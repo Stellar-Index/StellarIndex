@@ -259,12 +259,12 @@ func TestOHLC_StablecoinFiatProxy_NoPegLeaves404(t *testing.T) {
 // must NOT have High pegged to $1 — the default 4σ filter drops the
 // outlier before ComputeOHLC sees it.
 //
-// Pre-fix: live r1 served `/v1/ohlc?base=native&quote=fiat:USD` with
-// High=1.0000000000 because ComputeOHLC iterates raw trades and
+// Guards against `/v1/ohlc?base=native&quote=fiat:USD` serving
+// High=1.0000000000: ComputeOHLC iterates raw trades and
 // accepts any positive base+quote — a single dust ManageOffer cross
 // at the offer-book boundary trumps every legitimate print.
 //
-// Post-fix: ?outlier_sigma=0 still surfaces the dust High for callers
+// ?outlier_sigma=0 still surfaces the dust High for callers
 // who want raw inspection; default surfaces the real cluster.
 func TestOHLC_DefaultOutlierFilterRejectsDustTrade(t *testing.T) {
 	t0 := time.Unix(1_772_000_000, 0).UTC()

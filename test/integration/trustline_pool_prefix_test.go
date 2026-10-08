@@ -18,7 +18,7 @@ import (
 // and "poolX" etc. are valid Stellar asset codes (internal/canonical/asset.go
 // validateClassicAssetCode).
 //
-// Pre-fix, `NOT startsWith(asset, 'pool')` drops "poolX-GISSUER..." silently
+// `NOT startsWith(asset, 'pool')` would drop "poolX-GISSUER..." silently
 // alongside the real pool-share rows; this test goes RED on that predicate.
 func TestTrustlineAssetsAfter_PoolPrefixExcludesOnlyRealPoolShares(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

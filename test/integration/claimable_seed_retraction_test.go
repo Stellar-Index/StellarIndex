@@ -15,7 +15,7 @@ import (
 // TestClaimableSeed_RetractsServedClaim is the end-to-end proof: a claimable
 // balance an earlier seed wrote as live, claimed while the live observer was
 // not recording, must stop counting toward classic supply after a re-seed.
-// Before the fix the seed could only add rows, so the served reader kept
+// A seed that could only add rows would leave the served reader
 // summing the claimed balance forever.
 func TestClaimableSeed_RetractsServedClaim(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

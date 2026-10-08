@@ -441,9 +441,9 @@ func TestPlatformPostgresStores(t *testing.T) {
 
 		// RNC36: a nil ip (clientIP couldn't resolve one — RemoteAddr
 		// without a splittable port) must leave ip_last_seen UNCHANGED,
-		// never overwrite it with the "0.0.0.0" sentinel. Pre-fix this
-		// touch stamped the literal sentinel over the real IP recorded
-		// above; UA still updates because TouchSession's other columns
+		// never overwrite it with the "0.0.0.0" sentinel (which would clobber the
+		// real IP recorded
+		// above); UA still updates because TouchSession's other columns
 		// are unconditional.
 		if err := users.TouchSession(ctx, sess.ID, nil, "curl/9-no-ip"); err != nil {
 			t.Fatalf("touch with nil ip: %v", err)

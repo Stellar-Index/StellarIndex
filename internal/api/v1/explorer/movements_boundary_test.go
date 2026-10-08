@@ -19,11 +19,11 @@ import (
 // GET /v1/accounts/{g}/movements:
 //
 //   - a cap67 watermark READ ERROR must not disable
-//     the ClickHouse ceiling. Treating an error as wm=0 and guarding
+//     the ClickHouse ceiling. Setting wm=0 on error and guarding
 //     the CH trim with `if wm > 0` would serve a populated cap67 archive
 //     untrimmed across the whole post-P23 range AND the Postgres tail
 //     would serve the same watched-token transfers — every post-P23 movement
-//     double-listed. A read error fails closed to the static P23 boundary.
+//     double-listed. It fails closed to the static P23 boundary.
 //
 //   - the CH/PG split must not move under a paginated
 //     scroll. The watermark that produced page 1 is pinned into the cursor

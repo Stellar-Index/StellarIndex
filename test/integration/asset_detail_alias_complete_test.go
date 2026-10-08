@@ -24,10 +24,10 @@ import (
 //   - crypto:XLM/USD (binance, fiat:USD)                     → CEX leg,
 //     base_asset='crypto:XLM',            usd_volume > 0
 //
-// Pre-fix the readers key on base/quote = 'native' only, so the
-// crypto:XLM (CEX) leg is silently omitted — the served volume undercounts
-// and the trade-count is 1 instead of 2. Post-fix they use
-// base/quote = ANY(alias forms) and see both legs.
+// A reader keying on base/quote = 'native' only silently omits the
+// crypto:XLM (CEX) leg — the served volume undercounts and the trade-count
+// is 1 instead of 2. The readers must use base/quote = ANY(alias forms) and
+// see both legs.
 func TestAssetDetail_AliasCompleteVolumeAndCount(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -117,8 +117,8 @@ func TestAssetDetail_AliasCompleteVolumeAndCount(t *testing.T) {
 		t.Fatalf("fixture did not create cross-form volume: nativeOnly=%.4f total=%.4f", nativeOnly, total)
 	}
 
-	// The reader under test must equal the alias-complete total (post-fix).
-	// Pre-fix it returns nativeOnly (< total) → this assertion fails RED.
+	// The reader under test must equal the alias-complete total.
+	// A native-only reader returns nativeOnly (< total) → this assertion fails RED.
 	got, _, err := store.Volume24hUSDForAsset(ctx, native.String())
 	if err != nil {
 		t.Fatalf("Volume24hUSDForAsset: %v", err)
@@ -141,8 +141,8 @@ func TestAssetDetail_AliasCompleteVolumeAndCount(t *testing.T) {
 	}
 
 	// Trade-count reads the trades hypertable directly: both the native
-	// and the crypto:XLM trade must be counted. Pre-fix (base/quote =
-	// 'native') counts only the native leg → 1, not 2.
+	// and the crypto:XLM trade must be counted. A base/quote = 'native'
+	// filter counts only the native leg → 1, not 2.
 	n, err := store.GetAssetTradeCount24h(ctx, native.String())
 	if err != nil {
 		t.Fatalf("GetAssetTradeCount24h: %v", err)
@@ -152,7 +152,7 @@ func TestAssetDetail_AliasCompleteVolumeAndCount(t *testing.T) {
 	}
 
 	// Distinct-markets count: two pairs touch an XLM form (native/USDC and
-	// crypto:XLM/fiat:USD). Pre-fix (base/quote = 'native') sees only the
+	// crypto:XLM/fiat:USD). A base/quote = 'native' filter sees only the
 	// native/USDC pair → 1.
 	mc, err := store.GetAssetMarketsCount(ctx, native.String())
 	if err != nil {
@@ -165,8 +165,8 @@ func TestAssetDetail_AliasCompleteVolumeAndCount(t *testing.T) {
 	// Top markets: both pairs appear and — critically — the crypto:XLM/USD
 	// pair is labelled as the asset's OWN market (side 'base', counterparty
 	// the USD quote), not mislabelled with crypto:XLM as the counterparty.
-	// Pre-fix the crypto:XLM pair is absent entirely (per_pair filters on
-	// 'native'); if the CASE alone regressed it would surface crypto:XLM as
+	// The crypto:XLM pair would be absent entirely if per_pair filtered on
+	// 'native'; if the CASE alone were wrong it would surface crypto:XLM as
 	// a counterparty.
 	tops, err := store.GetAssetTopMarkets(ctx, native.String(), 5)
 	if err != nil {
@@ -196,8 +196,8 @@ func TestAssetDetail_AliasCompleteVolumeAndCount(t *testing.T) {
 
 	// ATH reads prices_1d as MAX(day-VWAP) across ALL forms. On the prior
 	// day the crypto:XLM (CEX) leg's day-VWAP is 3.0 and the native/USDC leg
-	// is 0.5; the alias-complete high is therefore 3.0. Pre-fix (base =
-	// 'native' only) would report 0.5 — omitting the CEX high entirely.
+	// is 0.5; the alias-complete high is therefore 3.0. A base = 'native'-only
+	// read would report 0.5 — omitting the CEX high entirely.
 	ath, err := store.GetAssetATH(ctx, native.String())
 	if err != nil {
 		t.Fatalf("GetAssetATH: %v", err)

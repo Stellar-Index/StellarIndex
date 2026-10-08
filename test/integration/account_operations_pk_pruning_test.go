@@ -124,7 +124,7 @@ func legacyAccountTransactionsSQL(hasCursor bool) string {
 //  2. READ-ROWS: one page of 50 via each path, `system.query_log`
 //     read_rows. The legacy shape reads ≥ one granule per key (≥ 200
 //     granules ≈ 1.6 M rows here; 38 k granules live); the new shape reads
-//     ≤ 3×limit granules. Red-proof: with the old query text in the reader
+//     ≤ 3×limit granules. Red-proof: with the legacy query text in the reader
 //     the reader's read_rows equal the legacy figure and the 4× bound
 //     fails.
 func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {

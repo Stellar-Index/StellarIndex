@@ -32,10 +32,10 @@ func (erroringCoverageFloorReader) EarliestBucketLiteralQuote(context.Context, c
 // TestCoverageFloor_FailedProbeUsesShortTTL is CA2-A02-harden-6: a
 // transient store error must not poison the advisory
 // coverage_from/outside_coverage annotation for the same thirty
-// minutes a genuine floor answer earns. Pre-fix, the failed entry's
-// expiry was `now.Add(coverageFloorTTL)` — identical to a success —
-// so this test fails on unfixed code (expiry ~30m out) and passes
-// once the failed branch uses its own short TTL.
+// minutes a genuine floor answer earns. The failed entry's expiry must
+// not be `now.Add(coverageFloorTTL)` — identical to a success — so
+// this test fails if it is (expiry ~30m out) and passes once the
+// failed branch uses its own short TTL.
 func TestCoverageFloor_FailedProbeUsesShortTTL(t *testing.T) {
 	pair, err := canonical.NewPair(mustParseAsset("crypto:XLM"), mustParseAsset("fiat:USD"))
 	if err != nil {

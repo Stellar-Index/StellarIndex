@@ -144,8 +144,8 @@ func TestPriceBatch_OmitsMissingAssets(t *testing.T) {
 // TestPriceBatch_AliasResolvesXLM pins, on the batch surface:
 // asset_ids=native must resolve a snapshot published under the
 // crypto:XLM alias key, exactly like handlePrice's primary read.
-// Pre-fix the batch path queried the literal form only, silently
-// dropping the row while /v1/price?asset=native served fresh.
+// Querying the literal form only would silently
+// drop the row while /v1/price?asset=native serves fresh.
 func TestPriceBatch_AliasResolvesXLM(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	reader := &stubPriceReader{
@@ -339,10 +339,10 @@ func TestPriceBatch_ReaderError500(t *testing.T) {
 }
 
 // A server-side request deadline (middleware.RequestTimeout) firing mid-
-// batch must NOT be treated as a client abort. Pre-fix, lookupPriceBatch
-// tested `ctx.Err() != nil` after wg.Wait() and returned without writing
-// anything on ANY done context — including DeadlineExceeded — so net/http
-// answered with an implicit 200 and an empty body: an authoritative-
+// batch must NOT be treated as a client abort. lookupPriceBatch must not
+// test `ctx.Err() != nil` after wg.Wait() and return without writing
+// anything on ANY done context — including DeadlineExceeded — or net/http
+// answers with an implicit 200 and an empty body: an authoritative-
 // looking empty result for what is actually a blown server budget.
 //
 // This holds the reader open past a deliberately tiny RequestTimeout so
@@ -586,11 +586,11 @@ func TestPriceBatch_AssetIdsAndPairsBoth_Returns400(t *testing.T) {
 // asset_id is the id the CLIENT asked for, not whichever XLM alias the
 // store happened to be keyed under.
 //
-// Before the fix, readPriceWithAliases returned the snapshot built from
-// the winning alias, so `?asset_ids=native,crypto:XLM` produced TWO rows
+// Guards against readPriceWithAliases returning the snapshot built from
+// the winning alias, so `?asset_ids=native,crypto:XLM` would produce TWO rows
 // both stamped "crypto:XLM". Since the batch route omits misses rather
 // than returning null rows, `asset_id` is the only mapping the wire shape
-// supports — so a client keying the response by it lost `native`
+// supports — a client keying the response by it would lose `native`
 // entirely.
 func TestPriceBatch_EchoesRequestedAssetNotStoreAlias(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()

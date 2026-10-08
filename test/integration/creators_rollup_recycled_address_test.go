@@ -16,10 +16,10 @@ import (
 // TestCreatorsRollup_RecycledAddressCountsOnce is the recycled-address proof
 // against real ClickHouse. stellar.account_creators_ops is one row
 // per creation OPERATION, so one creator recycling one address (create ->
-// merge -> create) produces two rows sharing the same `created`. Pre-fix,
-// the board's live_accounts/live_stroops joined the live-entry set onto
-// that per-event table directly, so the still-live address was counted
-// TWICE and its balance summed TWICE. The fix aggregates over the distinct
+// merge -> create) produces two rows sharing the same `created`. Joining
+// the board's live_accounts/live_stroops live-entry set onto that per-event
+// table directly counts the still-live address TWICE and sums its balance
+// TWICE, so the board aggregates over the distinct
 // (creator, created) pair before the outer sum.
 //
 // Fixture: one creator, one address created by two distinct operations,

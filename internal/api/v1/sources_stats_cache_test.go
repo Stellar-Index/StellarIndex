@@ -141,8 +141,8 @@ func TestCachedSourcesStatsReader_ErrorIsNotCached(t *testing.T) {
 // TestCachedSourcesStatsReader_WaitersSeeLeaderError — when
 // the single-flight leader's upstream call errors, every goroutine
 // that waited on it must get that error back too, not a fabricated
-// cache "hit" of the stale/nil field. A waiter must not
-// `<-ch` and unconditionally return (c.stats, nil).
+// cache "hit" of the stale/nil field. A waiter that did
+// `<-ch` and unconditionally returned (c.stats, nil) would hide it.
 func TestCachedSourcesStatsReader_WaitersSeeLeaderError(t *testing.T) {
 	wantErr := errors.New("timescale: query failed")
 	up := &fakeUpstream{statsDelay: 80 * time.Millisecond, statsErr: wantErr}

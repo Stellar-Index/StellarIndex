@@ -236,7 +236,7 @@ func TestObservations_NonstandardDecimals_NormalizesPrice(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 	body, _ := readAll(resp)
-	// Pre-fix served the raw ratio "0.0250000000".
+	// Guards against serving the raw ratio "0.0250000000".
 	if !strings.Contains(body, `"price":"2.5000000000"`) {
 		t.Errorf("/v1/observations price not normalized (want 2.5000000000): %s", body)
 	}
@@ -328,11 +328,11 @@ func TestAssetsF2_NonstandardDecimals_NormalizesPriceAndCaps(t *testing.T) {
 		t.Fatalf("status = %d: %s", resp.StatusCode, body)
 	}
 	body, _ := readAll(resp)
-	// price_usd: raw 41.32 × K(100) = 4132. Pre-fix served 41.32.
+	// price_usd: raw 41.32 × K(100) = 4132, not the raw 41.32.
 	if !strings.Contains(body, `"price_usd":"4132.0000000000"`) {
 		t.Errorf("price_usd not normalized (want 4132.0000000000): %s", body)
 	}
-	// market_cap = 1000 tokens × $4132 = $4,132,000. Pre-fix: 1000 × 41.32 = 41,320.
+	// market_cap = 1000 tokens × $4132 = $4,132,000, not 1000 × 41.32 = 41,320.
 	if !strings.Contains(body, `"market_cap_usd":"4132000.00"`) {
 		t.Errorf("market_cap_usd not normalized (want 4132000.00): %s", body)
 	}

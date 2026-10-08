@@ -37,7 +37,7 @@ func (stallingMarketCapHistory) HistoryPointsInRange(
 // answer when the blanket request deadline fires inside
 // /v1/chart?price_type=market_cap.
 //
-// Pre-fix the market-cap legs mapped ANY read error, deadline included,
+// The market-cap legs must not map ANY read error, deadline included,
 // to emptyMarketCapSeries at HTTP 200 with Flags{} — no stale marker, no
 // error. An empty series is syntactically valid, so a caller renders
 // "market cap $0" for an asset holding real supply and cannot tell that

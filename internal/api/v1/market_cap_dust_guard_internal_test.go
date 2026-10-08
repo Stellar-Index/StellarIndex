@@ -153,13 +153,13 @@ func TestFillRowMarketCap_NativeNeverDustSuppressed(t *testing.T) {
 	}
 }
 
-// TestApplyUnverifiedWarning_ReferenceOnlyTicker — post-52b04a63
-// regression fix: a reference-only ticker (USDT — the catalogue knows
+// TestApplyUnverifiedWarning_ReferenceOnlyTicker — regression guard:
+// a reference-only ticker (USDT — the catalogue knows
 // it as a well-known EXTERNAL asset with no verified Stellar issuance)
-// must still produce the warning + envelope flag. Pre-fix the
-// StellarEntry()==nil "unreachable" bail silently killed the warning
+// must still produce the warning + envelope flag. A StellarEntry()==nil
+// "unreachable" bail would silently kill the warning
 // for exactly the tickers impersonators target hardest, so
-// /v1/assets/USDT-G… served clean while the listing flagged the same
+// /v1/assets/USDT-G… would serve clean while the listing flags the same
 // row. Pinned against the real embedded catalogue.
 func TestApplyUnverifiedWarning_ReferenceOnlyTicker(t *testing.T) {
 	cat, err := currency.LoadEmbedded()

@@ -89,11 +89,11 @@ func TestUsdMarketValue_NegativeSupplyRejected(t *testing.T) {
 // COR-03 regression: computeMarketCapUSD (the /v1/assets LISTING
 // path) and usdMarketValue (the /v1/assets/{id} DETAIL path, tested
 // above) must agree that a zero circulating supply is a legitimate
-// "0.00" reading, not an error/omitted field. Before the fix,
-// computeMarketCapUSD's `mc.Sign() <= 0` guard treated an exact zero
-// the same as a parse failure and returned "" — so the identical
-// zero-supply asset showed market_cap_usd:"0.00" on its detail page
-// and a missing field on the listing.
+// "0.00" reading, not an error/omitted field. Guards against
+// computeMarketCapUSD's `mc.Sign() <= 0` guard treating an exact zero
+// like a parse failure and returning "", which would show
+// market_cap_usd:"0.00" on the detail page but a missing field on the
+// listing.
 func TestComputeMarketCapUSD_ZeroSupplyMatchesUsdMarketValue(t *testing.T) {
 	got := computeMarketCapUSD("0", "0.07", 7)
 	if got != "0.00" {

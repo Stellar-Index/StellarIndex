@@ -205,8 +205,8 @@ func TestPriceTip_FallbackWhenNoHistoryWired(t *testing.T) {
 // TestPriceTip_AliasResolvesXLM pins, on the tip surface:
 // asset=native must resolve a LatestPrice observation published under
 // the crypto:XLM alias key (the rolling-window VWAP path being empty),
-// exactly like handlePrice's primary read. Pre-fix the tip fallback
-// queried the literal form only and 404'd while /v1/price served fresh.
+// exactly like handlePrice's primary read. Querying the literal form only
+// would 404 while /v1/price serves fresh.
 func TestPriceTip_AliasResolvesXLM(t *testing.T) {
 	prices := &stubPriceReader{
 		// Only the crypto:XLM form is populated; native is absent.

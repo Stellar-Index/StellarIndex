@@ -306,8 +306,8 @@ func insertSAC(t *testing.T, ctx context.Context, store *timescale.Store, contra
 // do NOT collide on the natural key when observed_at differs, so both rows
 // persist and the DISTINCT ON must choose deterministically.
 //
-// Before the fix the readers ordered by `ledger DESC` alone and the pick was
-// left to the planner — the same shape as a case where a tie between a
+// Ordering the readers by `ledger DESC` alone leaves the pick to the
+// planner — the same shape as a case where a tie between a
 // `state` before-image and its `updated` after-image serves whichever the
 // engine happens to keep. The seed row must win: it reconstructs the
 // ledger's FINAL state, so it belongs at the end of the intra-ledger order.
@@ -369,9 +369,9 @@ func TestClaimableSameLedgerTieBreak(t *testing.T) {
 // claimed a claimable balance for that asset recently — and it must NOT read
 // as staleness.
 //
-// Before the fix, the query took MIN over per-ASSET MAX(ledger), so the quiet
-// asset's anchor was pinned to its ancient claimable row. The Refresher then
-// saw a lag past the dormancy horizon and refused every subsequent snapshot,
+// The query must not take MIN over per-ASSET MAX(ledger): the quiet
+// asset's anchor is then pinned to its ancient claimable row. The Refresher then
+// sees a lag past the dormancy horizon and refuses every subsequent snapshot,
 // freezing the asset's served supply permanently. In production this froze 37
 // of 48 watched assets within hours of claimable_observations being seeded
 // from lake history; the only assets still publishing were the three that

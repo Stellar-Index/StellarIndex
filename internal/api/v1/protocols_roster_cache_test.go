@@ -58,8 +58,8 @@ func (r *rosterCacheStubReader) callCount(source string) int {
 // TestProtocolsList_RosterServedFromCache proves the W1.3 perf fix: a
 // second /v1/protocols request does NOT re-scan the served tier for a
 // source's contract roster — the count is served from the per-server SWR
-// cache. Pre-fix (handleProtocolsList called protocolRoster inline per
-// request) the reader was hit once PER request; the assertion that blend's
+// cache. Were handleProtocolsList to call protocolRoster inline per
+// request, the reader would be hit once PER request; the assertion that blend's
 // registry read ran exactly once across two requests fails against that
 // code and passes against the cache.
 func TestProtocolsList_RosterServedFromCache(t *testing.T) {
@@ -110,8 +110,8 @@ func TestProtocolsList_RosterServedFromCache(t *testing.T) {
 // TestProtocolsList_RosterFailureOmitsNotZeros proves the W1.3 honesty fix:
 // when a source's roster read FAILS and no last-good count is cached, the
 // source is OMITTED from the directory and named in coverage_note — never
-// serialised with a fabricated contract_count: 0. Pre-fix the failing read
-// was swallowed to an empty roster, so blend appeared with contract_count 0
+// serialised with a fabricated contract_count: 0. A failing read swallowed
+// to an empty roster would make blend appear with contract_count 0
 // and no coverage_note; both assertions fail against that code.
 func TestProtocolsList_RosterFailureOmitsNotZeros(t *testing.T) {
 	reader := &rosterCacheStubReader{

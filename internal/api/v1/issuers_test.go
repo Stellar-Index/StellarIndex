@@ -182,8 +182,8 @@ func TestHandleIssuersList_ReaderError500(t *testing.T) {
 // canceled ListIssuers query as SQLSTATE 57014. That is a client
 // abort, NOT a server fault: the handler must return quietly, never
 // a 500 (a 500 pollutes the 5xx rate + SLA availability — it was the
-// sole sla-probe SLA-harness blocker). Pre-fix the missing
-// clientAborted guard let the canceled-context error fall through to
+// sole sla-probe SLA-harness blocker). Without the
+// clientAborted guard the canceled-context error falls through to
 // the generic `Issuers list failed` 500. clientAborted keys off
 // r.Context().Err(), so any storage error + a canceled request ctx
 // must NOT 500.
@@ -221,9 +221,9 @@ func TestHandleIssuer_503WhenReaderNil(t *testing.T) {
 }
 
 // TestHandleIssuer_NotFound404 — sql.ErrNoRows surfaces as 404
-// with `issuer-not-found` problem type. Pre-fix this would 500
-// because the handler didn't distinguish ErrNoRows from generic
-// storage failures.
+// with `issuer-not-found` problem type; the handler must distinguish
+// ErrNoRows from generic
+// storage failures (which 500).
 func TestHandleIssuer_NotFound404(t *testing.T) {
 	reader := &stubIssuersReader{rowErr: sql.ErrNoRows}
 	srv := v1.New(v1.Options{Issuers: reader})
@@ -241,10 +241,9 @@ func TestHandleIssuer_NotFound404(t *testing.T) {
 
 // TestHandleIssuer_LowercaseInputUppercased — the handler upper-
 // cases the path segment before hitting storage so URL clients
-// that auto-lowercase don't dead-end. Pre-fix
-// `/v1/issuers/ga5zsejyb...` 404'd while the uppercase form
-// returned the row. Verified by checking what the storage stub
-// received.
+// that auto-lowercase don't dead-end: `/v1/issuers/ga5zsejyb...` must not
+// 404 while the uppercase form returns the row. Verified by checking what
+// the storage stub received.
 func TestHandleIssuer_LowercaseInputUppercased(t *testing.T) {
 	reader := &stubIssuersReader{
 		row: timescale.IssuerRow{
@@ -307,10 +306,10 @@ func TestHandleIssuer_HappyPath_WithAssets(t *testing.T) {
 }
 
 // TestHandleIssuer_ScamSuppressesSEP1Payload — S-010 suppression must
-// clear SEP1Payload alongside HomeDomain/OrgName. Pre-fix the raw
-// stellar.toml JSONB (which carries the same impersonated org_name/
-// home_domain the two string fields were cleared of) was still
-// served verbatim, so a client decoding sep1_payload recovered the
+// clear SEP1Payload alongside HomeDomain/OrgName. The raw
+// stellar.toml JSONB carries the same impersonated org_name/
+// home_domain the two string fields are cleared of; served verbatim,
+// a client decoding sep1_payload would recover the
 // exact identity the suppression exists to hide.
 func TestHandleIssuer_ScamSuppressesSEP1Payload(t *testing.T) {
 	const counterfeiter = "GBYBVWOOVC4EJVRIF4HMWG5B7POLCS7JRPY5KYR3BCLEK24IJQOGUARD"

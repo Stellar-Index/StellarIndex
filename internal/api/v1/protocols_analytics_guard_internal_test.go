@@ -473,8 +473,8 @@ func TestEnrichProtocolAnalytics_SharedPlanSingleTipRead(t *testing.T) {
 }
 
 // closeTimeActivityStub models a synthetic, deliberately NON-theoretical
-// ledger close cadence (6s, i.e. 14,400/day — distinct from a
-// hardcoded 17,280/day) so protocolWindowFloor's close_time boundary
+// ledger close cadence (6s, i.e. 14,400/day — distinct from a hardcoded
+// 17,280/day) so protocolWindowFloor's close_time boundary
 // produces a DIFFERENT, independently-computable answer than a
 // ledger-count arithmetic.
 type closeTimeActivityStub struct {
@@ -569,9 +569,9 @@ func TestProtocolWindowFloor_GapFarFromBoundary(t *testing.T) {
 // the fast (day-grain) window while the breakdown falls back alone to the
 // raw (ledger-window) source — the two windows differ, and the wire's
 // sum(EventBreakdown)==EventsTotal invariant assumes one shared window
-// per build. Before the fix, protocolBreakdown and protocolSeries each
-// fell back fast->raw independently, so this exact script (fast series ok,
-// fast breakdown erroring) left rawBreak==1 but rawSeries==0 — a split.
+// per build. protocolBreakdown and protocolSeries must not each
+// fall back fast->raw independently: on this exact script (fast series ok,
+// fast breakdown erroring) that leaves rawBreak==1 but rawSeries==0 — a split.
 func TestEnrichProtocolAnalytics_FastBreakdownErrorForcesBothToRaw(t *testing.T) {
 	stub := &scriptedFastStub{
 		answers:      []probeAnswer{{true, true}},

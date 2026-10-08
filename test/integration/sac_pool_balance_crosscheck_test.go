@@ -144,7 +144,7 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 			}
 			sacSupply := supply.Supply{AssetKey: tc.sacContract, TotalSupply: sacTotal}
 
-			// (1) Pre-fix classic-side visibility: an ordinary trustline
+			// (1) Classic-side visibility only: an ordinary trustline
 			// holder only — no pool-held balance yet.
 			insertTrustline(t, ctx, store, tc.classicHolder, assetKey, 1000, tc.classicAmount, observedAt, false)
 

@@ -116,9 +116,9 @@ func TestAssetsOrderByReachesTheStore(t *testing.T) {
 }
 
 // TestAssetsOrderByGarbageIs400 — an unrecognised value must fail
-// loudly, the way /v1/markets always has. Pre-fix it returned 200 and
-// the observation-count ordering, so a client typo was indistinguishable
-// from a served ranking.
+// loudly, the way /v1/markets does. A 200 with the observation-count
+// ordering would leave a client typo indistinguishable from a served
+// ranking.
 func TestAssetsOrderByGarbageIs400(t *testing.T) {
 	stub, rec := serveAssetList(t, "/v1/assets?order_by=TOTAL_GARBAGE")
 	if rec.Code != http.StatusBadRequest {

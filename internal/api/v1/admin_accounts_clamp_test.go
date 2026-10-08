@@ -276,11 +276,11 @@ func TestAdminAccountOverrides_EnforcementNeutralPatchDoesNotEvictKeyCache(t *te
 //
 // The validator RESOLVES a key's effective monthly-quota ceiling and per-minute
 // floor from the account overrides at Lookup time (auth/apikey_postgres.go) and
-// caches the resolved Subject verbatim. Before the fix the PATCH ran only the
-// tier-clamp seam (early-returns unless the ceiling drops) and the suspend seam
-// (early-returns unless status leaves active); an override-only change tripped
-// neither, so every warm key kept authenticating with the OLD unmetered/higher
-// quota until the TTL rolled it off — the just-tightened operator ceiling
+// caches the resolved Subject verbatim. The tier-clamp seam (early-returns
+// unless the ceiling drops) and the suspend seam (early-returns unless status
+// leaves active) both skip an override-only change, so without explicit
+// invalidation every warm key keeps authenticating with the OLD unmetered/higher
+// quota until the TTL rolls it off — the just-tightened operator ceiling
 // silently unenforced.
 //
 // Prove-red: without the override eviction wiring, InvalidateCachedKey is never

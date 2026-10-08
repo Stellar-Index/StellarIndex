@@ -41,10 +41,10 @@ import (
 // with a single trade so every constituent bar is exact:
 //
 //	t0+00m  native/<USDC-classic>   7000 base / 1260 quote → 0.18  (SDEX depth;
-//	                                the ONLY leg the old fallback could reach,
+//	                                the ONLY leg the literal-pair fallback reaches,
 //	                                and only when the literal pair was empty)
 //	t0+05m  native/fiat:USD         1000 base /  200 quote → 0.20  (direct fiat;
-//	                                non-empty, so no fallback applies)
+//	                                non-empty, so a literal-only read stops here)
 //	t0+10m  crypto:XLM/fiat:USD     2000 base /  380 quote → 0.19  (the CEX
 //	                                stream, which lives under the alias form and
 //	                                was unreachable from ?base=native)
