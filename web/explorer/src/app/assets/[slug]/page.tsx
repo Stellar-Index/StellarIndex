@@ -1689,7 +1689,7 @@ function VerifiedCurrencyView({
       {/* Markets panel — surfaces every market the asset trades on
           across both Stellar SDEX and CEX feeds. The slug is
           passed through to /v1/markets?asset=<slug> which the
-          server expands (R-018 phase 2) into every catalogue
+          server expands into every catalogue
           asset_id form for the slug and unions trade rows. So
           /assets/USDC shows USDC-GA5Z... (SDEX), and BTC/ETH/XLM
           tickers show their crypto:<TICKER> CEX pairs from

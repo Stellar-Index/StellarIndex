@@ -29,7 +29,7 @@ export function isSafeHomeDomain(
   return HOSTNAME_RE.test(domain);
 }
 
-// SEC-10: validation for issuer-controlled SEP-1 `image` URLs before they
+// Validation for issuer-controlled SEP-1 `image` URLs before they
 // are rendered as an <img src>. image is issuer-controlled (any asset
 // issuer's stellar.toml CURRENCIES[].image); scheme-only validation
 // (https?://…) lets a hostile issuer point every viewer's browser at an

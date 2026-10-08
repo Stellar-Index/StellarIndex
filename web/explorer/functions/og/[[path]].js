@@ -79,7 +79,7 @@ function prettyLabel(type, id) {
   return id.length > 24 ? `${id.slice(0, 10)}…${id.slice(-8)}` : id;
 }
 
-// SEC-08: a Map, not a plain object — a plain object keyed by an
+// A Map, not a plain object — a plain object keyed by an
 // attacker-controlled `type` string lets `type === 'constructor'` (etc.)
 // resolve an inherited Object.prototype member instead of missing cleanly.
 export const TYPE_LABEL = new Map([
@@ -97,7 +97,7 @@ export const TYPE_LABEL = new Map([
 // upstream price fetch, or the satori render.
 const MAX_ID_LENGTH = 160;
 
-// SEC-15: liveSubline's upstream fetch is only worth making — and only
+// liveSubline's upstream fetch is only worth making — and only
 // safe to make unauthenticated, at the edge, on every request — when both
 // legs of `base~quote` actually look like a canonical asset id the API
 // accepts: `native`, `CODE-ISSUER` (up to a 12-char code + '-' + a 56-char
@@ -395,7 +395,7 @@ export async function onRequest(context) {
     .filter(Boolean);
   const type = (parts[0] || 'home').replace(/[^a-z0-9-]/gi, '');
 
-  // SEC-15: 404 unknown types before doing any work — 'home' is the only
+  // 404 unknown types before doing any work — 'home' is the only
   // pseudo-type without a TYPE_LABEL entry (the id-less site-wide card).
   if (type !== 'home' && !TYPE_LABEL.has(type)) {
     return cachePut(context, cache, cacheKey, notFound());
