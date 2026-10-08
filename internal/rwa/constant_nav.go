@@ -6,43 +6,9 @@ import (
 	"time"
 )
 
-// Prospectus constant-NAV bindings — share classes whose net asset value
-// is fixed at one unit of currency by the fund's own rules, so that the
-// reference price is a matter of the prospectus and not of a feed.
-//
-// A short-term public-debt CNAV money market fund under the EU Money
-// Market Fund Regulation is authorised to maintain a constant NAV per
-// share of 1 in its base currency, and publishes that NAV daily beside a
-// mark-to-market shadow price. For such a share class "what is one
-// share worth" has the same answer every day the fund exists, and the
-// price a feed would carry is the number the regulation prescribes. This
-// table binds an exact (code, issuer) to that prescribed value, with the
-// ISIN it was checked against and the issuer's own page the NAV was read
-// from — the reference is the issuer's published NAV, and it is served
-// under its own provenance so a consumer can tell it from an oracle's
-// measurement and from a listing platform's aggregate.
-//
-// EXACT on both halves, for the reason [InstrumentFeed] is: codes are
-// not unique on this network, and a constant price on a code alone would
-// value an impostor at par.
-//
-// A rule, but not a permanent one. The regulation lets a CNAV fund's
-// mark-to-market price deviate from the constant by up to 20 basis
-// points before it must convert or impose fees, and a share class is
-// converted to variable NAV, merged or liquidated by a decision of the
-// fund that leaves the issuer's SEP-1 exactly as it was. Nothing on
-// this platform observes that decision, so every binding carries the
-// date it was last read against the issuer's page and the date by which
-// it must be read again — [ConstantNAVReviewInterval] — and past that
-// date it is served labelled as due for re-verification. That is the
-// same bound every other reference on the surface carries, at the
-// cadence a prospectus fact moves rather than the cadence a feed does.
-//
-// What is deliberately NOT here: any accumulating share class. An
-// accumulating class's NAV grows with the fund's income and is a
-// measurement, not a prescription — Franklin's Singapore sgBENJI
-// (SGXZ71843866, "A (acc) USD") is the case at hand, and it stays
-// unpriced until a feed carries its NAV.
+// ConstantNAVBinding binds an exact (code, issuer) to the NAV an EU MMFR CNAV prospectus
+// fixes, served under the issuer's own provenance and re-read every [ConstantNAVReviewInterval]
+// because a conversion leaves SEP-1 unchanged. Accumulating classes (e.g. sgBENJI) are measured, not fixed.
 type ConstantNAVBinding struct {
 	Code   string
 	Issuer string
@@ -59,29 +25,14 @@ type ConstantNAVBinding struct {
 	// VerifiedOn the UTC date (YYYY-MM-DD) it was read there.
 	Source     string
 	VerifiedOn string
-	// ReviewBy is the UTC date (YYYY-MM-DD) by which the binding must be
-	// re-read against Source: VerifiedOn plus [ConstantNAVReviewInterval].
-	// DERIVED when the table is indexed, never declared, so it cannot
-	// drift from the verification date it is a function of. Re-verifying
-	// a binding means advancing VerifiedOn; ReviewBy follows.
+	// ReviewBy is VerifiedOn plus [ConstantNAVReviewInterval], derived at indexing so it
+	// cannot drift; re-verifying means advancing VerifiedOn.
 	ReviewBy string
 }
 
-// ConstantNAVReviewInterval is how long a constant-NAV binding stands on
-// one reading of the issuer's page before it is due to be read again.
-//
-// Ninety days — a quarter. A public-debt CNAV fund under the MMFR
-// publishes its constant NAV daily, so the figure itself never goes
-// stale in the 72-hour sense an oracle observation does: it is 1.00
-// every day until the fund changes regime. What CAN change is the
-// regime, and a regime change is a corporate action announced to
-// shareholders with notice and reflected in the fund's reports, which
-// are quarterly at the shortest. A quarterly re-read of the issuer's
-// page therefore catches a conversion, merger or liquidation within one
-// reporting cycle of it, without asking a human to re-confirm a number
-// that cannot have moved in between. Shorter would flag the binding
-// stale on a cadence nothing about the fund justifies; longer would let
-// a converted class be served at par for the better part of a year.
+// ConstantNAVReviewInterval is a quarter: the NAV is fixed until the regime changes, and a
+// regime change is announced in reports that are quarterly at the shortest. Longer would serve
+// a converted class at par for most of a year.
 const ConstantNAVReviewInterval = 90 * 24 * time.Hour
 
 // constantNAVDateLayout is the layout VerifiedOn and ReviewBy are
@@ -94,24 +45,15 @@ const (
 	franklinLuxABIssuer = "GA3ZBL3LBRKOF7CZ6MCA7JLPHWQCGYCCGKH4GVWNEDZOXW4IPXFGN2FQ"
 )
 
-// The issuer's Luxembourg price-and-performance pages, one per share
-// class, as its own product sitemap enumerates them
-// (franklintempleton.lu/binaries/content/assets/global/sitemaps/google/en-lu_product.xml):
-// product 41372 is the fund, the path segment after it is the share
-// class's own code, and the URL ends in the class's ISIN. The site
-// answers 200 with the same application shell for ANY trailing ISIN,
-// so a URL is verified against the sitemap, not against its status.
+// franklinOnChainLiquidityPages is the issuer's per-class price page prefix, from its
+// product sitemap. The site answers 200 for ANY trailing ISIN, so a URL is verified against
+// the sitemap, not its status.
 const franklinOnChainLiquidityPages = "https://www.franklintempleton.lu/our-funds/price-and-performance-money-funds/products/41372/"
 
 var constantNAVBindings = []ConstantNAVBinding{
-	// Franklin OnChain U.S. Government Liquidity Fund (Luxembourg SICAV
-	// "Franklin Templeton OnChain Funds", CSSF-authorised): "qualifies as
-	// a short-term public debt constant net asset value (CNAV) money
-	// market fund under the European Money Market Fund Regulation",
-	// objective "to maintain a constant net asset value per share of 1
-	// US dollar". The issuer's SEP-1 at www.franklintempleton.com binds
-	// each class to its own account and declares the ISIN; the AB class
-	// page showed NAV $1.00 (mark-to-market $0.9999).
+	// Franklin OnChain U.S. Government Liquidity Fund: CSSF-authorised short-term public-debt
+	// CNAV MMF targeting $1 per share; SEP-1 at www.franklintempleton.com binds each class and
+	// declares its ISIN (AB page: NAV $1.00, mark-to-market $0.9999).
 	{
 		Code: "gBENJI", Issuer: franklinLuxIBIssuer, ISIN: "LU2900381208", NAVUSD: "1.00",
 		Fund: "Franklin OnChain U.S. Government Liquidity Fund — IB (Ddis) USD", Regime: "EU MMFR short-term public-debt CNAV",
@@ -124,10 +66,8 @@ var constantNAVBindings = []ConstantNAVBinding{
 	},
 }
 
-// constantNAVIndex keys the table on the exact pair and on the ISIN, and
-// stamps each binding's ReviewBy from its VerifiedOn. A defect in the
-// table is a defect in this file, and the process refuses to start on it
-// rather than serve a binding it cannot vouch for.
+// constantNAVIndex refuses to start the process on a table defect rather than serve a
+// binding it cannot vouch for.
 var constantNAVIndex = func() constantNAVTable {
 	t, err := indexConstantNAV(constantNAVBindings)
 	if err != nil {
@@ -141,11 +81,8 @@ type constantNAVTable struct {
 	byISIN map[string]ConstantNAVBinding
 }
 
-// indexConstantNAV stamps ReviewBy into bindings in place and indexes
-// them. An ISIN names one share class and a share class is bound on one
-// pair, so a repeated ISIN or pair is two securities wearing one
-// identity and is refused, as is an ISIN that is not the upper-case,
-// check-digit-valid form every lookup compares against.
+// indexConstantNAV stamps ReviewBy and indexes bindings; a repeated ISIN or pair (two
+// securities, one identity) or a non-canonical ISIN is refused.
 func indexConstantNAV(bindings []ConstantNAVBinding) (constantNAVTable, error) {
 	t := constantNAVTable{
 		byPair: make(map[instrumentKey]ConstantNAVBinding, len(bindings)),
@@ -174,14 +111,8 @@ func indexConstantNAV(bindings []ConstantNAVBinding) (constantNAVTable, error) {
 	return t, nil
 }
 
-// ReviewDeadline is the instant the binding falls due for
-// re-verification: the start of the ReviewBy date, UTC.
-//
-// A ReviewBy that does not parse is answered with the zero time, which
-// [ConstantNAVBinding.ReviewDue] reads as already due. The field is
-// derived from a date the index has already parsed, so this cannot
-// happen to a binding the table produced; a hand-built one fails closed
-// rather than being served at par indefinitely.
+// ReviewDeadline is the start of the ReviewBy date, UTC; an unparseable date returns the
+// zero time so a hand-built binding fails closed as already due.
 func (b ConstantNAVBinding) ReviewDeadline() time.Time {
 	t, err := time.Parse(constantNAVDateLayout, b.ReviewBy)
 	if err != nil {
@@ -204,12 +135,8 @@ func ConstantNAV(code, issuer string) (ConstantNAVBinding, bool) {
 	return b, ok
 }
 
-// ConstantNAVISINConflict reports whether the ISIN an issuer's SEP-1
-// declares for (code, issuer) contradicts the constant-NAV table: the
-// pair is bound to a different ISIN, or the ISIN is bound to a
-// different pair. Either way the row would name one security and be
-// valued as another. A declaration that is not a well-formed ISIN names
-// no security and so contradicts nothing.
+// ConstantNAVISINConflict reports whether the SEP-1-declared ISIN contradicts the table,
+// so a row would name one security and be valued as another; a malformed ISIN contradicts nothing.
 func ConstantNAVISINConflict(code, issuer, declaredAnchorAsset string) bool {
 	isin, ok := CanonicalISIN(declaredAnchorAsset)
 	if !ok {
