@@ -1,27 +1,14 @@
 // Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package pricelesscoverage is the priceless-popular pricing-coverage
-// tripwire (task #28 Part B). A recurring aggregator sweep asks: is any
-// asset genuinely popular yet has no served price and no recorded reason?
-// Such a gap should PAGE — surface as a metric + ticket alert — instead of
-// waiting for an operator to notice it while browsing /assets.
+// Package pricelesscoverage pages when a popular asset has no served price and
+// no recorded reason, instead of waiting for someone to notice it on /assets.
 //
-// The popularity floor is deliberately measured on MARKET-CHARACTER
-// volume, never raw volume: a volume-painting wash farm (the reported scam
-// AUD: ~108/109 of its trades one wallet pair) trades huge raw USD volume,
-// so a raw-volume floor would let every wash farm self-select into the
-// alert. The classifier excludes volume concentrated in a single account
-// pair, the same single-account-pair filter the volume-character rollup
-// design uses, computed inline here.
-//
-// The concentration is measured on EVERY venue that records a
-// counterparty, not only the order book: an AMM fill names the taker and
-// leaves the maker side to the pool, so its key is that one account (see
-// timescale.popularPricelessCandidatesSQL). Volume from a venue that
-// records no account at all (the external CEX feeds) can only dilute the
-// share, so an unmeasurable market pages an operator rather than being
-// quietly dropped — the same fail-loud direction as pricedViaClassicAlias.
+// Popularity is measured on market-character volume, never raw volume: a wash
+// farm trades huge raw volume and would otherwise self-select into the alert.
+// Volume concentrated in one counterparty key is excluded on every venue that
+// records one; venues recording no account only dilute the share, so an
+// unmeasurable market pages rather than being quietly dropped.
 package pricelesscoverage
 
 import (
@@ -37,32 +24,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// DefaultInterval is the sweep cadence when Options.Interval is unset. A
-// coverage gap is not time-critical (it pages a ticket, not an SLO), and
-// the underlying trailing windows are 24h/7d, so a slow cadence keeps the
-// full-catalogue scan cheap.
+// DefaultInterval is the sweep cadence; a gap pages a ticket, not an SLO, and the
+// windows are 24h/7d, so a slow cadence keeps the full-catalogue scan cheap.
 const DefaultInterval = 10 * time.Minute
 
-// DefaultSweepTimeout bounds one sweep's candidate read. The full-catalogue
-// scan measures ~55s warm against the live trades hypertable and can run
-// longer on a cold cache or under DB load; this ceiling is comfortably
-// above that yet stops a pathological sweep from holding a connection
-// indefinitely. A timed-out sweep is best-effort-skipped (the gauge holds
-// its last good value), never fatal. Options.SweepTimeout <= 0 uses this.
+// DefaultSweepTimeout bounds one candidate read (~55s warm); a timed-out sweep is
+// skipped and the gauge keeps its last good value.
 const DefaultSweepTimeout = 5 * time.Minute
 
-// DefaultProbeTimeout bounds ONE candidate's classic-alias probe
-// (resolveSAC + isPriced). Each candidate gets its own context derived
-// from the sweep's PARENT context rather than the shared sweepCtx, so a
-// sweep running long against a cold cache does not leave every remaining
-// probe sharing a near-expired deadline — which would time many of them
-// out together and read identically to a real mass coverage gap.
+// DefaultProbeTimeout bounds one candidate's classic-alias probe. Each probe derives
+// from the sweep's parent context so a long sweep's shrinking deadline cannot time
+// many out together and mimic a mass coverage gap.
 const DefaultProbeTimeout = 15 * time.Second
 
-// Popularity + market-character thresholds. The floor numbers are the
-// task-directed values; the concentration threshold matches the serving
-// stack. "Withheld" is not a threshold here: it is the serving gate's own
-// verdict, asked through Options.Withheld.
+// Popularity and market-character thresholds; "withheld" is asked of the serving
+// gate through Options.Withheld, not re-derived here.
 const (
 	// FloorVolume7dUSD / FloorTrades7d are the popularity floor, applied to
 	// MARKET-CHARACTER volume/trades (raw minus wash). Above EITHER, an
@@ -70,12 +46,9 @@ const (
 	FloorVolume7dUSD = 10_000.0
 	FloorTrades7d    = 5_000
 
-	// washConcentrationThreshold — a single unordered counterparty key
-	// (the (maker,taker) pair on the order book, the lone taker account on
-	// an AMM) owning >= this share of an asset's 7d priced volume is the
-	// volume-painting / ping-pong / dust signature. Matches the volume-character
-	// rollup's concentration threshold. A wash-concentrated asset
-	// contributes NO market-character volume, so it can never be "popular".
+	// washConcentrationThreshold: one counterparty key (the order-book pair, or an
+	// AMM's lone taker) owning this share of 7d priced volume is the wash signature,
+	// and such an asset contributes no market-character volume.
 	washConcentrationThreshold = 0.90
 )
 
@@ -88,24 +61,16 @@ type CandidateReader interface {
 
 // Options configures the [Worker].
 type Options struct {
-	// ResolveSAC maps a Stellar Asset Contract id to its classic asset's
-	// canonical id ("CODE-ISSUER" / native). A Soroban-venue trade is
-	// recorded under the contract id while the same asset's price is
-	// served under its classic id, so without this a SAC-wrapped classic
-	// asset that trades on an AMM reads as a priceless popular asset
-	// (yBTC on aquarius). Nil disables the aliasing; a miss
-	// leaves the candidate as read.
+	// ResolveSAC maps a SAC id to its classic asset id. Soroban trades record the
+	// contract id while the price is served under the classic id, so without it a
+	// SAC-wrapped asset reads as priceless. Nil disables aliasing.
 	ResolveSAC func(ctx context.Context, contractID string) (string, bool)
 	// IsPriced asks the sweep's own priced set about one asset id — the
 	// resolved classic id. Nil disables the aliasing.
 	IsPriced func(ctx context.Context, assetID string) (bool, error)
-	// Withheld reports whether the serving substance gate deliberately
-	// withholds the asset's USD price, which makes its pricelessness
-	// expected rather than a gap. Wire it to the gate the listing asks
-	// (pricingguard.AssetSubstanceVerdict): any re-derivation of the
-	// gate's floors disagrees with it in both directions. It must answer
-	// false when the gate could not measure, so an unknown pages. Nil
-	// means no gate is serving, so nothing is withheld.
+	// Withheld reports whether the serving substance gate deliberately withholds the
+	// asset's USD price; wire it to the gate itself, since a re-derivation disagrees.
+	// It must answer false when the gate could not measure, so an unknown pages.
 	Withheld func(ctx context.Context, assetID string) bool
 
 	// Interval is the sweep cadence. <= 0 falls back to DefaultInterval.
@@ -126,10 +91,7 @@ type Options struct {
 // priceless-popular coverage gauge + sweep-health metrics.
 type Worker struct {
 	reader CandidateReader
-	// resolveSAC is optional and may be wired after construction
-	// (SetResolveSAC) by a background dial retry, while Sweep is
-	// already ticking on another goroutine — hence atomic rather than a
-	// plain field.
+	// resolveSAC is atomic because a background dial retry may set it while Sweep runs.
 	resolveSAC   atomic.Pointer[func(ctx context.Context, contractID string) (string, bool)]
 	isPriced     func(ctx context.Context, assetID string) (bool, error)
 	withheld     func(ctx context.Context, assetID string) bool
@@ -177,19 +139,14 @@ func New(reader CandidateReader, opts Options) *Worker {
 	return w
 }
 
-// SetResolveSAC wires (or re-wires) the SAC-to-classic-asset resolver
-// after construction. Safe to call concurrently with Run/Sweep: a
-// background ClickHouse dial retry arms the SAC alias check once
-// the lake answers, rather than the sweep either blocking start on that
-// dial or giving up on it forever after one failure.
+// SetResolveSAC wires the SAC resolver after construction; safe concurrently with
+// Run/Sweep, so start-up neither blocks on the lake dial nor gives up after one failure.
 func (w *Worker) SetResolveSAC(f func(ctx context.Context, contractID string) (string, bool)) {
 	w.resolveSAC.Store(&f)
 }
 
-// Run drives the sweep loop until ctx is cancelled. Sweeps once
-// immediately (so the gauge is fresh within one tick of start-up, before
-// the staleness alert's grace window), then every Interval. Returns
-// ctx.Err() on cancellation.
+// Run sweeps once immediately (fresh before the staleness alert's grace window),
+// then every Interval, until ctx is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
 	tick := time.NewTicker(w.interval)
 	defer tick.Stop()
@@ -204,11 +161,8 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep runs one coverage pass and publishes the metrics. Exported so
-// tests drive a single pass deterministically. Errors are recorded on the
-// outcome counter and swallowed (best-effort background worker); the gauge
-// is only updated on success so a read failure leaves the last good count
-// standing rather than flapping to a false 0.
+// Sweep runs one coverage pass and publishes the metrics. Errors are counted and
+// swallowed; the gauge updates only on success so a read failure cannot flap to 0.
 func (w *Worker) Sweep(ctx context.Context) {
 	sweepCtx, cancel := context.WithTimeout(ctx, w.sweepTimeout)
 	defer cancel()
@@ -229,11 +183,7 @@ func (w *Worker) Sweep(ctx context.Context) {
 		if !popularPriceless(sig) {
 			continue
 		}
-		// Each candidate's probe gets its OWN bounded context derived from
-		// the sweep's parent, not the shared sweepCtx: late in a long sweep
-		// sweepCtx's remaining budget shrinks toward zero, and every
-		// still-unprocessed candidate sharing it would time out together —
-		// indistinguishable from a real mass coverage gap.
+		// Derive from the parent ctx, not sweepCtx; see DefaultProbeTimeout.
 		probeCtx, probeCancel := context.WithTimeout(ctx, w.probeTimeout)
 		classic, priced, timedOut := w.pricedViaClassicAlias(probeCtx, sig.AssetID)
 		if timedOut {
@@ -263,10 +213,7 @@ func (w *Worker) Sweep(ctx context.Context) {
 			"attributed_vol_share", sig.AttributedVolShare)
 	}
 	obs.AssetsPopularPriceless.Set(float64(count))
-	// A burst of per-probe timeouts is reported distinctly from a clean
-	// pass: "ok" means every candidate's probe actually answered, so an
-	// operator reading a mass coverage gap under "ok" can trust it is
-	// real, not a timeout burst masquerading as one.
+	// "ok" means every probe answered, so a mass gap under "ok" is not a timeout burst.
 	outcome := "ok"
 	if probeTimeouts > 0 {
 		w.logger.Warn("priceless-popular coverage sweep: probe timeouts during sweep",
@@ -277,13 +224,9 @@ func (w *Worker) Sweep(ctx context.Context) {
 	obs.PricelessCoverageCheckLastSuccessUnix.Set(float64(w.now().Unix()))
 }
 
-// pricedViaClassicAlias resolves a C… candidate to its classic asset and
-// asks whether THAT is priced. Returns the classic id (empty when the
-// candidate is not a resolvable SAC), the verdict, and whether the probe
-// itself hit ctx's deadline. A resolver or probe error is logged and
-// treated as "not priced": the tripwire fails loud, never quiet — but a
-// timeout is also reported to the caller so a burst of them can be told
-// apart from a real gap.
+// pricedViaClassicAlias resolves a C… candidate to its classic asset and asks
+// whether that is priced, returning the classic id, the verdict, and whether the
+// probe timed out. Errors read as unpriced (fail loud); timeouts are reported apart.
 func (w *Worker) pricedViaClassicAlias(ctx context.Context, assetID string) (string, bool, bool) {
 	resolveSACPtr := w.resolveSAC.Load()
 	if resolveSACPtr == nil || w.isPriced == nil || !looksLikeContractID(assetID) {
@@ -308,11 +251,9 @@ func looksLikeContractID(id string) bool {
 	return len(id) == 56 && id[0] == 'C'
 }
 
-// popularPriceless is the tripwire's pure pre-filter for one asset: fire
-// iff the asset is priceless, NOT a wash farm, and popular by
-// MARKET-CHARACTER volume. Every threshold lives here (never in the SQL),
-// so the classification is unit-testable without a database. Whether the
-// gate withholds the price is asked afterwards, of the gate itself.
+// popularPriceless fires iff the asset is priceless, not wash-concentrated, and
+// popular by market-character volume. Thresholds live here, not in SQL, so this
+// is unit-testable.
 func popularPriceless(s timescale.AssetCoverageSignals) bool {
 	if s.HasPriceUSD {
 		return false // priced — not a coverage gap
@@ -320,36 +261,22 @@ func popularPriceless(s timescale.AssetCoverageSignals) bool {
 	if washConcentrated(s) {
 		return false // volume-painting wash is not a real market
 	}
-	// The floor is measured on MARKET-CHARACTER volume/trades: the top
-	// counterparty pair's own volume and trade count (paired from one row
-	// — see top_pair_ranked) are subtracted first, so a sub-90%-share wash
-	// pair cannot inflate an asset past the floor on volume the pair alone
-	// contributed.
+	// Subtract the top pair's own volume and trades first, so a sub-threshold wash
+	// pair cannot carry an asset past the floor.
 	marketVol := s.Volume7dUSD - s.TopAccountPairVolUSD
 	marketTrades := s.Trades7d - s.TopAccountPairTrades7d
 	return marketVol > FloorVolume7dUSD || marketTrades > FloorTrades7d
 }
 
-// washConcentrated reports whether the asset's volume is dominated by a
-// single counterparty key — the market-character discriminator. A
-// concentrated asset contributes no market-character volume, so it never
-// clears the popularity floor no matter how large its RAW volume.
-//
-// The share is measured against the asset's FULL 7d priced volume on
-// every venue that names a counterparty, so this fires for an AMM-only
-// asset (one wallet round-tripping through a pool) exactly as it does for
-// an order-book wash pair. No floor on AttributedVolShare is needed: the
-// share can only reach the threshold if the attributed population does
-// too, so a market with no recorded accounts is never suppressed by it.
+// washConcentrated reports whether one counterparty key dominates the asset's full
+// 7d priced volume on every venue naming one, so it fires for an AMM-only round-tripper
+// too. A market with no recorded accounts can never reach the threshold.
 func washConcentrated(s timescale.AssetCoverageSignals) bool {
 	return s.TopAccountPairVolShare >= washConcentrationThreshold
 }
 
-// SubstanceWithheld builds the [Options.Withheld] verdict from the serving
-// substance gate and the operator's USD pegs: the asset is withheld when
-// the gate MEASURED it and no backing quote cleared, the exact question
-// the /v1/assets listing asks. An unparseable id or an unmeasured verdict
-// is not withheld, so it pages.
+// SubstanceWithheld builds [Options.Withheld] from the serving substance gate and the
+// USD pegs, asking what /v1/assets asks. Unparseable or unmeasured means not withheld.
 func SubstanceWithheld(gate pricingguard.SubstanceVerdicter, usdPegs []canonical.Asset) func(context.Context, string) bool {
 	if gate == nil {
 		return nil
