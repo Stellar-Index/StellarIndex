@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestCCTPReplayDoubleCount_DisarmedByMigration0164 is the T434 proof.
+// TestCCTPReplayDoubleCount_DisarmedByMigration0164 is the proof.
 //
 // Migration 0112 added event_index to cctp_events' PK and backfilled
 // existing rows to event_index=0 on the premise that a prescribed

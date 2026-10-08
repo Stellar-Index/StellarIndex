@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestAccountMovements_LedgerCeilingBoundsTheQuery executes F055's fixed
+// TestAccountMovements_LedgerCeilingBoundsTheQuery executes the fixed
 // SQL against a real ClickHouse: the /movements merge ceiling travels in
 // AccountMovementFilter.MaxLedger/HasMaxLedger and is applied as a WHERE
 // predicate, so a bounded read returns a FULL page of servable rows.
@@ -96,7 +96,7 @@ func TestAccountMovements_LedgerCeilingBoundsTheQuery(t *testing.T) {
 		t.Fatalf("ceiling 0 served %d rows, want 0 — the arm must fail closed at an installed genesis floor", len(zeroRows))
 	}
 
-	// No ceiling = the whole archive, unchanged from before the fix.
+	// No ceiling = the whole archive.
 	allRows, err := er.AccountMovements(ctx, g, rowCount, clickhouse.AccountMovementCursor{},
 		clickhouse.AccountMovementFilter{})
 	if err != nil {

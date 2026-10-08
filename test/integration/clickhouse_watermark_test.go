@@ -22,7 +22,7 @@ import (
 // The bug: the watermark's interior-gap scan (leadInFrame over DISTINCT
 // ledger_seq >= from) is blind to a hole exactly at `from`. When `from` is
 // absent, the smallest present ledger is from+1 and {from+1, from+2, …} is
-// internally contiguous, so the gap scan returns 0 ("no hole") and the pre-fix
+// internally contiguous, so the gap scan returns 0 ("no hole") and a naive
 // code returned chMax — advancing the projector RIGHT OVER the missing ledger.
 //
 // This is a real-ClickHouse test (not a query-shape assertion) because the thing
@@ -101,7 +101,7 @@ func TestContiguousWatermark_HoleAtFrom(t *testing.T) {
 // TestCap67Range_StallsAtHole is the money-display correctness proof for the
 // cap67 movements derive: its upper bound MUST clamp to the contiguous
 // watermark, not the raw lake max. The LiveSink drops whole ledgers under
-// pressure, so a near-tip hole can exist; the pre-fix derive read to
+// pressure, so a near-tip hole can exist; a naive derive read to
 // MaxLedger and advanced its watermark PAST the hole with no trailing
 // re-derive — permanently dropping that ledger's classic/native account
 // movements. This proves Cap67Range now STALLS before an interior hole.

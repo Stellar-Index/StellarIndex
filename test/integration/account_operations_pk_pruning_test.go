@@ -100,7 +100,7 @@ func legacyAccountTransactionsSQL(hasCursor bool) string {
 //     exclude the op's own source; that listing's merge would serve a
 //     SHORT page if the invariant were violated — see the "no cross-arm
 //     dedupe needed" note there). On the TRANSACTIONS side this overlap
-//     is what #290 was: the key was emitted by both arms and ate two of
+//     was the bug: the key was emitted by both arms and ate two of
 //     the merge's LIMIT slots.
 //
 // A re-ingested duplicate part covers the ReplacingMergeTree dedupe on
@@ -108,13 +108,13 @@ func legacyAccountTransactionsSQL(hasCursor bool) string {
 //
 //  1. DIFFERENTIAL: walks the ENTIRE history of BOTH listings (page size
 //     7, ~58 / ~86 pages) through the reader and through the frozen
-//     pre-fix SQL with the same args, plus a cursor set MID-page. The
+//     legacy SQL with the same args, plus a cursor set MID-page. The
 //     OPERATIONS walk asserts every page identical — rows, order, cursor
 //     continuation, dedupe. The TRANSACTIONS walk asserts the same
 //     SEQUENCE of rows in the same order, but not the same page
-//     boundaries: since #290 the reader dedupes the two overlapping arms
+//     boundaries: the reader dedupes the two overlapping arms
 //     at the keyset merge, so its pages are full where the frozen
-//     pre-fix shape still hands back a SHORT one (the walk requires the
+//     legacy shape still hands back a SHORT one (the walk requires the
 //     legacy side to still produce one, else the reader-side fullness
 //     assertion would be vacuous). Also pins the absolute expectations
 //     (600 distinct ops / 600 distinct txs, strictly descending, no key
@@ -122,7 +122,7 @@ func legacyAccountTransactionsSQL(hasCursor bool) string {
 //     the reader — the handler withholds next_cursor on a short page, so
 //     one truncates the client's history walk).
 //  2. READ-ROWS: one page of 50 via each path, `system.query_log`
-//     read_rows. The pre-fix shape reads ≥ one granule per key (≥ 200
+//     read_rows. The legacy shape reads ≥ one granule per key (≥ 200
 //     granules ≈ 1.6 M rows here; 38 k granules live); the new shape reads
 //     ≤ 3×limit granules. Red-proof: with the old query text in the reader
 //     the reader's read_rows equal the legacy figure and the 4× bound
@@ -278,7 +278,7 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 	// distinct keys served. Every page is `pageSize` long but the last:
 	// a non-final short page is exactly what makes a client stop early
 	// (the handler withholds next_cursor on it — see the transactions
-	// walk below and #290).
+	// walk below).
 	walk := func(name string, page func(cur chstore.ExplorerCursor) (got, want []key)) map[key]bool {
 		t.Helper()
 		var (
@@ -351,7 +351,7 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 			len(opsSeen), want, n/stride, n/stride, n/stride)
 	}
 	// The tx listing's two arms legitimately overlap (the txOff txs, sourced
-	// by hot AND carrying it as a non-source participant). Until #290 an
+	// by hot AND carrying it as a non-source participant). Without dedupe an
 	// overlap key occupied TWO of the keyset merge's LIMIT slots — the merge
 	// took its LIMIT before anything deduped — so the page came back SHORT
 	// while older history remained, and the handler emits next_cursor only on

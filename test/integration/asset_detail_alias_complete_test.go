@@ -107,7 +107,7 @@ func TestAssetDetail_AliasCompleteVolumeAndCount(t *testing.T) {
 	}
 
 	// Ground truth read directly from prices_1m: the alias-complete total
-	// (all forms) vs the native-only total the pre-fix reader produced.
+	// (all forms) vs the native-only total a native-only reader would produce.
 	total := scanVolSum(t, ctx, store, aliases)
 	nativeOnly := scanVolSum(t, ctx, store, []string{"native"})
 

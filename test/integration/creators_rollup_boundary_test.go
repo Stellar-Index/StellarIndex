@@ -122,7 +122,7 @@ func TestCreatorsRollup_BoundaryIsTheNetworks(t *testing.T) {
 
 	// Pubnet's boundary on a chain whose every ledger sits below it: the
 	// classic arm owns ledger 40 and finds no create_account movement —
-	// the pre-fix test-net symptom, pinned so the substitution below is
+	// the test-net symptom, pinned so the substitution below is
 	// shown to be what changes the outcome.
 	if rows, _ := edgesAt(chstore.P23BoundaryLedger); rows != 0 {
 		t.Fatalf("boundary %d: %d edge rows for a post-P23 creation below the boundary, want 0 "+

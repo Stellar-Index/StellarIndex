@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestClaimableSeed_RetractsServedClaim is GH #712 end to end: a claimable
+// TestClaimableSeed_RetractsServedClaim is the end-to-end proof: a claimable
 // balance an earlier seed wrote as live, claimed while the live observer was
 // not recording, must stop counting toward classic supply after a re-seed.
 // Before the fix the seed could only add rows, so the served reader kept

@@ -11,7 +11,7 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestEventCensusShortfalls_DroppedEventPartition is the #806 proof on a real
+// TestEventCensusShortfalls_DroppedEventPartition is the proof on a real
 // ClickHouse: a DROP PARTITION on stellar.contract_events leaves stellar.ledgers
 // contiguous and hash-chained, so SubstrateProblem still reports the range
 // intact — the census is the only reader that sees the events are gone.

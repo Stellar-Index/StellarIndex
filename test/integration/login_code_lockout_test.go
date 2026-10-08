@@ -337,7 +337,7 @@ func TestLoginCodeLockout(t *testing.T) {
 	})
 
 	// Durability, stated plainly: the state is a row. This is the whole
-	// point of the finding — the pre-fix bound lived in Redis and a flush
+	// point of the finding — a Redis-backed bound lived in Redis and a flush
 	// cleared it.
 	t.Run("StateIsARowNotACacheEntry", func(t *testing.T) {
 		const email = "durable@example.com"

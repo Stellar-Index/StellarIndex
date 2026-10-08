@@ -311,7 +311,7 @@ func bespokeKPI(blk *timescale.BespokeBlock, label string) *timescale.BespokeKPI
 	return nil
 }
 
-// TestBespokeDEX24hBoundaryHourExcludedFromBothReaders pins GH-1113: a
+// TestBespokeDEX24hBoundaryHourExcludedFromBothReaders pins that a
 // trade in the hour bucket that floors to exactly `now() - 24h` must be
 // excluded by BOTH readers of source_volume_1h identically. Before the
 // fix, GetSourceVolumeHistory24h floored its window with

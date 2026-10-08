@@ -12,7 +12,7 @@ import (
 )
 
 // TestAccountObservationSeedProvenanceRoundTrip executes migration 0189's
-// table through the store (GH #1201): unstamped reads ok=false, a complete
+// table through the store: unstamped reads ok=false, a complete
 // pass' upsert round-trips every column — including watched_accounts/
 // missing_accounts, stored sorted regardless of input order so a `missing`
 // count is traceable to a specific G-strkey — and a second complete pass

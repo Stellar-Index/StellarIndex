@@ -124,7 +124,7 @@ func TestQueryECWindowCoverage_SeedOnlyLedgerIsAGap(t *testing.T) {
 	}
 }
 
-// TestVerifyContiguity_AutoECFloorGatesHoleBelowOldConstant is the GH-1092
+// TestVerifyContiguity_AutoECFloorGatesHoleBelowOldConstant is the
 // end-to-end proof. Ledgers [7,300,000, 7,300,009] are tx-bearing with
 // transaction-scoped entry-change rows on all but 7,300,005. That band sits
 // far below the old hardcoded -ec-floor (63,050,000), which routed the hole

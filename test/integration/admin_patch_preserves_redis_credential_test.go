@@ -6,7 +6,7 @@
 package integration_test
 
 // Admin account PATCH vs. the register-minted credential, on the REAL
-// stores (findings F056 / K050 / Q145).
+// stores (register-minted credential survives the PATCH).
 //
 // Under the default `auth_backend=redis` the record at `apikey:<hash>`
 // is the canonical credential: RedisAPIKeyValidator reads nothing else,

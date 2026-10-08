@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// GH-663 — the claim was plain FIFO, so one endpoint's backlog filled the
+// A plain FIFO claim lets one endpoint's backlog fill the
 // batch and every other customer's events waited behind it (and, with the
 // worker serial per endpoint, behind every one of its timeouts). The claim
 // now takes each due endpoint's oldest rows first and at most five per

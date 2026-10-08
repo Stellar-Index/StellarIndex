@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// ─── GH-652: docker/verify/Dockerfile's base images must be digest-pinned ───
+// ─── docker/verify/Dockerfile's base images must be digest-pinned ───
 // (The six stellarindex-*.Dockerfiles are pinned by digest, but
 // docker/verify/Dockerfile — the image `make prepush` runs in — on a bare
 // tag, and Dependabot's docker ecosystem cannot rewrite a digest that was

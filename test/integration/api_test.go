@@ -644,7 +644,7 @@ func (r apiHistoryAdapter) TWAPPointsInRange(ctx context.Context, pair c.Pair, g
 	return out, nil
 }
 
-// OHLCSeries is required by v1.HistoryReader (F-0071 multi-bar). The
+// OHLCSeries is required by v1.HistoryReader. The
 // integration test for /v1/history doesn't exercise this path; the
 // stub returns an empty series so the adapter implements the full
 // interface without dragging in the production-side OHLCSeries

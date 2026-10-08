@@ -23,9 +23,9 @@ import (
 // (ReplacingMergeTree on version = ledger_seq<<32 | intra_ledger_seq) → FINAL.
 //
 // The two rows are inserted in the ADVERSARIAL order [removed, updated] on
-// purpose: with the pre-fix ReplacingMergeTree(ledger_seq) both rows tie on
+// purpose: with a plain ReplacingMergeTree(ledger_seq) both rows tie on
 // version, and ClickHouse keeps the LAST-inserted (the 'updated' before-image)
-// — i.e. this exact test goes RED on the pre-fix schema. The composite version
+// — i.e. this exact test goes RED on a plain-ledger_seq schema. The composite version
 // makes the removal (intra_ledger_seq 6 > 5) win regardless of insert order.
 func TestLedgerEntriesCurrent_SameLedgerLastChangeWins(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

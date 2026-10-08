@@ -16,7 +16,7 @@ import (
 )
 
 // TestComputeCompleteness_OneSourceErrorDoesNotWithholdTheRest drives the real
-// compute-completeness subcommand on real TimescaleDB (#805, #1202 item 5).
+// compute-completeness subcommand on real TimescaleDB.
 //
 // soroswap is the FIRST catalogue source. A trigger makes its verdict write
 // fail, standing in for any per-source error (an RPC seed gap, a lake

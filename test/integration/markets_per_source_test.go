@@ -14,7 +14,7 @@ import (
 )
 
 // TestMarketsListingGrain pins the two properties the /v1/markets
-// directory read is required to have and did not (F027 / K031 / F028).
+// directory read is required to have and did not.
 // Both are executed against a real TimescaleDB with the real CAGGs, in
 // the state r1 is actually in: prices_1d materialized only up to the
 // PREVIOUS UTC midnight, which is what its 6-hour end_offset +

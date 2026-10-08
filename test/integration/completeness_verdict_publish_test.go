@@ -27,7 +27,7 @@ import (
 const verdictPublishSource = "cctp"
 
 // verdictSnap is a CLEAN verdict at the given tip — the only kind that may
-// earn a window clear, and the only kind the CS-083 guard can reject.
+// earn a window clear, and the only kind the guard can reject.
 func verdictSnap(tip uint32) timescale.CompletenessSnapshot {
 	return timescale.CompletenessSnapshot{
 		Source: verdictPublishSource, Genesis: 50_000_000, Tip: tip, Watermark: tip,
@@ -248,8 +248,8 @@ func TestPublishCompletenessVerdict_RacingAdvanceRejectsAndKeepsWindow(t *testin
 	}
 }
 
-// TestUpsertCompletenessSnapshot_ProblemArmNeverLowersTip is finding T379:
-// the CS-083 guard's second arm ("OR EXCLUDED.first_problem_ledger > 0")
+// TestUpsertCompletenessSnapshot_ProblemArmNeverLowersTip pins that
+// the guard's second arm ("OR EXCLUDED.first_problem_ledger > 0")
 // exists so a newly-discovered problem is always recorded even when it
 // can't advance the tip — but the UPDATE SET applied tip_ledger =
 // EXCLUDED.tip_ledger unconditionally, so a regressive-tip run that found a
@@ -268,8 +268,8 @@ func TestUpsertCompletenessSnapshot_ProblemArmNeverLowersTip(t *testing.T) {
 	}
 
 	// A regressive-window run (smaller tip) that ALSO found a problem: the
-	// second CS-083 arm applies the write so the problem is recorded, but
-	// tip_ledger must not regress below the previously stored, more-advanced
+	// second arm applies the write so the problem is recorded, but
+	// tip_ledger must not regress below the stored, more-advanced
 	// tip.
 	problem := verdictSnap(63_000_000)
 	problem.Complete = false
@@ -318,7 +318,7 @@ func storedVerdict(t *testing.T, ctx context.Context, store *timescale.Store) ti
 	return timescale.CompletenessSnapshot{}
 }
 
-// Finding T213: the ClickHouse projection reconcile is an aggregate, so a
+// The ClickHouse projection reconcile is an aggregate, so a
 // failed reconcile (nonzero delta, blind spots, floor loss) leaves
 // first_problem_ledger at 0. A lower-tip run whose reconcile FOUND a
 // mismatch therefore missed the guard's problem arm and was dropped,

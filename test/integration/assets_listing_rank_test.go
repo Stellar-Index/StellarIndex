@@ -155,7 +155,7 @@ func seedRankFixture(t *testing.T, ctx context.Context, store *timescale.Store, 
 // rankFixture is the scenario both tests share.
 //
 // Raw 24h volume orders the set FLAGA > NOPRC > GOODA > GOODB > FLAGB >
-// GOODC, which is exactly the pre-fix ranking. FLAGA is deliberately
+// GOODC, which is exactly the raw-volume ranking. FLAGA is deliberately
 // BOTH flagged and priced and the highest-volume row in the set: if the
 // test only used an unpriced flagged asset, the unpriced tier alone would
 // carry it and the scam demotion would go unproven.
@@ -216,7 +216,7 @@ func codesOf(rows []timescale.AssetRow) []string {
 	return out
 }
 
-// TestAssetsListing_FlaggedAndUnpricedDemotion is the #356 red test: a
+// TestAssetsListing_FlaggedAndUnpricedDemotion pins that a
 // directory-flagged asset must not outrank ANY unflagged one, and an
 // unpriced asset must not outrank a priced one, under the default
 // volume-desc listing sort.
@@ -254,7 +254,7 @@ func TestAssetsListing_FlaggedAndUnpricedDemotion(t *testing.T) {
 	for _, r := range rows {
 		byCode[r.Code] = r
 	}
-	// The headline of #356: the flagged asset with the HIGHEST volume in
+	// The headline: the flagged asset with the HIGHEST volume in
 	// the set sits below the lowest-volume unflagged priced asset.
 	if pos(got, "FLAGA") < pos(got, "GOODC") {
 		t.Errorf("FLAGA ($500k, malicious/unsafe) at %d must rank BELOW GOODC ($1k, unflagged, priced) at %d",

@@ -17,7 +17,7 @@ import (
 // ReplacingMergeTree(ingested_at), and a corrected re-ingest leaves the stale
 // part beside the fix until a merge. Without FINAL both rows ride one INSERT
 // into contract_instance_changes, tie on its DEFAULT now() version, and the
-// pre-fix wasm_hash can be the one code-history serves. The stale part is
+// stale wasm_hash can be the one code-history serves. The stale part is
 // written LAST so an unmerged read hands it to the target last.
 func TestContractInstanceBackfill_ReadsCorrectedSourceRowOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -42,7 +42,7 @@ func TestContractInstanceBackfill_ReadsCorrectedSourceRowOnly(t *testing.T) {
 	if _, err := chstore.InsertEntryChanges(ctx, addr, []chstore.LedgerEntryChangeRow{row}, 0); err != nil {
 		t.Fatalf("InsertEntryChanges: %v", err)
 	}
-	// The same source key, one hour OLDER by version: the pre-fix row a
+	// The same source key, one hour OLDER by version: the stale row a
 	// merge would discard, still sitting in its own part.
 	if err := conn.Exec(ctx, `INSERT INTO stellar.ledger_entry_changes
 		SELECT * REPLACE (? AS entry_xdr, ingested_at - INTERVAL 1 HOUR AS ingested_at)

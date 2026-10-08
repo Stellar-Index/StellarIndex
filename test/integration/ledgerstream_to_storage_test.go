@@ -216,7 +216,7 @@ func TestEndToEnd_LedgerstreamToTimescale(t *testing.T) {
 		}
 	})
 
-	// Redstone subtest — proves the OpArgs pathway added in PR 166:
+	// Redstone subtest — proves the OpArgs pathway added with the Redstone decoder:
 	// the dispatcher extracts InvokeContract args from the envelope
 	// and the Redstone decoder zips them against event body entries.
 	// Without OpArgs the decoder has no feed_ids and can't attribute

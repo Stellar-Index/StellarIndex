@@ -16,16 +16,16 @@ import (
 
 // TestAssetRegistry_DuplicateReplayDoesNotMutateCounters pins the
 // end-to-end counter contract:
-// replaying a previously-stored trade must NOT advance the
+// replaying a already-stored trade must NOT advance the
 // `classic_assets.observation_count` or `last_seen_*` columns,
 // even when the in-process dedupe cache is cold (the simulated-
 // process-restart shape).
 //
-// The audit's concern was: a backfill operator (or restarted
+// The concern: a backfill operator (or restarted
 // indexer) that re-encounters already-stored trades should not
-// inflate registry counters by one per replay. The wave-47
+// inflate registry counters by one per replay. The
 // `assetRegistryDedupeTTL` fix protects only the same-process
-// hot path; the wave-51 `RowsAffected == 0` guard inside
+// hot path; the `RowsAffected == 0` guard inside
 // [Store.InsertTrade] is what protects post-restart replay. This
 // test isolates the post-restart shape by clearing the dedupe
 // cache between the original insert and the replay via
@@ -74,7 +74,7 @@ func TestAssetRegistry_DuplicateReplayDoesNotMutateCounters(t *testing.T) {
 	}
 
 	// Reset the dedupe cache between scenarios so each subtest
-	// starts from the post-restart shape (the audit's risk shape).
+	// starts from the post-restart shape (the risk shape).
 	store.ResetAssetRegistryDedupeForTest()
 
 	baseTS := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
@@ -108,7 +108,7 @@ func TestAssetRegistry_DuplicateReplayDoesNotMutateCounters(t *testing.T) {
 	}
 
 	// Simulate a process restart: cold dedupe cache, same trade
-	// hits InsertTrade again. Without the wave-51 RowsAffected
+	// hits InsertTrade again. Without the RowsAffected
 	// guard the registry hook would fire and observation_count
 	// would advance to 2.
 	store.ResetAssetRegistryDedupeForTest()

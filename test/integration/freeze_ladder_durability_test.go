@@ -35,7 +35,7 @@ import (
 //     inserts a row into an OLD chunk and calls compress_chunk() BEFORE
 //     migrating, so the ALTER really does run against compressed data. A
 //     failure here is a failed deploy, and the pipeline rolls back the
-//     binary but never the schema (CS-099);
+//     binary but never the schema;
 //   - SaveLadder's UPDATE lands on the open row and LoadLadder reads back
 //     the EXACT ladder, through real timestamptz round-tripping;
 //   - LoadLadder honours `recovered_at IS NULL`, which is what makes

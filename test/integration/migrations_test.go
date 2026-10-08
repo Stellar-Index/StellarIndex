@@ -217,7 +217,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	assertPolicyAttached(t, db, ctx, "soroban_events", "policy_compression")
 
 	// 0105 created the classic_movements hypertable; 0113 drops it
-	// (audit C2-18 / DAT-03 — superseded by ADR-0048 D2, the archive
+	// (superseded by ADR-0048 D2, the archive
 	// moved to ClickHouse-native stellar.account_movements and this
 	// Postgres table had no live writer/reader). After the FULL up
 	// stack, therefore, it must NOT exist — this asserts the cleanup
@@ -227,7 +227,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 
 	// 0142 — the six protocol tables 0127-0132 typed derive_generation
 	// as int4 while every other derived-value table (0109/0110 core +
-	// protocol, 0141 fx_quotes) uses bigint (audit W1-migrations-3). The
+	// protocol, 0141 fx_quotes) uses bigint. The
 	// column carries time.Now().Unix(), so an int4 column overflows on
 	// 2038-01-19 and rejects EVERY projector write to these tables.
 	// Migration 0142 widens all six to bigint; assert the applied type
@@ -509,7 +509,7 @@ func assertDownRefusedWithRows(t *testing.T, ctx context.Context, db *sql.DB, ds
 
 // TestMigration0112DownOnCompressedChunks pins that 0112's down, which has
 // no decompress prelude, still succeeds on compressed chunks (r1 compresses
-// both tables) and keeps the rows (#1172 item 8).
+// both tables) and keeps the rows.
 func TestMigration0112DownOnCompressedChunks(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -549,7 +549,7 @@ func TestMigration0112DownOnCompressedChunks(t *testing.T) {
 	}
 }
 
-// TestMigration0004DownRestoresCompression pins GH-1162: 0004's down
+// TestMigration0004DownRestoresCompression pins that 0004's down
 // disabled compression on `trades` and named the compression policy
 // (0001) as the recovery — but that policy only SCHEDULES a job against
 // a table with timescaledb.compress enabled, and it can never recompress
@@ -677,7 +677,7 @@ func assertHypertableExists(t *testing.T, db *sql.DB, ctx context.Context, name 
 // (timescaledb.compress = …)` flips, distinct from whether a
 // policy_compression JOB is scheduled (assertPolicyAttached): the job
 // can be attached and still fail on every run against a hypertable
-// this is false on (GH-1162).
+// this is false on.
 func assertCompressionEnabled(t *testing.T, db *sql.DB, ctx context.Context, hypertable string, want bool) {
 	t.Helper()
 	var got bool

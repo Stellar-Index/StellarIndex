@@ -17,7 +17,7 @@ import (
 // TestOracleCAGGsMatchCatalog is TestTradesCAGGsMatchCatalog for the
 // oracle_updates root: every aggregate built (at any depth) on
 // oracle_updates is in timescale.OracleCAGGs, which backfill refreshes
-// after each chunk, and nothing else is (GH-687).
+// after each chunk, and nothing else is.
 func TestOracleCAGGsMatchCatalog(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -58,7 +58,7 @@ func TestOracleCAGGsMatchCatalog(t *testing.T) {
 }
 
 // TestOracleCAGGsRefreshOverABackfilledRange is the oracle half of
-// GH-687 on a real TimescaleDB: oracle rows written for a historical
+// this on a real TimescaleDB: oracle rows written for a historical
 // ledger range are invisible to oracle_prices_1d (created WITH NO DATA,
 // policy reach 7 days) until refreshed, and the store now finds that
 // range's time span and accepts every oracle_prices_* view.

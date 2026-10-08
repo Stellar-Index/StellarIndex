@@ -2,7 +2,7 @@
 
 package integration_test
 
-// Tests the F-0039 cascade response semantics end-to-end using
+// Tests the cascade response semantics end-to-end using
 // testcontainers-go: spins up Postgres (TimescaleDB) + Redis,
 // forces Redis into a MISCONF state via CONFIG SET dir=/nonexistent
 // + BGSAVE, asserts the full system response chain — handler 503

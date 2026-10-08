@@ -95,7 +95,7 @@ func TestFXQuotesGenerationGuard_OperatorCorrectionIsDurable(t *testing.T) {
 
 	// (3) The next daily live worker refresh re-writes the row at generation
 	// 0 with the stale rate. The guard must PRESERVE the operator correction
-	// — this is the durability property MR-1 regression (2) is about.
+	// — this is the durability property regression guard (2) is about.
 	store.SetDeriveGeneration(0)
 	if err := store.InsertFXQuoteBatch(ctx, []timescale.FXQuote{{
 		Bucket: bucket, Ticker: ticker, RateUSD: wrongRate, InverseUSD: 1.0 / wrongRate, Source: "massive",

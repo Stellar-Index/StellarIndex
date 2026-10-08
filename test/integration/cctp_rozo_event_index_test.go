@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestCCTPRozoEventIndex_SameTypeEventsInOneOpDoNotCollapse is the C2-13a
+// TestCCTPRozoEventIndex_SameTypeEventsInOneOpDoNotCollapse is the
 // proof. Migrations 0038 / 0039 keyed cctp_events / rozo_events on
 // (contract_id, ledger, tx_hash, op_index, event_type, ts) — no intra-op
 // discriminator. A single operation that emits TWO events of the SAME type

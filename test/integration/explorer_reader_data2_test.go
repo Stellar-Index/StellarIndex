@@ -12,7 +12,7 @@ import (
 )
 
 // TestClickHouseContractActivitySummaryRMTDedup is the live-ClickHouse proof
-// for audit CHQ-2: ContractActivitySummaryFor read stellar.contract_active_ledgers
+// for ContractActivitySummaryFor read stellar.contract_active_ledgers
 // (a ReplacingMergeTree) with a bare count(), so an overlapping backfill window
 // that re-inserts the same (contract, ledger) keys as a second un-merged part
 // inflated ActiveLedgersTotal (a headline card number) and the daily bars up to
@@ -82,7 +82,7 @@ func TestClickHouseContractActivitySummaryRMTDedup(t *testing.T) {
 }
 
 // TestClickHouseContractEventsRecentPartialBackfill is the live-ClickHouse proof
-// for audit W1-chrollup-3: contract_active_ledgers' availability probe is a
+// for contract_active_ledgers' availability probe is a
 // LIMIT-1 table-global emptiness check that cannot see PARTIAL backfill
 // coverage. In the applied-but-still-backfilling state the index is globally
 // non-empty (some OTHER contract's rows) but holds NO rows for a quiet contract

@@ -103,7 +103,7 @@ func mev0185Insert(t *testing.T, ctx context.Context, store *timescale.Store, ki
 	}
 }
 
-// mev0185InsertLegacy writes rows in the shape the pre-fix detectors
+// mev0185InsertLegacy writes rows in the shape the legacy detectors
 // persisted and returns which of them 0185 must keep.
 func mev0185InsertLegacy(t *testing.T, ctx context.Context, store *timescale.Store) map[string]bool {
 	t.Helper()

@@ -135,7 +135,7 @@ func TestAssetPriceUSDCQuotedOnly(t *testing.T) {
 		t.Fatalf("refresh prices_1m: %v", err)
 	}
 	// The LISTING's price column now comes from asset_price_snapshot
-	// (migration 0154, #331 F1) rather than from twelve per-request
+	// (migration 0154) rather than from twelve per-request
 	// prices_1m CTEs, so refreshing the cagg alone leaves the listing
 	// arm of this test unpriced. The single-asset arm still reads
 	// prices_1m live and is unaffected — which is exactly the split

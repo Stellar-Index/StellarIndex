@@ -11,7 +11,7 @@ import (
 )
 
 // TestFindPerSourceLedgerGapsSeedClosesWindowBoundary is the DB-backed
-// proof of the CA2-A10/A11 audit fix: a gap detector cycle only scans
+// proof that a gap detector cycle only scans
 // [from, tip], so a writer that halts and resumes later can leave its
 // last pre-halt row in one cycle's window and its first post-resume row
 // in the NEXT cycle's window — two disjoint LAG-over-DISTINCT scans,

@@ -27,7 +27,7 @@ import (
 // SetCap67MovementsWatermark): step 2 records base+10 over the hole at base+6
 // and step 4 records base+10 over the never-derived [base+6, base+7].
 //
-// Note for a pre-fix reconstruction: the fix widened
+// Note: the guard widens
 // SetCap67MovementsWatermark to take the window's lower bound, so this file
 // does not compile against the unfixed signature — the wholesale-revert red
 // proof lives in clickhouse_cap67_to_clamp_test.go, which drives the same

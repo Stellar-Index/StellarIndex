@@ -27,7 +27,7 @@ import (
 // going to 1, Prometheus aged the series out, and `== 1` alerts
 // RESOLVED — the watchdog fell silent the worse the outage got. The
 // oracle and fx legs auto-resolved at 30 days, the supply leg at 7, and
-// the CS-102 per-asset gauge reported a literal healthy 0 once every
+// a per-asset gauge reported a literal healthy 0 once every
 // watched asset had been frozen longer than 30 days.
 func TestDataFreshnessSurvivesADeadFeed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
