@@ -46,7 +46,7 @@
           }
         }
 
-        # SL26: IPv6 CIDRs were silently filtered out of the v4-only sets
+        # IPv6 CIDRs were silently filtered out of the v4-only sets
         # above and never placed in any set, so an operator adding an
         # IPv6 CIDR to redis_internal_cidrs/redis_allowed_ssh_cidrs got no
         # error and no rule — the entry just vanished. Mirror both sets

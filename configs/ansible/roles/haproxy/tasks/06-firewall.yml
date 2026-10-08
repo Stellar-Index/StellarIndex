@@ -7,10 +7,10 @@
 # Public ingress on 80/443; SSH narrowed to allow-list CIDRs; VRRP
 # between LB peers; stats endpoint stays loopback-only (no rule).
 #
-# SL10: haproxy_internal_cidrs / haproxy_allowed_ssh_cidrs entries
+# haproxy_internal_cidrs / haproxy_allowed_ssh_cidrs entries
 # containing ':' were rendered into ipv4_addr-only sets, so an IPv6
 # CIDR silently dropped out of the ruleset instead of being enforced.
-# Mirror ipv6_addr sets fix that (same pattern as SL12 in the loki role).
+# Mirror ipv6_addr sets fix that (same pattern as the loki role).
 
 - name: ensure nftables installed
   apt:

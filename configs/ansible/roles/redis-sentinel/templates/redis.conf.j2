@@ -21,7 +21,7 @@ masterauth {{ redis_password }}
 #     unix-socket-bound admin user; not surfaced here by default.
 aclfile /etc/redis/users.acl
 
-# SL02: under lockdown, masterauth's username-less AUTH resolves
+# Under lockdown, masterauth's username-less AUTH resolves
 # against the disabled `default` user (same failure as Sentinel's,
 # fixed by `sentinel auth-user` — SL03). masteruser names the ACL
 # user (defined in users.acl.j2) a replica authenticates as instead.

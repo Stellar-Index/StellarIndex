@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# redis-oom-reject-alert-test.sh — regression guard for T611.
+# redis-oom-reject-alert-test.sh — regression guard for Redis maxmemory-policy and its OOM-reject alert.
 #
 # archival-node/tasks/15-log-discipline.yml codified `maxmemory` for
 # r1's Debian-packaged redis but never `maxmemory-policy`, so a rebuild
@@ -38,7 +38,7 @@ record "$TASKS codifies maxmemory-policy" "$policy_ok"
 for f in configs/prometheus/rules.r1/cache.yml deploy/monitoring/rules/cache.yml; do
   alert_ok=0
   if grep -q 'alert: stellarindex_redis_write_rejected_oom' "$f" \
-    && grep -q 'redis_errors_total{err="OOM"}' "$f"; then
+    && grep -qE 'redis_errors_total\{err=~?"([^"]*\|)?OOM(\|[^"]*)?"\}' "$f"; then
     alert_ok=1
   fi
   record "$f defines an OOM write-rejection alert" "$alert_ok"

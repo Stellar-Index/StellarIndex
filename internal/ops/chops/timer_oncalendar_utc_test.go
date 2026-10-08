@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// ─── SL24: pgbackrest-backup.timer.j2 had no UTC suffix ─────────────
+// ─── pgbackrest-backup.timer.j2 had no UTC suffix ─────────────
 //
 // systemd resolves an OnCalendar= expression against the unit's
 // configured timezone, which defaults to the HOST's local zone, not
@@ -54,7 +54,7 @@ func TestArchivalNodeTimers_OnCalendarPinsUTC(t *testing.T) {
 			}
 			// A shorthand hour:minute repeater (e.g. "*:0/15", no seconds
 			// field) fires at the same relative cadence regardless of the
-			// host's zone; it's not the fixed-wall-clock hazard SL24 is
+			// host's zone; it's not the fixed-wall-clock hazard this test is
 			// about, so it's excluded rather than folded into this rule.
 			if strings.Count(value, ":") < 2 {
 				continue
