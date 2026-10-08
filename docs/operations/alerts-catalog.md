@@ -28,7 +28,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 68 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 262 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 261 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -481,7 +481,6 @@ region that hasn't opted in.
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_hashdb_drift_detected` | `stellarindex_hashdb_drift_total` | > 0 | ticket | [hashdb](runbooks/hashdb.md#stellarindex_hashdb_drift_detected) |
 | `stellarindex_hashdb_verify_failing` | `rate(stellarindex_hashdb_verify_runs_total{window="recent",outcome="error"}[6h]) > rate(...{window="recent",outcome=~"ok\|drift"}[6h])` | sustained 30 min | ticket | [hashdb](runbooks/hashdb.md#stellarindex_hashdb_verify_failing) |
-| `stellarindex_hashdb_history_verify_failing` | `increase(...{window="history",outcome="error"}[6h]) > 0 unless increase(...{window="history",outcome=~"ok\|drift"}[6h]) > 0` | sustained 30 min | ticket | [hashdb](runbooks/hashdb.md#stellarindex_hashdb_history_verify_failing) |
 | `stellarindex_hashdb_verify_stale` | `sum(increase(stellarindex_hashdb_append_total[6h])) > 0 and sum(stellarindex_hashdb_append_total offset 6h) > 0 and sum(increase(stellarindex_hashdb_verify_runs_total[6h])) == 0` | sustained 30 min | ticket | [hashdb](runbooks/hashdb.md#stellarindex_hashdb_verify_stale) |
 | `stellarindex_hashdb_append_failing` | `rate(stellarindex_hashdb_append_total{outcome="error"}[15m]) > rate(...{outcome="ok"}[15m])` | sustained 10 min | ticket | [hashdb](runbooks/hashdb.md#stellarindex_hashdb_append_failing) |
 
