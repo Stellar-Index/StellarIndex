@@ -601,12 +601,11 @@ func FreezeOverride(asset, quote canonical.Asset) FreezeKey {
 // `flags.frozen` keeps serving after the aggregator stops writing
 // (crash, restart, deploy, a stalled tick).
 //
-// It is NOT the freeze duration. It used to be: markers were written
-// with a flat 5-minute TTL and re-written on every bucket the
-// ADR-0019 3-signal AND fired for, which made "the freeze ends" mean
-// "the fire condition stopped holding for one bucket" — a release
-// band strictly wider than the fire band, on a single sample. The
-// duration now lives in `freeze.State` (initial hold, extension
+// It is NOT the freeze duration: a flat TTL re-written on every fire
+// would make "the freeze ends" mean "the fire condition stopped
+// holding for one bucket" — a release band strictly wider than the
+// fire band, on a single sample (ADR-0019). The
+// duration lives in `freeze.State` (initial hold, extension
 // ladder, escalation, two-consecutive-bucket auto-unfreeze) per
 // ADR-0019 §"Freeze duration"; this constant only decides how much
 // aggregator downtime a live freeze tolerates before the serving
@@ -838,10 +837,8 @@ const OracleLatestTTL = 30 * time.Second
 // canonical builder below rather than call sites hand-appending
 // `":order=" + foo` onto [MarketsList]'s result — string
 // concatenation onto a canonical builder's output is exactly the
-// ad-hoc-key-construction bug class this package exists to close
-// (it used to compile silently against the old `string` return
-// type; against the typed [MarketsListKey] it's a compile error,
-// which is what caught this during the ADR-0007 typed-key migration).
+// ad-hoc-key-construction bug class this package exists to close;
+// against the typed [MarketsListKey] it's a compile error (ADR-0007).
 
 // AssetsListKey is the typed Redis key for the
 // `assets:list:<cursor>:<limit>` family.

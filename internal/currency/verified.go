@@ -666,8 +666,8 @@ func (v *VerifiedCurrency) StellarEntry() *IssuanceEntry {
 
 // CoinGeckoIDs returns the catalogue's CG mapping as
 // upper-cased-ticker → CG slug, restricted to entries with a
-// non-empty CoinGeckoID. Drives the CG poller's id-lookup table
-// (R-018 Phase 1.2): adding a verified currency with a coingecko_id
+// non-empty CoinGeckoID. Drives the CG poller's id-lookup table;
+// adding a verified currency with a coingecko_id
 // in the seed automatically expands the poller's coverage.
 func (c *Catalogue) CoinGeckoIDs() map[string]string {
 	if c == nil {

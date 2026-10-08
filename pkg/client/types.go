@@ -1734,7 +1734,7 @@ type VerifiedCurrencyListItem struct {
 	Slug   string `json:"slug"`
 	Name   string `json:"name"`
 	// Class is one of "crypto" / "stablecoin" / "fiat" — drives the
-	// listing taxonomy on consumers (R-018 assets-unification).
+	// listing taxonomy on consumers.
 	Class          string `json:"class"`
 	VerifiedIssuer string `json:"verified_issuer,omitempty"`
 	// Image is the asset's logo URL from the issuer's SEP-1 TOML
