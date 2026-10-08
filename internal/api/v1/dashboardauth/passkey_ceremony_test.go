@@ -647,3 +647,35 @@ func TestPasskeyFinishLogin_SurvivesSpentMarkerEviction(t *testing.T) {
 		t.Fatal("a replay after spent-marker eviction minted a SECOND session — the single-use guard was defeated by allkeys-lru")
 	}
 }
+
+// TestPasskeyFinishLogin_ClearsCodeLockoutsForStoredCase — users.email is
+// citext and may keep the case it was registered with, but the code
+// lockouts are keyed by the canonical address, so a passkey sign-in must
+// canonicalise before clearing or it retires neither budget.
+func TestPasskeyFinishLogin_ClearsCodeLockoutsForStoredCase(t *testing.T) {
+	rig, auth, _ := newLiveClockPasskeyRig(t)
+	rig.users.mu.Lock()
+	u := rig.users.users[rig.user.ID]
+	u.Email = "PK@Example.com"
+	rig.users.users[rig.user.ID] = u
+	rig.users.mu.Unlock()
+
+	keys := []string{"pk@example.com", platform.LoginCodeDeviceKey("pk@example.com")}
+	rig.tokens.mu.Lock()
+	for _, k := range keys {
+		rig.tokens.lockouts[k] = platform.LoginCodeLockout{FailedCount: 3}
+	}
+	rig.tokens.mu.Unlock()
+
+	cookie, challenge := beginLogin(t, rig)
+	if w := finishLogin(t, rig, cookie, auth.assertionBody(t, challenge, flagUserPresent|flagUserVerified, 0)); w.Code != http.StatusOK {
+		t.Fatalf("finish-login status = %d, want 200 (%s)", w.Code, w.Body.String())
+	}
+	rig.tokens.mu.Lock()
+	defer rig.tokens.mu.Unlock()
+	for _, k := range keys {
+		if got := rig.tokens.lockouts[k].FailedCount; got != 0 {
+			t.Errorf("lockout %q survived a passkey sign-in: %d failures", k, got)
+		}
+	}
+}
