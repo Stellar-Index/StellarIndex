@@ -7,7 +7,7 @@ import { CURRENT_NETWORK } from '@/lib/networks';
 // Why this exists: Next.js 15 metadata "merges" nested openGraph
 // fields between layout + page, BUT the merge has been observed to
 // drop `openGraph.images` from the layout when a page sets its own
-// openGraph block (audited 2026-05-09 across /assets, /currencies,
+// openGraph block (observed across /assets, /currencies,
 // /issuers, /sources, /exchanges, /dexes, /lending, /convert,
 // /research/* — every detail page that overrides openGraph rendered
 // without og:image, while pages that don't override inherited the

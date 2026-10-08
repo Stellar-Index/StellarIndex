@@ -11,10 +11,10 @@
 // scoped to the SCAM-CLASS tags below:
 //
 //   - the server withholds price + market cap for a flagged issuer
-//     (pricingguard.ScamGate, 2026-08-25); and
+//     (pricingguard.ScamGate); and
 //   - a flagged asset is RANKED LAST — server-side in the listing's
 //     ORDER BY, and here by demoteFlaggedLast for whatever column the
-//     user sorts the rendered page by (#356). The row and its badge
+//     user sorts the rendered page by. The row and its badge
 //     stay: we do not hide a flagged asset, we refuse to rank it.
 //
 // SERVER-SAFE home (same rationale as asset-label.ts): the RSC asset

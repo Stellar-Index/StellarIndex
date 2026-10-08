@@ -74,9 +74,9 @@ const SUBUNIT_MAX_DECIMALS = 20;
 
 // formatSubunitPrice — a tiny positive (or bad-data negative) value as
 // a PLAIN DECIMAL with `sig` significant digits and no exponent:
-// 3.353e-4 renders "0.0003353", never "$3.353e-4" (operator call,
-// 2026-08-06: scientific notation is not user-friendly and the plain
-// decimal is no less accurate). Trailing zeros are trimmed. Decimals
+// 3.353e-4 renders "0.0003353", never "$3.353e-4" (scientific
+// notation is not user-friendly and the plain decimal is no less
+// accurate). Trailing zeros are trimmed. Decimals
 // are capped at 20 places, which keeps 1e-18 honest (its first
 // significant digit is place 18) while bounding the column width.
 // A non-zero value that rounds away under the cap renders as a signed
@@ -100,7 +100,7 @@ export function formatSubunitPrice(n: number, sig = 4): string {
 // significant-digits tail below 0.001 (formatSubunitPrice), so a real
 // sub-cent (or sub-1e-8) price never collapses to "0.00" the way a
 // fixed-max-8dp formatter does — and never renders scientific
-// notation either (pre-2026-08-06 this branch was toExponential).
+// notation either (this branch must not use toExponential).
 // This is the /assets directory price-column formatter, lifted here
 // as the single source so the asset-detail sidebar and any other
 // USD-price cell share ONE implementation instead of each re-deriving
@@ -169,9 +169,9 @@ export function formatOraclePrice(p: string): string {
 // Relative "time ago" label for an ISO timestamp. Returns '—' for a
 // missing/unparseable value and 'now' for a (near-)future one — so a
 // null/empty/garbage timestamp can never render as the literal
-// "NaNd ago". Canonical home for what used to be ~7 copy-pasted
-// `formatRelative` helpers across the table components, two of which
-// had dropped the finite-guard and did render "NaN".
+// "NaNd ago". Canonical home: copy-pasted `formatRelative`
+// helpers across table components risk dropping the finite-guard and
+// rendering "NaN".
 export function formatRelative(
   iso: string | null | undefined,
   opts?: { suffix?: boolean },
@@ -233,8 +233,8 @@ export function formatDurationShort(seconds: number): string {
 
 /**
  * formatDurationLong — milliseconds → compound "2h 15m" (incident
- * durations want the extra precision). Re-homed from the incident page;
- * finite guard added on re-home (NaN previously rendered "NaNm").
+ * durations want the extra precision). The finite guard keeps NaN from
+ * rendering "NaNm".
  */
 export function formatDurationLong(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return '—';

@@ -13,8 +13,8 @@ import { SidebarAssetIcon } from './SidebarAssetIcon';
 // internal interfaces.
 export interface SidebarCoin {
   // Optional: a Soroban contract asset has no `code` (the API omits the
-  // field). Required here until 2026-08-31, which only type-checked
-  // because the OpenAPI spec wrongly marked `code` required.
+  // field). Must stay optional: the consumers
+  // below dereference it only after a presence check.
   code?: string;
   // SEP-1 icon URL (served by the API since v0.7.2; https-only,
   // sanitized server-side). Letter glyph stays the fallback.
@@ -70,9 +70,8 @@ export function AssetSidebar({
   /**
    * WHAT the headline number is — rendered as a caption so the page
    * never shows a bare dollar figure of unstated provenance
-   * (2026-08-04: the sidebar was silently falling back to a
-   * build-time listing snapshot up to 7 days old, presented
-   * identically to a live VWAP).
+   * (a build-time listing snapshot up to 7 days old must not be
+   * presented identically to a live VWAP).
    *  - 'vwap1m'       — /v1/price closed 1-minute VWAP (the real thing)
    *  - 'triangulated' — composed client-side from asset/XLM × XLM/USD
    *  - 'listing'      — build-time listing cache; can lag hours–days
@@ -112,8 +111,8 @@ export function AssetSidebar({
 
   // Circulating-supply progress: against max if known, else total.
   const denom = max ?? total ?? null;
-  // AM-22: when neither max nor total is known, the bar previously
-  // asserted 100% — fabricated certainty. Unknown renders as no bar.
+  // When neither max nor total is known, asserting 100% would be
+  // fabricated certainty. Unknown renders as no bar.
   const circPct =
     circulating != null && denom != null && denom > 0
       ? Math.min(100, (circulating / denom) * 100)

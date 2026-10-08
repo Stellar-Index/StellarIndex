@@ -125,8 +125,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // noindex URL in the sitemap is a Search Console error
     // ("Submitted URL marked 'noindex'").
     //
-    // #328: filtered through the per-network route table before emission.
-    // A test net's sitemap used to submit /markets, /anomalies,
+    // Filtered through the per-network route table before emission.
+    // A test net's sitemap would otherwise submit /markets, /anomalies,
     // /divergences, /mev and the rest of the pricing surface to Search
     // Console under the TEST NET's own canonical origin — pages that are
     // structurally empty there, i.e. thin content, indexed on purpose.
@@ -220,8 +220,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.5,
   }));
   // Per-currency detail pages live under /external/assets/{friendly-slug}
-  // (2026-08-24 fiat de-duplication: /assets/{fiat} no longer exports and
-  // 301s there). One entry per ticker — friendly form (us-dollar, …).
+  // (/assets/{fiat} does not export and 301s there). One entry per ticker — friendly form (us-dollar, …).
   const currencyPages: MetadataRoute.Sitemap = currencyTickers.map(
     (ticker) => ({
       url: siteURL(`/external/assets/${fiatSlugFor(ticker)}`),
@@ -305,7 +304,7 @@ type SitemapSource = { name: string };
 // noted — fail-hard via requireRows so a persistent transport failure or
 // an authoritative-empty listing fails the BUILD rather than quietly
 // shipping a sitemap missing a whole URL family. A bare `catch { return
-// [] }` here previously made a transient API blip indistinguishable from
+// [] }` here would make a transient API blip indistinguishable from
 // "there are truly zero rows", and Google silently drops the missing
 // URLs rather than complaining.
 
@@ -336,8 +335,7 @@ async function fetchLendingPools(): Promise<string[]> {
 async function fetchMarketPairs(): Promise<string[]> {
   // Match the per-pair generateStaticParams cap (500) so the
   // sitemap doesn't undercount the routes we actually
-  // pre-render. Pre-2026-05-08 this was 100 in both places —
-  // bumped together so Google sees the same surface that
+  // pre-render. Both places move together so Google sees the same surface that
   // returns 200.
   const rows = requireRows(
     await buildFetchData<{ base: string; quote: string }[]>(
@@ -349,8 +347,7 @@ async function fetchMarketPairs(): Promise<string[]> {
 }
 
 async function fetchCurrencyTickers(): Promise<string[]> {
-  // Migrated from /v1/currencies → /v1/assets/verified (rc.48 +
-  // F-1201 audit-2026-05-12). The new endpoint returns the full
+  // /v1/assets/verified returns the full
   // verified-currency catalogue with `class` ∈ {crypto, stablecoin,
   // fiat}; filter to fiat client-side so the sitemap only includes
   // the fiat tickers (which is what the per-currency converter

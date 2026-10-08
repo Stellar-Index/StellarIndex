@@ -52,7 +52,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
   return (
     <div className="space-y-4">
       {data.scam_reason && (
-        // Warning consolidation (2026-08-25): the full scam reason + guidance
+        // Warning consolidation: the full scam reason + guidance
         // live in ONE primary banner in the page header (same stellar.expert
         // finding). This is the slim, table-scoped restatement — it adds the
         // one fact the header can't (every asset in the table below shares

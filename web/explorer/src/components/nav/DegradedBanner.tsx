@@ -18,10 +18,9 @@ import { CURRENT_NETWORK } from '@/lib/networks';
  * unless we tell them otherwise. QA finding F-01 in
  * docs/review-2026-05-13-live-site-qa.md.
  *
- * Data: the shared useStatus query (FEC A6-6/D2 fold — this banner,
- * the sidebar Status pill, and the /status page used to run separate
- * poll loops over the same endpoint and could disagree in one
- * viewport). Cadence is the shared STATUS_POLL_MS (30 s).
+ * Data: the shared useStatus query (this banner, the sidebar Status
+ * pill, and the /status page share one poll loop, so they cannot
+ * disagree in one viewport). Cadence is the shared STATUS_POLL_MS (30 s).
  */
 
 // health-check: consecutive failed polls before we flag the status feed
@@ -43,7 +42,7 @@ export function DegradedBanner() {
   if (!CURRENT_NETWORK.pricing) return null;
 
   // health-check: distinct from `overall` — "we could not reach the status
-  // feed at all", which used to be swallowed silently and look identical
+  // feed at all", which must not be swallowed silently and look identical
   // to "everything's fine" (the one failure mode this banner exists to
   // catch: a total outage).
   const unreachable = (feed?.consecutiveFailures ?? 0) >= FAILURE_THRESHOLD;

@@ -1,5 +1,5 @@
 // Shared SSE stream multiplexer — the transport layer of the live-tick
-// program (RT-2, operator directive 2026-08-08: "most pages updating
+// program (RT-2: "most pages updating
 // in real time … should feel alive").
 //
 // One EventSource per URL, shared by every subscriber on the page:

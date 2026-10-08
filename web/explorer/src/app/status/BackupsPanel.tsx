@@ -9,7 +9,7 @@ import { formatDurationShort } from '@/lib/format';
 // age, the monthly restore drill (pass/fail + date), and the ClickHouse
 // schema-snapshot age, each judged against the SLO the API echoes.
 //
-// Honest-staleness contract (PR #273's conventions): a row whose source
+// Honest-staleness contract: a row whose source
 // is absent renders grey "no data" — never a green zero; a row past its
 // SLO renders red with its real age; the whole panel carries a
 // "source unknown / degraded" marker when the API says its Prometheus
@@ -84,9 +84,9 @@ function dateText(iso: string | null | undefined): string {
 // Date.now()): the age the API judged is the age the panel shows.
 //
 // A stamp AHEAD of as_of is the same future-dated artefact the API
-// refuses to judge (#311) — clock skew or a corrupt pgBackRest label.
+// refuses to judge — clock skew or a corrupt pgBackRest label.
 // It is NOT a zero-second-old copy, so it is named rather than clamped
-// up into "0s ago", which is how this row previously painted an
+// up into "0s ago", which would paint an
 // arbitrarily stale repository as the freshest thing on the page.
 function sinceAsOf(iso: string | null | undefined, asOf?: string): string {
   if (!iso || !asOf) return '—';

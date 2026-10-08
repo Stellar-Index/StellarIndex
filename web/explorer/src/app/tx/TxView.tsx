@@ -260,8 +260,7 @@ function OperationsPanel({
 // AuthInvocation mirrors the API's decoded Soroban authorization node
 // (internal/xdrjson.AuthInvocation): the nested tree of contract calls that
 // required authorization. NOT the full execution/call tree — that lives in the
-// tx meta the lake does not store — but the piece the /tx view previously
-// omitted.
+// tx meta the lake does not store — but the piece the /tx view shows.
 type AuthInvocation = {
   kind: string;
   contract_id?: string;

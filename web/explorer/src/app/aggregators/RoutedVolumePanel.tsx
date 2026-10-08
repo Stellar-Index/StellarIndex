@@ -28,10 +28,9 @@ function fmtVolume(v: string | null): string {
  * RoutedVolumePanel — live routed-via attribution from
  * /v1/aggregators: how many trades (and how much USD volume)
  * reached the underlying DEX pairs via each registered router over
- * the trailing 24 h. EVERY registry row renders — pre-fix this
- * filtered to kind === 'router' and silently dropped the
- * aggregator-vault entries the endpoint returns (survey 2026-07-31
- * defect #6). Vault-kind entries never accrue per-tx routing tags
+ * the trailing 24 h. EVERY registry row renders — filtering to
+ * kind === 'router' would silently drop the
+ * aggregator-vault entries the endpoint returns. Vault-kind entries never accrue per-tx routing tags
  * (their capital state lives on the protocol pages), so their
  * routed columns render "n/a" — not a zero-claim.
  */

@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 
 export default function SignInPage() {
   return (
-    // Route-frame record (FEC A1-10, operator decision D4 2026-08-24):
+    // Route-frame record :
     // max-w-md is DELIBERATE — the bare magic-link form is an auth
     // micro-surface; /signup stays max-w-4xl for its tier table. Vertical
     // rhythm is harmonized with /signup (py-12 sm:py-16); widths diverge

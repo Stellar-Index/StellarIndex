@@ -45,8 +45,7 @@ const ENTRIES: Entry[] = [
     contractsRepo: 'https://github.com/soroswap/core',
     protocolSlug: 'soroswap',
     contractRefs: [
-      // Sourced from soroswap/core public/mainnet.contracts.json,
-      // last verified 2026-05-08.
+      // Sourced from soroswap/core public/mainnet.contracts.json.
       {
         label: 'Router',
         cstrkey: 'CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH',
@@ -70,8 +69,7 @@ const ENTRIES: Entry[] = [
     contractsRepo: 'https://github.com/paltalabs/defindex',
     protocolSlug: 'defindex',
     contractRefs: [
-      // Sourced from paltalabs/defindex public/mainnet.contracts.json,
-      // last verified 2026-05-08.
+      // Sourced from paltalabs/defindex public/mainnet.contracts.json.
       {
         label: 'Factory',
         cstrkey: 'CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI',

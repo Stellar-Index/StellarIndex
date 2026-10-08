@@ -2,7 +2,7 @@ import { ArrowDown, ArrowRight, ArrowUp } from 'lucide-react';
 import { twMerge } from 'tailwind-merge';
 
 export type DirectionPillProps = {
-  // AGT-06: this used to read "Fraction; 0.05 = +5%", which disagreed with
+  // A "Fraction; 0.05 = +5%" contract would disagree with
   // the render code below (no *100 conversion — deltaPct.toFixed(2) is used
   // directly) and with the app-wide convention (every real percentage
   // field, e.g. change_24h_pct, already arrives as a percentage-point

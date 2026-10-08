@@ -40,10 +40,9 @@ async function fetchPoolsForAsset(assetID: string): Promise<PoolRow[] | null> {
 /**
  * LiquidityTabPanel — every DEX pool that touches this asset on
  * either side, ranked by 24h USD volume. Single fetch to
- * `/v1/pools?asset=<assetID>` (the OR-shape filter) — pre-2026-05-09
- * this was two parallel `?base=` + `?quote=` fetches merged
- * client-side, but the API now does the OR predicate server-side
- * so we get one cache key, one SQL scan, and a smaller cached
+ * `/v1/pools?asset=<assetID>` (the OR-shape filter) — the API does the
+ * OR predicate server-side (no two parallel `?base=` + `?quote=`
+ * fetches merged client-side), so we get one cache key, one SQL scan, and a smaller cached
  * payload.
  *
  * Server component; fetched at request time. Empty-state when the

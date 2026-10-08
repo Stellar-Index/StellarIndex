@@ -16,8 +16,8 @@ export const metadata: Metadata = {
  *
  * The frame (heading + standing description) is SERVER-rendered and the
  * `?seq=`-dependent subtree alone sits in Suspense, behind a VISIBLE
- * skeleton. The page used to be `<Suspense fallback={null}>` around the
- * whole view: useSearchParams bails the subtree out to client rendering,
+ * skeleton. A `<Suspense fallback={null}>` around the
+ * whole view would break: useSearchParams bails the subtree out to client rendering,
  * so under output:'export' the null fallback is what got baked and the
  * static document shipped an empty <main> with no <h1> — nothing for a
  * crawler, a no-JS reader, or the first paint. Only useSearchParams

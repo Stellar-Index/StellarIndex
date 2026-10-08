@@ -213,7 +213,7 @@ export function CandleChart({
   // Push new data on prop changes (and initial mount) without destroying the chart.
   useEffect(() => {
     const theme = themeRef.current;
-    // Adaptive price precision (2026-08-05): lightweight-charts
+    // Adaptive price precision: lightweight-charts
     // defaults to 2 decimals, which renders XLM as a flat "$0.17" and
     // any sub-cent asset as "$0.00". Scale the axis/crosshair/legend
     // precision to the series' actual magnitude.
@@ -334,7 +334,7 @@ export function pricePrecisionFor(points: CandlePoint[]): number {
 // priceFormatFor is the series priceFormat: fixed decimals from
 // pricePrecisionFor, or the plain-decimal formatSubunitPrice for a
 // sub-1e-12 series so a non-zero price never renders as zero (and never
-// in scientific notation: operator call, 2026-08-06).
+// in scientific notation).
 export function priceFormatFor(points: CandlePoint[]): PriceFormat {
   const max = maxPrice(points);
   if (max === 0 || max >= MIN_FIXED_PRICE) {

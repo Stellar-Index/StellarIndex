@@ -245,11 +245,8 @@ function parseDec(s: string | null | undefined): number | null {
 // rows, returning the top 10. Native is deduped by asset_id
 // (belt-and-suspenders — the listing never returns it).
 //
-// The LISTED rows keep the order the API returned. They did not used to:
-// this function re-sorted the whole union by raw volume_24h_usd, which
-// was load-bearing while the server ignored order_by and handed back an
-// observation-count ordering (wave-D RD-02). Now that order_by is
-// honoured, re-sorting would actively undo server policy — the API ranks
+// The LISTED rows keep the order the API returned: the server honours
+// order_by, so re-sorting by raw volume_24h_usd would actively undo server policy — the API ranks
 // on a concentration-ADJUSTED volume so wash / operational assets don't
 // sit atop the directory, while volume_24h_usd in the payload is the RAW
 // figure. Sorting the page by the raw column promotes exactly the assets

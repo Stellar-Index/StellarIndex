@@ -7,8 +7,8 @@
  * code — do NOT import it from 'use client' modules.
  *
  * ── Incident history (why this file exists) ─────────────────────────
- * Each strategy-2 page used to carry its own copy of timeout / retry /
- * memo scaffolding, and each copy re-learned the same lessons:
+ * Strategy-2 pages share this timeout / retry / memo scaffolding
+ * rather than each re-learning the same lessons:
  *
  * - Baked "Asset not found" HTML: a 2s fetch timeout (later 8s) plus
  *   `catch { return null }` meant any build that hit a slow API window
@@ -73,9 +73,9 @@ import { API_BASE_URL } from '@/api/client';
 import { CURRENT_NETWORK_ID } from './networks';
 import type { components } from '@/api/types';
 
-// AGT-06: the envelope's `flags`/`as_of` siblings (see EnvelopeMeta in the
-// generated spec) used to be discarded entirely — only `data` survived
-// buildFetchData's return. buildFetchEnvelope preserves them for callers
+// The envelope's `flags`/`as_of` siblings (see EnvelopeMeta in the
+// generated spec) are dropped by buildFetchData — only `data` survives its
+// return. buildFetchEnvelope preserves them for callers
 // that need the server's own stale/triangulated signal (e.g. the price
 // enrichment on /assets/[slug]) instead of a client-synthesized guess.
 export type BuildFetchEnvelope<T> = {
@@ -113,9 +113,9 @@ const MAX_THROTTLE_WAITS = 8;
 
 // A 502/503/504 during a build is almost always a TRANSIENT window, not a
 // baked-in server bug: the API mid-deploy (its reverse proxy returns 502/503
-// with no upstream) or a brief gateway blip. The 2026-08-26 explorer-deploy
-// died on a SINGLE /v1/assets/LUKOIL-… 503 that raced the v0.44.3 API deploy —
-// the old 5×`500*attempt` path gives up in ~5s, far short of an API restart.
+// with no upstream) or a brief gateway blip. A single 503 that races an
+// API deploy must not fail the explorer build, and a short fixed backoff
+// gives up far short of an API restart.
 // So these "temporarily unavailable" codes get the SAME discipline as a 429:
 // wait on the server's terms (Retry-After aware, capped exponential backoff)
 // WITHOUT spending a transport attempt. 6 waits over the shared 1s→30s ramp is
@@ -216,7 +216,7 @@ export function buildFetchEnvelope<T>(
 ): Promise<BuildFetchEnvelope<T>> {
   if (isCIStub) return Promise.resolve({ data: null });
   const base = `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
-  // EDGE-CACHE BYPASS (2026-07-10): static-export builds must read the
+  // EDGE-CACHE BYPASS: static-export builds must read the
   // ORIGIN's current truth, not whatever mix of Cloudflare cache entries
   // happens to be resident — two builds in one evening failed on stale
   // edge rows (a pre-v0.11 /v1/assets/{id} without `kind`; a pre-enable

@@ -59,8 +59,8 @@ export function rawOracleSymbol(canonical: string): string {
 /**
  * shortAssetText — compact single-line label for a canonical asset_id,
  * for dense table cells where AssetLabel's two-line form is too tall.
- * THE canonical (13 page-local forks folded onto it, 2026-08-24): the
- * base-tier forks rendered numeric trustline ids as raw digits and a
+ * THE canonical (page-local forks are not allowed): they
+ * rendered numeric trustline ids as raw digits and a
  * C… Soroban id as all 56 chars.
  */
 export function shortAssetText(canonical: string | undefined | null): string {

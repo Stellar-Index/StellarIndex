@@ -34,7 +34,7 @@ export interface NetworkInfo {
   stellarExpertPath: string | null;
   /**
    * This network's stellarchain.io origin. Unlike stellar.expert,
-   * stellarchain.io hosts all three networks (verified 2026-08-27), so this
+   * stellarchain.io hosts all three networks , so this
    * is never null — which is why it is the one cross-reference that still
    * works on futurenet.
    */
@@ -67,10 +67,10 @@ export interface NetworkInfo {
   /**
    * Whether this network has issued assets worth a browse surface.
    * False on futurenet, which is a contracts-only protocol-preview
-   * chain: measured 2026-08-27 it carries 0 issued assets, so /assets,
+   * chain: it carries 0 issued assets, so /assets,
    * /issuers and the home "Top assets" grid are structurally empty
-   * there. Before #328 futurenet was special-cased by id on the
-   * homepage ONLY, so the nav still offered the empty pages.
+   * there. A homepage-only special case would leave the nav offering
+   * the empty pages.
    */
   hasAssets: boolean;
   /**
@@ -138,7 +138,7 @@ export const NETWORKS: NetworkInfo[] = [
     pricing: false,
     accounts: false,
     // Contracts-only preview chain — 0 issued assets, 0 SDEX trades
-    // (measured 2026-08-27). See the flags' docs on NetworkInfo.
+    // See the flags' docs on NetworkInfo.
     hasAssets: false,
     hasSdexActivity: false,
     hasBridges: false,
@@ -179,7 +179,7 @@ export function stellarExpertUrl(kind: string, id: string): string | null {
 /**
  * Absolute stellarchain.io URL for an entity on THIS network.
  *
- * Path segments verified live 2026-08-27 by response size — the PLURAL forms
+ * Path segments verified live by response size — the PLURAL forms
  * (`/transactions/`, `/accounts/`, `/contracts/`) return a server-rendered
  * page (~40 KB), while the singular forms return the same ~20 KB empty SPA
  * shell as a nonsense path. Status code is useless here: the SPA answers 200

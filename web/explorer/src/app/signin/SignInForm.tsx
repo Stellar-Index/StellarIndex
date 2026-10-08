@@ -114,10 +114,9 @@ export function SignInForm({
         // login-intent witness the callback demands (C3-030), so every
         // emailed sign-in link 403'd with "this sign-in link must be
         // opened in the browser that requested it" — verified live
-        // 2026-08-04. The server-side binding landed in 5b99ebbd, which
-        // touched no web source; the Go tests replay the cookie a real
-        // browser "would have stored", which is exactly the assumption
-        // this call broke. accountFetch has always had it.
+        // The Go tests replay the cookie a real browser "would have
+        // stored", which is exactly the assumption omitting this would
+        // break. accountFetch has it too.
         credentials: 'include',
         signal: timeoutSignal(),
       });

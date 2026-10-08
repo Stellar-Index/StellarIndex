@@ -25,8 +25,7 @@ import { truncateMiddle } from '@/lib/format';
  *                             returns no entry.
  *   - `<CODE>-<G-strkey>`   → CODE prominent, issuer truncated
  *
- * Centralised here (was previously copy-pasted into 5 view files)
- * so SAC resolution lands everywhere with a single edit and any
+ * Centralised here so SAC resolution lands everywhere with a single edit and any
  * future canonical-form addition (e.g. `lp:…`) only needs to be
  * handled in one place.
  */

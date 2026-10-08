@@ -20,8 +20,8 @@ type LendingPool = NonNullable<
 // Display-only; precision loss past 2^53 is fine for an at-a-glance
 // column (the API ships the exact decimal string).
 // Curated metadata for every Blend mainnet contract we know of.
-// Sourced from docs/operations/wasm-audits/blend.md (Phase 4 walk,
-// last verified 2026-05-03). Reserve-asset breakdown per pool
+// Sourced from docs/operations/wasm-audits/blend.md (Phase 4 walk).
+// Reserve-asset breakdown per pool
 // needs a Blend-pool-storage reader that doesn't exist yet (task #84);
 // until then this table at least gives users deploy timestamps +
 // initiator addresses so pools are distinguishable.
@@ -147,10 +147,10 @@ function weightedAvg(
 
 /**
  * PoolRealStats — TVL (USD) + true utilization from the pool-storage
- * reader via /v1/lending/pools/{pool}/reserves (site audit S-013: the
- * list used to render window event proxies in raw base-units —
- * "578.1T supplied", "222.4% util" — impossible numbers presented as
- * real ones while the real ones existed one endpoint over).
+ * reader via /v1/lending/pools/{pool}/reserves (window event proxies in raw
+ * base-units — "578.1T supplied", "222.4% util" — would be impossible
+ * numbers presented as real ones while the real ones exist one endpoint
+ * over).
  *
  * All derived figures are computed over PRICED reserves only — an
  * unpriced reserve is excluded from the basis, never counted as $0

@@ -32,7 +32,7 @@ export function levelFor(count: number, max: number): number {
 /**
  * servedDaysUTC — the day axis (YYYY-MM-DD, oldest → newest) derived from
  * the SERVED cells' date range, never the client clock: a skewed client
- * clock (or a server window not ending today) previously minted columns
+ * clock (or a server window not ending today) would mint columns
  * the reader never scanned — fabricated zeros — and could push served
  * days off the grid entirely. Days BETWEEN served cells are real zeros
  * (the reader scanned the whole served window), so the range is

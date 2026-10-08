@@ -12,11 +12,11 @@ export const USDC_ASSET_ID =
   'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 
 // chartQuoteFor picks the ONE quote an asset's price chart renders
-// against (2026-08-05 operator decision): every chart is anchored to
+// against: every chart is anchored to
 // USDC — never XLM. An XLM-quoted chart re-denominates the asset in a
-// floating unit (the source of the header-vs-chart confusion this
-// replaced), and XLM-quoted thin markets were exactly the manipulated
-// visuals of the 2026-08-04 incident. USDC ≈ $1 by construction, so a
+// floating unit (a source of header-vs-chart confusion), and
+// XLM-quoted thin markets are exactly where manipulated visuals
+// appear. USDC ≈ $1 by construction, so a
 // USDC-quoted chart reads as dollars while staying a REAL traded
 // market rather than a synthetic blend.
 //

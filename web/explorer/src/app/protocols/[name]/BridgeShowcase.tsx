@@ -39,7 +39,7 @@ import {
 // net-inflow headline chart, the combined inbound/outbound flow chart,
 // side-by-side source/destination donuts, per-chain top-5 multi-line charts,
 // and the largest-transfers table. The 24h/7d/30d/90d window pills and the
-// `?days=N` refetch live at BespokeSection level (lifted 2026-07-30 so
+// `?days=N` refetch live at BespokeSection level (so
 // every category is window-reactive); this component consumes the section's
 // window + fetch state as props. For rozo (a single settled series, no
 // breakdowns) it degrades to one flow line.

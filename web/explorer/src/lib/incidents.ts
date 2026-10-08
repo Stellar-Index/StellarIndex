@@ -15,7 +15,7 @@
 // rather than published. The Go loader's package doc explains why:
 // an unvalidated severity/status defaulted straight through can
 // publish a live SEV-1 looking like routine "maintenance", or print
-// "Resolved" during an ongoing outage (cold audit 2026-08-03).
+// "Resolved" during an ongoing outage.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
@@ -67,7 +67,7 @@ function isValidStatus(v: unknown): v is IncidentStatus {
 // cwd-positional `path.resolve(process.cwd(), '..', '..')` silently points
 // at the wrong tree (or a nonexistent one) whenever the build/dev process is
 // invoked from anywhere other than web/explorer, and the readdirSync catch
-// below used to swallow the resulting ENOENT with no diagnostic at all.
+// below would swallow the resulting ENOENT with no diagnostic at all.
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(MODULE_DIR, '..', '..', '..', '..');
 const DATA_DIR = path.join(REPO_ROOT, 'internal', 'incidents', 'data');
@@ -156,7 +156,7 @@ export function parseIncidentFile(
     resolvedRaw !== 'null'
   ) {
     if (Number.isNaN(Date.parse(resolvedRaw))) {
-      // Do NOT silently drop it — an unparseable resolved_at used to
+      // Do NOT silently drop it — an unparseable resolved_at would
       // leave the field null, which publishes a resolved-looking
       // status page entry with no timestamp (or vice versa). Reject
       // the whole post instead, matching the Go loader.

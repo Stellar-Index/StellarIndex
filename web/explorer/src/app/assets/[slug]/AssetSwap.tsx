@@ -294,8 +294,8 @@ export function AssetSwap({
 
   // The leg that still IS the page asset always reflects the live prop
   // price; any other leg re-fetches its own price on the same cadence
-  // (GH-786: a picked leg used to freeze at its pick-time snapshot
-  // forever, with no way to tell the amount on screen was stale).
+  // (a picked leg must not freeze at its pick-time snapshot, with no way
+  // to tell the amount on screen was stale).
   const fromRate = useLegRate(fromToken, pageToken.key, priceUSD);
   const toRate = useLegRate(toToken, pageToken.key, priceUSD);
   const pFrom = fromRate.price;
@@ -730,10 +730,10 @@ function TokenPicker({
 /**
  * useLegRate — the live USD price for one converter leg. The page-asset
  * leg is priced off the live `priceUSD` prop (already refreshing with the
- * page); every other leg used to freeze at its pick-time snapshot from
- * the picker's `topCoins`/`searchedCoins` read forever, with no
- * refetch and no way to tell the number on screen had gone stale
- * (GH-786). Re-fetches that leg's own price on the same 60s cadence as
+ * page); every other leg would otherwise freeze at its pick-time snapshot from
+ * the picker's `topCoins`/`searchedCoins` read, with no
+ * refetch and no way to tell the number on screen had gone stale.
+ * Re-fetches that leg's own price on the same 60s cadence as
  * the rest of the site's live reads, carrying `price_type`/`observed_at`
  * so a stale or declared-peg rate is visible (RLT-384) rather than
  * assumed live.

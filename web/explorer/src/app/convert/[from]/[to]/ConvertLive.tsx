@@ -36,15 +36,12 @@ const SNIPPET_AMOUNTS = [1, 10, 100, 1000, 10000];
  * then the client re-fetches on mount and every 60s (the RT-2
  * live-hydration pattern used by LiveAssetPrice / LivePairPrice).
  *
- * F-1201 migration (audit-2026-05-12): pre-rc.48 `/v1/currencies/{from}`
- * carried a cross_rates map for every currency in one RT; rc.48 removed
- * the route. We now hit `/v1/price/batch?asset_ids=fiat:{to}&quote=
+ * We hit `/v1/price/batch?asset_ids=fiat:{to}&quote=
  * fiat:{from}`, which returns the single-pair rate the converter uses.
  *
- * RLT-384 (audit-2026-09-18): this hook used to type the batch response
- * as `{data: Array<{asset_id, price}>}` and return `q.dataUpdatedAt` as
- * its "updated" stamp, which erased the price envelope and told three
- * lies with it. `/v1/price/batch` OMITS a row it will not price (a
+ * This hook keeps the whole price envelope: typing the batch response
+ * as `{data: Array<{asset_id, price}>}` and returning `q.dataUpdatedAt`
+ * as the "updated" stamp would erase it and tell three lies. `/v1/price/batch` OMITS a row it will not price (a
  * withheld or never-observed pair), so a `null` rate was
  * indistinguishable from a successful read and the BUILD-baked
  * `initialRate` silently took its place — under `output: 'export'` that

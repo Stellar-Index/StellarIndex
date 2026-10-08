@@ -62,8 +62,7 @@ export function TabNav({
 /**
  * SegmentedControl — THE pill-style toggle group for compact in-card
  * window/metric switches (FEC A3-F6.2: 7 hand-rolled aria-pressed rows
- * folded onto this; SortPill is the one recorded sibling). Design calls
- * recorded 2026-08-24: the quiet `bg-surface shadow-xs` active style wins
+ * folded onto this; SortPill is the one recorded sibling). The quiet `bg-surface shadow-xs` active style wins
  * over the forks' `bg-brand-600 text-white` / `bg-brand-100`, and the
  * WindowPills a11y semantics win — role="group" + a required aria-label +
  * a focus-visible ring on every segment.

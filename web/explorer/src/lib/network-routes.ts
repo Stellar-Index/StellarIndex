@@ -2,8 +2,8 @@
 // on which network, and the one predicate every nav / discovery surface
 // asks before offering a link.
 //
-// Why this exists (#328). The answer used to be duplicated in four
-// places that had drifted apart: the Sidebar's TESTNET_HIDDEN_HREFS, the
+// Why this exists: the answer would otherwise be duplicated in four
+// places that drift apart: the Sidebar's TESTNET_HIDDEN_HREFS, the
 // Footer's LEAN_HIDDEN_HREFS, the SearchModal's static page list, and
 // the sitemap. So /anomalies, /divergences and /mev — all
 // aggregator-derived and structurally empty on the lean test nets — were

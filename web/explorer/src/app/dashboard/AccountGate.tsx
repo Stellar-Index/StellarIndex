@@ -72,10 +72,9 @@ export function AccountGate({
   }
 
   if (me.isError) {
-    // error/auth availability: previously there was no third state — a
-    // timed-out/errored auth probe left the visitor stuck on the loading
-    // skeleton forever (before the [absence: timeouts] fix, the request
-    // itself could also hang indefinitely with no bound at all). Give
+    // error/auth availability: a third state, so a timed-out/errored
+    // auth probe does not leave the visitor stuck on the loading
+    // skeleton forever. Give
     // them a way out instead of a silent dead end.
     return (
       <Container>

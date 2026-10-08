@@ -199,7 +199,7 @@ export default function RootLayout({
         />
       </head>
       <body className="flex min-h-screen flex-col">
-        {/* a11y (audit-2026-06-14 Q3): bypass-blocks skip link — keyboard
+        {/* a11y: bypass-blocks skip link — keyboard
             users jump past the nav + dropdowns to the page content. Visually
             hidden until focused. */}
         <a

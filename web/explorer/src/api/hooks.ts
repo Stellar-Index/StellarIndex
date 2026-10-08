@@ -79,7 +79,7 @@ export type StatusResponse = Schemas['StatusResponse'];
 /**
  * useVerifiedSlugs — fetches the lowercase slug set of every
  * verified-currency catalogue entry via /v1/assets/verified
- * (R-018 Phase 1.5). Used by listing / homepage components to mark
+ * Used by listing / homepage components to mark
  * verified rows with a green check badge.
  *
  * Catalogue changes only at API restart (the catalogue is embedded
@@ -172,9 +172,8 @@ export function useSACWrappers() {
 }
 
 /**
- * The one /v1/status poll cadence (FEC A5-03 + A6-6, decision D2
- * 2026-08-24). The status page's 30 s cadence won over the banner's 60 s;
- * every consumer shares the ['/v1/status'] query so a viewport holds ONE
+ * The one /v1/status poll cadence: the status page's 30 s, not the
+ * banner's 60 s. Every consumer shares the ['/v1/status'] query so a viewport holds ONE
  * poll loop regardless of how many status surfaces render.
  */
 export const STATUS_POLL_MS = 30_000;
@@ -327,7 +326,7 @@ export function useMe() {
       const res = await fetch(url, {
         credentials: 'include',
         headers: { Accept: 'application/json' },
-        // [absence: timeouts] a hung /v1/account/me request used to leave
+        // [absence: timeouts] a hung /v1/account/me request would leave
         // this query — and AccountGate, which gates every /dashboard/*
         // page on it — stuck in "loading" forever with no escape hatch.
         signal: timeoutSignal(),
@@ -388,7 +387,7 @@ export type ChangeEntityType =
  *
  * Returns the row flattened (not `{data: row}}`) for callers that only
  * want the numbers, plus a sibling `flags` so `ChangeSummaryStrip` can
- * still surface `stale`/`triangulated` — dropping the envelope used to
+ * still surface `stale`/`triangulated` — dropping the envelope would
  * mean the worker's own freshness caveats never reached the page.
  */
 export function useChangeSummary(
@@ -572,11 +571,10 @@ export type CoinsPage = {
 /**
  * useCoins — fetches the registry-aware asset directory.
  *
- * Sourced from /v1/assets (R-018 finish — assets-unification). The
- * hook name is kept for ergonomics during the consumer migration:
+ * Sourced from /v1/assets. The hook name is kept for ergonomics:
  * callers reading `data.coins[i].price_usd` work unchanged because
- * /v1/assets rows now carry the same field shape as /v1/coins
- * rows did (rc.47 lifted the missing scalars onto AssetDetail).
+ * /v1/assets rows carry the same field shape as the retired /v1/coins
+ * rows did.
  *
  * Response envelope is reshaped from /v1/assets's `{data: [], pagination: {next}}`
  * to the legacy `{coins: [], next_cursor, limit}` shape so existing

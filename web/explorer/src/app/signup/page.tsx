@@ -39,7 +39,7 @@ const TIERS = [
 
 export default function SignupPage() {
   return (
-    // Route-frame record (FEC A1-10, operator decision D4 2026-08-24):
+    // Route-frame record :
     // max-w-4xl is DELIBERATE — this page carries the tier table + plan
     // copy beside the same SignInForm; /signin stays max-w-md as the bare
     // auth micro-surface. Vertical rhythm (py-12 sm:py-16) is the shared

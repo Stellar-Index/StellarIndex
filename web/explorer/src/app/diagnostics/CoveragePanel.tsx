@@ -31,7 +31,7 @@ import {
  * The ADR-0033 RECOGNITION axis is rendered separately, below the
  * table, by {@link RecognitionAxisCard}. It is a system-wide census —
  * event shapes on contracts no indexed source owns — not a source, and
- * it used to arrive as a 21st row here that read permanently
+ * as a 21st row it would read permanently
  * incomplete by construction, making the headline "20/21" unfixable.
  * It is a discovery backlog, not missing data, so it gets its own card
  * with its own numbers rather than a red row in a completeness table.

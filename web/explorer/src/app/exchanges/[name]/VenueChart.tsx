@@ -128,9 +128,9 @@ export function VenueChart({ venue }: { venue: string }) {
   );
 }
 
-// labelOf delegates to the canonical shortAssetText (F2b fold,
-// 2026-08-24 review follow-up): the local fork rendered numeric
-// trustline ids as raw digits and C-strkeys head-only.
+// labelOf delegates to the canonical shortAssetText : a local
+// formatter would render numeric trustline ids as raw digits and
+// C-strkeys head-only.
 const labelOf = shortAssetText;
 
 function PairPicker({
