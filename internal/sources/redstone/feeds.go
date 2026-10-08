@@ -7,98 +7,44 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// feedEntry is one row of the RedStone feed registry: the canonical
-// (base, quote) pair a feed_id prices, plus whether the on-chain
-// value is published in the inverse (market-FX) orientation.
+// feedEntry is one feed-registry row: the canonical (base, quote) a feed_id prices, and its orientation.
 type feedEntry struct {
 	Base  canonical.Asset
 	Quote canonical.Asset
 
-	// Invert is true for feeds RedStone publishes in market-FX
-	// convention (units-per-USD, e.g. USDMXN ≈ 17.4 pesos/USD) rather
-	// than our canonical "<Base> in <Quote>" convention. The decoder
-	// reciprocates the raw value (1/x, exact big.Int arithmetic) so
-	// the stored row reads "<Base> in USD" like every other feed. 1/x
-	// at 8 dp is lossy, so the on-chain integer is kept verbatim as the
-	// row's PublishedPrice.
-	//
-	// Only MXNe needs this today: RedStone emits ~17.4 (pesos/USD)
-	// while every other currency/RWA feed — including the Mexican
-	// CETES bond (~$0.067) and the EUR-pegged EUROB (~$1.17) — is
-	// already emitted as value-in-USD. Post-invert MXNe read ~0.0575,
-	// matching reflector-fx MXN (~0.0573), verified against live r1
-	// rows. See docs/adr/0028 + the reflector stablecoin-proxy note in
-	// AGENTS.md (normalise orientation here, NOT the asset identity — a
-	// MXNe depeg still shows through 1/x).
+	// Invert marks feeds published in market-FX convention (units-per-USD): the decoder reciprocates
+	// exactly so the row reads "<Base> in USD", keeping the lossy on-chain integer as PublishedPrice. Only
+	// MXNe today (~17.4 → ~0.0575, matching reflector-fx MXN). Orientation only; a depeg still shows (ADR-0028).
 	Invert bool
 }
 
-// quoteUSD / quoteEUR are the two quote CURRENCIES the registry
-// uses. RedStone publishes USD-denominated MARKET prices unless the
-// feed_id carries an explicit `/<QUOTE>` suffix — EUROC/EUR is the
-// only non-USD suffix; the relayer-expansion feeds carry explicit
-// `/USD` suffixes that simply restate the default. NAV feeds are the
-// exception to the default — see quoteBTC / quoteSolvBTC below. See
-// ADR-0028 §Decision.
+// quoteUSD / quoteEUR are the registry's quote currencies: USD unless the feed_id carries a `/<QUOTE>`
+// suffix (only EUROC/EUR differs); NAV feeds use quoteBTC / quoteSolvBTC. See ADR-0028 §Decision.
 var (
 	quoteUSD = mustFiat("USD")
 	quoteEUR = mustFiat("EUR")
 )
 
-// quoteBTC / quoteSolvBTC are the non-currency denominators. A bare
-// `_FUNDAMENTAL` feed publishes net asset value in the token's
-// RESERVE asset, which is only a currency when the reserve is cash or
-// T-bills (BENJI, USST, savUSD — see the attestation list in
-// feeds_test.go). For the SolvBTC family the reserve is crypto, so
-// the published number is a RATIO and the quote must name the asset
-// the ratio is denominated in. Registering those two feeds as
-// `fiat:USD` would serve "a BTC-backed token is worth $1.00" on
-// /v1/oracle/streams with mapped=true, for a token its own
-// `_FUNDAMENTAL/USD` sibling priced at $78,313.
+// quoteBTC / quoteSolvBTC denominate the SolvBTC `_FUNDAMENTAL` NAV ratios, whose reserve is crypto.
+// Quoting them `fiat:USD` would serve "a BTC-backed token is worth $1.00" with mapped=true, beside its
+// own `_FUNDAMENTAL/USD` sibling at $78,313.
 var (
 	quoteBTC     = mustCrypto("BTC")
 	quoteSolvBTC = mustCrypto("SolvBTC")
 )
 
-// earnUSDCVaultContract is the Gami earnUSDC vault on Stellar — a
-// TOKENIZED vault that accepts native USDC deposits and mints
-// proportional earnUSDC shares, so the vault contract IS the share
-// token and one id serves both. Verified against the lake rather than
-// taken on trust: this contract carries 115 `deposit`, 35 `withdraw`
-// and 8 `transfer` events from ledger 62938336, while the other address
-// circulated for this vault has zero events of any kind.
-//
-// Held as a named constant because it is an IDENTITY, not a tunable:
-// changing it re-points a published price at a different instrument.
-//
-// It is an ALIAS of internal/sources/upshift's own constant rather than
-// a second copy of the string. The vault's on-chain activity is decoded
-// there and its price is published here; two independently maintained
-// literals for one instrument is precisely how a price and the activity
-// underneath it drift onto different asset ids.
+// earnUSDCVaultContract is the Gami earnUSDC tokenized vault (the contract IS the share token),
+// verified in the lake: 115 deposit / 35 withdraw / 8 transfer events from ledger 62938336, while the other
+// circulated address has none. An alias of upshift's constant so the price and the decoded activity
+// cannot drift onto different asset ids.
 const earnUSDCVaultContract = upshift.MainnetVaultEarnUSDC
 
-// feedRegistry maps each EXACT on-chain feed_id() string to the
-// canonical (base, quote) pair it prices — the 32 RedStone Stellar
-// mainnet feeds: 19 captured on-chain (see ADR-0028), 11 from the
-// relayer expansion at ledger 63624934, USDT0 and earnUSDC_FUNDAMENTAL.
-// The count is asserted by TestFeedRegistry_CountMatchesItsDocComment
-// rather than trusted.
+// feedRegistry maps each EXACT on-chain feed_id() to its canonical (base, quote) — the 32 RedStone
+// Stellar mainnet feeds (TestFeedRegistry_CountMatchesItsDocComment). No two feed_ids share a pair
+// (TestFeedRegistry_UniquePairs): one batch would interleave two quantities into one series.
 //
-// Invariant (pinned by TestFeedRegistry_UniquePairs): no two
-// feed_ids map to the same (Base, Quote) pair — feeds arrive
-// together in one batch, so a shared pair would interleave two
-// different quantities into one price series.
-//
-// The key is the string the relayer passes in
-// write_prices(updater, feed_ids, payload) — which is NOT always the
-// display name. EUROC's feed_id is `EUROC/EUR`; BENJI's is
-// `BENJI_ETHEREUM_FUNDAMENTAL`. Matching a plain-ticker allow-list
-// against these would silently drop 5 feeds, EUROC among them.
-//
-// An explicit registry, not `canonical.IsKnownCrypto(feedID)`, is
-// required because (a) feed_id ≠ ticker for 5 feeds and (b) the quote
-// currency is per-feed, not a global USD assumption.
+// The key is the write_prices feed_id, not the display name (EUROC/EUR, BENJI_ETHEREUM_FUNDAMENTAL), and
+// the quote is per-feed, so a ticker allow-list like canonical.IsKnownCrypto would drop 5 feeds.
 var feedRegistry = map[string]feedEntry{
 	// Crypto / stablecoin feeds.
 	"BTC":       {Base: mustCrypto("BTC"), Quote: quoteUSD},
@@ -110,49 +56,22 @@ var feedRegistry = map[string]feedEntry{
 	"EUROC/EUR": {Base: mustCrypto("EUROC"), Quote: quoteEUR}, // EUR-denominated — note the suffix
 	"EUROB":     {Base: mustCrypto("EUROB"), Quote: quoteUSD},
 
-	// earnUSDC — an Upshift vault share (curated by Gami Labs + Stake
-	// Capital) that allocates USDC across Stellar yield sources. The base
-	// is the vault's own Soroban contract, not a bare ticker and NOT
-	// USDC: a yield-bearing claim on USDC is a different instrument from
-	// USDC, and collapsing the two is the asset-identity error class that
-	// puts attacker-authored pricing on a served surface. Identifying it
-	// by contract id also means this price lands on the same asset id as
-	// any on-chain activity we index for the token.
+	// earnUSDC — an Upshift vault share, keyed on the vault contract, NOT USDC: collapsing a
+	// yield-bearing claim into USDC is the asset-identity error class.
 	//
-	// REPORTED AS PUBLISHED. RedStone price this feed at ~0.72 while the
-	// vault's own share price is ~1.01; that gap is RedStone's to explain,
-	// and confirmed with them as their published figure. We pass their
-	// number through rather than reconciling it — so do not "correct" this
-	// entry to make the two agree. The decoder was checked against BTC and
-	// EUROC on the same oracle contract (78,6xx and 1.0002, both right),
-	// so the 0.72 is not a scaling bug on our side.
+	// REPORTED AS PUBLISHED: RedStone prices it ~0.72 against a ~1.01 share price, confirmed with them as
+	// their figure; BTC and EUROC on the same contract decode right. Do not "correct" this entry.
 	"earnUSDC_FUNDAMENTAL": {Base: mustSoroban(earnUSDCVaultContract), Quote: quoteUSD},
 	// MXNe is published units-per-USD (USDMXN market convention);
 	// Invert reciprocates it to MXNe-in-USD. See feedEntry.Invert.
 	"MXNe": {Base: mustCrypto("MXNe"), Quote: quoteUSD, Invert: true},
 
-	// Tokenized-BTC feeds — BTC-backed crypto tokens (crypto, not rwa).
-	// `SolvBTC` is the market price in dollars; the two bare
-	// `_FUNDAMENTAL` feeds are NAV RATIOS, denominated in the reserve
-	// each token is a claim on — NOT in USD (the `/USD` siblings further
-	// down carry the dollar figures).
+	// Tokenized-BTC feeds (crypto). `SolvBTC` is a dollar price; the bare `_FUNDAMENTAL` feeds are NAV
+	// RATIOS in their reserve asset, derived from live rows where both `_FUNDAMENTAL/USD` legs read 78313.03:
 	//
-	// Denominators were derived from the live r1 rows
-	// (/v1/oracle/streams?include_unmapped=true), where the two
-	// `_FUNDAMENTAL/USD` legs were byte-identical — 78313.02974310 each,
-	// as they were in an earlier capture (6543063913439 each):
-	//
-	//   SolvBTC_FUNDAMENTAL     1.00295305 = NAV_USD / BTC_USD
-	//     (78313.03 / 78082.5) ⇒ denominated in BTC.
-	//   SolvBTC.BBN_FUNDAMENTAL 1.00000000 exactly, on three
-	//     independent captures (lake ledger 60104689 and two live
-	//     reads), while its NAV_USD equals SolvBTC's NAV_USD
-	//     ⇒ SolvBTC.BBN is 1:1 with SolvBTC and the ratio is
-	//     denominated in SolvBTC. Quoting it BTC would contradict our
-	//     own SolvBTC.BBN_FUNDAMENTAL_USD row by the SolvBTC premium.
-	//
-	// Each feed_id keeps its own base code (per ADR-0028 §Decision);
-	// only the denominator departs from USD.
+	//   SolvBTC_FUNDAMENTAL     1.00295305 = 78313.03 / 78082.5 (BTC) ⇒ denominated in BTC.
+	//   SolvBTC.BBN_FUNDAMENTAL 1.00000000 on three captures, with NAV_USD equal to SolvBTC's
+	//     ⇒ denominated in SolvBTC; quoting BTC would contradict its own _USD row.
 	"SolvBTC":                 {Base: mustCrypto("SolvBTC"), Quote: quoteUSD},
 	"SolvBTC_FUNDAMENTAL":     {Base: mustCrypto("SolvBTC_FUNDAMENTAL"), Quote: quoteBTC},
 	"SolvBTC.BBN_FUNDAMENTAL": {Base: mustCrypto("SolvBTC.BBN_FUNDAMENTAL"), Quote: quoteSolvBTC},
@@ -168,21 +87,13 @@ var feedRegistry = map[string]feedEntry{
 	"SPXU":                        {Base: mustRWA("SPXU"), Quote: quoteUSD},
 
 	// ── Relayer expansion (ledger 63624934) ───────────────────────
-	// Orientation + magnitude for every entry below were verified live
-	// against api.redstone.finance (?provider=redstone) with CoinGecko
-	// cross-checks, plus r1 oracle_updates for the SolvBTC baselines
-	// above. None needs Invert — all are published token-in-quote like
-	// the rest of the registry.
+	// Orientation and magnitude verified live against api.redstone.finance with CoinGecko cross-checks;
+	// none needs Invert.
 
-	// Bare EUROC is USD-quoted: live 1.1398 ≈ EUR/USD (CG euro-coin
-	// 1.14) — DISTINCT from the EUR-quoted `EUROC/EUR` feed above
-	// (live 1.0003). Same base asset, different quote → two separate
-	// price series; both can arrive in one batch without colliding.
+	// Bare EUROC is USD-quoted (live 1.1398 ≈ EUR/USD), a separate series from `EUROC/EUR` (1.0003).
 	"EUROC": {Base: mustCrypto("EUROC"), Quote: quoteUSD},
 
-	// Ethena synthetic dollars. USDe live 0.9998 (CG ethena-usde
-	// 0.99957); sUSDe is the staked accruing form, live 1.2407 (CG
-	// ethena-staked-usde 1.24). Crypto, not RWA — see ADR-0014.
+	// Ethena synthetic dollars (crypto, not RWA — ADR-0014); sUSDe is the accruing staked form.
 	"USDe":  {Base: mustCrypto("USDe"), Quote: quoteUSD},
 	"sUSDe": {Base: mustCrypto("sUSDe"), Quote: quoteUSD},
 
@@ -190,15 +101,8 @@ var feedRegistry = map[string]feedEntry{
 	// class as sUSDe (NOT ADR-0028 rwa). Live 1.1877, accruing.
 	"savUSD_FUNDAMENTAL": {Base: mustCrypto("savUSD_FUNDAMENTAL"), Quote: quoteUSD},
 
-	// USD-quoted SolvBTC NAV feeds. These publish NAV **in USD**
-	// (live 65,430 vs RedStone BTC 65,234) — a DIFFERENT quantity
-	// from the unsuffixed `_FUNDAMENTAL` feeds above, which publish
-	// the NAV RATIO against their reserve asset (crypto:BTC /
-	// crypto:SolvBTC; live 1.0029 and 1.0000, r1 oracle_updates
-	// agrees). Hence distinct base codes, with `/` normalized to `_`
-	// (see canonical.knownCryptoCodes for the URL-path rationale) AND
-	// distinct quotes — the `/USD` suffix is what makes these two,
-	// and only these two, dollar-denominated.
+	// USD-quoted SolvBTC NAV feeds: NAV in USD (live 65,430), a different quantity from the unsuffixed
+	// ratio feeds, so distinct base codes (`/` → `_`, see canonical.knownCryptoCodes) and quotes.
 	"SolvBTC_FUNDAMENTAL/USD":     {Base: mustCrypto("SolvBTC_FUNDAMENTAL_USD"), Quote: quoteUSD},
 	"SolvBTC.BBN_FUNDAMENTAL/USD": {Base: mustCrypto("SolvBTC.BBN_FUNDAMENTAL_USD"), Quote: quoteUSD},
 
@@ -211,23 +115,14 @@ var feedRegistry = map[string]feedEntry{
 	"deJTRSY_FUNDAMENTAL/USD": {Base: mustRWA("deJTRSY"), Quote: quoteUSD}, // deRWA JTRSY: live 1.0315
 }
 
-// lookupFeed resolves a feed_id to its registry entry. ok is false
-// for a feed_id outside the registry — RedStone deploying a feed
-// beyond the registered set surfaces here; resolveFeedEntry then
-// records it as a raw row and counts the miss.
+// lookupFeed resolves a feed_id to its registry entry; ok is false off-registry (then recorded raw).
 func lookupFeed(feedID string) (entry feedEntry, ok bool) {
 	entry, ok = feedRegistry[feedID]
 	return entry, ok
 }
 
-// reciprocalAtScale returns 1/value for a fixed-point Amount at the
-// given decimal scale, computed in exact big.Int arithmetic
-// (ADR-0003 — never via float or int64 truncation). A raw integer r
-// encodes value = r / 10^d; its reciprocal at the SAME scale d is
-// 10^(2d) / r, rounded half-up. Used for [feedEntry.Invert] feeds
-// (e.g. MXNe: r≈17.4·10^8 pesos/USD → ≈0.0575·10^8 USD/MXNe). The
-// caller guarantees r > 0 (the decoder skips non-positive prices
-// before inverting), so there is no divide-by-zero.
+// reciprocalAtScale returns 1/value for a fixed-point Amount at the same scale, in exact big.Int
+// arithmetic (ADR-0003): 10^(2d) / r, rounded half-up. The caller guarantees r > 0.
 func reciprocalAtScale(a canonical.Amount, decimals uint8) canonical.Amount {
 	r := a.BigInt()
 	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
@@ -239,12 +134,8 @@ func reciprocalAtScale(a canonical.Amount, decimals uint8) canonical.Amount {
 	return canonical.NewAmount(twoNum.Quo(twoNum, twoR))
 }
 
-// mustSoroban / mustCrypto / mustRWA / mustFiat build a canonical
-// reference asset for the registry. Their arguments are compile-time
-// constants (the codes vetted against the ADR-0014 / ADR-0028
-// allow-lists, the contract id from package upshift) — an error means
-// a typo in one of those constants, so panic at init rather than
-// degrade silently.
+// mustSoroban / mustCrypto / mustRWA / mustFiat build registry assets from compile-time constants;
+// an error is a typo, so panic at init rather than degrade silently.
 func mustSoroban(contractID string) canonical.Asset {
 	a, err := canonical.NewSorobanAsset(contractID)
 	if err != nil {
