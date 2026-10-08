@@ -248,7 +248,7 @@ jobs:
       # Consumed ONLY by the "Sign SHA256SUMS (cosign keyless)" and
       # "Attest build provenance" steps below: each trades the GitHub
       # OIDC JWT for a short-lived Fulcio certificate. Scoped to this
-      # job per F-1296 — the other jobs never see an OIDC token.
+      # job — the other jobs never see an OIDC token.
       id-token: write
       attestations: write  # store the provenance attestation on the repo
     steps:
@@ -290,7 +290,7 @@ jobs:
               -cf - migrations | gzip -n > dist/migrations.tar.gz
           ls -la dist/migrations.tar.gz
           # `| head` closes early, SIGPIPEs tar and — under pipefail —
-          # fails the step for no reason (F-1300). `sed -n` drains.
+          # fails the step for no reason. `sed -n` drains.
           tar -tzf dist/migrations.tar.gz | sed -n '1,5p'
 
       - name: Compute SHA256SUMS

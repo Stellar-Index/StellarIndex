@@ -17,7 +17,7 @@ type Params = Promise<{ ticker: string }>;
 
 // Wire shape of /v1/assets/{ticker} for a fiat catalogue entry —
 // returns GlobalAssetView when the ticker resolves to a verified
-// currency (F-1201 migrated this from /v1/currencies/{ticker}).
+// currency.
 // Derived from the generated OpenAPI contract.
 // class is spec'd on GlobalAssetView since board #33.
 //

@@ -38,10 +38,8 @@ const FALLBACK_TICKERS = [
 type Params = Promise<{ from: string; to: string }>;
 
 // Local projection of the per-(from, to) data the SSR shell needs.
-// Pre-F-1201 this carried a full cross_rates map (from→every ticker)
-// from /v1/currencies/{from}; post-F-1201 we fetch one pair via
-// /v1/price/batch and synthesize a {to: rate} singleton map so the
-// existing render path stays unchanged.
+// One pair comes from /v1/price/batch, synthesized into a {to: rate}
+// singleton map so the render path stays map-shaped.
 interface CurrencyDetail {
   ticker: string;
   name: string;
@@ -101,9 +99,7 @@ export async function generateStaticParams() {
 // the {from} currency's identity (ticker / name) + the from→to
 // rate via cross_rates[to].
 //
-// F-1201 migration: pre-rc.48 a single /v1/currencies/{from} call
-// returned every cross-rate at once; rc.48 removed that route.
-// We now hit two endpoints in parallel:
+// Two endpoints, fetched in parallel:
 //
 //   1. /v1/external/assets/{from} for the identity (ticker, name);
 //      /v1/assets is Stellar-only and 404s a fiat ticker
