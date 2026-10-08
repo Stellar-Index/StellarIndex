@@ -122,7 +122,7 @@ func TestUsageTracker_FamilyAndOutcome(t *testing.T) {
 // TestUsageTracker_OutcomeClasses — every status lands in its detail
 // class, and only CALLER-caused outcomes advance the legacy billable
 // total. wantBillable is 0 for 5xx: counting it as 1 would be
-// exactly the COR-05 defect (a platform failure charged to the
+// exactly the defect (a platform failure charged to the
 // customer's monthly quota) — see
 // TestUsageTracker_ServerErrorExcludedFromLegacyTotal.
 func TestUsageTracker_OutcomeClasses(t *testing.T) {
@@ -171,7 +171,7 @@ func TestUsageTracker_OutcomeClasses(t *testing.T) {
 
 // TestUsageTracker_ServerErrorExcludedFromLegacyTotal — a 5xx records
 // under the server-error class but must NOT advance the legacy per-day
-// total (COR-05).
+// total.
 //
 // The legacy total is MonthlyQuota's input. Counting our own failures
 // against it means a sustained outage burns the customer's paid

@@ -252,7 +252,7 @@ const defaultVWAPFreshness = 15 * time.Minute
 // SYMMETRIC. Hand-written call sites drifted apart: the last-trade arm
 // of LatestPrice consulted substance but not scam, so an operator who
 // set disable_substance_gate=true to widen pricing coverage silently
-// also un-withheld every directory-flagged issuer (MSP-07). Callers
+// also un-withheld every directory-flagged issuer. Callers
 // cannot make that mistake here — there is one expression, and
 // TestWithholdingGatesAreSpelledOnlyAtTheChokepoint fails if a future
 // call site spells either gate out again.

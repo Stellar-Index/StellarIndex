@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// TestLocalStore_SweepsAtMostOncePerWindow pins the CON-04 invariant.
+// TestLocalStore_SweepsAtMostOncePerWindow pins that invariant.
 //
 // The attack it encodes: hold the fallback limiter above its key cap
 // inside a single window (a distinct-key flood is the *only* way to get
@@ -52,7 +52,7 @@ func TestLocalStore_SweepsAtMostOncePerWindow(t *testing.T) {
 	}
 }
 
-// TestLocalStore_OverflowIsBoundedAndFailsClosed pins the REL-05 memory
+// TestLocalStore_OverflowIsBoundedAndFailsClosed pins the memory
 // bound at the unit level: past the cap the map does not grow, and the
 // overflow population shares one fail-CLOSED budget rather than each
 // flood key minting a private one. The exported-API twin of this test

@@ -383,7 +383,7 @@ func TestBucket_DwellTime_FailsClosedAfterWindow(t *testing.T) {
 	}
 }
 
-// TestBucket_DwellTime_FlapVsSustainedRecovery pins the REL-06 recovery
+// TestBucket_DwellTime_FlapVsSustainedRecovery pins the recovery
 // semantic: a SINGLE Redis success must NOT reset the fail-closed dwell clock
 // (a flapping Redis with occasional successes still trips fail-closed after
 // dwellTime); only a SUSTAINED healthy streak (dwellTime of unbroken successes)
@@ -411,7 +411,7 @@ func TestBucket_DwellTime_FlapVsSustainedRecovery(t *testing.T) {
 	}
 
 	// FLAPPING: one lucky success, then continued failure past the dwell window.
-	// The stray success must NOT reset the clock → fail-CLOSED (the REL-06 fix).
+	// The stray success must NOT reset the clock → fail-CLOSED.
 	fi.fail = false
 	_ = take() // single success
 	fi.fail = true

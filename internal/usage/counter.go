@@ -65,8 +65,8 @@ const (
 	// traffic — outcomes the CALLER caused (MonthlyQuota reads the
 	// legacy keys). A 429 is our throttle firing and a 5xx is our
 	// failure; charging either against a paid monthly cap means an
-	// outage or a rate-limit storm eats the customer's allowance
-	// (audit COR-05). The one billable 5xx is a read that timed out
+	// outage or a rate-limit storm eats the customer's allowance.
+	// The one billable 5xx is a read that timed out
 	// on its server-side budget, which the request itself spent (see
 	// middleware.billableClass). Both are still counted in full in the
 	// per-endpoint detail hash, so neither becomes invisible — only

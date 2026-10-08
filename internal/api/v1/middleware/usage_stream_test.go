@@ -127,7 +127,7 @@ func TestUsageTracker_StreamCountedAtOpen(t *testing.T) {
 
 // TestUsageTracker_StreamRefusedAtOpenNotBilled guards that metering at open
 // still classifies by the committed status: a stream refused with 429 must
-// not eat monthly quota (COR-05), while the detail family still sees it.
+// not eat monthly quota, while the detail family still sees it.
 func TestUsageTracker_StreamRefusedAtOpenNotBilled(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -323,7 +323,7 @@ func TestUsageTracker_StreamNoTicksAfterClose(t *testing.T) {
 // handler that panics before ever writing anything never opens the
 // stream (once.fired() stays false the whole time it runs), so
 // UsageTracker's recover defer is the FIRST call to once.fire —
-// classing the request as a platform 5xx that COR-05 forbids billing.
+// classing the request as a platform 5xx, which must never be billed.
 //
 // If that recover defer runs BEFORE the streaming block's
 // close(done) (defers are LIFO, so close(done), registered first, runs
@@ -389,7 +389,7 @@ func TestUsageTracker_StreamPanicBeforeOpenBillsNothing(t *testing.T) {
 // can be paused right there while close(done) then once.fire(true) both
 // run, then resume and read once.fired()==true — billing rec's
 // still-default 200 status as OK on a request the recover defer just
-// classed as a non-billable 5xx (COR-05), and double-billing besides.
+// classed as a non-billable 5xx, and double-billing besides.
 //
 // A test hook (SetStreamTickHookForTest) pauses the goroutine at
 // exactly that point instead of relying on scheduling luck to land

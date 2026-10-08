@@ -58,7 +58,7 @@ type localStore struct {
 
 	// lastSweptWindow is the window value gcLocked last ran a full scan
 	// for. A second scan at the same value can only re-walk live
-	// entries, so it is skipped (REL-05 / CON-04).
+	// entries, so it is skipped.
 	lastSweptWindow int64
 
 	// maxKeys is the hard cap on tracked entries; newLocalStore sets it
@@ -75,7 +75,7 @@ type localStore struct {
 
 	// sweeps counts completed full scans. Observability for the
 	// invariant test that pins "at most one sweep per window" — the
-	// property REL-05 / CON-04 is about. Cheap: incremented at most
+	// property this guards. Cheap: incremented at most
 	// once per window.
 	sweeps int
 }
@@ -194,7 +194,7 @@ func slash48Key(key string) (string, bool) {
 // entry names W, and every entry written afterwards names W as well
 // (window is derived from the same clock for all callers), so re-scanning
 // at W can only walk live entries and delete none — that is exactly the
-// wasted O(n)-per-request scan REL-05 / CON-04 flagged. Past that guard
+// wasted O(n)-per-request scan. Past that guard
 // the sweep runs either on the per-window cadence or immediately when the
 // map is at capacity (so a flood's stale entries are reclaimed on the
 // first call of the next window rather than a full windowDur later).
