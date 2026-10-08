@@ -43,7 +43,7 @@ WatchdogSec=1h
 # bootstrap full pass needs to run to completion to seed the
 # -from-last-verified state file; a binary-side cap that fired
 # mid-pass meant state never seeded and every run stayed a full
-# pass (the Task #13 / 2026-05-19 incident).
+# pass.
 # Cold-start floor only — normal runs resume from the state file's
 # high-water (63.6M+, far above any floor). If the state file is ever
 # lost, restarting from the hot floor instead of ledger 2 avoids a
@@ -74,7 +74,7 @@ Environment=VERIFY_ARCHIVE_TEXTFILE=/var/lib/node_exporter/textfile_collector/ve
 # of being overridden by them.
 EnvironmentFile=-/etc/default/stellarindex-ops
 
-# Incremental scheme (since 2026-05-14): -from-last-verified reads
+# Incremental scheme: -from-last-verified reads
 # the prior run's high-water mark from the state file, then verifies
 # only the [last_verified - safety_overlap, tip] window. Past LCM
 # files are immutable so re-verifying them nightly is wasted compute.
