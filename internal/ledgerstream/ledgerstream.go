@@ -329,69 +329,40 @@ func latestLedger(ctx context.Context, dsCfg datastore.DataStoreConfig) (uint32,
 // A LEDGER, until Config.LiveRetryBudget is exhausted.
 // It returns the last error, or nil if a re-attempt eventually ran clean.
 //
-// Why this exists on top of [applyLiveRetryPolicy]. That policy spends the
-// budget inside the SDK's fetch worker, and the worker only exists once
-// the datastore has been opened and its schema loaded. Both of those
-// happen ONCE, up front, with no retry anywhere:
-//
-//	dataStore, err := datastoreFactory(ctx, publisherConfig.DataStoreConfig)
-//	if err != nil { return fmt.Errorf("failed to create datastore: %w", err) }
-//	schema, err := datastore.LoadSchema(context.Background(), dataStore, …)
-//	if err != nil { return fmt.Errorf("failed to retrieve datastore schema: %w", err) }
-//
-// (go-stellar-sdk ingest/producer.go; our streamTiered/walkDataStore have
-// the same shape, and LoadSchema is a live round-trip — it LISTS the
-// bucket to discover the ledger file extension.) Without this retry a lake
-// outage present when the stream STARTS is not covered by the budget at
-// all: measured without it, Stream returned in 85µs against a 3s budget.
-//
-// That is not a cosmetic difference, because the indexer's supervisor
-// counts starts, not seconds. The first process burns its 5-minute
-// in-walk budget and exits; every restart after that dies in the startup
-// path in about a second, so the start cycle collapses to RestartSec
-// (10s). Sixty of those fit inside StartLimitIntervalSec=15min, the unit
-// parks in `failed`, and it stays parked after MinIO comes back until a
-// human runs `systemctl reset-failed`. The whole point of the budget was
-// that a lake blip degrades to stall-and-retry rather than needing an
-// operator, so the startup path has to honour it too.
+// [applyLiveRetryPolicy] spends the budget inside the SDK's fetch worker,
+// which only exists after the datastore is opened and its schema loaded —
+// both done ONCE with no retry (go-stellar-sdk ingest/producer.go; our
+// streamTiered/walkDataStore share the shape, and LoadSchema LISTS the
+// bucket). Without this, a lake outage present at START bypasses the
+// budget (Stream returned in 85µs against a 3s budget). The supervisor
+// counts starts, not seconds: restarts collapse to RestartSec, sixty fit
+// in StartLimitIntervalSec, and the unit parks in `failed` until a human
+// runs `systemctl reset-failed` even after MinIO returns.
 //
 // Three properties make the retry safe:
 //
 //   - It CANNOT skip a ledger. It re-attempts only while delivered == 0,
-//     re-issuing the identical range, so the caller's callback — which is
-//     where the cursor is written — has not run and there is nothing to
-//     resume past. The moment any ledger lands, a later failure is
-//     returned untouched: resuming mid-stream would need a cursor-aware
-//     restart, which belongs to the caller, not here.
-//   - It is BOUNDED, by wall clock rather than attempts. The deadline is
-//     fixed before the first re-attempt, so an attempt that itself
-//     consumes the whole in-walk budget leaves no time for another and
-//     the total stays ~one budget. An unbounded reconnect would convert a
-//     visible outage into a silent freeze, which is strictly worse than
-//     the crash it replaces.
-//   - It is VISIBLE while it runs, via
-//     stellarindex_ledgerstream_live_start_retries_total. Exhaustion
-//     itself is deliberately NOT a counter: it increments once and the
-//     process exits, so no scrape would ever see it — the honest cover
-//     for exhaustion is the process exit, which pages via
-//     stellarindex_ingestion_ledger_stalled (and, for the MinIO case,
+//     re-issuing the identical range, so the caller's callback (which
+//     writes the cursor) has not run. Once any ledger lands, a later
+//     failure is returned untouched; mid-stream resume is the caller's.
+//   - It is BOUNDED by a wall-clock deadline fixed before the first
+//     re-attempt, so the total stays ~one budget. An unbounded reconnect
+//     would turn a visible outage into a silent freeze.
+//   - It is VISIBLE while running, via
+//     stellarindex_ledgerstream_live_start_retries_total. Exhaustion is
+//     not a counter (the process exits before any scrape); the exit pages
+//     via stellarindex_ingestion_ledger_stalled (and, for MinIO,
 //     stellarindex_minio_exporter_down within ~2 min).
 //
-// Errors are deliberately NOT classified into transient and permanent
-// here. On an unbounded tail the only correct response to "I could not
-// start" is "try again shortly" whatever the cause, and the classes are
-// not reliably separable at this seam anyway — the SDK wraps with
-// pkg/errors and exposes no sentinel, and a 403 is as likely to be a
-// half-restarted MinIO as a revoked key. A genuinely permanent fault
-// (bad credentials, deleted bucket) therefore surfaces one budget later
-// instead of immediately, exactly as [Config.LiveRetryBudget] already
-// documents for the in-walk case.
+// Errors are NOT classified transient vs permanent: on an unbounded tail
+// "could not start" always means "try again shortly", and the SDK wraps
+// with pkg/errors and exposes no sentinel (a 403 is as likely a
+// half-restarted MinIO as a revoked key). A permanent fault therefore
+// surfaces one budget later, as [Config.LiveRetryBudget] documents.
 //
 // Backoff is exponential from LiveRetryWait, capped at
-// [maxLiveStartRetryWait]. No jitter: jitter exists to de-correlate many
-// clients against one server, and there is exactly one indexer per host
-// reading a MinIO on 127.0.0.1 — it would buy nothing here and make the
-// timing untestable.
+// [maxLiveStartRetryWait]. No jitter: there is one indexer per host
+// reading a MinIO on 127.0.0.1, and jitter would make timing untestable.
 //
 // Callers must gate on the range being unbounded; see [Stream].
 func retryLiveStart(

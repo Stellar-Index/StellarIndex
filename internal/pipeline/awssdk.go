@@ -38,73 +38,32 @@ var (
 // "Response has no supported checksum" before they reach the real
 // stderr. Everything else is forwarded byte-for-byte.
 //
-// Why this exists: aws-sdk-go-v2 logs a WARN on every S3 GetObject
-// response that lacks one of its supported checksum headers. MinIO
-// (our colo galexie backend) never sends those headers, so *every*
-// ledger read triggers the line. stellarindex-indexer's live tail
-// reads ~1 ledger/5s so the noise is trivial; verify-archive's
-// 12-way parallel walk does ~50k ledgers/s and floods journald
-// (~22k WARN/30s observed during r1 bootstrap, ballooning
-// /tmp/va-full.log to 1.65 GB and burying the real verify-archive
-// failure under noise journald then rate-dropped).
+// aws-sdk-go-v2 WARNs on every GetObject lacking a supported checksum
+// header, and MinIO never sends one, so verify-archive's ~50k ledgers/s
+// walk floods journald and buries real failures. The env-var off switch
+// (AWS_RESPONSE_CHECKSUM_VALIDATION=when_required) does not help:
+// go-stellar-sdk/support/datastore/s3.go hardcodes
+// `ChecksumMode: types.ChecksumModeEnabled` on every GetObjectInput.
 //
-// Setting AWS_RESPONSE_CHECKSUM_VALIDATION=when_required, so the
-// SDK's default-config layer skips the validation attempt, is a
-// no-op for our use because
-// go-stellar-sdk/support/datastore/s3.go:161 hardcodes
+// Mechanism: dup fd 2 as the real stderr, dup2 a pipe's write end onto
+// fd 2, and drain the reader in a goroutine that drops matching lines.
 //
-//	ChecksumMode: types.ChecksumModeEnabled
-//
-// on every GetObjectInput, overriding whatever the env-var default
-// produced. The upstream-respect path is to change that line in
-// go-stellar-sdk; until that lands, stderr filtering is the
-// reliable workaround.
-//
-// Mechanism:
-//
-//  1. dup the current fd 2 to a fresh fd (the "real stderr").
-//  2. create a pipe; dup2 the write end onto fd 2 so every
-//     subsequent write — including the SDK's default logger which
-//     was bound to os.Stderr at config-load time — flows into our
-//     reader.
-//  3. spin a goroutine that scans the reader line-by-line, drops
-//     lines containing checksumWarnSubstring, and forwards the
-//     rest to the real stderr.
-//
-// Constraints honoured:
-//
-//   - Must run BEFORE config.LoadDefaultConfig — the SDK captures
-//     os.Stderr into logging.NewStandardLogger at that point. Call
-//     this from the first line of main().
-//   - Fail-soft: any error in pipe/dup2 logs to the original
-//     stderr and returns; the binary keeps running with noisy
-//     stderr, never crashes at startup over a logging filter.
-//   - sync.Once-guarded; second call is a no-op (returns the
-//     same flush from the first install).
-//   - The goroutine drains the pipe continuously, so a slow real
-//     stderr (e.g. journald rate-limit) can't deadlock the
-//     writer side beyond the pipe buffer.
+//   - Must run BEFORE config.LoadDefaultConfig, which binds os.Stderr
+//     into the SDK logger; call it from the first line of main().
+//   - Fail-soft: a pipe/dup2 error logs to the original stderr and
+//     returns; a logging filter never crashes startup.
+//   - sync.Once-guarded; a second call returns the first flush.
+//   - The goroutine drains continuously, so a slow real stderr
+//     (journald rate-limit) cannot deadlock writers beyond the pipe
+//     buffer.
 //
 // # Drain-on-exit
 //
-// Returns a `flush func()` the caller MUST run before the process
-// exits. Without it, short-lived processes lose output: the
-// consumer goroutine reads from the pipe in the background and is
-// killed mid-buffer when the runtime tears down. The symptom is
-// `stellarindex-ops backfill -dry-run` printing only its first line
-// and `stellarindex-ops backfill` errors printing nothing at all.
-//
-// The flush func:
-//
-//  1. dup2's the saved real-stderr fd back onto fd 2, so any
-//     subsequent writes bypass the pipe.
-//  2. closes the pipe writer, signalling EOF to the reader.
-//  3. waits on the consumer goroutine to finish draining
-//     (sync.WaitGroup) before returning.
-//
-// Crucial design constraint: Go's `os.Exit` does NOT run deferred
-// functions. So `defer flush()` only fires when main() returns
-// normally. The canonical caller shape is therefore:
+// The caller MUST run the returned flush before exiting, or short-lived
+// processes lose buffered output (`stellarindex-ops backfill` errors
+// printed nothing). flush restores fd 2, closes the pipe writer and
+// waits for the goroutine to drain. os.Exit skips defers, so the caller
+// shape is:
 //
 //	func main() { os.Exit(realMain()) }
 //	func realMain() int {
@@ -114,11 +73,7 @@ var (
 //	    return 0  // or 1 on error
 //	}
 //
-// This way every error path (return 1 from realMain) still
-// triggers the defer before main calls os.Exit with the int.
-//
-// Fail-soft install still returns a non-nil flush — it's a no-op
-// when no pipe was installed, so callers can defer
+// flush is non-nil even after a fail-soft install, so callers can defer
 // unconditionally.
 func SilenceSDKChecksumWarnings() (flush func()) {
 	silenceOnce.Do(func() {

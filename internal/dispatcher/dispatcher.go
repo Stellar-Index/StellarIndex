@@ -1101,39 +1101,26 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 // dispatches each to the entry-decoder chain, in the order stellar-core
 // committed them. Returns the collected outputs across every matched change.
 //
-// Two properties this function exists to guarantee — both are correctness
-// requirements of the balance-observation surface, not cosmetics:
+// Two correctness requirements of the balance-observation surface:
 //
-//  1. FAILED TXS ARE INCLUDED. A failed
-//     transaction still debits its fee on chain, and stellar-core commits
-//     that fee change; only the operation changes are rolled back (a failed
-//     tx's meta carries no op changes, so nothing rolled-back is replayed).
-//     Skipping failed txs would over-report the observed balance by the
-//     fee and put the live observer permanently out of step with the lake,
-//     whose clickhouse.extractEntryChanges walks every tx.
-//     ADR-0034's "re-derive the LedgerEntry supply observers from the lake"
-//     promise is only meetable if the two agree.
+//  1. FAILED TXS ARE INCLUDED. A failed tx still debits its fee and core
+//     commits that change (its meta carries no op changes, so nothing
+//     rolled-back is replayed). Skipping it would over-report the balance
+//     by the fee and diverge from the lake's clickhouse.extractEntryChanges,
+//     which walks every tx; ADR-0034's re-derive-from-lake promise needs
+//     the two to agree.
 //
-//  2. THE WALK IS THREE-PHASE, LEDGER-WIDE, plus a fourth eviction phase
-//     that is ours, not the SDK's — ingest.LedgerChangeReader has no
-//     eviction state, so a TTL-lapsed entry is invisible to anything that
-//     only mirrors it. stellar-core commits a ledger in ledger-wide phases,
-//     not tx by tx, and this walk follows the SDK's canonical
+//  2. THE WALK IS LEDGER-WIDE AND PHASED, following the SDK's
 //     ingest.LedgerChangeReader state machine (feeChangesState →
-//     metaChangesState → postTxApplyState) — see the phase table below.
-//     "Follows", not "mirrors exactly": the SDK additionally suppresses
-//     changes for txInternalError() at LedgerVersion <= 12, which this
-//     walk does not, so where the two diverge we emit MORE rather than
-//     fewer changes (inert in practice — such txs carry no operations in
-//     the V4 meta production actually delivers).
-//     Walking per tx (fee, apply, then the next tx's fee) would mis-rank an
-//     account touched by tx1's ops and tx2's fee: IntraLedgerSeq would put
-//     the fee last, and IntraLedgerSeq is exactly the tiebreak that makes
-//     the FINAL intra-ledger change win the balance upsert, so a fee-phase
-//     balance would be published as the ledger-final one. Omitting phase 3 has
-//     the same shape on P23+ ledgers: the refund is the LAST thing that
-//     touches the fee-source account, so dropping it publishes the
-//     pre-refund balance as final.
+//     metaChangesState → postTxApplyState) plus an eviction phase of our
+//     own, since the reader has no eviction state. Walking per tx would
+//     rank tx2's fee after tx1's ops on a shared account, and
+//     IntraLedgerSeq is the tiebreak that makes the FINAL change win the
+//     balance upsert, so a fee-phase balance would publish as ledger-final.
+//     Omitting phase 3 does the same on P23+: the refund is the last touch
+//     of the fee source. Unlike the SDK we do not suppress
+//     txInternalError() changes at LedgerVersion <= 12, so we can emit
+//     MORE, never fewer (inert: such txs carry no operations in V4 meta).
 //
 // The phases, in emission order:
 //
@@ -1152,51 +1139,26 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 //	                                           decoders from nowhere else —
 //	                                           see [walkEvictedKeys]
 //
-// LEDGER UPGRADES (the SDK's 4th state, upgradeChangesState) are deliberately
-// NOT walked: they are not transaction-scoped, carry no TxHash, and no
-// LedgerEntryChangeDecoder consumes them today. The lake walker makes the
-// identical choice, so the two stay in step. They are COUNTED and logged
-// per ledger by [ProcessLedger] ([noteLedgerUpgrades]), whether or not any
-// entry decoder is registered, so a network parameter change is visible.
+// LEDGER UPGRADES (upgradeChangesState) are NOT walked: they carry no
+// TxHash and no entry decoder consumes them; the lake walker makes the
+// same choice. [ProcessLedger] counts and logs them ([noteLedgerUpgrades])
+// so a network parameter change stays visible.
 //
-// IntraLedgerSeq is the per-ledger monotonic position, advanced for every
-// walked change (matched or not) so relative order is preserved; gaps from
-// unmatched changes are harmless.
+// IntraLedgerSeq advances for every walked change (matched or not), so
+// relative order holds; gaps are harmless. POSITIONS ARE
+// WALK-VERSION-SCOPED: a walk change renumbers every ledger, so compare
+// only within one walk version — see [EntryWalkVersion] and migration
+// 0120.
 //
-// POSITIONS ARE WALK-VERSION-SCOPED. IntraLedgerSeq is only comparable
-// against another position produced by the SAME walk version. A walk change
-// renumbers every ledger, so an older-walk row can outrank a correction — see
-// [EntryWalkVersion] and migration 0120 for the invariant and the repair
-// path.
-//
-// Meta-version handling: V3 + V4 share the same Operations / TxChanges
-// shape for entry-change purposes; the only difference is the wrapping
-// type. Anything else lands in the default arm and is COUNTED, not
-// silently skipped — see below.
-//
-// V0/V1/V2 are unreachable on production input, but NOT because they lack
-// operation metadata: xdr.TransactionMetaV1{TxChanges, Operations} and
-// TransactionMetaV2{TxChangesBefore, Operations, TxChangesAfter} both
-// carry full per-operation LedgerEntryChanges, which is exactly where
-// every pre-Soroban trustline / offer / account change lives, and the
-// SDK's own LedgerChangeReader handles V1 and V2 in its apply phase. The
-// real reason we never see them is that galexie's captive stellar-core
-// RE-GENERATES TransactionMeta at replay time in the newest format its
-// binary supports: only the LedgerCloseMeta wrapper is epoch-native.
-// Verified by decoding 48 production ledgers from both
-// datastores this code reads (r1 galexie-archive + the aws-public-
-// blockchain cold tier) spanning protocols 1→19 and 8,000+ transactions:
-// every single tx carried meta V4, including ledger 1,000,023 at
-// protocol 1. r1's own lake agrees — 70.5 billion apply-phase
-// ledger_entry_changes rows below the protocol-20 activation, back to
-// ledger 3.
-//
-// So the default arm is defence against two futures, not a live gap:
-// an archive re-derived by a pre-CAP-67 core binary, and a protocol that
-// bumps meta past V4. Both would otherwise stop entry-change observation
-// dead while every table simply stopped advancing — the exact
-// "masquerading as clean ledgers" failure the sibling tx-event path counts
-// in txEventReadErrors.
+// Meta versions: V3 and V4 share the entry-change shape. V0/V1/V2 DO carry
+// per-op changes, but never reach us: galexie's captive core RE-GENERATES
+// TransactionMeta in its newest format at replay (only the LedgerCloseMeta
+// wrapper is epoch-native) — every tx in 48 sampled production ledgers
+// spanning protocols 1→19 carried V4. Anything else lands in the default
+// arm and is COUNTED, defending against an archive re-derived by a
+// pre-CAP-67 core or a meta version past V4, either of which would
+// otherwise stop entry-change observation while tables silently stopped
+// advancing (the failure txEventReadErrors counts on the tx-event path).
 func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []ingest.LedgerTransaction, ledgerSeq uint32, closedAt time.Time) []consumer.Event {
 	var seq uint32
 	dispatchFor := func(txHash string) func(int, xdr.LedgerEntryChange) []consumer.Event {
