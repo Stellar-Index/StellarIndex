@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-no-wrangler-cache-tracked-test.sh — fixture tests for
-# scripts/ci/check-no-wrangler-cache-tracked.sh (T535).
+# scripts/ci/check-no-wrangler-cache-tracked.sh.
 #
 # Builds a throwaway git repo per case so the check's `git ls-files` /
 # `git check-ignore` calls exercise real git behaviour, not a mock.
@@ -10,6 +10,10 @@ set -uo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
 CHECK="$PWD/scripts/ci/check-no-wrangler-cache-tracked.sh"
+
+# A pre-commit hook exports these; left set, both the fixtures and the check read the real repo.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+      GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -32,8 +36,6 @@ mkrepo() {
   local dir="$TMP/$1"
   mkdir -p "$dir/docs/reference/api/.wrangler/cache"
   (
-    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
-          GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
     cd "$dir" || exit 1
     real_dir="$(pwd -P)"
     git init -q
