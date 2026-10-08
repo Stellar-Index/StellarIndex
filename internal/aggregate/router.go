@@ -483,7 +483,7 @@ type scoredRoute struct {
 //     single-route target (the whole production config today).
 //   - pathCount: the number of surviving routes in the full gated set
 //     (survivors after outlier omission over ALL gated routes, not just the
-//     top tier). This is the serving multiplicity historically carried on
+//     top tier). This is the serving multiplicity carried on
 //     the composite meta — NOT the number that produced the served value
 //     (the two sets can be disjoint, e.g. a thin divergent
 //     majority survives median-relative omission while the served price

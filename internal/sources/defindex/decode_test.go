@@ -344,7 +344,7 @@ func TestDecode_factoryEvent_isClassifiedButEmits0Events(t *testing.T) {
 // create-emitting DeFindexFactory instances. Each constant is one
 // full `("DeFindexFactory","create")` event body, byte-identical to
 // what the contract emitted on-chain. They NAME real curated
-// strategies, but the fix (W8 recon 6c) no longer seeds from these
+// strategies, but the decoder does not seed from these
 // bodies at all — see TestDecode_factoryCreate_doesNotSeedFromBody.
 const (
 	// createBodyTwoStrategies — CDKFHFJI… (current factory), ledger

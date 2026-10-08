@@ -1049,7 +1049,7 @@ func windowLabel(window time.Duration) string {
 //     absent and still sticks.
 //   - open row but hold lapsed beyond the grace → the aggregator has been
 //     down longer than the freeze's own hold. Do NOT resurrect it; behave
-//     exactly as before 0119. The bound is what keeps a week-old
+//     as if no row existed. The grace bound is what keeps a week-old
 //     never-closed row from re-freezing a healthy pair on restart.
 //
 // A raw `redis-cli DEL` is no longer an override, by design: it never was a

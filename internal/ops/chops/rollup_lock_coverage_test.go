@@ -14,11 +14,11 @@ import (
 // invocation of the SAME job already holds its lock, exactly as
 // ch-holders-rollup does (TestAcquireHoldersRollupLockSerializesConcurrentRuns).
 //
-// Before this fix these three CLI entry points took no lock at all: a
-// manually-invoked `stellarindex-ops ch-creators-rollup` (etc.) proceeded
+// Without the lock these three CLI entry points would run unguarded: a
+// manually-invoked `stellarindex-ops ch-creators-rollup` (etc.) would proceed
 // straight past flag parsing into ClickHouse work, so a run launched
 // while the 30-minute timer's own invocation was mid TRUNCATE -> fill ->
-// EXCHANGE on the same global staging tables raced it instead of being
+// EXCHANGE on the same global staging tables would race it instead of being
 // turned away here. Each case below holds the lock externally first and
 // asserts the CLI entry point returns the contention error BEFORE it
 // would reach any network call, so the test needs no ClickHouse and no

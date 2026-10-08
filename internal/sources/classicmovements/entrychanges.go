@@ -466,7 +466,7 @@ func DecodeCAP0038Revocation(ledger uint32, closedAt time.Time, txHash string, o
 				"trigger_op_type": triggerType,
 				// Canonical key, matching every other emitter and the
 				// ClickHouse external table. `claimable_balance_id` is kept
-				// alongside it because rows written before this change carry
+				// alongside it because older rows carry
 				// only that spelling.
 				"balance_id":           cb.BalanceIDHex,
 				"claimable_balance_id": cb.BalanceIDHex,

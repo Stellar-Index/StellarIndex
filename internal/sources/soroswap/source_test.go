@@ -207,7 +207,7 @@ func TestDecodeSwap_AmbiguousBothDirectionsRefused(t *testing.T) {
 // TestDecodeSwap_ThreeNonZeroLegRefused: a swap with
 // exactly THREE non-zero amounts (0_in, 1_in, 1_out) slips past the
 // all-four-only ambiguity guard, matches the first direction arm
-// (0_in>0 && 1_out>0), and — before this fix — decoded a trade reporting
+// (0_in>0 && 1_out>0), and would decode a trade reporting
 // the GROSS 0_in while silently dropping the 1_in leg, fabricating a
 // price into VWAP/OHLC. It must be refused as ErrAmbiguousSwapDirection,
 // exactly like its all-four sibling.
