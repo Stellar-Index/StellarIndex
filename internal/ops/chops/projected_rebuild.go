@@ -349,30 +349,16 @@ func gateProjectedRebuild(ctx context.Context, cfg config.Config, store *timesca
 }
 
 // checkProjectedRebuildBackfillSafe refuses a rebuild of a source whose
-// decoder has not been audited against every WASM generation that ran
-// over its history.
+// decoder has not been audited against every WASM generation in its history:
+// the current decoder over an old range, with rows that win on conflict, is
+// the hazard backfill, projector-replay and `ch-rebuild -write` already
+// refuse. [external.ReplayBackfillSafe] resolves the projector names with no
+// registry row of their own; an unregistered name is refused.
 //
-// projected-rebuild is the third re-derive path: it builds the live
-// projector's CURRENT decoder (projector.BuildRegistry) and runs it over
-// a HISTORICAL lake range, and — because it stamps a positive
-// derive_generation — its rows WIN over what is stored. That is the
-// old-WASM-generation hazard `backfill`, `projector-replay` and
-// `ch-rebuild -write` refuse, on the very path the
-// projector-replay runbook sends any rewind over ~1M ledgers to. The question goes through
-// [external.ReplayBackfillSafe], which resolves the projector source
-// names that deliberately have no registry row of their own
-// (blend_backstop follows blend's attestation; the sep41 pair read a
-// standard-fixed schema), so the sanctioned rebuilds are not stranded. A
-// name nobody registered is refused, fail-closed.
-//
-// NOT armed under -write only, unlike ch-rebuild: this command's dry-run
-// is a faithful preview of the -write run (the live-cursor guard below
-// already applies to both), and a multi-hour preview of a run that would
-// be refused is a plan nobody can execute — the same call
-// projector-replay makes for -dry-run. Evaluating an unaudited decoder
-// against history stays available through ch-rebuild's ungated default
-// dry-run. No override flag, matching `backfill`: the way through is the
-// audit plus the registry flip, in one reviewed PR.
+// Armed in dry-run too, unlike ch-rebuild: the dry run previews the -write
+// run, and a multi-hour preview of a refused run is a plan nobody can execute.
+// ch-rebuild's ungated dry run still evaluates an unaudited decoder. No
+// override flag: the way through is the audit plus the registry flip.
 func checkProjectedRebuildBackfillSafe(source string, from uint32) error {
 	if external.ReplayBackfillSafe(source) {
 		return nil
@@ -481,30 +467,17 @@ type ProjectedRebuildOptions struct {
 	Heartbeat *opsutil.JobHeartbeat
 }
 
-// applyProjectedEvent decodes one lake event and writes its outputs,
-// returning how many rows it emitted and how many of those FAILED to insert.
+// applyProjectedEvent decodes one lake event and writes its outputs, returning
+// how many rows it emitted and how many failed to insert. The failure count is
+// the inserts a re-run can still land, so non-zero means the caller must not
+// checkpoint the window (see [checkpointWindow]).
 //
-// The failure count is the load-bearing return value: it counts the inserts a
-// RE-RUN CAN STILL LAND, so a non-zero count means the caller must not
-// checkpoint that window (see [checkpointWindow]).
-//
-// One class of HandleEvent error is deliberately NOT in that count: a
-// *[pipeline.TradeDroppedError] — a trade the store PERMANENTLY
-// rejected, which HandleEvent reports rather than folding into a nil return.
-// It is counted on its own ([projectedRebuildCounters.permanentDrops]) and does NOT
-// hold the window, for three reasons:
-//
-//   - it is deterministic: the same value fails identically on every re-run,
-//     so holding the window makes every resumed run redo it forever and turns
-//     "re-run to retry" into an instruction that can never succeed;
-//   - it is the live projector's policy for the same fault (count + skip +
-//     advance the cursor — projector.dispositionSkip), and this tool's whole
-//     contract is to behave like the live projector, in bulk;
-//   - it is what this tool does for the other deterministic per-row
-//     failure, a decode error: counted, window still checkpoints.
-//
-// The loop never stops at a failed output — a row's remaining outputs are
-// always offered to the sink.
+// A *[pipeline.TradeDroppedError] is counted separately
+// ([projectedRebuildCounters.permanentDrops]) and does not hold the window: it
+// fails identically on every re-run, the live projector skips it the same way
+// (projector.dispositionSkip), and decode errors get the same treatment. A
+// failed output never stops the loop; the row's other outputs still reach the
+// sink.
 func applyProjectedEvent(
 	ctx context.Context,
 	opts ProjectedRebuildOptions,
@@ -556,29 +529,17 @@ func writeProjectedOutputs(
 	return emitted, insertErrs
 }
 
-// checkpointWindow records a completed projected-rebuild window — or
-// deliberately does NOT, when rows were lost inside it.
+// checkpointWindow records a completed window, or deliberately does not when
+// rows were lost inside it: -resume skips checkpointed windows, so
+// checkpointing anyway would lose the row for good, while leaving the cursor
+// unset makes the next resumed run redo the window idempotently.
 //
-// Checkpointing unconditionally on the grounds that "the idempotent ON
-// CONFLICT write is retried by re-running the range" would be false:
-// -resume defaults to true and a resumed run SKIPS checkpointed windows, so
-// the range would never actually be re-run and the row would be gone
-// permanently. Leaving the cursor unset is what makes that retry real: the
-// next resumed run redoes exactly this window, and the writes are idempotent.
-//
-// insertErrs is [applyProjectedEvent]'s count, so it EXCLUDES trades the store
-// permanently rejected: those are counted separately and never hold
-// a window, because no re-run can land them. What does land here is a
-// non-trade insert that failed, or a trade whose block-and-retry (ADR-0041)
-// was abandoned on ctx cancellation. A non-trade row the store rejects
-// DETERMINISTICALLY is still held — this tool does not classify non-trade
-// errors — so a window that re-fails identically on every re-run needs the
-// defect fixed, not another re-run; the summary says so.
-//
-// This is the only recovery path that works unattended. The completeness
-// verdict cannot be relied on: the reconciliation catalogue registers only
-// `trades` for some sources (aquarius), so a dropped aquarius_reserves /
-// _liquidity / _rewards / _admin row is invisible to it.
+// insertErrs excludes permanently rejected trades. What remains is a failed
+// non-trade insert or a trade retry abandoned on cancellation; a non-trade row
+// rejected deterministically still holds the window, and the summary says it
+// needs a fix, not a re-run. This is the only unattended recovery path: the
+// completeness verdict registers only `trades` for some sources (aquarius), so
+// a dropped reserves/liquidity/rewards/admin row is invisible to it.
 func checkpointWindow(
 	ctx context.Context,
 	opts ProjectedRebuildOptions,
@@ -636,34 +597,17 @@ type ProjectedRebuildResult struct {
 	Elapsed    time.Duration
 }
 
-// RunProjectedRebuild is the core executor: builds the window plan,
-// filters already-done windows when Resume is set, then runs Workers
-// goroutines that each repeatedly claim the next pending window off a
-// shared scheduler (windowScheduler.claim — an atomic index, not a static
-// per-worker split like ch-backfill's SplitRange, so uneven per-ledger
-// density — e.g. a dense aquarius-rewards stretch next to a quiet one —
-// doesn't strand one worker on a giant window while others idle) and
-// stream it from the ClickHouse lake through the source's decoder into
-// pipeline.HandleEvent.
+// RunProjectedRebuild builds the window plan, drops done windows under Resume,
+// then runs Workers goroutines that claim windows off a shared atomic
+// scheduler (so dense stretches do not strand one worker) and stream each
+// from the lake through the decoder into pipeline.HandleEvent inline, never
+// buffering, to fit run-heavy-job.sh's memory cap.
 //
-// Never buffers a window's rows: HandleEvent is called inline from the
-// ClickHouse stream callback, exactly like the live projector's own
-// per-event sink — satisfies the "stream, don't buffer" requirement for
-// running under run-heavy-job.sh on r1 (MemoryMax=20G).
-//
-// A window's stream error is fatal to the whole run (propagated through
-// errgroup, cancelling sibling workers) except when ctx itself was
-// canceled (SIGINT/SIGTERM) — the caller distinguishes the two via
-// ctx.Err(). Either way, only FULLY completed windows are checkpointed;
-// -resume picks up exactly where a crash or interrupt left off. A
-// per-event decode error (Decoder.Decode returning non-nil) is instead a
-// soft-fail — logged and counted, the window still completes and
-// checkpoints — because a deterministically malformed row would just
-// re-fail identically on retry (same policy as
-// internal/projector.processEventSafely). A trade the store permanently
-// rejects (*pipeline.TradeDroppedError) gets the same treatment for the same
-// reason — counted in PermanentDrops, window still checkpoints — while every
-// other insert failure holds its window; see [applyProjectedEvent].
+// A window stream error is fatal to the run unless ctx was canceled; only
+// fully completed windows are checkpointed, so -resume restarts exactly. A
+// decode error or a permanently rejected trade is a soft-fail, counted while
+// the window still checkpoints, because it would re-fail identically; any
+// other insert failure holds the window (see [applyProjectedEvent]).
 func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (ProjectedRebuildResult, error) {
 	logger := opts.Logger
 	if logger == nil {
