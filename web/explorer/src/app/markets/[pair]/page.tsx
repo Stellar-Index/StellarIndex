@@ -747,7 +747,7 @@ function AssetBadge({ canonical }: { canonical: string }) {
   } else {
     const dashIx = canonical.indexOf('-');
     if (dashIx !== -1) {
-      // AM-09: link the FULL canonical id, not the bare code — the
+      // Link the FULL canonical id, not the bare code — the
       // code form 404s for anything outside the top-500 listing AND
       // can resolve to the wrong issuer's asset on code collisions
       // (every USDC-alike shares /assets/USDC). The canonical-id

@@ -132,7 +132,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
 }
 
 function Row({ m, assetID }: { m: Market; assetID: string }) {
-  // AM-08: the server expands a catalogue slug ("usdc") into its
+  // The server expands a catalogue slug ("usdc") into its
   // asset_ids, so strict equality against the slug never matched and
   // rows where the asset IS the base rendered "quote · vs itself".
   // Match by expanded-form prefix: the asset's code appears at the

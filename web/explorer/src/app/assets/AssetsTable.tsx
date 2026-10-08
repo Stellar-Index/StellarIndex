@@ -406,7 +406,7 @@ export function AssetsTable({
                     // number. A rank the data cannot back is better
                     // omitted than guessed.
                     //
-                    // Q224: the same reasoning applies within page 1. idx
+                    // The same reasoning applies within page 1. idx
                     // walks rankedAssets, which reflects whatever column
                     // the user has sorted by — not the server's default
                     // (market-cap-ish) order. Numbering a "Volume 24h"
@@ -436,7 +436,7 @@ export function AssetsTable({
       <Pagination
         cursor={cursor}
         nextCursor={data?.next_cursor ?? ''}
-        // AM-18: history.back() walks off-site when a cursor URL is
+        // history.back() walks off-site when a cursor URL is
         // opened directly; keyset cursors can't step backwards, so
         // "previous" honestly means "back to the top".
         onPrev={() => setQuery({ cursor: '' })}

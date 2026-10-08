@@ -72,7 +72,7 @@ export function MarketsTable() {
     void queryClient.invalidateQueries({ queryKey: ['/v1/markets'] });
   }, [streamLatest, queryClient]);
   const [filter, setFilter] = useState('');
-  // AM-05: the volume sort puts pure CEX reference pairs (crypto:*/
+  // The volume sort puts pure CEX reference pairs (crypto:*/
   // fiat:*) first — a visitor asking "what trades on Stellar" got
   // Binance's tape. A pair is on-Stellar when either side is a
   // Stellar-network asset (native, classic CODE-G…/CODE:G…, or a

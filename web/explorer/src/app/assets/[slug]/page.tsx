@@ -431,7 +431,7 @@ async function resolveCoin(
       // asset_id side index so it needs no per-page API call.
       cache.byAssetId.get(slug);
     if (hit) {
-      // AM-04: the cache row is a LISTING row — it lacks the
+      // The cache row is a LISTING row — it lacks the
       // detail-only fields (ath, top_markets, 24h/7d histories,
       // markets/trades counts), so pages built from cache hits baked
       // WITHOUT their differentiating panels while the code read as
@@ -557,7 +557,7 @@ export async function fetchPriceDirect(
   // refuses to aggregate a price for a substanceless on-chain market,
   // and this page must not resurrect one from a lower-trust source.
   //
-  // AGT-06: buildFetchEnvelope (not buildFetchData) so the envelope's real
+  // buildFetchEnvelope (not buildFetchData) so the envelope's real
   // `flags.stale`/`flags.triangulated` reach the page instead of being
   // discarded — the "Stale" badge below was permanently dead without this
   // (the only path that ever set `flags` was the client-synthesized
@@ -616,7 +616,7 @@ export async function fetchPrice(assetId: string): Promise<PriceResp | null> {
     price: triangulated,
     quote: 'fiat:USD',
     age_seconds: Math.max(vsXlm.age_seconds ?? 0, xlmUsd.age_seconds ?? 0),
-    // AGT-06: a triangulated price built from a stale leg is itself
+    // A triangulated price built from a stale leg is itself
     // stale — propagate the real per-leg `flags.stale` rather than only
     // ever reporting `triangulated: true`.
     flags: {
@@ -696,7 +696,7 @@ export async function generateMetadata({
   // treat /assets/XLM and /assets/native as separate pages with
   // duplicate content.
   const canonicalSlug = globalView?.slug ?? coin?.slug ?? slug;
-  // AM-16: fiat currencies have two detail pages (/assets/us-dollar and
+  // Fiat currencies have two detail pages (/assets/us-dollar and
   // /external/assets/us-dollar — split identity, duplicate content).
   // The external page is canonical; point crawlers there.
   const canonical =

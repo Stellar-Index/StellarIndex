@@ -15,7 +15,7 @@ import {
 // the redesign can restyle freely, but must not break these entry points.
 describe('domain primitives — render without throwing', () => {
   it('DirectionPill: shows the value when present, still renders for no-data', () => {
-    // AGT-06: deltaPct is already a percentage-point number (5 = +5%), not
+    // deltaPct is already a percentage-point number (5 = +5%), not
     // a fraction — pin the exact rendered string so this test can only
     // pass under the correct (code-matching) interpretation. A stale
     // fraction-based reading of the same input (0.052 -> "+0.05%") would

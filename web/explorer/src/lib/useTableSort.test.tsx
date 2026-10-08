@@ -3,7 +3,7 @@ import { render, screen, renderHook } from '@testing-library/react';
 
 import { SortableTh, useTableSort } from './useTableSort';
 
-// ACC-01: SortableTh's <th> must carry scope="col" (matching ui/Table.tsx's
+// SortableTh's <th> must carry scope="col" (matching ui/Table.tsx's
 // own <Th>) so screen readers announce the column header for each data
 // cell in the column, not just the clicked one.
 describe('SortableTh', () => {

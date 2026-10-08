@@ -76,7 +76,7 @@ export function Callout({
     bad: 'border-bad-300 bg-bad-50 text-bad-900',
     ok: 'border-ok-300 bg-ok-50 text-ok-700',
   }[tone];
-  // LC-052: announce to assistive tech. bad/warn are errors → assertive
+  // Announce to assistive tech. bad/warn are errors → assertive
   // role=alert (interrupts); ok/info are status → polite. Callouts that
   // render dynamically after a form submit (sign-in, key create/revoke) are
   // now spoken instead of silently appearing.

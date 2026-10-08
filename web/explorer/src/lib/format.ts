@@ -158,13 +158,8 @@ export function formatOraclePrice(p: string): string {
   return formatSubunitPrice(n);
 }
 
-// AGT-06: formatPctChange and formatLedger were removed as dead code —
-// grep confirmed zero callers outside their own tests. formatPctChange in
-// particular was a footgun: it takes a FRACTION (0.0123 → "+1.23%"), but
-// every real percentage field in the app (change_24h_pct, ChangeBadge's
-// `pct`, …) already arrives as a percentage point and is rendered with a
-// plain `.toFixed(2)}%` — reaching for this helper on one of those fields
-// would have silently multiplied the displayed change by 100.
+// Percentage fields (change_24h_pct, ChangeBadge's `pct`, …) already arrive
+// as percentage points: render with `.toFixed(2)}%`, never a fraction→% helper.
 
 // Relative "time ago" label for an ISO timestamp. Returns '—' for a
 // missing/unparseable value and 'now' for a (near-)future one — so a
