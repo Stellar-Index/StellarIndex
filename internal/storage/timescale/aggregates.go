@@ -456,11 +456,9 @@ func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity
 	interval := granularity.closedBucketInterval()
 	// The two stored orientations are a UNION ALL of two single-direction
 	// branches, NOT one `(A AND B) OR (B AND A)` disjunction: the planner
-	// cannot drive prices_*_pair_bucket_idx from an OR of two different
-	// (base, quote) equality pairs, so the bucket-ordered read falls back
-	// to the plain bucket index with the pair test as a post-index filter
-	// — and proving an unknown pair EMPTY then walks every chunk to
-	// exhaustion (10682.994 ms vs 3.610 ms, measured on r1; see
+	// cannot drive prices_*_pair_bucket_idx from an OR of two different (base,
+	// quote) equality pairs, so the bucket-ordered read falls back to the
+	// plain bucket index with the pair test as a post-index filter see
 	// prices_1m_direction_union_test.go). This read is the one anyone can
 	// drive unauthenticated and with no lower time bound at all, via
 	// /v1/history/since-inception.
@@ -1251,19 +1249,16 @@ func scanCombinedVwap1mRows(rows *sql.Rows, p canonical.Pair, limit int, what st
 // holding only the flipped leg it would match nothing, so
 // change_24h_pct would simply vanish from the response.
 //
-// `LIMIT 2` is the row cap for ONE bucket (a bucket holds at most two
-// rows). When the newest qualifying bucket has a single row, the
-// second row belongs to an older bucket; [scanCombinedVwap1mRows]
-// groups by bucket and the limit=1 trim discards it.
-// Shape: a UNION ALL of two single-direction branches, NOT one
-// `(A AND B) OR (B AND A)` disjunction. Each branch is an exact prefix
-// match on prices_1m_pair_bucket_idx (base_asset, quote_asset, bucket
-// DESC), so it walks the index newest-first and stops at its LIMIT. The
-// OR form cannot drive that index — the planner falls back to the plain
-// bucket index with the pair as a post-index filter, and for a pair with
-// NO rows the LIMIT never fills, so it walks every chunk to exhaustion.
-// Measured on r1 with prices_1m at 34 chunks: 10682.994 ms (OR) vs
-// 3.610 ms (UNION ALL) for native/fiat:USD. Guarded by
+// `LIMIT 2` is the row cap for ONE bucket (a bucket holds at most two rows).
+// When the newest qualifying bucket has a single row, the second row belongs
+// to an older bucket; [scanCombinedVwap1mRows] groups by bucket and the
+// limit=1 trim discards it. Shape: a UNION ALL of two single-direction
+// branches, NOT one `(A AND B) OR (B AND A)` disjunction. Each branch is an
+// exact prefix match on prices_1m_pair_bucket_idx (base_asset, quote_asset,
+// bucket DESC), so it walks the index newest-first and stops at its LIMIT. The
+// OR form cannot drive that index — the planner falls back to the plain bucket
+// index with the pair as a post-index filter, and for a pair with NO rows the
+// LIMIT never fills, so it walks every chunk to exhaustion. Guarded by
 // TestBothDirectionReadersUseUnionNotOr.
 const closedVWAP1mAtOrBeforeQuery = `
         SELECT * FROM (
@@ -1527,18 +1522,15 @@ func (s *Store) closedVWAPAtOrBeforeRes(
 func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair) (Vwap1mRow, error) {
 	// Combine BOTH stored directions of the market into the requested
 	// orientation. The SDEX decoder records the same market both ways
-	// (XLM/USDC and USDC/XLM), so reading only (base=$1, quote=$2) used
-	// half the liquidity — and returned ErrNoRows if the latest minute
-	// happened to trade only the flipped way. We read both, and for the
-	// flipped rows invert the vwap (1/vwap) so every row expresses the
-	// price of $1 in $2, then trade-count-weight them within the latest
-	// closed bucket. Closed-bucket-only (ADR-0015) is preserved, and the
-	// combine is deterministic across regions.
-	// Find the latest closed bucket via the (base,quote,bucket DESC)
-	// index — one fast max() per direction, UNIONed — then point-read +
-	// combine just that bucket's 1-2 rows. Scanning the pair's ENTIRE
-	// prices_1m history (back to 2015) before LIMIT 1 measured ~1s warm
-	// and ~9s under load.
+	// (XLM/USDC and USDC/XLM), so reading only (base=$1, quote=$2) used half
+	// the liquidity — and returned ErrNoRows if the latest minute happened to
+	// trade only the flipped way. We read both, and for the flipped rows
+	// invert the vwap (1/vwap) so every row expresses the price of $1 in $2,
+	// then trade-count-weight them within the latest closed bucket.
+	// Closed-bucket-only (ADR-0015) is preserved, and the combine is
+	// deterministic across regions. Find the latest closed bucket via the
+	// (base,quote,bucket DESC) index — one fast max() per direction, UNIONed —
+	// then point-read + combine just that bucket's 1-2 rows.
 	//
 	// PERF (two layers, both required):
 	//
@@ -2146,9 +2138,8 @@ func (s *Store) OHLCSeries(
 	// one (base_asset, quote_asset) value each, so a bucket holds AT MOST
 	// ONE row per direction and max() over that single row is that row.
 	// Doing it inline keeps the whole read in one grouping pass — a
-	// second CTE joined back on bucket costs 1.34x on r1, this costs
-	// 1.005x (29911 -> 30076, 30 days of 1h on the flagship pair,
-	// EXPLAIN plan only).
+	// second CTE joined back on bucket costs 1.34x, this costs
+	// 1.005x (EXPLAIN plan cost).
 	// #nosec G201 — table + interval are derived from the validated
 	// HistoryGranularity enum, not user input. See Validate.
 	q := fmt.Sprintf(`
@@ -2379,10 +2370,9 @@ func (s *Store) OHLCSeriesReBucketed(
 	// base_asset, quote_asset)), so norm concatenates the two directly.
 	// Across source buckets there are as many rows as the out_interval
 	// spans, so that fold is a real N-way union and gets its own grouping
-	// over the unnested arrays, joined back on out_bucket. Cost on r1
-	// (1h -> 4h, 30 days, flagship pair, EXPLAIN plan only):
-	// 31003 -> 38892, 1.25x. Unioning at the pre-fold grain instead —
-	// which forces the row-level CTE to materialise — measured 2.08x.
+	// over the unnested arrays, joined back on out_bucket (1.25x plan cost).
+	// Unioning at the pre-fold grain instead forces the row-level CTE to
+	// materialise (2.08x).
 	// #nosec G201 — table comes from the validated enum;
 	// outInterval comes from the allow-list above. No user input
 	// reaches the SQL string.

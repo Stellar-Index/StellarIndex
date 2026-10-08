@@ -8,7 +8,7 @@ package timescale
 // ─── Yield bespoke analytics (DeFindex) ──────────────────────────────────
 //
 // Built from defindex_flows (migration 0050), which records BOTH layers of
-// every protocol flow — ground-truthed on r1 over all 160,206 rows:
+// every protocol flow.
 //
 //   - VAULT layer (who/when): actor is the end-user (G-strkey, occasionally
 //     a routing C-strkey), contract_id is the vault. The amount lives in
@@ -75,7 +75,7 @@ func defindexWindowKPIQuery() string {
 // defindexAllTimeKPIQuery returns the retained-history totals across both
 // layers plus the first-observation date. Deliberately NOT window-bounded;
 // defindex_flows carries no retention, but history begins at the source's
-// first ingested event (2025-05-13 on r1), not vault genesis.
+// first ingested event, not vault genesis.
 func defindexAllTimeKPIQuery() string {
 	return `
 		SELECT count(*)::text,

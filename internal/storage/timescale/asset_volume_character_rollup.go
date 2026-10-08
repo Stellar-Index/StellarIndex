@@ -12,18 +12,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Volume-character rollup worker store methods (wash-and-scam-signals
-// design §2). RefreshAssetVolumeCharacter runs the ALL-ASSET single-pass
-// generalization of assetVolumeCharacterSQL over the `trades` hypertable
-// and upserts one row per canonical asset into asset_volume_character
-// (migration 0149); AssetVolumeCharacterRollup is the keyed-on-PK read the
-// /v1/assets{,/{id}} paths use instead of the per-request 14-day trades
-// roll (measured 4.09s on the USDC detail — the scan this moves off the
-// request path). The rollup only MOVES the compute: every signal value it
-// stores is byte-for-byte what the per-asset [Store.AssetVolumeCharacter]
-// returns for the same asset, because both derive from the SAME raw
-// double-precision sums through the SAME Go path
-// ([volumeCharacterFromSums]).
+// Volume-character rollup worker store methods (wash-and-scam-signals design
+// §2). RefreshAssetVolumeCharacter runs the ALL-ASSET single-pass
+// generalization of assetVolumeCharacterSQL over the `trades` hypertable and
+// upserts one row per canonical asset into asset_volume_character (migration
+// 0149); AssetVolumeCharacterRollup is the keyed-on-PK read the
+// /v1/assets{,/{id}} paths use instead of the per-request 14-day trades roll.
+// The rollup only MOVES the compute: every signal value it stores is
+// byte-for-byte what the per-asset [Store.AssetVolumeCharacter] returns for
+// the same asset, because both derive from the SAME raw double-precision sums
+// through the SAME Go path ([volumeCharacterFromSums]).
 
 // assetVolumeCharacterRollupSQLTemplate is the all-asset generalization of
 // assetVolumeCharacterSQL. Where the per-asset query takes an alias array

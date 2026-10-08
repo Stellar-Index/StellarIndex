@@ -126,16 +126,15 @@ func (s *Store) LedgerRangeToOracleTimeRange(ctx context.Context, fromLedger, to
 // ([CAGGsLiveForever]) and the usd_volume restamp follow-up derive
 // from; two hand-copied lists had drifted to seven and twelve entries.
 //
-// Membership and order come from `_timescaledb_catalog.continuous_agg`
-// (r1): exactly these twelve have `trades` as their root
-// hypertable (oracle_prices_* hang off oracle_updates, supply_1d off
-// asset_supply_history). Ten read `trades` directly and are mutually
-// independent; twap_1h / twap_1d are HIERARCHICAL — built on
-// prices_1m's materialisation — so prices_1m leads and the twaps
-// trail, or they re-materialise from stale input. The other prices_*
-// rungs are NOT built on prices_1m (each reads `trades` itself) and do
-// not inherit its refresh. TestTradesCAGGsMatchCatalog holds the list
-// against the migrated schema.
+// Membership and order come from `_timescaledb_catalog.continuous_agg`:
+// exactly these twelve have `trades` as their root hypertable (oracle_prices_*
+// hang off oracle_updates, supply_1d off asset_supply_history). Ten read
+// `trades` directly and are mutually independent; twap_1h / twap_1d are
+// HIERARCHICAL — built on prices_1m's materialisation — so prices_1m leads and
+// the twaps trail, or they re-materialise from stale input. The other prices_*
+// rungs are NOT built on prices_1m (each reads `trades` itself) and do not
+// inherit its refresh. TestTradesCAGGsMatchCatalog holds the list against the
+// migrated schema.
 //
 // Per-entry MinWindow is the Timescale-imposed minimum refresh
 // window: refresh_continuous_aggregate rejects (`SQLSTATE 22023:
@@ -264,19 +263,16 @@ func IsRefreshableCAGG(viewName string) bool { return allowedCAGGViews[viewName]
 // defined over; same order as [TradesCAGGs].
 //
 // COST of the two fine rungs, from the MinWindow constants in [TradesCAGGs]
-// rather than an estimate. All seven read `trades`, so each rung is
-// one more pass over the chunk's rows: seven passes instead of five.
-// On scanned ts range the fine rungs are the CHEAP ones — they pad to
-// 2 and 30 minutes, while the coarse set pads to 3h + 12h + 3d + 21d
-// + 93d ≈ 117 days no matter how short the chunk is, so adding both
-// widens the range this function touches by 0.3% for a 4-hour chunk,
-// ~10% for a week and ~28% for a 30-day chunk. What they do cost is
-// rows written: one minute bucket per (pair-direction, minute) that
-// traded, bounded above by the chunk's own trade count, against
-// ≤ 937 buckets per pair for the five coarse rungs over 30 days.
-// Measured on r1: prices_1m accrues ≈392k rows/day, so a
-// 30-day range materialises order-of-10M minute buckets. Those rows
-// are exactly what the surfaces listed above read.
+// rather than an estimate. All seven read `trades`, so each rung is one more
+// pass over the chunk's rows: seven passes instead of five. On scanned ts
+// range the fine rungs are the CHEAP ones — they pad to 2 and 30 minutes,
+// while the coarse set pads to 3h + 12h + 3d + 21d + 93d ≈ 117 days no matter
+// how short the chunk is, so adding both widens the range this function
+// touches by 0.3% for a 4-hour chunk, ~10% for a week and ~28% for a 30-day
+// chunk. What they do cost is rows written: one minute bucket per
+// (pair-direction, minute) that traded, bounded above by the chunk's own trade
+// count, against ≤ 937 buckets per pair for the five coarse rungs over 30
+// days. Those rows are exactly what the surfaces listed above read.
 //
 // CAGGSpec names a continuous aggregate and its minimum refresh window.
 type CAGGSpec struct {
@@ -505,14 +501,13 @@ type CAGGCoverage struct {
 // index. Empty when the CAGG has not yet been materialised at all
 // (cold-start before any aggregator tick).
 func (s *Store) CAGGCoverageStats(ctx context.Context) (CAGGCoverage, error) {
-	// MIN/MAX use the bucket index (~100ms on r1). The exact COUNT(*)
-	// over prices_1h was a full scan that grew to ~36s as the CAGG accrued
-	// ~175M rows (1h OHLC back to 2015) — and /v1/diagnostics/ingestion
-	// polls this every ~15s, so it hammered Postgres and tripped
-	// parallel-worker churn (the recurring "terminating parallel worker"
-	// log flood). BucketCount is a coverage stat, so TimescaleDB's
-	// chunk-metadata approximate_row_count (≈0.03% error on r1, instant)
-	// is more than precise enough and removes the scan.
+	// MIN/MAX use the bucket index. The exact COUNT(*) over prices_1h was a
+	// full scan that grew to ~36s as the CAGG accrued ~175M rows (1h OHLC back
+	// to 2015) — and /v1/diagnostics/ingestion polls this every ~15s, so it
+	// hammered Postgres and tripped parallel-worker churn (the recurring
+	// "terminating parallel worker" log flood). BucketCount is a coverage
+	// stat, so TimescaleDB's chunk-metadata approximate_row_count is more than
+	// precise enough and removes the scan.
 	const minMaxQ = `SELECT MIN(bucket), MAX(bucket) FROM prices_1h`
 	const countQ = `SELECT approximate_row_count('prices_1h')`
 	var (

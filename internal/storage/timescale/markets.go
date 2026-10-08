@@ -80,9 +80,8 @@ type Pool struct {
 // not "every pair ever observed". The window is exposed as a var so
 // tests can override it without changing the public function signature.
 //
-// At the 14-day default on r1 (441M trades, no concurrent backfill):
-// ~540 ms cold, ~50 ms warm. A concurrent backfill evicts the recent
-// chunks from the buffer cache and pushes the cold call to ~7 s.
+// A concurrent backfill evicts the recent chunks from the buffer cache and
+// pushes the cold call to ~7 s.
 //
 // 30-day: ~9 s with JIT, ~3 s without — too slow for a hot path.
 // 90-day: ~16-19 s — exceeded the 30s client deadline.
@@ -948,16 +947,12 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	//   - 24h trade_count + volume_usd          ← prices_1m
 	//     RESTRICTED to the trailing 24h. Exact + fresh. A rolling
 	//     (non-hour-aligned) 24h window is NOT bucket-additive over
-	//     a coarser CAGG: measured on r1, prices_1h understated the
+	//     a coarser CAGG: prices_1h understated the
 	//     all-pairs 24h volume ~9% vs prices_1m ($3.60B vs $3.97B —
 	//     boundary mismatch + prices_1h refresh-lag near the tip).
-	//     The perf problem fixed in cc4ed08ae was ONLY the 14d ×
-	//     ~52k-pair enumeration (now on prices_1d); a 24h prices_1m sum is
-	//     chunk-pruned to the last day's chunks → ~160ms all-pairs
-	//     on r1 — fast AND exact, so the user-facing 24h figure
-	//     stays prices_1m-accurate. (Corrects an earlier prices_1h
-	//     variant that shipped a ~9% headline-volume understatement
-	//     under a false "Σ-associative → identical" claim.)
+	//     Only the 14d × ~52k-pair enumeration needs prices_1d; a 24h
+	//     prices_1m sum is chunk-pruned to the last day's chunks — fast AND
+	//     exact, so the user-facing 24h figure stays prices_1m-accurate.
 	// bucket_close_at rounds to the day — immaterial for a directory;
 	// the exact ts/price is on the detail endpoints. It is the LATER
 	// of prices_1d's newest materialized bucket and the day of the
@@ -1122,9 +1117,8 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 //     meant crypto:BTC/crypto:USDT materialised 17.2 MILLION rows to
 //     return a timestamp and a count.
 //
-// Measured on r1 on an idle box, trades at 140 GB. Two
-// runs per form, so the first column is a cold buffer pool and the
-// second a warm one:
+// Two runs per form, so the first column is a cold buffer pool and the second
+// a warm one:
 //
 //	pair                        OLD                NEW
 //	crypto:BTC/crypto:USDT   95727.9 / 4324.3   120.3 / 107.0 ms
@@ -1135,13 +1129,12 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 // The 95.7-second cold read is past the API's 8-second handler
 // ceiling: that request could not complete at all.
 //
-// Verified set-identical against the old form over 40 sampled live
-// pairs — same last_trade_at, count_24h, vol_24h_usd and last_price.
-// The one deliberate difference is the `, base_asset` tiebreaker on the
-// last_price sort: `bucket DESC` alone is not a total order once a
-// bucket holds both orientations (native/USDC has 1,270 such buckets in
-// a day on r1), so which leg won was planner-defined. Same reasoning and
-// same tiebreaker as [closedVWAP1mAtOrBeforeQuery]. Guarded by
+// Verified set-identical against the old form over 40 sampled live pairs —
+// same last_trade_at, count_24h, vol_24h_usd and last_price. The one
+// deliberate difference is the `, base_asset` tiebreaker on the last_price
+// sort: `bucket DESC` alone is not a total order once a bucket holds both
+// orientations, so which leg won was planner-defined. Same reasoning and same
+// tiebreaker as [closedVWAP1mAtOrBeforeQuery]. Guarded by
 // TestPairMarketQueryShape.
 const pairMarketQuery = `
         WITH last_trade AS (

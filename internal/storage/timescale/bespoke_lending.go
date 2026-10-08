@@ -11,12 +11,9 @@ package timescale
 // backstop activity. blend_positions amounts are unsigned magnitudes — the
 // sign is the event_kind, not the value — so net positions are signed sums of
 // the gross magnitudes, and they are only ever summed WITHIN one asset
-// (cross-asset sums mix per-token decimals — see the count-first block
-// comment below; that is why there is no cross-asset "Net
-// supplied/borrowed" headline KPI and no per-pool Util%).
-// Confirmed on r1: event_kind ∈ {supply, withdraw, supply_collateral,
-// withdraw_collateral, borrow, repay, flash_loan}; token_amount +
-// b_or_d_amount are both ≥ 0.
+// (cross-asset sums mix per-token decimals — see the count-first block comment
+// below; that is why there is no cross-asset "Net supplied/borrowed" headline
+// KPI and no per-pool Util%).
 import (
 	"context"
 	"fmt"
@@ -74,14 +71,11 @@ func (s *Store) bespokeLending(ctx context.Context, source string, windowDays in
 // ─── Blend visual-suite extensions ──────────────────────────────────────
 //
 // Everything below is COUNT-first on purpose: blend_positions /
-// blend_backstop_events rows mix many tokens at per-asset decimals, and no
-// USD valuation exists for them at this layer — summing different tokens'
-// raw amounts across rows would be a meaningless (and dishonest) number.
-// Amounts appear only where a single row's single asset is shown (the
-// flash-loan table) or where an existing surface already scopes a sum
-// per-asset. Ground-truthed on r1: blend_positions 973,390 rows
-// (2024-05-02 →), 15 pools; blend_backstop_events 93,243 rows;
-// blend_auctions 9,908 rows.
+// blend_backstop_events rows mix many tokens at per-asset decimals, and no USD
+// valuation exists for them at this layer — summing different tokens' raw
+// amounts across rows would be a meaningless (and dishonest) number. Amounts
+// appear only where a single row's single asset is shown (the flash-loan
+// table) or where an existing surface already scopes a sum per-asset.
 //
 // Series names are window-stable (no "(Nd)" suffix, no "Daily" prefix):
 // the grain — hourly at the 24h window, daily otherwise, via
@@ -362,13 +356,12 @@ func (s *Store) collectLendingBreakdown(ctx context.Context, base BespokeBreakdo
 }
 
 // lendingFlashLoanTable fills the recent-flash-loans table — the showcase
-// event class the auction table doesn't cover (r1: 806 flash loans in the
-// trailing 30d). Rows are RECENCY-ordered, never amount-ordered: ranking
-// mixed-asset raw amounts against each other would compare numbers at
-// different per-asset decimal scales. Each row shows its own single
-// asset's raw amount honestly; Tx carries the full hash like the bridge
-// largest-transfers table. Empty-safe: omitted when no flash loan landed
-// in the window.
+// event class the auction table doesn't cover. Rows are RECENCY-ordered, never
+// amount-ordered: ranking mixed-asset raw amounts against each other would
+// compare numbers at different per-asset decimal scales. Each row shows its
+// own single asset's raw amount honestly; Tx carries the full hash like the
+// bridge largest-transfers table. Empty-safe: omitted when no flash loan
+// landed in the window.
 func (s *Store) lendingFlashLoanTable(ctx context.Context, blk *BespokeBlock, since string) error {
 	tbl, err := s.scanTable(ctx,
 		BespokeTable{Title: "Recent flash loans", Columns: []string{"When", "Pool", "Asset", "Amount (raw token units)", "Borrower", "Tx"}},
@@ -425,10 +418,9 @@ func truncLendingID(id string) string {
 // from this data (migration 0090 header + internal/sources/sorocredit).
 //
 // Empty-safe: returns nil (not an error) when no credit_* row exists in the
-// window, so /v1/protocols/sorocredit degrades to its generic analytics —
-// r1's credit_* tables are empty until the sorocredit projector-replay runs
-// post-deploy. Amounts are USDC / token base units (per-asset decimals),
-// never USD (sorocredit has no published price).
+// window, so /v1/protocols/sorocredit degrades to its generic analytics.
+// Amounts are USDC / token base units (per-asset decimals), never USD
+// (sorocredit has no published price).
 //
 // creditAmountUnitsNote and creditSettlementVolumeHint document the USDC
 // scale served in the block: sorocredit's USDC leg is the classic Stellar
@@ -564,10 +556,9 @@ func creditPositionsOpenedSeriesQuery(windowDays int) string {
 // creditAllTimePositionsKPIQuery is the unwindowed lifetime scale of the
 // sorocredit position book: positions ever opened + distinct owners.
 // credit_positions is the only credit_* table with a real owner column
-// (credit_events carries no owner — see the migration 0090 shapes), so
-// the all-time unique-users figure is honestly scoped to position opens.
-// Deliberately NOT window-bounded (measured on r1: 105,896 rows — a
-// trivially cheap aggregate under the window-keyed detail cache).
+// (credit_events carries no owner — see the migration 0090 shapes), so the
+// all-time unique-users figure is honestly scoped to position opens.
+// Deliberately NOT window-bounded.
 func creditAllTimePositionsKPIQuery() string {
 	return `
 		SELECT count(*)::text, count(DISTINCT owner)::text
@@ -600,7 +591,6 @@ func (s *Store) creditPositionExtras(ctx context.Context, blk *BespokeBlock, win
 
 // bespokeYield builds the DeFindex vault bespoke block from defindex_flows:
 // windowed gross deposit / withdraw flow volume (by direction), per-vault net
-// flow (deposit − withdraw, an AUM proxy), and unique actors. Confirmed on r1:
-// direction ∈ {deposit, withdraw}; layer ∈ {strategy, vault}. The series and
+// flow (deposit − withdraw, an AUM proxy), and unique actors. The series and
 // per-vault net scope to the vault layer to avoid double-counting a deposit
 // that fans out into strategies.

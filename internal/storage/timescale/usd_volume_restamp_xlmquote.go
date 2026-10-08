@@ -17,7 +17,7 @@ import (
 //
 //	usd_volume = quote_amount / 1e7 x XLM/USD at ts
 //
-// Measured population on r1: ~18.0M rows.
+// Population: ~18.0M rows.
 //
 // # Why the orientation alone makes a different tier
 //

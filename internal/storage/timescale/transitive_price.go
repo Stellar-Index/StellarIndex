@@ -21,12 +21,11 @@ import (
 // structurally classic-only (`issuer_g_strkey NOT NULL`), so no
 // Soroban-native contract asset can reach them at all.
 //
-// Measured on r1: `CAUP7NFA…` traded $71.8k over 6,418 trades
-// in 7 days and served no price, because its ONLY counterparty is
-// `CBIJ…`, which is itself a Soroban-native contract. Both legs are
-// substantial — CAUP7/CBIJ is $18,872 over 1,216 buckets spanning 24h,
-// and CBIJ/XLM is $18,908 over 27 buckets spanning 19.1h — so the price
-// is derivable; nothing was deriving it.
+// Example: `CAUP7NFA…` traded $71.8k over 6,418 trades in 7 days and served
+// no price, because its ONLY counterparty is `CBIJ…`, which is itself a
+// Soroban-native contract. Both legs are substantial — CAUP7/CBIJ is $18,872
+// over 1,216 buckets spanning 24h, and CBIJ/XLM is $18,908 over 27 buckets
+// spanning 19.1h — so the price is derivable; nothing was deriving it.
 //
 // SAFETY. This deliberately returns the hop rather than just a number.
 // A transitive price is only as trustworthy as its weakest leg, so the

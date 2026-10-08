@@ -99,15 +99,15 @@ func (s *Store) BuildProtocolBespoke(ctx context.Context, source, category strin
 // bespokeBridge builds the bridge bespoke block: DIRECTIONAL (in/out)
 // USDC-denominated flow volumes, daily series, and per-domain tables.
 //
-// Amount scales are per-bridge and DIFFERENT — both ground-truthed
+// Amount scales are per-bridge and DIFFERENT — both checked
 // against the USDC SAC leg of a real tx (the external-scaling trap
 // class, AGENTS.md):
 //   - cctp_events.amount is CANONICAL 6-decimal USDC (event 172,719,938 vs
 //     SAC mint 1,727,199,380 — exactly 10× — matching the on-chain
 //     token_decimal_config {canonical:6, local:7} fixture) — EXCEPT
 //     mint_and_forward, which restates its op's mint_and_withdraw amount at
-//     the LOCAL 7-decimal scale (exactly 10× on all 13,651 pairs measured
-//     on r1) and is therefore excluded from flow sums entirely
+//     the LOCAL 7-decimal scale (exactly 10× on all 13,651 pairs measured)
+//     and is therefore excluded from flow sums entirely
 //     (see protocol_bespoke_cctp.go);
 //   - rozo_events.amount is LOCAL 7-decimal SAC stroops (event and SAC
 //     transfer byte-identical: 2,500,000).
@@ -126,12 +126,12 @@ func (s *Store) bespokeBridge(ctx context.Context, source string, windowDays int
 }
 
 // bridgeSeriesGrain returns the date_trunc grain + to_char timestamp format
-// for the bridge flow series. windowDays == 1 buckets by HOUR — a daily
-// bucket would collapse the 24h window into a single point, useless for a
-// chart — with the hour spelled out ("2026-07-29T14:00") so a consumer can
-// tell the grain apart from the date-only daily shape. Longer windows stay
-// daily. (In to_char patterns double-quoted text is emitted literally, so
-// "T" renders as the ISO 'T' separator.)
+// for the bridge flow series. windowDays == 1 buckets by HOUR — a daily bucket
+// would collapse the 24h window into a single point, useless for a chart —
+// with the hour spelled out so a consumer can tell the grain apart from the
+// date-only daily shape. Longer windows stay daily. (In to_char patterns
+// double-quoted text is emitted literally, so "T" renders as the ISO 'T'
+// separator.)
 func bridgeSeriesGrain(windowDays int) (trunc, format string) {
 	if windowDays == 1 {
 		return "hour", `YYYY-MM-DD"T"HH24:00`

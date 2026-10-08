@@ -16,10 +16,9 @@ import (
 // day's groups against it and reports violations. This file is the WRITE
 // side — the corrective path for rows that fail it.
 //
-// The population it exists for: trades stamped BEFORE the peg identity was
-// the insert path (66 dirty days when measured, every violation `[base_pegged] sdex` USDC-base rows valued by the
-// resolver's VWAP instead of the $1 peg; ~+0.7% drift on dust groups). This
-// is the corrective UPDATE as a tool, with this discipline baked in:
+// The population it exists for: trades stamped BEFORE the insert path enforced the
+// peg identity. This is the corrective UPDATE as a tool, with this discipline
+// baked in:
 //
 //   - the tier and the scale come from [ClassifyUSDVolumeTier] — the
 //     SAME classifier the verifier uses, which is itself lock-stepped to
