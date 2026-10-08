@@ -25,27 +25,12 @@ import (
 // Metadata.AmountScaleDecimals() — the USD-volume paths below consult it
 // instead of a hard-coded 8, which mis-valued FX trades 100×.
 
-// USDVolumeFXResolver returns the asset's USD price as of `at` as
-// a decimal string ("0.07127", "1.00", …) for use by
-// [tradeUSDVolume]'s Phase 2 fallback path.
-//
-// Returns ("", false, nil) when no USD anchor is available for
-// the asset (the resolver has no rate, the rate is too stale, the
-// asset isn't on the operator's covered set). Real I/O errors
-// propagate so the caller can surface them in metrics; the trade
-// still inserts, just with `usd_volume` left NULL.
-//
-// Production wiring:
-// [VWAPUSDFXResolver] queries `prices_1m` for `<asset>/<peg>`
-// per configured peg, caches per-(asset, 1-minute bucket), and
-// expires entries past a freshness ceiling. Wired in
-// `cmd/stellarindex-indexer/main.go` whenever the operator's
-// `[trades].usd_pegged_classic_assets` list is non-empty.
-//
-// Concurrency: the resolver is invoked from the trade-insert
-// hot path, possibly across many goroutines for high-fanout
-// indexers. Implementations MUST be safe for concurrent
-// USDPriceAt calls.
+// USDVolumeFXResolver returns the asset's USD price as of `at` as a decimal
+// string for [tradeUSDVolume]'s FX tiers. ("", false, nil) means no usable
+// anchor; real I/O errors propagate and the trade still inserts with NULL
+// usd_volume. Production: [VWAPUSDFXResolver] over `prices_1m`, wired when
+// `[trades].usd_pegged_classic_assets` is non-empty. Implementations MUST be
+// safe for concurrent USDPriceAt calls: it runs on the trade-insert hot path.
 type USDVolumeFXResolver interface {
 	USDPriceAt(ctx context.Context, asset canonical.Asset, at time.Time) (string, bool, error)
 }
@@ -122,39 +107,13 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 	if fxResolver == nil {
 		return nil, nil
 	}
-	// When the BASE leg is XLM, value the trade off that leg BEFORE
-	// asking the resolver to price the quote.
-	//
-	// Tier 3's quote price for an on-chain token is usually not a direct
-	// market — it is tier 3b's bridge, `token/XLM x XLM/USD`, read out of
-	// prices_1m. But prices_1m is a continuous aggregate over `trades`,
-	// so for a token with no honest market the bridge rate is whatever
-	// the last trader wrote, and the loop closes: an attacker self-deals
-	// one trade to set token/XLM, and every later trade against that
-	// token is valued by multiplying through it.
-	//
-	// Example, one sdex row: base 5 XLM (the only real
-	// value in the trade) traded for 49,999,980 units of a classic asset
-	// whose code impersonates XLM. Tier 3b read that issuer's own 1:1
-	// self-trade as the rate and stored
-	//   49,999,980 x 0.17118456496402309304 = $8,559,224.82
-	// for a trade worth $0.86 — and the same path understated a 10-XLM
-	// trade on the same pair as $0.00000175 (~977,000x low) 2.4h later,
-	// once the rate bucket moved. Fleet-wide over 24h: sum(usd_volume)
-	// $21,958,433 against sum(XLM leg) $596,699, with 225 rows over 10x.
-	//
-	// Note the identity key is NOT the defect — queryXLMLeg binds
-	// asset.String() and QuoteUSDPegInfo keys on code+"-"+issuer, so
-	// nothing here matches on code alone. The defect is trusting a
-	// price the counterparty authored.
-	//
-	// XLM is the one asset immune to that: it IS the bridge's anchor, so
-	// its rate is a direct XLM/USD market rather than a bridged one. When
-	// it is sitting in the row, it is both the more trustworthy leg and
-	// the one whose value we can state exactly. Restricted to XLM
-	// deliberately — a non-XLM base would resolve through the same
-	// poisonable bridge, and usdVolumeViaXLMBaseAnchor is
-	// SubclassDEX-only, so CEX pricing is untouched.
+	// With XLM as the BASE leg, value the trade off that leg BEFORE pricing the
+	// quote. Tier 3's quote rate for an on-chain token is usually the tier-3b
+	// `token/XLM x XLM/USD` bridge read from prices_1m, which the counterparty can
+	// author: one self-trade set a rate that stored $8,559,224.82 for a trade
+	// worth $0.86 (fleet-wide 24h: $21,958,433 usd_volume against $596,699 of XLM
+	// legs). XLM is the bridge's anchor, so its rate is a direct market nobody can
+	// author. XLM only: a non-XLM base resolves through the same poisonable bridge.
 	if isXLMAsset(t.Pair.Base) {
 		if v, err := usdVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver); err != nil || v != nil {
 			return v, err
@@ -176,29 +135,15 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 }
 
 // tradeUSDVolumeViaUSDBase is tier 2b: value the trade off a USD-pegged BASE
-// leg. A waterfall inspecting only the quote asset so a `USDC/TOKEN`-oriented
-// market — where the dollar leg is the base — fell through every tier even
-// though its USD value was sitting right there in base_amount.
+// leg, so `USDC/TOKEN`-oriented markets are priced.
 //
 //	usd_volume = base_amount / 10^decimals
 //
-// This is EXACT, not an estimate: the trade moved that many pegged
-// dollars, so it is the same "trust the declared peg" assumption tiers
-// 1/2 already make on the quote side — which is why it sits with them,
-// ahead of the FX tiers.
-//
-// It also supersedes a quote-side FX estimate where both could fire
-// (e.g. USDC/XLM, otherwise valued as quote_amount x XLM/USD).
-// That is deliberate and a correctness win: measured across 111,617
-// such trades in one day the two routes agreed to 0.69% on average
-// but diverged by up to 134.92%, and the divergence is the VWAP
-// route's error — thin-market and dust-contaminated buckets — not the
-// dollar amount's. A re-derive corrects those rows in place via the
-// migration-0109 derive_generation path.
-//
-// Deliberately does NOT re-check the quote leg: the caller only
-// reaches here after [usdVolumeDecimals] declined the quote, so a
-// both-legs-pegged trade has already been valued quote-side.
+// EXACT, the same "trust the declared peg" assumption as tiers 1/2, so it
+// wins over a quote-side FX estimate: across 111,617 USDC/XLM-style trades in
+// one day the two agreed to 0.69% on average but diverged by up to 134.92%,
+// and the error was the VWAP route's. It does not re-check the quote leg:
+// [usdVolumeDecimals] already declined it.
 func tradeUSDVolumeViaUSDBase(t canonical.Trade, md external.Metadata, quoteSpec *USDVolumeQuoteSpec) *string {
 	decimals, ok := usdVolumeDecimals(t.Pair.Base, md, quoteSpec)
 	if !ok {
@@ -212,16 +157,10 @@ func tradeUSDVolumeViaUSDBase(t canonical.Trade, md external.Metadata, quoteSpec
 	return &rendered
 }
 
-// tradeUSDVolumeViaFX is the L2.2 Phase 2 multiplication path.
-// Picks the right scale per source (off-chain: the source's registered
-// AmountScaleDecimals — 8 for CEX, 6 for the FX pollers; DEX = 7),
-// asks the resolver for the quote asset's USD price at the trade
-// time, and renders quote_amount × usdRate / 10^decimals as a
-// fixed-precision NUMERIC string.
-//
-// Errors in the resolver are silent here — the function returns
-// nil. The write path uses [usdVolumeViaFX] and decides per derive
-// generation whether to fail or store NULL.
+// tradeUSDVolumeViaFX is the FX multiplication tier: quote_amount × usdRate /
+// 10^decimals, with the per-source scale (CEX 8, FX pollers 6, DEX 7).
+// Resolver errors return nil here; the write path uses [usdVolumeViaFX] and
+// decides per derive generation whether to fail or store NULL.
 func tradeUSDVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Metadata, r USDVolumeFXResolver) *string {
 	v, _ := usdVolumeViaFX(ctx, t, md, r)
 	return v
@@ -270,40 +209,18 @@ func usdVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Metadata
 	return &rendered, nil
 }
 
-// boundUSDVolume is the one bound every ESTIMATED on-chain tier shares.
-// `candidate` is a USD value resting on a resolver rate
-// for one leg of a DEX trade; `other` / `otherAmount` name the leg it
-// does NOT rest on. Returns the value to store, or nil to refuse the
-// print (usd_volume left NULL).
+// boundUSDVolume is the bound every ESTIMATED on-chain tier shares; it
+// returns the value to store or nil (usd_volume NULL). `candidate` rests on a
+// resolver rate for one leg; `other`/`otherAmount` name the other leg.
 //
-// LEG CROSS-CHECK: a resolver
-// rate for an on-chain token is usually tier 3b's <token>/XLM x XLM/USD
-// bridge, and the token leg of that bridge is WRITABLE by anyone willing
-// to pay bridgeLegMinUSDVolume — an attacker planted INDUSX/XLM at 3,395
-// XLM and two dust trades stamped $182M of fake usd_volume (real value
-// <$0.01; ledgers 63890020/63890022). A volume floor cannot stop that
-// (the floor is just the plant's price), but DOUBLE-planting is: value
-// the OTHER leg through the same resolver, and when the two legs
-// disagree by more than usdLegAgreementFactor, store the SMALLER — an
-// attacker must now pump BOTH legs' markets with real value to inflate a
-// print.
-//
-// SINGLE-LEG CEILING: when the other leg is
-// UNRESOLVABLE the cross-check cannot fire and the whole value rests on
-// one leg an attacker can author for the cost of bridgeLegMinUSDVolume.
-// USDPriceAt exposes only (rate, ok, err) — it cannot tell a poisoned
-// bridge from an honest direct market — and legs are legitimately
-// unresolvable on most DEX pairs, so the single-leg class is NOT
-// blanket-NULLed. It is BOUNDED: an uncross-checkable single-leg DEX
-// print above singleLegMaxUSDVolume is implausible for any real Stellar
-// swap, so it is refused rather than served and propagated to
-// /v1/markets volume and the confidence LiquidityUSD factor.
-//
-// Both guards lived inline in [tradeUSDVolumeViaFX] until the base
-// anchor was found consuming the identical rate with neither. They are
-// one function so that a tier cannot acquire the rate without the bound.
-// Callers must NOT route an XLM-anchored value through here — see
-// [usdVolumeViaXLMBaseAnchor].
+// LEG CROSS-CHECK: the tier-3b bridge's token leg is writable for
+// bridgeLegMinUSDVolume (a planted INDUSX/XLM rate stamped $182M of fake
+// usd_volume, real value <$0.01). Valuing the other leg too and storing the
+// SMALLER past usdLegAgreementFactor forces an attacker to pump both markets.
+// SINGLE-LEG CEILING: with the other leg unresolvable the cross-check cannot
+// fire, so a print above singleLegMaxUSDVolume is refused rather than served.
+// One function so no tier can take the rate without the bound; never route an
+// XLM-anchored value here (see [usdVolumeViaXLMBaseAnchor]).
 func boundUSDVolume(ctx context.Context, r USDVolumeFXResolver, candidate *big.Rat, other canonical.Asset, otherAmount canonical.Amount, decimals int, at time.Time) (*big.Rat, error) {
 	otherVal, err := fxLegValue(ctx, r, other, otherAmount, decimals, at)
 	if err != nil {
@@ -336,16 +253,9 @@ func boundUSDVolume(ctx context.Context, r USDVolumeFXResolver, candidate *big.R
 var usdLegAgreementFactor = big.NewRat(10, 1)
 
 // singleLegMaxUSDVolume bounds a DEX trade whose usd_volume rests on ONE
-// resolvable leg. When the BASE leg is unresolvable the [fxLegValue]
-// double-plant cross-check above cannot corroborate the quote leg, and the
-// quote leg for an on-chain token is usually the poisonable tier-3b
-// <token>/XLM bridge (see [tradeUSDVolumeViaFX]). No real single Stellar DEX
-// swap approaches nine figures — fleet-wide 24h on-chain volume is far below
-// this — so a single-leg print above the ceiling is refused (usd_volume left
-// NULL) rather than served. Deliberately set high so the large legitimate
-// class of unresolvable-base DEX trades keeps its honest value: the ceiling
-// only removes the implausible, uncross-checkable tail an attacker can drive
-// arbitrarily high through a self-authored bridge rate.
+// resolvable, possibly self-authored leg. No real Stellar swap approaches nine
+// figures, so the ceiling removes only the implausible tail an attacker can
+// drive through a bridge rate and leaves honest unresolvable-base trades alone.
 var singleLegMaxUSDVolume = new(big.Rat).SetInt64(100_000_000)
 
 // fxLegValue values one leg of a trade through the resolver: amount /
@@ -372,48 +282,18 @@ func fxLegValue(ctx context.Context, r USDVolumeFXResolver, asset canonical.Asse
 	return v.Mul(v, rate), nil
 }
 
-// usdVolumeViaXLMBaseAnchor is the write-time counterpart of
-// [Store.SorobanVolume24hUSDForAsset]'s query-time
-// `base_asset IN ('native', SAC)` CASE. It fires only when
-// [tradeUSDVolumeViaFX] declined the quote asset — i.e. the trade's
-// quote is a pure-Soroban SEP-41 token with no direct USD-pegged
-// market (or no market against XLM either) — AND the trade's BASE
-// asset passes [baseAnchorEligible].
-//
-// A pool that quotes a pure SEP-41 token in XLM (its primary
-// liquidity route) can store the trade either way round depending
-// on the pool's own token ordering — see [tradeUSDVolume]'s tier 3
-// vs tier 4 split. When the quote leg carries no resolvable USD
-// price but the BASE leg is XLM, this values the trade off the XLM
-// leg instead: base_amount is already XLM stroops at the Stellar
-// classic 10^7 scale regardless of the quote token's own decimals
-// (which we may not even know), so
+// usdVolumeViaXLMBaseAnchor values a trade off its BASE leg when
+// [tradeUSDVolumeViaFX] declined the quote and the base passes
+// [baseAnchorEligible]. For an XLM base, base_amount is stroops regardless of
+// the quote token's decimals:
 //
 //	usd_volume = (base_amount / 1e7) × XLM/USD
 //
-// mirrors exactly the NUMERIC identity [sorobanVolume24hUSDQuery]
-// applies query-time via `(volume / 1e7::numeric) * xlm_usd`. Once
-// this lands at insert time, new pure-SEP41/XLM trades carry a
-// non-NULL `usd_volume` in the `trades` row itself, so every
-// consumer that sums `usd_volume`/`volume_usd` from `trades` or the
-// `prices_*` CAGGs (chart buckets, `/v1/markets`, source stats,
-// routed-via, protocol KPIs, …) picks it up automatically — not
-// just the one asset-detail field the query-time fallback covers.
-// `SorobanVolume24hUSDForAsset`'s `volume_usd > 0` discriminator
-// means a tier-4 hit here is picked up there too, with no
-// double-count.
-//
-// Any on-chain base leg is eligible, not just XLM: the resolver bridges
-// arbitrary tokens through XLM (tier 3b), so a TOKEN_A/TOKEN_B trade
-// whose QUOTE leg cannot be priced can still be valued off its BASE
-// leg. That matters because the largest remaining unpriced class is
-// exactly token/token — for a 6T/F8 trade where F8 has no usable
-// market, 6T may well have one.
-//
-// Pure SEP-41 bases are eligible too, whatever their decimals: the
-// token's scale cancels in the raw-rate product (see
-// [baseAnchorEligible]). Only per-whole-unit price tiers need real
-// decimals, and those stay restricted to classic + SAC.
+// the write-time twin of [sorobanVolume24hUSDQuery]'s query-time identity, so
+// every consumer summing `usd_volume` picks it up, with no double-count there.
+// Any on-chain base is eligible (token/token is the largest unpriced class),
+// pure SEP-41 included, since the token's scale cancels in the raw-rate
+// product.
 func usdVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subclass external.Subclass, r USDVolumeFXResolver) (*string, error) {
 	if r == nil || subclass != external.SubclassDEX {
 		// Off-chain sources don't have this orientation problem —
@@ -450,18 +330,10 @@ func usdVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subclass 
 	}
 	q := new(big.Rat).SetFrac(base, scaleDenominator(stellarClassicDecimals))
 	usdAmount := new(big.Rat).Mul(q, usdRate)
-	// A non-XLM anchor's rate is the same poisonable tier-3b bridge the
-	// quote-side FX tier reads, so it takes the same bound:
-	// storing it verbatim would re-open the $182M
-	// fake-print class for anyone who planted <base>/XLM and swapped
-	// against a never-priced quote. XLM is exempt, and must stay so: its
-	// rate is a direct XLM/USD market nobody can author and base_amount
-	// is XLM that actually moved, so the value is exact — a ceiling would
-	// NULL a real trade, and a cross-check could only drag an exact value
-	// down to a rate the counterparty wrote (the reasoning
-	// [tradeUSDVolumeViaXLMQuoteAnchorFor] records for the mirror tier).
-	// Applied HERE rather than at the waterfall's call sites so the
-	// restamp tiers, which reach this function directly, inherit it.
+	// A non-XLM anchor's rate is the same poisonable tier-3b bridge, so it takes
+	// the same bound, or the $182M fake-print class reopens. XLM is exempt: its
+	// rate is a direct market and base_amount is XLM that moved, so a ceiling
+	// would NULL a real trade. Applied here so the restamp tiers inherit it.
 	if !isXLMAsset(t.Pair.Base) {
 		usdAmount, err = boundUSDVolume(ctx, r, usdAmount, t.Pair.Quote, t.QuoteAmount, stellarClassicDecimals, t.Timestamp)
 		if err != nil || usdAmount == nil {
@@ -484,20 +356,11 @@ func isXLMAsset(a canonical.Asset) bool {
 
 // ─── the tier-4 scope, as seen from a STORED row ─────────────────────
 //
-// The three helpers below answer, for a row already in `trades`, the
-// questions [tradeUSDVolume] answers for a row about to be inserted:
-// which sources this waterfall's DEX branches apply to, whether the
-// tier-4 XLM anchor is the branch that owns this (source, base, quote),
-// and what that branch computes.
-//
-// They live HERE rather than beside their caller
-// (usd_volume_restamp_xlmbase.go) for two reasons. The binding one is the
-// LOCKSTEP discipline in [tradeUSDVolume]'s header: the tier's definition
-// and the waterfall's branch order must be visible in one file, or a
-// re-ordering silently re-points the re-derive at a different population.
-// The second is architectural (D8 rule 4, scripts/ci/lint-imports.sh):
-// [external.Registry] is a compute-tier package that the storage tier
-// only reaches into from this already-grandfathered file.
+// The helpers below answer for a stored row what [tradeUSDVolume] answers for
+// one being inserted. They live here, not beside their caller, so the tier
+// definitions and the waterfall's branch order stay in one file (LOCKSTEP),
+// and because [external.Registry] is reachable from storage only through this
+// grandfathered file (D8 rule 4, scripts/ci/lint-imports.sh).
 
 // dexSourceNames returns the registered source names whose subclass is
 // [external.SubclassDEX], sorted — the set whose trades the DEX branches
@@ -552,19 +415,11 @@ func xlmBaseTierFor(t canonical.Trade, quoteSpec *USDVolumeQuoteSpec) restampTie
 	return restampTierOwns
 }
 
-// xlmQuoteTierFor is [xlmBaseTierFor]'s MIRROR: a DEX trade whose QUOTE
-// leg is an XLM form and whose BASE leg is neither an XLM form nor a
-// declared USD peg.
-//
-// The two tiers are deliberately DISJOINT. A trade with XLM on both legs
-// (`native` against the SAC wrapper) is the xlm-base tier's — the
-// waterfall reaches [usdVolumeViaXLMBaseAnchor] through the base leg
-// there, so a second tier claiming the same row would fight it at a
-// different generation. A USD-pegged base leg is tier 2b's, exactly
-// ([tradeUSDVolumeViaUSDBase] runs BEFORE any FX tier), and a USD-pegged
-// quote leg cannot occur here because the quote IS XLM — the check is
-// kept anyway so an operator who ever declared an XLM form as a peg gets
-// the exact tier rather than an estimate.
+// xlmQuoteTierFor is [xlmBaseTierFor]'s mirror: a DEX trade whose QUOTE leg
+// is an XLM form and whose BASE is neither an XLM form nor a USD peg. The
+// tiers are DISJOINT: XLM on both legs belongs to the xlm-base tier, a pegged
+// base to tier 2b; the pegged-quote check stays for an operator who declared
+// an XLM form as a peg.
 func xlmQuoteTierFor(t canonical.Trade, quoteSpec *USDVolumeQuoteSpec) restampTierVerdict {
 	md := external.Lookup(t.Source)
 	if md.Subclass != external.SubclassDEX || !isXLMAsset(t.Pair.Quote) || isXLMAsset(t.Pair.Base) {
@@ -580,14 +435,9 @@ func xlmQuoteTierFor(t canonical.Trade, quoteSpec *USDVolumeQuoteSpec) restampTi
 }
 
 // cexFiatTierFor is the off-chain counterpart: a CEX trade quoted in a
-// NON-USD fiat currency, whose base leg is not a USD peg either.
-//
-// [tradeUSDVolumeViaFX] is the branch the waterfall takes for it — the
-// quote leg is a fiat asset, which resolves from `fx_quotes` and never
-// from prices_1m ([VWAPUSDFXResolver.usdPriceForFiat]), so the rate is a
-// vendor feed rather than a market any counterparty can author. A
-// USD-pegged quote (fiat:USD, or a crypto ticker whose FiatProxy is USD)
-// is tier 1 and exact; a USD-pegged base is tier 2b.
+// non-USD fiat whose base is not a USD peg. Its rate comes from `fx_quotes`
+// ([VWAPUSDFXResolver.usdPriceForFiat]), a vendor feed no counterparty can
+// author.
 func cexFiatTierFor(t canonical.Trade, quoteSpec *USDVolumeQuoteSpec) restampTierVerdict {
 	md := external.Lookup(t.Source)
 	if md.Subclass != external.SubclassCEX || t.Pair.Quote.Type != canonical.AssetFiat {
@@ -602,18 +452,10 @@ func cexFiatTierFor(t canonical.Trade, quoteSpec *USDVolumeQuoteSpec) restampTie
 	return restampTierOwns
 }
 
-// cexSourceNames returns the registered source names whose subclass is
-// [external.SubclassCEX], sorted — the off-chain exchanges whose trades
-// the fiat-quote branch of this waterfall applies to. Read from the same
-// [external.Registry] the insert path consults, exactly as
-// [dexSourceNames] is.
-//
-// SubclassFX sources are deliberately NOT here. They are the connector-
-// path FX pollers (disabled in production), their pairs are fiat/fiat
-// rather than crypto/fiat, and they stamp amounts at 1e6 rather than the
-// CEX 1e8 — a different population with a different scale, which a
-// re-derive should take on deliberately rather than by inheriting a
-// subclass list.
+// cexSourceNames returns the registered [external.SubclassCEX] source names,
+// sorted, read from the same [external.Registry] the insert path consults.
+// SubclassFX is excluded: fiat/fiat pairs at a 1e6 scale are a different
+// population a re-derive should take on deliberately.
 func cexSourceNames() []string {
 	out := make([]string, 0, len(external.Registry))
 	for name, md := range external.Registry {
@@ -634,29 +476,13 @@ func tradeUSDVolumeViaXLMBaseAnchorFor(ctx context.Context, t canonical.Trade, r
 	return usdVolumeViaXLMBaseAnchor(ctx, t, external.Lookup(t.Source).Subclass, r)
 }
 
-// tradeUSDVolumeViaXLMQuoteAnchorFor values a stored row whose XLM leg is
-// the QUOTE one: `quote_amount / 1e7 x XLM/USD at ts`.
-//
-// It is the SAME function as the base-side anchor, handed the trade with
-// its legs swapped — not a second spelling of the arithmetic. The anchor
-// values whichever leg it is given as the base, at the Stellar classic
-// 1e7 scale, through the installed resolver's XLM/USD rate at the row's
-// timestamp; mirroring the row is therefore the whole difference between
-// the two tiers, and a change to the anchor moves both at once.
-//
-// The insert path ([tradeUSDVolume]) takes this branch ahead of
-// [tradeUSDVolumeViaFX], so a re-derive and a fresh insert agree.
-//
-// ONLY the XLM leg, deliberately. [tradeUSDVolumeViaFX] additionally
-// cross-checks the two legs and stores the SMALLER when they diverge by
-// more than [usdLegAgreementFactor]. That cross-check defends a value
-// resting on a token leg an attacker can author (the tier-3b bridge, the
-// $182M fake print). Here the value rests on XLM — the
-// bridge's own anchor, and the one leg of a Stellar pair nobody can
-// author — so admitting the token leg could only DRAG the number down to
-// a rate the counterparty wrote. The mirror tier therefore stops at the
-// anchor, exactly as the xlm-base tier does, and a row it cannot price
-// that way is reported rather than valued.
+// tradeUSDVolumeViaXLMQuoteAnchorFor values a stored row whose XLM leg is the
+// QUOTE: `quote_amount / 1e7 x XLM/USD at ts`, by handing the base-side
+// anchor the trade with its legs swapped, so a change moves both tiers.
+// [tradeUSDVolume] takes this branch ahead of [tradeUSDVolumeViaFX], so a
+// re-derive and an insert agree. Deliberately no leg cross-check: the value
+// rests on XLM, which nobody can author, so the token leg could only drag it
+// down to a counterparty-written rate.
 func tradeUSDVolumeViaXLMQuoteAnchorFor(ctx context.Context, t canonical.Trade, r USDVolumeFXResolver) (*string, error) {
 	return tradeUSDVolumeViaXLMBaseAnchorFor(ctx, mirrorTradeLegs(t), r)
 }
@@ -671,17 +497,10 @@ func mirrorTradeLegs(t canonical.Trade) canonical.Trade {
 	return t
 }
 
-// tradeUSDVolumeViaFiatQuoteFor values a stored OFF-CHAIN row quoted in a
-// non-USD fiat currency: `quote_amount / 10^<source scale> x <fiat>/USD
-// at ts`, through [tradeUSDVolumeViaFX] — the same function
-// [Store.InsertTrade] reaches for such a row today, with the source's own
-// registered amount scale and the resolver's fx_quotes-backed
-// fiat rate.
-//
-// The gates here are the ones that make the DEX-only halves of
-// [tradeUSDVolumeViaFX] (the two-leg cross-check, the single-leg ceiling)
-// unreachable and irrelevant: a CEX subclass and a fiat quote leg. A row
-// outside that shape is declined rather than valued.
+// tradeUSDVolumeViaFiatQuoteFor values a stored CEX row quoted in a non-USD
+// fiat through [tradeUSDVolumeViaFX], as [Store.InsertTrade] does, with the
+// source's registered scale and the fx_quotes-backed rate. The CEX and fiat
+// gates make the DEX-only guards unreachable; other shapes are declined.
 func tradeUSDVolumeViaFiatQuoteFor(ctx context.Context, t canonical.Trade, r USDVolumeFXResolver) (*string, error) {
 	md := external.Lookup(t.Source)
 	if md.Subclass != external.SubclassCEX || t.Pair.Quote.Type != canonical.AssetFiat {
@@ -690,43 +509,19 @@ func tradeUSDVolumeViaFiatQuoteFor(ctx context.Context, t canonical.Trade, r USD
 	return usdVolumeViaFX(ctx, t, md, r)
 }
 
-// baseAnchorEligible reports whether an asset can be valued from a
-// raw-VWAP rate by [usdVolumeViaXLMBaseAnchor].
+// baseAnchorEligible reports whether an asset can be valued from a raw-VWAP
+// rate by [usdVolumeViaXLMBaseAnchor].
 //
-// The 1e7 divisor there looks like it assumes the base asset has 7
-// decimals. It does not — and this is the subtle part worth stating
-// plainly, because the obvious "fix" of looking up per-token decimals
-// would INTRODUCE the very error it appears to remove.
-//
-// The divisor belongs to the asset the RATE is denominated against,
-// not to the asset being scaled. prices_1m stores vwap as a RAW ratio
-// (quote_amount/base_amount straight off `trades`, no decimals applied
-// to either side), so for A raw units of a token at raw rate R = X/A
-// against an anchor:
+// The 1e7 divisor belongs to the asset the RATE is denominated against, not
+// the asset being scaled; looking up per-token decimals would INTRODUCE an
+// error. prices_1m stores vwap as a raw quote/base ratio, so for A raw units
+// at raw rate R = X/A against an anchor:
 //
 //	usd = (A / 1e7) x R x anchorUSD = (X / 1e7) x anchorUSD
 //
-// A cancels identically, leaving the ANCHOR's leg valued at the
-// anchor's own scale. Every anchor we price through is genuinely
-// 7-decimal (native XLM, and the classic/SAC USD pegs), so 1e7 is
-// correct and the priced token's declared decimals never enter.
-// TestUSDVolumeIsIndependentOfTokenDecimals pins this by pricing the
-// same economic trade through tokens declaring 6, 7, 9 and 18 decimals
-// and requiring an identical result.
-//
-// So pure SEP-41 tokens ARE eligible, which is also what makes this
-// consistent with [tradeUSDVolumeViaFX]: that path has never had an
-// asset-type guard and has always valued pure-SEP-41 QUOTE legs this
-// way. Excluding them only on the base side left ~6,400 aquarius /
-// soroswap / phoenix trades a day unpriced for no reason.
-//
-// The boundary that does exist: a per-WHOLE-UNIT price (a declared
-// peg, an oracle quote) does NOT cancel and genuinely needs real
-// decimals. That is why the peg tiers ([usdVolumeDecimals] /
-// QuoteUSDPegInfo) stay restricted to classic + SAC, whose 7 decimals
-// are an invariant — and why the served per-unit PRICE for a non-7
-// token is a separate, real bug that internal/decimalsguard declines
-// rather than something this function should be policing.
+// Every anchor is 7-decimal, so pure SEP-41 tokens are eligible
+// (TestUSDVolumeIsIndependentOfTokenDecimals). Per-whole-unit prices (pegs,
+// oracle quotes) do not cancel, so the peg tiers stay classic + SAC.
 func baseAnchorEligible(a canonical.Asset) bool {
 	//exhaustive:ignore — the on-chain asset forms are the point; fiat,
 	// crypto-ticker and RWA are external-source shapes that never reach
@@ -746,38 +541,18 @@ func baseAnchorEligible(a canonical.Asset) bool {
 // whose Stellar-side quote assets all share this scale.
 const stellarClassicDecimals = 7
 
-// WouldPopulateUSDVolume reports whether [Store.InsertTrade] would
-// stamp a non-null `usd_volume` for this trade given the store's
-// currently-configured [USDVolumeQuoteSpec] AND
-// [USDVolumeFXResolver]. Safe for callers (e.g. the pipeline sink
-// emitting coverage metrics) to invoke before InsertTrade.
-//
-// The predicate runs the full resolution waterfall: Phase 1
-// (off-chain CEX/FX with USD-pegged quote → tier 1; on-chain DEX
-// with operator-allow-listed quote → tier 2), the USD-pegged BASE
-// leg (tier 2b), Phase 2 (any remaining trade with a quote-side
-// FX-resolver hit → tier 3), and L7.6 (a remaining pure-Soroban
-// SEP-41 quote whose trade's BASE asset is XLM and resolves via the
-// same FX resolver → tier 4). Tier 3 also prices
-// fiat quotes from fx_quotes, which is what covers non-USD-quoted
-// CEX pairs (BTC/EUR, ETH/GBP, …).
-//
-// Note: a Phase 2 hit makes a synchronous call into the configured
-// resolver. Production resolvers MUST be cheap enough for the
-// trade-insert hot path (typically an in-memory cache lookup —
-// see the package doc).
+// WouldPopulateUSDVolume reports whether [Store.InsertTrade] would stamp a
+// non-null `usd_volume` under the installed [USDVolumeQuoteSpec] and
+// [USDVolumeFXResolver], running the full waterfall (tiers 1, 2, 2b, 3 incl.
+// fiat quotes from fx_quotes, 4). An FX-tier hit calls the resolver
+// synchronously, so production resolvers must be hot-path cheap.
 func (s *Store) WouldPopulateUSDVolume(ctx context.Context, t canonical.Trade) bool {
 	return tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver) != nil
 }
 
-// usdVolumeDecimals picks the correct decimal scale for a USD-pegged
-// trade leg given the source's subclass + the operator's quote spec.
-// Returns (0, false) when the asset isn't recognised as USD-pegged.
-//
-// Despite the historical name it is side-agnostic — it answers "is
-// this asset USD-pegged, and at what scale". [tradeUSDVolume] calls it
-// for the quote leg (tier 1/2) and [tradeUSDVolumeViaUSDBase] calls it
-// for the base leg (tier 2b).
+// usdVolumeDecimals reports whether an asset is USD-pegged and at what scale,
+// given the source's subclass and the operator's quote spec. Side-agnostic:
+// used for the quote leg (tiers 1/2) and the base leg (tier 2b).
 func usdVolumeDecimals(asset canonical.Asset, md external.Metadata, quoteSpec *USDVolumeQuoteSpec) (int, bool) {
 	switch md.Subclass {
 	case external.SubclassCEX, external.SubclassFX:
@@ -800,18 +575,11 @@ func usdVolumeDecimals(asset canonical.Asset, md external.Metadata, quoteSpec *U
 	}
 }
 
-// ClassifyUSDVolumeTier reports which waterfall tier the insert path WOULD
-// use for a (source, base, quote) trade today, and the decimal scale that
-// tier divides by.
-//
-// It calls exactly the functions [tradeUSDVolume] calls, in the same order,
-// so a change to the peg list or the waterfall moves both together. Assets
-// that do not parse yield [TierEstimated] with a non-nil error — the caller
-// reports them rather than silently dropping them, since an unparseable
-// asset id on a landed trade is its own finding.
-//
-// spec may be nil (no operator peg list): on-chain pairs then never resolve
-// a peg, which matches [usdVolumeDecimals]'s own nil handling.
+// ClassifyUSDVolumeTier reports which waterfall tier the insert path would use
+// for a (source, base, quote) trade today, and that tier's decimal scale. It
+// calls the same functions as [tradeUSDVolume] in the same order. An
+// unparseable asset yields [TierEstimated] with an error, a finding in itself.
+// A nil spec means on-chain pairs never resolve a peg.
 func ClassifyUSDVolumeTier(source, baseID, quoteID string, spec *USDVolumeQuoteSpec) (USDVolumeTier, int, error) {
 	md := external.Lookup(source)
 	if md.Class != external.ClassExchange {
@@ -870,38 +638,14 @@ func quoteIsUSDOrUSDPegged(a canonical.Asset) bool {
 // and surface the fallback via the AggregatorFXSnapFallbackTotal metric.
 var ErrNoFXQuote = errors.New("timescale: no FX quote at or before cutoff")
 
-// isDexUnitRatioTrade reports whether a LANDED trade is the signature
-// of a decoder field-mapping bug: an on-chain DEX trade
-// whose base_amount exactly equals its quote_amount (both nonzero) —
-// i.e. the decoder is reporting a 1:1 price, which a field-mapping
-// bug can produce silently while ADR-0033 completeness checks (which
-// verify presence, not plausibility) stay green.
-//
-// Chosen as the instrumentation choke point over the pipeline sink
-// (internal/pipeline/sink.go) deliberately: trades reach `trades`
-// through TWO different call shapes there — persistTrade (single-row,
-// used by HandleEvent for the projector's per-event sink and as the
-// dispatcher batch path's per-row fallback) and flushTradeBatch's
-// bulk w.BatchInsertTrades call (the dispatcher's PRIMARY live path,
-// which never touches persistTrade on the success case). A metric
-// wired into only persistTrade would silently miss the majority of
-// on-chain trades, since the batch path is the common case. InsertTrade
-// and BatchInsertTrades below are the only two functions every trade
-// — dispatcher live batch, projector single-event (via HandleEvent),
-// and stellarindex-ops backfill/ch-rebuild re-derives — funnels
-// through exactly once per landed row. This is the same choke point
-// obs.TradeInsertOutcomeTotal already uses for the analogous
-// new-vs-duplicate signal.
-//
-// ledger == 0 is the off-chain (CEX/FX) marker every external
-// connector deliberately stamps (migration
-// 0004_relax_trades_ledger_for_offchain); those trades are excluded
-// because their amounts are normalised onto a fixed integer scale
-// (AGENTS.md "External-source amount scaling is NOT uniform") where
-// an equal-value reading doesn't carry the same "decoder is broken"
-// signal an on-chain 1:1 does. canonical.Trade.Validate() admits one
-// zero leg (an SDEX rounding fill) and there is no DB CHECK on the legs,
-// so the nonzero check here is load-bearing: 0 == 0 is not a 1:1 trade.
+// isDexUnitRatioTrade reports whether a landed on-chain trade has
+// base_amount == quote_amount (both nonzero): the signature of a decoder
+// field-mapping bug that completeness checks, which verify presence not
+// plausibility, cannot see. Counted in InsertTrade and BatchInsertTrades, the
+// one choke point every trade path crosses once; the sink would miss the batch
+// path. ledger == 0 (off-chain) is excluded because fixed-scale CEX/FX amounts
+// carry no such signal; the nonzero check matters because Validate admits one
+// zero leg.
 func isDexUnitRatioTrade(ledger uint32, base, quote canonical.Amount) bool {
 	if ledger == 0 {
 		return false
@@ -921,22 +665,12 @@ func recordDexTradeUnitRatio(t canonical.Trade) {
 	}
 }
 
-// usdPopulatedLabel maps the resolved-or-not decision to the stable
-// Prometheus label values the coverage dashboards and alerts filter on.
-//
-// The counter lives here, beside the tradeUSDVolume call, because this
-// is the choke point every trade path funnels through exactly once (the
-// same argument [isDexUnitRatioTrade] documents for the unit-ratio
-// metric); a sink-level copy misses the batch path and every connector.
-//
-// An unpriced trade between two classic assets of ONE issuer is labelled
-// "unroutable": such a pair has no independent market to value it, so it
-// is excluded from the coverage ratio rather than counted as a pricing gap.
-// Its usd_volume stays NULL either way; only the label differs.
-//
-// "thin" marks an unpriced trade whose only candidate rate was refused by the
-// resolver's substance gate: a market exists but is too small to value
-// against, so it is excluded from the coverage ratio like "unroutable".
+// usdPopulatedLabel maps the resolved-or-not decision to the stable Prometheus
+// label values coverage dashboards and alerts filter on. Counted here, the
+// choke point every trade path crosses once. "unroutable" (two classic assets
+// of one issuer) and "thin" (only candidate rate refused by the substance
+// gate) are excluded from the coverage ratio; usd_volume stays NULL either
+// way.
 func usdPopulatedLabel(p canonical.Pair, populated, thin bool) string {
 	switch {
 	case populated:
@@ -969,62 +703,27 @@ func (s *Store) usdLabel(t canonical.Trade, v *string) string {
 	return usdPopulatedLabel(t.Pair, v != nil, thin)
 }
 
-// InsertTrade writes one trade. Returns nil for a successful insert
-// OR a conflict on the storage identity (source+ledger+tx_hash+
-// op_index+ts). Other errors propagate.
+// InsertTrade validates and writes one trade, returning nil on insert or
+// conflict on (source, ledger, tx_hash, op_index, ts).
 //
-// Conflict semantics are ON CONFLICT DO UPDATE, guarded by
-// `trades.derive_generation <= EXCLUDED.derive_generation` (migration
-// 0109) — NOT DO NOTHING. A conflicting write from an
-// equal-or-higher generation therefore OVERWRITES the stored value
-// columns, `usd_volume` among them; a lower-generation write is
-// refused by the guard and leaves the row untouched. That overwrite is
-// the whole point of the corrective upsert — a re-derive must be able
-// to repair a wrong stored value — but it also means any re-derive
-// path that runs WITHOUT the USD-volume resolvers installed will
-// overwrite correct usd_volume with NULL, which is why
-// [InstallUSDVolumeResolution] and [Store.reDeriveNullVolumeGuard] exist.
-//
-// The trade is validated via [canonical.Trade.Validate] before
-// touching the DB; a Validate failure returns [canonical.ErrInvalidTrade].
-//
-// `usd_volume` is computed via [tradeUSDVolume] for both off-chain
-// (CEX/FX) and on-chain (DEX) sources whose quote asset is recognised
-// as USD-pegged. Off-chain coverage is built-in via the crypto-ticker
-// `aggregate.FiatProxy` map; on-chain coverage requires the operator
-// to install a [USDVolumeQuoteSpec] via [Store.SetUSDVolumeQuoteSpec]
-// declaring which classic credits (and their SAC wrappers, transitive)
-// they trust as USD-pegged. Everything else stores NULL — see the
-// L2.2 caveat documented on `Volume24hUSDForAsset` and
-// `internal/api/v1.VolumeReader`.
+// The conflict is DO UPDATE guarded by `derive_generation <= EXCLUDED`, so an
+// equal-or-higher generation OVERWRITES the value columns, usd_volume
+// included. A re-derive without the USD-volume resolvers installed would
+// overwrite correct values with NULL, hence [InstallUSDVolumeResolution] and
+// [Store.reDeriveNullVolumeGuard]. usd_volume comes from [tradeUSDVolume];
+// on-chain pegs need [Store.SetUSDVolumeQuoteSpec], everything else is NULL.
 func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	if err := t.Validate(); err != nil {
 		return err
 	}
 	countZeroLegAdmitted(t)
 
-	// One statement, two effects, fully atomic:
-	//   1. Upsert the trade (idempotent-corrective on its PK). On
-	//      conflict we DO UPDATE every value column plus derive_generation,
-	//      guarded by `trades.derive_generation <= EXCLUDED.derive_generation`
-	//      (migration 0109): a re-derive with a higher-or-equal
-	//      generation lands its correction in place, while a lower
-	//      generation (e.g. a live gen-0 replay) can never revert a
-	//      correction. This replaces the old `DO NOTHING`, which silently
-	//      discarded corrected re-derives (the re-backfill treadmill).
-	//   2. If — and only if — a row was actually INSERTED (not updated),
-	//      bump the per-source entry tally (migration 0035). `xmax = 0`
-	//      distinguishes a fresh insert from an on-conflict update; the
-	//      `HAVING count(*) FILTER (WHERE inserted) > 0` makes the counter
-	//      upsert produce zero rows on a duplicate or an update, so a
-	//      backfill re-walk / re-derive over already-stored ledgers never
-	//      inflates the tally. Data-modifying CTEs always execute even
-	//      though `bump` is unreferenced.
-	// The trailing `SELECT count(*) FILTER (WHERE inserted)` returns 1
-	// (new row) or 0 (duplicate, update, or guard-skipped) — an explicit
-	// count, sturdier than the old RowsAffected() path (no driver-quirk
-	// fail-open ambiguity), and it keeps the landed-only gating below
-	// (registry hook, outcome metric, sentinels) exactly as before.
+	// One atomic statement: upsert the trade (DO UPDATE guarded by
+	// derive_generation, so a lower generation never reverts a correction), and
+	// only for a fresh INSERT (`xmax = 0`) bump source_entry_counts, so a re-walk
+	// never inflates the tally. Data-modifying CTEs run though `bump` is
+	// unreferenced. The trailing count is 1 for a new row, 0 otherwise, and gates
+	// the registry hook, outcome metric and sentinels.
 	const q = `
         WITH ins AS (
             -- routed_via, signer and tx_index are post-insert tagger
@@ -1132,14 +831,8 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	// every asset/issuer after the first touch in the process.
 	for _, side := range [2]canonical.Asset{t.Pair.Base, t.Pair.Quote} {
 		if regErr := s.registerClassicAssetSeen(ctx, side, t.Ledger, t.Timestamp); regErr != nil {
-			// Soft-fail: the trade row is committed; a registry-side
-			// problem must not sink the hot path. Stay quiet at info
-			// level, but DON'T swallow silently.
-			// registerClassicAssetSeen is dedupe-cached, so
-			// this naturally fires at most once per (asset,issuer) per
-			// process — already rate-limited. Debug level keeps the
-			// steady state silent while leaving a breadcrumb when an
-			// operator turns up logging to chase registry drift.
+			// Soft-fail: the trade row is committed. Dedupe-cached, so this logs at
+			// most once per (asset, issuer) per process; Debug keeps steady state quiet.
 			slog.Default().Debug("timescale: classic-asset registry upsert failed (soft-skip)",
 				"asset", side.String(),
 				"ledger", t.Ledger,
@@ -1328,22 +1021,10 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
 		return nil, nil, nil, err
 	}
 
-	// CTE shape:
-	//   ins → multi-row INSERT, RETURNING source (+ ledger/amounts for
-	//         the unit-ratio sentinel below) for each row that actually
-	//         landed (i.e. wasn't a duplicate).
-	//   bump → aggregate landed rows per source, UPSERT into
-	//          source_entry_counts.
-	// The bump's SELECT … GROUP BY pattern is the multi-source twin
-	// of the single-row variant in InsertTrade.
-	//
-	// The outer SELECT's `unit_ratio` column mirrors isDexUnitRatioTrade
-	// as a FILTER over the SAME
-	// `ins` rows the outcome-metric count uses — cheap (no extra I/O,
-	// the RETURNING set is already materialized) and exact: it counts
-	// only rows that actually landed, matching InsertTrade's landed-only
-	// gating. Keep the predicate in sync with isDexUnitRatioTrade's Go
-	// logic if either changes.
+	// ins: multi-row INSERT RETURNING each landed row; bump: per-source UPSERT
+	// into source_entry_counts, the multi-row twin of InsertTrade's. The outer
+	// `unit_ratio` FILTER mirrors isDexUnitRatioTrade over the same landed rows;
+	// keep the two predicates in sync.
 	//nolint:gosec // G201: VALUES placeholders constructed only from compile-time format string.
 	query := fmt.Sprintf(`
         WITH ins AS (
@@ -1412,30 +1093,16 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
 	return s.scanBatchTradeOutcome(ctx, query, args)
 }
 
-// BatchInsertTrades writes trades with one multi-row upsert per
-// parameter-safe sub-batch of at most [tradeInsertMaxRows] rows, because
-// per-INSERT roundtrip latency, not Postgres, caps indexer throughput.
+// BatchInsertTrades writes trades with one multi-row upsert per sub-batch of
+// at most [tradeInsertMaxRows] rows: per-INSERT roundtrip latency caps indexer
+// throughput. Conflict semantics match [Store.InsertTrade]; re-runs are
+// idempotent in row count but not inert in value.
 //
-// Conflict semantics match [Store.InsertTrade]: an equal-or-higher
-// `derive_generation` overwrites the stored value columns (including
-// `usd_volume`), a lower one is refused. Re-runs are idempotent in row
-// count but not inert in value; `source_entry_counts` is bumped only by
-// rows actually written.
-//
-// Each sub-batch is one all-or-nothing INSERT, so
-// [Store.filterStorableTrades] first drops rows failing
-// [canonical.Trade.Validate] lest one bad row sink the rest. An SDEX
-// one-side-zero fill passes Validate and is stored (unpriceable: every
-// price path filters on `base_amount > 0 AND quote_amount > 0`).
-//
-// Each sub-batch commits in its own transaction (one across them would
-// hold every row lock and the source_entry_counts lock between
-// statements). Sub-batches run in conflict-key order and stop at the
-// first failure; the committed prefix still gets its metrics and registry
-// hook, since a replay would see those rows as updates and never count
-// them. The error is a [*TradeSubBatchError] wrapping the cause, so
-// errors.Is/As classification is unchanged; callers replay the whole
-// batch.
+// [Store.filterStorableTrades] drops invalid rows first so one cannot sink an
+// all-or-nothing sub-batch. Sub-batches commit separately in conflict-key
+// order and stop at the first failure; the committed prefix still gets its
+// metrics and registry hook (a replay would see updates). The error is a
+// [*TradeSubBatchError] wrapping the cause; callers replay the whole batch.
 func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error {
 	if len(trades) == 0 {
 		return nil
@@ -1450,42 +1117,20 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 		return nil
 	}
 
-	// Deterministic PK order WITHIN the batch, or concurrent batch inserts
-	// deadlock (40P01 2-/3-way ShareLock cycles). PersistWorkers fans a single event
-	// channel out to 8 goroutines with NO sharding by source/symbol (see
-	// persistWorker in internal/pipeline/sink.go), so any two workers can
-	// end up holding batches with overlapping trades.PK rows — most
-	// visibly for CEX sources, whose WS reconnect handling can redeliver
-	// the same exchange trade into the shared channel and have it picked
-	// up by two different workers at once. Two multi-row INSERT..ON
-	// CONFLICT statements that touch the same keys in different orders
-	// take row locks in different orders — a textbook AB/BA deadlock.
-	//
-	// Sorting by the FULL conflict key, `ts` included, gives every writer
-	// one total, tie-free lock-acquisition order; a partial key leaves ties
-	// to `sort.Slice`'s unspecified order and reopens the AB/BA window.
-	// It lives in the batch builder so every caller (the indexer's
-	// persistWorker drain, the external retry buffer, `stellarindex-ops
-	// ch-rebuild`) gets it without pre-sorting. The per-row
-	// isolate-on-non-infra-error fallback in
-	// internal/pipeline/trade_sink.go::flushTradeBatch stays as
-	// belt-and-braces for whatever this doesn't catch.
-	//
-	// Clone first: filterStorableTrades returns the caller's slice when every
-	// row is valid, and callers replay that slice in their own order on error.
+	// Sort by the FULL conflict key, ts included, so every writer takes row locks
+	// in one tie-free order: PersistWorkers fan one channel to 8 unsharded
+	// goroutines and CEX reconnects redeliver trades, so overlapping batches
+	// otherwise deadlock (40P01). Done here so every caller gets it; the per-row
+	// fallback in internal/pipeline/trade_sink.go stays as belt-and-braces.
+	// Clone first: filterStorableTrades may return the caller's slice, which
+	// callers replay in their own order on error.
 	storable = slices.Clone(storable)
 	sortTradesByConflictKey(storable)
 
-	// Collapse intra-batch PK duplicates BEFORE building the statement.
-	// The batch `ON CONFLICT` is a DO UPDATE (migration 0109), and Postgres
-	// rejects a single INSERT..ON CONFLICT DO UPDATE that presents the same
-	// conflict key twice ("cannot affect row a second time"). A
-	// CEX WS reconnect can redeliver the same exchange trade into one
-	// worker's batch (see the deadlock note above), so dedupe adjacent
-	// equal keys here (input is already conflict-key sorted), keeping the
-	// latest copy. The original `trades` slice is left intact so the
-	// per-source "sent" tally below still counts the collapsed duplicate
-	// as a duplicate — the outcome metric is unchanged.
+	// Postgres rejects an INSERT..ON CONFLICT DO UPDATE that presents one key
+	// twice, and a CEX redelivery can put a key in one batch twice, so collapse
+	// adjacent duplicates, keeping the latest. `trades` stays intact so the
+	// "sent" tally still counts the duplicate.
 	insertRows := dedupeSortedTradesByConflictKey(storable)
 
 	// Postgres' extended protocol caps one statement at 65,535 bind
@@ -1583,17 +1228,9 @@ func noteRegistryObservation(seen map[string]registryObservation, asset string, 
 // registerBatchLandedAssets runs the classic-asset registry hook for the
 // distinct assets of a batch's landed rows.
 func (s *Store) registerBatchLandedAssets(ctx context.Context, seenAssets map[string]registryObservation) {
-	// Auto-register the classic-asset / issuer registry from the
-	// LANDED trades — the same Phase-4 hook InsertTrade runs. Skipping it on the batch path
-	// would assume a later single-row InsertTrade picks
-	// the asset up; but the LIVE indexer ingests trades EXCLUSIVELY through
-	// this batch path (persistWorker → BatchInsertTrades), so classic_assets
-	// / issuers would stay permanently under-populated for batch-ingested assets. We
-	// register only genuinely-inserted rows (matching InsertTrade's
-	// duplicate-replay guard), deduped to the distinct assets in this batch,
-	// each over the lowest..highest ledger we saw. Soft-fail + dedupe-cached, exactly
-	// like the single-row path — a registry write can't sink the committed
-	// batch, and steady state is a no-op after the first touch per asset.
+	// Register classic assets/issuers from the LANDED rows, as InsertTrade does:
+	// the live indexer ingests only through this path, so skipping it would leave
+	// the registry under-populated. Soft-fail and dedupe-cached.
 	for assetID, obsv := range seenAssets {
 		asset, perr := canonical.ParseAsset(assetID)
 		if perr != nil {
@@ -1612,19 +1249,11 @@ func (s *Store) registerBatchLandedAssets(ctx context.Context, seenAssets map[st
 	}
 }
 
-// filterStorableTrades returns the subset of a batch for which
-// [canonical.Trade.Validate] passes. Each [Store.BatchInsertTrades] sub-batch
-// is ONE all-or-nothing multi-row INSERT, so a malformed row (negative leg,
-// both legs zero, missing identity) would otherwise take the good trades of
-// its sub-batch down with it. A dropped row is a genuine upstream/decoder bug
-// and stays loud (SourceInsertErrorsTotal + ERROR), exactly as the single-row
-// InsertTrade path surfaces it.
-//
-// An SDEX one-side-zero fill (one leg rounded to 0) passes Validate and is
-// stored; it is counted on [obs.TradesZeroLegAdmittedTotal].
-//
-// The common case — an all-valid batch — allocates nothing and returns the
-// input slice unchanged.
+// filterStorableTrades returns the rows passing [canonical.Trade.Validate],
+// so one malformed row cannot sink an all-or-nothing sub-batch. Dropped rows
+// stay loud (SourceInsertErrorsTotal + ERROR). An SDEX one-side-zero fill
+// passes and is counted on [obs.TradesZeroLegAdmittedTotal]. An all-valid
+// batch returns the input slice without allocating.
 func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade {
 	firstBad := -1
 	for i := range trades {
@@ -1684,73 +1313,28 @@ func newRegistryObservation(ledger uint32, ts time.Time) registryObservation {
 	return registryObservation{minLedger: ledger, maxLedger: ledger, minTs: ts, maxTs: ts}
 }
 
-// A market has NO stored direction of its own, and the two readers
-// below are the raw-trade reads that serve one.
+// A market has NO stored direction: the SDEX decoder sets base = soldAsset,
+// so one market lands as both (A,B) and (B,A) rows, and a read keyed on one
+// direction silently returns nothing for the other. The readers below select
+// both directions and re-express flipped rows per ROW ([orientTradeTo]).
 //
-// internal/sources/sdex/decode.go sets base = soldAsset, quote =
-// boughtAsset, and [canonical.Trade] deliberately does not normalise
-// ("Direction matches the on-chain event — we do not normalise here"),
-// so one market lands in `trades` as both (A,B) and (B,A) rows. A read
-// keyed on `base_asset = $1 AND quote_asset = $2` alone therefore
-// answered `base=AQUA&quote=USDC` with nothing at all for a market the
-// decoder recorded only as USDC/AQUA — silent in the worst way, since
-// an empty answer is a valid one on both surfaces.
-//
-// Each reader now selects BOTH stored directions and re-expresses the
-// flipped rows in the requested orientation ([orientTradeTo]). It is
-// the raw-trade twin of what [Store.OHLCSeries]'s `norm` CTE does on
-// the bucket side and of what /v1/history's page read does in its
-// caller, and it is per ROW: the row's own base_asset decides, not
-// which arm of the union returned it.
-//
-// TWO LIMITED ARMS, not one OR'd scan. Each arm is exactly the single-direction query, so each keeps its index-ordered scan
-// (trades_pair_ts_idx / trades_pair_source_ts_idx, migration 0037) and
-// its early stop. An OR would have to bitmap both directions and sort
-// them together — on a read whose worst case is already a full-history
-// walk for an empty pair (see [Store.RecentClosedVWAP1mExists]). Cost
-// is therefore exactly twice the old read, with the same plan on each
-// half.
-//
-// [Store.TradesInRange] and [Store.FXQuoteAtOrBefore] fold on the same
-// rule, for the same reason. The aggregate case was held back once as
-// "a mean is not a relabelling"; it is settled in
-// docs/architecture/aggregation-plan.md §"The direction fold" and the answer is that
-// every aggregate this store feeds is defined on the two integer LEG
-// AMOUNTS — Σquote/Σbase for a mean, quote/base per row for an extreme
-// — so the leg swap re-weights them exactly and no aggregate needs a
-// rule of its own.
-//
-// [Store.TradesInRangeAfter] is the one read here that stays honest
-// about one orientation, because /v1/history's caller merges the two
-// itself under a keyset cursor. It carries the sole entry in
-// [directionExempt].
+// TWO LIMITED ARMS, not one OR'd scan, so each keeps its index-ordered scan
+// (trades_pair_ts_idx / trades_pair_source_ts_idx) and early stop, at twice
+// the single-direction cost. Aggregates fold the same way because each is
+// defined on the two integer leg amounts (docs/architecture/aggregation-plan.md
+// §"The direction fold"). [Store.TradesInRangeAfter] stays one-directional
+// (its caller merges under a keyset cursor) and is the sole [directionExempt].
 
 // maxLatestTradesForPair caps [Store.LatestTradesForPair]: each arm is a
 // time-unbounded walk, so an unclamped limit could materialise the market.
 const maxLatestTradesForPair = 1000
 
-// LatestTradesForPair returns up to `limit` most-recent trades for the
-// market the pair names — in EITHER stored direction, each returned in
-// the requested orientation. Returns an empty slice + nil error if the
-// market has no trades.
-//
-// The union of each direction's newest `limit`, re-sorted and cut to
-// `limit`, is exactly the market's newest `limit`, so the arms may be
-// limited individually. Each arm keeps every row tying its cut on
-// (ts, ledger) — the order the indexes and compressed batches serve
-// cheaply — so the outer sort can break ties on the full key
-// /v1/history orders on, and the answer is one fixed row rather than
-// whichever of a ledger's trades the plan happened to meet first.
-//
-// Unbounded in time on purpose, and for the same two reasons as
-// [Store.LatestTradePerSource] — read the "no time bound, deliberately"
-// section there. The `ORDER BY ts DESC … LIMIT` lets this one stop
-// early for any market with recent trades, on top of that; the walk
-// only runs its length for a market with none, which is precisely the
-// market a recency bound would answer WRONG. This read backs
-// /v1/price's last-trade arm, so a window here would stop serving a
-// price for a quiet market rather than merely slow it down. Zero-leg
-// (unpriceable) rows are excluded so the last trade is always a price.
+// LatestTradesForPair returns up to `limit` most-recent trades for the market,
+// in either stored direction, oriented as requested; empty slice + nil if
+// none. Each arm keeps rows tying its cut on (ts, ledger) so the outer sort
+// breaks ties on /v1/history's full key. Unbounded in time for the reasons in
+// [Store.LatestTradePerSource]: this backs /v1/price's last-trade arm, and a
+// window would stop pricing a quiet market. Zero-leg rows are excluded;
 // `limit` is clamped to [maxLatestTradesForPair].
 func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
@@ -1827,31 +1411,17 @@ func offChainSourcesArg() string {
 	return strings.Join(names, ",")
 }
 
-// LatestTradePerSource returns the most-recent trade from each source
-// that has ever traded the market `pair` names, in either stored
-// direction and returned in the requested orientation. Empty slice +
-// nil error when the market has no trades.
+// LatestTradePerSource returns each source's most-recent trade on the market,
+// in either stored direction, oriented as requested; sourceFilter "" means all.
 //
-// sourceFilter "" returns all sources; a non-empty value restricts to
-// that single source (0- or 1-element slice).
-//
-// Each stored direction runs DISTINCT ON (source) ordered by ts DESC,
-// ledger DESC, a skip scan over trades_pair_source_ts_idx costing
-// ~O(num_sources). The LATERAL then picks among that ledger's rows by
-// (tx_hash, op_index); those keys stay out of the DISTINCT ON's ORDER BY,
-// which the index does not cover. A source that traded both ways arrives
-// twice and is folded in Go by [tradeIsLaterInMarket] on (ts, ledger,
-// tx_hash, op_index), a total order within one source, so the answer is
-// the same in either orientation and matches /v1/history's last row.
-//
-// The read has no time bound, deliberately. Each arm binds `base_asset AND
-// quote_asset`, the leading compress_segmentby columns, so every chunk is
-// an index seek (unlike HasAsset's old OR arm); the full-history worst case
-// measured under 300 ms. And no window preserves the answer: "last trade
-// seen" becomes "last trade within W", and quiet networks (futurenet had
-// zero XLM trades in 14 days) would report nothing.
-// [TestRawTradeReadsSpanBothStoredDirections] pins the arms and
-// [TestLatestTradeReadsTakeNoRecencyBound] pins the window's absence.
+// Each direction runs DISTINCT ON (source) by ts, ledger DESC (a skip scan
+// over trades_pair_source_ts_idx); a LATERAL picks within the ledger by
+// (tx_hash, op_index), and a source seen both ways is folded by
+// [tradeIsLaterInMarket]. No time bound: each arm is an index seek (worst
+// case measured under 300 ms) and quiet networks (futurenet: zero XLM trades
+// in 14 days) would otherwise report nothing.
+// [TestRawTradeReadsSpanBothStoredDirections] and
+// [TestLatestTradeReadsTakeNoRecencyBound] pin this.
 // unbounded-latest-ok: "last trade seen" has no window that preserves it; TestLatestTradeReadsTakeNoRecencyBound pins it.
 func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
 	const q = `
@@ -1932,15 +1502,9 @@ func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sour
 	return out, nil
 }
 
-// scanTradeOriented scans one row of the projection both latest-trade
-// readers select — source, ledger, tx_hash, op_index, ts, base_asset,
-// quote_asset, base_amount, quote_amount, maker, taker, routed_via —
-// rebuilds its Pair through the canonical parse path (which enforces
-// shape invariants on read), and re-expresses it in `want`'s
-// orientation.
-//
-// `who` names the calling method so the wrapped error keeps this
-// file's `timescale: <method> …` convention.
+// scanTradeOriented scans one row of the latest-trade projection, rebuilds
+// its Pair through the canonical parse path and re-expresses it in `want`'s
+// orientation; `who` names the caller for the wrapped error.
 func scanTradeOriented(rows *sql.Rows, want canonical.Pair, who string) (canonical.Trade, error) {
 	var t canonical.Trade
 	var baseAsset, quoteAsset string
@@ -1968,22 +1532,10 @@ func scanTradeOriented(rows *sql.Rows, want canonical.Pair, who string) (canonic
 	return orientTradeTo(t, want), nil
 }
 
-// orientTradeTo re-expresses one stored trade in `want`'s orientation.
-//
-// A row stored that way already is returned untouched. A row stored the
-// other way round has its two legs and its two smallest-unit amounts
-// swapped — what [canonical.Orient] documents for a flipped row.
-//
-// The swap is EXACT and divides nothing. Price is derived from the two
-// amounts downstream (quote_amount / base_amount), so it inverts as a
-// consequence of the swap, at full precision and at any magnitude, and
-// a zero amount cannot poison a row here because no ratio is formed.
-// Same rule, same name, as the /v1/history page's own re-expression;
-// the two are deliberately identical, and inverting by division in
-// either would break ADR-0003.
-//
-// A row in NEITHER orientation is left exactly as it came: this
-// re-expresses rows, it does not relabel them.
+// orientTradeTo re-expresses one stored trade in `want`'s orientation by
+// swapping legs and amounts ([canonical.Orient]). The swap divides nothing, so
+// price inverts exactly downstream; inverting by division would break
+// ADR-0003. A row in neither orientation is returned as it came.
 func orientTradeTo(t canonical.Trade, want canonical.Pair) canonical.Trade {
 	if !t.Pair.Equal(want.Flip()) {
 		return t
@@ -1993,14 +1545,9 @@ func orientTradeTo(t canonical.Trade, want canonical.Pair) canonical.Trade {
 	return t
 }
 
-// tradeIsLaterInMarket reports whether `a` is the later of two trades
-// on one market, comparing (ts, ledger, tx_hash, op_index) — the four
-// components /v1/history orders its raw page on, and the four that
-// exclude `source`, whose Go byte order need not agree with the
-// database's collation.
-//
-// Used to pick between the two stored directions of one source, where
-// those four are a total order (see [Store.LatestTradePerSource]).
+// tradeIsLaterInMarket reports whether `a` is later than `b` on
+// (ts, ledger, tx_hash, op_index), /v1/history's order minus `source`, whose
+// Go byte order need not match the database collation.
 func tradeIsLaterInMarket(a, b canonical.Trade) bool {
 	switch {
 	case !a.Timestamp.Equal(b.Timestamp):
@@ -2021,35 +1568,16 @@ func tradeIsLaterInMarket(a, b canonical.Trade) bool {
 // never fire, so a ~48%-of-windows truncation rate would read as 0%.
 const MaxTradesInRangeLimit = 10000
 
-// TradesInRange returns the market's trades whose close-time falls in
-// [from, to) — in EITHER stored direction, each re-expressed in the
-// requested orientation. Ordered by (ts ASC, ledger ASC) — chronological,
-// which is what OHLC / VWAP callers want.
+// TradesInRange returns the market's trades with ts in [from, to), in either
+// stored direction, oriented as requested and ordered (ts, ledger) ASC.
 //
-// Both directions, because a market has no stored direction of its own (see
-// [Store.LatestTradesForPair]) and this read feeds /v1/vwap, /v1/twap,
-// single-bar /v1/ohlc, /v1/price/tip and the aggregator orchestrator.
-// Measured, one hour of native/USDC-GA5Z…: 2957 rows one way round and 2794
-// the other, so one direction held a biased 51.4% (the sell side, since the
-// decoder sets base = soldAsset); the folded high was 0.1818181818 against
-// 0.1806435916 served (+0.65%) and the low 0.1794054551 against 0.1796178598.
-//
-// The fold is a per-ROW leg swap ([orientTradeTo]) and nothing else. That
-// suffices because every aggregate downstream is defined on the two integer
-// amounts (Σquote/Σbase, quote/base) and `ts`, so the swap re-weights the
-// mean as it inverts the price, exactly and without dividing. See
-// docs/architecture/aggregation-plan.md §"The direction fold".
-//
-// TWO LIMITED ARMS, as in [Store.LatestTradesForPair]: any row in the
-// market's newest `limit` has at most limit-1 rows above it within its own
-// direction, so it survives its arm's cut. Truncation still keeps the NEWEST
-// rows, and `len(rows) == limit` still signals overflow to the
-// orchestrator's truncation detector. [canonical.Pair.Validate] refuses
-// base == quote, so the arms are disjoint.
-//
-// limit <= 0 means the default of 1000; it is clamped to
-// [MaxTradesInRangeLimit]. An empty slice + nil error means no trades in the
-// window.
+// It feeds /v1/vwap, /v1/twap, single-bar /v1/ohlc, /v1/price/tip and the
+// orchestrator. One direction alone is biased: one hour of native/USDC held
+// 2957 rows one way and 2794 the other, and the served high was 0.65% low.
+// The per-row leg swap suffices because every downstream aggregate is defined
+// on the integer amounts. Two limited arms keep the NEWEST rows, so
+// `len(rows) == limit` still signals truncation. limit <= 0 means 1000,
+// clamped to [MaxTradesInRangeLimit].
 func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 1000
@@ -2126,18 +1654,10 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
 	return out, nil
 }
 
-// TradesInRangeAfter is TradesInRange with a full-PK cursor. Rows
-// are returned iff their (ts, ledger, tx_hash, op_index, source)
-// tuple is strictly greater than the corresponding `after*` values.
-//
-// Widening from (ts, ledger) to the full PK closes a pagination
-// edge case: multiple trades can share (ts, ledger), and the naive
-// tuple `(ts, ledger) > (X, Y)` would skip any same-(ts, ledger)
-// row that didn't happen to be the last one on the previous page.
-// The primary key is unique so the full-PK tuple gives total order.
-//
-// afterTs = zero time disables the cursor; use TradesInRange for
-// that case (shorter form).
+// TradesInRangeAfter is TradesInRange with a full-PK cursor: rows whose
+// (ts, ledger, tx_hash, op_index, source) is strictly greater than `after*`.
+// The PK, not (ts, ledger), because several trades can share (ts, ledger).
+// A zero afterTs disables the cursor.
 func (s *Store) TradesInRangeAfter(
 	ctx context.Context,
 	p canonical.Pair,
@@ -2186,17 +1706,9 @@ func (s *Store) tradesInRangeAfter(
 	if to.Before(from) {
 		return nil, fmt.Errorf("timescale: TradesInRangeAfter: to %v < from %v", to, from)
 	}
-	// Full-PK tuple comparison. ORDER BY + WHERE must agree on the
-	// column order so the comparison is monotonic with the sort.
-	// Source sorts last so the common case (single-source trades)
-	// doesn't pay an unnecessary string compare cost on the index.
-	//
-	// NOTE: the Go function signature declares afterSource BEFORE
-	// afterOpIndex (by-type grouping of the two strings), but the
-	// SQL tuple expects them in PK order (tx_hash, op_index, source).
-	// The parameter BINDING below — not the signature — is what
-	// matters; it hands values to the placeholders in PK order.
-	// If you reorder the signature, reorder the binding too.
+	// ORDER BY and WHERE use the same PK column order so the comparison is
+	// monotonic with the sort. The signature lists afterSource before
+	// afterOpIndex but the binding below follows PK order; reorder both together.
 	const q = `
         SELECT source, ledger, tx_hash, op_index, ts,
                base_asset, quote_asset,
@@ -2285,48 +1797,21 @@ func (s *Store) tradesInRangeAfter(
 	return out, nil
 }
 
-// FXQuoteAtOrBefore returns the most recent FX observation for `pair`
-// at-or-before `cutoff`, restricted to sources passed in `fxSources`
-// (typically the result of external.FXSources()).
+// FXQuoteAtOrBefore returns the latest FX observation for `pair` at or before
+// `cutoff`, from sources in `fxSources`.
 //
-// Read order (the unified FX read path):
+//  1. `fx_quotes`, written by the active feed (forex worker), when `fxSources`
+//     contains [fxQuotesSourceLabel] and both sides are fiat: the newest daily
+//     row per ticker within [fxQuotesSnapLookback], USD legs exact 1 (see
+//     [fxSnapFromRows]). Legs fully covered by fx_fixings (bar_end ≤ cutoff −
+//     [FXFixingLag], within [fxFixingStoreMaxAge]) price from those first.
+//  2. `trades` filtered by `fxSources`, structurally empty today (no FX source
+//     writes trades); latest ts wins, ties by source name DESC.
 //
-//  1. `fx_quotes` — the table the ACTIVE FX feed (`massive`, the
-//     internal/sources/external/forex worker) writes. Consulted only when
-//     `fxSources` admits that feed (contains [fxQuotesSourceLabel]) and
-//     both pair sides are fiat. The most recent daily row per needed
-//     ticker within [fxQuotesSnapLookback] wins; USD legs are exact 1
-//     (rate_usd is USD-anchored). See [fxSnapFromRows] for the exact-
-//     Rat cross/inversion math.
-//     A leg set fully covered by fx_fixings (bar_end ≤ cutoff − [FXFixingLag],
-//     within [fxFixingStoreMaxAge]) is priced from those bars first.
-//  2. `trades` filtered by `fxSources` — structurally empty today: no
-//     FXSources() member writes trades (massive writes fx_quotes,
-//     exchangeratesapi writes oracle_updates), so re-enabling a
-//     connector does not feed it. Fires only when fx_quotes has no
-//     row in the lookback. When multiple FX sources have a quote
-//     at-or-before cutoff, the one with the largest ts wins; ties are
-//     broken by source-name DESC ordering (deterministic across
-//     regions because every region's source registry is identical).
-//
-// Returns (price, observedAt, source, nil) on hit;
-// (nil, time.Time{}, "", [ErrNoFXQuote]) when neither table has an FX
-// quote at or before cutoff. Other DB errors propagate.
-//
-// `price` is quote-units-per-base-unit as a *big.Rat (no precision
-// loss — every input is a NUMERIC column read as text; floats never
-// touch the money path per ADR-0003). On the trades path that is the
-// per-trade ratio QuoteAmount/BaseAmount — FX-source trades use a
-// uniform 1e6 scale on each side so the ratio is dimensionally clean
-// (the scale cancels). On the fx_quotes path it is the rate_usd ratio,
-// which is already scale-free. Empty `fxSources` returns ErrNoFXQuote
-// without touching the DB.
-//
-// Implementation notes:
-//   - The trades hypertable index `(base_asset, quote_asset, ts DESC)`
-//     makes the fallback a constant-cost descending range scan. Pushing
-//     the source filter to SQL keeps the scan bounded to FX rows.
-//   - cutoff is rounded to UTC to match the InsertTrade convention.
+// Returns [ErrNoFXQuote] when neither has a quote (and for empty `fxSources`
+// without a query). `price` is an exact *big.Rat (ADR-0003): per-trade
+// quote/base, where the uniform FX 1e6 scale cancels, or the scale-free
+// rate_usd ratio. cutoff is rounded to UTC to match InsertTrade.
 func (s *Store) FXQuoteAtOrBefore(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -2466,17 +1951,11 @@ func sameTradeConflictKey(a, b *canonical.Trade) bool {
 		a.Timestamp.Equal(b.Timestamp)
 }
 
-// dedupeSortedTradesByConflictKey collapses adjacent PK-duplicate rows in
-// a conflict-key-sorted batch, keeping the LAST copy of each run (the
-// latest redelivery). It exists because the batch upsert (migration
-// 0109) uses ON CONFLICT DO UPDATE, which Postgres rejects when one
-// statement presents the same conflict key twice. Input MUST be sorted by sortTradesByConflictKey so equal
-// keys are adjacent.
-//
-// Copy-on-write: the common case (no intra-batch duplicate) returns the
-// input slice untouched and allocates nothing; only when a duplicate is
-// found does it build a fresh slice, leaving the caller's slice intact so
-// the per-source "sent" tally can still count the collapsed duplicate.
+// dedupeSortedTradesByConflictKey collapses adjacent PK-duplicate rows,
+// keeping the LAST (latest redelivery), because Postgres rejects one ON
+// CONFLICT DO UPDATE presenting a key twice. Input must be sorted by
+// sortTradesByConflictKey. With no duplicate it returns the input untouched,
+// so the caller's "sent" tally still counts collapsed duplicates.
 func dedupeSortedTradesByConflictKey(sorted []canonical.Trade) []canonical.Trade {
 	firstDup := -1
 	for i := 1; i < len(sorted); i++ {
