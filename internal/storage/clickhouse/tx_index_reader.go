@@ -15,7 +15,7 @@ import (
 // TxIndexReader resolves tx hashes to their intra-ledger application
 // order (tx_index) from the lake's stellar.tx_hash_index — the
 // hash-ordered lookup table kept current by a materialized view over
-// stellar.transactions (ADR-0034 / perf-todo §4). This is the
+// stellar.transactions (ADR-0034). This is the
 // ordering signal the Postgres served tier does not carry; the MEV
 // worker's sandwich detectors consume it (mev.TxOrderResolver).
 //
