@@ -1246,42 +1246,30 @@ func (d *Dispatcher) noteLedgerUpgrades(ups []xdr.UpgradeEntryMeta, ledgerSeq ui
 }
 
 // walkEvictedKeys dispatches one synthetic Removed change per ledger key
-// stellar-core EVICTED at this ledger's close, and is the missing half of
-// the Soroban state-archival lifecycle.
+// stellar-core EVICTED at this ledger's close: the missing half of the
+// Soroban state-archival lifecycle (the decoders handle Restored).
 //
-// A contract-data entry whose TTL lapses leaves the live state without any
-// transaction touching it: it appears in no transaction's meta, so none of
-// the three phases above can ever see it. Core reports it in the
-// LedgerCloseMeta's evicted-keys list instead (CAP-62; the list carries both
-// the data key and its TTL key). Left unwalked, an evicted SAC balance's
-// last write would stand as "current" forever and the served supply
-// component would never come back down, drifting permanently ABOVE the
-// truth with no path to self-correct. The decoders handle the other half,
-// Restored.
+// An entry whose TTL lapses appears in no transaction's meta; core lists it
+// in the LedgerCloseMeta's evicted keys instead (CAP-62, data key plus TTL
+// key). Unwalked, an evicted SAC balance's last write would stand as
+// current forever and served supply would drift ABOVE the truth.
 //
-// Emitted as Removed, deliberately, rather than a new change variant: it is
-// what every entry decoder's Removed arm already means, and a later Restored
-// change reverses it. Unlike the lake walker, which skips persistent keys
-// (archived, not deleted), every evicted key is dispatched here and the
-// decoders decide. Removal is an absorbing STATE, not a
-// delta, so re-ingesting the ledger rewrites the identical row rather than
-// double-subtracting.
+// It is emitted as Removed because that is what every decoder's Removed arm
+// already means, and a later Restored reverses it. Removal is an absorbing
+// state, not a delta, so re-ingesting a ledger rewrites the same row.
+// Unwatched key types (TTL keys, contract code) fall out at each decoder's
+// Matches.
 //
-// Keys of entry types no decoder watches (the paired TTL keys, contract
-// code) fall out at each decoder's Matches — same as any unmatched change.
-//
-// The lake walker (clickhouse.extractLedgerEntryChanges) gives every evicted
-// key the same position but writes a `removed` row only for a deleted entry:
-// an archived persistent entry or contract code keeps its last live row.
+// The lake walker (clickhouse.extractLedgerEntryChanges) gives evicted keys
+// the same position but writes `removed` only for a deleted entry; an
+// archived persistent entry or contract code keeps its last live row.
 // entry_walk_parity_test.go pins the positions together.
 //
-// An LCM whose evicted keys cannot be read yields none. The SDK panics
-// rather than erroring on an unknown version, and ProcessLedger has already
-// reached that panic via lcm.LedgerSequence() long before this point, so the
-// error arm is unreachable today. If a future SDK starts returning it, the
-// rest of the ledger still lands, but the arm is COUNTED and logged with the
-// ledger: every eviction it drops leaves a served balance above the truth,
-// and the ledger number is what a replay needs.
+// Unreadable evicted keys yield none. The SDK panics on an unknown LCM
+// version before this point, so the error arm is unreachable for now; if it
+// fires, the rest of the ledger lands but the arm is counted and logged with
+// the ledger number, since each dropped eviction overstates a balance and
+// a replay needs that ledger.
 func (d *Dispatcher) walkEvictedKeys(lcm evictedKeysSource, ledgerSeq uint32, dispatch func(int, xdr.LedgerEntryChange) []consumer.Event) []consumer.Event {
 	keys, err := lcm.EvictedLedgerKeys()
 	if err != nil {

@@ -1413,42 +1413,29 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
 }
 
 // BatchInsertTrades writes trades with one multi-row upsert per
-// parameter-safe sub-batch of at most [tradeInsertMaxRows] rows.
-// Per-INSERT roundtrip latency caps indexer throughput at ~5 inserts/sec despite postgres-side capacity > 9000/sec
-// (verified by raw psql loop). Batching collapses N roundtrips into one
-// per sub-batch, lifting throughput by roughly the batch factor.
+// parameter-safe sub-batch of at most [tradeInsertMaxRows] rows, because
+// per-INSERT roundtrip latency, not Postgres, caps indexer throughput.
 //
-// Same conflict semantics as [Store.InsertTrade] (INT-01): ON
-// CONFLICT ... DO UPDATE on the trade PK, guarded by
-// `trades.derive_generation <= EXCLUDED.derive_generation` — an
-// equal-or-higher generation OVERWRITES the stored value columns
-// including `usd_volume`, a lower one is refused. Re-running a batch
-// over already-stored ledgers is therefore idempotent in ROW COUNT
-// but not inert in VALUE. The `source_entry_counts` UPSERT bumps the
-// per-source tally only by the number of rows actually written, so
-// re-runs don't inflate the count.
+// Conflict semantics match [Store.InsertTrade]: an equal-or-higher
+// `derive_generation` overwrites the stored value columns (including
+// `usd_volume`), a lower one is refused. Re-runs are idempotent in row
+// count but not inert in value; `source_entry_counts` is bumped only by
+// rows actually written.
 //
-// Storability pre-filter: each sub-batch is ONE all-or-nothing multi-row
-// INSERT, so one invalid row would abort that whole sub-batch.
-// [Store.filterStorableTrades] drops rows that fail [canonical.Trade.Validate]
-// (the same gate as the single-row [Store.InsertTrade]) so they can never
-// sink a batch of otherwise-good trades. An SDEX one-side-zero fill passes
-// Validate and is stored (unpriceable: every price path filters on
-// `base_amount > 0 AND quote_amount > 0`). USD-volume is computed per row
-// from the store's USD-volume resolver, same as the single row path.
+// Each sub-batch is one all-or-nothing INSERT, so
+// [Store.filterStorableTrades] first drops rows failing
+// [canonical.Trade.Validate] lest one bad row sink the rest. An SDEX
+// one-side-zero fill passes Validate and is stored (unpriceable: every
+// price path filters on `base_amount > 0 AND quote_amount > 0`).
 //
-// Partial success is explicit. Each sub-batch commits in its own
-// transaction (one transaction across them would hold every row lock and
-// the per-source source_entry_counts lock between statements, a lock
-// interleaving a single statement never had). Sub-batches run in
-// conflict-key order and stop at the first failure, so on error the rows
-// before it are committed and the rest are not written; the outcome
-// metrics and the registry hook still run for the committed rows, because
-// a replay sees them as updates (xmax <> 0) and can never count them. The
-// error is a [*TradeSubBatchError] naming the failed range and wrapping
-// the cause, so errors.Is/As classification (IsInfraError, ctx) is
-// unchanged. Callers replay the whole batch; that is row-idempotent under
-// the ON CONFLICT guard above.
+// Each sub-batch commits in its own transaction (one across them would
+// hold every row lock and the source_entry_counts lock between
+// statements). Sub-batches run in conflict-key order and stop at the
+// first failure; the committed prefix still gets its metrics and registry
+// hook, since a replay would see those rows as updates and never count
+// them. The error is a [*TradeSubBatchError] wrapping the cause, so
+// errors.Is/As classification is unchanged; callers replay the whole
+// batch.
 func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error {
 	if len(trades) == 0 {
 		return nil
