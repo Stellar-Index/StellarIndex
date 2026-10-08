@@ -202,9 +202,7 @@ func TestMinLedgerBySource_ExcludesOneShotJobNamespaces(t *testing.T) {
 		{Source: "ledgerstream", Sub: "", LastLedger: 900_000},
 		{Source: "projector", Sub: "soroswap", LastLedger: 899_500},
 		{Source: "projector", Sub: "band", LastLedger: 899_800},
-		// One-shot job shards — abandoned or long-finished, per the
-		// finding's r1 census (4,523 projected-rebuild rows, 91
-		// SDEX backfill rows from a 2026-05 attempt).
+		// One-shot job shards — abandoned or long-finished.
 		{Source: "backfill", Sub: "sdex-shard-1", LastLedger: 12_000},
 		{Source: "projected-rebuild", Sub: "shard-9", LastLedger: 4_000},
 		{Source: "census-backfill", Sub: "shard-2", LastLedger: 1},

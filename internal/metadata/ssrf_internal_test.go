@@ -79,8 +79,8 @@ func TestIsBlocked_CoversCloudMetadataAndReservedRanges(t *testing.T) {
 	}
 }
 
-// TestResolverTransportDisablesProxy is the F-1336 regression. The
-// SEP-1 fetch transport MUST NOT honour HTTP(S)_PROXY: with a proxy
+// TestResolverTransportDisablesProxy: the SEP-1 fetch transport MUST NOT
+// honour HTTP(S)_PROXY: with a proxy
 // configured, the transport dials the PROXY (which passes our
 // DialContext SSRF guard) and hands it the issuer-controlled target
 // host, so the guard never validates the real target — letting an

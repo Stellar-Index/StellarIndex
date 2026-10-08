@@ -211,11 +211,9 @@ func TestStatusRecorder_Flush_noopWhenInnerDoesntImplementFlusher(t *testing.T) 
 	r.Flush()
 }
 
-// F-0105 regression: a fast 500 must NOT count in the success
-// histogram. Pre-this-PR fast errors were observed in the same
-// histogram as fast successes, so a 500 returning in 5 ms reported
-// as "good" against the latency SLO numerator. After this fix, the
-// 500's elapsed time only lands in HTTPRequestDuration (the full
+// A fast 500 must NOT count in the success histogram, or a 500
+// returning in 5 ms reports as "good" against the latency SLO
+// numerator. The 500's elapsed time only lands in HTTPRequestDuration (the full
 // distribution); HTTPRequestSuccessDuration stays untouched.
 //
 // This drives the REAL middleware chain (HTTPMetrics → CaptureRoute →
@@ -259,7 +257,7 @@ func TestHTTPMetrics_Fast5xxDoesNotCountAsSuccess(t *testing.T) {
 	if got := durationAfter - durationBefore; got != 1 {
 		t.Errorf("http_request_duration_seconds count delta = %d, want 1", got)
 	}
-	// ...but the success-only histogram must NOT (F-0105: a fast 5xx is
+	// ...but the success-only histogram must NOT (a fast 5xx is
 	// not a latency success and must stay out of the SLO numerator).
 	if got := successAfter - successBefore; got != 0 {
 		t.Errorf("fast 500 leaked into success histogram: count delta = %d, want 0", got)
