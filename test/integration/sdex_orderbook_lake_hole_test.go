@@ -40,7 +40,7 @@ import (
 // HOLDS at B+1 (it never crosses the hole), and once the hole is filled the
 // SAME cache advances to B+4 and serves exactly {B, C}.
 //
-// Proven red: on the pre-fix reader the final book is {A, C} — phantom A
+// Proven red: on a reader without the hole check the final book is {A, C} — phantom A
 // still served, B never seen — with as_of_ledger already at B+4 after the
 // first Advance.
 func TestSDEXOrderBook_ConvergesAfterLakeHoleIsFilled(t *testing.T) {

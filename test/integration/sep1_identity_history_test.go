@@ -11,7 +11,7 @@ import (
 )
 
 // SEP-1 identity change detection and freshness against a real Postgres
-// (GH #840, migration 0190). The history rows are written inside
+// (migration 0190). The history rows are written inside
 // SetIssuerSep1Payload's transaction and the freshness verdict is SQL in
 // data-freshness.sh; neither exists in Go to unit-test.
 func TestSep1IdentityHistoryAndFreshness(t *testing.T) {

@@ -21,8 +21,7 @@ import (
 // flipped to `col = usage_daily.col + EXCLUDED.col`, every 5-minute
 // sweep would RE-ADD the cumulative value and usage_daily would report
 // k*N requests for N real requests — a permanent, non-self-correcting
-// over-count on the surface a metered plan bills against (audit
-// W2-plat-1 / candidate b).
+// over-count on the surface a metered plan bills against.
 //
 // The unit suite (internal/usage/rollup_test.go) only proves the sweep
 // hands the same cumulative batch on replay, then delegates: "idempotence

@@ -39,7 +39,7 @@ func (r *flakeyFXResolver) USDPriceAt(_ context.Context, asset c.Asset, _ time.T
 // is DOUBLE-WRITTEN at deriveGeneration=0 by both the dispatcher's
 // BatchInsertTrades and the projector's InsertTrade on the same store. If one
 // writer resolves a usd_volume and the other races the same PK while its FX
-// resolver hits a transient fault (returning nil), the pre-fix upsert
+// resolver hits a transient fault (returning nil), an upsert
 // (`usd_volume = EXCLUDED.usd_volume` gated only by
 // `derive_generation <= EXCLUDED.derive_generation`, equal included) overwrote
 // the populated value with NULL — permanently deflating the pair's volume.

@@ -319,7 +319,7 @@ func prB64(t *testing.T, sv xdr.ScVal) string {
 // Failure is injected by renaming rozo_events out from under the insert —
 // a real, deterministic Postgres error, not a mock.
 //
-// Proven red: with the pre-fix `_ = pipeline.HandleEvent(...)`, run 1
+// Proven red: with the old `_ = pipeline.HandleEvent(...)`, run 1
 // checkpoints both windows, run 2 skips them, and the rows are never written.
 func TestProjectedRebuild_FailedInsertDoesNotCheckpoint(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

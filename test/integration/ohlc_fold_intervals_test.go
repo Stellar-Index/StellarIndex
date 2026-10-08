@@ -54,9 +54,9 @@ func foldWidth(t *testing.T, lit string) time.Duration {
 // /v1/ohlc route ([timescale.OHLCRoutes]) through OHLCSeriesReBucketed
 // against a real TimescaleDB and checks the fold's arithmetic and
 // alignment against trades placed by hand. 2h, 12h, 3d and 2w never
-// executed in production before this test existed: their literals
+// had no coverage before this test: their literals
 // were routed but not allow-listed, so the store refused them before
-// composing SQL and the API answered 500 (launch plan W8-17). A fold
+// composing SQL and the API answered 500. A fold
 // literal that Postgres would not accept, or a bucket that does not
 // land where the API promises (`t` aligned to UTC interval
 // boundaries, weeks on Monday), fails here rather than at the edge.

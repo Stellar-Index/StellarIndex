@@ -26,7 +26,7 @@ import (
 // seeds one stellar.ledgers row whose close_time is ~2.5y stale, resolves it
 // through the production reader, feeds it through the production XLM computer
 // exactly as the resolver→computer path does, and asserts the snapshot's
-// ObservedAt equals the seeded close time — NOT ≈now. The pre-fix callers
+// ObservedAt equals the seeded close time — NOT ≈now. Callers that skipped the lake
 // discarded this resolved value entirely (they never read the lake), so this
 // stale, non-wall-clock ObservedAt is precisely what they could not produce.
 func TestSupplyObservedAt_StampsLedgerCloseTimeNotWallClock(t *testing.T) {

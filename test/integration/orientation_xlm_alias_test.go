@@ -11,13 +11,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestDistinctPairsRanksCryptoXLMAsQuote is GH-1100: quoteRankSQL used
-// to recognise only "native" and the SAC address as XLM, so a market
-// recorded in the crypto:XLM off-chain spelling ranked as an ordinary
-// token (rank 1) instead of XLM (rank 2). Stored as (base=crypto:XRP,
+// TestDistinctPairsRanksCryptoXLMAsQuote checks that quoteRankSQL ranks the crypto:XLM
+// off-chain spelling as XLM (rank 2), not as an ordinary token (rank 1),
+// like "native" and the SAC address. Stored as (base=crypto:XRP,
 // quote=crypto:XLM) — the correct canonical orientation keeps that
-// order (XLM outranks XRP), but the pre-fix rank tie broke on string
-// comparison ("crypto:XRP" > "crypto:XLM") and flipped it, swapping
+// order (XLM outranks XRP), but a rank tie would break on string
+// comparison ("crypto:XRP" > "crypto:XLM") and flip it, swapping
 // which leg the listing reports as base and which as quote.
 func TestDistinctPairsRanksCryptoXLMAsQuote(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -51,7 +50,7 @@ func TestDistinctPairsRanksCryptoXLMAsQuote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DistinctPairs: %v", err)
 	}
-	// The listing folds XLM spellings (GH-1098), so the quote may come back
+	// The listing folds XLM spellings, so the quote may come back
 	// as any of XLM's alias forms; what this test pins is the orientation.
 	xlmForms := map[string]bool{}
 	for _, a := range c.AssetAliases(xlm) {

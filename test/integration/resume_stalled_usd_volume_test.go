@@ -31,7 +31,7 @@ import (
 // non-NULL with the correct value.
 //
 // To reproduce the red state: revert the body of [ingest.ArmTradeWriteStore]
-// to `return nil` (the pre-fix behaviour: no SetDeriveGeneration, no
+// to `return nil` (the broken behaviour: no SetDeriveGeneration, no
 // InstallUSDVolumeResolution). InsertTrade then computes usd_volume=NULL and
 // the non-NULL assertion goes red.
 func TestResumeStalled_ArmsUSDVolumeResolution(t *testing.T) {

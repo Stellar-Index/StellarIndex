@@ -303,9 +303,8 @@ func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 	})
 
 	// Price-history series (the sparklines): every bucket that has an
-	// XLM leg in EITHER stored direction must carry a point. Pre-fix
-	// (#254 follow-up) the four series CTEs read the XLM leg base-side
-	// only, so CBIJ and ZINV had a headline price but an EMPTY series.
+	// XLM leg in EITHER stored direction must carry a point. The four series CTEs must not read the XLM leg base-side
+	// only, or CBIJ and ZINV had a headline price but an EMPTY series.
 	//
 	// ZDIR is the per-bucket byte-identity guard: the bucket holding its
 	// base-side row (-40m, 2.0 XLM) must price 0.80 even though a

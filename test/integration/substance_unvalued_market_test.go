@@ -14,7 +14,7 @@ import (
 
 // TestSubstanceGate_TellsAnUnvaluableMarketFromAThinOne executes both
 // substance reads against real TimescaleDB and runs the gate over them
-// (GH-1052). prices_1m stores sum(coalesce(usd_volume, 0)), so a market
+// . prices_1m stores sum(coalesce(usd_volume, 0)), so a market
 // the insert-time waterfall could not value reads as $0 — the same
 // number as a market that was valued and found empty. The reads now
 // return how many active buckets carried a dollar value, and the gate

@@ -98,7 +98,7 @@ func TestGetNetworkStatsFoldsFlippedOrientation(t *testing.T) {
 	}
 }
 
-// TestGetNetworkStatsLatestLedgerReadsOnlyLiveCursors pins T603: the
+// TestGetNetworkStatsLatestLedgerReadsOnlyLiveCursors pins that the
 // home page's latest_ledger must be the live tip, not the highest
 // ledger any one-shot job's shard cursor ever reached. Each job writes
 // its own namespace ("census-backfill", "projected-rebuild", …), and a

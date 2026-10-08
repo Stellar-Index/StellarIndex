@@ -13,7 +13,7 @@ import (
 )
 
 // TestSampleAccountIDs_SeededChangeLogFrame proves reconcile-balances' -sample
-// frame (GH-1096) on real ClickHouse:
+// frame on real ClickHouse:
 //
 //   - it is drawn from stellar.ledger_entry_changes, so an account the
 //     ledger_entries_current projection lost is still drawable (the old frame

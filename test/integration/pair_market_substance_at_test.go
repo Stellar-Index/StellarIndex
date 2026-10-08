@@ -14,7 +14,7 @@ import (
 
 // TestPairMarketSubstanceAt_MeasuresTheMarketAtTheInstant executes the
 // point-in-time substance SQL against real TimescaleDB, and then runs
-// the thin-market gate over it end to end (finding T038).
+// the thin-market gate over it end to end.
 //
 // The defect: /v1/price/at and the /v1/price/changes horizons serve the
 // bucket at-or-before a past `ts`, but the gate deciding whether to

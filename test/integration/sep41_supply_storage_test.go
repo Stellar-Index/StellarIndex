@@ -262,7 +262,7 @@ func TestSEP41SupplyRollup_AdvanceDeltaAndFallback(t *testing.T) {
 
 	// This test pins the tip-deferral guard, so declare the domain durably
 	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
-	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	// further than the projector's cursor (see settleSEP41Cursor).
 	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
 
 	const contractID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
@@ -355,7 +355,7 @@ func TestSEP41SupplyRollup_AdvanceDeltaAndFallback(t *testing.T) {
 //
 //   - A SAC-wrapper with pre-Soroban issuance (seeded genesis mint) + a large
 //     Soroban-era burn computes a POSITIVE LIFETIME total and does NOT trip the
-//     negative-total guard — the pre-fix failure mode for VELO/AQUA/yXLM/… .
+//     negative-total guard — the failure mode for VELO/AQUA/yXLM/… .
 //   - A Soroban-only token (no pre-genesis flows) is UNCHANGED whether or not a
 //     baseline row exists, and seeding a ZERO baseline does not double-count.
 //   - The baseline is gated on asOfLedger ≥ genesis_baseline_ledger, so a read
@@ -376,7 +376,7 @@ func TestSEP41GenesisBaseline_LifetimeSupplyEndToEnd(t *testing.T) {
 
 	// This test pins the tip-deferral guard, so declare the domain durably
 	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
-	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	// further than the projector's cursor (see settleSEP41Cursor).
 	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
 
 	// Real production reader → computer over the store.
@@ -447,7 +447,7 @@ func TestSEP41GenesisBaseline_LifetimeSupplyEndToEnd(t *testing.T) {
 		t.Fatalf("post-seed SEP41GenesisBaselineSeeded = %v, %v; want true, nil", seeded, err)
 	}
 
-	// Post-fix: lifetime total = (2 + 2.4e12) − 2.18e12 = 220000000002, positive,
+	// With the guard: lifetime total = (2 + 2.4e12) − 2.18e12 = 220000000002, positive,
 	// guard not tripped.
 	got, err := computeTotal(sacContract, tip)
 	if err != nil {
@@ -630,7 +630,7 @@ func TestSEP41SupplyRollupFoldReset(t *testing.T) {
 
 	// This test pins the tip-deferral guard, so declare the domain durably
 	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
-	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	// further than the projector's cursor (see settleSEP41Cursor).
 	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
 
 	// Raw connection for DIRECT column assertions — the exported reader hides
@@ -836,7 +836,7 @@ func TestSEP41GenesisBaseline_SeedAfterUnflooredFold(t *testing.T) {
 
 	// This test pins the tip-deferral guard, so declare the domain durably
 	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
-	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	// further than the projector's cursor (see settleSEP41Cursor).
 	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
 
 	// Raw connection for DIRECT fold-column assertions — the exported reader
@@ -1063,7 +1063,7 @@ func TestSEP41GenesisBaseline_ReseedRepairsFoldPoisonedUnderSameFloor(t *testing
 	}
 }
 
-// TestSEP41SupplyRollup_ContendedWritersYield pins #1086's convoy: a fold
+// TestSEP41SupplyRollup_ContendedWritersYield pins the convoy: a fold
 // writer blocked on another writer's row lock must give up after the bounded
 // lock_timeout (SQLSTATE 55P03) rather than wait out a cold full-history fold,
 // because the aggregator advances contracts sequentially and every later
@@ -1163,7 +1163,7 @@ func TestSEP41SupplyRollup_ResetDuringAdvanceIsNotStranded(t *testing.T) {
 
 	// This test pins the tip-deferral guard, so declare the domain durably
 	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
-	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	// further than the projector's cursor (see settleSEP41Cursor).
 	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
 
 	rawdb, err := sql.Open("pgx", dsn)
@@ -1350,7 +1350,7 @@ func TestSEP41RollupCheckpoints_DerivedReconcile(t *testing.T) {
 
 	// This test pins the tip-deferral guard, so declare the domain durably
 	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
-	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	// further than the projector's cursor (see settleSEP41Cursor).
 	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
 
 	const (
@@ -1452,7 +1452,7 @@ func TestSEP41SupplyRollup_LargeI128(t *testing.T) {
 
 	// This test pins the tip-deferral guard, so declare the domain durably
 	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
-	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	// further than the projector's cursor (see settleSEP41Cursor).
 	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
 
 	const contractID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"

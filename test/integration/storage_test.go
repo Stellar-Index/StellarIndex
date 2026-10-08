@@ -498,7 +498,7 @@ func applyMigrations(t *testing.T, dsn string) {
 	// quiesceCAGGRefreshPolicies and raced the policy job TimescaleDB
 	// fires shortly after add_continuous_aggregate_policy — the 55P03
 	// "concurrent refresh" flake that failed TestAPI_EndToEnd +
-	// TestVWAPUSDFXResolver_BootstrapsWithoutUSDVolume on PR #121's CI
+	// TestVWAPUSDFXResolver_BootstrapsWithoutUSDVolume in CI
 	// (migration 0147 lengthened the chain enough to shift the timing
 	// into collision). Integration tests materialize every view by
 	// hand; a scheduled background refresh adds nothing they assert.
@@ -647,7 +647,7 @@ func TestTWAPPointsInRange_TimeWeighted(t *testing.T) {
 // TestTWAPSampleCount_CoverageWeighted proves migration 0126's
 // `sample_count` column materializes in the twap_1h CAGG AND that
 // TWAPPointsInRange folds the two stored market directions by minute
-// COVERAGE, not trade count (audit finding M-B). This is the on-Postgres
+// COVERAGE, not trade count. This is the on-Postgres
 // twin of the cannedConn unit test.
 //
 // One hour of a two-sided XLM/USDC market:

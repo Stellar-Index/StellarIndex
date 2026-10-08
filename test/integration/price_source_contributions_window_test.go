@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestPriceSourceContributions_Migration0169 pins GH #763 against real
+// TestPriceSourceContributions_Migration0169 pins the window behaviour against real
 // TimescaleDB:
 //
 //   - 0169 applies to a price_source_contributions hypertable that already

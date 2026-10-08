@@ -175,7 +175,7 @@ func TestSEP41SupplyRollup_SettledBoundIsTheDurableCursor(t *testing.T) {
 	}
 
 	// The money assertion: the retried mint is part of served supply.
-	// Folding past it (the pre-fix bound) loses exactly its 1,000,000.
+	// Folding past it (the unsettled bound) loses exactly its 1,000,000.
 	const wantMint = 700_000 + 1_000_000 + 2_000_000 + 3_000_000 + 5_000_000
 	assertTotals("after retry landed", contractID, 5000, wantMint, 100_000)
 

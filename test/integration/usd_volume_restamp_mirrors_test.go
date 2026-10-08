@@ -213,7 +213,7 @@ func TestXLMQuoteRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 		topLedger = spam.Ledger
 	}
 
-	// The pre-fix state, imposed by hand.
+	// The stale state, imposed by hand.
 	f.exec(`UPDATE trades SET usd_volume = 0.00372265 WHERE source='sdex' AND ledger=$1`, ledger["quote-side wrong"])
 	f.exec(`UPDATE trades SET usd_volume = NULL       WHERE source='sdex' AND ledger=$1`, ledger["stored NULL"])
 
@@ -422,7 +422,7 @@ func TestCEXFiatRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 		topLedger = spam.Ledger
 	}
 
-	// The pre-fix state: the population this tier exists for is stored
+	// The stale state: the population this tier exists for is stored
 	// NULL (prices_1m has no fiat pair, so before the resolver read
 	// fx_quotes these rows fell through every tier).
 	f.exec(`UPDATE trades SET usd_volume = 0.50000000 WHERE source='binance' AND ledger=$1`, ledger["fx wrong"])

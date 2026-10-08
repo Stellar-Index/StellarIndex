@@ -30,12 +30,12 @@ import (
 // FINAL change.
 //
 // Proven-red evidence, all on ONE live container:
-//   - "unguarded_last_writer_wins_reproduces_bug" runs the EXACT pre-fix SQL
+//   - "unguarded_last_writer_wins_reproduces_bug" runs the EXACT unguarded SQL
 //     (a plain ON CONFLICT DO UPDATE with no seq guard) and shows the STALE
 //     (earlier) value wins when it commits last — the bug, reproduced.
 //   - "guarded_writer_keeps_final" runs the REAL fixed writer with the SAME
 //     out-of-order sequence and shows the FINAL value wins. This assertion
-//     FAILS on the pre-fix writer (no column / no guard → the stale late
+//     FAILS on an unguarded writer (no column / no guard → the stale late
 //     write wins), so it is red-on-unfixed and green-after-fix.
 func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -89,8 +89,8 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 		}
 	}
 
-	// ── The pre-fix behaviour, reproduced live ────────────────────────────
-	// Raw unguarded last-writer-wins (the writer BEFORE this fix), writing the
+	// ── The unguarded behaviour, reproduced live ────────────────────────────
+	// Raw unguarded last-writer-wins (the writer without the seq guard), writing the
 	// FINAL change first and the EARLIER change last (an out-of-order worker):
 	// the stale earlier value overwrites the final. This is the C2-6 bug.
 	t.Run("unguarded_last_writer_wins_reproduces_bug", func(t *testing.T) {
