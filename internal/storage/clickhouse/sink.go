@@ -1,8 +1,6 @@
-// Package clickhouse is the Tier-1 raw-lake write path (ADR-0034 /
-// docs/architecture/ingest-pipeline.md#the-structural-lake-ingest). It buffers structurally-
-// decoded ledger rows and flushes them to the ClickHouse `stellar.*` tables
-// in native columnar batches. Rows mirror deploy/clickhouse/tier1_schema.sql
-// exactly (excluding the DEFAULT ingested_at column).
+// Package clickhouse is the Tier-1 raw-lake write path (ADR-0034): it buffers decoded
+// ledger rows and flushes them to the `stellar.*` tables in native batches, mirroring
+// deploy/clickhouse/tier1_schema.sql (minus the DEFAULT ingested_at column).
 package clickhouse
 
 import (
@@ -53,11 +51,9 @@ type TransactionRow struct {
 	MemoType       string
 	Memo           string
 
-	// Soroban resource metering (extract.go:extractSorobanMetering). All 0 for
-	// classic/non-Soroban txs. DECLARED = the submitter's resource bid (tx
-	// envelope SorobanTransactionData); ACTUAL fees = what core charged (tx
-	// meta SorobanTransactionMetaExtV1). No actual-instructions field exists in
-	// pubnet ledger meta, so only the three charged-fee values are captured.
+	// Soroban resource metering (extract.go:extractSorobanMetering); 0 for classic txs.
+	// DECLARED = submitter's bid, ACTUAL = fees core charged. Pubnet meta has no
+	// actual-instructions field.
 	SorobanInstructions   uint32 // declared CPU instruction bid
 	SorobanDiskReadBytes  uint32 // declared
 	SorobanWriteBytes     uint32 // declared
@@ -68,9 +64,8 @@ type TransactionRow struct {
 	SorobanRefundableFee  int64  // actual refundable resource fee charged
 	SorobanRentFee        int64  // actual rent fee charged
 
-	// Fee-bump outer layer (extract.go:extractFeeBump); ""/0 on a non-fee-bump
-	// tx. On a fee bump TxHash is the OUTER hash and SourceAccount/MaxFee are
-	// the inner tx's.
+	// Fee-bump outer layer (extract.go:extractFeeBump); ""/0 otherwise. On a fee bump
+	// TxHash is the OUTER hash and SourceAccount/MaxFee are the inner tx's.
 	InnerTxHash     string // inner tx hash
 	FeeAccount      string // fee payer
 	FeeBumpFee      int64  // fee payer's max-fee bid (the bound on FeeCharged)
@@ -98,9 +93,8 @@ type OperationResultRow struct {
 	ResultXDR  string
 }
 
-// OperationParticipantRow mirrors stellar.operation_participants — one
-// row per (non-source account, operation) for ADR-0038 Phase B account
-// history.
+// OperationParticipantRow mirrors stellar.operation_participants: one row per
+// (non-source account, operation) (ADR-0038).
 type OperationParticipantRow struct {
 	Account   string
 	LedgerSeq uint32
@@ -138,56 +132,30 @@ type LedgerEntryChangeRow struct {
 	EntryType   string
 	KeyXDR      string
 	EntryXDR    string
-	// AccountID is the owning account G-strkey for account-owned entries
-	// (account / trustline / offer / data), "" otherwise. The queryable
-	// owner column for account-state explorer reads (ADR-0038 Phase C) —
-	// ledger_entry_changes is otherwise keyed only by (ledger, tx).
+	// AccountID is the owning account G-strkey for account-owned entries, "" otherwise;
+	// the queryable owner column for explorer reads (ADR-0038).
 	AccountID string
-	// Asset is the canonical asset id ("CODE-ISSUER" / "native" /
-	// "pool:<hex>") for trustline entries, "" otherwise — the queryable
-	// key for asset-holder reads.
+	// Asset is the canonical asset id (CODE-ISSUER / native / pool:<hex>) for trustlines.
 	Asset string
-	// Balance is the entry's balance in stroops for account (native) +
-	// trustline entries, 0 otherwise. A queryable column so top-holders /
-	// account-balance reads sort + aggregate in SQL without decoding every
-	// entry's XDR. Int64 (XLM / classic balances are i64 in XDR).
+	// Balance is the stroop balance for account and trustline entries (i64 in XDR), 0
+	// otherwise, so holder reads sort and aggregate in SQL without decoding XDR.
 	Balance int64
-	// IntraLedgerSeq is the position of this change within its ledger's
-	// canonical entry-change walk — a per-ledger monotonic counter assigned in
-	// LEDGER-WIDE PHASE order, not per-transaction order: phase 1 every tx's
-	// fee changes (tx-set apply order), phase 2 every tx's apply-phase meta
-	// (tx-changes-before, per-op changes in op_index/change_index order,
-	// tx-changes-after), phase 3 every tx's post-apply fee changes (P23
-	// Soroban refunds), phase 4 the ledger's evicted keys. This mirrors the SDK's canonical
-	// ingest.LedgerChangeReader state machine and dispatcher's
-	// walkLedgerEntryChanges exactly. A
-	// PER-TRANSACTION order would mis-rank tx1's apply-phase change below
-	// tx2's fee change. It is the
-	// intra-ledger tie-breaker folded into stellar.ledger_entries_current's
-	// ReplacingMergeTree version (version = ledger_seq<<32 | intra_ledger_seq),
-	// so when the SAME key is changed more than once in one ledger (e.g.
-	// update-then-remove) FINAL deterministically keeps the LAST change instead
-	// of an arbitrary same-ledger row. change_index
-	// alone can't serve — it is a per-TRANSACTION counter, so it repeats across
-	// a ledger's txs (see extract_entry_changes.go). Snapshot/seed backfill rows
-	// stamp the seedIntraLedgerSeq sentinel (the authoritative final state for
-	// their ledger). DEFAULT 0 in the lake — old-binary-safe.
-	//
-	// POSITIONS ARE SCOPED TO dispatcher.EntryWalkVersion: comparable only
-	// against another position from the SAME walk version. A version bump
-	// renumbers every ledger, so a lower-numbered correction cannot displace a
-	// higher-numbered legacy row through the RMT version — the partition must
-	// be dropped before re-ingest. See that constant and migration 0120.
+	// IntraLedgerSeq is the change's position in the ledger-wide canonical walk, in PHASE
+	// order, not per-tx: (1) every tx's fee changes, (2) every tx's apply-phase meta,
+	// (3) post-apply fee changes (Soroban refunds), (4) evicted keys. Mirrors the SDK's
+	// ingest.LedgerChangeReader and dispatcher walkLedgerEntryChanges. It is folded into
+	// ledger_entries_current's RMT version (ledger_seq<<32 | intra_ledger_seq) so FINAL
+	// keeps the LAST same-ledger change; change_index cannot serve (per-tx counter).
+	// Seed rows stamp seedIntraLedgerSeq. Positions are comparable only within the same
+	// dispatcher.EntryWalkVersion: a bump renumbers every ledger, so the partition must be
+	// dropped before re-ingest (migration 0120). DEFAULT 0 in the lake.
 	IntraLedgerSeq uint32
 }
 
-// SupplyFlowRow mirrors stellar.supply_flows: one decoded supply-affecting
-// event (CAP-67 classic / SEP-41 mint/burn/clawback). The amount is decoded
-// from the event body AT INGEST (DecodeSupplyAmount) — the i128 magnitude as a
-// *big.Int (ADR-0003) — so per-token supply is a pure SQL sum over this table
-// (Σmint − Σburn − Σclawback) with no XDR decode at read time and no periodic
-// rollup refresh. Keyed (in the ReplacingMergeTree ORDER BY) by the event
-// identity so the lake's drop→heal / re-backfill re-inserts are idempotent.
+// SupplyFlowRow mirrors stellar.supply_flows: one decoded mint/burn/clawback event.
+// The i128 magnitude is decoded at ingest as a *big.Int (ADR-0003), so per-token
+// supply is a pure SQL sum. The event identity is the ORDER BY key, so re-inserts
+// are idempotent.
 type SupplyFlowRow struct {
 	ContractID string
 	LedgerSeq  uint32
@@ -199,8 +167,7 @@ type SupplyFlowRow struct {
 	Amount     *big.Int
 }
 
-// LedgerExtract is one ledger's full structural decode — all rows produced
-// from a single LedgerCloseMeta.
+// LedgerExtract is all rows from one LedgerCloseMeta.
 type LedgerExtract struct {
 	Ledger       LedgerRow
 	Txs          []TransactionRow
@@ -211,58 +178,35 @@ type LedgerExtract struct {
 	Changes      []LedgerEntryChangeRow
 	SupplyFlows  []SupplyFlowRow
 
-	// TxReadErrors / TxEventReadErrors count transactions this extract
-	// could NOT fully read (a malformed tx, or a tx whose
-	// GetTransactionEvents failed — e.g. an unsupported future
-	// TransactionMeta version). They are IN-MEMORY ONLY (not ClickHouse
-	// columns): the ledger is still written so the lake stays contiguous
-	// (contiguity is the substrate-continuity coverage proof — dropping
-	// the ledger would be worse), but a non-zero value means this
-	// ledger's Events/SorobanEventCount undercount. The indexer meters
-	// all three on stellarindex_ch_live_sink_read_undercount_total (a
-	// meta-version break drops EVERY tx's events in lock-step, which
-	// would otherwise look like a run of clean empty ledgers).
+	// TxReadErrors / TxEventReadErrors count txs not fully read (malformed, or events
+	// unreadable under an unsupported meta version). In-memory only: the ledger is still
+	// written to keep the lake contiguous, but its Events undercount. The indexer meters
+	// them on stellarindex_ch_live_sink_read_undercount_total.
 	TxReadErrors      int
 	TxEventReadErrors int
 
-	// EntryMetaUnsupported counts transactions whose apply-phase
-	// LedgerEntryChange walk was skipped because their TransactionMeta
-	// carried a version the walk does not handle. Same in-memory-only
-	// treatment and same reason as the two above: the ledger is still
-	// written (contiguity), but this ledger's Changes undercount — every
-	// classic balance / trustline / offer / LP change in those txs is
-	// missing, which reads downstream as "nothing happened". Unreachable
-	// on production input today (galexie's captive core re-generates meta
-	// at replay time — verified across protocols 1→19);
-	// a non-zero value means an archive re-derived by an old core binary
-	// or a protocol that bumped meta past V4.
+	// EntryMetaUnsupported counts txs whose entry-change walk was skipped for an
+	// unhandled TransactionMeta version: the ledger's Changes undercount and read as
+	// "nothing happened". In-memory only; unreachable on production input today.
 	EntryMetaUnsupported int
 
-	// SorobanFeeMetaUnsupported counts Soroban transactions whose
-	// TransactionMeta version the charged-fee read does not handle: their
-	// soroban_*_fee columns are written as 0, indistinguishable from a
-	// zero charge. Same in-memory-only treatment as the counts above.
+	// SorobanFeeMetaUnsupported counts Soroban txs whose charged-fee columns are written
+	// as 0, indistinguishable from a zero charge. In-memory only.
 	SorobanFeeMetaUnsupported int
 
-	// EvictedKeysUnreadable is 1 when the LedgerCloseMeta's evicted-keys
-	// list could not be read: this ledger's eviction rows are missing, so
-	// each evicted entry's last write stays current. Same in-memory-only
-	// treatment as the counts above.
+	// EvictedKeysUnreadable is 1 when the evicted-keys list was unreadable: each evicted
+	// entry's last write stays current. In-memory only.
 	EvictedKeysUnreadable int
 
-	// EntryChangesUnencodable counts entry changes (tx-phase or eviction)
-	// that could not be re-marshalled and so wrote no row; each still took
-	// its intra_ledger_seq position. Unreachable on XDR-decoded input, which
-	// rejects every invalid enum and union arm.
+	// EntryChangesUnencodable counts changes that could not be re-marshalled and wrote no
+	// row (each still took its intra_ledger_seq position). Unreachable on decoded input.
 	EntryChangesUnencodable int
 }
 
-// ErrBufferFull is returned by [Sink.Add] when the in-memory buffer is already
-// at maxBufferLedgers and the flush that should have drained it is failing (a
-// sustained ClickHouse outage). The incoming extract is DROPPED rather than
-// appended, capping heap growth on the shared host. It is a distinct
-// sentinel so callers (the LiveSink worker) can count it as a bounded DROP, not
-// a write ERROR — the ch-live-catchup gap-scan timer heals the hole later.
+// ErrBufferFull is returned by [Sink.Add] when the buffer is at maxBufferLedgers and
+// flushes keep failing (sustained ClickHouse outage). The extract is DROPPED to cap
+// heap; callers count it as a bounded drop, not an error, and the ch-live-catchup
+// gap scan heals it.
 var ErrBufferFull = errors.New("clickhouse: sink buffer full — extract dropped (bounded-drop, heals via ch-live-catchup)")
 
 // Sink buffers extracts and flushes them to ClickHouse in batches. Not safe
@@ -286,23 +230,16 @@ type Sink struct {
 	supplyFlows  []SupplyFlowRow
 }
 
-// SetMaxBufferLedgers caps how many ledgers' worth of rows the Sink will hold
-// in memory before [Add] starts dropping incoming extracts with [ErrBufferFull].
-// The cap bounds heap growth during a sustained ClickHouse outage,
-// where every Flush fails and would otherwise keep the buffers intact while the
-// worker keeps appending. 0 (the default) means unbounded — correct for
-// backfill Sinks, whose caller retries the SAME range on flush failure rather
-// than streaming new ledgers on top. The LiveSink sets a finite cap because its
-// producer (live ingest) never stops feeding it.
+// SetMaxBufferLedgers caps buffered ledgers before [Add] drops with [ErrBufferFull].
+// 0 (default) is unbounded, right for backfill Sinks whose caller retries the same
+// range; the LiveSink sets a cap because live ingest never stops feeding it.
 func (s *Sink) SetMaxBufferLedgers(n int) { s.maxBufferLedgers = n }
 
 // BufferedLedgers reports how many ledgers are currently buffered (unflushed).
 func (s *Sink) BufferedLedgers() int { return len(s.ledgers) }
 
-// Open dials ClickHouse (native protocol) at addr (e.g. "127.0.0.1:9300")
-// against the `stellar` database, pings it, and fails if any table or
-// operator-scope column Flush writes to is missing. flushEvery is the ledger-count threshold that
-// triggers an automatic Flush.
+// Open dials ClickHouse at addr, pings, and fails if any table or column Flush
+// writes to is missing. flushEvery is the ledger count that triggers a Flush.
 func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 	if flushEvery <= 0 {
 		flushEvery = 2000
@@ -316,13 +253,9 @@ func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 		Addr: []string{addr},
 		Auth: auth,
 		Settings: clickhouse.Settings{
-			// `max_execution_time` is a TIME limit (seconds), not a
-			// memory bound — it does not keep memory modest,
-			// and 0 = UNLIMITED, which is exactly what lets a heavy FINAL
-			// gate/reconcile read wedge CH. This Sink is the WRITE
-			// path (cheap appends), so a generous-but-finite ceiling is purely a
-			// safety net against a pathological INSERT…SELECT; the read-path caps
-			// live on openRead in gate.go where the heavy-FINAL query class runs.
+			// max_execution_time is a time limit (0 = unlimited, which lets a heavy FINAL read
+			// wedge CH). This is the write path, so a finite ceiling is a safety net; read-path
+			// caps live on openRead in gate.go.
 			"max_execution_time": 300,
 		},
 		DialTimeout:     10 * time.Second,
@@ -332,9 +265,8 @@ func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 	}, flushEvery)
 }
 
-// openSink dials with opts, pings, and refuses a target that lacks any table
-// or column Flush writes to, so a mis-pointed or un-migrated endpoint fails at startup
-// rather than on the first Flush.
+// openSink dials, pings, and refuses a target missing any table or column Flush
+// writes to, so a mis-pointed endpoint fails at startup.
 func openSink(ctx context.Context, opts *clickhouse.Options, flushEvery int) (*Sink, error) {
 	addr := strings.Join(opts.Addr, ",")
 	conn, err := clickhouse.Open(opts)
@@ -358,10 +290,8 @@ var sinkTables = []string{
 	"contract_events", "ledger_entry_changes", "supply_flows", "ledgers",
 }
 
-// sinkColumns lists the columns Flush names in its INSERTs that tier1_schema.sql
-// alone may not create: databases provisioned before them need the additive
-// ALTERs in deploy/clickhouse (transactions_soroban_metering.sql,
-// transactions_fee_bump.sql, ledger_entries_current_intra_ledger_seq.sql).
+// sinkColumns are columns Flush writes that tier1_schema.sql alone may not create;
+// older databases need the additive ALTERs in deploy/clickhouse.
 var sinkColumns = map[string][]string{
 	"transactions": {
 		"soroban_instructions", "soroban_disk_read_bytes", "soroban_write_bytes",
@@ -427,20 +357,11 @@ func stellarNames(ctx context.Context, conn driver.Conn, query string) (map[stri
 	return have, nil
 }
 
-// Add buffers one ledger's extract, auto-flushing when the ledger threshold
-// is reached. Any error other than [ErrBufferFull] comes from that inline
-// flush: e is buffered and stays buffered for the next Flush.
-//
-// Bounded drop: if a finite cap is set (SetMaxBufferLedgers) and the
-// buffer is already AT the cap, the incoming extract is DROPPED and
-// [ErrBufferFull] is returned — the buffer is NOT grown. This only happens once
-// the cap is reached, which (given flushEvery < cap) means flushes have been
-// failing long enough to back up — i.e. a sustained CH outage. Dropping the
-// NEWEST extract (rather than evicting an already-buffered older one) keeps the
-// flat per-table slices intact and is O(1); the ch-live-catchup gap-scan timer
-// re-fills the dropped (older, below-tip) ledgers later. Bounded heap is
-// strictly safer than unbounded growth on the shared r1 host (Postgres
-// co-tenant; see CH-root-fill incident).
+// Add buffers one ledger's extract and flushes at the ledger threshold; any error
+// other than [ErrBufferFull] comes from that inline flush (e stays buffered). If a
+// finite cap is set and the buffer is AT it, the NEWEST extract is dropped (O(1),
+// keeps the slices intact) and the ch-live-catchup gap scan refills it: bounded heap
+// beats unbounded growth on the shared host.
 func (s *Sink) Add(ctx context.Context, e LedgerExtract) error {
 	if s.maxBufferLedgers > 0 && len(s.ledgers) >= s.maxBufferLedgers {
 		return ErrBufferFull
@@ -459,20 +380,11 @@ func (s *Sink) Add(ctx context.Context, e LedgerExtract) error {
 	return nil
 }
 
-// Flush sends all buffered rows as one native batch per table, then clears
-// the buffers. A partial failure returns the error with buffers intact so the
-// caller can retry the same range (idempotent under ReplacingMergeTree).
-//
-// ORDERING IS LOAD-BEARING: stellar.ledgers is flushed LAST, after every other
-// table. The batches are independent INSERTs (no cross-table transaction), so a
-// flush can partially succeed. Writing ledgers last makes a ledgers row a
-// per-ledger COMMIT MARKER: if a ledger_seq is present in stellar.ledgers, all
-// of that ledger's txs/ops/results/events/changes are already durable in CH.
-// The real-time projector's completeness watermark (ADR-0041 feed-switch,
-// ContiguousWatermark) relies on this invariant to read contract_events only up
-// to where the lake is provably complete — never racing ahead of a half-written
-// or dropped ledger. (Buffer-full drops in LiveSink.PushLedger drop the whole
-// LedgerExtract atomically, so they leave no ledgers row either.)
+// Flush sends one native batch per table, then clears the buffers. A partial failure
+// keeps them so the caller retries the range (idempotent under ReplacingMergeTree).
+// ORDERING IS LOAD-BEARING: stellar.ledgers is flushed LAST as the per-ledger commit
+// marker (the INSERTs are not transactional). The projector's ContiguousWatermark
+// (ADR-0041) relies on it never passing a half-written ledger.
 func (s *Sink) Flush(ctx context.Context) error {
 	n := len(s.ledgers)
 	if n == 0 {
@@ -499,7 +411,7 @@ func (s *Sink) Flush(ctx context.Context) error {
 	if err := s.flushSupplyFlows(ctx); err != nil {
 		return err
 	}
-	// ledgers LAST — the commit marker. See the ORDERING note above.
+	// ledgers LAST: the commit marker (see Flush).
 	if err := s.flushLedgers(ctx); err != nil {
 		return err
 	}
@@ -611,15 +523,8 @@ func (s *Sink) flushEvents(ctx context.Context) error {
 	return wrapSend(b.Send(), "contract_events")
 }
 
-// flushChanges writes stellar.ledger_entry_changes.
-//
-// Extract.Changes IS populated — extractEntryChanges
-// walks the per-op LedgerEntry changes (ADR-0038 Phase C, see extract.go) and
-// stellar.ledger_entry_changes is a live table, read by StreamEntryChanges for
-// the ADR-0047 Phase 4 movement reconstruction. Do not assume the opposite
-// ("ALWAYS empty ... a no-op in practice ... do not
-// assume stellar.ledger_entry_changes is populated"), which is exactly the
-// claim a reader would use to decide the table can be ignored.
+// flushChanges writes stellar.ledger_entry_changes, a live table populated by
+// extractEntryChanges and read by StreamEntryChanges.
 func (s *Sink) flushChanges(ctx context.Context) error {
 	if len(s.changes) == 0 {
 		return nil // No entry changes in this batch (e.g. a ledger of pure fee bumps).

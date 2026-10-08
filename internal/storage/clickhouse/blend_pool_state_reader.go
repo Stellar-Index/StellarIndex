@@ -10,12 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 )
 
-// BlendReserveState is one Blend reserve's decoded current state +
-// derived metrics (ADR-0039), read from the certified lake. ResData
-// (the volatile state) is always present; ResConfig (the rate-model
-// params + decimals) may not be captured (it's written rarely, often
-// before the contract-storage capture window began) — Metrics.HasAPR
-// reflects that, and Decimals falls back to 7 (the Stellar/SAC default).
+// BlendReserveState is one reserve's decoded current state and derived metrics
+// (ADR-0039). ResData is always present; ResConfig (rate model, decimals) may be
+// uncaptured, so Metrics.HasAPR reports it and Decimals falls back to 7.
 //
 // DecimalsFound reports whether Decimals came from the reserve's config.
 // When false the exponent is a placeholder: a caller must not publish a
@@ -29,111 +26,35 @@ type BlendReserveState struct {
 	Metrics       blend.ReserveMetrics
 }
 
-// blendReserveStateQuery is the batched current-state lookup for a
-// pool's reserve entries — a PK-PREFIX PROBE on
-// ledger_entries_current's (entry_type, key_xdr) sort key, bounded by
-// construction to (2 instance durabilities + 1 ResData per reserve)
-// keys. Identical in shape to the three sibling pool-state readers
-// (SoroswapPairReserves, PhoenixPoolReserves, CometPoolReserves), which
-// have always read the current-state projection.
-//
-// A scan would make this reader the outlier: folding the LATEST entry per key
-// out of stellar.ledger_entry_changes itself, with
-//
-//	WHERE entry_type = 'contract_data'
-//	  AND ledger_seq > (SELECT max(ledger_seq) FROM …) - 250000
-//	  AND key_xdr IN (?)
-//	GROUP BY key_xdr
-//	HAVING argMax(change_type, (ledger_seq, intra_ledger_seq)) != 'removed'
-//
-// — a 250,000-ledger (~14-day) window over a 150B-row / 6+TiB table. The
-// key_xdr bloom skip-index cannot rescue that shape for THIS reader: a
-// Blend ResData entry is rewritten on nearly every pool interaction, so
-// one reserve's key alone matches tens of thousands of rows scattered
-// across the window's granules (74,834 rows for the busiest pool's USDC
-// reserve, measured on r1 — see the fixture note in
-// blend_pool_state_reader_test.go). The scan cost is a function of pool
-// ACTIVITY over the window, not of how many reserves were asked for, so
-// it was a multi-second FLOOR paid by every pool, largest and smallest
-// alike (12.1s timeout on the largest pool, 9.31s on a small one).
-//
-// ledger_entries_current already holds exactly this answer as one row
-// per live key, so the fold is not ours to do:
-//
-//   - VERSION RESOLUTION is the same composite the old argMax spelled
-//     out. The table is ReplacingMergeTree(version) with
-//     version = (ledger_seq << 32) | intra_ledger_seq, so FINAL keeps the
-//     LAST change in canonical intra-ledger order, which matters because
-//     a ResData entry is commonly rewritten several times inside ONE
-//     ledger, and a ledger_seq-only tie-break serves an arbitrary
-//     MID-ledger reserve state.
-//   - THE REMOVED-KEY DROP keeps only rows whose entry_xdr is NON-EMPTY,
-//     applied to the row FINAL kept. (Spelled without the empty-string
-//     literal on purpose: gofumpt's doc-comment reformatter rewrites a
-//     doubled apostrophe to a typographic quote, silently, and the
-//     result is fmt-STABLE — so the corruption survives every later
-//     check. The SQL itself is in a raw string and is unaffected.) A
-//     'removed' change carries only its key (see entryChangeRow), so an
-//     empty entry_xdr on the winning row means "this key's final change
-//     was a removal". The filter must NOT run before the collapse —
-//     filtering removals out first is what let an earlier same-ledger
-//     update RESURRECT a deleted key, the exact bug the old HAVING
-//     existed to avoid — so optimize_move_to_prewhere_if_final is pinned
-//     OFF rather than left to the server default.
-//
-// max_threads / max_memory_usage are the shared guard rails the sibling
-// readers pin (see ttlLivenessBatchQuery): the read is cheap, and a
-// planner or layout shift must fail THIS query loudly rather than fan
-// out on the shared host.
-//
-// LEGACY TIE ROWS. intra_ledger_seq is 0 on every row ingested before
-// the stamp existed and on legacy rows until a full re-derive repopulates
-// it, so two same-ledger changes to one key from that era tie under
-// FINAL exactly as they would tie under argMax — the survivor is
-// arbitrary. That is not a regression (both shapes resolve it the same
-// way), but it is worth knowing WHERE it bites hardest: the population
-// this query newly admits — quiet reserves whose last write is old — is
-// drawn disproportionately from precisely that era. A reserve last
-// touched years ago is more likely to sit on unbroken ties than one
-// rewritten this week. The fix is a re-derive of
-// ledger_entry_changes.intra_ledger_seq, not a change here.
-//
-// Reading the projection RETIRES the capture-window caveat — a reserve
-// whose ResData had not been touched for 14 days would be reported
-// absent, and a quiet reserve is not a dead one — but a scan window would
-// also act as an accidental STALENESS bound, so the read is paired
-// with an explicit archived-entry drop. See [dropArchivedBlendReserves].
+// blendReserveStateQuery is a batched PK-prefix probe of ledger_entries_current's
+// (entry_type, key_xdr) sort key, like the sibling pool-state readers. Do not fold the
+// latest entry per key out of ledger_entry_changes: a ResData entry is rewritten on
+// nearly every pool interaction, so scan cost scales with pool activity.
+// FINAL resolves versions: version = (ledger_seq << 32) | intra_ledger_seq, so the
+// last change in intra-ledger order wins. A 'removed' change carries only its key, so
+// a winning row with empty entry_xdr is a removal; that filter must run AFTER the
+// collapse (before it, an older same-ledger update resurrects a deleted key), hence
+// optimize_move_to_prewhere_if_final = 0. Rows stamped before intra_ledger_seq existed
+// tie arbitrarily until it is re-derived. Quiet reserves are not dropped by a scan
+// window, so staleness is bounded by [dropArchivedBlendReserves]. The thread and
+// memory pins are the siblings' guard rails (see ttlLivenessBatchQuery).
 const blendReserveStateQuery = `SELECT key_xdr, entry_xdr
 	FROM stellar.ledger_entries_current FINAL
 	WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
 	SETTINGS max_threads = 4, max_memory_usage = 8000000000, optimize_move_to_prewhere_if_final = 0`
 
-// BlendPoolReserves reads the CURRENT reserve STATE for a Blend pool
-// from the lake (ADR-0039): the volatile ResData entry (b_rate/d_rate/
-// supplies) per reserve asset, plus the pool's instance entry (backstop
-// rate), fetched in a SINGLE batched `key_xdr IN (...)` query against
-// the current-state projection (see [blendReserveStateQuery]). The
-// rate-model CONFIG comes from the caller (`configs`, sourced from
-// blend_admin queue_set_reserve events) — the on-chain ResConfig
-// storage entry is usually uncaptured (set at reserve init, never
-// rewritten), so APY is computed from the event-derived config when
-// present, and omitted otherwise (BaseMetrics). `version` is the pool's
-// contract generation (from its deploying factory), which fixes the
-// ResData rate scale; an unknown one is an error.
-//
-// ABSENCE means "reserves unavailable", never zero — the same contract
-// the sibling readers publish. A reserve is absent when it has no
-// captured ResData, when its final change was a removal, and when its
-// entry has been TTL-ARCHIVED (a lapsed pool's last-known reserves are
-// not current liquidity; see [dropArchivedBlendReserves]). An archived
-// pool INSTANCE takes every reserve under it with it.
+// BlendPoolReserves reads the CURRENT reserve state for a pool (ADR-0039): ResData per
+// asset plus the instance entry (backstop rate) in one batched query. The rate-model
+// config comes from the caller (blend_admin queue_set_reserve events); without it
+// APY is omitted (BaseMetrics). version fixes the ResData rate scale; unknown is an
+// error. ABSENCE means "unavailable", never zero: no ResData, a final removal, or a
+// TTL-archived entry (an archived pool instance takes all its reserves).
 func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, version blend.PoolVersion, assets []string, configs map[string]blend.ReserveConfig) ([]BlendReserveState, error) {
 	poolID, err := contractIDFromStrkey(pool)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: blend pool id %q: %w", pool, err)
 	}
-	// V1 and V2 ResData share field names but not rate scales; decoding
-	// under a guessed generation is off by 10^3.
+	// V1 and V2 ResData share field names but not rate scales (off by 10^3 if guessed).
 	if version != blend.PoolV1 && version != blend.PoolV2 {
 		return nil, fmt.Errorf("clickhouse: blend pool %s: unknown pool version %d", pool, version)
 	}
@@ -153,18 +74,9 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ver
 	if err != nil {
 		return nil, err
 	}
-	// Archived entries are dropped BEFORE anything here becomes a reported
-	// figure — the projection keeps a lapsed entry's last-known value, and
-	// the handler prices whatever it is handed. See
-	// [dropArchivedBlendReserves].
-	//
-	// This does not reintroduce a per-request scan: verdicts come from the
-	// shared stale-while-revalidate cache (the same one SoroswapPairReserves
-	// uses), whose recompute is detached and whose underlying read is a
-	// primary-key lookup on the slim ttl_live_until projection since v0.21.4.
-	// Only a COLD cache waits, and it waits on the caller's deadline — which
-	// the wrapping here maps to the handler's retryable `lending-timeout` 503
-	// (handlerTimedOut unwraps DeadlineExceeded) rather than a 500.
+	// Drop archived entries before anything is reported: the projection keeps a lapsed
+	// entry's last value. Verdicts come from the shared SWR cache, so no per-request scan;
+	// only a cold cache waits, on the caller's deadline (handler maps it to a 503).
 	if err := dropArchivedBlendReserves(ctx, r.ttlVerdicts, dataByAsset, refByKey, matched); err != nil {
 		return nil, fmt.Errorf("clickhouse: blend reserves ttl liveness: %w", err)
 	}
@@ -172,13 +84,10 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ver
 	return assembleBlendReserveStates(pool, assets, dataByAsset, configs, bstop), nil
 }
 
-// assembleBlendReserveStates builds the reported states in the caller's
-// asset order. ResData (the state) is mandatory; the rate-model config is
-// optional — with it we report the real decimals, without it
-// supplied/borrowed/utilization (config-free) + placeholder decimals 7
-// (DecimalsFound=false). APR needs the config AND the pool's backstop
-// rate: a nil bstop (instance Config missing or undecodable) withholds it
-// (HasAPR=false) rather than serving the gross rate as the supply APR.
+// assembleBlendReserveStates builds states in the caller's asset order. Without the
+// config: config-free metrics and placeholder decimals 7 (DecimalsFound=false). APR
+// also needs the backstop rate: a nil bstop withholds it (HasAPR=false) rather than
+// serving the gross rate as the supply APR.
 func assembleBlendReserveStates(
 	pool string, assets []string,
 	dataByAsset map[string]*blend.ReserveData,
@@ -219,11 +128,8 @@ type keyRef struct {
 	kind  string // "ResData" | "ResConfig" | "Instance"
 }
 
-// blendReserveKeys builds the storage keys BlendPoolReserves fetches —
-// the pool instance entry (for the backstop rate) + the ResData entry
-// per reserve asset — and a reverse index from key to (asset, kind).
-// (ResConfig is NOT fetched from the lake; the rate config comes from
-// blend_admin events — see BlendPoolReserves.)
+// blendReserveKeys builds the keys to fetch (instance entry plus ResData per asset)
+// and a key -> (asset, kind) index. ResConfig is not fetched.
 func blendReserveKeys(poolID xdr.ContractId, assets []string) ([]string, map[string]keyRef) {
 	refByKey := make(map[string]keyRef)
 	keys := make([]string, 0, len(assets)+2)
@@ -248,16 +154,9 @@ func blendReserveKeys(poolID xdr.ContractId, assets []string) ([]string, map[str
 	return keys, refByKey
 }
 
-// scanBlendReserveParts decodes the batched lookup's rows into the
-// per-asset ResData + the pool's backstop rate, and reports which of the
-// requested keys actually produced a row (`matched`).
-//
-// `matched` is what the TTL-liveness filter is scoped to. Judging keys
-// the lake never returned would let a TTL row with no companion
-// contract_data entry drop reserves the reader would otherwise have
-// served — an over-drop, the mirror of the phantom-liquidity bug and
-// harder to notice. Only entries we are actually about to REPORT get
-// classified.
+// scanBlendReserveParts decodes rows into per-asset ResData and the backstop rate, and
+// reports the keys that produced a row (matched). The TTL filter is scoped to matched:
+// judging keys the lake never returned could over-drop reserves we would have served.
 func scanBlendReserveParts(rows interface {
 	Next() bool
 	Scan(...any) error
@@ -298,40 +197,13 @@ func scanBlendReserveParts(rows interface {
 	return dataByAsset, bstop, matched, nil
 }
 
-// dropArchivedBlendReserves removes reserve state whose lake entry has
-// been TTL-ARCHIVED — the staleness bound this reader owes its callers,
-// and the reason the three sibling pool-state readers are not parity in
-// SHAPE alone (SoroswapPairReserves → dropArchivedPairs,
-// PhoenixPoolReserves / CometPoolReserves → ClassifyTTLLiveness).
-//
-// Soroban evicts a contract_data entry once its TTL lapses, but
-// ledger_entries_current keeps its last-known value forever. An archived
-// reserve therefore reads as a perfectly good ResData row, and the API
-// multiplies it by today's USD price into `tvl_usd` and stamps the
-// current watermark with flags.stale=false — a fabricated TVL for a dead
-// pool, published as current. This is the same phantom-liquidity class
-// dropArchivedPairs documents ("phantom depth on every surface that
-// consumes this") and that PHO's +157% supply divergence came from.
-//
-// It also replaces a bound that a scan window provides by accident. The
-// 250,000-ledger window does DOUBLE DUTY: an archived
-// entry has had no writes since it lapsed, so the window drops it as a
-// side effect of being narrow. Reading the current-state projection
-// removes that window — correctly, since a QUIET reserve is not a dead
-// one — so the staleness bound has to be stated explicitly rather than
-// inherited from a scan bound.
-//
-// FAIL-OPEN, exactly as the siblings: only a positively-resolved lapsed
-// liveUntilLedgerSeq drops anything. A key with no TTL row, an
-// unrecognised TTL wire shape, or a reader built without a verdict cache
-// (tests) all yield TTLUnknown, which KEEPS the reserve — under-reporting
-// live liquidity is the same class of error in the other direction, and
-// a silent over-drop is harder to spot than a residual over-count.
-//
-// An archived pool INSTANCE drops every reserve under it: the pool
-// contract itself is no longer live ledger state, so its reserves cannot
-// be current liquidity whatever their own TTLs say. Same "ANY archived
-// key sinks the pool" rule as dropArchivedPhoenixPools.
+// dropArchivedBlendReserves removes reserve state whose entry is TTL-archived. Soroban
+// evicts an entry once its TTL lapses but ledger_entries_current keeps its last value,
+// so an archived reserve would be priced into tvl_usd as live: phantom liquidity (see
+// dropArchivedPairs). FAIL-OPEN: only a positively lapsed liveUntilLedgerSeq drops
+// anything; no TTL row, unknown wire shape or no verdict cache yields TTLUnknown and
+// KEEPS the reserve. An archived pool INSTANCE drops every reserve under it (same
+// rule as dropArchivedPhoenixPools).
 func dropArchivedBlendReserves(
 	ctx context.Context,
 	verdicts *ttlLivenessCache,
@@ -361,8 +233,7 @@ func dropArchivedBlendReserves(
 	return nil
 }
 
-// contractDataValue unmarshals a base64 LedgerEntry and returns its
-// ContractData value ScVal.
+// contractDataValue returns the ContractData value ScVal of a base64 LedgerEntry.
 func contractDataValue(b64 string) (xdr.ScVal, bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
@@ -375,10 +246,9 @@ func contractDataValue(b64 string) (xdr.ScVal, bool) {
 	return cd.Val, true
 }
 
-// backstopRateFromInstance pulls PoolConfig.bstop_rate (7 decimals)
-// from a contract instance entry's storage map (Symbol "Config"). ok is
-// false on a missing or undecodable Config: 0 is a legal rate, so a miss
-// must not be spelled as 0 (that serves the gross rate as supply APR).
+// backstopRateFromInstance pulls PoolConfig.bstop_rate (7 decimals) from the instance
+// storage map. ok=false on a missing Config: 0 is a legal rate, so a miss must not
+// read as 0 (that serves the gross rate as supply APR).
 func backstopRateFromInstance(val xdr.ScVal) (rate uint32, ok bool) {
 	inst, isInst := val.GetInstance()
 	if !isInst || inst.Storage == nil {
@@ -396,11 +266,8 @@ func backstopRateFromInstance(val xdr.ScVal) (rate uint32, ok bool) {
 	return 0, false
 }
 
-// poolDataKeyXDR builds the base64 LedgerKey for a Blend
-// PoolDataKey::<variant>(asset) persistent contract_data entry under
-// the pool contract — matching the `key_xdr` column verbatim. The
-// #[contracttype] enum variant encodes as Vec[Symbol(variant),
-// Address(asset)].
+// poolDataKeyXDR builds the base64 LedgerKey of a persistent PoolDataKey::<variant>
+// (asset) entry, matching key_xdr verbatim: Vec[Symbol(variant), Address(asset)].
 func poolDataKeyXDR(poolID xdr.ContractId, variant string, assetID xdr.ContractId) (string, error) {
 	pid := poolID
 	sym := xdr.ScSymbol(variant)
