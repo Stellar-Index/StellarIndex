@@ -1,20 +1,6 @@
-// Package statsflush owns the periodic worker that exports
-// dispatcher in-memory counters to the decoder_stats_5m hypertable.
-//
-// The dispatcher tracks events_seen / decode_errors / orphan_events
-// per source as cumulative process counters. The flusher samples
-// those counters every interval, computes the delta against its
-// last snapshot, and writes one row per (source, bucket) tuple to
-// postgres.
-//
-// Snapshot-and-delta (not snapshot-and-clear) is the contract:
-// resetting the dispatcher's counters from outside the dispatcher
-// would race with concurrent decoder writes. Computing deltas
-// owner-side keeps the dispatcher untouched.
-//
-// Powers /v1/diagnostics/decoders + the explorer /diagnostics
-// decoder-coverage table per docs/architecture/explorer-data-
-// inventory.md §7.22.
+// Package statsflush exports the dispatcher's cumulative per-source counters to
+// decoder_stats_5m as per-interval deltas. It diffs against its own snapshot
+// rather than clearing the counters, which would race concurrent decoder writes.
 package statsflush
 
 import (
@@ -27,39 +13,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// shutdownDrainTimeout bounds the final flush on the way out. Long
-// enough for one small batched write against a healthy pool, short
-// enough that a wedged pool cannot hold process shutdown open.
+// shutdownDrainTimeout bounds the final flush so a wedged pool cannot hold shutdown open.
 const shutdownDrainTimeout = 5 * time.Second
 
-// StatsSource is the seam the flusher reads from. The Dispatcher
-// satisfies it directly; tests can substitute a fake.
+// StatsSource is the counter source; the Dispatcher satisfies it.
 type StatsSource interface {
 	Stats() dispatcher.Stats
 }
 
-// LedgerSource provides the most-recently-ingested ledger for the
-// last_ledger column. Optional — nil leaves last_ledger NULL.
+// LedgerSource supplies last_ledger; nil leaves it NULL.
 type LedgerSource interface {
 	LatestLedger() uint32
 }
 
-// statsWriter is the narrow subset of [*timescale.Store] the flusher
-// depends on. Declared as an interface — the same pattern
-// internal/pipeline's tradeWriter uses — so the write-failure /
-// retained-snapshot behaviour is
-// unit-testable with a fake that fails on demand, without a real
-// Postgres: *timescale.Store.Open pings before returning, so there's
-// no way to construct a *Store that succeeds at construction and then
-// fails on a later call without an actual reachable database.
+// statsWriter is the subset of *timescale.Store the flusher uses; an interface
+// so write-failure behaviour is testable without a reachable Postgres.
 type statsWriter interface {
 	InsertDecoderStats(ctx context.Context, rows []timescale.DecoderStatsBucket) error
 }
 
-// Flusher snapshots dispatcher counters every interval and writes
-// per-bucket deltas to the decoder_stats_5m hypertable.
-//
-// Run via [Flusher.Run]; caller cancels via context.
+// Flusher writes per-bucket counter deltas to decoder_stats_5m every interval.
 type Flusher struct {
 	source   StatsSource
 	store    statsWriter
@@ -71,18 +44,9 @@ type Flusher struct {
 	// from current values yields the delta for this bucket.
 	last dispatcher.Stats
 
-	// obsLast baselines the dispatcher-level Prometheus counters
-	// (TxReadErrors, TxEventReadErrors, EntryMetaUnsupported, EvictedKeysUnreadable,
-	// LedgerUpgradeEntries, UncorroboratedCalls) separately from last. Those emissions happen
-	// unconditionally, before InsertDecoderStats, so they must not
-	// share a baseline with the per-source DB rows: flush
-	// deliberately holds `last` back on a write failure so the next
-	// successful insert recovers the dropped window, but that same
-	// hold-back would otherwise replay the identical counter delta
-	// and WARN on every subsequent tick until a new occurrence
-	// finally moves `current` past the stuck baseline. obsLast
-	// advances right after each emission,
-	// independent of whether the DB write that follows succeeds.
+	// obsLast baselines the counters emitted straight to Prometheus. It advances on
+	// every emission, unlike last, which holds back on a write failure; sharing
+	// last would replay the same delta and WARN on every tick until a new event.
 	obsLast dispatcherObsCounters
 }
 
@@ -94,16 +58,13 @@ type dispatcherObsCounters struct {
 	EntryMetaUnsupported  int
 	EvictedKeysUnreadable int
 	LedgerUpgradeEntries  int
-	// UncorroboratedCalls is per-source (oracle-forgery rejections
-	// can hit any oracle-class ContractCallDecoder), unlike its scalar
-	// siblings above. Same obsLast-not-f.last reasoning applies.
+	// UncorroboratedCalls is per-source, unlike its scalar siblings.
 	UncorroboratedCalls map[string]int
 }
 
 // Options tunes a Flusher at construction time.
 type Options struct {
-	// Interval between snapshots. Default 5 min — matches the
-	// decoder_stats_5m hypertable name + chunk interval.
+	// Interval between snapshots; default 5 min, matching decoder_stats_5m.
 	Interval time.Duration
 
 	// LedgerSource is consulted on every flush so each row carries
@@ -111,15 +72,11 @@ type Options struct {
 	LedgerSource LedgerSource
 }
 
-// New constructs a Flusher. Logger is required — the flusher logs
-// every tick at DEBUG, plus any postgres write failures at WARN.
-// store is typically *timescale.Store, which satisfies [statsWriter].
+// New constructs a Flusher; store is typically *timescale.Store.
 func New(source StatsSource, store statsWriter, logger *slog.Logger, opts Options) *Flusher {
 	if logger == nil {
-		// Match the sibling sink constructors (clickhouse.NewLiveSink,
-		// discovery/sorobanevents AsyncSink) which all default the
-		// logger — flushAt derefs it on a background tick, so a nil
-		// would nil-panic minutes after a clean start.
+		// Default the logger: flushAt derefs it on a background tick, so nil would panic
+		// minutes after a clean start.
 		logger = slog.Default()
 	}
 	interval := opts.Interval
@@ -140,9 +97,7 @@ func New(source StatsSource, store statsWriter, logger *slog.Logger, opts Option
 	}
 }
 
-// Run blocks until ctx is cancelled, flushing every interval.
-// Returns nil on context cancellation; never returns an error
-// (per-tick failures log + continue).
+// Run flushes every interval until ctx is cancelled; per-tick failures only log.
 func (f *Flusher) Run(ctx context.Context) error {
 	t := time.NewTicker(f.interval)
 	defer t.Stop()
@@ -150,17 +105,8 @@ func (f *Flusher) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			// One last flush before exiting so a clean shutdown
-			// captures the final partial bucket.
-			//
-			// It must NOT use ctx: that context is what just fired,
-			// so database/sql would reject the write before it
-			// reaches Postgres and every restart would silently drop
-			// up to a full interval of counters — while logging the
-			// retain-snapshot warning, a promise an exiting process
-			// cannot keep. Detach from the
-			// cancellation but keep a bound so a wedged pool can't
-			// hold shutdown open.
+			// Final flush on a context detached from the cancelled ctx: database/sql would
+			// reject the write otherwise and drop up to an interval of counters.
 			drainCtx, cancel := context.WithTimeout(
 				context.WithoutCancel(ctx), shutdownDrainTimeout)
 			f.flush(drainCtx)
@@ -172,18 +118,13 @@ func (f *Flusher) Run(ctx context.Context) error {
 	}
 }
 
-// flush is the convenience wrapper around flushAt that uses
-// time.Now. Used for the shutdown drain.
+// flush is flushAt at time.Now.
 func (f *Flusher) flush(ctx context.Context) {
 	f.flushAt(ctx, time.Now())
 }
 
-// flushAt computes the per-source delta against the last snapshot
-// and writes the rows. Intentionally exported via the lowercase
-// name; tests reach in via deterministic clock injection in
-// New(). The bucket is floored to the configured interval so two
-// independent flushers (e.g. during a leader handover) write to
-// the same row.
+// flushAt writes per-source deltas since the last snapshot. The bucket is floored
+// to the interval so two flushers during a leader handover write the same row.
 func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 	bucket := now.UTC().Truncate(f.interval)
 	current := f.source.Stats()
@@ -205,20 +146,15 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 			OrphanEvents: int64(current.OrphanEvents[source] - f.last.OrphanEvents[source]),
 			LastLedger:   lastLedger,
 		}
-		// Skip rows where every counter is zero AND we have no
-		// ledger context. Avoids writing meaningless zero-rows on
-		// quiet sources.
+		// Skip all-zero rows with no ledger context.
 		if delta.EventsSeen == 0 && delta.DecodeErrors == 0 && delta.OrphanEvents == 0 && delta.LastLedger == 0 {
 			continue
 		}
 		rows = append(rows, delta)
 	}
 
-	// Surface dispatcher-level tx-read errors at WARN when a delta
-	// appears in this flush window, and add it to the Prometheus
-	// counter. The counter sits outside the per-source row
-	// schema (LedgerTransactionReader.Read failures aren't attributable
-	// to a source) so the statsflush hypertable can't carry it.
+	// Tx-read errors are not attributable to a source, so they go to Prometheus
+	// and a WARN, not to the per-source rows.
 	if delta := current.TxReadErrors - f.obsLast.TxReadErrors; delta > 0 {
 		f.logger.Warn("dispatcher: tx-read errors during this flush window",
 			"delta", delta,
@@ -229,11 +165,8 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 	}
 	f.obsLast.TxReadErrors = current.TxReadErrors
 
-	// G15-06: a climbing tx-event-read-error count means
-	// GetTransactionEvents is failing (e.g. an unsupported future meta
-	// version), silently dropping every tx's Soroban events. Surfaced at
-	// WARN so the break is visible rather than masquerading as clean
-	// (empty) ledgers that the completeness reconcile would still pass.
+	// Tx-event read errors drop every Soroban event in the tx, which would
+	// otherwise look like a clean empty ledger that completeness still passes.
 	if delta := current.TxEventReadErrors - f.obsLast.TxEventReadErrors; delta > 0 {
 		f.logger.Warn("dispatcher: tx-event read errors during this flush window — Soroban events being dropped",
 			"delta", delta,
@@ -244,12 +177,8 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 	}
 	f.obsLast.TxEventReadErrors = current.TxEventReadErrors
 
-	// An unhandled TransactionMeta version stops the apply-phase entry
-	// change walk for that tx — every classic balance / trustline / offer
-	// / LP change in it becomes invisible, which downstream is
-	// indistinguishable from a ledger in which nothing happened. Same
-	// WARN treatment as the sibling tx-event break above, and for the
-	// same reason.
+	// An unhandled TransactionMeta version hides every classic state change in the
+	// tx, indistinguishable from an empty ledger; same WARN as above.
 	if delta := current.EntryMetaUnsupported - f.obsLast.EntryMetaUnsupported; delta > 0 {
 		f.logger.Warn("dispatcher: unsupported TransactionMeta version during this flush window — apply-phase entry changes being skipped",
 			"delta", delta,
@@ -278,13 +207,8 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 	}
 	f.obsLast.LedgerUpgradeEntries = current.LedgerUpgradeEntries
 
-	// UncorroboratedCalls: a call an oracle decoder refused to
-	// corroborate is a security signal (rejected forgery, or a
-	// routing-shape change), not routine noise — same immediate-WARN
-	// treatment as the tx-level counters above, but per-source since a
-	// forgery attempt targets one oracle's routing shape at a time. Never
-	// touches f.last, so the hold-back-on-write-failure below can't make
-	// this replay a stale delta once a later tick moves current past it.
+	// A refused oracle corroboration is a security signal (forgery or routing
+	// change), so it WARNs per source. It never touches f.last.
 	for source, n := range current.UncorroboratedCalls {
 		delta := n - f.obsLast.UncorroboratedCalls[source]
 		if delta <= 0 {
@@ -302,27 +226,16 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 
 	if len(rows) > 0 {
 		if err := f.store.InsertDecoderStats(ctx, rows); err != nil {
-			// Do NOT advance f.last on a
-			// write failure. This window's rows never landed, so the
-			// delta they represent must stay live — advancing the
-			// snapshot anyway would make the NEXT tick compute its
-			// delta from `current`, silently discarding this window's
-			// counts forever instead of folding them into the next
-			// successful flush.
+			// Keep f.last on a write failure so the next successful flush folds this
+			// window in; advancing it would drop these counts forever.
 			f.logger.Warn("decoder-stats flush failed — retaining last snapshot so the next successful flush recovers this window's counts",
 				"rows", len(rows), "err", err)
 			return
 		}
 	}
 
-	// Snapshot for next-tick delta computation. Make a copy of the
-	// maps so concurrent dispatcher writes can't mutate our reference.
-	// TxReadErrors/TxEventReadErrors/EntryMetaUnsupported/
-	// EvictedKeysUnreadable are NOT
-	// carried here — obsLast (advanced above, independent of write
-	// success) is their baseline; folding them into this DB-row
-	// snapshot would re-couple them to the hold-back-on-failure
-	// behaviour.
+	// Copy the maps so concurrent dispatcher writes cannot mutate the snapshot.
+	// The Prometheus-only counters stay on obsLast, decoupled from write success.
 	f.last = dispatcher.Stats{
 		EventsSeen:    copyIntMap(current.EventsSeen),
 		DecodeErrors:  copyIntMap(current.DecodeErrors),
@@ -331,11 +244,8 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 	}
 }
 
-// allSources returns the union of source keys present in either
-// the current or the last snapshot. Lets us write a delta row
-// even when a source's counter went to zero (e.g. all errors
-// resolved; we want to record the "fresh data point" for the
-// dashboard line).
+// allSources unions current and last keys so a source whose counter returned
+// to zero still gets a row.
 func allSources(current, last dispatcher.Stats) map[string]struct{} {
 	out := make(map[string]struct{}, len(current.EventsSeen)+len(current.DecodeErrors)+len(current.OrphanEvents))
 	for k := range current.EventsSeen {
