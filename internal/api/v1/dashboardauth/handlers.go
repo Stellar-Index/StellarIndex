@@ -742,7 +742,9 @@ type verifyCodeResponse struct {
 // The code is matched only against the email's NEWEST in-flight login
 // token — one comparison per request, so each guess has 1-in-1e6 odds no
 // matter how many sign-in emails an attacker has triggered — and every
-// attempt is charged — per token and per email — BEFORE it is compared, atomically in the store, so a burst of concurrent guesses
+// attempt is charged — per token, and per email (a separate budget when the
+// browser holds this address's [LoginDeviceCookieName] proof) — BEFORE it is compared,
+// atomically in the store, so a burst of concurrent guesses
 // gets no more comparisons than sequential ones (see [maxCodeAttempts],
 // [maxDurableCodeFailures]). All failure modes return one generic error
 // so a caller can't tell "no token" from "wrong code" from "too many
@@ -779,12 +781,22 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A browser that has signed in to this address before is charged
+	// against its own durable budget. The email's budget is spendable by
+	// anyone who knows the address, so sharing it would let a stranger's
+	// ten guesses lock the owner out; a separate budget keeps the proof
+	// holder bounded too, in case the proof outlives the owner's control.
+	lockKey := email
+	if h.hasLoginDeviceProof(r, email) {
+		lockKey = platform.LoginCodeDeviceKey(email)
+	}
+
 	// Durable per-email lockout, checked BEFORE any candidate is
 	// compared so a locked address burns no code space. Same generic 400
 	// as every other failure — a distinguishable "you are locked out"
 	// would be an enumeration oracle, and the anti-enumeration contract
 	// on this endpoint is absolute.
-	if h.loginCodeLocked(r, email) {
+	if h.loginCodeLocked(r, lockKey) {
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
 	}
@@ -799,7 +811,7 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	// The status check above is only a cheap early refusal: under a
 	// concurrent burst every request can pass it. The charge is what
 	// bounds the burst, so it must precede the comparison.
-	if !h.chargeLoginCodeAttempt(r, email) {
+	if !h.chargeLoginCodeAttempt(r, lockKey) {
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
 	}
@@ -874,6 +886,17 @@ func (h *Handlers) loginCodeLocked(r *http.Request, email string) bool {
 	return true
 }
 
+// clearLoginCodeLockouts retires both durable code budgets for email: the
+// shared one and the signed-in browsers' one. Best-effort: a failure must
+// never turn a valid login into an error.
+func (h *Handlers) clearLoginCodeLockouts(r *http.Request, email string) {
+	for _, key := range []string{email, platform.LoginCodeDeviceKey(email)} {
+		if err := h.cfg.Tokens.ClearLoginCodeLockout(r.Context(), key); err != nil {
+			h.cfg.Logger.Warn("clear login code lockout", "err", err, "email", maskEmail(email))
+		}
+	}
+}
+
 // loginCodeLive reports whether a code candidate exists for email. A
 // store error answers true: the attempt is then charged as before, never
 // waved through uncharged.
@@ -941,9 +964,7 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 	// legitimate user's typos would accumulate across months until they
 	// locked themselves out of the code path for nothing. Best-effort:
 	// a failure here must never turn a valid login into an error.
-	if err := h.cfg.Tokens.ClearLoginCodeLockout(r.Context(), email); err != nil {
-		h.cfg.Logger.Warn("clear login code lockout", "err", err, "email", maskEmail(email))
-	}
+	h.clearLoginCodeLockouts(r, email)
 
 	// Mark email verified — a consumed login token proves control of
 	// the address. Passkey logins don't re-prove it, so the flag is

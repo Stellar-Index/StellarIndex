@@ -92,6 +92,7 @@ func seedErasureAccount(
 	exec(`INSERT INTO magic_link_tokens (token_hash, email, purpose, expires_at, requested_ip)
 		VALUES ($1, $2, 'login', now() + interval '1 hour', $3)`, []byte("ml-"+tag), owner, ownerIP)
 	exec(`INSERT INTO login_code_lockouts (email, failed_count) VALUES ($1, 3)`, member)
+	exec(`INSERT INTO login_code_lockouts (email, failed_count) VALUES ($1, 2)`, platform.LoginCodeDeviceKey(member))
 	exec(`INSERT INTO api_usage_events (ts, account_id, key_id, route, method, status, duration_ms, client_ip)
 		VALUES (now(), $1, $2, '/v1/price', 'GET', 200, 5, $3)`, s.accountID, s.pgKeyID, ownerIP)
 	exec(`INSERT INTO usage_daily (day, subject, endpoint, ok_count) VALUES
@@ -517,6 +518,7 @@ func TestAccountErasureBoundaries(t *testing.T) {
 			t.Fatal(err)
 		}
 		mustExec(t, ctx, db, `INSERT INTO login_code_lockouts (email, failed_count) VALUES ($1, 4)`, stranger)
+		mustExec(t, ctx, db, `INSERT INTO login_code_lockouts (email, failed_count) VALUES ($1, 4)`, platform.LoginCodeDeviceKey(stranger))
 		mustExec(t, ctx, db, `INSERT INTO magic_link_tokens (token_hash, email, purpose, expires_at, requested_ip)
 			VALUES ('ml-stranger', $1, 'login', now() + interval '1 hour', '203.0.113.5')`, stranger)
 		mustExec(t, ctx, db, `INSERT INTO invites (token_hash, account_id, email, role, invited_by_user_id, expires_at)
@@ -527,15 +529,16 @@ func TestAccountErasureBoundaries(t *testing.T) {
 		}
 		var lockouts, links, invites, memberLockouts int
 		if err := db.QueryRowContext(ctx, `SELECT
-			(SELECT count(*) FROM login_code_lockouts WHERE email = $1 AND failed_count = 4),
+			(SELECT count(*) FROM login_code_lockouts WHERE email IN ($1, $2) AND failed_count = 4),
 			(SELECT count(*) FROM magic_link_tokens WHERE email = $1),
 			(SELECT count(*) FROM invites WHERE email = $1),
-			(SELECT count(*) FROM login_code_lockouts WHERE email = 'mary-7@b.example')`, stranger).
+			(SELECT count(*) FROM login_code_lockouts WHERE email IN ('mary-7@b.example', 'mary-7@b.example device'))`,
+			stranger, platform.LoginCodeDeviceKey(stranger)).
 			Scan(&lockouts, &links, &invites, &memberLockouts); err != nil {
 			t.Fatal(err)
 		}
-		if lockouts != 1 || links != 1 || invites != 1 {
-			t.Errorf("stranger's lockout/magic link/invite = %d/%d/%d, want 1/1/1 kept", lockouts, links, invites)
+		if lockouts != 2 || links != 1 || invites != 1 {
+			t.Errorf("stranger's lockout/magic link/invite = %d/%d/%d, want 2/1/1 kept", lockouts, links, invites)
 		}
 		if memberLockouts != 0 {
 			t.Errorf("the erased member's lockout survived (%d)", memberLockouts)

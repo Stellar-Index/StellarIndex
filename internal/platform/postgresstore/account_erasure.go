@@ -217,7 +217,7 @@ func (r *AccountStore) EraseAccount(ctx context.Context, req ErasureRequest) (Er
 		{&c.APIKeys, "api keys", `DELETE FROM api_keys WHERE account_id = $1`, []any{p.AccountID}},
 		{&c.UsageEvents, "usage events", `DELETE FROM api_usage_events WHERE account_id = $1`, []any{p.AccountID}},
 		{&c.MagicLinkTokens, "magic links", `DELETE FROM magic_link_tokens WHERE lower(email::text) = ANY($1::text[])`, []any{p.Emails}},
-		{&c.LoginLockouts, "lockouts", `DELETE FROM login_code_lockouts WHERE lower(email) = ANY($1::text[])`, []any{p.Emails}},
+		{&c.LoginLockouts, "lockouts", `DELETE FROM login_code_lockouts WHERE lower(split_part(email, ' ', 1)) = ANY($1::text[])`, []any{p.Emails}},
 		{&c.Users, "users", `DELETE FROM users WHERE account_id = $1`, []any{p.AccountID}},
 		{nil, "account", `DELETE FROM accounts WHERE id = $1`, []any{p.AccountID}},
 		{nil, "tombstone", `
