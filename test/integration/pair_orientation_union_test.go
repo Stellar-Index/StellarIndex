@@ -73,7 +73,7 @@ func seedOrientationFixture(ctx context.Context, t *testing.T) orientationFixtur
 
 // TestPairReadersFoldBothOrientationsAsUnion executes the six pair
 // readers whose orientation fold moved from one OR disjunction to two
-// UNION ALL arms (GH-866), and pins that the rewrite still reads both
+// UNION ALL arms, and pins that the rewrite still reads both
 // stored directions: a flipped-only market is served, a two-sided one
 // is counted once per row, and an absent pair is still a clean miss.
 func TestPairReadersFoldBothOrientationsAsUnion(t *testing.T) {
@@ -134,7 +134,7 @@ func TestPairReadersFoldBothOrientationsAsUnion(t *testing.T) {
 }
 
 // TestMarketsSparklineMatchesListingVolume executes the /v1/markets
-// sparkline read against the listing it decorates (GH-962). The handler
+// sparkline read against the listing it decorates. The handler
 // keys the batch by the listing's CANONICAL rows; FLIP/native is stored
 // only as (native, FLIP), so a read of the stored key alone drew 24 zero
 // bars beside a $100 volume_24h_usd. Every seeded trade sits inside the

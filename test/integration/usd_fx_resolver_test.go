@@ -14,7 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestVWAPUSDFXResolver_QueriesPrices1m exercises the F-1268
+// TestVWAPUSDFXResolver_QueriesPrices1m exercises the
 // production path against a real postgres: seed an EURC/USDC
 // trade, refresh prices_1m, then call USDPriceAt(EURC, now+1m) and
 // verify the resolver picks up the VWAP through the USDC peg.

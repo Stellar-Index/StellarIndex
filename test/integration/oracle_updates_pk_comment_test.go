@@ -22,7 +22,7 @@ const oracleUpdatesComment0003 = `Every observed oracle publication, one row per
 	`Hypertable partitioned on ts. See ADR-0006.`
 
 // TestOracleUpdatesPKComment pins the catalog comment on oracle_updates
-// after migration 0176 up and down (T094). 0003's comment claimed "one row
+// after migration 0176 up and down. 0003's comment claimed "one row
 // per (source, ledger, tx_hash, op_index)" — the PRIMARY KEY also carries
 // `ts`, so a decoder-ts-derivation fix that replays affected ledgers adds a
 // second row for the same publication instead of replacing the first. The

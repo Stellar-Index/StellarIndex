@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// TestSessionByTokenHash_RejectsExpired pins GH-1302: the authentication-path
+// TestSessionByTokenHash_RejectsExpired pins that the authentication-path
 // lookup itself refuses an expired-but-unrevoked session. Expired rows persist
 // until the reaper's grace window passes, so leaving expiry to one caller-side
 // `if` made every other consumer of this lookup an authentication bypass.

@@ -14,8 +14,7 @@ import (
 )
 
 // TestXLMBaseRestamp_RederivesThroughTheLiveAnchor is the DB-backed proof
-// for `usd-volume-restamp -tier xlm-base` (issue #372), on real
-// TimescaleDB, against rows the REAL insert path wrote with the REAL
+// for `usd-volume-restamp -tier xlm-base` on real TimescaleDB, against rows the REAL insert path wrote with the REAL
 // resolver wiring:
 //
 //  1. the re-derived value is the ANCHOR value — base_amount/1e7 x the
@@ -192,7 +191,7 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 		}
 	}
 
-	// ── the pre-fix state, imposed by hand ──────────────────────
+	// ── the stale state, imposed by hand ──────────────────────
 	// HEAD's insert path already writes the anchor value, so the defect
 	// has to be re-created: row 10 valued quote-side through the token's
 	// own thin book (the BUCK shape), row 11 unpriced, row 21

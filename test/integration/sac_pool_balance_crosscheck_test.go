@@ -22,7 +22,7 @@ import (
 // ClassicComputer.Compute, exactly what the aggregator's per-asset
 // Refresher runs) against a real TimescaleDB:
 //
-//  1. Insert only the classic-side components a pre-fix system would
+//  1. Insert only the classic-side components a classic-only system would
 //     have observed (trustlines + a small "already-visible" SAC
 //     balance) — Algorithm 2's total under-counts, exactly like the
 //     documented incident.
@@ -76,7 +76,7 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 		// opaque string, no strkey validation at this layer).
 		sacContract string
 		// classicHolder is an ordinary trustline holder representing the
-		// pre-fix "visible" classic supply.
+		// classic-only "visible" classic supply.
 		classicHolder string
 		classicAmount int64
 		// poolHolder is the dormant Phoenix/Blend pool contract's
@@ -96,7 +96,7 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 			asset:         canonical.Asset{Type: canonical.AssetClassic, Code: "PHO", Issuer: "GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO"},
 			sacContract:   "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32",
 			classicHolder: "GHOLDER_PHO_1",
-			classicAmount: 200_000_000_000_000, // representative pre-fix Alg-2 reading — well under sacTotal
+			classicAmount: 200_000_000_000_000, // representative classic-only Alg-2 reading — well under sacTotal
 			poolHolder:    "CPOOL_PHO_PHOENIX_1",
 			poolAmount:    "1900000000000000", // recovers the dormant pool balance; classic+pool > sacTotal
 			sacTotal:      "1999999993050277", // PHO lifetime SAC supply (exact real figure)
@@ -106,7 +106,7 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 			asset:         canonical.Asset{Type: canonical.AssetClassic, Code: "BLND", Issuer: "GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY"},
 			sacContract:   "CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY",
 			classicHolder: "GHOLDER_BLND_1",
-			classicAmount: 1_100_000_000_000_000, // representative pre-fix reading — under sacTotal by ~12%, matching the incident's ~12.4%-under BLND finding
+			classicAmount: 1_100_000_000_000_000, // representative classic-only reading — under sacTotal by ~12%, matching the incident's ~12.4%-under BLND finding
 			poolHolder:    "CPOOL_BLND_BACKSTOP_1",
 			poolAmount:    "200000000000000",
 			sacTotal:      "1236670485295609", // BLND lifetime SAC supply (exact real figure)
@@ -116,7 +116,7 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 			asset:         canonical.Asset{Type: canonical.AssetClassic, Code: "EURC", Issuer: "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2"},
 			sacContract:   "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV",
 			classicHolder: "GHOLDER_EURC_1",
-			classicAmount: 3_000_000_000_000_000, // representative pre-fix reading, same shape (exact live figure not captured in this investigation)
+			classicAmount: 3_000_000_000_000_000, // representative classic-only reading, same shape (exact live figure not captured in this investigation)
 			poolHolder:    "CPOOL_EURC_PHOENIX_1",
 			poolAmount:    "6000000000000000",
 			sacTotal:      "7900000000000000", // representative, > classicAmount alone
@@ -126,7 +126,7 @@ func TestSupplyCrossCheckConvergesAfterPoolBalanceRecovery(t *testing.T) {
 			asset:         canonical.Asset{Type: canonical.AssetClassic, Code: "KALE", Issuer: "GBDVX4VELCDSQ54KQJYTNHXAHFLBCA77ZY2USQBM4CSHTTV7DME7KALE"},
 			sacContract:   "CB23WRDQWGSP6YPMY4UV5C4OW5CBTXKYN3XEATG7KJEZCXMJBYEHOUOV",
 			classicHolder: "GHOLDER_KALE_1",
-			classicAmount: 1_000_000_000_000_000, // representative pre-fix reading, same shape (exact live figure not captured in this investigation)
+			classicAmount: 1_000_000_000_000_000, // representative classic-only reading, same shape (exact live figure not captured in this investigation)
 			poolHolder:    "CPOOL_KALE_DEFINDEX_1",
 			poolAmount:    "2500000000000000",
 			sacTotal:      "3010000000000000", // representative, matches the post-2×-fix KALE served-supply magnitude

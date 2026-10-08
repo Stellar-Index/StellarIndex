@@ -20,7 +20,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestRozoMemoBytes_HostileMemoLandsInPostgres is the F052 proof against a
+// TestRozoMemoBytes_HostileMemoLandsInPostgres is the proof against a
 // REAL Postgres, through the production path end to end:
 //
 //	events.Event -> rozo.Decoder.Decode -> pipeline.HandleEvent

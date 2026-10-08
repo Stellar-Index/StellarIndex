@@ -439,7 +439,7 @@ func opTypeInListFrom(t *testing.T, label, sql string) string {
 
 // ── the test ────────────────────────────────────────────────────────────────
 
-// TestStreamOpsQueriesPruneOperationResults is the live proof for F111 / T385.
+// TestStreamOpsQueriesPruneOperationResults is the live proof.
 func TestStreamOpsQueriesPruneOperationResults(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -470,7 +470,7 @@ func TestStreamOpsQueriesPruneOperationResults(t *testing.T) {
 }
 
 // assertOpStreamBounded pins, for one shipped op-stream statement: no
-// successful-tx set-build (F111/T385), primary-key pruning retained on
+// successful-tx set-build, primary-key pruning retained on
 // stellar.operation_results (the rejected remediation), the exact rows the
 // IN-subquery shape served (no over- or under-count from the join), and a
 // read_rows bound. Each assertion is paired with a non-vacuity guard against

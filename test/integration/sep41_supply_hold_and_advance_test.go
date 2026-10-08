@@ -20,7 +20,7 @@ import (
 // through the exact pair of calls internal/projector makes at the end of a
 // cycle — GetCursor → [timescale.CursorRead] → AdvanceCursorFrom, i.e.
 // Projector.commitCursor, whose compare-and-swap replaced UpsertCursor so a
-// `projector-replay` rewind landing mid-cycle is not reverted (F159).
+// `projector-replay` rewind landing mid-cycle is not reverted.
 //
 // The storage layer hard-codes the ("projector", "sep41_supply") pair the
 // rollup fold's settled bound reads (sep41SupplyCursorSource /
@@ -108,7 +108,7 @@ func TestSEP41SupplyRollup_HoldAndAdvanceInterleavedWithAFold(t *testing.T) {
 
 		mintEarly int64 = 700_000
 		burnPrior int64 = 100_000
-		mintHeld  int64 = 5_000_000 // the amount the pre-fix bound loses
+		mintHeld  int64 = 5_000_000 // the amount the unsettled bound loses
 		mintAfter int64 = 1_000     // each of the three post-hold ledgers
 
 		readAt uint32 = 5000

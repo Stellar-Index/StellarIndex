@@ -20,7 +20,7 @@ import (
 
 // TestSinkShutdownDrain_PersistsAllInFlight is the C2-17 proof: a shutdown
 // (parent ctx cancelled) with N events already in flight on the sink channel
-// must persist ALL N — none dropped. The pre-fix persistWorker select could
+// must persist ALL N — none dropped. A persistWorker select without the drain could
 // pick the shutdown arm over draining a buffered event, and the drain-timeout
 // path counted-and-dropped the remainder instead of persisting it.
 //

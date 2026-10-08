@@ -2,7 +2,7 @@
 
 package integration_test
 
-// Real-Redis coverage for internal/ratelimit (#340 item 8).
+// Real-Redis coverage for internal/ratelimit.
 //
 // Why this exists alongside internal/ratelimit/*_test.go
 // ─────────────────────────────────────────────────────

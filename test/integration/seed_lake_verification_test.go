@@ -12,7 +12,7 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestSeedWalk_VerifyLakeRefusesAHole pins GH #713's coverage leg on both
+// TestSeedWalk_VerifyLakeRefusesAHole pins the coverage leg on both
 // full-history seed readers: a walk asked to verify the lake must refuse,
 // before emitting anything, a range whose stellar.ledgers rows are missing.
 // The shared test lake carries entry changes at ledgers no fixture wrote a

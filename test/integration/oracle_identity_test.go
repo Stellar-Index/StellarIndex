@@ -14,7 +14,7 @@ import (
 )
 
 // TestOracleUpdate_ReDeriveThatMovesIdentityDoesNotDuplicate reproduces
-// GH-1328: oracle_updates' primary key carries ts, and the reflector
+// the duplicate-row bug: oracle_updates' primary key carries ts, and the reflector
 // op_index formula changed (eventFanoutStride), so a replay over pre-change
 // history writes a second row for the same observation instead of
 // correcting the first. The assertions state the CORRECT outcome (one row

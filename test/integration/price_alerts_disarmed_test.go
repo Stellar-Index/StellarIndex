@@ -18,7 +18,7 @@ import (
 )
 
 // TestPriceAlertsDisarmed executes migration 0198 up and down and the SQL
-// that makes an alert fire once per crossing (GH #664): the claim disarms
+// that makes an alert fire once per crossing: the claim disarms
 // and refuses a disarmed row, the re-arm is a compare-and-swap on
 // last_fired_at, an edit to the rule or a re-enable re-arms it, and a claim
 // made against a snapshot the owner has since edited or disabled is refused.

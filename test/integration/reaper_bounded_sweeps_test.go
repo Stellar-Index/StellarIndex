@@ -23,7 +23,7 @@ import (
 // This proves the bound is real: with the batch size overridden small,
 // a single Sweep call over a backlog LARGER than one call's cap
 // (batchSize * sweepMaxBatchesPerCall) deletes only up to the cap and
-// leaves the remainder for the next call — the unbounded pre-fix
+// leaves the remainder for the next call — the unbounded
 // DELETE would have removed everything in the first call.
 func TestSweepExpiredMagicLinkTokens_BoundedPerCall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -101,7 +101,7 @@ func TestSweepExpiredMagicLinkTokens_BoundedPerCall(t *testing.T) {
 	}
 }
 
-// T371/T372/T374 — SweepEndedSessions shares deleteInBatches with the
+// SweepEndedSessions shares deleteInBatches with the
 // sweeps above, but nothing proved its own call site actually threads
 // the per-call cap: a bug pinning it to defaultSweepBatchRows instead of
 // r.sweepBatchRows would still pass the table-driven correctness test in

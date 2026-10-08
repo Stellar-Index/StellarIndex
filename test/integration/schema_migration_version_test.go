@@ -12,7 +12,7 @@ import (
 )
 
 // TestStoreSchemaMigrationVersion runs the indexer/aggregator readiness
-// reader (GH-1167) against a real migrated TimescaleDB: at the migrations
+// reader against a real migrated TimescaleDB: at the migrations
 // head the schema check passes; with the applied head rolled back one
 // version it fails, which is what makes their /readyz — and so the deploy
 // gate — refuse a binary swapped ahead of its migrations.

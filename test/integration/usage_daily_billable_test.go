@@ -13,7 +13,7 @@ import (
 )
 
 // TestUsageDailyBillableByDay drives the SQL the month-to-date meter
-// reconciles evicted Redis day keys against (GH-1274): per-day billable
+// reconciles evicted Redis day keys against: per-day billable
 // units are ok + 4xx summed over endpoints, never 5xx or 429, for one
 // subject, inside an inclusive [from, to] window.
 func TestUsageDailyBillableByDay(t *testing.T) {

@@ -1182,7 +1182,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 	})
 
-	// GH-766: revoked rows are kept forever, so every account read path must
+	// Revoked rows are kept forever, so every account read path must
 	// be bounded by the active set, never by the revoked history.
 	t.Run("APIKeyStore/RevokedHistoryIsBounded", func(t *testing.T) {
 		keys := postgresstore.NewAPIKeyStore(store)
@@ -1947,7 +1947,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 	})
 
-	// #368 M10 on real Postgres: the once-per-cooldown-window guarantee is
+	// On real Postgres: the once-per-cooldown-window guarantee is
 	// the conditional UPDATE, not the evaluator's in-memory coolingDown
 	// check — that check reads the snapshot ListEnabledPriceAlerts took at
 	// the top of the sweep, so every concurrent evaluator passes it.

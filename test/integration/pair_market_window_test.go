@@ -29,7 +29,7 @@ import (
 // construction (set-identical over 40 sampled live pairs on r1),
 // because the defect was the PLAN, not the answer. The
 // redness proof is TestPairMarketQueryShape in internal/storage/timescale,
-// which fails on the pre-fix query text. This test exists because the
+// which fails on the single-aggregate query text. This test exists because the
 // rewrite split one 14-day aggregate into four independently-bounded
 // reads, and the cheapest way for a future edit to make /v1/pairs faster
 // still is to narrow one of those bounds too far — dropping a direction

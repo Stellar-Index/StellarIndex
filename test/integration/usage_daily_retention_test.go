@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// TestUsageDailyRetention pins GH-1282: `usage_daily` holds per-account
-// request history and kept it forever. 0167 must attach exactly one
+// TestUsageDailyRetention pins that `usage_daily`, which holds per-account
+// request history, is not kept forever. 0167 must attach exactly one
 // armed 12-month retention job, and its down must remove it.
 func TestUsageDailyRetention(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

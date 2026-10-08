@@ -12,7 +12,7 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestDistinctTopicShapes_NonSymbolTopic0 is the GH-807 proof on a real
+// TestDistinctTopicShapes_NonSymbolTopic0 is the proof on a real
 // ClickHouse: events whose topic[0] is not a Symbol all carry an empty topic_0_sym,
 // so keying on (contract, topic_0_sym) alone collapsed them into one shape and
 // one exemplar. They must split on topics_xdr[1], topics_xdr[2] and arity,
