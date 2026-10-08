@@ -1362,7 +1362,7 @@ loki_push_url:           "http://localhost:3100/loki/api/v1/push"
 # tarballs). Bump `pgbackrest_exporter_version` here when the operator
 # wants a newer release; re-paste the matching SHA into r1.secrets.yml /
 # non-secret inventory.
-pgbackrest_exporter_version: "0.23.0"  # 2026-07-03: matched to the version live on r1 (0.18.0 predated it AND its release URL 404s upstream)
+pgbackrest_exporter_version: "0.23.0"  # matches the version live on r1; 0.18.0's release URL 404s upstream
 # pgbackrest_exporter_release_sha256: <required; set in inventory>
 
 # ───── Local single-host Prometheus (23-local-prometheus.yml) ────────

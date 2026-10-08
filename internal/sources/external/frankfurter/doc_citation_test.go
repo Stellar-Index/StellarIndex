@@ -8,15 +8,15 @@ import (
 	"testing"
 )
 
-// danglingBacklog47Ref is the RSWP-024 citation client.go's package doc
-// used to carry: "BACKLOG #47" resolves (via `gh pr view 47`) to an
+// danglingBacklog47Ref is a citation client.go's package doc must not
+// carry: "BACKLOG #47" resolves (via `gh pr view 47`) to an
 // unrelated merged dependency-bump PR, not the FX-into-external fold it
 // was cited for. CHANGELOG.md records the fold under ROADMAP #47, not
 // BACKLOG #47. Built from parts so this guard's own source doesn't trip
 // the check it performs.
 var danglingBacklog47Ref = "BACKLOG #" + "47"
 
-// TestFrankfurterDocHasNoDanglingBacklogReference guards RSWP-024: the
+// TestFrankfurterDocHasNoDanglingBacklogReference guards that the
 // FX-into-external fold citation in client.go's package doc must point at
 // the roadmap item that actually documents the fold, not a stale/wrong
 // backlog number that now resolves to unrelated content.
