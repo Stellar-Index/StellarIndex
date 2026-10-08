@@ -1152,30 +1152,10 @@ var SourceUncorroboratedCallsTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
-// SourceUnknownSymbolsTotal — per-source counter of asset slots in
-// an otherwise-decoded oracle event whose symbol/feed id isn't in
-// our canonical asset allow-list (ADR-0010 fiat / ADR-0014 crypto /
-// ADR-0028 RWA + RedStone feed registry). Since the oracle
-// capture-totality change (PR-2, docs/design/oracle-capture-
-// totality-design.md) such a slot is RECORDED verbatim as a
-// `raw:<symbol>` row (canonical.AssetOracleRaw) rather than dropped;
-// the counter now means "recorded as raw" — a mapping gap the
-// allow-list / feed-registry owner has to close so the row can be
-// promoted in place, not data lost. Distinct from
-// SourceDecodeErrorsTotal because the rest of the event decodes
-// cleanly.
-//
-// Upstream oracle coverage can
-// expand while we silently omit the new asset; without this counter
-// operators have no signal that a feed is unmapped. Reflector,
-// Redstone, and Band all increment this on their unmapped-symbol
-// (`!Asset.IsMapped()` / feed-registry miss) branches.
-//
-// Alert consumer: `stellarindex_ingestion_oracle_unknown_symbols`
-// (deploy/monitoring/rules/ingestion.yml + the R1 overlay; runbook
-// docs/operations/runbooks/ingestion-events.md). This counter keeps incrementing, because a raw row is still
-// a mapping gap the allow-list owner has to close. Name deliberately
-// unchanged (dashboards + the alert key off it).
+// SourceUnknownSymbolsTotal counts oracle asset slots off the canonical allow-list or feed registry,
+// recorded as `raw:<symbol>` rows (docs/design/oracle-capture-totality-design.md): a mapping gap to
+// close so the row is promoted in place, not lost data. Reflector, RedStone and Band increment it.
+// Alert: `stellarindex_ingestion_oracle_unknown_symbols` (runbook docs/operations/runbooks/ingestion-events.md).
 var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_unknown_symbols_total",
@@ -1184,25 +1164,10 @@ var SourceUnknownSymbolsTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
-// ExternalPollerPollsTotal — per-source, per-outcome counter of
-// PollOnce invocations. Outcome is one of:
-//
-//   - success — venue returned 200 and the response decoded to ≥1 row
-//   - empty   — venue returned 200 but no usable row; does not refresh
-//     ExternalPollerLastSuccessUnix
-//   - error   — PollOnce returned a non-nil error (network, HTTP
-//     4xx/5xx, decode failure)
-//   - skipped — the poller's internal cooldown (after a previous
-//     throttle) suppressed the HTTP call
-//   - idle    — no configured pair applies to the poller; does not
-//     refresh ExternalPollerLastSuccessUnix
-//
-// This counter exists because a sustained-failing external poller
-// was otherwise invisible — CoinGecko throttling went undetected for
-// ~13h on r1 because the only output was a per-minute WARN log. The
-// `success` outcome plus PromQL absence-checking is the canonical
-// way to alert: `rate(...{outcome="success", source="<name>"}[30m])
-// == 0` for sources expected to contribute.
+// ExternalPollerPollsTotal counts PollOnce calls by outcome: success, empty (200, no usable row),
+// error, skipped (throttle cooldown) or idle (no configured pair); empty and idle do not refresh
+// ExternalPollerLastSuccessUnix. CoinGecko throttling once went unseen ~13h on r1 behind a WARN log;
+// alert on `rate(...{outcome="success"}[30m]) == 0` for sources expected to contribute.
 var ExternalPollerPollsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_external_poller_polls_total",
@@ -1249,17 +1214,9 @@ var ExternalPollerRefusedEntriesTotal = prometheus.NewCounterVec(
 	[]string{"source", "reason"},
 )
 
-// AMMSelfPairSwapTotal — per-source counter of AMM swap events decoded as a
-// SELF-PAIR swap (token_in == token_out) and dropped to zero rows. A self-pair
-// swap has NO honest purpose: it moves no value between distinct assets, and
-// it is the primitive the Blend/Comet exploit ran 390 times to
-// walk a pool's spot price. Comet emitted ZERO self-pair swaps
-// before the exploit, so any sustained count is an exploit-shaped signal, not
-// noise — the tripwire the freeze/divergence guards were blind to because the
-// self-pair rows never reach the served `trades` table (they decode to
-// (nil,nil); the raw event still lands in soroban_events for forensics).
-// Incremented at the decoder drop point (e.g. comet dispatcher_adapter). This
-// is a DETECTION metric only — it changes no serving or freeze decision.
+// AMMSelfPairSwapTotal counts AMM swaps decoded as token_in == token_out and dropped. A self-pair swap
+// has no honest purpose: the Blend/Comet exploit ran 390 of them to walk a pool's spot price, and Comet
+// emitted zero before it, so any sustained count is exploit-shaped. Detection only.
 var AMMSelfPairSwapTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_amm_self_pair_swap_total",
@@ -1268,17 +1225,9 @@ var AMMSelfPairSwapTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
-// AMMNonPositiveSwapTotal — per-source counter of AMM swap events decoded
-// as carrying a non-positive amount (in/out <= 0) and dropped to zero rows.
-// Sibling detection metric to [AMMSelfPairSwapTotal]: same "decoded cleanly,
-// zero honest rows" drop shape, same exploit-adjacent significance, so it is
-// recency-gated the same way (the decoder's own [selfPairLiveWindow]) —
-// without that gate, `reconciliation_catalogue.go` and `verify_decoders.go`
-// constructing their own un-disabled comet.NewDecoder() to replay historical
-// ledgers would inflate this counter on every completeness sweep, exactly
-// the false-positive shape the self-pair gate exists to avoid. Incremented
-// at the decoder drop point (comet dispatcher_adapter). Detection only — it
-// changes no serving or freeze decision.
+// AMMNonPositiveSwapTotal counts AMM swaps with an amount <= 0, dropped. Recency-gated like
+// AMMSelfPairSwapTotal ([selfPairLiveWindow]) so completeness sweeps replaying history through their own
+// decoders do not inflate it. Detection only.
 var AMMNonPositiveSwapTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_amm_non_positive_swap_total",
@@ -1300,29 +1249,9 @@ var AMMSwapReceivedDivergenceTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
-// CEXStreamDisconnectTotal — per-source, per-reason counter of CEX
-// WebSocket stream disconnects, incremented by [wsclient.Loop] for
-// every venue (binance, bitstamp, coinbase, kraken all run through
-// wsclient.Loop). Reason is one of:
-//
-//   - stall              — venue stopped answering pings, a half-open
-//     socket TCP hasn't noticed yet (wsclient.ErrStreamStalled);
-//     operationally the most important reason, since
-//     it means the connection LOOKS alive but is dead.
-//   - reset               — TCP RST surfaced as "connection reset by peer"
-//   - broken_pipe         — write after peer hung up
-//   - timeout             — read/handshake timed out
-//   - dial                — handshake failed (DNS, TLS, refused, etc.)
-//   - server_requested    — bitstamp's bts:request_reconnect frame
-//   - subscription_rejected — coinbase rejected the subscribe frame
-//     (ErrSubscriptionRejected), usually a config bug (bad product_id)
-//   - other               — EOF, framing, or anything else
-//
-// It gives the disconnect cadence a signal, so operators need not read
-// raw WARN lines off Loki. Sustained non-zero rate with reason="reset"
-// likely means we're missing PING/PONG (handled by coder/websocket
-// v1.8.14, but configurable to disable via OnPingReceived returning
-// false) or the host TCP keepalive is off (now enabled).
+// CEXStreamDisconnectTotal counts CEX WebSocket disconnects per source from [wsclient.Loop], by reason:
+// stall (half-open socket, the one that LOOKS alive), reset, broken_pipe, timeout, dial,
+// server_requested (bitstamp), subscription_rejected (coinbase, usually a bad product_id) or other.
 var CEXStreamDisconnectTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_cex_stream_disconnect_total",
@@ -1344,17 +1273,8 @@ var CEXStreamDisconnectReasons = []string{
 	"server_requested", "subscription_rejected", "other",
 }
 
-// CEXStreamLastTradeUnix — per-source UNIX-seconds timestamp of the
-// most recent trade forwarded from a CEX WebSocket streamer to the
-// sink. Zero / unset when the streamer has forwarded no trade since
-// process start.
-//
-// Streamer analogue of [ExternalPollerLastSuccessUnix]: that gauge is
-// set only in runPoller, so joining CEXStreamDisconnectTotal against
-// it selected a series with no binance/coinbase/kraken/bitstamp label —
-// it can never exist for a streamer. Set in forwardTrades
-// (internal/sources/external/runner.go) so `time() - <gauge>` is
-// alertable the same way pollers already are.
+// CEXStreamLastTradeUnix stamps the latest trade a CEX streamer forwarded (set in forwardTrades,
+// external/runner.go). Streamers never set [ExternalPollerLastSuccessUnix], so this is their staleness signal.
 var CEXStreamLastTradeUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_cex_stream_last_trade_unix",
@@ -1410,22 +1330,9 @@ var ExternalPollerLastSuccessUnix = prometheus.NewGaugeVec(
 	[]string{"source"},
 )
 
-// ChainlinkFeedDecimalsMismatchTotal — count of Chainlink readings
-// REFUSED because the feed's configured `decimals` disagrees with the
-// AggregatorV3 proxy's on-chain `decimals()` view. Labels:
-//
-//   - consumer ∈ {divergence, ingest}: which Chainlink reader refused
-//     (internal/divergence/chainlink.go cross-check vs the
-//     internal/sources/external/chainlink oracle_updates poller).
-//   - pair: the canonical pair string the feed is mapped to.
-//
-// Incremented on EVERY refused reading (not once per detection), so
-// `increase(...[15m]) > 0` reads as "this feed is currently dark
-// because of a scale disagreement" for as long as the disagreement
-// lasts. A mis-scaled feed would otherwise produce a permanent
-// 10^(d-8) false divergence (or store 10^(d-8)-off oracle rows) with
-// no signal at all — the readers fail closed and count here instead.
-// Zero forever is the healthy state.
+// ChainlinkFeedDecimalsMismatchTotal counts Chainlink readings REFUSED because configured `decimals`
+// disagrees with the proxy's on-chain decimals(), by consumer (divergence, ingest) and pair. Counted per
+// refused reading, so increase() > 0 means "dark right now"; unrefused, it would be a silent 10^(d-8) error.
 var ChainlinkFeedDecimalsMismatchTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_chainlink_feed_decimals_mismatch_total",
@@ -1434,23 +1341,9 @@ var ChainlinkFeedDecimalsMismatchTotal = prometheus.NewCounterVec(
 	[]string{"consumer", "pair"},
 )
 
-// ChainlinkFeedDecimalsVerifyFailedTotal — count of failed on-chain
-// decimals() RPC calls that fell back to the last known value
-// (configured, or a previously verified on-chain read) instead of
-// refusing the feed. Labels match ChainlinkFeedDecimalsMismatchTotal:
-//
-//   - consumer ∈ {divergence, ingest}: which Chainlink reader made the
-//     failing call.
-//   - pair: the canonical pair string the feed is mapped to.
-//
-// This is the fail-OPEN sibling of the mismatch counter above: a feed
-// whose decimals() call keeps failing is still being served at its
-// last known scale, so it produces no divergence signal on its own.
-// Without this counter, repeated decimals()-verification failures are
-// visible only in WARN logs and an operator cannot alert on them.
-// Zero forever is the healthy state; a sustained rate means the RPC
-// endpoint or the feed itself is unhealthy even though readings keep
-// flowing.
+// ChainlinkFeedDecimalsVerifyFailedTotal counts failed decimals() calls that fell back to the last known
+// scale instead of refusing (labels as the mismatch counter). The fail-open sibling: such a feed keeps
+// serving, so a sustained rate is the only signal its RPC or feed is unhealthy.
 var ChainlinkFeedDecimalsVerifyFailedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_chainlink_feed_decimals_verify_failed_total",
@@ -1486,31 +1379,9 @@ var ChainlinkFeedLastSuccessUnix = prometheus.NewGaugeVec(
 	[]string{"pair"},
 )
 
-// ExternalFXLastQuoteUnix — per-source UNIX-seconds timestamp of the
-// most recent successful fx_quotes WRITE from the active fiat-FX feed
-// (`massive`, the internal/sources/external/forex worker). Stamped only after
-// InsertFXQuoteBatch commits a NON-EMPTY batch — a failed write or an
-// empty snapshot (upstream returned no usable rates) leaves the prior
-// stamp untouched, so a stuck-but-erroring worker cannot keep the
-// gauge green.
-//
-// Why a SEPARATE gauge from ExternalPollerLastSuccessUnix: the FX feed
-// does NOT run under the external.Connector poller framework — it is
-// the forex worker in the API binary writing the fx_quotes hypertable,
-// which the X2.5 triangulation forex-snap (FXQuoteAtOrBefore) reads
-// with a 7-day lookback for every fiat-quoted pair (XLM/EUR, …). A dry
-// feed is invisible to the poller-staleness alert (massive emits no
-// external_poller series) and to the fx_snap read (a stale-but-present
-// row still prices) until the 7-day lookback finally expires and fiat
-// pairs silently break. This gauge makes "the FX feed VWAP depends on
-// has gone dry" expressible as `time() - <gauge>` and alertable long
-// before that 7-day cliff (see stellarindex_external_fx_feed_stale).
-//
-// Reset-proof across restarts: the worker's startup refresh re-stamps
-// it within seconds of a healthy boot (mirrors the gap-detector
-// last_success gauge). A source that has never once
-// written since process start emits no series here — that "never came
-// up" case is covered by the paired absent()-based alert.
+// ExternalFXLastQuoteUnix stamps the latest NON-EMPTY committed fx_quotes write from the forex worker.
+// Not ExternalPollerLastSuccessUnix: the worker is not a poller, and a stale-but-present row keeps pricing
+// fiat pairs until the 7-day FX-snap lookback silently expires. Alert: stellarindex_external_fx_feed_stale.
 var ExternalFXLastQuoteUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_external_fx_last_quote_unix",
@@ -1519,31 +1390,10 @@ var ExternalFXLastQuoteUnix = prometheus.NewGaugeVec(
 	[]string{"source"},
 )
 
-// ExternalFXRateRejectedTotal — per-source counter of upstream FX rates
-// the forex worker refused to persist, by reason.
-//
-// The forex worker's fx_quotes rows are the denominator of every
-// fiat-quoted `usd_volume` the X2.5 triangulation derives, so ONE bad
-// upstream bar (a decimal shift, a unit-scale change, a zeroed field)
-// mis-scales an entire currency's history. persistSnapshot now gates each
-// per-ticker rate on a deviation band against the last accepted value for
-// that ticker and drops the outlier instead of writing it.
-//
-// Reasons (bounded — extend the const block, not the call sites):
-//   - "deviation"    — moved more than the band vs the last accepted rate
-//     for that ticker, and no second fetch has confirmed it yet.
-//   - "non_positive" — rate <= 0 (an upstream field that came back empty).
-//   - "non_finite"   — NaN or ±Inf (a parse that produced garbage).
-//
-// Deliberately NOT labelled by ticker: ~150 currencies × sources would be
-// pure cardinality for a signal whose actionable question is "is the feed
-// producing junk", and the rejected ticker is on the WARN log line.
-//
-// A single rejection is expected and self-healing — the guard is
-// two-strike, so a genuine devaluation confirmed by the next fetch is
-// accepted one refresh later. A SUSTAINED non-zero rate is the alertable
-// state: it means a ticker is wedged on a stale rate
-// (see stellarindex_external_fx_rate_rejections).
+// ExternalFXRateRejectedTotal counts upstream FX rates the forex worker refused, by reason (deviation,
+// non_positive, non_finite). One bad bar would mis-scale a currency's whole fiat usd_volume history. The
+// guard is two-strike, so single rejections self-heal; a SUSTAINED rate means a ticker is wedged on a
+// stale rate (stellarindex_external_fx_rate_rejections). Not labelled by ticker, for cardinality.
 var ExternalFXRateRejectedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_external_fx_rate_rejected_total",
@@ -1600,29 +1450,10 @@ var (
 	}, []string{"ticker"})
 )
 
-// SourceUnrepresentableSymbolsTotal — per-source counter of oracle
-// asset slots DROPPED because the published symbol / feed id cannot be
-// held even by the record layer's verbatim `raw:` namespace: empty,
-// longer than 64 bytes, or carrying a byte outside printable ASCII
-// 0x21–0x7E (canonical.NewOracleRawAsset / validateRawSymbol).
-//
-// Deliberately NOT folded into SourceUnknownSymbolsTotal. That counter
-// means "recorded as raw:<symbol>" — the row exists and a later
-// allow-list / feed-registry entry promotes it in place. A slot on THIS
-// counter is a HOLE: nothing was written, so closing it needs the
-// registry entry AND a replay of the affected ledgers. Sharing one
-// series would send operators hunting for raw rows that do not exist.
-//
-// Only an ScString-keyed oracle can reach it in practice: RedStone
-// feed_ids are `ScString` (arbitrary bytes, unbounded length), while
-// Reflector/Band symbols are `ScSymbol`. Refusal is per-SLOT, not
-// per-event: write_prices batches every updated feed into one
-// event, so refusing the event would take all ~19 feeds dark — the
-// inverse of the oracle capture-totality goal.
-//
-// Alert consumer: `stellarindex_ingestion_oracle_unrepresentable_symbols`
-// (deploy/monitoring/rules/ingestion.yml + the R1 overlay; runbook
-// docs/operations/runbooks/ingestion-events.md).
+// SourceUnrepresentableSymbolsTotal counts oracle slots DROPPED because the symbol cannot be held even as
+// `raw:` (canonical.NewOracleRawAsset). Separate from SourceUnknownSymbolsTotal: this is a hole needing a
+// registry entry AND a replay. Only ScString feeds (RedStone) reach it; refusal is per slot so one bad id
+// cannot take the whole batch dark. Alert: `stellarindex_ingestion_oracle_unrepresentable_symbols`.
 var SourceUnrepresentableSymbolsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_unrepresentable_symbols_total",
@@ -1631,15 +1462,8 @@ var SourceUnrepresentableSymbolsTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
-// SourceOrphanEventsTotal — per-source counter of events that
-// arrived but never correlated into a complete observation.
-// Soroswap emits one per aged-out half of a swap/sync pair;
-// Phoenix emits one per aged-out incomplete 8-field set.
-//
-// Distinct from SourceDecodeErrorsTotal because an orphan event
-// was well-formed on its own — the surrounding context is what's
-// missing. A sustained rate usually means the RPC is dropping
-// events or the contract shape shifted.
+// SourceOrphanEventsTotal counts well-formed events that aged out uncorrelated (a Soroswap swap/sync
+// half, an incomplete Phoenix 8-field set); a sustained rate means dropped events or a contract shape shift.
 var SourceOrphanEventsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_orphan_events_total",
@@ -1663,14 +1487,8 @@ var SourceNonDirectionalSwapsTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
-// DiscoveryDroppedHitsTotal — count of discovery hits (SEP-41 token
-// sightings AND the broader oracle-suggestive event/call sightings
-// added per docs/architecture/oracle-manipulation-defense.md
-// §"Discovery pipeline" — internal/canonical/discovery.Sniff / SniffOracleEvent /
-// SniffOracleCall all share the one sink) that were dropped because
-// the async sink buffer was full. Discovery is intentionally
-// best-effort, but operators still need a live signal when the
-// buffer starts shedding records under write pressure.
+// DiscoveryDroppedHitsTotal counts discovery hits (SEP-41 and oracle-suggestive sightings, one shared
+// sink) dropped because the async sink buffer was full.
 var DiscoveryDroppedHitsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_discovery_dropped_hits_total",
@@ -1678,14 +1496,8 @@ var DiscoveryDroppedHitsTotal = prometheus.NewCounter(
 	},
 )
 
-// DiscoverySkippedHitsTotal — count of discovery hits (same shared
-// sink as [DiscoveryDroppedHitsTotal] — SEP-41 + oracle-suggestive
-// event/call sightings) whose dedup key had already been enqueued in
-// this process and were therefore deduplicated before reaching the
-// async sink buffer. A high ratio of Skipped to (Skipped + Recorded)
-// is expected and healthy — most events for already-discovered
-// contracts are noise. Tracked for capacity-planning visibility, not
-// alerting.
+// DiscoverySkippedHitsTotal counts discovery hits deduplicated in-process before the sink. A high ratio
+// is healthy; tracked for capacity planning, not alerting.
 var DiscoverySkippedHitsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_discovery_skipped_hits_total",
@@ -1693,16 +1505,8 @@ var DiscoverySkippedHitsTotal = prometheus.NewCounter(
 	},
 )
 
-// AggregatorCatalogueTickersSkipped — count of verified-currency
-// catalogue tickers (those carrying a `coingecko_id`) that
-// aggregatorPairsFromCatalogue (cmd/stellarindex-indexer) EXCLUDED
-// from the aggregator cross-check pair set because
-// canonical.NewCryptoAsset rejected the ticker — it isn't on the
-// ADR-0014 crypto allow-list yet. Gauge, not a counter: it's a
-// snapshot of the current catalogue/allow-list mismatch, set once
-// per startup catalogue build, not an event tally. Without it a
-// currency could gain pricing coverage in the seed yaml and silently
-// never join aggregator cross-check.
+// AggregatorCatalogueTickersSkipped is the number of catalogue tickers with a `coingecko_id` excluded from
+// the aggregator cross-check because they are not on the ADR-0014 crypto allow-list. Set once per startup.
 var AggregatorCatalogueTickersSkipped = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_catalogue_tickers_skipped",
@@ -1710,19 +1514,9 @@ var AggregatorCatalogueTickersSkipped = prometheus.NewGauge(
 	},
 )
 
-// DiscoveryRecordFailuresTotal — count of discovery hits whose
-// Recorder.Record write FAILED (Postgres error / timeout), distinct
-// from [DiscoveryDroppedHitsTotal] (buffer-full pre-write drop) and
-// [DiscoverySkippedHitsTotal] (in-process dedup). Otherwise a Record
-// failure in the async sink is only logged (a Warn line in
-// internal/canonical/discovery/sink.go) — so a persistent recorder
-// outage would silently stop discovered_assets from growing with no
-// metric or alert. The discovered contract will re-appear on a later
-// event (best-effort policy), so this counts write ATTEMPTS that failed,
-// not permanent loss — but a sustained non-zero rate means discovery
-// coverage is degrading and must be visible. Bridged from the sink's
-// FailedCount() by the indexer's discovery-metrics goroutine, mirroring
-// how DiscoveryDroppedHitsTotal is fed.
+// DiscoveryRecordFailuresTotal counts discovery Recorder.Record writes that FAILED, bridged from the
+// sink's FailedCount(). Hits recur, so this is failed attempts, not loss; a sustained rate means
+// discovered_assets has stopped growing.
 var DiscoveryRecordFailuresTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_discovery_record_failures_total",
@@ -1730,28 +1524,9 @@ var DiscoveryRecordFailuresTotal = prometheus.NewCounter(
 	},
 )
 
-// MetricsRegistryPresent — boot-time gauge (0/1) recording whether a
-// component that CAN run without a Prometheus Registry actually got one
-// wired. The concrete case: ledgerstream's SDK
-// BufferedStorageBackend buffer metrics (buffer_fetch_latency_seconds
-// etc., registered via the SDK's WithMetrics / ApplyLedgerMetadata) only
-// register when Config.Registry != nil. The production builder
-// (pipeline.LedgerstreamConfig) leaves it nil ON PURPOSE — the
-// archive→live→catch-up path calls Stream repeatedly and the SDK's
-// registration is not idempotent, so a second identical registration
-// panics — hence those SDK buffer metrics are absent in production. This
-// gauge makes that state observable: the indexer sets
-// {component="ledgerstream"} to 1 when the config carries a Registry, 0
-// when it doesn't. Only set on binaries that actually build the affected
-// config; absent series = "component not used here", not an alert.
-//
-// NOTE: the TieredDataStore's own tier_read_total +
-// cold_read_duration_seconds metrics are NO LONGER gated on this. They
-// are the package-level [LedgerstreamTierReadTotal] /
-// [LedgerstreamColdReadDurationSeconds] below, registered unconditionally
-// at boot, so the ledgerstream-tier `both_missing` page is live in
-// production regardless of this gauge's value. This gauge
-// tracks only the SDK buffer-metric coverage, which stays nil-gated.
+// MetricsRegistryPresent is 1 when a component that can run without a Registry got one. Production
+// leaves ledgerstream's Registry nil on purpose (the SDK's registration panics on repeated Stream calls),
+// so its SDK buffer metrics are absent; the tier metrics below are registered unconditionally instead.
 var MetricsRegistryPresent = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_metrics_registry_present",
@@ -1760,22 +1535,9 @@ var MetricsRegistryPresent = prometheus.NewGaugeVec(
 	[]string{"component"},
 )
 
-// LedgerstreamTierReadTotal — tiered-datastore reads partitioned by which
-// tier served the request (ADR-0027). `outcome` is one of:
-//
-//	hot          — served from the local galexie-archive MinIO (hot tier).
-//	cold         — hot missed; served from the AWS public bucket (cold tier).
-//	both_missing — neither tier has the object; the reader is stalled.
-//
-// A sustained `both_missing` increase is a data-integrity page
-// (deploy/monitoring/rules/ledgerstream-tier.yml). This is a PACKAGE-LEVEL
-// metric registered unconditionally at boot — NOT gated on
-// ledgerstream.Config.Registry — because the production builder leaves
-// that registry nil (the SDK's non-idempotent registration panics across
-// the archive→live→catch-up Stream calls). Emitted by
-// internal/ledgerstream/tiered.go's TieredDataStore. A per-TieredDataStore CounterVec would register only
-// when a registry is passed, so it would be nil in production and the
-// `both_missing` page could never fire.
+// LedgerstreamTierReadTotal counts tiered-datastore reads (ADR-0027) by outcome: hot, cold or
+// both_missing (a stalled reader; pages via ledgerstream-tier.yml). Package-level and registered
+// unconditionally because the production ledgerstream Registry is nil (see MetricsRegistryPresent).
 var LedgerstreamTierReadTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ledgerstream_tier_read_total",
@@ -1814,32 +1576,10 @@ var LedgerstreamColdReadDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// LedgerstreamLiveStartRetriesTotal — how many times the live tail has
-// re-attempted a start that failed before delivering a single ledger.
-// Emitted by internal/ledgerstream's retryLiveStart.
-//
-// What makes this distinct from every other ingest signal: it is the ONLY
-// series that moves while the indexer is alive, healthy in every other
-// respect, and simply cannot open the lake. The datastore open + schema
-// load happen once, before the SDK's fetch worker (and therefore before
-// the Config.LiveRetryBudget the worker spends) exists, so a MinIO that
-// is down at process start ends the process in microseconds unless it
-// stalls and retries; this counter stops that stall being silent.
-//
-// When to look at it: the first branch of the ledger-ingest.md
-// runbook. A cursor that has stopped advancing while this counter climbs
-// is a lake-reachability problem (MinIO down, credentials rejected,
-// bucket gone) — not Postgres, not a decoder, not the dispatcher. A
-// cursor that has stopped advancing while this counter is FLAT rules the
-// lake out entirely.
-//
-// Plain counter, not a Vec: it exists from registration, so "no retries
-// have happened" and "this binary has never emitted it" are not the same
-// scrape. There is deliberately no `exhausted` sibling — that increment
-// would land immediately before the process exits and no scrape would
-// ever see it; exhaustion is covered by the process exit itself
-// (stellarindex_ingestion_ledger_stalled, plus
-// stellarindex_minio_exporter_down within ~2 min for the MinIO case).
+// LedgerstreamLiveStartRetriesTotal counts live-tail start retries before the first ledger
+// (retryLiveStart). It is the only series that moves when the indexer is healthy but cannot open the
+// lake: a stalled cursor with this climbing is lake reachability; flat rules the lake out. No
+// `exhausted` sibling: it would land just before exit, unscraped.
 var LedgerstreamLiveStartRetriesTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ledgerstream_live_start_retries_total",
@@ -1911,21 +1651,9 @@ var RedisErrorClasses = []string{
 	"io", "timeout", "canceled", "other",
 }
 
-// MonthlyQuotaFailOpenTotal — counter of requests that skipped the
-// per-key monthly-quota ceiling because the month-to-date read errored.
-//
-// The exact sibling of [RateLimitFailOpenTotal], and deliberately shaped
-// identically. `internal/api/v1/middleware/monthly_quota.go` fails OPEN on a
-// backing-store error — the cap is a billing-fairness mechanism, not a
-// security boundary, so a Redis blip must not 429 paying customers — but
-// that means the metered-plan spend ceiling silently switches itself off,
-// and until this counter existed the only trace was a `logger.Debug` line
-// (below the API's default log level, so in production: no trace at all).
-//
-// The exposure is the mirror image of the rate limiter's: this one is
-// revenue, not abuse. While it is failing open a metered key can bill past
-// its agreed cap, and the overage is unrecoverable after the fact — the
-// requests were served.
+// MonthlyQuotaFailOpenTotal counts requests that skipped the monthly-quota ceiling because the
+// month-to-date read errored. The quota fails open (a Redis blip must not 429 paying customers), but while
+// it does a metered key can bill past its cap, unrecoverably. Sibling of [RateLimitFailOpenTotal].
 var MonthlyQuotaFailOpenTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_monthly_quota_fail_open_total",
@@ -1933,20 +1661,9 @@ var MonthlyQuotaFailOpenTotal = prometheus.NewCounter(
 	},
 )
 
-// MonthlyQuotaFailClosedTotal — counter of requests REJECTED with 429
-// because the month-to-date counter had been unreadable continuously
-// for longer than the fail-open dwell window, so the middleware flipped
-// from fail-OPEN to fail-CLOSED.
-//
-// The dwell-guarded companion to [MonthlyQuotaFailOpenTotal]: a
-// transient counter blip increments the fail-OPEN counter (the request
-// is still served), but a SUSTAINED outage past the dwell window
-// increments this one instead (the request is denied), so a counter
-// outage cannot become an indefinite unmetered billing window for a key
-// already at its cap. A non-zero rate here means the usage backend has
-// been down long enough that paying customers are now being 429'd —
-// alert on it distinctly from the fail-open signal. Pre-seeded at zero
-// (unlabelled counter) so "quiet" is distinguishable from "dead".
+// MonthlyQuotaFailClosedTotal counts requests 429'd because the counter stayed unreadable past the
+// fail-open dwell window, so an outage cannot become an indefinite unmetered window. Non-zero means paying
+// customers are being refused; alert separately from fail-open.
 var MonthlyQuotaFailClosedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_monthly_quota_fail_closed_total",
@@ -1954,15 +1671,9 @@ var MonthlyQuotaFailClosedTotal = prometheus.NewCounter(
 	},
 )
 
-// SourceInsertErrorsTotal — per-source counter of persistence
-// failures (DB connection lost, constraint violation, etc.).
-// Separate from decode errors because operators respond differently:
-// decode errors mean the source schema drifted; insert errors mean
-// the storage layer is struggling. kind="trade"|"trade_abandoned"|
-// "oracle"|"panic"|"unhandled" lets dashboards split trade vs
-// oracle-update writes, flag recovered sink panics distinctly from
-// storage-layer rejects, and surface half-wired sources whose event
-// type the sink's type-switch doesn't recognise.
+// SourceInsertErrorsTotal counts persistence failures per source, separate from decode errors (storage
+// vs schema drift). kind ∈ trade, trade_abandoned, oracle, panic (recovered sink panic), unhandled
+// (an event type the sink's type-switch does not know).
 var SourceInsertErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_insert_errors_total",
@@ -1983,14 +1694,8 @@ const (
 	InsertErrorKindTradeAbandoned = "trade_abandoned"
 )
 
-// TradesZeroLegAdmittedTotal — per-source counter of trades admitted to
-// the served tier with exactly one zero leg (an SDEX fill whose base or
-// quote rounded to zero stroops). Such a row is stored but unpriceable, so
-// every price path filters it out. SDEX is the only known producer; every
-// other decoder and CEX parser drops zero legs upstream, so a non-sdex
-// series is an upstream change worth a look, not an error. Incremented at
-// the Go write gates (InsertTrade, filterStorableTrades) once
-// canonical.Trade.Validate has passed the row. Detection only.
+// TradesZeroLegAdmittedTotal counts trades stored with exactly one zero leg (unpriceable, filtered by
+// every price path). SDEX is the only known producer; a non-sdex series is an upstream change. Detection only.
 var TradesZeroLegAdmittedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_trades_zero_leg_admitted_total",
@@ -2010,26 +1715,9 @@ var CursorLastLedger = prometheus.NewGaugeVec(
 	[]string{"source"},
 )
 
-// DivergenceRefreshTotal — per-outcome counter for the orchestrator's
-// divergence cache-refresh loop. Labels:
-//
-//   - `ok`            — refresh succeeded; div:<asset> cache entry
-//     written.
-//   - `no_vwap`       — VWAP cache miss for this pair (frozen, empty
-//     window, transient cache error). Skip.
-//   - `parse_error`   — cached VWAP couldn't be parsed as float.
-//     Indicates a writer regression.
-//   - `refresh_error` — RefreshPair returned a network/marshal/cache
-//     error. The previous entry's TTL keeps
-//     counting down; flag stays at last-known good.
-//   - `no_reference`  — every configured reference was dark for the
-//     pair.
-//
-// Only `ok` writes a fresh div:<asset> entry, so the alerts compare
-// the failure children against `ok` AND fire when `ok` stops while
-// the refresher is wired (stellarindex_divergence_no_ok_outcomes):
-// a pass that yields only `no_vwap` (every pair frozen) drains the
-// 5-min cache fleet-wide just as surely as `refresh_error` does.
+// DivergenceRefreshTotal counts divergence cache refreshes by outcome: ok (the only one writing a fresh
+// div:<asset> entry), no_vwap, parse_error, refresh_error, no_reference. Alerts also fire when `ok` stops:
+// an all-`no_vwap` pass drains the 5-min cache as surely as errors do.
 var DivergenceRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_divergence_refresh_total",
@@ -2050,22 +1738,8 @@ var DivergenceRefresherWired = prometheus.NewGauge(
 	},
 )
 
-// DivergenceRefreshDurationSeconds — latency histogram for the
-// per-pair divergence refresh call. `RefreshPair` fans out to
-// every configured external reference (CoinGecko, Chainlink, …)
-// for the pair, so the natural failure mode is "one vendor's API
-// goes slow and the whole refresh tick stretches" — currently
-// invisible without this metric.
-//
-// Labelled by outcome (matches the counter labels) so operators
-// chart `ok` p95/p99 separately from `refresh_error` (often the
-// fast-fail path) and `no_vwap` (cache miss, no work done).
-//
-// Buckets span 10 ms → 30 s — covers a healthy local cache-only
-// refresh (≤ 50 ms when every reference is cached), a single
-// slow vendor (~1-5 s on CG / Chainlink), and the worst-case
-// per-reference timeout (`per_reference_timeout_seconds`,
-// default 5 s) compounded across multiple references.
+// DivergenceRefreshDurationSeconds is per-pair refresh latency by outcome; one slow vendor stretches the
+// whole tick. Buckets 10ms–30s cover cache-only refreshes up to the 5s per-reference timeout compounded.
 var DivergenceRefreshDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_divergence_refresh_duration_seconds",
