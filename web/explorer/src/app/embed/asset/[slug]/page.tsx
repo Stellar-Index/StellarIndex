@@ -112,7 +112,7 @@ function getAssetIndex(): Promise<AssetIndex> {
 // thin GlobalAssetView (catalogue slugs like usdc, aqua) has none, so we
 // resolve it from the listing index by slug.
 //
-// Discriminated on `kind` (ADR-0042 LC-040) rather than `coin.asset_id`
+// Discriminated on `kind` (ADR-0042) rather than `coin.asset_id`
 // truthiness alone: the former shape-sniff would have (in theory) let a
 // GlobalAssetView payload with a stray non-empty asset_id-shaped field
 // short-circuit into the wrong branch. `kind === 'stellar_asset'` is the

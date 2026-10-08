@@ -25,7 +25,7 @@ type Params = Promise<{ ticker: string }>;
 // fiat ticker, so it decodes straight into GlobalAssetView without
 // checking `kind` (unlike assets/[slug]/page.tsx's fetchCoinDirect
 // and embed/asset/[slug]/page.tsx's resolveChartAsset, which branch
-// on `kind === 'stellar_asset' | 'catalogue'`, ADR-0042 LC-040, since
+// on `kind === 'stellar_asset' | 'catalogue'`, ADR-0042, since
 // those routes DO see both wire shapes off the same endpoint). If
 // this fetcher is ever generalised to share the dual-shape fetcher
 // those use, GlobalAssetView.kind (now "catalogue") is available for

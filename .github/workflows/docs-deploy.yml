@@ -91,7 +91,7 @@ jobs:
         # The Pages branch label is the production switch, so it must agree
         # with the ref this job checked out: production only from main,
         # preview never as `main`, allowlisted because it reaches wrangler's
-        # command line (F-004). Refs pass through the runner's GITHUB_REF /
+        # command line. Refs pass through the runner's GITHUB_REF /
         # GITHUB_REF_NAME, never a `${{ }}` interpolated into the shell.
         env:
           DEPLOY_ENVIRONMENT: ${{ github.event.inputs.environment }}

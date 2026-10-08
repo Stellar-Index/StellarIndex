@@ -957,7 +957,7 @@ paths:
                   divergence_warning: false
                   divergence_checked: false
               schema:
-                # ADR-0042 LC-040: the two branches are discriminated by
+                # ADR-0042: the two branches are discriminated by
                 # `data.kind` ("stellar_asset" | "catalogue"), but that
                 # property lives one level below the oneOf member (inside
                 # each envelope's `data`, not on the envelope itself) —
@@ -21154,7 +21154,7 @@ components:
             data: { $ref: "#/components/schemas/OHLCBar" }
           required: [data]
 
-    # OHLC series (CG/CMC parity, F-0071).
+    # OHLC series (CG/CMC parity).
     OHLCSeriesBar:
       type: object
       description: |
