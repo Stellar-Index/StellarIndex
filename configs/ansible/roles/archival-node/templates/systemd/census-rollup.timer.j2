@@ -1,9 +1,8 @@
 # systemd timer: contracts-census rollup — every 30 minutes.
 #
-# Rendered by Ansible. Companion to census-rollup.service (inventory
-# #26 item 2): the /v1/contracts directory's serving tail is at most
-# one cadence stale, replacing the 40s-per-run census scans the
-# prewarm rungs used to pay ~160 times per 3h.
+# Rendered by Ansible. Companion to census-rollup.service: the
+# /v1/contracts directory's serving tail is at most one cadence stale,
+# so the prewarm rungs never pay a 40s census scan.
 
 [Unit]
 Description=contracts-census rollup every 30 minutes
