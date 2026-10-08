@@ -15,26 +15,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sdexclaim"
 )
 
-// ExtractLedger structurally decodes one LedgerCloseMeta into Tier-1 rows.
-// Decoder-INDEPENDENT: it records the shape + raw XDR, not protocol meaning.
-//
-// Scope: ledgers, transactions, operations, operation_results, contract_events,
-// supply_flows.
-//
-// ledger_entry_changes (ADR-0038 Phase C).
-// Extract.Changes is populated by extractEntryChanges (see
-// extract_entry_changes.go): it walks the tx-meta v3/v4 op-change + fee-meta
-// streams exactly as dispatcher.walkEntryChanges does (fee/tx-level at
-// op_index -1, per-op changes at their index), base64s the entry+key XDR, and
-// tags change/entry type. This gives the lake the LedgerEntry substrate the
-// account-state explorer re-derives current balances/trustlines/offers/
-// contract-data from, and fulfils ADR-0034's "re-derive the LedgerEntry supply
-// observers from the lake" promise. Live capture starts when the indexer
-// running this extractor is redeployed; historical coverage comes from a
-// ch-rebuild over the range (billions of rows — the Phase C backfill).
-//
-// Resilient like dispatcher.CensusLedger: a per-tx read error is skipped +
-// tolerated, not fatal, so one bad tx can't lose a whole ledger.
+// ExtractLedger structurally decodes one LedgerCloseMeta into Tier-1 rows. Decoder-
+// independent: it records shape and raw XDR, not protocol meaning.
+// ledger_entry_changes (extract_entry_changes.go) walk the tx-meta op-change and
+// fee-meta streams like dispatcher.walkEntryChanges (ADR-0038). A per-tx read error
+// is skipped and counted, not fatal, so one bad tx cannot lose a ledger.
 func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, error) {
 	seq := lcm.LedgerSequence()
 	closeTime := lcm.ClosedAt().UTC()
@@ -61,11 +46,8 @@ func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, e
 	}
 	defer func() { _ = reader.Close() }()
 
-	// Read the ledger's transactions up front: the entry-change walk is
-	// ledger-wide and two-phase (all fee changes, then all apply-phase
-	// changes), mirroring stellar-core's commit order and
-	// dispatcher.walkLedgerEntryChanges exactly.
-	// LedgerTransaction holds slices into lcm, so retaining them is cheap.
+	// Read all txs up front: the entry-change walk is ledger-wide and two-phase (fee
+	// changes, then apply-phase), mirroring stellar-core's commit order.
 	txs := make([]ingest.LedgerTransaction, 0, 64)
 	for {
 		tx, rerr := reader.Read()
@@ -73,9 +55,7 @@ func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, e
 			break
 		}
 		if rerr != nil {
-			// Skip + tolerate, mirroring CensusLedger — but COUNT it so a
-			// silently-dropped tx is recoverable in the caller's signal
-			// (the ledger still writes, keeping the lake contiguous).
+			// Skip like CensusLedger but count it; the ledger still writes, keeping the lake contiguous.
 			ext.TxReadErrors++
 			continue
 		}
@@ -84,27 +64,24 @@ func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, e
 	for i := range txs {
 		extractTx(&ext, txs[i], seq, closeTime)
 	}
-	// An unreadable tx still exists on-chain: count it so stored tx_count
-	// exceeds the transactions rows and the gate fails rather than agreeing
-	// on the smaller number.
+	// An unreadable tx still exists on-chain: count it so tx_count exceeds the
+	// transactions rows and the gate fails.
 	ext.Ledger.TxCount += uint32(ext.TxReadErrors)
-	// An unreadable list is counted, not fatal: the rest of the ledger still
-	// lands, but every dropped eviction leaves a lapsed entry reading as live.
+	// An unreadable eviction list is counted, not fatal, but each dropped eviction
+	// leaves a lapsed entry reading as live.
 	evicted, err := lcm.EvictedLedgerKeys()
 	if err != nil {
 		ext.EvictedKeysUnreadable++
 		evicted = nil
 	}
-	// ADR-0038 Phase C substrate.
+
 	extractLedgerEntryChanges(&ext, txs, evicted, seq, closeTime)
 
 	return ext, nil
 }
 
-// extractTx appends one transaction's rows (the tx, its ops + results, its
-// contract events) to ext and updates the per-ledger counts. The tx's
-// LedgerEntryChanges are NOT appended here — they are walked ledger-wide by
-// extractLedgerEntryChanges, which needs every tx before it can emit anything.
+// extractTx appends one tx's rows (tx, ops, results, events). Entry changes are
+// walked ledger-wide by extractLedgerEntryChanges, not here.
 func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time) {
 	txIndex := tx.Index - 1 // Index is 1-based; store 0-based
 	txHash := hex.EncodeToString(tx.Result.TransactionHash[:])
@@ -151,16 +128,9 @@ func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clos
 	extractEvents(ext, tx, seq, closeTime, txHash, opArgsByIndex(tx.Envelope.Operations()), tx.Result.Successful())
 }
 
-// sorobanMetering is the per-tx Soroban resource-metering snapshot folded into
-// TransactionRow. Zero-valued for classic / pre-Soroban txs. DECLARED values
-// (the submitter's resource bid) come from the tx envelope's
-// SorobanTransactionData; ACTUAL fee values (what core charged) come from the
-// tx meta's SorobanTransactionMetaExtV1. There is deliberately NO
-// actual-instructions-consumed field: pubnet ledger meta carries none (the CPU
-// count lives only in diagnostic-event core_metrics, which pubnet core does not
-// emit into the LCM and the lake does not store — see
-// internal/xdrjson/operation.go), so only the three fee fields are captured on
-// the actual side.
+// sorobanMetering is the per-tx Soroban resource snapshot; zero for classic txs.
+// DECLARED values come from the envelope, ACTUAL fees from the tx meta. There is no
+// actual-instructions field: pubnet meta carries none (see internal/xdrjson/operation.go).
 type sorobanMetering struct {
 	Instructions     uint32
 	DiskReadBytes    uint32
@@ -171,16 +141,14 @@ type sorobanMetering struct {
 	NonRefundableFee int64 // actual TotalNonRefundableResourceFeeCharged
 	RefundableFee    int64 // actual TotalRefundableResourceFeeCharged
 	RentFee          int64 // actual RentFeeCharged
-	// FeeMetaUnsupported: the meta version is unknown, so the three charged
-	// fees above are zero for want of a reader, not because none were charged.
+	// FeeMetaUnsupported: meta version unknown, so the charged fees are zero for want of
+	// a reader, not because none were charged.
 	FeeMetaUnsupported bool
 }
 
-// extractSorobanMetering pulls the resource bid (envelope) + charged fees
-// (meta) for a Soroban tx. Both sides are variant-aware: the envelope decode
-// unwraps a fee-bump to its inner V1 tx (a naive .V1.Tx access nil-panics on a
-// fee-bump-wrapped Soroban tx), and the meta decode reads either the V3 or the
-// p27 V4 shape. Returns the zero value for any classic / non-Soroban tx.
+// extractSorobanMetering pulls the resource bid (envelope) and charged fees (meta).
+// Variant-aware: a fee-bump unwraps to its inner V1 tx (a naive .V1.Tx nil-panics)
+// and meta may be V3 or V4. Zero for non-Soroban txs.
 func extractSorobanMetering(tx ingest.LedgerTransaction) sorobanMetering {
 	sd, ok := sorobanDataFromEnvelope(tx.Envelope)
 	if !ok {
@@ -214,12 +182,9 @@ type feeBump struct {
 	InnerResultCode int32
 }
 
-// extractFeeBump reads the outer layer of a fee-bump transaction. The SDK's
-// Account()/MaxFee() answer for the INNER tx on a fee bump, so the payer, its
-// bid, the inner hash (what the submitter's SDK returned) and the inner
-// failure reason exist nowhere else in the row. The inner hash and code come
-// from the result's InnerResultPair, which core emits with both
-// tx_fee_bump_inner_* codes.
+// extractFeeBump reads the outer fee-bump layer. The SDK's Account()/MaxFee() answer
+// for the INNER tx, so payer, bid, inner hash and inner failure code exist nowhere
+// else in the row; the last two come from the InnerResultPair.
 func extractFeeBump(tx ingest.LedgerTransaction) feeBump {
 	if !tx.Envelope.IsFeeBump() || tx.Envelope.FeeBump == nil {
 		return feeBump{}
@@ -234,10 +199,8 @@ func extractFeeBump(tx ingest.LedgerTransaction) feeBump {
 	return fb
 }
 
-// sorobanDataFromEnvelope returns the tx's SorobanTransactionData, unwrapping a
-// fee-bump to the inner V1 tx. ok=false for V0 or any non-Soroban tx. There is
-// no SDK helper for this — the type switch mirrors TransactionEnvelope's own
-// SourceAccount()/Fee() accessors.
+// sorobanDataFromEnvelope returns the SorobanTransactionData, unwrapping a fee-bump
+// to the inner V1 tx; ok=false for V0 or non-Soroban. No SDK helper exists.
 func sorobanDataFromEnvelope(env xdr.TransactionEnvelope) (xdr.SorobanTransactionData, bool) {
 	switch env.Type {
 	case xdr.EnvelopeTypeEnvelopeTypeTx:
@@ -260,10 +223,8 @@ func sorobanDataFromEnvelope(env xdr.TransactionEnvelope) (xdr.SorobanTransactio
 // fee reader knows; its charged-fee ext cannot be located.
 var errSorobanMetaUnsupported = errors.New("clickhouse: unsupported TransactionMeta version for soroban fee ext")
 
-// sorobanMetaFeeExt reads the charged-fee ext (present since p21; live pubnet is
-// p27 → TransactionMetaV4) from either the V3 or V4 meta shape. ok=false when
-// the tx carries no Soroban meta (classic tx, or a Soroban tx whose meta
-// predates the ext); errSorobanMetaUnsupported for a version past V4.
+// sorobanMetaFeeExt reads the charged-fee ext from the V3 or V4 meta. ok=false when
+// there is no Soroban meta; errSorobanMetaUnsupported for a version past V4.
 func sorobanMetaFeeExt(meta xdr.TransactionMeta) (xdr.SorobanTransactionMetaExtV1, bool, error) {
 	switch meta.V {
 	case 0, 1, 2:
@@ -284,9 +245,7 @@ func sorobanMetaFeeExt(meta xdr.TransactionMeta) (xdr.SorobanTransactionMetaExtV
 	return xdr.SorobanTransactionMetaExtV1{}, false, nil
 }
 
-// clampU16 saturates a footprint length into a uint16 (a Soroban footprint is
-// bounded far below 65k entries by the network resource limits, but saturate
-// defensively rather than wrap).
+// clampU16 saturates rather than wraps.
 func clampU16(n int) uint16 {
 	if n < 0 {
 		return 0
@@ -297,24 +256,17 @@ func clampU16(n int) uint16 {
 	return uint16(n)
 }
 
-// opInvokeArgs is one operation's top-level InvokeContract snapshot:
-// the invoked contract's C-strkey plus its base64-SCVal args. The
-// contract identity is what lets extractEvents apply the OpArgs
-// provenance gate (args attach only to events the CALLEE itself
-// emitted — the lake-side twin of the dispatcher's gate).
+// opInvokeArgs is one op's top-level InvokeContract call: callee C-strkey plus
+// base64 SCVal args. The callee identity drives the OpArgs provenance gate.
 type opInvokeArgs struct {
 	ContractID string
 	Args       []string
 }
 
-// opArgsByIndex returns the top-level InvokeContract call per operation
-// index (nil for non-InvokeContract ops). Mirrors the OpArgs side of
-// dispatcher.extractInvokeContractCalls exactly (same MarshalBinary +
-// base64.Std), so an event's op_args_xdr equals events.Event.OpArgs — which
-// decoders that need the invoking call's args read (Redstone zips feed_ids
-// from here; the event body carries none). A slot whose contract address
-// can't be strkey-encoded yields nil (no args rather than args with
-// unverifiable provenance).
+// opArgsByIndex returns the top-level InvokeContract call per op index (nil
+// otherwise), matching dispatcher.extractInvokeContractCalls (same MarshalBinary +
+// base64.Std) so op_args_xdr equals events.Event.OpArgs. A slot whose contract cannot
+// be strkey-encoded yields nil, not args of unverifiable provenance.
 func opArgsByIndex(ops []xdr.Operation) []*opInvokeArgs {
 	out := make([]*opInvokeArgs, len(ops))
 	for i := range ops {
@@ -354,8 +306,7 @@ func opArgsByIndex(ops []xdr.Operation) []*opInvokeArgs {
 	return out
 }
 
-// extractOps appends one tx's operation + operation_result rows and updates
-// the op + classic-trade-effect counts.
+// extractOps appends one tx's operation and operation_result rows and counts.
 func extractOps(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash, txSource string, txIndex uint32, successful bool) {
 	ops := tx.Envelope.Operations()
 	opResults, hasResults := tx.Result.OperationResults()
@@ -381,23 +332,17 @@ func extractOps(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clo
 		})
 		ext.Ledger.OpCount++
 
-		// ADR-0038 Phase B: index the op's NON-source participants (the
-		// incoming/counterparty accounts in the op body — payment dest,
-		// trustor, merge target, clawback victim, …) so account history
-		// covers received activity, not just sourced. The op source stays
-		// in operations.source_account; the reader unions the two. Shared
-		// with ch-participant-backfill via operationParticipantRows so live
-		// capture and the historical re-derive can never drift. A decode
-		// failure soft-skips (perr != nil) — the raw op still wrote above.
+		// Index the op's non-source participants (payment dest, trustor, merge target, ...)
+		// so account history covers received activity; shared with ch-participant-backfill
+		// via operationParticipantRows so live and re-derive cannot drift. A decode failure
+		// soft-skips; the raw op still wrote above.
 		if prs, perr := operationParticipantRows(body, opSource, seq, closeTime, txHash, txIndex, uint32(i)); perr == nil {
 			ext.Participants = append(ext.Participants, prs...)
 		}
 		if hasResults && i < len(opResults) {
 			appendOpResult(ext, seq, txHash, uint32(i), opResults[i]) // capture all op results (incl. failed) for the lake
 			if successful {
-				// classic_trade_effect_count mirrors the census/SDEX count,
-				// which only counts trades in SUCCESSFUL txs (rolled-back ops
-				// in a failed tx show success codes but never happened).
+				// Counts only SUCCESSFUL txs, as the census does (rolled-back ops show success codes).
 				ext.Ledger.ClassicTradeEffectCount += uint32(claimAtomCount(op, opResults[i]))
 			}
 		}
@@ -418,53 +363,23 @@ func appendOpResult(ext *LedgerExtract, seq uint32, txHash string, opIndex uint3
 	})
 }
 
-// extractEvents appends one tx's eligible contract-event rows. opArgs holds
-// the top-level InvokeContract call per operation index (from opArgsByIndex);
-// an event of op i carries opArgs[i].Args ONLY when the event's own contract
-// IS opArgs[i].ContractID — the OpArgs provenance gate, identical to the
-// dispatcher's (dispatcher.ProcessLedger): the top-level args belong to the
-// callee, and attaching them to events emitted by OTHER contracts in the same
-// op (sub-invocations under a wrapper) hands attacker-chosen wrapper args to
-// decoders like Redstone that read feed identity out of them. Wrapper-reached
-// events land with empty op_args_xdr, so an args-requiring decoder refuses
-// honestly at projection time instead of misattributing.
-//
-// TX-SUCCESS GATE. `successful` is
-// tx.Result.Successful(); a failed transaction contributes nothing. Without it,
-// this would be the ONLY one of the three ledger walks with no such gate —
-// dispatcher.ProcessLedger skips failed txs outright (dispatcher.go, "Failed
-// transactions don't produce real price signal") and dispatcher.CensusLedger
-// does the same before counting — so the lake's soroban_event_count and the
-// census oracle it is reconciled against were computed over different
-// populations, and eventRow stamped `in_successful_call = 1` on every row
-// regardless. Three invariants now hold by construction instead of by
-// coincidence:
-//
-//   - ledgers.soroban_event_count == COUNT(contract_events) for the range
-//     (what ReadGateCounts compares);
-//   - ext.Ledger.SorobanEventCount == census.SorobanEventCount for the same
-//     LCM (what ch-gate's EXTRACT≠CENSUS check compares);
-//   - in_successful_call = 1 is TRUE of every row written, rather than a
-//     hard-coded constant.
-//
-// The rejected alternative was to keep the rows and stamp
-// in_successful_call = 0: that preserves lake fidelity but breaks the first
-// invariant above (the gate counts contract_events rows, not
-// in_successful_call=1 rows), and it would leave supply_flows crediting
-// mint/burn amounts from transactions that never applied — a money-visible
-// error for a fidelity gain in events the protocol does not actually emit
-// (see the note in ExtractLedger's own doc on failed-tx meta shape).
+// extractEvents appends one tx's eligible contract-event rows. An event of op i
+// carries opArgs[i].Args ONLY when its own contract is opArgs[i].ContractID (the
+// dispatcher's provenance gate): wrapper-reached events get empty op_args_xdr, so
+// args-requiring decoders (Redstone) refuse instead of reading attacker-chosen args.
+// A failed tx contributes nothing, as in dispatcher.ProcessLedger and CensusLedger, so
+// ledgers.soroban_event_count == COUNT(contract_events) == census (ch-gate) and
+// in_successful_call = 1 is true of every row; supply_flows never credits unapplied
+// mint/burn amounts.
 func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash string, opArgs []*opInvokeArgs, successful bool) {
 	if !successful {
 		return
 	}
 	txEvents, terr := tx.GetTransactionEvents()
 	if terr != nil {
-		// An unsupported future TransactionMeta version makes this
-		// fail for every tx — count it so the lost events are visible
-		// instead of looking like a clean empty ledger. Tx-level CAP-67
-		// fee/diagnostic events (txEvents.TransactionEvents) are
-		// deliberately not captured here, matching the dispatcher + census.
+		// An unsupported future TransactionMeta version fails for every tx: count it so lost
+		// events are visible. Tx-level CAP-67 fee/diagnostic events are not captured (as in
+		// the dispatcher and census).
 		ext.TxEventReadErrors++
 		return
 	}
@@ -480,12 +395,9 @@ func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, 
 			}
 			ext.Events = append(ext.Events, row)
 			ext.Ledger.SorobanEventCount++
-			// Decode-at-ingest (ADR-0034): for supply-affecting events
-			// (mint/burn/clawback) decode the i128 amount now and emit a
-			// supply_flows row, so per-token supply is a pure SQL sum with no
-			// read-time XDR decode and no rollup refresh. An undecodable body
-			// (skipped here) just doesn't contribute — the raw event is still
-			// in contract_events for audit.
+			// Decode supply events (mint/burn/clawback) at ingest (ADR-0034) so per-token supply
+			// is a pure SQL sum. An undecodable body adds no flow; the raw event stays in
+			// contract_events.
 			if IsSupplyFlowSym(row.Topic0Sym) {
 				if amt, _, okAmt := DecodeSupplyAmountXDR(row.DataXDR); okAmt {
 					ext.SupplyFlows = append(ext.SupplyFlows, SupplyFlowRow{
@@ -504,10 +416,8 @@ func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, 
 	}
 }
 
-// eventRow maps one contract event to a ContractEventRow, applying the same
-// capture-eligibility gate as dispatcher.captureEligible (Type=Contract,
-// ContractId set, body V0, ≥1 topic). Returns ok=false to skip ineligible
-// events so the row count matches the census oracle.
+// eventRow maps one contract event to a row under the same eligibility gate as
+// dispatcher.captureEligible (Contract type, ContractId set, body V0, >=1 topic).
 func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash string, opIdx, evIdx int, call *opInvokeArgs) (ContractEventRow, bool) {
 	if ce.Type != xdr.ContractEventTypeContract || ce.ContractId == nil || ce.Body.V != 0 {
 		return ContractEventRow{}, false
@@ -532,25 +442,15 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 	if derr != nil {
 		return ContractEventRow{}, false
 	}
-	// topic_0_sym is a SYMBOL-ONLY convenience column: GetSym succeeds for
-	// ScvSymbol and nothing else, so it stays EMPTY for an ScvString
-	// topic[0] (phoenix publishes ("create","liquidity_pool") as two
-	// Strings; so do its swap/liquidity actions). This is deliberate — the
-	// column exists as a cheap Symbol fast-path, and topics_xdr carries the
-	// unabridged truth — but it differs from the PG landing zone, which
-	// fills the same-named column via tryDecodeSymbolOrString. Anything
-	// FILTERING on a topic[0] name must therefore accept both encodings or
-	// it silently matches zero String-topic rows: that cost phoenix its
-	// entire factory-creation walk. Use topic0Predicate in
-	// event_reader.go rather than writing `topic_0_sym IN (…)` by hand.
-	// Widening this column would mean re-extracting the whole lake.
+	// topic_0_sym is a SYMBOL-ONLY column: it stays empty for an ScvString topic[0]
+	// (phoenix emits Strings), unlike the PG landing zone's tryDecodeSymbolOrString.
+	// Filters on a topic[0] name must accept both encodings (use topic0Predicate in
+	// event_reader.go). Widening it means re-extracting the lake.
 	var topic0Sym string
 	if sym, sok := v0.Topics[0].GetSym(); sok {
 		topic0Sym = string(sym)
 	}
-	// OpArgs provenance gate (see extractEvents' doc): the producing
-	// op's top-level args are stored only on events the invoked contract
-	// itself emitted.
+	// OpArgs provenance gate (see extractEvents): args only on events the callee emitted.
 	var opArgs []string
 	if call != nil && call.ContractID == cid {
 		opArgs = call.Args
@@ -568,23 +468,14 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 		TopicsXDR:  topics,
 		DataXDR:    base64.StdEncoding.EncodeToString(dataRaw),
 		OpArgsXDR:  opArgs, // callee-only InvokeContract args (Redstone feed_ids, etc.)
-		// Constant 1 is a STATEMENT OF FACT, not an assumption: the only
-		// caller, extractEvents, returns early for a failed transaction.
-		// Without the gate this literal would be
-		// stamped on every row while extractEvents has no tx-success gate at
-		// all, so the column would assert something the extractor had not checked.
+		// Constant 1 is fact: the only caller, extractEvents, returns early for failed txs.
 		InSuccessfulCall: 1,
 	}, true
 }
 
-// claimAtomCount mirrors dispatcher.claimAtomCount exactly (same op types +
-// success gating) so classic_trade_effect_count equals the SDEX decoder's
-// trade output — not COUNT(trades), which also excludes one-side-zero fills.
-// The per-atom predicate is [sdexclaim.IsRealTrade] on both sides — the same
-// rule sdex.decodeClaimAtom applies — so the mirror this comment claims is
-// enforced by a shared function, not by inspection
-// (TestClaimAtomCount_LockStepWithDecoder in the dispatcher's external test
-// package pins all three against the same divergent-atom table).
+// claimAtomCount mirrors dispatcher.claimAtomCount (same op types, success gating) so
+// classic_trade_effect_count equals the SDEX decoder's output. The per-atom rule is
+// [sdexclaim.IsRealTrade] on both sides (TestClaimAtomCount_LockStepWithDecoder).
 func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint:gocognit // switch over 5 trade op types, with a dual result-arm fallback for passive offers; linear and clearer unsplit.
 	if result.Code != xdr.OperationResultCodeOpInner {
 		return 0
@@ -607,12 +498,8 @@ func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint
 		}
 		return sdexclaim.RealTradeCount(r.MustSuccess().OffersClaimed)
 	case xdr.OperationTypeCreatePassiveSellOffer:
-		// stellar-core emits passive-offer results under the ManageSellOffer
-		// arm (passive offers are processed as manage-sell-offers), so
-		// GetCreatePassiveSellOfferResult returns ok=false on real on-chain
-		// data — confirmed vs Hubble at ledger 62701151. Try the passive arm
-		// (XDR spec) first, then fall back to manage-sell (what core emits).
-		// Mirror sdex.extractClaimAtoms + dispatcher.census exactly.
+		// Core emits passive-offer results under the ManageSellOffer arm, so the passive getter
+		// returns ok=false on real data: try the passive arm, then fall back to manage-sell.
 		if r, ok := tr.GetCreatePassiveSellOfferResult(); ok {
 			if r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
 				return 0
@@ -642,10 +529,7 @@ func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint
 	return 0
 }
 
-// (realTradeCount / claimAtomAmounts moved to internal/sdexclaim — shared with
-// the dispatcher census. Both-zero no-op crosses are excluded, one-side-zero
-// rounding-artifact fills kept, so the census equals the decoder's output and
-// exceeds COUNT(trades) by the fills the writer cannot store.)
+// realTradeCount and claimAtomAmounts live in internal/sdexclaim.
 
 func hashHex(h xdr.Hash) string { return hex.EncodeToString(h[:]) }
 

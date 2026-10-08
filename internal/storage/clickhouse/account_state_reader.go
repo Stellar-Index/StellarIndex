@@ -24,9 +24,8 @@ type AccountState struct {
 	SeqNum        int64
 	NumSubEntries uint32
 	Flags         uint32
-	// Liabilities (AccountEntry ext.v1) and sponsorship counters (ext.v2)
-	// make minimum balance and spendable XLM derivable:
-	// min = (2 + NumSubEntries + NumSponsoring - NumSponsored) × base_reserve,
+	// Liabilities (ext.v1) and sponsorship counts (ext.v2) give
+	// min = (2 + NumSubEntries + NumSponsoring - NumSponsored) × base_reserve and
 	// spendable = Balance - min - SellingLiabilities. Zero when absent.
 	BuyingLiabilities  int64
 	SellingLiabilities int64
@@ -41,12 +40,9 @@ type AccountState struct {
 	Signers            []AccountSigner
 	Trustlines         []TrustlineState
 	Offers             []OfferState
-	// AsOfLedger is the lake watermark read immediately BEFORE this state
-	// was scanned (mirrors AccountWealthSnapshot.AsOfLedger), so it never
-	// names a ledger later than the data it describes. Stamped by the
-	// cache fill in [ExplorerReader.refreshAccountState], not by this
-	// method itself — a caller reading the account live (bypassing the
-	// cache) gets 0. 0 also when the watermark was unreadable.
+	// AsOfLedger is the lake watermark read BEFORE the scan, so it never names a ledger
+	// later than the data. Stamped by [ExplorerReader.refreshAccountState]; a live read
+	// that bypasses the cache gets 0, as does an unreadable watermark.
 	AsOfLedger uint32
 }
 
@@ -84,16 +80,13 @@ type AssetHolder struct {
 	Balance   int64
 }
 
-// AccountState reconstructs an account's current state from the lake: the
-// latest AccountEntry (balance/signers/thresholds/flags/home-domain), plus its
-// live trustlines and offers (latest non-removed change per key). Relies on
-// the account_id skip-index (ADR-0038 Phase C). Returns Exists=false (no error)
-// for an unknown / merged account.
+// AccountState reconstructs an account's current state: the latest AccountEntry plus
+// its live trustlines and offers (latest non-removed change per key). Exists=false,
+// no error, for an unknown or merged account.
 func (r *ExplorerReader) AccountState(ctx context.Context, account string) (AccountState, error) {
 	st, err := r.accountEntry(ctx, account)
 	if errors.Is(err, errCorruptAccountEntry) {
-		// A corrupt stored entry degrades to "no state" rather than 500-ing
-		// the request — the row is the substrate's problem, not the caller's.
+		// A corrupt stored entry degrades to "no state" rather than a 500.
 		return AccountState{}, nil
 	}
 	if err != nil || !st.Exists {
@@ -113,36 +106,23 @@ func (r *ExplorerReader) AccountState(ctx context.Context, account string) (Acco
 	return st, nil
 }
 
-// AccountSigners returns the account's entry-level state (thresholds,
-// master weight, signers) without its trustlines and offers. Unlike
-// [ExplorerReader.AccountState], a corrupt stored entry is an error: an
-// authentication check must not read an unparseable entry as "no account".
+// AccountSigners returns the entry-level state without trustlines and offers. Unlike
+// [ExplorerReader.AccountState], a corrupt entry is an error: an authentication
+// check must not read it as "no account".
 func (r *ExplorerReader) AccountSigners(ctx context.Context, account string) (AccountState, error) {
 	return r.accountEntry(ctx, account)
 }
 
 var errCorruptAccountEntry = errors.New("clickhouse: corrupt stored account entry")
 
-// accountEntry reads the latest AccountEntry. Exists=false (no error) for
-// an unknown or merged account; errCorruptAccountEntry when the stored
-// entry does not decode.
+// accountEntry reads the latest AccountEntry; errCorruptAccountEntry when it does
+// not decode.
 func (r *ExplorerReader) accountEntry(ctx context.Context, account string) (AccountState, error) {
 	var st AccountState
 
-	// Account entry — the current-state projection (ledger_entries_current)
-	// already holds the latest entry per key (ReplacingMergeTree); FINAL forces
-	// read-time dedup. A trailing 'removed' = merged away.
-	// Query by key_xdr, NOT account_id (site-audit follow-up). The table
-	// is ORDER BY (entry_type, key_xdr), so account_id — not a sort-key
-	// column — cannot use the primary index and every read did a full
-	// FINAL scan of the 43.6M-row current-state table. Measured on R1:
-	// 0.42s standalone, but under the bounded api_serving profile
-	// (2 threads) plus concurrent load it ballooned to the handler's 8s
-	// ceiling, which kept /v1/issuers/{g} and /v1/accounts/{g} at 8s and
-	// held the whole site's p95 SLO in breach. The account's LedgerKey
-	// XDR is a PK prefix, so this is a point lookup — 0.028s, and it does
-	// not balloon. Same fix class as NativeLiquidityPoolReserves /
-	// TokenDecimals, which already key on key_xdr.
+	// FINAL: ledger_entries_current is ReplacingMergeTree; a trailing 'removed' = merged.
+	// Query by key_xdr, not account_id: the table is ORDER BY (entry_type, key_xdr), so
+	// the account's LedgerKey XDR is a PK point lookup and account_id full-scans.
 	keyXDR, err := accountKeyXDR(account)
 	if err != nil {
 		return st, err
@@ -159,8 +139,7 @@ func (r *ExplorerReader) accountEntry(ctx context.Context, account string) (Acco
 	row := r.conn.QueryRow(ctx, accQ, keyXDR)
 	if err := row.Scan(&entryXDR, &changeType, &bal, &ledgerSeq); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			// Unknown account / not in the captured window — the empty
-			// state, surfaced via Exists=false rather than an error.
+			// Unknown account: empty state via Exists=false, not an error.
 			return st, nil
 		}
 		return st, fmt.Errorf("clickhouse: account entry %s: %w", account, err)
@@ -175,13 +154,9 @@ func (r *ExplorerReader) accountEntry(ctx context.Context, account string) (Acco
 	return st, nil
 }
 
-// accountTrustlinesQuery is a PRIMARY-INDEX range read: an account's
-// trustline LedgerKeys share a fixed key_xdr prefix (accountEntryKeyPrefix),
-// so `key_xdr LIKE '<prefix>%'` prunes to the account's contiguous slice of
-// the (entry_type, key_xdr) sort order; the exact account_id equality closes
-// the prefix's one-byte residual. Measured on r1 (a whale
-// account): 5.18s via the old account_id bloom skip-index → 0.069s. The
-// scan-settings pin stays as a guard rail, not load-bearing tuning.
+// accountTrustlinesQuery is a primary-index range read: an account's trustline keys
+// share a key_xdr prefix (accountEntryKeyPrefix); the exact account_id equality
+// closes the prefix's one-byte residual. The scan-settings pin is a guard rail.
 const accountTrustlinesQuery = `SELECT asset, entry_xdr AS ex, balance AS bal
 		FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'trustline' AND key_xdr LIKE ?
@@ -264,9 +239,7 @@ func trustlineStateFromEntry(asset, entryXDR string, bal int64) TrustlineState {
 	return t
 }
 
-// accountOffersQuery — same PK-prefix range shape + rationale as
-// accountTrustlinesQuery (offer LedgerKeys start with the seller's
-// AccountId after the discriminant).
+// Same PK-prefix range shape as accountTrustlinesQuery (offer keys start with the seller).
 const accountOffersQuery = `SELECT entry_xdr AS ex
 		FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'offer' AND key_xdr LIKE ?
@@ -308,12 +281,9 @@ func (r *ExplorerReader) accountOffers(ctx context.Context, account string) ([]O
 	return out, rows.Err()
 }
 
-// assetHoldersQuery / assetHoldersCountQuery are AssetHolders' two FINAL
-// scans over the trustline prefix (idx_lecur_asset bloom). Scan-shaped —
-// their cost scales with the ASSET's holder count, not the request — hence
-// the explorerScanSettings pin (one huge asset's
-// /v1/assets/{id}/holders was in the 8s 503 class; latency for repeats is
-// the hot_reads.go cache's job, the pin bounds the scan that DOES run).
+// Two FINAL scans over the trustline prefix (idx_lecur_asset bloom). Cost scales with
+// the asset's holder count, hence the explorerScanSettings pin; repeat latency is
+// hot_reads.go's job.
 const (
 	assetHoldersQuery = `SELECT account_id, balance
 		FROM stellar.ledger_entries_current FINAL
@@ -325,21 +295,10 @@ const (
 		WHERE entry_type = 'trustline' AND asset = ? AND change_type != 'removed' AND balance > 0` + explorerScanSettings
 )
 
-// nativeHoldersQuery / nativeHoldersCountQuery are the NATIVE-XLM arm of
-// AssetHolders. Native XLM has NO trustlines — every account holds XLM in
-// its AccountEntry balance — so the trustline-shaped queries above return
-// an empty board with holder_count 0 BY CONSTRUCTION for it (live bug,
-// /v1/assets/native/holders served {"holder_count":0} instantly
-// while every issued asset's board did real work). The native board ranks
-// the ACCOUNT range instead. entry_type is the FIRST column of the table's
-// ORDER BY (entry_type, key_xdr), so this is a primary-index RANGE read
-// over the account rows (30.7M of the 43.6M current-state total), not a
-// whole-table scan — measured on r1 under this exact SETTINGS
-// pin: 2.36s ranking + 2.11s count (9,915,982 funded accounts). Same cost
-// class as a large issued asset's trustline board, and like every holders
-// board it is served exclusively through the explorer's SWR cache
-// (hot_reads.go) — the scans run on the detached 90s refresh budget, never
-// a request deadline once warm.
+// Native XLM has no trustlines, so the queries above would return an empty board with
+// holder_count 0 by construction. Rank the 'account' rows instead: entry_type leads
+// the sort key, so it is a primary-index range read. Served via the SWR cache
+// (hot_reads.go), never on a request deadline once warm.
 const (
 	nativeHoldersQuery = `SELECT account_id, balance
 		FROM stellar.ledger_entries_current FINAL
@@ -351,23 +310,16 @@ const (
 		WHERE entry_type = 'account' AND change_type != 'removed' AND balance > 0` + explorerScanSettings
 )
 
-// AssetHolders returns the top holders of an asset by current balance, plus
-// the total count of holders with a positive balance. For issued assets the
-// balance is the holder's trustline balance; for `asset == "native"` it is
-// the AccountEntry XLM balance (see nativeHoldersQuery — native has no
-// trustlines) and the count is the number of funded accounts. Pure SQL —
-// no per-holder XDR decode. Callers pass the CANONICAL board key: the
-// handler folds XLM's alias forms (crypto:XLM — canonical.AssetAliases)
-// down to "native" before reaching here.
+// AssetHolders returns the top holders by current balance plus the count of positive
+// balances. For "native" the balance is the AccountEntry XLM balance (see
+// nativeHoldersQuery). Callers pass the canonical board key: the handler folds XLM
+// alias forms (canonical.AssetAliases) to "native" first.
 func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit int) ([]AssetHolder, int64, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	// Precomputed fast path: keyed reads off the 30-min
-	// rollup — the difference between sub-millisecond and two FINAL
-	// scans per request. Read errors fall through to the legacy path
-	// (availability over speed); ok=false means the rollup isn't
-	// provisioned/usable.
+	// Precomputed rollup first; a read error falls through to the live scans
+	// (availability over speed), ok=false means the rollup is not usable.
 	if out, total, ok, err := r.holdersRollupBoard(ctx, asset, limit); err == nil && ok {
 		return out, total, nil
 	}
@@ -377,8 +329,7 @@ func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit i
 	return r.holdersBoard(ctx, assetHoldersQuery, []any{asset, limit}, assetHoldersCountQuery, []any{asset})
 }
 
-// holdersBoard runs one (ranking, count) holders-query pair — the shared
-// scan/aggregate shape of the trustline and native arms of AssetHolders.
+// holdersBoard runs one (ranking, count) query pair.
 func (r *ExplorerReader) holdersBoard(ctx context.Context, holdersQ string, holdersArgs []any, countQ string, countArgs []any) ([]AssetHolder, int64, error) {
 	rows, err := r.conn.Query(ctx, holdersQ, holdersArgs...)
 	if err != nil {
@@ -407,49 +358,23 @@ func (r *ExplorerReader) holdersBoard(ctx context.Context, holdersQ string, hold
 // AccountWealth is one row of the wealth-ranked accounts directory.
 type AccountWealth struct {
 	AccountID string
-	// Value is the ranking key and the served figure: the exact sum of
-	// balance × price in whole units of the basis (dollars on the usd basis,
-	// XLM on native_xlm).
+	// Value is the ranking key and served figure: exact sum of balance × price in whole
+	// units of the basis (dollars on usd, XLM on native_xlm).
 	Value *big.Rat
-	// NativeStroops is the account entry's exact XLM balance in stroops — the
-	// served value on the native_xlm basis, where USD's float64 cannot carry
-	// the 7th decimal above 2^53 stroops (~900.7M XLM).
+	// NativeStroops is the exact XLM balance in stroops, the served value on native_xlm,
+	// where float64 cannot carry the 7th decimal above 2^53 stroops.
 	NativeStroops canonical.Amount
-	// Locked marks a provably-unspendable account (a locked burn address —
-	// master weight 0 and all thresholds 0). Resolved by the background
-	// refresh so it is served from cache; do NOT resolve it on the request
-	// path (site-audit S3: AccountsUnspendable is a FINAL scan, 6-8s, and it
-	// was the residual /v1/accounts latency after the ranking itself was
-	// cached).
+	// Locked marks a provably-unspendable account (locked burn address). Resolved by the
+	// background refresh; never resolve it on the request path (FINAL scan, seconds).
 	Locked bool
 }
 
-// accountsByWealthQuery is AccountsByWealth's SQL. balance is stroops (1e7);
-// k = "native" for the account entry, else the trustline asset.
-// has(assets, k) keeps only priced rows; indexOf maps the key to its price.
-// Sum per account, rank desc. native_stroops carries the exact XLM balance
-// (widened before summing).
-//
-// The sum is Decimal256, never Float64, because it is the served figure: Int64
-// stroops times a price cast to 18 places fits Decimal256's 76 digits with
-// ~39 to spare, and the stroop-to-unit division happens in Go, exactly.
-//
-// This is a background-refresh query (never on a request deadline — see
-// accounts_wealth_cache.go). The FINAL scan of 43.6M current-state rows
-// measured ~23s on R1 and is close to the connection's default 30s
-// max_execution_time, which real production price arrays (30+ assets) plus
-// serving contention tip over. The refresh has a 3-minute Go budget; the
-// max_execution_time = 150 gives the CH side matching headroom so the query
-// completes and the cache populates, instead of dying silently at 30s.
-//
-// max_threads/max_memory: at DEFAULT threads the
-// whole-table FINAL fan-out over the post-D3 part layout is the 40× memory
-// class — the refresh died repeatedly, so the cache never filled and
-// /v1/accounts sat on its 503 warming state forever. Pinning the refresh is
-// what actually un-503s the route; the cache only ever serves what a
-// completed refresh stored. The settings live in SQL text (not
-// clickhouse.WithSettings) so the pin is test-assertable and immune to the
-// driver's observed context-settings drop (see cbLookupCreatesQuery).
+// balance is stroops (1e7); k = "native" for the account entry, else the trustline
+// asset; only priced rows (has(assets, k)) count. The sum is Decimal256, never
+// Float64, because it is the served figure; stroop-to-unit division happens in Go.
+// Background refresh only (accounts_wealth_cache.go): the FINAL scan is slow, so
+// threads, memory and max_execution_time are pinned in SQL text (test-assertable;
+// the driver drops context settings, see cbLookupCreatesQuery).
 const accountsByWealthQuery = `WITH arrayMap(p -> toDecimal256(p, 18), ?) AS px,
 		sum(toDecimal256(balance, 0) * arrayElement(px, indexOf(?, k))) AS stroop_value
 		SELECT account_id, toString(stroop_value),
@@ -469,15 +394,12 @@ const accountsByWealthQuery = `WITH arrayMap(p -> toDecimal256(p, 18), ?) AS px,
 // stroopsPerUnit converts a stroop-denominated sum to whole units.
 var stroopsPerUnit = big.NewRat(10_000_000, 1)
 
-// wealthPriceScale is the fractional precision accountsByWealthQuery casts
-// each price to; wealthPriceArgs renders to it so ClickHouse never meets a form
-// (exponent, fraction) it cannot parse, and a price quoted past 18 places is
-// rounded here, visibly, rather than inside the cast.
+// wealthPriceScale is the precision accountsByWealthQuery casts prices to; rendering
+// to it keeps ClickHouse from meeting an unparseable form and rounds visibly.
 const wealthPriceScale = 18
 
-// wealthPriceArgs renders each price as a plain decimal at wealthPriceScale,
-// refusing one that is not a positive number: a single bad element would fail
-// the whole ranking in ClickHouse rather than just its own asset.
+// wealthPriceArgs renders prices as plain decimals, refusing a non-positive one: one
+// bad element would fail the whole ranking.
 func wealthPriceArgs(prices []string) ([]string, error) {
 	out := make([]string, len(prices))
 	for i, p := range prices {
@@ -490,14 +412,9 @@ func wealthPriceArgs(prices []string) ([]string, error) {
 	return out, nil
 }
 
-// AccountsByWealth ranks accounts by total USD value of their holdings —
-// native XLM (the account entry) plus every trustline asset for which the
-// caller supplied a USD price. assets/prices are parallel arrays (assets[i]
-// priced at prices[i], a decimal string; the native XLM key is "native").
-// Computed over the current-state projection in one pass (sum balance×price
-// per account); only priced assets contribute. Coverage tracks the
-// entry-change capture + backfill — accounts/assets not yet captured simply
-// aren't ranked yet.
+// AccountsByWealth ranks accounts by USD value of native XLM plus every trustline
+// asset with a caller-supplied price (assets/prices are parallel arrays; native key
+// is "native"). Unpriced or uncaptured assets simply do not contribute.
 func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets, prices []string, limit int) ([]AccountWealth, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -535,24 +452,14 @@ func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets, prices []
 	return out, rows.Err()
 }
 
-// accountsUnspendableQuery — an account_id-bloom-probed FINAL scan (the IN
-// list keeps the probe count small, so the bloom stays effective, but the
-// scan shape is the same as accountTrustlinesQuery). Runs on the wealth
-// cache's background refresh only; pinned for the same fan-out reason as
-// accountsByWealthQuery.
+// account_id-bloom-probed FINAL scan; the IN list keeps probes few. Wealth-cache
+// background refresh only.
 const accountsUnspendableQuery = `SELECT account_id, entry_xdr FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'account' AND account_id IN (?) AND change_type != 'removed'` + explorerScanSettings
 
-// AccountsUnspendable reports which of the given accounts are locked
-// burn addresses: master weight 0 with no other signers — stellar-core
-// only ever admits the master key as a signer when its weight is
-// nonzero, so master weight 0 plus an empty signer list means no
-// signature set can ever reach ANY threshold, including a nonzero one
-// (Pass-B ACC-1: the SDF burn address ranked as the "richest account",
-// $11.3B of dead XLM presented as wealth). Decoded from the current
-// account entry XDR. Threshold values are irrelevant to reachability
-// here: they gate which OPERATIONS a given signing weight authorizes,
-// not whether any weight can ever be produced.
+// AccountsUnspendable reports locked burn addresses: master weight 0 and no other
+// signers, so no signature set reaches ANY threshold. Thresholds are irrelevant:
+// they gate which operations a weight authorizes, not whether a weight is reachable.
 func (r *ExplorerReader) AccountsUnspendable(ctx context.Context, accountIDs []string) (map[string]bool, error) {
 	if len(accountIDs) == 0 {
 		return nil, nil
@@ -583,17 +490,13 @@ func (r *ExplorerReader) AccountsUnspendable(ctx context.Context, accountIDs []s
 	return out, rows.Err()
 }
 
-// accountIsUnspendable is the reachability check behind AccountsUnspendable:
-// master weight 0 with zero other signers means no signature set exists at
-// any weight, so the account is locked regardless of its threshold values
-// (thresholds gate which operations a given weight authorizes, not whether
-// any weight is reachable at all).
+// accountIsUnspendable: master weight 0 with no other signers is locked regardless
+// of thresholds.
 func accountIsUnspendable(th xdr.Thresholds, numSigners int) bool {
 	return th.MasterKeyWeight() == 0 && numSigners == 0
 }
 
-// signerAddress renders a SignerKey strkey without panicking on an unknown
-// discriminant (degrades to "").
+// signerAddress renders a SignerKey strkey, "" for an unknown discriminant.
 func signerAddress(k xdr.SignerKey) string {
 	s, err := k.GetAddress()
 	if err != nil {
@@ -602,14 +505,10 @@ func signerAddress(k xdr.SignerKey) string {
 	return s
 }
 
-// AccountHomeDomains returns account → home_domain for the given accounts that
-// have a live, decodable entry in the current-state projection. Batch helper
-// for the issuer-enrich backfill: the lake doesn't denormalize home_domain to a
-// column, so it's decoded from the account entry XDR.
-//
-// Three states, and callers must keep them apart: a non-empty value is the
-// declared domain, "" is an entry that was READ and declares none, and an
-// absent key was not read (no live entry, or an undecodable one).
+// AccountHomeDomains returns account → home_domain for accounts with a live,
+// decodable entry (decoded from XDR; the lake has no home_domain column). Keep three
+// states apart: non-empty = declared domain, "" = entry read, none declared, absent
+// key = not read.
 func (r *ExplorerReader) AccountHomeDomains(ctx context.Context, accounts []string) (map[string]string, error) {
 	if len(accounts) == 0 {
 		return map[string]string{}, nil
@@ -638,10 +537,8 @@ func (r *ExplorerReader) AccountHomeDomains(ctx context.Context, accounts []stri
 	return out, rows.Err()
 }
 
-// accountKeyXDR returns the base64 LedgerKey XDR for an account G-strkey —
-// the primary-key form of stellar.ledger_entries_current, so a lookup on
-// it is a PK-prefix point read rather than a full-column scan on
-// account_id. Mirrors liquidityPoolKeyXDR / instanceKeyXDR.
+// accountKeyXDR returns the base64 LedgerKey XDR for a G-strkey, the primary-key form
+// of ledger_entries_current (PK point read, not an account_id scan).
 func accountKeyXDR(gStrkey string) (string, error) {
 	var aid xdr.AccountId
 	if err := aid.SetAddress(gStrkey); err != nil {
@@ -658,25 +555,11 @@ func accountKeyXDR(gStrkey string) (string, error) {
 	return b64, nil
 }
 
-// accountEntryKeyPrefix returns a base64 STRING prefix that matches every
-// ledger_entries_current key_xdr of the given LedgerEntryType belonging to
-// the account — the PK-range form of "this account's trustlines/offers".
-//
-// Why it works: both LedgerKey shapes start
-// [type discriminant (4B)] [AccountId: key type (4B) + 32 raw key bytes],
-// so an account's entries of one type share a fixed 40-byte binary prefix
-// and are CONTIGUOUS under the table's ORDER BY (entry_type, key_xdr).
-// key_xdr is stored as base64 TEXT, and base64 is prefix-stable only at
-// 3-byte boundaries, so the prefix is cut at 39 bytes (52 base64 chars) —
-// one raw byte short of the full account. That residual ambiguity (a
-// neighbour key differing only in the last account byte) is closed by the
-// caller keeping its exact `account_id = ?` filter; the prefix's job is
-// only to turn the read into a primary-index range.
-//
-// Measured on r1 (a whale account): trustline
-// read 5.18s via the account_id bloom skip-index → 0.069s via this prefix
-// — the difference between /v1/accounts/{g} needing the whole
-// stale-serving apparatus and answering interactively.
+// accountEntryKeyPrefix returns a base64 prefix matching every key_xdr of the given
+// entry type for the account, turning the read into a primary-index range. Both key
+// shapes start [type (4B)][AccountId (4B + 32B)], contiguous under ORDER BY. Base64
+// is prefix-stable only at 3-byte boundaries, so cut at 39 bytes (52 chars); the
+// caller's exact `account_id = ?` closes the one-byte residual.
 func accountEntryKeyPrefix(gStrkey string, entryType xdr.LedgerEntryType) (string, error) {
 	var aid xdr.AccountId
 	if err := aid.SetAddress(gStrkey); err != nil {

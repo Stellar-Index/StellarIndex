@@ -14,33 +14,23 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// ClassicTokenTopic0Syms are the CAP-67 / SEP-41 token-event topic[0] symbols.
-// Under the r1 archive's uniform V4 meta these classic-asset transfer/mint/burn
-// events are synthesized for ALL history and utterly dominate contract_events
-// (446.91 M of 446.92 M rows in partition 50 — 99.9988 %). No protocol DEX /
-// lending decoder (soroswap/aquarius/phoenix/comet/blend/cctp/rozo/defindex)
-// consumes them, so a re-derivation pass for those sources can exclude them via
-// StreamContractEvents' excludeTopic0 arg, turning a 447 M-row partition scan
-// into a ~5 k-row one. (sep41_supply/sep41_transfers DO use these topics, so
-// never exclude them when re-deriving those sources.)
+// ClassicTokenTopic0Syms are the CAP-67 / SEP-41 token-event topic[0] symbols. They
+// dominate contract_events (>99.99% of a partition) and no DEX/lending decoder reads
+// them, so those re-derivations exclude them. sep41_supply and sep41_transfers DO
+// use them: never exclude when re-deriving those.
 var ClassicTokenTopic0Syms = []string{
 	"transfer", "mint", "burn", "clawback", "approve", "set_admin", "set_authorized",
 }
 
-// FirehoseExcludeSyms is ClassicTokenTopic0Syms MINUS set_admin — the exclusion
-// the DEX/lending re-derive paths (projector + ch-rebuild) must use, because
-// Blend (and Comet) emit a pool-level "set_admin" event that shares topic[0]
-// with the CAP-67 token set_admin. Excluding set_admin wholesale would silently
-// drop those protocol admin events (the bug behind blend_admin's missing
-// set_admin rows). set_admin's CAP-67 volume is negligible, so retaining it
-// costs nothing. Keep in lockstep with internal/projector.firehoseExcludeSyms.
+// FirehoseExcludeSyms is ClassicTokenTopic0Syms minus set_admin: Blend and Comet emit
+// a pool-level set_admin sharing topic[0] with the token one, so excluding it would
+// drop protocol admin events. Keep in lockstep with internal/projector.firehoseExcludeSyms.
 var FirehoseExcludeSyms = []string{
 	"transfer", "mint", "burn", "clawback", "approve", "set_authorized",
 }
 
-// sqlQuoteList renders a string slice as a SQL IN list: 'a','b',... The inputs
-// are compile-time constants (topic symbols), so inlining carries no injection
-// risk and avoids driver-specific slice-binding for IN (?).
+// sqlQuoteList renders a SQL IN list from compile-time constants (topic symbols), so
+// inlining carries no injection risk.
 func sqlQuoteList(ss []string) string {
 	q := make([]string, len(ss))
 	for i, s := range ss {
@@ -49,20 +39,15 @@ func sqlQuoteList(ss []string) string {
 	return strings.Join(q, ",")
 }
 
-// sqlQuoteEscaped renders a single-quoted SQL string literal with backslash +
-// quote escaping. For values that come back FROM the lake (contract ids, topic
-// symbols read in a prior query) rather than compile-time constants — they are
-// well-formed in practice (strkeys, ScSymbol charset), but the exemplar fetch
-// inlines them into query text, so escape rather than assume.
+// sqlQuoteEscaped renders an escaped string literal for values read back from the lake
+// (contract ids, topic symbols) that are inlined into query text.
 func sqlQuoteEscaped(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `'`, `\'`)
 	return "'" + s + "'"
 }
 
-// sqlQuoteEscapedList renders a string slice as a SQL IN list using
-// sqlQuoteEscaped per element — the list-shaped counterpart of
-// sqlQuoteEscaped, for a caller-supplied slice rather than a single value.
+// sqlQuoteEscapedList is the list form of sqlQuoteEscaped.
 func sqlQuoteEscapedList(ss []string) string {
 	q := make([]string, len(ss))
 	for i, s := range ss {
@@ -71,26 +56,17 @@ func sqlQuoteEscapedList(ss []string) string {
 	return strings.Join(q, ",")
 }
 
-// boundedScanSettings is the per-QUERY settings clause for the full-history
-// scan class (the recognition shape scan and the completeness reconcile event
-// stream). The connection-level class in openRead already caps tracked
-// per-query memory, but the in-order read pool's wide-column buffers are
-// UNDERTRACKED per query while counted in the SERVER-WIDE total: the
-// `compute-completeness -ch -source sep41_transfers` runs died at
-// ANY server cap ("would use 61G" at a 64G cap, "would use 69G" at 72G) —
-// consumption scaled with available memory, so raising caps was not a fix.
-// What bounds this class's true footprint is WORK SHAPE, enforced here:
-// max_threads=2 (at most two concurrent wide part streams hold read buffers),
-// an 8 GiB tracked ceiling, and external group-by/sort spill at 4 GiB so a
-// growing lake costs time (disk spill), never an OOM kill. Values are bytes
-// (8589934592 = 8 GiB, 4294967296 = 4 GiB).
+// boundedScanSettings is the per-query clause for full-history scans. The connection
+// cap does not bound them: the in-order read pool's wide-column buffers are
+// undertracked per query yet counted server-wide, so raising caps did not help.
+// Work shape bounds the footprint: 2 threads, 8 GiB tracked, external group-by/sort
+// spill at 4 GiB (bytes), so a growing lake costs time, never an OOM kill.
 const boundedScanSettings = "SETTINGS max_threads = 2, max_memory_usage = 8589934592, " +
 	"max_bytes_before_external_group_by = 4294967296, max_bytes_before_external_sort = 4294967296"
 
-// forEachLedgerWindow invokes fn over consecutive [lo,hi] windows covering
-// [from,to] inclusive. Windows end at multiple-of-stride boundaries minus one,
-// so when stride is the lake's partition size (1M) — or divides it evenly —
-// each query touches the minimum number of partitions. A no-op when to < from.
+// forEachLedgerWindow invokes fn over consecutive [lo,hi] windows covering [from,to].
+// Windows end at stride boundaries minus one, so a stride dividing the 1M partition
+// size touches the fewest partitions. No-op when to < from.
 func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) error {
 	if to < from || stride == 0 {
 		return nil
@@ -110,92 +86,26 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 	}
 }
 
-// StreamContractEvents is the Phase-4 input adapter (ADR-0034): it reads
-// stellar.contract_events for [from,to] inclusive, ordered by
-// (ledger_seq, tx_hash, op_index, event_index) — the dispatcher's natural
-// emission order — and invokes fn for each row reconstructed as an
-// events.Event.
+// StreamContractEventsFiltered is the projector's forward-read source (ADR-0041):
+// contract_events for [from,to] narrowed by contract_id IN / topic_0_sym IN, rebuilt
+// as events.Event in apply order (SQL sorts by tx_hash; scanInApplyOrder re-sorts each
+// ledger by tx_index). ID and TransactionIndex stay zero. Empty filters leave
+// Decoder.Matches as the only gate.
 //
-// The CH columns are a byte-identical serialization of events.Event: topics,
-// value, and op-args are all base64(scval.MarshalBinary), exactly as the
-// production dispatcher writes them (internal/dispatcher.contractEventToEventsEvent
-// at dispatcher.go:881/:907 vs the extractor's eventRow at extract.go:181/:206).
-// So the existing protocol decoders consume these events verbatim — no
-// re-encoding, no galexie re-touch.
+// excludeTopic0Syms (nil = none) drops the CAP-67 firehose in SQL (ClassicTokenTopic0Syms).
 //
-// FINAL dedups concurrent/duplicate ReplacingMergeTree parts at read time.
-// Callers re-projecting all history should window [from,to] (e.g. per 1M-ledger
-// partition) so the streamed result set stays bounded in memory.
+// useFinal=false (projector): windows are small and writes idempotent, so duplicate
+// ReplacingMergeTree parts are absorbed. A COUNTING consumer must not double-count
+// them: pass true (ch-rebuild sep41 dry-run), or dedup adjacent rows in Go (ORDER BY
+// makes duplicates consecutive; the completeness reconcile does this, gentler on the
+// shared host). FINAL + contract_id filter + wide range is the protocol_reader.go
+// trap; the sole useFinal=true caller is deliberate (openRead has no execution-time
+// cap and it streams), but a new request-path caller needs its own row ceiling.
 //
-// Note: ID and TransactionIndex are left zero — the CH lake keys events by
-// (ledger, tx_hash, op_index, event_index) and decoders use TxHash. Delivery
-// order within a ledger is still transaction apply order: the SQL sorts by
-// tx_hash so ClickHouse streams in read order, and scanInApplyOrder re-sorts
-// each ledger by stellar.transactions.tx_index before fn sees it.
-// StreamContractEventsFiltered is the projector's forward-read source (ADR-0041
-// feed-switch): it streams contract_events for [from,to] narrowed by a
-// per-source prefilter (contract_id IN / topic_0_sym IN — mirrors the Postgres
-// soroban_events path's prefilter), reconstructing each as an events.Event for
-// the source's decoder. NO FINAL: the projector reads small forward windows and
-// its downstream writes are idempotent (ON CONFLICT DO NOTHING), so a duplicate
-// event decodes to the same row and is absorbed — FINAL's full-partition merge
-// would be pure overhead here. Empty filters → match-by-Decoder.Matches alone
-// (coarser, but the window is BatchLimit-bounded).
-//
-// excludeTopic0Syms (nil = no exclusion) drops events whose topic[0] symbol is
-// in the list — used so the no-contract-prefilter DEX/lending sources skip the
-// CAP-67 classic-token firehose at the SQL layer instead of streaming it all
-// and discarding it via Decoder.Matches (see ClassicTokenTopic0Syms; matters
-// for a far-behind source's wide catch-up window).
-//
-// useFinal toggles FINAL. The live projector passes false: it reads small
-// forward windows and its downstream writes are idempotent (ON CONFLICT DO
-// NOTHING), so a duplicate ReplacingMergeTree part decodes to the same row and
-// is absorbed — FINAL would be pure overhead. A COUNTING consumer must ensure
-// un-merged duplicate parts (e.g. the footprint-sample / validation re-run
-// partitions 25/45/62) are not double-counted, but has TWO honest ways to do
-// so. It can pass useFinal=true so merge-on-read collapses the duplicates in CH
-// (the ch-rebuild sep41 dry-run count does this). OR it can pass useFinal=false
-// and dedup adjacent duplicates in-Go: the ORDER BY (ledger_seq, tx_hash,
-// op_index, event_index) makes exact-identity duplicate rows CONSECUTIVE, the
-// apply-order re-sort is stable so they stay consecutive in the callback
-// sequence, and no window ever splits a ledger, so an O(1)
-// previous-key skip counts each event exactly once at no FINAL cost. The
-// completeness reconcile deliberately takes the second path
-// (completeness.ReDeriveOutputCountsByKindFromEvents via ReconcileEventStreamer)
-// because no-FINAL is far gentler on the shared host — so useFinal=false is
-// correct for a counting consumer that dedups, not a bug.
-//
-// On the "FINAL + contract_id filter + wide range" trap (the protocol_reader.go
-// class): this query CAN express it, and one caller does.
-// Census of every call site — projector.go, projected_rebuild.go,
-// completeness.go and ch_cap67_movements.go all pass useFinal=false; the sole
-// useFinal=true caller is ch_rebuild.go's sep41 dry-run, which passes the
-// operator's raw -from/-to with no windowing. That is DELIBERATE and must not
-// be given a row ceiling: it runs on openRead(), whose Settings pin
-// max_execution_time to 0 precisely so "a legitimate FINAL stream over a
-// full-history window" can run for minutes (gate.go), it streams rather
-// than aggregates so its memory is bounded regardless of range, and the range
-// IS the operator's explicit request. The request-path protection lives on the
-// request-path reader instead (protocolRawScanRowCeiling). A NEW consumer of
-// this function that is request-path, passes useFinal=true AND a contract_id
-// filter would reproduce the trap — it needs its own ceiling, not this one's
-// absence taken as precedent.
-//
-// withOpArgs selects whether the read includes op_args_xdr. Only decoders that
-// consume events.Event.OpArgs need it (redstone zips write_prices feed_ids
-// from the op args); every other decoder decodes from topics + data.
-// op_args_xdr is a WIDE column (the whole InvokeContract arg vector per row),
-// and reading it across the CAP-67 classic-token firehose was one of the two
-// legs of sep41 completeness OOMs — pass false unless the
-// consuming decoder actually reads OpArgs.
-//
-// withStateWriteKeys additionally resolves each event's
-// events.Event.StateWriteKeys from stellar.ledger_entry_changes (batched
-// point lookups — see state_write_keys.go). Per-source opt-in exactly like
-// withOpArgs, and for the same reason: today only redstone's decoder reads
-// the keys (exact accepted-feed subset attribution), and a firehose-scale
-// source would pay the lookups for nothing.
+// withOpArgs reads op_args_xdr, a wide column: only decoders reading
+// events.Event.OpArgs (redstone) need it. withStateWriteKeys resolves StateWriteKeys
+// from ledger_entry_changes (state_write_keys.go); per-source opt-in, only redstone
+// reads them.
 func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs, withStateWriteKeys bool, fn func(events.Event) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -206,9 +116,8 @@ func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uin
 	emit := fn
 	var enricher *stateWriteKeyEnricher
 	if withStateWriteKeys {
-		// openRead's MaxOpenConns=2 leaves one underlying connection free
-		// for the enricher's batch lookups while the event stream holds
-		// the other.
+		// openRead's MaxOpenConns=2 leaves one connection for the enricher's batch lookups
+		// while the stream holds the other.
 		enricher = newStateWriteKeyEnricher(ctx, conn, fn)
 		emit = enricher.add
 	}
@@ -228,42 +137,18 @@ func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uin
 	return nil
 }
 
-// topic0Predicate renders the topic[0] prefilter for a list of requested
-// action names.
-//
-// It must match BOTH on-wire encodings of topic[0], because the lake's
-// convenience column only carries one of them. extract.go fills topic_0_sym
-// from `v0.Topics[0].GetSym()` — Symbol ONLY — so the column is EMPTY for
-// every event whose topic[0] is an ScvString. (The PG landing zone made the
-// other choice, tryDecodeSymbolOrString, which is why the two disagree.)
-// Filtering on topic_0_sym alone therefore silently matched NOTHING for a
-// String-topic protocol: phoenix publishes `("create","liquidity_pool")` as
-// two Strings, so the -ch gated prefilter — which asks this lake for
-// topic_0_sym "create" — returned zero rows over a lake that holds those
-// events from ledger 51,572,026. seed-protocol-contracts is NOT
-// blocked here: it reads the PG landing zone, whose topic_0_sym comes from
-// tryDecodeSymbolOrString and does match Strings; that command was inert for
-// the decoder reason alone.
-//
-// Matching topics_xdr[1] against the ScvString encoding of the same name
-// closes that without touching what topic_0_sym MEANS for the ~6B rows
-// already written: re-extracting the whole lake to widen the column is a
-// multi-day rewrite of the largest table, and nothing else needs it.
-//
-// This only ever WIDENS a prefilter, so it cannot cause an undercount, and it
-// cannot cause a mis-attribution either: the prefilter is a cheap SQL scope,
-// never the attribution decision — each decoder's Matches() is still the final
-// per-event gate. Cost is negligible: topic_0_sym is not in the sort key and
-// has no skip index (ORDER BY is (ledger_seq, tx_hash, op_index, event_index)),
-// so it was already a scan, and topics_xdr is in the SELECT list regardless.
+// topic0Predicate renders the topic[0] prefilter and matches BOTH encodings:
+// extract.go fills topic_0_sym from GetSym() (Symbol only), so it is empty for an
+// ScvString topic[0] (phoenix) and filtering on it alone silently matches nothing.
+// Also test topics_xdr[1] against the ScvString encoding; widening the column would
+// mean re-extracting the lake. It only widens a prefilter, and each decoder's
+// Matches() remains the final gate.
 func topic0Predicate(topic0Syms []string) string {
 	asStrings := make([]string, 0, len(topic0Syms))
 	for _, s := range topic0Syms {
 		b64, err := scval.EncodeString(s)
 		if err != nil {
-			// Not encodable as an ScvString (over the XDR length bound):
-			// no lake row can carry it in that form, so the Symbol arm
-			// alone is exhaustive for this name.
+			// Not encodable as an ScvString: no lake row carries that form, so the Symbol arm is exhaustive.
 			continue
 		}
 		asStrings = append(asStrings, b64)
@@ -275,9 +160,8 @@ func topic0Predicate(topic0Syms []string) string {
 	return "(" + pred + ")"
 }
 
-// contractEventsFilteredQuery builds the StreamContractEventsFiltered query
-// text. Split out so the query shape (column trim, FINAL, prefilters, the
-// bounded-scan SETTINGS) is unit-testable without a ClickHouse server.
+// contractEventsFilteredQuery builds the query text, split out so its shape is
+// unit-testable without a ClickHouse server.
 func contractEventsFilteredQuery(contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs bool) string {
 	where := contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms)
 	final := ""
@@ -339,10 +223,7 @@ func firstContractEventLedgerQuery(contractIDs, topic0Syms, excludeTopic0Syms []
 func contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms []string) string {
 	where := "WHERE ledger_seq BETWEEN ? AND ?"
 	if len(contractIDs) > 0 {
-		// contractIDs is caller-supplied (e.g. a decoder's live-grown
-		// GatedContractSet(), not a compile-time constant) — escape it
-		// like sqlQuoteEscaped's other lake-derived-value callers, not
-		// sqlQuoteList's compile-time-constant topic symbols.
+		// contractIDs is caller-supplied (a live-grown gated set), so escape it.
 		where += " AND contract_id IN (" + sqlQuoteEscapedList(contractIDs) + ")"
 	}
 	if len(topic0Syms) > 0 {
@@ -354,9 +235,8 @@ func contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms []stri
 	return where
 }
 
-// excludeTopic0 (nil = no filter) drops events whose topic[0] symbol is in the
-// list — used to skip the CAP-67 classic-token firehose when re-deriving
-// protocol sources that don't consume it (see ClassicTokenTopic0Syms).
+// StreamContractEvents reads contract_events FINAL for [from,to] in apply order,
+// always with op_args_xdr. excludeTopic0 (nil = none) skips the CAP-67 firehose.
 func StreamContractEvents(ctx context.Context, addr string, from, to uint32, excludeTopic0 []string, fn func(events.Event) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -393,11 +273,8 @@ func scanInApplyOrder(ctx context.Context, conn driver.Conn, rows driver.Rows, w
 	return o.flush()
 }
 
-// scanContractEvents maps contract_events result rows to events.Event and
-// invokes fn for each. Shared by StreamContractEvents (FINAL, exclude-filter,
-// always reads op_args_xdr) and StreamContractEventsFiltered (per-source
-// prefilter; withOpArgs must match the query's column list — false leaves
-// events.Event.OpArgs nil).
+// scanContractEvents maps result rows to events.Event for fn. withOpArgs must match
+// the query's column list; false leaves events.Event.OpArgs nil.
 func scanContractEvents(rows driver.Rows, withOpArgs bool, fn func(events.Event) error) error {
 	for rows.Next() {
 		var (

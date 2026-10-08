@@ -13,72 +13,46 @@ import (
 )
 
 // SDEX live-offer reads (order-book substrate).
+// The book is the set of LIVE `offer` entries. ledger_entries_current is keyed
+// (entry_type, key_xdr) but holds ~1.02B offer rows incl. dead offers' trailing state,
+// and the assets live only inside entry_xdr, so no per-pair predicate is possible
+// without decoding. ledger_entry_changes is the append-only, ledger_seq-partitioned
+// stream. Serving a pair straight off either is not honest within a read budget, so
+// the book is IN-PROCESS: one full-slice load at start ([LoadLiveOffers]), then
+// partition-pruned increments ([OfferChangesSince]) into an in-memory map
+// (internal/api/v1's SDEXOrderBookCache). The book lags the tip by one advance
+// cadence; the load streams the offer slice once per start.
 //
-// The classic order book is the set of LIVE `offer` ledger entries. The lake
-// holds them two ways:
-//
-//   - stellar.ledger_entries_current — ReplacingMergeTree(version) keyed
-//     (entry_type, key_xdr): the latest version per offer key, but ~1.02B
-//     offer ROWS on r1 including every dead offer's trailing state, with the
-//     selling/buying assets only inside the entry_xdr blob (no asset columns
-//     for offers, so no per-pair predicate is possible without decoding).
-//   - stellar.ledger_entry_changes — the append-only change stream,
-//     partitioned by ledger_seq (cheap partition-pruned incremental reads).
-//
-// Serving a per-pair book straight off either table is therefore not honest
-// within an explorer read budget: a pair filter requires decoding entry_xdr
-// row by row across the whole offer slice. The cheapest honest design —
-// chosen over a materialized offers projection (needs Go-side XDR decode at
-// insert, i.e. a new ingest writer, ADR-0031 territory) — is an IN-PROCESS
-// live book: one full-slice load at process start ([LoadLiveOffers]), then
-// small partition-pruned increments ([OfferChangesSince]) applied to an
-// in-memory map (internal/api/v1's SDEXOrderBookCache). Trade-offs, stated
-// plainly: the initial load streams the whole offer slice once per process
-// start (minutes of IO on r1, bounded work-shape below); the served book
-// then lags the lake tip by at most the advance cadence; and process memory
-// carries the live book (tens of thousands of offers — small).
-//
-// Work-shape bound for the full-slice read (same reasoning as
-// [boundedScanSettings]): FINAL streams a merge over the table's own
-// (entry_type, key_xdr) sort order — memory is merge-buffer-bounded, NOT
-// key-cardinality-bounded, which is why FINAL is preferred here over a
-// GROUP BY/argMax whose hash state would scale with the ~hundreds of
-// millions of distinct offer keys ever created. max_threads=4 pins the
-// fan-out (default fan-out measured at 40× the
-// memory of a pinned scan on this table's part layout). Pinned off like
-// blendReserveStateQuery: pushing the change_type filter to PREWHERE ahead
-// of the FINAL collapse can surface a superseded, non-removed offer version.
+// Full-slice work shape (as [boundedScanSettings]): FINAL streams a merge over the
+// (entry_type, key_xdr) sort order, so memory is merge-buffer-bounded, not
+// key-cardinality-bounded as a GROUP BY/argMax would be. max_threads=4 pins fan-out
+// (the default measured 40x the memory). optimize_move_to_prewhere_if_final is off, as
+// in blendReserveStateQuery: PREWHERE on change_type ahead of the FINAL collapse can
+// surface a superseded, non-removed offer version.
 const liveOfferScanSettings = "SETTINGS max_threads = 4, max_memory_usage = 8589934592, optimize_move_to_prewhere_if_final = 0"
 
-// LiveOffer is one live classic offer decoded from its ledger entry.
-// Amounts/prices are classic protocol types (int64 stroops, int32 price
-// rationals) — NOT Soroban i128s; aggregation over many offers still uses
-// big math on the caller side (sums can exceed int64).
+// LiveOffer is one live classic offer. Amounts and prices are classic types (int64
+// stroops, int32 price rationals), not i128; callers aggregate with big math.
 type LiveOffer struct {
-	// KeyXDR is the entry's LedgerKey (base64) — the book's map key.
 	KeyXDR string
-	// OfferID is the protocol offer id.
+
 	OfferID int64
-	// Seller is the offer owner's G-strkey.
+
 	Seller string
 	// Selling / Buying are canonical asset ids (`native`, `CODE-G...`).
 	Selling string
 	Buying  string
-	// Amount is the remaining SELLING amount, in stroops (7-decimal).
+
 	Amount int64
-	// PriceN/PriceD is the exact price rational: buying units per
-	// selling unit = N/D.
+	// PriceN/PriceD: buying units per selling unit.
 	PriceN int32
 	PriceD int32
-	// Ledger is the ledger this state was set at; Version orders states
-	// of the same key ((ledger<<32)|intra — the table's own version).
+	// Version orders states of one key: (ledger<<32)|intra.
 	Ledger  uint32
 	Version uint64
 }
 
-// OfferChange is one offer-entry change from the incremental stream.
-// Removed=true means the offer left the book (taken or cancelled);
-// Offer is only populated when Removed is false.
+// OfferChange is one offer-entry change; Offer is populated only when Removed is false.
 type OfferChange struct {
 	KeyXDR  string
 	Removed bool
@@ -87,26 +61,17 @@ type OfferChange struct {
 	Offer   LiveOffer
 }
 
-// offerBookLoadHoleLookback is how far below the lake tip a full load
-// looks for an unhealed hole when it picks the book's starting cursor.
-// The cursor has no predecessor at load time, and a contiguity scan from
-// the lake floor is a whole-lake window sort (over the CH memory cap), so
-// the load anchors at the first ledger present in the last 100k — about
-// six days at the 5 s close cadence, against a healer that runs every ten
-// minutes. A hole older than that has outlived the healer by days and is
-// an operator incident, not a cursor concern; the periodic re-load in the
-// cache re-anchors once it is filled.
+// offerBookLoadHoleLookback is how far below the tip a full load looks for an
+// unhealed hole. A contiguity scan from the lake floor is a whole-lake window sort
+// (over the CH memory cap), so the load anchors in the last 100k ledgers (~6 days
+// at 5 s); an older hole is an operator incident, and the periodic re-load re-anchors.
 const offerBookLoadHoleLookback = 100_000
 
-// offerBookTip is the order book's hole-safe upper read bound: the
-// highest ledger reachable from `from` without crossing a ledger the lake
-// does not hold. anchored=true is the incremental case — `from` is
-// cursor+1, so if `from` itself is missing the answer is from-1 and the
-// cursor HOLDS until catch-up fills it. anchored=false is the case with no
-// cursor to continue from (a full load, or a book loaded off an empty
-// lake): `from` is only a floor, so the run starts at the first ledger
-// actually present at or above it — every lake begins at ledger 2, and an
-// anchored read from 1 would report a boundary hole forever.
+// offerBookTip is the hole-safe upper read bound: the highest ledger reachable from
+// `from` without crossing a missing one. anchored=true (incremental, `from` is
+// cursor+1): a missing `from` returns from-1 and the cursor HOLDS. anchored=false
+// (no cursor): `from` is only a floor and the run starts at the first present ledger,
+// else a boundary hole is reported forever (every lake begins at ledger 2).
 func offerBookTip(from uint32, anchored bool, lc ledgerContiguity) uint32 {
 	if !anchored && lc.minPresent > from {
 		from = lc.minPresent
@@ -114,11 +79,8 @@ func offerBookTip(from uint32, anchored bool, lc ledgerContiguity) uint32 {
 	return watermark(from, lc.lakeMax, lc.firstGap, lc.minPresent)
 }
 
-// offerBookLoadCursor picks the cursor a full load hands the cache: the
-// contiguous tip of the lake's recent window, read BEFORE the offer scan.
-// A plain max(ledger_seq) here would start the book ABOVE any hole that is
-// open at load time, and the ledger catch-up later writes into that hole
-// would sit below the cursor for the life of the process.
+// offerBookLoadCursor is the contiguous tip of the recent window, read BEFORE the
+// offer scan; a plain max(ledger_seq) would start the book above any open hole.
 func (r *ExplorerReader) offerBookLoadCursor(ctx context.Context) (uint32, error) {
 	var lakeMax uint64
 	if err := r.conn.QueryRow(ctx, `SELECT toUInt64(max(ledger_seq)) FROM stellar.ledgers`).Scan(&lakeMax); err != nil {
@@ -138,15 +100,10 @@ func (r *ExplorerReader) offerBookLoadCursor(ctx context.Context) (uint32, error
 	return offerBookTip(floor, false, lc), nil
 }
 
-// LoadLiveOffers streams every LIVE offer entry from the lake's
-// current-state projection, returning the offers plus the lake's
-// CONTIGUOUS tip read BEFORE the scan started ([offerBookLoadCursor]) —
-// the caller's incremental cursor. Everything above that cursor —
-// changes landing during the scan, and ledgers the scan saw above a
-// still-open hole — is re-read by [OfferChangesSince] and re-applied
-// idempotently by version. Undecodable entries are skipped (counted by
-// the caller via len). See the package comment above for the design
-// trade-offs.
+// LoadLiveOffers streams every LIVE offer entry from the current-state projection
+// and returns them with the CONTIGUOUS tip read BEFORE the scan (the incremental
+// cursor). Anything above it is re-read by [OfferChangesSince] and re-applied
+// idempotently by version. Undecodable entries are skipped.
 func (r *ExplorerReader) LoadLiveOffers(ctx context.Context) ([]LiveOffer, uint32, error) {
 	cursor, err := r.offerBookLoadCursor(ctx)
 	if err != nil {
@@ -185,29 +142,20 @@ func (r *ExplorerReader) LoadLiveOffers(ctx context.Context) ([]LiveOffer, uint3
 	return out, cursor, nil
 }
 
-// OfferChangesSince streams offer-entry changes with fromLedger <
-// ledger_seq <= the lake's CONTIGUOUS tip above fromLedger, in
-// (ledger_seq, intra_ledger_seq) order, returning the changes and the
-// new cursor. The read is partition-pruned by ledger_seq, so a 60s
-// cadence costs a few small partitions at most. Duplicate/overlapping
-// rows are safe: the caller applies changes by version, idempotently.
-//
-// The upper bound is [offerBookTip], never max(ledger_seq): the returned
-// cursor is committed by the caller, and the LiveSink drops whole ledgers
-// under pressure. Reading to the raw max crosses such a hole and commits
-// a cursor above it, so the rows ch-live-catchup later writes INTO the
-// hole are below the cursor forever — an offer removed in the dropped
-// ledger is served as resting liquidity until the process restarts.
-// Bounded by the contiguous tip the cursor holds
-// just below the hole and resumes through it once it is filled — the
-// same guard as projector.resolveTip and chops.Cap67Range.
+// OfferChangesSince streams offer changes in (fromLedger, contiguous tip] in
+// (ledger_seq, intra_ledger_seq) order, partition-pruned. Overlapping rows are safe:
+// the caller applies by version. The upper bound is [offerBookTip], never
+// max(ledger_seq): the caller commits the cursor, and the LiveSink drops whole
+// ledgers under pressure, so crossing a hole would put later catch-up rows below
+// the cursor forever and an offer removed in the dropped ledger would stay live.
+// The cursor holds below the hole and resumes once it is filled (as
+// projector.resolveTip and chops.Cap67Range).
 func (r *ExplorerReader) OfferChangesSince(ctx context.Context, fromLedger uint32) ([]OfferChange, uint32, error) {
 	lc, err := ledgerContiguityFrom(ctx, r.conn, fromLedger+1)
 	if err != nil {
 		return nil, 0, err
 	}
-	// fromLedger == 0 is a book loaded off an empty lake: no cursor to
-	// continue from, so start at the lake's first ledger (see offerBookTip).
+	// fromLedger == 0 is a book loaded off an empty lake: start at the first ledger.
 	tip := offerBookTip(fromLedger+1, fromLedger > 0, lc)
 	if tip < lc.lakeMax {
 		slog.Warn("sdex order book: advance held below a lake hole; the book lags until ch-live-catchup fills it",
@@ -244,12 +192,9 @@ func (r *ExplorerReader) OfferChangesSince(ctx context.Context, fromLedger uint3
 		if !ch.Removed {
 			o, ok := offerFromEntryXDR(entryXDR)
 			if !ok {
-				// A skipped non-removed change FREEZES this key's
-				// previously-applied state in the served book (the update
-				// it carried is lost until the key's next decodable
-				// change) — surface it instead of dropping it silently.
-				// Offer entries are core-emitted XDR,
-				// so any increment here points at a lake problem upstream.
+				// A skipped non-removed change FREEZES the key's prior state in the served book, so
+				// surface it rather than drop it silently. Offer entries are core-emitted XDR, so
+				// any increment points at a lake problem upstream.
 				slog.Warn("sdex order book: undecodable non-removed offer change skipped; key's prior state frozen",
 					"key_xdr", keyXDR, "ledger", ledger)
 				obs.SDEXOrderBookUndecodableOffersTotal.Inc()
@@ -268,50 +213,36 @@ func (r *ExplorerReader) OfferChangesSince(ctx context.Context, fromLedger uint3
 	return out, tip, nil
 }
 
-// offerVersion mirrors ledger_entries_current's materialized version:
-// (ledger_seq << 32) | intra_ledger_seq.
+// offerVersion mirrors ledger_entries_current's version: (ledger_seq << 32) | intra.
 func offerVersion(ledger, intra uint32) uint64 {
 	return uint64(ledger)<<32 | uint64(intra)
 }
 
-// OfferRemovalRef identifies one version-tie-suspect book entry: an
-// offer's LedgerKey plus the ledger its winning current-state row was
-// recorded at.
+// OfferRemovalRef is an offer's LedgerKey plus the ledger its winning current-state
+// row was recorded at.
 type OfferRemovalRef struct {
 	KeyXDR string
 	Ledger uint32
 }
 
-// offerRemovalProbeBatch bounds one OfferRemovedAt query. Each ref
-// prunes to its own ledger's granules via the (ledger_seq, …) primary
-// key, so per-batch cost is ~linear in refs; 500 scattered old-era
-// refs measured 0.77s / trivial memory on r1.
+// offerRemovalProbeBatch bounds one OfferRemovedAt query; each ref prunes to its
+// ledger's granules, so cost is ~linear in refs.
 const offerRemovalProbeBatch = 500
 
-// OfferRemovedAt reports which of the given offers have a `removed`
-// change row AT THE SAME LEDGER as their winning current-state row.
+// OfferRemovedAt reports which offers have a `removed` change row AT THE SAME LEDGER
+// as their winning current-state row.
 //
-// Why this exists — the zombie-offer class: historical
-// backfill wrote ledger_entry_changes rows with intra_ledger_seq = 0,
-// so every same-ledger change to one key ties on
-// ledger_entries_current's ReplacingMergeTree version and an ARBITRARY
-// row survives the merge. An offer that was updated then fully
-// consumed within one ledger can survive as `updated` — a phantom
-// "live" offer years after it left the chain (founding case: XLM/USDC
-// offers 845025288/845025425/845025699/845028065, consumed
-// at ledger 38224736+, still "live" in the book and
-// serving a crossed best bid 0.4327 vs best ask 0.1722). The losing
-// `removed` row is physically gone from ledger_entries_current after
-// the merge, but ledger_entry_changes still holds it — this probe
-// recovers the truth with a partition-pruned point read.
+// Backfilled ledger_entry_changes rows may carry intra_ledger_seq = 0, so same-ledger
+// changes to one key tie on ledger_entries_current's RMT version and an ARBITRARY row
+// survives: an offer updated then consumed in one ledger can persist as `updated`, a
+// phantom live offer (crossed best bid/ask). The losing `removed` row is gone from
+// ledger_entries_current but ledger_entry_changes still holds it; this is a
+// partition-pruned point read.
 //
-// The same-ledger check is sufficient for winners of the current-state
-// FINAL scan: an offer LedgerKey embeds the protocol offer ID and is
-// never reused, so a removal at a LATER ledger would itself have been
-// the higher-version winner (no tie), and a removal at an EARLIER
-// ledger is impossible. Refs whose change rows are absent entirely
-// (never-ingested windows) simply come back "not removed" — that
-// residual class is what the crossed-pairs gauge watches.
+// A same-ledger check suffices for FINAL winners: an offer key embeds the never-reused
+// offer ID, so a later removal would itself have won (no tie) and an earlier one is
+// impossible. Refs with no change rows at all come back "not removed"; the
+// crossed-pairs gauge watches that residue.
 func (r *ExplorerReader) OfferRemovedAt(ctx context.Context, refs []OfferRemovalRef) (map[string]struct{}, error) {
 	removed := make(map[string]struct{})
 	for start := 0; start < len(refs); start += offerRemovalProbeBatch {
@@ -351,8 +282,8 @@ func (r *ExplorerReader) OfferRemovedAt(ctx context.Context, refs []OfferRemoval
 	return removed, nil
 }
 
-// offerFromEntryXDR decodes one offer LedgerEntry. ok=false for
-// undecodable bytes or a non-offer entry — refuse to guess.
+// offerFromEntryXDR decodes one offer LedgerEntry; ok=false for undecodable bytes or
+// a non-offer entry.
 func offerFromEntryXDR(b64 string) (LiveOffer, bool) {
 	var le xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &le) != nil {
