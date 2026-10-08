@@ -19,7 +19,6 @@ go-lines internal/api/v1/price.go 3927
 go-lines internal/api/v1/rwa.go 2688
 go-lines internal/api/v1/server.go 3639
 go-lines internal/config/config.go 2494
-go-lines internal/dispatcher/dispatcher.go 2234
 go-lines internal/obs/metrics.go 5981
 go-lines internal/ops/chops/compute_completeness.go 2818
 go-lines internal/pipeline/sink.go 2687
