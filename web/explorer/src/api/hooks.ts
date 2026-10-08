@@ -283,7 +283,7 @@ export type MeResponse = Omit<Schemas['Account'], 'tier'> & {
 // signed out. Drives the navbar session widget + the logged-in
 // Account nav group + the /account/* auth gate.
 //
-// Cross-origin session detection (F-03) is now wired: the explorer
+// Cross-origin session detection is wired: the explorer
 // at stellarindex.io sends a CREDENTIALED request to the API at
 // api.stellarindex.io (cross-origin, same-site). This works because
 //   1. the session cookie is a host-only __Host- cookie on the API

@@ -106,7 +106,7 @@ RULES = [
             "internal/ops/ingest/detect_gaps.go",
             "internal/ops/ingest/seed_soroswap_pairs.go",  # insert-only bootstrap; never rewrites a registered pair
             "scripts/dev/",                     # fixture-capture
-            "/decode.go",                       # source decode.go — uses Event type only (PR 165b will move)
+            "/decode.go",                       # source decode.go — uses Event type only
             "/factory_seed.go",                 # cold-start factory state via simulateTransaction (PR 14) — not a runtime decoder
             "_test.go",                         # tests
         ],
@@ -127,11 +127,11 @@ RULES = [
             "internal/canonical/asset_xdr.go",  # xdr.Asset (native/alphanum4/alphanum12) → canonical.Asset. Classic-asset plumbing, NOT SCVal decoding — same category as internal/sources/sdex, which is where this function lived before C2-010 (audit-2026-07-23) hoisted it. The hoist is load-bearing: internal/sdexclaim (already allowlisted for xdr.ClaimAtom) must apply the DECODER'S asset rule so the census + lake trade counts equal COUNT(trades), and it cannot import sdex without cycling through internal/dispatcher.
             "internal/ledgerstream/",           # transport layer — exposes xdr.LedgerCloseMeta
             "internal/archivecompleteness/",    # reads REAL ledger headers out of history-archive checkpoint files (xdr.LedgerHeaderHistoryEntry via NewGzStream) to prove a present file actually contains the ledgers it claims — the valid-gzip-wrong-content class. Same non-SCVal ledger-meta category as ledgerstream (audit-2026-07-23)
-            "internal/dispatcher/",             # routes tx / events (PR 165b)
+            "internal/dispatcher/",             # routes tx / events
             "internal/pipeline/",               # shared ledger-meta plumbing (indexer + backfill)
             "internal/storage/clickhouse/",     # Tier-1 raw-lake structural decoder: walks LCM, stores raw XDR blobs (NOT SCVal decoding) (ADR-0034)
             "internal/xdrjson/",                # network-explorer classic-XDR→JSON decoder: decodes op bodies/keys/entries (NOT SCVal events) (ADR-0038)
-            "internal/sources/sdex/",           # SDEX decodes non-SCVal xdr (classic ops) (PR 165c)
+            "internal/sources/sdex/",           # SDEX decodes non-SCVal xdr (classic ops)
             "internal/sources/classicmovements/", # ADR-0047: reconstructs pre-P23 classic movements (Payment/CreateAccount) from raw xdr.Operation/OperationResult — same non-SCVal classic-op category as sdex
             "internal/sdexclaim/",              # shared ClaimAtom count/amount helpers (dispatcher + clickhouse); xdr.ClaimAtom only
             "internal/entrywalk/",              # canonical LedgerEntryChange order shared by the dispatcher walk and the clickhouse extract; ledger keys only, no SCVal decoding
@@ -142,7 +142,7 @@ RULES = [
             "internal/sources/sac_balances/",   # SAC ContractData observer reads ledger-meta deltas (ADR-0022)
             "internal/sources/sep41_supply/",   # SEP-41 supply observer reads xdr.ScVal Value/Type discriminants (ADR-0023)
             "internal/sources/sep41_transfers/", # SEP-41 audit-trail decoder reads xdr.ScVal Value/Type discriminants (F-0021)
-            "cmd/stellarindex-indexer/",         # glue: wires ledgerstream → dispatcher (PR 165d)
+            "cmd/stellarindex-indexer/",         # glue: wires ledgerstream → dispatcher
             "internal/ops/",                    # verify-decoders mirrors the indexer's ledger plumbing (D1 M1-5 split moved stellarindex-ops subcommands out of cmd/stellarindex-ops/)
             "internal/stellarrpc/",             # builds TransactionEnvelope XDR for simulateTransaction (not SCVal)
             "scripts/dev/",                     # diagnostic helpers (decode-scval pretty-prints raw XDR)

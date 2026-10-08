@@ -26,7 +26,7 @@ on:
   # admin-bypass rule — a red run on main is the tripwire. Do not remove it.
   push:
     branches: [main]
-    # See T471/RLT-376 note on the pull_request trigger above — same
+    # See the note on the pull_request trigger above — same
     # reasoning applies to push-to-main.
     paths-ignore:
       - 'CHANGELOG.md'
@@ -154,7 +154,7 @@ jobs:
       # Measured standalone: 0.11s.
       - name: lint-actions-pinning
         run: bash scripts/ci/lint-actions-pinning.sh
-      # T547: catches a pnpm/action-setup `version:` input drifting from
+      # Catches a pnpm/action-setup `version:` input drifting from
       # the package.json `packageManager` pin it's meant to install for.
       - name: lint-pnpm-version-pin self-test
         run: bash scripts/ci/lint-pnpm-version-pin-test.sh
@@ -1623,7 +1623,7 @@ jobs:
         # routes on, not the constant-200 /v1/healthz.
         run: ./scripts/ci/lint-deploy-probe-parity-test.sh
       - name: check-no-wrangler-cache-tracked
-        # T535: docs/reference/api/.wrangler/cache/pages.json was a
+        # docs/reference/api/.wrangler/cache/pages.json was a
         # Cloudflare Pages build-cache artifact committed to this public
         # repo, carrying account_id/project_name verbatim, because
         # .gitignore's old /.wrangler/ entry was root-anchored and never
@@ -2169,7 +2169,7 @@ jobs:
           python3 ./scripts/ci/lint-ch-client-auth.py
           ./scripts/ci/lint-ch-client-auth-test.sh
       # ── from the former `web-explorer` job (web/explorer) ──
-      # T547: `version:` floated independently of web/explorer/package.json's
+      # `version:` floated independently of web/explorer/package.json's
       # `packageManager` pin — package_json_file lets action-setup read the
       # pin itself instead of a second, driftable copy.
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
@@ -2186,7 +2186,7 @@ jobs:
         working-directory: web/explorer
         run: pnpm install --frozen-lockfile
         if: needs.preflight.outputs.web == 'true'
-      # T335: web/explorer/public/_redirects documents Cloudflare Pages'
+      # web/explorer/public/_redirects documents Cloudflare Pages'
       # free-plan ~100-rule cap in its own comments but nothing enforced
       # it — past the cap CF Pages silently drops the excess rules at
       # deploy time with no build error. working-directory overrides the
@@ -2268,7 +2268,7 @@ jobs:
           severity: CRITICAL,HIGH
           skip-dirs: web/explorer/node_modules
       # ── from the former `web-status` job (web/status) ──
-      # T547: package_json_file reads web/status/package.json's
+      # package_json_file reads web/status/package.json's
       # `packageManager` pin instead of a second, driftable copy.
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
         if: needs.preflight.outputs.web == 'true'
