@@ -20,13 +20,13 @@
 #     running or every recent run had residuals. Severity: ticket
 #     at 26 h, page at 48 h.
 #
-#     C4-038/039/054 (audit-2026-07-23): the writer used to OMIT
-#     `archive_completeness_last_success_timestamp` on any run that
-#     ended with residuals, on the false premise that node_exporter
-#     retains the previous scrape's value. It re-reads the textfile
-#     every scrape, so the series disappeared and these two alerts
-#     had no samples to evaluate during exactly the persistent-
-#     failure state they exist for. The writer now always emits it —
+#     The writer must not OMIT
+#     `archive_completeness_last_success_timestamp` on a run that
+#     ended with residuals: node_exporter re-reads the textfile
+#     every scrape and does not retain the previous value, so the series
+#     would disappear and these two alerts
+#     would have no samples to evaluate during exactly the persistent-
+#     failure state they exist for. The writer always emits it —
 #     carrying the last clean run's value forward, or 0 when no clean
 #     run has ever been recorded (which correctly fires both tiers).
 #
@@ -106,15 +106,12 @@ groups:
       # mode in archivecompleteness/metrics.go, which accumulates
       # them across runs so they are genuine counters.
       #
-      # C4-037 (audit-2026-07-23): two defects made this structurally
-      # unfireable. (1) The emitter filed failures under a synthetic
-      # `multi-source-exhausted` label while attempts used real source
-      # names, so `by (source)` never intersected and the numerator was
-      # permanently empty for every real source. (2) The window was
-      # `rate(...[1h])` against a metric the DAILY verify timer
-      # rewrites, so the ratio series existed for at most one hour
-      # after a run and could never satisfy `for: 1h`. Failures now
-      # carry real source names, and the window is a 25 h `increase()`
+      # Two things keep this fireable. (1) Failures carry real source
+      # names (a synthetic label would never intersect `by (source)` with
+      # the attempts, leaving the numerator empty). (2) The window is a
+      # 25 h `increase()` (a `rate(...[1h])` over a metric the DAILY
+      # verify timer rewrites exists for at most one hour after a run and
+      # can never satisfy `for: 1h`)
       # — one verify cadence (24 h) plus the same 1 h cushion the
       # staleness budget above uses.
       - alert: stellarindex_archive_repair_source_degraded

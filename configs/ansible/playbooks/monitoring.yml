@@ -16,8 +16,7 @@
 #
 #   ansible-playbook -i <multi-host inventory> playbooks/monitoring.yml
 #
-# NOT runnable against inventory/r1.yml (OBS-02, audit-2026-07-23 — the
-# line here used to say exactly that, and it never worked). The
+# NOT runnable against inventory/r1.yml. The
 # prometheus role is the MULTI-HOST shape: roles/prometheus/tasks/
 # 01-preflight.yml requires a `prometheus_pair` group with exactly two
 # hosts, plus a populated `stellarindex_api`/`_aggregator`/`_indexer`

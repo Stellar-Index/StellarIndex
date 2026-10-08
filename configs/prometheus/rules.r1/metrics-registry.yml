@@ -1,5 +1,5 @@
 ---
-# Metrics-registry-present alerts (audit-2026-07-16 C4-4).
+# Metrics-registry-present alerts.
 #
 # Some components CAN run without a Prometheus Registry, in which case
 # the SDK-side metrics they would register go absent (the source series
@@ -39,7 +39,7 @@ groups:
         # registry-less until a gatherer-bridge lands (queued in the
         # runbook). Alerting forever on a documented accepted state is
         # noise; the rule stays armed for any NEW registry-less
-        # component (2026-08-05).
+        # component.
         expr: stellarindex_metrics_registry_present{component!="ledgerstream"} == 0
         for: 15m
         labels:

@@ -11,10 +11,9 @@
 # BODIES. The heartbeats prove a process is listening, the SLA probe
 # measures latency and freshness — neither can see `/v1/coins` returning
 # HTTP 200 with the `data` field missing, which is precisely what the
-# smoke's 34 jq shape assertions are for. Until 2026-09-03 its single
-# sink was HEALTHCHECKS_URL_SMOKE, empty on r1 since install, so the
-# check ran every five minutes into the journal and nowhere else: no
-# textfile, no series, no rule. A check whose result no one can query is
+# smoke's 34 jq shape assertions are for. With HEALTHCHECKS_URL_SMOKE
+# as its only sink (empty on r1) the check runs every five minutes into
+# the journal and nowhere else: no textfile, no series, no rule. A check whose result no one can query is
 # indistinguishable from a check that is not running.
 #
 # absent_over_time branch (OBS-2 pattern, as the restore-drill rule

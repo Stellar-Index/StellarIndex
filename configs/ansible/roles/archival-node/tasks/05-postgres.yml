@@ -34,8 +34,8 @@
 # ── WAL headroom guard ──────────────────────────────────────────────
 #
 # Refuse to write a postgresql.conf whose max_wal_size does not fit the
-# filesystem pg_wal is ACTUALLY on. On 2026-09-16 raising max_wal_size
-# from 2GB to 16GB took r1's database down: the reasoning in the
+# filesystem pg_wal is ACTUALLY on. Raising max_wal_size
+# from 2GB to 16GB took r1's database down once: the reasoning in the
 # template asserted "pg_wal sits on a dataset with 2.7TB free", which
 # was true of the DATA directory and false of pg_wal — a symlink to a
 # /pgwal path on the 49GB root filesystem. Root reached 0 bytes, and
@@ -71,7 +71,7 @@
       [ -n "$used" ] || used=0
     elif [ -L "$wal" ]; then
       # pg_wal names a volume that is not there. That is not a fresh
-      # host, it is the 2026-09-16 substitution itself: no ancestor's df
+      # host, it is the symlink substitution above: no ancestor's df
       # describes the capacity WAL would get once the mount appears.
       state=dangling
       used=0
@@ -206,9 +206,8 @@
 
 # pg_stat_statements on the APPLICATION db is enabled AFTER the db is
 # created, below ("Enable pg_stat_statements on stellarindex db"). A
-# duplicate task here (before the CREATE DATABASE) passed idempotently on
-# the already-built r1 but fails a FRESH build ("database does not exist");
-# removed 2026-08-26.
+# duplicate task here (before the CREATE DATABASE) passes idempotently on
+# the already-built r1 but fails a FRESH build ("database does not exist").
 
 # ──── stellarindex application database ─────────────────────────────
 # Used by stellarindex-indexer / aggregator / api. Owns the trades +
@@ -246,7 +245,7 @@
   # and reports back ("timescaledb, pg_stat_statements"). postgresql_set
   # string-compares the desired value against the live pg_settings value,
   # so the spaceless form drifts (reports changed → restart handler) on
-  # every --check run (2026-07-06 drift reconcile).
+  # every --check run.
   community.postgresql.postgresql_set:
     name: shared_preload_libraries
     value: "timescaledb, pg_stat_statements"

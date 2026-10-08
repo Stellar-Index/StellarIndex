@@ -79,10 +79,9 @@
       [Service]
       Type=simple
       User={{ redis_user }}
-      # F-1295 (codex audit-2026-05-13): REDIS_PASSWORD now comes
-      # from the 0600 /etc/default/redis_exporter env-file (root-
-      # only readable). Pre-fix the password was inlined here
-      # via `Environment=REDIS_PASSWORD={{ redis_password }}` —
+      # REDIS_PASSWORD comes from the 0600 /etc/default/redis_exporter
+      # env-file (root-only readable). Inlining it via
+      # `Environment=REDIS_PASSWORD={{ redis_password }}` would expose it:
       # the unit file is 0644 so any local user could recover the
       # password.
       EnvironmentFile=/etc/default/redis_exporter

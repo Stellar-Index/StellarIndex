@@ -4,19 +4,19 @@
 # playbooks/deploy-binary.yml (pre_tasks) and exercised for real, against
 # temp dirs, by scripts/ci/deploy-sync-test.sh.
 #
-# History of this step (each fix broke the previous invariant):
+# Rejected alternatives (each breaks an invariant):
 #   - ansible.posix.synchronize: one rsync, `delete: true` — but rsync
 #     runs on the CONTROLLER and never sees deploy.yml's
 #     `--ssh-common-args "-o ProxyJump=…"`, so the NAT-only test-net VMs
-#     were unreachable (deploy-ansible-deploy-2, PR #268).
-#   - ansible.builtin.copy with a DIRECTORY src (#268): connection-
+#     are unreachable.
+#   - ansible.builtin.copy with a DIRECTORY src: connection-
 #     agnostic, but O(files): one SFTP round-trip + remote checksum per
 #     file, and the GH runner gets no ControlPersist across module
-#     invocations. On the r1 deploy of v0.49.0 (run 33244745680) that
-#     single task ran > 16 minutes for 291 already-identical files; the
-#     whole deploy used to take ~7. It also silently dropped `delete`.
+#     invocations. On an r1 deploy that single task ran > 16 minutes for
+#     291 already-identical files (the whole deploy otherwise takes ~7).
+#     It also silently drops `delete`.
 #
-# Now: O(1) AND connection-agnostic.
+# This step is O(1) AND connection-agnostic.
 #   1. Controller builds a DETERMINISTIC tar.gz of {{ local_dist_dir }}/
 #      migrations/ (sorted entries, mtime 0, uid/gid 0, modes normalised
 #      to 0644/0755, gzip mtime 0) and prints the manifest. Determinism

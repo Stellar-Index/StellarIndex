@@ -1,9 +1,7 @@
 ---
-# F-1278 fix (codex audit-2026-05-13): render the COMPLETE
-# /etc/nftables.conf for this host. Previously the role wrote a
-# drop-in inside a separate `inet patroni_filter` table with
-# `policy accept`, which composed unpredictably with the repo's
-# default-drop base chain. On HA-dedicated DB hosts the patroni
+# Render the COMPLETE /etc/nftables.conf for this host. A drop-in in
+# a separate `inet patroni_filter` table with `policy accept` composes
+# unpredictably with the repo's default-drop base chain. On HA-dedicated DB hosts the patroni
 # role now owns the whole-host firewall.
 #
 # Postgres + Patroni REST + etcd, internal-only.
@@ -23,7 +21,7 @@
     content: |
       #!/usr/sbin/nft -f
       # Managed by ansible (patroni role) — DO NOT EDIT BY HAND.
-      # F-1278: complete ruleset (was a no-op drop-in until 2026-05-13).
+      # Complete ruleset.
       flush ruleset
 
       table inet filter {

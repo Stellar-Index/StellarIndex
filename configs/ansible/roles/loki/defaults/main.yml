@@ -10,7 +10,7 @@ promtail_version: "3.2.0"
 # ── Server (log_aggregator host) ───────────────────────────────
 loki_data_dir: /var/lib/loki
 loki_retention_days: 30
-# F-1289 (codex audit-2026-05-13): preflight asserts at least
+# Preflight asserts at least
 # this many GB free at /var. The role caches chunks locally
 # before flushing to MinIO and keeps the boltdb index on local
 # disk; both share /var by default.
@@ -40,9 +40,9 @@ loki_replication_factor: 1
 loki_s3_endpoint: "{{ hostvars[groups['log_aggregator'][0]].s3_endpoint | default('http://127.0.0.1:9000') }}"
 loki_s3_bucket: loki-chunks
 loki_s3_region: r1
-# F-1286 (codex audit-2026-05-13): these env-var-name knobs are
+# These env-var-name knobs are
 # retained for inventory compatibility but the loki.service.j2
-# template no longer reads them — systemd `Environment=`
+# template does not read them — systemd `Environment=`
 # cannot expand `${VAR}`. Operators put `AWS_ACCESS_KEY_ID=`
 # and `AWS_SECRET_ACCESS_KEY=` directly into /etc/default/loki.
 loki_s3_access_key_env: STELLARINDEX_S3_ACCESS_KEY
@@ -69,7 +69,7 @@ loki_internal_cidrs:
   - 172.16.0.0/12
   - 192.168.0.0/16
 
-# F-1278 (codex audit-2026-05-13): the role now renders the COMPLETE
+# The role renders the COMPLETE
 # /etc/nftables.conf on its dedicated log_aggregator host. Override
 # the SSH allow-list CIDRs below for your bastion/operator network.
 loki_allowed_ssh_cidrs:

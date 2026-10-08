@@ -1,10 +1,8 @@
 ---
-# F-1278 fix (codex audit-2026-05-13): render the COMPLETE
-# /etc/nftables.conf for this host. Previously the role wrote a
-# drop-in inside a separate `inet prometheus_filter` table with
-# `policy accept`, which composed unpredictably with the repo's
-# default-drop base chain. On HA-dedicated prom hosts the role
-# now owns the whole-host firewall.
+# Render the COMPLETE /etc/nftables.conf for this host. A drop-in in
+# a separate `inet prometheus_filter` table with `policy accept`
+# composes unpredictably with the repo's default-drop base chain. On
+# HA-dedicated prom hosts the role owns the whole-host firewall.
 #
 # Internal-only:
 #   - 9090 (Prometheus web/scrape) — peer Prometheuses scrape each other
@@ -28,7 +26,7 @@
     content: |
       #!/usr/sbin/nft -f
       # Managed by ansible (prometheus role) — DO NOT EDIT BY HAND.
-      # F-1278: complete ruleset (was a no-op drop-in until 2026-05-13).
+      # Complete ruleset.
       flush ruleset
 
       table inet filter {

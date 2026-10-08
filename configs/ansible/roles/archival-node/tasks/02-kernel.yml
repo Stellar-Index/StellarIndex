@@ -45,7 +45,7 @@
       # RemainAfterExit keeps the unit active(exited) after the oneshot
       # runs — without it systemd reports inactive, so ansible's
       # `state: started` re-fires on EVERY run and the drift check
-      # permanently reports this task changed (2026-07-27).
+      # permanently reports this task changed.
       RemainAfterExit=yes
       ExecStart=/bin/sh -c 'echo never > /sys/kernel/mm/transparent_hugepage/enabled && echo never > /sys/kernel/mm/transparent_hugepage/defrag'
 

@@ -19,8 +19,7 @@
 #     means upstream history was rewritten (a previously-fetched
 #     ledger's bytes changed under us) or the copy we're reading now
 #     is locally corrupted. Ticket severity, not page: this is a
-#     brand-new, first-production-exposure detector (2026-07-08
-#     sign-off) and a standing data-integrity concern rather than a
+#     new, first-production-exposure detector and a standing data-integrity concern rather than a
 #     customer-facing outage — but it needs prompt, deliberate
 #     investigation, not a 2am wake-up on an unproven signal.
 #

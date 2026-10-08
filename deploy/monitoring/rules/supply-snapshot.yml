@@ -93,9 +93,8 @@ groups:
       # Closes the blind spot in `_stale`: when the metric has NEVER
       # been emitted (textfile collector hasn't seen a `.prom` file
       # at all), `time() - <missing>` evaluates to "no data" and the
-      # `_stale` alert silently never fires. r1 sat in this state for
-      # 24+ days before the 2026-05-08 audit caught it — the timer
-      # had simply never been installed.
+      # `_stale` alert silently never fires. r1 once sat in this state for
+      # 24+ days — the timer had simply never been installed.
       #
       # 36h matches the `_stale` cushion: fresh installs that haven't
       # had time for one daily timer fire don't false-positive, but

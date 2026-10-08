@@ -1,6 +1,6 @@
 ---
 # Rolling ZFS snapshots of the ClickHouse lake + Postgres datasets
-# (decision 2026-08-29). Tag: zfs-snapshots.
+# Tag: zfs-snapshots.
 #
 # pgBackRest (18-pgbackrest-backup.yml) is the off-host, PITR-capable
 # Postgres backup and the lake is re-derivable from the Galexie archive

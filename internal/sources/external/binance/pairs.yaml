@@ -20,21 +20,20 @@
 #     triangulation graph.
 #   - ETHUSDT — second crypto anchor; needed for any ETH-quoted
 #     Soroban DEX pair.
-#   - BTC/ETH × EUR/GBP (2026-05-14): Binance supports these natively;
-#     added so multi-source VWAP works on the most-asked-for fiat
-#     conversions (the only pre-fix venue publishing BTC/EUR was
-#     Bitstamp).
+#   - BTC/ETH × EUR/GBP: Binance supports these natively;
+#     they give multi-source VWAP on the most-asked-for fiat
+#     conversions (otherwise only Bitstamp publishes BTC/EUR).
 #   - <major>USDT — top-cap globals for cross-venue VWAP coverage.
-#     All verified TRADING on Binance via /exchangeInfo 2026-05-05.
+#     All verified TRADING on Binance via /exchangeInfo.
 pairs:
   - symbol: XLMUSDT
     base: { code: XLM, class: crypto }
     quote: { code: USDT, class: crypto }
-  # XLMEUR — verified TRADING on the Binance exchangeInfo API 2026-08-27.
-  # crypto:XLM/fiat:EUR previously had only TWO venues (kraken + bitstamp),
-  # so one venue going quiet dropped source_count to 1 — an ADR-0019 phase-2
-  # freeze signal — and a pair with deep global liquidity kept freezing.
-  # With coinbase XLM-EUR added alongside, this takes it to four venues.
+  # XLMEUR — verified TRADING on the Binance exchangeInfo API.
+  # Without it crypto:XLM/fiat:EUR has only TWO venues (kraken + bitstamp),
+  # so one venue going quiet drops source_count to 1 — an ADR-0019 phase-2
+  # freeze signal — and a pair with deep global liquidity keeps freezing.
+  # With coinbase XLM-EUR alongside, it has four venues.
   # (Binance has no XLMGBP product; XLM/GBP stays on kraken + bitstamp plus
   # the triangulated USD/GBP route.)
   - symbol: XLMEUR

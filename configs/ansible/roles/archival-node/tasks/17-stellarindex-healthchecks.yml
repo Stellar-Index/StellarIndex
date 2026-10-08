@@ -1,13 +1,10 @@
 ---
-# F-0137 (audit-2026-05-26): closes the drift cluster F-0133..F-0136
-# root cause. `configs/healthchecks/install.sh` is the deploy
+# `configs/healthchecks/install.sh` is the deploy
 # mechanism for the smoke + heartbeat + sla-probe stack — but it's
-# a MANUAL operator script (grep -rn 'install.sh\|r1-smoke'
-# configs/ansible/ returned empty pre-patch). Every change to a
+# a MANUAL operator script. Every change to a
 # wrapper script or systemd unit under `configs/healthchecks/`
-# required a manual re-run on r1; the deployed `r1-smoke.sh` was
-# 100 LoC + 10 checks behind the repo until the Wave-0 manual
-# re-sync flushed it.
+# would otherwise need a manual re-run on r1, and the deployed copy
+# drifts behind the repo until someone re-syncs it.
 #
 # This task mirrors what `install.sh` does, but in idempotent
 # Ansible. Three wrapper-script + unit groups, each with its own
@@ -262,6 +259,6 @@
     daemon_reload: true
   when:
     # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml. The
-    # GO sla-probe.timer this one superseded is what aborted the
-    # 2026-08-24 weekly drift run.
+    # GO sla-probe.timer this one supersedes is what aborted a
+    # weekly drift run.
     - not (ansible_check_mode and stellarindex_sla_probe_timer_unit is changed)

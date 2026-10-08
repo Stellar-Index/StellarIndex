@@ -7,7 +7,7 @@
 # entries; disagreement beyond the float-rounding tolerance signals
 # indexer corruption upstream and demands investigation.
 #
-# 2026-07-08 amendment (BACKLOG #59): the original ADR-0011
+# The original ADR-0011
 # total-vs-total EQUALITY compare is only a true invariant for a
 # classic asset whose entire economic supply is SAC-represented. For
 # the common partially-wrapped case (e.g. AQUA: Alg-2 ≈ 86.4B,
@@ -21,17 +21,17 @@ groups:
     interval: 60s
     rules:
 
-      # 2026-07-08 decision (BACKLOG #59): this alert used to compare
+      # This alert does not compare
       # Algorithm 2's classic TOTAL supply against Algorithm 3's
       # SAC-wrapped supply for EQUALITY (1-stroop tolerance) for every
-      # configured pair — a category error for a partially-wrapped
+      # configured pair, which is a category error for a partially-wrapped
       # classic asset (most of its supply legitimately lives OUTSIDE
-      # the SAC, e.g. AQUA: Alg-2 ≈ 86.4B, Alg-3 ≈ 0), which fired 8
-      # standing false positives. Served supply was never wrong; only
-      # the comparison was. The metric itself is now wrap_class-aware
+      # the SAC, e.g. AQUA: Alg-2 ≈ 86.4B, Alg-3 ≈ 0), and fired standing
+      # false positives (8 at the time). Served supply was never wrong; only
+      # the comparison was. The metric is wrap_class-aware
       # (internal/supply.WrapClass — see crosscheck.go):
-      #   - wrap_class="partial_wrap" (the default): the gauge is leg 2
-      #     (audit E4/N-F3(b), 2026-07-25), max(0, classic.sac_wrapped −
+      #   - wrap_class="partial_wrap" (the default): the gauge is leg 2:
+      #     max(0, classic.sac_wrapped −
       #     sac_total) — zero in the expected benign state, positive
       #     only when more is escrowed inside the SAC than it ever
       #     net-minted (impossible under correct accounting — a genuine
@@ -39,17 +39,16 @@ groups:
       #     "passing") when the classic snapshot carries no sac_wrapped
       #     component. Leg 1, max(0, sac_total − classic_total), is
       #     still computed and exposed as OverMintStroops for triage but
-      #     is DIAGNOSTIC-ONLY since 2026-08-05 (BLND/PHO false-paged a
+      #     is DIAGNOSTIC-ONLY (it false-paged for a
       #     week on legitimate classic-side burns/redistribution that
       #     leg 1's premise doesn't account for) and no longer feeds
       #     this gauge — see internal/supply/crosscheck.go's
       #     CrossCheckSubsetBound.
       #   - wrap_class="full_wrap" (operator-attested via
-      #     `[supply].fully_wrapped_sacs`; none configured as of
-      #     2026-07-08): the gauge is the ORIGINAL |classic − sac|
+      #     `[supply].fully_wrapped_sacs`; none configured): the gauge is the ORIGINAL |classic − sac|
       #     equality compare.
-      # The expr below is UNCHANGED (`> 1`) and does not need to
-      # filter on wrap_class — the false positives are fixed upstream,
+      # The expr below (`> 1`) does not need to
+      # filter on wrap_class — false positives are prevented upstream,
       # in what the gauge value MEANS, not in the alert condition. A
       # genuine violation still fires for either class.
       - alert: stellarindex_supply_cross_check_divergence

@@ -344,11 +344,11 @@ jobs:
       # that emits that shape, so they're deterministically extracted
       # from the one bundle produced (and self-verified) above:
       # messageSignature.signature is byte-identical to what
-      # --output-signature used to write (base64 ASN.1-DER ECDSA sig —
+      # the legacy --output-signature flag wrote (base64 ASN.1-DER ECDSA sig —
       # verified locally against a cosign-produced bundle), and
       # verificationMaterial.certificate.rawBytes is the same X.509
       # certificate DER-encoded, just not yet PEM-wrapped the way
-      # --output-certificate used to leave it (verified locally against a
+      # legacy --output-certificate flag left it (verified locally against a
       # generic X.509 cert; the DER->PEM step is a pure encoding
       # transform, not cosign/Fulcio-specific).
       - name: Sign SHA256SUMS (cosign keyless, sigstore bundle format)

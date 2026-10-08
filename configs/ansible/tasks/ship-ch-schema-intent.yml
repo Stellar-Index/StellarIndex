@@ -3,7 +3,7 @@
 # ch-schema-drift check's intent. Imported by the archival-node role AND by
 # playbooks/deploy-binary.yml: a binary deploy must re-stamp it, or the host's
 # release outruns Intent-Version and ch_schema_drift_not_converged fires after
-# every release (INV-2530). Needs a full-history, tagged checkout.
+# every release. Needs a full-history, tagged checkout.
 - name: Resolve the repo provenance of the Tier-1 lake DDL
   ansible.builtin.shell:
     executable: /bin/bash
@@ -32,7 +32,7 @@
       # packs differently. The stamp then differs by one character
       # between the file CI ships and the file an operator ships, the
       # drift verdict compares them, and reports drift on a byte that
-      # names the same commit. Observed exactly that on 2026-09-10:
+      # names the same commit. Observed exactly that:
       #   -- Intent-Schema-Commit: 01fa1106d (2026-09-09)   (r1)
       #   -- Intent-Schema-Commit: 01fa1106 (2026-09-09)    (CI)
       # Pin the width and the value is identical everywhere.

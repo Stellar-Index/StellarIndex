@@ -69,18 +69,16 @@ groups:
       # verify_archive_textfile.go). A failed run carries the prior
       # value forward.
       #
-      # It used to read node_systemd_timer_last_trigger_seconds — when
-      # the TIMER last FIRED, independent of the triggered service's
-      # exit status. So a job that failed every single night kept the
-      # gauge perfectly fresh, and this page was defeated by exactly the
-      # scenario it exists for. The comment here claimed the metric was
-      # the timer's ActiveEnterTimestamp / "last successful Activate";
-      # it was neither (wave-D ALERT-10).
+      # It must not read node_systemd_timer_last_trigger_seconds — that is
+      # when the TIMER last FIRED, independent of the triggered service's
+      # exit status. A job that failed every single night would keep the
+      # gauge perfectly fresh, and this page would be defeated by exactly
+      # the scenario it exists for.
       #
       # The `> 0` guard is retained deliberately: a host that has never
       # completed a run emits an explicit 0, and 0 would otherwise read
-      # as "stale since 1970" on first install. That preserves today's
-      # behaviour for a fresh host; making a never-verified host page is
+      # as "stale since 1970" on first install. That keeps
+      # a fresh host quiet; making a never-verified host page is
       # a separate operator decision.
       #
       # absent_over_time branch (OBS-2 pattern; same shape as

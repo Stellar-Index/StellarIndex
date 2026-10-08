@@ -112,7 +112,7 @@ all:
     # ───── SSH hardening ───────────────────────────────────────────
     admin_ssh_keys:
       - "ssh-ed25519 AAAA... ops@stellarindex.io"   # replace
-    # No role default any more (audit-2026-07-23 SEC-network): SSH grants
+    # There is no role default: SSH grants
     # root here, so every inventory states its own answer. Replace with
     # the operator VPN / jump-host CIDR(s). A world-open port additionally
     # needs `ssh_world_open_ack: true` right here — see inventory/r1.yml.

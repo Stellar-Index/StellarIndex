@@ -1,9 +1,7 @@
 ---
-# F-1278 fix (codex audit-2026-05-13): render the COMPLETE
-# /etc/nftables.conf for this host. Previously the role wrote a
-# drop-in inside a separate `inet loki_filter` table with
-# `policy accept`, which composed unpredictably with the repo's
-# default-drop base chain. On HA-dedicated log_aggregator hosts
+# Render the COMPLETE /etc/nftables.conf for this host. A drop-in in
+# a separate `inet loki_filter` table with `policy accept` composes
+# unpredictably with the repo's default-drop base chain. On HA-dedicated log_aggregator hosts
 # the role now owns the whole-host firewall.
 #
 # SL12: loki_internal_cidrs / loki_allowed_ssh_cidrs entries containing
@@ -26,7 +24,7 @@
     content: |
       #!/usr/sbin/nft -f
       # Managed by ansible (loki role) — DO NOT EDIT BY HAND.
-      # F-1278: complete ruleset (was a no-op drop-in until 2026-05-13).
+      # Complete ruleset.
       flush ruleset
 
       table inet filter {

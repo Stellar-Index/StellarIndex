@@ -336,7 +336,7 @@ groups:
       # cannot write (measured: root-FS full → Redis BGSAVE blocked → every
       # Set returned MISCONF for ~9h) surfaces only as customer 404s on
       # rewritten pairs, because `flags.stale` is not flipped (the
-      # aggregator is running, just unable to publish). The post-mortem
+      # aggregator is running, just unable to publish). The incident write-up
       # `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`
       # recommends "alert on aggregator WARN rate (not just service-up
       # status)" — this is the metric realisation:

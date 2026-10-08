@@ -1,13 +1,11 @@
 ---
-# F-1278 fix (codex audit-2026-05-13): render the COMPLETE
-# /etc/nftables.conf for this host. Previously the role wrote a
-# drop-in inside a separate `inet redis_filter` table with
-# `policy accept`, which composed unpredictably with the repo's
-# default-drop base chain (an `accept` verdict in one chain at
+# Render the COMPLETE /etc/nftables.conf for this host. A drop-in
+# in a separate `inet redis_filter` table with `policy accept`
+# composes unpredictably with the repo's default-drop base chain (an `accept` verdict in one chain at
 # priority -100 does NOT short-circuit a later priority-0 drop
 # in another chain — netfilter evaluates every base chain in the
 # hook ladder and a `drop` anywhere is final). On HA-dedicated
-# hosts the redis-sentinel role now owns the whole-host firewall.
+# hosts the redis-sentinel role owns the whole-host firewall.
 
 - name: ensure nftables installed
   apt:
@@ -24,7 +22,7 @@
     content: |
       #!/usr/sbin/nft -f
       # Managed by ansible (redis-sentinel role) — DO NOT EDIT BY HAND.
-      # F-1278: complete ruleset (was a no-op drop-in until 2026-05-13).
+      # Complete ruleset.
       flush ruleset
 
       table inet filter {
@@ -137,7 +135,7 @@
     state: started
     enabled: true
 
-# Clean up the legacy F-1278-broken drop-in if it still exists on
+# Clean up the legacy no-op drop-in if it still exists on
 # previously-deployed hosts. Safe no-op on fresh deploys.
 - name: remove legacy 41-redis-sentinel.conf drop-in (was no-op)
   file:

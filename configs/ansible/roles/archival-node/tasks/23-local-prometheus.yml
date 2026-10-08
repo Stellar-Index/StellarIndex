@@ -1,5 +1,5 @@
 ---
-# Local single-host Prometheus (ASH-8, diagnosed 2026-09-08).
+# Local single-host Prometheus.
 #
 # THE GAP. Both test nets reported `overall: degraded` at every check
 # while every unit was active. /v1/status derives background-service

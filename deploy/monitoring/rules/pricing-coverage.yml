@@ -50,8 +50,8 @@ groups:
       # the sweep and updates this gauge. The metric is registered in the
       # shared obs registry, so the indexer + api export it too but never set
       # it (it sits at unix 0), which made `time() - 0` cross 1800 on every
-      # eval and page a perma-stale FALSE positive from those instances
-      # (2026-08-26). The job matcher still catches a genuinely-wedged
+      # eval and page a perma-stale FALSE positive from those instances.
+      # The job matcher still catches a genuinely-wedged
       # aggregator: if ITS sweep never lands, its gauge stays 0 and the alert
       # fires from the aggregator instance. The job name is this tree's
       # (prometheus.yml.j2); r1's overlay uses r1's hyphenated one, and

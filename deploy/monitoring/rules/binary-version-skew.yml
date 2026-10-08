@@ -5,19 +5,18 @@
 # components (core / galexie / archivist). Nothing watched our own
 # binaries, and that gap produced the same incident twice:
 #
-#   - 2026-05-13 (F-1314): stellarindex-sla-probe was drifting because
-#     the deploy workflow's default binary list omitted it. The SLA
-#     evidence binary was stale (or absent on a fresh host) while every
-#     deploy reported success. Fixed by adding it to the list.
-#   - 2026-08-28: the IDENTICAL failure for stellarindex-ops, which the
-#     same list also omitted. Measured on r1: ops v0.44.7 against
+#   - stellarindex-sla-probe drifted because the deploy workflow's
+#     default binary list omitted it. The SLA evidence binary was stale
+#     (or absent on a fresh host) while every deploy reported success.
+#   - The IDENTICAL failure for stellarindex-ops, which the same list
+#     also omitted. Measured on r1: ops v0.44.7 against
 #     indexer/aggregator/api/sla-probe all at v0.46.1 — two releases of
 #     drift. Thirteen units exec that binary, including the
 #     data-integrity gates (verify-archive tier-a/b,
 #     archive-completeness, ch-schema-drift, restore-drill).
 #
-# The first fix corrected one binary but not the blind spot, so the
-# class recurred three months later. This alert closes the class: it
+# Fixing one binary does not close the blind spot, so the class
+# recurs. This alert closes the class: it
 # needs no list of which binaries matter and no notion of the current
 # release — it just asserts that binaries shipped from one release tag
 # should all report the same version. A deploy that silently skips one

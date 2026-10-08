@@ -9,13 +9,13 @@
 # ansible.cfg's `inventory` points at THIS file on purpose, so that a run
 # which forgets -i resolves zero hosts instead of guessing a region.
 #
-# It used to point at `./inventory` — the whole DIRECTORY — which ansible
+# It must NOT point at `./inventory` — the whole DIRECTORY — which ansible
 # merges. Every region inventory declares the same `archival_nodes` group, so
-# an -i-less run produced ONE group holding r1 (production) plus both test
+# an -i-less run would produce ONE group holding r1 (production) plus both test
 # nets plus the r*.example.yml placeholders, and pointed it at
 # playbooks/deploy-binary.yml (`hosts: all`), archival-node.yml and
-# monitoring.yml (`hosts: archival_nodes`). The merge also clobbered
-# per-region host vars by load order: si-futurenet resolved to
+# monitoring.yml (`hosts: archival_nodes`). The merge also clobbers
+# per-region host vars by load order: si-futurenet would resolve to
 # stellar_network=testnet, region_id=testnet, galexie_start_ledger=4340000
 # and postgres_replication_role=async-replica against r1-01.stellarindex.io.
 #

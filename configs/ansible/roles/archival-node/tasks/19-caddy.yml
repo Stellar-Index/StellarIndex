@@ -1,16 +1,15 @@
 ---
 # Caddy — the public TLS-terminating edge for the /v1 API.
 #
-# Codified 2026-07-03 (drift audit): Caddy was the last hand-managed
-# public-edge config — no role installed it, so a rebuild shipped an
-# archival node with no public API at all, and a naive nftables render
-# was one missing default away from firewalling it dead (the 80/443
+# Without this role a rebuild ships an archival node with no public
+# API at all, and a naive nftables render is one missing default away
+# from firewalling it dead (the 80/443
 # rules live in public_allow_ports_base; config-assertions.sh asserts
 # them live).
 #
 # caddy_site_addresses is the current brand domain only — the legacy
-# alias was dropped 2026-07-03 (brand purge; DNS deletion is the
-# operator's Cloudflare action).
+# alias is not served (DNS deletion is the operator's Cloudflare
+# action).
 
 # Keyring path + list filename MATCH the official caddy install docs
 # (and therefore the hand-installed state on r1) — a different

@@ -25,12 +25,11 @@ groups:
     interval: 30s
     rules:
 
-      # ─── P3: ActionWarn is firing (the previously-inert warn_pct knob) ──
+      # ─── P3: ActionWarn is firing (the warn_pct knob) ──
       #
       # stellarindex_anomaly_warn_total (internal/obs/metrics.go) exists
       # so the operator's warn_pct threshold has somewhere to surface —
-      # before it, ActionWarn was computed and discarded (audit COR-09 /
-      # AGT-06). A sustained non-zero rate is exactly the "called out,
+      # without it, ActionWarn is computed and discarded. A sustained non-zero rate is exactly the "called out,
       # not frozen" signal warn_pct exists to catch.
       # lint-tripwire-window:sustained: warn_rate exists to catch a CONTINUING elevated ActionWarn rate, not a single decision; a lone warn is expected noise
       - alert: stellarindex_anomaly_warn_rate
@@ -123,7 +122,7 @@ groups:
             error.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_recovery_stalled
 
-      # Exploit-shaped detector (4.4c, post-2026-08-25 Blend/Comet).
+      # Exploit-shaped detector (4.4c, from the Blend/Comet exploit).
       # A SELF-PAIR swap (token_in == token_out) on a curated AMM pool
       # moves no value between distinct assets and has NO honest purpose;
       # it is the primitive the exploit ran 390 times to walk the pool's

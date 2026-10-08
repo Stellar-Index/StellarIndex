@@ -44,11 +44,9 @@
     create_home: yes
     state: present
 
-# F-1289 (codex audit-2026-05-13): defaults/README/design-note
-# advertised preflight checks the role didn't actually run.
-# Pre-fix this task file ended above with only OS / inventory /
-# time-sync / user checks. The two below close the documented
-# contract.
+# Preflight checks the defaults/README/design-note advertise (disk
+# headroom at /var and the like), beyond the OS / inventory /
+# time-sync / user checks above.
 - name: collect /var free bytes
   command: df --output=avail -B1 /var
   register: _var_df

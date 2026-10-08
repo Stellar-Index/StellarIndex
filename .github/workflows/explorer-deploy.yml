@@ -188,10 +188,10 @@ jobs:
       # The three post-build guards — the Next 16 `__next.*` segment-cache
       # prune (keeping `__next._tree.txt`), the Cloudflare file-budget guard
       # (scripts/ci/explorer-file-budget.sh) and the SEO metadata lint
-      # (scripts/ci/explorer-seo-lint.sh) — used to be steps here. They ran
-      # only on this workflow, which fires on workflow_dispatch alone, while
-      # production publishes through Cloudflare Pages' repository integration
-      # and got none of them (F085/T325). They now live in web/explorer's
+      # (scripts/ci/explorer-seo-lint.sh) — are not steps here: this
+      # workflow fires on workflow_dispatch alone, while production
+      # publishes through Cloudflare Pages' repository integration and
+      # would get none of them. They live in web/explorer's
       # `postbuild` chain, which pnpm runs after ANY `pnpm build` — including
       # the Build step above — so every publisher shares one copy. See
       # docs/operations/explorer-deployment.md (Build-time guards) for what

@@ -72,7 +72,7 @@ all:
     # Archive bucket points at the AWS public-blockchain galexie
     # mirror. Note region MUST be us-east-2 (sponsored bucket lives
     # there), NOT us-east-1 where this region's compute lives.
-    # Verified empirically 2026-04-27 — first wasm-history smoke
+    # Verified empirically: the first wasm-history smoke
     # test failed with HTTP 301 PermanentRedirect when set to
     # us-east-1; us-east-2 works.
     galexie_archive_endpoint: "https://s3.us-east-2.amazonaws.com"
@@ -95,7 +95,7 @@ all:
     # ───── SSH hardening ───────────────────────────────────────────
     admin_ssh_keys:
       - "ssh-ed25519 AAAA... ops@stellarindex.io"   # replace
-    # No role default any more (audit-2026-07-23 SEC-network): SSH grants
+    # There is no role default: SSH grants
     # root here, so every inventory states its own answer. Replace with
     # the operator VPN / jump-host CIDR(s). A world-open port additionally
     # needs `ssh_world_open_ack: true` right here — see inventory/r1.yml.

@@ -5,8 +5,8 @@
 # enumeration command listed below — re-run periodically (after
 # every detected new pool / factory upgrade) to refresh.
 #
-# Total: 540 contracts across 8 sources, derived from the
-# 2026-04-30 r1 walk + 2026-05-01 cross-check via Soroban-RPC.
+# Total: 540 contracts across 8 sources, derived from an r1 walk
+# cross-checked via Soroban-RPC.
 # See docs/operations/wasm-audits/r1-walk-2026-05-01.md for the
 # audit synthesis that produced this list.
 ---
@@ -608,13 +608,11 @@ soroswap:
     - CDZKYLUACJQ4GWZ2LTVCCE4G2NTSU5IDAU3HDNBIAF3JBQFZSM4ZEYPU
     - CDZYG4RE75T4UFVUPP3V5LPBZ2GRGXZURP6LPUPADYRGWMTJXS2N5JXI
 
-# Removed 2026-05-01: three Reflector TESTNET addresses
-# (CAVLP5DH..., CCSSOHTBL..., CCYOZJCO...) were originally in the
-# input list because the Reflector audit walked legacy/testnet
-# contracts for completeness. They emit ranges:null on a mainnet
-# walk because they don't exist on mainnet, which earlier
-# investigations misinterpreted as "TTL-evicted." Per
-# walker-investigation-2026-05-01.md these should not be in any
-# future mainnet walk. The real mainnet Aquarius router is
+# Excluded: three Reflector TESTNET addresses
+# (CAVLP5DH..., CCSSOHTBL..., CCYOZJCO...). They emit ranges:null on a
+# mainnet walk because they don't exist on mainnet, which reads as
+# "TTL-evicted" but is not. Per
+# walker-investigation-2026-05-01.md they should not be in any
+# mainnet walk. The real mainnet Aquarius router is
 # CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK
 # (already in the aquarius: block above).

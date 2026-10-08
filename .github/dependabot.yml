@@ -1,12 +1,12 @@
 version: 2
 
-# Grouping policy (2026-07-08): one weekly PR per ecosystem for
-# minor/patch bumps, majors split out per-dependency. Before this,
-# every Go module got its own PR — the aws-sdk-go-v2 family alone
-# spawned 4 interdependent PRs whose merges invalidated each
-# other's go.sum (missing-transitive-entry typecheck failures) and
-# forced a rebase cascade across every open PR. A single grouped
-# PR moves version families together and cuts CI to one run.
+# Grouping policy: one weekly PR per ecosystem for
+# minor/patch bumps, majors split out per-dependency. One PR per Go
+# module would spawn interdependent PRs (the aws-sdk-go-v2 family alone
+# is 4) whose merges invalidate each other's go.sum (missing-transitive-
+# entry typecheck failures) and force a rebase cascade across every open
+# PR. A single grouped PR moves version families together and cuts CI to
+# one run.
 
 updates:
   # Go modules — our direct + transitive deps.
@@ -49,7 +49,7 @@ updates:
         update-types: ["minor", "patch"]
 
   # Docker base images. The six docker/stellarindex-*.Dockerfile FROM
-  # lines are pinned `image:tag@sha256:…` (2026-09-18); with a digest
+  # lines are pinned `image:tag@sha256:…`; with a digest
   # present Dependabot rewrites the digest when the tag moves and still
   # proposes tag bumps, so the pins do not go stale by themselves.
   # Non-recursive: each Dockerfile-bearing directory needs its own entry.
@@ -89,13 +89,13 @@ updates:
       - dependency-name: golang
         update-types: ["version-update:semver-minor"]
 
-  # F-1207 (codex audit-2026-05-12): npm/pnpm ecosystems for the
+  # npm/pnpm ecosystems for the
   # Next.js apps. Without these, Dependabot doesn't surface
   # next.js / typescript / react security advisories — operators
   # have to run `pnpm audit` manually. The CI gate is the
   # trivy pnpm-lock.yaml scan in ci.yml's `toolchain-gates` job
-  # (`pnpm audit --audit-level high` enforced nothing from
-  # 2026-07-15 on and was replaced — see ci.yml's DEP-F1 comment);
+  # (`pnpm audit --audit-level high` enforces nothing there; see ci.yml's
+  # DEP-F1 comment);
   # Dependabot opens the bump PR proactively.
   #
   # `package-ecosystem: npm` is Dependabot's identifier for the
@@ -103,7 +103,7 @@ updates:
   # pnpm-lock.yaml and opens PRs that update package.json + the
   # lockfile in-step.
   #
-  # (web/dashboard entry removed 2026-07-08 — the directory does
+  # (There is no web/dashboard entry: the directory does
   # not exist; dashboard primitives live in internal/platform.)
   - package-ecosystem: npm
     directory: /web/explorer

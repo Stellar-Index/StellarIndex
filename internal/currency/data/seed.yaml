@@ -1,8 +1,7 @@
 # Verified-currency catalogue — seed.
 #
 # Source of truth for "what is the verified Stellar asset behind
-# ticker X" — the Stellar verified-asset catalogue (R-018, re-scoped
-# Stellar-only by the Stellar-focus refactor).
+# ticker X" — the Stellar verified-asset catalogue (Stellar-only).
 #
 # This file is embedded into the stellarindex-api binary at build
 # time via `//go:embed`. Changing the catalogue requires a code
@@ -132,7 +131,7 @@ verified_currencies:
       #
       # Its supply also lives almost entirely OFF trustlines — 6,469 by
       # trustline sum against 2,581,054 by mint−burn over the SAC
-      # (2026-09-15) — so the classic lake-supply path, not the
+      # (measured) — so the classic lake-supply path, not the
       # trustline sum, is what serves a true figure here.
       - network: stellar
         code: USDT0
