@@ -24,51 +24,37 @@ import (
 // ─── `usd-volume-restamp -chunks` — the chunk-by-chunk walk ─────────────
 //
 // The TIER-AGNOSTIC driver: it owns the chunks, the compression policy, the
-// run lock and the free-space guard. Rows are the tier's business, reached
-// through [chunkRestampTier] (estimatedChunkTier, exactChunkTier). Every tier
-// lives in COMPRESSED chunks and pays the same price to write into one, so
-// they share this walk.
+// run lock and the free-space guard; rows are the tier's business, reached
+// through [chunkRestampTier]. Every tier writes into COMPRESSED chunks, so all
+// share this walk.
 //
-// The day walk UPDATEs rows wherever they are, and a DML into a compressed
-// chunk decompresses it wholesale: on production one 2,000-row UPDATE took
-// over 14 minutes and a run committed 0 rows. Without its own `ts` bound a
-// batch also makes every compressed chunk a result relation (a 23-row UPDATE
-// ran 60 minutes and wrote ~270 GB of WAL); that bound lives with the
-// statement, and this walk keeps the ONE chunk it targets out of the slow
-// path. Per chunk, oldest first: decompress (if compressed at listing), the
-// SAME restamp restricted to that chunk in -chunk-batch transactions,
-// re-compress (restoring the listed state, not deciding one), and a
-// progress line plus heartbeat for run-heavy-job.sh.
+// A DML into a compressed chunk decompresses it wholesale (one 2,000-row
+// UPDATE took over 14 minutes and committed nothing), so per chunk, oldest
+// first, the walk decompresses, runs the SAME restamp restricted to that
+// chunk in -chunk-batch transactions, re-compresses to the listed state, and
+// heartbeats for run-heavy-job.sh. The statement's own `ts` bound keeps the
+// other compressed chunks out of the result relations.
 //
 // Guards:
-//   - ONE RUN AT A TIME: run-heavy-job.sh locks per job NAME, so a -write run
-//     also holds a session advisory lock on a dedicated connection; a SIGKILL
-//     cannot leave it behind.
+//   - ONE RUN AT A TIME: a -write run holds a session advisory lock on a
+//     dedicated connection, beyond run-heavy-job.sh's per-name lock.
 //   - THE COMPRESSION POLICY IS PAUSED for a -write run, or it re-compresses
-//     the open chunk between batches and the next batch crawls without an
-//     error. It is re-enabled on EVERY exit path before the lock is released,
-//     and the re-enable SQL is printed first so a SIGKILL leaves a trace. An
-//     already-unscheduled policy is refused without -resume-paused-policy:
-//     this run does not silently take ownership of someone else's pause.
-//   - A POLICY RUN IN FLIGHT IS WAITED OUT (the pause stops only the next
-//     fire), and the chunks are listed again once it is idle.
-//   - THE CHUNK IS CHECKED AHEAD OF EVERY BATCH: a by-hand compress_chunk can
-//     take it back, and an UPDATE into a compressed chunk crawls rather than
-//     fails, so a compressed chunk STOPS the walk with the RESUME line.
+//     the open chunk between batches and the walk crawls silently. It is
+//     re-enabled on every exit path, its SQL printed first for a SIGKILL; an
+//     already-paused policy needs -resume-paused-policy.
+//   - A POLICY RUN IN FLIGHT IS WAITED OUT, then the chunks are re-listed.
+//   - THE CHUNK IS CHECKED BEFORE EVERY BATCH: a by-hand compress_chunk STOPS
+//     the walk with the RESUME line instead of crawling.
 //   - DRY RUN is the default and decompresses or pauses nothing.
-//   - PRE-FLIGHT: free space must exceed 2 x the largest chunk's uncompressed
-//     size (largest measured: 160 GB), rechecked before every decompress.
-//     statfs is only meaningful on the database host, so a non-loopback DSN
-//     needs -min-free-bytes.
-//   - LIVE-ADJACENT REFUSAL without -allow-live-adjacent: chunks inside the
-//     policy's lag are uncompressed on purpose (the cursor-regression replay
-//     upserts into them) and the in-place walk is the right tool there.
+//   - PRE-FLIGHT: free space must exceed 2 x the largest chunk's
+//     uncompressed size (up to 160 GB), rechecked before every decompress;
+//     a non-loopback DSN needs -min-free-bytes, since statfs is local.
+//   - LIVE-ADJACENT chunks are refused without -allow-live-adjacent: they are
+//     uncompressed on purpose and the in-place walk is the tool there.
 //   - A FAILED CHUNK IS RE-COMPRESSED before a non-zero exit, and the by-hand
-//     repair is printed before each decompress and re-compress, because either
-//     statement can outlive the wrapper's SIGTERM-to-SIGKILL window.
-//   - RESUMABLE: each chunk is first probed read-only and skipped undecompressed
-//     when nothing would change, so a rerun walks the finished prefix at
-//     dry-run cost; -generation keeps the whole span at ONE generation.
+//     repair is printed first, since either statement can outlive SIGKILL.
+//   - RESUMABLE: a read-only probe skips a chunk with nothing to change;
+//     -generation keeps the whole span at ONE generation.
 
 // chunkRestampStore is the DRIVER's seam: the chunk, policy and lock
 // primitives, and nothing that knows a tier. *timescale.Store satisfies
