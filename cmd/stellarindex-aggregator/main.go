@@ -1,63 +1,26 @@
-// Binary stellarindex-aggregator computes VWAP over the ingested
-// canonical trade stream and writes pre-aggregated results to Redis
-// so API requests serve from cache rather than recomputing on every
-// query.
+// Binary stellarindex-aggregator computes VWAP over the ingested canonical
+// trade stream and writes pre-aggregated results to Redis, so API requests
+// serve from cache rather than recomputing. Its workers (VWAP, triangulation,
+// outlier filter, confidence + ADR-0019 freeze, divergence cache, supply
+// snapshots) are each driven from one orchestrator.Config field
+// (internal/aggregate/orchestrator); TOML knobs are under [aggregate] in
+// docs/reference/config/README.md.
 //
-// Wired today (each driven from one orchestrator.Config field —
-// `internal/aggregate/orchestrator/`):
-//
-//   - Rolling-window VWAP per configured pair, written to Redis
-//     keys `vwap:<base>:<quote>:<window-seconds>` on a 30 s cadence
-//     (configurable). Class-filtered by default
-//     (ClassExchange-only); aggregator + oracle classes excluded
-//     to avoid double-counting / methodology mixing.
-//   - Triangulation worker (XLM/USD × USD/EUR = XLM/EUR), with
-//     the X2.5 forex-snap rule for chained-fiat pairs.
-//   - Outlier filter on the raw-trade fetch
-//     (`OutlierSigmaThreshold`).
-//   - Multi-factor confidence score + ADR-0019 anomaly response
-//     (Phase 1 + 2 — z-score + confidence + source-count freeze
-//     thresholds; freeze.Writer publishes markers consumed by
-//     the API binary's freeze.Looker).
-//   - Divergence-cache refresh from the Tick (CoinGecko by
-//     default, Chainlink HTTP cross-check via FeedMap), feeding
-//     the API's `flags.divergence_warning`.
-//   - Periodic supply-snapshot worker (XLM via LCM AccountEntry,
-//     classic via trustlines + claimable + LP + SAC observers,
-//     SEP-41 via Soroban event observer).
-//
-// CAGG refresh stays Timescale-driven (background job in
-// migration 0002's `add_continuous_aggregate_policy` calls); the
-// orchestrator does not manually refresh.
-//
-// Already wired through TOML (see [aggregate] in
-// docs/reference/config/README.md):
-//
-//   - disable_class_filter            — opt out of ClassExchange-only VWAP.
-//   - enable_stablecoin_fiat_proxy    — expand XLM/fiat:USD to pull
-//     XLM/USDT/USDC/DAI/PYUSD/USDP
-//     and collapse onto the target.
-//   - interval_seconds                — tick cadence override.
-//   - max_trades_per_window           — per-window scan cap.
+// VWAP is exchange-class only by default: aggregator and oracle classes would
+// double-count or mix methodologies. CAGG refresh stays Timescale-driven; the
+// orchestrator never refreshes manually.
 //
 // Flags:
 //
 //	-config PATH    TOML config file (required).
 //	-dry-run        Load config, open connections, validate, exit.
 //
-// Graceful shutdown: SIGINT + SIGTERM cancel the root context;
-// the orchestrator's Tick unwinds on the next iteration.
+// SIGINT and SIGTERM cancel the root context; Tick unwinds on its next
+// iteration.
 //
-// ⚠ CAGG TWAP CAVEAT ⚠
-//
-// Migration 0002 defines a `twap` column in prices_1m / _15m / _1h /
-// _4h / _1d / _1w / _1mo as `avg(quote_amount / base_amount)` — the
-// arithmetic mean of observed trade prices, NOT a time-weighted
-// average. True TWAP needs inter-trade durations that the CAGG
-// definitions don't capture. The v1 orchestrator sidesteps this by
-// computing VWAP (not TWAP) from raw trades; TWAP-via-CAGG lands
-// with either internal/aggregate/twap.go (Go-side) or a corrected
-// CAGG that stores per-bucket duration.
+// A cagg `twap` column is not necessarily time-weighted (migration 0002
+// defined it as the arithmetic mean of trade prices); the time-weighted
+// computation is internal/aggregate/twap.go.
 package main
 
 import (
