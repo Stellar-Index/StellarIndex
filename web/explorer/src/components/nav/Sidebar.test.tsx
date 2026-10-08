@@ -39,7 +39,7 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
 
-// ACC-06: the account menu had no focus-trap/focus-restore — closing it
+// The account menu had no focus-trap/focus-restore — closing it
 // (Escape) never returned focus to the trigger button, unlike the shared
 // useDialog hook already used elsewhere (RequestReveal).
 function renderNav() {

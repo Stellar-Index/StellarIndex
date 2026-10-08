@@ -171,7 +171,7 @@ describe('ui primitives — render + semantics', () => {
   });
 
   it('Breadcrumbs marks the current (last, unlinked) crumb with aria-current="page"', () => {
-    // ACC-03: only the non-linked crumb is "current" — the linked ones are
+    // Only the non-linked crumb is "current" — the linked ones are
     // not the current page and must not carry aria-current.
     render(
       <Breadcrumbs

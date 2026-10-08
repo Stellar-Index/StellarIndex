@@ -202,7 +202,7 @@ describe('AssetsTable rank column across cursor pages (EXR-06)', () => {
   });
 });
 
-// Q224: the same over-claim happens WITHOUT pagination. Clicking a
+// The same over-claim happens WITHOUT pagination. Clicking a
 // sortable header re-sorts `rankedAssets` client-side; numbering the
 // result "#1, #2, …" presents that page-local sort order as a
 // directory-wide rank, which it is not.

@@ -30,7 +30,7 @@ export function RequestReveal({
   className,
 }: RequestRevealProps) {
   const [open, setOpen] = useState(false);
-  // LC-050: Escape + focus-trap + focus move-in/restore for the dialog.
+  // Escape + focus-trap + focus move-in/restore for the dialog.
   const close = useCallback(() => setOpen(false), []);
   const dialogRef = useDialog<HTMLDivElement>(open, close);
 

@@ -38,7 +38,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
     setPrevPathname(pathname);
     setDrawer(false);
   }
-  // LC-051: the mobile drawer is the primary mobile nav — give it the full
+  // The mobile drawer is the primary mobile nav — give it the full
   // modal contract (Escape + focus trap + focus move-in/restore), not just
   // Escape. The shared hook handles all of it.
   const closeDrawer = useCallback(() => setDrawer(false), []);

@@ -44,7 +44,7 @@ export function Field({
   children: ReactNode;
   className?: string;
 }) {
-  // ACC-12: give the error/hint paragraph a stable id and wire it to the
+  // Give the error/hint paragraph a stable id and wire it to the
   // control via aria-describedby (+ aria-invalid on error) so a screen
   // reader announces it alongside the control's label instead of leaving
   // it as unassociated text a sighted user can see but a screen-reader

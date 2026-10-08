@@ -378,11 +378,9 @@ function AccountMenu({ email }: { email?: string }) {
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
-  // ACC-06: focus-trap + focus-move-in + focus-restore (was missing —
-  // Tab could escape the open menu into the rest of the page, and
-  // closing never returned focus to the trigger button). Escape-to-close
-  // is now owned by useDialog too, hence dropping the separate onEsc
-  // listener above. Deliberately NOT role="dialog"/aria-modal — see the
+  // focus-trap + focus-move-in + focus-restore, so Tab cannot escape the
+  // open menu and closing returns focus to the trigger button.
+  // Escape-to-close is owned by useDialog too. Deliberately NOT role="dialog"/aria-modal — see the
   // role comment below: this is a disclosure, not a modal, so useDialog
   // is used here only for its focus mechanics.
   const close = useCallback(() => setOpen(false), []);
