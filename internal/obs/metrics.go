@@ -1195,10 +1195,9 @@ var ProjectorReplayWindowActive = prometheus.NewGaugeVec(
 //	  sum(rate(http_request_success_duration_seconds_bucket{le="0.2",...}[w]))
 //	  / sum(rate(http_request_duration_seconds_count{...}[w]))
 //
-// Before this metric existed, both numerator and denominator used
-// the same `_duration_seconds` series — a fast 500 landed in both
-// and reported as "good" against the latency SLO even though the
-// customer experience was a hard outage.
+// Using the same `_duration_seconds` series for both numerator and
+// denominator would let a fast 500 land in both and count as "good"
+// against the latency SLO even though the customer saw a hard outage.
 // The availability SLO (http_requests_total{status=~"5.."} — the
 // label is `status`, NOT `status_class`, which does not exist on this
 // CounterVec, so a selector using it would match nothing)
@@ -1456,8 +1455,8 @@ var DispatcherLedgerUpgradeEntriesTotal = prometheus.NewCounter(
 // ContractCall invocations dropped before Decode because they were only
 // DECLARED in the auth tree, never executed (W8.4a,
 // dispatcher.Stats.UncorroboratedCalls). Non-zero on an oracle source means
-// either a rejected price-forgery attempt or a routing-shape change — both
-// were invisible everywhere before this counter had a reader.
+// either a rejected price-forgery attempt or a routing-shape change; this counter is the
+// only signal for either.
 var SourceUncorroboratedCallsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_uncorroborated_calls_total",
@@ -1632,9 +1631,7 @@ var AMMSwapReceivedDivergenceTotal = prometheus.NewCounterVec(
 //     (ErrSubscriptionRejected), usually a config bug (bad product_id)
 //   - other               — EOF, framing, or anything else
 //
-// r1 logs showed Binance + Bitstamp
-// reconnecting every 6-12 min with backoff pinned at 60 s. Before this counter
-// there was no signal for the disconnect cadence — operators read
+// It gives the disconnect cadence a signal, so operators need not read
 // raw WARN lines off Loki. Sustained non-zero rate with reason="reset"
 // likely means we're missing PING/PONG (handled by coder/websocket
 // v1.8.14, but configurable to disable via OnPingReceived returning
@@ -1971,8 +1968,8 @@ var SourceOrphanEventsTotal = prometheus.NewCounterVec(
 // direct pair.swap() invocation, not a trade). Recognized non-trade class
 // (ADR-0033 counts it expected-zero, not undecodable), so distinct from
 // SourceDecodeErrorsTotal: purely informational, tracking Decoder.
-// SkippedNonDirectional (soroswap, sushiswap_v3), which had no production
-// reader at all before this counter.
+// SkippedNonDirectional (soroswap, sushiswap_v3), whose only production
+// reader is this counter.
 var SourceNonDirectionalSwapsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_non_directional_swaps_total",
@@ -2018,10 +2015,9 @@ var DiscoverySkippedHitsTotal = prometheus.NewCounter(
 // canonical.NewCryptoAsset rejected the ticker — it isn't on the
 // ADR-0014 crypto allow-list yet. Gauge, not a counter: it's a
 // snapshot of the current catalogue/allow-list mismatch, set once
-// per startup catalogue build, not an event tally. Before this
-// metric the skip was a bare `continue` with no signal at all — a
-// currency could gain pricing coverage in the seed yaml and never
-// join aggregator cross-check, silently.
+// per startup catalogue build, not an event tally. Without it a
+// currency could gain pricing coverage in the seed yaml and silently
+// never join aggregator cross-check.
 var AggregatorCatalogueTickersSkipped = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_catalogue_tickers_skipped",
@@ -2032,10 +2028,10 @@ var AggregatorCatalogueTickersSkipped = prometheus.NewGauge(
 // DiscoveryRecordFailuresTotal — count of discovery hits whose
 // Recorder.Record write FAILED (Postgres error / timeout), distinct
 // from [DiscoveryDroppedHitsTotal] (buffer-full pre-write drop) and
-// [DiscoverySkippedHitsTotal] (in-process dedup). Before this counter,
-// a Record failure in the async sink was only logged (a Warn line in
+// [DiscoverySkippedHitsTotal] (in-process dedup). Otherwise a Record
+// failure in the async sink is only logged (a Warn line in
 // internal/canonical/discovery/sink.go) — so a persistent recorder
-// outage silently stopped discovered_assets from growing with no
+// outage would silently stop discovered_assets from growing with no
 // metric or alert. The discovered contract will re-appear on a later
 // event (best-effort policy), so this counts write ATTEMPTS that failed,
 // not permanent loss — but a sustained non-zero rate means discovery
@@ -3917,9 +3913,8 @@ var AggregatorDroppedWindowsTotal = prometheus.NewCounterVec(
 // aggregate.pairs allow-list; see PriceStalenessSeconds for the same
 // cardinality reasoning).
 //
-// Before this metric existed, an unvaluable
-// on-chain quote pair passed through unguarded SILENTLY — the same
-// code path minted no signal either way. A non-zero rate here means
+// An unvaluable on-chain quote pair would otherwise pass through
+// unguarded SILENTLY. A non-zero rate here means
 // an operator has a directly-configured Soroban- or classic-quoted
 // pair whose quote asset isn't on usd_pegged_classic_assets /
 // sac_wrappers — that pair now publishes NOTHING; the fix is adding
@@ -5684,9 +5679,9 @@ var SDEXOrderBookUndecodableOffersTotal = prometheus.NewCounter(
 // data is hours old. A sustained `error` rate on any one cache is a
 // ticket; bursts during lake merges self-heal.
 // WorkerPanicsTotal counts panics recovered by worker.Recover, per worker
-// name. Before this existed a recovered panic left ONE log line
-// and nothing else: the worker was stopped for good while the process
-// stayed up, and neither rule tree could see it — ~45 background workers
+// name. Without it a recovered panic leaves ONE log line
+// and nothing else: the worker is stopped for good while the process
+// stays up, and neither rule tree can see it — ~45 background workers
 // could die one by one with the first signal being a downstream freshness
 // alert hours later. Each increment is one dead worker until the binary
 // restarts; alerted by stellarindex_worker_panicked (infra.yml).

@@ -501,10 +501,10 @@ const MetadataTTL = 5 * time.Minute
 // The key is per-PAIR, not per-base-asset. The
 // orchestrator's divergence refresh loops every configured pair
 // (XLM/fiat:USD, XLM/fiat:EUR, XLM/fiat:GBP, …) and each one calls
-// RefreshPair. The pre-fix key was `div:<base>` so the last pair in
-// iteration order clobbered the asset's divergence result — if
+// RefreshPair. A `div:<base>` key would let the last pair in
+// iteration order clobber the asset's divergence result — if
 // XLM/USD diverged but XLM/GBP didn't, the later XLM/GBP refresh
-// cleared the warning and /v1/price for XLM/USD served
+// would clear the warning and /v1/price for XLM/USD would serve
 // divergence_warning=false. Keying by pair makes every pair's result
 // independent; the by-asset API reader (DivergenceFiringFor) ORs the
 // per-pair WarningFired flags via the [DivergenceBaseIndex] set so

@@ -271,8 +271,8 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 // Strict on a malformed WRAPPER, like [NewUSDVolumeQuoteSpec]: a dropped
 // wrapper is invisible under-counted volume, which is the defect class
 // this expansion exists to remove. The declared pegs themselves are NOT
-// re-validated here — they are bound verbatim, exactly as before this
-// expansion existed, and [NewUSDVolumeQuoteSpec] is where an operator's
+// re-validated here — they are bound verbatim, as the config declares
+// them, and [NewUSDVolumeQuoteSpec] is where an operator's
 // unparseable peg is rejected on the production wiring path.
 //
 // A parseable classic peg is rendered through [classicKey] so a
@@ -534,9 +534,9 @@ const fiatUSDRateScale = 18
 // A fiat asset can NEVER resolve through [VWAPUSDFXResolver.queryDB]: that
 // path looks for `<asset>/<peg>` in prices_1m, and prices_1m holds crypto
 // markets only — there is no `fiat:EUR/fiat:USD` row and there never will be
-// one. Before this branch existed, every CEX pair quoted in a currency other
-// than USD (binance BTC/EUR, kraken ETH/GBP, …) fell through all four tiers of
-// [tradeUSDVolume] and inserted with `usd_volume` NULL, silently deflating
+// one. Without this branch, every CEX pair quoted in a currency other
+// than USD (binance BTC/EUR, kraken ETH/GBP, …) would fall through all four tiers of
+// [tradeUSDVolume] and insert with `usd_volume` NULL, silently deflating
 // every aggregate built on that column. See
 // docs/operations/usd-volume-coverage-plan.md.
 //

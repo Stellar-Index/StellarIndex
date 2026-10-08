@@ -89,9 +89,7 @@ func (c *Client) Endpoint() string { return c.endpoint }
 // plain-text proxy page, JSON that is not a JSON-RPC envelope, or a
 // JSON-RPC error envelope. The status is the one thing a caller needs
 // to tell "the endpoint is rate limiting or briefly unwell" from "this
-// request is wrong", and before this type existed it was dropped on
-// the empty-body and error-envelope paths and only present as text on
-// the others — so classify with errors.As on this type, never by
+// request is wrong" — so classify with errors.As on this type, never by
 // matching the message.
 //
 // When the body was a JSON-RPC error envelope, Err is the

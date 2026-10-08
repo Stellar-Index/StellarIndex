@@ -157,10 +157,9 @@ func decodeClaimAtom(
 		// AccountId discriminant. Surface as a regular OrderBook
 		// trade by deriving the G-strkey from the raw bytes — the
 		// rest of the shape (offer_id, asset+amount sold/bought) is
-		// identical. Pre-fix we returned ErrUnknownClaimAtomType
-		// here and the parent decoder's per-claim skip dropped V0
-		// fills silently, leaving since-inception SDEX history with
-		// a coverage hole.
+		// identical. Returning ErrUnknownClaimAtomType
+		// here would make the parent decoder's per-claim skip drop V0
+		// fills silently, leaving a coverage hole in SDEX history.
 		v0 := atom.MustV0()
 		sellerAccount, _ = strkey.Encode(strkey.VersionByteAccountID, v0.SellerEd25519[:])
 		soldAsset = v0.AssetSold

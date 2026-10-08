@@ -113,10 +113,9 @@ func (s *Server) transitiveCandidateAllowed(ctx context.Context, asset canonical
 // hop never needs to be resolved at all.
 //
 // Byte-identical for an asset with no confirmed non-7-decimals row (see
-// [Server.normalizeRawRatioString]). Before this the fill published the
-// raw product while every sibling price surface normalised, so a 9dp
-// token's price_usd read 100x low on exactly the assets this fill exists
-// for — Soroban-native contracts, the only class that can be non-7dp.
+// [Server.normalizeRawRatioString]). Without it the raw product would read
+// 100x low for a 9dp token, on exactly the assets this fill exists for —
+// Soroban-native contracts, the only class that can be non-7dp.
 func (s *Server) normalizeTransitiveUSD(priceUSD string, asset canonical.Asset) string {
 	return s.normalizeRawRatioString(priceUSD, asset, defaultPriceQuote)
 }

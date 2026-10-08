@@ -81,8 +81,8 @@ type DirectoryRWACensus struct {
 	// useful number on the contract arm. Such an entity is recognised,
 	// unflagged and real, and this index holds NO Stellar token for it
 	// at all: no classic asset to evaluate, and no directory entry
-	// naming a contract of theirs either. Before this count existed the
-	// entity was invisible — not refused by any requirement, just never
+	// naming a contract of theirs either. Without this count the
+	// entity would be invisible — not refused by any requirement, just never
 	// collected — and a reader of the response could not tell it apart
 	// from an entity that does not exist.
 	//
