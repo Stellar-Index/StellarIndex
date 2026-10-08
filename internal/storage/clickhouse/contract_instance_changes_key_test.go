@@ -42,7 +42,7 @@ func createStmt(ddl, kind, name string) string {
 	}
 }
 
-// TestContractInstanceChanges_KeyIsTransactionScoped pins T356/T377.
+// TestContractInstanceChanges_KeyIsTransactionScoped.
 // change_index restarts at 0 on every TRANSACTION (extractLedgerEntryChanges),
 // so under ORDER BY (contract_hash, ledger_seq, change_index) two
 // transactions writing one contract's instance in the same ledger share a key

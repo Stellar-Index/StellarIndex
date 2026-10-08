@@ -13,9 +13,9 @@ import (
 // the panic contract: pipeline.HandleEvent recovers a sink panic and returns
 // it wrapped in pipeline.ErrSinkPanic, which the sink's own classifier drops.
 // The projector must read it the same way — with a sink-health proof the row
-// is shed on cycle one under the RLT-131 cap and counted as sink_permanent —
+// is shed on cycle one under the shed cap and counted as sink_permanent —
 // rather than as an unclassified fault that re-runs the panicking decode
-// every cycle for the whole quarantine budget (Q053).
+// every cycle for the whole quarantine budget.
 func TestCycle_SinkPanicIsShedLikeAPermanentFault(t *testing.T) {
 	const source = "q053-sink-panic"
 	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}

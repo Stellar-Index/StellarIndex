@@ -255,7 +255,7 @@ func TestAssetGet_readerPopulatesSep1Status(t *testing.T) {
 }
 
 // TestAssetGet_Kind_SetForReaderPathAndSurvivesResponseCache proves
-// the ADR-0042 LC-040 cache trap is closed. stubAssetReader — like
+// the ADR-0042 cache trap is closed. stubAssetReader — like
 // the real storage.timescale AssetReader implementation — has no
 // reason to know about the `kind` wire-shape discriminator, so its
 // fixture row below deliberately carries a zero-value Kind, the same

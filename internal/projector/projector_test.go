@@ -270,7 +270,7 @@ func TestBuildRegistry_IncludesInScopeSources(t *testing.T) {
 }
 
 // TestAdaptiveWindow pins the shrink/recover arithmetic for the
-// 2026-07-10 dense-window stall: deadline-exceeded halves exactly toward
+// dense-window stall: deadline-exceeded halves exactly toward
 // MinBatchLimit and never below; success doubles back to BatchLimit. The
 // cycle-level sink-budget arm is pinned by
 // TestCycle_SinkBudgetExhaustionShrinksWindowAndHoldsCursor.

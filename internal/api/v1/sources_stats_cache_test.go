@@ -215,13 +215,13 @@ func TestCachedSourcesStatsReader_HitMissCounter(t *testing.T) {
 	}
 }
 
-// danglingPRRef is the RSWP-112 citation this file's HitMissCounter doc
+// danglingPRRef is the citation this file's HitMissCounter doc
 // comment used to carry: no such PR exists, and the bare number now
 // resolves to unrelated content. Built from parts so this guard's own
 // source doesn't itself trip the check it performs.
 var danglingPRRef = "#" + "1197"
 
-// TestSourceStatsCacheTestFileHasNoDanglingPRReference guards RSWP-112:
+// TestSourceStatsCacheTestFileHasNoDanglingPRReference guards the rule:
 // strip dangling citations instead of reintroducing them, and don't
 // invent a replacement PR number we can't verify.
 func TestSourceStatsCacheTestFileHasNoDanglingPRReference(t *testing.T) {

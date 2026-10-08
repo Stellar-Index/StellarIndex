@@ -54,7 +54,7 @@ func TestCCTPEventType_IsValid_AllTwentySixKinds(t *testing.T) {
 
 // TestCCTPEventType_MatchesSourceEventNames cross-checks the second
 // gating layer (this enum's IsValid) against the FIRST (the decoder's
-// Event* constants in internal/sources/cctp) — the pair Q085 found
+// Event* constants in internal/sources/cctp) — the pair that was
 // ungated: the old fixture above re-listed the 26 kinds as string
 // literals, so a source-side rename or a new Event* constant with no
 // matching CCTPEventType entry compiled and passed silently. Importing

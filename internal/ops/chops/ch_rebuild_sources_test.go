@@ -25,7 +25,7 @@ func sourcesTestCatalogue() []reconSource {
 	}
 }
 
-// TestCheckCHRebuildSources_unknownNameRefused pins the K015 DO-NOTHING
+// TestCheckCHRebuildSources_unknownNameRefused pins the DO-NOTHING
 // trap: `ch-rebuild -sources sdx` (a typo for sdex) made enabled() false
 // for every real source, so the run decoded nothing, printed its report
 // and exited 0 — a rebuild-of-nothing reported as success.

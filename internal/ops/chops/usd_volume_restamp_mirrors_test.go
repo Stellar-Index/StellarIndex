@@ -134,7 +134,7 @@ func TestXLMQuoteChunkRestamp_BracketsEachChunkAndNamesItsOwnTier(t *testing.T) 
 			t.Errorf("write-run output lacks %q:\n%s", want, got)
 		}
 	}
-	// The #372 tier's own measured flag guidance is not this tier's.
+	// The xlm-base tier's own measured flag guidance is not this tier's.
 	if strings.Contains(got, "FLAG GUIDANCE") {
 		t.Errorf("the xlm-quote summary carries the xlm-base tier's flag guidance:\n%s", got)
 	}

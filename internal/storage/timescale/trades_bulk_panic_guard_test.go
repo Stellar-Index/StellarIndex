@@ -33,7 +33,7 @@ func bulkPanicTrades(t *testing.T, n int) []canonical.Trade {
 	return rows
 }
 
-// K012 — the bulk backfill writer's usd_volume fan-out is a bounded pool of
+// The bulk backfill writer's usd_volume fan-out is a bounded pool of
 // detached goroutines joined by a WaitGroup. JOINED IS NOT PROTECTED: an
 // unrecovered panic in any of them terminates the whole process and the
 // WaitGroup does nothing about it. Without the guard this test does not fail,
@@ -94,7 +94,7 @@ func TestResolveBulkUSDVolumes_PanickingResolverFailsTheCallNotTheProcess(t *tes
 	}
 }
 
-// K012 — the COPY fan-out is the other WaitGroup-joined pool, and its release
+// The COPY fan-out is the other WaitGroup-joined pool, and its release
 // is errs[i]. copyTradePartitions returns the index ranges that COMMITTED so
 // the caller can keep source_entry_counts exact, and it decides "committed"
 // from errs[i] == nil. So a panic that is merely CONTAINED reports the

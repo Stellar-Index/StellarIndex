@@ -9,7 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestUsdVolumeTotalViolations_CountsParseErrs pins #1093: a group
+// TestUsdVolumeTotalViolations_CountsParseErrs pins: a group
 // ClassifyUSDVolumeTier can't parse was printed as "UNCLASSIFIABLE" but
 // never added to the violation count, so a day with nothing but
 // unclassifiable groups exited 0 — a mis-spelled asset id on a landed

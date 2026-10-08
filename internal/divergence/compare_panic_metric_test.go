@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// K012 — Compare's per-reference fan-out already recovered (a broken
+// Compare's per-reference fan-out already recovered (a broken
 // reference must not take the comparison down; see
 // TestCompare_PanicInOneReferenceIsolated), but it recovered PRIVATELY: the
 // panic landed in one Result's Failures map and nowhere else, so the alert

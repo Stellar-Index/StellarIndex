@@ -42,7 +42,7 @@ func isStatsCycleMarker(q string) bool {
 
 // statsConn wires a full happy-path rollup snapshot. The cycle marker
 // answers with the newest metrics timestamp, matching what readStatsMetrics
-// derives as ComputedAt — so a happy path never trips the T346 retry.
+// derives as ComputedAt — so a happy path never trips the mid-read retry.
 func statsConn(t *testing.T, metrics, wealth, trust, held [][]any) (*ExplorerReader, *stubConn) {
 	t.Helper()
 	var newest time.Time
@@ -300,7 +300,7 @@ func TestAccountsStats_ProbeGatesEveryRead(t *testing.T) {
 	}
 }
 
-// TestAccountsStats_RetriesOnceWhenACycleSwapsMidRead pins T346: a swap
+// TestAccountsStats_RetriesOnceWhenACycleSwapsMidRead pins: a swap
 // landing between the first read and the post-read marker check must not be
 // served as a blended snapshot. The stub reports the marker as having moved
 // forward exactly once — the shape one EXCHANGE landing mid-read produces —

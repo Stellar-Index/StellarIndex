@@ -448,7 +448,7 @@ func TestInstallUSDVolumeResolution_NilStore(t *testing.T) {
 
 // TestXLMLegRate_Orientation — a token's XLM market can be stored
 // either way round (trades keep the venue's observed base/quote
-// ordering), and on 2026-07-17 several tokens had BOTH orientations on
+// ordering), and some tokens have had BOTH orientations on
 // the same day. Getting the inversion wrong is silent: the rate comes
 // out wrong by a factor of vwap^2 and still looks like a plausible
 // small number.

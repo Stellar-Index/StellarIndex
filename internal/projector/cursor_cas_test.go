@@ -52,8 +52,8 @@ func (f *fakeStore) rewind(t *testing.T, to uint32) {
 	f.projectorCursor = to
 }
 
-// TestCycle_ReplayRewindMidCycleIsNotClobbered is finding F159 at the unit
-// layer: projector-replay's rewind lands while a cycle is in flight (here:
+// TestCycle_ReplayRewindMidCycleIsNotClobbered is the unit-level
+// check: projector-replay's rewind lands while a cycle is in flight (here:
 // from inside that cycle's own sink call, which is as mid-cycle as it
 // gets). The cycle's commit is derived from the cursor it read at its
 // start; it must NOT put the cursor back at tip, and the next cycle must

@@ -14,7 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// RLT-133: the projector skips a failed row and advances the cursor past it,
+// The projector skips a failed row and advances the cursor past it,
 // so the failure itself must reach the operator — the decode error text in the
 // log, and a panic in the stellarindex_decoder_panicked page counter.
 func TestProcessEventSafely_DecodeErrorIsLoggedWithRowCoordinate(t *testing.T) {

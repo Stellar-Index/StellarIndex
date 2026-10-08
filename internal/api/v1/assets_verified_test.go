@@ -404,7 +404,7 @@ func TestAssetGet_WarningSerialisationShape(t *testing.T) {
 // it showed correct values for the same asset.
 //
 // Fiats are non-Stellar, so the detail page is /v1/external/assets/{slug}
-// (LC-001 routes them off /v1/assets). This test wires an FX reader and NO PriceReader at all, so a non-null price
+// (they are routed off /v1/assets). This test wires an FX reader and NO PriceReader at all, so a non-null price
 // proves the fx_quotes path ran rather than a price reader happening to
 // answer.
 //

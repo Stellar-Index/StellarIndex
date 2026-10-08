@@ -287,7 +287,7 @@ func TestChainlink_DefaultFeedMapCoversCommonPairs(t *testing.T) {
 // TestChainlink_DefaultFeedMapMatchesSource pins the invariant that
 // this package's default feed map cannot silently drift from the
 // ingest source's: same key set, same address, decimals and invert
-// per key (#1331 — two independently hardcoded copies gave a real
+// per key (two independently hardcoded copies gave a real
 // divergence between the two proxies no way to surface).
 func TestChainlink_DefaultFeedMapMatchesSource(t *testing.T) {
 	src := externalchainlink.DefaultFeedMap()
@@ -364,7 +364,7 @@ func abs(x float64) float64 {
 	return x
 }
 
-// TestChainlink_StaleRoundRejected pins the CS-089 fix: a round
+// TestChainlink_StaleRoundRejected pins: a round
 // whose updatedAt exceeds the feed's MaxAge (relative to the
 // comparison's observedAt) must surface as ErrPriceUnavailable —
 // "reference unavailable", never a fresh-looking price that can

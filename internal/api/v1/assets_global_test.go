@@ -365,7 +365,7 @@ func TestExternalAssetList_InvalidClass_400s(t *testing.T) {
 	}
 }
 
-// TestAssetGet_StellarExternalGate pins the LC-001 detail split: an external
+// TestAssetGet_StellarExternalGate pins the detail split: an external
 // asset (fiat) 404s on /v1/assets/{slug}, and a Stellar asset (usdc) 404s on
 // /v1/external/assets/{slug}. No redirect — each lives on exactly one path.
 func TestAssetGet_StellarExternalGate(t *testing.T) {

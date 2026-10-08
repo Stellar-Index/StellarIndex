@@ -146,7 +146,7 @@ func fullSink(t *testing.T, conn driver.Conn) *Sink {
 	return s
 }
 
-// TestSinkFlushOrderLedgersLast pins the K074 invariant declared in the
+// TestSinkFlushOrderLedgersLast pins the invariant declared in the
 // "ORDERING IS LOAD-BEARING" comment on Flush: stellar.ledgers must be the
 // LAST table flushed, after every table the completeness watermark
 // (ContiguousWatermark) depends on, so a present ledgers row is a valid

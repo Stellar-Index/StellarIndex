@@ -17,8 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 )
 
-// TestEvaluateEachSource_OneFailureDoesNotWithholdLaterVerdicts (#805, #1202
-// item 5): the per-source loop returned on the first error, so a failure in
+// TestEvaluateEachSource_OneFailureDoesNotWithholdLaterVerdicts: the per-source
+// loop returned on the first error, so a failure in
 // the FIRST catalogue source (soroswap) left every later source on its prior,
 // stale verdict. Every selected source must still be evaluated, and the run
 // must still fail, naming each source that errored.

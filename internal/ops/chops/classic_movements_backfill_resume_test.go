@@ -5,7 +5,7 @@ package chops
 
 import "testing"
 
-// TestClassicMovementsResumeStart_WidenedFromNotSkipped is Q216: a
+// TestClassicMovementsResumeStart_WidenedFromNotSkipped: a
 // prior, narrower run wrote data only at the TOP of a later, WIDER
 // -from range. MaxAccountMovementLedger over the wider range still
 // finds that prior run's tip, but MinAccountMovementLedger proves the

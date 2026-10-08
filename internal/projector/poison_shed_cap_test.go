@@ -15,7 +15,7 @@ import (
 // affected hypertable: SQLSTATE 23502, class 23, which
 // timescale.IsPermanentDataError reports as a POSITIVE permanent data fault.
 //
-// That is the trap RLT-131 names: the classifier's verdict is "these VALUES
+// That is the trap: the classifier's verdict is "these VALUES
 // are bad", but the same SQLSTATE arrives from a fault that is GLOBAL rather
 // than row-local, in which case every row of the window is "poison" at once.
 func notNullViolation() error {
@@ -25,7 +25,7 @@ func notNullViolation() error {
 	}
 }
 
-// TestCycle_GlobalPermanentFaultShedsAtMostOneRowPerCycle is the RLT-131
+// TestCycle_GlobalPermanentFaultShedsAtMostOneRowPerCycle is the
 // regression. A bad migration makes the sink reject EVERY row of the window
 // with a class-23 error. The projector must not answer that by dropping the
 // whole backlog: it holds every row below the cursor (a visible stall — rising
@@ -96,7 +96,7 @@ func TestCycle_GlobalPermanentFaultShedsAtMostOneRowPerCycle(t *testing.T) {
 
 // TestCycle_PoisonOutputOnAHeldRowDoesNotResetItsRetryBudget guards the
 // interaction the shed cap introduces, rather than the defect it fixes: a
-// multi-output row (RLT-132) can carry BOTH a permanently dropped output and a
+// multi-output row can carry BOTH a permanently dropped output and a
 // fault that holds the cursor. Such a row is retried whole, poison outputs
 // included, so it must not also be a shed candidate — shedding it would forget
 // the row identity, and the consecutive-cycle count the quarantine budget is

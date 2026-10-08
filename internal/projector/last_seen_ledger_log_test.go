@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// TestCycle_LogsLastSeenLedger pins T119: the cycle-summary "projector
+// TestCycle_LogsLastSeenLedger pins: the cycle-summary "projector
 // cycle" log line must actually carry last_seen_ledger, matching the
 // highest ledger this cycle's stream callback observed — the comment above
 // the commit-watermark logic claims "lastSeenLedger is only logged", but

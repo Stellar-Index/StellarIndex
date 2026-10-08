@@ -37,7 +37,7 @@ import (
 // 17.2 MILLION rows to return a timestamp and a count. This half is the
 // larger win and has no prices_1m analogue, so it is pinned here.
 //
-// Measured on r1 (2026-09-03) on an idle box, trades at 140 GB. Two
+// Measured on r1 on an idle box, trades at 140 GB. Two
 // runs per form, so the first column is a cold buffer pool and the
 // second a warm one:
 //

@@ -54,7 +54,7 @@ func (r *shrinkGuardRow) Scan(dest ...any) error {
 
 func (r *shrinkGuardRow) Err() error { return r.err }
 
-// TestRunHoldersRollupRefusesAShrunkenBoard pins T397: a staging arm that
+// TestRunHoldersRollupRefusesAShrunkenBoard pins: a staging arm that
 // comes out of the fills far smaller than what is currently live must not
 // be published. ClickHouse can finish the FINAL scan that fills a staging
 // arm having read far fewer rows than a healthy cycle WITHOUT returning any

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestIssuersCacheComment_NoDanglingConfigReference pins Q137: the doc
+// TestIssuersCacheComment_NoDanglingConfigReference pins that the doc
 // comment on NewCachedIssuersReader must not point readers at a
 // configs/example.toml issuers_cache_ttl knob that doesn't exist — there is
 // no [api] issuers_cache_ttl field anywhere in internal/config/config.go or

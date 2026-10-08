@@ -59,7 +59,7 @@ func TestCountAgreeing(t *testing.T) {
 			want:      0,
 		},
 		{
-			// CS-087: no responders means UNCHECKED — zero here must
+			// No responders means UNCHECKED — zero here must
 			// pair with SuccessCount=0 at the consumer, never read as
 			// "everyone disagrees".
 			name:      "empty sources",
@@ -158,7 +158,7 @@ func TestRefreshPair_AgreementCountPersisted(t *testing.T) {
 }
 
 // TestRefreshPair_AllReferencesDark_AgreementZeroMeansUnchecked —
-// CS-087: when every reference fails, the cached result reads
+// when every reference fails, the cached result reads
 // SuccessCount=0 + AgreementCount=0 and RefreshPair returns
 // ErrNoReferenceResponded. Consumers must interpret that as
 // "unchecked", never as "zero references agree with us".
@@ -190,7 +190,7 @@ func TestRefreshPair_AllReferencesDark_AgreementZeroMeansUnchecked(t *testing.T)
 	}
 }
 
-// TestRefreshPair_AllUnsupportedIsNotAnOutage pins #1044: a pair every
+// TestRefreshPair_AllUnsupportedIsNotAnOutage pins: a pair every
 // reference structurally doesn't cover (ErrAssetUnsupported —
 // reference.go's own doc: "no reference for this pair on this source,
 // not a degradation") must not be reported as ErrNoReferenceResponded.
@@ -226,7 +226,7 @@ func TestRefreshPair_AllUnsupportedIsNotAnOutage(t *testing.T) {
 }
 
 // TestRefreshPair_MixedUnsupportedAndFailedIsAnOutage guards the other
-// side of #1044: a genuine failure alongside unsupported references
+// side: a genuine failure alongside unsupported references
 // must still page — the veto is only for the all-unsupported case.
 func TestRefreshPair_MixedUnsupportedAndFailedIsAnOutage(t *testing.T) {
 	refs := []divergence.Reference{

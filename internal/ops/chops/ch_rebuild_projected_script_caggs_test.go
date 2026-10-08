@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// #782: the script rewrites `trades` over a range years behind tip, and no
+// The script rewrites `trades` over a range years behind tip, and no
 // trades continuous aggregate's refresh policy looks back that far. Without
 // an explicit refresh the served OHLC / volume / TWAP keep the pre-repair
 // rows for good. These tests EXECUTE the shipped script (see

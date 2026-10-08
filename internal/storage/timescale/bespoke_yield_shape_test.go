@@ -48,7 +48,7 @@ func TestDefindexSeriesQueryShapes(t *testing.T) {
 	}
 }
 
-// TestDefindexStrategyVolumeSeriesExcludesHarvest guards Q067/T078: the
+// TestDefindexStrategyVolumeSeriesExcludesHarvest guards: the
 // strategy volume series must filter by direction, like its sibling KPI
 // (window KPIs, L65-66) and per-strategy table (L164-172) queries, and
 // must exclude 'harvest' — strategy yield, not capital deposited or

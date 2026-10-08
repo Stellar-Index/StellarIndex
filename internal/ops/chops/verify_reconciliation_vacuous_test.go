@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestReconciliationIsVacuous pins #1093: verify-reconciliation printed
+// TestReconciliationIsVacuous pins: verify-reconciliation printed
 // "OK — expected=0 actual=0" and exited 0 for a target with no data on
 // either side — indistinguishable from a source redeployed behind a new
 // contract id whose config was never updated (the projector writes

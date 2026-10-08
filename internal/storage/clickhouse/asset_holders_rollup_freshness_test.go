@@ -43,7 +43,7 @@ func holdersRollupLake(t *testing.T, listed bool, boardAt, tableAt time.Time) *s
 	}}
 }
 
-// TestHoldersRollupBoard_RefusesAStaleCycle pins T390: a board whose cycle
+// TestHoldersRollupBoard_RefusesAStaleCycle pins: a board whose cycle
 // stamp is older than holdersRollupMaxAge (the rollup timer has wedged) must
 // not be served as the current holders board — ok=false sends AssetHolders
 // to the live per-request scans instead.
@@ -65,7 +65,7 @@ func TestHoldersRollupBoard_RefusesAStaleCycle(t *testing.T) {
 }
 
 // TestHoldersRollupBoard_RefusesAStaleCycleForAnUnlistedAsset pins the other
-// half of T390: an asset with no row in either table is "authoritatively zero
+// half: an asset with no row in either table is "authoritatively zero
 // holders" only for a CURRENT cycle. Under a wedged rollup, an asset issued
 // since the last cycle would otherwise be served as having no holders.
 //

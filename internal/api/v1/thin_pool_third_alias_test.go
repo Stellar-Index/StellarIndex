@@ -183,7 +183,7 @@ func TestPrice_ThinPoolThirdAlias_ClassicQuoteServesTheQuietBook(t *testing.T) {
 // TestPrice_ThinPoolThirdAlias_NativeQuoteWalkStaysOnTheLiteralQuote is
 // the same shape for XLM, whose three-way family is unconditional
 // (native / crypto:XLM / the XLM SAC) and whose Soroban book is stored
-// SAC/SAC (measured on r1 2026-09-03 — see the queryDB doc in
+// SAC/SAC (measured on r1; see the queryDB doc in
 // internal/storage/timescale/usd_fx_resolver.go). All three base forms
 // are walked, in canonical order, every one against classic USDC.
 func TestPrice_ThinPoolThirdAlias_NativeQuoteWalkStaysOnTheLiteralQuote(t *testing.T) {
