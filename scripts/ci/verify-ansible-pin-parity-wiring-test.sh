@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-ansible-pin-parity-wiring-test.sh — regression test for GH-896's
+# verify-ansible-pin-parity-wiring-test.sh — regression test for the
 # refutation gap: scripts/ci/ansible-collection-pin-parity-test.sh existed
 # and passed but was never invoked by anything automated (not verify.sh, not
 # a ci.yml job, not prepush.sh, not lint-changed.sh's default lane), so a

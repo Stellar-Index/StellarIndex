@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # reconcile-supply-vs-horizon-test.sh — proves that a 5xx / non-JSON
 # response from OUR OWN API (not Horizon) no longer aborts the whole
-# reconciliation run (F083).
+# reconciliation run.
 #
 # reconcile-supply-vs-horizon.sh runs under `set -euo pipefail`. The
 # Horizon fetch at the top of the loop uses `curl -sf`, so an HTTP >=400

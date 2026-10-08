@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-checkout-ref-test.sh — the deploy job's checkout must pin `ref:`
-# to the tag being deployed (GH-885).
+# to the tag being deployed.
 #
 # Without a `ref:`, actions/checkout resolves the dispatching ref (main
 # in practice), so every artefact scp'd from the working tree —

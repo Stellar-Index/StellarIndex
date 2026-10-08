@@ -151,7 +151,7 @@ if [ "$src_rc" -eq 0 ]; then ok "structural: $(cat "$SOUT")"; else bad "structur
 rm -f "$SOUT"
 
 # ── structural: crash-loop stability window (CA2-A37) ───────────────────
-# GH-1167 replaced `systemctl is-active` with a real /readyz probe, but
+# The deploy uses a real /readyz probe rather than `systemctl is-active`, but
 # both stop retrying at the FIRST success — a binary that panics after
 # passing its first probe still reports a healthy deploy (systemd's own
 # Restart=on-failure then crash-loops it with no rollback). This pins the

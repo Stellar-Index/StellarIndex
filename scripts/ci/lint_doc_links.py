@@ -255,7 +255,7 @@ def main():
             # else — a bad encoding, permissions — must NOT be absorbed
             # here: a bare `except Exception` once let one non-UTF-8 byte
             # skip a file's scan silently while the summary line still
-            # reported it as scanned (GH-1255).
+            # reported it as scanned.
             continue
         scanned += 1
         if sum(1 for line in lines if FENCE.match(line)) % 2:

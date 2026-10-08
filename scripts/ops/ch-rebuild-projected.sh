@@ -44,12 +44,12 @@
 #        ch-rebuild -from LO -to HI -sources <deleted> -record-dirty-window
 #      compute-completeness then re-reconciles that range instead of carrying
 #      its prior clean claim over it, and clears the obligation only with the
-#      verdict that discharges it (F072). Nothing here ever retracts one: this
+#      verdict that discharges it. Nothing here ever retracts one: this
 #      script's own re-derive is the CAUSE of the dirtiness, not evidence
 #      against it, so one re-reconcile per incident is the price of the claim.
 #      The command is printed as well as run, because the filing can itself
 #      fail (no binary, PG down): the run then says COULD NOT FILE and the
-#      printed line is what the operator re-runs (F075).
+#      printed line is what the operator re-runs.
 #   5. Never leave the aggregates on the old rows. Every continuous aggregate
 #      over `trades` (prices_*, twap_*, the volume rollups) has a refresh
 #      policy that looks back minutes to months, never this far, so once a
@@ -262,7 +262,7 @@ dirty_window_note() {
 # file_dirty_window LO HI CSV — rule 4, carried out rather than suggested.
 # Printing the command left the obligation on an operator reading this log,
 # so between a failed re-derive and someone's attention /v1/coverage kept
-# certifying an EMPTY window complete (F075). The note still goes to the log
+# certifying an EMPTY window complete. The note still goes to the log
 # first: it is the fallback when the filing below cannot be made, and what an
 # operator greps for. Non-fatal by itself — every caller either exits
 # non-zero anyway or is on its way to the recovery that removes the hole.

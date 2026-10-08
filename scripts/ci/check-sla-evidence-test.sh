@@ -54,7 +54,7 @@ expect() {
 }
 
 mkdir -p "$TMP/empty" "$TMP/fresh" "$TMP/stale" "$TMP/decoys" "$TMP/mixed"
-# Leg 2b (GH-744) opens the file and requires a `generator:` line, so
+# Leg 2b opens the file and requires a `generator:` line, so
 # every fixture standing in for a REAL landed report needs one — an
 # empty file is no longer indistinguishable from evidence, which is the
 # defect this leg exists to close.
@@ -117,7 +117,7 @@ expect 'stale proof is rc 2, not rc 1 (the run must still execute)' 2 'the load 
 run "$TMP/decoys"
 expect 'procedure/template/undated files are not evidence → rc 2' 2 'has ever landed'
 
-# ── Leg 2b (GH-744): a matching filename is not itself evidence ─────────
+# ── Leg 2b: a matching filename is not itself evidence ─────────
 # Before the fix, Leg 2 matched only the sla-proof-<date>.md filename and
 # never opened the file — so a masked timer, a hand-edited stub, or a
 # truncated write with the right name and mtime read HEALTHY.

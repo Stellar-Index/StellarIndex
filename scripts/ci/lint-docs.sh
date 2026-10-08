@@ -862,7 +862,7 @@ fi
 # legitimately shaped differently. The allow-list mirrors the
 # orphan-lint exclusions above plus three procedural runbooks
 # (`dr-activation`, `sev-status-page-update`, the dated operator
-# note) flagged as not-alert-shaped during the wave-81 survey.
+# note) flagged as not-alert-shaped.
 
 echo "Checking alert-runbook section presence..."
 if [ -d docs/operations/runbooks ]; then

@@ -7,7 +7,7 @@
 # `public/openapi/` (web/explorer/package.json); whether a package manager
 # runs that hook is a config detail, not a repo invariant, so a build in
 # which it silently didn't run must fail loudly here rather than ship a
-# dead link (GH-1300).
+# dead link.
 #
 # Usage: scripts/ci/explorer-openapi-check.sh [out-dir] [spec-path]
 # Both paths may be relative to the caller's cwd. SPEC defaults to the

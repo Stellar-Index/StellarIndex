@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lint-deploy-probe-parity-test.sh — regression test for GH-1167: the
+# lint-deploy-probe-parity-test.sh — regression test: the
 # deploy gate's API health probe must use the readiness probe HAProxy
 # routes on (`/v1/readyz`), not the constant-200 liveness probe
 # (`/v1/healthz`) — a binary readyz would refuse could pass the deploy

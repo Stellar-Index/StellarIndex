@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # sep41-mint-recovery-runbook-test.sh — proves every
 # `run-heavy-job.sh <name> …` invocation in
-# docs/operations/sep41-mint-recovery.md uses the SAME job-label NAME
-# (K016).
+# docs/operations/sep41-mint-recovery.md uses the SAME job-label NAME.
 #
 # The wrapper's contract (configs/ansible/roles/archival-node/tasks/
 # 14-stellarindex-services.yml, the /usr/local/sbin/run-heavy-job.sh

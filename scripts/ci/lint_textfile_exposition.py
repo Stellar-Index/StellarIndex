@@ -826,9 +826,9 @@ def main() -> int:
 
     # ── 1b. alert coverage: every manifest producer's .prom output(s) must
     #        be selected by at least one Prometheus staleness rule, either
-    #        by name or by a file-unscoped catch-all (GH-899: 60/66
-    #        producers had neither, so a stuck or crashed producer went
-    #        unalarmed forever). `operator-supplied` outputs have no
+    #        by name or by a file-unscoped catch-all. A producer with neither
+    #        would leave a stuck or crashed producer
+    #        unalarmed forever. `operator-supplied` outputs have no
     #        literal basename to check here. Skipped entirely when no rules
     #        directory exists (e.g. a fixture root unrelated to alerting) —
     #        this check is additive, not a requirement to ship a rules

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# preflight-deploy-gh556-test.sh — regression fixture for GH-556(b)/(c)/(d):
+# preflight-deploy-gh556-test.sh — regression fixture:
 #
 #   (b) `gh` missing must be a DECISION NEEDED (exit 1), not a soft note
 #       that leaves the script exit 0 with the release unverified.

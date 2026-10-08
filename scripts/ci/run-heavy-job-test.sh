@@ -306,7 +306,7 @@ else
   bad "held lock, systemd unit fire not a clean exit-75 skip (rc=$rc, err='$(tr '\n' ' ' < "$TMP/err")')"
 fi
 
-# ── 7b. HEAVY_JOB_LOCK_WAIT queues instead of skipping (GH-1229) ─────
+# ── 7b. HEAVY_JOB_LOCK_WAIT queues instead of skipping ─────
 run HEAVY_JOB_OPS_ENV="$OPS_ENV" FLOCK_REC="$TMP/flockrec" INVOCATION_ID=0123456789abcdef
 if grep -qx -- '-n 9' "$TMP/flockrec"; then ok "no HEAVY_JOB_LOCK_WAIT: the lock is tried once (-n), as before"; else bad "default lock mode changed ($(cat "$TMP/flockrec"))"; fi
 run HEAVY_JOB_OPS_ENV="$OPS_ENV" FLOCK_REC="$TMP/flockrec" HEAVY_JOB_LOCK_WAIT=5 INVOCATION_ID=0123456789abcdef
@@ -512,7 +512,7 @@ sys.exit(1 if found == 0 or missing else 0)
 PY
 then ok "every cron launcher of the wrapper declares HEAVY_JOB_CLASS=scheduled and a HEAVY_JOB_LOCK_WAIT"; else bad "a cron launcher of the wrapper is not HEAVY_JOB_CLASS=scheduled (or none was found)"; fi
 
-# ── 14. units that SHARE a job name queue, never skip (GH-1229) ──────
+# ── 14. units that SHARE a job name queue, never skip ──────
 # Two units on one lock name are mutually exclusive on purpose, so a skip
 # means one of them silently does not run while the other is long (Tier
 # B skipped Tier A's whole bootstrap pass). Each must set
@@ -540,7 +540,7 @@ for name in $names; do
 done
 if [ "$shared" -gt 0 ]; then ok "$shared unit(s) on a shared job name checked"; else bad "no two units share a job name — the check ran over nothing (verify-archive tiers A and B should)"; fi
 
-# ── 12. a stopped wrapper stops its scope (GH-1228) ──────────────────
+# ── 12. a stopped wrapper stops its scope ──────────────────
 # The scope is a SIBLING of the calling unit, so a unit stop or its
 # TimeoutStartSec signals only the wrapper. Unforwarded, the payload ran
 # on holding the lock and every later fire skipped as "already running".
@@ -593,7 +593,7 @@ rc=$?
 if [ "$rc" -eq 3 ]; then ok "the payload's own exit status is the wrapper's"; else bad "payload exit 3 came back as $rc"; fi
 if out_has "stdin=hello"; then ok "the backgrounded payload still reads the caller's stdin"; else bad "payload lost stdin ($(cat "$TMP/out"))"; fi
 
-# ── 13. the memory cap reaches the payload's scope (GH-1228) ─────────
+# ── 13. the memory cap reaches the payload's scope ─────────
 echo "  [memory cap, root branch]"
 : > "$PROPS"
 PATH="$TMP/rootbin:$PATH" run HEAVY_JOB_OPS_ENV="$OPS_ENV" SYSTEMD_RUN_PROPS="$PROPS" HEAVY_JOB_MEMORY_MAX=2G

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # install-ansible.sh — one installer for the two Ansible toolchain shapes
-# used across deploy.yml, ansible-drift.yml and ci.yml (GH-896).
+# used across deploy.yml, ansible-drift.yml and ci.yml.
 #
 # One pin, not an inline version string per workflow: separate copies
 # drift and break the collection pins. Both pins live in

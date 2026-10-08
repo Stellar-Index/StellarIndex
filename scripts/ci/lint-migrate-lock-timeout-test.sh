@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lint-migrate-lock-timeout-test.sh — regression test for GH-1166: both
+# lint-migrate-lock-timeout-test.sh — regression test: both
 # ansible call sites of `stellarindex-migrate ... up` must set
 # PGOPTIONS with lock_timeout + statement_timeout (the DDL-lock-convoy
 # mitigation),

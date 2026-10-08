@@ -185,7 +185,7 @@ write("gapped", gapped)
 # probe's own liveness facts say it was dead (or failing) for most of the
 # window. node_exporter kept re-serving the last textfile it was given,
 # so scrape coverage and series_gaps see nothing wrong — this is exactly
-# the "masked timer" failure GH-744 exists to catch.
+# the "masked timer" failure the generator must catch.
 masked = copy.deepcopy(clean)
 each(masked, "no_pass_max_sec", lambda v, m: 999999.0)
 each(masked, "unit_failed_frac", lambda v, m: 0.9)
@@ -305,7 +305,7 @@ nanpass = copy.deepcopy(clean)
 each(nanpass, "passing_runs", lambda v, m: float("nan"))
 write("passing_runs_nan", nanpass)
 
-# `samples_avg_nan` (GH-649) — one endpoint's samples_avg reads Prometheus's
+# `samples_avg_nan` — one endpoint's samples_avg reads Prometheus's
 # literal 'NaN' (a zero denominator upstream). Before the fix this reached
 # `int()`/`sum()` unfiltered and crashed the generator with rc 1 and no
 # report written at all — the worst outcome, worse than a wrong number.
@@ -313,7 +313,7 @@ samples_nan = copy.deepcopy(clean)
 set_cell(samples_nan, "samples_avg", "healthz", "NaN")
 write("samples_avg_nan", samples_nan)
 
-# `descriptive_over_missing` (GH-649) — the p95_over_frac series (the
+# `descriptive_over_missing` — the p95_over_frac series (the
 # "window over target" descriptive column) carries no row for `assets`,
 # the same shape a probe relabel or an endpoint that exports latency but
 # not a breach fraction would produce. Before the fix `(frac or 0.0)`
@@ -393,7 +393,7 @@ expect 'every endpoint at 0 samples/run → rc 2 REFUSED' 2 'measured nothing'
 render "$TMP/passing_runs_nan.json" "$TMP/out-nanpass"
 expect 'a NaN passing_runs scalar does not crash the generator' 0 'PROVEN — wrote'
 
-# A NaN `samples_avg` cell must not crash the generator either (GH-649):
+# A NaN `samples_avg` cell must not crash the generator either:
 # it still writes a report, and the sample-size sentence reads "n/a"
 # rather than raising out of `int()`/`sum()`.
 render "$TMP/samples_avg_nan.json" "$TMP/out-samplesnan"
@@ -404,7 +404,7 @@ assert_contains 'the NaN samples/run cell reads n/a, not a raised error' \
 
 # A headline series can be present while one endpoint's descriptive
 # breach-fraction cell is absent; `pct()`'s own n/a gate must render it,
-# not a masked 0.000 % (GH-649).
+# not a masked 0.000 %.
 render "$TMP/descriptive_over_missing.json" "$TMP/out-descrmissing"
 expect 'a missing descriptive breach-fraction cell still renders' 0 'wrote'
 DESCRMISSING="$TMP/out-descrmissing/$(ls "$TMP/out-descrmissing")"
@@ -469,9 +469,9 @@ else
 fi
 
 # The digest is self-referential: zero the digest line's value, hash the
-# rest of the document, and it must equal what got embedded (GH-744 —
-# before the fix there was no digest line at all, so evidence tampering
-# after render was undetectable to anything except a byte diff).
+# rest of the document, and it must equal what got embedded (without it
+# there would be no digest line at all, so evidence tampering
+# after render would be undetectable to anything except a byte diff).
 embedded_digest="$(grep -m1 '^digest: sha256:' "$CLEAN" | sed 's/^digest: sha256://')"
 recomputed_digest="$(sed "s/^digest: sha256:.*/digest: sha256:$(printf '0%.0s' $(seq 1 64))/" "$CLEAN" | shasum -a 256 | cut -d' ' -f1)"
 if [ -n "$embedded_digest" ] && [ "$embedded_digest" = "$recomputed_digest" ]; then
@@ -558,7 +558,7 @@ THIN="$TMP/out-thin/$(ls "$TMP/out-thin")"
 assert_contains 'the thin report reports its coverage' "$THIN" \
   'Scrapes of the probe series in the window'
 
-# ── A masked timer is not a clean window either (GH-744) ────────────────
+# ── A masked timer is not a clean window either ────────────────
 # `masked` carries byte-identical numbers and full scrape coverage to
 # `clean` — the only difference is the probe-liveness facts, which say the
 # probe was effectively dead. Before the fix, window_clean read only

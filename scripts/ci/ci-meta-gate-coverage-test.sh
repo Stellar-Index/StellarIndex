@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ci-meta-gate-coverage-test.sh — structural pins for two of the
-# meta-gates that keep the other gates honest (GH-778).
+# meta-gates that keep the other gates honest.
 #
 # 1. The Tier D fork-detection cron test
 #    (scripts/ci/verify-archive-tier-d-test.sh) asserts on

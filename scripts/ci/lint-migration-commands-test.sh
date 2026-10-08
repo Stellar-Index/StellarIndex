@@ -265,7 +265,7 @@ printf '%s\n' \
   > "$stale/scripts/ci/lint-migration-commands.baseline"
 check "a stale baseline entry fails until it is deleted" 1 "$stale"
 
-# ── docs/ fenced ```sql DELETE/UPDATE (GH-795) ────────────────────────
+# ── docs/ fenced ```sql DELETE/UPDATE ────────────────────────
 docs_unbound="$(mk docs_unbound)"
 mkdir -p "$docs_unbound/docs"
 cat > "$docs_unbound/docs/bad-runbook.md" <<'MD'

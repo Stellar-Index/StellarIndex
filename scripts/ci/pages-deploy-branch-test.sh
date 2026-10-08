@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pages-deploy-branch-test.sh — every `wrangler pages deploy` job must label
-# its deploy with a branch that agrees with the ref it built (GH-844).
+# its deploy with a branch that agrees with the ref it built.
 #
 # For each job in .github/workflows/ whose step runs `pages deploy`, this
 # finds the step that exports BRANCH, evaluates that step's `env:` against a

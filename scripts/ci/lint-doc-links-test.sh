@@ -80,7 +80,7 @@ check "a real anchor with a double hyphen resolves" ok
 printf '# fixture\n\n```\n[gone](./nope-%s.md)\n' "$$" > "$FIX"
 check "an odd number of fences is reported, not silently trusted" red
 
-# GH-1255: a bare `except Exception: continue` absorbed a bad encoding the
+# A bare `except Exception: continue` absorbed a bad encoding the
 # same way it absorbed a file going away mid-run, so a non-UTF-8 byte
 # silently dropped a file from the scan and the gate reported OK anyway.
 printf '# fixture\n\nAll good here.\n' > "$FIX"

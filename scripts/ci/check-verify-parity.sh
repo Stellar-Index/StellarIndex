@@ -74,7 +74,7 @@ extract_invoked() {
 #                         coverage-floor.sh: their SELF-TESTS are in verify.sh
 #                         and are what guard the logic. lint-go-toolchain-
 #                         parity.sh is NOT here — it runs bare and is mirrored.
-#   install-ansible.sh   an INSTALLER (GH-896), not a gate: `core`/`bundle`
+#   install-ansible.sh   an INSTALLER, not a gate: `core`/`bundle`
 #                         put pip/pipx-installed Ansible on the runner. It has
 #                         no local pre-push analogue — verify.sh does not
 #                         install a toolchain — and no exit-nonzero verdict to
