@@ -9,7 +9,7 @@ import (
 // TestDocDoesNotClaimUnshippedPrimaryCheck guards against the package
 // docs re-asserting that the primary (galexie-archive) scan is
 // implemented. Report.Primary is never populated anywhere in this
-// package (T232): no code shells out to `galexie detect-gaps`, so the
+// package. No code shells out to `galexie detect-gaps`, so the
 // doc comments must say so plainly instead of claiming the mode ships
 // or carrying a stale "PR B fills it" placeholder.
 func TestDocDoesNotClaimUnshippedPrimaryCheck(t *testing.T) {

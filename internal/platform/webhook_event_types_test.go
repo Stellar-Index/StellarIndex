@@ -17,7 +17,7 @@ import (
 // requires every constant typed WebhookEventType to appear in
 // WebhookEventTypes(). Go has no exhaustiveness check over string
 // constants, so without this a sixth type would be invisible to every
-// consumer of the list (GH-1348).
+// consumer of the list.
 func TestWebhookEventTypesListsEveryConstant(t *testing.T) {
 	declared := declaredWebhookEventTypes(t)
 	if len(declared) == 0 {

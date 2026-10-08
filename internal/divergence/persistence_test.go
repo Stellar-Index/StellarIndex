@@ -43,9 +43,9 @@ func readDivergence(t *testing.T, rdb *redis.Client, pair canonical.Pair) diverg
 // not yet persisted past the debounce window, so it is indistinguishable
 // from the mechanical VWAP-vs-spot lag of a fast move.
 //
-// This is the non-vacuous assertion: against the pre-fix worker (which
+// This is the non-vacuous assertion: against a worker that
 // set WarningFired = checked && (DivergencePct > threshold || nobody
-// agrees)) this single 10% refresh fires true and the test fails red.
+// agrees) this single 10% refresh fires true and the test fails red.
 func TestRefreshPair_FastMoveDoesNotFalseWarn(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "coingecko", price: 1.00},
@@ -408,7 +408,7 @@ func TestRefreshPair_RestartDoesNotResurrectClearedWarning(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_GapDoesNotMatureStreak (GH-1043): a pair that fired once,
+// TestRefreshPair_GapDoesNotMatureStreak: a pair that fired once,
 // then went unevaluated for hours (no VWAP, parse error, below quorum), must
 // not publish on the single firing observation after the gap. Elapsed time
 // across an unobserved interval is not evidence the divergence persisted.

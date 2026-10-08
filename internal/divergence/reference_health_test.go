@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// GH-679 (1): a pair with exactly two references loses one to a
+// A pair with exactly two references loses one to a
 // fail-closed freshness gate (price_unavailable). SuccessCount drops below
 // the quorum, the verdict is carried forward instead of evaluated, and the
 // pass still returns nil — so the pass-level outcome counter reads "ok".
@@ -138,7 +138,7 @@ func TestCompare_OutcomesAreBoundedClasses(t *testing.T) {
 	}
 }
 
-// GH-679 (2): the div: key must outlive the gap between two writes of the
+// The div: key must outlive the gap between two writes of the
 // same pair. With the default 300s min interval on a 30s tick the pass runs
 // every 330s, so a key written with the bare 300s TTL expired ~30s before
 // its rewrite on every cycle — longer when the fan-out is slow — and the

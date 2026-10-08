@@ -7,7 +7,7 @@ import (
 )
 
 // TestLint_RealWorkflowsWireChaos — the real .github/workflows tree must
-// reference the chaos suite. This is the green side of T430: before
+// reference the chaos suite. This is the green side: before
 // chaos-nightly.yml existed, this test failed against the real repo tree
 // (see the package comment / commit history for the red run).
 func TestLint_RealWorkflowsWireChaos(t *testing.T) {
@@ -23,7 +23,7 @@ func TestLint_RealWorkflowsWireChaos(t *testing.T) {
 	}
 }
 
-// TestLint_FailsWhenNoWorkflowReferencesChaos reproduces the pre-T430
+// TestLint_FailsWhenNoWorkflowReferencesChaos reproduces the unwired
 // state: a workflow directory with files present but none of them
 // mentioning the chaos suite. This is exactly the shape of
 // .github/workflows/*.yml before chaos-nightly.yml was added — grepping

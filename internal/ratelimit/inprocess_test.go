@@ -135,7 +135,7 @@ func TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket(t *testing.T) {
 		t.Fatal("first key past the cap should still get the shared bucket's first slot")
 	}
 	// …and the next distinct key is DENIED because it shares that bucket
-	// rather than minting its own. This is the line that is RED pre-fix
+	// rather than minting its own. This is the line that goes RED without the cap
 	// (every flood key got a private counter and an unbounded map entry).
 	if r, _ := b.Take(ctx, "anon:overflow-b"); r.Allowed {
 		t.Fatal("a distinct key past the key cap must be fail-CLOSED into the shared " +

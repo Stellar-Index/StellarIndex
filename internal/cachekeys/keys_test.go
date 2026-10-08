@@ -536,7 +536,7 @@ func TestTypedKeysAreDistinctFamilies(t *testing.T) {
 	_ = usdc // keep the import path exercised even if unused above
 }
 
-// TestAPIKeyRecords_NotOnAnEvictingInstance pins GH-1317. `apikey:`
+// TestAPIKeyRecords_NotOnAnEvictingInstance: `apikey:`
 // records are the credential of record for signup, admin and mint-key
 // issued keys (the plaintext is unrecoverable by contract). They are
 // durable only if the instance can never evict them: noeviction, or a
@@ -558,8 +558,8 @@ func TestAPIKeyRecords_NotOnAnEvictingInstance(t *testing.T) {
 	}
 }
 
-// TestRedisRole_EnforcesPolicyOnRunningInstances pins the other half of
-// GH-1317: redis.conf is rendered on first run only, so without a live
+// TestRedisRole_EnforcesPolicyOnRunningInstances pins the other half:
+// redis.conf is rendered on first run only, so without a live
 // CONFIG SET a corrected default never reaches a running cluster.
 func TestRedisRole_EnforcesPolicyOnRunningInstances(t *testing.T) {
 	raw, err := os.ReadFile("../../configs/ansible/roles/redis-sentinel/tasks/03-redis-configure.yml")

@@ -355,7 +355,7 @@ func TestLookupCached_PerPairOR_OrderIndependent(t *testing.T) {
 	// Two refresh orderings; both must yield firing=true for the base.
 	// Ordering 1: USD (diverging) first, GBP (in-tolerance) last —
 	// this is the regression case (GBP would have cleared the base key
-	// under the pre-fix per-base layout).
+	// under a per-base layout).
 	// Ordering 2: GBP first, USD last.
 	type step struct {
 		pair  canonical.Pair
@@ -382,7 +382,7 @@ func TestLookupCached_PerPairOR_OrderIndependent(t *testing.T) {
 			// quote (EUR) sorts lexicographically BEFORE the clean
 			// quote (USD), so miniredis's sorted SMembers returns the
 			// clean pair LAST. A naive "last value wins" aggregation
-			// (the pre-fix per-base clobber) would read the base
+			// (a per-base clobber) would read the base
 			// verdict as false here — only a true OR keeps it firing.
 			name:       "firing_quote_sorts_first",
 			order:      []step{{eurPair, 1.50}, {usdPair, 1.00}},
@@ -598,7 +598,7 @@ func TestRefreshPair_ObservationStampedWithComparisonTime(t *testing.T) {
 }
 
 // TestRefreshPair_ObservationCarriesReferenceAsOf — each row records when
-// ITS reference observed the price (GH-823), not only the comparison time:
+// ITS reference observed the price, not only the comparison time:
 // two references answering the same comparison from different instants must
 // persist different RefObservedAt values, so a reader can tell a fresh quote
 // from a 50-minute-old one that still passed the comparability ceiling.
@@ -636,7 +636,7 @@ func TestRefreshPair_ObservationCarriesReferenceAsOf(t *testing.T) {
 }
 
 // TestRefreshPair_StampsVerdictWindow — the cached verdict names the
-// aggregation window its OurPrice was computed over (GH-1045), so an API
+// aggregation window its OurPrice was computed over, so an API
 // surface serving a different window can tell the verdict does not speak to
 // its value; a service built without a window leaves the verdict unscoped.
 func TestRefreshPair_StampsVerdictWindow(t *testing.T) {

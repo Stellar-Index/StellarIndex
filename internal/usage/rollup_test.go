@@ -257,8 +257,7 @@ func TestRollupSweep_DeadlineBoundsSink(t *testing.T) {
 }
 
 // TestRollupSweep_Metrics — the paired outcome counter + duration
-// histogram advance on both the ok and sink_error paths (wave-100
-// obstest convention).
+// histogram advance on both the ok and sink_error paths..
 func TestRollupSweep_Metrics(t *testing.T) {
 	_, rdb := newRedis(t)
 	clock := time.Date(2026, 7, 3, 9, 0, 0, 0, time.UTC)
@@ -354,7 +353,7 @@ func TestScanDetail_DuplicateScanKeysCountOnce(t *testing.T) {
 	}
 }
 
-// TestScanDetailFunc_StreamsOneRowAtATime — GH-1282's open remainder:
+// TestScanDetailFunc_StreamsOneRowAtATime —
 // a production sweep must not buffer a whole day's rows before
 // processing them. ScanDetailFunc delivers rows to fn as they are
 // decoded, so a callback that aborts after the first row sees the
@@ -449,7 +448,7 @@ func foldedOK(sink *fakeSink, subject, endpoint string) map[string]int64 {
 	return out
 }
 
-// TestRollupSweep_CatchesUpDaysAnOutageSkipped pins GH #798: a sink
+// TestRollupSweep_CatchesUpDaysAnOutageSkipped: a sink
 // outage from Friday evening to Monday morning must not lose Friday's
 // tail or the weekend from usage_daily. The first successful sweep
 // after recovery re-folds every day no successful sweep covered since

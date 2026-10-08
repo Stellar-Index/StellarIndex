@@ -7,7 +7,7 @@ import (
 
 // TestUsageRollupBackfillHelpDocumentsWriteFlag — the --help entry is
 // what an operator reads first; its synopsis and example must carry
-// -write for the same reason (GH #798).
+// -write for the same reason.
 func TestUsageRollupBackfillHelpDocumentsWriteFlag(t *testing.T) {
 	i := strings.Index(usageBody, "  usage-rollup-backfill ")
 	if i < 0 {

@@ -34,7 +34,7 @@ func evaluated(outcome string) float64 {
 	return testutil.ToFloat64(obs.PriceAlertEvaluatedTotal.WithLabelValues(outcome))
 }
 
-// GH-749 (2): the sweep is serial on the process context, so one alert
+// The sweep is serial on the process context, so one alert
 // whose price read never returns held every later alert — every other
 // tenant's — for up to the 30 m background statement timeout, and no
 // sweep outcome was emitted meanwhile. Each alert now has its own
@@ -89,7 +89,7 @@ func TestSweep_StalledAlertTimesOutAndOthersStillFire(t *testing.T) {
 	}
 }
 
-// GH-749 (1): a sweep where every alert fails and one where a single alert
+// A sweep where every alert fails and one where a single alert
 // fails both emit one partial_error sample. The per-alert counter must
 // tell them apart, and the last-sweep gauge must advance either way.
 func TestSweep_CountsEveryFailingAlert(t *testing.T) {

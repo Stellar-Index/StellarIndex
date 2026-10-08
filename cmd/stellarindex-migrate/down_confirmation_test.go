@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// THE DEFECT (T400). `down` calls m.Steps(-n) — a destructive rollback —
+// THE DEFECT. `down` calls m.Steps(-n) — a destructive rollback —
 // with no confirmation prompt, no -yes/-force flag and no TTY guard: an
 // operator who fat-fingers `down` (or a script that inherits the wrong
 // $STELLARINDEX_POSTGRES_DSN) drops production migrations with no

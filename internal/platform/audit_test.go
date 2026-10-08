@@ -21,7 +21,7 @@ func readAuditGo(t *testing.T) string {
 	return string(src)
 }
 
-// TestAuditStoreDocDoesNotClaimDashboardReadsViaList (T158): the
+// TestAuditStoreDocDoesNotClaimDashboardReadsViaList: the
 // AuditStore interface doc must not claim "the dashboard reads via
 // List" — grep across the tree finds zero non-test callers of List,
 // and admin_keys.go's AuditSink (the only thing wired into API
@@ -41,7 +41,7 @@ func TestAuditStoreDocDoesNotClaimDashboardReadsViaList(t *testing.T) {
 	}
 }
 
-// TestAuditEntryDocDoesNotClaimOfflineArchiver (T378): the
+// TestAuditEntryDocDoesNotClaimOfflineArchiver: the
 // AuditEntry doc must not claim rows are deleted "by the offline
 // retention archiver" — no archiver exists anywhere in the tree (no
 // DELETE/purge statement touches audit_log; no archiver code in

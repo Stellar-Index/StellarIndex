@@ -169,7 +169,7 @@ func TestAuditAppend_ValidationRejectsEmpty(t *testing.T) {
 	}
 }
 
-// TestAuditStoreDocDoesNotClaimUnbuiltDashboardReader (T158): the
+// TestAuditStoreDocDoesNotClaimUnbuiltDashboardReader: the
 // AuditStore struct doc must not claim List "powers the dashboard's
 // audit-trail surface" — grep across the tree finds zero non-test
 // callers of List, and admin_keys.go's AuditSink (the only thing
@@ -194,7 +194,7 @@ func TestAuditStoreDocDoesNotClaimUnbuiltDashboardReader(t *testing.T) {
 }
 
 // TestMigration0027AuditLogCommentDoesNotClaimImplementedRetention
-// (T337): migration 0027's audit_log header comment must not
+// Migration 0027's audit_log header comment must not
 // present 12-month/S3 retention as current behavior — no
 // retention/archival job exists anywhere in the tree (no DELETE or
 // purge statement touches audit_log, and no archiver code exists in

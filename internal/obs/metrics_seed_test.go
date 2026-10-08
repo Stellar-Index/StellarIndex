@@ -88,8 +88,7 @@ func TestDivergenceRefreshOutcomesAreSeeded(t *testing.T) {
 	}
 }
 
-// TestCustomerWebhookDeliveryOutcomesAreSeeded is the #368 M6
-// regression, in the same shape as its divergence sibling above.
+// TestCustomerWebhookDeliveryOutcomesAreSeeded: in the same shape as its divergence sibling above.
 //
 // Every alert on this counter uses rate()/increase(). A CounterVec
 // child does not exist until its first .Inc(), and rate()/increase()

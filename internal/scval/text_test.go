@@ -9,7 +9,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// textCases is the shared matrix for the F052 text-safety contract:
+// textCases is the shared matrix for the text-safety contract:
 // contract-chosen ScString bytes must become a value a Postgres `text`
 // column accepts (valid UTF-8, no NUL) WITHOUT losing a byte.
 var textCases = []struct {

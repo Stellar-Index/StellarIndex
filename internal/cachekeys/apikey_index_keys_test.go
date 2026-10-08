@@ -8,7 +8,7 @@ import (
 )
 
 // TestAPIKeyIndex pins the wire strings of the API-key lookup index
-// family (F057 / K051). Two properties are load-bearing beyond the
+// family. Two properties are load-bearing beyond the
 // literal bytes:
 //
 //   - Both keys sit under `apikey-index:` so ONE Redis ACL pattern

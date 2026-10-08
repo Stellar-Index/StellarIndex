@@ -254,7 +254,7 @@ func TestSubscriber_DropsForgedValueDecimal(t *testing.T) {
 		"1000000000000000000000000000000", // 10^30 — absurd
 		"1/2",                             // fraction form big.Rat would accept
 		"1e9",                             // scientific form big.Rat would accept
-		"+5.000000000000",                 // explicit leading '+' (T163)
+		"+5.000000000000",                 // explicit leading '+'
 		"0x1p4",                           // hex float literal big.Rat would accept (Q171)
 		"1_000.5",                         // underscore-separated literal (Q171)
 		"0b101",                           // binary literal (Q171)

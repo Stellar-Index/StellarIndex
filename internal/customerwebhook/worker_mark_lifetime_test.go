@@ -21,7 +21,7 @@ import (
 // a database driver does: a write attempted on a dead context fails
 // with the context's error and changes nothing. The package's other
 // fake ignores ctx entirely, which is why a mark write running on an
-// already-expired context went unseen (K025).
+// already-expired context went unseen.
 type ctxHonouringStore struct {
 	mu sync.Mutex
 
@@ -114,7 +114,7 @@ func newLifetimeStore(url string) *ctxHonouringStore {
 	}
 }
 
-// TestTick_TimedOutPOSTStillRecordsTheAttempt is K025's webhook leg at
+// TestTick_TimedOutPOSTStillRecordsTheAttempt exercises the webhook leg at
 // the worker's real entry point (tick → deliverOne → handleFailure →
 // the store write).
 //
@@ -161,7 +161,7 @@ func TestTick_TimedOutPOSTStillRecordsTheAttempt(t *testing.T) {
 	// RSEC-Y1: the recorded message is the fixed, address-free reason —
 	// not the raw dial/transport error text, which can name an internal
 	// destination — so this only pins the status and outcome, not wording
-	// that used to embed the URL.
+	// that embeds the URL.
 	if got.status != 0 || got.msg == "" {
 		t.Errorf("recorded failure = %+v, want a status-0 network failure", got)
 	}

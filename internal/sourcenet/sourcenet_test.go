@@ -8,7 +8,7 @@ import (
 )
 
 // Pubnet never excludes anything — the default scope is byte-identical to
-// the pre-#483 behaviour, which is the whole safety argument.
+// the unscoped behaviour, which is the whole safety argument.
 func TestApplicable_PubnetIsEverything(t *testing.T) {
 	for _, src := range []string{"soroswap", "blend", "sdex", "recognition", "made-up-source"} {
 		for _, net := range []string{"", Pubnet} {

@@ -12,7 +12,7 @@ import (
 // TestOracleManipulationDefenseDoc_NoFabricatedMetricNames guards
 // docs/architecture/oracle-manipulation-defense.md's "Engineering
 // observability" section against citing Prometheus series that
-// internal/obs/metrics.go never registers. T509: the doc claimed
+// internal/obs/metrics.go never registers: the doc once claimed
 // `stellarindex_anomaly_z_score` and `stellarindex_anomaly_confidence`
 // exist as a histogram/gauge; neither is registered anywhere.
 func TestOracleManipulationDefenseDoc_NoFabricatedMetricNames(t *testing.T) {

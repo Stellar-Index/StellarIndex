@@ -178,7 +178,7 @@ func TestRead_EmptySubjectReturnsNil(t *testing.T) {
 }
 
 // TestRead_NilCounterIsNoOp — a nil *Counter must behave like the
-// disabled-tracking case (GH-800): IncrementBy and MonthToDate both
+// disabled-tracking case: IncrementBy and MonthToDate both
 // guard `c == nil`, but Read did not, so a deployment without a usage
 // counter wired up (`UsageReader` left nil-backed) panicked on
 // `c.nowFn()` the first time /v1/account/usage was hit instead of
@@ -339,7 +339,7 @@ func dayKey(subject, day string) string {
 	return "usage:" + url.QueryEscape(subject) + ":" + day
 }
 
-// TestMonthToDate_EvictedDayKeysReconcileFromUsageDaily pins GH-1274:
+// TestMonthToDate_EvictedDayKeysReconcileFromUsageDaily:
 // the day keys live on an evicting Redis and a missing key read as a
 // quiet day, so evicting the month's cold early days silently cut the
 // billed month from 950 to 250. The rollup has already persisted those

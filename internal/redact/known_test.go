@@ -357,7 +357,7 @@ func TestKnownCutsAPasswordWithNoAtSignAfterIt(t *testing.T) {
 	}
 }
 
-// A query password holding an unescaped `@` — the character F077 names,
+// A query password holding an unescaped `@` — the character that matters here,
 // in the spelling attempt two did not cover. Nothing in a malformed DSN
 // tells the `@` that ends a userinfo from one inside a secret, so the
 // userinfo reading runs to the LAST `@` and swallows the `password=`

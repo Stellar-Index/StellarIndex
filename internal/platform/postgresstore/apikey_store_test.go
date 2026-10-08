@@ -60,14 +60,14 @@ func TestNonNilStringArray_EmptyNonNilPassthrough(t *testing.T) {
 
 // apiKeysBoundedMarkers are the shapes that keep a read of api_keys
 // independent of the revoked history, which is kept forever and grows
-// without bound under a create/revoke loop (GH-766): an explicit LIMIT, an
+// without bound under a create/revoke loop: an explicit LIMIT, an
 // aggregate or EXISTS probe, a unique-key lookup, or the active set (capped
 // per account at insert time).
 var apiKeysBoundedMarkers = []string{
 	"LIMIT", "COUNT(", "EXISTS", "WHERE id = $", "WHERE key_hash = $", "revoked_at IS NULL",
 }
 
-// TestAPIKeysQueriesAreBounded is the lint behind GH-766: every SQL literal
+// TestAPIKeysQueriesAreBounded is the lint that every SQL literal
 // in this package that reads FROM api_keys must be bounded. An unbounded
 // per-account list put the whole revoked history on the mint path, the
 // dashboard list and the admin suspend kill switch.

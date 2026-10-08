@@ -25,8 +25,7 @@ func TestParticipantAccounts_Payment(t *testing.T) {
 	}
 }
 
-// TestParticipantAccounts_CreateClaimableBalanceClaimants is the T098
-// regression: a create_claimable_balance op's claimants are genuine account
+// TestParticipantAccounts_CreateClaimableBalanceClaimants: a create_claimable_balance op's claimants are genuine account
 // addresses (ClaimantV0.Destination), not opaque free text, so they must be
 // indexed as participants the same as a payment destination.
 func TestParticipantAccounts_CreateClaimableBalanceClaimants(t *testing.T) {
@@ -70,8 +69,7 @@ func TestParticipantAccounts_ClaimClaimableBalanceNoAccountField(t *testing.T) {
 	}
 }
 
-// TestParticipantAccounts_BeginSponsoringFutureReservesTarget is the T098
-// regression: the sponsorship target is a genuine account address.
+// TestParticipantAccounts_BeginSponsoringFutureReservesTarget: the sponsorship target is a genuine account address.
 func TestParticipantAccounts_BeginSponsoringFutureReservesTarget(t *testing.T) {
 	b64 := mustBody(t, xdr.OperationTypeBeginSponsoringFutureReserves, xdr.BeginSponsoringFutureReservesOp{
 		SponsoredId: xdr.MustAddress(gAddr2),
@@ -85,8 +83,7 @@ func TestParticipantAccounts_BeginSponsoringFutureReservesTarget(t *testing.T) {
 	}
 }
 
-// TestParticipantAccounts_RevokeSponsorshipLedgerEntryAccount is the GH-1065
-// regression: revoking sponsorship of an ACCOUNT ledger entry must index the
+// TestParticipantAccounts_RevokeSponsorshipLedgerEntryAccount: revoking sponsorship of an ACCOUNT ledger entry must index the
 // sponsored account (whose reserve requirement the revocation returns),
 // exactly like begin_sponsoring_future_reserves indexes it going in.
 func TestParticipantAccounts_RevokeSponsorshipLedgerEntryAccount(t *testing.T) {
@@ -142,8 +139,8 @@ func TestParticipantAccounts_NoneForSelfContained(t *testing.T) {
 
 // TestParticipantAccounts_ManageDataNameLooksLikeAccount is the W8.3 regression:
 // a manage_data DataName / value that happens to spell a valid G-strkey must
-// NOT inject that (attacker-chosen) address into another account's history. The
-// pre-fix generic "any IsAccountID string field" scan added it as a participant;
+// NOT inject that (attacker-chosen) address into another account's history. A
+// generic "any IsAccountID string field" scan added it as a participant;
 // the type-aware extractor knows manage_data carries no account field.
 func TestParticipantAccounts_ManageDataNameLooksLikeAccount(t *testing.T) {
 	value := xdr.DataValue(gAddr2)

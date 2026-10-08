@@ -10,13 +10,12 @@ import (
 // controlByteCode4 is an alphanum4 asset code carrying an embedded
 // control byte (0x01) — the exact shape internal/canonical.AssetFromXDR
 // (via NewClassicAsset/validateClassicAssetCode) refuses, and which
-// stellar-core does not itself reject (see AssetFromXDR's doc comment
-// and Q129/T099).
+// stellar-core does not itself reject (see AssetFromXDR's doc comment).
 var controlByteCode4 = [4]byte{'A', 0x01, 'B', 0}
 
 const issuerAccount = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
-// TestAssetCodeRejectsInvalidBytes pins the fix for Q129/T099: assetCode
+// TestAssetCodeRejectsInvalidBytes pins that assetCode
 // must not just trim trailing NULs, it must apply the same validity rule
 // canonical.AssetFromXDR enforces, so xdrjson never mints an asset id the
 // canonical layer would refuse.
@@ -69,7 +68,7 @@ func TestTrustLineAssetIDRejectsInvalidCode(t *testing.T) {
 	}
 }
 
-// TestChangeTrustAssetPoolShare pins GH-1139: a change_trust op on a
+// TestChangeTrustAssetPoolShare: a change_trust op on a
 // liquidity-pool share must render the SAME "pool:<hex>" id the resulting
 // trustline gets from TrustLineAssetID — not the old opaque
 // "liquidity_pool_share" marker, which discarded AssetA/AssetB/Fee entirely.

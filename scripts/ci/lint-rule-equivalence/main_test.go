@@ -70,7 +70,7 @@ func TestCompareFile_DetectsAnnotationDrift(t *testing.T) {
 	}
 }
 
-// TestCheckExprWaiversAreTested is the GH-1174 regression: a baseline
+// TestCheckExprWaiversAreTested: a baseline
 // `:expr` waiver naming a rule with no promtool test anywhere under
 // the rule-tests dir must fail, and adding that test must clear it.
 func TestCheckExprWaiversAreTested(t *testing.T) {

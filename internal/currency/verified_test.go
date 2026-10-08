@@ -509,7 +509,7 @@ func TestSeedBrowseable_StellarOnlyNetworks(t *testing.T) {
 	}
 }
 
-// TestLoadFromBytes_RejectsUnknownField guards F007/K035: a misspelled
+// TestLoadFromBytes_RejectsUnknownField: a misspelled
 // or renamed optional key (e.g. "coingecko_id" typo'd as "coingecko_di")
 // must fail the load loudly instead of silently parsing to the zero
 // value and dropping the intended data.
@@ -653,7 +653,7 @@ func TestStellarCollision_nativeAssetImpersonator(t *testing.T) {
 // issued elsewhere", and a sovereign currency is issued nowhere — SEP-1
 // codes a fiat anchor's deposit token with exactly the ISO code, so the
 // census was requiring every compliant anchor to be reportable as an
-// impersonator (K033). The carve is by CLASS and only where the entry
+// impersonator. The carve is by CLASS and only where the entry
 // has no Stellar issuance of its own; the census itself is unchanged in
 // strength, because a fiat code must still be ANSWERABLE — via
 // FiatDenomination — and a fiat entry that ever gains a verified Stellar

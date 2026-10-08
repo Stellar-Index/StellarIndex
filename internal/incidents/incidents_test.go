@@ -226,7 +226,7 @@ body
 	}
 }
 
-// TestParseSource_RejectsUnknownFrontmatterField guards F007/K035: a
+// TestParseSource_RejectsUnknownFrontmatterField guards that a
 // misspelled frontmatter key (e.g. "sevority" for "severity") must fail
 // the post loudly instead of silently parsing with severity/status left
 // at their zero value and the post publishing with missing data.

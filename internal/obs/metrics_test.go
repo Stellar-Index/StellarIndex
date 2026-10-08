@@ -99,7 +99,7 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 		"stellarindex_source_last_event_unix",
 		"stellarindex_source_enabled",
 		"stellarindex_source_decode_errors_total",
-		// #291. This entry is the ONLY check that the counter is
+		// This entry is the ONLY check that the counter is
 		// actually REGISTERED. The redstone decoder test asserts its
 		// value with testutil.ToFloat64, which reads the Collector
 		// directly and never consults obs.Registry — so dropping the
@@ -589,7 +589,7 @@ func TestZeroSeed_F0033(t *testing.T) {
 		// evidence it happened — an absent series here would make "no
 		// staff look-up has ever lost its row" indistinguishable from
 		// "the look-up never got wired to the audit sink at all", which
-		// is the pre-fix state.
+		// is the failure mode.
 		`stellarindex_admin_audit_write_failures_total{surface="staff_customer_lookup"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="admin_account_read"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="passkey_register"} 0`,
@@ -648,8 +648,7 @@ func TestZeroSeed_F0033(t *testing.T) {
 	}
 }
 
-// TestCEXStreamDisconnectReasons_MatchesEmittedSet is the GH-941
-// regression guard: obs.CEXStreamDisconnectReasons (and therefore
+// TestCEXStreamDisconnectReasons_MatchesEmittedSet guards: obs.CEXStreamDisconnectReasons (and therefore
 // CEXStreamDisconnectTotal's Help text / the README enum, both
 // generated from it) must list exactly the reason strings the
 // classifiers actually produce — no more, no less. Before the fix the

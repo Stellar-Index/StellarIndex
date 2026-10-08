@@ -12,7 +12,7 @@ import (
 )
 
 // TestNoDeadReferenceHelpers guards against the two dead functions
-// GH-1004(e) found reachable only from tests reappearing with no
+// were once found reachable only from tests reappearing with no
 // production caller: decodeChainlinkInt256 (a fourth duplicate int256
 // decoder — the live path decodes inline in fetchChainlinkAnswer) and
 // CoinGeckoReference.LookupPrices (superseded by the per-pair
@@ -47,7 +47,7 @@ func TestNoDeadReferenceHelpers(t *testing.T) {
 
 // TestNoStaleDivergenceCrossReferences fails when a comment or doc cites
 // a divergence symbol that no longer exists: the API binary's reference
-// builder and the deleted int256 helper (GH-1004).
+// builder and the deleted int256 helper.
 func TestNoStaleDivergenceCrossReferences(t *testing.T) {
 	stale := []string{
 		"cmd/stellarindex-api/main.go::" + "buildDivergenceReferences",

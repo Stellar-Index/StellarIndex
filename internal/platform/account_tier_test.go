@@ -118,7 +118,7 @@ func TestTierLadders(t *testing.T) {
 	}
 }
 
-// TestAccountEffectiveRateLimitPerMin pins GH-1074: the account view
+// TestAccountEffectiveRateLimitPerMin: the account view
 // reports what auth enforces on a default-minted key (1000/min, raised
 // by the override floor), never the tier ceiling. A partner comped to
 // 5,000/min reads 5,000, not 100,000.
@@ -143,7 +143,7 @@ func TestAccountEffectiveRateLimitPerMin(t *testing.T) {
 	}
 }
 
-// TestAccountEffectiveMonthlyQuota pins GH-1074's quota half: a
+// TestAccountEffectiveMonthlyQuota: a
 // default-minted key stores the tier ceiling with no override and
 // inherits the override when one is set, above or below the ceiling.
 func TestAccountEffectiveMonthlyQuota(t *testing.T) {
