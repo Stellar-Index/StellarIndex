@@ -269,7 +269,7 @@ func TestDexLargestTradesQueryShape(t *testing.T) {
 // TestDexSinceTotalsQueryShape — deliberately unwindowed over the
 // materialized-only CAGG, and it must surface the floor date so the KPI
 // label can be "since <date>", never "all-time" (the rollup floor is
-// 2026-03-18 on r1 while raw sdex history reaches 2018).
+// later than the start of raw sdex history).
 func TestDexSinceTotalsQueryShape(t *testing.T) {
 	q := dexSinceTotalsQuery()
 	if strings.Contains(q, "$2") || sqlContainsFold(q, "interval") {

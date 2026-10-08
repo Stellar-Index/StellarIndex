@@ -11,7 +11,7 @@ import (
 )
 
 // The fixtures are VERBATIM rows from the certified lake on r1, captured
-// 2026-09-15 from stellar.ledger_entries_current FINAL, with the answers
+// from stellar.ledger_entries_current FINAL, with the answers
 // checked there before they were written down here.
 //
 // contract_storage_caocxwnx.tsv is the COMPLETE storage of one private-credit

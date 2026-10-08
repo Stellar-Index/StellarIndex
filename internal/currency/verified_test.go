@@ -643,8 +643,7 @@ func TestStellarCollision_nativeAssetImpersonator(t *testing.T) {
 // 11 keys total, meaning those were the only codes an impersonation
 // could ever be flagged for. Measured on r1: 22,496 codes are claimed by
 // more than one issuer across 132,808 of 194,034 classic assets, and
-// `?code=XRP` returned 645 rows with not one flagged (cold audit
-// 2026-08-04).
+// `?code=XRP` returned 645 rows with not one flagged.
 //
 // The census must not run over cat.All() without a carve-out, which
 // would put the twenty sovereign-currency entries inside it too. That is

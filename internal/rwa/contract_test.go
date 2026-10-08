@@ -285,7 +285,7 @@ const (
 //
 // The curated entry answers C4 and nothing else. With no directory entry
 // for the address — which is the live state, every Spiko contract
-// returning 404 from the curated directory on 2026-09-15 — the candidate
+// returning 404 from the curated directory — the candidate
 // must still be refused, and refused on C2.
 //
 // If this ever starts passing as an admission, a curated in-repo entry
@@ -336,7 +336,7 @@ func TestSpikoBinding_StillNeedsIndependentRecognition(t *testing.T) {
 // ─── C2 arm 2: an independent listing corroborating a curated binding ──
 //
 // The addresses below are REAL and are the measured state of the two
-// sources on 2026-09-15. They are fixtures in the sense that the test
+// sources. They are fixtures in the sense that the test
 // pins a rule, but unlike contractA/contractB they are not invented:
 // the whole point of arm 2 is that two parties who do not read each
 // other arrived at the same 56 characters, and a made-up address could

@@ -267,9 +267,8 @@ func TestSweepTimeout_DefaultApplied(t *testing.T) {
 
 const ybtcSAC = "CB2XMFB6BDIHFOSFB5IXHDOYV3SI3IXMNIZLPDZHC7ENDCXSBEBZAO2Y"
 
-// r1, 2026-09-17: yBTC's SAC traded $43.8k on aquarius under its contract
-// id while yBTC was priced under its classic id, and the tripwire ticketed
-// a "priceless popular asset" that had a price. A SAC candidate whose
+// A SAC trading under its contract id while the asset is priced under its
+// classic id must not trip the "priceless popular asset" tripwire. A SAC candidate whose
 // classic asset is priced is not a gap; one whose classic asset is also
 // priceless still is.
 func TestSweep_SACCandidatePricedUnderItsClassicAssetIsNotAGap(t *testing.T) {

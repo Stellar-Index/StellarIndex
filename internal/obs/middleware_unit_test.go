@@ -28,8 +28,8 @@ func TestNormalizeMethod(t *testing.T) {
 		{"PATCH", "PATCH"},
 		// Any verb outside the standard set collapses to the bounded
 		// "other" label. net/http accepts arbitrary tokens as methods,
-		// so passing them through verbatim was an unbounded metric-label
-		// cardinality DoS (audit W4-obs-1).
+		// so passing them through verbatim would be an unbounded metric-label
+		// cardinality DoS.
 		{"propfind", "other"},
 		{"PROPFIND", "other"},
 		{"", "other"},

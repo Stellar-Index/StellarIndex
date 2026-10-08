@@ -28,18 +28,10 @@ import (
 // The failure is silent in the worst way: nothing in the response looks
 // malformed, there is just less of it than there should be.
 //
-// This has now been the same bug three times:
+// The same bug recurs across readers (LatestClosedVWAP1mForPair,
+// RecentClosedVWAP1mForPair, ClosedVWAP1mAtOrBefore).
 //
-//   - LatestClosedVWAP1mForPair (fixed)
-//   - RecentClosedVWAP1mForPair — missed by the first fix,
-//     recorded in that audit's remediation-state.json, and never
-//     dispositioned. Fixed later.
-//   - ClosedVWAP1mAtOrBefore — the second reader the direction-union fix itself
-//     missed; found by its skeptic. Fixed in the same change.
-//
-// Each previous fix came with a test pinning THAT function's query.
-// None of them could see the next reader, which is why the class
-// survived two remediations. This test is deliberately written against
+// A test pinning one function's query cannot see the next reader. This test is deliberately written against
 // the class instead: it parses every string literal in the package and
 // fails on any pair-bound per-direction read that filters one
 // orientation, whether or not anyone remembered to write a test for it.

@@ -711,8 +711,8 @@ func TestHit_OracleWithReadingsIsASuccess(t *testing.T) {
 
 // TestRunProbe_MultiPairDoesNotMergeSamples is the regression guard for
 // with two -pair flags, both pairs' endpoints share the
-// bare names "price"/"price-tip"/"oracle-latest". Before the fix, samples
-// were keyed by ep.Name alone, so native's fresh price-tip samples and
+// bare names "price"/"price-tip"/"oracle-latest". Samples must not be
+// keyed by ep.Name alone, or native's fresh price-tip samples and
 // USDC's 600s-stale ones landed in the same bucket and every PerEndpoint
 // row for a given name was fed that merged slice — the stale pair's
 // freshness became invisible (or was reported as a duplicate row

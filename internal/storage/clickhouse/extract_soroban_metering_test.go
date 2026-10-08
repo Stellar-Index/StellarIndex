@@ -76,8 +76,7 @@ func TestExtractSorobanMetering_V1WithV4Meta(t *testing.T) {
 	}
 }
 
-// TestExtractSorobanMetering_FeeBumpReachesInner is the regression guard for the
-// audit's nil-panic finding: a fee-bump wrapping a Soroban tx must be unwrapped
+// TestExtractSorobanMetering_FeeBumpReachesInner guards the nil-panic case: a fee-bump wrapping a Soroban tx must be unwrapped
 // to its inner V1 tx to reach the SorobanTransactionData. A naive .V1.Tx access
 // would nil-panic here (env.V1 is nil on a fee-bump).
 func TestExtractSorobanMetering_FeeBumpReachesInner(t *testing.T) {

@@ -125,9 +125,9 @@ func TestBucket_KeysAreIndependent(t *testing.T) {
 
 func TestBucket_ColonInKeyDoesNotCollide(t *testing.T) {
 	// Keys containing `:` (IPv6 addresses, future API-key formats)
-	// must not collide with distinct keys. Previously Take() built
-	// the Redis key as `rl:<key>:<minute>`, so two IPv6 clients
-	// whose addresses share a prefix could land on the same slot.
+	// must not collide with distinct keys. Take() builds the Redis key as
+	// `rl:<key>:<minute>`; without escaping, two IPv6 clients whose
+	// addresses share a prefix could land on the same slot.
 	// url.QueryEscape in Take() closes this.
 	rdb, _ := newRedis(t)
 	b := ratelimit.New(rdb, 1, time.Minute)

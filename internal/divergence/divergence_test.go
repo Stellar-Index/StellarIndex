@@ -312,8 +312,8 @@ func TestCoinGecko_AssetNotInIDMap(t *testing.T) {
 
 // TestCoinGecko_DefaultIDMapCoversCommonPairs — a stock deployment
 // (no operator IDMap) MUST recognise the canonical asset_id forms
-// the aggregator computes by default. Caught from an r1 audit: the previous behaviour was empty-IDMap → every
-// pair returns ErrAssetUnsupported → divergence_observations
+// the aggregator computes by default. An empty IDMap would make every
+// pair return ErrAssetUnsupported, leaving divergence_observations
 // silently empty even though Compare's "ok" counter incremented.
 func TestCoinGecko_DefaultIDMapCoversCommonPairs(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

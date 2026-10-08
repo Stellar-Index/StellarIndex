@@ -224,9 +224,8 @@ func TestAsAddressStrkey_claimableBalance(t *testing.T) {
 }
 
 // TestAsAddressStrkey_liquidityPool pins the CAP-67 / P23 LP
-// strkey encoding (L-…). This was the live-r1 cascade-drain
-// dry-run failure case on 2026-05-28: every SEP-41 transfer
-// targeting an LP destination tripped "unknown ScAddress type 4"
+// strkey encoding (L-…). Every SEP-41 transfer
+// targeting an LP destination otherwise trips "unknown ScAddress type 4"
 // (LP is type 4 in the SDK enum despite the SEP-41 / strkey doc
 // ordering).
 func TestAsAddressStrkey_liquidityPool(t *testing.T) {

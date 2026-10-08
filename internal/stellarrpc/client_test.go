@@ -414,10 +414,8 @@ func TestEventClosedAtParse(t *testing.T) {
 }
 
 func TestEventClosedAtEmptyIsError(t *testing.T) {
-	// Empty ledgerClosedAt must error — the previous behaviour of
-	// returning time.Time{} silently is the bug we fixed on
-	// 2026-04-23. Zero-time events were sneaking through into
-	// trades with observed_at = 0.
+	// Empty ledgerClosedAt must error: returning time.Time{} silently
+	// would let zero-time events through into trades with observed_at = 0.
 	e := &events.Event{ID: "bad-1"}
 	if _, err := e.EventClosedAt(); err == nil {
 		t.Fatal("empty LedgerClosedAt must error, got nil")

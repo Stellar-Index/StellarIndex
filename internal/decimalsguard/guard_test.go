@@ -423,10 +423,9 @@ func TestReport_RetriesWriteAfterTransientFailure(t *testing.T) {
 
 // ─── Backfill (one-time startup self-seed pass) ────────────────────────────
 
-// TestBackfill_DormantOffenderGetsUpserted is the production scenario this
-// change fixes: a non-7-decimals token traded once, went dormant, and
-// stopped appearing in the periodic sweep's short window (the CC2RB… gap,
-// 2026-07-09). It proves (a) Sweep's short window genuinely cannot see a
+// TestBackfill_DormantOffenderGetsUpserted pins the dormant-offender case:
+// a non-7-decimals token traded once, went dormant, and stopped appearing
+// in the periodic sweep's short window. It proves (a) Sweep's short window genuinely cannot see a
 // 30-day-old trade, and (b) Backfill's wide window does, and self-seeds
 // nonstandard_decimals_assets through the same classify+report path Sweep
 // uses — without any operator hand-seed.

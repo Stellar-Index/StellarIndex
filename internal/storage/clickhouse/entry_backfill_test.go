@@ -47,9 +47,9 @@ func trustlineEntry(t *testing.T, holder, code, issuer string, lastModified uint
 // The table is ReplacingMergeTree ORDER BY (ledger_seq, tx_hash, op_index,
 // change_index), and snapshot rows all share tx_hash="" and op_index=-1. With
 // a constant ChangeIndex, every snapshot entry that shares a ledger_seq
-// collapses to ONE arbitrary survivor at merge time — a site audit
-// measured over 55% of the 48M-entry Phase-C snapshot already destroyed,
-// taking account-state, trustline, supply and wasm reads down with it.
+// collapses to ONE arbitrary survivor at merge time — which would destroy
+// most of a large snapshot and take account-state, trustline, supply and
+// wasm reads down with it.
 //
 // crc32(key_xdr) restores per-key uniqueness AND keeps a re-run idempotent
 // (the same key re-derives the same index, so it replaces rather than
@@ -199,8 +199,8 @@ func TestSnapshotEntryRow_PopulatesTheQueryableColumns(t *testing.T) {
 // TestResolveChangeIndexCollisions_ReassignsCollidingRows is the regression
 // test: crc32(key) is only 32 bits, so two DIFFERENT keys
 // sharing a ledger_seq/tx_hash/op_index group can legitimately collide on
-// ChangeIndex — the exact shape the site audit measured destroying
-// >55% of a 48M-entry snapshot. Without a resolution pass, that collision
+// ChangeIndex — the exact shape that destroys snapshot rows
+// at merge time. Without a resolution pass, that collision
 // reaches ClickHouse and one row silently REPLACES the other at merge time.
 func TestResolveChangeIndexCollisions_ReassignsCollidingRows(t *testing.T) {
 	rows := []LedgerEntryChangeRow{
