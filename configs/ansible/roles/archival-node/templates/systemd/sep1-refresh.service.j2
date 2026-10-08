@@ -93,7 +93,7 @@ ProtectControlGroups=true
 # Must stay above RUN_TIMEOUT (25m) or systemd kills a run the binary was
 # about to end cleanly, losing the work it had done.
 #
-# A SIGKILL mid-loop no longer strands the row it was working on: the
+# A SIGKILL mid-loop does not strand the row it was working on: the
 # refresh marks each issuer's attempt BEFORE fetching it, so the retry
 # ladder defers a row whose processing killed the worker instead of
 # re-serving it at the head of `ORDER BY ... NULLS FIRST` on every run.
