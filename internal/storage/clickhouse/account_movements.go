@@ -14,9 +14,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// AccountMovementDirection discriminates which side of a two-party
-// classic-asset movement one stellar.account_movements row represents
-// (ADR-0048 D2).
+// AccountMovementDirection says which side of a two-party movement a row represents.
 type AccountMovementDirection string
 
 const (
@@ -25,13 +23,9 @@ const (
 	AccountMovementSelf     AccountMovementDirection = "self"
 )
 
-// AccountMovement is the storage-local, PRE-FAN-OUT shape of one
-// ADR-0047-reconstructed classic movement. It deliberately mirrors
-// classicmovements.Movement's fields rather than importing that type:
-// internal/storage/ sits BELOW internal/sources/ in the repo's import
-// direction (scripts/ci/lint-imports.sh's L/storage-below-compute
-// rule forbids new storage->sources edges). The caller
-// (stellarindex-ops classic-movements-backfill) converts.
+// AccountMovement is the pre-fan-out movement. It mirrors classicmovements.Movement
+// instead of importing it: internal/storage sits below internal/sources
+// (lint-imports.sh L/storage-below-compute).
 type AccountMovement struct {
 	MovementKind    string
 	Provenance      string
@@ -43,22 +37,16 @@ type AccountMovement struct {
 	Asset           string
 	Amount          *big.Int
 
-	// FromAddress/ToAddress: "" means "not a real G-account for this
-	// leg" (a claimable balance's escrow, a liquidity pool), NOT
-	// "unknown" — every classicmovements decode path either resolves
-	// a side or leaves it empty on purpose. See FanOutAccountMovement.
+	// FromAddress/ToAddress: "" means "not a real G-account for this leg" (claimable
+	// balance escrow, liquidity pool), not "unknown".
 	FromAddress string
 	ToAddress   string
 
-	// Attributes is the kind-specific remainder in migration 0105's
-	// (since-dropped, 0113) `attributes` shape, as a JSON string here.
+	// Attributes is the kind-specific remainder, as a JSON string.
 	Attributes map[string]any
 }
 
-// AccountMovementRow is one stellar.account_movements row — the
-// feed-shaped, per-participant fan-out of an AccountMovement
-// (ADR-0048 D2). Address is the row's OWN participant; Counterparty
-// is the other side, when known.
+// AccountMovementRow is one per-participant row; Counterparty is the other side, when known.
 type AccountMovementRow struct {
 	Address         string
 	Ledger          uint32
@@ -75,34 +63,11 @@ type AccountMovementRow struct {
 	Attributes      map[string]any
 }
 
-// FanOutAccountMovement expands one reconstructed movement into its
-// stellar.account_movements row(s) — ADR-0048 D2's "two rows per
-// movement, one per participant, direction discriminator" rule, with
-// two documented exceptions driven directly by
-// internal/sources/classicmovements' decode semantics:
-//
-//   - FromAddress == ToAddress (both non-empty): a degenerate
-//     self-payment (Stellar allows a payment whose destination is its
-//     own source). ONE row, direction=self — a sent+received pair
-//     would otherwise be two rows IDENTICAL except for `direction`
-//     for the very same address, which is redundant and would force
-//     `direction` into the ORDER BY purely to avoid a false PK
-//     collision between them.
-//   - Exactly one of FromAddress/ToAddress is non-empty: the other
-//     side isn't a real G-account for this leg (a claimable balance's
-//     escrow at creation/claim/clawback time, a liquidity pool's leg,
-//     or a path payment's per-asset leg, whose asset crosses the path's
-//     offers/pools). ONE row for the known side, Counterparty="". This is the
-//     "acting side" rule (ADR-0048 D2 / the classic-movements-backfill
-//     task doc): claimable_balance_create emits one 'sent' row for the
-//     creator; claimable_balance_claim/clawback and each LP-withdraw
-//     leg emit one 'received' row for the account; each LP-deposit leg
-//     emits one 'sent' row for the depositor.
-//
-// Neither side known (both empty) is a defensive no-op (nil, zero
-// rows) — every real classicmovements decode path populates at least
-// one side; a caller hitting this indicates a decode-layer bug worth
-// logging, not a legitimate zero-participant movement.
+// FanOutAccountMovement expands one movement into its account_movements row(s).
+// Two exceptions to "one row per participant": From==To (both set) is one
+// direction=self row, so no two rows differ only by `direction`; exactly one side
+// set (claimable-balance escrow, LP or path-payment leg) is one row for the known
+// side with Counterparty="". Neither side set returns nil.
 func FanOutAccountMovement(m AccountMovement) []AccountMovementRow {
 	base := AccountMovementRow{
 		Ledger:          m.Ledger,
@@ -147,24 +112,10 @@ func FanOutAccountMovement(m AccountMovement) []AccountMovementRow {
 	}
 }
 
-// accountMovementsDDL is the canonical stellar.account_movements
-// definition, kept in sync with deploy/clickhouse/tier1_schema.sql
-// (that file's copy is the one applied to r1 —
-// `clickhouse-client < deploy/clickhouse/tier1_schema.sql`, an
-// operator step, see docs/operations/self-hosting.md §4.5 — and the
-// one the integration-test harness loads). This Go-side copy exists
-// so EnsureAccountMovementsTable can defensively create the table on
-// a fresh/older ClickHouse before the first backfill write, the same
-// belt-and-suspenders pattern supply_flows.go uses.
-//
-// idx_cb_balance_id (see FindClaimableBalanceCreates'
-// doc comment) is part of this DDL so a FRESH install gets it from the
-// start. `CREATE TABLE IF NOT EXISTS` does NOT retrofit an index onto
-// an already-existing table, though — this only takes effect the first
-// time EnsureAccountMovementsTable creates the table from scratch. r1's
-// table already existed when the index was added, so it was applied
-// there directly via a one-off `ALTER TABLE ... ADD INDEX` (mutation
-// complete, not re-run by this DDL).
+// accountMovementsDDL mirrors deploy/clickhouse/tier1_schema.sql, which is what gets
+// applied; this copy lets EnsureAccountMovementsTable create the table on a fresh
+// ClickHouse. CREATE TABLE IF NOT EXISTS does not retrofit idx_cb_balance_id onto
+// an existing table.
 const accountMovementsDDL = `
 	CREATE TABLE IF NOT EXISTS stellar.account_movements (
 		address           String,
@@ -186,10 +137,7 @@ const accountMovementsDDL = `
 	PARTITION BY intDiv(ledger, 1000000)
 	ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction)`
 
-// EnsureAccountMovementsTable creates stellar.account_movements if
-// absent. Idempotent; classic-movements-backfill calls it at startup
-// so the write path never races a missing table on a freshly deployed
-// ClickHouse that hasn't had tier1_schema.sql re-applied yet.
+// EnsureAccountMovementsTable creates stellar.account_movements if absent (idempotent).
 func EnsureAccountMovementsTable(ctx context.Context, addr string) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -202,33 +150,15 @@ func EnsureAccountMovementsTable(ctx context.Context, addr string) error {
 	return nil
 }
 
-// accountMovementsInsertChunk is how many ROWS (post-fan-out, not
-// input movements — most movements fan out to 2 rows) accumulate
-// before one native INSERT batch is sent. A caller may hand
-// InsertAccountMovements an entire backfill window's decoded movement
-// set (the task's "fat batches, >=10k rows" target); chunking here
-// bounds any single INSERT payload independently of how large a
-// window's total row count grows.
+// accountMovementsInsertChunk is the ROW count (post-fan-out) per native INSERT,
+// bounding payload size however large the caller's window is.
 const accountMovementsInsertChunk = 20_000
 
-// InsertAccountMovements fans out + batch-inserts movements into
-// stellar.account_movements. Retry-safe: ReplacingMergeTree absorbs a
-// duplicate re-send of an already-written window (the same idempotent
-// re-derivation guarantee as every other ADR-0034 lake/serving
-// writer) — a caller that fails partway through a multi-chunk send
-// can simply retry the whole batch. classic-movements-backfill, which
-// does NOT retry and instead restarts from MaxAccountMovementLedger,
-// is covered too: rows are sent in ledger order
-// (sortAccountMovementRowsForInsert), so whatever survives a partial
-// send is COMPLETE for every ledger below the highest one written,
-// which is exactly what makes max(ledger) a sound resume checkpoint
-// for that caller. ch-cap67-movements, this table's other
-// writer, does not use this checkpoint at all — it resumes off its
-// own stellar.cap67_movements_watermark. Returns the number of ROWS sent
-// (not deduped — unlike Postgres's ON CONFLICT ... RETURNING, a
-// ClickHouse INSERT doesn't observe how many rows survive merge-time
-// dedup; "landed" isn't directly measurable here the way
-// BatchInsertClassicMovements' return value was).
+// InsertAccountMovements fans out and batch-inserts movements; a retry of the
+// whole batch is safe because ReplacingMergeTree absorbs duplicates.
+// Rows go out in ledger order, so a partial send is complete below max(ledger),
+// which is what makes max(ledger) a sound resume point for classic-movements-backfill.
+// Returns rows sent, not rows surviving dedup.
 func InsertAccountMovements(ctx context.Context, addr string, movements []AccountMovement) (int64, error) {
 	if len(movements) == 0 {
 		return 0, nil
@@ -240,10 +170,7 @@ func InsertAccountMovements(ctx context.Context, addr string, movements []Accoun
 	if len(rows) == 0 {
 		return 0, nil
 	}
-	// Deterministic, LEDGER-ORDERED — see
-	// sortAccountMovementRowsForInsert: the order decides what a
-	// partially-sent multi-chunk batch leaves behind, and
-	// classic-movements-backfill checkpoints on max(ledger).
+	// Ledger-ordered: decides what a partially-sent multi-chunk batch leaves behind.
 	sortAccountMovementRowsForInsert(rows)
 
 	conn, err := openAccountMovementsWrite(ctx, addr)
@@ -266,8 +193,7 @@ func InsertAccountMovements(ctx context.Context, addr string, movements []Accoun
 	return written, nil
 }
 
-// insertAccountMovementChunk sends one native batch (<=
-// accountMovementsInsertChunk rows).
+// insertAccountMovementChunk sends one native batch.
 func insertAccountMovementChunk(ctx context.Context, conn driver.Conn, rows []AccountMovementRow) error {
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO stellar.account_movements
 		(address, ledger, ledger_close_time, tx_hash, op_index, leg_index, direction,
@@ -294,10 +220,7 @@ func insertAccountMovementChunk(ctx context.Context, conn driver.Conn, rows []Ac
 	return wrapSend(batch.Send(), "account_movements")
 }
 
-// marshalAccountMovementAttributes renders Attributes as the string
-// to pass through to the driver — '{}' for nil/empty (matching the
-// column DEFAULT), json.Marshal's output otherwise. Same convention
-// as timescale's marshalClassicMovementAttributes.
+// marshalAccountMovementAttributes returns '{}' for nil/empty, matching the column DEFAULT.
 func marshalAccountMovementAttributes(attrs map[string]any) (string, error) {
 	if len(attrs) == 0 {
 		return "{}", nil
@@ -309,35 +232,10 @@ func marshalAccountMovementAttributes(attrs map[string]any) (string, error) {
 	return string(b), nil
 }
 
-// sortAccountMovementRowsForInsert orders a batch for
-// InsertAccountMovements' chunked send: LEDGER first, then the table's
-// remaining ORDER BY columns (address, tx_hash, op_index, leg_index,
-// direction) for a fully deterministic, reproducible batch.
-//
-// Ledger-first is a resume-safety requirement, not a cosmetic choice.
-// A batch larger than accountMovementsInsertChunk is sent as
-// several INSERTs, and ClickHouse has no transaction spanning them: a
-// send that fails partway leaves the earlier chunks durably written.
-// classic-movements-backfill checkpoints on MaxAccountMovementLedger —
-// "the data IS the checkpoint" (ADR-0048 D2) — so what the survivors
-// look like decides whether that checkpoint is sound.
-// (ch-cap67-movements, this table's other writer, checkpoints on its
-// own stellar.cap67_movements_watermark instead — MaxAccountMovementLedger
-// plays no part in its resume.)
-//
-//   - ADDRESS-first (the previous order) made each chunk an address
-//     PREFIX spanning the window's entire ledger range. max(ledger) then
-//     already sat at the top of the window while every address past the
-//     failure point held nothing for it, and -resume restarted there —
-//     silently skipping those addresses for the whole window, with no
-//     row, log line or count to show for it.
-//   - LEDGER-first makes each chunk a ledger prefix: every ledger
-//     strictly below the highest written one is COMPLETE, and resume
-//     restarts AT that ledger (re-processing it in full, which
-//     ReplacingMergeTree absorbs). No gap is reachable.
-//
-// ClickHouse re-sorts each part by the table's ORDER BY key at merge
-// time, so the insert order costs nothing on the read side.
+// sortAccountMovementRowsForInsert orders by LEDGER first, then the remaining ORDER BY
+// columns. ClickHouse has no transaction across chunks and resume checkpoints on
+// max(ledger), so ledger-first makes every ledger below the highest written one
+// complete; address-first would silently skip addresses past a failure point.
 func sortAccountMovementRowsForInsert(rows []AccountMovementRow) {
 	sort.Slice(rows, func(i, j int) bool {
 		a, b := &rows[i], &rows[j]
@@ -360,12 +258,7 @@ func sortAccountMovementRowsForInsert(rows []AccountMovementRow) {
 	})
 }
 
-// openAccountMovementsWrite dials ClickHouse for
-// InsertAccountMovements' batch INSERTs — the cheap-append write
-// class (a finite execution ceiling), same shape as
-// openParticipantWrite, kept as its own opener per this package's
-// per-writer-file convention (participant_backfill.go, sink.go each
-// define their own).
+// openAccountMovementsWrite dials the cheap-append write class; one opener per writer file.
 func openAccountMovementsWrite(ctx context.Context, addr string) (driver.Conn, error) {
 	// Identity from the environment; see ops_auth.go.
 	auth, err := chAuth()
@@ -393,15 +286,8 @@ func openAccountMovementsWrite(ctx context.Context, addr string) (driver.Conn, e
 	return conn, nil
 }
 
-// MaxAccountMovementLedger returns the highest ledger already present
-// in stellar.account_movements within [from,to] inclusive — the
-// ClickHouse-native resume point classic-movements-backfill uses in
-// place of a Postgres-persisted cursor (ADR-0048 D2: "no Postgres in
-// the loop"). found=false when nothing has been written in-range yet.
-//
-// No FINAL: max() over duplicate ReplacingMergeTree parts is correct
-// without dedup (a duplicate row shares the same ledger value), so
-// this stays a cheap, un-deduped read even over a large window.
+// MaxAccountMovementLedger returns the highest ledger in [from,to], the resume point (found=false if none).
+// No FINAL: duplicates share the same ledger value, so max() is exact.
 func MaxAccountMovementLedger(ctx context.Context, addr string, from, to uint32) (ledger uint32, found bool, err error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -420,17 +306,9 @@ func MaxAccountMovementLedger(ctx context.Context, addr string, from, to uint32)
 	return uint32(hi), true, nil
 }
 
-// MinAccountMovementLedger returns the lowest ledger already present
-// in stellar.account_movements within [from,to] inclusive. Paired
-// with MaxAccountMovementLedger: classic-movements-backfill's -resume
-// only trusts a jump to MaxAccountMovementLedger's result when
-// MinAccountMovementLedger([from,to]) itself equals from — i.e. the
-// range genuinely has data starting right at the resume window's own
-// lower bound, not merely somewhere inside it. Without that check, a
-// later invocation with a WIDENED -from (covering an earlier range a
-// prior, narrower run never touched) still finds that prior run's tip
-// via max(ledger) and jumps straight to it, silently never
-// revisiting the newly-widened earlier range.
+// MinAccountMovementLedger returns the lowest ledger in [from,to]. -resume trusts
+// MaxAccountMovementLedger only when this equals from, otherwise a widened -from
+// would jump past the earlier, never-processed range.
 func MinAccountMovementLedger(ctx context.Context, addr string, from, to uint32) (ledger uint32, found bool, err error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -449,36 +327,19 @@ func MinAccountMovementLedger(ctx context.Context, addr string, from, to uint32)
 	return uint32(lo), true, nil
 }
 
-// ClaimableBalanceCreateRow is one resolved claimable_balance_create
-// movement's asset/amount/creator, keyed by balance_id in
-// FindClaimableBalanceCreates' returned map.
+// ClaimableBalanceCreateRow is one resolved claimable_balance_create (asset/amount/creator).
 type ClaimableBalanceCreateRow struct {
 	Asset     string
 	Amount    *big.Int
 	CreatedBy string
 }
 
-// cbLookupExtTableChunkSize bounds how many balance_id hex strings go
-// into a single external-table semijoin query (see
-// FindClaimableBalanceCreates' doc comment for the full failure
-// history). Unlike the retired inlined-IN-list chunk bound, this is
-// NOT driven by a SQL-text-size ceiling — an external table sends ids
-// as column data over the native protocol, not as inlined SQL
-// literals, so there is no `max_query_size` exposure at any size. This
-// bound exists purely as a safety ceiling on how large a single
-// server-side hash-set (and driver-side Table.Append batch) gets built
-// per query. 1,000,000 comfortably covers every real window observed
-// so far in one or two queries,
-// while still capping worst-case per-query footprint if some future
-// window is far larger.
+// cbLookupExtTableChunkSize caps ids per external-table semijoin query. Ids travel as
+// column data, so there is no max_query_size exposure; the cap only bounds the
+// server-side hash set and driver batch.
 const cbLookupExtTableChunkSize = 1_000_000
 
-// chunkStrings splits ids into contiguous sub-slices of at most n
-// elements each (the last sub-slice may be shorter). n<=0 is treated
-// as "no chunking" (one sub-slice containing all of ids). Extracted
-// as its own function so the chunking arithmetic (exact multiples,
-// remainders, n larger than len(ids)) is unit-testable without a
-// ClickHouse connection.
+// chunkStrings splits ids into sub-slices of at most n; n<=0 means no chunking.
 func chunkStrings(ids []string, n int) [][]string {
 	if len(ids) == 0 {
 		return nil
@@ -497,60 +358,14 @@ func chunkStrings(ids []string, n int) [][]string {
 	return chunks
 }
 
-// FindClaimableBalanceCreates batch-resolves MANY pending claim/
-// clawback refs' claimable_balance_create rows — the ADR-0048 D2
-// ClickHouse-native replacement for the retired Postgres
-// timescale.Store.FindClaimableBalanceCreate lookup (ADR-0047 Phase
-// 3's cross-window correlation fallback tier; see
-// classicmovements/dispatcher_adapter.go's Decoder doc for the full
-// three-tier resolution: in-run index, this lookup, then unresolved).
-// It replaces a now-removed single-ref FindClaimableBalanceCreate that
-// classic-movements-backfill called once per pending ref, serially.
-//
-// A claimable-balance-bot window surfaces thousands to millions of pending
-// refs, so one lookup per ref was a full scan each. The idx_cb_balance_id
-// bloom skip-index fixes single lookups, but inlining a large IN-list into
-// the SQL text does not scale: past ~3,400 ids it exceeds `max_query_size`,
-// and at 2,000 ids per chunk the bloom filter's false-positive rate compounds
-// (1-(1-0.01)^2000 ≈ 1), degenerating each chunk into a near-full scan of the
-// wide `attributes` column that blows `max_memory_usage`. An IN-list
-// overflow failed the WHOLE window's lookup, leaving every claim
-// unresolved.
-//
-// So ids are passed as a ClickHouse EXTERNAL TABLE
-// (`clickhouse.WithExternalTable`, native-protocol side-channel, not
-// SQL text) and matched via `JSONExtractString(...) IN cb_ids` — a
-// hash-set semijoin whose cost is O(ids), not a function of granule
-// count or bloom FPR. This intentionally does NOT use
-// idx_cb_balance_id at all (an external table's contents aren't known
-// at query-analysis time, so there's nothing for the skip index to
-// prune against) — the `movement_kind = 'claimable_balance_create'`
-// LowCardinality prewhere already scopes the scan to the ~2.1M
-// cb-create rows before the semijoin runs, and a per-query
-// `WithSettings` (max_threads=4, max_memory_usage=8 GiB,
-// max_bytes_before_external_group_by=2 GiB) bounds the worst case.
-// cbLookupExtTableChunkSize (1,000,000) still chunks the external
-// table itself, purely as a footprint safety bound, not to dodge a
-// text-size or index-FPR ceiling — see its doc comment.
-//
-// idx_cb_balance_id does not back this batched lookup: the query runs with
-// use_skip_indexes=0 because a bloom-filter false-positive rate compounded
-// over a large IN-set matches every granule. No current reader uses the
-// index; it only prunes when the predicate is textually identical to the
-// indexed expression.
-//
-// The returned map contains ONLY found ids; a balance_id absent from
-// it means no matching create row exists YET for it in what's been
-// backfilled to ClickHouse so far — a genuine ADR-0047 D4
-// recognizable-incompleteness signal (the create may be outside the
-// range backfilled so far, or — rarely — same-ledger ordering noise),
-// never a query failure. Callers must count + log misses, never guess
-// an amount. Duplicate rows for the same balance_id (ReplacingMergeTree
-// parts not yet merged, or the same id appearing in two different
-// chunks) are identical by construction; the first one scanned wins.
-// Empty input returns an empty, non-nil map without querying
-// ClickHouse. ctx is checked between chunks so a caller's cancellation
-// or deadline is honored without waiting for every remaining chunk.
+// FindClaimableBalanceCreates batch-resolves pending claim/clawback refs to their create rows, keyed by balance_id.
+// Ids go in a ClickHouse external table and match via a hash-set semijoin: an
+// inlined IN-list exceeds max_query_size and compounds the bloom filter's
+// false-positive rate into a full scan of the wide attributes column. The query
+// runs with use_skip_indexes=0, so idx_cb_balance_id is unused here.
+// The map holds only found ids; a miss means no create row yet (ADR-0047 D4
+// incompleteness), so callers must count and log it, never guess an amount.
+// Duplicate rows are identical, first wins. Empty input returns an empty non-nil map.
 func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexes []string) (map[string]ClaimableBalanceCreateRow, error) {
 	out := make(map[string]ClaimableBalanceCreateRow, len(balanceIDHexes))
 	if len(balanceIDHexes) == 0 {
@@ -573,19 +388,10 @@ func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexe
 	return out, nil
 }
 
-// cbLookupCreatesQuery matches chunk's ids against the external table
-// (`cb_ids`, one `balance_id String` column) findClaimableBalanceCreatesChunk
-// attaches via clickhouse.WithExternalTable — a hash-set semijoin, not
-// an inlined IN-list.
-// The SETTINGS clause lives in the SQL text, not clickhouse.WithSettings:
-// observed live that per-query context settings did NOT reach
-// the server when combined with WithExternalTable — the failing query ran
-// at openRead's connection-level 10 GiB ceiling, not the requested 8 GB.
-// use_skip_indexes=0 is load-bearing: evaluating idx_cb_balance_id (bloom,
-// 1% FPR) against a multi-thousand-element IN-set matches essentially every
-// granule (1-(1-0.01)^N → 1) and the index machinery itself blew the 10 GiB
-// limit; a plain PREWHERE-on-movement_kind scan + hash probe streams within
-// bounds (measured ~2.5 min over 695M cb-create rows at 4 threads).
+// cbLookupCreatesQuery matches chunk ids against the `cb_ids` external table.
+// SETTINGS is in the SQL text because per-query WithSettings did not reach the
+// server alongside WithExternalTable. use_skip_indexes=0 is load-bearing: the
+// bloom index against a large IN-set matches every granule and blew the memory limit.
 const cbLookupCreatesQuery = `
 	SELECT JSONExtractString(attributes, 'balance_id') AS balance_id, asset, amount, address
 	FROM stellar.account_movements
@@ -593,12 +399,8 @@ const cbLookupCreatesQuery = `
 	  AND JSONExtractString(attributes, 'balance_id') IN cb_ids
 	SETTINGS use_skip_indexes = 0, max_threads = 4, max_memory_usage = 8000000000`
 
-// findClaimableBalanceCreatesChunk runs cbLookupCreatesQuery against
-// one chunk (<= cbLookupExtTableChunkSize ids), passed as a
-// server-side external table rather than inlined SQL, and merges
-// matches into out. Building the ext.Table is per-chunk (the driver
-// has no reset/reuse API for one), which is cheap relative to the
-// query itself.
+// findClaimableBalanceCreatesChunk runs the query for one chunk via a server-side
+// external table and merges matches into out.
 func findClaimableBalanceCreatesChunk(ctx context.Context, conn driver.Conn, chunk []string, out map[string]ClaimableBalanceCreateRow) error {
 	tbl, terr := ext.NewTable("cb_ids", ext.Column("balance_id", "String"))
 	if terr != nil {
@@ -610,9 +412,7 @@ func findClaimableBalanceCreatesChunk(ctx context.Context, conn driver.Conn, chu
 		}
 	}
 
-	// Query bounds are in cbLookupCreatesQuery's SQL-text SETTINGS
-	// clause — see its doc comment for why WithSettings cannot be
-	// trusted next to WithExternalTable.
+	// Query bounds are in cbLookupCreatesQuery's SETTINGS clause (see there).
 	qctx := clickhouse.Context(ctx, clickhouse.WithExternalTable(tbl))
 
 	rows, qerr := conn.Query(qctx, cbLookupCreatesQuery)
@@ -637,30 +437,13 @@ func findClaimableBalanceCreatesChunk(ctx context.Context, conn driver.Conn, chu
 	return rows.Err()
 }
 
-// AccountMovementVerifyCounts maps movement_kind -> the number of
-// DISTINCT movements (not rows — a two-participant movement is 2 rows
-// sharing one (tx_hash, op_index, leg_index) identity) currently in
-// stellar.account_movements for a ledger window.
+// AccountMovementVerifyCounts maps movement_kind to the count of DISTINCT movements
+// (a two-participant movement is 2 rows sharing one identity).
 type AccountMovementVerifyCounts map[string]uint64
 
-// VerifyAccountMovementsWindow recounts [from,to] from
-// stellar.account_movements, grouped by movement_kind, collapsing
-// each movement's 1-2 fan-out rows back to one count via
-// uniqExact(tx_hash, op_index, leg_index) — tx_hash is unique
-// network-wide (stellar.tx_hash_index's ORDER BY tx_hash precedent),
-// so this needs no `ledger` in the tuple beyond the WHERE-scope.
-//
-// This is classic-movements-backfill's -verify mode: a cheap,
-// window-scoped reconciliation of "ops decoded this run" against
-// "movements now visible in ClickHouse" (ADR-0047 D4 applied to the
-// CH write target) — NOT the full ADR-0033 substrate/recognition/
-// projection machinery, which doesn't apply to a historical-only,
-// non-projected write path like this one.
-//
-// No FINAL: uniqExact over duplicate ReplacingMergeTree parts is
-// still exact (an identical duplicate row is the identical tuple, so
-// it doesn't inflate the distinct count) — the same reasoning
-// StreamClassicOps' NO-FINAL note documents for this table family.
+// VerifyAccountMovementsWindow recounts [from,to] by movement_kind via
+// uniqExact(tx_hash, op_index, leg_index), collapsing fan-out rows. No FINAL:
+// identical duplicates do not inflate a distinct count.
 func VerifyAccountMovementsWindow(ctx context.Context, addr string, from, to uint32) (AccountMovementVerifyCounts, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -690,45 +473,23 @@ func VerifyAccountMovementsWindow(ctx context.Context, addr string, from, to uin
 	return out, rows.Err()
 }
 
-// AccountMovementFilter narrows an AccountMovements read (ADR-0048
-// D5's GET /v1/accounts/{g}/movements). Zero-value fields mean "no
-// filter" on that dimension.
+// AccountMovementFilter narrows an AccountMovements read; zero values mean no filter.
 type AccountMovementFilter struct {
 	Kind      string                   // movement_kind exact match; "" = any
 	Direction AccountMovementDirection // exact match; "" = any
 	Asset     string                   // canonical asset id exact match; "" = any
 
-	// MaxLedger is the INCLUSIVE ledger ceiling this read is clamped
-	// to (`AND ledger <= ?`), read only when HasMaxLedger is set.
-	//
-	// It is a SQL predicate rather than a caller-side post-filter on
-	// purpose: /v1/accounts/{g}/movements clamps this arm to the cap67
-	// watermark, and dropping rows in Go AFTER the SQL LIMIT shrinks
-	// the page — to EMPTY whenever every one of the `limit` newest rows
-	// sits above the ceiling, which is the routine shape while the
-	// cap67 follow daemon is mid-window. An empty page suppresses
-	// next_cursor and makes the account's whole pre-watermark history
-	// unreachable. Bounding inside the query fills the page from
-	// the rows that are actually servable.
+	// MaxLedger is the inclusive ledger ceiling, read only when HasMaxLedger is set.
+	// It is a SQL predicate, not a Go post-filter: trimming after LIMIT can empty the
+	// page and suppress next_cursor, stranding all pre-watermark history.
 	MaxLedger uint32
-	// HasMaxLedger is the explicit set-signal for MaxLedger: 0 is a
-	// REACHABLE ceiling, not "unset". A deployment whose movements
-	// floor is installed at genesis (testnet/futurenet,
-	// timescale.InstallMovementsFloor(1)) computes ceiling = floor-1 =
-	// 0 whenever the watermark is absent or unreadable, and MUST then
-	// serve NOTHING from this arm — a `MaxLedger > 0` sentinel would
-	// silently drop the clause and serve the whole archive alongside
-	// the Postgres tail instead. Callers reading the unbounded archive
-	// leave both fields zero.
+	// HasMaxLedger is the explicit set-signal: 0 is a reachable ceiling (genesis floor
+	// with no watermark) and must serve nothing, which a `MaxLedger > 0` sentinel would break.
 	HasMaxLedger bool
 }
 
-// AccountMovementCursor is the keyset position for AccountMovements
-// pagination (ADR-0048 D5) — descending (ledger, tx_hash, op_index,
-// leg_index), the table's ORDER BY suffix after the fixed `address`
-// equality filter. Zero value (Ledger==0) means "from the newest"
-// (first page) — same IsSet/Ledger==0 sentinel convention as
-// ExplorerCursor above.
+// AccountMovementCursor is the descending (ledger, tx_hash, op_index, leg_index)
+// keyset position; Ledger==0 means first page.
 type AccountMovementCursor struct {
 	Ledger   uint32
 	TxHash   string
@@ -736,30 +497,22 @@ type AccountMovementCursor struct {
 	LegIndex uint32
 }
 
-// IsSet reports whether the cursor points past the newest row (a
-// continuation page, not the first).
+// IsSet reports whether this is a continuation page.
 func (c AccountMovementCursor) IsSet() bool { return c.Ledger > 0 }
 
 const accountMovementCols = `ledger, ledger_close_time, tx_hash, op_index, leg_index, direction,
 	movement_kind, provenance, asset, counterparty, amount, attributes`
 
-// accountMovementsQuery builds AccountMovements' SQL for the given filter
-// dimensions + cursor presence (the arg order mirrors the clause order).
-//
-// This is a KEYED read — `address = ?` is an equality on the table's ORDER BY
-// prefix, a single contiguous primary-key range (measured class: 0.08s) —
-// but it still carries explorerScanSettings defensively: while the
-// participant/movements backfill is running, the address range spans MANY
-// small un-merged parts, and the per-part stream setup at default threads is
-// the same fan-out the pin bounds. Pinning threads on a range read costs
-// nothing when the part count is small.
+// accountMovementsQuery builds the SQL for the filter dimensions and cursor presence.
+// Keyed read: `address = ?` is a contiguous primary-key range, but it still
+// carries explorerScanSettings because un-merged parts during backfill fan out
+// per-part stream setup.
 func accountMovementsQuery(filter AccountMovementFilter, hasCursor bool) string {
 	return accountMovementsSQL(filter, hasCursor, true)
 }
 
-// accountMovementsWindowQuery reads the same range in sort-key order with the
-// row version (ingested_at) appended and no LIMIT 1 BY, so the read stops
-// early; the caller keeps the newest version per key.
+// accountMovementsWindowQuery reads in sort-key order with ingested_at appended and
+// no LIMIT 1 BY, so the read stops early; the caller keeps the newest version per key.
 func accountMovementsWindowQuery(filter AccountMovementFilter, hasCursor bool) string {
 	return accountMovementsSQL(filter, hasCursor, false)
 }
@@ -784,19 +537,12 @@ func accountMovementsSQL(filter AccountMovementFilter, hasCursor, exactDedup boo
 		sb.WriteString(" AND ledger <= ?")
 	}
 	if hasCursor {
-		// The leading `ledger <= ?` is implied by the tuple but is what lets the
-		// primary index cut the range at the cursor; a tuple alone is not pruned.
+		// The leading `ledger <= ?` lets the primary index cut at the cursor; a tuple alone is not pruned.
 		sb.WriteString(" AND ledger <= ? AND (ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
 	}
-	// LIMIT 1 BY = the read-time dedup the sibling account readers
-	// (AccountTransactions / AccountOperations) already carry: an un-merged
-	// ReplacingMergeTree duplicate part — routine while a re-derive is in
-	// flight, since InsertAccountMovements is retry-by-reinsert — would
-	// otherwise eat a LIMIT slot, repeat a row, and shift the keyset cursor.
-	// Far cheaper than FINAL: dedup applies only to the rows this address's
-	// contiguous range scan already returns. ingested_at DESC makes the kept
-	// row the newest version: a re-derive rewrites a key in place (e.g. only
-	// counterparty changes), and without it an un-merged older part can win.
+	// LIMIT 1 BY is the read-time dedup: an un-merged ReplacingMergeTree duplicate would
+	// eat a LIMIT slot and shift the keyset cursor. Cheaper than FINAL.
+	// ingested_at DESC keeps the newest version of a re-derived key.
 	if exactDedup {
 		sb.WriteString(" ORDER BY ledger DESC, tx_hash DESC, op_index DESC, leg_index DESC, ingested_at DESC LIMIT 1 BY ledger, tx_hash, op_index, leg_index LIMIT ?")
 	} else {
@@ -806,28 +552,13 @@ func accountMovementsSQL(filter AccountMovementFilter, hasCursor, exactDedup boo
 	return sb.String()
 }
 
-// AccountMovements returns one address's movement feed from
-// stellar.account_movements (ADR-0048 D2/D5), newest first, keyset-
-// paged by the composite (ledger, tx_hash, op_index, leg_index)
-// cursor. `address` is an equality filter on the table's ORDER BY
-// PREFIX, so this is a single contiguous primary-key range scan — the
-// exact property ADR-0048 D1 designed this table for (unlike
-// AccountTransactions/AccountOperations above, which UNION two arms
-// against the raw lake's source_account/participant split, this needs
-// no UNION).
-//
-// internal/api/v1/explorer/movements.go merges this CH-native
-// pre-P23 archive with timescale.Store.ListSEP41TransfersByAddress's
-// post-P23 Postgres tail to serve the full GET
-// /v1/accounts/{g}/movements feed (ADR-0048 D5). That merge's ledger
-// ceiling travels in filter.MaxLedger/HasMaxLedger so it is applied
-// BEFORE this query's LIMIT — never as a post-read trim, which would
-// return short (or empty) pages and strand the history below it.
-//
-// No FINAL. The page is read as a bounded window in sort-key order (no
-// LIMIT 1 BY, which would stop ClickHouse's read-in-order early exit), the
-// newest ingested_at per key is kept in Go, and a window that cannot prove a
-// full page falls back to the exact LIMIT 1 BY query (accountMovementsQuery).
+// AccountMovements returns one address's movement feed, newest first, keyset-paged.
+// `address` is an equality on the ORDER BY prefix: one contiguous range, no UNION.
+// The explorer merges this archive with the Postgres tail; its ledger ceiling travels
+// in filter.MaxLedger/HasMaxLedger so it applies before LIMIT, never as a post-read trim.
+// No FINAL: the page is read as a window in sort-key order (LIMIT 1 BY would stop
+// the early exit), newest ingested_at per key is kept in Go, and a window that
+// cannot prove a full page falls back to accountMovementsQuery.
 func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, limit int, cur AccountMovementCursor, filter AccountMovementFilter) ([]AccountMovementRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 25
@@ -869,9 +600,8 @@ type movementKey struct {
 	txHash                    string
 }
 
-// accountMovementsWindowed reads one window in sort-key order, keeps the
-// newest ingested_at per key and serves the page. ok=false means the window
-// could not prove a full page; the caller runs the exact LIMIT 1 BY query.
+// accountMovementsWindowed serves a page from one sort-key-order window, keeping the
+// newest ingested_at per key. ok=false means it could not prove a full page.
 func (r *ExplorerReader) accountMovementsWindowed(ctx context.Context, address string, limit, window int, cur AccountMovementCursor, filter AccountMovementFilter, args []any) ([]AccountMovementRow, bool, error) {
 	rows, err := r.conn.Query(ctx, accountMovementsWindowQuery(filter, cur.IsSet()), args...)
 	if err != nil {
@@ -917,9 +647,7 @@ func scanAccountMovementVersions(rows driver.Rows, address string) ([]accountMov
 	return out, rows.Err()
 }
 
-// scanAccountMovementRows scans accountMovementCols rows into
-// AccountMovementRow values, stamping Address (not itself selected —
-// every row already matches the query's address filter).
+// scanAccountMovementRows scans rows into AccountMovementRow, stamping Address (not selected).
 func scanAccountMovementRows(rows driver.Rows, address string) ([]AccountMovementRow, error) {
 	var out []AccountMovementRow
 	for rows.Next() {
@@ -932,8 +660,7 @@ func scanAccountMovementRows(rows driver.Rows, address string) ([]AccountMovemen
 	return out, rows.Err()
 }
 
-// scanAccountMovementRow scans one accountMovementCols row; a non-nil version
-// also receives the trailing ingested_at column.
+// scanAccountMovementRow scans one row; a non-nil version also receives ingested_at.
 func scanAccountMovementRow(rows driver.Rows, address string, row *AccountMovementRow, version *time.Time) error {
 	var direction, attrs string
 	var amt *big.Int
