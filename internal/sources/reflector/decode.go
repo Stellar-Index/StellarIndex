@@ -11,44 +11,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// opIndexFanoutStride spaces the synthetic op_index values emitted
-// from one Reflector event's price vector. 1024 comfortably holds
-// any vector size we've observed (dozens of assets) with room to
-// grow; well within uint32 since Stellar caps ops/tx at 100.
+// opIndexFanoutStride spaces the synthetic op_index values of one event's price vector; 1024
+// holds any observed vector (dozens of assets) with room to grow.
 const opIndexFanoutStride = 1024
 
-// eventFanoutStride bounds how many contract events ONE operation can
-// emit before their per-event op_index blocks would collide. A fanout
-// base of OperationIndex ALONE would collide two Reflector update
-// events within the SAME operation on their whole 1024-wide OpIndex
-// block — the second event's rows would land on top of (or lose to ON
-// CONFLICT DO NOTHING against) the first's. EventIndex ALONE isn't a
-// safe base either: per events.Event's own doc it is scoped
-// PER-OPERATION (resets to 0 for each new op), so it would collide two
-// DIFFERENT operations that each emit a single event. Combining both
-// dimensions — OperationIndex and EventIndex — keeps every event's
-// OpIndex block disjoint whether the collision risk is same-op or
-// cross-op. 64 is well beyond any observed Reflector-adjacent event
-// fanout (single digits) and keeps the whole synthesized value
-// comfortably inside uint32 even at Stellar's 100-ops/tx cap:
-// (100*64+63)*1024+1023 ≈ 6.6M.
+// eventFanoutStride bounds the contract events ONE operation can emit before their OpIndex blocks
+// collide (and lose to ON CONFLICT DO NOTHING). OperationIndex alone collides two events in one op;
+// EventIndex alone (per-operation) collides two ops. Packing both stays under uint32: ≈ 6.6M at 100 ops/tx.
 const eventFanoutStride = 64
 
 // opIndexFanoutMax bounds e.OperationIndex so the packed op_index stays
 // within uint32: 2^32 / (eventFanoutStride * opIndexFanoutStride) = 65536.
 const opIndexFanoutMax = (1 << 32) / (eventFanoutStride * opIndexFanoutStride)
 
-// reflectorTopicArity is the minimum topic count on a Reflector
-// UpdateEvent: ["REFLECTOR", "update", <timestamp: u64>]. Anything
-// shorter is by definition not our event.
+// reflectorTopicArity is the minimum UpdateEvent topic count: ["REFLECTOR", "update", <timestamp: u64>].
 const reflectorTopicArity = 3
 
-// classify reports whether this is a Reflector "update" event. We
-// match topic[0]=REFLECTOR + topic[1]=update; anything else returns
-// false and the caller skips. We do NOT require topic[2] at this
-// stage — a malformed topic arity is surfaced later as
-// ErrMalformedPayload so the decode-errors metric catches it
-// separately from the common "not our event" case.
+// classify reports whether this is a REFLECTOR.update event. Topic arity is checked later, so a
+// malformed one surfaces as ErrMalformedPayload rather than "not our event".
 func classify(e *events.Event) bool {
 	if len(e.Topic) < 2 {
 		return false
@@ -57,26 +37,10 @@ func classify(e *events.Event) bool {
 		e.Topic[1] == TopicSymbolUpdate
 }
 
-// decodeUpdate converts one REFLECTOR.update event into a slice of
-// canonical.OracleUpdate — one per (asset, price) pair in the
-// event's update_data vector.
-//
-// Each OracleUpdate shares the same (ledger, tx_hash) but gets a
-// distinct OpIndex derived from the vector index so identity stays
-// unique in the oracle_updates hypertable.
-//
-// variant determines the source-name to stamp; decimals is the
-// contract-declared price scale (typically 14); observer is an
-// optional relayer strkey stamped on every emitted row.
-//
-// NOTE: observer is NOT populated in production. No production
-// NewDecoder call passes WithDecoderObserver (see
-// internal/pipeline/dispatcher.go), and the per-tx relayer — the
-// update tx's source account — is not currently available to decoders
-// at all: internal/events/event.go's Event carries no
-// tx-source-account field. Capturing the relayer would first require
-// plumbing that field through events.Event (a noted follow-up); until
-// then observer is empty on every production OracleUpdate.
+// decodeUpdate converts one REFLECTOR.update event into one canonical.OracleUpdate per (asset,
+// price) slot, each with an OpIndex from its vector position. decimals is the contract's price scale.
+// observer is empty in production: no NewDecoder call passes WithDecoderObserver, and events.Event
+// carries no tx-source account to supply the relayer.
 func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer string, closedAt time.Time) ([]canonical.OracleUpdate, error) {
 	if !classify(e) {
 		return nil, ErrNotReflectorEvent
@@ -88,10 +52,7 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 
 	prices, err := decodeUpdateBody(e.Value)
 	if err != nil {
-		// Double-%w preserves both sentinels — callers can
-		// errors.Is against ErrMalformedPayload (for the "any
-		// decode problem" gate) AND against the specific wrapped
-		// cause (for targeted ops tooling).
+		// Double-%w: callers can errors.Is both ErrMalformedPayload and the specific cause.
 		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
 	if len(prices) == 0 {
@@ -103,18 +64,9 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 		return nil, err
 	}
 
-	// Timestamp: the contract puts it in topic[2] as u64
-	// MILLISECONDS (not seconds — verified against a mainnet capture
-	// and reflector-contract/oracle/src/price_oracle.rs:74, which
-	// divides by 1000 to expose seconds via `last_timestamp`. Internal
-	// storage is ms; the event carries the raw internal value).
-	//
-	// Fall back to ledger close time if the topic decode fails so an
-	// isolated encoding quirk doesn't drop an entire event's worth
-	// of price updates. canonical.SafeUnixMillis clamps sentinel /
-	// garbage values (pre-epoch or far-future, incl. the >MaxInt64
-	// wrap class of the router deadline_ts overflow) to the ledger
-	// close so they can't error the timestamptz INSERT.
+	// topic[2] is u64 MILLISECONDS (verified on a mainnet capture; price_oracle.rs:74 divides by 1000
+	// for seconds). On decode failure fall back to ledger close rather than drop the event's prices;
+	// SafeUnixMillis clamps garbage to the ledger close so it cannot error the timestamptz INSERT.
 	ts := closedAt
 	if tsMs, terr := decodeUpdateTimestamp(e.Topic[2]); terr == nil {
 		ts = canonical.SafeUnixMillis(tsMs, closedAt)
@@ -123,28 +75,12 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 	sourceName := variant.SourceName()
 	out := make([]canonical.OracleUpdate, 0, len(prices))
 	for i, entry := range prices {
-		// Oracle capture-totality: there is no unknown-symbol skip here.
-		// An unmapped symbol arrives from sdkDecodeUpdateBody as a
-		// raw:<symbol> PriceEntry and is emitted like any other slot, at
-		// its own vector position `i`, so no other row's OpIndex depends on
-		// the allow-list (see PriceEntry's godoc).
+		// Capture-totality: an unmapped symbol is a raw:<symbol> entry at its own position `i`, so no
+		// row's OpIndex depends on the allow-list (see PriceEntry).
 		if entry.Price.Sign() <= 0 {
-			// Reflector filters zero-price entries at the contract
-			// level (oracle/src/events.rs:24 — zero prices skipped
-			// before publish), so in practice we should never see
-			// one. Defensive skip keeps us correct if the contract
-			// relaxes that filter.
-			//
-			// Surface the skip so a non-positive slot isn't dropped
-			// invisibly (cf. the unmapped-symbol path, which records
-			// the slot as raw: and increments
-			// obs.SourceUnknownSymbolsTotal). A WARN log rather than
-			// that counter: a non-positive price is a
-			// contract-invariant violation, NOT an allow-list/coverage
-			// gap, so it doesn't belong on the coverage-drift metric
-			// that drives that counter's alert. Loud if it ever fires,
-			// without misrouting operators toward extending an
-			// allow-list.
+			// The contract filters zero prices (oracle/src/events.rs:24); this is defensive. WARN, not
+			// SourceUnknownSymbolsTotal: a non-positive price breaks a contract invariant, not allow-list
+			// coverage, and must not send operators to extend an allow-list.
 			slog.Warn("reflector: skipping non-positive oracle price",
 				"source", sourceName,
 				"contract_id", e.ContractID,
@@ -159,9 +95,7 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 			ContractID: e.ContractID,
 			Ledger:     e.Ledger,
 			TxHash:     e.TxHash,
-			// OpIndex packs (OperationIndex, EventIndex, vector
-			// position) — see eventFanoutStride's godoc for why both
-			// index dimensions are needed, not just one.
+			// See eventFanoutStride for why both index dimensions are packed.
 			OpIndex:   (uint32(e.OperationIndex)*eventFanoutStride+uint32(e.EventIndex))*opIndexFanoutStride + uint32(i),
 			Timestamp: ts,
 			Asset:     entry.Asset,
@@ -173,9 +107,7 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 		out = append(out, u)
 	}
 	if len(out) == 0 {
-		// Only reachable when EVERY slot was non-positive: an unmapped
-		// symbol is a raw row, not a skip, so an all-unknown vector does
-		// not land here.
+		// Only when EVERY slot was non-positive; unmapped symbols are raw rows, not skips.
 		return nil, ErrEmptyPrices
 	}
 	return out, nil
@@ -198,20 +130,9 @@ func checkFanoutBounds(e *events.Event, priceCount int) error {
 	return nil
 }
 
-// quoteForVariant returns the implicit quote asset of a Reflector
-// contract, which is the contract's SEP-40 base():
-//
-//   - CEX (CAFJ…) and FX (CBKG…) publish an explicit USD base per the
-//     Reflector docs (ADR-0010 fiat sentinel).
-//   - DEX (CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M)
-//     returns Asset::Stellar(<pubnet USDC SAC>) from base() (confirmed
-//     via simulateTransaction; USDC is absent from its feed and the XLM
-//     SAC reads ~0.20, not the 1.0 of an XLM self-price).
-//
-// The DEX quote is stamped as that SAC, not fiat:USD: stablecoins are
-// never normalised at ingest (a depeg would vanish) — USDC→USD is a
-// compute-time mapping, and the alias registry joins the SAC to its
-// classic form on read.
+// quoteForVariant returns the contract's SEP-40 base(): USD for CEX (CAFJ…) and FX (CBKG…)
+// (ADR-0010 fiat sentinel); for DEX the pubnet USDC SAC, confirmed via simulateTransaction. The DEX
+// quote stays that SAC, never fiat:USD: normalising a stablecoin at ingest would hide a depeg.
 func quoteForVariant(v Variant) canonical.Asset {
 	switch v {
 	case VariantDEX:
@@ -219,8 +140,7 @@ func quoteForVariant(v Variant) canonical.Asset {
 	case VariantCEX, VariantFX:
 		return usdFiat
 	default:
-		// Unknown variant should never occur; default to the USD
-		// quote every real Reflector oracle uses rather than XLM.
+		// Unreachable; default to the USD quote every real Reflector oracle uses.
 		return usdFiat
 	}
 }
@@ -229,10 +149,8 @@ func quoteForVariant(v Variant) canonical.Asset {
 // base() returns.
 const dexBaseContractID = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 
-// usdFiat is the implicit USD quote for CEX/FX Reflector variants;
-// dexBaseUSDC the DEX variant's. Parsed once at package init so a
-// regression fires a loud init panic instead of silently writing
-// zero-asset oracle updates on every Reflector event.
+// usdFiat / dexBaseUSDC are the CEX/FX and DEX quotes, parsed at init so a regression panics
+// loudly instead of writing zero-asset oracle updates.
 var (
 	usdFiat     = mustUSDFiat()
 	dexBaseUSDC = mustSorobanAsset(dexBaseContractID)
@@ -254,18 +172,9 @@ func mustUSDFiat() canonical.Asset {
 	return a
 }
 
-// PriceEntry is one (asset, price) pair from the update_data vector.
-//
-// sdkDecodeUpdateBody keeps the SLOT COUNT stable — exactly one
-// PriceEntry per raw update_data[] position. An unmapped symbol
-// yields a canonical.AssetOracleRaw entry (`raw:<symbol>`) rather
-// than being compacted out: decodeUpdate's synthetic OpIndex is
-// derived from vector POSITION, so dropping a slot from the slice
-// would shift every OTHER entry's OpIndex whenever the allow-list
-// changed, orphaning or duplicating rows on a re-derive instead of
-// updating them in place. Because the raw row consumes its slot and
-// IS emitted, a later allow-list extension re-derives the same PK and
-// promotes `raw:X` → `crypto:X` in place.
+// PriceEntry is one (asset, price) slot of update_data. sdkDecodeUpdateBody keeps exactly one per
+// raw position (an unmapped symbol becomes `raw:<symbol>`): OpIndex derives from POSITION, so compacting
+// would shift other rows' keys on an allow-list change; instead a re-derive promotes raw:X → crypto:X in place.
 type PriceEntry struct {
 	Asset canonical.Asset
 	Price canonical.Amount
@@ -279,44 +188,15 @@ var (
 	decodeUpdateTimestamp = sdkDecodeUpdateTimestamp
 )
 
-// sdkDecodeUpdateBody decodes Event.Value (base64 SCVal) into the
-// payload emitted by Reflector's UpdateEvent.
-//
-// Contract reference: reflector-contract/oracle/src/events.rs:4-10
-// (soroban-sdk 25.3.0 at VERSIONS.md's pinned SHA):
-//
-//	#[contractevent(topics = ["REFLECTOR", "update"])]
-//	pub struct UpdateEvent {
-//	    #[topic] timestamp: u64,
-//	    update_data: Vec<(Val, i128)>,
-//	}
-//
-// On the wire (verified against four mainnet DEX-oracle
-// captures in test/fixtures/reflector/v6-*/), the
-// soroban-sdk #[contractevent] macro wraps non-topic fields in a
-// Map keyed by field name — even when there is only one such
-// field. So the body we receive is:
+// sdkDecodeUpdateBody decodes Event.Value (base64 SCVal) of Reflector's UpdateEvent
+// (reflector-contract/oracle/src/events.rs:4-10, soroban-sdk 25.3.0). #[contractevent] wraps the
+// non-topic field in a Map even when it is alone (pinned by test/fixtures/reflector/v6-*/):
 //
 //	Map { "update_data": Vec<(Val, i128)> }
 //
-// NOT the raw Vec. We look up the field by name (per
-// docs/architecture/ingest-pipeline.md#contract-schema-evolution — decode-by-name-
-// not-position lets us survive benign field additions across
-// upgrades).
-//
-// `Val` in each pair is either:
-//   - `ScAddress` — for Asset::Stellar(address); yields a
-//     canonical.NewSorobanAsset(C-strkey).
-//   - `ScSymbol`  — for Asset::Other(symbol); resolved through
-//     canonical.MapOracleSymbol (fiat ADR-0010 → crypto ADR-0014 →
-//     RWA ADR-0028), else recorded VERBATIM as `raw:<symbol>` so the
-//     record layer stays total while operators decide whether to
-//     extend an allow-list (docs/design/oracle-capture-totality-
-//     design.md).
-//
-// Per ADR-0013 + ingest-pipeline.md#contract-schema-evolution this is the ONLY
-// decoder path; tests override via the package-level var, not by
-// editing this function.
+// The field is looked up by name to survive benign additions across upgrades. Val is an ScAddress
+// (a Soroban asset) or an ScSymbol, mapped via canonical.MapOracleSymbol or recorded as `raw:<symbol>`.
+// Per ADR-0013 this is the only decoder path; tests override the package-level var.
 func sdkDecodeUpdateBody(valueB64 string) ([]PriceEntry, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
@@ -342,17 +222,8 @@ func sdkDecodeUpdateBody(valueB64 string) ([]PriceEntry, error) {
 			return nil, fmt.Errorf("update_data[%d]: %w", i, err)
 		}
 		if !entry.Asset.IsMapped() {
-			// Unmapped symbol = gap in our canonical asset model,
-			// not a structural event problem. The slot is recorded
-			// verbatim as raw:<symbol> at its own vector position
-			// (see PriceEntry's godoc). Still count it on
-			// stellarindex_source_unknown_symbols_total — a raw row
-			// is a mapping gap the allow-list owner has to close,
-			// and the alert on this counter is how they learn of
-			// it. The metric label uses the generic "reflector"
-			// because the decoder is shared across
-			// reflector-dex/cex/fx; the parent dispatcher
-			// attributes per-contract context if needed.
+			// Unmapped symbol: recorded as raw:<symbol> (see PriceEntry) and counted, since the alert on
+			// this counter tells the allow-list owner. Label "reflector" because the decoder is shared by all three variants.
 			obs.SourceUnknownSymbolsTotal.WithLabelValues("reflector").Inc()
 		}
 		out = append(out, entry)
@@ -360,10 +231,7 @@ func sdkDecodeUpdateBody(valueB64 string) ([]PriceEntry, error) {
 	return out, nil
 }
 
-// decodeUpdateDataEntry turns one 2-tuple of the Vec<(Val, i128)>
-// payload into a PriceEntry. Splits the union-dispatch on the asset
-// slot (Address | Symbol) out from the outer loop so per-slot
-// failures carry a clear index in their wrapping error.
+// decodeUpdateDataEntry turns one (Val, i128) tuple into a PriceEntry, so per-slot failures carry their index.
 func decodeUpdateDataEntry(pair scval.ScVal) (PriceEntry, error) {
 	elts, err := scval.AsTupleN(pair, 2)
 	if err != nil {
@@ -381,14 +249,8 @@ func decodeUpdateDataEntry(pair scval.ScVal) (PriceEntry, error) {
 			return PriceEntry{}, fmt.Errorf("soroban asset from %q: %w", kind.Address, err)
 		}
 	case kind.Symbol != "":
-		// Reflector's Asset::Other(Symbol) covers both fiat tickers
-		// (FX oracle: "USD", "EUR", "ARS" …) and crypto tickers
-		// (CEX oracle: "BTC", "ETH", "USDT" …). The shared mapper
-		// tries fiat (ADR-0010), then crypto (ADR-0014), then RWA
-		// (ADR-0028); anything matching none is returned as a raw:
-		// asset so the slot is recorded rather than dropped. The
-		// only error is a symbol the raw validator cannot represent
-		// (impossible for an ScSymbol) — refused as malformed.
+		// Asset::Other covers fiat (FX) and crypto (CEX) tickers; MapOracleSymbol tries fiat, crypto,
+		// then RWA, else returns a raw: asset. Its only error (unrepresentable symbol) is malformed.
 		asset, err = canonical.MapOracleSymbol(kind.Symbol)
 		if err != nil {
 			return PriceEntry{}, fmt.Errorf("%w: symbol %q: %w", ErrMalformedPayload, kind.Symbol, err)
@@ -404,13 +266,8 @@ func decodeUpdateDataEntry(pair scval.ScVal) (PriceEntry, error) {
 	return PriceEntry{Asset: asset, Price: price}, nil
 }
 
-// sdkDecodeUpdateTimestamp decodes Event.Topic[2] (base64 SCVal U64)
-// into the raw uint64 the contract emits — MILLISECONDS, the
-// contract's internal scale (see the topic[2] comment in decodeUpdate
-// and oracle/src/price_oracle.rs, which divides by 1000 to expose
-// seconds via last_timestamp). The caller passes the value through
-// canonical.SafeUnixMillis; do NOT treat this return as seconds.
-// Matches the #[topic] declaration on UpdateEvent.timestamp.
+// sdkDecodeUpdateTimestamp decodes Event.Topic[2] (SCVal U64) to the raw MILLISECONDS the contract
+// emits; the caller passes it through canonical.SafeUnixMillis. Do NOT treat it as seconds.
 func sdkDecodeUpdateTimestamp(topicB64 string) (uint64, error) {
 	sv, err := scval.Parse(topicB64)
 	if err != nil {
