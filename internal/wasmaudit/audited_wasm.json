@@ -985,5 +985,37 @@
     "role": "pool",
     "audited": "2026-10-08",
     "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "29eb1047312dc244e06128910bf60aa71e4104083c5bf41af006177b65216ca0": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "pool",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "64ef0bc6962f06546c0e00a11877c869d78c08043f79d50ee2c09cb1b837c477": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "pool",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "2e6f1daed872881ac52bf637328076cd81a3b5a70e46524453a354309c7a3786": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "pool",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "f5bdd7c4b58401cd3c28bd4ba4162650fe1971f9b22c27b5be7c4d3664596a96": {
+    "sources": [
+      "aquarius"
+    ],
+    "role": "pool",
+    "audited": "2026-10-08",
+    "doc": "docs/operations/wasm-audits/aquarius.md"
   }
 }

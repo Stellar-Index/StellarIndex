@@ -266,7 +266,7 @@ strings:
 All 3 include `trade` + the 3 non-trade event
 names in their data sections.
 
-## Per-hash string check — 18 more hashes, 2026-10-08
+## Per-hash check — 22 more hashes, 2026-10-08
 
 `projected-rebuild -source aquarius` refused on 22 hashes that registry
 contracts ran and `audited_wasm.json` did not list: 12 pool builds and 10
@@ -282,7 +282,14 @@ each blob was byte-searched on r1 for the literals the decoder watches
 All 10 router builds carry both router literals (35 – 47 KB). 8 pool builds
 carry all four pool literals. 4 pool builds (`29eb1047…`, `2e6f1dae…`,
 `64ef0bc6…`, `f5bdd7c4…`) carry `trade`, `deposit_liquidity` and
-`withdraw_liquidity` but not `update_reserves`; they are NOT audited here.
+`withdraw_liquidity` but not `update_reserves`. Those 4 were checked against
+the lake instead: every successful event their contracts emitted while
+running the build (`stellar.contract_events`, grouped by topic and body
+length) has the audited shape. `trade` is 4 topics with a 3×i128 body
+(101,631 events); `deposit_liquidity` and `withdraw_liquidity` carry N+1
+amounts for N token topics, which `decodeLiquidity` requires and fails loud
+on otherwise. They never emit `update_reserves`, so a replay writes no
+reserve rows for their windows; nothing is misread.
 
 | hash | role | contracts | first ledger |
 | --- | --- | --- | --- |
@@ -304,8 +311,12 @@ carry all four pool literals. 4 pool builds (`29eb1047…`, `2e6f1dae…`,
 | `d691135a…` | pool | 275 | 64,735,740 |
 | `22dff724…` | pool | 45 | 64,735,965 |
 | `155a17b9…` | pool | 41 | 64,736,662 |
+| `f5bdd7c4…` | pool (no `update_reserves`) | 3 | 52,730,973 |
+| `29eb1047…` | pool (no `update_reserves`) | 11 | 53,552,612 |
+| `64ef0bc6…` | pool (no `update_reserves`) | 19 | 55,363,569 |
+| `2e6f1dae…` | pool (no `update_reserves`) | 25 | 56,505,116 |
 
-A string check does not see topic order or body shape. These 18 are in
+A string check does not see topic order or body shape. All 22 are in
 `audited_wasm.json`.
 
 ## Caveats
