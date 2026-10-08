@@ -64,7 +64,7 @@ func TestAPI_EndToEnd(t *testing.T) {
 
 	// Force-refresh the CAGGs /v1/markets reads so it sees the seeded
 	// trades before the 30s policy fires. /v1/markets (DistinctPairs)
-	// enumerates pairs from prices_1d (the right-granularity rewrite, cc4ed08ae)
+	// enumerates pairs from prices_1d (the right-granularity rewrite)
 	// and reads 24h volume from prices_1m — refresh BOTH, else the market
 	// list is empty even though prices_1m has the rows.
 	for _, stmt := range []string{

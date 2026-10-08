@@ -22,7 +22,7 @@ import (
 //
 // The pair is the production shape; the CALL is not, deliberately. The
 // projector's only cursor write is `AdvanceCursorFrom` — a compare-and-swap
-// against the position the cycle read, since F159 (`7f2a32655`), so that an
+// against the position the cycle read, so that an
 // in-flight cycle cannot clobber a `projector-replay` rewind. Seeding a
 // starting position has nothing to compare against, so this uses the
 // unconditional `UpsertCursor`. A helper that claimed to seed "through the

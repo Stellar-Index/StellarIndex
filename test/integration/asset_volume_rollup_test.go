@@ -30,7 +30,7 @@ SELECT COALESCE(SUM(volume_usd), 0)::text
        AND volume_usd IS NOT NULL
   ) t`
 
-// TestAssetVolumeRollup_MatchesLiveSum proves the e0fbbbc3b rollup end-to-end:
+// TestAssetVolumeRollup_MatchesLiveSum proves the asset-volume rollup end-to-end:
 // RefreshAssetVolume24h populates asset_volume_24h with values that are
 // byte-identical to the old inline per-request SUM over prices_1m, the
 // refresh is idempotent, and an asset that ages out of the 24h window is

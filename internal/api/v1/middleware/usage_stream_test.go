@@ -383,7 +383,7 @@ func TestUsageTracker_StreamPanicBeforeOpenBillsNothing(t *testing.T) {
 }
 
 // TestUsageTracker_StreamPanicDuringTickBillsNothing pins the race left
-// after 037ea6181's defer-reorder fix: close(done) only SIGNALS
+// after the defer-reorder fix: close(done) only SIGNALS
 // meterOpenStream to stop, it does not wait for it to have stopped. A
 // tick that already passed its done re-check when the handler panics
 // can be paused right there while close(done) then once.fire(true) both
@@ -399,7 +399,7 @@ func TestUsageTracker_StreamPanicBeforeOpenBillsNothing(t *testing.T) {
 // sequenced strictly after <-exited unblocks in the same goroutine, so
 // it CANNOT have run while the hook holds this goroutine — no matter
 // how long the test waits — only with the exited wait in place. Fails
-// on 037ea6181 (close(done) alone, no wait); passes with it.
+// without the wait (close(done) alone); passes with it.
 func TestUsageTracker_StreamPanicDuringTickBillsNothing(t *testing.T) {
 	t.Cleanup(middleware.SetStreamMeterIntervalForTest(5 * time.Millisecond))
 

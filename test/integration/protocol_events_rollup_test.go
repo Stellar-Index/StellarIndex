@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestProtocolEventRollup_RoundTrip proves the 78dff337b rollup end-to-end:
+// TestProtocolEventRollup_RoundTrip proves the protocol-event rollup end-to-end:
 // RefreshProtocolEventCounts folds the trailing-24h census into
 // protocol_events_24h, CountRecentEventsBySource reads it back, only
 // recent trades count, the refresh is idempotent, and a source that
