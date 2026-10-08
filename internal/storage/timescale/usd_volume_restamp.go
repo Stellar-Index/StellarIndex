@@ -9,42 +9,31 @@ import (
 	"time"
 )
 
-// ─── W5.3: the exact-tier usd_volume RE-STAMP ─────────────────────
+// ─── The exact-tier usd_volume RE-STAMP ───────────────────────────
 //
 // [usd_volume_reconcile.go] is the READ side of the exact-tier identity
-// (`usd_volume = pegged_leg / 10^decimals`): verify-usd-volume judges a
-// day's groups against it and reports violations. This file is the WRITE
-// side — the corrective path for rows that fail it.
+// (`usd_volume = pegged_leg / 10^decimals`): verify-usd-volume reports
+// violations. This file is the WRITE side, correcting rows stamped before
+// the insert path enforced the identity, under this discipline:
 //
-// The population it exists for: trades stamped BEFORE the insert path enforced the
-// peg identity. This is the corrective UPDATE as a tool, with this discipline
-// baked in:
-//
-//   - the tier and the scale come from [ClassifyUSDVolumeTier] — the
-//     SAME classifier the verifier uses, which is itself lock-stepped to
-//     the insert waterfall by TestClassifyUSDVolumeTier_TracksTheWaterfall.
-//     The tool never decides "which leg / which scale" on its own (the
-//     verifier header's reimplementation-trap warning);
-//   - every corrected row is stamped with the run's
-//     `derive_generation`, and the write is guarded by
-//     `derive_generation <= $gen` exactly like the InsertTrade upsert, so
-//     a later live gen-0 replay can never claw a correction back and an
-//     older re-derive can never overwrite a newer one;
-//   - a row that ALREADY satisfies the identity is not touched at all —
-//     not its value, not its derive_generation — so re-running a window
-//     is idempotent (`usd_volume IS DISTINCT FROM <identity>`);
-//   - every rewrite first copies the row's prior usd_volume and
-//     derive_generation into `usd_volume_restamp_log` (migration 0175) in
-//     the same transaction ([Store.restampTradesUSDVolume]), so a bad run
-//     can be undone from the database instead of re-derived;
-//   - NULL rows are left alone by default. Filling an unpriced exact-tier
-//     row is the same arithmetic, but it is a COVERAGE change the
-//     operator opts into (FillNull), not something a value-repair tool
-//     does silently.
+//   - tier and scale come from [ClassifyUSDVolumeTier], the SAME
+//     classifier the verifier uses (lock-stepped to the insert waterfall by
+//     TestClassifyUSDVolumeTier_TracksTheWaterfall); the tool never picks a
+//     leg or scale on its own;
+//   - each corrected row gets the run's `derive_generation`, guarded by
+//     `derive_generation <= $gen` like the InsertTrade upsert, so neither a
+//     live gen-0 replay nor an older re-derive can overwrite a correction;
+//   - a row that ALREADY satisfies the identity is untouched (value and
+//     generation), so re-running a window is idempotent;
+//   - every rewrite first copies the prior usd_volume and derive_generation
+//     into `usd_volume_restamp_log` (migration 0175) in the same transaction
+//     ([Store.restampTradesUSDVolume]), so a bad run can be undone;
+//   - NULL rows are left alone unless the operator opts in (FillNull):
+//     filling one is a COVERAGE change, not a value repair.
 //
 // Estimated tiers (3/4: FX rate / XLM anchor at trade time) are OUT of
-// scope by construction — their value is not reproducible from the row
-// alone and needs the full resolver-backed waterfall, which is
+// scope: their value is not reproducible from the row alone and needs the
+// full resolver-backed waterfall, which is
 // `ch-rebuild`'s job (docs/operations/usd-volume-rederive-2026-08.md).
 
 // ExactTierUSDVolume renders the exact-tier identity for one row: the
