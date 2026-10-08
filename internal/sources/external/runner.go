@@ -15,27 +15,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// dustFloorUSDMicros is the dust threshold the streamer guard
-// enforces, in micro-dollars: 1_000 µUSD = $0.001. This — not a
-// count of quote units — is the guard's actual intent. A STREAMED
-// CEX fill worth less than a tenth of a cent carries no usable
-// price: CEX feeds emit sub-microcent fills whose amounts are tiny
-// integers (e.g. 8 base for 1 quote), making quote/base a
-// meaningless round fraction (1/8, 1/10, …). Kept, those single
-// dust prints would set the UNWEIGHTED OHLC high/low (max/min of
-// quote/base) and produce absurd wicks on the served /v1/ohlc API
-// — e.g. an XLM/USD low of $0.125 from a $0.00000001 fill — while
-// contributing ~zero real volume.
-//
-// The floor is denominated in USD, not quote units. A flat 100_000
-// units at the external 10^8 scale is 0.001 of whatever the QUOTE
-// asset happens to be, and CEX reference pairs are not all
-// USD-quoted: binance/pairs.yaml and bitstamp/pairs.go both configure
-// XLM/BTC. 0.001 BTC is ~$100, so a flat floor would silently drop
-// every XLM/BTC print below roughly a thousand XLM — and the drop is
-// SIZE-BIASED, systematically skewing the surviving XLM/BTC volume and
-// VWAP toward large trades. Denominating the floor in USD removes the
-// bias at its source instead of papering over it per-pair.
+// dustFloorUSDMicros is the streamer dust guard's threshold: 1_000 µUSD = $0.001. CEX feeds emit
+// sub-microcent fills with tiny integer amounts (8 base for 1 quote), whose quote/base is a meaningless
+// fraction; kept, they set the UNWEIGHTED OHLC high/low and draw absurd /v1/ohlc wicks (an XLM/USD low of
+// $0.125 from a $0.00000001 fill) for ~zero volume. It is in USD, not quote units: XLM/BTC is configured
+// (binance/pairs.yaml, bitstamp/pairs.go), and a flat 0.001-quote floor (~$100 in BTC) would drop every
+// small print, SIZE-BIASING the surviving volume and VWAP.
 const dustFloorUSDMicros = 1_000
 
 // externalQuoteScale is the fixed-point scale streamed CEX amounts
@@ -44,58 +29,20 @@ const dustFloorUSDMicros = 1_000
 // guard stays scoped to the streamer path.
 const externalQuoteScale = 100_000_000
 
-// fiatQuoteUSDMicros is the USD reference used for ANY fiat quote
-// leg: one whole unit ≈ $1. Deliberately one number rather than a
-// per-currency FX table — a real table would be false precision for
-// an order-of-magnitude dust threshold, and would rot.
-//
-// $1 is NOT an upper bound across the fiat allow-list:
-// canonical.knownFiatCodes carries the full massive feed, including
-// KWD ≈ $3.26, BHD ≈ $2.65, OMR ≈ $2.60 and KYD ≈ $1.20.
-//
-// For those codes the error runs the OTHER way. Under-stating the
-// reference OVER-states the floor: assuming $1 for a $3.26 KWD makes
-// dustFloorUnits yield 0.001 whole quote units ≈ $0.00326 notional —
-// about 3.3× STRICTER than the intended $0.001, which is the
-// size-biased-dropping direction the USD floor exists to prevent. The
-// poorest codes (IDR, VND, KRW) still float far below a dollar and
-// still get a floor well under $0.001, which is the harmless
-// direction.
-//
-// It stays one number anyway. A real FX table would be false
-// precision for an order-of-magnitude dust threshold and would rot —
-// and the exposure is bounded at compile time: every fiat quote leg a
-// streamer can see is hard-coded (kraken + bitstamp + coinbase
-// USD/EUR/GBP, binance EUR/GBP), all ≤ ~$1.35.
-// ExternalVenueConfig exposes only `enabled` and `poll_interval`, so
-// reaching a KWD leg takes a reviewed Go/YAML edit, a rebuild and a
-// redeploy — not a config change.
-//
-// Revisit if a venue-pair list ever becomes runtime-configurable, or
-// if a >$1.35 fiat leg is added to one of those hard-coded lists.
+// fiatQuoteUSDMicros is the USD reference for ANY fiat quote leg: one unit ≈ $1. A per-currency table would
+// be false precision for an order-of-magnitude threshold, and would rot. It understates KWD (≈ $3.26), BHD,
+// OMR and KYD, making their floor stricter (~3.3× for KWD), the size-biased direction. That exposure is
+// bounded at compile time: every streamed fiat leg is hard-coded (kraken + bitstamp + coinbase USD/EUR/GBP,
+// binance EUR/GBP, all ≤ ~$1.35), and ExternalVenueConfig exposes only `enabled` and `poll_interval`.
+// Revisit if a pair list becomes runtime-configurable or gains a >$1.35 fiat leg.
 const fiatQuoteUSDMicros = 1_000_000
 
-// cryptoQuoteUSDMicros is a coarse, order-of-magnitude USD value of
-// ONE whole unit of each crypto ticker that can appear as a QUOTE
-// leg on a venue we stream. Micro-dollars, same units as
-// [fiatQuoteUSDMicros].
-//
-// These are NOT prices. Nothing served, stored, or aggregated reads
-// them; they exist solely to convert the $0.001 dust threshold into
-// the quote asset's own units, and the result is floored at 1 unit.
-// That makes them robust to enormous drift — BTC anywhere between
-// ~$1k and ~$10M still resolves to a 1-unit floor, and a 10× error
-// on ETH moves the threshold between $0.0001 and $0.01, both still
-// orders of magnitude below any real fill. There is no rate source
-// at the ingest runner (the USD-valuation path lives downstream in
-// the aggregator, deliberately — see internal/aggregate/stablecoin.go
-// on why peg/rate policy must not run at decode time), so a static
-// anchor table is the honest option; it is kept here beside the
-// guard it serves, matching this package's Go-map source-of-truth
-// convention (see [Registry]).
-//
-// A ticker that is absent resolves to "no floor" — see
-// [minStreamQuoteUnits].
+// cryptoQuoteUSDMicros is a coarse USD value of ONE whole unit of each crypto quote ticker we stream, in
+// [fiatQuoteUSDMicros] units. NOT prices: nothing served or aggregated reads them; they only convert the
+// $0.001 threshold to quote units, floored at 1, so BTC anywhere in ~$1k–$10M still gives a 1-unit floor.
+// The ingest runner has no rate source (valuation belongs downstream; internal/aggregate/stablecoin.go), so
+// a static table beside the guard is the honest option. An absent ticker means no floor
+// ([minStreamQuoteUnits]).
 var cryptoQuoteUSDMicros = map[string]uint64{
 	// USD-pegged stablecoins — the dominant CEX quote leg.
 	"USDT":  1_000_000,
@@ -115,14 +62,9 @@ var cryptoQuoteUSDMicros = map[string]uint64{
 	"XLM": 300_000,
 }
 
-// noDustFloor is the floor applied when no USD reference exists for
-// a quote asset: 1 unit, i.e. only a strictly-zero quote leg counts
-// as dust. Fail-open on the DATA is the conservation-correct choice
-// here — inventing a magnitude for an unknown asset recreates the
-// flat-floor size bias, and silently discarding real prints biases every
-// served volume/VWAP downstream, whereas keeping a marginal print
-// merely leaves a visible outlier. Operators are told at start-up:
-// [Run]'s pre-flight warns once per unreferenced streamed pair.
+// noDustFloor applies when a quote asset has no USD reference: only a zero quote leg is dust. Failing open
+// is conservation-correct: inventing a magnitude recreates the size bias and dropping real prints skews
+// served volume/VWAP, while a kept marginal print is a visible outlier. [Run] warns once per such pair.
 var noDustFloor = canonical.NewAmount(big.NewInt(1))
 
 // streamDustFloors caches the computed floor per distinct USD
@@ -205,21 +147,10 @@ type PollerSpec struct {
 	Pairs  []canonical.Pair
 }
 
-// Run launches every streamer (and later, poller) in its own
-// goroutine, fans trade output into the supplied consumer.Event
-// channel wrapping each as a TradeEvent, and returns a cleanup
-// function that blocks until all connectors have shut down. The
-// cleanup is normally called from the indexer's shutdown sequence;
-// ctx cancellation is the primary stop signal.
-//
-// On a streamer's own error channel close (unrecoverable error),
-// Run logs and lets it drop — the other connectors continue. Fatal
-// config errors at Start time are returned synchronously before any
-// goroutine spawns.
-//
-// The signature intentionally mirrors the dispatcher's
-// processAndPersist goroutine pattern so the indexer can wire them
-// symmetrically.
+// Run starts every streamer and poller in its own goroutine, fans their output into sink as consumer.Events,
+// and returns a cleanup that blocks until all have stopped; ctx cancellation is the stop signal. A streamer
+// whose channel closes on an unrecoverable error is dropped while the rest continue; config errors at Start
+// return synchronously before anything is left running.
 func Run(
 	ctx context.Context,
 	streamers []StreamerSpec,
@@ -237,19 +168,10 @@ func Run(
 		return func() {}, nil
 	}
 
-	// Pre-flight every Start. Fatal config errors (empty pair list,
-	// bad endpoint URL) surface here before we spawn anything.
-	//
-	// Each Streamer.Start spawns a reconnect-forever goroutine bound
-	// to the context we hand it. If a LATER Start fails, the earlier
-	// streamers' goroutines would otherwise leak — Run returns
-	// an error, the caller never gets a wait()/cancel handle, and those
-	// goroutines run until the parent ctx is cancelled (often never, on
-	// a startup-config error). We start every streamer under a DERIVED,
-	// cancellable context and cancel it on the error path so the
-	// already-launched streamers shut down before Run returns. On the
-	// happy path the derived context lives as long as the parent (it's
-	// cancelled when ctx is, via context.WithCancel propagation).
+	// Pre-flight every Start so config errors (empty pair list, bad URL) surface before anything is left
+	// running. Each Start spawns a reconnect-forever goroutine bound to the ctx it gets; under a derived,
+	// cancellable ctx, a LATER Start failure cancels the earlier streamers instead of leaking them until the
+	// parent ctx ends (often never, on a config error).
 	streamerCtx, cancelStreamers := context.WithCancel(ctx)
 	type running struct {
 		name string
@@ -301,16 +223,9 @@ func Run(
 			// at Error with its stack); the other connectors keep running.
 			defer worker.Recover(logger, "external-poller:"+spec.Poller.Name())
 			defer wg.Done()
-			// The poller runs under streamerCtx, not the raw parent ctx.
-			// teardown() (used when a LATER poller in this same loop
-			// fails config validation) only cancels streamerCtx — a
-			// poller goroutine bound to the raw ctx would ignore that
-			// cancellation and wg.Wait() below (and in teardown) would
-			// block until the caller's own ctx is separately cancelled,
-			// which on a startup-config error may never happen.
-			// streamerCtx is a child of ctx, so on the normal shutdown
-			// path (ctx cancelled) it propagates the cancellation
-			// unchanged.
+			// The poller runs under streamerCtx so teardown() (a later poller failing validation) can cancel it;
+			// bound to the raw ctx, wg.Wait() would block until the caller's ctx ends. streamerCtx inherits ctx's
+			// cancellation on normal shutdown.
 			runPoller(streamerCtx, spec, sink, logger)
 		}(p)
 	}
@@ -353,14 +268,9 @@ func declareOracleResolution(source string, pollInterval time.Duration) {
 	obs.DeclareOracleResolution(source, resolution.Seconds())
 }
 
-// warnUnreferencedDustQuotes logs once per configured streamed pair
-// whose quote asset has no USD reference in [cryptoQuoteUSDMicros].
-// Those pairs run with [noDustFloor] — correct (we never silently
-// drop a real print) but it means the dust guard is inert for them,
-// which an operator adding a pair should know. Deliberately a
-// start-up WARN, not a fatal: one unreferenced pair must not take
-// the whole external ingest down, and not a per-trade signal:
-// cardinality is bounded by the configured pair list.
+// warnUnreferencedDustQuotes logs once per configured streamed pair whose quote has no
+// [cryptoQuoteUSDMicros] entry: it runs with [noDustFloor], so the dust guard is inert for it. A start-up WARN,
+// not fatal (one pair must not stop external ingest) and not per-trade (bounded by the pair list).
 func warnUnreferencedDustQuotes(source string, pairs []canonical.Pair, logger *slog.Logger) {
 	for _, p := range pairs {
 		if _, ok := quoteUSDReferenceMicros(p.Quote); ok {
@@ -548,17 +458,9 @@ func emitPollResults(ctx context.Context, source string, sink chan<- consumer.Ev
 	}
 }
 
-// runPoller drives a single Poller at its declared cadence. On each
-// tick, PollOnce is called; returned trades land as TradeEvents and
-// updates as UpdateEvents on the shared sink. An error from PollOnce
-// is logged + counted (future: per-source metrics hook) but doesn't
-// stop the loop — poll-based sources regularly hit transient REST
-// errors (network blip, venue rate-limit) and should just retry at
-// the next tick.
-//
-// First poll fires immediately on startup rather than waiting a full
-// interval — operators want fresh data visible within seconds of
-// starting the indexer, not only after the ticker elapses.
+// runPoller drives one Poller at its declared cadence, firing immediately so data appears within seconds of
+// start. Trades and updates land on sink as TradeEvents / UpdateEvents; a PollOnce error is logged and the
+// loop retries next tick, since REST sources hit transient errors routinely.
 func runPoller(
 	ctx context.Context,
 	spec PollerSpec,
