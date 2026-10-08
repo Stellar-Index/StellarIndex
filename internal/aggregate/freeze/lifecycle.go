@@ -6,35 +6,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// ─── ADR-0019 freeze lifecycle ────────────────────────────────────
-//
-// ADR-0019 §"Freeze duration" makes a freeze a HOLD with an extension
-// ladder, not a per-bucket decision:
-//
-//	Initial: 30 minutes
-//	Re-evaluation at expiry: if the freeze condition still holds,
-//	  extend by 30 min, up to 4 extensions (2 hours total)
-//	After 4 extensions: escalate to operator review (P1 alert);
-//	  freeze stays active until manual unfreeze
-//	Auto-unfreeze trigger: confidence rises above 0.30 AND z_score
-//	  falls below 3.0 for two consecutive buckets
-//
-// Releasing on the negation of the fire condition, judged on one bucket,
-// lets one clean-ish bucket publish the manipulated price the freeze had
-// refused: an attacker clears it with a single trade on a second venue, or
-// by nudging z from 5.1 to 4.9.
-//
-// The state machine is a pure function of (previous state, this bucket's
-// signal) so the policy is exhaustively testable; the orchestrator owns
-// persistence and side effects. Two load-bearing properties:
-//
-//   - The initial hold is a MINIMUM; auto-unfreeze cannot fire inside it.
-//     The freeze fires at z > 5 and the streak needs only z < 3, so on a
-//     wide-MAD asset a price still far from last-known-good can read
-//     healthy two buckets running.
-//   - Release needs POSITIVE evidence of health, never just the absence of
-//     the fire condition. An unscorable bucket (no baseline, as after a
-//     restart) resets the streak rather than crediting it.
+// ADR-0019 freeze lifecycle: a HOLD with an extension ladder (30 min, up to 4 × 30 min, then
+// P1 and manual unfreeze only), released when confidence > 0.30 AND z < 3.0 for two consecutive
+// buckets. Releasing on one bucket's negated fire condition lets one trade on a second venue, or
+// nudging z from 5.1 to 4.9, publish the manipulated price. The state machine is a pure function
+// of (previous state, signal); the orchestrator owns persistence. Load-bearing:
+//   - the initial hold is a MINIMUM: on a wide-MAD asset a price far from last-known-good can
+//     read z < 3 two buckets running;
+//   - release needs POSITIVE evidence; an unscorable bucket resets the streak.
 
 // Freeze-lifecycle defaults, per ADR-0019 §"Freeze duration" and
 // §"Auto-unfreeze trigger". Operators tune via `[anomaly.phase2]`;
@@ -45,30 +24,9 @@ const (
 	// lens available this bucket (see [Signal.Corroborated]).
 	DefaultInitialHold = 30 * time.Minute
 
-	// DefaultUncorroboratedInitialHold is a documented DEVIATION from
-	// ADR-0019's flat 30 minutes, for freezes on pairs where no
-	// corroborating lens produced a reading at all: no configured
-	// triangulation chain compared a composite against the direct
-	// price, and no cross-oracle reference set met the trust floor.
-	//
-	// Why the durations must not be uniform. A freeze serves the
-	// last-known-good price for its whole duration, so a FALSE freeze
-	// is its own money bug (a stale leg laundered
-	// into a derived pair). The false-freeze rate is not uniform
-	// across the index — it concentrates entirely on thin books, where
-	// a single venue's own history is the only reference the 3-signal
-	// AND has, and where a $19/hour book can produce a z > 5 bucket
-	// from one ordinary trade. Charging that population the full
-	// 30-minute stale-price bill for a decision taken on one lens is
-	// the wrong trade; charging it 10 minutes is not.
-	//
-	// 10 minutes, not 5: it must comfortably outlast both the longest
-	// default aggregation window that can carry the spike (5m) and
-	// several 30s ticks, so a one-bucket spike cannot be waited out.
-	// Extensions are NOT scaled — an uncorroborated pair whose anomaly
-	// persists climbs the same 30-minute ladder to the same 2-hour
-	// escalation, so the shortened hold only shortens the FIRST
-	// decision, which is where the false-positive risk sits.
+	// DefaultUncorroboratedInitialHold deviates from ADR-0019 for pairs no corroborating lens read.
+	// A false freeze serves a stale price (its own money bug) and false freezes concentrate on thin
+	// books; 10 min still outlasts the 5m window and several ticks. Extensions are NOT scaled.
 	DefaultUncorroboratedInitialHold = 10 * time.Minute
 
 	// DefaultExtension — ADR-0019: "extend by 30 min".
@@ -90,21 +48,13 @@ const (
 	// "for two consecutive buckets".
 	DefaultUnfreezeBuckets = 2
 
-	// DefaultOverrideMemory is how long a force-unfrozen ladder is
-	// remembered: ADR-0019's escalation budget ("up to 4 extensions (2
-	// hours total)"). A pair that re-fires inside it resumes the ladder
-	// the override ended, so an escalated pair returns escalated instead of
-	// restarting a fresh first hold that will not page again for two hours.
+	// DefaultOverrideMemory is how long a force-unfrozen ladder is remembered, so a pair re-firing
+	// inside it resumes escalated instead of starting a fresh hold that will not page for two hours.
 	DefaultOverrideMemory = 2 * time.Hour
 )
 
-// DefaultMarkerGrace is how long the Redis marker outlives the hold
-// it encodes. It exists so a missed aggregator tick — or a restart —
-// cannot blink `flags.frozen` off mid-hold on the serving path.
-//
-// Deliberately [cachekeys.FreezeTTL]: that constant means "how long a freeze
-// survives aggregator silence", which is the only job a TTL was ever
-// suited for. A freeze's DURATION is state, not an expiry.
+// DefaultMarkerGrace is how long the Redis marker outlives its hold, so a missed tick or restart
+// cannot blink `flags.frozen` off mid-hold. A freeze's DURATION is state, not a TTL.
 var DefaultMarkerGrace = cachekeys.FreezeTTL
 
 // Policy is the operator-tunable shape of the ADR-0019 freeze
@@ -145,21 +95,9 @@ type Policy struct {
 	OverrideMemory time.Duration
 }
 
-// WithDefaults returns a copy with every unset (zero-valued) field
-// replaced by its ADR-0019 default.
-//
-// Zero is the "unset" sentinel for every field here. A zero-length hold
-// is "don't freeze", which is achieved by disabling the Phase 2 gate
-// rather than by a zero duration.
-//
-// The UnfreezeConfidenceMin sentinel exists so an unset field gets the
-// ADR-0019 default rather than an unbounded release gate: the test is
-// `sig.Confidence > p.UnfreezeConfidenceMin`, so a zero bound would be
-// satisfied by any positive confidence. A deliberate 0 therefore cannot
-// be expressed; it becomes 0.30.
-//
-// A negative MaxExtensions is not an escalate-immediately switch:
-// config validation rejects max_extensions < 0.
+// WithDefaults replaces every zero field with its ADR-0019 default. A zero
+// UnfreezeConfidenceMin would pass any positive confidence, so a deliberate 0 becomes 0.30;
+// negative MaxExtensions is rejected by config validation.
 func (p Policy) WithDefaults() Policy {
 	if p.InitialHold <= 0 {
 		p.InitialHold = DefaultInitialHold
@@ -191,14 +129,8 @@ func (p Policy) WithDefaults() Policy {
 	return p
 }
 
-// State is one pair's freeze-lifecycle state. It is the authority for
-// the freeze's LIFECYCLE (when it fired, how much of the ladder it has
-// climbed, whether it has escalated); the Redis marker remains the
-// authority for the SERVING path's `flags.frozen`, and carries a copy
-// of this state so a marker dump is self-describing and so the state
-// survives an aggregator restart.
-//
-// The zero value means "not frozen" — see [State.Active].
+// State is one pair's freeze-lifecycle authority; the Redis marker stays the serving authority
+// and carries a copy so the state survives a restart. The zero value is "not frozen".
 type State struct {
 	// FiredAt is when the freeze first engaged. Preserved across
 	// extensions, so `now - FiredAt` is the freeze's true age.
@@ -224,11 +156,8 @@ type State struct {
 	// including a bucket that could not be scored at all.
 	UnfreezeStreak int `json:"unfreeze_streak,omitempty"`
 
-	// Corroborated records whether a corroborating lens had produced a
-	// reading for this pair at fire time — the input that chose
-	// between the two initial-hold durations. Kept so an operator
-	// reading a marker can tell WHY this freeze's first hold was 10
-	// minutes rather than 30.
+	// Corroborated records whether a lens had read the pair at fire time, so an operator can tell
+	// why the first hold was 10 minutes rather than 30.
 	Corroborated bool `json:"corroborated,omitempty"`
 
 	// OverriddenAt is when an out-of-band override last ended this pair's
@@ -259,60 +188,22 @@ type Signal struct {
 	// does NOT keep one alive and does NOT extend one.
 	Fires bool
 
-	// Scored reports whether Confidence and ZScore below are real
-	// measurements for this bucket. False means the bucket could not
-	// be scored (no baseline row, no previous VWAP to derive a return
-	// from, Phase 1 firing before Phase 2 ran) — which is the ABSENCE
-	// of evidence, never evidence of health, so it resets the
-	// auto-unfreeze streak.
+	// Scored is false when the bucket could not be scored (no baseline, no previous VWAP): absence
+	// of evidence, never health, so it resets the auto-unfreeze streak.
 	Scored bool
 
-	// Confidence / ZScore are this bucket's multi-factor confidence
-	// score and its OBSERVATION-based z-score — the two values
-	// ADR-0019's auto-unfreeze condition reads. Both are already
-	// computed by the orchestrator's refresh loop; this policy never
-	// recomputes them.
-	//
-	// ZScore is deliberately the observation-based score and not the
-	// wider sustained-drift statistic: the drift signal latches for up
-	// to 30 days and, wired into a publication decision, cannot
-	// self-clear (see orchestrator/confidence.go's header). It reaches
-	// this decision through Confidence instead, which is graded and
-	// self-correcting — the drift statistic already feeds
-	// confidence.Compute's z input.
+	// Confidence / ZScore are the values the auto-unfreeze reads. ZScore is observation-based, not
+	// sustained drift: drift latches for 30 days and cannot self-clear, so it arrives via Confidence.
 	Confidence float64
 	ZScore     float64
 
-	// Corroborated reports whether a corroborating lens produced a
-	// reading for this pair in this bucket: a configured triangulation
-	// chain compared a composite against the direct price, or a
-	// cross-oracle reference set met the trust floor. Read only when
-	// the freeze FIRES (it selects the initial hold).
-	//
-	// This is "was a second lens consulted", NOT "did the second lens
-	// agree". A lens that actively DISAGREES is the strongest evidence
-	// the freeze is true, and must not buy the shorter hold — see the
-	// ADR-0019 amendment for why the agreement-only reading was
-	// rejected.
+	// Corroborated is "was a second lens consulted", not "did it agree"; it selects the initial
+	// hold. A disagreeing lens is the strongest evidence the freeze is true and must not shorten it.
 	Corroborated bool
 
-	// ReleaseCorroborated is the AGREEMENT reading Corroborated
-	// deliberately is not — but taken against the FRESH release
-	// candidate, never against the served price. It reports that a
-	// corroborating lens produced a reading this bucket that agrees
-	// with the bucket's own computed price (the one an auto-unfreeze
-	// would publish).
-	//
-	// It exists because the calm legs alone cannot release safely: under the per-tick
-	// shadow comparator ANY held level reads calm, and mid-freeze the
-	// cached divergence result compares the references against the
-	// SERVED last-known-good — evidence about the LKG, not about the
-	// candidate. Gating the streak on this field is what separates "the
-	// market genuinely repriced and the references followed" (releases)
-	// from "an attacker parks a manipulated level" (holds, walks the
-	// ladder, escalates). False here for every pair with no lens: an
-	// uncorroboratable calm bucket is the absence of evidence, and
-	// those freezes end only by operator override or ladder escalation.
+	// ReleaseCorroborated: a lens agrees with this bucket's fresh price (the one a release would
+	// publish). Calm legs alone cannot release: a held manipulation reads calm too. False with no lens,
+	// so those freezes end only by override or escalation.
 	ReleaseCorroborated bool
 }
 
@@ -329,11 +220,8 @@ const (
 	TransitionHeld Transition = "held"
 	// TransitionExtended — the hold expired unreleased; ladder +1.
 	TransitionExtended Transition = "extended"
-	// TransitionHeldUnscored — the hold expired on a bucket that could
-	// not be scored (post-restart confidence bootstrap, scoring
-	// outage): the hold slides WITHOUT consuming an extension, because
-	// an unscored bucket asked nothing about recovery. The ladder
-	// resumes when scoring does.
+	// TransitionHeldUnscored — the hold expired on an unscored bucket; it slides without consuming
+	// an extension, and the ladder resumes when scoring does.
 	TransitionHeldUnscored Transition = "held_unscored"
 	// TransitionEscalated — the ladder ran out; operator review (P1).
 	TransitionEscalated Transition = "escalated"
@@ -382,32 +270,14 @@ func (p Policy) Evaluate(prev State, sig Signal) Outcome {
 
 	switch {
 	case st.Escalated:
-		// ADR-0019: an escalated freeze "stays active until manual
-		// unfreeze". Auto-unfreeze is suppressed on purpose — the
-		// ladder already spent two hours asking whether this pair had
-		// recovered, and a human has been paged. The hold keeps
-		// sliding so the marker never lapses under a live aggregator.
+		// Escalated: no auto-unfreeze, a human has been paged; keep sliding so the marker never lapses.
 		st.HoldUntil = sig.Now.Add(p.Extension)
 		return p.frozen(st, TransitionHeld, sig.Now)
 
 	case st.UnfreezeStreak >= p.UnfreezeBuckets && p.minimumServed(st, sig.Now):
-		// Earned release. ADR-0019 phrases auto-unfreeze as a TRIGGER,
-		// so it is evaluated on every bucket once the INITIAL hold has
-		// been served — not only at a ladder expiry. Gating it on
-		// expiry instead would make a pair that recovered one bucket
-		// after an extension was granted wait out the full 30-minute
-		// extension serving a stale last-known-good price, which is
-		// the money bug the freeze itself trades
-		// against; there is no security argument for it, because the
-		// streak is what proves recovery and the streak is not easier
-		// to satisfy at an expiry instant than between two.
-		//
-		// The initial hold IS still a hard minimum. It is load-bearing
-		// on volatile pairs: the freeze fires at z > 5 and the streak
-		// only needs z < 3, so on a wide-MAD asset a price still well
-		// away from the last-known-good can read "healthy" two buckets
-		// running. The minimum hold is what stops those two buckets —
-		// possibly 60 seconds after the freeze — from ending it.
+		// Release is a TRIGGER, checked every bucket once the initial hold is served; gating it on
+		// expiry would serve a stale price for a whole extension. The initial hold stays a hard minimum
+		// (z > 5 fires, z < 3 releases, so a wide-MAD pair can look healthy 60 s after firing).
 		return Outcome{Transition: TransitionReleased}
 
 	case sig.Now.Before(st.HoldUntil):
@@ -417,17 +287,8 @@ func (p Policy) Evaluate(prev State, sig Signal) Outcome {
 		return p.frozen(st, TransitionHeld, sig.Now)
 
 	case !sig.Scored:
-		// The hold expired on a bucket that could NOT be scored — the
-		// ~30-minute post-restart confidence bootstrap, or a mid-freeze
-		// scoring outage. An extension is supposed to mean "we asked
-		// whether this pair recovered and it had not"; an unscored
-		// bucket asked NOTHING, so it must not climb the ladder.
-		// Counting these expiries would let a freeze rehydrated across a
-		// restart (unscored ⇒ streak=0) burn its extensions and reach
-		// ESCALATED, operator-only, without a single scored evaluation.
-		// Slide the hold and wait for scoring to return; the ladder
-		// resumes exactly where it was. ADR-0019's 2-hour escalation budget thereby counts two
-		// hours of SCORED asking, which is what it always meant.
+		// Unscored expiry (post-restart bootstrap, scoring outage): slide without climbing the ladder,
+		// else a rehydrated freeze could reach ESCALATED without one scored evaluation.
 		st.HoldUntil = sig.Now.Add(p.Extension)
 		return p.frozen(st, TransitionHeldUnscored, sig.Now)
 
@@ -443,11 +304,8 @@ func (p Policy) Evaluate(prev State, sig Signal) Outcome {
 	}
 }
 
-// fire opens a freeze on an inactive `prev`. Inside [Policy.OverrideMemory]
-// of an override it resumes the overridden ladder: the override was a
-// human's call on THAT anomaly, and a pair still anomalous after it is not a
-// fresh first hold. An escalated ladder comes back escalated, so the P1
-// pages again rather than going quiet for another two hours.
+// fire opens a freeze. Inside OverrideMemory of an override it resumes that ladder: a pair still
+// anomalous after a human's call is not a fresh first hold, and an escalated one pages again.
 func (p Policy) fire(prev State, sig Signal) Outcome {
 	st := State{
 		FiredAt:      sig.Now,
@@ -475,28 +333,14 @@ func (p Policy) initialHold(corroborated bool) time.Duration {
 	return p.UncorroboratedInitialHold
 }
 
-// minimumServed reports whether the freeze has served its INITIAL
-// hold — the floor below which no auto-unfreeze may fire, however
-// healthy the last two buckets looked.
-//
-// Derived from FiredAt + the initial hold rather than stored, so it
-// stays a property of the freeze rather than of the ladder: HoldUntil
-// slides forward on every extension, and comparing against it would
-// silently turn the floor into "the current segment's end".
+// minimumServed reports whether the initial hold is served. Derived from FiredAt, not HoldUntil,
+// which slides on every extension and would turn the floor into the current segment's end.
 func (p Policy) minimumServed(st State, now time.Time) bool {
 	return !now.Before(st.FiredAt.Add(p.initialHold(st.Corroborated)))
 }
 
-// streak advances (or resets) the consecutive-healthy-bucket counter
-// that ADR-0019's auto-unfreeze condition requires.
-//
-// Fail-closed in four places, each of which has been a real bug
-// class somewhere in this pipeline: an unscored bucket earns nothing,
-// a bucket that still FIRES earns nothing even if an operator has
-// configured overlapping fire/unfreeze bands, a bucket whose candidate
-// no corroborating lens agrees with earns nothing (a held manipulation
-// is calm too — see Signal.ReleaseCorroborated), and the counter
-// saturates rather than growing without bound.
+// streak advances the consecutive-healthy-bucket counter, fail-closed: unscored, still-firing
+// (overlapping bands) or uncorroborated buckets earn nothing, and the counter saturates.
 func (p Policy) streak(prev int, sig Signal) int {
 	if !sig.Scored || sig.Fires {
 		return 0
