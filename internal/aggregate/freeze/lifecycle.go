@@ -8,8 +8,8 @@ import (
 
 // ─── ADR-0019 freeze lifecycle ────────────────────────────────────
 //
-// ADR-0019 §"Freeze duration" specifies a freeze as a HOLD with an
-// extension ladder, not as a per-bucket decision:
+// ADR-0019 §"Freeze duration" makes a freeze a HOLD with an extension
+// ladder, not a per-bucket decision:
 //
 //	Initial: 30 minutes
 //	Re-evaluation at expiry: if the freeze condition still holds,
@@ -19,38 +19,21 @@ import (
 //	Auto-unfreeze trigger: confidence rises above 0.30 AND z_score
 //	  falls below 3.0 for two consecutive buckets
 //
-// Until this file landed, none of that existed. The shipped freeze
-// was "write a Redis marker with a 5-minute TTL on every bucket the
-// 3-signal AND fires for, and stop writing when it stops firing", so
-// the RELEASE condition was the negation of the FIRE condition —
-// evaluated on a SINGLE bucket, with the release band strictly wider
-// than the fire band (release at z ≤ 5 rather than the ADR's z < 3,
-// release on confidence ≥ 0.45 rather than the ADR's > 0.30, and
-// release the moment a second source appears at all). One clean-ish
-// bucket therefore published the manipulated price the freeze had
-// just refused, and an attacker who could produce a single trade on a
-// second venue — or nudge z from 5.1 to 4.9 for one bucket — cleared
-// the freeze while the manipulation was still in force.
+// Releasing on the negation of the fire condition, judged on one bucket,
+// lets one clean-ish bucket publish the manipulated price the freeze had
+// refused: an attacker clears it with a single trade on a second venue, or
+// by nudging z from 5.1 to 4.9.
 //
-// The state machine below is deliberately a pure function of
-// (previous state, this bucket's signal): no clock reads, no IO, no
-// package state. The orchestrator owns persistence and side effects;
-// this file owns the policy, so the policy is exhaustively testable
-// at table speed.
+// The state machine is a pure function of (previous state, this bucket's
+// signal) so the policy is exhaustively testable; the orchestrator owns
+// persistence and side effects. Two load-bearing properties:
 //
-// Two properties are load-bearing and easy to lose in a refactor:
-//
-//   - The initial hold is a MINIMUM. Auto-unfreeze cannot fire inside
-//     it however healthy the last two buckets looked; from the end of
-//     it the ADR's trigger is evaluated on every bucket. Releasing
-//     inside the minimum on "the current bucket looks fine" is the
-//     evasion above: the freeze fires at z > 5 and the streak needs
-//     only z < 3, so on a wide-MAD asset a price still well away from
-//     the last-known-good reads healthy two buckets running.
-//   - Release requires POSITIVE evidence of health (the ADR's
-//     two-consecutive-bucket condition), never merely the absence of
-//     the fire condition. A bucket the scorer could not score at all
-//     (no baseline, no previous VWAP — the state after an aggregator
+//   - The initial hold is a MINIMUM; auto-unfreeze cannot fire inside it.
+//     The freeze fires at z > 5 and the streak needs only z < 3, so on a
+//     wide-MAD asset a price still far from last-known-good can read
+//     healthy two buckets running.
+//   - Release needs POSITIVE evidence of health, never just the absence of
+//     the fire condition. An unscorable bucket (no baseline, as after a
 //     restart) resets the streak rather than crediting it.
 
 // Freeze-lifecycle defaults, per ADR-0019 §"Freeze duration" and
