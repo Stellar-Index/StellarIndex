@@ -13,34 +13,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// DefaultWindow is the size of the rolling training window per
-// ADR-0019: 30 days of 1m bucket VWAPs.
+// DefaultWindow is ADR-0019's rolling training window: 30 days of 1m bucket VWAPs.
 const DefaultWindow = 30 * 24 * time.Hour
 
-// TimedVWAPSource reads time-stamped 1m VWAPs for a pair over a
-// half-open window [from, to). Implementations are expected to
-// return values in chronological order (oldest first); the
-// downstream [SplitByLookback] depends on that ordering.
-//
-// Production wiring: a thin adapter around
-// `timescale.Store.TimedVWAPsForPair1m`.
+// TimedVWAPSource reads a pair's 1m VWAPs over [from, to), oldest first ([SplitByLookback]
+// depends on the order).
 type TimedVWAPSource interface {
 	TimedVWAPsForPair1m(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]TimedVWAP, error)
 }
 
-// Sink persists a freshly-computed multi-window baseline.
-// Implementations are expected to be UPSERT — one row per pair,
-// the latest computation wins.
-//
-// The interface takes a [MultiBaseline] so the refresher's three-
-// window output (1d / 7d / 30d) lands atomically in storage —
-// either all three windows update together or the upsert fails as
-// a unit.
-//
-// The interface takes the metadata fields directly rather than a
-// pre-built struct so the refresher doesn't depend on the storage
-// package — keeps the dep direction clean (storage adapter
-// implements `Sink`, not the other way around).
+// Sink UPSERTs one pair's [MultiBaseline] so all three windows land atomically. It takes plain
+// metadata so the storage adapter implements it, not the other way round.
 type Sink interface {
 	UpsertBaseline(
 		ctx context.Context,
@@ -50,17 +33,8 @@ type Sink interface {
 	) error
 }
 
-// Refresher recomputes per-pair baselines from the prices_1m CAGG
-// and writes them through a [Sink]. Designed to run as a separate
-// goroutine in the aggregator binary on a slow cadence (e.g.
-// hourly) — baselines are 30-day rolling stats, so refreshing at
-// the 1m bucket cadence would be wasted work.
-//
-// On each per-pair refresh, the Refresher pulls the full 30-day
-// VWAP series and uses [SplitByLookback] to derive the 1d / 7d
-// sub-windows, then computes a [MultiBaseline] and persists it
-// atomically — one read of the hypertable produces all three
-// windows.
+// Refresher recomputes per-pair baselines from one 30-day prices_1m read (split by
+// [SplitByLookback]) and writes them through a [Sink], on a slow cadence: they are 30-day stats.
 type Refresher struct {
 	src         TimedVWAPSource
 	sink        Sink
@@ -69,9 +43,7 @@ type Refresher struct {
 	minuteFloor *big.Rat
 }
 
-// NewRefresher constructs a Refresher. Pass `window <= 0` to use
-// [DefaultWindow]. Logger is required (use slog.Default() if you
-// don't have one).
+// NewRefresher constructs a Refresher; window <= 0 means [DefaultWindow]. logger is required.
 func NewRefresher(src TimedVWAPSource, sink Sink, window time.Duration, logger *slog.Logger) *Refresher {
 	if window <= 0 {
 		window = DefaultWindow
@@ -110,9 +82,7 @@ func MinuteNotionalFloor(minUSDVolume float64, longestWindow time.Duration) *big
 	return f.Quo(f, new(big.Rat).SetInt64(minutes))
 }
 
-// RefreshOutcome describes the per-pair outcome of one refresh
-// attempt — used by [RefreshSummary] to give callers a structured
-// breakdown of what happened across a batch.
+// RefreshOutcome is one pair's refresh result, tallied in [RefreshSummary].
 type RefreshOutcome int
 
 const (
@@ -120,15 +90,11 @@ const (
 	OutcomeNotEnoughSamples
 	OutcomeReadError
 	OutcomeWriteError
-	// OutcomeOKPerMinuteFallback: the window carried too little USD flow
-	// for MinSamples+1 volume bars, so the median/MAD were built one point
-	// per minute, as before volume bars, rather than leaving a publishable
-	// pair with no z-score freeze. Day30.N is clamped so the density stays
-	// that of the bars; see [Refresher.RefreshPair].
+	// OutcomeOKPerMinuteFallback: too little USD flow for MinSamples+1 volume bars, so the baseline
+	// is per minute rather than leaving a publishable pair with no z-score freeze; Day30.N is clamped.
 	OutcomeOKPerMinuteFallback
-	// OutcomeOKUnvalued: no minute in the window carried a USD valuation,
-	// so notional is unmeasurable and the baseline was built from every
-	// minute to keep the z-score freeze live. Persisted, like OutcomeOK.
+	// OutcomeOKUnvalued: no USD-valued minute, so the baseline uses every minute to keep the
+	// z-score freeze live. Persisted.
 	OutcomeOKUnvalued
 )
 
@@ -151,9 +117,7 @@ func (o RefreshOutcome) String() string {
 	}
 }
 
-// RefreshSummary aggregates the outcomes of a [Refresher.RefreshAll]
-// run. Counts per outcome let the caller emit metrics in one place
-// without scanning per-pair errors.
+// RefreshSummary counts [Refresher.RefreshAll] outcomes for metrics.
 type RefreshSummary struct {
 	OK                  int
 	NotEnoughSamples    int
@@ -163,25 +127,9 @@ type RefreshSummary struct {
 	OKUnvalued          int
 }
 
-// RefreshPair recomputes the baseline for one pair and writes it.
-// Reads the pair's full 30-day timed VWAP series, splits into 1d /
-// 7d / 30d sub-windows, computes a [MultiBaseline] (each window
-// independently bootstraps if it doesn't have enough samples), and
-// upserts atomically.
-//
-// Returns:
-//
-//   - (OutcomeOK, nil) on a successful upsert (Day30 valid; the
-//     1d/7d windows may still be in bootstrap on this scale)
-//   - (OutcomeNotEnoughSamples, [ErrNotEnoughSamples]) when even
-//     the 30d window has fewer than [MinSamples] returns — the
-//     pair is in full bootstrap and nothing is persisted
-//   - (OutcomeOKPerMinuteFallback, nil) on a successful upsert of the
-//     per-minute baseline for a pair with too little USD flow for bars
-//   - (OutcomeOKUnvalued, nil) on a successful upsert for a pair with no
-//     USD-valued minute in the window
-//   - (OutcomeReadError, err) on a [TimedVWAPSource] failure
-//   - (OutcomeWriteError, err) on a [Sink] failure
+// RefreshPair recomputes one pair's [MultiBaseline] from its 30-day series and upserts it. It
+// persists nothing and returns [ErrNotEnoughSamples] when even the 30d window is in bootstrap, and
+// OutcomeReadError / OutcomeWriteError with the source or sink error.
 func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (RefreshOutcome, error) {
 	now := time.Now().UTC()
 	windowStart := now.Add(-r.window)
@@ -211,9 +159,7 @@ func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (Refre
 		}
 	}
 	if multi.Day30 == nil {
-		// Even the long window is in bootstrap; persist nothing.
-		// Caller's confidence-score loop applies ADR-0019 bootstrap
-		// policy.
+		// Full bootstrap; the confidence-score loop applies ADR-0019's policy.
 		return OutcomeNotEnoughSamples, ErrNotEnoughSamples
 	}
 
@@ -223,17 +169,10 @@ func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (Refre
 	return okOutcome, nil
 }
 
-// volumeBars turns a valued pair's minutes into USD-volume bars: consecutive
-// priced minutes accumulate until their summed notional reaches the minute
-// floor, then emit one point at the last minute's bucket end, priced at the
-// USD-weighted mean of their VWAPs. Every point, and so every return and
-// every unit of Day30.N density, costs a floor's worth of USD flow; a dust
-// minute contributes usd/floor of a point and that share of its price, so
-// real flow sets the median/MAD. A minute at or above the floor is its own
-// point at its exact VWAP. Unpriced minutes prove no notional and are
-// skipped; a trailing sub-floor remainder is dropped. valued is false when
-// no minute carried a USD valuation, and the caller falls back to every
-// minute.
+// volumeBars accumulates consecutive priced minutes into USD-volume bars of at least the minute
+// floor, each priced at its USD-weighted mean VWAP, so every point (and unit of Day30.N density) costs
+// real flow and dust cannot set the median/MAD. Unpriced minutes and a trailing remainder are dropped;
+// valued is false when no minute was USD-valued.
 func (r *Refresher) volumeBars(timed []TimedVWAP) (bars []TimedVWAP, valued bool) {
 	bars = make([]TimedVWAP, 0, len(timed))
 	usd, px := new(big.Rat), new(big.Rat)
@@ -259,14 +198,8 @@ func (r *Refresher) volumeBars(timed []TimedVWAP) (bars []TimedVWAP, valued bool
 	return bars, valued
 }
 
-// RefreshAll runs [Refresher.RefreshPair] for every pair in
-// `pairs` with up to `concurrency` in flight at once. Per-pair
-// failures are logged but don't abort the batch — a transient
-// failure on one pair shouldn't starve the others. Returns a
-// summary of outcomes across the batch.
-//
-// concurrency <= 0 falls back to 1 (serial). Use a value at or
-// below your DB connection-pool size to avoid pool exhaustion.
+// RefreshAll runs [Refresher.RefreshPair] for pairs, at most concurrency at once (<= 0 means 1;
+// keep it within the DB pool). One pair's failure is logged, never aborting the batch.
 func (r *Refresher) RefreshAll(ctx context.Context, pairs []canonical.Pair, concurrency int) RefreshSummary {
 	if concurrency < 1 {
 		concurrency = 1
@@ -288,10 +221,8 @@ loop:
 		}
 		wg.Add(1)
 		go func(pair canonical.Pair) {
-			// A panic in one pair's refresh must not crash the whole
-			// aggregator process — it unwinds this per-pair goroutine,
-			// releasing sem + wg via the defers below; the pair is simply
-			// absent from the summary (logged at Error with its stack).
+			// A panic unwinds only this pair's goroutine (defers release sem + wg); it is logged with its
+			// stack and absent from the summary.
 			defer worker.Recover(r.logger, "baseline-refresh:"+pair.String())
 			defer wg.Done()
 			defer func() { <-sem }()

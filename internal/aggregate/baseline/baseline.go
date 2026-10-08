@@ -7,27 +7,16 @@ import (
 	"time"
 )
 
-// MADScale is the consistency factor that maps MAD to σ-equivalent
-// units for normally-distributed data. Multiplying raw MAD by
-// 1.4826 means a 5-σ-equivalent anomaly is at z=5 (matching the
-// industry convention) regardless of whether the underlying
-// distribution is actually Gaussian.
-//
-// Source: 1 / Φ⁻¹(0.75) ≈ 1.4826, where Φ⁻¹ is the inverse standard
-// normal CDF.
+// MADScale (1 / Φ⁻¹(0.75)) maps MAD to σ-equivalent units, so z=5 is a 5-σ-equivalent
+// anomaly whether or not the distribution is Gaussian.
 const MADScale = 1.4826
 
-// MinSamples is the floor below which Median + MAD aren't meaningful.
-// At n=1 there's no variance to measure; at n=0 there's nothing at
-// all. ADR-0019 §"Bootstrap (warmup) policy" handles the
-// not-yet-trained case at a higher layer; this package just refuses
-// to compute.
+// MinSamples is the floor below which Median + MAD aren't meaningful; the not-yet-trained case
+// is ADR-0019's bootstrap policy, a layer up.
 const MinSamples = 2
 
-// MinDriftSamples is the floor below which [Baseline.DriftZScore] is
-// not trustworthy. The drift statistic divides by MAD, so it inherits
-// MAD's estimation error — and at small n a MAD that happens to come
-// in low manufactures a large drift z out of pure noise.
+// MinDriftSamples is the floor below which [Baseline.DriftZScore] is not trustworthy: it divides
+// by MAD, and a small-n MAD that comes in low manufactures a large drift z from noise.
 //
 // Measured null false-positive rate (20k trials of zero-drift
 // Gaussian returns, P(driftZ >= 5)):
@@ -36,72 +25,30 @@ const MinSamples = 2
 //	n=5    7.5%      n=60    0.035%
 //	n=10   1.4%      n=1440  0.005%
 //
-// 60 is the smallest round window whose null rate is within an order
-// of magnitude of the asymptote, and it carries a natural domain
-// meaning: 60 one-minute buckets = one hour of continuous trading.
-// Well below the 1,440 a healthy 1d window carries, so this gates
-// only genuinely sparse windows — never a real one.
+// 60 (one hour of 1m buckets) is the smallest round window within an order of magnitude of the
+// asymptote, well below the 1,440 a healthy 1d window carries.
 const MinDriftSamples = 60
 
-// MinMAD is the floor placed under the MAD before it is used as the
-// denominator of either z-statistic. It is expressed in the
-// same σ-equivalent RETURN units as [Baseline.MAD]: 1e-3 = 10 basis
-// points of per-bucket return.
-//
-// Why a floor is required. MAD is 0 whenever a strict MAJORITY of the
-// window's bucket-to-bucket returns are exactly 0 — which is the
-// NORMAL state of a tightly-pegged stablecoin, and of any pair quiet
-// enough that most 1-minute buckets reprint the same VWAP. Dividing
-// by that 0 made every nonzero move, down to a 1e-9 rounding wiggle,
-// score z=+Inf. [MultiBaseline.MaxZScore] then takes the max ACROSS
-// windows, so one quiet window was enough to pin the pair at +Inf,
-// which drives ZScoreFactor to 0, the whole confidence score to 0 (a
-// geometric mean), and satisfies the Phase 2 freeze's `z > 5` leg
-// forever. A near-zero-but-nonzero MAD produces the same failure less
-// visibly (MAD=1e-9 turns a 1e-6 move into z=1000), so the floor
-// applies to any MAD below it, not just to exactly zero.
-//
-// Why 1e-3. The floor is the spread we are willing to assert a quiet
-// window really has, and ADR-0019 triggers at 5σ — so the floor is
-// equivalent to choosing the smallest single-bucket move that counts
-// as anomalous for an asset that has been perfectly flat. At 1e-3
-// that move is 0.5%, which is an order of magnitude outside the
-// ±10 bps band a healthy USD peg trades in (so a quiet peg stops
-// self-triggering) while still catching a genuine depeg, a fat-finger
-// print, or a manipulated bucket. Tighter values keep the false
-// positive; looser ones start hiding real moves, so this errs toward
-// the sensitive side of the trade-off.
+// MinMAD floors the MAD (σ-equivalent return units; 1e-3 = 10 bps per bucket) before it divides
+// either z-statistic. A pegged or quiet pair has MAD 0 or near it, which scored every rounding wiggle
+// z=+Inf; via MaxZScore's max-across-windows that pinned confidence at 0 and the freeze's `z > 5` leg
+// on forever. At 5σ the floor makes a 0.5% move from flat the smallest anomaly: an order of magnitude
+// outside a healthy peg's ±10 bps, still catching a depeg, fat-finger or manipulated bucket.
 const MinMAD = 1e-3
 
-// ErrNotEnoughSamples is what [FromReturns] returns when the input
-// has fewer than [MinSamples] elements. Callers translate this into
-// "use the bootstrap policy" rather than treating it as an error.
+// ErrNotEnoughSamples means fewer than [MinSamples] returns; callers apply the bootstrap policy.
 var ErrNotEnoughSamples = errors.New("baseline: not enough samples (need >= 2)")
 
-// Baseline is the robust-statistics summary of a rolling window of
-// returns, ready to score a new observation against.
-//
-// Population semantics: Median is the 50th percentile; MAD is the
-// 1.4826-scaled median absolute deviation. N is the count that fed
-// the computation — useful for downstream baseline_quality factors
-// (ADR-0019 §"Multi-factor confidence score").
-//
-// MAD == 0 is a real outcome — it means every observation in the
-// window was identical (think a tightly-pegged stablecoin during a
-// quiet period). [Baseline.ZScore] handles that explicitly.
+// Baseline is the robust-statistics summary of a rolling window of returns: Median, MAD
+// (1.4826-scaled) and the sample count N. MAD == 0 is real (a quiet peg); [Baseline.ZScore] floors it.
 type Baseline struct {
 	Median float64
 	MAD    float64
 	N      int
 }
 
-// FromReturns computes the robust-stats summary of a slice of
-// bucket-to-bucket percent changes. The input is NOT mutated.
-//
-// Returns [ErrNotEnoughSamples] when len(returns) < [MinSamples].
-// Caller is responsible for filtering NaN / Inf out of the input
-// — this function does not silently drop pathological inputs
-// because that would mask data-pipeline bugs upstream.
+// FromReturns computes the robust-stats summary of bucket-to-bucket returns without mutating them.
+// The caller filters NaN / Inf: dropping them silently here would mask upstream pipeline bugs.
 func FromReturns(returns []float64) (Baseline, error) {
 	if len(returns) < MinSamples {
 		return Baseline{}, ErrNotEnoughSamples
@@ -117,29 +64,14 @@ func FromReturns(returns []float64) (Baseline, error) {
 	}, nil
 }
 
-// ZScore returns the standardised distance from the baseline
-// median, in σ-equivalent units:
-//
-//	z = |x - Median| / max(MAD, MinMAD)
-//
-// The denominator is floored at [MinMAD]. A quiet or pegged
-// window reports MAD at or near 0, and the unfloored ratio scored a
-// sub-basis-point wiggle as +Inf — see [MinMAD] for why that is a
-// false positive rather than a detection. x == Median still returns
-// 0, and a genuinely large move from a flat baseline still scores far
-// above any sane threshold; only the noise band changed.
-//
-// Callers compare against threshold = 5 per ADR-0019 §"5σ trigger"
-// to gate confidence-score factors and freeze decisions.
+// ZScore returns |x - Median| / max(MAD, [MinMAD]), in σ-equivalent units; see [MinMAD] for why
+// the floor. Callers compare against ADR-0019's threshold of 5.
 func (b Baseline) ZScore(x float64) float64 {
 	return math.Abs(x-b.Median) / b.scale()
 }
 
-// scale is the MAD actually used as [Baseline.ZScore]'s denominator:
-// the measured MAD, floored at [MinMAD]. [Baseline.DriftZScore]
-// deliberately does NOT use it — see that method for why. A negative
-// MAD is not reachable (MAD is a median of absolute deviations) but
-// is folded into the same floor rather than trusted.
+// scale is [Baseline.ZScore]'s denominator: MAD floored at [MinMAD] (an unreachable negative MAD
+// included). [Baseline.DriftZScore] deliberately does NOT use it.
 func (b Baseline) scale() float64 {
 	if b.MAD < MinMAD {
 		return MinMAD
@@ -147,48 +79,20 @@ func (b Baseline) scale() float64 {
 	return b.MAD
 }
 
-// DriftZScore scores the window's own *persistent directional drift*
-// — the frog-boiling signal that [Baseline.ZScore] structurally
-// cannot see.
+// DriftZScore scores the window's own persistent directional drift — the frog-boiling signal
+// [Baseline.ZScore] cannot see, since each drifted return hides in the noise and the Median tracks it.
 //
 //	driftZ = |Median| * sqrt(N) / MAD
 //
-// ZScore is blind to a slow drift: a frog-boiling attacker keeps every
-// per-bucket return inside the noise, and the window's own Median tracks
-// the drift, so z stays ~0 however far the price travels. More window
-// lengths do not help; in return space there is no level memory.
+// An honest walk wanders ~MAD*sqrt(N) with median ~0; a sustained push accumulates Median*N, so drift
+// grows significant as sqrt(N) while volatility does not. The MEDIAN numerator means one spike cannot
+// fake a drift. sqrt(N) amplifies a partly-shifted median (30d: a 0.5%/day push needs ~60% coverage,
+// +50% over 7 days ~23%), which is why the three windows are non-redundant.
 //
-// The drift statistic never compares price to a baseline. Under an
-// honest random walk the price wanders ~MAD*sqrt(N) in no direction and
-// the median return is ~0; a sustained push accumulates Median*N. The
-// ratio grows as sqrt(N), so persistent drift becomes significant while
-// honest volatility does not. Suppressing per-bucket moves to dodge
-// ZScore keeps MAD, the denominator, small: the largest displacement that
-// hides under threshold T is ~T*MAD*sqrt(N) per window, scaled by the
-// asset's own volatility (ADR-0019 §Consequences).
-//
-// The numerator is the MEDIAN return, so a single spike cannot fake a
-// drift (ADR-0019 §Alternatives-considered).
-//
-// Partial coverage does NOT simply dilute away: sqrt(N) amplifies a
-// partly-shifted median. Measured on the 30d window, a weak 0.5%/day
-// push needs ~60% coverage to reach z=5, a +50%-over-7-days move only
-// ~23%. That trade of coverage against sqrt(N) is why
-// [MultiBaseline.MaxDriftZScore]'s three scales are non-redundant.
-//
-// A drift stays visible until it ages out of the window, so this
-// statistic is unsuitable for gating a per-bucket decision. See
-// [MultiBaseline.MaxDriftZScore].
-//
-// Returns (_, false) when N < [MinDriftSamples] — see that constant
-// for the measured small-sample false-positive rates.
-//
-// MAD == 0 deliberately does NOT take [Baseline.ZScore]'s [MinMAD]
-// floor: flooring the denominator would let an attacker drift below
-// 5·[MinMAD]·sqrt(N) per window undetected (measured: a 15%-over-30d
-// push drops from z≈9 to z≈0.7 under a 1e-3 floor). A zero Median scores
-// 0 (a flat price, the common illiquid case); a nonzero Median with zero
-// MAD is +Inf (a perfectly linear ramp no real market produces).
+// A drift stays visible until it ages out, so never gate a per-bucket decision on this; see
+// [MultiBaseline.MaxDriftZScore]. ok is false when N < [MinDriftSamples]. MAD == 0 deliberately skips
+// the [MinMAD] floor: it would hide a drift under 5·MinMAD·sqrt(N) per window (a 15%-over-30d push
+// drops from z≈9 to z≈0.7). Zero Median scores 0; nonzero Median over zero MAD is +Inf.
 func (b Baseline) DriftZScore() (float64, bool) {
 	if b.N < MinDriftSamples {
 		return 0, false
@@ -203,10 +107,7 @@ func (b Baseline) DriftZScore() (float64, bool) {
 	return drift * math.Sqrt(float64(b.N)) / b.MAD, true
 }
 
-// Median returns the 50th percentile of `xs`. The input is NOT
-// mutated; an internal copy is sorted. Empty input returns 0
-// (callers should use [FromReturns] which checks [MinSamples]
-// before delegating here).
+// Median returns the 50th percentile of xs from a sorted copy; empty input returns 0.
 func Median(xs []float64) float64 {
 	if len(xs) == 0 {
 		return 0
@@ -219,22 +120,12 @@ func Median(xs []float64) float64 {
 	if n%2 == 1 {
 		return cp[n/2]
 	}
-	// Even count: arithmetic mean of the two middle values. Done
-	// in float64 because the inputs are already float64 — adding
-	// big.Rat would be precision theatre at this layer.
+	// float64 suffices: the inputs are already float64.
 	return (cp[n/2-1] + cp[n/2]) / 2
 }
 
-// MAD returns the 1.4826-scaled median absolute deviation:
-//
-//	MAD = 1.4826 * median( |xs[i] - median(xs)| )
-//
-// The 1.4826 factor (see [MADScale]) converts to σ-equivalent for
-// normal data — so [Baseline.ZScore] reads as "σ-equivalents from
-// median" without further conversion.
-//
-// Empty input returns 0. Single-element input also returns 0
-// (no spread to measure — degenerate but well-defined).
+// MAD returns 1.4826 * median(|xs[i] - median(xs)|), σ-equivalent for normal data (see
+// [MADScale]). Empty or single-element input returns 0.
 func MAD(xs []float64) float64 {
 	if len(xs) == 0 {
 		return 0
@@ -259,17 +150,9 @@ const BucketWidth = time.Minute
 // never be scored against it.
 type BucketReturn struct{ frac float64 }
 
-// NewBucketReturn returns curr's return over prev, two bucket VWAPs whose
-// bucket ends lie elapsed apart. ok is false when prev is zero (no defined
-// return).
-//
-// An empty minute has no bucket, so a sparse pair's returns span many
-// minutes, and under diffusion a return over k buckets has sqrt(k) times a
-// one-bucket return's spread. Dividing by sqrt(elapsed/BucketWidth) puts
-// an hourly printer's baseline and observations in the same one-minute
-// unit as a pair that prints every minute. elapsed at or below one bucket,
-// including an unknown zero, is left unscaled so a return is never
-// amplified.
+// NewBucketReturn returns curr's return over prev, two bucket VWAPs elapsed apart; ok is false
+// when prev is zero. A k-bucket return has sqrt(k) times a one-bucket spread, so dividing by
+// sqrt(elapsed/BucketWidth) puts sparse pairs in the one-minute unit; elapsed <= one bucket is unscaled.
 func NewBucketReturn(prev, curr float64, elapsed time.Duration) (r BucketReturn, ok bool) {
 	if prev == 0 {
 		return BucketReturn{}, false
@@ -284,18 +167,9 @@ func NewBucketReturn(prev, curr float64, elapsed time.Duration) (r BucketReturn,
 // Fraction is the one-bucket-scaled return as a fraction (0.1 = +10%).
 func (r BucketReturn) Fraction() float64 { return r.frac }
 
-// ReturnsFromVWAPs converts a chronologically-ordered (oldest-first)
-// series of bucket VWAPs into one [BucketReturn] fraction per consecutive
-// pair of priced buckets, each scaled by the time between their bucket
-// ends (see [NewBucketReturn]).
-//
-// A bucket whose VWAP is 0 carries no price and is skipped entirely: the
-// return spans the priced buckets either side of it rather than recording
-// a -100% move into it. Returns nil when fewer than two buckets are
-// priced.
-//
-// Used as the input to [FromReturns] when building a baseline from
-// a stored window of 1m VWAP buckets.
+// ReturnsFromVWAPs converts oldest-first bucket VWAPs into one scaled [BucketReturn] fraction per
+// consecutive priced pair (see [NewBucketReturn]), the input to [FromReturns]. A zero-VWAP bucket is
+// skipped, not a -100% move. Returns nil with fewer than two priced buckets.
 func ReturnsFromVWAPs(timed []TimedVWAP) []float64 {
 	var out []float64
 	prev := -1
