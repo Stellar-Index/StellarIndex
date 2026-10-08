@@ -1,68 +1,22 @@
-// Package rwa holds the definition of a tokenized real-world asset on
-// the Stellar network: which on-chain assets the RWA surface admits,
-// and why each one qualifies.
+// Package rwa defines which Stellar assets the RWA surface admits and why.
 //
-// The definition is the load-bearing part of the surface. An RWA page
-// names issuers as representing real-world value and publishes
-// valuations against them, so a permissive rule does not produce a
-// longer dashboard — it produces a phishing amplifier. Asset codes are
-// not unique on Stellar: anyone may issue a token called USTRY, BENJI
-// or XAU, and the network holds many that impersonate exactly those.
-// Identity here is therefore always (code, issuer), never a code alone
-// (the same rule the verified-currency collision warning and
-// [canonical.Asset] enforce).
+// A permissive rule is a phishing amplifier, not a longer dashboard: anyone may issue USTRY,
+// BENJI or XAU, so identity is always (code, issuer). [Qualify] requires all four:
 //
-// # The four requirements
+// R1 IDENTITY: a classic asset with an issuer G-address (contract tokens use contract.go's
+// C1-C4 arm, keyed by contract address; the arms never overlap).
 //
-// An asset is in the set when ALL of these hold. Each is checked by
-// one of the predicates below; [Qualify] composes them and returns the
-// reason a candidate was refused.
+// R2 ISSUER-BOUND SELF-DECLARATION: the SEP-1 fetched from the account's on-chain
+// home_domain has a [[CURRENCIES]] entry for this code naming this account as issuer.
 //
-// R1 — IDENTITY. A classic Stellar asset with a code and an issuer
-// G-address. The native asset is not an RWA.
+// R3 INDEPENDENT RECOGNITION: the curated account directory tags the issuer (or an unflagged
+// domain sibling) with a recognition tag and no scam tag. 128 of 130 issuers self-declaring
+// a real-world anchor were tagged malicious, so R2 alone is worthless.
 //
-// A contract-issued token qualifies through the SEPARATE arm in
-// contract.go, on its contract address, under requirements C1 to C4:
-// R2 is structurally impossible for a C-address, so that arm says what
-// carries R2's weight instead. The two arms never overlap: this one runs
-// over SEP-1 attestations keyed by (code, issuer), that one over curated
-// directory entries keyed by contract address.
+// R4 REAL-WORLD INSTRUMENT: [BasisSep1Anchor], [BasisOracleFeed] or [BasisSep1ISIN], in
+// that order; never load-bearing alone, which keeps the code-keyed oracle basis safe.
 //
-// R2 — ISSUER-BOUND SELF-DECLARATION. The issuer account carries a
-// SEP-1 stellar.toml, fetched over HTTPS from the home_domain that
-// account set ON CHAIN, containing a [[CURRENCIES]] entry whose code
-// matches the asset and whose declared issuer equals the account that
-// served the file. This is the same provenance rule the SEP-1 logo
-// overlay enforces (timescale.AllSep1Images) after a token was able to
-// claim another issuer's brand by declaring it in its own toml. It
-// proves the claim came from a domain the issuer controls, bound to
-// this exact strkey — nothing more, and the next requirement exists
-// because nothing more is a low bar.
-//
-// R3 — INDEPENDENT RECOGNITION. The issuer G-address is named in the
-// curated third-party account directory (migration 0136) with at least
-// one recognition tag and no scam-class tag. A self-declaration alone
-// is worthless here: measured on the production directory,
-// of the 130 issuers publishing a domain-bound real-world
-// anchor_asset_type, 128 carry the `malicious` tag — the declarations
-// come overwhelmingly from lookalike domains impersonating real
-// exchanges. R3 is the requirement a party other than the issuer
-// vouched for that specific account, or for an unflagged sibling
-// account the same issuer-bound SEP-1 declares ([RecognitionDomainSibling]).
-//
-// R4 — REAL-WORLD INSTRUMENT. The asset is a real-world instrument
-// rather than one of the issuer's other tokens, established by
-// [BasisSep1Anchor], [BasisOracleFeed] or [BasisSep1ISIN], tried in
-// that order. R4 classifies within an issuer R3 has already vouched
-// for; it is never load-bearing on its own, which is what keeps the
-// code-keyed oracle basis safe.
-//
-// # What a failing asset gets
-//
-// Nothing. It is absent from this surface, and its own asset page
-// continues to serve it under the gates that already apply there. The
-// set is a claim about real-world backing; an asset that cannot meet
-// the bar has no partial place in it.
+// A failing asset is simply absent here; its own asset page still serves it.
 package rwa
 
 import (
@@ -81,37 +35,13 @@ const (
 	// BasisSep1Anchor — the issuer-bound SEP-1 entry from R2 declares
 	// an anchor_asset_type naming a real-world instrument class.
 	BasisSep1Anchor = "sep1_anchor_declaration"
-	// BasisOracleFeed — an independent price oracle publishes a
-	// net-asset-value feed for an instrument of this code, per the
-	// ADR-0028 allow-list (canonical.IsKnownRWA). The feed is keyed on
-	// the CODE alone, which is exactly why this basis is admissible
-	// only after R3 has bound the issuer to a recognised entity: on its
-	// own it would readmit the code-only identity the whole definition
-	// refuses. A hand-vetted fund-NAV binding ([FundNAVTicker]) also
-	// admits here, keyed on the exact (code, issuer).
+	// BasisOracleFeed: an ADR-0028 oracle publishes a NAV feed for this CODE, admissible
+	// only because R3 already bound the issuer. A vetted fund-NAV binding ([FundNAVTicker])
+	// also admits here, keyed on the exact pair.
 	BasisOracleFeed = "oracle_rwa_feed"
-	// BasisSep1ISIN — the issuer-bound [[CURRENCIES]] entry declares an
-	// anchor_asset whose value is a well-formed ISIN, check digit and
-	// all. It admits WITHOUT a class, for the same reason
-	// [BasisOracleFeed] does: this arm establishes that a real-world
-	// instrument exists, not what category it belongs to, and inventing
-	// one would publish a classification nothing declared.
-	//
-	// Why an ISIN is evidence at all. anchor_asset_type is a string the
-	// issuer picks from a vocabulary it is free to ignore — Franklin
-	// Templeton's four Stellar share classes all declare `other`. An
-	// ISIN is not picked: it is assigned by a national numbering agency
-	// to a registered security, it is externally checkable, and its
-	// final digit is a Luhn check over the rest. As evidence that a
-	// real-world instrument stands behind a token it is at least as
-	// strong as a self-chosen class string, and arguably stronger.
-	//
-	// What it is NOT is evidence that THIS issuer is entitled to that
-	// ISIN. Nothing here checks that, and nothing needs to: R2 has
-	// already required the declaration to come from the issuer's own
-	// on-chain domain and to name its own account, and R3 has required
-	// an independent directory to recognise that account and not flag
-	// it. An impersonator reaches this arm only after defeating both.
+	// BasisSep1ISIN: the bound entry's anchor_asset is a well-formed ISIN. Admits without a
+	// class; an agency-assigned, checkable ISIN beats a self-picked class string, and entitlement
+	// to it is left to R2 and R3, which an impersonator must defeat first.
 	BasisSep1ISIN = "sep1_isin_declaration"
 )
 
@@ -127,22 +57,9 @@ const (
 	RejectNoInstrumentClaim = "no_real_world_instrument_basis"
 )
 
-// anchorClasses is the closed vocabulary of anchor_asset_type values
-// that name a real-world instrument.
-//
-// It is the SEP-1 enumeration itself, minus the terms that name no
-// real-world instrument. anchor_asset_type is free text on the wire —
-// the production set holds `equity`, `etf`, `metal`, `rwa`,
-// `real_estate`, `sovereign` and dozens more invented spellings — and
-// accepting synonyms is how a closed set stops being closed. A token
-// whose issuer wants to appear here declares one of these four.
-//
-//   - `fiat` is excluded: a fiat-anchored token is a stablecoin, a
-//     different instrument with a different risk story, counted on its
-//     own surface (the comparison dashboards keep the two apart too).
-//   - `crypto` and `nft` are excluded: neither is a real-world asset.
-//   - `other` is excluded: it classifies nothing, and 6,309 bound
-//     entries carry it.
+// anchorClasses is SEP-1's anchor_asset_type enumeration minus terms naming no real-world
+// instrument (fiat is a stablecoin, crypto/nft are not RWAs, other classifies nothing).
+// No synonyms: accepting invented spellings is how a closed set stops being closed.
 var anchorClasses = map[string]struct{}{
 	"stock":      {},
 	"bond":       {},
@@ -162,42 +79,10 @@ func AnchorClass(declared string) string {
 	return c
 }
 
-// contractAnchorClasses is the closed vocabulary a CURATED CONTRACT
-// BINDING may use. It is [anchorClasses] plus the terms SEP-1 has no
-// word for.
-//
-// The two vocabularies differ because the two arms are doing different
-// things with the word. The classic arm READS the issuer's own free-text
-// anchor_asset_type, so its vocabulary has to be SEP-1's: accepting a
-// term SEP-1 does not define is accepting an invented spelling, which is
-// the exact failure the closed set exists to prevent (the production set
-// carries `equity`, `etf`, `metal`, `rwa`, `sovereign` and dozens more).
-// The contract arm does not read a declaration at all. The class on a
-// curated binding is OUR OWN statement, made in code from a primary
-// source and reviewed as a change — so it may use a term SEP-1 lacks,
-// and it has to, because SEP-1 has no word for a share in a fund.
-//
-//   - `fund` — a share in a pooled investment vehicle, whose exposure is
-//     the fund's stated objective rather than any one asset type it
-//     happens to hold. It exists because forcing an asset-type label
-//     onto a fund share states something false in BOTH directions, and
-//     the Spiko Amundi Overnight Swap Fund is the case that proved it:
-//     152 of its 160 holdings are listed equities (119% of net assets),
-//     and total return swaps with a counterparty hand every penny of
-//     that equity return away in exchange for the overnight index rate.
-//     `stock` would tell a holder it tracks equities, which is the
-//     precise opposite of what the instrument does; `bond` would be
-//     false on the assets (not one bond) and false on the exposure
-//     (an overnight rate, not credit or duration), and the fund's own
-//     AMF classification is "EUR UCITS" rather than a money-market
-//     fund. `fund` says what is true of every share class of it: the
-//     holder owns a piece of a vehicle, and the vehicle's objective is
-//     the exposure.
-//
-// Adding a term here widens what a BINDING may say. It does not widen
-// what is admitted: C1, C2 and C3 are untouched, and a contract still
-// needs its address named by two independent parties or by the curated
-// directory before a class is ever read.
+// contractAnchorClasses is [anchorClasses] plus `fund`. A curated binding's class is our
+// own reviewed statement, not a declaration read, so it may use terms SEP-1 lacks; `fund`
+// exists because the Spiko Amundi swap fund is neither `stock` nor `bond` in exposure.
+// Widening it admits nothing: C1-C3 still decide membership.
 var contractAnchorClasses = func() map[string]struct{} {
 	out := make(map[string]struct{}, len(anchorClasses)+1)
 	for c := range anchorClasses {
@@ -232,17 +117,8 @@ func AnchorClasses() []string {
 	return out
 }
 
-// recognitionTags is the curated-directory vocabulary that counts as
-// an independent party recognising an account as an ISSUING entity
-// (R3).
-//
-// Deliberately narrower than "has any tag": `personal`, `wallet`,
-// `memo-required`, `airdrop`, `application` and `infra` describe an
-// account without vouching for it as the issuer of a real-world
-// instrument, and `memo-required` in particular is an operational
-// note that any account can attract. The scam-class tags are handled
-// separately and always exclude — a scam tag beats every recognition
-// tag on the same account.
+// recognitionTags are directory tags vouching for an account as an ISSUER (R3); tags like
+// `wallet` or `memo-required` describe without vouching. A scam tag always wins.
 var recognitionTags = map[string]struct{}{
 	"issuer":    {},
 	"anchor":    {},
@@ -307,25 +183,15 @@ type Candidate struct {
 	// DeclaredAnchorType is the anchor_asset_type from that bound
 	// entry, verbatim. Empty when the entry declares none.
 	DeclaredAnchorType string
-	// DeclaredAnchorAsset is the anchor_asset from that same entry,
-	// verbatim. Carried separately from the type because the two answer
-	// different questions: the type proposes a CLASS, the asset names
-	// the INSTRUMENT. An issuer may give a usable answer to one and not
-	// the other — Franklin Templeton declares type `other` beside ISINs
-	// LU2900381208 and LU3258450587.
+	// DeclaredAnchorAsset is the bound entry's anchor_asset, verbatim; kept apart from the type
+	// because an issuer may answer one usefully and not the other (Franklin: `other` + ISINs).
 	DeclaredAnchorAsset string
 	// DirectoryTags are the curated third-party tags on the issuer
 	// G-address. Empty when the directory does not list it, which is a
 	// refusal under R3 and not an error.
 	DirectoryTags []string
-	// SiblingRecognised reports that ANOTHER account on this candidate's
-	// own issuer-bound domain is directory-recognised and not flagged —
-	// the same SEP-1 that binds this issuer names that one too. It
-	// stands in for R3 when the directory has not listed this account
-	// itself, and the verdict says so ([RecognitionDomainSibling]). It
-	// never overrides a scam flag on this account, and it supplies no
-	// instrument claim: the class, oracle-code or ISIN arms still have
-	// to admit the asset on its own declaration.
+	// SiblingRecognised stands in for R3 when another account on this issuer-bound domain is
+	// recognised and unflagged. It never overrides a scam flag or supplies an instrument claim.
 	SiblingRecognised bool
 }
 
@@ -343,31 +209,14 @@ type Verdict struct {
 	// Reject names the FIRST requirement the candidate failed, in R1→R4
 	// order. Empty when admitted.
 	Reject string
-	// Recognition names WHICH independent party's naming satisfied the
-	// recognition requirement. Set on every admission, empty on every
-	// refusal. On the classic arm it is [RecognitionDirectory] when the
-	// directory lists this account itself and
-	// [RecognitionDomainSibling] when it lists another account the
-	// same issuer-bound SEP-1 binds on the same domain.
-	//
-	// It exists because each arm has TWO ways to satisfy its
-	// recognition requirement — the contract arm's
-	// [RecognitionCuratedDirectory] and
-	// [RecognitionListingCorroborated], the classic arm's direct and
-	// sibling routes — and the pair never carries the same weight: one
-	// is an address-level attestation that admits on its own, the other
-	// is an inference from sources that never looked at this address.
-	// A row that could not say which one let it in would publish two
-	// different strengths of evidence under one indistinguishable
-	// membership.
+	// Recognition names which route satisfied recognition, set on every admission. Each arm
+	// has two routes of unequal weight (direct attestation vs inference), and a row that could
+	// not say which would serve two evidence strengths as one membership.
 	Recognition string
 }
 
-// Qualify applies the four requirements in order and returns the
-// verdict. The order matters for the reported reason: an unrecognised
-// issuer whose token also declares nothing is reported as
-// unrecognised, because recognition is the requirement that would have
-// had to change first.
+// Qualify applies the requirements in order; the reported reason is the requirement that
+// would have had to change first.
 func Qualify(c Candidate) Verdict {
 	if strings.TrimSpace(c.Code) == "" || strings.TrimSpace(c.Issuer) == "" {
 		return Verdict{Reject: RejectNotClassic}
@@ -403,12 +252,8 @@ func Qualify(c Candidate) Verdict {
 	if _, ok := FundNAVTicker(c.Code, c.Issuer); ok {
 		return Verdict{InSet: true, Basis: BasisOracleFeed, Recognition: recognition}
 	}
-	// The ISIN arm, last because it is the weakest of the three in what
-	// it TELLS us — it establishes an instrument and no class — while
-	// being the strongest in identity. An issuer that declared a usable
-	// class has already been admitted above with more information; an
-	// oracle feed has an independent party behind it. This arm carries
-	// only the issuer's own declaration, checked for form.
+	// The ISIN arm is last: strongest in identity but tells no class, and carries only the
+	// issuer's own declaration, checked for form.
 	if IsISIN(c.DeclaredAnchorAsset) {
 		return Verdict{InSet: true, Basis: BasisSep1ISIN, Recognition: recognition}
 	}
@@ -420,39 +265,15 @@ const (
 	// RecognitionDirectory — the curated account directory lists THIS
 	// issuer account with a recognition tag. The original arm.
 	RecognitionDirectory = "curated_account_directory"
-	// RecognitionDomainSibling — the directory does not list this
-	// account, but it lists (unflagged) another account that the SAME
-	// issuer-bound SEP-1 declares, on the same domain. The entity is
-	// recognised; this is one more of its accounts, named by the entity
-	// itself from its own domain. Weaker than the direct arm in one
-	// stated way: the directory never looked at this account. Franklin
-	// Templeton's Luxembourg and Singapore share classes (gBENJI,
-	// grBENJI, sgBENJI) are the case this exists for — ISIN-declared in
-	// franklintempleton.com's SEP-1 beside the directory-listed BENJI
-	// issuer, 82M tokens between them, unlisted by the directory.
-	//
-	// The arm ASSUMES one entity per domain: that every account whose
-	// on-chain home_domain is X, and which X's stellar.toml binds, is an
-	// account of the entity that owns X. That holds for a fund manager
-	// publishing its own share classes. It does not hold for a hosting
-	// domain — an anchor or toml-hosting service whose stellar.toml
-	// lists assets from several tenants who each set home_domain to it.
-	// There, one directory-recognised tenant would recognise every
-	// other tenant the host publishes, and the host, not the directory,
-	// would decide who passes R3; the remaining gates (class, oracle
-	// code, ISIN) are the tenant's own declarations in that same toml,
-	// so nothing independent stands in the way. No such domain has a
-	// recognised tenant in the directory today, which is why the
-	// assumption is stated here rather than enforced; the day the set
-	// grows through a shared domain, this comment is what says why.
+	// RecognitionDomainSibling: the directory lists (unflagged) another account the same
+	// issuer-bound SEP-1 declares, e.g. Franklin's gBENJI/grBENJI/sgBENJI beside BENJI.
+	// It ASSUMES one entity per domain; a multi-tenant toml host would let one recognised
+	// tenant pass every other through R3. No such domain has a recognised tenant today.
 	RecognitionDomainSibling = "curated_account_directory_via_domain_sibling"
 )
 
-// isOracleRWACode reports whether an independent oracle publishes a
-// net-asset-value feed for an instrument of this code, per the
-// ADR-0028 allow-list. Case-insensitive: the allow-list spells codes
-// as the instrument tickers (XAUm, iBENJI, deJAAA) while an on-chain
-// asset code carries whatever case its issuer chose.
+// isOracleRWACode reports whether the ADR-0028 allow-list has a feed for this code,
+// case-insensitively, since tickers (XAUm, iBENJI) and on-chain codes differ in case.
 func isOracleRWACode(code string) bool {
 	code = strings.TrimSpace(code)
 	if canonical.IsKnownRWA(code) {
@@ -466,24 +287,9 @@ func isOracleRWACode(code string) bool {
 	return false
 }
 
-// CouldQualify reports whether an asset with this code and declared
-// anchor type and anchor asset could satisfy requirement 4 at all,
-// independent of the issuer. It exists so a caller scanning every
-// issuer-bound SEP-1 attestation can drop the overwhelming majority —
-// the NFT, crypto and undeclared entries — without materialising them,
-// and it is deliberately the ONLY predicate that answers a membership
-// question from asset-side inputs alone. It is a pre-filter, never a
-// decision: [Qualify] still has to run, and requirements 2 and 3 still
-// have to hold.
-//
-// It reads EVERY asset-side input [Qualify]'s requirement-4 arms read —
-// the class, the code and the anchor asset — and must keep doing so as
-// arms are added: a pre-filter narrower than the rule it precedes is a
-// silent membership change. The three Franklin share classes declare
-// type `other` beside their ISINs, so a filter that read only the type
-// would leave the ISIN arm unreached.
-// [TestCouldQualify_MatchesQualifyOnTheAssetSideInputs] pins the match
-// over all three inputs.
+// CouldQualify is the asset-side pre-filter for R4, never a decision. It must read every
+// input Qualify's R4 arms read, or it silently changes membership (Franklin's `other` + ISIN
+// classes); TestCouldQualify_MatchesQualifyOnTheAssetSideInputs pins that.
 func CouldQualify(code, declaredAnchorType, declaredAnchorAsset string) bool {
 	return AnchorClass(declaredAnchorType) != "" ||
 		isOracleRWACode(code) ||
