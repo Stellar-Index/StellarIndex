@@ -33,7 +33,7 @@ const DefaultTimeout = 30 * time.Second
 // in tandem with the SDK module's tag.
 //
 // Bumped 0.1.0 -> 0.2.0 for the Client.Asset() breaking change
-// (ADR-0042 LC-040: return type Envelope[AssetDetail] ->
+// (ADR-0042: return type Envelope[AssetDetail] ->
 // Envelope[AssetLookup]). No pkg/client/vX.Y.Z tag has ever
 // been cut; see docs/architecture/semver-policy.md's
 // opening section (one root tag clock, no pkg/* tags).

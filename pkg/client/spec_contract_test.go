@@ -71,7 +71,7 @@ var coveredOperations = []coveredOperation{
 	{"VWAP", "GET", "/vwap", VWAPResult{}, ""},
 	{"TWAP", "GET", "/twap", TWAPResult{}, ""},
 	{"Assets", "GET", "/assets", AssetDetail{}, ""},
-	// payload: nil — Asset() returns AssetLookup (ADR-0042 LC-040), a
+	// payload: nil — Asset() returns AssetLookup (ADR-0042), a
 	// hand-written dual-shape union with custom UnmarshalJSON/
 	// MarshalJSON, not a struct with static JSON tags the generic
 	// reflection check (jsonTags) can walk. The seen[key] de-dupe in

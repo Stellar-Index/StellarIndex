@@ -1585,7 +1585,7 @@ type Pool struct {
 // is the per-Stellar-asset view returned for canonical asset_ids.
 type GlobalAssetView struct {
 	// Kind is the wire-shape discriminator for the /v1/assets/{asset_id}
-	// oneOf (ADR-0042 LC-040). Always "catalogue" on this struct.
+	// oneOf (ADR-0042). Always "catalogue" on this struct.
 	Kind        string `json:"kind"`
 	Ticker      string `json:"ticker"`
 	Slug        string `json:"slug"`
