@@ -275,14 +275,8 @@ func registerAppMetricsTail() {
 		// SourceUnrepresentableSymbolsTotal below.
 		ScamGateLookupFailuresTotal,
 
-		// Source-family counter. It belongs beside
-		// SourceUnknownSymbolsTotal in [registerAppMetrics] and is
-		// registered here only because that function already sat exactly
-		// on the funlen ceiling, so one more line made it lint-red —
-		// the "or registerAppMetricsTail(), whichever keeps funlen happy"
-		// branch of docs/contributing/add-metric.md. Registration, not
-		// placement, is what puts it on /metrics: see
-		// TestHandler_ExposesMetrics, which scrapes for this name.
+		// Belongs beside SourceUnknownSymbolsTotal; registered here because registerAppMetrics sits on
+		// the funlen ceiling (docs/contributing/add-metric.md). TestHandler_ExposesMetrics scrapes for it.
 		SourceUnrepresentableSymbolsTotal,
 
 		// Served-tier shutdown-loss counter; the Postgres twin of
@@ -472,27 +466,9 @@ func registerAuthReaperMetrics() {
 // funlen ceiling is what forces the split rather than a silently
 // ever-longer function.
 func seedBoundedLabelSeries() {
-	// Pre-seed zero-valued series for the
-	// bounded-cardinality counters whose alert rules use rate() /
-	// increase() but whose label combinations never appear in
-	// /metrics output until the first event fires. Without
-	// pre-seeding, PromQL queries against e.g.
-	// `rate(stellarindex_aggregator_triangulations_total{outcome="ok"}[15m])`
-	// resolve to "no data" (gap, not zero) until the first
-	// triangulation succeeds — which makes `absent()` / `<= 0` checks
-	// ambiguous: the metric looks "missing from scrape output". That is a
-	// Prometheus client-library quirk, not a code bug: counters only register a
-	// series after the first .Inc on a given label combo.
-	//
-	// Only counters with a *bounded, well-known* label set are
-	// pre-seeded here. AggregatorFXSnapFallbackTotal's `leg` label
-	// is per-pair (unbounded by operator config) so it stays
-	// emit-on-error.
-	// `frozen_leg` landed after the original four and was not
-	// seeded with them — so the one outcome that means "we refused to
-	// publish a derived price because a leg was frozen" was the one
-	// outcome an operator could not distinguish from "this metric is
-	// dead" until it first fired.
+	// Pre-seed zero series for bounded-label counters alerted via rate()/increase(): a CounterVec child
+	// does not exist until its first Inc, so the alert reads "no data", indistinguishable from a dead
+	// metric. AggregatorFXSnapFallbackTotal's per-pair `leg` label is unbounded, so it stays emit-on-error.
 	for _, outcome := range []string{"ok", "missing_leg", "parse_error", "redis_error", "frozen_leg", "frozen_leg_direct_served", "low_confidence", "proxy_pivot"} {
 		AggregatorTriangulationsTotal.WithLabelValues(outcome)
 	}
@@ -667,38 +643,15 @@ func seedHashdbSeries() {
 // seedBoundedLabelSeriesTail continues seedBoundedLabelSeries — split
 // for the same gocognit ceiling that split registerAppMetrics.
 func seedBoundedLabelSeriesTail() {
-	// Both divergence guards (stellarindex_divergence_no_reference and
-	// _refresh_error_dominant) compare a FAILURE outcome's rate against
-	// the `ok` outcome's rate. Without seeding, a process that has never
-	// had a successful refresh has no `ok` child at all, the comparison
-	// is the empty vector, and BOTH alerts are silent in exactly the
-	// total-outage case they exist to catch — CoinGecko and Chainlink
-	// both unreachable, the aggregator restarted during the outage (as
-	// deploys routinely do), so `ok` is never registered while
-	// flags.divergence_warning serves frozen and a live depeg goes
-	// unflagged.
-	//
-	// Values mirror internal/aggregate/orchestrator/divergence_refresh.go
-	// exactly: no_vwap, parse_error, the refresh_error/no_reference pair,
-	// and ok.
+	// Both divergence guards compare a failure rate against `ok`. Unseeded, a process that never
+	// refreshed successfully (restarted mid-outage) has no `ok` child and BOTH alerts stay silent in
+	// the total-outage case they exist for. Values mirror orchestrator/divergence_refresh.go.
 	for _, outcome := range []string{"ok", "no_vwap", "parse_error", "refresh_error", "no_reference"} {
 		DivergenceRefreshTotal.WithLabelValues(outcome)
 	}
-	// The customer-webhook sender's complete outcome
-	// vocabulary. Every alert on this counter is a rate()/increase(),
-	// and a CounterVec child does not exist until its first .Inc() —
-	// so the window containing an outcome's FIRST occurrence has a
-	// single sample and evaluates to 0, silencing the alert for
-	// precisely the first event. That matters most for the two
-	// low-frequency outcomes an operator is paged/ticketed on:
-	// `exhausted` (a customer's delivery permanently lost) and
-	// `mark_error` (the store write that records a completed POST
-	// failed, so the row keeps its claim lease and the SAME request is
-	// re-POSTed every lease interval — markTerminal's godoc calls this
-	// "visible to an alert", which it was not).
-	// The set is pinned by TestCustomerWebhookDeliveryOutcomesAreSeeded,
-	// which derives it from customerwebhook/worker.go rather than from
-	// this list.
+	// The customer-webhook sender's full outcome vocabulary, seeded so the first `exhausted` (delivery
+	// lost) or `mark_error` (the same request re-POSTed every lease) fires its alert instead of
+	// reading 0. TestCustomerWebhookDeliveryOutcomesAreSeeded derives the set from customerwebhook/worker.go.
 	for _, outcome := range []string{
 		"delivered", "server_error", "client_error", "exhausted", "network_error",
 		"webhook_missing", "disabled", "no_secret", "build_error", "list_error",
@@ -751,14 +704,8 @@ func seedBoundedLabelSeriesTail() {
 	}
 }
 
-// seedLedgerstreamTierSeries pre-registers the ADR-0027 tiered-read
-// outcomes so the ledgerstream-tier `both_missing` page's
-// `increase(...) > 0` query reads a real zero (not "no data") before the
-// first cold read. Without this the both_missing series is absent until
-// the cold path first runs, which is precisely the "looks dead vs is
-// dead" ambiguity that registering this metric unconditionally removes.
-// Peeled into its own helper for the same gocognit ceiling that split
-// seedBoundedLabelSeries.
+// seedLedgerstreamTierSeries pre-registers the ADR-0027 tiered-read outcomes so the `both_missing`
+// page reads a real zero before the first cold read. Split out for the gocognit ceiling.
 func seedLedgerstreamTierSeries() {
 	for _, outcome := range []string{"hot", "cold", "both_missing"} {
 		LedgerstreamTierReadTotal.WithLabelValues(outcome)
@@ -768,14 +715,8 @@ func seedLedgerstreamTierSeries() {
 	}
 }
 
-// seedNotifySeries pre-registers the Resend transactional-email send outcomes
-// (task #33 / W8 recon 9c). Bounded: the two notify.Sender call sites
-// (magic-link login, signup verification) × {sent, failed}. Seeded so the
-// send-failure-ratio alert reads a real 0 before the first login/signup email
-// — an absent series would make "no mail has ever failed" and "the mailer is
-// dead" the same scrape (the exact silence this counter closes). Peeled into
-// its own helper for the same gocognit ceiling that split
-// seedLedgerstreamTierSeries.
+// seedNotifySeries pre-registers the transactional-email outcomes (2 call sites × {sent, failed}) so
+// the send-failure alert can tell "never failed" from "mailer dead". Split out for the gocognit ceiling.
 func seedNotifySeries() {
 	for _, template := range []string{
 		NotifyTemplateMagicLink, NotifyTemplateSignupVerify, NotifyTemplatePasskeyChanged, NotifyTemplateAccountErased,
@@ -907,24 +848,9 @@ var IngestGapDetectorRunsTotal = prometheus.NewCounterVec(
 	[]string{"source", "table", "outcome"},
 )
 
-// IngestSourceDistinctLedgers is the **data-derived covered-
-// ledgers** signal: COUNT(DISTINCT ledger) per (source, table)
-// over the detector's trailing scan window [from, tip]. Together
-// with `IngestGapMaxSize` powers the ADR-0031 data-derived coverage
-// projection.
-//
-// Density = IngestSourceDistinctLedgers / (tip - from + 1).
-// Gap-free = 1 - IngestGapMaxSize / (tip - from + 1).
-//
-// The `from` lower bound is the trailing window the detector scans
-// (bounded to avoid IO saturation) — steady state ~[last high-
-// water, tip], first run within FirstScanCap of tip, never the full
-// [genesis, tip]. Deep-history coverage is the ADR-0033 completeness
-// verdict's domain, not this gauge.
-//
-// Emitted by the gap detector at the same cadence as the gap
-// gauges (one COUNT query alongside the LAG-over-DISTINCT scan
-// per target per cycle).
+// IngestSourceDistinctLedgers is COUNT(DISTINCT ledger) per (source, table) over the gap detector's
+// trailing window [from, tip]; with IngestGapMaxSize it gives the ADR-0031 density and gap-free
+// ratios. Deep-history coverage is the ADR-0033 completeness verdict's job, not this gauge's.
 var IngestSourceDistinctLedgers = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_ingest_source_distinct_ledgers",
@@ -933,17 +859,8 @@ var IngestSourceDistinctLedgers = prometheus.NewGaugeVec(
 	[]string{"source", "table"},
 )
 
-// IngestGapDetectorTip is the live ledgerstream cursor's
-// `last_ledger` value at the most recent gap-detector cycle's
-// start — the upper bound `tip` used by every per-target scan. The
-// per-target density denominator is `tip - from + 1` where `from`
-// is the target's trailing-window lower bound,
-// so this gauge alone is not sufficient to recompute density;
-// read the persisted source_coverage_snapshots row for that.
-//
-// Single-vector gauge (no `source`/`table` labels) because every
-// target uses the same tip in the same cycle; emitting per-target
-// would be redundant + the consumer needs only one read.
+// IngestGapDetectorTip is the ledgerstream cursor at the latest gap-detector cycle's start, the
+// shared `tip` of every per-target scan. One unlabelled gauge: every target uses the same tip.
 var IngestGapDetectorTip = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_ingest_gap_detector_tip_ledger",
@@ -966,31 +883,10 @@ var IngestGapDetectorDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"source", "table", "outcome"},
 )
 
-// IngestGapDetectorLastSuccessUnix is the wall-clock timestamp (Unix
-// seconds) of the most recent SUCCESSFUL per-(source, table) gap scan.
-// It is the reset-proof liveness primitive the
-// `stellarindex_ingest_gap_detector_silent` alert keys off, replacing
-// the fragile `rate(runs_total{outcome="ok"}[7h]) == 0` construct.
-//
-// Why a timestamp gauge, not rate() over the counter: the heavy targets
-// (sdex/trades, soroban-events/soroban_events) scan on a 6h
-// ScanCadence, so their `ok` counter increments only once every 6h.
-// When the aggregator restarts more often than that (deploys, incident
-// recoveries), each process life records exactly ONE ok, pinning the
-// counter at 1. Because the value is 1 both before AND after the
-// restart, Prometheus counter-reset detection never triggers (it only
-// fires on a DECREASE), so `rate(...ok[7h])` reads a flat line and
-// evaluates to 0 — the silent alert false-fired for >7h even though
-// every startup scan succeeded. A wall-clock
-// gauge is immune: the startup scan re-stamps it to now(), so a healthy
-// restart immediately clears staleness, while a genuinely wedged
-// target's stamp simply stops advancing and `time() - gauge` grows past
-// the alert threshold.
-//
-// Advances ONLY on a clean scan; a scan that errors or times out leaves
-// the previous stamp untouched. A target that has NEVER once succeeded
-// since process start emits no series here — that case is covered by the
-// paired `runs_total{outcome="error"}` rate, not this gauge.
+// IngestGapDetectorLastSuccessUnix stamps the latest SUCCESSFUL per-(source, table) gap scan, for
+// the `stellarindex_ingest_gap_detector_silent` alert. A timestamp, not rate(ok): 6h-cadence targets
+// record one ok per process life, so restarts pin the counter at 1 and rate() false-fires. Never-succeeded
+// targets emit no series; the `runs_total{outcome="error"}` rate covers them.
 var IngestGapDetectorLastSuccessUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_ingest_gap_detector_last_success_unix",
@@ -999,17 +895,9 @@ var IngestGapDetectorLastSuccessUnix = prometheus.NewGaugeVec(
 	[]string{"source", "table"},
 )
 
-// ProjectorLagLedgers is how far behind tip each projector source
-// currently is, in ledgers. The projector reads soroban_events
-// (raw) and writes per-source classifier tables; this gauge =
-// ledgerstream tip - last_projected_ledger, measured against the
-// ledgerstream tip even when the CH lake watermark clamps the scan. ADR-0032.
-//
-// Steady-state value is 0-few-ledgers when the projector is
-// keeping up. A sustained > 256 value means the projector is
-// falling behind (decoder error storm, downstream sink saturated,
-// or projector stopped). Paging alert
-// `stellarindex_projector_lag_high` fires on sustained drift.
+// ProjectorLagLedgers is ledgerstream tip minus last_projected_ledger per source (ADR-0032), measured
+// against the ledgerstream tip even when the lake watermark clamps the scan. Pages via
+// `stellarindex_projector_lag_high` on sustained > 256.
 var ProjectorLagLedgers = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_projector_lag_ledgers",
@@ -1018,19 +906,9 @@ var ProjectorLagLedgers = prometheus.NewGaugeVec(
 	[]string{"source"},
 )
 
-// ProjectorRunsTotal counts projector cycle outcomes per source.
-// `outcome` ∈ {ok, error, idle, watermark_held, sink_retry, decode_degraded,
-// gate_widened}; rate is
-// the alive-check (zero rate sustained 5+ minutes means the source's
-// loop wedged). `decode_degraded` marks a cycle that
-// advanced the cursor but dropped at least one decode-failed row — a
-// clean-looking advance that is NOT "ok"; a sustained per-source
-// decode_error rate on those cycles is a decoder regression.
-// `watermark_held` is an empty scan because the CH lake's contiguous
-// watermark sits below ledgers ledgerstream already holds (a lake hole),
-// as opposed to `idle`, which is genuinely caught up.
-// `gate_widened` marks a cycle whose read admitted a new contract into a
-// live gate (a factory-seeded pool); it holds the cursor for one re-read.
+// ProjectorRunsTotal counts projector cycles per source; a zero rate for 5+ min means a wedged loop.
+// `decode_degraded` advanced while dropping decode-failed rows; `watermark_held` is a lake hole below
+// ledgerstream (vs `idle`, caught up); `gate_widened` admitted a new contract and re-reads once.
 var ProjectorRunsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_projector_runs_total",
@@ -1063,20 +941,9 @@ var ProjectorCycleDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"source"},
 )
 
-// ProjectorWedged flags a per-source cursor WEDGE: the adaptive window
-// has bottomed out at the MinBatchLimit floor AND the source has failed
-// to commit forward progress for `projector.WedgeCycles` consecutive
-// cycles. This is the ONE shrink-to-floor stall the adaptive window
-// cannot escape on its own — a floor-sized (25-ledger) range that stays
-// over PerSourceTimeout (a dense + compressed chunk) retries the
-// identical range every cycle forever. The shrink halves the window on a
-// deadline, but at the floor there is nothing left to halve, so lag stops
-// falling and the ONLY prior signal was a flat
-// stellarindex_projector_runs_total{outcome="error"} rate (which a busy
-// error-storm from OTHER sources can mask). 1 = wedged; 0 = healthy.
-// Cleared on any advancing cycle. Remediation is MANUAL and documented in
-// the runbook (raise the per-cycle budget or decompress the range) — the
-// projector deliberately does not change the shrink logic itself.
+// ProjectorWedged is 1 when the adaptive window sits at MinBatchLimit and the source has not
+// advanced for projector.WedgeCycles cycles: a floor-sized range that keeps timing out retries forever.
+// Cleared on any advance. Remediation is manual (runbook: raise the budget or decompress the range).
 var ProjectorWedged = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_projector_wedged",
@@ -1085,30 +952,10 @@ var ProjectorWedged = prometheus.NewGaugeVec(
 	[]string{"source"},
 )
 
-// ProjectorReplayWindowActive is 1 while a source's projector cursor is
-// still inside a window recorded by `stellarindex-ops projector-replay`, and
-// 0 otherwise. A replay is an INTENDED lag: a 2.57M-ledger rewind once held
-// stellarindex_projector_lag_high in a ~4h ticket that told the operator
-// nothing and masked a genuine lag on the same source. The lag rule joins
-// against this (`unless … == 1`), and stellarindex_projector_replay_stalled
-// tickets if the replay STOPS climbing.
-//
-// Three bounds keep the suppression narrow (projector.replayWindowCovers):
-//
-//  1. PROVENANCE: only projector-replay windows count. A projected-rebuild
-//     window routinely covers the live cursor, so keying on it would silence
-//     a HELD source, the state the lag ticket exists to catch.
-//  2. UPPER BOUND, EXCLUSIVE: the flag clears when the cursor regains the
-//     window's to_ledger, not when the row is reconciled up to a day later.
-//  3. LOWER BOUND: replay parks the cursor at from_ledger-1, so a cursor
-//     below that was not put there by this rewind.
-//
-// Accepted residual: the one row per source WIDENS on upsert, so a replay
-// recorded while a rebuild window is pending may expire at the rebuild's
-// higher to_ledger; it stays provenance-gated and still expires.
-//
-// Fails OPEN: a dirty-window read error forces 0 everywhere, so monitoring
-// failure never silences a real lag ticket.
+// ProjectorReplayWindowActive is 1 while a source's cursor is inside a `projector-replay` window, so
+// the lag rule skips INTENDED lag (a 2.57M-ledger rewind once held a 4h lag ticket that masked a real
+// one). Only replay windows count, bounded by [from_ledger-1, to_ledger) (projector.replayWindowCovers);
+// a read error forces 0, so it fails open.
 var ProjectorReplayWindowActive = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_projector_replay_window_active",
@@ -1117,28 +964,9 @@ var ProjectorReplayWindowActive = prometheus.NewGaugeVec(
 	[]string{"source"},
 )
 
-// HTTPRequestSuccessDuration is the success-only twin of
-// HTTPRequestDuration: same buckets / labels, but the middleware
-// only records into this histogram when the response status is NOT
-// 5xx. Pair the two metrics in the SLO ratio so a fast-5xx burns
-// the latency budget (numerator excludes the error; denominator
-// counts everything):
-//
-//	api_slow_request_ratio =
-//	  sum(rate(http_request_success_duration_seconds_bucket{le="0.2",...}[w]))
-//	  / sum(rate(http_request_duration_seconds_count{...}[w]))
-//
-// Using the same `_duration_seconds` series for both numerator and
-// denominator would let a fast 500 land in both and count as "good"
-// against the latency SLO even though the customer saw a hard outage.
-// The availability SLO (http_requests_total{status=~"5.."} — the
-// label is `status`, NOT `status_class`, which does not exist on this
-// CounterVec, so a selector using it would match nothing)
-// is unchanged — it stays the authority for 5xx rate, and this
-// metric is only about getting the latency SLO right.
-//
-// Same buckets as HTTPRequestDuration so the
-// `le="0.2"` filter lands on the identical boundary across both.
+// HTTPRequestSuccessDuration is HTTPRequestDuration recorded only for non-5xx responses, with the
+// same buckets. It is the latency-SLO numerator so a fast 500 cannot count as "good"; the 5xx
+// availability SLO stays on http_requests_total{status=~"5.."} (the label is `status`, not `status_class`).
 var HTTPRequestSuccessDuration = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "http_request_success_duration_seconds",
@@ -1148,30 +976,10 @@ var HTTPRequestSuccessDuration = prometheus.NewHistogramVec(
 	[]string{"method", "route"},
 )
 
-// APICacheOpsTotal — every read through an in-memory cache wrapper
-// (`v1.CachedMarketsReader`, `v1.CachedAssetsReader`, …) increments
-// this counter. The `result` label is a READ outcome — `hit`
-// (returned cached value), `stale` (served a stale value while a
-// refresh runs) or `miss` (called upstream) — or one of the two
-// side-events the wrappers also record: `refresh_error` (a background
-// refresh failed) and `evicted` (a bounded cache dropped its oldest
-// entry to admit a new key). The `op` label names the cached method
-// (e.g. `all_pools`, `distinct_pairs`, `list_coins`).
-//
-// Why: prewarm goroutines warm cache keys that MUST match what
-// handlers look up. If those keys drift (different filter shape,
-// different limit, different order), every user request becomes a
-// miss while the prewarm slot sits unread. The bug is invisible to
-// tests + log-greps, so an operator dashboard on hit-rate is the
-// cheapest detector.
-//
-// Alert idea: `rate(stellarindex_api_cache_ops_total{result="miss"}
-// [5m]) / rate(stellarindex_api_cache_ops_total{result=~"hit|miss|
-// stale"}[5m]) > 0.5` sustained 10 min on any (cache, op) is
-// suspicious — prewarm should keep hot ops > 90% hit. The denominator
-// MUST stay filtered to the read outcomes: `evicted` fires once per
-// admitted key, so an unfiltered ratio caps at 0.5 under exactly the
-// key-enumeration storm the alert exists to catch.
+// APICacheOpsTotal counts cache-wrapper reads by `op` and `result` (hit, stale, miss, plus the
+// side-events refresh_error and evicted). Hit rate catches prewarm keys drifting from handler keys,
+// which tests miss. A hit-rate alert must filter to read outcomes: `evicted` fires once per admitted
+// key and would cap the ratio at 0.5 during a key-enumeration storm.
 var APICacheOpsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_cache_ops_total",
@@ -1202,26 +1010,9 @@ var SourceLastEventUnix = prometheus.NewGaugeVec(
 	[]string{"source"},
 )
 
-// SourceLastInsertUnix — per-source gauge, Unix-epoch wall-clock
-// timestamp of the most recent SUCCESSFUL trade row landed for the
-// source (i.e. InsertTrade returned with rowsInserted==1). Since the upsert is generation-guarded,
-// a corrective UPDATE also returns 0 here, so this
-// stamp does not climb during a re-derive that only corrects existing
-// rows — see [TradeInsertOutcomeTotal]'s conflation note.
-//
-// Pairs with [SourceLastEventUnix] to detect the
-// stuck-cursor / replay-loop pattern: when the dispatcher matches
-// events (last_event_unix climbs) but ON CONFLICT short-circuits
-// every insert (last_insert_unix stops climbing), the gap between
-// the two grows. Direct alert template:
-//
-//	time() - stellarindex_source_last_insert_unix{source="sdex"} > 3600
-//
-// catches the pattern seen live on r1 (157 SDEX insert-attempts/
-// min, all duplicates, max(ts) 11 h old) within an hour of recurrence.
-// Complements the [TradeInsertOutcomeTotal] rate-shape alert with a
-// timestamp-shape signal that doesn't require sustained traffic to
-// fire.
+// SourceLastInsertUnix stamps the latest trade row actually inserted per source (a generation-guarded
+// corrective UPDATE does not count). Diverging from SourceLastEventUnix flags a stuck cursor or replay
+// loop, as seen on r1 (157 SDEX insert attempts/min, all duplicates, max(ts) 11h old).
 var SourceLastInsertUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_source_last_insert_unix",
@@ -1241,22 +1032,9 @@ var SourceEnabled = prometheus.NewGaugeVec(
 	[]string{"source"},
 )
 
-// SourceMatchedEventsTotal — per-source counter of inputs (events,
-// contract calls, entry changes, ops) that a decoder's Matches()
-// claimed. The DENOMINATOR of decoder error-rate; the numerator is
-// SourceDecodeErrorsTotal. Bumped pre-Decode so a decoder that
-// matches then errors still counts — error-rate stays meaningful
-// (errors / inputs_attempted) instead of tautological (errors /
-// successful_outputs).
-//
-// Distinct from SourceEventsTotal — that's a per-source count of
-// consumer.Events the SINK processes, i.e. decoder OUTPUTS. A
-// decoder that buffers (soroswap swap+sync correlation) or
-// produces zero outputs for an intermediate matched event would
-// register on this counter but not on SourceEventsTotal.
-//
-// Mirror of dispatcher.Stats.EventsSeen, emitted via the
-// pipeline.processor delta loop.
+// SourceMatchedEventsTotal counts inputs a decoder's Matches() claimed, bumped before Decode: the
+// denominator of decoder error rate (numerator SourceDecodeErrorsTotal). Unlike SourceEventsTotal
+// (decoder outputs) it counts buffered or zero-output matches. Mirrors dispatcher.Stats.EventsSeen.
 var SourceMatchedEventsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_matched_events_total",
@@ -1275,34 +1053,10 @@ var SourceDecodeErrorsTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
-// DecoderPanicsTotal — per-source counter of decoder PANICS the
-// dispatcher recovered and converted into a decode error, and
-// those the projector and projected-rebuild recovered on a lake row
-// (dispatcher.DecodeRow).
-//
-// A dispatcher panic is a strict SUBSET of SourceDecodeErrorsTotal (a
-// projector one, of ProjectorEventsDecoded{outcome="decode_error"}): the
-// dispatcher counts both, because "this decoder refused the input" and
-// "this decoder crashed on the input" demand very different responses
-// even though the ingest-side handling is deliberately identical (skip
-// the one input, keep the rest of the ledger, advance the cursor).
-//
-// Why this needs its own series rather than a log line: before the
-// guard, a panicking decoder killed the whole indexer PROCESS. systemd
-// restarted it, the same ledger was re-read, the same decoder panicked,
-// and after StartLimitBurst restarts the unit parked in `failed` — one
-// source's bug stopping ingest for every source. Skipping the event
-// instead is only the right trade if the skip is LOUD, because the
-// decoder will keep dropping every event of that shape until someone
-// ships a fix.
-//
-// Alerted by `stellarindex_decoder_panicked` (ingestion.yml) as a PAGE
-// on the raw counter value rather than on increase(): the counter is
-// process-lifetime and a poison event typically panics ONCE (it is
-// skipped and the stream moves on), so a series that appears at 1 and
-// stays there must still fire — which increase() over a series born
-// inside the lookback window cannot do.
-// Runbook: docs/operations/runbooks/ingestion.md.
+// DecoderPanicsTotal counts decoder panics recovered by the dispatcher, projector or projected-rebuild
+// (a subset of decode errors). A recovered panic skips one input, so the skip must be loud: the decoder
+// drops every input of that shape until fixed. `stellarindex_decoder_panicked` pages on the raw value,
+// since a poison event panics once and increase() misses a series born at 1. Runbook: docs/operations/runbooks/ingestion.md.
 var DecoderPanicsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_decoder_panics_total",
