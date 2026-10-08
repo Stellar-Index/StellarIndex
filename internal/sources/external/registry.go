@@ -5,30 +5,15 @@ import (
 	"time"
 )
 
-// Registry is the source-of-truth metadata table for every source the
-// aggregator knows about — both external (this package's responsibility)
-// AND on-chain (internal/sources/*). Centralising here lets the
-// aggregator do `Registry[trade.Source].Class` without importing
-// every source package to ask.
+// Registry is the metadata table for every source the aggregator knows, external and on-chain, so it can
+// read Registry[trade.Source].Class without importing every source package. A miss falls back to
+// ClassExchange with IncludeInVWAP=false: visible in /v1/sources, fail-closed out of VWAP. Venues toggle via
+// `enabled` in config.ExternalConfig; Class and Paid are venue facts, and per-venue weight/VWAP overrides
+// are not wired.
 //
-// Lookups that miss the registry fall back to ClassExchange-with-
-// IncludeInVWAP=false, which makes unknown sources visible in
-// /v1/sources but not contributing to VWAP — fail-closed on
-// misconfiguration.
-//
-// Operators toggle individual venues via config
-// (see `ExternalConfig` in internal/config/config.go — each venue
-// has an `enabled` flag that disables it when false). Class and
-// Paid are venue facts, not per-deployment — they aren't exposed
-// as config. Per-venue DefaultWeight / IncludeInVWAP overrides are
-// not wired today; if an operator needs them, that's a future
-// follow-up rather than a missing surface.
-//
-// Backfill is BackfillPerWASM for on-chain Soroban sources: a replay is
-// admitted only over a range whose every active WASM hash is in
-// internal/wasmaudit/audited_wasm.json (an `update_contract` upgrade can
-// change event body schemas). Off-chain sources and SDEX are
-// BackfillNoWASM; BackfillUnsafe refuses outright.
+// Backfill is BackfillPerWASM for on-chain Soroban sources: a replay is admitted only over a range whose
+// every active WASM hash is in internal/wasmaudit/audited_wasm.json (`update_contract` can change event
+// schemas). Off-chain sources and SDEX are BackfillNoWASM; BackfillUnsafe refuses outright.
 var Registry = map[string]Metadata{
 	// ─── On-chain exchanges (dispatcher-path; listed here so the
 	// aggregator has a single lookup table) ──────────────────────
@@ -43,17 +28,10 @@ var Registry = map[string]Metadata{
 	// (docs/operations/wasm-audits/sushiswap_v3.md).
 	"sushiswap_v3": {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM},
 
-	// Upshift tokenized vaults (earnUSDC, earnXLM) — ClassRouter for the
-	// same reason DeFindex is: an aggregator vault takes a deposit and
-	// allocates it across other protocols, so its events are derivative
-	// actions on top of other sources rather than new price observations.
-	// Excluded from VWAP; the vault publishes no price at all (RedStone
-	// publishes one FOR the earnUSDC share, which reaches us through the
-	// oracle path, not this one). AmountDecimals is deliberately left
-	// unset: a vault event carries `assets` and `shares` on DIFFERENT
-	// scales, so a single per-source decimals value would be wrong for one
-	// of them. Backfill stays Unsafe until a WASM audit page exists —
-	// the default for on-chain Soroban sources.
+	// Upshift tokenized vaults (earnUSDC, earnXLM): ClassRouter like DeFindex, since a vault allocates deposits
+	// across other protocols and publishes no price (RedStone's earnUSDC price arrives on the oracle path).
+	// AmountDecimals is unset: vault events carry `assets` and `shares` on different scales. Backfill stays
+	// Unsafe until a WASM audit page exists.
 	"upshift": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillUnsafe},
 
 	// Spectra yield-tokenisation markets: ClassRouter because PT/YT swaps and
@@ -78,17 +56,9 @@ var Registry = map[string]Metadata{
 	// they DO NOT contribute to VWAP. See the blend source package
 	// README for the full extraction scope.
 	"blend": {Class: ClassLending, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; 11 contracts (9 pools + backstop + factory), 3 unique WASMs, no mid-life upgrades observed in 5h4m walk over [50457424, 62249727]. See docs/operations/wasm-audits/blend.md §"Phase 2 results". */},
-	// blend_emitter — protocol-emissions plumbing (mints/distributes
-	// BLND to backstops), same family as `blend`. No published price,
-	// never VWAP. Audited directly against the ClickHouse raw lake (no
-	// wasm-history/MinIO walk): all 469 lifetime events (465/465
-	// `distribute` exhaustively, not sampled, plus both `drop`s and the
-	// one `q_swap`/`swap` individually) decode to the exact shape the
-	// decoder expects; the sole confirmed WASM hash (438a5528…) is
-	// SHA256-verified against the extracted bytes. The package doc's
-	// "3 observed WASM uploads" was NOT corroborated by the lake for 2
-	// of 3 claimed ledgers — see
-	// docs/operations/wasm-audits/blend_emitter.md.
+	// blend_emitter: BLND emissions plumbing in the `blend` family; no price, never VWAP. Audited against the
+	// ClickHouse lake rather than a wasm-history walk: all 469 lifetime events decode to the expected shape and
+	// the sole WASM hash (438a5528…) is SHA256-verified (docs/operations/wasm-audits/blend_emitter.md).
 	"blend_emitter": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; see docs/operations/wasm-audits/blend_emitter.md */},
 	// sorocredit — an unbranded consumer-USDC credit / CDP protocol
 	// (single main contract CCG5EWFY…). Credit positions / statements /
@@ -98,27 +68,16 @@ var Registry = map[string]Metadata{
 	"sorocredit": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited lake-direct (ADR-0034): single instance WASM 84a88013…810ea set at deploy (ledger 61,620,824), zero executable changes in the dense-coverage window [62.0M→tip]; all 7 event types have one invariant on-wire schema across the contract's whole life (NewCollateralContract structurally identical 61,624,053→63,363,505, spanning the sparse early window). Safe from genesis 61,620,822. See docs/operations/wasm-audits/sorocredit.md */},
 
 	// ─── On-chain routers + aggregator vaults ────────────────────
-	// Excluded from VWAP — these don't emit independent trades; they
-	// invoke other contracts (DEX pairs / lending pools) which do.
-	// Captured for per-tx attribution + user-intent visibility (path
-	// requested vs path realised; aggregator vault → underlying
-	// protocol exposures). See docs/architecture/explorer-data-
-	// inventory.md §9.9 + migration 0025 (`routers`). The sibling
-	// aggregator_exposures table 0025 also created had no writer, and
-	// migration 0152 dropped it — vault exposure is not persisted.
+	// Excluded from VWAP: they emit no independent trades, they invoke contracts that do. Captured for per-tx
+	// attribution and user intent (path requested vs realised; docs/architecture/explorer-data-inventory.md
+	// §9.9). Vault exposure to underlying protocols is not persisted.
 	"soroswap-router": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; r1 wasm-history walk: single hash 4c3db3eb...07 over the contract's entire life [50746272→tip], zero mid-life upgrades; both swap_exact_tokens_for_tokens + swap_tokens_for_exact_tokens exports verified present; ContractCallDecoder (router emits no events). See docs/operations/wasm-audits/soroswap-router.md */},
 	"defindex":        {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; decoder re-derived to the real on-chain schema ("BlendStrategy",deposit|withdraw){from,amount}, topic-dispatched across all emitters (the tag-1.0.0 "DeFindexVault" schema was fiction; deployed WASM 11329c24...988 is Blend strategy code). Live-verified after deploy: indexer emitted `defindex strategy flow` log lines against real traffic (9 in 90min sample). wasm2wat data-section scan of the deployed bytes confirmed all required symbols present (BlendStrategy/deposit/withdraw/from/amount). See docs/operations/wasm-audits/defindex.md */},
 
 	// ─── Cross-chain bridges (flow coverage; excluded from VWAP) ─
-	// Bridges move tokens across chains — they publish no prices and
-	// emit no trades, so they never contribute to VWAP. Captured for
-	// the granular-coverage mission: CCTP's deposit_for_burn /
-	// mint_and_withdraw are USDC supply exits / entries beyond the
-	// classic trustline mint/burn channel. Backfill is PerWASM — the
-	// required WASM-history audit is done (see
-	// docs/operations/wasm-audits/cctp.md and the per-field citation
-	// below): zero WASM upgrades observed, single-deploy confirmed. See
-	// docs/protocols/cctp.md.
+	// Bridges publish no prices and emit no trades. CCTP's deposit_for_burn / mint_and_withdraw are USDC supply
+	// exits and entries beyond the classic trustline mint/burn channel. WASM audit:
+	// docs/operations/wasm-audits/cctp.md; protocol: docs/protocols/cctp.md.
 	"cctp": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited via wasm-history walk [60M, 62.64M] across all 3 mainnet contracts (TokenMessengerMinter, MessageTransmitter, CctpForwarder): zero WASM upgrades observed, ranges=null. Single deploy confirmed via stellar.expert. See docs/operations/wasm-audits/cctp.md. */},
 	// Rozo v1 intent-bridge — same bridge semantics. payment / flush
 	// events from the three live v1 Payment contracts. Audited alongside
@@ -136,34 +95,17 @@ var Registry = map[string]Metadata{
 	"coinbase":         {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM},
 
 	// ─── Institutional FX feeds ──────────────────────────────────
-	// `massive` is the ACTIVE fiat-FX feed (massive.com — the same vendor
-	// that was branded polygon.io before the rename, not a second one).
-	// There is deliberately NO `polygon-forex` entry: it named this same
-	// upstream under the dead brand and carried IncludeInVWAP:true, so
-	// enabling it would have double-counted these rates. Do not re-add it.
-	// It runs as the internal/sources/external/forex worker in the API binary and
-	// polls hourly but writes one row per ticker per UTC day to the
-	// `fx_quotes` table — every write buckets to Truncate(24 * time.Hour),
-	// so the table never holds anything finer than daily — the USD-anchor
-	// reference behind per-trade usd_volume, fiat pricing on /v1/assets and
-	// the fiat series on /v1/chart. It is an
-	// off-chain vendor feed (not a Stellar source), hence registered here so
-	// /v1/sources classifies it as external FX (SubclassFX → IsOnChain=false)
-	// instead of fail-closing through Lookup's unknown-source fallback.
+	// `massive` is the active fiat-FX feed (massive.com, the vendor once branded polygon.io). There is
+	// deliberately NO `polygon-forex` entry: it named the same upstream with IncludeInVWAP:true and would
+	// double-count. Do not re-add it. The forex worker (API binary) polls hourly but writes one fx_quotes row
+	// per ticker per UTC day: the USD anchor behind per-trade usd_volume, /v1/assets fiat pricing and the
+	// /v1/chart fiat series. Registered so /v1/sources classifies it off-chain FX, not the unknown fallback.
 	//
-	// `exchangeratesapi` (currently disabled) is NOT a forex-snap fallback:
-	// its poller emits OracleUpdates only (oracle_updates), never trades or
-	// fx_quotes, so FXQuoteAtOrBefore's `trades` arm finds nothing from it.
-	// The snap's only fallback is the forex worker's in-process ECB standby
-	// (forex.ECBProvider), which writes fx_quotes with source "ecb" — not
-	// the "ecb" sanity connector below.
-	// forex.OpenExchangeRatesProvider has no row: it writes nothing until
-	// wired, and wiring it must add one or the FX-snap class check refuses it.
-	// FX pollers stamp amounts at 1e6 (DefaultDecimals=6), NOT the CEX 1e8;
-	// AmountDecimals:6 records that for the USD-volume gate.
-	// OracleResolution is a trading day: an FX rate legitimately holds
-	// through the ~48 h weekend close, which a minute cadence would ticket
-	// every Saturday.
+	// `exchangeratesapi` (disabled) is NOT a forex-snap fallback: it emits only OracleUpdates, so
+	// FXQuoteAtOrBefore's `trades` arm finds nothing. The only fallback is the forex worker's ECB standby
+	// (forex.ECBProvider, fx_quotes source "ecb"). forex.OpenExchangeRatesProvider has no row; wiring it must
+	// add one or the FX-snap class check refuses it. FX pollers stamp 1e6, not the CEX 1e8 (AmountDecimals:6,
+	// for the USD-volume gate). OracleResolution is a trading day: FX holds through the ~48h weekend close.
 	"massive":          {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6},
 	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 
@@ -179,14 +121,9 @@ var Registry = map[string]Metadata{
 	"ecb": {Class: ClassAuthoritySanity, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 
 	// ─── Off-chain oracles (Chainlink via EVM RPC) ───────────────
-	// Chainlink is on Ethereum mainnet, not Stellar; we read it via
-	// JSON-RPC against AggregatorV3 contracts. Class=ClassOracle
-	// because it's a price publisher (not raw trades). Backfill
-	// is NoWASM — off-chain HTTPS source, no on-chain Soroban WASM
-	// dependency to audit. Backfill via eth_getLogs walks
-	// AnswerUpdated events. See internal/sources/external/chainlink/.
-	// OracleResolution is 24 h: Timestamp is the round's updatedAt, and
-	// the slowest feeds (FX) heartbeat daily and pause over the weekend.
+	// Chainlink lives on Ethereum mainnet, read over JSON-RPC from AggregatorV3 contracts (backfill walks
+	// AnswerUpdated via eth_getLogs): a price publisher, so ClassOracle, and NoWASM. OracleResolution is 24h:
+	// Timestamp is the round's updatedAt, and the slowest (FX) feeds heartbeat daily and pause on weekends.
 	"chainlink": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false /* Alchemy free tier covers 516-feed scale */, BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: 24 * time.Hour},
 
 	// Tiingo publishes registered funds' daily NAV. Rows are `raw:<TICKER>`,
@@ -238,48 +175,27 @@ func BackfillSafe(source string) bool {
 	return Lookup(source).BackfillSafe()
 }
 
-// replayAuditCoveredBy maps a PROJECTED source that deliberately has no
-// Registry row of its own to the Registry entry whose WASM audit covers
-// its decoder. blend_backstop is the only one: it is a projected lending
-// surface, not a venue, so it carries no class/weight/VWAP row — but the
-// Blend Phase-2 wasm-history walk covered the backstop contract
-// explicitly (docs/operations/wasm-audits/blend.md, "Backstop historical
-// replay decision"), so its replay-safety IS `blend`'s attestation and
-// falls with it if that attestation is ever withdrawn.
-//
-// String literals, not the source packages' SourceName constants: the
-// source packages' consumers import this package, so it must not import
-// them back. The ops-layer tests pin the literals to the constants.
+// replayAuditCoveredBy maps a projected source with no Registry row to the entry whose WASM audit covers its
+// decoder. blend_backstop is a lending surface, not a venue, but Blend's wasm-history walk covered the
+// backstop contract (docs/operations/wasm-audits/blend.md), so its replay safety stands or falls with
+// `blend`'s. String literals, not SourceName constants: those packages import this one; ops tests pin them.
 var replayAuditCoveredBy = map[string]string{
 	"blend_backstop": "blend",
 }
 
-// replayStandardSchemaSources are the projected sources whose decoders
-// read an event schema fixed by a STANDARD (SEP-41 / CAP-67) across an
-// operator-curated set of arbitrary token contracts, rather than one
-// protocol's own WASM. The per-protocol "every WASM generation this
-// contract ran" audit that BackfillSafe records has no single subject
-// there. Both have sanctioned re-derive procedures this gate must not
-// strand: `projector-replay -source sep41_supply` (which resets the
-// rollup fold) and `ch-rebuild -sep41`
-// (docs/operations/sep41-mint-recovery.md).
+// replayStandardSchemaSources read a schema fixed by a standard (SEP-41 / CAP-67) across curated arbitrary
+// token contracts, so the per-protocol WASM audit has no single subject. Their sanctioned re-derives,
+// `projector-replay -source sep41_supply` and `ch-rebuild -sep41` (docs/operations/sep41-mint-recovery.md),
+// must not be stranded by this gate.
 var replayStandardSchemaSources = map[string]struct{}{
 	"sep41_transfers": {},
 	"sep41_supply":    {},
 }
 
-// ReplayBackfillSafe is [BackfillSafe] as asked by the RE-DERIVE paths —
-// `projector-replay` and `ch-rebuild` — which run a CURRENT decoder over
-// HISTORICAL events exactly as `backfill` does and so carry the identical
-// old-WASM-generation hazard. Without it the gate would guard `backfill`
-// alone, while the documented catch-up procedure for every projected
-// source is projector-replay.
-//
-// It differs from BackfillSafe only in the namespace it accepts: those
-// paths take PROJECTOR source names, three of which are deliberately not
-// Registry keys (see replayAuditCoveredBy and
-// replayStandardSchemaSources). Every other name — including one nobody
-// has registered — gets BackfillSafe's own answer, which is fail-closed.
+// ReplayBackfillSafe is [BackfillSafe] for the re-derive paths (projector-replay, ch-rebuild), which run a
+// current decoder over historical events with the same old-WASM hazard as `backfill`. It differs only in
+// accepting projector source names (see replayAuditCoveredBy, replayStandardSchemaSources); any other name,
+// registered or not, gets BackfillSafe's fail-closed answer.
 func ReplayBackfillSafe(source string) bool {
 	if ReplayExempt(source) {
 		return true
@@ -340,20 +256,10 @@ func IsFXSource(source string) bool {
 	return Lookup(source).Subclass == SubclassFX
 }
 
-// IsOnChain reports whether a source observes the Stellar network
-// directly (dispatcher-path on-chain ingest) rather than reading an
-// off-chain vendor API. On-chain: the DEX venues (sdex + the Soroban
-// DEXes), the Soroban oracles (reflector-*, band, redstone), lending
-// (blend), routers (defindex, soroswap-router), and bridges (cctp,
-// rozo). Off-chain: CEX + FX venues, aggregators, sovereign FX
-// anchors, Chainlink — an Ethereum-mainnet oracle read over JSON-RPC —
-// and Tiingo's fund NAVs, the two ClassOracle sources NOT on Stellar.
-//
-// The explorer's Stellar-network surfaces (the /network page, the
-// /sources directory) filter on this so reference-pricing feeds don't
-// masquerade as Stellar on-chain activity. Unknown sources fall
-// through to the on-chain branch — but the registry is closed (every
-// source is listed above), so that only matters for tests/typos.
+// IsOnChain reports whether a source observes Stellar directly rather than an off-chain vendor API.
+// Off-chain: CEX and FX venues, aggregators, sovereign anchors, and the two non-Stellar ClassOracle sources
+// (Chainlink, Tiingo). The explorer's network surfaces filter on it so reference-pricing feeds don't pose as
+// on-chain activity. Unknown names fall to on-chain, which only matters for typos: the registry is closed.
 func IsOnChain(source string) bool {
 	m := Lookup(source)
 	// Off-chain subclasses short-circuit to false; every other subclass
@@ -379,18 +285,9 @@ func IsOnChain(source string) bool {
 	return true
 }
 
-// AggregatorSources returns every registered source whose Class is
-// ClassAggregator, in deterministic lexicographic order. Powers the
-// `aggregator_avg` tier of the global-price fallback chain: handlers
-// pass this list to `Store.LatestAggregatorPricesForPair` to scope
-// queries to the aggregator class without leaking the registry's
-// class-filter policy into the storage layer.
-//
-// Operator-disabled aggregators (e.g. CMC when no API key is
-// configured) still appear in this list — the storage query
-// degrades naturally to "no observations" for disabled sources
-// because the indexer never wrote any. Returning the full registry
-// set keeps this helper deployment-agnostic.
+// AggregatorSources returns every ClassAggregator source, sorted. The `aggregator_avg` tier of the
+// global-price fallback passes it to Store.LatestAggregatorPricesForPair, keeping class policy out of
+// storage. Disabled aggregators (e.g. CMC without a key) stay listed; they simply have no rows.
 func AggregatorSources() []string {
 	out := make([]string, 0, 4)
 	for name, m := range Registry {
