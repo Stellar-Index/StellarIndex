@@ -190,7 +190,7 @@ func TestRedisAPIKey_NoAccountReaderIsPreFixBehaviour(t *testing.T) {
 	}
 }
 
-// TestRedisAPIKey_AccountOverridesResolved pins GH-965: on the default
+// TestRedisAPIKey_AccountOverridesResolved pins that, on the default
 // redis backend an operator's account overrides are enforced on the next
 // Lookup, with the Postgres validator's cascade (the rate-limit override is
 // a floor, the monthly-quota override a ceiling), and a change lands once the

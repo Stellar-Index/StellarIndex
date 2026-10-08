@@ -28,7 +28,7 @@ import (
 //	[vars+headers, encode, sse-handle, maintenance-503, /metrics, proxy]
 //
 // so a stream request was proxied and returned before the 503 was ever
-// reached. Measured, not reasoned: `caddy adapt` on the pre-fix file
+// reached. Measured, not reasoned: `caddy adapt` on the old file
 // produces exactly that order, and real caddy 2.11.4 in front of a
 // stub SSE upstream answered 200 + event data on all four stream
 // routes with MAINTENANCE_MODE present.
@@ -260,7 +260,7 @@ func caddyFlatten(t *testing.T, routes []json.RawMessage, inherited string) []ca
 }
 
 // TestCaddyKillSwitchCompiledOrder asks caddy what it will actually do.
-// On the pre-fix file the stream subroute compiles ahead of the
+// On the old file the stream subroute compiles ahead of the
 // maintenance 503; this fails there and passes on the route-block form.
 func TestCaddyKillSwitchCompiledOrder(t *testing.T) {
 	caddyBin, err := exec.LookPath("caddy")

@@ -46,7 +46,7 @@ func TestEmitMarkdown_hasGeneratedBanner(t *testing.T) {
 	}
 }
 
-// TestDescribe_durationFieldTypeLabel pins GH-1132: a time.Duration field
+// TestDescribe_durationFieldTypeLabel pins that a time.Duration field
 // must render as "duration" in the generated reference, not the underlying
 // Kind's "int64" (an operator-facing lie about the accepted TOML shape,
 // e.g. "30m").
@@ -63,7 +63,7 @@ func TestDescribe_durationFieldTypeLabel(t *testing.T) {
 	t.Fatal("storage.background_statement_timeout not found in Describe() output")
 }
 
-// TestDescribe_explicitEmptyDefaultIsNotRequired pins GH-1132: a field
+// TestDescribe_explicitEmptyDefaultIsNotRequired pins that a field
 // tagged `default:""` documents an intentional empty default, distinct
 // from a field with no `default` tag at all. Both must not be reported as
 // Required — a real config with the field left unset is valid.

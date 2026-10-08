@@ -68,7 +68,7 @@ func liveTrades(pair canonical.Pair, ts time.Time) []canonical.Trade {
 	return []canonical.Trade{mk(0, 100_000_000, 21_000_000), mk(1, 200_000_000, 42_000_000)}
 }
 
-// TestTick_DeadQuoteIsNotMaskedByALiveSiblingQuote is F067 at the
+// TestTick_DeadQuoteIsNotMaskedByALiveSiblingQuote runs at the
 // production entry point (Tick → refreshPairWindow → the write-time
 // record → emitStalenessGauges).
 //
@@ -303,7 +303,7 @@ func (h *compositeStalenessHarness) tick(t *testing.T, outcome string) float64 {
 // stamp taken from refreshPairWindow alone, BTC/EUR read 600 s stale
 // while publishing every tick, and because the gauge is the STALEST
 // quote, it dragged crypto:BTC to 600 with it — a permanent false page
-// for a healthy asset (F067, second writer).
+// for a healthy asset (second writer).
 func TestTick_CompositeServedPairReadsFresh(t *testing.T) {
 	fx := &fakeFXStore{quote: new(big.Rat).SetFrac(big.NewInt(90), big.NewInt(100)), source: "exchangeratesapi", observedAt: liveFXObservedAt}
 	h := newCompositeStalenessHarness(t, fx, 0)

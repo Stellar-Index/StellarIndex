@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestTick_LongWindowVWAP_StopsServingAfterTheSilenceGrace is F034 at
+// TestTick_LongWindowVWAP_StopsServingAfterTheSilenceGrace checks, at
 // the production entry point: the value the windowed /v1/price surface
 // reads is written by Tick, and it must not outlive the aggregator.
 //

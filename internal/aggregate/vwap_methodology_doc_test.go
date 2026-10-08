@@ -19,9 +19,8 @@ import (
 // docs/methodology/vwap-aggregation.md and docs/protocols/README.md
 // are public methodology pages, not generated from code — a reader
 // (or a protocol team asked to verify their contract set) trusts the
-// prose directly. A truth-audit found that closure of a prior drift
-// sweep against those two pages couldn't be confirmed by reading
-// alone, because nothing in the repo re-checks the load-bearing
+// prose directly. Reading alone cannot confirm the pages stay
+// correct, because nothing in the repo re-checks the load-bearing
 // numbers the pages state against the source they describe. This
 // file is that check for the facts most likely to silently drift:
 // the stablecoin fiat-proxy set and the two bridges' pinned-contract
