@@ -61,7 +61,7 @@ jobs:
           grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$allow" | sed 's/[[:space:]]*$//' > /tmp/allow.txt
           [ -s /tmp/allow.txt ] || { echo "::error::$allow lists no identities — refusing to pass vacuously"; exit 1; }
 
-          # See scripts/ci/commit-identity-range.sh (RLT-374) for why the
+          # See scripts/ci/commit-identity-range.sh for why the
           # new-branch/force-push fallback lives there rather than inline.
           range="$(scripts/ci/commit-identity-range.sh)"
 
@@ -120,7 +120,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # See scripts/ci/commit-identity-range.sh (RLT-374) for why the
+          # See scripts/ci/commit-identity-range.sh for why the
           # new-branch/force-push fallback lives there rather than inline.
           range="$(scripts/ci/commit-identity-range.sh)"
 
