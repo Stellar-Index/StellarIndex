@@ -6,7 +6,7 @@ import (
 )
 
 // AssetLookup is the /v1/assets/{asset_id} dual-shape response
-// (ADR-0042 LC-040). [Client.Asset] returns one of these instead of
+// (ADR-0042). [Client.Asset] returns one of these instead of
 // a bare [AssetDetail] because the endpoint serves two different
 // wire shapes depending on whether the caller passed a canonical
 // Stellar asset_id or a verified-currency catalogue slug — see the

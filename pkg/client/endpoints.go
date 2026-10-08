@@ -478,7 +478,7 @@ func (c *Client) Assets(ctx context.Context, opts AssetsOptions) (*Envelope[[]As
 }
 
 // Asset fetches the /v1/assets/{asset_id} dual-shape response
-// (ADR-0042 LC-040). assetID accepts either a canonical Stellar
+// (ADR-0042). assetID accepts either a canonical Stellar
 // asset_id (native, CODE-G…, C… contract, fiat:CODE) OR a
 // verified-currency catalogue slug (usdc, eurc, aqua, …) — the two
 // forms route to different wire shapes server-side, and the server
