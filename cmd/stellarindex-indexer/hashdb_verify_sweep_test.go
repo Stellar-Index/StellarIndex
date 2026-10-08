@@ -16,12 +16,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestClassifyHashDBVerifySweep_DriftSurvivesShutdownCancel is T128:
-// a sweep that tallied drift before the stream was cancelled (e.g. by
+// TestClassifyHashDBVerifySweep_DriftSurvivesShutdownCancel pins that a
+// sweep that tallied drift before the stream was cancelled (e.g. by
 // process shutdown) must still be classified as drift, not silently
-// discarded as "nothing to report". Before the fix, the Canceled-error
-// early return in hashDBVerifySweep ran unconditionally, ahead of the
-// AnyDrift() check, and threw the drift away.
+// discarded as "nothing to report". The Canceled-error
+// early return in hashDBVerifySweep must not run ahead of the
+// AnyDrift() check, or it throws the drift away.
 func TestClassifyHashDBVerifySweep_DriftSurvivesShutdownCancel(t *testing.T) {
 	res := archivecompleteness.HashDBVerifyResult{
 		From: 100, To: 104,

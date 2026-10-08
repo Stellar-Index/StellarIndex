@@ -4,7 +4,7 @@ package main
 // internal/api/v1/slo_guard_test.go pattern): the decimals cache's
 // initial, BOOT-time refresh must be fatal.
 //
-// #368 M9. The cache is fail-open, and that is right for a periodic
+// The cache is fail-open, and that is right for a periodic
 // refresh: a Postgres blip leaves the last-good snapshot in place and
 // one newly-confirmed offender's normalization phases in late. At BOOT
 // there is no last-good snapshot, so the same fail-open policy makes

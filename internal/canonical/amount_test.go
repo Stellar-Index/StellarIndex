@@ -221,9 +221,9 @@ func TestAmount_UnmarshalJSONRejectsOversize(t *testing.T) {
 	}
 }
 
-// TestAmount_UnmarshalJSONRejectsNull guards T139: encoding/json leaves
-// a non-pointer string target unmodified on `null`, so without an
-// explicit guard `null` silently became FromString("") == zero — an
+// TestAmount_UnmarshalJSONRejectsNull guards against encoding/json leaving
+// a non-pointer string target unmodified on `null`, which without an
+// explicit guard silently becomes FromString("") == zero — an
 // absent money value read back as the real value 0.
 func TestAmount_UnmarshalJSONRejectsNull(t *testing.T) {
 	t.Parallel()

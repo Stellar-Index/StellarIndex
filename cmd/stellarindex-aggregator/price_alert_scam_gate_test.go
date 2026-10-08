@@ -19,10 +19,10 @@ import (
 // gate and the scam-issuer gate not at all, in a binary the API's seam
 // guard cannot see — so a directory-flagged issuer whose price
 // /v1/price refuses to publish could still be delivered, signed, to a
-// customer (K001).
+// customer.
 //
 // These tests pin both halves of the repair: the decision is consulted
-// here, and it is the PAIR decision (F002) rather than a second
+// here, and it is the PAIR decision rather than a second
 // base-only copy.
 
 // alertScamDirectory flags exactly the listed G-addresses.

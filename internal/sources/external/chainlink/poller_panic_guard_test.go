@@ -14,7 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// K012 — PollOnce fans out one detached goroutine per feed plus a join
+// PollOnce fans out one detached goroutine per feed plus a join
 // goroutine, and an unrecovered panic in ANY goroutine terminates the WHOLE
 // process. Without the guard this test does not fail, it CRASHES the test
 // binary; that crash is the production harm.

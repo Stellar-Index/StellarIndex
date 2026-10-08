@@ -10,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// K012 — every goroutine in the stellarindex-api process recovers.
+// Every goroutine in the stellarindex-api process recovers.
 //
 // An unrecovered panic in ANY goroutine terminates the whole Go process; it
 // is not confined to the goroutine that panicked. Two places close that hole, and guarded each with an AST walk:

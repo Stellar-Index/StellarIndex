@@ -50,7 +50,7 @@ func TestLakeReadersAreDialledWithRetry(t *testing.T) {
 	// refresher's close-time source, -dry-run branch ONLY — a
 	// single synchronous dial so a bad config fails -dry-run instead of
 	// only surfacing at a real start. The real boot path does not use
-	// this call; it goes through newLazyCloseTimeReader (GH-902) above.
+	// this call; it goes through newLazyCloseTimeReader above.
 	// Plus the SEP-41 genesis auto-seeder's NewSupplyReader: dialled per
 	// seed attempt and failed closed, so a cold lake is retried on the next
 	// attempt rather than disabling anything for the process lifetime.

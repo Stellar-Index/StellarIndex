@@ -387,7 +387,7 @@ func waitForRollup(t *testing.T, cond func() bool) {
 	t.Fatal("timed out waiting for rollup worker to advance all contracts")
 }
 
-// TestRunSEP41SupplyRollup_AbsentCursorIsNoCursorNotNoop pins GH-1153: a pass
+// TestRunSEP41SupplyRollup_AbsentCursorIsNoCursorNotNoop pins that a pass
 // that folds nothing because the projector's sep41_supply cursor row is
 // absent leaves the fold pinned and every supply read on the full-history
 // scan. It must count as outcome="no_cursor" (never the steady-state "noop"
@@ -544,7 +544,7 @@ func TestBuildSupplyPolicy_RejectsMalformedOverride(t *testing.T) {
 
 // TestBuildSupplyPolicy_EmptyConfigIsValid — the common case (no
 // operator overrides configured) must still produce a usable,
-// validation-clean Policy equivalent to the pre-fix supply.Policy{}.
+// validation-clean Policy equivalent to the zero supply.Policy{}.
 func TestBuildSupplyPolicy_EmptyConfigIsValid(t *testing.T) {
 	policy, err := buildSupplyPolicy(config.SupplyConfig{})
 	if err != nil {
@@ -651,9 +651,9 @@ func TestDivergenceLedgerAdapter_LatestLedger_FailsOpenOnError(t *testing.T) {
 // race clickhouse-server's metadata load causes) would abort the whole
 // aggregator process. newLazyCloseTimeReader must instead retry in the
 // background until the dial succeeds, exactly like the decimals-guard
-// (K024) and SAC-resolver readers already do. A dial stub that fails twice
-// then succeeds proves the retry happened: on the pre-fix single-shot
-// behavior there is no such loop to observe.
+// and SAC-resolver readers already do. A dial stub that fails twice
+// then succeeds proves the retry happened: a single-shot
+// dial has no such loop to observe.
 func TestLazyCloseTimeReader_RetriesTransientDialFailure(t *testing.T) {
 	origMin, origMax := decimalsResolverRetryMin, decimalsResolverRetryMax
 	decimalsResolverRetryMin = time.Millisecond

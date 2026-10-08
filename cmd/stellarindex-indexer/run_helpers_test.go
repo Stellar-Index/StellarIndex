@@ -21,7 +21,7 @@ import (
 	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 )
 
-// Coverage for the indexer's run() wiring helpers (#340 item 4). All
+// Coverage for the indexer's run() wiring helpers. All
 // four ran only from run(), which no test calls.
 
 // ─── chainlinkFeedSetFromConfig ──────────────────────────────────
@@ -169,7 +169,7 @@ func TestChainlinkFeedSetFromConfig_CarriesMaxAgeThrough(t *testing.T) {
 // operator who enables chainlink with no feed_map silently gets the six
 // built-in mainnet feeds. That is a defensible default, but it is the
 // opposite of what the guard implies, so it is pinned here — and the
-// guard is consequently unreachable for an empty map (see #340).
+// guard is consequently unreachable for an empty map.
 func TestChainlinkFeedSetFromConfig_EmptyMapYieldsTheBuiltInDefaults(t *testing.T) {
 	t.Parallel()
 

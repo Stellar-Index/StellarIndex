@@ -53,10 +53,10 @@ func TestOrient_Symmetric(t *testing.T) {
 	}
 }
 
-// TestOrient_XLMAliasFamilyRanksIdentically is GH-1100: all three
+// TestOrient_XLMAliasFamilyRanksIdentically pins that all three
 // canonical spellings of XLM (native, crypto:XLM, the SAC wrapper) must
-// orient identically against the same counter-asset. Before the fix,
-// quoteRank recognised only "native" and the SAC address, so a
+// orient identically against the same counter-asset. quoteRank must not
+// recognise only "native" and the SAC address, or a
 // crypto:XLM-spelled market could orient inversely to the same market
 // spelled native.
 func TestOrient_XLMAliasFamilyRanksIdentically(t *testing.T) {

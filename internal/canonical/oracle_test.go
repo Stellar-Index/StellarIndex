@@ -132,7 +132,7 @@ func TestOracle_Validate_errors(t *testing.T) {
 	}
 }
 
-// TestOracle_Validate_observerAcceptsEveryAddressKind pins GH-598: Band
+// TestOracle_Validate_observerAcceptsEveryAddressKind pins that Band
 // and Redstone stamp Observer from scval.AsAddressStrkey, so Validate
 // must accept every strkey kind that decoder can return — a contract
 // relayer (C…) must not fail the whole batch as an insert error.

@@ -18,10 +18,9 @@ func TestVerifyHashDBRangeFlags_NeitherSetIsNotRequested(t *testing.T) {
 	}
 }
 
-// TestVerifyHashDBRangeFlags_ExplicitOlderRangeIsAccepted is T122: before
-// this type existed there was no way to express a verify request for a
-// ledger range OLDER than the live-tip trailing window — hashDBVerifySweep
-// only ever computed [from,to] off lastAppended. A range far behind any
+// TestVerifyHashDBRangeFlags_ExplicitOlderRangeIsAccepted pins that a verify request can
+// express a ledger range OLDER than the live-tip trailing window
+// (hashDBVerifySweep computes [from,to] off lastAppended). A range far behind any
 // plausible live tip (e.g. genesis-era ledgers) must validate and pass
 // through unchanged, proving the CLI path is decoupled from the tip.
 func TestVerifyHashDBRangeFlags_ExplicitOlderRangeIsAccepted(t *testing.T) {

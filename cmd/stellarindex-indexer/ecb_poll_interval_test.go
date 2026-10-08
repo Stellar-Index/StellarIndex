@@ -7,7 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// TestNewECBPoller_UsesConfiguredInterval is the regression for GH-999:
+// TestNewECBPoller_UsesConfiguredInterval is the regression test:
 // `poll_interval` under `[external.ecb]` was accepted at config load,
 // validated, and then discarded — startExternalConnectors never read it,
 // so the poller always ran at its 6h built-in default regardless of what

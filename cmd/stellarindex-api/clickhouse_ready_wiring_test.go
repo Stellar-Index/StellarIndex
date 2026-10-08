@@ -9,7 +9,7 @@ import (
 )
 
 // TestRun_RegistersTheClickhouseCheckOnTheFailedDialPathToo is the
-// wiring guard for F122: a ClickHouse readiness checker must be
+// wiring guard that a ClickHouse readiness checker must be
 // registered on a path that a FAILED boot dial also takes.
 //
 // The defect it pins is positional, not logical — `checks = append(

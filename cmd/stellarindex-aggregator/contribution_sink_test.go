@@ -12,7 +12,7 @@ import (
 
 // The orchestrator records one breakdown per (pair, window). Each window's
 // rows must carry that window, or the 5m, 1h and 24h breakdowns of one pair
-// land in price_source_contributions indistinguishable (GH #763).
+// land in price_source_contributions indistinguishable.
 func TestContributionRows_CarryTheRecordsWindow(t *testing.T) {
 	base, err := canonical.NewCryptoAsset("BTC")
 	if err != nil {
@@ -53,7 +53,7 @@ func TestContributionRows_CarryTheRecordsWindow(t *testing.T) {
 }
 
 // Weight and volume_usd land in NUMERIC columns and must reach them at
-// decimal precision, not float64's ~16 significant digits (GH #604).
+// decimal precision, not float64's ~16 significant digits.
 // A USD volume above 2^53 cents and a 1/3 share both lose digits as float.
 func TestContributionRows_RenderExactDecimals(t *testing.T) {
 	vol, ok := new(big.Rat).SetString("90071992547409.93") // 2^53+1 cents

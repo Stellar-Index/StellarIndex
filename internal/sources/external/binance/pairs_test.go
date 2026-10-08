@@ -83,7 +83,7 @@ func TestDefaultPairs_GoldenSet(t *testing.T) {
 	}
 }
 
-// TestParsePairsYAML_RejectsUnknownField guards F007/K035: an unknown
+// TestParsePairsYAML_RejectsUnknownField guards that an unknown
 // key in an asset spec (e.g. "klass" instead of "class") must fail the
 // load loudly instead of silently leaving Class at its zero value,
 // which would fall through to an "unknown asset class" error only

@@ -81,7 +81,7 @@ func TestAsyncSink_DrainsToRecorder(t *testing.T) {
 // TestAsyncSink_DedupsRepeatedHits — repeat pushes for the same
 // (ContractID, EventType) inside a single process don't each occupy a
 // channel slot (the rest are counted in SkippedCount, this is the
-// production-rate-protection path: r1 evidence (PR #620) showed 99%
+// production-rate-protection path: r1 evidence showed 99%
 // of Pushes were duplicates of already-discovered contracts), but the
 // skipped observations are NOT discarded: Stop flushes them as one
 // extra Record call per key carrying the true accumulated count,
@@ -180,7 +180,7 @@ func TestAsyncSink_DropRollsBackSeen(t *testing.T) {
 	// Unblock the worker so the channel drains.
 	close(hold)
 
-	// Retry the previously-dropped contract; with seen rolled back
+	// Retry the dropped contract; with seen rolled back
 	// it should eventually land. Poll because drain is async.
 	recorded := false
 	deadline := time.Now().Add(2 * time.Second)

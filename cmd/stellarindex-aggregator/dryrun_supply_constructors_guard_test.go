@@ -5,7 +5,7 @@ package main
 // close-time reader, and the supply / cross-check refresher builders must
 // be constructed before run()'s dry-run early-return, so a config that
 // fails one of them is caught by -dry-run instead of only surfacing at a
-// real start (T184).
+// real start.
 //
 // Behavioural coverage is not available here — the calls live inside
 // run(), which needs a config file, a Postgres pool and a Redis client

@@ -5,8 +5,7 @@ import (
 	"testing"
 )
 
-// TestAssertRedisOrSingleInstance pins the fail-closed startup gate
-// (W1-auth-passkey-3 / auth-lt-1): a Redis-less deployment must not boot
+// TestAssertRedisOrSingleInstance pins the fail-closed startup gate: a Redis-less deployment must not boot
 // unless the operator has explicitly asserted single-instance, because the
 // per-process auth fallbacks are unsafe across multiple instances.
 func TestAssertRedisOrSingleInstance(t *testing.T) {

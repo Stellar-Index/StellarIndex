@@ -14,7 +14,7 @@ package main
 // 10^(7-decimals) — silently, since no metric separates "the guard found
 // nothing" from "the guard never ran".
 //
-// Proven red against the pre-fix wiring (a single
+// Fails against single-dial wiring (a single
 // clickhouse.NewExplorerReader call whose error logged and fell
 // through): one dial, no retry, guard never armed.
 

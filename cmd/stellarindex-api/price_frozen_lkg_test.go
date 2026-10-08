@@ -42,8 +42,8 @@ func (closedBucketReader) RecentClosedSnapshots(context.Context, canonical.Asset
 	return []v1.PriceSnapshot{}, nil
 }
 
-// TestFrozenPairServesHeldValueThroughProductionAdapters pins F013
-// (MNY-22) end to end through the adapters this binary wires: with the
+// TestFrozenPairServesHeldValueThroughProductionAdapters pins
+// end to end through the adapters this binary wires: with the
 // aggregator's freeze marker live for XLM/GBP and its 5m value held in
 // the VWAP cache, /v1/price must serve the HELD value, not the newer
 // prices_1m bucket the freeze refused — and must go back to the closed

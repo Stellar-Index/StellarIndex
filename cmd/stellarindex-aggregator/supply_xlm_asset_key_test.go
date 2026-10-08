@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TestBuildXLMRefresher_AssetKeyMatchesSupplyAssetKey pins T017/T034: the
+// TestBuildXLMRefresher_AssetKeyMatchesSupplyAssetKey pins that the
 // XLM refresher must register (and report) the "XLM" asset_key that
 // supply.AssetKey produces for native — the same shape
 // StaleComponentLedgersByAsset overrides and outcome-metric labels are

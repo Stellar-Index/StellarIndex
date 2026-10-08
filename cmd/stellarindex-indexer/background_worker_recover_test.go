@@ -11,12 +11,12 @@ import (
 // or be a documented, content-checked CRASH site.
 //
 // An unrecovered panic in ANY goroutine terminates the whole Go process —
-// it is not confined to the goroutine that panicked. Before #368 M4 the
-// indexer had twelve `go` statements and zero recoveries, so a fault in
+// it is not confined to the goroutine that panicked. A fault in an unguarded
+// goroutine such as
 // the decoder-stats flusher, the hashdb drift verifier, a metrics watcher
-// or either attribution tagger stopped ingestion for the whole network.
+// or either attribution tagger stops ingestion for the whole network.
 // Worse, most of those goroutines carry `defer close(done)`, so the
-// channel main waits on still closed and the shutdown path read a
+// channel main waits on still closes and the shutdown path reads a
 // panicked worker as a cleanly-finished one — an invisible death.
 //
 // The guard is deliberately NOT uniform, and the exemptions are the
@@ -90,7 +90,7 @@ func TestBackgroundWorkersRecover(t *testing.T) {
 
 	// Guard against the guard covering nothing (e.g. the spawn idiom
 	// changes and the AST match stops finding anything). 11 guarded
-	// goroutines exist as of #368 M4; this is a floor, not an exact count.
+	// goroutines exist today; this is a floor, not an exact count.
 	if checked < 11 {
 		t.Errorf("only %d guarded goroutine(s) discovered, expected at least 11 — "+
 			"the discovery in this test has drifted from the code and is no longer "+
@@ -116,7 +116,7 @@ func TestBackgroundWorkersRecover(t *testing.T) {
 // the recovery exists only to (a) move stellarindex_worker_panics_total
 // and log the stack, and (b) hand the fault to main as a fatal error, so
 // the up-to-256 already-buffered events are drained before exit rather
-// than discarded — the same hole #368 M2 closed on the error path.
+// than discarded — the same hole the error path closes.
 //
 // This test is what stops a later "simplification" from turning that into
 // an ordinary log-and-continue guard: the site must recover AND still

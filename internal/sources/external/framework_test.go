@@ -185,17 +185,17 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 	}
 
 	wantPerWASM := []string{
-		"soroswap",      // audited 2026-04-29 — see docs/operations/wasm-audits/soroswap.md
-		"band",          // audited 2026-04-29 — see docs/operations/wasm-audits/band.md
-		"redstone",      // audited 2026-04-29 — see docs/operations/wasm-audits/redstone.md
-		"reflector-dex", // audited 2026-04-29 (incl v2 disassembly) — see docs/operations/wasm-audits/reflector.md
-		"reflector-cex", // audited 2026-04-29 (incl v2 disassembly) — see docs/operations/wasm-audits/reflector.md
-		"reflector-fx",  // audited 2026-04-29 — see docs/operations/wasm-audits/reflector.md
-		"phoenix",       // audited 2026-04-29 (11 pools enumerated, 2 unique WASMs verified) — see docs/operations/wasm-audits/phoenix.md
-		"aquarius",      // audited 2026-04-29 (313 pools enumerated, 3 unique WASMs verified) — see docs/operations/wasm-audits/aquarius.md
-		"comet",         // audited 2026-04-29 (Blend backstop pool only known mainnet deployment; WASM verified) — see docs/operations/wasm-audits/comet.md
-		"blend",         // audited 2026-05-02 (11 contracts, 3 unique WASMs, no mid-life upgrades over 11.79M-ledger walk) — see docs/operations/wasm-audits/blend.md §"Phase 2 results"
-		"blend_emitter", // audited 2026-07-10 (ClickHouse-lake-only; all 469 lifetime events shape-verified, 465/465 distribute exhaustively) — see docs/operations/wasm-audits/blend_emitter.md
+		"soroswap",      // audited — see docs/operations/wasm-audits/soroswap.md
+		"band",          // audited — see docs/operations/wasm-audits/band.md
+		"redstone",      // audited — see docs/operations/wasm-audits/redstone.md
+		"reflector-dex", // audited (incl v2 disassembly) — see docs/operations/wasm-audits/reflector.md
+		"reflector-cex", // audited (incl v2 disassembly) — see docs/operations/wasm-audits/reflector.md
+		"reflector-fx",  // audited — see docs/operations/wasm-audits/reflector.md
+		"phoenix",       // audited (11 pools enumerated, 2 unique WASMs verified) — see docs/operations/wasm-audits/phoenix.md
+		"aquarius",      // audited (313 pools enumerated, 3 unique WASMs verified) — see docs/operations/wasm-audits/aquarius.md
+		"comet",         // audited (Blend backstop pool only known mainnet deployment; WASM verified) — see docs/operations/wasm-audits/comet.md
+		"blend",         // audited (11 contracts, 3 unique WASMs, no mid-life upgrades over 11.79M-ledger walk) — see docs/operations/wasm-audits/blend.md §"Phase 2 results"
+		"blend_emitter", // audited (ClickHouse-lake-only; all 469 lifetime events shape-verified, 465/465 distribute exhaustively) — see docs/operations/wasm-audits/blend_emitter.md
 		"sushiswap_v3",
 	}
 	for _, name := range wantPerWASM {
