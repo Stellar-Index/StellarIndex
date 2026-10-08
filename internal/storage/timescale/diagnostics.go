@@ -554,29 +554,15 @@ type BackfillCoverage struct {
 	TradeCount     int64
 }
 
-// BackfillCoverageStats is intentionally a no-op (returns no rows).
-// Retained only for interface/return-type compatibility with the
-// CoverageCache scaffolding, which is removed in the server-side
-// snapshot-pregeneration refactor.
+// BackfillCoverageStats is intentionally a no-op (returns no rows); it
+// exists only to satisfy the CoverageCache reader interface.
 //
-// Why it does nothing: it formerly scanned `trades` per source for
-// earliest/latest ledger + an approximate trade count, cached by
-// CoverageCache and read via buildBackfillCoverage. The
-// cursor-first refactor made that output 100% dead — every mapped
-// source's density/covered/earliest/latest is derived from the
-// backfill-cursor union, and buildBackfillCoverage's cacheRows path
-// `continue`s past every source this function scanned (all are in
-// sourceGenesisLedger). So the result was thrown away entirely
-// while the function still ran ~13 per-source ts-ordered scans + a
-// ~15s approximate_row_count('trades') every refresh interval.
-// Oracle sources (band/redstone/reflector-*) write to
-// oracle_updates and have ZERO `trades` rows, so their scan could
-// not chunk-exclude and walked the full ~2700-chunk hypertable to
-// the statement-timeout (57014) — the root cause of the
-// CoverageCache cold-start hang and a primary SLO-burn contributor.
-// 0e470e96c only time-bounded that wasted work; this removes it entirely
-// (the honest fix). Cursor-first coverage + the source_entry_counts
-// tally already supply everything the diagnostics surface needs.
+// Coverage is cursor-first: every mapped source's density, earliest and
+// latest ledger come from the backfill-cursor union and the
+// source_entry_counts tally, so a per-source scan of `trades` would be
+// discarded. It is also unsafe: oracle sources have no `trades` rows, so
+// their scan cannot chunk-exclude and walks the whole hypertable to the
+// statement timeout.
 func (s *Store) BackfillCoverageStats(_ context.Context) ([]BackfillCoverage, error) {
 	return nil, nil
 }

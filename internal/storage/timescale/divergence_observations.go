@@ -9,7 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
-// LedgerProvider is defined by freeze_events.go (6047a9a33 landed first).
+// LedgerProvider is defined by freeze_events.go.
 // Reusing it here keeps the seam consistent across sinks.
 
 // DivergenceSink is the timescale-backed implementation of
