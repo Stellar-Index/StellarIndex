@@ -185,9 +185,9 @@ func newSeededFilesystemDataStore(t *testing.T, ctx context.Context, from, to ui
 // pipeline.LedgerstreamConfig — deliberately, because ops backfills reuse that
 // helper against the archive bucket and must survive racing the live tip. The
 // consequence for the indexer is that a genuine hole at the trailing edge of
-// the archive range makes the bounded Stream return SUCCESS. Before this fix
-// the handoff then jumped to the fixed `seam` regardless, so every
-// undelivered ledger was skipped — and skipped PERMANENTLY, because the
+// the archive range makes the bounded Stream return SUCCESS. The handoff
+// must not then jump to the fixed `seam` regardless, or every
+// undelivered ledger is skipped — and skipped PERMANENTLY, because the
 // cursor advances past the gap and nothing re-reads it. The completeness
 // verdict would be the only thing to ever notice, long after the fact.
 //

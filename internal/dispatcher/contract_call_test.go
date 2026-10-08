@@ -252,12 +252,11 @@ func TestDispatchContractCall_DiscoveryHook_NilSinkIsNoop(t *testing.T) {
 
 // TestContractCallPathActive covers the ProcessLedger gate that
 // decides whether to walk each op's InvokeContract auth tree at all.
-// Before this change the gate was `len(contractCallDecoders) > 0`
-// only, which meant the event-less-oracle discovery hook (living
-// inside dispatchContractCall) silently depended on Band — or some
-// other ContractCallDecoder — happening to be registered in the
-// running binary. A discovery sink alone must now also activate the
-// walk.
+// A gate of `len(contractCallDecoders) > 0` alone would make the
+// event-less-oracle discovery hook (living inside dispatchContractCall)
+// silently depend on Band — or some other ContractCallDecoder — being
+// registered in the running binary. A discovery sink alone must also
+// activate the walk.
 func TestContractCallPathActive(t *testing.T) {
 	tests := []struct {
 		name       string

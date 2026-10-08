@@ -1365,8 +1365,7 @@ groups:
       # so these exist to give a long lead time rather than to catch a
       # failure in progress. Produced by the packaged nvme collector,
       # redirected into the read textfile dir by the archival-node role
-      # (10-observability.yml) — before that redirect these series did
-      # not exist despite being generated every 5 minutes.
+      # (10-observability.yml).
       - alert: stellarindex_nvme_wear_high
         expr: nvme_percentage_used_ratio > 0.80
         for: 1h

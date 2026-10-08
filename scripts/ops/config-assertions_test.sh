@@ -8,10 +8,8 @@
 # postmaster-level (postgresql.conf.j2's own comment), so an ansible
 # apply that rewrites the file does nothing to the RUNNING server until
 # it restarts. A file-only grep cannot see that gap; the live SHOW must
-# disagree with the file while a restart is pending. Before this fix,
-# config-assertions.sh emitted no metric for this at all — this test
-# fails against that version because the assertion name it greps for
-# does not exist yet.
+# disagree with the file while a restart is pending. This test fails
+# unless config-assertions.sh emits the assertion name it greps for.
 #
 # Uses a fake `psql` on PATH and overridable PG_CONF_FILE /
 # PG_PASSWORD_FILE (same override pattern as TEXTFILE_DIR) so this runs

@@ -18,10 +18,10 @@ const realisticGStrkey = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZ
 // TestBuildDispatcher_FoldsWhitespaceAndCaseInSourceNames pins that the
 // dispatcher's own switch must normalise ingestion.enabled_sources entries
 // the SAME way internal/config/validate.go's KnownSources check already
-// does (lowercase + trim). Before this fix the dispatcher only lowercased,
-// so a name with leading/trailing whitespace passed config.Validate (which
-// trims) but then hard-errored here as "unknown source" — a boot-time crash
-// on input the config layer had already accepted as valid.
+// does (lowercase + trim). Lowercasing alone would let a name with
+// leading/trailing whitespace pass config.Validate (which trims) but then
+// hard-error here as "unknown source" — a boot-time crash on input the
+// config layer had already accepted as valid.
 func TestBuildDispatcher_FoldsWhitespaceAndCaseInSourceNames(t *testing.T) {
 	disp, err := BuildDispatcher([]string{"  Comet  "}, config.OracleConfig{}, nil)
 	if err != nil {

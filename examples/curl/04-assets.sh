@@ -5,8 +5,8 @@
 # stellarindex.io. Each row includes the coin-equivalence overlay
 # (slug, code, issuer, last_price_usd, volume_24h_usd,
 # market_cap_usd, sparkline_7d, etc.) inlined into the response —
-# the standalone /v1/coins route was removed in rc.48 and the
-# overlay was lifted onto every /v1/assets row in rc.47.
+# there is no standalone /v1/coins route; the overlay is on every
+# /v1/assets row.
 #
 # Row filters (BACKLOG #54), combinable:
 #   type=native|classic|soroban|fiat|any   structural asset class

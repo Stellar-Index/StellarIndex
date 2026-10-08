@@ -111,9 +111,9 @@ func TestSinkModeForProjector_TruthTable(t *testing.T) {
 //     and an empty set makes BOTH paths emit nothing, so the invariant is
 //     vacuously satisfied there and not exercised here.
 //
-// Before this change, `persist_per_source` left at its zero-value
-// (false) while the projector was enabled selected sole-writer mode for
-// a projector that could not serve sep41 → zero writers → total loss.
+// `persist_per_source` left at its zero-value (false) while the
+// projector is enabled must not select sole-writer mode for a projector
+// that cannot serve sep41 → zero writers → total loss.
 func TestSinkModeForProjector_SoleWriterInvariant(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		for _, pps := range []bool{false, true} {
