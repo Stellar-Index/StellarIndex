@@ -664,130 +664,27 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 }
 
 // SeedSourceEntryCounts authoritatively recomputes source_entry_counts
-// from a full GROUP BY over EVERY decoded-event hypertable and
+// from a full GROUP BY over every decoded-event hypertable and
 // overwrites the tally (SET, not ADD — so re-running converges).
 // Returns the number of source rows reconciled.
 //
-// This is the heavy reconciliation the writers' incremental bump can
-// never do on its own (a fresh counter doesn't know pre-counter
-// history). Operator one-shot via `stellarindex-ops seed-entry-counts`
-// — run post-backfill: the GROUP BY scans every relevant chunk in one
-// transaction (fine within the 4096 max_locks budget, slow + IO-hungry
-// mid-backfill).
+// The incremental bump cannot know pre-counter history, so this is the
+// operator one-shot `stellarindex-ops seed-entry-counts`, run after a
+// backfill: it scans every relevant chunk in one transaction.
 //
-// Tables covered (per "entries = total decoded protocol activity"):
+// The tables folded are those in seedSourceEntryCountsSQL, kept in
+// lockstep with DefaultGapDetectorTargets by
+// [TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable]; a watched
+// table left out would have its tally overwritten by a re-seed.
 //
-//	trades                         — DEX swap + CEX trade events (sources:
-//	                                 soroswap, phoenix, aquarius, comet,
-//	                                 sdex, binance, kraken, …).
-//	oracle_updates                 — oracle publications (band, redstone,
-//	                                 reflector-{dex,cex,fx}, chainlink).
-//	fx_quotes                      — off-chain FX (ecb, frankfurter,
-//	                                 exchangeratesapi,
-//	                                 coingecko-fx, …).
-//	blend_auctions                 — Blend lending auctions; literal
-//	                                 source 'blend' (single-source table).
-//	account_observations           — AccountEntry observer; literal
-//	                                 source 'accounts'.
-//	trustline_observations         — classic-supply trustline observer;
-//	                                 literal source 'trustlines'.
-//	claimable_observations         — claimable-balance observer; literal
-//	                                 source 'claimable_balances'.
-//	lp_reserve_observations        — LP-reserve observer; literal source
-//	                                 'liquidity_pools'.
-//	sac_balance_observations       — SAC-balance observer; literal source
-//	                                 'sac_balances'.
-//	sep41_supply_events            — SEP-41 mint/burn/clawback per
-//	                                 ADR-0023; literal source
-//	                                 'sep41_supply'.
-//	soroswap_router_swaps          — soroswap-router ContractCall swaps
-//	                                 (migration 0049); literal source
-//	                                 'soroswap-router'.
-//	defindex_flows                 — defindex vault + strategy flows
-//	                                 (migration 0050, both layers);
-//	                                 literal source 'defindex'.
-//	defindex_fees                  — defindex dfees fee-distribution
-//	                                 entries (migration 0146); literal
-//	                                 source 'defindex' (summed WITH
-//	                                 defindex_flows).
-//	defindex_admin_events          — defindex vault admin events
-//	                                 (migration 0192); literal source
-//	                                 'defindex' (summed WITH the above).
-//	comet_liquidity                — Comet join/exit/deposit/withdraw;
-//	                                 literal source 'comet' (summed WITH
-//	                                 the comet swaps from `trades`).
-//	soroswap_skim_events           — Soroswap skim events; literal source
-//	                                 'soroswap' (summed WITH soroswap
-//	                                 swaps from `trades`).
-//	phoenix_liquidity              — Phoenix provide/withdraw; and
-//	phoenix_stake_events           — Phoenix bond/unbond; both literal
-//	                                 source 'phoenix' (summed WITH each
-//	                                 other AND phoenix swaps from `trades`).
-//	blend_positions                — Blend supply/borrow/repay/…; and
-//	blend_emissions                — Blend gulp/claim/bad-debt/…; and
-//	blend_admin                    — Blend admin/pool-config/deploy; all
-//	                                 three literal source 'blend' (summed
-//	                                 WITH blend_auctions above).
-//	blend_backstop_events          — Blend backstop deposit/withdraw/…;
-//	                                 literal source 'blend_backstop'.
-//	cctp_events                    — CCTP bridge events; literal source
-//	                                 'cctp'.
-//	rozo_events                    — Rozo payment/flush; literal source
-//	                                 'rozo'.
-//	sep41_transfers                — SEP-41 transfer/approve/… audit
-//	                                 trail; literal source 'sep41_transfers'.
-//	aquarius_*                     — the seven Aquarius non-swap streams
-//	                                 (reserves, reserves_sync, protocol_fee,
-//	                                 kill_switches, liquidity, rewards_events,
-//	                                 admin); literal source 'aquarius' (summed
-//	                                 WITH aquarius swaps from `trades`).
-//	soroswap_liquidity             — Soroswap add/remove liquidity; literal
-//	                                 source 'soroswap' (summed WITH skim +
-//	                                 swaps).
-//	sushiswap_v3_position_events   — SushiSwap V3 mint/burn/collect; literal
-//	                                 source 'sushiswap_v3' (summed WITH swaps
-//	                                 from `trades`).
-//	phoenix_initialize             — Phoenix pool initialize; and
-//	phoenix_admin_events           — Phoenix admin; literal source 'phoenix'.
-//	blend_emitter_events           — Blend emitter distribute/drop/swap-
-//	                                 config; literal source 'blend_emitter'.
-//	credit_positions               — sorocredit collateral contracts; and
-//	credit_statements              — sorocredit statements; and
-//	credit_settlements             — sorocredit settlements; and
-//	credit_events                  — every other sorocredit event; all
-//	                                 four literal source 'sorocredit'.
-//	upshift_vault_events           — Upshift vault deposit/withdraw/…;
-//	                                 literal source 'upshift'.
-//	spectra_events                 — Spectra registry/market events;
-//	                                 literal source 'spectra'.
-//
-// [TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable] holds this
-// list in lockstep with DefaultGapDetectorTargets: a per-source table
-// the gap detector watches but the seed does not fold is a source whose
-// bumped tally a re-seed would silently overwrite.
-//
-// Every source whose 'entries' tally is bumped via
-// pipeline/sink.go::bumpEntryCount (a NON-idempotent +1 per decoded event)
-// is now folded into this SET-reset from a countable table. That matters
-// because — UNLIKE the trades/oracle_updates bump, which is inlined inside
-// the idempotent INSERT (`HAVING count(*) > 0`, fires only when a row is
-// actually inserted) and so is replay-safe — the bumpEntryCount path ADDs
-// unconditionally, so a replay / re-derive that re-drives the sink
-// double-counts it: a KALE-class trap for the `entries` diagnostics column.
-//
-// The reconciliation invariant: for each such source, the seed's per-source
-// total must equal its steady-state bump total. Each folded table is an
-// idempotent (ON CONFLICT DO NOTHING) hypertable with exactly one row per
-// bumped event, so its COUNT is replay-stable and equals the bumps. Blend
-// bumps one 'blend' source across four tables (auctions + positions +
-// emissions + admin) — the outer GROUP BY sums all four. comet / soroswap /
-// phoenix ALSO bump via the idempotent trades INSERT for their swaps; their
-// non-swap streams (liquidity / skim / stake) are a DISJOINT event set, so
-// summing the folded table with the trades count is the honest total, not a
-// double-count. Net effect: a re-seed CORRECTS a replay's over-count for
-// every bumpEntryCount source instead of leaving it drifted (or zeroing the
-// ones that have no table), so seed-reset is SAFE and required after
-// a replay.
+// Unlike the trades/oracle_updates bump, which fires inside the idempotent
+// INSERT, pipeline/sink.go's bumpEntryCount adds +1 unconditionally, so a
+// replay double-counts. Each folded table holds exactly one idempotent row
+// per bumped event, so its COUNT equals the steady-state bumps, and a
+// re-seed after a replay corrects the drift. Sources spread over several
+// tables (blend's four; comet, soroswap and phoenix non-swap streams plus
+// their swaps in trades) are disjoint event sets, so the outer GROUP BY's
+// sum is the honest total.
 const seedSourceEntryCountsSQL = `
         INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
         SELECT source, sum(c)::bigint, now()

@@ -776,84 +776,35 @@ type SEP41RollupAdvance struct {
 }
 
 // AdvanceSEP41SupplyRollup folds a contract's newly-SETTLED
-// sep41_supply_events into its sep41_supply_rollup checkpoint — the
-// incremental maintainer that keeps the SEP41KindTotalsAtOrBefore fast
-// path cheap (migration 0085). The fold columns have two other writers,
-// [Store.ResetSEP41SupplyRollupFold] and [Store.UpsertSEP41GenesisBaseline];
-// both zero them and re-fold through the same statement this pass runs.
-// The genesis columns are the seed's alone.
+// sep41_supply_events into its sep41_supply_rollup checkpoint, keeping the
+// SEP41KindTotalsAtOrBefore fast path cheap (migration 0085). The other
+// fold writers, [Store.ResetSEP41SupplyRollupFold] and
+// [Store.UpsertSEP41GenesisBaseline], zero the columns and re-fold through
+// the same statement. The genesis columns are the seed's alone.
 //
-// It sums only rows with `ledger > last_ledger` that are SETTLED by BOTH
-// independent pieces of evidence that a ledger will receive no further
-// write:
+// A row is settled when `ledger < max(ledger)` (the tip may be mid-write)
+// AND `ledger <= durable_cursor`, the projector's sep41_supply cursor. The
+// cursor bound matters because a transiently failed sink write does not
+// abort the projector's cycle: the cursor is capped below the held ledger
+// L and L is retried later. Folding past L would strand its row below
+// last_ledger, where neither the fold nor the reader's delta looks, so its
+// amount would be permanently missing from served supply.
 //
-//   - `< max(ledger)` defers the tip ledger, which may still be
-//     mid-write, so a partially-written ledger is never half-folded;
-//   - `<= durable_cursor` defers everything the sole writer has not yet
-//     COMMITTED, where durable_cursor is the projector's ingestion
-//     cursor for the `sep41_supply` domain
-//     (ingestion_cursors(projector, sep41_supply), written by
-//     internal/projector after a cycle's sink writes all succeeded).
+// With no cursor row the pass folds nothing and reports CursorAbsent, so
+// the reader stays on the exact but costly full-sum path and the worker can
+// surface it rather than treat it as a healthy no-op.
 //
-// The second bound is what makes the fold safe against OUT-OF-ORDER
-// writes. A sink write that fails transiently — a deadlock, a
-// statement_timeout — does NOT abort the projector's cycle: the rest of
-// the window's rows are written and the cursor is capped at (lowest
-// held ledger − 1) so the failed row is retried on a later cycle.
-// Bounding the fold by max(ledger) alone would let a 5-minute rollup
-// pass fold PAST the held ledger L and set last_ledger above it; when
-// the retry finally wrote L, that row would sit below the checkpoint
-// (so no later fold could ever see it — the incremental watermark only
-// looks above last_ledger) and below the reader's delta floor (which
-// only adds `ledger > last_ledger`), so its amount would be permanently
-// excluded from served SEP-41 supply — a silent UNDERCOUNT reported as
-// a normal advance. Folding no further than the durable cursor keeps
-// ledger L inside the reader's live delta until the row that belongs to
-// it has actually committed.
+// Idempotent and monotonic; amounts are summed in NUMERIC (ADR-0003). A
+// re-derive that rewrites history below the checkpoint must re-fold from
+// zero; `ch-rebuild -sep41 -write` does so via
+// [Store.ResetSEP41SupplyRollupFold], which keeps the genesis baseline.
 //
-// Fail-closed when the cursor row is ABSENT (the projector has never
-// committed a cycle for this domain): the pass folds nothing and
-// reports Advanced=false with CursorAbsent=true. Nothing is lost or
-// wrong — with last_ledger unmoved the reader answers from the exact
-// full-sum/delta path, the same answer at a higher query cost — and the
-// fold resumes by itself on the projector's first cursor commit. The
-// alternative (assume settlement with no evidence of it) is the defect
-// above. CursorAbsent keeps that state distinguishable from a healthy
-// no-op: pinned at 0 the reader pays the full-history scan migration
-// 0085 exists to prevent, so the worker must be able to surface it.
-// Same posture as the density projection's refusal to credit a cursor
-// span it cannot evidence (see [Cursor] / migration 0046).
-//
-// Idempotent + monotonic: re-running with no newly-settled rows is a
-// no-op (zero delta, unchanged last_ledger); the per-kind totals only
-// ever grow by the summed delta. i128-safe — amounts are summed and
-// accumulated in Postgres NUMERIC (ADR-0003).
-//
-// NOTE: a re-derive that rewrites sep41_supply_events history BELOW an
-// existing checkpoint must then re-fold from zero; the incremental
-// watermark cannot see edits it already passed. `ch-rebuild -sep41
-// -write` does this automatically via [Store.ResetSEP41SupplyRollupFold]
-// (which preserves the genesis baseline, unlike a bare `TRUNCATE
-// sep41_supply_rollup`).
-//
-// Self-contained under a row lock. The pass reads its OWN input boundary
-// (last_ledger) and floor (genesis_baseline_ledger) inside the folding
-// statement, in a transaction that ALREADY holds the rollup row's write
-// lock ([lockSEP41RollupRow], which also says why the lock is taken in a
-// statement of its own and not inside the fold), rather than in an
-// unlocked round trip beforehand. Both of the other writers of those two
-// columns — [Store.ResetSEP41SupplyRollupFold] (`ch-rebuild -sep41
-// -write`) and [Store.UpsertSEP41GenesisBaseline] (`supply
-// seed-sep41-genesis`, which rebuilds the fold) — run against a LIVE
-// aggregator. With the boundary decided before the write, a reset landing
-// in that gap would be stranded: the pass would add its delta over
-// (stale last_ledger, mx) on top of the freshly-zeroed totals and then
-// push last_ledger back up, so every row at-or-below the stale checkpoint
-// would be permanently excluded from the fold — a served UNDERCOUNT that
-// the next pass can never repair. Taking the row lock first makes the two
-// orderings the only two outcomes: the reset lands before this pass
-// (which then re-folds from zero under the current floor) or after it
-// (and re-folds the row itself).
+// The pass reads last_ledger and genesis_baseline_ledger inside the fold,
+// under the row lock taken first ([lockSEP41RollupRow]). Both other writers
+// run against a live aggregator; reading the boundary before the lock would
+// let a reset land in the gap, and this pass would then push last_ledger
+// back up over the zeroed totals, a permanent undercount. With the lock the
+// reset lands wholly before or after this pass.
 func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string) (SEP41RollupAdvance, error) {
 	if contractID == "" {
 		return SEP41RollupAdvance{}, errors.New("timescale: AdvanceSEP41SupplyRollup: empty contractID")

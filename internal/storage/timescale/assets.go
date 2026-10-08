@@ -168,83 +168,23 @@ func (s *Store) hasClassicAsset(ctx context.Context, a canonical.Asset) (bool, e
 // hasNonClassicAsset answers existence for every asset type the classic
 // registry cannot hold.
 //
-// # Why not an unbounded existence scan
+// It avoids the unbounded `trades WHERE base = $1 OR quote = $1` scan the
+// no-unbounded-trade-scan rule forbids: the OR BitmapOrs every chunk back
+// to 2017, and on r1 `GET /v1/assets/native` blew the 15 s budget while
+// historical chunks were being recompressed. Instead three probes are
+// ORed and evaluated lazily: classic_assets over the alias forms (so a
+// declared SAC agrees with its classic twin), then trades base side and
+// quote side, each `= ANY($1) AND ts >= $2` so each leads on its own
+// column's index. `since` is computed Go-side so the planner excludes
+// out-of-window chunks at plan time. The probes bind [assetAliasArray],
+// so XLM's three spellings answer alike.
 //
-// The obvious arm is an UNBOUNDED existence scan:
-//
-//	SELECT EXISTS (SELECT 1 FROM trades
-//	                WHERE base_asset = $1 OR quote_asset = $1 LIMIT 1)
-//
-// — precisely the shape the standing no-unbounded-trade-scan rule
-// forbids, and the same shape hasClassicAsset was written to escape.
-// The OR across two columns cannot be one scan of either single-column index, so the
-// planner BitmapOrs both per chunk and appends chunks until a row turns
-// up; on r1 that is thousands of chunks spanning 2017, nearly all
-// compressed. It survives only by getting lucky early in the append
-// order. Measured on r1, while a usd-volume re-stamp was
-// decompressing and re-compressing historical chunks (routine
-// maintenance here), `GET /v1/assets/native` blew the 15 s request
-// budget on three consecutive attempts — `GetAsset failed
-// err="timescale: HasAsset: timeout: context deadline exceeded"` —
-// while `/v1/assets/USDC-GA5Z…` on the classic arm answered in 2.5 ms.
-//
-// # The shape
-//
-// Three index probes ORed together, short-circuited on the first TRUE:
-//
-//  1. `classic_assets` over the ALIAS forms. Reached only when one of
-//     them is classic — a SAC whose classic twin the operator declared
-//     in `[supply].sac_wrappers` — and it is what makes HasAsset(SAC)
-//     agree with HasAsset(classic twin) for one and the same asset. One
-//     PK seek; never matches for native/fiat/crypto/rwa.
-//  2. and 3. `trades`, base side then quote side, each `= ANY($1) AND
-//     ts >= $2`. Splitting the OR into two single-column predicates is
-//     what lets each one lead on an index of the column it probes (the
-//     shape [Store.RecentSorobanDEXTrades] already uses), and `since` is
-//     computed Go-side — never `now() - INTERVAL` — so the planner sees
-//     a constant timestamp and excludes out-of-window chunks at plan
-//     time. That exclusion is what matters: maintenance on historical
-//     chunks stays off this query's path.
-//
-// Measured on a migrated Timescale 2.26/pg15 with 40 days of trades
-// (chunk interval 7 days since migration 0062): the unbounded statement
-// plans a BitmapOr against every chunk; this one plans three InitPlans —
-// a classic_assets index-only scan, then per-side index scans over the
-// in-window chunks ONLY, with the `ts >= …` qual dropped on the chunks
-// wholly inside the window and kept on the straddling one. Postgres
-// evaluates the InitPlans lazily across the OR, so a hit on an early
-// probe leaves the later ones unexecuted.
-//
-// Alias-complete per the XLM dual-form rule: the probes bind
-// [assetAliasArray], so `native`, `crypto:XLM` and the XLM SAC each
-// answer from all three spellings and no form is made fast at another's
-// expense. Existence is an identity question, so folding the spellings
-// here does not merge their (genuinely disjoint) venue populations —
-// every read that returns DATA still keys on the form it was asked for.
-//
-// # The semantic this narrows, deliberately
-//
-// The answer is now "traded inside [MarketsRecencyWindow], or carried
-// by the classic registry" rather than "traded at any point in
-// history". That is the same window [Store.DistinctAssets] uses, and
-// the equality is the point: `/v1/assets/{id}` now answers for a
-// superset of exactly the population `/v1/assets` lists, so the detail
-// route cannot 404 something the listing shows. The old semantic was
-// never reachable inside a request budget — it required the unbounded
-// scan above — so this narrows a promise the code could not keep.
-//
-// It is NOT a superset of "ever traded": a non-classic asset whose only
-// trades predate the window now answers false where the old scan would
-// eventually have answered true. For native/fiat/crypto/rwa that
-// population is empty on a live network (those forms trade continuously
-// if they trade at all); for Soroban contracts it is bounded by the
-// listing's own 24h-volume gate, i.e. contracts the listing does not
-// show either. The durable removal of that residual is a general
-// asset-seen registry: `registerClassicAssetSeen` early-returns for
-// non-classic assets today, so extending the trade-insert hook (plus a
-// chunked backfill) would give every type the strict-superset argument
-// hasClassicAsset gets. That is a writer-side change with a migration,
-// filed as follow-up rather than smuggled into a read-path fix.
+// The answer is "traded inside [MarketsRecencyWindow], or in the classic
+// registry", the window [Store.DistinctAssets] uses, so the detail route
+// cannot 404 an asset the listing shows. A non-classic asset whose only
+// trades predate the window now answers false; for Soroban contracts that
+// residual is contracts the listing does not show either. Removing it
+// needs a writer-side asset-seen registry for every type.
 func (s *Store) hasNonClassicAsset(ctx context.Context, a canonical.Asset) (bool, error) {
 	const q = `
         SELECT
