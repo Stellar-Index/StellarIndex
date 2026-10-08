@@ -4,12 +4,10 @@
 # A binary deploy swaps binaries only; Prometheus rule files are a
 # separate config surface. That gap has bitten before:
 #
-#   - #462 added a ClickHouse availability alert. Merged, released,
-#     deployed — and watching nothing, because the rule file never
-#     reached the host. It was the only health signal ClickHouse had.
-#   - #465 removed stellarindex_recognition_unattributed_jump. It kept
-#     FIRING on r1 for hours afterwards, from a rule file the repo no
-#     longer contained.
+#   - A new alert merged, released and deployed, yet watched nothing,
+#     because the rule file never reached the host.
+#   - A removed alert kept FIRING on r1 for hours afterwards, from a
+#     rule file the repo no longer contained.
 #   - A deploy that had in fact fired was read as not-fired from a
 #     single `gh run list` sampled inside the propagation window, and a
 #     duplicate was launched.
@@ -24,7 +22,7 @@
 #                                            the alerts $PROM_URL has loaded
 #                                            RIGHT NOW; no install. For a
 #                                            scheduled reconciliation run on
-#                                            the host itself (T677): apply,
+#                                            the host itself: apply,
 #                                            ci.yml's --check-only and this
 #                                            script's own verify step (below)
 #                                            only ever run AT deploy time —
@@ -59,7 +57,7 @@
 # Its two safety properties are borrowed from that role on purpose, so
 # the single-host and HA paths cannot drift in behaviour:
 #   - stale-file cleanup, because copying never deletes;
-#   - the F-1357 guard: an empty source directory must ABORT, never be
+#   - the empty-source guard: an empty source directory must ABORT, never be
 #     read as "delete every rule". A path typo would otherwise reload
 #     Prometheus with zero alerts and look like a clean run.
 
@@ -169,7 +167,7 @@ echo "apply-rules: expecting $expected_count alert(s) to load"
 # Recording rule names the incoming set declares. /api/v1/rules reports
 # these under the same "name" field as alerts, so a --live-check that
 # only knows about expected_alerts reads every codified recording rule
-# as permanent host drift (F-1219 recurrence: stellarindex:api_error_ratio:*
+# as permanent host drift (stellarindex:api_error_ratio:*
 # and :api_slow_request_*/_count:* were already committed and correctly
 # deployed, and still showed up as "loaded but NOT in the repo").
 expected_records="$(grep -hoE '^[[:space:]]*-[[:space:]]*record:[[:space:]]*[^[:space:]]+' "${src_files[@]}" \

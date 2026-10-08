@@ -9,7 +9,7 @@
 #      resume from `last_exported + 1`. This is the path on every
 #      RESTART of an already-running deployment (the common case);
 #      it guarantees no gap when the service is restarted after
-#      having uploaded ledgers previously (a wrapper that skipped to
+#      having uploaded ledgers before (a wrapper that skipped to
 #      the archive tip every time left a gap after a ZFS migration).
 #
 #   2. If the bucket is empty (fresh deploy), fall back to the

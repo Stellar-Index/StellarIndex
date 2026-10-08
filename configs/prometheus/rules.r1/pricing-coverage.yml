@@ -1,5 +1,5 @@
 ---
-# Priceless-popular pricing-coverage tripwire (task #28 Part B).
+# Priceless-popular pricing-coverage tripwire.
 #
 # The aggregator's internal/pricelesscoverage sweep counts assets that are
 # popular by MARKET-CHARACTER volume (single-account-pair wash excluded, so

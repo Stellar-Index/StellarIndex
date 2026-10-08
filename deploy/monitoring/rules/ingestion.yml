@@ -400,7 +400,7 @@ groups:
             later. Closing it needs a feed-registry / allow-list entry AND
             a replay of the affected ledgers. See the runbook.
 
-      # Q261 note — `for:` equal to the increase window is DELIBERATE on this
+      # Note — `for:` equal to the increase window is DELIBERATE on this
       # rule. That shape cannot fire on one isolated increment (true for W
       # after it, pending needs a further W); it fires only while increments
       # keep arriving, which is exactly what this rule's own description
@@ -443,7 +443,7 @@ groups:
       # the projected DEXes, external) is in the set too. A ctx-abandoned
       # trade retry (cursor held, re-derivable) counts as
       # kind="trade_abandoned" and is deliberately NOT in it.
-      # Q261: `for: 0m`, NOT `for:` = the increase window. A tripwire must
+      # `for: 0m`, NOT `for:` = the increase window. A tripwire must
       # fire on ONE isolated increment, and `increase(m[W]) > 0` with
       # `for: W` cannot: the expression is true only for W after the
       # increment, and the pending period needs it true for a further W,
@@ -504,7 +504,7 @@ groups:
       # on a later event), same posture as discovery_drops.
       # lint-tripwire-window:sustained: best-effort write, the contract
       # re-appears on a later event; the description asks for "kept failing
-      # for 10 minutes" (see the Q261 note above discovery_drops)
+      # for 10 minutes" (see the `for:` note above discovery_drops)
       - alert: stellarindex_ingestion_discovery_record_failures
         expr: increase(stellarindex_discovery_record_failures_total[10m]) > 0
         for: 10m
@@ -528,7 +528,7 @@ groups:
 
       # lint-tripwire-window:sustained: clickhouse.md#stellarindex_ingestion_ch_live_sink_drops: "drops are
       # normal in rare bursts", healed by the ch-live-catchup timer; this
-      # tickets only when dropping is continuous (see the Q261 note above
+      # tickets only when dropping is continuous (see the `for:` note above
       # discovery_drops)
       - alert: stellarindex_ingestion_ch_live_sink_drops
         expr: increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[10m]) > 0
@@ -733,7 +733,7 @@ groups:
       # DB outage — exactly "the sink is blocking on a sick DB" — could sit
       # below that threshold indefinitely and never surface. Sensitive (any
       # nonzero increase), same posture as stellarindex_ingestion_persist_drop.
-      # Q261: `for: 0m` plus the born-inside-the-window arm — see
+      # `for: 0m` plus the born-inside-the-window arm — see
       # stellarindex_ingestion_persist_drop above for why `for: 15m` over a
       # 15m increase window could never fire on a single drop, why an
       # unseeded {source,kind="dropped"} child needs the second arm, and

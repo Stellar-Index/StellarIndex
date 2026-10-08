@@ -1,10 +1,10 @@
 # Rendered by Ansible (archival-node role).
 #
-# CS-118 (audit-2026-06-30): runs de-privileged as the stellarindex
+# Runs de-privileged as the stellarindex
 # service user with the hardening block from the in-repo unit at
 # deploy/systemd/stellarindex-indexer.service (which was drifting
 # unused while this template ran the daemon as root). The
-# stellarindex user is created by 04-users.yml (CS-119).
+# stellarindex user is created by 04-users.yml.
 # EnvironmentFile is read by systemd (PID 1), not the service user;
 # it stays 0640 root:stellarindex.
 
@@ -15,13 +15,13 @@ Wants=network-online.target
 
 # Restart-storm limit — [Unit] directives per systemd.unit(5); systemd
 # >=230 IGNORES StartLimit* under [Service]. More than StartLimitBurst
-# NOTE (#371 F3): with the live-tail retry budget in force a start
+# NOTE: with the live-tail retry budget in force a start
 # cycle is ~5min10s, so a PERMANENTLY broken config can never reach
 # 60 starts inside 15 min and `systemd_unit_failed` will not fire for
 # it. The honest cover for that fault is
 # `stellarindex_ingestion_ledger_stalled` (page, ~10 min): the
 # committed LEDGER cursor stops advancing. NOT `all_sources_stopped`,
-# which this comment named until 2026-09-03 — the CEX/FX connectors
+# because the CEX/FX connectors
 # share this binary and keep its input moving through a lake outage.
 # The ~5min10s figure holds only because the budget covers the datastore
 # OPEN as well as the walk (ledgerstream.retryLiveStart). The open +
@@ -34,10 +34,10 @@ Wants=network-online.target
 # restarts within StartLimitIntervalSec parks the unit in `failed`,
 # which node_systemd_unit_state{state="failed"} raises a TICKET on
 # (`stellarindex_systemd_unit_failed`, for: 15m — not a page) instead
-# of hot-looping forever (audit-2026-07-23 REL-resource-governance —
+# of hot-looping forever (resource governance —
 # this had drifted from the deploy/systemd/*.service reference copies).
 #
-# Sized as a DEPENDENCY-OUTAGE budget (#371 F3): with RestartSec=10s
+# Sized as a DEPENDENCY-OUTAGE budget: with RestartSec=10s
 # below, 60 restarts is ~10 minutes of continuous failure before the
 # unit parks — longer than a MinIO or Postgres restart (2-3 min on r1,
 # including a config apply) — and the interval must exceed 60 × 10s =
@@ -68,7 +68,7 @@ RestartSec=10s
 
 # Memory ceiling — bounds a leak so it can't starve Postgres/ClickHouse
 # on this shared, memory-tight host (188 GiB total, already running
-# close to capacity per r1-deployment-state.md F-1209). MemoryHigh
+# close to capacity per r1-deployment-state.md). MemoryHigh
 # throttles (cgroup reclaim) well before the hard MemoryMax kill.
 # Deliberately generous for a lean Go service — conservative starting
 # point to avoid a false-positive OOM-kill outage; tune down once

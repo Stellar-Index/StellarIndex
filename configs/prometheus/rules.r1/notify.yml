@@ -41,8 +41,8 @@ groups:
 
             Runbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
 
-      # Mirror of the rule in deploy/monitoring/rules/notify.yml (Q268/
-      # RLT-324). The ratio rule above is 0/0 = NaN whenever a template has
+      # Mirror of the rule in deploy/monitoring/rules/notify.yml.
+      # The ratio rule above is 0/0 = NaN whenever a template has
       # sent nothing at all in 15m, so it cannot see the mailer having
       # stopped being invoked entirely. Dead-man's-switch companion: fires
       # on 6h of zero send attempts only while sign-in/signup requests were
@@ -97,8 +97,8 @@ groups:
 
             Runbook: docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
 
-      # Mirror of the rule in deploy/monitoring/rules/notify.yml (Q268/
-      # RLT-324). Absolute-rate companion to the ratio rule: a persistent
+      # Mirror of the rule in deploy/monitoring/rules/notify.yml.
+      # Absolute-rate companion to the ratio rule: a persistent
       # failure trickle on a high-volume template can stay under the 50%
       # ratio threshold indefinitely while still failing real users.
       - alert: stellarindex_notify_send_failures_sustained

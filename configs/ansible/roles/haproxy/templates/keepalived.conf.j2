@@ -26,7 +26,7 @@ vrrp_instance VI_API {
     }
 
 {% if keepalived_unicast_src_ip and keepalived_unicast_peer_ips %}
-    # Unicast VRRP (audit-2026-07-23 REL-HA) — avoids relying on
+    # Unicast VRRP — avoids relying on
     # multicast (224.0.0.18), which some cloud/VPC networks drop,
     # risking a dual-MASTER split brain on the shared VIP.
     unicast_src_ip {{ keepalived_unicast_src_ip }}

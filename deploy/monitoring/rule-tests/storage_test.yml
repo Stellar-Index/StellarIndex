@@ -1169,7 +1169,7 @@ tests:
         alertname: stellarindex_ch_schema_snapshot_offsite_stale
         exp_alerts: []
 
-  # ══ stellarindex_ch_schema_drift_detected / _not_converged / _stale (T604) ═
+  # ══ stellarindex_ch_schema_drift_detected / _not_converged / _stale ═
   - interval: 5m
     name: a divergent ClickHouse schema tickets after 30m
     input_series:
@@ -1245,7 +1245,7 @@ tests:
         alertname: stellarindex_ch_schema_drift_not_converged
         exp_alerts: []
 
-  # PROVEN-RED case for T604: before this rule existed, a
+  # PROVEN-RED case: before this rule existed, a
   # ch-schema-drift.timer that stopped firing left
   # stellarindex_ch_schema_drift_last_run_unix (and _divergent,
   # _intent_converged) frozen at their last values forever — served

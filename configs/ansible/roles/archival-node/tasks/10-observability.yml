@@ -1718,7 +1718,7 @@
 - name: Install prometheus-node-exporter-collectors Debian package
   # Ships the apt/nvme timers + scripts the drop-ins below repoint;
   # without this the drop-in ExecStart= commands reference scripts
-  # that were never installed (T630).
+  # that were never installed.
   ansible.builtin.apt:
     name: prometheus-node-exporter-collectors
     state: present

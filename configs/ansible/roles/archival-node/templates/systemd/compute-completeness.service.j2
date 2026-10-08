@@ -35,12 +35,12 @@ SuccessExitStatus=75
 Environment=HEAVY_JOB_LOCK_WAIT=43200
 Environment=HEAVY_JOB_CLASS=scheduled
 # Shares the job name with compute-completeness-sdex.service, so it queues
-# (up to that unit's 390 min run) instead of skipping a night (GH-1229); the
+# (up to that unit's 390 min run) instead of skipping a night; the
 # 12h wait above covers it.
 ExecStart=/usr/local/sbin/run-heavy-job.sh compute-completeness /usr/local/sbin/run-compute-completeness.sh
 
 # De-privileged — the stellarindex user is
-# created by 04-users.yml (CS-119). Talks Postgres + ClickHouse over the
+# created by 04-users.yml. Talks Postgres + ClickHouse over the
 # loopback only; writes nothing to disk.
 User=stellarindex
 Group=stellarindex

@@ -7,7 +7,7 @@
 # a full recompute — there is no watermark and no backfill. The companion
 # timer re-runs it 30 minutes after each run ends.
 #
-# T391: -heartbeat wires this into the same ops_job textfile-collector
+# -heartbeat wires this into the same ops_job textfile-collector
 # gauges every other stellarindex-ops oneshot publishes (last-finish,
 # last-exit-ok), which the generic ops_job alert tree already covers —
 # a crash was already caught by the systemd catch-all, but a cycle that
@@ -34,7 +34,7 @@ ExecStart=/usr/local/bin/stellarindex-ops ch-holders-rollup \
   -write \
   $EXTRA_FLAGS
 
-# De-privileged, same shape as the sibling oneshots (CS-118/CS-119).
+# De-privileged, same shape as the sibling oneshots.
 User=stellarindex
 Group=stellarindex
 
@@ -44,7 +44,7 @@ NoNewPrivileges=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-# T572: ch-holders-rollup now takes an exclusive flock on
+# ch-holders-rollup now takes an exclusive flock on
 # /var/lib/stellarindex/ch-holders-rollup.lock before it runs, so a
 # manually-invoked run cannot overlap this timer. ProtectSystem=strict
 # makes the whole filesystem read-only except what is listed here —

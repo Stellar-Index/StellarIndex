@@ -32,7 +32,7 @@ if [ -z "$TO" ] || [ "$TO" = "0" ]; then
   exit 1
 fi
 
-# GH-1095: ARCHIVE_TO had no floor. A cursor reset or a partial
+# ARCHIVE_TO had no floor. A cursor reset or a partial
 # reap-cursors leaving MAX(last_ledger) far below its true position
 # silently shrinks the verified range instead of failing — the
 # nightly run stamps success for [from, TO] and the ledgers beyond TO

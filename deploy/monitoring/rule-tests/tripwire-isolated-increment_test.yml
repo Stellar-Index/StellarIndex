@@ -1,6 +1,6 @@
 ---
 # promtool unit tests for the "any nonzero increase" TRIPWIRE class
-# (audit Q261). Run via:
+# Run via:
 #
 #   promtool test rules deploy/monitoring/rule-tests/tripwire-isolated-increment_test.yml
 #
@@ -540,7 +540,7 @@ tests:
                 Not customer-visible but affects Tier-1 posture if sustained.
 
   # ══ stellarindex_ingestion_dispatcher_tx_skips ═════════════════════
-  # RLT-143 / #615: pins that a LONE increment on any one of the three
+  # Pins that a LONE increment on any one of the three
   # dispatcher skip counters fires this tripwire (`for: 0m`, not the
   # 15m window), and that the alert self-resolves once the increment
   # leaves the window.

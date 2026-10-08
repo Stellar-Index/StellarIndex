@@ -1,5 +1,5 @@
 ---
-# Speculative-account reaper health (F-1255). The API binary's reaper
+# Speculative-account reaper health. The API binary's reaper
 # (internal/signupreaper) deletes orphan `accounts` rows left behind by
 # a lost signup race — rows Suspended with a `signup-race:` reason that
 # never got a user (or key) attached. When the reap DELETE keeps

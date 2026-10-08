@@ -8,7 +8,7 @@
 # stellarindex_timescale_backup_none_24h (24h, page) + _backup_failed
 # (25h, ticket); a non-zero exit fails the unit (unit_failed alert).
 #
-# WHY per-repo (2026-08-29, repo2 = S3 went live on r1): pgBackRest's
+# WHY per-repo (repo2 = S3): pgBackRest's
 # `backup` command is single-repo. With several repos configured and no
 # --repo, it backs up ONLY the highest-priority repo (the lowest repo
 # key, i.e. repo1) — it does NOT fan out. Only archive-push (WAL) and
@@ -43,12 +43,12 @@ if [ "$(date +%u)" -eq 7 ]; then TYPE=full; else TYPE="diff"; fi
 # Every repoN-* key in any section names a repo (repo1 may carry only
 # repo1-path; repo2 is s3 and carries repo2-type). Sorted numerically so
 # repo1 (local, fast) always runs first. Unreadable/absent conf → repo1
-# only, exactly the pre-2026-08-29 behaviour.
+# only, exactly the pre-repo2 behaviour.
 # REPO_COUNT is counted by hand rather than with bash's array-length
 # idiom (dollar, brace, hash): ansible renders this file through Jinja,
 # where brace-hash OPENS A COMMENT — everything after it is swallowed and
 # the template task dies with "Missing end of comment tag". That is not
-# theoretical: on r1 (2026-08-29) it meant the #305 wrapper could never be
+# theoretical: on r1 it meant the per-repo wrapper could never be
 # applied, so the nightly job kept running the pre-repo2 command and the
 # off-site repo never got a base backup from it.
 REPOS=()

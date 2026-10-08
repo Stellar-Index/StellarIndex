@@ -8,7 +8,7 @@
 # This is the "true up-to-the-second" evolution the timer-driven oneshot
 # reserved for a follow-worker. `-follow` runs it as a long-lived daemon:
 # catch up to the CONTIGUOUS lake tip (the watermark-gated range that
-# never steps past a near-tip hole — see Cap67Range / #174), sleep
+# never steps past a near-tip hole — see Cap67Range), sleep
 # FOLLOW_INTERVAL, repeat. The FIRST catch-up after provisioning is still
 # the multi-hour P23→tip backfill (one loop iteration); it then follows.
 # Crash-safe: Restart=always + resume-from-watermark; a transient
@@ -69,7 +69,7 @@ ExecStart=/usr/local/bin/stellarindex-ops ch-cap67-movements \
 Restart=always
 RestartSec=10s
 
-# De-privileged, same shape as the sibling oneshots (CS-118/CS-119).
+# De-privileged, same shape as the sibling oneshots.
 User=stellarindex
 Group=stellarindex
 

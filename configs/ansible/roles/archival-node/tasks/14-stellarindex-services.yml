@@ -204,7 +204,7 @@
       - up
   environment:
     STELLARINDEX_POSTGRES_DSN: "{{ postgres_dsn_stellarindex }}"
-    # GH-1166: same DDL-lock-convoy mitigation as deploy-binary.yml's
+    # Same DDL-lock-convoy mitigation as deploy-binary.yml's
     # "Apply outstanding migrations" task. stellarindex-migrate's
     # golang-migrate postgres driver is lib/pq, which reads PGOPTIONS as
     # backend startup options; this and deploy-binary.yml are the two
@@ -231,9 +231,9 @@
   # api} units. Carries the Postgres DSN (with password), the MinIO
   # read creds, and the off-chain connector API keys — everything
   # stellarindex.toml deliberately omits. Mode 0640 root:stellarindex
-  # (CS-118/CS-121 pattern): systemd reads EnvironmentFile as PID 1,
+  # systemd reads EnvironmentFile as PID 1,
   # but scripts sourced interactively by the service user need group
-  # read; the stellarindex group is created in 04-users.yml (CS-119).
+  # read; the stellarindex group is created in 04-users.yml.
   ansible.builtin.template:
     src: stellarindex.env.j2
     dest: /etc/default/stellarindex
@@ -455,7 +455,7 @@
       # Mandatory wrapper for heavy one-shot jobs (ops re-derives,
       # backfills, bulk SQL, archive walks). First takes a per-job
       # singleton lock so a new run can't start while the prior run of
-      # the same job is still going (C4-14 / INF-11), then the host-wide
+      # the same job is still going, then the host-wide
       # heavy-job lock (one operator heavy job at a time). Then, for root
       # callers, hard-caps memory at 20G or HEAVY_JOB_MEMORY_MAX (kill, not swap: MemorySwapMax=0
       # keeps the job away from swap entirely) and deprioritises CPU/IO
@@ -482,7 +482,7 @@
           ;;
       esac
 
-      # ── Singleton lock (C4-14 / INF-11) ──────────────────────────
+      # ── Singleton lock ──────────────────────────
       # Per-job flock so a new run cannot start while the prior run of
       # the SAME job is still going. Overlapping timer fires — or a
       # manual run racing a timer run — that would otherwise stack and
@@ -847,7 +847,7 @@
       fi
       echo "run-heavy-job: ${NAME} memory cap: MemoryMax=${MEMORY_MAX} (swap denied)" >&2
 
-      # ── Stop the scope with the wrapper (GH-1228) ─────────────────
+      # ── Stop the scope with the wrapper ─────────────────
       # The scope is a SIBLING of the calling unit in system.slice: when
       # that unit is stopped or hits TimeoutStartSec, systemd signals this
       # shell and the watchdog and never reaches the payload, which would

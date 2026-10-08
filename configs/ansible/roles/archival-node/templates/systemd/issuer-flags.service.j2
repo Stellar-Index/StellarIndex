@@ -61,7 +61,7 @@ ExecStart=/usr/local/bin/stellarindex-ops issuer-flags \
   $EXTRA_FLAGS
 
 # De-privileged — the stellarindex user is
-# created by 04-users.yml (CS-119). Reads config + ClickHouse, writes
+# created by 04-users.yml. Reads config + ClickHouse, writes
 # Postgres. Nothing else.
 User=stellarindex
 Group=stellarindex

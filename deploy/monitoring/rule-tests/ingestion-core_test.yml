@@ -1584,7 +1584,7 @@ tests:
         alertname: stellarindex_ingest_gap_detector_silent
         exp_alerts: []
 
-  # ══ stellarindex_ingestion_ch_live_sink_errors (#371 F6) ══════════
+  # ══ stellarindex_ingestion_ch_live_sink_errors ══════════
   # `errored` is a DIFFERENT fault class from `dropped`: the sink's
   # bounded queue never saw the ledger, because either
   # clickhouse.ExtractLedger failed on it (a decode/meta-version break)

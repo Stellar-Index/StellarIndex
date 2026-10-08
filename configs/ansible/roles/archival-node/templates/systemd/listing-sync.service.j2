@@ -58,7 +58,7 @@ ExecStart=/usr/local/bin/stellarindex-ops listing-sync \
   $EXTRA_FLAGS
 
 # De-privileged, same shape as directory-sync and sep1-refresh
-# (CS-118/CS-119): reads config, fetches two HTTPS bodies, writes
+# reads config, fetches two HTTPS bodies, writes
 # Postgres.
 User=stellarindex
 Group=stellarindex

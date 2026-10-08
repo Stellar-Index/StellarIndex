@@ -1,13 +1,13 @@
 ---
-# promtool unit tests for the hashdb alert family (T634), rules live in
+# promtool unit tests for the hashdb alert family, rules live in
 # hashdb.yml.
 #
 #   promtool test rules deploy/monitoring/rule-tests/hashdb_test.yml
 #
 # stellarindex_hashdb_append_total{outcome} has carried the warning
 # "error means the drift detector is silently not recording" since it
-# was declared (internal/obs/metrics.go), but until T634 nothing
-# consumed it: hashdb.yml alerted on the verify-sweep side only
+# was declared (internal/obs/metrics.go), but nothing
+# consumed it until the hashdb alert family: hashdb.yml alerted on the verify-sweep side only
 # (drift_detected, verify_failing), leaving the write side with zero
 # alert coverage. A sustained run of Append errors is the ONLY signal
 # that hashdb has gone blind on ingest — the periodic verify sweep
@@ -65,7 +65,7 @@ tests:
         alertname: stellarindex_hashdb_append_failing
         exp_alerts: []
 
-  # ── T132: verify sweep permanently idle (every tick an early
+  # ── Verify sweep permanently idle (every tick an early
   # return in hashDBVerifySweep) must trip verify_stale even though
   # verify_failing's rate() ratio reads as no-data-so-green. Every
   # input below carries the six verify_runs_total series seeded at 0

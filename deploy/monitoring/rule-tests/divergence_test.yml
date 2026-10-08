@@ -285,7 +285,7 @@ tests:
                 or a signal of oracle failure — check the oracle's own status page.
 
   # ── the no-behaviour-change boundary: an un-overridden asset ───────
-  # The point of #478 is that adding a per-asset budget must not move a
+  # The point is that adding a per-asset budget must not move a
   # single existing alert. So this pins the exact minute an asset with
   # NO override goes off, against the default budget of 3000 s
   # (10 × reflector's 300 s resolution — the same arithmetic the old
@@ -351,7 +351,7 @@ tests:
       - series: 'stellarindex_oracle_staleness_budget_seconds{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex",asset="crypto:DAI"}'
         values: '32400+0x560'
       # The source still declares 300 s, and that is the point: this
-      # case only means something because the pre-#478 threshold
+      # case only means something because the old fixed threshold
       # (10 × 300 = 3000 s) is present in the fixture and the rule
       # ignores it in favour of the pair's own budget.
       - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex"}'

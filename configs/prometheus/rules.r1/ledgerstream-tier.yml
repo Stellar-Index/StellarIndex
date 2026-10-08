@@ -14,7 +14,7 @@ groups:
     interval: 60s
     rules:
 
-      # Q261: `for: 0m`. `for: 5m` over a 5m increase window could not
+      # `for: 0m`. `for: 5m` over a 5m increase window could not
       # fire on ONE both-tiers miss (true for 5m after the increment, pending
       # needs a further 5m). It paged only when a consumer kept missing.
       # Firing at once is safe because no scraped process emits this

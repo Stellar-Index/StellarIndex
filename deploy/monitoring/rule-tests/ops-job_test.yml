@@ -295,7 +295,7 @@ tests:
                 that is deliberate (a job that died must not become invisible
                 just because nothing is running).
 
-  # ── T578: a job that finished and FAILED tickets run_failed ──────
+  # ── A job that finished and FAILED tickets run_failed ──────
   # The job ran to completion (running→0 at t=10m, same as the "cleanly
   # finished" case above) but its last run errored: last_exit_ok=0. The
   # two siblings must stay silent — their `running == 1` guard is false —

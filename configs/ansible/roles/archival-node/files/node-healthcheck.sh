@@ -161,7 +161,7 @@ g_enter_epoch=$(date -d "$g_enter_iso" +%s 2>/dev/null || echo 0)
 g_age=$(( $(date +%s) - g_enter_epoch ))
 if [ "$g_age" -gt "$GALEXIE_WARMUP_SEC" ]; then
   # mc --json gives a machine-readable listing; sort by lastModified.
-  # `sort` writes to a file and `head` reads it back — see #475: with
+  # `sort` writes to a file and `head` reads it back: with
   # pipefail set, `sort -r | head -1` makes `sort` die on EPIPE once the
   # listing exceeds the pipe buffer (which a live bucket always does),
   # logging "write failed: 'standard output': Broken pipe" on every

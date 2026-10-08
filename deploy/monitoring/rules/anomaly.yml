@@ -82,7 +82,7 @@ groups:
       # The P1 page for a freeze that exhausted its extension
       # ladder lives ONLY in freeze-lifecycle.yml
       # (stellarindex_anomaly_freeze_escalated). A duplicate lived
-      # here until GH-1121: same expr on the same unlabelled counter,
+      # here in the past: same expr on the same unlabelled counter,
       # so `sum by (class)` grouped nothing and every page's summary
       # interpolated a blank `{{ $labels.class }}`, and every
       # escalation paged twice. Engagement (below) stays ticket-level

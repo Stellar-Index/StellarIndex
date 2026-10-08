@@ -49,7 +49,7 @@ groups:
             `price-alert evaluator: wired` startup log line, then the
             runbook.
 
-      # GH #749: a sweep in which EVERY enabled alert errors (bad row,
+      # A sweep in which EVERY enabled alert errors (bad row,
       # price-read, or enqueue failure — e.g. the app role losing
       # INSERT on webhook_deliveries) still returns "ok" from the list
       # step, so it emits `partial_error`, never `list_error`. The rule
@@ -85,7 +85,7 @@ groups:
             webhook_deliveries) is common to every alert, then the
             runbook.
 
-      # GH-749: most per-alert evaluations failing. partial_error above is
+      # Most per-alert evaluations failing. partial_error above is
       # one sample per sweep whether one alert or every alert failed; this
       # reads the per-alert counter, so it separates "one bad row" from
       # "customer alerts are not being delivered", and it keeps firing
@@ -112,7 +112,7 @@ groups:
             outcome, check aggregator logs for `price-alert evaluate
             failed`, then the runbook.
 
-      # GH-749: the evaluator stopped completing sweeps. A sweep stuck
+      # The evaluator stopped completing sweeps. A sweep stuck
       # behind slow alerts emits no outcome sample at all, so every rate()
       # rule above reads "no data" and stays silent. The gauge is seeded
       # with the evaluator's start time, so a first sweep that never
@@ -140,7 +140,7 @@ groups:
             evaluated. Check the aggregator's goroutine state and
             `price-alert evaluate failed` timeouts, then the runbook.
 
-      # Companion to the two rules above (RLT-226): both read `rate()`
+      # Companion to the two rules above: both read `rate()`
       # over stellarindex_price_alert_eval_total, and a counter with no
       # increments is ABSENT, not zero, so neither can ever fire while
       # the evaluator has never produced a single series — disabled by

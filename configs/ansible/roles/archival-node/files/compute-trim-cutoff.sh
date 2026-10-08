@@ -11,7 +11,7 @@
 # the result to /run/galexie-archive-trim.env which the service
 # loads via EnvironmentFile.
 #
-# Mirrors the compute-archive-to.sh pattern (F-1205): use the same
+# Mirrors the compute-archive-to.sh pattern: use the same
 # DSN as the application binaries (sourced from /etc/default/
 # stellarindex) rather than peer-auth, which fails under systemd's
 # restricted user-switch context.

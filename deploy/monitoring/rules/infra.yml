@@ -255,7 +255,7 @@ groups:
             catchup slows, Postgres WAL flush stalls. Check chassis airflow
             + ambient temperature.
 
-      # ── Textfile-collector scrape errors (T583) ─────────────────────
+      # ── Textfile-collector scrape errors ─────────────────────
       #
       # node_exporter's own `node_textfile_scrape_error` gauge is 1 when
       # ANY file under --collector.textfile.directory failed to parse on
@@ -375,7 +375,7 @@ groups:
             `systemctl status {{ $labels.name }}` then
             `journalctl -u {{ $labels.name }} --since -24h` for the cause.
 
-      # T586: keepalived-textfile-scraper.timer runs every 30s
+      # keepalived-textfile-scraper.timer runs every 30s
       # (OnUnitActiveSec=30s, haproxy role 07-monitoring.yml) and
       # node_exporter re-serves keepalived.prom's last value on every
       # scrape regardless of whether the timer is still alive — the

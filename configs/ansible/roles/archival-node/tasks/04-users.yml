@@ -90,7 +90,7 @@
     mode: "0755"
 
 # The de-privileged Tier B checkpoint-anchor job (verify-archive-tier-b,
-# User=stellarindex per CS-118) reads the canonical header-hashes from this
+# User=stellarindex) reads the canonical header-hashes from this
 # LOCAL mirror. The `file:` task above only sets the TOP dir 0755; the subtree
 # is created by stellar-archivist / manual gap-fills, and a fill run under
 # umask 027 leaves nested dirs at 0750 root:root — world-traverse cleared —

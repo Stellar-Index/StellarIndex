@@ -1,5 +1,5 @@
 ---
-# promtool unit tests for the two alerts RLT-131 added to
+# promtool unit tests for the two alerts added to
 # ../rules/projector.yml. Run via:
 #
 #   promtool test rules deploy/monitoring/rule-tests/projector-permanent-drop_test.yml
@@ -8,7 +8,7 @@
 # rejected and advances the cursor past it — the served tier loses the row
 # until an operator re-drives it. The quarantine arm's identical outcome has
 # had a rule since COR-11; this arm had none, and its only signal was an ERROR
-# log. RLT-131 adds:
+# log. The alerts are:
 #
 #   * stellarindex_projector_row_dropped_permanent (ticket) on
 #     outcome="sink_permanent";
@@ -24,7 +24,7 @@
 # so both children are BORN by the very drop the rule is for, and
 # `increase()` over a series with no earlier sample reads 0. A naive
 # increase()-only rule for either alert is mute on exactly the event it
-# exists to report. Both carry the Q261 born-inside-the-window arm
+# exists to report. Both carry the born-inside-the-window arm
 # (`or ( m > 0 unless m offset 15m )`) the quarantine rule already uses, and
 # case 2 below is the one that proves it.
 #
