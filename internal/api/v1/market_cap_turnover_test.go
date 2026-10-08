@@ -311,7 +311,7 @@ func slogDiscard() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// TestPopulateMarketCapFlagsFDVOnlyCeilingBreach (RWC-535) covers the row
+// TestPopulateMarketCapFlagsFDVOnlyCeilingBreach covers the row
 // shape TestPopulateMarketCapAgreesWithTheListingOnTheSameAsset does not:
 // circulating supply small enough that market_cap_usd CLEARS the turnover
 // ceiling and publishes, while max_supply is large enough that fdv_usd

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// HO-007: docs/protocols/defindex.md's "Events decoded" table said the
+// docs/protocols/defindex.md's "Events decoded" table said the
 // DeFindexFactory `create`/`n_fee` topics "register the vault",
 // contradicting the page's own header ("NEITHER vaults NOR strategies
 // self-register from factory create events") and Decode itself, whose

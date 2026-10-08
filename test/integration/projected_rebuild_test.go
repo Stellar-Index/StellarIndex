@@ -294,7 +294,7 @@ func prB64(t *testing.T, sv xdr.ScVal) string {
 	return base64.StdEncoding.EncodeToString(b)
 }
 
-// TestProjectedRebuild_FailedInsertDoesNotCheckpoint is the COR-09 proof, and
+// TestProjectedRebuild_FailedInsertDoesNotCheckpoint is the proof, and
 // it is deliberately end-to-end (real ClickHouse + real Postgres) because the
 // bug lived in the seam between them.
 //

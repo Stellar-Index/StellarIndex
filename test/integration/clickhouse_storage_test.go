@@ -795,10 +795,10 @@ func TestNetworkThroughput_DedupsReingestedLedger(t *testing.T) {
 	}
 }
 
-// TestClickHouseContractDirectoryDedupsDuplicateEvents is the DAT-10 proof for
-// the two contract readers the original DAT-10 sweep (1bac345f) missed:
+// TestClickHouseContractDirectoryDedupsDuplicateEvents is the dedup proof for
+// the two contract readers the original dedup sweep missed:
 // RecentContracts and ContractInteractions. They appear in neither that
-// commit's fixed list nor its re-derived-as-correct list — they were simply
+// sweep's fixed list nor its re-derived-as-correct list — they were simply
 // not visited, while the sibling operations readers were fixed with LIMIT 1 BY.
 //
 // stellar.contract_events is ReplacingMergeTree(ingested_at), and duplicates

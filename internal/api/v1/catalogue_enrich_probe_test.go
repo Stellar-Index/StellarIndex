@@ -10,7 +10,7 @@ import (
 )
 
 // TestCatalogueSlugToStellarAssetID probes the exact chain
-// fillCatalogueStatsForPage relies on (AM-10 enrichment live-debug):
+// fillCatalogueStatsForPage relies on:
 // wire Slug → LookupBySlug → StellarEntry → AssetID.
 func TestCatalogueSlugToStellarAssetID(t *testing.T) {
 	cat, err := currency.LoadEmbedded()

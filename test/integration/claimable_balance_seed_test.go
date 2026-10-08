@@ -31,7 +31,7 @@ import (
 // set by the highest ledger ANY test in the process left behind. One fixture
 // at ledger 4,000,000,000 made every walk here ~16,000 empty windows (53-58 s
 // each unloaded, five walks in this file) and breached the 5-minute deadline
-// under machine load (CO-22). The fixtures that seed up there now remove
+// under machine load. The fixtures that seed up there now remove
 // their rows; cbsSeedsByID's window check turns any recurrence into an
 // immediate, named failure instead of a load-dependent timeout, and
 // TestClaimableSeed_WalkStaysBoundedAfterHighLedgerFixtures pins the two
@@ -355,8 +355,8 @@ func TestClaimableSeed_NativeAndAssetScope(t *testing.T) {
 	}
 }
 
-// TestClaimableSeed_WalkStaysBoundedAfterHighLedgerFixtures is CO-22's
-// regression test. The seed reader walks the process-shared lake from
+// TestClaimableSeed_WalkStaysBoundedAfterHighLedgerFixtures is the
+// regression test for that. The seed reader walks the process-shared lake from
 // min(ledger_seq) to max(ledger_seq), so a fixture another test leaves at a
 // far-future ledger is paid for by every walk that follows it in the process.
 // Two tests seed up there on purpose — TestBlendPoolReserves_SameLedgerLastChangeWins

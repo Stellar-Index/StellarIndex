@@ -16,7 +16,7 @@ import (
 // degraded == true) must not fall through the switch's default branch
 // like a curator with a genuinely empty recognised set: "served" with
 // Assets: 0. Those two states are not the same thing and must not
-// render identically (RWC-524).
+// render identically.
 func TestRWACuratedSummarise_DegradedContractReadIsUnavailableNotServedZero(t *testing.T) {
 	snap := rwaCurated{available: true, wired: true}
 	now := time.Now().UTC()
