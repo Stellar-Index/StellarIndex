@@ -3020,39 +3020,10 @@ const (
 	FanoutFailureEnqueue = "enqueue"
 )
 
-// CustomerWebhookFanoutFailuresTotal — customer events that never
-// became a delivery row.
-//
-// This is the PRODUCER-side counterpart to
-// [CustomerWebhookDeliveryAttemptsTotal], which only starts counting
-// once a `webhook_deliveries` row exists. A fan-out failure happens
-// strictly before that row: the freeze / divergence / incident event
-// fired, the customer was subscribed, and no delivery was ever
-// enqueued for them. There is nothing to retry and nothing to drain —
-// the customer's event is permanently gone.
-//
-// `Fanout.Publish` returns an error for this, so a fan-out
-// that lost every subscriber is distinguishable from a successful
-// one at the call site, rather than leaving only a WARN line.
-//
-// Labels:
-//   - event_type: the platform.WebhookEventType that was being
-//     published (incident.sev1 | incident.resolved | anomaly.freeze |
-//     divergence.firing | price.alert)
-//   - reason: invalid_payload | list_subscribers | enqueue
-//
-// `enqueue` increments once per lost DELIVERY (per subscriber);
-// the other two increment once per lost fan-out, where the loss
-// covers every subscriber of that event type.
-//
-// Emitted by the aggregator binary (freeze + divergence hot paths)
-// and by `stellarindex-ops emit-incident`; the ops CLI is short-lived
-// and unscraped, which is why that call site ALSO returns the error
-// to the operator's shell.
-//
-// Pre-seeded across event_type × reason so a quiet fan-out reads as a
-// real zero rather than "no data" — the distinction this whole
-// counter exists to make.
+// CustomerWebhookFanoutFailuresTotal counts customer events that never became a delivery row, so are
+// permanently lost (nothing to retry); the producer-side counterpart of [CustomerWebhookDeliveryAttemptsTotal].
+// reason ∈ invalid_payload, list_subscribers (per lost fan-out) or enqueue (per lost subscriber). The ops CLI
+// call site is unscraped, so it also returns the error. Pre-seeded so a quiet fan-out reads a real zero.
 var CustomerWebhookFanoutFailuresTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_customer_webhook_fanout_failures_total",
@@ -3061,21 +3032,9 @@ var CustomerWebhookFanoutFailuresTotal = prometheus.NewCounterVec(
 	[]string{"event_type", "reason"},
 )
 
-// CustomerWebhookDeliveryDurationSeconds — latency histogram for
-// the outbound HTTP POST inside the customer-webhook delivery
-// worker (the OUTBOUND worker is a goroutine, not an HTTP handler,
-// so the API middleware's free `http_request_duration_seconds`
-// doesn't cover it).
-//
-// Labelled by outcome (same enum as the attempts counter) so
-// operators can chart p95/p99 latency separately for `delivered`
-// (the happy path) vs `server_error`/`client_error` (which often
-// run hot or slow when a customer's endpoint is misbehaving).
-//
-// Buckets span 10 ms → 60 s — covers fast LANs (≤ 20 ms),
-// typical TLS-terminated webhook endpoints (~100-500 ms), and
-// the worst-case 60 s context timeout the delivery worker
-// enforces before treating a request as a network_error.
+// CustomerWebhookDeliveryDurationSeconds is the outbound delivery POST latency (a worker goroutine, so
+// http_request_duration_seconds misses it), labelled like the attempts counter. Buckets 10ms–60s reach the
+// worker's 60s timeout, past which a request is a network_error.
 var CustomerWebhookDeliveryDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_customer_webhook_delivery_duration_seconds",
@@ -3085,26 +3044,9 @@ var CustomerWebhookDeliveryDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// APICORSDecisionsTotal — per-request CORS outcome counter.
-//
-// Outcomes:
-//   - "no_origin"        — request had no Origin header (server-to-server, curl).
-//     Middleware passes through; no CORS headers emitted.
-//   - "allowed_origin"   — Origin matched a configured allow-list entry.
-//     Allow-Origin echoed back.
-//   - "allowed_wildcard" — wildcard policy ("*") was configured and matched.
-//     Allow-Origin: * emitted.
-//   - "denied"           — request had an Origin header that did NOT match
-//     the allow-list; no Allow-Origin emitted (browser
-//     will block the response).
-//
-// Why a counter, not a startup-only warning: the startup warning in
-// warnOpenCORS (cmd/stellarindex-api/main.go) fires once at boot and
-// is forgotten. Per-request visibility lets operators dashboard
-// actual cross-origin traffic patterns and alert when a wildcard
-// policy starts handling real cross-origin requests in production
-// — the silent failure mode of `STELLARINDEX_ALLOWED_ORIGINS=*`
-// slipping into prod with credentialed auth_mode.
+// APICORSDecisionsTotal counts CORS outcomes per request: no_origin, allowed_origin, allowed_wildcard,
+// denied. Per request, not a boot warning, so an alert can catch `STELLARINDEX_ALLOWED_ORIGINS=*` reaching
+// prod with credentialed auth_mode and handling real cross-origin traffic.
 var APICORSDecisionsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_cors_decisions_total",
@@ -3113,37 +3055,10 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// AggregatorDroppedTradesTotal — count of trades the orchestrator
-// removed from the VWAP input set, labelled by reason and by the
-// CONFIGURED target pair. "class" = removed by the ClassExchange-only
-// filter; "unpriceable" = a stored trade with a zero leg (no price);
-// "outlier" = removed by the σ-threshold filter. Operators
-// alert on a sudden spike in "class" (a new venue mis-registered) or
-// "outlier" (a market in distress flooding the window with anomalies).
-//
-// `pair` (a single-issuer token farm spamming
-// SDEX would need ad-hoc SQL to attribute) is the canonical string of the
-// configured aggregate pair whose refresh dropped the trade — bounded
-// cardinality by construction: only pairs in the orchestrator's
-// configured set flow through refreshPairWindow (~12 in production).
-// Config-dependent labels are NOT pre-seeded, per the
-// AggregatorFXSnapFallbackTotal `leg` convention in
-// seedBoundedLabelSeries; the storm/spike alerts sum() across labels,
-// so an absent pair series never gates them. Diagnose with
-// `topk(5, rate(...{reason="outlier"}[10m]))` by pair.
-//
-// Semantics caveat: the orchestrator re-runs the filter
-// over the whole trailing window every tick, so a print that stays
-// outside the band is counted again on every tick it remains in the
-// window, and once per window ([5m,1h,24h]). The rate is therefore
-// "band-residents × windows / tick", not "new outliers/s".
-// outlier_storm does not gate on this counter
-// (it reads AggregatorVenueVWAP; trim-fraction reads
-// AggregatorWindowTrades) — but class_drop_spike (reason="class")
-// still does. The former outlier_trim_rate_legacy (reason="outlier")
-// overlap-copy alert was retired once
-// trim_fraction had a week of live evidence; see
-// configs/prometheus/rules.r1/aggregator.yml.
+// AggregatorDroppedTradesTotal counts trades removed from the VWAP input by reason (class, unpriceable,
+// outlier) and configured `pair` (bounded, so not pre-seeded). The filter re-runs over every window each
+// tick, so the rate is "band residents × windows / tick", not new outliers/s. class_drop_spike reads it;
+// outlier_storm and trim-fraction read AggregatorVenueVWAP and AggregatorWindowTrades instead.
 var AggregatorDroppedTradesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_dropped_trades_total",
@@ -3152,24 +3067,10 @@ var AggregatorDroppedTradesTotal = prometheus.NewCounterVec(
 	[]string{"reason", "pair"},
 )
 
-// AggregatorVenueVWAP — per-source VWAP of the PRE-outlier-filter
-// (post-class-filter) trade set for one (pair, window) refresh, on
-// the served price scale. Set on every refresh; a source that has
-// left the window has its series deleted so a venue that stopped
-// trading cannot pin a stale level into the disagreement ratio.
-//
-// This is the input to `stellarindex_aggregator_outlier_storm`:
-// `max by (pair) / min by (pair) − 1` over the
-// 5m window measures VENUE DISAGREEMENT directly. The previous
-// counter-based rule measured how many prints the whole-window MAD
-// band trimmed — which once fired for hours on
-// crypto:XLM/fiat:GBP while every venue agreed within 0.9%, because
-// the band trimmed a genuine +2% step (see aggregate.FilterOutliersLocal).
-//
-// Cardinality: configured pairs × windows × sources that traded in
-// the window (≤ ~12 × 3 × 5). Config-dependent, not pre-seeded.
-// A float64 gauge is fine here: this is an operator signal, never a
-// served value (ADR-0003 applies to the value path only).
+// AggregatorVenueVWAP is each source's pre-outlier-filter VWAP per (pair, window), deleted when a venue
+// leaves the window. It feeds `stellarindex_aggregator_outlier_storm` (max/min − 1 = venue disagreement);
+// counting trimmed prints instead once fired for hours on XLM/GBP while venues agreed within 0.9%.
+// float64 is fine: an operator signal, never a served value (ADR-0003 covers the value path).
 var AggregatorVenueVWAP = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_venue_vwap",
@@ -3178,18 +3079,9 @@ var AggregatorVenueVWAP = prometheus.NewGaugeVec(
 	[]string{"pair", "window", "source"},
 )
 
-// AggregatorWindowTrades — number of trades in one (pair, window)
-// refresh after each filter stage: "fetched" (what the store
-// returned, post-truncation), "class" (after the ClassExchange-only
-// filter), "outlier" (after the outlier filter — the VWAP input).
-// A gauge of the CURRENT window, not a counter: the trim fraction
-// `1 − outlier/class` is the honest "how much of this window is the
-// filter rejecting" signal, whereas the per-tick
-// AggregatorDroppedTradesTotal increments re-count the same window
-// residents on every 30 s tick, summed across windows.
-//
-// Feeds `stellarindex_aggregator_outlier_trim_fraction`. Bounded
-// cardinality: configured pairs × windows × 3 stages.
+// AggregatorWindowTrades is the trade count per (pair, window) after each stage: fetched, class, outlier.
+// A gauge of the current window, so `1 − outlier/class` is the honest trim fraction
+// (`stellarindex_aggregator_outlier_trim_fraction`), unlike the re-counting dropped-trades counter.
 var AggregatorWindowTrades = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_window_trades",
@@ -3198,17 +3090,10 @@ var AggregatorWindowTrades = prometheus.NewGaugeVec(
 	[]string{"pair", "window", "stage"},
 )
 
-// AggregatorWindowBaseVolume — base-asset volume, in whole units (each
-// source's smallest-unit scale divided out), of one (pair, window)
-// refresh after the "class" and "outlier" stages. The outlier centre is
-// a per-print median, so a trade-count trim share cannot tell dust from
-// a trimmed honest block; `1 − outlier/class` here is the share of the
-// traded money the filter removed, and 1 when it withheld a window
-// whose trim would have discarded the volume majority. float64 only at
-// the gauge boundary — an operator signal, never a served value.
-//
-// Feeds `stellarindex_aggregator_outlier_volume_trim_fraction`. Bounded
-// cardinality: configured pairs × windows × 2 stages.
+// AggregatorWindowBaseVolume is base volume in whole units per (pair, window) after the class and outlier
+// stages. The outlier centre is a per-print median, so a count share cannot tell dust from a trimmed block;
+// `1 − outlier/class` here is the share of traded money removed
+// (`stellarindex_aggregator_outlier_volume_trim_fraction`). float64 only at the gauge boundary.
 var AggregatorWindowBaseVolume = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_window_base_volume",
@@ -3232,25 +3117,10 @@ var AggregatorDroppedWindowsTotal = prometheus.NewCounterVec(
 	[]string{"reason"},
 )
 
-// AggregatorMinUSDVolumeUnvaluableTotal — count of (pair, window)
-// refreshes where `aggregate.min_usd_volume` is configured (> 0) but
-// the target pair's on-chain quote asset (classic or Soroban) has no
-// operator-recognised USD peg, so the manipulation-floor check could
-// not be evaluated and the window was DROPPED fail-closed (publishing them
-// unguarded is the valuation-incident exposure).
-// Labelled
-// by `pair` (bounded — operators configure a small, curated
-// aggregate.pairs allow-list; see PriceStalenessSeconds for the same
-// cardinality reasoning).
-//
-// An unvaluable on-chain quote pair would otherwise pass through
-// unguarded SILENTLY. A non-zero rate here means
-// an operator has a directly-configured Soroban- or classic-quoted
-// pair whose quote asset isn't on usd_pegged_classic_assets /
-// sac_wrappers — that pair now publishes NOTHING; the fix is adding
-// the missing peg, not alerting (no rule wired — see
-// docs/reference/metrics/README.md for why this one is
-// dashboard-only).
+// AggregatorMinUSDVolumeUnvaluableTotal counts (pair, window) refreshes DROPPED fail-closed because
+// `aggregate.min_usd_volume` is set but the on-chain quote asset has no recognised USD peg, so the
+// manipulation floor cannot be checked. Non-zero means that pair publishes NOTHING until its peg is added;
+// dashboard-only (docs/reference/metrics/README.md).
 var AggregatorMinUSDVolumeUnvaluableTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_min_usd_volume_unvaluable_total",
@@ -3259,29 +3129,10 @@ var AggregatorMinUSDVolumeUnvaluableTotal = prometheus.NewCounterVec(
 	[]string{"pair"},
 )
 
-// PriceServeSubstanceWithheldTotal — count of aggregated-price
-// decisions WITHHELD by the serving-side thin-market substance gate
-// (internal/pricingguard.SubstanceGate): the pair has an on-chain leg
-// and its trailing market activity (USD volume / distinct 1m buckets /
-// wall-clock span) is below the [pricing_guard] serve floor, so no
-// "the price of X is P" claim is published for it. Raw surfaces
-// (/v1/ohlc, /v1/observations, /v1/history) still serve the pair. An
-// asset-level decision that probes several quotes counts once.
-//
-// Labelled by `surface` — WHICH serving path withheld; the full set is
-// the one table in docs/reference/metrics/README.md, pinned to the call
-// sites by pricingguard's TestPriceServeSurfaceLabelsAreDocumented — and
-// by `floor`, the first floor the market failed ("buckets", "span",
-// "volume", or "volume_unvalued" when most of its activity carried no
-// USD valuation). Low-cardinality constants only — NEVER a pair label;
-// the gate is hit by arbitrary user-supplied pairs (tens of thousands of
-// assets, see the cardinality warning on PriceStalenessSeconds).
-//
-// A steady non-zero rate is EXPECTED (the long tail of dust pairs is
-// large — that is the gate doing its job); what warrants a look is a
-// sudden step-change, which usually means either a data outage
-// upstream of prices_1m (everything looks thin) or a floor
-// misconfiguration. Dashboard-only, no alert rule.
+// PriceServeSubstanceWithheldTotal counts aggregated-price claims withheld by the thin-market substance
+// gate (raw surfaces still serve), by `surface` (pinned by TestPriceServeSurfaceLabelsAreDocumented) and
+// first failed `floor`. NEVER a pair label: user-supplied pairs are unbounded. A steady rate is expected;
+// a step change means an upstream data outage or a floor misconfiguration. Dashboard-only.
 var PriceServeSubstanceWithheldTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_substance_withheld_total",
@@ -3290,16 +3141,9 @@ var PriceServeSubstanceWithheldTotal = prometheus.NewCounterVec(
 	[]string{"surface", "floor"},
 )
 
-// PriceServeSubstanceUnmeasuredTotal — count of substance-gate verdicts
-// that could not be reached: the trailing-substance read errored or ran
-// out of request deadline, so the pair was neither cleared nor withheld
-// on evidence. What the surface does with it differs: a single price
-// lookup ("price_read", "tip", …) serves unguarded, while the listing
-// ("listing") withholds the row's price and stamps flags.stale on the
-// page (ADR-0018). Same `surface` constant set as
-// PriceServeSubstanceWithheldTotal. Expected zero; a sustained non-zero
-// rate means the substance store is too slow or down for the request
-// path. Dashboard-only, no alert rule.
+// PriceServeSubstanceUnmeasuredTotal counts substance verdicts not reached (read error or deadline). Single
+// price lookups then serve unguarded; the listing withholds and sets flags.stale (ADR-0018). Expected zero;
+// sustained means the substance store is too slow or down. Dashboard-only.
 var PriceServeSubstanceUnmeasuredTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_substance_unmeasured_total",
@@ -3308,17 +3152,9 @@ var PriceServeSubstanceUnmeasuredTotal = prometheus.NewCounterVec(
 	[]string{"surface"},
 )
 
-// PriceServeThinAdmittedTotal — count of thin-market verdicts SERVED
-// because the request opted in with `?include_thin=true`: the market
-// failed the substance floor, and the response carries the price flagged
-// `thin_market` with its substance evidence instead of withholding it.
-// Same `surface` and `floor` labels as PriceServeSubstanceWithheldTotal.
-// The price surfaces count per read (a coalesced read once): an opted-in
-// thin serve counts its default pass as withheld and its second pass
-// here. surface=listing counts once per served row, after the
-// declared-peg fill and the scam-issuer suppression, and never as
-// withheld; surface=detail counts at the read and can include a price the
-// issuer-directory suppression later nulls. Dashboard-only, no alert rule.
+// PriceServeThinAdmittedTotal counts thin-market prices served because the request set `include_thin=true`,
+// flagged `thin_market`; labels as PriceServeSubstanceWithheldTotal. Price surfaces count the default pass
+// as withheld and the opt-in pass here; listing counts per served row and never as withheld. Dashboard-only.
 var PriceServeThinAdmittedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_thin_admitted_total",
@@ -3327,16 +3163,9 @@ var PriceServeThinAdmittedTotal = prometheus.NewCounterVec(
 	[]string{"surface", "floor"},
 )
 
-// PriceServeScamWithheldTotal — count of aggregated-price serves withheld
-// by the scam-pricing gate because the asset's issuer is flagged
-// scam-class (malicious/unsafe/fraud/scam/hack/phishing) in the curated
-// account directory. Labelled by serving surface — the set shared with
-// PriceServeSubstanceWithheldTotal above (not every surface asks both
-// gates). An asset-level decision that probes several quotes counts
-// once. A non-zero rate here
-// with no matching directory change can indicate the gate mis-firing;
-// a sudden drop to zero while flagged issuers still trade can indicate
-// the gate failing open — counted directly by ScamGateLookupFailuresTotal.
+// PriceServeScamWithheldTotal counts price serves withheld because the issuer is flagged scam-class in the
+// curated account directory, by surface. A rate with no directory change suggests a mis-fire; failing
+// open is counted by ScamGateLookupFailuresTotal.
 var PriceServeScamWithheldTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_scam_withheld_total",
@@ -3360,22 +3189,9 @@ var ScamGateLookupFailuresTotal = prometheus.NewCounterVec(
 	[]string{"surface"},
 )
 
-// PricingGuardTrailingFetchFailedTotal — count of
-// internal/pricingguard.GuardServedVWAP1mConfidence /
-// GuardServedVWAP1mAt trailing-baseline fetches that errored.
-// The guard fails OPEN on this error — it serves the candidate bucket
-// unguarded rather than blackout a pair — which is the right posture
-// for a transient DB blip, but it means the manipulation/fat-finger
-// band the guard exists to enforce (see package doc) silently stood
-// down for that request with only a WARN log as a trace. This counter
-// is the quantitative signal: a sustained non-zero rate means the
-// robust-band check is not running for real traffic and correlates
-// with the timescale readyz probe, the same way [RateLimitFailOpenTotal]
-// correlates with the redis readyz probe.
-//
-// Labelled by `path`: "latest" (GuardServedVWAP1mConfidence, the
-// /v1/price + assets + price-alert callers) or "at" (GuardServedVWAP1mAt,
-// /v1/price/at + /v1/price/changes). Two-value cardinality.
+// PricingGuardTrailingFetchFailedTotal counts trailing-baseline fetch errors in the serving guard, by
+// `path` (latest, at). The guard fails OPEN, serving the bucket unguarded, so a sustained rate means the
+// manipulation band is off for real traffic. Sibling of [RateLimitFailOpenTotal].
 var PricingGuardTrailingFetchFailedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_pricingguard_trailing_fetch_failed_total",
@@ -3384,14 +3200,8 @@ var PricingGuardTrailingFetchFailedTotal = prometheus.NewCounterVec(
 	[]string{"path"},
 )
 
-// PricingGuardDegradedTotal counts serving-sanity guard decisions that
-// did not serve the current bucket as a validated price, so "the guard is
-// holding a pair" is distinguishable from "the market is quiet". `path` is
-// the guard entry point (latest | at | series); `reason` is outlier (the
-// candidate failed the robust band) or unvalidated (no trailing baseline).
-// What the caller then served is per path: latest serves last-known-good
-// or a low-confidence value, at withholds unless a last-known-good bucket
-// meets the staleness bound, series drops the bucket.
+// PricingGuardDegradedTotal counts guard decisions that did not serve the current bucket as validated, by
+// `path` (latest, at, series) and `reason` (outlier, unvalidated), so a held pair differs from a quiet market.
 var PricingGuardDegradedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_pricingguard_degraded_total",
@@ -3402,45 +3212,10 @@ var PricingGuardDegradedTotal = prometheus.NewCounterVec(
 
 // ─── Supply-derivation metrics ────────────────────────────────────
 
-// SupplyCrossCheckDivergenceStroops — gauge of the stroop divergence
-// between a classic asset's Algorithm 2 supply and its SAC-wrapped
-// Algorithm 3 supply. The alert in deploy/monitoring/rules/supply.yml
-// fires when this exceeds 1 stroop.
-//
-// Labelled by classic_key (CODE:ISSUER) so a per-asset dashboard +
-// runbook can identify the offending asset without log dive, AND by
-// wrap_class (see
-// internal/supply.WrapClass) so operators can see which invariant
-// produced a given reading:
-//
-//   - wrap_class="full_wrap": the value is the ORIGINAL ADR-0011
-//     equality compare, |classic_total − sac_total|. Only used for a
-//     pair the operator has attested is genuinely 100% SAC-
-//     represented (`[supply].fully_wrapped_sacs`).
-//   - wrap_class="partial_wrap" (the default): the value is
-//     max(0, sac_total − classic_total) — zero in the normal,
-//     expected state for a partially-wrapped classic asset (most of
-//     its supply lives outside the SAC), positive only when the SAC
-//     reports MORE than the classic total could possibly back, which
-//     is impossible under correct accounting and is therefore a
-//     genuine corruption signal.
-//
-// The alert threshold (`> 1`) is unchanged and does NOT need to
-// filter on wrap_class: the metric itself is already zero in the
-// benign partial-wrap case (fixing the 8 standing false positives
-// this label was introduced to explain), and still fires on a
-// genuine violation for either class.
-//
-// Cardinality bound by the curated asset set with deployed SAC
-// contracts (low dozens at launch, hundreds at maturity) × the
-// 2-value wrap_class set.
-//
-// Emitted by `cmd/stellarindex-aggregator/main.go::buildCrossCheckRefresher`
-// once per `[supply].aggregator_refresh_cadence` tick when both the
-// classic side and the SAC side of a wrapper are in the watched-sets.
-// The CLI `stellarindex-ops supply audit <asset> -cross-check <counterpart>`
-// path remains for ad-hoc operator inspection but does not update the
-// gauge — only the aggregator's periodic refresher does.
+// SupplyCrossCheckDivergenceStroops is the stroop divergence between a classic asset's Algorithm 2 supply
+// and its SAC's Algorithm 3 supply, by classic_key and wrap_class: full_wrap is |classic − sac| (attested
+// `[supply].fully_wrapped_sacs`); partial_wrap is max(0, sac − classic), positive only on impossible
+// accounting. The `> 1` alert (deploy/monitoring/rules/supply.yml) needs no wrap_class filter.
 var SupplyCrossCheckDivergenceStroops = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_supply_cross_check_divergence_stroops",
@@ -3449,17 +3224,9 @@ var SupplyCrossCheckDivergenceStroops = prometheus.NewGaugeVec(
 	[]string{"classic_key", "wrap_class"},
 )
 
-// SupplyCrossCheckTotal — counter of cross-check evaluations per
-// outcome (within | over | missing_snapshot | read_error | misaligned)
-// and wrap_class (full_wrap | partial_wrap).
-// The last three outcomes delete the pair's divergence gauge series,
-// so stellarindex_supply_cross_check_unevaluable alerts on them here.
-//
-// `missing_snapshot` is emitted while either side of the pair has no
-// snapshot in `asset_supply_history` yet — the bootstrap state.
-// `read_error` covers transient storage failures so a sustained-rate
-// regression on this label surfaces a different failure mode than
-// genuine divergence.
+// SupplyCrossCheckTotal counts cross-check evaluations by outcome and wrap_class. missing_snapshot,
+// read_error and misaligned delete the divergence gauge series, so
+// stellarindex_supply_cross_check_unevaluable alerts on them here.
 var SupplyCrossCheckTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_supply_cross_check_total",
@@ -3468,38 +3235,13 @@ var SupplyCrossCheckTotal = prometheus.NewCounterVec(
 	[]string{"outcome", "wrap_class"},
 )
 
-// ─── Supply-divergence cross-check metrics ────────────────────────────
-//
-// DISTINCT from the SupplyCrossCheck* pair above: that pair is an
-// INTERNAL consistency check (a classic asset's Algorithm 2 sum vs its
-// SAC-wrapped Algorithm 3 sum — both OUR OWN numbers). The
-// SupplyDivergence* set below cross-checks OUR served circulating
-// supply against an EXTERNAL authoritative reference (the Stellar
-// Network Dashboard for XLM; CoinGecko when a Pro key is configured).
-// It catches a genuinely-stale SDF-reserve exclusion list — the drift
-// that a manual "is our supply right?" investigation is otherwise the
-// only defense against (docs/methodology/xlm-circulating-supply.md).
-//
-// Emitted by `cmd/stellarindex-aggregator/main.go` (obsSupplyDivergenceEmitter,
-// driven by `internal/divergence.SupplyService.Tick`) once per
-// `[divergence.supply].refresh_interval` when the check is enabled.
+// SupplyDivergence* compares OUR served circulating supply against an external reference (Stellar Network
+// Dashboard for XLM; CoinGecko with a Pro key), catching a stale SDF-reserve exclusion list
+// (docs/methodology/xlm-circulating-supply.md). Unlike SupplyCrossCheck*, which compares our own numbers.
 
-// SupplyDivergenceRatio — gauge of the absolute relative divergence
-// |our − reference| / reference between OUR served circulating supply
-// and an external reference's, per (asset, reference).
-//
-// The primary alert target: `stellarindex_supply_divergence_high`
-// fires when this exceeds the operator threshold (default 0.01 = 1%,
-// well above the ~0.03% XLM Fee-Pool noise floor —
-// docs/methodology/xlm-circulating-supply.md). Labelled by `asset`
-// (canonical wire form, e.g. "native") and `reference`
-// ("stellar-dashboard" / "coingecko"). Cardinality bound by the tiny
-// flagship check set × reference set (single digits).
-//
-// NOT updated on the no_reference / refresh_error outcomes — a frozen
-// gauge (last-known value) is the correct behaviour when a reference
-// goes dark (the no_reference counter carries that signal), so a dead
-// reference never manufactures a divergence reading.
+// SupplyDivergenceRatio is |our − reference| / reference per (asset, reference). `stellarindex_supply_divergence_high`
+// fires above the threshold (default 1%, well above the ~0.03% Fee-Pool noise). Frozen on no_reference and
+// refresh_error, so a dead reference never manufactures a divergence.
 var SupplyDivergenceRatio = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_supply_divergence_ratio",
@@ -3508,23 +3250,9 @@ var SupplyDivergenceRatio = prometheus.NewGaugeVec(
 	[]string{"asset", "reference"},
 )
 
-// SupplyDivergenceTotal — per-outcome counter for the supply
-// cross-check, one increment per (asset, tick):
-//
-//   - `ok`            — served figure agreed with every responding
-//     reference within the threshold.
-//   - `divergent`     — a responding reference disagreed by more than
-//     the threshold. The ratio gauge carries the magnitude.
-//   - `no_reference`  — served figure loaded but every reference was
-//     unreachable / didn't publish the asset (CoinGecko 429, Dashboard
-//     outage). Graceful-degrade — deliberately NOT paged, so a dead
-//     reference isn't a false divergence alarm.
-//   - `refresh_error` — OUR served snapshot couldn't be read
-//     (bootstrap, storage error). Nothing to compare.
-//
-// The `no_reference` rate is the "checker running blind" signal (the
-// DivergenceRefreshTotal `no_reference` analogue on the supply path); operators watch it but it does
-// not page.
+// SupplyDivergenceTotal counts supply cross-checks per (asset, tick): ok, divergent, no_reference (every
+// reference unreachable; deliberately not paged) or refresh_error (our snapshot unreadable). no_reference
+// is the "checker running blind" signal.
 var SupplyDivergenceTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_supply_divergence_total",
@@ -3533,16 +3261,8 @@ var SupplyDivergenceTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// SupplyDivergenceDurationSeconds — latency histogram for one
-// (asset, tick) supply cross-check evaluation, including the served
-// read + the HTTP fan-out to every reference. Labelled by outcome
-// (matches the counter) so operators chart the healthy `ok` path
-// separately from the slow-vendor / timeout `no_reference` path.
-//
-// Buckets span 10 ms → 30 s: a warm served read is single-digit ms;
-// a single slow reference (Dashboard / CoinGecko) is ~1-10 s; the
-// worst case is the per-reference timeout (default 10s) compounded
-// across the reference set.
+// SupplyDivergenceDurationSeconds is per-(asset, tick) check latency by outcome. Buckets 10ms–30s cover a
+// warm read up to the 10s per-reference timeout compounded.
 var SupplyDivergenceDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_supply_divergence_duration_seconds",
@@ -3552,28 +3272,8 @@ var SupplyDivergenceDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// ─── verify-archive metrics ───────────────────────────────────────
-//
-// Emitted by `stellarindex-ops verify-archive` when the operator
-// passes -metrics-listen ADDR. One-shot diagnostic command, but the
-// run can take hours on full pubnet sweeps — live metrics let
-// operators dashboard the bottleneck during the run rather than
-// guessing from log tails.
-//
-// All vectors labelled by chunk_idx (decimal string) so a parallel
-// run with -workers 8 produces per-chunk series. Cardinality bound
-// by the -workers cap (currently [1,16]).
-
-// AnomalyFreezeEngagedTotal — counter of ActionFreeze decisions
-// the aggregator's anomaly checker emitted, labelled by the asset
-// class that drove the threshold lookup. Each increment means the
-// orchestrator declined to publish a fresh VWAP (kept the prior
-// bucket's last-known-good value); the API's /v1/price for the
-// affected pair will surface flags.frozen=true on the next read.
-//
-// Pair-specific freeze details live in the freeze marker JSON
-// (deviation_pct, reason) — labelled by class only here so
-// cardinality stays bound to the small AssetClass enum.
+// AnomalyFreezeEngagedTotal counts ActionFreeze decisions by asset class: the prior bucket's value is kept
+// and /v1/price shows flags.frozen=true. Pair detail lives in the freeze marker JSON.
 var AnomalyFreezeEngagedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_engaged_total",
@@ -3582,25 +3282,9 @@ var AnomalyFreezeEngagedTotal = prometheus.NewCounterVec(
 	[]string{"class"},
 )
 
-// AnomalyWarnTotal — counter of ActionWarn decisions the aggregator's
-// anomaly checker emitted, labelled by asset class, mirroring
-// [AnomalyFreezeEngagedTotal].
-//
-// This exists because ActionWarn is otherwise computed and thrown
-// away: on the non-freeze path a bucket deviating past `warn_pct` —
-// enough to be called out, not enough to freeze — left NO trace anywhere.
-// The operator's `warn_pct` knob was tunable and completely inert.
-//
-// Deliberately NOT wired to flags.divergence_warning, which several doc
-// comments claimed it fed. That flag is produced by the cross-reference
-// divergence service and is meaningful ONLY alongside
-// flags.divergence_checked (a false warning must not be read as
-// "prices agree"). An anomaly warn runs no cross-reference check, so ORing
-// it in would publish divergence_warning=true with divergence_checked=false
-// — precisely the state that cannot be interpreted. Surfacing the
-// anomaly warn on the wire needs its own flag; that is an API-shape
-// decision, and until it is made the signal lives here where an operator
-// can alert on it.
+// AnomalyWarnTotal counts ActionWarn decisions by asset class, otherwise discarded. NOT wired to
+// flags.divergence_warning: that flag means something only beside divergence_checked, which an anomaly warn
+// never sets, so ORing it in would publish an uninterpretable state.
 var AnomalyWarnTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_warn_total",
@@ -3609,25 +3293,9 @@ var AnomalyWarnTotal = prometheus.NewCounterVec(
 	[]string{"class"},
 )
 
-// AnomalyFreezeEscalatedTotal — counter of freezes that exhausted
-// ADR-0019's extension ladder (4 × 30 min after the initial hold =
-// 2 hours) and escalated to operator review. P1 by construction:
-// the freeze does NOT auto-unfreeze once escalated ("freeze stays
-// active until manual unfreeze"), so every increment is a pair whose
-// /v1/price is pinned to a last-known-good value until a human acts.
-//
-// One increment per escalation transition, not per frozen tick — so
-// `increase(...[15m]) > 0` reads as "a new pair escalated", and the
-// steady state of an un-actioned escalation is a flat line rather
-// than a climbing one. Pair identity is in the WARN log line and in
-// the `freeze:<asset>:<quote>` marker's `state` object; the metric
-// stays unlabelled so an escalation storm cannot blow up cardinality
-// on the aggregator's hot path.
-//
-// Unlabelled also means the series exists at zero from process start:
-// a counter with no label combinations registers
-// immediately, so the alert's increase() reads a real 0 rather than
-// "no data" before the first escalation.
+// AnomalyFreezeEscalatedTotal counts freezes that exhausted ADR-0019's 2-hour extension ladder; an escalated
+// freeze stays until manual unfreeze, so each increment is P1. Counted per transition, so increase() > 0 means
+// a new escalation. Unlabelled for cardinality (pair is in the WARN log and marker), so it reads 0 from start.
 var AnomalyFreezeEscalatedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_escalated_total",
@@ -3649,14 +3317,9 @@ var AnomalyFreezeExtensionsTotal = prometheus.NewCounter(
 	},
 )
 
-// AnomalyFreezeHeldUnscoredTotal — counter of hold expiries that
-// landed on a bucket the scorer could not evaluate at all (post-restart
-// bootstrap or a scoring outage — [freeze.TransitionHeldUnscored]).
-// The ladder slides without climbing or releasing on these, which is
-// correct per ADR-0019 (an unscored bucket asked nothing), but a
-// SUSTAINED non-zero rate means scoring itself is stuck, not that any
-// pair is being evaluated — the extension/escalation counters stay
-// silent through that the whole time.
+// AnomalyFreezeHeldUnscoredTotal counts hold expiries on a bucket the scorer could not evaluate (restart
+// bootstrap or scoring outage). The ladder correctly slides; a SUSTAINED rate means scoring is stuck while the
+// extension and escalation counters stay silent.
 var AnomalyFreezeHeldUnscoredTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_held_unscored_total",
@@ -3675,19 +3338,9 @@ var AnomalyFreezeRefiredAfterOverrideTotal = prometheus.NewCounter(
 	},
 )
 
-// AnomalyFreezeReleasedTotal — counter of freezes that ended,
-// labelled by how: `auto` (ADR-0019's auto-unfreeze condition —
-// confidence > 0.30 AND z < 3.0 for two consecutive buckets — held at
-// hold expiry), `operator` (stellarindex-ops freeze-unfreeze cleared the
-// marker, which is the ADR's "operator override always available") or
-// `lapsed` (the marker and durable ladder expired with nobody refreshing
-// them and no operator tombstone).
-//
-// Pairs with AnomalyFreezeEngagedTotal: engaged increments on every
-// frozen tick, this one only on the ending transition, so the two are
-// NOT expected to balance. What an operator watches here is the
-// `operator` label — a rising manual-unfreeze rate means the
-// calibration is producing freezes humans keep having to undo.
+// AnomalyFreezeReleasedTotal counts ended freezes by how: auto (ADR-0019 condition held at expiry), operator
+// (freeze-unfreeze) or lapsed (nobody refreshed it). Not expected to balance engaged; a rising `operator`
+// rate means calibration produces freezes humans keep undoing.
 var AnomalyFreezeReleasedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_released_total",
@@ -3696,20 +3349,8 @@ var AnomalyFreezeReleasedTotal = prometheus.NewCounterVec(
 	[]string{"mode"},
 )
 
-// AnomalyFreezeActive — gauge of (pair, window) freezes the
-// aggregator is currently holding, set at the end of every tick.
-//
-// A gauge, unlike the engaged counter, distinguishes "one pair frozen
-// for an hour" from "sixty pairs frozen for one tick each" — the
-// counter reads identically for both, which is what made the
-// pre-lifecycle `anomaly_freeze_sustained` alert so hard to triage
-// (see the anomaly.yml header's "Why a counter (not a gauge)"
-// paragraph: the answer was "the orchestrator doesn't track per-pair
-// is-this-frozen-now state", and now it does).
-//
-// Unlabelled by pair on purpose: len(Pairs) × len(Windows) is
-// operator-configured and unbounded in principle. Per-pair identity
-// lives in the marker JSON.
+// AnomalyFreezeActive is the number of (pair, window) freezes held at the end of each tick, telling one long
+// freeze from many short ones. Not labelled by pair: the pair set is operator-configured and unbounded.
 var AnomalyFreezeActive = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_anomaly_freeze_active",
@@ -3729,23 +3370,9 @@ var AnomalyFreezeRecoveredTotal = prometheus.NewCounter(
 	},
 )
 
-// AnomalyFreezeLadderRehydratedTotal — counter of freeze lifecycles
-// restored from the DURABLE ladder (migration 0119) because the Redis
-// marker was gone but `freeze_events` still held an open, unlapsed row.
-//
-// Each increment is one freeze — extension count, escalation flag and all —
-// that would silently RELEASE: the orchestrator reads a
-// missing marker under a live freeze as the ADR-0019 operator override, so
-// a Redis flush would unfreeze every held pair, including ones that had
-// climbed the whole 2-hour ladder to escalated ("stays active until manual
-// unfreeze") and had already paged a human.
-//
-// Deliberately not alerted on its own: the healthy steady state is zero,
-// and a non-zero reading means the safety net WORKED. What it gives an
-// operator is the ability to correlate — a burst here immediately after a
-// Redis restart is the expected shape, whereas a slow trickle with Redis
-// healthy means markers are being evicted (maxmemory policy) or expiring
-// early, which is a real configuration fault worth chasing.
+// AnomalyFreezeLadderRehydratedTotal counts freezes restored from the durable `freeze_events` ladder after
+// the Redis marker vanished; otherwise a Redis flush would release every freeze, escalated ones included.
+// Not alerted: a burst after a Redis restart is expected; a trickle with Redis healthy means marker eviction.
 var AnomalyFreezeLadderRehydratedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_ladder_rehydrated_total",
@@ -3753,31 +3380,9 @@ var AnomalyFreezeLadderRehydratedTotal = prometheus.NewCounter(
 	},
 )
 
-// AnomalyFreezeLadderWriteFailuresTotal — counter of durable ADR-0019
-// ladder writes (migration 0119) that did not land, by call site
-// (`mark_hold` | `clear`).
-//
-// The failure was always possible; the SILENCE is what this closes. Neither
-// freeze.Writer nor timescale.FreezeEventSink holds a logger, so a
-// persistently failing ladder write produced no signal on any surface: every
-// freeze looked healthy right up until a Redis flush needed the ladder that
-// had never been written, at which point the escalated freeze released
-// exactly as it did before 0119.
-//
-// The shape that makes this concrete is a partially-failed deploy. The
-// pipeline applies migrations BEFORE swapping the binary, so a new binary
-// running against a schema where 0119 did not apply sees EVERY ladder write
-// match zero rows — uniformly absent durable state, zero complaints. The
-// sink now reports that as ErrNotFound and it is counted here.
-//
-// Any sustained non-zero value means the durable ladder is not being
-// maintained and the Redis-flush protection is inert. `mark_hold` failing is
-// the dangerous direction (ladders never recorded); `clear` failing only
-// widens the pre-existing recovery-worker window.
-//
-// Both label values are pre-seeded — a metric that only appears once it
-// breaks is indistinguishable from a dead one, which is the exact class of
-// gap this counter exists to close.
+// AnomalyFreezeLadderWriteFailuresTotal counts durable ladder writes that did not land, by call site.
+// Without it the Redis-flush protection fails silently (e.g. a binary running ahead of its migration matches
+// zero rows, now ErrNotFound). `mark_hold` is the dangerous direction. Both labels are pre-seeded.
 var AnomalyFreezeLadderWriteFailuresTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_ladder_write_failures_total",
@@ -3811,23 +3416,9 @@ var AnomalyFreezeRecoverySweepsTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// AnomalyFreezeRecoverySweepDurationSeconds — latency histogram
-// for the freeze recovery worker's per-sweep tick. Pairs with the
-// counter above. The sweep does ListOpen (Postgres read) plus,
-// per open row, a Redis GET and possibly MarkRecovered (Postgres
-// write). Fast path is sub-100 ms when there are zero open rows;
-// climbs proportionally with the open-row count.
-//
-// Latency degradation typically means Postgres pressure or Redis
-// lag rather than a freeze-policy issue. The 60-second sweep
-// cadence means even a multi-second sweep doesn't lose
-// correctness — the next tick catches up — but sustained
-// slowness is worth investigating before the freeze_events
-// table accumulates open rows the operator UI shows as
-// permanently firing.
-//
-// Buckets span 10 ms → 30 s. No alert wired today; the
-// existing recovery-sweep error counter covers correctness.
+// AnomalyFreezeRecoverySweepDurationSeconds is per-sweep recovery-worker latency (ListOpen plus per-row
+// Redis GET and MarkRecovered). The 60s cadence absorbs slow sweeps; sustained slowness usually means
+// Postgres or Redis pressure. Buckets 10ms–30s; no alert, the error counter covers correctness.
 var AnomalyFreezeRecoverySweepDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_anomaly_freeze_recovery_sweep_duration_seconds",
@@ -3851,16 +3442,9 @@ var AggregatorTriangulationsTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// AggregatorCompositeCorroboration — per (pair, window) verdict of the
-// CURRENT-BUCKET composite-reference corroboration for structurally
-// single-venue targets (orchestrator/composite_reference.go).
-// One series per verdict, exactly one of them 1 after each evaluated
-// bucket: `corroborated` (the deep-market composite agrees with the
-// direct print within tolerance — a phase-2 fire on this bucket is
-// suppressed, corroboration_basis=composite), `refuted` (composite
-// disagrees — venue-specific, freeze as before) or `unavailable` (a leg
-// was too thin / not refreshed / FX stale or not FX-class — freeze as
-// before). Cardinality: the allow-list × windows × 3.
+// AggregatorCompositeCorroboration is the current-bucket composite-reference verdict per (pair, window)
+// for single-venue targets, one series per verdict set to 1: corroborated (phase-2 fire suppressed),
+// refuted or unavailable (both freeze as before).
 var AggregatorCompositeCorroboration = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_composite_corroboration",
@@ -3869,14 +3453,8 @@ var AggregatorCompositeCorroboration = prometheus.NewGaugeVec(
 	[]string{"pair", "window", "verdict"},
 )
 
-// AggregatorRouteCorroborationCount — the router's independent,
-// tightly-agreeing, non-diverged route count behind the last published
-// composite for (pair, window). This is the ROUTER count, not
-// path_count (the raw survivor-set size before the tight-agreement /
-// independence filter) and not the venue source count phase2_freeze's
-// `sources=` reads — see [orchestrator.compositeMeta.CorroborationCount]
-// and the freeze reason's paired `sources=` / `route_corroboration=`
-// fields, which this gauge mirrors for dashboards.
+// AggregatorRouteCorroborationCount is the router's independent, tightly-agreeing route count behind the
+// last composite, mirroring the freeze reason's `route_corroboration=`; not path_count, not venue `sources=`.
 var AggregatorRouteCorroborationCount = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_route_corroboration_count",
@@ -3913,15 +3491,9 @@ var AggregatorCompositeReferenceLegDispersionBps = prometheus.NewGaugeVec(
 	[]string{"pair", "window", "leg"},
 )
 
-// AggregatorCompositeFreezeSuppressedTotal — counter of phase-2 freeze
-// fires (the 3-signal AND held) that were NOT engaged because the
-// current-bucket composite reference corroborated the move. Every
-// increment is a bucket that would otherwise have frozen; read
-// it next to stellarindex_anomaly_freeze_engaged_total when judging
-// whether the tolerance is too loose. Labelled (pair, window) — same
-// pair as AggregatorCompositeCorroboration — so a suppression can be
-// attributed to the pair it happened on rather than read as one
-// unattributed process-wide tally.
+// AggregatorCompositeFreezeSuppressedTotal counts phase-2 freeze fires not engaged because the composite
+// corroborated the move, by (pair, window). Read it beside stellarindex_anomaly_freeze_engaged_total to judge
+// whether the tolerance is too loose.
 var AggregatorCompositeFreezeSuppressedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_composite_freeze_suppressed_total",
@@ -3930,17 +3502,9 @@ var AggregatorCompositeFreezeSuppressedTotal = prometheus.NewCounterVec(
 	[]string{"pair", "window"},
 )
 
-// AggregatorFXSnapFallbackTotal — counter of triangulation legs that
-// fell back from the X2.5 forex-snap rule to the cached-VWAP path
-// because FXQuoteAtOrBefore returned no row at-or-before the bucket
-// end. Steady state should be near-zero once FX ingestion is warm.
-// Sustained > 50% of triangulations indicates an FX-source health
-// issue (exchangeratesapi) — see the matching alert
-// in deploy/monitoring/rules/aggregator.yml.
-//
-// Label `leg` is the canonical pair string of the FX leg that fell
-// back (e.g. "fiat:USD/fiat:EUR"); cardinality is bounded by the
-// operator-configured triangulation chain set.
+// AggregatorFXSnapFallbackTotal counts triangulation legs that fell back from the forex-snap rule to cached
+// VWAP for lack of an FX quote at-or-before the bucket end, by `leg`. Sustained > 50% of triangulations is an
+// FX-source problem (alert in deploy/monitoring/rules/aggregator.yml).
 var AggregatorFXSnapFallbackTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_fx_snap_fallback_total",
@@ -3949,17 +3513,9 @@ var AggregatorFXSnapFallbackTotal = prometheus.NewCounterVec(
 	[]string{"leg"},
 )
 
-// AggregatorBaselineRefreshTotal — counter of baseline refresh
-// outcomes per pair, per refresh cycle (ADR-0019 Phase 2). One
-// increment per pair per cycle; outcome ∈ {ok, ok_unvalued,
-// ok_per_minute_fallback, not_enough_samples, read_error, write_error}.
-// Steady state is mostly `ok`; sustained `not_enough_samples` indicates
-// pairs in bootstrap (ADR-0019 §"Bootstrap policy");
-// `ok_per_minute_fallback` counts pairs with too little USD flow for
-// volume bars, whose median/MAD are one point per minute with the 30d
-// density clamped so dust cannot lift the cap; `ok_unvalued` counts pairs with no USD-valued minute, whose
-// baseline is built from every minute; sustained `read_error` / `write_error`
-// indicate the storage layer needs investigation.
+// AggregatorBaselineRefreshTotal counts baseline refreshes per pair per cycle (ADR-0019 Phase 2):
+// ok, ok_unvalued (built from every minute), ok_per_minute_fallback (too little USD flow; 30d density clamped
+// so dust cannot lift the cap), not_enough_samples (bootstrap), read_error, write_error.
 var AggregatorBaselineRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_baseline_refresh_total",
@@ -3968,39 +3524,9 @@ var AggregatorBaselineRefreshTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// AggregatorSupplyRefreshTotal — counter of supply-snapshot refresh
-// outcomes per cycle (ADR-0011 / ADR-0021 / ADR-0022 / ADR-0023).
-// One increment per (asset, tick); labels:
-//
-//   - asset_key: supply.AssetKey form ("XLM", "CODE:ISSUER" for
-//     classic credits, the bare contract C-strkey for SEP-41).
-//   - outcome ∈ {ok, dormant, static_reserve, no_ledger,
-//     no_observation, compute_error, stale_component,
-//     missing_freshness, missing_baseline, write_error}.
-//     `static_reserve` is an XLM snapshot published from the dated
-//     static reserve map rather than the live observer; the
-//     error_dominant alert counts it. `dormant` is a benign accept: a
-//     dormant asset whose component anchor is unchanged but current.
-//     `stale_component` is a real rejection (the freshness producer
-//     lagged); the supply-refresh alert excludes `dormant` and is
-//     keyed by asset_key so one stuck asset isn't masked.
-//
-// Steady-state is mostly `ok` per asset. Sustained `no_observation`
-// means the AccountEntry observer hasn't backfilled the watched
-// accounts yet (the chain-reader fell through to static config and
-// that also missed) — expected briefly post-deploy, alarming
-// sustained. Per-asset rates let operators chart bootstrap
-// progress per watched asset rather than as one aggregate.
-// AggregatorSupplyLakeClampLedgers — how far the `ledgerstream`
-// ingestion cursor leads the newest landed stellar.ledgers row at
-// the moment a supply snapshot is resolved. The snapshot is stamped
-// at the lake's row, never the cursor's, because ObservedAt must be
-// a real close_time; the gap is therefore how much the resolver had
-// to clamp. Ordinary lead is a ledger or two. The resolver refuses
-// to publish once the gap passes its stalled-lake bound, so this is
-// the series that shows the refusal coming rather than reporting it
-// after supply has already stopped advancing. Not labelled by asset
-// — every watched asset resolves against the same two positions.
+// AggregatorSupplyLakeClampLedgers is how far the ledgerstream cursor leads the newest landed
+// stellar.ledgers row when a supply snapshot resolves (stamped at the lake row, a real close_time). The
+// resolver refuses past its stalled-lake bound, so this shows the refusal coming. Not labelled by asset.
 var AggregatorSupplyLakeClampLedgers = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_supply_lake_clamp_ledgers",
@@ -4008,6 +3534,9 @@ var AggregatorSupplyLakeClampLedgers = prometheus.NewGauge(
 	},
 )
 
+// AggregatorSupplyRefreshTotal counts supply refreshes per (asset_key, tick). `static_reserve` is XLM from the
+// dated static map (error_dominant counts it); `dormant` is a benign accept; `stale_component` is a real
+// rejection. The alert excludes `dormant` and keys on asset_key so one stuck asset is not masked.
 var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_supply_refresh_total",
@@ -4161,6 +3690,9 @@ var AggregatorBaselineDensityDays = prometheus.NewGaugeVec(
 	},
 	[]string{"pair"},
 )
+
+// verify-archive metrics, served by `stellarindex-ops verify-archive -metrics-listen ADDR` so hours-long
+// runs can be watched live. Labelled by chunk_idx, bounded by the -workers cap.
 
 // VerifyArchiveLedgersVerified — counter of ledgers successfully
 // walked + verified. Rate over time gives ledgers/sec per chunk —
