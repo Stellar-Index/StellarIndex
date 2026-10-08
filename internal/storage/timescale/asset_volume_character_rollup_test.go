@@ -159,7 +159,7 @@ func TestRefreshAssetVolumeCharacter_zeroRowPassKeepsLastGood(t *testing.T) {
 
 // TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout proves the
 // pinned connection's PRIOR statement_timeout (whatever an [OpenBackground]
-// connector's session backstop set it to — REC-08) is captured before this
+// connector's session backstop set it to) is captured before this
 // call's own assetVolumeCharacterRollTimeout override and restored — via set_config with the
 // captured value, not a bare RESET — before the connection goes back to
 // the pool. Without the capture/restore, a later query landing on the

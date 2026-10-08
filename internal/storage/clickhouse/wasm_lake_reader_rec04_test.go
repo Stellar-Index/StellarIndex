@@ -10,8 +10,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// TestContractWasmHash_PartialIndexMissFallsBackToLegacy is the REC-04
-// residual regression (the instance-changes reader DATA-2 did not cover).
+// TestContractWasmHash_PartialIndexMissFallsBackToLegacy is the
+// residual regression (the instance-changes reader the first fix missed).
 //
 // instanceChangesIndexAvailable is a table-global `LIMIT 1` emptiness
 // probe: it goes true as soon as the operator-applied
@@ -83,7 +83,7 @@ func TestContractWasmHash_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 	}
 }
 
-// TestContractCodeHistory_PartialIndexMissFallsBackToLegacy is REC-04's
+// TestContractCodeHistory_PartialIndexMissFallsBackToLegacy is the
 // sibling gap: ContractCodeHistory trusted an EMPTY per-contract
 // result from contract_instance_changes as an authoritative "never
 // upgraded", even though instanceChangesIndexAvailable is the same

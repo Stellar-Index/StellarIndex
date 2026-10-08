@@ -316,7 +316,7 @@ func indexMissStub(legacy [][]any) *stubConn {
 // index holding no per-contract row is NOT proof the contract never
 // upgraded — instanceChangesIndexAvailable is a table-global LIMIT-1
 // emptiness probe that cannot see partial per-contract backfill coverage
-// (the same class REC-04 fixed for contractWasmHash). So the reader must
+// (the same class already fixed for contractWasmHash). So the reader must
 // fall through to the changes-log scan rather than serving the empty
 // timeline as authoritative.
 func TestContractCodeHistory_IndexMissFallsBackToLegacyScan(t *testing.T) {

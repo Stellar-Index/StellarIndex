@@ -249,7 +249,7 @@ func (s *Store) RefreshAssetVolumeCharacter(ctx context.Context) error {
 // call overrides it, and restored (via set_config, on a context detached
 // from the caller's so a caller deadline that already fired doesn't also
 // fail the restore) before the connection goes back to the pool — so an
-// [OpenBackground] connector's session backstop (REC-08) isn't silently
+// [OpenBackground] connector's session backstop isn't silently
 // replaced by this call's assetVolumeCharacterRollTimeout bound for whichever later query lands on
 // the same pooled connection. A restore that fails marks the connection
 // bad via conn.Raw(driver.ErrBadConn) rather than returning it to the pool

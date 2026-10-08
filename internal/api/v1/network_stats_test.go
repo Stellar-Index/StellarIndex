@@ -157,7 +157,7 @@ func (r *stubStaleNetworkStatsReader) GetNetworkStatsAt(_ context.Context) (time
 	return r.stats, r.observedAt, r.stale, nil
 }
 
-// TestNetworkStats_HonestStaleAsOf pins REC-05 for /v1/network/stats: when
+// TestNetworkStats_HonestStaleAsOf pins /v1/network/stats: when
 // the reader serves an SWR-stale value, the envelope must stamp
 // flags.stale=true and an as_of equal to the served value's real
 // observation time — NOT stale:false / as_of=now, which would assert

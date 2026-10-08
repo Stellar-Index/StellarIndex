@@ -25,7 +25,7 @@ func (u *countingNetStatsUpstream) GetNetworkStats(_ context.Context) (timescale
 // SWR stale-serve branch (A') and proves GetNetworkStatsAt reports
 // stale=true with the AGED observation time — the signal the handler needs
 // to stamp an honest as_of instead of now(). A fresh hit reports
-// stale=false. This is the cache half of the REC-05 fix (the handler half
+// stale=false. This is the cache half of the fix (the handler half
 // is TestNetworkStats_HonestStaleAsOf).
 func TestCachedNetworkStatsAt_StaleServeReportsStale(t *testing.T) {
 	up := &countingNetStatsUpstream{val: timescale.NetworkStats{MarketsCount24h: 7}}
