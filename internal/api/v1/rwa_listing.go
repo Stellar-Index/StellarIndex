@@ -10,61 +10,32 @@ import (
 )
 
 // C2's second arm on the read path: the independent listing directory,
-// and the candidate population it opens up.
-//
-// The RULE lives in internal/rwa/contract.go, where the argument for why
-// a listing map corroborates rather than attests is made. This file is
-// the read path — where the second source comes from, which candidates
-// it lets the surface evaluate that it could not before, and what the
-// response says when it is not answering.
+// and the candidate population it opens up. The RULE, and why a listing
+// map corroborates rather than attests, lives in internal/rwa/contract.go.
 //
 // # The population this arm exists to reach
 //
-// buildRWAContractMembership drew its candidates from ONE place: the
-// contract addresses the curated account directory names with an
-// issuing tag. An address that directory has never heard of was not
-// refused by any requirement — it was never enumerated, never had its
-// metadata read, and never appeared in any tally. That is the same
-// silent-discard shape the contract arm itself was built to close on
-// the classic side, reproduced one level down.
+// Candidates drawn only from the curated account directory's issuing-tagged
+// contracts silently skip every address it has never heard of. Measured on
+// production: the curated directory names 387 contract addresses and the
+// listing directory 17, with FOUR in both; the in-repo curated binding set
+// names five, and the directory names NONE of them.
 //
-// Measured on production: the curated directory names 387 contract
-// addresses and the listing directory names 17 on Stellar, with FOUR in
-// both. The in-repo curated binding set names five, and the directory
-// names NONE of them. So with the directory as the only gate, the whole
-// curated binding set — verified addresses, named instruments, known
-// classes, nine figures of supply sitting in the certified lake — would
-// be unreachable by construction.
-//
-// So the population becomes the UNION of two sets: the contract
-// addresses the curated directory recognises, and every address the
-// in-repo curated binding set names. The second half is bounded by the
-// size of a hand-reviewed table in this repository, so it cannot grow
-// without a code change.
-//
-// Enumerating a curated binding is NOT admitting one. Every candidate
-// from the second half still has to satisfy C2, and the only way it can
-// is for the listing directory to name the same address independently.
-// What enumeration buys is that its refusal is now REPORTED: an address
-// this repository has verified and nobody else has named appears in the
-// funnel under contract_curated_binding_without_independent_listing
-// rather than vanishing before the accounting starts.
+// So the population is the UNION of the directory's addresses and every
+// address the in-repo binding set names (bounded by a hand-reviewed table,
+// so it cannot grow without a code change). Enumerating is NOT admitting:
+// a curated binding still has to be named independently by the listing
+// directory to pass C2. What enumeration buys is that its refusal is
+// REPORTED under contract_curated_binding_without_independent_listing
+// instead of vanishing before the accounting starts.
 //
 // # Why the two arms are reported separately
 //
-// They narrow different populations from different roots, exactly as
-// the classic and contract arms do, so they are a separate funnel arm
-// and their stage counts reconcile only within themselves. A reader who
-// took one narrowing for the whole would conclude that an address
-// absent from the first was refused, when it was never in that
-// population at all.
-//
-// The two candidate sets are made DISJOINT rather than merely counted
-// twice: an address the curated directory already recognises is
-// evaluated by the directory arm and removed from this one. Both arms
-// would otherwise evaluate it, both would admit it, and the served set
-// would carry it twice — which is how a double-counted market cap gets
-// shipped.
+// They narrow different populations from different roots, so their stage
+// counts reconcile only within themselves. The candidate sets are made
+// DISJOINT: an address the curated directory recognises is evaluated by the
+// directory arm and removed from this one, or the served set would carry it
+// twice — a double-counted market cap.
 
 // ─── storage seam ───────────────────────────────────────────────────
 

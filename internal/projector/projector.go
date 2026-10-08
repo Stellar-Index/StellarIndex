@@ -555,59 +555,34 @@ func (p *Projector) refreshReplayWindows(ctx context.Context) {
 
 // replayWindowCovers reports whether an OPERATOR REWIND ON RECORD explains
 // this source's cursor position — the only state in which a replay's
-// intended lag may excuse stellarindex_projector_lag_high.
-//
-// Three bounds, each closing a way the excuse could outlive its cause. A
-// suppression is only ever as good as the proof it stays narrow:
+// intended lag may excuse stellarindex_projector_lag_high. Each bound
+// closes a way the excuse could outlive its cause:
 //
 //  1. PROVENANCE. Only a `projector-replay` window counts
-//     ([timescale.ProjectionDirtyWindow.IsProjectorReplay]). The table's
-//     other writer, `projected-rebuild -write`, never rewinds the live
-//     cursor and its recorded range routinely COVERS that cursor's own
-//     position: `-to` defaults to the live cursor (equal), and
-//     `-allow-live-overlap` bypasses the one-writer guard so the range can
-//     sit wholly above it (exercised on r1). Either shape would
-//     otherwise pin the flag at 1 while the source's projector is HELD — a
-//     sink-retry hold, a poison hold, a wedge — which is precisely the
-//     state the lag ticket exists to catch, and there would be no operator
-//     rewind on record to explain the silence.
+//     ([timescale.ProjectionDirtyWindow.IsProjectorReplay]). A
+//     `projected-rebuild -write` range routinely covers the live cursor
+//     (`-to` defaults to it; `-allow-live-overlap` can sit wholly above it)
+//     without rewinding it, so it would silence the alert while the
+//     projector is HELD — exactly the state the ticket exists to catch.
 //
-//  2. UPPER BOUND, EXCLUSIVE. The flag clears the instant the cursor
-//     reaches the row's `to_ledger`; the remaining
-//     catch-up from there is ordinary forward lag. Exclusive rather than
-//     inclusive because the dirty row survives until compute-completeness
-//     re-verifies the range (up to a day later), so a projector wedged
-//     exactly AT to_ledger — replay finished, cursor stuck — must stay
-//     alertable.
+//  2. UPPER BOUND, EXCLUSIVE. The flag clears when the cursor reaches
+//     `to_ledger`. Exclusive because the dirty row survives until
+//     compute-completeness re-verifies it (up to a day), so a projector
+//     wedged exactly AT to_ledger must stay alertable.
 //
-//     `to_ledger` is the row's bound, which is USUALLY the replay's own
-//     pre-rewind position but need not be. The table holds one row per
-//     source and its upsert takes the RANGE UNION (LEAST/GREATEST), so a
-//     replay recorded while a projected-rebuild window is still pending
-//     widens to the higher `to_ledger` and the flag expires there. That
-//     is a recorded, ratified decision, documented with its operator
-//     remedy in docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled ("clear the
-//     pending window with a compute-completeness run first if you want
-//     the tighter bound"). Only an un-widened row's bound is the
-//     pre-rewind position.
-//
-//     The union itself is deliberate and must NOT be narrowed to tighten
-//     this flag. It closes the carried-claim invalidation gap
-//     (19,366 over-projected cctp rows without it), and
-//     compute-completeness's forced re-reconcile floor — the table's
-//     PRIMARY consumer — depends on it. Keeping only the newest writer's
-//     range, or refusing to record while a window is pending, trades a
-//     narrower alert suppression for a data-integrity regression on the
-//     verifier path. The residue this leaves uncovered is one case:
-//     lag high, still FALLING, inside the extra stretch — a
-//     degraded-but-advancing projector. A wedged or falling-behind one
-//     still tickets via stellarindex_projector_replay_stalled, which
-//     arms precisely when this gauge reads 1.
+//     The row's upsert takes the RANGE UNION, so a replay recorded while a
+//     projected-rebuild window is pending expires at the wider bound (remedy
+//     in docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled).
+//     Do NOT narrow the union to tighten this flag: it closes the
+//     carried-claim invalidation gap (19,366 over-projected cctp rows
+//     without it) that compute-completeness depends on. The uncovered
+//     residue — lag high but still falling inside the extra stretch — is a
+//     degraded-but-advancing projector; a wedged one still tickets via
+//     stellarindex_projector_replay_stalled.
 //
 //  3. LOWER BOUND. `projector-replay` parks the cursor at from_ledger-1
 //     (internal/ops/ingest/projector.go: rewindTo = target-1), so a cursor
-//     below that was not put there by this recorded rewind and has no
-//     recorded excuse.
+//     below that has no recorded excuse.
 func replayWindowCovers(w timescale.ProjectionDirtyWindow, cursor uint32) bool {
 	if !w.IsProjectorReplay() {
 		return false

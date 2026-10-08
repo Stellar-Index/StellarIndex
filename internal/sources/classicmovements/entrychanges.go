@@ -14,64 +14,35 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// ─── Phase 4 (entry-changes half): LiquidityPoolDeposit/Withdraw + ──
+// ─── Entry-changes half: LiquidityPoolDeposit/Withdraw + ────────────
 // ─── the CAP-0038 trustline-revocation auto-liquidation edge case ───
 //
-// ADR-0047 D3 Phase 4 / inventory path (c): LiquidityPoolDepositResult
-// and LiquidityPoolWithdrawResult are BARE success/failure codes with
-// zero data fields — the only ground truth for the two amounts
-// exchanged is the pool's LiquidityPoolEntryConstantProduct
-// ReserveA/ReserveB before vs. after the op, which lives ONLY in
-// ledger_entry_changes. The CAP-0038 edge case (a trustline
-// revocation that deauthorizes an account holding LP-share
-// trustlines mixing the revoked asset auto-redeems those shares into
-// two new ClaimableBalanceEntry rows, same op_index) is the same
-// story: neither AllowTrust nor SetTrustLineFlags's own body/result
-// carries the liquidated amounts.
+// ADR-0047 D3: LiquidityPoolDepositResult and LiquidityPoolWithdrawResult
+// are bare result codes, so the amounts exchanged exist only as the pool's
+// ReserveA/ReserveB before vs. after the op in ledger_entry_changes. The
+// CAP-0038 case (a trustline revocation auto-redeeming LP shares into two
+// ClaimableBalanceEntry rows, same op_index) is the same: neither
+// AllowTrust nor SetTrustLineFlags carries the liquidated amounts.
 //
-// This is therefore a SEPARATE decode surface from decode.go's
-// Matches/decodeOp/Decoder.Decode: dispatcher.OpContext (the
-// op-only surface's input) has no room for a correlated
-// ledger_entry_changes group, and — per D2 — this package is never
-// live-wired anyway, so there's no dispatcher.LedgerEntryChangeDecoder
-// registration to conform to either (that interface delivers ONE
-// change at a time per LCM, not a pre-grouped before/after pair for
-// one op — a mismatch for what before/after delta computation
-// needs). EntryChangeOpTypes/DecodeLiquidityPoolOp/
-// DecodeCAP0038Revocation below are plain functions the caller
-// (classic-movements-backfill) invokes directly, after correlating
-// clickhouse.StreamEntryChanges output by (ledger, tx_hash, op_index)
-// itself.
+// This is a SEPARATE surface from decode.go: dispatcher.OpContext has no
+// room for a correlated change group, and dispatcher.LedgerEntryChangeDecoder
+// delivers one change at a time, not a before/after pair per op. The
+// functions below are plain calls made by classic-movements-backfill after
+// it correlates clickhouse.StreamEntryChanges by (ledger, tx_hash, op_index).
 //
 // # Ledger_entry_changes fidelity: BOTH available and unavailable eras
 //
-// README boundaries: per-op ledger_entry_changes fidelity natively starts
-// at ~ledger 61,996,000, past the P23 boundary (58,762,517) this
-// package's backfill command hard-clamps to. Phase 0 (ch-backfill over
-// [38115806, 61999000]) is done, so the addressable range has real
-// fidelity; the functions below stay correct for BOTH eras so a window
-// that lacks it is reported, not guessed:
-//   - Fidelity absent: ErrEntryChangesUnavailable / (nil, nil,
-//     "no CAP-0038 liquidation" for AllowTrust/SetTrustLineFlags),
-//     counted and logged by the caller — NEVER a guessed amount.
-//   - Fidelity present: correct amounts derived from the actual
-//     before/after reserve deltas.
+// Per-op fidelity starts at ~ledger 61,996,000, past the P23 boundary
+// (58,762,517) the backfill clamps to; ch-backfill over [38115806, 61999000]
+// filled the gap. The functions stay correct for both eras: absent fidelity
+// yields ErrEntryChangesUnavailable (or "no CAP-0038 liquidation"), counted
+// by the caller — NEVER a guessed amount.
 //
-// The one thing NEITHER function can do on its own is distinguish
-// "fidelity absent for this window" from "op genuinely had no entry
-// changes" — an empty StreamEntryChanges result looks identical
-// either way at the SQL layer. LiquidityPoolDeposit/Withdraw don't
-// need to distinguish these (a REAL deposit/withdraw ALWAYS mutates
-// the pool, so empty changes always means unavailable fidelity —
-// ErrEntryChangesUnavailable is correct either way). AllowTrust/
-// SetTrustLineFlags CANNOT make this assumption (the overwhelming
-// majority of these ops trigger NO liquidation at all, fidelity
-// present or not) — the caller MUST run a window-level fidelity
-// probe (clickhouse.CountOpScopedEntryChanges) BEFORE trusting an
-// empty-changes "no liquidation" result from DecodeCAP0038Revocation,
-// or it will silently under-report liquidations during the
-// fidelity-absent era. See classic-movements-backfill's wiring for
-// the exact probe-then-decide sequence.
+// An empty change set cannot tell "fidelity absent" from "no changes".
+// Deposit/Withdraw always mutate the pool, so empty means unavailable.
+// AllowTrust/SetTrustLineFlags usually liquidate nothing, so the caller MUST
+// run clickhouse.CountOpScopedEntryChanges for the window before trusting an
+// empty "no liquidation" from DecodeCAP0038Revocation, or it under-reports.
 
 // EntryChangeOpTypes returns the entry-changes-correlated decode
 // surface's op-type scope, in stellar.operations.op_type string form
