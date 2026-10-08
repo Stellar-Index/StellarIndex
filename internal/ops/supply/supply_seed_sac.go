@@ -21,62 +21,31 @@ import (
 // entry of each `[supply.sac_wrappers]` contract (ADR-0022 / migration
 // 0014). It is the SAC analogue of `supply seed-observations`.
 //
-// Why this exists. The live SAC balance observer only writes a row when
-// a `Balance(Address)` entry CHANGES after the observer started. A
-// Balance entry created before that window and idle since never emits a
-// LedgerEntryChange, so dormant contract-held (C-address) SAC balances
-// are invisible to Algorithm-2 classic supply — dragging a token's
-// Algorithm-2 total under its true supply (measured: ~98% of PHO sat
-// dormant in a handful of Phoenix contracts → PHO read 156.9% under;
-// BLND 12.4% under). That under-count also flows to
-// `/v1/assets/{id}` circulating_supply + market_cap.
+// The live observer writes a row only when a Balance entry changes, so
+// a contract-held balance dormant since before it started is invisible
+// to Algorithm-2 classic supply and to circulating_supply/market_cap
+// (measured: PHO read 156.9% under, BLND 12.4% under).
 //
-// One seeding pass scans stellar.ledger_entries_current for every live
-// Balance entry of a watched wrapper and upserts it at the entry's true
-// last-modified ledger; the live observer supersedes it on the next real
-// change, and the insert is idempotent (ON CONFLICT DO UPDATE on
-// (contract_id, holder, ledger, observed_at)). Because the served-tier
-// readers pick the most-recent row per (contract_id, holder) by ledger
-// DESC (SumSACBalancesAtOrBefore / SACBalanceForContractAtOrBefore),
-// seeding at an OLD ledger can never clobber a newer live observation. A
-// removed or TTL-archived entry is written as an is_removal tombstone at its
-// removal / archival ledger, retracting a balance served before it left live
-// state; tombstones are tallied as retractions, never as holders.
+// The seed reads authoritative current on-chain state, so it is always
+// correct to run. Rows land at each entry's true last-modified ledger and
+// the insert is idempotent; readers pick the newest row per (contract_id,
+// holder), so an old seed never clobbers a newer live observation. A
+// removed or archived entry is written as an is_removal tombstone at its
+// removal ledger, tallied as a retraction, never as a holder.
 //
-// Unlike `supply seed-sep41-genesis` (which sums replay-derived
-// pre-Soroban flows), this seed reads AUTHORITATIVE current on-chain
-// state — the live ContractData Balance entry itself — so it is always
-// correct to run.
+// The scan touches every contract_data entry network-wide (the contract
+// id lives inside key_xdr, so filtering runs in Go): run it under
+// run-heavy-job.sh on r1.
 //
-// The scan touches EVERY contract_data entry network-wide (the contract
-// id lives inside key_xdr, so the watched-set filter runs in Go, not
-// SQL) — it is READ-HEAVY and MUST run under run-heavy-job.sh on r1.
-//
-// -full-history. The default source, stellar.ledger_entries_current, is fed by a
-// ClickHouse materialized view that only processes rows inserted AFTER
-// the MV was created (~ledger 62,000,000) — a Balance entry dormant
-// since before that floor is invisible to it even though it has always
-// existed in the certified lake. PHO/BLND/EURC/KALE's largest holders
-// are Phoenix/Blend pool contracts that acquired the SAC token via an
-// ordinary transfer years before the floor and have been dormant since —
-// exactly this shape. Passing -full-history switches the read to
-// clickhouse.StreamSACBalanceSeedsFullHistory (stellar.ledger_entry_changes,
-// the append-log, complete to genesis per ADR-0034) to recover them. It
-// is substantially heavier than the default scan (every historical
-// write, not just current state) — reserve it for the small watched set
-// that's known to have the floor problem, always under run-heavy-job.sh,
-// never as a routine re-run.
-//
-// Expect the full-history pass to run for roughly an hour on r1 and to print
-// nothing until it finishes: the reader walks the append-log in ledger windows
-// (a ClickHouse memory bound) and can only emit once the
-// last window has been reduced, so all inserts land at the end of the scan
-// rather than interleaved with it. Silence is not a hang.
-//
-// Before walking, the full-history pass proves stellar.ledgers contiguous and
-// hash-linked over the range it reduces and refuses otherwise: a hole hides the
-// change that superseded an entry. Its provenance row records the ledger the
-// lake was verified through; the -full-history flag alone stamps nothing.
+// -full-history. stellar.ledger_entries_current is fed by an MV created
+// near ledger 62,000,000 and misses entries dormant since before it; the
+// largest PHO/BLND/EURC/KALE holders are exactly that shape.
+// -full-history reads stellar.ledger_entry_changes (complete to genesis)
+// instead. It is far heavier, runs about an hour on r1 and prints nothing
+// until the last ledger window is reduced; silence is not a hang. It
+// first proves stellar.ledgers contiguous and hash-linked over its range,
+// because a hole hides the change that superseded an entry, and stamps
+// provenance with the ledger the lake was verified through.
 //
 // Flags:
 //
@@ -85,8 +54,7 @@ import (
 //	-ch-addr ADDR    ClickHouse native address (default 127.0.0.1:9300).
 //	-full-history    Read from stellar.ledger_entry_changes (complete to
 //	                 genesis) instead of the floor-limited
-//	                 stellar.ledger_entries_current. Heavier; closes the
-//	                 ~62M current-state coverage floor.
+//	                 stellar.ledger_entries_current.
 //	-timeout DUR     Whole-run deadline (default 12h). All writes happen
 //	                 after the scan, so a deadline that expires mid-scan
 //	                 loses the whole pass.

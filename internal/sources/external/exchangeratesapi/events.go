@@ -1,33 +1,15 @@
 // Package exchangeratesapi polls exchangeratesapi.io's REST endpoint
-// for fiat reference rates. First Poller (not Streamer) in the
-// external-connector framework; validates the Poller interface
-// with a real venue.
+// for fiat reference rates.
 //
-// Role in the aggregator:
+// It emits canonical.OracleUpdate, not Trade: an FX reference rate is a
+// computed benchmark, not an executed trade. The triangulation layer uses
+// it (`XLM/USD × USD/EUR = XLM/EUR`) when no venue trades a pair directly.
+// Its registry class is ClassExchange, a first-party computation.
 //
-//   - Emits canonical.OracleUpdate (not Trade) — an FX reference
-//     rate isn't an executed trade, it's a computed benchmark
-//     sourced from interbank feeds + the ECB reference rate.
-//   - Consumed by the triangulation layer: `XLM/USD × USD/EUR =
-//     XLM/EUR` when no venue trades XLM/EUR directly (e.g. when
-//     Kraken is the only direct-XLM-EUR venue and goes down).
-//   - Class is ClassExchange in the registry — it's an authoritative
-//     first-party computation, not a third-party aggregation of
-//     other markets. Contributes to VWAP in the fiat-pair sense.
-//
-// Tier notes (important for procurement):
-//
-//   - Free tier: EUR base only, 1-hour cadence, no redistribution,
-//     250 requests/month. Unusable for production.
-//   - Basic ($9.99/mo): EUR base, 5-min cadence, 10,000 reqs/mo.
-//   - Professional ($29.99/mo): **USD base + any base**, 1-min
-//     cadence, 100,000 reqs/mo, **redistribution allowed**.
-//   - Professional+ ($99.99/mo): 60-sec cadence, 300,000 reqs/mo.
-//
-// We target Professional tier at minimum. Free tier is rejected at
-// startup because EUR-only-base would force every FX consumer to
-// triangulate through EUR which is the wrong shape for our USD-quoted
-// price surface.
+// Professional tier is the minimum: it is the first with a USD base and
+// redistribution rights. The free tier (EUR base only) is rejected at
+// startup, because a EUR-only base would force every FX consumer to
+// triangulate through EUR.
 //
 // Wire format verified against
 // https://exchangeratesapi.io/documentation:

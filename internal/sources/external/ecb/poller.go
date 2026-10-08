@@ -1,22 +1,13 @@
 // Package ecb polls the European Central Bank's daily foreign-
-// exchange reference rates. First `ClassAuthoritySanity` connector
-// in the fleet — authoritative but daily-cadence sovereign rates,
-// used by the aggregator as an end-of-day anchor against which
-// intraday VWAP computation drift surfaces as a divergence signal.
+// exchange reference rates: a `ClassAuthoritySanity` connector whose
+// end-of-day fix is the anchor against which drift in an upstream FX
+// feed surfaces as a divergence. It is neither primary pricing (one fix
+// per TARGET business day) nor a triangulation input (the forex-snap
+// reads the `massive` feed's fx_quotes).
 //
-// Role: NOT primary pricing (cadence too slow — published once per
-// TARGET business day ~4pm CET). Not for triangulation either
-// (the triangulation forex-snap reads the `massive` feed's fx_quotes
-// and has no fallback feed). ECB's
-// value is that it's the EU's official reference rate — if our
-// computed EUR/USD ever diverges > 50 bps from ECB's daily close,
-// we want to know, because one of our upstream feeds is drifting.
-//
-// Free, no auth, official source. Cadence: one published fix per
-// TARGET business day (skips EU bank holidays + weekends). Our
-// poller handles "no update since last poll" by re-emitting the
-// same rate with a fresh Observer timestamp — harmless idempotent
-// insert given the stable tx_hash synthesis.
+// Free and unauthenticated. With no new fix the poller re-emits the same
+// rate with a fresh Observer timestamp; the stable tx_hash makes that
+// insert idempotent.
 //
 // Wire shape (verified against
 // https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml):
@@ -43,13 +34,9 @@
 //
 // So for USD at rate=1.0825: Asset=USD, Quote=EUR, Price=0.9238.
 //
-// Overlap note: sibling package internal/sources/external/frankfurter
-// also wraps an ECB-backed feed (the Frankfurter API), but as a
-// one-shot historical client for scripts/ops/fx-history-backfill
-// rather than a live Connector poller — see frankfurter's package
-// doc. Two code paths onto the same upstream, kept as a known/
-// accepted duplication rather than unified (unifying them would be a
-// behavior change, not a move).
+// Sibling package frankfurter also reads an ECB-backed feed, as a one-shot
+// historical client for scripts/ops/fx-history-backfill rather than a live
+// poller.
 package ecb
 
 import (
