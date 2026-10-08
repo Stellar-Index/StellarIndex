@@ -2,59 +2,34 @@
 // vaults on Stellar — institutional yield vaults curated by Gami Labs
 // and Stake Capital Group, with Upshift supplying the vault contract.
 //
-// A vault is an ERC-4626-shaped tokenized vault: it accepts one
-// underlying asset and mints proportional SHARES. The vault contract IS
-// the share token — it emits the SEP-41 `transfer` / `approve` events
-// for its own shares — so one contract id serves both "the vault" and
-// "the share instrument". That is the same identity the RedStone feed
-// registry prices `earnUSDC_FUNDAMENTAL` on
-// ([MainnetVaultEarnUSDC], internal/sources/redstone/feeds.go), and it
-// is deliberately NOT the underlying's id: a yield-bearing claim on
-// USDC is a different instrument from USDC.
+// A vault is ERC-4626-shaped: it accepts one underlying asset and mints
+// proportional SHARES, and the vault contract IS the share token (it
+// emits SEP-41 `transfer` / `approve` for its own shares). That is the
+// identity RedStone prices `earnUSDC_FUNDAMENTAL` on
+// ([MainnetVaultEarnUSDC]), deliberately NOT the underlying's id: a
+// yield-bearing claim on USDC is a different instrument from USDC.
 //
 // # Shape of the protocol, proven from the certified ClickHouse lake
 //
-// Swept over `stellar.contract_events` (ledgers up to
-// 64,345,4xx). TWO vault contracts exist and no others: the two are the
-// ONLY contracts in the lake at or after ledger 62,000,000 that emit
-// any of this protocol's five bespoke symbols (`deployed_assets_changed`,
-// `wallet_deployed_updated`, `deposit_to_subaccount`,
-// `withdraw_from_subaccount`, `wallet_net_deployed_seeded`).
+// TWO vault contracts exist: the only contracts at or after ledger
+// 62,000,000 emitting any of the protocol's five bespoke symbols
+// (`deployed_assets_changed`, `wallet_deployed_updated`,
+// `deposit_to_subaccount`, `withdraw_from_subaccount`,
+// `wallet_net_deployed_seeded`). They were deployed minutes apart onto
+// the same admin and operator, each with its own custody subaccount:
 //
 //	CCL3WITW… (earnUSDC)   first event `admin_set` @ 62,623,313
-//	  deposit 116 · deployed_assets_changed 37 · deposit_to_subaccount 36
-//	  withdraw 35 · wallet_deployed_updated 17 · transfer 8 · approve 6
-//	  withdraw_from_subaccount 4 · admin_set / operator_set /
-//	  subaccount_added / wallet_net_deployed_seeded 1 each
-//
 //	CC6TRAPQ… (earnXLM)    first event `admin_set` @ 62,623,319
-//	  deposit 68 · withdraw 38 · deployed_assets_changed 24
-//	  wallet_deployed_updated 15 · deposit_to_subaccount 6 · transfer 1
-//	  approve 1 · admin_set / operator_set / subaccount_added /
-//	  wallet_net_deployed_seeded 1 each
 //
-// The two were deployed in the same batch minutes apart — `admin_set` 6
-// ledgers apart, `operator_set` 11, `subaccount_added` 8 — onto the same
-// admin (GDYNPLQ7…) and the same operator (GCDR6QB2…), each with its OWN
-// custody subaccount (GDJ7WZYS… for earnUSDC, GAPUSI7E… for earnXLM).
-// Each vault's UNDERLYING asset is proven by the SAC `transfer` that
-// lands in the SAME transaction, one event index ahead of the `deposit`,
-// for exactly the `assets` amount the deposit reports:
+// Each vault's underlying is proven by the SAC `transfer` one event ahead
+// of a `deposit` in the same transaction for exactly its `assets` amount
+// (USDC:GA5ZSEJY… at 62,938,336; native at 62,638,654). The ticker names
+// are inferred from the underlying; the CONTRACT IDS the decoder gates on
+// are proven.
 //
-//	earnUSDC ← CCW67TSZ… `transfer` … String("USDC:GA5ZSEJY…KZVN"), amount 2000000
-//	           == deposit.assets 2000000              (ledger 62,938,336)
-//	earnXLM  ← CAS3J7GY… `transfer` … String("native"),  amount 5000000
-//	           == deposit.assets 5000000              (ledger 62,638,654)
-//
-// The ticker names are the one inferred part: no event carries the
-// share token's symbol, so "earnUSDC" / "earnXLM" are read off the
-// underlying each vault holds plus the protocol's published pair. The
-// CONTRACT IDS are what the decoder gates on and those are proven.
-//
-// A third address, CC2DNHE5EFPPVJ47BJCRIQCEZ7KVHOATVR5QMNBEKKZQF2EZO7U7YTHT,
-// circulated as this vault's address and has ZERO events of any kind in
-// the lake. It is not a vault and is deliberately absent from
-// [MainnetVaults]; TestMainnetVaults_ExcludesTheZeroEventAddress pins that.
+// CC2DNHE5EFPPVJ47BJCRIQCEZ7KVHOATVR5QMNBEKKZQF2EZO7U7YTHT, circulated as
+// a vault address, has ZERO events in the lake and is deliberately absent
+// from [MainnetVaults] (TestMainnetVaults_ExcludesTheZeroEventAddress).
 //
 // # Event shapes (every field name read off real lake bytes)
 //
@@ -68,59 +43,34 @@
 //	           topics [Symbol, operator Address]
 //	           body   Map{ old_amount: i128, new_amount: i128 }
 //
-// The three `deposit` / `withdraw` topic addresses are (caller,
-// receiver, owner) — the OpenZeppelin ERC-4626 `Withdraw` ordering.
-// Exactly TWO events in the two vaults' combined history carry three
-// DIFFERENT addresses, one per vault, and they corroborate each other:
+// The `deposit` / `withdraw` topic addresses are (caller, receiver,
+// owner), the OpenZeppelin ERC-4626 ordering. Two withdraws carry three
+// distinct addresses (63,812,795 and 63,812,816): in the second, the G
+// account in the middle slot had approved and transferred its shares to
+// the outer C contract six ledgers earlier, so the contract was caller
+// and owner and the G account the receiver. CAVEAT: every `deposit`
+// carries three identical addresses, so deposit's ordering is carried
+// over from withdraw, not independently proven.
 //
-//	63,812,795  earnXLM   (C CD5YZRFQ…, G GCNC7GXV…, C CD5YZRFQ…)
-//	63,812,816  earnUSDC  (C CCJ43PID…, G GCNC7GXV…, C CCJ43PID…)
-//
-// The SAME G account sits in the middle slot of both while the outer
-// contract differs — one holder redeeming both vaults in one session, 21
-// ledgers apart, through a different router each time. Six ledgers
-// before the earnUSDC one, that G account approved that C contract as a
-// spender (`approve` @ 63,812,810) and transferred its shares to it
-// (`transfer` @ 63,812,811). So at burn time the contract both CALLED
-// and OWNED the shares, and the G account is who received the
-// underlying — (caller, receiver, owner), not (caller, owner, receiver).
-//
-// CAVEAT, stated because it matters: all 184 `deposit` events carry the
-// three addresses IDENTICAL, so deposit's reading is carried over from
-// withdraw (same topic arity, same body schema) and is not
-// independently proven.
-//
-// Shares are NOT at the underlying's scale. Every genesis-era deposit
-// mints shares == assets × 1,000,000 exactly (2000000 → 2000000000000;
-// 5000000 → 5000000000000), i.e. the OpenZeppelin ERC-4626 decimals
-// OFFSET of 6 that hardens a vault against the inflation attack. Later
-// events drift off that ratio as the share price accrues (withdraw @
-// 63,812,816 redeems 9,919,211,002,150 shares for 10,000,000 assets —
-// ~0.8% above par). This package therefore stores assets and shares as
-// RAW i128 (canonical.Amount / NUMERIC per ADR-0003) and does NOT
-// divide one by the other or apply a decimals assumption; the offset is
-// recorded here as evidence, not applied as a constant.
+// Shares are NOT at the underlying's scale: genesis-era deposits mint
+// shares == assets × 1,000,000 (the ERC-4626 decimals offset of 6), and
+// later events drift off that ratio as the share price accrues. Assets
+// and shares are stored as RAW i128 (ADR-0003); no ratio or decimals
+// assumption is applied.
 //
 // # What is NOT decoded, and why
 //
 //   - deposit_to_subaccount / withdraw_from_subaccount /
-//     wallet_deployed_updated / wallet_net_deployed_seeded — the
-//     CUSTODY-side mirror of the capital that
-//     `deployed_assets_changed` already reports at vault level. They
-//     name the custodian's internal wallet topology (one subaccount
-//     today) and report the same movement a second time; decoding them
-//     into the same table would double-count deployed capital.
+//     wallet_deployed_updated / wallet_net_deployed_seeded — the custody
+//     side of what `deployed_assets_changed` already reports; decoding
+//     them would double-count deployed capital.
 //   - subaccount_added / admin_set / operator_set / vault_paused /
-//     vault_unpaused — governance. No economic state. The pause pair
-//     (topic[1] the caller address, body an empty Map) was first emitted
-//     at 64,715,361 by the same audited WASM 4b3d9f6b….
-//   - approve — a SEP-41 allowance, not a balance change. The vault's
-//     share-token audit trail (`transfer` + `approve`) has a home of
-//     its own in internal/sources/sep41_transfers whenever an operator
-//     puts the vault in `watched_sep41_contracts`; `transfer` is
-//     decoded HERE as well because a share movement is vault economics
-//     (it reassigns the claim without minting or burning) and the two
-//     sources write different tables, so there is no double write.
+//     vault_unpaused — governance, no economic state (the pause pair was
+//     first emitted at 64,715,361 by the same audited WASM 4b3d9f6b…).
+//   - approve — an allowance, not a balance change. The share-token
+//     audit trail lives in internal/sources/sep41_transfers when the
+//     vault is watched; `transfer` is decoded HERE too because it is
+//     vault economics, and the two write different tables.
 //
 // All ten are still RECOGNIZED by [classify] and gated by
 // [Decoder.Matches]: they decode to ZERO rows with no error, so the
@@ -129,23 +79,14 @@
 //
 // # Gating
 //
-// ADR-0035 requires contract-identity gating, and this protocol makes
-// the case plainly: `deposit`, `withdraw` and `transfer` are among the
-// most generic symbols on the network — a bounded 20,000-ledger census
-// (63,000,000–63,020,000) found FOUR distinct contracts emitting
-// `deposit` and 77 such events, of which the vaults are a minority. A
-// topic-only decoder would attribute a stranger's vault flows to this
-// protocol and, worse, would let any contract publish share/asset
-// numbers under this source's name.
-//
-// There is no factory to anchor on: neither vault has a creation event
-// in the lake (each one's first event is its own `admin_set`), so the
-// ADR-0040 CURATED-SET mechanism applies rather than the factory
-// fan-out — the same shape internal/sources/comet uses. The trust root
-// is [MainnetGatedSet] plus the `protocol_contracts` DB warm, and a new
-// Upshift vault must be operator-admitted before its events are
-// attributed. That fails CLOSED: an un-admitted vault's events surface
-// as an ADR-0033 recognition gap, never as a silent mis-attribution.
+// `deposit`, `withdraw` and `transfer` are among the most generic symbols
+// on the network (a 20,000-ledger census found four contracts emitting
+// `deposit`), so ADR-0035 contract-identity gating is essential. Neither
+// vault has a creation event, so there is no factory to anchor on: the
+// ADR-0040 CURATED-SET applies, as in internal/sources/comet. The trust
+// root is [MainnetGatedSet] plus the `protocol_contracts` DB warm; a new
+// vault must be operator-admitted, and until then its events surface as
+// an ADR-0033 recognition gap, never a silent mis-attribution.
 package upshift
 
 import (

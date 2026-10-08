@@ -3,64 +3,37 @@
 // N ≥ 2 tokens with arbitrary weights; trading preserves the
 // weighted-geometric-mean invariant.
 //
-// Wire shape, verified against the public contract source
-// (comet-contracts-v1/contracts/src/c_pool/event.rs and
-// call_logic/pool.rs:21,184-191) and against upstream `main` for the
-// join/exit/deposit/withdraw additions:
+// Wire shape, verified against comet-contracts-v1
+// (contracts/src/c_pool/event.rs, call_logic/pool.rs) and upstream `main`:
 //
 //	topic[0] = Symbol("POOL")
 //	topic[1] = Symbol("<event_name>")
 //	body     = Map { … }      (shape per event)
 //
-// The Soroban port emits exactly **five** events under the shared
-// `POOL` namespace:
+// The Soroban port emits exactly five events under `POOL`:
 //
-//   - "swap"       — caller, token_in, token_out,
-//     token_amount_in, token_amount_out
-//     → emits a canonical.Trade
-//   - "join_pool"  — caller, token_in, token_amount_in
-//     → emits a LiquidityEvent (multi-token LP add;
-//     one event per token, so an N-token join
-//     produces N rows)
-//   - "exit_pool"  — caller, token_out, token_amount_out
-//     → emits a LiquidityEvent (multi-token LP remove)
-//   - "deposit"    — caller, token_in, token_amount_in
-//     → emits a LiquidityEvent (single-asset LP add)
-//   - "withdraw"   — caller, token_out, token_amount_out,
-//     pool_amount_in
-//     → emits a LiquidityEvent (single-asset LP remove;
-//     pool_amount_in is the BPT-share count burned)
+//   - "swap"      — caller, token_in, token_out, token_amount_in,
+//     token_amount_out → a canonical.Trade
+//   - "join_pool" — caller, token_in, token_amount_in → a LiquidityEvent
+//     per token (an N-token join produces N rows)
+//   - "exit_pool" — caller, token_out, token_amount_out → LiquidityEvent
+//   - "deposit"   — caller, token_in, token_amount_in → single-asset add
+//   - "withdraw"  — caller, token_out, token_amount_out, pool_amount_in
+//     (the BPT shares burned) → single-asset remove
 //
-// What's **not** emitted by the Soroban port (despite being in
-// Balancer-v1 on EVM):
+// Balancer-v1's bind / rebind / unbind / finalize / set_swap_fee /
+// set_public_swap do not exist in the port (the token+weight set is fixed
+// at `init()`); set_controller and gulp exist but publish nothing. A
+// future upgrade adding a new POOL topic is rejected with
+// ErrNotCometEvent until support is added. BPT transfers use the SEP-41
+// surface and belong to internal/sources/sep41_supply, not this package.
 //
-//   - bind / rebind / unbind / finalize — these functions do not
-//     exist in the Soroban port. The pool's token+weight set is
-//     fixed at `init()` and there is no event published.
-//   - set_swap_fee / set_public_swap — neither function exists.
-//   - set_controller — exists, but does not publish an event in the
-//     Soroban port (a contract upgrade that adds one would surface
-//     as a new (POOL, set_controller) topic; the decoder rejects
-//     it with ErrNotCometEvent until support is added).
-//   - gulp — exists (absorbs tokens sent directly to the contract),
-//     does not publish an event.
-//
-// BPT (Balancer Pool Token) transfers ARE emitted, but via the
-// **SEP-41 standard token-event surface**, not the POOL namespace.
-// They are claimed by the SEP-41 supply observer
-// (internal/sources/sep41_supply) when the pool contract is in its
-// registered scope; this package does not re-decode them.
-//
-// `POOL` is a shared topic namespace across every Comet pool contract
-// — ROUTING (which decoder claims the event) is by topic bytes, but
-// ATTRIBUTION is gated on contract identity AT DISPATCH TIME
-// (ADR-0035/0040): Decoder.Matches (dispatcher_adapter.go)
-// only claims an event whose ContractID is in the curated registry
-// (MainnetGatedSet + protocol_contracts warm) — the bare topic tuple
-// is forgeable by any pubnet contract built from (or mimicking) the
-// Balancer-v1 WASM, so topic bytes alone are never sufficient. A
-// comet-shaped event from an unregistered contract is left unclaimed
-// for the recognition audit to surface, never silently attributed.
+// `POOL` is shared by every Balancer-v1-derived contract, so ROUTING is by
+// topic bytes but ATTRIBUTION is gated on contract identity at dispatch
+// time (ADR-0035/0040): Decoder.Matches only claims an event whose
+// ContractID is in the curated registry (MainnetGatedSet +
+// protocol_contracts warm). A comet-shaped event from an unregistered
+// contract is left for the recognition audit, never silently attributed.
 package comet
 
 import (

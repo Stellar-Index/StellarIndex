@@ -20,52 +20,36 @@
 //	dequeue_withdrawal — cancel a queued unstake
 //	draw               — draw backstop funds to cover bad debt
 //	rw_zone_add        — add a pool to the reward zone (V2)
-//	rw_zone            — the V1 spelling of the same reward-zone-update
-//	                     action; body has no Option wrapper (both
-//	                     addresses always present)
+//	rw_zone            — the V1 spelling of the same action; body has no
+//	                     Option wrapper (both addresses always present)
 //	rw_zone_remove     — remove a pool from the reward zone (V2 only;
-//	                     never observed on mainnet — see below)
+//	                     never observed on mainnet)
 //
-// SCHEMA PROVENANCE: the per-event field layouts were reverse-engineered
-// from real mainnet lake samples, validated against golden frames in
-// decode_test.go, and cross-checked by a read-only lake audit and a
-// direct read of the Blend team's published source (blend-contracts-v2,
-// backstop/src/events.rs). The shapes that are easy to get wrong:
+// Field layouts come from mainnet lake samples (golden frames in
+// decode_test.go), cross-checked against blend-contracts-v2
+// backstop/src/events.rs. The shapes that are easy to get wrong:
 //
-//  1. V1 gulp_emissions carries only 1 topic (no pool) and a BARE i128
-//     body, not the V2 2-element Vec; requiring 2 topics and a 2-Vec
-//     body would error all 209 V1 rows.
-//  2. The V1 reward-zone topic is literally `rw_zone`, not
-//     `rw_zone_add`; a Classify() that knew only `rw_zone_add` would
-//     drop its 5 real events end-to-end.
+//  1. V1 gulp_emissions has 1 topic (no pool) and a BARE i128 body;
+//     requiring the V2 shape would error all 209 V1 rows.
+//  2. The V1 reward-zone topic is literally `rw_zone`; knowing only
+//     `rw_zone_add` drops its 5 real events.
 //  3. V2 rw_zone_add's body is Vec[to_add: Address, to_remove:
-//     Option<Address>]; the second element is not a u32 reward-zone
-//     index.
-//  4. rw_zone_remove is decoded from the source alone (see
-//     decodeRwZoneRemove).
-//  5. gulp_emissions' topic[1] is the POOL address (the same pool topic
-//     every other event promotes), not a "token", so it lands in the
-//     Pool column rather than in attributes.
-//  6. withdraw's body is (shares_burned, tokens_out) — the OPPOSITE
-//     order from deposit's (tokens_in, shares_minted) — so promoting
-//     vec[0] to Amount uniformly would make Amount mean "shares" for
-//     withdraw and "tokens" for deposit.
+//     Option<Address>]; the second element is not a u32 index.
+//  4. rw_zone_remove is decoded from the source alone (decodeRwZoneRemove).
+//  5. gulp_emissions' topic[1] is the POOL address, so it lands in the
+//     Pool column, not in attributes.
+//  6. withdraw's body is (shares_burned, tokens_out) — the OPPOSITE of
+//     deposit's (tokens_in, shares_minted) — so Amount cannot uniformly
+//     promote vec[0].
 //
-// This source is still LIVE-CAPTURE ONLY for backfill purposes — the
-// shapes above are schema correctness, not a completeness guarantee for
-// eras this decoder has never run against. Applying them to stored rows
-// takes a historical replay (`projector-replay -source blend_backstop
-// -from 51499923`). See events.go + README.md §Provenance.
+// These are schema correctness, not a completeness guarantee for eras
+// this decoder has never run against: applying them to stored rows takes
+// `projector-replay -source blend_backstop -from 51499923`.
 //
-// Per ADR-0013 this decoder reads SCVal exclusively through
-// internal/scval — it never imports go-stellar-sdk/xdr directly
-// (enforced by scripts/ci/lint-imports.sh).
-//
-// Wiring: decode.go decodes; consumer.go projects each event into the
-// canonical blend_backstop.Event row; dispatcher_adapter.go is the
-// dispatcher Decoder; the sink persists via
-// Store.InsertBlendBackstopEvent into blend_backstop_events
-// (migration 0063). See README.md §Wiring.
+// Per ADR-0013 SCVal is read only through internal/scval
+// (scripts/ci/lint-imports.sh). Rows persist via
+// Store.InsertBlendBackstopEvent into blend_backstop_events; README.md
+// covers wiring and provenance.
 package blend_backstop
 
 import (
