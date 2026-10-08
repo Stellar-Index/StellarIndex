@@ -12,7 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestAssetsListing_SorobanTypeAndQ pins RLT-023: a Soroban-native
+// TestAssetsListing_SorobanTypeAndQ pins that a Soroban-native
 // contract asset has NULL code/issuer_g_strkey/slug (contract assets
 // have no SEP-1 code or issuer account — see listAssetsBaseSelect's
 // discovered-contract arm), so the q predicate's original

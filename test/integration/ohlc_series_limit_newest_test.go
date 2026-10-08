@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestOHLCSeries_LimitKeepsNewestBucketsInWideWindow pins RLT-453: an
+// TestOHLCSeries_LimitKeepsNewestBucketsInWideWindow pins that an
 // explicit window wider than `limit` intervals must serve the NEWEST
 // `limit` buckets, not the oldest. The previous query ended `ORDER BY
 // bucket ASC` and then applied `LIMIT`, so a wide window silently
@@ -96,7 +96,7 @@ func TestOHLCSeries_LimitKeepsNewestBucketsInWideWindow(t *testing.T) {
 // TestOHLCSeriesReBucketed_LimitKeepsNewestOutBucketsInWideWindow is
 // the folded-interval sibling of
 // TestOHLCSeries_LimitKeepsNewestBucketsInWideWindow: OHLCSeriesReBucketed
-// carries the identical ORDER BY/LIMIT defect (RLT-453), one layer up —
+// carries the identical ORDER BY/LIMIT defect, one layer up —
 // re-bucketing prices_1h into 4-hour out-buckets.
 func TestOHLCSeriesReBucketed_LimitKeepsNewestOutBucketsInWideWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ─── RLT-169: an openapi/** diff must trigger the `go` change class ───
+// ─── An openapi/** diff must trigger the `go` change class ───
 //
 // internal/api/v1/handler_spec_fields_test.go (and its spec-parity
 // siblings across internal/api/v1, cmd/stellarindex-aggregator and

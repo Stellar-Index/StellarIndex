@@ -200,7 +200,7 @@ func TestClassicSupplyObservationsRoundTrip(t *testing.T) {
 			t.Errorf("isolated asset sum = %s, want 999", got)
 		}
 
-		// RLT-248: SACBalanceObservationsExist must distinguish "no
+		// SACBalanceObservationsExist must distinguish "no
 		// observation at all" from "observations exist and (possibly)
 		// sum to zero" — SumSACBalancesAtOrBefore's COALESCE(sum, 0)
 		// alone can't tell those apart, and CrossCheckSubsetBound's

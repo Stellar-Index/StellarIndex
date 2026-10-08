@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sla-probe-apikey-test.sh — regression coverage for RLT-335.
+# sla-probe-apikey-test.sh — the probe API key stays off argv.
 #
 # sla-probe.sh must never put the API key on the probe binary's argv:
 # process arguments are world-readable (`ps`, /proc/<pid>/cmdline) to

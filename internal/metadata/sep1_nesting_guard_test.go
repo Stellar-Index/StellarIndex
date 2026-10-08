@@ -26,8 +26,8 @@ func nestedInlineTables(depth int) []byte {
 	return []byte(b.String())
 }
 
-// TestParseSEP1RefusesDeepNestingWithinBudget is the wedge (RSEC-Z1 /
-// RLT-458) at the parser: a document the byte cap admits must not be
+// TestParseSEP1RefusesDeepNestingWithinBudget is the wedge at the
+// parser: a document the byte cap admits must not be
 // allowed to spend gigabytes in the decoder.
 //
 // The assertion is on BOTH halves, because either alone is passable by

@@ -390,7 +390,7 @@ func TestGuardServedVWAP1m_TrailingFetchErrorFailsOpen(t *testing.T) {
 	}
 }
 
-// RLT-242: a fail-open trailing-fetch error must not be silent — it stands
+// A fail-open trailing-fetch error must not be silent — it stands
 // down the manipulation/fat-finger band with only a log line as a trace, so
 // it needs a counter an alert can fire on. Proves the counter actually
 // increments on the real fail-open paths, not just that logging happened.

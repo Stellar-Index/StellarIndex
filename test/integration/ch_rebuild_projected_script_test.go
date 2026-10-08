@@ -39,7 +39,7 @@ import (
 //     multi-statement Exec is implicitly one transaction and would pass
 //     this even without the script's BEGIN/COMMIT.
 //  3. The default SRC deletes every listed source's rows, and still not
-//     sushiswap_v3's (RLT-380) or sdex's.
+//     sushiswap_v3's or sdex's.
 func TestChRebuildProjectedScript_DeleteSQLOnRealPostgres(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the ops script is bash; r1 and CI are Linux")
