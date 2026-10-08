@@ -55,6 +55,12 @@ type Invite struct {
 	CreatedAt       time.Time
 }
 
+// LoginCodeDeviceKey is the lockout key charged for code attempts from a
+// browser holding the address's login-device proof. No valid address contains
+// a space, so it never collides with a request-body email; account erasure
+// relies on that, matching both keys by the part before the space.
+func LoginCodeDeviceKey(email string) string { return email + " device" }
+
 // LoginCodeLockout is the durable per-EMAIL failed-verify state for the
 // 6-digit email-code sign-in (migration 0122). It is what
 // [MagicLinkToken.Attempts] is not: independent of any single token, so

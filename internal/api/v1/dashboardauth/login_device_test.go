@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // The wire name is pinned as a literal: renaming it silently drops every
@@ -155,12 +157,14 @@ func (lr *lockoutRig) postVerifyCodeWithCookies(t *testing.T, email, code string
 	return w
 }
 
-// TestLockout_SignedInBrowserIsNotLockedOut — anyone who knows an address
-// can spend its durable code budget, so a stranger's ten wrong codes must
-// not shut the owner's own browser out of code sign-in, and that browser's
-// typos must not spend the budget strangers are held to.
-func TestLockout_SignedInBrowserIsNotLockedOut(t *testing.T) {
+// TestLockout_SignedInBrowserHasOwnBudget — anyone who knows an address can
+// spend its durable code budget, so a stranger's ten wrong codes must not
+// shut the owner's own browser out of code sign-in, and that browser's typos
+// must not spend the budget strangers are held to. The browser is still
+// bounded: its own budget locks after the same number of failures.
+func TestLockout_SignedInBrowserHasOwnBudget(t *testing.T) {
 	const email = "owner3@example.com"
+	deviceKey := platform.LoginCodeDeviceKey(email)
 	lr := newLockoutRig(t)
 	browser := lr.signIn(t, email)
 
@@ -177,9 +181,30 @@ func TestLockout_SignedInBrowserIsNotLockedOut(t *testing.T) {
 	if got := lr.durableFailures(email); got != before {
 		t.Errorf("signed-in browser's typo charged the shared budget: %d → %d", before, got)
 	}
+	if got := lr.durableFailures(deviceKey); got != 1 {
+		t.Errorf("signed-in browser's typo: own budget = %d failures, want 1", got)
+	}
 	w := lr.postVerifyCodeWithCookies(t, email, code, browser)
 	if w.Code != http.StatusOK || !sessionCookieSet(w) {
 		t.Fatalf("signed-in browser locked out of its own address: status = %d, body %s", w.Code, w.Body.String())
+	}
+	if a, b := lr.durableFailures(email), lr.durableFailures(deviceKey); a != 0 || b != 0 {
+		t.Errorf("sign-in left failures on record: shared %d, browser %d; want both 0", a, b)
+	}
+
+	for i := 0; i < maxDurableCodeFailures; i++ {
+		if i%maxCodeAttempts == 0 {
+			lr.postLogin(t, email)
+		}
+		plaintext := lr.extractTokenFromSentEmail(t)
+		guess := wrongCode(lr.h.cfg.Generator.CodeForHash(HashMagicLinkPlaintext(plaintext)))
+		if w := lr.postVerifyCodeWithCookies(t, email, guess, browser); w.Code != http.StatusBadRequest {
+			t.Fatalf("browser guess %d: status = %d, want 400", i+1, w.Code)
+		}
+	}
+	code = lr.loginAndCode(t, email)
+	if w := lr.postVerifyCodeWithCookies(t, email, code, browser); w.Code != http.StatusBadRequest {
+		t.Fatalf("signed-in browser past its own budget got status %d, want 400", w.Code)
 	}
 
 	other := lr.signIn(t, "stranger@example.com")

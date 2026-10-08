@@ -139,9 +139,9 @@ func (h *Handlers) clearLoginIntentCookie(w http.ResponseWriter) {
 // LoginDeviceCookieName marks a browser that has completed a sign-in for
 // one address. From this browser, for that address, POST /v1/auth/login
 // still gets a link when the per-address send cap is full
-// ([Handlers.admitSignedInBrowser]), and POST /v1/auth/verify-code is not
-// barred by the per-address code lockout ([Handlers.HandleVerifyCode]);
-// anyone who knows the address can fill both. It authenticates nothing and
+// ([Handlers.admitSignedInBrowser]), and POST /v1/auth/verify-code charges
+// its own code budget instead of the per-address one ([Handlers.HandleVerifyCode]);
+// anyone who knows the address can fill the shared ones. It authenticates nothing and
 // is scoped by Path to the /v1/auth routes.
 const LoginDeviceCookieName = "stellarindex_login_device"
 

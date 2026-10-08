@@ -773,9 +773,7 @@ func (h *Handlers) HandlePasskeyFinishLogin(w http.ResponseWriter, r *http.Reque
 	// A successful passkey login proves the account owner is present —
 	// retire the durable email-code failure counter exactly as the
 	// email doors do. Best-effort.
-	if err := h.cfg.Tokens.ClearLoginCodeLockout(r.Context(), matchedUser.Email); err != nil {
-		h.cfg.Logger.Warn("clear login code lockout", "err", err, "user_id", matchedUser.ID)
-	}
+	h.clearLoginCodeLockouts(r, matchedUser.Email)
 
 	if err := h.mintSession(w, r, matchedUser); err != nil {
 		h.cfg.Logger.Error("start session (passkey)", "err", err, "user_id", matchedUser.ID)
