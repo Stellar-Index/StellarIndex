@@ -150,9 +150,11 @@ func tradeUSDVolumeViaUSDBase(t canonical.Trade, md external.Metadata, quoteSpec
 		return nil
 	}
 	base := t.BaseAmount.BigInt()
-	if base == nil || base.Sign() <= 0 {
+	if base == nil || base.Sign() < 0 {
 		return nil
 	}
+	// A zero pegged leg is exactly $0; declining would hand it to an
+	// estimated tier and break usd_volume = base_amount / 10^decimals.
 	rendered := new(big.Rat).SetFrac(base, scaleDenominator(decimals)).FloatString(8)
 	return &rendered
 }

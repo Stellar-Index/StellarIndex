@@ -191,6 +191,8 @@ func TestExactTierRestampScope_MirrorsTheDecision(t *testing.T) {
 		"t.usd_volume IS DISTINCT FROM round(",
 		"t.usd_volume IS NOT NULL",
 		"t.quote_amount > 0",
+		// A zero pegged base leg is valued at exactly $0, so the restamp must reach it.
+		"END) >= 0",
 	} {
 		if !strings.Contains(fromWhere, want) {
 			t.Errorf("scope lacks %q:\n%s", want, fromWhere)
