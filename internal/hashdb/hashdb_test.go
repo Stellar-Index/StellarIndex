@@ -86,7 +86,7 @@ func TestVerify_OK(t *testing.T) {
 // TestVerify_DriftDetected is the alert path: same ledger seq, but
 // the bytes have changed. Verify must return ErrDrift so the caller
 // can escalate. This is the exact scenario the package exists to
-// catch — AWS public bucket retroactively rewrote a previously-fetched
+// catch — AWS public bucket retroactively rewrote an already-fetched
 // ledger, or local corruption silently flipped bits.
 func TestVerify_DriftDetected(t *testing.T) {
 	db, err := Create(mkPath(t), 0)

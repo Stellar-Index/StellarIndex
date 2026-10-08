@@ -592,8 +592,8 @@ func TestApplyEnvOverrides_DoesNotCorruptS3KeyNames(t *testing.T) {
 
 func TestLoadWithEnv_RevalidatesAfterOverride(t *testing.T) {
 	// A file that Validate() accepts, then env override with a
-	// malformed DSN. Previously (Load + ApplyEnvOverrides) this got
-	// past startup and errored at DB dial time. LoadWithEnv must
+	// malformed DSN. Load + ApplyEnvOverrides would let this get
+	// past startup and error at DB dial time. LoadWithEnv must
 	// catch it as ErrInvalidConfig.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "c.toml")

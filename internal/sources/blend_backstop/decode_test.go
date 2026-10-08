@@ -215,9 +215,8 @@ func TestGolden_RoundTripViaDecodeOne(t *testing.T) {
 
 // TestGolden_GulpEmissions_V1 pins bug #1 against real lake bytes
 // (ledger 51524667): V1 has NO pool topic (topic_count=1) and a bare
-// i128 body — not the V2 2-element Vec. Before the fix, the hard
-// `len(e.Topic) < 2` check on the old single decodeGulpEmissions body
-// errored EVERY one of the 209 real V1 rows.
+// i128 body — not the V2 2-element Vec. A hard
+// `len(e.Topic) < 2` check in decodeGulpEmissions would error EVERY one of the 209 real V1 rows.
 func TestGolden_GulpEmissions_V1(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{

@@ -93,8 +93,8 @@ func startC(logger *slog.Logger) { go worker.Recover(logger, "x") }
 // resolving Line and a FuncLit's Origin against the SCANNED file's
 // *token.FileSet even when the site was found by recursing into a callee
 // parsed into a different FileSet (indexDir/indexImport each build their
-// own). Before the fix, both values were computed with r.fset — the
-// outer resolver's FileSet — so a nested `go func(){}()` found while
+// own). Computing both values with r.fset — the
+// outer resolver's FileSet — would mean a nested `go func(){}()` found while
 // recursing into workers.go (parsed by indexDir, not by ScanFile) reported
 // Line 0 and a garbage Origin instead of workers.go's real line.
 func TestScan_RecursedFuncLitUsesCalleeFileSet(t *testing.T) {

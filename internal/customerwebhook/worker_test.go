@@ -440,9 +440,8 @@ func TestWorker_MissingWebhookTerminates(t *testing.T) {
 // retrying can never repair) — never emit a spoofable signature.
 //
 // Not reachable via the API today (generateSecret always writes 32
-// crypto/rand bytes), but a belt-and-suspenders gap. Pre-fix the worker
-// signed with the empty key and POSTed, so the test server would receive
-// the request and the row would be marked delivered.
+// crypto/rand bytes), but a belt-and-suspenders gap. Signing with the empty key
+// and POSTing would reach the test server and mark the row delivered.
 func TestWorker_EmptySecret_TerminalNoDelivery(t *testing.T) {
 	var posted int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -539,14 +538,14 @@ func TestWorker_DeliveryDurationMetricRecorded(t *testing.T) {
 //
 // The failure it encodes: GetWebhook fails with a TRANSPORT error — a
 // connection reset, a fail-over, a statement timeout — while the webhook
-// row is perfectly intact. Pre-fix the worker treated every GetWebhook
-// error identically to "row deleted" and called MarkAttemptFailed with a
+// row is perfectly intact. Treating every GetWebhook
+// error as "row deleted" would call MarkAttemptFailed with a
 // zero next_attempt_at, which removes the row from the pending predicate
 // FOREVER. One postgres blip therefore silently and permanently dropped
 // a customer's SEV-1 / freeze / divergence notification, with no retry
 // and no alert path other than reading the delivery log by hand.
 //
-// Post-fix only platform.ErrNotFound is terminal; a transient error
+// Only platform.ErrNotFound is terminal; a transient error
 // leaves the row untouched so the store's 5-minute claim lease expires
 // and the next poll re-delivers it.
 func TestWorker_TransientGetWebhookError_LeavesDeliveryForRetry(t *testing.T) {

@@ -13,14 +13,14 @@ import (
 //
 // The attack it encodes: hold the fallback limiter above its key cap
 // inside a single window (a distinct-key flood is the *only* way to get
-// there, i.e. exactly when the limiter matters most). Pre-fix the
-// size-triggered branch re-ran a full O(n) scan of the map under the
-// global mutex on EVERY subsequent take — a scan that provably deletes
+// there, i.e. exactly when the limiter matters most). A size-triggered branch
+// that re-ran a full O(n) scan of the map under the
+// global mutex on EVERY subsequent take would do so — a scan that provably deletes
 // nothing, because every surviving entry names the current window — so
 // each request paid for a walk of every other client's counter and the
 // limiter became the cheapest way to stall the process.
 //
-// Post-fix a window's scan happens once. The counter asserts the exact
+// A window's scan must happen once. The counter asserts the exact
 // number, not "few".
 func TestLocalStore_SweepsAtMostOncePerWindow(t *testing.T) {
 	const windowDur = time.Minute

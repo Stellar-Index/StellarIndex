@@ -57,8 +57,8 @@ func newLoginThrottle(t *testing.T, opts auth.LoginThrottleOptions) (*auth.Redis
 
 // TestLoginThrottle_PerEmailCapIsCaseAndWhitespaceInsensitive is the LOW
 // finding: hashEmail normalises (lower-case + trim) internally, so the
-// per-target-email cap can't be walked by re-spelling the address. Pre-fix
-// hashEmail hashed the raw bytes, so "Victim@X.com " and "victim@x.com"
+// per-target-email cap can't be walked by re-spelling the address. Hashing raw
+// bytes would put "Victim@X.com " and "victim@x.com"
 // landed on DIFFERENT buckets and each got a fresh budget — the caller
 // happened to lower-case, but the throttle's own invariant was not
 // self-enforcing. Against a MaxPerEmail=2 cap, four sends split across two

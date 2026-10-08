@@ -399,9 +399,9 @@ func TestSweep_NoSubscribedWebhook_DoesNotMarkFired(t *testing.T) {
 // advanced before the fan-out, each subscribed webhook receives the
 // crossing at most once across repeated sweeps.
 //
-// Pre-fix (enqueue-then-mark): sweep 1 enqueues both webhooks, the mark
-// fails, and sweep 2 re-enqueues both → 4 deliveries (duplicates on new,
-// un-dedupable delivery ids). Post-fix: 2 deliveries, one per webhook.
+// Enqueue-then-mark would let sweep 1 enqueue both webhooks, the mark
+// fail, and sweep 2 re-enqueue both → 4 deliveries (duplicates on new,
+// un-dedupable delivery ids). Required: 2 deliveries, one per webhook.
 func TestSweep_FiredMarkFlaky_NoDuplicateDelivery(t *testing.T) {
 	acct := uuid.New()
 	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
@@ -545,8 +545,8 @@ func TestConditionCrossed(t *testing.T) {
 // running the same code — an operator who started a second aggregator, an
 // R2/R3 standby, or the overlap window of a rolling deploy — take that
 // snapshot before either has fired, so BOTH pass the gate on the same
-// crossing. Pre-fix the mark was an unconditional UPDATE, so both also
-// "succeeded" and both fanned out: the customer got two webhooks per
+// crossing. An unconditional UPDATE mark would let both also
+// "succeed" and both fanned out: the customer got two webhooks per
 // crossing, with different delivery ids they cannot dedup on
 // X-StellarIndex-Delivery-Id.
 //

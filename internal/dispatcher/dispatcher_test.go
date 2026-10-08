@@ -219,8 +219,7 @@ func (f *fakeNonDirectionalReporter) SkippedNonDirectional() int { return f.skip
 
 // TestStats_NonDirectionalSwapsSurfacedViaDuckTypedInterface pins that the
 // soroswap/sushiswap_v3 SkippedNonDirectional() getter had zero production
-// callers repo-wide — Stats() never collected it. Before the fix this field
-// did not exist at all.
+// callers repo-wide — Stats() never collected it.
 func TestStats_NonDirectionalSwapsSurfacedViaDuckTypedInterface(t *testing.T) {
 	dec := &fakeNonDirectionalReporter{
 		fakeDecoder: fakeDecoder{name: "soroswap", topic0: "T"},

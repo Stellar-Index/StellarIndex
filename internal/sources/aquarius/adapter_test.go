@@ -327,9 +327,9 @@ func TestDecoder_Decode_MalformedClosedAtReturnsError(t *testing.T) {
 // TestDecoder_Decode_UnrecognizedKindFailsClosed pins Q041: Decode()'s
 // switch must fail closed on a kind it has no explicit case for, not
 // force it through decodeTrade just because the topic shape happens to
-// resemble one. Before the fix, an event whose topic[0] classify()
+// resemble one. An event whose topic[0] classify()
 // doesn't recognize — but which otherwise has trade-shaped topics/body —
-// was silently decoded as a genuine trade (ADR-0035 violation).
+// must not be silently decoded as a genuine trade (ADR-0035 violation).
 func TestDecoder_Decode_UnrecognizedKindFailsClosed(t *testing.T) {
 	d := NewDecoder()
 	tokenIn := makeContractStrkey(t, 0x01)

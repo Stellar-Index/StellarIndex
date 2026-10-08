@@ -1309,7 +1309,7 @@ func TestTradeUSDVolumeViaFX_LegCrossCheck(t *testing.T) {
 	// requires the uncross-checkable single-leg print to be BOUNDED. Here
 	// 292,247.4 quote units x $549.43 ≈ $160.5M — above
 	// singleLegMaxUSDVolume — so the value is refused (NULL) rather than
-	// served. (Before the fix this returned the ~$160M poisoned figure.)
+	// served. (Serving it would publish the ~$160M poisoned figure.)
 	single := stubFXResolver{prices: map[string]string{quote.String(): "549.43"}}
 	if got3 := tradeUSDVolumeViaFX(context.Background(), tr, md, single); got3 != nil {
 		t.Fatalf("single-leg above ceiling: want NULL (refused), got %q", *got3)

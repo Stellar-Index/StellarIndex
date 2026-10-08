@@ -115,7 +115,7 @@ func TestCheckSACSeedShrink(t *testing.T) {
 	full := timescale.SACBalanceSeedSourceFullHistory
 	prev := timescale.SACBalanceSeedProvenance{ContractID: "CPHO", Source: full, HoldersSeeded: 45}
 
-	// 6 live + 39 retracted accounts for every previously-seeded holder.
+	// 6 live + 39 retracted accounts for every already-seeded holder.
 	if err := checkSACSeedShrink(prev, full, &sacSeedTally{holders: 6, retracted: 39}); err != nil {
 		t.Errorf("retracted holders accounted for: err = %v, want nil", err)
 	}

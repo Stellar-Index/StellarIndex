@@ -655,9 +655,9 @@ func TestAsyncSink_StartTwice_IsNoOp(t *testing.T) {
 
 // TestAsyncSink_PushEventAfterStop_NeverOrphansARow pins the
 // shutdown-race accounting: a PushEvent that arrives once Stop has
-// fired must be counted dropped, never enqueued. Before the fix the
-// blocking select had both a free slot and a closed stopping ready and
-// picked one at random — roughly half the late rows landed in a channel
+// fired must be counted dropped, never enqueued. A blocking
+// select with both a free slot and a closed stopping ready picks
+// one at random — roughly half the late rows would land in a channel
 // nobody reads again, counted neither written, dropped nor lost.
 func TestAsyncSink_PushEventAfterStop_NeverOrphansARow(t *testing.T) {
 	t.Parallel()
@@ -761,8 +761,8 @@ func (w *poisonWriter) InsertSorobanEventsBatch(_ context.Context, rows []Row) e
 
 // TestAsyncSink_FlushBatch_PermanentFaultIsolatesPoisonRow pins the
 // batch-splitting contract: one poison row in a batch loses exactly that
-// row. Before the fix the whole batch was abandoned — BatchSize-1 good
-// rows counted lost and missing from soroban_events for one bad one.
+// row. Abandoning the whole batch would count BatchSize-1 good
+// rows lost and missing from soroban_events for one bad one.
 func TestAsyncSink_FlushBatch_PermanentFaultIsolatesPoisonRow(t *testing.T) {
 	t.Parallel()
 

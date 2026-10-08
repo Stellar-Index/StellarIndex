@@ -123,7 +123,7 @@ func (h *dropExpireHook) ProcessPipelineHook(next redis.ProcessPipelineHook) red
 // window uses a different key suffix), so every dropped EXPIRE leaks one
 // permanent key into the throttle namespace, unbounded over time.
 //
-// Post-fix INCR and EXPIRE are one Lua EVAL: Redis runs both or neither,
+// INCR and EXPIRE must be one Lua EVAL: Redis runs both or neither,
 // and a hook that kills standalone EXPIREs cannot separate them.
 func TestFixedWindowCounter_TTLSurvivesDroppedExpire(t *testing.T) {
 	rdb, mr := newRedis(t)

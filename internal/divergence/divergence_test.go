@@ -656,9 +656,8 @@ func TestCompare_PanicInName(t *testing.T) {
 // the returned quote against observedAt using the same discipline as
 // the Chainlink and on-chain oracle references.
 //
-// Pre-fix the reference ignored observedAt entirely and had no
-// upstream timestamp at all, so a price stamped hours ago sailed
-// straight into the divergence median.
+// Guards against ignoring observedAt, which would let a price
+// stamped hours ago into the divergence median.
 func TestCoinGecko_StalenessGate(t *testing.T) {
 	// Fixed bucket-end comparison time the aggregator passes through.
 	observedAt := time.Unix(1_770_000_000, 0).UTC()

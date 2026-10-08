@@ -11,9 +11,8 @@ import (
 // the caller — and must be surfaced through the dispatcher's duck-typed
 // reporter interface (mirroring EvictedOrphans) so
 // internal/pipeline.emitDispatcherMetricDeltas can wire it to
-// obs.SourceDecodeErrorsTotal. Before the fix, Decoder had no
-// UnknownContractDrops method at all: this drop had zero non-test
-// callers reading it.
+// obs.SourceDecodeErrorsTotal. Decoder must expose an
+// UnknownContractDrops method so this drop has a reader.
 func TestDecoder_UnknownContractDrops_countsSameAsSkippedUnknownPair(t *testing.T) {
 	d := NewDecoder()
 	pair := makeContractStrkey(t, 0x20)
@@ -37,8 +36,8 @@ func TestDecoder_UnknownContractDrops_countsSameAsSkippedUnknownPair(t *testing.
 // bare `sync` (deposit/withdraw/skim traffic, README Q2) that ages out
 // of the correlation buffer with no preceding swap must NOT inflate
 // EvictedOrphans — that counter is the real-loss signal (a swap that
-// never got its sync) and must stay legible. Before the fix, both
-// classes fed the single `evictedOrphans` counter.
+// never got its sync) and must stay legible. Both classes must not feed
+// a single `evictedOrphans` counter.
 func TestDecoder_EvictedOrphans_excludesBareSyncEvictions(t *testing.T) {
 	d := NewDecoder()
 	pair := makeContractStrkey(t, 0x21)

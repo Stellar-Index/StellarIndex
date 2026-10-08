@@ -153,11 +153,11 @@ func work() {}
 // TestScan_NamedCalleeGoStmtsAreWalked: a `go` statement
 // resolved to a named callee is checked for whether the callee itself
 // defers the guard, but the callee may start further goroutines of its
-// own — in another file of the same package, as here. Before the fix,
-// ScanFile only parsed the ONE file it was given, so `workers.go`'s own
-// `go` statements were never even visited, let alone required to be
+// own — in another file of the same package, as here. If
+// ScanFile only parsed the ONE file it was given, `workers.go`'s own
+// `go` statements would never be visited, let alone required to be
 // guarded: `sites found: 1` with the guarded helper reporting Recovers
-// and the two unrecovered goroutines it starts invisible. The fix must
+// and the two unrecovered goroutines it starts invisible. ScanFile must
 // surface all three sites, attributing the two inner ones to workers.go.
 func TestScan_NamedCalleeGoStmtsAreWalked(t *testing.T) {
 	dir := filepath.Join("testdata", "namedcallee_gostmts")
