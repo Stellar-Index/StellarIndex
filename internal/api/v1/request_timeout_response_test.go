@@ -41,10 +41,10 @@ func (blockingLendingReader) BlendReserveConfigs(ctx context.Context, _ string) 
 // when the RequestTimeout middleware's own deadline — not a tighter
 // per-handler one — is what fires.
 //
-// Pre-fix this produced a BODYLESS HTTP 200: clientAborted keyed on
+// The failure mode is a BODYLESS HTTP 200: clientAborted keyed on
 // `r.Context().Err() != nil`, which the middleware's deadline satisfies
-// exactly as a client disconnect does, so the handler returned silently
-// and net/http emitted an implicit 200 with content-length 0. A
+// exactly as a client disconnect does, so the handler returns silently
+// and net/http emits an implicit 200 with content-length 0. A
 // dashboard reads resp.ok as true, parses an empty body, and renders
 // "0 reserves / $0 TVL" for a pool holding real supply — a wrong answer
 // served with full confidence, which is worse than an error.

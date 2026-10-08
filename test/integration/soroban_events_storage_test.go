@@ -79,8 +79,8 @@ func TestSorobanEventsBatchInsert(t *testing.T) {
 // DB-round-trip guard: a row carrying MORE than four topics must
 // persist through InsertSorobanEventsBatch → topics_xdr (migration
 // 0114) → StreamSorobanEvents with EVERY topic byte-for-byte intact,
-// in order. Pre-fix (four fixed topic_0..3 columns only) topics 5+ had
-// nowhere to land; post-fix the topics_xdr bytea[] column keeps them
+// in order. A schema of four fixed topic_0..3 columns only would leave topics 5+
+// nowhere to land; the topics_xdr bytea[] column keeps them
 // all.
 func TestSorobanEventsBatchInsert_PreservesFiveOrMoreTopics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

@@ -27,10 +27,10 @@ import (
 // One pair, two windows frozen: 1h escalated (ADR-0019 holds it "until
 // manual unfreeze"), 5m about to recover. Redis loses the marker — the one
 // situation the 0163 per-window durable ladders exist for — and the 5m
-// window releases. Pre-fix the release fell through to Writer.Clear, whose
-// SaveLadder(State{}) NULLs hold_until AND window_ladders: the row went
+// window releases. The release must not fall through to Writer.Clear, whose
+// SaveLadder(State{}) NULLs hold_until AND window_ladders: the row would go
 // from `"3600": {escalated, extensions_used: 4}` to no ladder at all, and
-// the 1h window rehydrated nothing.
+// the 1h window would rehydrate nothing.
 func TestFreezeReleaseWindow_RedisLossKeepsEscalatedSibling(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

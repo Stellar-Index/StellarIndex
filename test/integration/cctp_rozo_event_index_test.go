@@ -22,7 +22,7 @@ import (
 //
 // Migration 0112 adds event_index to the key. This test inserts two
 // same-type events that differ ONLY in event_index and asserts BOTH land.
-// Before the fix, COUNT is 1 (collapsed); after, it is 2.
+// If the key omitted event_index, COUNT would be 1 (collapsed); it must be 2.
 func TestCCTPRozoEventIndex_SameTypeEventsInOneOpDoNotCollapse(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

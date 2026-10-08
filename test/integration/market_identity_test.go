@@ -15,9 +15,9 @@ import (
 // readers against one market stored in both directions: sdex writes
 // XLM/USDC and USDC/XLM, soroswap only XLM/USDC, aquarius only
 // USDC/XLM. Every reader must see ONE market holding all four trades.
-// Pre-fix: the asset markets count was 2, top_markets listed USDC twice,
-// the per-source asset breakdown gave sdex markets_24h 2, and the pair
-// breakdown dropped aquarius entirely and half of sdex.
+// Guards against an asset markets count of 2, top_markets listing USDC twice,
+// the per-source asset breakdown giving sdex markets_24h 2, and the pair
+// breakdown dropping aquarius entirely and half of sdex.
 func TestMarketIdentity_BothOrientationsAreOneMarket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

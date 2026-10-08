@@ -325,12 +325,12 @@ func TestUsageTracker_StreamNoTicksAfterClose(t *testing.T) {
 // UsageTracker's recover defer is the FIRST call to once.fire —
 // classing the request as a platform 5xx that COR-05 forbids billing.
 //
-// Before the fix, that recover defer ran BEFORE the streaming block's
-// close(done) (defers are LIFO and close(done) was registered first,
-// hence ran second), so meterOpenStream's ticker kept running for a
-// window after once.fire had already flipped fired()==true. A tick
-// landing in that window read rec's still-default 200 status (a panic
-// never sets it) and billed it as OK — eating quota on a request this
+// If that recover defer runs BEFORE the streaming block's
+// close(done) (defers are LIFO, so close(done), registered first, runs
+// second), meterOpenStream's ticker keeps running for a
+// window after once.fire has already flipped fired()==true. A tick
+// landing in that window reads rec's still-default 200 status (a panic
+// never sets it) and bills it as OK — eating quota on a request this
 // same defer had just classed as non-billable. A 1µs meter interval
 // plus many trials makes the (otherwise sub-microsecond) window
 // observable: without the guard this leaks on about 113 of 3000 trials
@@ -464,8 +464,8 @@ func TestUsageTracker_StreamPanicDuringTickBillsNothing(t *testing.T) {
 		t.Fatal("after-response pool did not drain in time")
 	}
 
-	// Pre-fix, the handler does not wait for meterOpenStream at all, so
-	// reqDone closing proves nothing about whether the released tick's
+	// A handler that does not wait for meterOpenStream at all makes
+	// reqDone closing prove nothing about whether the released tick's
 	// own IncrementBy call has landed yet — poll rather than assume it.
 	// This does not reintroduce timing-dependence in the race itself
 	// (that part is already forced deterministically by the hook above):

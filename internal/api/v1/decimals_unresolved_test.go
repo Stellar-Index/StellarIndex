@@ -18,7 +18,7 @@ import (
 
 // A FAILED decimals() read (error or deadline) is not "no declaration": the
 // scale is unknown, and every surface below publishes a figure scaled by it.
-// Pre-fix each one silently served the default 7 as if it had been read.
+// None may silently serve the default 7 as if it had been read.
 
 var errDecimalsRead = errors.New("clickhouse: context deadline exceeded")
 

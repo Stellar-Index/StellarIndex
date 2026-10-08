@@ -136,8 +136,8 @@ func TestClassicRowTakesItsListingPriceUnderTheSACForm(t *testing.T) {
 
 	// Same rule on the CNAV pre-check: a listing price is an observation
 	// and the prospectus NAV is a rule, so a SAC-listed CNAV share class
-	// takes the listing. Before the fix the classic-only key missed the
-	// SAC row and the prospectus figure was published over a live price.
+	// takes the listing. A classic-only key would miss the
+	// SAC row and publish the prospectus figure over a live price.
 	const gBENJI = "gBENJI-GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"
 	if _, ok := rwa.ConstantNAV("gBENJI", "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"); !ok {
 		t.Fatal("fixture drift: gBENJI is no longer a CNAV-bound pair; pick another")

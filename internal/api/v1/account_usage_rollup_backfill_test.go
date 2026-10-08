@@ -11,9 +11,9 @@ import (
 // rollup worker never produced a row for at all (an outage gap, not
 // a legitimate zero-traffic day) must be filled in from the legacy
 // per-day reader rather than silently dropped from the trailing
-// 30-day window. Pre-fix, readUsageRollup returned ok=true as soon
-// as len(days) > 0 and handleAccountUsage never consulted the legacy
-// reader again, so a gap day just vanished from the response.
+// 30-day window. Guards against readUsageRollup returning ok=true as soon
+// as len(days) > 0, which stops handleAccountUsage consulting the legacy
+// reader and makes a gap day vanish from the response.
 func TestAccountUsage_RollupBackfillsMissingDay(t *testing.T) {
 	rollup := &fakeUsageRollupReader{rows: []v1.UsageEndpointDay{
 		{Date: "2026-07-03", Endpoint: "/v1/price", Requests: 40, Errors: 1, Throttled: 7},

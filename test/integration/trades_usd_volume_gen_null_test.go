@@ -120,7 +120,7 @@ func TestUSDVolumeGenerationAwareNullPreservation(t *testing.T) {
 
 	// Writer B, gen 0: same PK, but its resolver hits a transient fault →
 	// computes NULL. At EQUAL generation the fix must PRESERVE $5.00.
-	// Pre-fix (`usd_volume = EXCLUDED.usd_volume`) this row goes NULL.
+	// Overwriting with `usd_volume = EXCLUDED.usd_volume` would null this row.
 	res.fail = true
 	trB := mkIntegrationTrade(source, nonce, ts, pair, 1_000_000_000, 25_000_000)
 	if err := store.InsertTrade(ctx, trB); err != nil {

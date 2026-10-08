@@ -96,7 +96,7 @@ func TestVWAPUSDFXResolver_QueriesPrices1m(t *testing.T) {
 // "price" is 20000 USDC per EURC — an artifact of dividing two tiny
 // integers, worth $0.004.
 //
-// Pre-fix this returns "20000". Post-fix the crumb is excluded and the
+// Without the floor this returns "20000". With it the crumb is excluded and the
 // real bucket's 1.085 is served.
 //
 // The dust bucket is deliberately made of trades that DO carry

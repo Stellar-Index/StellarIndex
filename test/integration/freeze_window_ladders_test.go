@@ -34,10 +34,10 @@ import (
 // Redis is then lost and the aggregator restarts, so the durable record is
 // the only authority left.
 //
-// Pre-fix that record was one ladder per (asset, quote), i.e. the LAST
-// writer's. The 1h window rehydrated the 5m window's ten-minute,
-// zero-extension ladder — an escalated freeze silently resumed
-// auto-unfreezing — and the 24h window, never frozen, rehydrated it too.
+// A record of one ladder per (asset, quote) is the LAST writer's: the 1h
+// window would rehydrate the 5m window's ten-minute,
+// zero-extension ladder — an escalated freeze silently resuming
+// auto-unfreezing — and the 24h window, never frozen, would rehydrate it too.
 func TestFreezeWindowLadders_EscalationSurvivesSiblingWrite(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

@@ -247,8 +247,8 @@ func TestOracleLastPrice_FallbackSetsStaleFlag(t *testing.T) {
 // TestOracleLastPrice_AliasResolvesXLM pins, on the SEP-40
 // lastprice surface: querying asset=native must resolve a snapshot
 // published under the crypto:XLM alias key (and vice-versa), exactly
-// like handlePrice's primary read. Pre-fix the SEP-40 surface queried
-// the literal form only, returning 404 while /v1/price served fresh.
+// like handlePrice's primary read. Querying only the literal form would
+// return 404 while /v1/price serves fresh.
 func TestOracleLastPrice_AliasResolvesXLM(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	reader := &stubPriceReader{
@@ -586,7 +586,7 @@ func TestOraclePrices_HappyPath(t *testing.T) {
 // TestOraclePrices_AliasResolvesXLM is the /v1/oracle/prices analogue of
 // TestOracleLastPrice_AliasResolvesXLM. Only the crypto:XLM alias
 // form has closed buckets (CEX trades write it); the literal
-// native/fiat:USD key has none. Pre-fix, recentClosedWithStablecoinFallback
+// native/fiat:USD key has none. recentClosedWithStablecoinFallback must not
 // read only the literal form and returned an empty array here even though
 // /v1/oracle/lastprice?asset=native (which does loop aliases) would have
 // served a price for the same underlying market.

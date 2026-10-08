@@ -19,7 +19,7 @@ import "testing"
 // platform decided must publish none (MSP-05).
 //
 // Both are now one predicate with two callers. This table is the
-// contract; the cases marked RED-PRE-FIX fail against the old code.
+// contract; the declared-peg case guards the detail path against testing less.
 func TestPriceSeriesPublishable_OnePredicateForBothPaths(t *testing.T) {
 	usd := "0.65"
 	for _, tc := range []struct {
@@ -38,9 +38,9 @@ func TestPriceSeriesPublishable_OnePredicateForBothPaths(t *testing.T) {
 			publishable: false,
 		},
 		{
-			// RED PRE-FIX on the detail path: withholdPriceSeriesWhenUnpriced
-			// tested only PriceUSD != nil, so this returned true there while
-			// the listing said false.
+			// Guards the detail path: withholdPriceSeriesWhenUnpriced must not test
+			// only PriceUSD != nil, or it returns true here while the listing says
+			// false.
 			name:        "declared peg publishes nothing (MSP-04)",
 			detail:      AssetDetail{PriceUSD: &usd, PriceBasis: priceBasisDeclaredPeg},
 			publishable: false,

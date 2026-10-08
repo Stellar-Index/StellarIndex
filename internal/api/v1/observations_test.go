@@ -273,10 +273,10 @@ func TestObservations_EmptyArrayWhenNoData(t *testing.T) {
 // the empty result is genuinely confusing when /v1/price WOULD
 // have served a value via the same Redis VWAP fallback.
 //
-// Pre-fix (verified live on r1): an empty `data: []` and
-// `triangulated: false` looked indistinguishable from "this pair
-// is unpriced", which sent integrators chasing nonexistent data.
-// Now the handler probes the triangulation cache when its own
+// Without a hint (verified live on r1), an empty `data: []` and
+// `triangulated: false` look indistinguishable from "this pair
+// is unpriced", which sends integrators chasing nonexistent data.
+// The handler probes the triangulation cache when its own
 // result is empty + no source filter, and surfaces
 // `triangulated: true` so consumers know to query /v1/price for
 // the proxied value.

@@ -18,10 +18,10 @@ import (
 // TimescaleDB: an XLM market keyed under `crypto:XLM` (as every CEX feed
 // writes it) MUST surface for a ?asset=native query, and vice-versa.
 //
-// Pre-fix distinctPairsCommon matched the asset filter with a scalar
-// `base_asset = $5 OR quote_asset = $5`, so ?asset=native returned zero
+// distinctPairsCommon must not match the asset filter with a scalar
+// `base_asset = $5 OR quote_asset = $5`: ?asset=native would return zero
 // rows for a crypto:XLM-keyed market — the exact undercount this test
-// pins. Post-fix the filter binds the full alias set and matches with
+// pins. The filter binds the full alias set and matches with
 // ANY-membership on each leg.
 func TestAPI_MarketsAssetFilter_XLMAliasComplete(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -70,7 +70,7 @@ func TestAPI_MarketsAssetFilter_XLMAliasComplete(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
-	// Query the OTHER alias form. Pre-fix: 0 rows (crypto:XLM omitted).
+	// Query the OTHER alias form; a scalar filter returns 0 rows (crypto:XLM omitted).
 	var env struct {
 		Data []v1.Market `json:"data"`
 	}

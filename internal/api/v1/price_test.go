@@ -647,11 +647,11 @@ func TestPrice_StablecoinFiatProxy_NonUSDQuoteSkips(t *testing.T) {
 // TestPrice_StablecoinFiatProxy_CryptoTickerSelfPeg pins P2-4(b):
 // the abstract global-ticker form of a stablecoin (crypto:USDC,
 // crypto:EURC) priced in the fiat it tracks must return ~$1, not
-// 404. Pre-fix, /v1/price?asset=crypto:USDC&quote=fiat:USD 404'd
-// because tryStablecoinFiatProxy only recognised the classic-issued
+// 404 (/v1/price?asset=crypto:USDC&quote=fiat:USD), even though
+// tryStablecoinFiatProxy alone recognises only the classic-issued
 // peg (USDC-GA5Z…) in usdPeggedClassics — the crypto:<TICKER> form
-// the catalogue + explorer use fell through. The aggregate.FiatProxy
-// arm now covers it (and the EUR/MXN pegs) WITHOUT any operator
+// the catalogue + explorer use falls through it. The aggregate.FiatProxy
+// arm covers it (and the EUR/MXN pegs) WITHOUT any operator
 // usd_pegged_classic_assets config, so this server wires none.
 func TestPrice_StablecoinFiatProxy_CryptoTickerSelfPeg(t *testing.T) {
 	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
@@ -1429,10 +1429,10 @@ func TestPrice_FreezeErrorIsBestEffort(t *testing.T) {
 
 // TestPrice_FreezeErrorLeavesSingleSourceUnasserted — a freeze lookup
 // error means the freeze status is UNKNOWN, not "confirmed not
-// frozen". Before the fix, the error silently fell into the
-// not-frozen branch and single_source was derived from the raw
-// source count as if the freeze check had actually cleared the pair
-// — asserting a fact (single-sourced AND confirmed unfrozen) the
+// frozen". The error must not silently fall into the
+// not-frozen branch with single_source derived from the raw
+// source count as if the freeze check had cleared the pair
+// — that asserts a fact (single-sourced AND confirmed unfrozen) the
 // failed read never established. A single-source bucket must not
 // claim single_source=true off that silent assumption, and
 // frozen_checked must reflect the failed read.

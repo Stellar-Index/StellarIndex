@@ -426,7 +426,7 @@ func TestSEP41GenesisBaseline_LifetimeSupplyEndToEnd(t *testing.T) {
 		t.Fatalf("insert sac soroban burn: %v", err)
 	}
 
-	// Pre-fix state: no baseline seeded → negative total → benign
+	// No baseline seeded yet → negative total → benign
 	// missing-baseline sentinel (NOT a paging compute_error).
 	if seeded, err := store.SEP41GenesisBaselineSeeded(ctx, sacContract); err != nil || seeded {
 		t.Fatalf("pre-seed SEP41GenesisBaselineSeeded = %v, %v; want false, nil", seeded, err)
@@ -715,7 +715,7 @@ func TestSEP41SupplyRollupFoldReset(t *testing.T) {
 	}
 
 	// ─── Recover a below-checkpoint row on BOTH (the re-derive's effect) ──
-	// A previously-missing mint at ledger lRecover (< last_ledger). The worker's
+	// A missing mint at ledger lRecover (< last_ledger). The worker's
 	// `> last_ledger` fold can never see it, so a bare re-advance UNDERCOUNTS.
 	for _, c := range []string{contractA, contractB} {
 		insert(c, lRecover, timescale.SEP41EventMint, 700_000, 4)
