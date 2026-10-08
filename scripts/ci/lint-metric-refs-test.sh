@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lint-metric-refs-test.sh — fixtures for the dead-alert guard.
 #
-# The load-bearing case (W8.15): a metric NAMED ONLY IN A COMMENT must
+# The load-bearing case: a metric NAMED ONLY IN A COMMENT must
 # not count as "emitted". Before the fix, is_emitted() did a plain
 # `grep -rlF` over emitter files, so a `// TODO wire stellarindex_foo`
 # Go comment or a `# HELP stellarindex_foo` .prom header made a dead

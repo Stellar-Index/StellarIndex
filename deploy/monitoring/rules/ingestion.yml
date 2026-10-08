@@ -1285,7 +1285,7 @@ groups:
             ledger, not a failure, so any nonzero increase needs eyes.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_dispatcher_tx_skips
 
-      # W8.4a: stellarindex_source_uncorroborated_calls_total (an
+      # stellarindex_source_uncorroborated_calls_total (an
       # oracle-class ContractCall declared in the auth tree but never
       # executed, so the dispatcher refused it before Decode) had a WARN
       # log but no alert, so a rejected price-forgery attempt — or a

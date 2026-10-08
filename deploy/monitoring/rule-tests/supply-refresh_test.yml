@@ -1,6 +1,5 @@
 ---
-# promtool unit tests for stellarindex_aggregator_supply_refresh_stalled
-# (W5-mon dead-alert fix).
+# promtool unit tests for stellarindex_aggregator_supply_refresh_stalled.
 #
 #   promtool test rules deploy/monitoring/rule-tests/supply-refresh_test.yml
 #

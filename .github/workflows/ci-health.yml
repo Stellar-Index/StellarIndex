@@ -3,7 +3,7 @@ name: ci-health
 # Two tripwires over this repo's own CI, sharing one open-or-update-an-
 # issue-AND-fail-the-run pattern.
 #
-# 1. MAIN-CI-RED (audit C4-16). Chronically-red `main` is a standing
+# 1. MAIN-CI-RED. Chronically-red `main` is a standing
 #    operator pain: nobody notices when main CI has been failing for
 #    hours. Queries the recent `ci` runs on main and, if main has been
 #    red past a threshold (consecutive-failure count OR wall-clock age),

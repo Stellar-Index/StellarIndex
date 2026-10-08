@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-migration-immutability-test.sh — fixture tests for the frozen-migration
-# gate (scripts/ci/lint-migration-immutability.sh, W1-migrations-5).
+# gate (scripts/ci/lint-migration-immutability.sh).
 #
 # The gate is the only thing that turns a SILENT in-place edit of a shipped
 # migration (golang-migrate never re-runs an applied version and never

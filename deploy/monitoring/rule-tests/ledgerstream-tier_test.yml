@@ -4,7 +4,7 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/ledgerstream-tier_test.yml
 #
-# These are the POSITIVE CONTROL the dead-alert class (W5-mon-3) lacked:
+# These are the POSITIVE CONTROL the dead-alert class lacked:
 # `stellarindex_ledgerstream_tier_both_missing` was structurally unable to
 # fire in production because its backing metric
 # (stellarindex_ledgerstream_tier_read_total) was a per-TieredDataStore
@@ -30,8 +30,8 @@ tests:
   # ── Positive control ─────────────────────────────────────────────
   # A TieredDataStore that keeps missing BOTH tiers: the counter climbs
   # by one every minute, so increase([5m]) stays > 0 continuously and the
-  # `for: 5m` page fires. Pre-W5-mon-3 the series simply did not exist in
-  # production, so this alert produced zero samples and could never fire.
+  # `for: 5m` page fires. Without the package-level metric the series does not exist
+  # in production, so this alert produces zero samples and never fires.
   - interval: 1m
     name: both_missing page fires on a sustained both-tiers-missing increase
     input_series:

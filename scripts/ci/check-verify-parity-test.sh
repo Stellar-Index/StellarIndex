@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-verify-parity-test.sh — fixture tests for the verify.sh ↔ CI
-# CI-wide parity gate (scripts/ci/check-verify-parity.sh, W5-ci-6).
+# CI-wide parity gate (scripts/ci/check-verify-parity.sh).
 #
 # The gate's whole value is being non-vacuous: it must FAIL when CI runs a
 # scripts/ci gate that verify.sh doesn't mirror, and PASS when they agree —

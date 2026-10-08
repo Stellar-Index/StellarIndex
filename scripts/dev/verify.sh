@@ -170,7 +170,7 @@ defer_check() {
     deferred_checks=$((deferred_checks + 1))
 }
 
-# verify.sh ↔ CI parity (W5-ci-6). The #1 cause of "green locally, red in CI"
+# verify.sh ↔ CI parity. The #1 cause of "green locally, red in CI"
 # is this gate drifting behind CI's repo-gates job. This deterministic
 # meta-check (no network) fails fast if CI runs a scripts/ci gate that the
 # steps below do not mirror — so a lint added to CI obligates adding it here.
@@ -191,7 +191,7 @@ echo "=== Pages deploy branch label ===" && ./scripts/ci/pages-deploy-branch-tes
 echo "=== Verifier image pins self-test ===" && ./scripts/ci/check-verify-image-pins-test.sh
 echo "=== Verifier image pins ===" && ./scripts/ci/check-verify-image-pins.sh
 
-# Best-effort awareness of main's CI health (W5-ci-6). ADVISORY ONLY: it needs
+# Best-effort awareness of main's CI health. ADVISORY ONLY: it needs
 # network + an authenticated gh, so it is fully wrapped and can NEVER affect
 # verify's exit code — it just warns when you're about to push onto a red main.
 if command -v gh >/dev/null 2>&1; then
@@ -635,7 +635,7 @@ lane_d() { # everything else
     echo "=== Ansible keepalived healthcheck self-test ===" && ./scripts/ci/ansible-keepalived-healthcheck-test.sh
     echo "=== HAProxy http-request timeout self-test ===" && ./scripts/ci/haproxy-http-request-timeout-test.sh
     # CI's repo-gates job runs these gate scripts too; verify.sh must mirror
-    # them or it issues a green CI won't honour (W5-ci-6, enforced by the parity
+    # them or it issues a green CI won't honour (enforced by the parity
     # check above). All are deterministic + network-free.
     echo "=== Migration backward-compat ===" && ./scripts/ci/lint-migration-compat.sh
     echo "=== Lake dedup (aggregating reads of duplicate-bearing archives) ===" && ./scripts/ci/lint-lake-dedup.sh

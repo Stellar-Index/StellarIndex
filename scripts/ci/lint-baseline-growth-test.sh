@@ -68,7 +68,7 @@ mkrepo() {
     git config commit.gpgsign false
     printf 'existing-entry\n' > scripts/ci/demo.baseline
     # Seed the two gitleaks allowlists so a later add reads as GROWTH,
-    # mirroring how they exist on the real default branch (W5-ci-2). The
+    # mirroring how they exist on the real default branch. The
     # tripwire is a line-diff grep, not a TOML/fingerprint parser, so the
     # minimal shapes below are enough to exercise it.
     printf '# fingerprints\ncafe0000cafe0000cafe0000cafe0000cafe0000:x_test.go:generic-api-key:1\n' \
@@ -136,7 +136,7 @@ unrelated() {
 }
 
 # grow_ignore <commit-message> — add a secret-scan fingerprint to
-# .gitleaksignore (W5-ci-2: the "silence a real leak in-diff" attack).
+# .gitleaksignore (the "silence a real leak in-diff" attack).
 grow_ignore() {
   (
     cd "$TMP/repo" || exit 1
@@ -360,7 +360,7 @@ grow "$(printf 'feat: legitimate, large range\n\nBaseline-Growth: scripts/ci/dem
 runGate
 expect "declared growth passes on a large commit range" 0 "no undeclared"
 
-# --- 6. .gitleaksignore fingerprint growth is caught (W5-ci-2) -------
+# --- 6. .gitleaksignore fingerprint growth is caught ----------------
 mkrepo 0
 grow_ignore "fix: quiet a scary-looking test string"
 runGate

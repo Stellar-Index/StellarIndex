@@ -9,7 +9,7 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/textfile-staleness-t586_test.yml
 #
-# Same shape as config-assertions_test.yml (W5-mon): node_exporter
+# Same shape as config-assertions_test.yml: node_exporter
 # re-serves a textfile's last values on every scrape regardless of
 # whether the producer that writes it is still running, so a metric
 # reported BY the producer (e.g. stellarindex_patroni_running) cannot

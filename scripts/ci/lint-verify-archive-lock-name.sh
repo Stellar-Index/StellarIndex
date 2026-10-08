@@ -2,7 +2,7 @@
 # lint-verify-archive-lock-name.sh — the verify-archive-tier-a.service.j2
 # timer and the runbooks' "run it manually" instructions must pass the
 # SAME job name to run-heavy-job.sh. run-heavy-job.sh's flock is keyed on
-# that first argument (C4-14 / INF-11): a manual re-run under a different
+# that first argument: a manual re-run under a different
 # name doesn't share the scheduled unit's singleton lock, so an operator
 # following the runbook mid-incident can run concurrently with the timer
 # instead of being skipped with exit 75.
