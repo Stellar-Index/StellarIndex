@@ -14,38 +14,26 @@ import (
 
 // ─── `-tier xlm-quote` and `-tier cex-fx` — the two mirror re-derives ───
 //
-// usd_volume_restamp_xlmbase.go repairs the on-chain DEX rows whose XLM
-// leg is the BASE one. These two tiers repair the
-// populations either side of it, through the same machinery: the same
-// run, the same walk, the same chunk driver, the same generation guard, the
-// same `-fill-null` opt-in, the same fail-closed dry run. What each one
-// supplies is a planner — which rows, and what the live insert path
-// computes for them.
+// These repair the populations either side of the xlm-base tier through the
+// same run, walk, chunk driver, generation guard, `-fill-null` opt-in and
+// fail-closed dry run; each supplies only a planner.
 //
-//	-tier xlm-quote (~18.0M rows on r1)
-//	  On-chain DEX trades whose QUOTE leg is XLM (`native` or the SAC
-//	  wrapper) and whose BASE leg is neither an XLM form nor a declared
-//	  USD peg. usd_volume = quote_amount/1e7 x XLM/USD at ts, through the
-//	  SAME anchor the xlm-base tier calls, handed the mirrored row
-//	  ([timescale.Store.PlanXLMQuoteUSDVolumeRestamp]).
+//	-tier xlm-quote: on-chain DEX trades whose QUOTE leg is XLM (`native` or
+//	  the SAC) and whose BASE leg is neither XLM nor a declared USD peg.
+//	  usd_volume = quote_amount/1e7 x XLM/USD at ts, through the xlm-base
+//	  tier's anchor ([timescale.Store.PlanXLMQuoteUSDVolumeRestamp]).
 //
-//	-tier cex-fx (~12.6M rows on r1)
-//	  Off-chain CEX trades quoted in a non-USD fiat currency (fiat:EUR,
-//	  fiat:GBP today). usd_volume = quote_amount/10^<source scale> x
-//	  <fiat>/USD at ts, with the rate read from `fx_quotes` — prices_1m
-//	  holds no fiat pair at all, which is why these rows are NULL. The
-//	  as-of rule and its tolerance are documented on
-//	  [timescale.Store.PlanCEXFiatUSDVolumeRestamp]; `-fx-max-staleness`
-//	  narrows it.
+//	-tier cex-fx: off-chain CEX trades quoted in a non-USD fiat.
+//	  usd_volume = quote_amount/10^<source scale> x <fiat>/USD at ts, read
+//	  from `fx_quotes` because prices_1m holds no fiat pair. The as-of rule
+//	  is on [timescale.Store.PlanCEXFiatUSDVolumeRestamp];
+//	  `-fx-max-staleness` narrows it.
 //
-// Both keep the xlm-base tier's two money rules exactly. A row the
-// anchor (or the FX feed) cannot price is REPORTED and left as it is: a
-// stored NULL stays NULL, a stored value is never blanked, and neither is
-// ever replaced by a second-choice estimate at a high derive_generation —
-// the one state a later correction cannot claw back. And neither tier
-// will price a pair with no trustworthy leg: the ~54M token/token rows on
-// production are outside both scans and both gates, deliberately (the
-// substance gate, usd_volume_restamp_legs.go).
+// Both keep the xlm-base money rules: an unpriceable row is REPORTED and left
+// as it is (NULL stays NULL, a value is never blanked or replaced by a
+// second-choice estimate at a high derive_generation, which a later
+// correction cannot claw back), and token/token pairs with no trustworthy leg
+// stay outside both scans (the substance gate, usd_volume_restamp_legs.go).
 
 // xlmQuoteRestampStore is the slice of [timescale.Store] the XLM-quote
 // mirror walks through. A seam rather than the concrete store so the walk
