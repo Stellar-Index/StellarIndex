@@ -1,61 +1,19 @@
-// Package logincodereaper bounds the `login_code_lockouts` table
-// (migration 0122) that the durable login-code lockout writes to.
+// Package logincodereaper bounds the `login_code_lockouts` table.
 //
-// # Why this exists
+// The lockout counter is keyed by an attacker-chosen email on the unauthenticated
+// `POST /v1/auth/verify-code`, so every synthetic address inserts a row that no
+// successful sign-in will ever clear: a cheap remote table-fill bounded only by the
+// per-IP rate limit. Gating the insert on live tokens would let an address prober
+// dodge the durable counter, so the insert stays unconditional and the table gets
+// retention instead.
 //
-// The lockout counter is keyed by EMAIL, and that key is
-// attacker-chosen. `POST /v1/auth/verify-code` is unauthenticated and
-// accepts any well-formed address, so:
+// Only settled rows are swept (updated_at < now()-Retention and no lock in force).
+// A live lock is never reaped; [DefaultRetention] outlasts the counting window, so
+// a swept row's next failure would have restarted at 1 anyway. A capped pass
+// re-sweeps after [DefaultDrainPause] because one IP can out-insert the hourly cap.
 //
-//	POST /v1/auth/verify-code {"email":"<random>@example.com","code":"000000"}
-//	  → no lockout row              → not locked, proceed
-//	  → chargeLoginCodeAttempt      → INSERT INTO login_code_lockouts
-//	                                  (email = <random>@example.com)
-//	  → no reserved candidates      → empty slice, no match
-//
-// That row is permanent. `ClearLoginCodeLockout` only fires on a
-// SUCCESSFUL sign-in for that exact address, which can never happen for
-// a synthetic one — nobody owns it. Without a reaper the only bound is
-// the anonymous per-IP rate limit (default 60/min, and 0 is an accepted
-// config value), which on a disk-fixed host makes this a slow, cheap,
-// remote table-fill whose first alarm would otherwise be the
-// volume-level disk page.
-//
-// Gating the INSERT on "this address has live tokens" would stop the
-// fill and re-open the hole: a grinder targeting a REAL address always has
-// live tokens, but one probing for valid addresses would dodge the
-// durable counter entirely, and the counter's whole purpose is to bound
-// guessing across mints. So the insert stays unconditional and the
-// TABLE gets a retention policy instead.
-//
-// # What is swept
-//
-// SETTLED rows only:
-//
-//	updated_at < now() - Retention  AND  (locked_until IS NULL OR locked_until <= now())
-//
-// A live lock is never reaped at any age — that is the load-bearing
-// half. Reaping the rest costs nothing: [DefaultRetention] is longer
-// than the counting window in
-// `dashboardauth.durableCodeFailureWindow`, so any row old enough to
-// sweep has already elapsed its window and its next failure would have
-// restarted the count from 1 regardless.
-//
-// The worker sweeps immediately, then every Interval, runs in the API
-// binary, and is bounded to the process root context. Unlike
-// internal/signupreaper it does not leave a capped pass's remainder for
-// the next Interval: the store deletes at most a fixed number of rows
-// per call, and one IP at the anonymous rate limit can insert more than
-// that per hour, so a capped pass re-sweeps after [DefaultDrainPause].
-//
-// # Not operator-tunable
-//
-// Deliberately no config section, unlike the signup reaper. Retention
-// here is a DoS control, and an operator disabling or lengthening it
-// re-opens the hole — the same reasoning that keeps
-// `dashboardauth.maxDurableCodeFailures` a constant. It also cannot be
-// silently disabled by an unrelated toggle: the signup reaper's
-// `enabled=false` must not switch this off too.
+// Deliberately not operator-tunable: retention is a DoS control, and neither config
+// nor the signup reaper's `enabled=false` may switch it off.
 package logincodereaper
 
 import (
@@ -77,24 +35,16 @@ const (
 	// attacker-driven, so a capped pass must not wait a full Interval:
 	// that would bound the drain rate below the insert rate.
 	DefaultDrainPause = 5 * time.Second
-	// DefaultRetention is how long a settled row is kept. MUST stay
-	// longer than dashboardauth.durableCodeFailureWindow (24 h) so a
-	// sweep can never shorten a live counting window; 48 h leaves a
-	// full window of slack and keeps a day of forensics on a grinder
-	// who has stopped.
+	// DefaultDrainPause is the gap between passes that hit the store's cap; the
+	// insert rate is attacker-driven, so waiting a full Interval would lose the race.
 	DefaultRetention = 48 * time.Hour
 )
 
-// LockoutStore is the reaper's narrow seam, satisfied by
-// *postgresstore.TokenStore. Declared here rather than widening
-// platform.TokenStore so the delete surface stays off the broad
-// interface every token fake would otherwise have to implement — same
-// reasoning as signupreaper.OrphanStore.
+// DefaultRetention MUST stay longer than dashboardauth.durableCodeFailureWindow
+// (24 h) so a sweep never shortens a live counting window; 48 h keeps a day of forensics.
 type LockoutStore interface {
-	// SweepLoginCodeLockouts deletes settled rows whose updated_at is
-	// before olderThan, returning the number removed and whether the
-	// call stopped at its per-call cap with settled rows possibly left.
-	// Never deletes a row whose lock is still in force.
+	// LockoutStore is the reaper's narrow seam, kept off platform.TokenStore so token
+	// fakes need not implement deletes (as signupreaper.OrphanStore).
 	SweepLoginCodeLockouts(ctx context.Context, olderThan time.Time) (int64, bool, error)
 	// CountLoginCodeLockouts returns the current row count.
 	CountLoginCodeLockouts(ctx context.Context) (int64, error)
@@ -159,10 +109,8 @@ func New(store LockoutStore, opts Options) *Reaper {
 	return r
 }
 
-// Run drives the sweep loop until ctx is cancelled. Sweeps once
-// immediately — a process that has just started may be inheriting a
-// table that grew while it was down — then every Interval, or after
-// DrainPause while a pass reports a backlog left behind its cap.
+// Run sweeps immediately (the table may have grown while the process was down),
+// then every Interval, or after DrainPause while a pass reports a backlog.
 func (r *Reaper) Run(ctx context.Context) error {
 	r.logger.Info("login-code-lockout reaper started",
 		"interval", r.interval, "retention", r.retention)
@@ -181,15 +129,9 @@ func (r *Reaper) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep runs one retention pass and refreshes the row-count gauge. It
-// reports true when the store stopped at its per-call cap, so settled
-// rows may remain. Exported so tests can drive a single pass
-// deterministically.
-//
-// Errors are recorded on [obs.LoginCodeLockoutErrorsTotal] and
-// swallowed: this is a background janitor, and a failed sweep is
-// retried next tick. The gauge is refreshed even when the DELETE failed
-// — that is exactly when an operator most needs to see the row count.
+// Sweep runs one pass, refreshes the row-count gauge, and reports whether the store
+// stopped at its cap. Errors are counted and retried next tick; the gauge still
+// refreshes after a failed DELETE, when the row count matters most.
 func (r *Reaper) Sweep(ctx context.Context) bool {
 	deleted, more, err := r.store.SweepLoginCodeLockouts(ctx, r.now().Add(-r.retention))
 	switch {
@@ -209,10 +151,8 @@ func (r *Reaper) Sweep(ctx context.Context) bool {
 	return err == nil && more
 }
 
-// refreshGauge publishes the current row count. A count failure is
-// counted under the same `sweep` op — from an operator's point of view
-// the janitor pass failed either way, and splitting it into a fourth
-// label would add a series nobody queries separately.
+// refreshGauge publishes the row count; a count failure counts under the `sweep`
+// op, since to an operator the janitor pass failed either way.
 func (r *Reaper) refreshGauge(ctx context.Context) {
 	n, err := r.store.CountLoginCodeLockouts(ctx)
 	if err != nil {
