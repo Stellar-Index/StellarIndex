@@ -2,10 +2,8 @@ package v1
 
 import "testing"
 
-// TestPriceSeriesPublishable_OnePredicateForBothPaths is the wave-D
-// MSP-04 / MSP-05 regression.
-//
-// The listing's sparkline attach and the detail path's series
+// TestPriceSeriesPublishable_OnePredicateForBothPaths: the listing's
+// sparkline attach and the detail path's series
 // suppression asserted the SAME product rule — "may this payload carry a
 // price-over-time claim?" — in two places, and drifted. The listing
 // excluded declared-peg rows; the detail path did not. So a declared-peg

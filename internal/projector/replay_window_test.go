@@ -322,9 +322,8 @@ func TestReplayWindow_ReadErrorFailsOpen(t *testing.T) {
 	}
 }
 
-// TestReplayWindow_ReadCarriesItsOwnDeadline pins wave-D RD-08.
-//
-// Every other p.store call in this package runs under cycleCtx; this one
+// TestReplayWindow_ReadCarriesItsOwnDeadline: every other
+// p.store call in this package runs under cycleCtx; this one
 // passed Run's ctx straight through, so a blocked read parked the watcher
 // goroutine with the gauge holding whatever it last published. A stale 1
 // keeps suppressing the lag ticket for a source nobody is replaying —

@@ -21,7 +21,7 @@ import (
 // The drop itself is correct — there is nothing sane to serve for an
 // asset we cannot name. What was wrong is that it happened with no log,
 // metric or error, so the row simply vanished from /v1/oracle/streams and
-// the explorer /oracles page (wave-D SI-OC-04).
+// the explorer /oracles page.
 //
 // The silence mattered most exactly when it was most likely: the
 // documented remediation for a mislabelled oracle row is an operator-run

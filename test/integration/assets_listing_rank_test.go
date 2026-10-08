@@ -184,7 +184,7 @@ var rankFixture = []rankAsset{
 // pagination walk passed for months while the observation-count arm
 // compared `(observation_count, asset_id) < ($n, $m)` — a same-direction
 // row constructor against a mixed-direction ORDER BY, which on a tie
-// re-selects rows already served and skips the rest (wave-D KP-1/RD-01).
+// re-selects rows already served and skips the rest.
 //
 // Kept SEPARATE from rankFixture rather than appended to it:
 // TestAssetsListing_FlaggedAndUnpricedDemotion asserts exact six-element

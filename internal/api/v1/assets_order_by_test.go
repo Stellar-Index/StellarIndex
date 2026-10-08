@@ -13,7 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Regression suite for wave-D RD-02: /v1/assets accepted `order_by`
+// Regression suite: /v1/assets accepted `order_by`
 // and never read it.
 //
 // The storage layer had supported AssetsOrderVolume24hUSDDesc all

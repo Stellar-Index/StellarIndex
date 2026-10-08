@@ -312,7 +312,7 @@ func TestLatestClosedVWAP1mQueryShape(t *testing.T) {
 }
 
 // TestRecentClosedVWAP1mForPairQueryShape extends the sargability guard
-// to the SEP-40 prices() passthrough read (wave-D UNAUTH-DOS-3).
+// to the SEP-40 prices() passthrough read.
 //
 // This query used `bucket + INTERVAL '1 minute' <= now()` — a function
 // on the indexed column, so the planner can neither use the bucket index
