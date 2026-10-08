@@ -56,5 +56,5 @@ GO-2026-6168  # CVE-2026-56869 — lib/pq/scram unbounded PBKDF2 iteration count
 GO-2026-6169  # CVE-2026-56870 — wrong .pgpass credential disclosed via hostaddr-without-host. N/A: DSN sets host=127.0.0.1 (no separate hostaddr), creds come from the DSN/env, not a .pgpass.
 GO-2026-6170  # CVE-2026-56871 — malformed backend frame length → negative slice bound → panic (DoS). Needs a malicious server / MITM sending hostile frames. Own localhost DB only.
 GO-2026-6171  # CVE-2026-56872 — malformed RowDescription/DataRow frames → panic (DoS). Needs a malicious server / MITM on the unauthenticated transport. Own localhost DB only.
-GO-2026-6172  # CVE-2026-56873 — pre-validation frame allocation → memory exhaustion / OOM (DoS). Needs a malicious server / MITM declaring multi-GB frames. Own localhost DB only.
-GO-2026-6173  # CVE-2026-56874 — pre-protocol plain-text error reader (bufio.Reader.ReadString(0), no byte limit) → unbounded buffering / OOM (DoS). Needs a malicious server / MITM. Own localhost DB only.
+GO-2026-6172  # CVE-2026-56873 — pre-validation frame allocation → memory exhaustion / OOM (DoS). Needs a malicious server / MITM declaring multi-GB frames. Own localhost DB only. [originally-scoped]
+GO-2026-6173  # CVE-2026-56874 — pre-protocol plain-text error reader (bufio.Reader.ReadString(0), no byte limit) → unbounded buffering / OOM (DoS). Needs a malicious server / MITM. Own localhost DB only. [originally-scoped]
