@@ -41,7 +41,7 @@ import (
 //  1. FIAT assets → `fx_quotes`, not prices_1m. prices_1m holds
 //     crypto markets only, so a fiat:EUR quote could never resolve
 //     here at all. [VWAPUSDFXResolver.usdPriceForFiat].
-//  2. Direct `<asset>/<peg>` VWAP in prices_1m — the original path.
+//  2. Direct `<asset>/<peg>` VWAP in prices_1m.
 //     [VWAPUSDFXResolver.queryDB], which loops the asset's canonical
 //     alias forms against the alias-complete peg set.
 //  3. The XLM bridge — `<asset>/XLM x XLM/USD`. Most Stellar tokens

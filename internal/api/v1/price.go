@@ -722,9 +722,8 @@ func (s *Server) lookupCachedVWAPAliased(ctx context.Context, bases, quotes []ca
 // the `diverged` (contributing routes disagreed) and `rerouted` (a
 // configured chain leg was dry, the price came via a substitute path)
 // signals the aggregator persists to [cachekeys.VWAPCompositeMeta].
-// Those signals were written on every router-priced target but had NO
-// reader until now (the key's own doc comment falsely claimed this
-// handler consumed them).
+// This handler is the only reader of those signals, which the aggregator
+// writes on every router-priced target.
 //
 // Modelled as an optional interface (the [proxyPairGate] idiom) rather
 // than an extension of [TriangulatedPriceLooker] so a looker that

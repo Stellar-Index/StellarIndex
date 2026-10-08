@@ -223,7 +223,7 @@ func TestBucket_DenyHoldsWhenTTLReportsNegative(t *testing.T) {
 	}
 
 	// Derive the bucket key the same way Take() does and strip its
-	// TTL. Under the old code, the next Take() would see retryTTL=0
+	// TTL. Without TTL handling, the next Take() would see retryTTL=0
 	// and incorrectly report Allowed=true even though count > max.
 	minute := fakeNow.Unix() / int64(time.Minute.Seconds())
 	bucketKey := "rl:k:" + strconv.FormatInt(minute, 10)
@@ -387,9 +387,9 @@ func TestBucket_DwellTime_FailsClosedAfterWindow(t *testing.T) {
 // semantic: a SINGLE Redis success must NOT reset the fail-closed dwell clock
 // (a flapping Redis with occasional successes still trips fail-closed after
 // dwellTime); only a SUSTAINED healthy streak (dwellTime of unbroken successes)
-// clears it and restores fail-open. The prior behaviour — one success wipes the
-// clock — let a flapping Redis (1 success/<dwellTime) keep this throttle, and the
-// auth brute-force + signup throttles that share the Bucket type, fail-open
+// clears it and restores fail-open. If one success wiped the clock, a flapping
+// Redis (1 success/<dwellTime) would keep this throttle, and the auth
+// brute-force + signup throttles that share the Bucket type, fail-open
 // indefinitely while Redis was effectively down.
 //
 // A faultInjector wrapping redis.Cmdable + a fake clock drive the sequences

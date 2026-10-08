@@ -44,7 +44,7 @@ import (
 //	                                the ONLY leg the old fallback could reach,
 //	                                and only when the literal pair was empty)
 //	t0+05m  native/fiat:USD         1000 base /  200 quote → 0.20  (direct fiat;
-//	                                non-empty, so the old code stopped here)
+//	                                non-empty, so no fallback applies)
 //	t0+10m  crypto:XLM/fiat:USD     2000 base /  380 quote → 0.19  (the CEX
 //	                                stream, which lives under the alias form and
 //	                                was unreachable from ?base=native)
