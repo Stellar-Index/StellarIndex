@@ -20,7 +20,7 @@ import { describe, expect, it } from 'vitest';
  *
  *   - the scam callout existed on 1 of 2 asset-detail render paths, and
  *     the path missing it was the LONG-TAIL one (wave-D EXR-01);
- *   - the SEC-10 image-host gate existed at 2 of 3 `<img>` sites.
+ *   - the image-host gate existed at 2 of 3 `<img>` sites.
  *
  * Enumerating from `src/` at test time is the point: a fourth site fails
  * on the day it is written, rather than at the next audit.
@@ -243,7 +243,7 @@ describe('trust-surface guards', () => {
     // `<script type="application/ld+json">` block; a site wired straight
     // to JSON.stringify or a hand-rolled string is a stored-XSS sink
     // (e.g. an issuer-controlled stellar.toml ORG_NAME). Deriving the
-    // sink list from source is the point, same as the SEC-10 guard above:
+    // sink list from source is the point, same as the image-URL guard above:
     // nothing else says which files carry a dangerouslySetInnerHTML block.
     const offenders = sourceFiles()
       .filter(([, body]) => isUnsafeJsonLdSink(body))

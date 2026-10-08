@@ -16,7 +16,7 @@ describe('isSafeHomeDomain', () => {
   });
 });
 
-// SEC-10: SEP-1 `image` is issuer-controlled; scheme-only validation let a
+// SEP-1 `image` is issuer-controlled; scheme-only validation let a
 // hostile issuer's URL point a viewer's browser at an arbitrary host,
 // including private/internal addresses (client-side SSRF) or plain http.
 describe('isSafePublicImageUrl', () => {

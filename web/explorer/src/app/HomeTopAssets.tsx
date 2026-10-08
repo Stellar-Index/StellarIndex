@@ -372,7 +372,7 @@ function AssetIcon({
   code?: string | null;
 }) {
   const [broken, setBroken] = useState(false);
-  // SEC-10: host-validated, https-only — scheme-only validation let a
+  // Host-validated, https-only — scheme-only validation let a
   // hostile issuer's SEP-1 image URL point every viewer's browser at an
   // arbitrary (including private/internal) host. See lib/safe-domain.ts.
   const safe = isSafePublicImageUrl(image) && !broken;

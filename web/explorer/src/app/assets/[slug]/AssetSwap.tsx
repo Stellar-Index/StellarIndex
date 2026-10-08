@@ -474,7 +474,7 @@ function SwapRow({
 function TokenIcon({ token, size = 22 }: { token: SwapToken; size?: number }) {
   const [broken, setBroken] = useState(false);
   const dim = { width: size, height: size };
-  // SEC-10: host-validated, https-only — the same gate SidebarAssetIcon
+  // Host-validated, https-only — the same gate SidebarAssetIcon
   // and HomeTopAssets apply. Scheme-only validation lets a hostile
   // issuer's SEP-1 image URL point every viewer's browser at an
   // arbitrary (including private/internal) host. This was the third of

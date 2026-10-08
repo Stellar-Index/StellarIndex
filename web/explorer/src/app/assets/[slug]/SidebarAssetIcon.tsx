@@ -20,7 +20,7 @@ export function SidebarAssetIcon({
   code: string;
 }) {
   const [broken, setBroken] = useState(false);
-  // SEC-10: host-validated, not just scheme-validated — see
+  // Host-validated, not just scheme-validated — see
   // lib/safe-domain.ts (isSafePublicImageUrl) for the threat this closes.
   const safe = isSafePublicImageUrl(image) && !broken;
   if (safe) {

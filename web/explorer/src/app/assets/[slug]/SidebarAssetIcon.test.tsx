@@ -3,7 +3,7 @@ import { render } from '@testing-library/react';
 
 import { SidebarAssetIcon } from './SidebarAssetIcon';
 
-// SEC-10: SEP-1 `image` is issuer-controlled. The old scheme-only check
+// SEP-1 `image` is issuer-controlled. The old scheme-only check
 // (/^https:\/\//) accepted ANY https host, including private/internal
 // ones — a hostile issuer could point a viewer's browser at their own
 // router or a cloud metadata endpoint via a plain <img src>.

@@ -3,8 +3,8 @@
 // Cloudflare Pages edge function — no DOM needed. `workers-og`'s
 // ImageResponse needs the CF Workers WASM loader (it errors under plain
 // Node), so it's stubbed here with a lightweight fake Response — these
-// tests target the request-gating logic (SEC-08/SEC-15/input-validation/
-// kill-switch), not satori/resvg rendering.
+// tests target the request-gating logic (type lookup, unauthenticated fetch gating,
+// input validation, kill-switch), not satori/resvg rendering.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Capture the html the function rendered so a test can assert on the
