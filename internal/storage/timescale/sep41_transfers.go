@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"strings"
 	"time"
@@ -524,6 +525,16 @@ type SEP41TransferCursor struct {
 // continuation page, not the first).
 func (c SEP41TransferCursor) IsSet() bool { return c.Ledger > 0 }
 
+// cursorIndex16 narrows a client-supplied cursor index to the smallint
+// column. Every stored index fits, so clamping keeps the keyset bound's
+// meaning where a wrap to a negative would skip the rest of that tx.
+func cursorIndex16(v uint32) int16 {
+	if v > math.MaxInt16 {
+		return math.MaxInt16
+	}
+	return int16(v)
+}
+
 // ListSEP41TransfersByAddress returns one address's SEP-41 'transfer'
 // history — both sides (from_addr = address OR to_addr = address) —
 // newest first, keyset-paged by the composite (ledger, tx_hash,
@@ -610,7 +621,7 @@ func sep41ByAddressArgs(floorLedger uint32, address, contractID string, cur SEP4
 	}
 	if cur.IsSet() {
 		n := len(args)
-		args = append(args, int64(cur.Ledger), cur.TxHash, int16(cur.OpIndex), int16(cur.EventIndex))
+		args = append(args, int64(cur.Ledger), cur.TxHash, cursorIndex16(cur.OpIndex), cursorIndex16(cur.EventIndex))
 		filterClause += fmt.Sprintf(" AND (ledger, tx_hash, op_index, event_index) < ($%d, $%d, $%d, $%d)", n+1, n+2, n+3, n+4)
 	}
 	args = append(args, limit)
