@@ -447,7 +447,7 @@ describe('RWAView', () => {
     );
     renderView();
 
-    // The population, which the page used to state nowhere at all.
+    // The population, which the page must state.
     expect(await screen.findByText(/Where the population went/)).toBeVisible();
     expect(screen.getByText('44,376')).toBeInTheDocument();
     expect(screen.getByText('14,635')).toBeInTheDocument();
@@ -1665,7 +1665,7 @@ describe('RWAView — the wider sector', () => {
   });
 
   // USDT0's case, end to end on the tile. It trades ~$106/day on
-  // Stellar, so no market cap is published for it and the tile used to
+  // Stellar, so no market cap is published for it and the tile would
   // show a floor with an invisible hole. The listing-priced figure fills
   // the hole — and the tile has to SAY that the total now mixes two
   // bases rather than quietly reading as one measurement.

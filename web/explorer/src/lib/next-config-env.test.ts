@@ -10,7 +10,7 @@
 // That is exactly how a testnet/futurenet build with NEXT_PUBLIC_NETWORK set
 // but NEXT_PUBLIC_API_BASE_URL forgotten (the git-integrated CF Pages
 // projects are hand-configured; see docs/operations/explorer-deployment.md)
-// used to serve MAINNET data under test-net chrome: next.config.mjs inlined
+// would serve MAINNET data under test-net chrome: next.config.mjs inlined
 // 'https://api.stellarindex.io' whenever the var was unset, so client.ts's
 // network-aware fallback was dead code.
 //

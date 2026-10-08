@@ -49,7 +49,7 @@ describe('AGT-06: dead-code percentage footgun removed', () => {
 describe('formatPriceSmall / formatPairPrice', () => {
   it('keeps sub-threshold precision instead of collapsing to 0.00', () => {
     expect(formatPriceSmall(150)).toBe('150.00');
-    expect(formatPriceSmall(0.0005)).toBe('0.0005'); // plain decimal since 2026-08-06
+    expect(formatPriceSmall(0.0005)).toBe('0.0005'); // plain decimal
     expect(formatPairPrice(1500)).toBe('1500.00');
   });
 
@@ -61,16 +61,16 @@ describe('formatPriceSmall / formatPairPrice', () => {
     // A negative price is bad data, not a zero — it must render
     // distinguishably (and not identically to a healthy zero-price row).
     expect(formatPriceSmall(-0.5)).not.toBe('0');
-    expect(formatPriceSmall(-0.5)).toBe('-0.5'); // plain decimal since 2026-08-06
+    expect(formatPriceSmall(-0.5)).toBe('-0.5'); // plain decimal
   });
 });
 
 describe('formatOraclePrice', () => {
-  // Extracted from oracles/OraclesView (#336) so the /oracles table and
+  // Extracted from oracles/OraclesView so the /oracles table and
   // the per-asset oracle panel cannot drift apart. These pin the exact
   // pre-extraction behaviour.
   it('keeps 4 digits at/above 1 and 6 below, on the real oracle shapes', () => {
-    // Reflector USDC at 14 decimals, Band USDC at 9 (r1, 2026-09-03).
+    // Reflector USDC at 14 decimals, Band USDC at 9 (r1).
     expect(formatOraclePrice('1.00003382630191')).toBe('1.0000');
     expect(formatOraclePrice('0.999822000')).toBe('0.999822');
     expect(formatOraclePrice('0.17892015847842')).toBe('0.178920');
@@ -175,7 +175,7 @@ describe('truncateMiddle', () => {
   });
 });
 
-// 2026-08-06 operator call: no scientific notation anywhere a price
+// Operator call: no scientific notation anywhere a price
 // renders — "$3.353e-4" is not user-friendly; "$0.0003353" is no less
 // accurate.
 describe('formatSubunitPrice', () => {
@@ -213,7 +213,7 @@ describe('formatPriceSmall — no scientific notation', () => {
   });
 });
 
-// FEC audit A3-F1/F1b: the consolidated relative/duration canonicals.
+// The consolidated relative/duration canonicals.
 describe('formatDurationShort', () => {
   it('formats second buckets without a suffix', () => {
     expect(formatDurationShort(45)).toBe('45s');

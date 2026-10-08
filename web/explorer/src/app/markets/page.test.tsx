@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest';
 
 import { metadata } from './page';
 
-// UXP-10/UXP-16: thousands of pairs trade on Stellar in a 14-day window,
+// Thousands of pairs trade on Stellar in a 14-day window,
 // but /markets only ever renders the top 100 by 24h volume (see the
 // Panel's own "top N by volume" label in MarketsTable.tsx). The page
-// metadata previously claimed "every active trading pair" — overclaiming
+// metadata must not claim "every active trading pair" — overclaiming
 // coverage the page doesn't provide.
 describe('markets/page metadata', () => {
   it('does not claim to cover every active pair', () => {

@@ -13,7 +13,7 @@ import { HomeTopAssets } from './HomeTopAssets';
 import { HomeTopMovers } from './HomeTopMovers';
 
 // The directory-flag badge and the flagged-last ranking must hold on every
-// home panel that renders /v1/assets rows, not only on /assets (#773).
+// home panel that renders /v1/assets rows, not only on /assets.
 
 const ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 const FLAGGED_ISSUER =
@@ -95,7 +95,7 @@ describe('home /v1/assets panels and directory-flagged issuers', () => {
   });
 
   it('HomeTopMovers never ranks a flagged gainer above an unflagged one', async () => {
-    // The client-side sort by change_24h_pct used to float a flagged row
+    // A client-side sort by change_24h_pct must not float a flagged row
     // with the largest move straight to Gainers #1, undoing the server's
     // flagged-last rank tier.
     mockAssets([

@@ -15,8 +15,8 @@ const USDC = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 const FAKE_USDC =
   'USDC-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA';
 
-// The oracle-class registry as /v1/sources?class=oracle serves it (r1,
-// 2026-09-03). coingecko is class=aggregator and is therefore ABSENT —
+// The oracle-class registry as /v1/sources?class=oracle serves it (r1).
+// coingecko is class=aggregator and is therefore ABSENT —
 // which is the whole point of the filter under test.
 const ORACLE_SOURCES = [
   { name: 'band', class: 'oracle' },
@@ -26,7 +26,7 @@ const ORACLE_SOURCES = [
 ];
 
 // Verbatim shapes from GET /v1/oracle/latest?asset=USDC-GA5Z… on r1
-// (2026-09-03), including the `coingecko` row the endpoint really does
+// including the `coingecko` row the endpoint really does
 // return: /v1/oracle/latest does NOT apply the class=oracle filter that
 // /v1/oracle/streams applies.
 const BAND = {

@@ -11,7 +11,7 @@ vi.mock('@/api/client', async () => {
 import { apiGet } from '@/api/client';
 import { PairsTable } from './PairsTable';
 
-// Frontend-honesty sweep: a /v1/markets timeout used to render as
+// Frontend-honesty sweep: a /v1/markets timeout must not render as
 // "No pairs found in the last 14 days" — i.e. "this exchange traded
 // nothing for two weeks". Absent ≠ empty.
 describe('PairsTable', () => {

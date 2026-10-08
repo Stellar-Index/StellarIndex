@@ -73,7 +73,7 @@ describe('stellarChainEntityUrl', () => {
   });
 
   it('uses the PLURAL path segments the site actually serves', async () => {
-    // Verified live 2026-08-27 by response size: /transactions/, /accounts/
+    // Verified live by response size: /transactions/, /accounts/
     // and /contracts/ return a server-rendered page while the singular forms
     // return the same empty SPA shell as a nonsense path. Status code cannot
     // tell them apart — the SPA answers 200 for everything.

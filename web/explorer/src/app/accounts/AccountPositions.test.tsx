@@ -244,9 +244,9 @@ describe('AccountPositions price envelope', () => {
     expect(screen.getByText('Allocation (priced)')).toBeInTheDocument();
   });
 
-  // GH-786: a holding the pricing API SAW and refused (thin market /
+  // A holding the pricing API SAW and refused (thin market /
   // flagged issuer — envelope.withheld) is a different fact from one it
-  // never observed at all. Both used to render identically as "—" /
+  // never observed at all. Both must not render identically as "—" /
   // "unpriced".
   it('labels a withheld holding distinctly from a never-observed one', async () => {
     vi.mocked(apiGet).mockImplementation(async (path: string) => {
@@ -301,7 +301,7 @@ describe('AccountPositions price envelope', () => {
 // /v1/price/batch rejects the WHOLE request on one id it cannot parse and
 // on more than 100 ids (internal/api/v1/price.go). The lake serves a
 // classic AMM pool share as a `pool:<hex>` trustline, so one LP position
-// used to erase the valuation of every other holding, silently.
+// would erase the valuation of every other holding, silently.
 const POOL_SHARE = `pool:${'ab'.repeat(32)}`;
 const FILLER_ISSUER =
   'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA';

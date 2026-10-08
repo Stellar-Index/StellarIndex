@@ -142,7 +142,7 @@ const rozoBespoke: Bespoke = {
 };
 
 // The bridge suite renders through BespokeSection: the 24h/7d/30d/90d
-// pills + the ?days= refetch live at section level (lifted 2026-07-30) and
+// pills + the ?days= refetch live at section level and
 // BridgeShowcase consumes the section's window as props.
 function renderIt(name: string, initial: Bespoke) {
   const client = new QueryClient({

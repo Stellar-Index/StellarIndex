@@ -80,9 +80,9 @@ describe('throttleDelayMs', () => {
 // A 502/503/504 is the API "temporarily unavailable" — typically mid-deploy,
 // its reverse proxy answering with no upstream. The build waits it out on the
 // SAME budget mechanism as a 429 (throttleDelayMs, without spending a transport
-// attempt). The 2026-08-26 explorer-deploy died on a single /v1/assets/LUKOIL-…
-// 503 that raced the v0.44.3 API deploy; the old 5×`500*attempt` path gave up
-// in ~5s. These pin the new budget so it can't silently regress below an
+// attempt). A single /v1/assets/LUKOIL-…
+// 503 racing an API deploy must not fail the explorer deploy; a
+// 5×`500*attempt` path gives up in ~5s. These pin the budget so it can't silently regress below an
 // API-restart window — nor grow into an unbounded CI hang.
 describe('502/503/504 unavailable-wait budget', () => {
   it('waits long enough in total to outlast an API-restart window', () => {

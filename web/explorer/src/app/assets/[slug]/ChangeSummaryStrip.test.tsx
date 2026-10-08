@@ -12,7 +12,7 @@ const row: ChangeSummary = {
   h24_delta_pct: -2.46,
   d7_delta_pct: -6.42,
   // d30 absent — sparse-history rows really omit windows (verified live
-  // 2026-07-31: /v1/changes/coin/native served h1/h24/d7 but no d30).
+  // /v1/changes/coin/native served h1/h24/d7 but no d30).
   atl_value: '0.1399',
   atl_at: '2026-05-23T08:41:00Z',
   streak_direction: 'down',

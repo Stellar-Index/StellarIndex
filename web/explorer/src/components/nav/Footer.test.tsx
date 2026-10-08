@@ -1,9 +1,9 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-// T321 — on a testnet build the API link's href correctly tracks
-// CURRENT_NETWORK, but the visible label used to be the literal string
-// 'api.stellarindex.io' regardless of network, so a testnet reader saw a
+// On a testnet build the API link's href correctly tracks
+// CURRENT_NETWORK, but the visible label must not be the literal string
+// 'api.stellarindex.io' regardless of network, so a testnet reader would see a
 // mainnet hostname next to a testnet href.
 vi.mock('next/navigation', () => ({
   usePathname: () => '/',

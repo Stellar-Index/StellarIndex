@@ -4,9 +4,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { PairPathView } from './PairPathView';
 
-// COR-09: useLastPathSegment() already swallows a failed decodeURIComponent
+// useLastPathSegment() already swallows a failed decodeURIComponent
 // and returns the raw (still-encoded-or-malformed) segment. PairPathView
-// used to decode that value a SECOND time with no guard — for a segment
+// must not decode that value a SECOND time with no guard — for a segment
 // containing an invalid percent-escape (e.g. a literal '%' not followed by
 // two hex digits), the first decode attempt inside useLastPathSegment fails
 // and is caught, but the second, unguarded decodeURIComponent call in

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
  *
  * A sibling of `network-hardcodes.test.ts` and
  * `fec-consolidation-guards.test.ts`, deliberately NOT folded into the
- * latter: that pack's header scopes it to the 2026-08-24 FEC
+ * latter: that pack's header scopes it to the FEC
  * consolidation classes, and widening it silently would make its stated
  * scope false.
  *

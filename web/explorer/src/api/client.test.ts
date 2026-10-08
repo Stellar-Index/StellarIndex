@@ -2,15 +2,15 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 
 import { apiGet, asExample, isTimeoutError, timeoutSignal } from './client';
 
-// [absence: timeouts] every runtime fetch used to have no upper bound at
-// all. timeoutSignal is the shared primitive that closes that gap while
+// [absence: timeouts] every runtime fetch needs an upper bound.
+// timeoutSignal is the shared primitive that provides it while
 // still honoring an external (e.g. TanStack Query) cancellation signal.
 describe('timeoutSignal', () => {
   it('aborts on its own after the given timeout when no external signal is passed', async () => {
     // Real timers, deliberately: the no-external path is native
     // AbortSignal.timeout(), whose internal timer vitest fake timers do
     // NOT drive on Node 22 (CI) — the fake-timer version passed locally
-    // on Node 24 and failed every CI run (ci-health flood, 2026-08-08).
+    // on Node 24 and failed every CI run.
     // 30ms timeout / 150ms wait keeps it fast and 5x-margin robust.
     const signal = timeoutSignal(30);
     expect(signal.aborted).toBe(false);

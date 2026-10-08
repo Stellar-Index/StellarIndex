@@ -11,8 +11,8 @@ vi.mock('@/api/client', async () => {
 import { apiGet } from '@/api/client';
 import { ProtocolsIndex } from './ProtocolsIndex';
 
-// #338 — /v1/protocols carries a headline `tvl_total` alongside
-// `protocols[]`, and this component's query used to `return
+// /v1/protocols carries a headline `tvl_total` alongside
+// `protocols[]`, and this component's query must not `return
 // env.data?.protocols ?? []`, dropping the money figure on the floor.
 // These tests pin that the total reaches the page, and that its ABSENT
 // case (tvl_total is `omitempty`; omitted when the reconciliation could
@@ -134,10 +134,10 @@ describe('ProtocolsIndex headline TVL total', () => {
 });
 
 // The category landings (/bridges, /yield) are one-liners over this
-// component with `lockedCategory` set. The headline stats used to be
+// component with `lockedCategory` set. The headline stats must not be
 // summed over every card in the directory while the grid below showed
 // one category, so /bridges published the whole directory's figures —
-// measured live 2026-09-03: 16 protocols and 1,146,432 events beside
+// measured live: 16 protocols and 1,146,432 events beside
 // the 2 bridges that actually emitted 2,732.
 
 const DIRECTORY = [

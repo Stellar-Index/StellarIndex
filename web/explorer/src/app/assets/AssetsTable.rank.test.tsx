@@ -72,8 +72,8 @@ const assets: Coin[] = [
 ];
 
 // Mutable so a test can put the table on a cursor-paginated page. The
-// mock previously hardcoded '' — which is why nothing caught the rank
-// column restarting at 1 on page 2 (EXR-06): every test ran on page 1.
+// mock hardcoding '' would hide the rank column restarting at 1 on
+// page 2: every test would run on page 1.
 let searchParams = new URLSearchParams('');
 
 vi.mock('next/navigation', () => ({

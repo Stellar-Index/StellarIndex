@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import os from 'node:os';
 
-// RLT-467: `DATA_DIR` used to be derived from `path.resolve(process.cwd(),
+// `DATA_DIR` must not be derived from `path.resolve(process.cwd(),
 // '..', '..')` — correct only when the process happens to be launched from
 // web/explorer. Kept in its own file so this is genuinely the first-ever
 // import of incidents.ts in this module graph: chdir before that first

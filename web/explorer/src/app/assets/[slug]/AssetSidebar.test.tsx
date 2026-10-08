@@ -12,8 +12,8 @@ function renderWithQuery(ui: ReactElement) {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 
-// 2026-08-04: the headline price must SAY what it is. Pre-fix the
-// sidebar rendered a bare dollar figure whether it came from the live
+// The headline price must SAY what it is: a bare dollar figure cannot
+// show whether it came from the live
 // closed-1m VWAP or from a build-time listing snapshot up to 7 days
 // old — indistinguishable on screen. These tests pin the provenance
 // caption semantics (text, not classes).

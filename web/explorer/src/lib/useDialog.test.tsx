@@ -4,7 +4,7 @@ import { useCallback, useState } from 'react';
 
 import { useDialog } from './useDialog';
 
-// FEC audit A6-3: useDialog restored focus to the pre-open trigger on EVERY
+// useDialog must not restore focus to the pre-open trigger on EVERY
 // close. Its popover consumers (sidebar AccountMenu) close on
 // outside-mousedown with no backdrop, so clicking from an open popover
 // straight into another control had focus yanked back off that control.
@@ -65,8 +65,8 @@ describe('useDialog focus restore (A6-3)', () => {
   });
 });
 
-// FEC audit A6-2: with the mobile drawer AND the search modal open (both on
-// document-level keydown), one Escape used to close BOTH — the user's drawer
+// With the mobile drawer AND the search modal open (both on
+// document-level keydown), one Escape must not close BOTH — the user's drawer
 // vanished underneath the search they meant to dismiss. The dialogStack means
 // Escape closes only the topmost; a second Escape then reaches the one below.
 function StackHarness() {

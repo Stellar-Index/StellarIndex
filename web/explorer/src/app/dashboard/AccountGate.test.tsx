@@ -22,12 +22,12 @@ vi.mock('next/navigation', async () => {
 import { useMe } from '@/api/hooks';
 import { AccountGate } from './AccountGate';
 
-// error handling / auth availability: AccountGate used to have only two
+// error handling / auth availability: AccountGate must not have only two
 // terminal states — loading skeleton, or signed-in — so an ERRORED auth
 // probe (timeout, network failure, 5xx) fell through the same branch as
 // "not signed in" and silently redirected to /signin, potentially
 // bouncing a legitimately signed-in visitor whose probe merely failed to
-// reach the server. It must now show a retry escape hatch instead.
+// reach the server. It must show a retry escape hatch instead.
 describe('AccountGate', () => {
   it('shows a retry escape hatch on an errored probe, and does NOT redirect to /signin', () => {
     const refetch = vi.fn();

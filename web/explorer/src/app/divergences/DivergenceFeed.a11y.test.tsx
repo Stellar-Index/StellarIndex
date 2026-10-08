@@ -82,7 +82,7 @@ function mountFeed() {
 // idle machine and not ample inside `make verify`: that runs four lanes
 // concurrently — gitleaks alone was measured at 717 % CPU — and this board
 // renders through a QueryClientProvider, so the button can appear well past a
-// second under that load. It failed exactly once that way on 2026-09-08
+// second under that load. It failed exactly once that way
 // ("Unable to find role=button and name /Plot AAA/", 1755 ms) while passing
 // 3/3 standalone and in a full 678-test standalone run, i.e. the component is
 // fine and the deadline was not.

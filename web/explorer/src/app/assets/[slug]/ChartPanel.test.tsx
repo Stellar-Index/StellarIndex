@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 import { chartQuoteFor, USDC_ASSET_ID } from './ChartPanel';
 
-// 2026-08-05 operator decision: every price chart is anchored to USDC,
+// Operator decision: every price chart is anchored to USDC,
 // never XLM (no quote toggle). USDC itself charts against fiat:USD so
 // a depeg is visible instead of a definitional flat 1.0.
 describe('chartQuoteFor', () => {

@@ -178,7 +178,7 @@ describe('toChartNumber', () => {
   });
 
   it('refuses compact-suffixed figures instead of mis-scaling them', () => {
-    // "1.2M" stripped of its suffix used to plot as 1.2 — a 10^6 error.
+    // "1.2M" stripped of its suffix would plot as 1.2 — a 10^6 error.
     expect(toChartNumber('1.2M')).toBeNull();
     expect(toChartNumber('3.4K')).toBeNull();
   });

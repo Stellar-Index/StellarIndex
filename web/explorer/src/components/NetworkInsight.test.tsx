@@ -22,9 +22,9 @@ vi.mock('@/components/charts/LineChart', () => ({
 import { apiGet } from '@/api/client';
 import { OperationMixPanel, ThroughputPanel } from './NetworkInsight';
 
-// UXP-16: the API's own contract for GET /v1/network/throughput says a
+// The API's own contract for GET /v1/network/throughput says a
 // `partial: true` bucket (today, still accumulating) must be EXCLUDED
-// from window totals and rendered distinctly — ThroughputPanel used to
+// from window totals and rendered distinctly — ThroughputPanel must not
 // fold it straight into both `total` and the chart series.
 describe('ThroughputPanel', () => {
   it('excludes the partial (still-accumulating) bucket from the total and the chart series', async () => {
