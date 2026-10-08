@@ -230,10 +230,10 @@ expect_msg "drift: names the missing index" "DRIFT account_movements.INDEX idx_a
 
 # ─── the REVERSE direction on a declared table ─────────
 # An index hand-added live during an incident (or dropped from the repo
-# but never dropped live) is an index-only divergence too. Before this it
-# was invisible: the comparison walked the repo's indices only, and the
-# "uncodified" bucket counts TABLES, so an extra index on a declared table
-# never reached any counter — rc=0, "0 divergent, 0 uncodified".
+# but never dropped live) is an index-only divergence too. It must be seen:
+# the comparison walks the repo's indices only, and the "uncodified" bucket
+# counts TABLES, so unless checked an extra index on a declared table
+# reaches no counter — rc=0, "0 divergent, 0 uncodified".
 awk '/^    INDEX idx_am_tx/ { print $0 ","; print "    INDEX idx_am_hand amount TYPE minmax GRANULARITY 4"; next } { print }' \
   "$tmp/live-ok.sql" > "$tmp/live-idx-extra.sql"
 run       "drift: index present live but never declared" 1 "$tmp/intent.sql" "$tmp/live-idx-extra.sql"
@@ -271,10 +271,10 @@ fi
 # ─── cut-over objects: operator DDL beside the intent ─────────
 # The v2 halves of an in-flight migration are declared in an operator
 # file marked `-- si-cutover-object:` and are deliberately absent from
-# tier1_schema.sql. Before this, a live v2 table landed in UNCODIFIED and
-# its ENGINE/ORDER BY were never compared — the ReplacingMergeTree
+# tier1_schema.sql. If treated as uncodified, a live v2 table's ENGINE/
+# ORDER BY would never be compared — the ReplacingMergeTree
 # version column ledger_entries_current_v2 exists to change could be
-# wrong live and produce zero signal. Now: compared like any declared
+# wrong live and produce zero signal. So: compared like any declared
 # table WHEN live; "no cut-over in progress" when absent; never counted
 # as uncodified.
 mkdir -p "$tmp/cutover"
@@ -1098,7 +1098,7 @@ fi
 # The stamp is a contract between two files that nothing else compares:
 # the ship task WRITES `-- Intent-Version:`, the script READS it. If
 # either is renamed alone the gate goes quiet — verified 0 forever, which
-# is the pre-fix behaviour wearing a metric.
+# is a silent gate wearing a metric.
 name="the ship task writes the Intent-Version stamp the script parses"
 ship_writes="$(grep -c -- '-- Intent-Version:' "$ship_task")"
 script_reads="$(grep -c -- 'Intent-Version' "$drift")"
