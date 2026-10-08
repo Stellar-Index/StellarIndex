@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# F-1205 follow-up (codex audit-2026-05-12): compute ARCHIVE_TO
+# Compute ARCHIVE_TO
 # for archive-completeness.service from the indexer cursor.
 # Uses the same DSN as the application binaries (sourced from
 # /etc/default/stellarindex) rather than peer-auth which fails

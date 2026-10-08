@@ -3,7 +3,7 @@
 # R1 durable mirror (the DR keystone the multi-region plan's off-site
 # copy will be pulled from).
 #
-# WHY: the 2026-08-21 DR review found the ratified HA plan claiming a
+# WHY: a DR review found the ratified HA plan claiming a
 # FULL-history archive while the bucket actually holds the genesis
 # partition [0,63999] plus [ARCHIVE_FROM=49984000 → tip] — the middle
 # is a DELIBERATE capacity trim (recoverable only from
@@ -34,7 +34,7 @@
 # The scan also reports ITS OWN health — galexie_archive_scan_ok,
 # _scan_listing_lines and _scan_last_run_unix, written on every run —
 # because its consumer stellarindex_galexie_archive_gap is severity
-# `page` and a failed bucket read used to produce a verdict that was
+# `page` and a failed bucket read produced a verdict that was
 # indistinguishable from a healthy one. See the read below, and
 # stellarindex_galexie_archive_scan_degraded in both rule trees.
 # Fixtures: scripts/ci/galexie-archive-contiguity-test.sh
@@ -62,7 +62,7 @@ EXPECTED_TRIM="${EXPECTED_TRIM-64000-49983999}"
 # ended in `|| true`, which threw mc's exit status away, so a read that
 # died PARTWAY through the listing handed the parser a truncated but
 # perfectly contiguous prefix — bad=0, unexpected_gaps 0, a clean
-# DR verdict derived from a failed read. Reproduced 2026-09-05 against
+# DR verdict derived from a failed read. Reproduced against
 # these exact bytes: a listing cut after 4 of 11 partitions wrote
 # `galexie_archive_unexpected_gaps 0`, byte-identical to the healthy
 # answer, and stellarindex_galexie_archive_gap (severity `page`) is the
@@ -129,7 +129,7 @@ if [ "$read_rc" -eq 0 ]; then
     # does not skip an unparseable line; it rejects the WHOLE file, so
     # that one empty field would take the scan's own health gauges down
     # together with the verdict they exist to qualify — the r1
-    # 2026-09-10 shape, where one bad value cost 127 unrelated series
+    # earlier shape, where one bad value cost 127 unrelated series
     # ~20 minutes of darkness.
     #
     # The publication guard below withholds any such line instead of

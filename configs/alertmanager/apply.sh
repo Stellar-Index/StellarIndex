@@ -26,8 +26,8 @@
 # (it keeps the config valid), but it is NEVER a legitimate thing to
 # INSTALL unasked — so applying with an empty URL is a hard error.
 #
-# Why it is fatal rather than a warning: between 2026-07-29 06:24 and
-# 2026-08-29 22:14 the secrets file supplied none of the three URLs.
+# Why it is fatal rather than a warning: once
+# the secrets file supplied none of the three URLs.
 # Every delivery path — page, ticket, default AND the deadman's switch —
 # was a black hole for 31 days. The config reloaded SUCCESSFULLY the
 # whole time, so alertmanager_config_last_reload_successful stayed 1 and

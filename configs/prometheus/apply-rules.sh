@@ -2,7 +2,7 @@
 # Apply configs/prometheus/rules.r1/ to R1 — and PROVE the rules loaded.
 #
 # A binary deploy swaps binaries only; Prometheus rule files are a
-# separate config surface. That gap bit three times on 2026-09-01:
+# separate config surface. That gap has bitten before:
 #
 #   - #462 added a ClickHouse availability alert. Merged, released,
 #     deployed — and watching nothing, because the rule file never
@@ -215,8 +215,8 @@ done
 chown -R prometheus:prometheus "$DEST" 2>/dev/null || true
 
 # Rule files DELETED from the repo must disappear from the host too.
-# This is the half that was missing on 2026-09-01: #465's alert kept
-# firing because removing it from git removed it from nowhere else.
+# Otherwise a removed rule keeps firing:
+# removing it from git removes it from nowhere else.
 for existing in "$DEST"/*.yml; do
   base="$(basename "$existing")"
   [ -f "$SRC/$base" ] || { echo "apply-rules: removing $base (no longer in the repo)"; rm -f "$existing"; }

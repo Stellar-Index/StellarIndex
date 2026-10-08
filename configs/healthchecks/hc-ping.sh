@@ -4,9 +4,9 @@
 # itself observable. Sourced by heartbeat.sh, smoke.sh and sla-probe.sh;
 # not executable on its own.
 #
-# Every ping in this directory used to end in `|| true`. That is the
+# Pings in this directory end in `|| true`. That is the
 # right exit-code contract — a monitoring wrapper must never fail the
-# unit it monitors — but it also threw away the one fact an operator
+# unit it monitors — but it also throws away the one fact an operator
 # needs when Healthchecks.io reports a check down on a host that was
 # healthy throughout: the ping never left the box.
 #

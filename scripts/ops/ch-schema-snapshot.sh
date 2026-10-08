@@ -208,7 +208,7 @@ offsite_ok=0
 # metrics block (§6) reads that variable to report offsite_configured,
 # and a host with a typo'd/loopback alias is "configured but failing"
 # (1), not "never configured" (0) — the two read as opposite fixes to
-# an on-call engineer, and blanking the target on a refusal used to
+# an on-call engineer, and blanking the target on a refusal would
 # collapse them into the wrong one.
 offsite_target_provable=1
 if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then

@@ -11,7 +11,7 @@
 # partial partitions (passed via PARTIALS env var or stdin), delete
 # them first so mirror sees them as missing and copies cleanly.
 #
-# F-0158 (2026-05-27) auto-partial detection: the partition-level set
+# Auto-partial detection: the partition-level set
 # diff has a trailing-edge blind spot. When AWS first publishes a new
 # partition, only the first few ledgers exist; we mirror those, mark
 # the partition "present", then never revisit it — leaving it stuck at
@@ -103,8 +103,8 @@ fi
 # Partition names should NOT have trailing slashes.
 PARTIALS_INPUT="${PARTIALS:-}"
 
-# aws_ls — list a prefix on the public AWS bucket with bounded retries (#475,
-# 2026-09-02). The S3 listing intermittently answers PermanentRedirect
+# aws_ls — list a prefix on the public AWS bucket with bounded retries.
+# The S3 listing intermittently answers PermanentRedirect
 # ("must be addressed using the specified endpoint") even against the
 # regional endpoint; under `set -e` one such reply killed the whole run with
 # no output — the unit alternated clean/failed hourly and a REAL failure was
@@ -207,8 +207,7 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
   # exits 2 — which pipefail promotes to the pipeline's status and set -e
   # turns into a failed unit. It only bites when the listing exceeds the
   # 64 KiB pipe buffer, so it fired on roughly a third of runs and looked
-  # random (#475; three failures in r1's journal, the last 2026-09-02
-  # 18:19:35 UTC, AFTER the be4907c5 retry helper — which cannot help,
+  # random (it persisted past the retry helper — which cannot help,
   # because the AWS call itself succeeded).
   aws_partitions > "$WORK/partitions.txt"
   head -n "$PARTIAL_CHECK_WINDOW" "$WORK/partitions.txt" \
@@ -222,7 +221,7 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
       # already incremental — it copies only the objects absent from the
       # destination — so the delete bought nothing and cost everything.
       #
-      # 2026-07-25: the delete made this pathological. The TIP partition
+      # The delete made this pathological. The TIP partition
       # is partial BY DEFINITION (it is the one currently filling), so
       # `local_n < aws_n` is permanently true for it and every hourly run
       # deleted and re-downloaded the whole thing. Measured over 62h:
@@ -249,9 +248,8 @@ mc ls "$ARCHIVE_DEST/" \
 comm -23 "$WORK/aws.txt" "$WORK/local.txt" \
   > "$WORK/missing.txt"
 # needs-work = MISSING (never mirrored) + INCOMPLETE (present but short,
-# from Phase 1b). Before 2026-07-25 the incomplete set was handled by
-# deleting those partitions so they showed up as missing here; they are
-# now unioned in directly and mirrored incrementally.
+# from Phase 1b). The incomplete set is unioned in directly and mirrored
+# incrementally rather than deleted so it shows up as missing here.
 touch "$WORK/incomplete.txt"
 sort -u "$WORK/missing.txt" "$WORK/incomplete.txt" \
   > "$WORK/needs-work.unfloored.txt"

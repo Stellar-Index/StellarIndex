@@ -13,7 +13,7 @@
 #   6. galexie/stellar-rpc captive-core dirs have < 90% disk used
 #
 # stellar-core's /info and stellar-rpc's getHealth were removed
-# 2026-04-23 along with those services themselves; see Check 1's
+# along with those services themselves; see Check 1's
 # comment block below.
 #
 # Ping URL lives in /etc/default/node-healthcheck as
@@ -52,12 +52,11 @@ add_fail() { FAILS+=("$1"); }
 
 # --- Check 1: systemd service liveness -------------------------
 # Storage + ingestion plumbing first, then the three application
-# services. Removed 2026-04-23: primary stellar-core (see
+# services. Deliberately absent: primary stellar-core (see
 # r1-deployment-state pitfall #1/#7), stellar-core-prometheus-
 # exporter (scraped primary), and stellar-rpc (redundant — our
 # indexer consumes galexie's MinIO output directly via Ingest SDK).
-# Application services added 2026-05-05 (was: silently unwatched —
-# a crashed indexer wouldn't have pinged failure here).
+# Application services are watched so a crashed indexer pings failure.
 #
 # Some services may be absent on a non-application-tier node
 # (a future read-only mirror, for example). Skip with a notice
@@ -128,7 +127,7 @@ if systemctl cat stellarindex-api >/dev/null 2>&1; then
 fi
 
 # Primary stellar-core /info probe and stellar-rpc getHealth probe
-# were both removed when we trimmed the stack on 2026-04-23. The
+# were both removed when we trimmed the stack. The
 # "is the network being followed?" signal is now exclusively the
 # galexie upload-freshness check below (Check 4.5).
 #
@@ -152,7 +151,7 @@ fi
 # (set in /etc/default/node-healthcheck, root:root 0600, no_log) that mc
 # reads with no config file at all. If mc still fails (unset/wrong
 # credentials, MinIO down and not just slow) we must flag it ourselves:
-# an empty last_iso used to mean either "mc broken" or "bucket genuinely
+# an empty last_iso can mean either "mc broken" or "bucket genuinely
 # empty" and we can't tell those apart from the listing alone, so we
 # track mc's own exit code.
 GALEXIE_MAX_LAG_SEC="${GALEXIE_MAX_LAG_SEC:-600}"
