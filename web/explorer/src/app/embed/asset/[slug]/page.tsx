@@ -10,7 +10,11 @@ import { LiveChangeChip } from '../../LiveChangeChip';
 // price_history_24h / change_1h_pct / change_7d_pct).
 import type { Coin } from '@/api/hooks';
 import { API_BASE_URL } from '@/api/client';
-import { formatCompactUnits, formatSubunitPrice } from '@/lib/format';
+import {
+  compareDecimalStrings,
+  formatCompactUnits,
+  formatPriceSmall,
+} from '@/lib/format';
 import { isCIStub } from '@/lib/buildFetch';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -292,7 +296,6 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
     );
   }
 
-  const priceNum = coin.price_usd ? Number(coin.price_usd) : null;
   const volumeText = formatCompactUnits(coin.volume_24h_usd);
   const showVolume =
     !coin.volume_24h_usd?.trim().startsWith('-') &&
@@ -338,7 +341,7 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <LivePrice
           assetId={liveAssetId}
-          initial={priceNum != null ? formatPrice(priceNum) : '—'}
+          initial={formatPrice(coin.price_usd)}
         />
         <LiveChangeChip
           entityType="coin"
@@ -442,10 +445,7 @@ function Sparkline({ points }: { points: { p?: string | null }[] }) {
   );
 }
 
-function formatPrice(n: number): string {
-  if (!Number.isFinite(n)) return '—';
-  if (n >= 1) return `$${n.toFixed(n >= 100 ? 2 : 4)}`;
-  if (n >= 0.001) return `$${n.toFixed(6)}`;
-  if (n > 0) return `$${formatSubunitPrice(n)}`;
-  return '—';
+function formatPrice(raw: string | null | undefined): string {
+  if (!raw || (compareDecimalStrings(raw, '0') ?? 0) <= 0) return '—';
+  return `$${formatPriceSmall(raw)}`;
 }

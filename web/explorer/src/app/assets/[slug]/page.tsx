@@ -15,7 +15,6 @@ import {
   formatCompact,
   formatCompactUnits,
   formatPriceSmall,
-  formatSubunitPrice,
   multiplyDecimalStrings,
 } from '@/lib/format';
 import {
@@ -1621,7 +1620,7 @@ function VerifiedCurrencyView({
   // For fiat tickers the canonical chart asset_id is `fiat:<ISO>`.
   // For crypto verified slugs we don't have a slug-level chart.
   const chartAssetID = isFiat ? `fiat:${view.ticker}` : null;
-  const priceNum = view.price_usd ? Number(view.price_usd) : null;
+  const priceText = view.price_usd ? formatPriceSmall(view.price_usd) : '—';
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <header className="space-y-3">
@@ -1637,12 +1636,9 @@ function VerifiedCurrencyView({
             {(view as GlobalAssetView & { class?: string }).class ?? 'verified'}
           </Badge>
         </h1>
-        {priceNum != null && Number.isFinite(priceNum) && (
+        {priceText !== '—' && (
           <div className="tnum text-ink font-mono text-2xl">
-            $
-            {priceNum < 0.001
-              ? formatSubunitPrice(priceNum)
-              : priceNum.toFixed(priceNum >= 100 ? 2 : 6)}
+            ${priceText}
             <span className="text-ink-muted ml-2 text-xs">USD</span>
           </div>
         )}
