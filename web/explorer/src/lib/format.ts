@@ -464,6 +464,11 @@ export function compareDecimalStrings(a: string, b: string): number | null {
   return d < 0n ? -1 : d > 0n ? 1 : 0;
 }
 
+/** positiveDecimal — the string itself when it is a decimal above zero, else null. */
+export function positiveDecimal(raw: string | null | undefined): string | null {
+  return raw != null && compareDecimalStrings(raw, '0') === 1 ? raw : null;
+}
+
 /**
  * compareDecimalDesc — a descending sort comparator over optional decimal
  * strings. Absent, empty and malformed all rank as 0, which keeps the order

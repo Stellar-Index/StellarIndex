@@ -90,7 +90,7 @@ describe('LivePairPrice — 24h change badge (K061)', () => {
       <LivePairPrice
         base="crypto:XLM"
         quote="fiat:USD"
-        initialPrice={0.17}
+        initialPrice="0.17"
         initialObservedAt={null}
         quoteIsUsd
         quoteSuffix="USD"
@@ -112,7 +112,7 @@ describe('LivePairPrice — 24h change badge (K061)', () => {
       <LivePairPrice
         base="crypto:XLM"
         quote="fiat:USD"
-        initialPrice={0.17}
+        initialPrice="0.17"
         initialObservedAt={null}
         quoteIsUsd
         quoteSuffix="USD"
@@ -146,7 +146,7 @@ describe('LivePairPrice — withheld wording + tip flags (GH-772)', () => {
       <LivePairPrice
         base="crypto:XLM"
         quote="fiat:USD"
-        initialPrice={0.17}
+        initialPrice="0.17"
         initialObservedAt={null}
         quoteIsUsd
         quoteSuffix="USD"
@@ -173,12 +173,62 @@ describe('LivePairPrice — withheld wording + tip flags (GH-772)', () => {
       <LivePairPrice
         base="crypto:XLM"
         quote="fiat:USD"
-        initialPrice={0.17}
+        initialPrice="0.17"
         initialObservedAt={null}
         quoteIsUsd
         quoteSuffix="USD"
       />,
     );
     expect(screen.getByText(/frozen/i)).toBeInTheDocument();
+  });
+});
+
+describe('LivePairPrice — exact rounding', () => {
+  it('rounds the polled price from its wire string, not a float', async () => {
+    useTipStream.mockReturnValue(null);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((input: string | URL) =>
+        Promise.resolve(
+          String(input).includes('/v1/price?')
+            ? {
+                ok: true,
+                status: 200,
+                json: async () => ({ data: { price: '2.00005' } }),
+              }
+            : { ok: false, status: 404, json: async () => ({}) },
+        ),
+      ),
+    );
+    renderPrice(
+      <LivePairPrice
+        base="crypto:XLM"
+        quote="fiat:USD"
+        initialPrice="0.17"
+        initialObservedAt={null}
+        quoteIsUsd
+        quoteSuffix="USD"
+      />,
+    );
+    // The double nearest 2.00005 sits below it, so toFixed(4) gives 2.0000.
+    expect(await screen.findByText('$2.0001')).toBeInTheDocument();
+  });
+
+  it('rounds the live tip from its wire string, not a float', () => {
+    useTipStream.mockReturnValue({
+      data: { data: { price: '2.00005' } },
+      receivedAt: Date.now(),
+    } as unknown as StreamFrame<LiveTip>);
+    renderPrice(
+      <LivePairPrice
+        base="crypto:XLM"
+        quote="fiat:USD"
+        initialPrice={null}
+        initialObservedAt={null}
+        quoteIsUsd
+        quoteSuffix="USD"
+      />,
+    );
+    expect(screen.getByText('$2.0001')).toBeInTheDocument();
   });
 });

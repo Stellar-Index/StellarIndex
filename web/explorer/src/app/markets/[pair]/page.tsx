@@ -337,7 +337,6 @@ export default async function PairPage({ params }: { params: Params }) {
 
   const baseLabel = shortAssetText(base);
   const quoteLabel = shortAssetText(quote);
-  const priceNum = price?.price ? Number(price.price) : null;
 
   // Per-source breakdown: count trades by source in the history sample.
   // (The full 24h source distribution is rendered by SourceBreakdownPanel
@@ -423,7 +422,7 @@ export default async function PairPage({ params }: { params: Params }) {
             <LivePairPrice
               base={base}
               quote={quote}
-              initialPrice={priceNum}
+              initialPrice={price?.price ?? null}
               initialObservedAt={price?.observed_at ?? null}
               quoteIsUsd={isUsdQuote(quote)}
               quoteSuffix={shortAssetText(quote)}

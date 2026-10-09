@@ -32,7 +32,7 @@ describe('AssetSidebar price provenance caption', () => {
       <AssetSidebar
         coin={coin}
         detail={null}
-        priceUSD={0.9998}
+        priceUSD="0.9998"
         priceProvenance="vwap1m"
       />,
     );
@@ -44,7 +44,7 @@ describe('AssetSidebar price provenance caption', () => {
       <AssetSidebar
         coin={coin}
         detail={null}
-        priceUSD={0.9998}
+        priceUSD="0.9998"
         priceProvenance="triangulated"
       />,
     );
@@ -56,7 +56,7 @@ describe('AssetSidebar price provenance caption', () => {
       <AssetSidebar
         coin={coin}
         detail={null}
-        priceUSD={0.9998}
+        priceUSD="0.9998"
         priceProvenance="listing"
       />,
     );
@@ -69,7 +69,7 @@ describe('AssetSidebar price provenance caption', () => {
       <AssetSidebar
         coin={coin}
         detail={null}
-        priceUSD={0.9998}
+        priceUSD="0.9998"
         priceProvenance="vwap1m"
         priceStale
       />,
