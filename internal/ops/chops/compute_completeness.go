@@ -1904,9 +1904,18 @@ func gatedPrefilter(ctx context.Context, chStreamer completeness.EventStreamer, 
 	for c := range set {
 		out = append(out, c)
 	}
+	if len(out) > maxGatedPrefilterIDs {
+		// The IN list is inlined into the SQL and would overrun ClickHouse's
+		// max_query_size (256 KiB); unscoped, Matches() still gates every event.
+		return nil, blind.Result(), nil
+	}
 	sort.Strings(out)
 	return out, blind.Result(), nil
 }
+
+// maxGatedPrefilterIDs keeps the inlined contract_id list well under 256 KiB
+// (~60 bytes per quoted strkey). sorocredit announces 139k+ children.
+var maxGatedPrefilterIDs = 2000
 
 // gatedContractSetter is the read-only half of gatedDecoder — a decoder that
 // can enumerate its gate. Split out so gatedPrefilter can read src.dec (typed

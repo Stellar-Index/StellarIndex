@@ -8,7 +8,7 @@ import {
   StreakIndicator,
   type DeltaWindow,
 } from '@/components/primitives';
-import { formatPriceSmall } from '@/lib/format';
+import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
 
 /**
  * unwrapChangeSummary — useChangeSummary returns the bare row; the
@@ -64,7 +64,11 @@ export function ChangeSummaryStrip({
 
   const windows = buildChangeWindows(summary);
   const hasAny = windows.some((w) => w.deltaPct != null);
-  const atl = summary.atl_value != null ? Number(summary.atl_value) : null;
+  const atl =
+    summary.atl_value != null &&
+    compareDecimalStrings(summary.atl_value, '0') != null
+      ? summary.atl_value
+      : null;
   const streakOk =
     summary.streak_direction != null &&
     summary.streak_direction !== 'flat' &&
@@ -92,7 +96,7 @@ export function ChangeSummaryStrip({
           acceleration={summary.acceleration}
         />
       )}
-      {atl != null && Number.isFinite(atl) && (
+      {atl != null && (
         <span
           className="bg-surface-subtle text-ink-muted inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-xs tabular-nums"
           title={`Lowest USD value observed since this asset entered the index${summary.atl_at ? ` (${summary.atl_at.slice(0, 10)})` : ''} — not an all-time low over full market history.`}

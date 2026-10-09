@@ -5,7 +5,7 @@ import { Suspense } from 'react';
 // `make web-generate-api`).
 import type { components } from '@/api/types';
 import { API_BASE_URL } from '@/api/client';
-import { formatSubunitPrice } from '@/lib/format';
+import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
 
 import { LivePrice } from '../../LivePrice';
 import { EmbedPairPathView } from './EmbedPairPathView';
@@ -156,7 +156,7 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
     fetchChart(base, quote),
   ]);
 
-  const priceNum = price?.price ? Number(price.price) : null;
+  const priceText = formatPrice(price?.price);
   const points = chart?.points ?? [];
   // 24h change: the server's own computed figure — never
   // re-derived from two /v1/chart points, which disagrees with it
@@ -189,11 +189,11 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
         </a>
       </div>
       <div className="flex items-baseline gap-2">
-        {priceNum != null ? (
+        {priceText !== '—' ? (
           <LivePrice
             assetId={base}
             quote={quote}
-            initial={formatPrice(priceNum)}
+            initial={priceText}
             format="plain"
           />
         ) : (
@@ -289,10 +289,7 @@ function Sparkline({
   );
 }
 
-function formatPrice(n: number): string {
-  if (!Number.isFinite(n)) return '—';
-  if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
-  if (n >= 0.001) return n.toFixed(6);
-  if (n > 0) return formatSubunitPrice(n);
-  return '—';
+function formatPrice(raw: string | null | undefined): string {
+  if (!raw || (compareDecimalStrings(raw, '0') ?? 0) <= 0) return '—';
+  return formatPriceSmall(raw);
 }

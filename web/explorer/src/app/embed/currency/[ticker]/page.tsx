@@ -4,7 +4,12 @@ import { Suspense } from 'react';
 import { assetHrefFor } from '@/lib/fiat-slugs';
 import type { components } from '@/api/types';
 import { API_BASE_URL } from '@/api/client';
-import { changePct, formatSubunitPrice } from '@/lib/format';
+import {
+  changePct,
+  compareDecimalStrings,
+  formatPairPrice,
+  formatSubunitPrice,
+} from '@/lib/format';
 
 import { LivePrice } from '../../LivePrice';
 import { EmbedCurrencyPathView } from './EmbedCurrencyPathView';
@@ -36,7 +41,7 @@ interface CurrencyDetail {
   ticker: string;
   name: string;
   rate_usd: number; // 1 USD = X local (= 1 / price_usd)
-  inverse_usd: number; // 1 local = X USD (= price_usd)
+  inverse_usd: string; // 1 local = X USD (= price_usd)
 }
 
 const FALLBACK = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'CNY'];
@@ -136,12 +141,12 @@ async function fetchCurrency(ticker: string): Promise<CurrencyDetail | null> {
     const env = (await res.json()) as { data: GlobalAssetView };
     const view = env.data;
     if (!view || view.class !== 'fiat') return null;
-    const priceUSD = view.price_usd ? Number(view.price_usd) : 0;
-    if (!(priceUSD > 0)) return null;
+    const priceUSD = view.price_usd;
+    if (!priceUSD || compareDecimalStrings(priceUSD, '0') !== 1) return null;
     return {
       ticker: view.ticker,
       name: view.name,
-      rate_usd: 1 / priceUSD, // 1 USD = X local
+      rate_usd: 1 / Number(priceUSD), // 1 USD = X local
       inverse_usd: priceUSD, // 1 local = X USD
     };
   } catch {
@@ -183,7 +188,6 @@ export default async function EmbedCurrencyPage({
     );
   }
 
-  const priceUSD = cur.inverse_usd > 0 ? cur.inverse_usd : null;
   // 7d change + sparkline now come from /v1/chart (fetchFxSeries). 24h
   // change needs intraday granularity we don't pull here, so the 24h
   // chip stays hidden — better honest than fabricated.
@@ -214,15 +218,11 @@ export default async function EmbedCurrencyPage({
         </a>
       </div>
       <div className="flex items-baseline gap-2">
-        {priceUSD != null ? (
-          <LivePrice
-            assetId={`fiat:${upper}`}
-            initial={`$${formatRate(priceUSD)}`}
-            format="usd"
-          />
-        ) : (
-          <span className="font-mono text-2xl tabular-nums">—</span>
-        )}
+        <LivePrice
+          assetId={`fiat:${upper}`}
+          initial={`$${formatPairPrice(cur.inverse_usd)}`}
+          format="usd"
+        />
         <ChangeChip pct={change24h} label="24h" />
         <ChangeChip pct={change7d} label="7d" />
       </div>
