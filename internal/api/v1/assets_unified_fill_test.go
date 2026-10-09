@@ -30,7 +30,7 @@ func (s *fillAssetsStub) ListAssetsExt(_ context.Context, opts timescale.ListAss
 	return rows, nil
 }
 
-// TestUnifiedPage1Fill pins S-002: when the catalogue phase is shorter
+// TestUnifiedPage1Fill pins that when the catalogue phase is shorter
 // than the requested limit, page 1 fills the remainder from the
 // classic stream instead of returning the catalogue tail alone.
 func TestUnifiedPage1Fill(t *testing.T) {

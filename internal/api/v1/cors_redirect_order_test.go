@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
-// TestTrailingSlashRedirectCarriesCORS pins S-009: the trailing-slash
+// TestTrailingSlashRedirectCarriesCORS pins that the trailing-slash
 // 308 must carry Access-Control-Allow-Origin. When TrailingSlashRedirect
 // ran OUTSIDE the CORS middleware, browsers killed the cross-origin
 // redirect and every trailing-slash API URL was as dead as the 404 the

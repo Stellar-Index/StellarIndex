@@ -296,7 +296,7 @@ func PadRefreshWindow(from, to time.Time, minWindow time.Duration) (time.Time, t
 // Fail-loud on unknown view name (defends against typo-driven
 // SQL injection through the view-name string format).
 //
-// Every CALL is bounded (W8-19): a statement_timeout derived from the
+// Every CALL is bounded: a statement_timeout derived from the
 // window's length by [CAGGRefreshTimeout] is applied on the pinned
 // connection that runs it, so a wedged refresh fails THIS call with a
 // [*CAGGRefreshTimeoutError] instead of holding the ops backfill pool

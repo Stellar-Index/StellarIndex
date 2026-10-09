@@ -24,7 +24,7 @@ import (
 //   - `q` never reached ListAssetsOptions on the default (no
 //     asset_class) path, so `?q=ZZZZNOSUCH` served the identical first
 //     page every unfiltered request gets. The unified path had passed Q
-//     since S-011; only this path's options bag was missing it.
+//     already; only this path's options bag was missing it.
 //   - `type` / `code` / `issuer` never reached the unified path — the
 //     handler dispatched on asset_class WITHOUT the parsed filters — so
 //     `?asset_class=all&code=AQUA` served the unfiltered baseline.

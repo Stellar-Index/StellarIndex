@@ -19,8 +19,8 @@ import (
 const displayMaxDepth = 3
 
 // Display renders an ScVal as a compact human-readable string for
-// explorer surfaces (site audit S-016: contract event rows showed only
-// topic_0; the remaining topics + data rendered nothing). It is a
+// explorer surfaces (contract event rows must render every topic and the
+// data, not just topic_0). It is a
 // DISPLAY format, not a wire format — lossy by design (long payloads
 // truncate, exotic types degrade to their type name).
 func Display(v xdr.ScVal) string {

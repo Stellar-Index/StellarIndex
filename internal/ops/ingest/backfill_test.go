@@ -165,7 +165,7 @@ func TestBackfill_AllSafeSourcesAccepted(t *testing.T) {
 // `[soroswap, aquarius, sdex]` in the config can still backfill a
 // subset (e.g. just sdex while the Soroban audits land).
 func TestBackfill_SourceFlagOverridesConfig(t *testing.T) {
-	// Every audited Soroban source is BackfillSafe=true now, so
+	// Every audited Soroban source is BackfillSafe=true, so
 	// this test verifies the override mechanism with a config that
 	// has multiple safe sources and the operator narrows to one.
 	cfg := writeMinimalConfig(t, []string{"soroswap", "aquarius", "sdex"})
@@ -751,8 +751,8 @@ func TestRefreshCAGGsForChunk_SerialisesAcrossParallelWorkers(t *testing.T) {
 	}
 }
 
-// TestRefreshCAGGsForChunk_TimeoutIsFatalAndNamed is the W8-19 caller
-// half: a per-CALL bound firing on one view surfaces as a chunk
+// TestRefreshCAGGsForChunk_TimeoutIsFatalAndNamed is the caller
+// half: a per-CALL refresh bound firing on one view surfaces as a chunk
 // failure that names that view (the cursor must not advance), every
 // other view is still attempted, and the typed error is reachable on
 // the chain so the log line can carry the window and the bound.

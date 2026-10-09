@@ -5,7 +5,7 @@ package v1
 
 import "testing"
 
-// TestScamIdentitySuppression pins S-010: a flagged, UNVERIFIED
+// TestScamIdentitySuppression pins that a flagged, UNVERIFIED
 // issuer's self-declared org identity is the impersonation itself —
 // the counterfeiter that set home_domain=lobstr.co must never render
 // as "LOBSTR — SCAM".
