@@ -75,7 +75,10 @@ describe('LedgerView total_coins caption', () => {
     renderView();
     const value = await screen.findByText('105,443,902,087.3472865 XLM');
     const cell = value.closest('dd')!;
-    expect(cell).toHaveTextContent('ledger header · includes the 2019 burn');
+    expect(cell).toHaveAttribute(
+      'title',
+      expect.stringContaining('ledger header · includes the 2019 burn'),
+    );
   });
 
   it('does not claim a burn on testnet', async () => {
@@ -84,8 +87,11 @@ describe('LedgerView total_coins caption', () => {
     renderView();
     const value = await screen.findByText('105,443,902,087.3472865 XLM');
     const cell = value.closest('dd')!;
-    expect(cell).toHaveTextContent('ledger header');
-    expect(cell).not.toHaveTextContent('burn');
+    expect(cell).toHaveAttribute(
+      'title',
+      expect.stringContaining('ledger header'),
+    );
+    expect(cell.getAttribute('title')).not.toContain('burn');
   });
 });
 
@@ -100,13 +106,16 @@ describe('LedgerView count basis captions', () => {
       const dt = dts.find((el) => el.tagName === 'DT');
       return dt!.parentElement!.querySelector('dd')!;
     };
-    expect(await cellFor('Transactions')).toHaveTextContent(
+    expect(await cellFor('Transactions')).toHaveAttribute(
+      'title',
       'tx set · incl. failed',
     );
-    expect(await cellFor('Operations')).toHaveTextContent(
+    expect(await cellFor('Operations')).toHaveAttribute(
+      'title',
       'tx set · incl. ops of failed txs',
     );
-    expect(await cellFor('Soroban events')).toHaveTextContent(
+    expect(await cellFor('Soroban events')).toHaveAttribute(
+      'title',
       'successful txs only',
     );
   });

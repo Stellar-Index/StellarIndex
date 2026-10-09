@@ -35,7 +35,7 @@ import { headlinePriceProvenance } from './priceProvenance';
 import { SourceBreakdown } from '../../markets/[pair]/SourceBreakdown';
 import { AssetTabs, ActiveTabSlot } from './AssetTabs';
 import { AssetAbout } from './AssetAbout';
-import { AssetFAQ, assetFaqFor } from './AssetFAQ';
+import { assetFaqFor } from './AssetFAQ';
 import { ChartPanel } from './ChartPanel';
 import { PriceSparklines } from './PriceSparklines';
 import { IssuerPanel } from './IssuerPanel';
@@ -814,13 +814,8 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
 
   // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
   // inside Breadcrumbs below — no hand-rolled LD.
-  // Schema.org FAQPage — the same Q/A pairs that render in the
-  // visible AssetFAQ panel below. Emitting them as JSON-LD lets
-  // Google pick them up for rich-snippet rendering on currency-
-  // pair queries like "what is XLM" / "how is USDC priced".
-  // Source of truth is assetFaqFor; the visible panel and this
-  // structured-data block read from the same function so the
-  // copy can never drift.
+  // Schema.org FAQPage (JSON-LD only, no visible panel) so Google can pick up
+  // currency-pair queries like "what is XLM" / "how is USDC priced".
   const faqLD = {
     '@context': 'https://schema.org',
     '@type': 'FAQPage',
@@ -1415,17 +1410,11 @@ function OverviewBody({
       )}
 
       <AssetAbout symbol={assetSymbol(coin)} />
-      <AssetFAQ symbol={assetSymbol(coin)} hasIssuer={!!coin.issuer} />
     </div>
   );
 }
 
-// (CURATED_ASSET_ABOUT extracted to ./AssetAbout — the panel is a
-// 'use client' component so it can collapse paragraphs behind a
-// "Read more →" toggle.)
-
-// AssetFAQ (+ its curated Q&A builder) extracted to ./AssetFAQ so the section
-// is independently reorderable/testable.
+// (CURATED_ASSET_ABOUT lives in ./AssetAbout.)
 
 function parsePrice(raw: string | undefined): number | null {
   if (!raw) return null;

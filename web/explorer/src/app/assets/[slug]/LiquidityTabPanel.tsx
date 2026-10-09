@@ -87,15 +87,12 @@ export async function LiquidityTabPanel({
     >
       {rows == null ? (
         <p className="text-ink-muted px-4 py-3 text-sm">
-          Pool list unavailable for this build — the liquidity query didn&apos;t
-          answer, so {code}&apos;s DEX pools are unknown rather than absent. It
-          refreshes on the next build.
+          Pool list unavailable: {code}&apos;s DEX pools are unknown, not
+          absent.
         </p>
       ) : merged.length === 0 ? (
         <p className="text-ink-muted px-4 py-3 text-sm">
-          No DEX pools observed touching {code} in the trailing 14 days. Either
-          the asset only trades on CEX feeds or the dispatcher hasn&apos;t
-          decoded a swap involving it yet.
+          No DEX pools touching {code} in the trailing 14 days.
         </p>
       ) : (
         <div className="overflow-x-auto">

@@ -185,9 +185,11 @@ function HoldersConcentration({
         centerSub="top 10"
         formatValue={(n) => formatCompact(n)}
       />
-      <p className="text-ink-faint mt-2 text-[11px]">
-        Share of the balance held by the served top-{holders.length} rows only —
-        not of total supply (the full holder set isn&rsquo;t served here).
+      <p
+        className="text-ink-faint mt-2 text-[11px]"
+        title="Share of the balance held by the served top rows only, not of total supply (the full holder set isn’t served here)."
+      >
+        Share of the top-{holders.length} served rows only, not of supply.
       </p>
     </div>
   );

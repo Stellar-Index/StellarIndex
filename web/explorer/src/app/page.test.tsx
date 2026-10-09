@@ -35,7 +35,7 @@ function renderHome() {
       <HomePage />
     </QueryClientProvider>,
   );
-  const pitch = screen.getByText(/Anonymous reads are free forever/i);
+  const pitch = screen.getByTestId('api-pitch');
   // The endpoint list is a <dt>/<dd> pair per row; the description
   // sits in the row wrapper alongside the path.
   const ohlcRow = screen.getByText('GET /v1/ohlc').parentElement;

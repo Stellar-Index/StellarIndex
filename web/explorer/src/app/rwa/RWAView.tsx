@@ -1132,14 +1132,17 @@ function ReferenceHeadline({
           reads past the glyph still has to be told the total is short
           of the sector, and by how many assets. */}
       {reference?.lower_bound && unvalued > 0 && (
-        <p className="text-ink-muted mt-2 text-xs leading-relaxed">
-          <strong className="text-ink">A floor, not a total.</strong> {unvalued}{' '}
+        <details className="text-ink-muted mt-2 text-xs">
+          <summary className="cursor-pointer">
+            <strong className="text-ink">A floor, not a total.</strong>{' '}
+            {unvalued} unvalued
+          </summary>{' '}
           of {summary.assets} asset{summary.assets === 1 ? '' : 's'} in the set
           carr{unvalued === 1 ? 'ies' : 'y'} no reference valuation — no bound
           and current oracle feed, or no circulating-supply reading — and
           contribute{unvalued === 1 ? 's' : ''} nothing to this figure. The
           sector is worth at least this much, not exactly this much.
-        </p>
+        </details>
       )}
       {lead && (
         <p className="text-ink-muted mt-2 text-xs leading-relaxed">{lead}</p>
@@ -1191,14 +1194,17 @@ function MarketCapHeadline({
         }
       />
       {summary.lower_bound && summary.assets_unvalued > 0 && (
-        <p className="text-ink-muted mt-2 text-xs leading-relaxed">
-          <strong className="text-ink">Also a floor.</strong>{' '}
+        <details className="text-ink-muted mt-2 text-xs">
+          <summary className="cursor-pointer">
+            <strong className="text-ink">Also a floor.</strong>{' '}
+            {summary.assets_unvalued} unvalued
+          </summary>{' '}
           {summary.assets_unvalued} asset
           {summary.assets_unvalued === 1 ? '' : 's'} publish
           {summary.assets_unvalued === 1 ? 'es' : ''} no market valuation and
           contribute{summary.assets_unvalued === 1 ? 's' : ''} nothing here —
           mostly because a tokenized instrument is bought and held, not traded.
-        </p>
+        </details>
       )}
       {lead && (
         <p className="text-ink-muted mt-2 text-xs leading-relaxed">{lead}</p>
@@ -1312,17 +1318,23 @@ function SectorTotals({
                     : '')
             }
           />
-          <p className="text-ink-muted mt-2 text-xs leading-relaxed">
-            <strong className="text-ink">Not a real-world asset.</strong> A
-            fiat-anchored token is a claim on a bank balance, not a tokenized
+          <details className="text-ink-muted mt-2 text-xs">
+            <summary className="cursor-pointer">
+              <strong className="text-ink">Not a real-world asset.</strong>
+            </summary>{' '}
+            A fiat-anchored token is a claim on a bank balance, not a tokenized
             instrument with a net asset value, so the definition above refuses
             the whole class and this figure is never part of it. Market caps as
             the asset pages serve them, over the issuer-bound identities in the
             served catalogue — never over a token code, which anyone can mint.
-          </p>
+          </details>
           {stable.listingPriced > 0 && (
-            <p className="text-ink-muted mt-2 text-xs leading-relaxed">
-              <strong className="text-ink">This total mixes two bases.</strong>{' '}
+            <details className="text-ink-muted mt-2 text-xs">
+              <summary className="cursor-pointer">
+                <strong className="text-ink">
+                  This total mixes two bases.
+                </strong>
+              </summary>{' '}
               {stable.listingPriced} of the {stable.valued} tokens trade too
               thinly on Stellar for this index to publish a market cap from what
               it observed, so the figure used for them is their supply valued at
@@ -1330,7 +1342,7 @@ function SectorTotals({
               address — <code>provenance: listing_platform_price</code> on the
               asset. Nobody was observed paying it here. The rest are observed
               market caps, and the per-asset pages say which is which.
-            </p>
+            </details>
           )}
         </StatCell>
         <StatCell>
@@ -1357,7 +1369,8 @@ function SectorTotals({
                 : 'Real-world assets plus stablecoins'
             }
           />
-          <p className="text-ink-muted mt-2 text-xs leading-relaxed">
+          <details className="text-ink-muted mt-2 text-xs">
+            <summary className="cursor-pointer">How Combined is built</summary>
             {stable.listingPriced > 0 ? (
               <>
                 <strong className="text-ink">Three bases, added.</strong>{' '}
@@ -1377,7 +1390,7 @@ function SectorTotals({
             real-world-asset figure — it is the size of the arms together, which
             is the quantity usually meant by tokenized value on Stellar. Read it
             against the arms, never in place of them.
-          </p>
+          </details>
         </StatCell>
       </StatGrid>
     </div>
@@ -1443,9 +1456,11 @@ function HeadlineStats({
           />
         </StatCell>
       </StatGrid>
-      <p className="text-ink-muted text-xs leading-relaxed">
-        <strong>Two different kinds of number.</strong> The value of the backing
-        is{' '}
+      <details className="text-ink-muted text-xs">
+        <summary className="cursor-pointer">
+          <strong>Two different kinds of number.</strong>
+        </summary>{' '}
+        The value of the backing is{' '}
         {oracle
           ? 'what an independent oracle says the underlying instrument is worth'
           : MIXED_REFERENCE_PROSE}
@@ -1506,7 +1521,7 @@ function HeadlineStats({
             )}
           </>
         )}
-      </p>
+      </details>
     </div>
   );
 }
@@ -1879,125 +1894,132 @@ function DefinitionPanel({
   const refusedTotal = refused.reduce((n, r) => n + r.assets, 0);
   return (
     <Panel title="What qualifies, and what does not" headingLevel={2}>
-      <ol className="text-ink-body ml-4 list-decimal space-y-1.5 text-sm leading-relaxed">
-        {REQUIREMENT_PROSE.map((r) => (
-          <li key={r}>{r}</li>
-        ))}
-      </ol>
-      <p className="text-ink-muted mt-3 text-xs leading-relaxed">
-        An asset failing any requirement is absent from this page — not ranked
-        lower, not hidden behind a filter. It keeps its own asset page, with
-        whatever warnings apply there. Recognised classes:{' '}
-        <span className="font-mono">
-          {definition.anchor_classes.join(', ')}
-        </span>
-        {contractOnlyClasses(definition).length > 0 ? (
-          <>
-            {' '}
-            — plus{' '}
-            <span className="font-mono">
-              {contractOnlyClasses(definition).join(', ')}
-            </span>{' '}
-            on a contract, where the class is this index&rsquo;s own statement
-            from a primary source rather than something an issuer declared
-          </>
-        ) : null}
-        . Fiat-anchored tokens are stablecoins and are counted elsewhere.
-      </p>
-      <div className="text-ink-muted mt-3 text-xs leading-relaxed">
-        <p>
-          <strong className="text-ink-body">
-            Which tokens are compared against an instrument.
-          </strong>{' '}
-          Only the exact <span className="font-mono">(code, issuer)</span> pairs
-          listed below. A code is not an identity: anyone can issue a token
-          called USTRY, and answering one of those with the real
-          instrument&rsquo;s value would publish a discount to a security it has
-          nothing to do with. The list is short by construction, and a pair
-          missing from it shows the reason rather than a number.
+      <details className="text-ink-muted text-xs">
+        <summary className="cursor-pointer">
+          Definition, refusals and valuation bases
+        </summary>
+        <ol className="text-ink-body ml-4 list-decimal space-y-1.5 text-sm leading-relaxed">
+          {REQUIREMENT_PROSE.map((r) => (
+            <li key={r}>{r}</li>
+          ))}
+        </ol>
+        <p className="text-ink-muted mt-3 text-xs leading-relaxed">
+          An asset failing any requirement is absent from this page — not ranked
+          lower, not hidden behind a filter. It keeps its own asset page, with
+          whatever warnings apply there. Recognised classes:{' '}
+          <span className="font-mono">
+            {definition.anchor_classes.join(', ')}
+          </span>
+          {contractOnlyClasses(definition).length > 0 ? (
+            <>
+              {' '}
+              — plus{' '}
+              <span className="font-mono">
+                {contractOnlyClasses(definition).join(', ')}
+              </span>{' '}
+              on a contract, where the class is this index&rsquo;s own statement
+              from a primary source rather than something an issuer declared
+            </>
+          ) : null}
+          . Fiat-anchored tokens are stablecoins and are counted elsewhere.
         </p>
-        <p className="mt-2">
-          What the comparison rests on is that one token is one unit of the
-          named instrument. The evidence is the issuer&rsquo;s own domain-bound
-          declaration and the independent recognition of its account — the same
-          evidence that admitted the asset — and is not a separate measurement.
-        </p>
-        {definition.bound_instruments.length > 0 && (
-          <ul className="mt-2 space-y-0.5">
-            {definition.bound_instruments.map((b) => (
-              <li
-                key={`${b.code}-${b.issuer}`}
-                className="font-mono text-[11px]"
-              >
-                {b.code}
-                <span className="text-ink-faint">
-                  -{truncateMiddle(b.issuer, 6, 6)}
-                </span>{' '}
-                <span aria-hidden>&rarr;</span> {b.feed}
-              </li>
-            ))}
-          </ul>
+        <div className="text-ink-muted mt-3 text-xs leading-relaxed">
+          <p>
+            <strong className="text-ink-body">
+              Which tokens are compared against an instrument.
+            </strong>{' '}
+            Only the exact <span className="font-mono">(code, issuer)</span>{' '}
+            pairs listed below. A code is not an identity: anyone can issue a
+            token called USTRY, and answering one of those with the real
+            instrument&rsquo;s value would publish a discount to a security it
+            has nothing to do with. The list is short by construction, and a
+            pair missing from it shows the reason rather than a number.
+          </p>
+          <p className="mt-2">
+            What the comparison rests on is that one token is one unit of the
+            named instrument. The evidence is the issuer&rsquo;s own
+            domain-bound declaration and the independent recognition of its
+            account — the same evidence that admitted the asset — and is not a
+            separate measurement.
+          </p>
+          {definition.bound_instruments.length > 0 && (
+            <ul className="mt-2 space-y-0.5">
+              {definition.bound_instruments.map((b) => (
+                <li
+                  key={`${b.code}-${b.issuer}`}
+                  className="font-mono text-[11px]"
+                >
+                  {b.code}
+                  <span className="text-ink-faint">
+                    -{truncateMiddle(b.issuer, 6, 6)}
+                  </span>{' '}
+                  <span aria-hidden>&rarr;</span> {b.feed}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {refusedTotal > 0 && (
+          <details className="group border-line mt-3 rounded-lg border">
+            <summary className="text-ink-body marker:text-ink-faint hover:text-brand-600 cursor-pointer px-3 py-1.5 text-xs font-medium select-none">
+              Candidates refused{' '}
+              <span className="text-ink-faint">
+                ({refusedTotal.toLocaleString('en-US')})
+              </span>
+            </summary>
+            <dl className="border-line space-y-1.5 border-t px-3 py-2 text-[11px] leading-relaxed">
+              {refused.map((r) => (
+                <div key={r.reason} className="flex justify-between gap-4">
+                  <dt className="text-ink-body">
+                    {REFUSAL_PROSE[r.reason] ?? r.reason}
+                  </dt>
+                  <dd className="tnum text-ink-muted">
+                    {r.assets.toLocaleString('en-US')}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </details>
         )}
-      </div>
-      {refusedTotal > 0 && (
-        <details className="group border-line mt-3 rounded-lg border">
-          <summary className="text-ink-body marker:text-ink-faint hover:text-brand-600 cursor-pointer px-3 py-1.5 text-xs font-medium select-none">
-            Candidates refused{' '}
-            <span className="text-ink-faint">
-              ({refusedTotal.toLocaleString('en-US')})
-            </span>
-          </summary>
-          <dl className="border-line space-y-1.5 border-t px-3 py-2 text-[11px] leading-relaxed">
-            {refused.map((r) => (
-              <div key={r.reason} className="flex justify-between gap-4">
-                <dt className="text-ink-body">
-                  {REFUSAL_PROSE[r.reason] ?? r.reason}
-                </dt>
-                <dd className="tnum text-ink-muted">
-                  {r.assets.toLocaleString('en-US')}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </details>
-      )}
-      <div className="text-ink-muted mt-3 text-xs leading-relaxed">
-        <p>
-          <strong className="text-ink-body">
-            Two valuations, kept apart on purpose.
-          </strong>{' '}
-          <em>Market cap</em> is circulating supply times a price somebody was
-          observed paying, and it reaches this page only after the same
-          thin-market, dust-liquidity and scam-issuer gates the asset pages
-          apply have each declined to withhold it. <em>Value of backing</em> is
-          circulating supply times{' '}
-          {oracleOnly(provenances)
-            ? 'what an independent oracle says one unit of the underlying instrument is worth'
-            : MIXED_REFERENCE_PROSE}
-          . Nobody was observed paying that, and none of those gates can check
-          it — there is no market in it for them to measure.
+        <div className="text-ink-muted mt-3 text-xs leading-relaxed">
+          <p>
+            <strong className="text-ink-body">
+              Two valuations, kept apart on purpose.
+            </strong>{' '}
+            <em>Market cap</em> is circulating supply times a price somebody was
+            observed paying, and it reaches this page only after the same
+            thin-market, dust-liquidity and scam-issuer gates the asset pages
+            apply have each declined to withhold it. <em>Value of backing</em>{' '}
+            is circulating supply times{' '}
+            {oracleOnly(provenances)
+              ? 'what an independent oracle says one unit of the underlying instrument is worth'
+              : MIXED_REFERENCE_PROSE}
+            . Nobody was observed paying that, and none of those gates can check
+            it — there is no market in it for them to measure.
+          </p>
+          <p className="mt-2">
+            Both are published because neither alone is honest here. A tokenized
+            treasury is bought and held rather than traded, so most of this set
+            has never produced a market price and the market-cap column is
+            silent about assets that plainly exist; equally, a figure the issuer
+            and its oracle assert is not evidence that anyone would pay it. They
+            are never added together, and an asset can appear in one column,
+            both, or neither. Where a token carries no reference figure, the
+            coverage panel below counts it under the reason.
+          </p>
+        </div>
+        <p className="text-ink-muted mt-3 text-[11px] leading-relaxed">
+          Live data from <span className="font-mono">{ENDPOINT}</span>. Market
+          valuations come from the same price, supply and trust gates the asset
+          pages use, so nothing here publishes a figure those pages withhold.
+          The full definition, with the evidence behind each requirement, is in
+          the{' '}
+          <Link href="/methodology" className="hover:text-brand-600 underline">
+            methodology
+          </Link>
+          .
         </p>
-        <p className="mt-2">
-          Both are published because neither alone is honest here. A tokenized
-          treasury is bought and held rather than traded, so most of this set
-          has never produced a market price and the market-cap column is silent
-          about assets that plainly exist; equally, a figure the issuer and its
-          oracle assert is not evidence that anyone would pay it. They are never
-          added together, and an asset can appear in one column, both, or
-          neither. Where a token carries no reference figure, the coverage panel
-          below counts it under the reason.
-        </p>
-      </div>
-      <p className="text-ink-muted mt-3 text-[11px] leading-relaxed">
-        Live data from <span className="font-mono">{ENDPOINT}</span>. Market
-        valuations come from the same price, supply and trust gates the asset
-        pages use, so nothing here publishes a figure those pages withhold. The
-        full definition, with the evidence behind each requirement, is in the{' '}
-        <Link href="/methodology" className="hover:text-brand-600 underline">
-          methodology
-        </Link>
-        .
-      </p>
+      </details>
     </Panel>
   );
 }

@@ -1,27 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
 
-import { AssetFAQ } from './AssetFAQ';
+import { assetFaqFor } from './AssetFAQ';
 
-describe('AssetFAQ', () => {
-  it('renders the FAQ panel with the asset code interpolated', () => {
-    render(<AssetFAQ symbol="XLM" hasIssuer={false} />);
-    expect(screen.getByText('FAQ')).toBeInTheDocument();
-    expect(screen.getByText('What is XLM?')).toBeInTheDocument();
-    // no-issuer branch → Soroban/contract-token phrasing
-    expect(
-      screen.getByText(/Soroban-native or smart-contract token/),
-    ).toBeInTheDocument();
+describe('assetFaqFor', () => {
+  it('interpolates the asset code and uses contract-token phrasing without an issuer', () => {
+    const faq = assetFaqFor('XLM', false);
+    expect(faq.map((f) => f.q)).toContain('What is XLM?');
+    expect(faq.map((f) => f.a).join(' ')).toMatch(
+      /Soroban-native or smart-contract token/,
+    );
   });
 
   it('uses classic-issuer phrasing when hasIssuer is set', () => {
-    render(<AssetFAQ symbol="USDC" hasIssuer />);
-    expect(screen.getByText('USDC issuer details')).toBeInTheDocument();
-    // phrasing unique to the has-issuer branch of assetFaqFor
-    expect(
-      screen.getByText(
-        /As a classic credit asset, USDC has a designated issuer account/,
-      ),
-    ).toBeInTheDocument();
+    const faq = assetFaqFor('USDC', true);
+    expect(faq.map((f) => f.q)).toContain('USDC issuer details');
+    expect(faq.map((f) => f.a).join(' ')).toMatch(
+      /As a classic credit asset, USDC has a designated issuer account/,
+    );
   });
 });

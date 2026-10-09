@@ -145,9 +145,10 @@ describe('SupplyTabPanel on-chain supply', () => {
     renderPanel();
     expect(screen.getByText('≥ 1M')).toBeInTheDocument();
     expect(screen.getByText('Stale')).toBeInTheDocument();
-    expect(
-      screen.getByText(/A floor, not the exact supply/),
-    ).toBeInTheDocument();
+    expect(screen.getByText('≥ floor')).toHaveAttribute(
+      'title',
+      expect.stringContaining('A floor, not the exact supply'),
+    );
     expect(screen.getByText(/Fresh to ledger 63,340,102/)).toBeInTheDocument();
   });
 
