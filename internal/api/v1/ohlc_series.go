@@ -184,8 +184,8 @@ func parseOHLCSeriesLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 // `bucket + interval <= now()` guard. When `from` is unset the
 // handler defaults to `to - limit*interval`; when `to` is unset it
 // defaults to "now" snapped to the previous interval boundary so
-// the same response is byte-identical across regions in the same
-// closed-window window.
+// the same response is byte-identical across regions within the same
+// closed window.
 //
 // Single-bar callers (no `interval` query param) are routed at
 // [Server.handleOHLC] BEFORE this function is reached — this

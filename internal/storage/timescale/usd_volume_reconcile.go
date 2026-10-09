@@ -29,8 +29,8 @@ import (
 // upward edge is grandfathered for trades.go, and the baseline only
 // shrinks).
 //
-// It It deliberately does NOT try to
-// re-price trades from an independent price series: `usd_volume` is a
+// It deliberately does NOT try to re-price trades from an independent
+// price series: `usd_volume` is a
 // five-tier waterfall (see tradeUSDVolume) whose upper tiers are VWAP/FX
 // ESTIMATES, and this repo has already measured the two routes diverging by
 // up to 134.92% on the same trades, so any cross-series comparison needs a
