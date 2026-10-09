@@ -30,6 +30,8 @@ User=stellarindex
 Group=stellarindex
 WorkingDirectory=/var/lib/stellarindex
 EnvironmentFile=/etc/default/stellarindex
+# Optional; carries the stellarindex_api role's DSN (migration 0213).
+EnvironmentFile=-/etc/default/stellarindex-api
 ExecStart=/usr/local/bin/stellarindex-api -config /etc/stellarindex.toml
 ExecStop=/bin/kill -TERM $MAINPID
 
