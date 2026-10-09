@@ -7,7 +7,12 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGetData, asExample } from '@/api/client';
 import type { components } from '@/api/types';
-import { formatCompact } from '@/lib/format';
+import {
+  changePct,
+  compareDecimalStrings,
+  formatCompact,
+  formatCompactUnits,
+} from '@/lib/format';
 import { truncateMiddle } from '@/components/ui/Mono';
 import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { hueByIdentity, toDailyLine } from '@/components/charts/dailyGaps';
@@ -235,20 +240,22 @@ function WindowChange({ points }: { points: RWAHistoryPoint[] }) {
       </p>
     );
   }
-  const from = Number(first.value_usd);
-  const to = Number(last.value_usd);
-  if (!(from > 0) || !Number.isFinite(to)) return null;
-  const pct = ((to - from) / from) * 100;
-  const up = pct >= 0;
+  const from = first.value_usd;
+  const to = last.value_usd;
+  if (compareDecimalStrings(from, '0') !== 1) return null;
+  const pct = changePct(from, to, 1);
+  if (pct == null) return null;
+  // Direction from the exact values: a drop under 0.05% rounds pct to 0.
+  const up = (compareDecimalStrings(to, from) ?? 0) >= 0;
   return (
     <p className="text-ink-muted text-xs leading-relaxed">
       <span className={up ? 'text-up' : 'text-down'}>
-        {up ? '+' : ''}
-        {pct.toFixed(1)}%
+        {up ? '+' : '-'}
+        {Math.abs(pct).toFixed(1)}%
       </span>{' '}
       across the window, over a constant {first.assets_valued} valued asset
-      {first.assets_valued === 1 ? '' : 's'} — {usdCompact(from)} →{' '}
-      {usdCompact(to)}.
+      {first.assets_valued === 1 ? '' : 's'} — ${formatCompactUnits(from)} → $
+      {formatCompactUnits(to)}.
     </p>
   );
 }
@@ -387,7 +394,7 @@ function AssetLegend({ lines }: { lines: NamedLineSeries[] }) {
 
 function totalAriaLabel(data: RWAHistoryView): string {
   const last = data.points[data.points.length - 1];
-  return `Value of backing for the real-world asset set, ${data.points.length} daily points. Most recent: ${usdCompact(Number(last.value_usd))} across ${last.assets_valued} of ${data.assets} assets${last.lower_bound ? ', a lower bound' : ''}.`;
+  return `Value of backing for the real-world asset set, ${data.points.length} daily points. Most recent: $${formatCompactUnits(last.value_usd)} across ${last.assets_valued} of ${data.assets} assets${last.lower_bound ? ', a lower bound' : ''}.`;
 }
 
 function assetAriaLabel(

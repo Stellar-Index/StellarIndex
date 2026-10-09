@@ -2,7 +2,8 @@
 
 import { HATCH_BG, HBarList } from '@/components/charts/Bars';
 import {
-  formatCompact,
+  compareDecimalStrings,
+  formatCompactUnits,
   formatDecimalAmount,
   formatRelative,
 } from '@/lib/format';
@@ -66,8 +67,8 @@ export function ProtocolTvlPanel({
   const withTvl = rows
     .filter((r): r is ProtocolTvlRow & { tvl: ProtocolTvl } => r.tvl != null)
     .map((r) => ({ ...r, usd: Number(r.tvl.tvl_usd) }))
-    .filter((r) => Number.isFinite(r.usd) && r.usd > 0)
-    .sort((a, b) => b.usd - a.usd);
+    .filter((r) => compareDecimalStrings(r.tvl.tvl_usd, '0') === 1)
+    .sort((a, b) => compareDecimalStrings(b.tvl.tvl_usd, a.tvl.tvl_usd) ?? 0);
 
   if (withTvl.length === 0) return null;
 
@@ -95,12 +96,12 @@ export function ProtocolTvlPanel({
       {headline && <DexTvlHeadline total={headline} />}
       <HBarList
         ariaLabel={`Value locked per protocol: ${withTvl
-          .map((r) => `${r.name} $${formatCompact(r.usd)}`)
+          .map((r) => `${r.name} $${formatCompactUnits(r.tvl.tvl_usd)}`)
           .join(', ')}`}
         items={withTvl.map((r) => ({
           label: protocolMeta(r.name)?.label ?? r.name,
           value: r.usd,
-          display: `${r.tvl.unpriced_pools > 0 ? '≥ ' : ''}$${formatCompact(r.usd)}`,
+          display: `${r.tvl.unpriced_pools > 0 ? '≥ ' : ''}$${formatCompactUnits(r.tvl.tvl_usd)}`,
           annotation:
             r.tvl.unpriced_pools > 0
               ? `${r.tvl.pools_priced}/${r.tvl.pools_total} pools priced`

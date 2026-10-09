@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { AssetText } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
+import { formatUsdWhole } from '@/lib/format';
 import { MevKindCharts } from './MevKindCharts';
 
 interface MevLeg {
@@ -69,12 +70,6 @@ interface MevEvent {
   detail: MevDetail;
   profit_usd: string | null;
 }
-
-const usdFmt = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 0,
-});
 
 const KIND_LABELS: Record<string, string> = {
   arbitrage: 'arbitrage',
@@ -207,7 +202,7 @@ export function MevFeed() {
                   )}
                   {e.detail.notional_usd && (
                     <span className="text-ink-body font-mono text-xs">
-                      {usdFmt.format(Number(e.detail.notional_usd))}
+                      {formatUsdWhole(e.detail.notional_usd)}
                     </span>
                   )}
                   <span className="text-ink-muted ml-auto font-mono text-[11px]">
