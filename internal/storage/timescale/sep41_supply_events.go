@@ -1123,22 +1123,13 @@ func (s *Store) SEP41SupplyEventKindResum(ctx context.Context, contractID string
 //
 // Resetting the fold columns forces a clean re-fold over the corrected set.
 //
-// Three callers rely on this, for the identical reason: `ch-rebuild -sep41
-// -write` (above), `stellarindex-ops projector-replay -source
-// sep41_supply` (internal/ops/ingest/projector.go's resetSEP41RollupAfterReplay),
-// which rewinds and re-walks the projector's own cursor over the same
-// checkpointed range, and `projected-rebuild -source sep41_supply -write`
-// (internal/ops/chops/projected_rebuild.go's resetSEP41RollupAfterRebuild),
-// which bulk-writes history behind the live tail. Each would otherwise leave
-// any row it re-drives or corrects at-or-below the checkpoint permanently
-// invisible to the fold.
+// The same holds for the other two writers below the checkpoint:
+// projector-replay -source sep41_supply (resetSEP41RollupAfterReplay) and
+// projected-rebuild -source sep41_supply -write (resetSEP41RollupAfterRebuild).
 //
-// It replaces a bare `TRUNCATE sep41_supply_rollup` because it PRESERVES the
-// migration-0088 pre-Soroban genesis-baseline columns (genesis_mint_total / genesis_burn_total
-// / genesis_clawback_total / genesis_baseline_ledger / genesis_seeded_at),
-// which a bare TRUNCATE would drop. Those are seeded separately
-// (`stellarindex-ops supply seed-sep41-genesis`, from the ClickHouse lake) and
-// a Soroban-era re-derive must never wipe them.
+// It is not a TRUNCATE because it must preserve the genesis_* baseline
+// columns (migration 0088), which `supply seed-sep41-genesis` seeds
+// separately from the lake.
 //
 // Scope:
 //   - contractIDs nil/empty → FULL reset: every rollup row's fold columns (the
