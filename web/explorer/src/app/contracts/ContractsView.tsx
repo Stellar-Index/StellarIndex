@@ -12,6 +12,11 @@ import { isNativeXlmSac } from '@/lib/asset-label';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import { StackedColumns } from '@/components/charts/Bars';
 import {
+  InlineBar,
+  ProtocolMixDonut,
+  RegistryCharts,
+} from '@/components/ContractCharts';
+import {
   Badge,
   Container,
   PageHeader,
@@ -200,6 +205,8 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
     null,
   );
 
+  const maxEvents = Math.max(0, ...rows.map((c) => c.events ?? 0));
+
   return (
     <Panel
       headingLevel={2}
@@ -211,6 +218,11 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
       source={asExample('/v1/contracts', { days: 30, limit: 100 })}
       bodyClassName="-mx-4"
     >
+      {rows.length > 0 && (
+        <div className="px-4 pb-4">
+          <ProtocolMixDonut rows={rows} />
+        </div>
+      )}
       <details className="text-ink-muted px-4 pb-3 text-xs">
         <summary className="cursor-pointer">Ranked by raw event volume</summary>
         Leaders are SACs and high-traffic system contracts. Attribution lives in
@@ -290,6 +302,13 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
                   </td>
                   <td className="px-4 py-3">{contractTypeBadge(c)}</td>
                   <td className="text-ink-body px-4 py-3 text-right font-mono tabular-nums">
+                    <span className="mr-2">
+                      <InlineBar
+                        value={c.events ?? 0}
+                        max={maxEvents}
+                        label={`${formatCompact(c.events ?? 0)} events`}
+                      />
+                    </span>
                     {formatCompact(c.events ?? 0)}
                   </td>
                   <td className="text-ink-muted px-4 py-3 text-xs">
@@ -364,6 +383,7 @@ function RegistryPanel() {
         </p>
       ) : (
         <div className="overflow-x-auto">
+          <RegistryCharts rows={rows} />
           <table className="divide-line min-w-full divide-y text-sm">
             <thead>
               <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">

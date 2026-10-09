@@ -8,7 +8,12 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { Badge, Container, Breadcrumbs } from '@/components/ui';
 import { DirectoryLabel } from '@/components/DirectoryLabel';
-import { Sparkline } from '@/components/primitives';
+import {
+  ContractDailyBars,
+  CounterpartyBars,
+  EventMixDonut,
+  ExportChips,
+} from '@/components/ContractCharts';
 import { apiGet, asExample, API_BASE_URL } from '@/api/client';
 import { useSACWrappers } from '@/api/hooks';
 import { isNativeXlmSac } from '@/lib/asset-label';
@@ -232,20 +237,14 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
                   )}
                 </div>
               </div>
-              {(data.activity.daily?.length ?? 0) >= 2 && (
-                <div title="Ledgers with activity per day, last 30 days">
-                  <div className="text-ink-muted text-[11px] tracking-wider uppercase">
-                    30d activity
-                  </div>
-                  <Sparkline
-                    values={(data.activity.daily ?? []).map(
-                      (d) => d.active_ledgers ?? 0,
-                    )}
-                    width={160}
-                    height={28}
-                  />
-                </div>
-              )}
+            </div>
+          )}
+          {(data.activity?.daily?.length ?? 0) >= 2 && (
+            <div
+              className="mt-3"
+              title="Ledgers with activity per day, last 30 days"
+            >
+              <ContractDailyBars daily={data.activity?.daily ?? []} />
             </div>
           )}
         </div>
@@ -404,34 +403,28 @@ function WasmPanel({ id }: { id: string }) {
         </div>
       </div>
 
-      {/* Exported entry points — the contract's real API surface. */}
+      {/* Exported entry points: the contract's real API surface. */}
+      <ExportChips exports={data.exports} />
       {data.exports.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="divide-line min-w-full divide-y text-sm">
-            <thead>
-              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
-                <th scope="col" className="py-2 pr-4">
-                  Export
-                </th>
-                <th scope="col" className="py-2">
-                  Signature (wasm ABI)
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-line-subtle divide-y">
-              {data.exports.map((e) => (
-                <tr key={e.name}>
-                  <td className="text-brand-700 py-1.5 pr-4 font-mono">
-                    {e.name}
-                  </td>
-                  <td className="text-ink-muted py-1.5 font-mono text-xs">
-                    {exportSignature(e)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <details className="text-ink-muted text-xs">
+          <summary className="cursor-pointer">ABI signatures</summary>
+          <div className="mt-2 overflow-x-auto">
+            <table className="divide-line min-w-full divide-y text-sm">
+              <tbody className="divide-line-subtle divide-y">
+                {data.exports.map((e) => (
+                  <tr key={e.name}>
+                    <td className="text-brand-700 py-1.5 pr-4 font-mono">
+                      {e.name}
+                    </td>
+                    <td className="text-ink-muted py-1.5 font-mono text-xs">
+                      {exportSignature(e)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
       )}
 
       {data.wat && <CodeDisclosure label="WAT disassembly" code={data.wat} />}
@@ -790,6 +783,14 @@ function InteractionsPanel({ id }: { id: string }) {
       source={source}
       bodyClassName="-mx-4"
     >
+      <CounterpartyBars
+        edges={edges}
+        nameFor={(cid) => {
+          const w = isNativeXlmSac(cid) ? 'native' : sacMap?.[cid];
+          if (!w) return undefined;
+          return `${w === 'native' ? 'XLM' : w.split(/[:-]/)[0]} SAC`;
+        }}
+      />
       <div className="overflow-x-auto">
         <table className="divide-line min-w-full divide-y text-sm">
           <thead>
@@ -914,6 +915,9 @@ function EventsPanel({
       source={source}
       bodyClassName="-mx-4"
     >
+      <div className="px-4 pb-4">
+        <EventMixDonut events={events} />
+      </div>
       <div className="overflow-x-auto">
         <table className="divide-line min-w-full divide-y text-sm">
           <thead>
