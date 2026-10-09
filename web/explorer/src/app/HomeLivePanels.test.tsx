@@ -6,7 +6,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import { NetworkLivePanel, SystemHealthLivePanel } from './HomeLivePanels';
+import {
+  IngestLagLivePanel,
+  NetworkLivePanel,
+  SystemHealthLivePanel,
+} from './HomeLivePanels';
 
 const { useCoverage, useCursors, useNetworkStats } = vi.hoisted(() => ({
   useCoverage: vi.fn(),
@@ -82,5 +86,14 @@ describe('HomeLivePanels', () => {
     render(<SystemHealthLivePanel />);
 
     expect(dot('archive completeness')).toBe(want);
+  });
+
+  it('reports ingest lag from live cursors only', () => {
+    useCursors.mockReturnValue({ data: cursors, isLoading: false });
+    render(<IngestLagLivePanel />);
+
+    expect(screen.getAllByText('15m')).toHaveLength(2);
+    expect(screen.queryByText('census-backfill/shard-3')).toBeNull();
+    expect(screen.getByText('ledgerstream')).toBeTruthy();
   });
 });

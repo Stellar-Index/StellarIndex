@@ -1,12 +1,16 @@
 import Link from 'next/link';
-import { ArrowRight, Activity } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 
 import { Badge, ButtonLink, Container } from '@/components/ui';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { HomeBlogStrip } from './HomeBlogStrip';
 import { HomeCurrencies } from './HomeCurrencies';
 import { HomeHeroChart } from './HomeHeroChart';
-import { NetworkLivePanel, SystemHealthLivePanel } from './HomeLivePanels';
+import {
+  IngestLagLivePanel,
+  NetworkLivePanel,
+  SystemHealthLivePanel,
+} from './HomeLivePanels';
 import { HomeNetworkStrip } from './HomeNetworkStrip';
 import { HomeRecentChanges } from './HomeRecentChanges';
 import { HomeRecentTrades } from './HomeRecentTrades';
@@ -76,24 +80,7 @@ export default function HomePage() {
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <NetworkLivePanel />
         <SystemHealthLivePanel />
-        <Link
-          href="/diagnostics"
-          className="group rounded-card border-line bg-surface shadow-card hover:border-line-strong hover:shadow-elevated flex h-full flex-col justify-between border p-5 transition-all"
-        >
-          <div>
-            <p className="text-ink-muted flex items-center gap-1.5 text-[11px] font-medium tracking-wider uppercase">
-              <Activity className="text-ink-faint h-3.5 w-3.5" />
-              Diagnostics
-            </p>
-            <p className="text-h3 text-ink mt-2 font-semibold">
-              Watch the indexer tick.
-            </p>
-          </div>
-          <p className="text-brand-600 mt-4 inline-flex items-center gap-1 text-sm font-medium">
-            Open diagnostics{' '}
-            <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-          </p>
-        </Link>
+        <IngestLagLivePanel />
       </section>
 
       {hasAssets && <HomeTopAssets />}

@@ -21,6 +21,7 @@ import {
   formatPairPrice,
 } from '@/lib/format';
 import { shortAssetText } from '@/lib/asset-label';
+import { InlineBar } from '@/components/ContractCharts';
 
 /**
  * HomeTopMarkets — top 10 trading pairs by trailing-24h USD
@@ -40,6 +41,10 @@ export function HomeTopMarkets() {
   useLedgerFollow(['/v1/markets']);
 
   const top = (data?.markets ?? []).slice(0, 10);
+  const maxVolume = Math.max(
+    0,
+    ...top.map((m) => Number(m.volume_24h_usd) || 0),
+  );
 
   return (
     <section className="space-y-3">
@@ -47,8 +52,7 @@ export function HomeTopMarkets() {
         <div className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight">Top markets</h2>
           <p className="text-ink-body text-sm">
-            Pairs ranked by trailing-24h USD volume across all sources. Click a
-            row for chart, recent trades, and per-source breakdown.
+            By 24h USD volume, all sources.
           </p>
         </div>
         <Link
@@ -115,9 +119,18 @@ export function HomeTopMarkets() {
                       {m.last_price ? formatPairPrice(m.last_price) : '—'}
                     </Td>
                     <Td align="right" className="font-mono">
-                      {m.volume_24h_usd
-                        ? `$${formatCompactUnits(m.volume_24h_usd)}`
-                        : '—'}
+                      {m.volume_24h_usd ? (
+                        <span className="inline-flex items-center gap-2">
+                          <InlineBar
+                            value={Number(m.volume_24h_usd)}
+                            max={maxVolume}
+                            label="24h volume relative to the top pair"
+                          />
+                          {`$${formatCompactUnits(m.volume_24h_usd)}`}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
                     </Td>
                     <Td align="right" className="text-ink-body font-mono">
                       {formatCompact(m.trade_count_24h)}
