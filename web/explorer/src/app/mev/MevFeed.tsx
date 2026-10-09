@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { AssetText } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
+import { MevKindCharts } from './MevKindCharts';
 
 interface MevLeg {
   source: string;
@@ -133,6 +134,7 @@ export function MevFeed() {
           the trade / auction / oracle streams every few minutes.
         </p>
       )}
+      {rows.length > 0 && <MevKindCharts events={rows} />}
       {rows.length > 0 && (
         <ul className="divide-line-subtle divide-y">
           {rows.map((e) => {

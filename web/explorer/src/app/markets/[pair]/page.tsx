@@ -28,6 +28,7 @@ import { OrderBookPanel } from './OrderBookPanel';
 import { PairChart } from './PairChart';
 import { PairPathView } from './PairPathView';
 import { SourceBreakdown } from './SourceBreakdown';
+import { SourcePriceSpread } from './SourcePriceSpread';
 import { shortAssetText } from '@/lib/asset-label';
 import { assetHref, assetHrefFor } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -614,6 +615,7 @@ function SourceBreakdownPanel({ rows }: { rows: PoolRow[] }) {
       title="Sources contributing"
       subtitle={`${rows.length} venue${rows.length === 1 ? '' : 's'} · ranked by 24h USD volume · /v1/pools?base=&quote=`}
     >
+      <SourcePriceSpread rows={rows} />
       <ul className="space-y-2">
         {rows.map((r) => {
           const v = r.volume_24h_usd ? Number(r.volume_24h_usd) : null;

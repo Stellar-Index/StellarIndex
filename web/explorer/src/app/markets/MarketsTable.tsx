@@ -9,6 +9,8 @@ import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { AssetLabel } from '@/components/AssetLabel';
 import { SourceSparkline } from '@/components/SourceSparkline';
+import { VolumeShare } from '@/components/charts/VolumeShare';
+import { shortAssetText } from '@/lib/asset-label';
 import { useMarkets } from '@/api/hooks';
 import { formatCompact, formatRelative } from '@/lib/format';
 import { useLedgerStream } from '@/lib/live/hooks';
@@ -217,6 +219,17 @@ export function MarketsTable() {
           </Link>
         </div>
       )}
+      <div className="px-4 pb-3">
+        <VolumeShare
+          noun="pairs"
+          rows={sorted.map((m) => ({
+            id: `${m.base}|${m.quote}`,
+            label: `${shortAssetText(m.base)}/${shortAssetText(m.quote)}`,
+            volume: m.volume_24h_usd,
+          }))}
+          scopeNote={`Only the top ${data.markets.length} pairs by volume are fetched; thousands more traded in the last 14 days.`}
+        />
+      </div>
       <div className="px-4 pt-1 pb-3">
         <div className="flex flex-wrap items-center gap-3 text-xs">
           <Input
