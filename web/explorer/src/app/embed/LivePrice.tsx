@@ -52,7 +52,7 @@ export function LivePrice({
           data?: { price?: string; observed_at?: string };
         };
         if (!cancelled && body.data?.price) {
-          setPrice(formatLivePrice(Number(body.data.price), format));
+          setPrice(formatLivePrice(body.data.price, format));
           setAsOf(body.data.observed_at ?? null);
           setWithheld(false);
         }
@@ -91,7 +91,10 @@ export function LivePrice({
   );
 }
 
-export function formatLivePrice(n: number, format?: 'usd' | 'plain'): string {
+export function formatLivePrice(
+  n: number | string,
+  format?: 'usd' | 'plain',
+): string {
   const s = formatPriceSmall(n);
   return format === 'plain' ? s : `$${s}`;
 }

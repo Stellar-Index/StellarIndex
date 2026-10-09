@@ -1087,7 +1087,7 @@ function OverviewBody({
   detail: AssetDetail | null;
   price: PriceResp | null;
 }) {
-  const priceNum = parsePrice(price?.price);
+  const priceStr = price?.price ? formatPriceSmall(price.price) : '—';
   const hasSupply =
     detail?.circulating_supply != null ||
     detail?.total_supply != null ||
@@ -1115,7 +1115,7 @@ function OverviewBody({
         >
           <div className="flex flex-wrap items-baseline gap-4">
             <span className="font-mono text-3xl tabular-nums">
-              {priceNum != null ? `$${formatPriceSmall(priceNum)}` : '—'}
+              {priceStr === '—' ? '—' : `$${priceStr}`}
             </span>
             {(() => {
               const peg = pegBadgeCurrency(
@@ -1416,12 +1416,6 @@ function OverviewBody({
 }
 
 // (CURATED_ASSET_ABOUT lives in ./AssetAbout.)
-
-function parsePrice(raw: string | undefined): number | null {
-  if (!raw) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
 
 function fmtUsd(raw: string | null | undefined): string {
   const s = formatCompactUnits(raw || null);

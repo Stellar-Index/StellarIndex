@@ -61,3 +61,22 @@ describe('LivePrice (RLT-386)', () => {
     expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
   });
 });
+
+describe('LivePrice rounding', () => {
+  it('rounds the fetched wire string, not a float of it', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: { price: '2.00005', observed_at: '2026-09-22T00:00:00Z' },
+        }),
+      }),
+    );
+
+    render(<LivePrice assetId="native" initial="$2.0000" />);
+
+    expect(await screen.findByText('$2.0001')).toBeInTheDocument();
+  });
+});

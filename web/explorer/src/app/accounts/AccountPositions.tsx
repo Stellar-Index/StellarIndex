@@ -107,7 +107,7 @@ interface PriceBatch {
 interface Holding {
   asset: string;
   balance: string; // stroops
-  priceUSD: number | null;
+  priceUSD: string | null;
   priceType: PriceType | null;
   valueUSD: number | null;
   /** Exact cents behind valueUSD — the portfolio total sums THIS, never
@@ -235,7 +235,7 @@ export function AccountPositions({ id }: { id: string }) {
         : ((state.trustlines ?? []).find((t) => t.asset === asset)?.balance ??
           '0');
     const priced = priceMap[asset] ?? null;
-    const priceUSD = priced?.price ?? null;
+    const priceUSD = priced?.priceRaw ?? null;
     // Exact BigInt multiply on the raw stroop integer and the API's
     // decimal price string; see valueUsdCents.
     const cents = priced ? valueUsdCents(raw, 7, priced.priceRaw) : null;

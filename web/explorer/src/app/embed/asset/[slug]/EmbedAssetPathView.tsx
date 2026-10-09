@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { Coin } from '@/api/hooks';
 import { apiGetData } from '@/api/client';
 import { assetHref } from '@/lib/fiat-slugs';
+import { compareDecimalStrings } from '@/lib/format';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 
 import { EmbedShellFrame, EmbedShellMessage } from '../../EmbedShellFrame';
@@ -35,10 +36,9 @@ export function EmbedAssetPathView() {
 
   const coin = q.data;
   const code = coin.code ?? (coin as { ticker?: string }).ticker ?? slug;
-  const price = coin.price_usd ? Number(coin.price_usd) : null;
   const initial =
-    price != null && Number.isFinite(price) && price > 0
-      ? formatLivePrice(price, 'usd')
+    coin.price_usd && (compareDecimalStrings(coin.price_usd, '0') ?? 0) > 0
+      ? formatLivePrice(coin.price_usd, 'usd')
       : '—';
   const change24h = coin.change_24h_pct ? Number(coin.change_24h_pct) : null;
   const liveId = coin.asset_id ?? '';
