@@ -75,10 +75,10 @@ const directoryUpsertChunk = 500
 // tag withholds the issuer's published price and market cap
 // (pricingguard.ScamGate), demotes its assets below every unflagged one
 // in the /v1/assets ranking (listingRankTierExpr) and draws the
-// explorer's "⚠ Flagged" pill. Until this constant existed the only
-// correction was `UPDATE account_directory SET tags = …` by hand, and
-// the next daily `directory-sync` overwrote it — the fix held for hours,
-// not until someone decided otherwise.
+// explorer's "⚠ Flagged" pill. Without this constant the only
+// correction is `UPDATE account_directory SET tags = …` by hand, which
+// the next daily `directory-sync` overwrites — a fix that holds for
+// hours, not until someone decides otherwise.
 //
 // Ownership is what makes it durable, and ownership is the `source`
 // column: ReplaceDirectory only ever touches rows carrying ITS source
