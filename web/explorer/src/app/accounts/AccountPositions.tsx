@@ -23,6 +23,7 @@ import type { components } from '@/api/types';
 import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import {
+  compareDecimalStrings,
   formatCompactUnits,
   formatPriceSmall,
   formatRelative,
@@ -49,10 +50,8 @@ type PriceType = components['schemas']['Price']['price_type'];
  * live VWAP", and a rate the API stamped hours ago read as current.
  */
 interface PricedAt {
-  price: number;
-  /** Decimal string exactly as the API served it. The float
-   * `price` above is display-only; the multiply against a holding's
-   * balance must run on this, never on the floated copy. */
+  /** Decimal string exactly as the API served it; display and the
+   * balance multiply both run on it, never on a float. */
   priceRaw: string;
   priceType: PriceType | null;
   observedAt: string | null;
@@ -183,11 +182,8 @@ export function AccountPositions({ id }: { id: string }) {
       let observedAt: string | null = null;
       let oldestMs = Number.POSITIVE_INFINITY;
       for (const row of batch.rows) {
-        if (!row.price) continue;
-        const p = Number(row.price);
-        if (!(Number.isFinite(p) && p > 0)) continue;
+        if (!row.price || compareDecimalStrings(row.price, '0') !== 1) continue;
         const at: PricedAt = {
-          price: p,
           priceRaw: row.price,
           priceType: row.price_type ?? null,
           observedAt: row.observed_at ?? null,
