@@ -10,14 +10,10 @@ import (
 // Boot-seeding the /v1/assets listing cache.
 //
 // The problem this file exists to solve is a race the prewarm cannot
-// win. Measured on r1 at a v0.58.0 restart: the process logs "http listening"
-// 12 ms after "starting", while the first real /v1/assets request
-// arrives at +3.5 s and the first browser request at +4.0 s. The cold
-// listing aggregate itself takes ~11 s (that boot: 11,658 ms for
-// `?limit=50`, 11,658 ms for `?include=sparkline&limit=10&order_by=…`,
-// with a second pair joining the same flight at 9,146 / 9,148 ms). No
-// prewarm ordering fixes that: the cost IS the first fill, and traffic
-// is routed to us three seconds before it can possibly complete.
+// win. The process starts listening milliseconds after start, the first
+// /v1/assets requests arrive within seconds, and the cold listing
+// aggregate takes around ten seconds. No prewarm ordering fixes that: the
+// cost IS the first fill, and traffic arrives before it can complete.
 //
 // The fix is to give [CachedAssetsReader.fetchRows] something to serve.
 // Seed the entries at boot from the previous process's last-good

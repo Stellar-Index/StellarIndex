@@ -4984,7 +4984,7 @@ func (s *Server) mergeContractArmVolumeExcept(ctx context.Context, dst *AssetDet
 // its listing row: the dedicated native reader for XLM (no
 // classic_assets twin exists), the exact-issuer listing filter for
 // classic ids (Q substring-matches column VALUES, so a full asset id
-// can never match — the lesson of v0.7.4/v0.7.5). Nil when the twin
+// can never match). Nil when the twin
 // isn't in the served store.
 //
 // ONE arm: the lookup keys on the classic issuer and a SAC wrapper has

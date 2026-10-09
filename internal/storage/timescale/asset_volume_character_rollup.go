@@ -263,7 +263,7 @@ func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolume
 
 	// This all-asset roll scans ~145M trades and shares the primary with the
 	// customer-facing API. Run it on a DEDICATED connection whose footprint is
-	// bounded so it can never starve serving (v0.44.1 regression fix):
+	// bounded so it can never starve serving:
 	//   - max_parallel_workers_per_gather=2 — leaves cores free for the API
 	//     rather than fanning the scan across every worker.
 	//   - statement_timeout=assetVolumeCharacterRollTimeout — a wedge guard: if it can't finish, it
