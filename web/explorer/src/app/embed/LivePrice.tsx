@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { formatPriceSmall } from '@/lib/format';
+import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
 import { pollWhileVisible } from '@/lib/live/visiblePoll';
 
 import { API_BASE_URL as API_BASE, timeoutSignal } from '@/api/client';
@@ -51,8 +51,12 @@ export function LivePrice({
         const body = (await res.json()) as {
           data?: { price?: string; observed_at?: string };
         };
-        if (!cancelled && body.data?.price) {
-          setPrice(formatLivePrice(Number(body.data.price), format));
+        if (
+          !cancelled &&
+          body.data?.price &&
+          compareDecimalStrings(body.data.price, '0') != null
+        ) {
+          setPrice(formatLivePrice(body.data.price, format));
           setAsOf(body.data.observed_at ?? null);
           setWithheld(false);
         }
@@ -91,7 +95,10 @@ export function LivePrice({
   );
 }
 
-export function formatLivePrice(n: number, format?: 'usd' | 'plain'): string {
+export function formatLivePrice(
+  n: number | string,
+  format?: 'usd' | 'plain',
+): string {
   const s = formatPriceSmall(n);
   return format === 'plain' ? s : `$${s}`;
 }

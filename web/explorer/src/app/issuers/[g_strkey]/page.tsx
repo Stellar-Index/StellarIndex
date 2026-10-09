@@ -684,18 +684,11 @@ function Td({
 }
 
 function PriceCell({ raw }: { raw?: string | null }) {
-  if (!raw) return <span className="text-ink-faint">—</span>;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
-  // FEC audit F-A4-02: the bare toFixed(6) ladder rendered sub-1e-6 prices
-  // (the scam-token class this cell exists to show) as "$0.000000" — LDEX
-  // was live-wrong on this page. formatPriceSmall is the COR-14 canonical
-  // with the subunit-safe plain-decimal tail.
-  return (
-    <span className="text-ink-body font-mono tabular-nums">
-      ${formatPriceSmall(n)}
-    </span>
-  );
+  const price = raw ? formatPriceSmall(raw) : '—';
+  if (price === '—') return <span className="text-ink-faint">—</span>;
+  // The subunit tail keeps sub-1e-6 prices (the scam-token class this cell
+  // exists to show) from rendering as "$0.000000".
+  return <span className="text-ink-body font-mono tabular-nums">${price}</span>;
 }
 
 function ChangeCell({ raw }: { raw?: string | null }) {
