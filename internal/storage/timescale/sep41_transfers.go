@@ -226,51 +226,29 @@ func (s *Store) InsertSEP41Transfer(ctx context.Context, r SEP41TransferRow) err
 // full-history read. Each rung is a `ledger_close_time >= now-D` floor;
 // the first rung that fills the caller's page wins.
 //
-// Why a ladder instead of one unbounded query: sep41_transfers has no
-// index that yields a single contract's rows in ledger_close_time DESC
-// order — sep41_transfers_contract_{from,to}_idx (migration 0047) put
-// the address column between contract_id and ledger_close_time, so a
-// contract-only predicate cannot take time order from them, and the
-// primary key leads with ledger_close_time — so an unbounded read has to materialise and sort
-// EVERY row a busy contract owns in the newest uncompressed chunk before
-// the LIMIT can take five of them. On r1 that chunk holds a month of the
-// CAP-67 firehose, and for the USDC SAC (CCW67TSZ…, the busiest token
-// contract and the OpenAPI parameter example) the planner picks
-// `Seq Scan + Sort` over ~17M estimated rows: GET
-// /v1/contracts/CCW67TSZ…/transfers?limit=5 burnt the whole 8s handler
-// budget and 503'd, while a quiet contract answered from
-// sep41_transfers_contract_from_idx in 0.19s — cost inverted with how
+// Why a ladder instead of one unbounded query: no index yields one
+// contract's rows in ledger_close_time DESC order (the
+// sep41_transfers_contract_{from,to}_idx put the address before the time,
+// and the primary key leads with time), so an unbounded read materialises
+// and sorts every row a busy contract owns before the LIMIT applies. For
+// the USDC SAC that is a Seq Scan + Sort over ~17M rows and blows the
+// handler budget; a quiet contract is cheap, so cost grows with how
 // interesting the contract is.
 //
-// A floor inside the recent uncompressed data changes the plan to an
-// index scan on the hypertable's ledger_close_time index under an
-// Incremental Sort, so the LIMIT stops early (r1 EXPLAIN ANALYZE, same
-// contract: 0.34ms for limit=100 over the 1h rung, 0.97ms for limit=500
-// over the 7d one).
-//
-// The invariant the rungs keep is that they stay narrow enough for
-// chunk exclusion to leave only the newest uncompressed chunk or
-// chunks, and 7d is the widest window measured on r1 to still plan
-// onto an index scan — 90d plans straight back to the per-chunk
-// `Seq Scan + Sort`, so widening the ladder buys no deeper cheap read,
-// it only reintroduces the timeout one rung later. The rungs do NOT
-// depend on fitting inside one chunk: migration 0047 declares 1-day
-// chunks and compression after 7 days, so a tree-built deployment
-// serves the 7d rung from up to eight chunks, the oldest of which may
-// already be compressed. r1's 30-day chunk width — which happens to put
-// all three rungs inside a single chunk — is drift from that migration,
-// not the design.
+// A floor inside the recent data turns the plan into an Incremental Sort
+// over the time index, so the LIMIT stops early (sub-millisecond on r1).
+// The rungs must stay narrow enough for chunk exclusion to leave only the
+// newest chunks: 7d is the widest window measured to keep the index plan,
+// and 90d falls back to the per-chunk Seq Scan + Sort. They do not depend
+// on fitting inside one chunk.
 //
 // The short-circuit is safe because the read is time-ordered: every row
 // a rung's floor excludes is strictly older than every row it keeps, so
 // a rung that returns a full page returned exactly the newest page.
 //
-// Cost: a rung that fills its page stops at the LIMIT and is cheap. A
-// rung that CANNOT fill it is not — for a contract the chunk statistics
-// still call busy, the planner walks the whole window of the time index
-// filtering on contract_id, and on r1 that walk measured 36ms at 1h,
-// 2.2s at 24h and past a 9s statement timeout at 7d. The ladder as a
-// whole is therefore bounded by [SEP41TransferLadderBudget]; see
+// Cost: a rung that cannot fill its page walks its whole window of the
+// time index (on r1: 36ms at 1h, 2.2s at 24h, past a 9s timeout at 7d),
+// so the ladder as a whole is bounded by [SEP41TransferLadderBudget]; see
 // [Store.walkSEP41TransferLadder].
 var sep41TransferLookbackLadder = []time.Duration{
 	time.Hour,
