@@ -14,10 +14,18 @@ import { ConvertLiveRate, ConvertSnippets } from './[from]/[to]/ConvertLive';
 export function ConvertLanding({ tickers }: { tickers: string[] }) {
   const [from, setFrom] = useState('XLM');
   const [to, setTo] = useState(tickers.includes('USD') ? 'USD' : tickers[0]);
+  // The link's href comes from the built page list, never from the select value.
   const pairPages = useMemo(
-    () => new Set(buildConvertParams(tickers).map((p) => `${p.from}/${p.to}`)),
+    () =>
+      new Map(
+        buildConvertParams(tickers).map((p) => [
+          `${p.from}/${p.to}`,
+          `/convert/${p.from}/${p.to}`,
+        ]),
+      ),
     [tickers],
   );
+  const pairHref = pairPages.get(`${from}/${to}`);
 
   const pickFrom = (next: string) => {
     setFrom(next);
@@ -75,9 +83,9 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
               ))}
             </Select>
           </label>
-          {pairPages.has(`${from}/${to}`) && (
+          {pairHref && (
             <Link
-              href={`/convert/${from}/${to}`}
+              href={pairHref}
               className="text-brand-600 h-9 text-sm leading-9 hover:underline"
             >
               {from} → {to} page
