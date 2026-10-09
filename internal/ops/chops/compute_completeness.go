@@ -1290,36 +1290,22 @@ func detectFloorLoss(src reconSource, servedMins []servedFloor, floors map[strin
 	return out
 }
 
-// floorsToRecord is what a clean run has EVIDENCE for, per target — the pure
-// half of recordFloors.
+// floorsToRecord is what a clean run has evidence for, per target: the pure
+// half of recordFloors. It records the target's live MIN(ledger) only when the
+// reconcile scope reached that bottom edge (scopes[i].From <= servedMins[i].min).
 //
-// It records the target's live MIN(ledger), and ONLY when the reconcile scope
-// actually reached that bottom edge (scopes[i].From <= servedMins[i].min). A
-// narrowed `-from`/incremental run (projectionFloor resuming from a prior
-// watermark) clips the scope ABOVE the served tier's real minimum, so this
-// run has no evidence about the range below the clip: recording
-// scopes[i].From there would assert a floor higher than what is genuinely
-// served, disarming detectFloorLoss against loss in that unverified gap.
-// This is not the harmless LEAST() no-op it looks like — LEAST()
-// only protects a target that ALREADY has a lower floor; a target with none
-// yet gets this inflated value banked outright on its first clean incremental
-// pass.
+// A narrowed -from or incremental run clips the scope above the served
+// minimum and has no evidence below the clip; recording scopes[i].From would
+// bank an inflated floor on a target's first clean pass (LEAST() only protects
+// a target that already has a lower one) and disarm detectFloorLoss for the
+// unverified gap.
 //
-// A target holding NO served rows is SKIPPED too, and for the same underlying
-// reason: targetScope floors an empty target at `genesis` (fail closed, so
-// expected>0 vs served=0 reconciles as loss), and recording THAT as a
-// verified floor asserts something the run never saw: a clean reconcile of an
-// empty target proves only "0 expected, 0 served", not "this table's rows
-// have been verified present from genesis". The next run where the table
-// legitimately acquires its first row at ledger L then reads MIN=L > genesis
-// and detectFloorLoss reports L−genesis ledgers "GONE" — a permanent false
-// projection failure, because UpsertCompletenessTargetFloor's LEAST() can
-// never raise the floor back and detectFloorLoss's own verdict blocks
-// re-recording. Every late-starting target reaches production through
-// exactly this path: a source whose first event has not happened yet (a rare
-// skim, a newly watched SEP-41 contract promoted into the catalogue). No rows
-// means no evidence about where the rows begin — so record nothing and let
-// the first run that actually sees rows establish the floor.
+// A target with no served rows is skipped for the same reason: targetScope
+// floors it at genesis to fail closed, but a clean "0 expected, 0 served"
+// says nothing about where rows begin. Recording genesis would make the first
+// real row at L read as L−genesis ledgers lost, a permanent false failure that
+// LEAST() can never raise back. Late-starting targets (a source whose first
+// event has not happened yet) all take this path.
 func floorsToRecord(src reconSource, scopes []projectionScope, servedMins []servedFloor) []timescale.CompletenessTargetFloor {
 	out := make([]timescale.CompletenessTargetFloor, 0, len(src.targets))
 	for i, tgt := range src.targets {
@@ -1538,11 +1524,10 @@ func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, prio
 //  4. Anything else — no prior verdict, a FAILING prior verdict, or a stale
 //     prior that leaves an unverified band — publishes false.
 //
-// The returned detail ALWAYS states the range actually verified, so
-// `complete=true` can never be read as a genesis-to-tip claim (the
-// served tier legitimately holds no sdex trades below ledger 61,609,957, and
-// each source's floor differs — soroswap's is 50,746,445; the genesis claim is
-// the separate lake_complete axis).
+// The returned detail always states the range actually verified, so
+// `complete=true` is never read as a genesis-to-tip claim: the served tier's
+// floor differs per source, and the genesis claim is the separate
+// lake_complete axis.
 func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail string, prior priorProjection, scope claimScope) (bool, string) {
 	if !runClean {
 		return false, "projection: " + runDetail
