@@ -6,6 +6,7 @@ import { EntityNotFoundShell } from '@/components/EntityNotFoundShell';
 import { Container, Breadcrumbs } from '@/components/ui';
 import { SourceHealthPanel } from './SourceHealthPanel';
 import { SourcePathView } from './SourcePathView';
+import { SourcePeerBars } from './SourcePeerBars';
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
 import { SourceTopChart } from '@/app/dexes/[source]/SourceTopChart';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
@@ -311,6 +312,8 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
             : 'pools'
         }
       />
+
+      <SourcePeerBars source={name} />
 
       {selectable && <SourceTopChart source={name} sourceName={name} />}
 
