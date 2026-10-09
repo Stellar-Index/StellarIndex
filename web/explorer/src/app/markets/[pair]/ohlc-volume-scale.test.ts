@@ -30,13 +30,13 @@ describe('markets/[pair] OHLC volume scale', () => {
     );
   });
 
-  it('reads the scale the bar states via the shared BigInt-safe helper', () => {
+  it('reads the scale the bar states via the shared exact helper', () => {
     expect(src).toContain('quote_volume_decimals');
-    // A local `Number(raw) / 10 ** decimals` reimplementation
-    // rounds silently above 2^53. The bar's stated scale must be applied
-    // by format.ts's scaleBaseUnits (BigInt-divide-first), not inline.
+    // A float scale rounds the displayed digits (2.00005 → 2.0000) and
+    // drops them above 2^53; format.ts's baseUnitsDecimal keeps the
+    // scaled value an exact decimal string.
     expect(src).not.toMatch(/Number\(raw\)/);
-    expect(src).toMatch(/scaleBaseUnits\(raw, decimals\)/);
+    expect(src).toMatch(/baseUnitsDecimal\(raw, decimals\)/);
   });
 
   it('renders no figure at all when the bar states no scale', () => {

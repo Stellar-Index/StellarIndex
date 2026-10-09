@@ -4,14 +4,13 @@ import { hrefFor } from '@/lib/hrefFor';
 
 import { buildFetchData, requireRows } from '@/lib/buildFetch';
 import {
+  baseUnitsDecimal,
   formatPriceSmall,
   compareDecimalStrings,
   formatBaseUnits,
   formatCompactUnits,
   formatPairPrice,
-  formatSubunitPrice,
   ratioPct,
-  scaleBaseUnits,
   sumDecimalStrings,
 } from '@/lib/format';
 import {
@@ -771,9 +770,8 @@ function isUsdQuote(quote: string): boolean {
 // units, using the scale the API stated for it (F096). A bar that states
 // no scale renders as "—": the divisor is a property of the venues that
 // traded, so guessing one is how this panel came to overstate every
-// CEX-quoted pair tenfold. An em-dash is the honest answer. Scaling goes
-// through scaleBaseUnits' BigInt-divide-first path (ADR-0003), not a bare
-// Number()-then-divide, so a volume above 2^53 doesn't round silently.
+// CEX-quoted pair tenfold. An em-dash is the honest answer. The scaled
+// value stays an exact decimal string (ADR-0003) and is rounded from it.
 function formatScaledAmount(
   raw: string,
   decimals: number | null | undefined,
@@ -782,21 +780,9 @@ function formatScaledAmount(
   if (decimals == null || !Number.isFinite(decimals) || decimals < 0) {
     return '—';
   }
-  const n = scaleBaseUnits(raw, decimals);
-  if (n == null) return '—';
-  return formatQuoteAmount(n, quote);
-}
-
-function formatQuoteAmount(n: number, quote: string): string {
-  const num =
-    n >= 1
-      ? n.toFixed(n >= 100 ? 2 : 4)
-      : n >= 0.001
-        ? n.toFixed(6)
-        : n > 0
-          ? formatSubunitPrice(n)
-          : '—';
-  if (num === '—') return num;
+  const exact = baseUnitsDecimal(raw, decimals);
+  if (exact == null || compareDecimalStrings(exact, '0') !== 1) return '—';
+  const num = formatPriceSmall(exact);
   return isUsdQuote(quote) ? `$${num}` : `${num} ${shortAssetText(quote)}`;
 }
 
