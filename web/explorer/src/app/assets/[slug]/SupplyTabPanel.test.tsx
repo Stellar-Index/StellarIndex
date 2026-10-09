@@ -131,6 +131,21 @@ describe('SupplyTabPanel on-chain supply', () => {
     expect(screen.queryByText('100000T')).not.toBeInTheDocument();
   });
 
+  it('shows the archived part of a storage-balance supply', () => {
+    supplyQuery.data = {
+      data: {
+        ...storageSupply,
+        decimals: 18,
+        archived_balance_entries: 3,
+        archived_balance_total: '250000000000000000000000',
+      },
+    };
+    renderPanel();
+    expect(screen.getByText('Archived')).toBeInTheDocument();
+    expect(screen.getByText('250K')).toBeInTheDocument();
+    expect(screen.getByText(/3 balances — TTL lapsed/)).toBeInTheDocument();
+  });
+
   it('renders the envelope stale flag and the lower-bound floor', () => {
     supplyQuery.data = {
       data: {
