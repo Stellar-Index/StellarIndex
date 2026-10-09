@@ -21,34 +21,28 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ch-cap67-movements derives post-P23 account movements for EVERY asset (native XLM included)
-// from the lake's own CAP-67 transfer, mint, burn and clawback events into
-// stellar.account_movements, provenance 'cap67_derived'.
+// ch-cap67-movements derives post-P23 account movements for EVERY asset
+// (native XLM included) from the lake's CAP-67 transfer, mint, burn and
+// clawback events into stellar.account_movements, provenance 'cap67_derived'.
 //
-// WHY: the Postgres sep41_transfers tail projects only WATCHED token
-// contracts — native XLM's SAC is deliberately unwatched (volume), so
-// without this job a classic-payment account's /movements feed stops at
-// the P23 boundary even though the lake captures
-// all of it (native SAC: 44.76M active ledgers).
+// WHY: the Postgres sep41_transfers tail projects only WATCHED contracts, and
+// native XLM's SAC is deliberately unwatched (volume), so without this job a
+// classic-payment account's /movements feed stops at the P23 boundary.
 //
-// SHAPE: windowed + resumable via stellar.cap67_movements_watermark
-// (deploy/clickhouse/cap67_movements.sql). `-follow` runs it as the
-// continuous real-time daemon: each iteration catches up from the
-// watermark (or the P23 boundary on first run) to the CONTIGUOUS lake tip,
-// then sleeps -follow-interval and repeats — this is the movement feed a user
-// watches their transactions land on. Without -follow it is a one-shot
-// catch-up that exits at the tip (manual -from/-to backfills). Idempotent:
-// account_movements is a ReplacingMergeTree keyed
-// (address, ledger, tx_hash, op_index, leg_index, direction), so re-derives
-// collapse. From P23 on CAP-67 reports a payment from an asset's issuer as
-// `mint` and one to it as `burn` (never as `transfer`), so those kinds and
-// `clawback` are derived too: without them an issuer's payments vanish.
-// The ledgers derived with those kinds are their own range (see
-// cap67SupplyFill), backfilled down to the floor by the watermark-driven runs.
+// SHAPE: windowed and resumable via stellar.cap67_movements_watermark
+// (deploy/clickhouse/cap67_movements.sql). `-follow` is the real-time daemon:
+// catch up from the watermark (or the P23 boundary) to the CONTIGUOUS lake
+// tip, sleep -follow-interval, repeat. Without it, a one-shot catch-up for
+// manual -from/-to backfills. Idempotent: account_movements is a
+// ReplacingMergeTree keyed (address, ledger, tx_hash, op_index, leg_index,
+// direction). From P23 CAP-67 reports a payment from an asset's issuer as
+// `mint` and one to it as `burn`, so those kinds and `clawback` are derived
+// too or an issuer's payments vanish; their range is tracked separately
+// (see cap67SupplyFill).
 //
 // The API's movements handler floors its Postgres arm at this job's
-// watermark, so at ANY backfill progress the two arms are gap-free and
-// double-count-free.
+// watermark, so the two arms are gap-free and double-count-free at any
+// backfill progress.
 func chCap67Movements(args []string) error {
 	fs := flag.NewFlagSet("ch-cap67-movements", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
