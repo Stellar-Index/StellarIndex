@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { API_BASE_URL } from '@/api/client';
-import { Container, PageHeader } from '@/components/ui';
+import { PageHeader } from '@/components/ui';
 
 import { SignInForm } from '../signin/SignInForm';
 
@@ -40,9 +40,12 @@ const TIERS = [
 
 export default function SignupPage() {
   return (
-    // Content stays max-w-4xl for the tier table beside the SignInForm;
-    // /signin keeps its bare max-w-md auth frame.
-    <Container className="py-12 sm:py-16 [&>*]:max-w-4xl">
+    // Route-frame record :
+    // max-w-4xl is DELIBERATE — this page carries the tier table + plan
+    // copy beside the same SignInForm; /signin stays max-w-md as the bare
+    // auth micro-surface. Vertical rhythm (py-12 sm:py-16) is the shared
+    // auth-pair rhythm. Allowlisted for the census-2 route-frame tripwire.
+    <div className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16">
       <PageHeader
         className="mb-10"
         breadcrumbs={[
@@ -167,6 +170,6 @@ export default function SignupPage() {
       <p className="text-ink-muted mt-8 text-xs">
         API base URL: <code className="font-mono">{API_BASE_URL}</code>
       </p>
-    </Container>
+    </div>
   );
 }
