@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Badge, Container, Breadcrumbs } from '@/components/ui';
+import { Badge, Container, PageHeader } from '@/components/ui';
 import { DirectoryLabel } from '@/components/DirectoryLabel';
 import {
   ContractDailyBars,
@@ -865,16 +865,15 @@ function Shell({
 }) {
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Contracts', href: '/contracts' },
-            { label: id ? `${id.slice(0, 8)}…${id.slice(-6)}` : 'contract' },
-          ]}
-        />
-        <h1 className="text-2xl font-semibold tracking-tight">Contract</h1>
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Contracts', href: '/contracts' },
+          { label: id ? `${id.slice(0, 8)}…${id.slice(-6)}` : 'contract' },
+        ]}
+        title="Contract"
+        description="A Soroban smart contract and its on-chain activity."
+      />
       {children}
     </Container>
   );
