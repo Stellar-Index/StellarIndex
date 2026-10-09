@@ -50,6 +50,34 @@ func TestOverlayCompleteness_ZeroPctIsEmitted(t *testing.T) {
 	}
 }
 
+// TestOverlayCompleteness_FillsVerifiedRange: on-chain rows show the
+// verified range (served floor or genesis, through the watermark); a row
+// already carrying a range keeps it.
+func TestOverlayCompleteness_FillsVerifiedRange(t *testing.T) {
+	srv := New(Options{
+		Logger: slog.New(slog.DiscardHandler),
+		CompletenessReader: fixedCompletenessReader{
+			{Source: "blend", Genesis: 100, Watermark: 900, ProjectionVerifiedFrom: 400},
+			{Source: "sdex", Genesis: 2, Watermark: 800},
+			{Source: "phoenix", Genesis: 50},
+			{Source: "binance", Genesis: 1, Watermark: 9},
+		},
+	})
+	rows := []BackfillCoverageRow{
+		{Source: "blend"},
+		{Source: "sdex"},
+		{Source: "phoenix"},
+		{Source: "binance", EarliestLedger: 5, LatestLedger: 7},
+	}
+	srv.overlayCompleteness(context.Background(), &rows)
+	want := [][2]int64{{400, 900}, {2, 800}, {0, 0}, {5, 7}}
+	for i, w := range want {
+		if got := [2]int64{rows[i].EarliestLedger, rows[i].LatestLedger}; got != w {
+			t.Errorf("%s: earliest/latest = %v, want %v", rows[i].Source, got, w)
+		}
+	}
+}
+
 // TestCoverageVerdictStaleAgeTighterThanLedgerHorizon pins the two
 // stale gates' relationship: the age gate covers one daily audit period
 // and fires before the ledger backstop (~2 periods at 5 s/ledger).

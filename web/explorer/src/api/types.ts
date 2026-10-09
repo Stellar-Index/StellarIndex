@@ -18186,9 +18186,15 @@ export interface operations {
                                  * @description Operator-curated source genesis (1 for SDEX, contract deploy ledger for Soroban).
                                  */
                                 genesis_ledger?: number;
-                                /** Format: int64 */
+                                /**
+                                 * Format: int64
+                                 * @description Start of the verified range: the served floor, else genesis (completeness_snapshots). Cached range for CEX rows. Omitted until verified.
+                                 */
                                 earliest_ledger?: number;
-                                /** Format: int64 */
+                                /**
+                                 * Format: int64
+                                 * @description End of the verified range: the completeness watermark. Omitted until verified.
+                                 */
                                 latest_ledger?: number;
                                 /**
                                  * Format: int64

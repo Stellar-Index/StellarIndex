@@ -157,9 +157,9 @@ type CompletenessReader interface {
 // add a row there.
 //
 // EarliestLedger / LatestLedger are display context — for
-// Soroban sources they're the first/last ledger we observed an
-// event from (taken from the source_coverage_snapshots row's
-// genesis/tip). For CEX/FX they're empty.
+// on-chain sources the verified range from completeness_snapshots
+// (served floor, else genesis, through the watermark); for
+// cache-only CEX rows the cached range.
 //
 // GapFreePct is `1 - max_gap / expected`. Goes to
 // 1.0 when no contiguous gap above the per-target threshold
@@ -870,6 +870,14 @@ func (s *Server) overlayCompleteness(ctx context.Context, rows *[]BackfillCovera
 		(*rows)[i].CompletenessComplete = sn.Complete
 		(*rows)[i].CompletenessLakeComplete = sn.LakeComplete
 		(*rows)[i].CompletenessComputedAt = wireTimePtr(&computedAt)
+		if (*rows)[i].EarliestLedger == 0 && sn.Watermark > 0 {
+			from := sn.Genesis
+			if sn.ProjectionVerifiedFrom > 0 {
+				from = sn.ProjectionVerifiedFrom
+			}
+			(*rows)[i].EarliestLedger = int64(from)
+			(*rows)[i].LatestLedger = int64(sn.Watermark)
+		}
 	}
 }
 
