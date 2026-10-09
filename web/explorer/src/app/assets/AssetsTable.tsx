@@ -13,6 +13,7 @@ import {
 } from '@/api/hooks';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import {
+  compareDecimalStrings,
   formatCompact,
   formatPriceSmall,
   scaleBaseUnits,
@@ -536,7 +537,7 @@ function AssetRow({
   pricing: boolean;
 }) {
   const price =
-    coin.price_usd != null && parseDec(coin.price_usd) != null
+    coin.price_usd != null && compareDecimalStrings(coin.price_usd, '0') != null
       ? coin.price_usd
       : null;
   // The server owns the dust-liquidity gate (single venue AND sub-floor

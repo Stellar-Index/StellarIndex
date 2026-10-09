@@ -104,15 +104,6 @@ export function decimalOrNull(raw: string | null | undefined): number | null {
 
 const SUBUNIT_MAX_DECIMALS = 20;
 
-// formatSubunitPrice — a tiny positive (or bad-data negative) value as
-// a PLAIN DECIMAL with `sig` significant digits and no exponent:
-// 3.353e-4 renders "0.0003353", never "$3.353e-4" (scientific
-// notation is not user-friendly and the plain decimal is no less
-// accurate). Trailing zeros are trimmed. Decimals
-// are capped at 20 places, which keeps 1e-18 honest (its first
-// significant digit is place 18) while bounding the column width.
-// A non-zero value that rounds away under the cap renders as a signed
-// "<" bound, so dust (or a tiny bad-data negative) never reads as "0".
 // toFixed on the exact decimal, rounding half away from zero in BigInt:
 // a float rounds "1.00005" down (its double is just below) and drops the
 // digits of a price past 2^53.
@@ -159,6 +150,15 @@ function bandedExact(raw: string, bands: [string, number][]): string {
   return subunitExact(d, 4);
 }
 
+// formatSubunitPrice — a tiny positive (or bad-data negative) value as
+// a PLAIN DECIMAL with `sig` significant digits and no exponent:
+// 3.353e-4 renders "0.0003353", never "$3.353e-4" (scientific
+// notation is not user-friendly and the plain decimal is no less
+// accurate). Trailing zeros are trimmed. Decimals
+// are capped at 20 places, which keeps 1e-18 honest (its first
+// significant digit is place 18) while bounding the column width.
+// A non-zero value that rounds away under the cap renders as a signed
+// "<" bound, so dust (or a tiny bad-data negative) never reads as "0".
 export function formatSubunitPrice(n: number, sig = 4): string {
   const abs = Math.abs(n);
   if (abs === 0) return '0';
