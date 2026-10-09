@@ -60,6 +60,19 @@ type AccountMovementsView struct {
 	// fresh deployment) or the Postgres recent-tail reader isn't
 	// wired / errored on this request. Absent = the full merge ran.
 	CoverageNote string `json:"coverage_note,omitempty"`
+	// Coverage is coverage_note as data: one entry per movement kind family.
+	Coverage []MovementKindCoverage `json:"coverage"`
+}
+
+// MovementKindCoverage states what the feed serves for one kind family.
+// Status is "served", "partial" (served over part of the range, or the
+// archive absent) or "not_served"; the ledger bounds are inclusive and
+// omitted when the kind is not served.
+type MovementKindCoverage struct {
+	Kind          string `json:"kind"`
+	Status        string `json:"status"`
+	FromLedger    uint32 `json:"from_ledger,omitempty"`
+	ThroughLedger uint32 `json:"through_ledger,omitempty"`
 }
 
 // accountMovementsDefaultLimit / accountMovementsMaxLimit — ADR-0048
@@ -288,6 +301,7 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		Account:      g,
 		Movements:    h.accountMovementEntries(ctx, merged),
 		CoverageNote: coverageNote,
+		Coverage:     movementsCoverage(wm, tailNote, supply),
 	}
 	if len(merged) == limit {
 		// Pin the boundary this sequence committed to (the live watermark
@@ -436,6 +450,31 @@ func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, l
 // well as assets.
 func movementsCoverageNote(wm uint32, tailNote string, supply supplyRange) string {
 	return movementsArchiveNote(wm, tailNote) + "; " + movementsKindGapNote(supply)
+}
+
+// movementsCoverage is the structured form of movementsCoverageNote. Fees
+// and order-book fills are never served on this feed, so they are always
+// reported not_served rather than omitted.
+func movementsCoverage(wm uint32, tailNote string, supply supplyRange) []MovementKindCoverage {
+	floor := timescale.MovementsFloor()
+	transfer := MovementKindCoverage{Kind: "transfer", Status: "served", FromLedger: floor, ThroughLedger: wm}
+	if wm == 0 || tailNote != "" {
+		transfer = MovementKindCoverage{Kind: "transfer", Status: "partial"}
+	}
+	supplyKinds := MovementKindCoverage{Kind: "mint_burn_clawback", Status: "not_served"}
+	if supply.from != 0 {
+		supplyKinds.Status = "served"
+		supplyKinds.FromLedger, supplyKinds.ThroughLedger = supply.from, supply.thru
+		if supply.from > floor {
+			supplyKinds.Status = "partial"
+		}
+	}
+	return []MovementKindCoverage{
+		transfer,
+		supplyKinds,
+		{Kind: "fee", Status: "not_served"},
+		{Kind: "fill", Status: "not_served"},
+	}
 }
 
 // supplyRange is the ledger range the archive serves mint, burn and clawback

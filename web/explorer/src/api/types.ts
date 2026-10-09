@@ -6459,6 +6459,27 @@ export interface components {
              *     Absent = both sides contributed to this response.
              */
             coverage_note?: string;
+            /**
+             * @description coverage_note as data: one entry per movement kind family
+             *     (transfer, mint_burn_clawback, fee, fill). fee and fill are
+             *     always not_served on this feed.
+             */
+            coverage: {
+                /** @enum {string} */
+                kind: "transfer" | "mint_burn_clawback" | "fee" | "fill";
+                /** @enum {string} */
+                status: "served" | "partial" | "not_served";
+                /**
+                 * Format: int64
+                 * @description First ledger served; absent when not served or unbounded.
+                 */
+                from_ledger?: number;
+                /**
+                 * Format: int64
+                 * @description Last ledger served (inclusive); absent when not served.
+                 */
+                through_ledger?: number;
+            }[];
         };
         /** @description One folded DeFi position — a net position in a single venue for a single protocol. */
         AccountPosition: {
