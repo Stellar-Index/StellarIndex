@@ -14623,6 +14623,9 @@ export interface operations {
                      *       },
                      *       "as_of": "2026-10-06T14:03:31Z",
                      *       "flags": {
+                     *         "divergence_warning": false,
+                     *         "triangulated": false,
+                     *         "reduced_redundancy": false,
                      *         "stale": false,
                      *         "degraded": false
                      *       }
@@ -15599,6 +15602,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "row_cap_truncated": false,
                      *         "asset_id": "native",
                      *         "quote": "fiat:USD",
                      *         "price_type": "vwap",
@@ -15986,6 +15990,9 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "clamped": false,
+                     *         "quote_volume_decimals": 7,
+                     *         "base_volume_decimals": 7,
                      *         "from": "2026-07-03T21:37:30Z",
                      *         "to": "2026-07-03T22:37:30Z",
                      *         "price": "0.2045966459",
@@ -16088,6 +16095,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "clamped": false,
                      *         "from": "2026-07-03T21:37:30Z",
                      *         "to": "2026-07-03T22:37:30Z",
                      *         "price": "0.2044317708",
@@ -18141,6 +18149,8 @@ export interface operations {
                      *         "sources": [
                      *           {
                      *             "name": "aquarius",
+                     *             "enabled": true,
+                     *             "entries_24h": 1482,
                      *             "class": "exchange",
                      *             "include_in_vwap": true,
                      *             "backfill_safe": true,
@@ -18707,9 +18717,11 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "unverified_sources": [],
                      *         "sources": [
                      *           {
                      *             "source": "aquarius",
+                     *             "projection_evidenced_at": "2026-07-03T22:38:02Z",
                      *             "complete": true,
                      *             "lake_complete": true,
                      *             "substrate_ok": true,
@@ -18725,6 +18737,7 @@ export interface operations {
                      *           },
                      *           {
                      *             "source": "sdex",
+                     *             "projection_evidenced_at": "2026-07-03T22:38:02Z",
                      *             "complete": true,
                      *             "lake_complete": true,
                      *             "substrate_ok": true,
@@ -18740,6 +18753,7 @@ export interface operations {
                      *           },
                      *           {
                      *             "source": "soroswap",
+                     *             "projection_evidenced_at": "2026-07-03T22:38:02Z",
                      *             "complete": false,
                      *             "lake_complete": true,
                      *             "substrate_ok": true,
@@ -19902,6 +19916,7 @@ export interface operations {
                      *       "data": [
                      *         {
                      *           "name": "aquarius",
+                     *           "selectable": true,
                      *           "class": "exchange",
                      *           "subclass": "dex",
                      *           "include_in_vwap": true,
@@ -20263,6 +20278,7 @@ export interface operations {
                      *         "assets": [
                      *           {
                      *             "asset_id": "USTRY-GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *             "recognition": "curated_account_directory",
                      *             "code": "USTRY",
                      *             "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
                      *             "slug": "USTRY-GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
@@ -20304,6 +20320,7 @@ export interface operations {
                      *           },
                      *           {
                      *             "asset_id": "USDY-GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6",
+                     *             "recognition": "curated_account_directory",
                      *             "code": "USDY",
                      *             "issuer": "GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6",
                      *             "slug": "USDY-GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6",
@@ -22406,6 +22423,7 @@ export interface operations {
                      *       "keys": [
                      *         {
                      *           "id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
+                     *           "effective_monthly_quota": 1000000,
                      *           "name": "production",
                      *           "description": "main backend key",
                      *           "key_prefix": "sip_1a2b3c4d",
@@ -22488,6 +22506,7 @@ export interface operations {
                      * @example {
                      *       "plaintext": "sip_9d4c8b2a6f1e3d7c5a8b9e2f4d1c6a3b8e5f7d2c9a1b4e6f3d8c5a2b9e7f1d4c",
                      *       "key": {
+                     *         "effective_monthly_quota": 1000000,
                      *         "id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
                      *         "name": "production",
                      *         "description": "main backend key",
@@ -23000,9 +23019,7 @@ export interface operations {
                      *           "id": "5c8e1f0a-2b4d-4a6c-9e3f-7d1b0c5a8e2f",
                      *           "event_type": "incident.sev1",
                      *           "attempt_count": 1,
-                     *           "next_attempt_at": null,
                      *           "delivered_at": "2026-07-01T14:03:22Z",
-                     *           "last_error": null,
                      *           "last_response_status": 200,
                      *           "created_at": "2026-07-01T14:03:21Z"
                      *         }
@@ -24322,6 +24339,7 @@ export interface operations {
                      *         "transactions": [
                      *           {
                      *             "hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                     *             "result": "tx_success",
                      *             "ledger": 63316166,
                      *             "close_time": "2026-07-03T22:37:01Z",
                      *             "index": 0,
@@ -24475,6 +24493,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "result": "tx_success",
                      *         "hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
                      *         "ledger": 63316166,
                      *         "close_time": "2026-07-03T22:37:01Z",
@@ -25845,6 +25864,7 @@ export interface operations {
                      *         "transactions": [
                      *           {
                      *             "hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
+                     *             "result": "tx_success",
                      *             "ledger": 63315192,
                      *             "close_time": "2026-07-03T21:02:29Z",
                      *             "index": 7,
@@ -25977,6 +25997,28 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "coverage": [
+                     *           {
+                     *             "kind": "transfer",
+                     *             "status": "served",
+                     *             "from_ledger": 50457424,
+                     *             "through_ledger": 63316166
+                     *           },
+                     *           {
+                     *             "kind": "mint_burn_clawback",
+                     *             "status": "served",
+                     *             "from_ledger": 50457424,
+                     *             "through_ledger": 63316166
+                     *           },
+                     *           {
+                     *             "kind": "fee",
+                     *             "status": "not_served"
+                     *           },
+                     *           {
+                     *             "kind": "fill",
+                     *             "status": "not_served"
+                     *           }
+                     *         ],
                      *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
                      *         "movements": [
                      *           {
@@ -26467,6 +26509,7 @@ export interface operations {
                      *           "points": [
                      *             {
                      *               "period": "2026-07",
+                     *               "priced_assets": 2,
                      *               "period_start": "2026-07-01T00:00:00Z",
                      *               "movements": 50,
                      *               "active_accounts": 21,
