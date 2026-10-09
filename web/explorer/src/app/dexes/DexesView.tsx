@@ -7,7 +7,12 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { AssetLabel } from '@/components/AssetLabel';
 import { type Envelope, apiGet, asExample } from '@/api/client';
-import { formatCompact, formatRelative } from '@/lib/format';
+import {
+  compareDecimalStrings,
+  formatCompact,
+  formatCompactUnits,
+  formatRelative,
+} from '@/lib/format';
 import { sourceToneClass } from '@/lib/pillTone';
 import { LastPriceCell } from '@/components/LastPriceCell';
 import { useLedgerFollow } from '@/lib/live/hooks';
@@ -260,7 +265,7 @@ export function DexesView() {
               {pools.map((p, i) => {
                 const slug = `${p.base}~${p.quote}`;
                 const offset = pager.depth * PAGE_LIMIT + i + 1;
-                const vol = p.volume_24h_usd ? Number(p.volume_24h_usd) : null;
+                const vol = p.volume_24h_usd;
                 const tone = sourceToneClass(p.source);
                 return (
                   <TR key={`${p.source}|${p.base}|${p.quote}`}>
@@ -302,9 +307,9 @@ export function DexesView() {
                       <LastPriceCell raw={p.last_price} />
                     </Td>
                     <Td align="right">
-                      {vol != null && Number.isFinite(vol) && vol > 0 ? (
+                      {vol && compareDecimalStrings(vol, '0') === 1 ? (
                         <span className="font-mono tabular-nums">
-                          ${formatCompact(vol)}
+                          ${formatCompactUnits(vol)}
                         </span>
                       ) : (
                         <span className="text-ink-faint">—</span>

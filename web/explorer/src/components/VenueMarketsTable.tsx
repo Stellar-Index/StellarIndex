@@ -9,7 +9,12 @@ import { LastPriceCell } from '@/components/LastPriceCell';
 import { Panel } from '@/components/reveal';
 import { AssetLabel } from '@/components/AssetLabel';
 import { type Envelope, apiGet, asExample } from '@/api/client';
-import { formatCompact, formatRelative } from '@/lib/format';
+import {
+  compareDecimalStrings,
+  formatCompact,
+  formatCompactUnits,
+  formatRelative,
+} from '@/lib/format';
 // /v1/markets row from the generated OpenAPI contract, via the shared
 // alias in src/api/hooks.ts (Market = MarketRow) — the contract-derived
 // type wins (FEC audit A3-F8): if /v1/markets changes, this build breaks
@@ -172,7 +177,7 @@ export function VenueMarketsTable({
             {rows.map((m, i) => {
               const slug = `${m.base}~${m.quote}`;
               const offset = pager.depth * PAGE_LIMIT + i + 1;
-              const vol = m.volume_24h_usd ? Number(m.volume_24h_usd) : null;
+              const vol = m.volume_24h_usd;
               return (
                 <tr
                   key={`${m.base}|${m.quote}`}
@@ -203,9 +208,9 @@ export function VenueMarketsTable({
                     <LastPriceCell raw={m.last_price} />
                   </Td>
                   <Td align="right">
-                    {vol != null && Number.isFinite(vol) && vol > 0 ? (
+                    {vol && compareDecimalStrings(vol, '0') === 1 ? (
                       <span className="font-mono tabular-nums">
-                        ${formatCompact(vol)}
+                        ${formatCompactUnits(vol)}
                       </span>
                     ) : (
                       <span className="text-ink-faint">—</span>

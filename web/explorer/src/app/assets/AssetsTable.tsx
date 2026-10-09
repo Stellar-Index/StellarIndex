@@ -14,6 +14,7 @@ import {
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import {
   formatCompact,
+  formatCompactUnits,
   formatPriceSmall,
   scaleBaseUnits,
   truncateMiddle,
@@ -540,7 +541,7 @@ function AssetRow({
   // volume, native carved out): it serves market_cap_usd null and says why
   // in market_cap_low_liquidity. Render its verdict; never re-decide it.
   const marketCap = parseDec(coin.market_cap_usd);
-  const volume = parseDec(coin.volume_24h_usd);
+  const volume = coin.volume_24h_usd;
   // circulating_supply is a RAW smallest-unit integer string; render it
   // in whole asset units by scaling down 10^decimals (7 for classic /
   // native, 0 for catalogue / fiat rows). market_cap / volume / price are
@@ -683,9 +684,9 @@ function AssetRow({
       )}
       {pricing && (
         <Td align="right">
-          {volume != null ? (
+          {volume != null && parseDec(volume) != null ? (
             <span className="text-ink-body font-mono tabular-nums">
-              ${formatCompact(volume)}
+              ${formatCompactUnits(volume)}
             </span>
           ) : (
             <Dash />

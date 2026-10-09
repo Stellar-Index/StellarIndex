@@ -8,7 +8,12 @@ import { Badge } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { useAsset, useAssetSupply, type AssetSupply } from '@/api/hooks';
 import { FreshnessMarker } from '@/components/primitives';
-import { formatBaseUnits, formatCompact, scaleBaseUnits } from '@/lib/format';
+import {
+  formatBaseUnits,
+  formatCompact,
+  formatCompactUnits,
+  scaleBaseUnits,
+} from '@/lib/format';
 import { type Envelope } from '../../explorer-shared';
 import { SupplyFlowsBar, buildSupplyFlowRows } from './SupplyFlowsBar';
 import { CurrencyDeclarations } from './CurrencyDeclarations';
@@ -420,7 +425,6 @@ function parseSmallest(
 }
 
 function formatUSD(s: string): string {
-  const n = Number(s);
-  if (!Number.isFinite(n)) return s;
-  return `$${formatCompact(n)}`;
+  const c = formatCompactUnits(s);
+  return c === '—' ? s : `$${c}`;
 }
