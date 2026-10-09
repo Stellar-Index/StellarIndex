@@ -4,6 +4,7 @@ import { hrefFor } from '@/lib/hrefFor';
 
 import { buildFetchData, requireRows } from '@/lib/buildFetch';
 import {
+  formatPriceSmall,
   compareDecimalStrings,
   formatBaseUnits,
   formatCompactUnits,
@@ -188,16 +189,8 @@ export async function generateMetadata({
   // Best-effort price fetch so the social-share preview reads as
   // a real ticker rather than boilerplate.
   const price = await fetchPrice(decoded.base, decoded.quote);
-  const priceNum = price?.price ? Number(price.price) : null;
-  let suffix = '';
-  if (priceNum != null && Number.isFinite(priceNum)) {
-    suffix =
-      priceNum >= 1
-        ? ` ${priceNum.toFixed(priceNum >= 100 ? 2 : 4)}`
-        : priceNum >= 0.001
-          ? ` ${priceNum.toFixed(6)}`
-          : ` ${formatSubunitPrice(priceNum)}`;
-  }
+  const priceStr = price?.price ? formatPriceSmall(price.price) : '—';
+  const suffix = priceStr === '—' ? '' : ` ${priceStr}`;
   const title = `${baseLabel} / ${quoteLabel}${suffix} — pair detail`;
   const description = `Live VWAP${suffix ? ` (${suffix.trim()})` : ''}, recent trades, and per-source breakdown for ${baseLabel} / ${quoteLabel} on Stellar.`;
   // Canonical URL: the URL-encoded pair slug. Without this,

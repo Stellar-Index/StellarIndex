@@ -655,21 +655,15 @@ export async function generateMetadata({
     coin = await resolveVerifiedListingCoin(globalView);
   }
   const code = globalView?.ticker ?? coin?.code ?? slug;
-  const priceNum = coin?.price_usd ? Number(coin.price_usd) : null;
+  const priceStr = coin?.price_usd ? formatPriceSmall(coin.price_usd) : '—';
   const change24h = coin?.change_24h_pct ? Number(coin.change_24h_pct) : null;
 
   // Build a price + change suffix so the social-share preview is
   // dynamic — "USDC $1.0005 +0.05% 24h" reads as a real ticker
   // rather than boilerplate.
   let suffix = '';
-  if (priceNum != null && Number.isFinite(priceNum)) {
-    const priceStr =
-      priceNum >= 1
-        ? `$${priceNum.toFixed(priceNum >= 100 ? 2 : 4)}`
-        : priceNum >= 0.001
-          ? `$${priceNum.toFixed(6)}`
-          : `$${formatSubunitPrice(priceNum)}`;
-    suffix = ` ${priceStr}`;
+  if (priceStr !== '—') {
+    suffix = ` $${priceStr}`;
     if (change24h != null && Number.isFinite(change24h)) {
       const sign = change24h > 0 ? '+' : '';
       suffix += ` (${sign}${change24h.toFixed(2)}% 24h)`;
@@ -686,7 +680,7 @@ export async function generateMetadata({
     : `${code}${suffix} — Stellar asset`;
   const description = globalView
     ? `${globalView.name}: live prices and markets on Stellar.`
-    : priceNum != null
+    : priceStr !== '—'
       ? `${code} on Stellar:${suffix} · live VWAP across on-chain DEXes, classic SDEX, and major exchanges.`
       : `Live price, markets, and issuer detail for ${code} on Stellar — VWAP'd across on-chain DEXes, classic SDEX, and major exchanges.`;
 

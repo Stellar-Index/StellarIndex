@@ -12,6 +12,7 @@ import { CURRENT_NETWORK } from '@/lib/networks';
 import { Stat } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import {
+  formatPriceSmall,
   formatCompact,
   formatCompactUnits,
   sumDecimalStrings,
@@ -88,11 +89,7 @@ export function HomeNetworkStrip() {
   const tipNumber = tipPriceStr != null ? Number(tipPriceStr) : NaN;
   const tipActive = Number.isFinite(tipNumber) && tipNumber > 0;
   const flash = usePriceFlash(tipActive ? tipPriceStr : undefined);
-  const xlmPrice = tipActive
-    ? tipNumber
-    : native.price != null
-      ? Number(native.price)
-      : null;
+  const xlmPrice = tipActive ? tipPriceStr : native.price;
   const xlmChange = native.change24hPct;
 
   // On a net with no aggregator both USD tiles are structurally "—"
@@ -160,7 +157,7 @@ export function HomeNetworkStrip() {
       {pricing && xlmPrice != null ? (
         <Cell
           label="XLM"
-          value={`$${xlmPrice.toFixed(xlmPrice >= 1 ? 4 : 6)}`}
+          value={`$${formatPriceSmall(xlmPrice)}`}
           flash={flash}
           sub={
             xlmChange != null && Number.isFinite(xlmChange)
