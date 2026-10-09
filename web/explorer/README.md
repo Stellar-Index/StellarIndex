@@ -68,8 +68,7 @@ src/
 │   ├── charts/          Lightweight Charts wrappers
 │   ├── nav/             Navbar, search, footer
 │   ├── AssetLabel.tsx
-│   ├── SourceSparkline.tsx
-│   └── QueryProvider.tsx
+│   └── SourceSparkline.tsx
 ├── api/
 │   ├── client.ts        Fetch wrapper
 │   ├── types.ts         Generated from openapi/stellar-index.v1.yaml

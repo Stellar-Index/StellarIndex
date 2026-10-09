@@ -4,11 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { apiGet } from '@/api/client';
 import type { components } from '@/api/types';
-import {
-  DepthChart,
-  OrderBookStatStrip,
-  computeBookStats,
-} from '@/components/charts/DepthChart';
+import { DepthChart, OrderBookStatStrip, computeBookStats } from './DepthChart';
 import { shortAssetText } from '@/lib/asset-label';
 
 type OrderBook = components['schemas']['SDEXOrderBook'];

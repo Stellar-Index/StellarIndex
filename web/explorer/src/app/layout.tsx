@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Inter, JetBrains_Mono, Fraunces } from 'next/font/google';
 import './globals.css';
 import { ConsoleShell } from '@/components/nav/ConsoleShell';
-import { QueryProvider } from '@/components/QueryProvider';
+import { QueryProvider } from './QueryProvider';
 import { serializeJsonLd } from '@/lib/seo';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
