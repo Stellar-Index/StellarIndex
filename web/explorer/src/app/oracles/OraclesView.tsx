@@ -18,7 +18,7 @@ import { sourceToneClass } from '@/lib/pillTone';
 import type { Source as SourceRow } from '@/api/hooks';
 import type { components } from '@/api/types';
 
-import { Breadcrumbs, Container, Th, Td } from '@/components/ui';
+import { Badge, Breadcrumbs, Container, Th, Td } from '@/components/ui';
 type OracleStream = components['schemas']['OracleReading'];
 
 // Oracle capture-totality: /v1/oracle/streams omits `raw:<symbol>` rows
@@ -108,11 +108,11 @@ export function OraclesView() {
           items={[{ label: 'Home', href: '/' }, { label: 'Oracles' }]}
         />
         <h1 className="text-3xl font-semibold tracking-tight">Oracles</h1>
-        <p className="text-ink-body max-w-3xl text-sm">
-          Every on-chain Stellar oracle we ingest and cross-reference. Oracles
-          are reported alongside our independent VWAP but never included in it —
-          mixing them would import their methodology and double-count whichever
-          upstream markets they read.
+        <p className="text-ink-body flex max-w-3xl flex-wrap items-center gap-2 text-sm">
+          On-chain Stellar oracles, shown alongside our VWAP.
+          <Badge title="Oracles are never included in the VWAP: mixing them would import their methodology and double-count the upstream markets they read.">
+            VWAP weight 0
+          </Badge>
         </p>
       </header>
 
@@ -402,21 +402,18 @@ export function OraclesView() {
       <Panel
         headingLevel={2}
         title="SEP-40 compatibility"
-        hint="Drop-in oracle interface"
+        hint="Drop-in oracle interface: /v1/oracle/lastprice, /prices, /x_last_price"
         source={asExample('/v1/oracle/lastprice', { asset: 'native' })}
-        bodyClassName="space-y-2 text-sm text-ink-body"
       >
-        <p>
-          We expose three SEP-40 endpoints —{' '}
-          <code className="font-mono text-xs">/v1/oracle/lastprice</code>,{' '}
-          <code className="font-mono text-xs">/v1/oracle/prices</code>,{' '}
-          <code className="font-mono text-xs">/v1/oracle/x_last_price</code> —
-          that match the SEP-40 contract trait on-chain consumers already
-          integrate against. Routing your existing on-chain{' '}
-          <code className="font-mono text-xs">lastprice()</code> calls through
-          Stellar Index swaps in independent VWAP-backed prices without touching
-          the calling contract.
-        </p>
+        <details className="text-ink-muted text-xs">
+          <summary className="cursor-pointer">How to use</summary>
+          <p className="mt-1">
+            The three endpoints match the SEP-40 contract trait. Routing your
+            on-chain <code className="font-mono">lastprice()</code> calls
+            through Stellar Index swaps in independent VWAP-backed prices
+            without touching the calling contract.
+          </p>
+        </details>
       </Panel>
     </Container>
   );

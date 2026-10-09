@@ -1,5 +1,6 @@
 'use client';
 
+import { NoteBadge } from '@/components/NoteBadge';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
@@ -166,7 +167,7 @@ export function AccountDefiPositionsPanel({ id }: { id: string }) {
       {/* Honest top-level note (task requirement): always present, not
           conditional — every position on this endpoint is a raw
           quantity, never a valuation. */}
-      {data.note && <p className="text-ink-faint text-xs">{data.note}</p>}
+      {data.note && <NoteBadge label="raw quantities">{data.note}</NoteBadge>}
 
       {positions.length === 0 ? (
         <p className="text-ink-muted text-sm">
@@ -249,7 +250,11 @@ function PositionRow({ p }: { p: AccountPosition }) {
       <Td className="text-ink-body">
         {p.assets && p.assets.length > 0 ? p.assets.join(' / ') : '—'}
       </Td>
-      <Td align="right" className="font-mono">
+      <Td
+        align="right"
+        className="font-mono"
+        title={`${semanticsLabel} · ${basisLabel} (${p.amount_semantics} — ${p.basis})`}
+      >
         {p.amount === '' ? '—' : p.amount}
       </Td>
       <Td>
@@ -258,15 +263,6 @@ function PositionRow({ p }: { p: AccountPosition }) {
         </div>
         <div className="text-ink-faint text-[11px]">
           #{p.last_activity.ledger.toLocaleString('en-US')}
-        </div>
-        {/* amount_semantics + basis surfaced as visible subtext, not
-            hidden — the tooltip carries the API's exact wording for
-            anyone who hovers, but the short label is always visible. */}
-        <div
-          className="text-ink-faint text-[11px]"
-          title={`${p.amount_semantics} — ${p.basis}`}
-        >
-          {semanticsLabel} · {basisLabel}
         </div>
       </Td>
     </TR>

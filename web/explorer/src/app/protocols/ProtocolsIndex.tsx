@@ -58,7 +58,7 @@ export function ProtocolsIndex({
   lockedCategory,
   eyebrow = 'Directory',
   title = 'Protocols',
-  description = 'Every major Stellar protocol we index — DEXes, AMMs, lending, yield vaults, bridges and oracles. Each protocol page carries its full contract roster, the distribution of every event type it emits, and a verified-completeness verdict against the certified ledger lake. Click a card to drill in.',
+  description = 'Every Stellar protocol we index: DEXes, AMMs, lending, yield, bridges and oracles.',
 }: {
   lockedCategory?: string;
   eyebrow?: string;

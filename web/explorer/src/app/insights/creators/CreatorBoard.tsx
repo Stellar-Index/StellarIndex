@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import {
+  Badge,
   Stat,
   TableWrap,
   Table,
@@ -117,20 +118,11 @@ export function CreatorBoard() {
             value={`${formatCompact(d.coverage.from_ledger)}–${formatCompact(d.coverage.thru_ledger)}`}
           />
         </dl>
-        <p className="text-ink-muted text-[11px]">
-          Counts cover ledgers{' '}
-          <span className="tnum">
-            {d.coverage.from_ledger.toLocaleString('en-US')}
-          </span>
-          –
-          <span className="tnum">
-            {d.coverage.thru_ledger.toLocaleString('en-US')}
-          </span>{' '}
-          ({formatTimestamp(d.coverage.from_time)} to{' '}
-          {formatTimestamp(d.coverage.thru_time)}) — the span the rollup
-          actually aggregated, not a claim about the whole chain. Snapshot
-          computed {formatTimestamp(d.computed_at)}.
-        </p>
+        <Badge title="The span the rollup actually aggregated, not a claim about the whole chain.">
+          ledgers {d.coverage.from_ledger.toLocaleString('en-US')}–
+          {d.coverage.thru_ledger.toLocaleString('en-US')} · computed{' '}
+          {formatTimestamp(d.computed_at)}
+        </Badge>
       </Panel>
 
       <Panel
@@ -139,24 +131,31 @@ export function CreatorBoard() {
         source={source}
         bodyClassName="space-y-3"
       >
-        <p className="text-ink-muted text-xs">
-          Ranked by accounts created, all-time within the covered span.{' '}
-          <strong>Created</strong> and <strong>funded</strong> are immutable
-          history — a creation never un-happens. <strong>Live</strong> and{' '}
-          <strong>XLM held</strong> are point-in-time: created accounts merge
-          away and balances move.
-        </p>
         <TableWrap>
           <Table>
             <THead>
               <TR>
                 <Th align="right">#</Th>
                 <Th>Creator</Th>
-                <Th align="right">Created</Th>
-                <Th align="right">Funded (XLM)</Th>
-                <Th align="right">Live</Th>
+                <Th
+                  align="right"
+                  title="Immutable history: a creation never un-happens"
+                >
+                  Created
+                </Th>
+                <Th align="right" title="Immutable history">
+                  Funded (XLM)
+                </Th>
+                <Th
+                  align="right"
+                  title="Point-in-time: created accounts merge away"
+                >
+                  Live
+                </Th>
                 <Th align="right">Survived</Th>
-                <Th align="right">XLM held now</Th>
+                <Th align="right" title="Point-in-time: balances move">
+                  XLM held now
+                </Th>
                 <Th align="right">Last created</Th>
               </TR>
             </THead>

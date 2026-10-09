@@ -839,8 +839,8 @@ function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
         </div>
         <h1 className="text-h1 text-ink font-semibold">Stellar Index status</h1>
         <p className="text-ink-muted mt-2 max-w-prose text-[15px] leading-relaxed">
-          Live service health, request latency, ingest freshness, and a curated
-          public-endpoint matrix — probed independently from your browser.
+          Live health, latency, ingest freshness and a curated public-endpoint
+          matrix, probed from your browser.
         </p>
       </div>
       {/* The pulse is a liveness claim: it only pulses green while the
@@ -2182,17 +2182,20 @@ function BackfillCoverageTable({
           {asOf && <>assembled {formatRelative(asOf)}</>}
         </span>
       </div>
-      <p className="text-ink-faint mb-2 text-[11px]">
-        <strong>Coverage</strong> = verified completeness (ADR-0033). A green %
-        is <strong>fully verified</strong>: the lake is hash-chained to the tip
-        (substrate), every event shape is recognized, AND the served tier
-        reconciles to the lake (Δ=0). <em>reconciling</em> (amber) = data is
-        captured in the lake but the served tier hasn&apos;t reconciled yet —{' '}
-        <em>captured, not yet verified</em>; the % shown is capture, not the
-        verdict. <em>unverified</em> = only a gap-free liveness signal exists
-        (the verifier hasn&apos;t run), which can read ~100% for sparse or
-        partially-indexed sources.
-      </p>
+      <details className="text-ink-faint mb-2 text-[11px]">
+        <summary className="cursor-pointer">How to read coverage</summary>
+        <p className="mt-1">
+          <strong>Coverage</strong> = verified completeness (ADR-0033). A green
+          % is <strong>fully verified</strong>: the lake is hash-chained to the
+          tip (substrate), every event shape is recognized, AND the served tier
+          reconciles to the lake (Δ=0). <em>reconciling</em> (amber) = data is
+          captured in the lake but the served tier hasn&apos;t reconciled yet —{' '}
+          <em>captured, not yet verified</em>; the % shown is capture, not the
+          verdict. <em>unverified</em> = only a gap-free liveness signal exists
+          (the verifier hasn&apos;t run), which can read ~100% for sparse or
+          partially-indexed sources.
+        </p>
+      </details>
       <div className="border-line overflow-x-auto rounded-lg border">
         <table className="w-full text-xs">
           <thead className="bg-surface-muted text-ink-faint">

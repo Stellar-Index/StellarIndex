@@ -7,7 +7,7 @@ import { MevFeed } from './MevFeed';
 
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
-import { Breadcrumbs, Container } from '@/components/ui';
+import { Badge, Breadcrumbs, Container } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'MEV — on-chain MEV detector',
   description:
@@ -86,13 +86,8 @@ export default function MevPage() {
         <Breadcrumbs items={[{ label: 'Home', href: '/' }, { label: 'MEV' }]} />
         <h1 className="text-3xl font-semibold tracking-tight">MEV</h1>
         <p className="text-ink-body max-w-3xl text-sm">
-          On-chain MEV detector. Five patterns are detected live: atomic
-          arbitrage and wash trading from the canonical trade stream,
-          liquidation cascades from Blend auctions correlated with oracle
-          updates, and sandwich / oracle-update sandwich using intra-ledger
-          transaction ordering (tx_index) resolved from the raw ledger lake.
-          Every event records evidence plus a note stating exactly what is — and
-          is not — claimed.
+          Five live MEV patterns, each recorded with evidence and a note on what
+          is and is not claimed.
         </p>
       </header>
 
@@ -101,72 +96,50 @@ export default function MevPage() {
       <Panel
         headingLevel={2}
         title="What we look for"
-        hint="Pattern catalogue — evidence-first, false-positive-tolerant"
+        hint="Hover a pattern for its definition and caveat"
       >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="flex flex-wrap gap-2">
           {PATTERNS.map((p) => (
-            <div
+            <Badge
               key={p.name}
-              className="border-line bg-surface-muted rounded-lg border p-3 text-xs"
+              tone="ok"
+              dot
+              title={`${p.description} Caveat: ${p.caveat}`}
             >
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-sm font-semibold">{p.name}</h3>
-                <span className="bg-up-subtle text-up-strong inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase">
-                  live
-                </span>
-              </div>
-              <p className="text-ink-body mt-1">{p.description}</p>
-              <p className="text-ink-muted mt-2 italic">{p.caveat}</p>
-            </div>
+              {p.name}
+            </Badge>
           ))}
         </div>
       </Panel>
 
-      <Panel
-        headingLevel={2}
-        title="Why this matters for pricing"
-        bodyClassName="text-sm text-ink-body space-y-2"
-      >
-        <p>
-          MEV trades show up as ordinary swaps on the wire. Without detection, a
-          sandwich pair would inflate observation count on the same pair the
-          victim contributed to, and an oracle- update sandwich would skew the
-          oracle reading the liquidation price was set against.
-        </p>
-        <p>
-          Detected events get a per-trade flag in{' '}
-          <code className="font-mono text-xs">mev_events</code> (migration
-          0021). The aggregator can then optionally exclude flagged trades from
-          VWAP — the policy lever lives at the aggregator, not the decoder, so
-          we keep the raw observation and let downstream methodology decide.
-        </p>
-      </Panel>
-
-      <Panel
-        headingLevel={2}
-        title="Known limits"
-        bodyClassName="text-sm text-ink-body space-y-2"
-      >
-        <p>
-          Detection is deliberately conservative about what it claims. The
-          served trade rows carry no direction (buy vs sell), so no detector
-          asserts front-run/back-run intent or estimates attacker profit —{' '}
-          <code className="font-mono text-xs">profit_usd</code> is always null
-          and each event&apos;s{' '}
-          <code className="font-mono text-xs">detail.note</code> says what the
-          evidence actually shows. Sandwich kinds depend on the lake&apos;s
-          transaction-order index and degrade to not-detected (never guessed)
-          when a transaction isn&apos;t indexed yet. An{' '}
-          <code className="font-mono text-xs">oracle_deviation</code> kind
-          remains reserved. Sub-invocation call-tree attribution (who invoked
-          whom inside a transaction) awaits diagnostic-event capture in the
-          lake. For the underlying methodology see the{' '}
-          <Link href="/research" className="underline decoration-dotted">
-            research index
-          </Link>
-          .
-        </p>
-      </Panel>
+      <details className="text-ink-muted text-xs">
+        <summary className="cursor-pointer">
+          Methodology and known limits
+        </summary>
+        <div className="mt-2 space-y-2">
+          <p>
+            MEV trades look like ordinary swaps. Detected events get a per-trade
+            flag in <code className="font-mono">mev_events</code>; the
+            aggregator can exclude flagged trades from VWAP, so the policy lives
+            there and the raw observation is kept.
+          </p>
+          <p>
+            Detection is conservative: served trade rows carry no direction, so
+            no detector asserts front/back-run intent and{' '}
+            <code className="font-mono">profit_usd</code> is always null; each
+            event&apos;s <code className="font-mono">detail.note</code> states
+            the evidence. Sandwich kinds need the lake&apos;s tx-order index and
+            degrade to not-detected (never guessed) when a transaction is not
+            indexed. <code className="font-mono">oracle_deviation</code> is
+            reserved, and call-tree attribution awaits diagnostic-event capture.
+            See the{' '}
+            <Link href="/research" className="underline decoration-dotted">
+              research index
+            </Link>
+            .
+          </p>
+        </div>
+      </details>
     </Container>
   );
 }

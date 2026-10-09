@@ -95,12 +95,11 @@ export function CoveragePanel() {
           </Link>
         </span>
       </header>
-      <p className="text-ink-faint mb-3 text-xs">
-        <strong className="text-ink-muted font-medium">Served tier</strong> =
-        verified within Postgres&apos;s retention window (what the API queries).{' '}
-        <strong className="text-ink-muted font-medium">Archive (lake)</strong> =
-        the certified ClickHouse archive, proven genesis-to-tip regardless of
-        retention.
+      <p
+        className="text-ink-faint mb-3 text-xs"
+        title="Served tier = verified within Postgres's retention window (what the API queries). Archive (lake) = the certified ClickHouse archive, proven genesis-to-tip regardless of retention."
+      >
+        Served tier (retention window) vs archive lake (genesis to tip)
       </p>
       <div className="-mx-4 overflow-x-auto">
         <table className="divide-line min-w-full divide-y text-sm">
@@ -165,8 +164,7 @@ function RecognitionAxisCard({ rec }: { rec: RecognitionAxis }) {
     return (
       <p className="border-line bg-surface-subtle text-ink-faint mt-3 rounded-md border p-3 text-xs">
         <span className="text-ink-body">Recognition axis:</span> no census
-        published yet — the completeness audit has not produced one on this
-        deployment. This is not a clean result; it is an absent one.
+        published (absent, not clean).
       </p>
     );
   }
