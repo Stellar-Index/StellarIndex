@@ -1,5 +1,6 @@
 'use client';
 
+import { NoteBadge } from '@/components/NoteBadge';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
@@ -105,11 +106,7 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
       source={source}
       bodyClassName="space-y-4"
     >
-      {data.coverage_note && (
-        <p className="border-line bg-surface-muted text-ink-muted rounded-md border px-3 py-2 text-xs">
-          {data.coverage_note}
-        </p>
-      )}
+      {data.coverage_note && <NoteBadge>{data.coverage_note}</NoteBadge>}
 
       <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-4">
         <ActivityStat

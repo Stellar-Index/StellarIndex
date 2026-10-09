@@ -459,16 +459,14 @@ export function BespokeSection({
 
       {/* ── Notes / caveats ── */}
       {notes.length > 0 && (
-        <ul className="text-ink-muted space-y-1 px-1 text-xs">
-          {notes.map((n, i) => (
-            <li key={i} className="flex gap-1.5">
-              <span aria-hidden className="text-ink-faint select-none">
-                ·
-              </span>
-              <span>{n}</span>
-            </li>
-          ))}
-        </ul>
+        <details className="text-ink-muted px-1 text-xs">
+          <summary className="cursor-pointer">Notes ({notes.length})</summary>
+          <ul className="mt-1 space-y-1">
+            {notes.map((n, i) => (
+              <li key={i}>{n}</li>
+            ))}
+          </ul>
+        </details>
       )}
     </section>
   );
@@ -520,11 +518,6 @@ function BespokeKpiCard({ kpi }: { kpi: BespokeKpi }) {
           </span>
         )}
       </div>
-      {kpi.hint && (
-        <p className="text-ink-faint mt-1 line-clamp-2 text-[11px] leading-snug">
-          {kpi.hint}
-        </p>
-      )}
     </div>
   );
 }

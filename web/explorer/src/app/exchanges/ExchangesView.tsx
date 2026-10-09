@@ -256,14 +256,11 @@ export function ExchangesView() {
         registryLoading={q.isLoading}
       />
 
-      <p className="text-ink-muted text-xs">
-        Sources are pulled from the static venue registry; per-venue 24h
-        activity is aggregated from{' '}
-        <code className="font-mono text-[11px]">trades</code> in TimescaleDB. We
-        deliberately subscribe to a curated set of pairs per venue (the
-        top-liquidity XLM markets and the crypto anchors that triangulate into
-        them); see the per-venue page for the full list. Reach the per-pair
-        candlestick view via any pair link below.
+      <p
+        className="text-ink-muted text-xs"
+        title="Venues come from the static registry; 24h activity is aggregated from trades in TimescaleDB. Each venue subscribes to a curated set of pairs (top-liquidity XLM markets and the crypto anchors that triangulate into them); the per-venue page lists them."
+      >
+        Curated pairs per venue · open a venue for its full list
       </p>
     </Container>
   );

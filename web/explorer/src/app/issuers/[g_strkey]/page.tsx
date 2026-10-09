@@ -5,7 +5,7 @@ import { IssuerPathView } from './IssuerPathView';
 import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
-import { Container, Breadcrumbs } from '@/components/ui';
+import { Badge, Container, Breadcrumbs } from '@/components/ui';
 import { asExample } from '@/api/client';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { assetHref } from '@/lib/fiat-slugs';
@@ -251,19 +251,14 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
   return (
     <Container className="space-y-6 py-8">
       {detail.scam_reason && (
-        <div className="border-down/40 bg-down-subtle rounded-lg border-2 px-4 py-3">
-          <div className="flex items-baseline gap-2">
-            <span className="bg-down text-surface-canvas rounded-sm px-2 py-0.5 text-[10px] font-bold tracking-wider uppercase">
-              Warning
-            </span>
-            <span className="text-down-strong text-sm font-medium">
-              This issuer is flagged as malicious or unsafe.
-            </span>
-          </div>
-          <p className="text-down-strong mt-1.5 text-xs">
-            {detail.scam_reason}. Do not trust assets issued from this account.
-            Source: stellar.expert directory.
-          </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge
+            tone="bad"
+            title="Flagged as malicious or unsafe (stellar.expert directory). Do not trust assets issued from this account."
+          >
+            Warning
+          </Badge>
+          <span className="text-down-strong text-sm">{detail.scam_reason}</span>
         </div>
       )}
 
@@ -384,11 +379,12 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
             // The account-flag reader hasn't populated this issuer yet —
             // show that honestly rather than four "unknown" dots that
             // read as a broken panel.
-            <p className="text-ink-muted text-xs">
-              Not yet resolved. Auth flags are read from the issuer&apos;s
-              on-chain account entry; this one is not in the captured
-              ledger-entry window yet.
-            </p>
+            <Badge
+              tone="warn"
+              title="Auth flags are read from the issuer's on-chain account entry; this one is not in the captured ledger-entry window yet."
+            >
+              pending
+            </Badge>
           ) : (
             <>
               <ul className="space-y-1.5 text-xs">

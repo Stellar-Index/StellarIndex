@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { ArrowRight, Activity } from 'lucide-react';
 
-import { ButtonLink, Container } from '@/components/ui';
+import { Badge, ButtonLink, Container } from '@/components/ui';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { HomeBlogStrip } from './HomeBlogStrip';
 import { HomeCurrencies } from './HomeCurrencies';
@@ -40,23 +40,10 @@ export default function HomePage() {
             ? 'The protocol explorer for the Stellar network.'
             : `The Stellar ${CURRENT_NETWORK.label} Explorer`}
         </h1>
-        <p className="text-ink-muted max-w-2xl text-lg leading-relaxed">
-          {pricing ? (
-            <>
-              Every contract, every event, and every trade across Stellar
-              protocols — CEXes, on-chain DEXes, and lending — served as
-              verified per-protocol data plus a single VWAP price through a
-              public REST API, alongside live world fiat rates. Every panel
-              below shows the exact API call that produced it.
-            </>
-          ) : (
-            <>
-              Every ledger, transaction, account, asset, and Soroban contract on
-              Stellar {CURRENT_NETWORK.label} — complete, verified, per-protocol
-              on-chain data through a public REST API. Every panel below shows
-              the exact API call that produced it.
-            </>
-          )}
+        <p className="text-ink-muted max-w-2xl text-lg">
+          {pricing
+            ? 'Every contract, event and trade on Stellar, as verified data and one VWAP price.'
+            : `Every ledger, transaction, account, asset and contract on Stellar ${CURRENT_NETWORK.label}.`}
         </p>
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <ButtonLink href="/assets" size="lg">
@@ -101,10 +88,6 @@ export default function HomePage() {
             <p className="text-h3 text-ink mt-2 font-semibold">
               Watch the indexer tick.
             </p>
-            <p className="text-ink-muted mt-1 text-sm">
-              Per-source ingest cursors, refreshed every 15 seconds — see every
-              backfill chunk advance in real time.
-            </p>
           </div>
           <p className="text-brand-600 mt-4 inline-flex items-center gap-1 text-sm font-medium">
             Open diagnostics{' '}
@@ -138,15 +121,17 @@ export default function HomePage() {
             <h2 className="text-h2 text-ink font-semibold">
               One verified price for every Stellar pair.
             </h2>
-            <p className="text-ink-muted text-[15px] leading-relaxed">
-              The API behind this explorer — the same data, machine-readable.
-              VWAP, TWAP, and OHLC computed from every CEX, DEX, and oracle we
-              index, served over REST + SSE with deterministic closed-bucket
-              semantics, alongside the ledger, contract, asset, supply and
-              history endpoints. Anonymous reads are free forever at 6,000
-              requests a minute per IP; an API key is a per-key budget of 1,000
-              a minute — yours alone rather than shared with every client on
-              your IP — with staff-set partner limits above that.
+            <p
+              data-testid="api-pitch"
+              className="flex flex-wrap items-center gap-2"
+            >
+              <Badge tone="brand">VWAP, TWAP, OHLC over REST + SSE</Badge>
+              <Badge>
+                Anonymous reads free: 6,000 requests a minute per IP
+              </Badge>
+              <Badge>
+                API key: per-key budget of 1,000 a minute, higher for partners
+              </Badge>
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-1">
               <ButtonLink href="/signup">
@@ -194,16 +179,15 @@ export default function HomePage() {
       <section className="space-y-4">
         <div className="space-y-1">
           <h2 className="text-h2 text-ink font-semibold">Try the API</h2>
-          <p className="text-ink-muted text-[15px]">
-            The free public tier needs no key — pick an example and paste it
-            straight into a terminal. An{' '}
+          <p className="text-ink-muted text-sm">
+            No key needed.{' '}
             <Link
               href="/pricing"
               className="text-brand-600 font-medium hover:underline"
             >
-              API key
+              API keys
             </Link>{' '}
-            lifts the rate limit when you outgrow it.
+            lift the rate limit.
           </p>
         </div>
         <HomeTryAPI />

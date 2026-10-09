@@ -417,11 +417,6 @@ export default async function PairPage({ params }: { params: Params }) {
             </span>
           )}
         </div>
-        <p className="text-ink-body max-w-3xl text-sm">
-          Live VWAP, hourly chart, and the last 50 trades on this pair. Pair
-          source: <code className="font-mono">{base}</code> /{' '}
-          <code className="font-mono">{quote}</code>.
-        </p>
       </header>
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">

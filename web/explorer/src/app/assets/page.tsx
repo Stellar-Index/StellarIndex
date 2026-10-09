@@ -33,7 +33,7 @@ export default async function AssetsPage() {
       <PageHeader
         eyebrow="Directory"
         title="Assets"
-        description="Every classic + Soroban asset observed on Stellar. Live price via VWAP across on-chain DEXes, classic SDEX, and major off-chain venues. Click through for live charts, recent trades, supply detail, and issuer profile."
+        description="Every classic and Soroban asset observed on Stellar, with live VWAP price."
       />
       <p className="text-ink-muted text-sm">
         Looking for fiat &amp; reference prices?{' '}

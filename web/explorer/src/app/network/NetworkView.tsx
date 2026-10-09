@@ -152,11 +152,6 @@ export function NetworkView() {
         <h1 className="text-ink text-2xl font-semibold tracking-tight">
           Network
         </h1>
-        <p className="text-ink-muted max-w-2xl text-sm">
-          A live snapshot of the Stellar network — ledger chain state,
-          throughput over time, what the network is doing right now, and the
-          markets and sources feeding the lake.
-        </p>
         {/* The rail carries one Network entry;
             the chain sub-surfaces are reached from this hub. */}
         <nav
@@ -350,7 +345,11 @@ function ChainEconomics({
       <Panel
         headingLevel={2}
         title="Daily fee burn"
-        hint="XLM paid in transaction fees per complete UTC day — the day-over-day delta of the cumulative network fee pool, off each day's last ledger, less any non-fee credit to the pool (a protocol upgrade)."
+        hint={
+          <span title="The day-over-day delta of the cumulative network fee pool, off each day's last ledger, less any non-fee credit to the pool (a protocol upgrade).">
+            XLM paid in fees per complete UTC day
+          </span>
+        }
         source={asExample('/v1/network/throughput', {
           window_days: windowDays,
         })}

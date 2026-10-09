@@ -85,10 +85,12 @@ describe('SponsorBoard', () => {
   it('presents the protocol-14 floor as the feature’s start, not a gap', async () => {
     renderWithQuery(<SponsorBoard />);
 
-    const strip = await screen.findByText(/where sponsorship began/i);
+    const strip = await screen.findByTitle(/where sponsorship began/i);
     expect(strip.textContent).toContain('32,747,295');
     expect(strip.textContent).toContain('64,277,243');
-    expect(strip.textContent).toMatch(/whole history of the feature/i);
+    expect(strip.getAttribute('title')).toMatch(
+      /whole history of the feature/i,
+    );
   });
 
   it('shows no live-sponsorship figure anywhere on the board', async () => {

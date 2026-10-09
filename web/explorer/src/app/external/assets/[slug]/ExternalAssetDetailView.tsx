@@ -96,23 +96,22 @@ export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
         {view.description && (
           <p className="leading-relaxed">{view.description}</p>
         )}
-        <p className="text-ink-muted leading-relaxed">
-          <span className="text-ink-body font-medium">{view.name}</span> is a
-          non-Stellar{' '}
-          {view.class === 'fiat' ? 'fiat currency' : 'reference asset'} tracked
-          by Stellar Index for pricing — it is{' '}
-          <span className="font-medium">not issued on Stellar</span>. We index
-          it from off-chain venues and reference feeds so on-Stellar pairs (and
-          the aggregated VWAP) have a fiat/reference anchor. Stellar-issued
-          assets live on{' '}
+        <p className="text-ink-muted text-xs">
+          <span className="text-ink-body font-medium">{view.name}</span>: not
+          issued on Stellar.{' '}
           <Link
             href="/assets"
             className="text-brand-600 hover:text-brand-700 font-medium"
           >
-            /assets
+            Stellar assets →
           </Link>
-          .
         </p>
+        <details className="text-ink-muted text-xs">
+          <summary className="cursor-pointer">Why it is tracked</summary>
+          Indexed from off-chain venues and reference feeds so on-Stellar pairs
+          (and the aggregated VWAP) have a{' '}
+          {view.class === 'fiat' ? 'fiat' : 'reference'} anchor.
+        </details>
       </Panel>
 
       <p className="text-ink-muted text-sm">

@@ -94,9 +94,8 @@ describe('CoveragePanel', () => {
       not_applicable_sources: [],
     });
 
-    expect(screen.getByText(/no census\s+published yet/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/not a clean result; it is an absent one/i),
+      screen.getByText(/no census\s+published \(absent, not clean\)/i),
     ).toBeInTheDocument();
   });
 

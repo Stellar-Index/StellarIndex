@@ -62,7 +62,7 @@ export default function RWAPage() {
         ]}
         eyebrow="Tokenized instruments"
         title="Real-world assets"
-        description="Stellar assets representing treasuries, commodities, equities and property — admitted only when the issuer declares the anchor in a SEP-1 file served from its own on-chain domain AND an independent directory recognises that exact issuing account. Identity is always (code, issuer); a code alone identifies nothing."
+        description="Tokenized treasuries, commodities, equities and property on Stellar, keyed by (code, issuer)."
       />
 
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>

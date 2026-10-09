@@ -1,14 +1,6 @@
-'use client';
-
-import { useState } from 'react';
-
-import { Panel } from '@/components/reveal';
-
 // CURATED_ASSET_ABOUT — short descriptions for the major Stellar
 // classic + Soroban assets. Currencies not in this map render no
-// panel (clean fail; the listing already gives users the data they
-// need). Multi-paragraph text rendered as separate <p>'s; first
-// paragraph shows verbatim, the rest hide behind "Read more →".
+// panel. The first sentence shows; the rest sits behind a <details>.
 //
 // Curated by hand from each issuer's own docs + the Phase-1 audit
 // pages under docs/discovery/. One-line addition extends the map.
@@ -34,28 +26,25 @@ export function AssetAbout({ symbol }: { symbol: string }) {
 }
 
 function ExpandableText({ title, body }: { title: string; body: string }) {
-  const [expanded, setExpanded] = useState(false);
   const paragraphs = body.split(/\n\s*\n/).filter(Boolean);
-  const teaser = paragraphs[0];
-  const more = paragraphs.slice(1);
-  const hasMore = more.length > 0;
+  const sentences = paragraphs[0].split(/(?<=\.)\s+(?=[A-Z])/);
+  const teaser = sentences[0];
+  const more = [sentences.slice(1).join(' '), ...paragraphs.slice(1)].filter(
+    Boolean,
+  );
   return (
-    <Panel
-      headingLevel={2}
-      title={title}
-      bodyClassName="text-sm text-ink-body space-y-3 leading-relaxed"
-    >
+    <section aria-label={title} className="text-ink-muted text-sm">
       <p>{teaser}</p>
-      {expanded && more.map((p, i) => <p key={i}>{p}</p>)}
-      {hasMore && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="text-brand-600 text-xs hover:underline"
-        >
-          {expanded ? 'Show less' : 'Read more →'}
-        </button>
+      {more.length > 0 && (
+        <details className="text-ink-muted text-xs">
+          <summary className="cursor-pointer">More</summary>
+          {more.map((p, i) => (
+            <p key={i} className="mt-1">
+              {p}
+            </p>
+          ))}
+        </details>
       )}
-    </Panel>
+    </section>
   );
 }

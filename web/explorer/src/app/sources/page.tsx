@@ -32,11 +32,8 @@ export default function SourcesPage() {
           Stellar sources
         </h1>
         <p className="text-ink-body max-w-3xl text-sm">
-          Every Stellar on-chain venue we index, grouped by class. Only DEX
-          venues contribute to VWAP by default — on-chain oracles, lending,
-          routers and bridges are reported alongside but excluded so we
-          don&apos;t import their methodology. Off-chain reference feeds (CEX,
-          aggregators, FX) that back the pricing layer live under{' '}
+          On-chain venues by class; only DEXes feed VWAP. Off-chain feeds are
+          under{' '}
           <Link href="/exchanges" className="text-brand-600 hover:underline">
             exchanges
           </Link>

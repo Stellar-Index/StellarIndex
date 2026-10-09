@@ -68,12 +68,8 @@ export default function AnomaliesPage() {
         />
         <h1 className="text-3xl font-semibold tracking-tight">Anomalies</h1>
         <p className="text-ink-body max-w-3xl text-sm">
-          Every clear→firing freeze transition, with reason + recovery + the
-          frozen value still served via{' '}
-          <code className="font-mono text-xs">/v1/price</code>. Powered by the
-          freeze-event durable mirror —{' '}
-          <code className="font-mono text-xs">freeze_events</code> hypertable
-          (migration 0018), populated alongside the load- bearing Redis marker.
+          Every clear→firing freeze, with reason, recovery and the frozen value
+          still served via <code className="font-mono text-xs">/v1/price</code>.
         </p>
       </header>
 
@@ -82,68 +78,39 @@ export default function AnomaliesPage() {
       <Panel
         headingLevel={2}
         title="What freezes a pair"
-        bodyClassName="space-y-3"
+        hint="Hover a reason code for its trigger and meaning"
       >
-        <p className="text-ink-body text-sm">
-          Per{' '}
-          <Link
-            href="/research/adr/0019"
-            className="underline decoration-dotted"
-          >
-            ADR-0019
-          </Link>
-          , a Phase 2 freeze fires only when confidence, z-score, and source
-          count ALL cross threshold together (an AND, not an OR) —{' '}
-          <code className="font-mono text-xs">divergence</code> is the separate
-          Phase 2 multi-source-disagreement path. While frozen, the API still
-          serves the last good value — but with{' '}
-          <code className="font-mono text-xs">flags.frozen=true</code> so
-          consumers know not to act on it. A freeze holds for 10 or 30 minutes,
-          extends up to four times, and then ESCALATES: an escalated freeze does
-          not auto-clear and stays firing until an operator runs{' '}
-          <code className="font-mono text-xs">freeze-unfreeze</code>.
-        </p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="flex flex-wrap gap-2">
           {REASONS.map((r) => (
-            <div
+            <code
               key={r.name}
-              className="border-line bg-surface-muted rounded-lg border p-3 text-xs"
+              className="text-down-strong bg-surface-muted cursor-help rounded-sm px-1.5 py-0.5 font-mono text-[11px]"
+              title={`${r.trigger}: ${r.meaning}`}
             >
-              <div className="flex items-baseline justify-between">
-                <code className="text-down-strong font-mono text-[11px]">
-                  {r.name}
-                </code>
-              </div>
-              <div className="text-ink-muted mt-1.5 text-[11px] tracking-wider uppercase">
-                {r.trigger}
-              </div>
-              <p className="text-ink-body mt-1.5">{r.meaning}</p>
-            </div>
+              {r.name}
+            </code>
           ))}
         </div>
-      </Panel>
-
-      <Panel
-        headingLevel={2}
-        title="Reading the timeline"
-        bodyClassName="text-sm text-ink-body space-y-2"
-      >
-        <p>
-          The timeline above is served live from{' '}
-          <code className="font-mono text-xs">/v1/anomalies</code> over the
-          durable <code className="font-mono text-xs">freeze_events</code>{' '}
-          mirror: the firing-now count, the per-reason breakdown (trailing 30
-          days), and every clear→firing transition with its duration and the
-          value served while frozen. A per-incident calendar heatmap of daily
-          counts is the next addition. Methodology rationale lives in{' '}
-          <Link
-            href="/research/adr/0019"
-            className="underline decoration-dotted"
-          >
-            ADR-0019
-          </Link>
-          .
-        </p>
+        <details className="text-ink-muted mt-3 text-xs">
+          <summary className="cursor-pointer">Freeze rules</summary>
+          <p className="mt-1">
+            Per{' '}
+            <Link
+              href="/research/adr/0019"
+              className="underline decoration-dotted"
+            >
+              ADR-0019
+            </Link>
+            , a freeze fires only when confidence, z-score and source count all
+            cross threshold together;{' '}
+            <code className="font-mono">divergence</code> is the separate
+            multi-source-disagreement path. While frozen the API serves the last
+            good value with <code className="font-mono">flags.frozen=true</code>
+            . A freeze holds 10 or 30 minutes, extends up to four times, then
+            escalates and stays firing until an operator runs{' '}
+            <code className="font-mono">freeze-unfreeze</code>.
+          </p>
+        </details>
       </Panel>
     </Container>
   );
