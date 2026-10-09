@@ -126,8 +126,8 @@ func (s *Store) IssuerGStrkeysNeedingFlags(ctx context.Context, limit int) ([]st
 // being true. Nothing else would ever revisit it: the primary queue is
 // `auth_required IS NULL`, and these rows HAVE auth_required, so filling them
 // takes them out of the drain's sight for good. Without this queue the
-// provenance column would be a one-way latch — the fix for the residue would
-// have created a fresh class of permanently-stale rows.
+// provenance column would be a one-way latch — filling the residue would
+// create a fresh class of permanently-stale rows.
 //
 // `live` rows are deliberately NOT re-checked here. They can go stale too (an
 // issuer that merges its account tomorrow), but the API's read path already
