@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { IssuerPanel } from './IssuerPanel';
+import { IssuerPanel, ledgerAxis } from './IssuerPanel';
 
 // The Issuer-identity panel surfaces the issuer's SEP-1 org_name. That name is
 // only an authoritative organisation identity when SEP-1 VERIFIED
@@ -126,5 +126,52 @@ describe('IssuerPanel issued-asset list', () => {
     // Ledger 0 cannot exist (genesis is 1).
     expect(screen.queryByText('#0')).not.toBeInTheDocument();
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('issued-asset active span', () => {
+  it('spans the earliest first-seen to the latest last-seen ledger', () => {
+    expect(
+      ledgerAxis([
+        { first_seen_ledger: 200, last_seen_ledger: 300 },
+        { first_seen_ledger: 100, last_seen_ledger: 250 },
+        { first_seen_ledger: null, last_seen_ledger: 999 },
+      ]),
+    ).toEqual({ lo: 100, hi: 300 });
+    expect(
+      ledgerAxis([{ first_seen_ledger: 5, last_seen_ledger: 5 }]),
+    ).toBeNull();
+  });
+
+  it('draws a span bar per asset with both ledgers known', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        g_strkey: G,
+        org_verified: false,
+        assets: [
+          {
+            asset_id: `USDC-${G}`,
+            code: 'USDC',
+            slug: 'usdc',
+            observation_count: 7,
+            first_seen_ledger: 100,
+            last_seen_ledger: 300,
+          },
+          {
+            asset_id: `EURC-${G}`,
+            code: 'EURC',
+            slug: 'eurc',
+            observation_count: 2,
+            first_seen_ledger: 250,
+            last_seen_ledger: 300,
+          },
+        ],
+      },
+    } as unknown as never);
+    renderPanel();
+    expect(
+      await screen.findByLabelText('Seen from ledger 250 to 300'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Active span')).toBeInTheDocument();
   });
 });
