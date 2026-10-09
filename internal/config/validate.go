@@ -636,7 +636,7 @@ func (a AggregateConfig) validate() error {
 	// orchestrator's truncation detector (len(t) >= MaxTradesPerWindow)
 	// can never fire again — so an operator who follows the field's own
 	// godoc ("raise the cap if that counter fires sustainedly") would see
-	// the ~48%-of-windows truncation rate measured on r1 drop to a
+	// a real truncation rate drop to a
 	// reported 0% with nothing actually fixed.
 	// tradesInRangeCeiling mirrors timescale.MaxTradesInRangeLimit.
 	// Duplicated as a literal because internal/config is a leaf package
