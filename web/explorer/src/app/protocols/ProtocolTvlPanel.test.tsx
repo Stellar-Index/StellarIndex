@@ -20,6 +20,33 @@ const COMET_TVL = {
 };
 
 describe('ProtocolTvlPanel', () => {
+  it('sorts and formats TVL from the exact decimal above 2^53', () => {
+    // Number() collapses 9007199254740992/…993 into a tie and shows the
+    // second as 1,000,000.01T; the exact values order and round correctly.
+    const { container } = render(
+      <ProtocolTvlPanel
+        rows={[
+          {
+            name: 'aquarius',
+            tvl: { ...COMET_TVL, tvl_usd: '9007199254740992' },
+          },
+          {
+            name: 'comet',
+            tvl: { ...COMET_TVL, tvl_usd: '9007199254740993' },
+          },
+          {
+            name: 'soroswap',
+            tvl: { ...COMET_TVL, tvl_usd: '1000000004999999999' },
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText('$1,000,000T')).toBeInTheDocument();
+    const text = container.textContent ?? '';
+    expect(text.indexOf('Comet')).toBeGreaterThan(-1);
+    expect(text.indexOf('Comet')).toBeLessThan(text.indexOf('Aquarius'));
+  });
+
   it('renders one bar per protocol with TVL, lower-bound-marked when pools are unpriced', () => {
     render(
       <ProtocolTvlPanel

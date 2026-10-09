@@ -320,3 +320,15 @@ describe('decimalOrNull', () => {
     expect(format.decimalOrNull('n/a')).toBeNull();
   });
 });
+
+describe('formatUsdWhole', () => {
+  it('rounds half away from zero in BigInt, exact above 2^53', () => {
+    expect(format.formatUsdWhole('9007199254740993.5')).toBe(
+      '$9,007,199,254,740,994',
+    );
+    expect(format.formatUsdWhole('1234.49')).toBe('$1,234');
+    expect(format.formatUsdWhole('-1234.5')).toBe('-$1,235');
+    expect(format.formatUsdWhole(null)).toBe('—');
+    expect(format.formatUsdWhole('1e5')).toBe('—');
+  });
+});

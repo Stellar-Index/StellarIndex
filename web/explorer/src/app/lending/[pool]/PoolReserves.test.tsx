@@ -81,4 +81,21 @@ describe('PoolReserves', () => {
     );
     expect(screen.queryByText(/^≥/)).not.toBeInTheDocument();
   });
+
+  it('shows a tvl_usd above 2^53 digit for digit', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        pool: POOL,
+        tvl_usd: '9007199254740993',
+        lower_bound: false,
+        reserves: [reserve('native', '9007199254740993')],
+      },
+    });
+    renderIt();
+    const line = await screen.findByText(/Pool TVL:/);
+    expect(line.textContent).toContain('$9,007,199,254,740,993');
+    expect(
+      screen.getAllByText('$9,007,199,254,740,993').length,
+    ).toBeGreaterThan(0);
+  });
 });

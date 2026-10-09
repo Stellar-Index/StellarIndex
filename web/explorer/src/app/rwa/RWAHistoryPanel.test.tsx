@@ -90,6 +90,37 @@ describe('RWAHistoryPanel', () => {
     ).toBeInTheDocument();
   });
 
+  it('formats window ends from the exact decimal above 2^53', async () => {
+    // Number() of this rounds up to 1,000,000.01T; the served value is 1,000,000T.
+    const v = '1000000004999999999';
+    apiGetData.mockResolvedValue(
+      view({
+        points: [
+          point({ value_usd: v }),
+          point({ t: '2026-09-11T00:00:00Z', value_usd: v }),
+        ],
+      }),
+    );
+    renderPanel();
+    expect(
+      await screen.findByText(/over a constant 6 valued assets/),
+    ).toHaveTextContent('$1,000,000T → $1,000,000T');
+  });
+
+  it('marks a drop under 0.05% as a fall, not a green +0.0%', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        points: [
+          point({ value_usd: '337699858.20' }),
+          point({ t: '2026-09-11T00:00:00Z', value_usd: '337559066.79' }),
+        ],
+      }),
+    );
+    renderPanel();
+    const pct = await screen.findByText(/-0\.0%/);
+    expect(pct).toHaveClass('text-down');
+  });
+
   it('WITHHOLDS the change when coverage moved across the window', async () => {
     apiGetData.mockResolvedValue(
       view({
