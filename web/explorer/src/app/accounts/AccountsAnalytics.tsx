@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Stat } from '@/components/ui';
+import { Badge, Stat } from '@/components/ui';
 import { HBarList, type HBarItem } from '@/components/charts/Bars';
 import { AssetLink } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
@@ -134,23 +134,18 @@ export function AccountsAnalytics() {
             value={`${s.concentration.top100_share_pct.toFixed(2)}%`}
           />
         </dl>
-        <p className="text-ink-muted text-[11px]">
-          Snapshot recomputed every 30 minutes from the captured ledger state
-          (last cycle {s.computed_at}). Balance statistics cover funded
-          accounts&apos; native XLM.
-        </p>
+        <Badge title="Snapshot recomputed every 30 minutes from the captured ledger state. Balance statistics cover funded accounts' native XLM.">
+          computed {s.computed_at}
+        </Badge>
       </Panel>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel
           title="Wealth distribution"
+          hint="Log-scale bands; annotation = band total XLM"
           source={asExample('/v1/accounts/stats')}
           bodyClassName="space-y-2"
         >
-          <p className="text-ink-muted text-xs">
-            Accounts by native balance, log-scale bands. Most accounts are
-            small; the annotation shows each band&apos;s total XLM.
-          </p>
           <HBarList
             items={wealthItems}
             ariaLabel="Accounts by XLM balance band"
@@ -158,14 +153,10 @@ export function AccountsAnalytics() {
         </Panel>
         <Panel
           title="Trustlines per account"
+          hint={`${formatCompact(s.totals.trustline_holding_accounts)} accounts hold ≥1 trustline`}
           source={asExample('/v1/accounts/stats')}
           bodyClassName="space-y-2"
         >
-          <p className="text-ink-muted text-xs">
-            How many assets accounts opt into holding —{' '}
-            {formatCompact(s.totals.trustline_holding_accounts)} accounts hold
-            at least one trustline.
-          </p>
           <HBarList
             items={trustlineItems}
             ariaLabel="Accounts by trustline count band"
@@ -176,13 +167,10 @@ export function AccountsAnalytics() {
       {heldAssets.length > 0 && (
         <Panel
           title="Most held assets"
+          hint="Positive-balance holders per asset"
           source={asExample('/v1/accounts/stats')}
           bodyClassName="space-y-2"
         >
-          <p className="text-ink-muted text-xs">
-            Assets by number of positive-balance holders — click through for
-            each asset&apos;s holder board.
-          </p>
           <HBarList
             items={heldAssets.map((a) => ({
               id: a.asset,

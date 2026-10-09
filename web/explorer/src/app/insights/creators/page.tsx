@@ -1,7 +1,5 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
-import { Panel } from '@/components/reveal';
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
 import { Breadcrumbs, Container } from '@/components/ui';
@@ -47,50 +45,35 @@ export default function CreatorsPage() {
           Account creators
         </h1>
         <p className="text-ink-body max-w-3xl text-sm">
-          Every Stellar account was created by another account, which paid its
-          starting balance. This board ranks those funders: who onboarded the
-          most accounts, what they funded them with, and how much of that
-          created set is still around.
+          Funders ranked by accounts onboarded, what they funded and how many
+          survive.
         </p>
       </header>
 
       <CreatorBoard />
 
-      <Panel
-        headingLevel={2}
-        title="What this measures, and what it does not"
-        bodyClassName="text-sm text-ink-body space-y-2"
-      >
-        <p>
-          A row here is the <strong>creator</strong> relationship: the source
-          account of a <code className="font-mono text-xs">CreateAccount</code>{' '}
-          operation and the account it brought into existence. That link is
-          immutable — once an account has been created, nothing later un-creates
-          it, so the counts only grow.
-        </p>
-        <p>
-          It is <strong>not</strong> sponsorship. A sponsor pays the base
-          reserve for a ledger entry someone else owns, and that arrangement can
-          be revoked or handed to another account at any time, so &quot;who
-          sponsors what&quot; is a point-in-time question with a different
-          answer. Sponsorship is not served by this API yet; nothing on this
-          page should be read as a sponsorship figure. The two are tracked
-          separately in{' '}
-          <Link
-            href="https://github.com/Stellar-Index/StellarIndex/issues/351"
-            className="underline decoration-dotted"
-          >
-            issue 351
-          </Link>
-          .
-        </p>
-        <p>
-          The board is a precomputed rollup, not a live scan, so it is only as
-          current as its last cycle — the coverage strip above states the ledger
-          span behind the numbers and when they were computed. Read the counts
-          as covering that span and nothing wider.
-        </p>
-      </Panel>
+      <details className="text-ink-muted text-xs">
+        <summary className="cursor-pointer">
+          What this measures, and what it does not
+        </summary>
+        <div className="mt-2 max-w-3xl space-y-2">
+          <p>
+            A row is the <strong>creator</strong> relationship: the source of a{' '}
+            <code className="font-mono">CreateAccount</code> operation and the
+            account it created. That link is immutable, so counts only grow.
+          </p>
+          <p>
+            It is <strong>not</strong> sponsorship, which is revocable and
+            point-in-time and is not served here; nothing on this page is a
+            sponsorship figure.
+          </p>
+          <p>
+            The board is a precomputed rollup, only as current as its last
+            cycle. Read the counts as covering the stated ledger span and
+            nothing wider.
+          </p>
+        </div>
+      </details>
     </Container>
   );
 }

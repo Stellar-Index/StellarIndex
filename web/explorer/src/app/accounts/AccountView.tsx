@@ -174,12 +174,11 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
           )}
         </ul>
         <CrossReference kind="account" id={id} />
-        <p className="border-line bg-surface-muted text-ink-muted rounded-md border px-3 py-2 text-xs">
-          Balances + trustlines + offers below reflect the lake&apos;s captured
-          ledger-entry window; the activity tables show <strong>all</strong>{' '}
-          history — both what the account sourced and where it&apos;s a
-          participant (incoming payments, trustlines, merges). Incoming coverage
-          tracks the participant-index backfill.
+        <p
+          className="text-ink-muted text-xs"
+          title="Balances, trustlines and offers reflect the lake's captured ledger-entry window; the activity tables show all history, including where the account is a participant (incoming payments, trustlines, merges). Incoming coverage tracks the participant-index backfill."
+        >
+          State: captured window · Activity: all history
         </p>
       </Panel>
 
@@ -312,20 +311,9 @@ export function AccountsDirectoryHeader() {
     <header className="space-y-2">
       <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
       <p className="text-ink-body max-w-3xl text-sm">
-        {isNative ? (
-          <>
-            The largest accounts on Stellar {CURRENT_NETWORK.label}, ranked by
-            native XLM balance, read straight from the certified lake&apos;s
-            current-state projection.
-          </>
-        ) : (
-          <>
-            The richest accounts on Stellar, ranked by the total USD value of
-            their holdings — native XLM plus every trustline asset we hold a
-            verified price for, summed straight from the certified lake&apos;s
-            current-state projection.
-          </>
-        )}
+        {isNative
+          ? `Largest accounts on Stellar ${CURRENT_NETWORK.label}, ranked by native XLM balance.`
+          : 'Richest accounts on Stellar, ranked by total USD value of priced holdings.'}
       </p>
     </header>
   );
@@ -414,20 +402,9 @@ function AccountsDirectory() {
               </tbody>
             </table>
             <p className="text-ink-muted text-xs">
-              {isNative ? (
-                <>
-                  Ranked by native XLM balance over the lake&apos;s
-                  current-state projection. Accounts not yet captured in the
-                  ledger-entry window are excluded.
-                </>
-              ) : (
-                <>
-                  Summed across {q.data.priced_assets} priced asset
-                  {q.data.priced_assets === 1 ? '' : 's'}. Wealth not yet
-                  captured in the lake&apos;s ledger-entry window (Phase-C
-                  backfill in progress) is excluded.
-                </>
-              )}
+              {isNative
+                ? 'Native XLM balance · accounts outside the captured window are excluded'
+                : `Summed across ${q.data.priced_assets} priced asset${q.data.priced_assets === 1 ? '' : 's'} · wealth outside the captured window is excluded`}
             </p>
           </>
         )}

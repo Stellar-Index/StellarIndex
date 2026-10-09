@@ -3,11 +3,10 @@ import Link from 'next/link';
 import { hrefFor } from '@/lib/hrefFor';
 import { ExternalLink } from 'lucide-react';
 
-import { Panel } from '@/components/reveal';
 import { ReferencePriceAggregators } from './ReferencePriceAggregators';
 import { RoutedVolumePanel } from './RoutedVolumePanel';
 
-import { Breadcrumbs, Container } from '@/components/ui';
+import { Badge, Breadcrumbs, Container } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'Aggregators — routers and yield wrappers on Stellar',
   description:
@@ -37,7 +36,7 @@ const ENTRIES: Entry[] = [
     name: 'Soroswap Router',
     type: 'router',
     blurb:
-      'Multi-hop convenience layer over Soroswap pair contracts. Trades that go through the router resolve to the same pair-level swap events we already index — the router is just the entry point.',
+      'Multi-hop router over Soroswap pairs; routed trades resolve to the pair-level swap events we already index.',
     notes: [
       'No router-specific decoder needed for trades — the underlying SoroswapPair swap events fire regardless. The router contract is tracked separately for routed-via attribution (what % of pair volume arrived via the router).',
       'Per the protocol-class contract, routers are in `/v1/sources` with class=aggregator and contribute zero VWAP weight by default. Including them would double-count the underlying pair trade.',
@@ -61,7 +60,7 @@ const ENTRIES: Entry[] = [
     name: 'DeFindex',
     type: 'yield',
     blurb:
-      'Yield-aggregator vaults that deposit into Blend and other lending pools. Earns the underlying borrow APY plus any incentive emissions, minus a management fee.',
+      'Yield vaults over Blend and other lending pools: borrow APY plus emissions, minus a management fee.',
     notes: [
       'Position changes happen on the vault contract (deposit/withdraw); the actual yield-bearing legs are at Blend. We track the vault TVL but rely on Blend for the underlying yield observation.',
       'Excluded from VWAP — yield-aggregator inflows are not price-discovery events.',
@@ -99,8 +98,8 @@ export default function AggregatorsPage() {
           items={[{ label: 'Home', href: '/' }, { label: 'Aggregators' }]}
         />
         <h1 className="text-3xl font-semibold tracking-tight">Aggregators</h1>
-        <p className="text-ink-body max-w-3xl text-sm">
-          Routers and yield wrappers — protocols that route into the underlying{' '}
+        <p className="text-ink-body flex max-w-3xl flex-wrap items-center gap-2 text-sm">
+          Routers and yield wrappers over{' '}
           <Link href="/dexes" className="underline decoration-dotted">
             DEXes
           </Link>{' '}
@@ -108,29 +107,12 @@ export default function AggregatorsPage() {
           <Link href="/lending" className="underline decoration-dotted">
             lending pools
           </Link>
-          . Reported alongside but excluded from VWAP so we don&apos;t
-          double-count the upstream price-discovery event.
+          .
+          <Badge title="Excluded from VWAP to avoid double-counting. A routed swap still emits the underlying pair's swap event, which is the one we VWAP; a vault deposit moves shares but sets no price, and Blend supplies the collateral revaluation.">
+            VWAP weight 0
+          </Badge>
         </p>
       </header>
-
-      <Panel
-        headingLevel={2}
-        title="Why aggregators don't price into VWAP"
-        bodyClassName="text-sm text-ink-body space-y-2"
-      >
-        <p>
-          A trade routed through the Soroswap router still emits a SoroswapPair
-          swap event on the underlying pair contract — that event is the one we
-          VWAP. Counting the router-level call separately would double the same
-          price-discovery moment.
-        </p>
-        <p>
-          The same logic applies to DeFindex: a vault deposit moves shares but
-          doesn&apos;t set a price. The underlying Blend loan&apos;s collateral
-          revaluation is what we care about, and we get that directly from
-          Blend.
-        </p>
-      </Panel>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {ENTRIES.map((e) => (
@@ -161,14 +143,16 @@ function Card({ entry }: { entry: Entry }) {
         </span>
       </div>
       <p className="text-ink-body mt-3 text-sm">{entry.blurb}</p>
-      <ul className="text-ink-body mt-3 space-y-1.5 text-xs">
-        {entry.notes.map((n, i) => (
-          <li key={i} className="flex gap-2">
-            <span className="text-ink-faint">•</span>
-            <span>{n}</span>
-          </li>
-        ))}
-      </ul>
+      <details className="text-ink-muted mt-3 text-xs">
+        <summary className="cursor-pointer">
+          Notes ({entry.notes.length})
+        </summary>
+        <ul className="mt-1 space-y-1">
+          {entry.notes.map((n, i) => (
+            <li key={i}>{n}</li>
+          ))}
+        </ul>
+      </details>
       {entry.contractRefs && entry.contractRefs.length > 0 && (
         <div className="border-line mt-4 border-t pt-3">
           <div className="text-ink-muted text-[10px] font-medium tracking-wider uppercase">

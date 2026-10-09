@@ -170,7 +170,7 @@ export function MarketsTable() {
   return (
     <Panel
       title={`${sorted.length} ${venue === 'stellar' ? 'Stellar markets' : venue === 'reference' ? 'reference feeds' : 'markets'} (top ${data.markets.length} by volume)`}
-      hint="Pairs that traded in the last 14 days, ordered by 24h USD volume. Reference feeds are off-chain CEX pairs used for pricing context."
+      hint="Pairs traded in the last 14 days, by 24h USD volume · reference feeds are off-chain CEX pairs"
       source={asExample('/v1/markets', {
         limit: 100,
         order_by: orderBy,

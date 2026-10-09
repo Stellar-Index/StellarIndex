@@ -6,6 +6,7 @@ import {
   formatDecimalAmount,
   formatRelative,
 } from '@/lib/format';
+import { Badge } from '@/components/ui';
 import { protocolMeta } from './registry';
 
 // Mirrors internal/api/v1/dex_tvl_cache.go ProtocolTVLView — served on
@@ -89,9 +90,7 @@ export function ProtocolTvlPanel({
     <div className="rounded-card border-line bg-surface border p-5">
       <h2 className="text-h3 text-ink font-semibold">Value locked (USD)</h2>
       <p className="text-ink-muted mt-1 mb-3 text-xs">
-        Current pool reserves valued through the served USD price tiers, per
-        protocol. Source: <code className="font-mono">/v1/protocols</code>{' '}
-        <code className="font-mono">tvl</code>.
+        Pool reserves at served USD prices, per protocol
       </p>
       {headline && <DexTvlHeadline total={headline} />}
       <HBarList
@@ -111,12 +110,13 @@ export function ProtocolTvlPanel({
         }))}
       />
       {anyUnpriced && (
-        <p className="text-ink-muted mt-3 text-[11px] leading-relaxed">
-          Hatched bars are <strong>lower bounds</strong>: pools whose assets
-          have no served USD price contribute $0, so the true figure is at least
-          what&apos;s shown. Hover a bar for that protocol&apos;s exact
-          valuation basis.
-        </p>
+        <Badge
+          tone="warn"
+          className="mt-3"
+          title="Hatched bars are lower bounds: pools whose assets have no served USD price contribute $0, so the true figure is at least what is shown. Hover a bar for that protocol's valuation basis."
+        >
+          hatched = lower bound
+        </Badge>
       )}
     </div>
   );
@@ -187,31 +187,43 @@ export function DexTvlHeadline({ total }: { total: DexTvlTotal }) {
           </time>
         </span>
       </div>
-      <p className="text-ink-muted mt-2 text-xs leading-relaxed">
-        {total.lower_bound && (
-          <>
-            <strong>At least</strong> this —{' '}
-            {total.pools_priced.toLocaleString('en-US')} of{' '}
-            {total.pools_total.toLocaleString('en-US')} pools priced;
-            unpriceable reserves contribute $0.{' '}
-          </>
-        )}
-        {total.basis}
-      </p>
-      {total.excluded.length > 0 && (
+      {total.lower_bound && (
+        <p className="text-ink-muted mt-2 text-xs">
+          <strong>At least</strong> this —{' '}
+          {total.pools_priced.toLocaleString('en-US')} of{' '}
+          {total.pools_total.toLocaleString('en-US')} pools priced; unpriceable
+          reserves contribute $0.
+        </p>
+      )}
+      {(total.excluded.length > 0 || total.basis) && (
         <details className="group border-line mt-2 rounded-lg border">
           <summary className="text-ink-body marker:text-ink-faint hover:text-brand-600 cursor-pointer px-3 py-1.5 text-xs font-medium select-none">
-            What this total excludes{' '}
-            <span className="text-ink-faint">({total.excluded.length})</span>
+            {total.excluded.length > 0 ? (
+              <>
+                What this total excludes{' '}
+                <span className="text-ink-faint">
+                  ({total.excluded.length})
+                </span>
+              </>
+            ) : (
+              'Basis'
+            )}
           </summary>
-          <dl className="border-line space-y-1.5 border-t px-3 py-2 text-[11px] leading-relaxed">
-            {total.excluded.map((e) => (
-              <div key={e.subject}>
-                <dt className="text-ink-body font-mono">{e.subject}</dt>
-                <dd className="text-ink-muted">{e.reason}</dd>
-              </div>
-            ))}
-          </dl>
+          {total.basis && (
+            <p className="text-ink-muted border-line border-t px-3 py-2 text-[11px] leading-relaxed">
+              {total.basis}
+            </p>
+          )}
+          {total.excluded.length > 0 && (
+            <dl className="border-line space-y-1.5 border-t px-3 py-2 text-[11px] leading-relaxed">
+              {total.excluded.map((e) => (
+                <div key={e.subject}>
+                  <dt className="text-ink-body font-mono">{e.subject}</dt>
+                  <dd className="text-ink-muted">{e.reason}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
         </details>
       )}
     </div>

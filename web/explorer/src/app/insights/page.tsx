@@ -21,36 +21,31 @@ const SURFACES = [
     href: '/anomalies',
     label: 'Anomalies',
     icon: Zap,
-    blurb:
-      'Price-anomaly freezes: when a pair’s print fails the 3-signal confidence check, publication is withheld and the freeze is recorded here — fire, holds, extensions, release.',
+    blurb: 'Price-anomaly freezes and their release.',
   },
   {
     href: '/divergences',
     label: 'Divergence',
     icon: GitCompare,
-    blurb:
-      'Cross-venue disagreement: where the on-chain price and external references part ways, by pair and by venue, with the reference chain that flagged it.',
+    blurb: 'Where our price and external references part ways.',
   },
   {
     href: '/mev',
     label: 'MEV',
     icon: Activity,
-    blurb:
-      'Extractable-value activity observed on Stellar: arbitrage cycles, liquidation races and ordering effects, tied back to the transactions that carried them.',
+    blurb: 'Arbitrage, sandwiches, liquidation races and wash trades.',
   },
   {
     href: '/insights/sponsors',
     label: 'Account sponsors',
     icon: HandCoins,
-    blurb:
-      "Who pays the base reserves for other accounts' ledger entries: sponsorships started, accounts covered and revocations issued, over the whole history of the feature.",
+    blurb: 'Who sponsors other accounts’ reserves; started, covered, revoked.',
   },
   {
     href: '/insights/creators',
     label: 'Account creators',
     icon: UserPlus,
-    blurb:
-      'Who bootstrapped the network: the accounts that funded the most other accounts into existence, what they paid to start them, and how much of that created set still exists.',
+    blurb: 'Who funded the most new accounts, and how many survive.',
   },
 ] as const;
 
@@ -74,8 +69,7 @@ export default function InsightsPage() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Insights</h1>
         <p className="text-ink-body max-w-3xl text-sm">
-          The signals layer over the raw data — what the network is doing that a
-          table of trades doesn’t say by itself.
+          Signals over the raw data.
         </p>
       </header>
 

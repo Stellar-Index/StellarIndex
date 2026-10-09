@@ -1,5 +1,6 @@
 'use client';
 
+import { NoteBadge } from '@/components/NoteBadge';
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
@@ -252,7 +253,7 @@ export function AccountTradesPanel({ id }: { id: string }) {
       </div>
 
       {/* Attribution-scope honesty note — always present on the API. */}
-      {data.note && <p className="text-ink-faint text-[11px]">{data.note}</p>}
+      {data.note && <NoteBadge>{data.note}</NoteBadge>}
     </Panel>
   );
 }

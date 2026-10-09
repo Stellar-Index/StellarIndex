@@ -67,7 +67,7 @@ describe('AccountsDirectoryHeader — ranking basis follows the served ranked_by
     // Before the response: the mainnet fallback, which is what the static
     // export ships.
     expect(header.querySelector('h1')).toHaveTextContent('Accounts');
-    expect(header).toHaveTextContent(/ranked by the total USD value/);
+    expect(header).toHaveTextContent(/ranked by total USD value/);
 
     // After it: the API ranked in XLM, so the header says so — above a
     // Panel that says the same, over XLM-formatted numbers.
@@ -88,7 +88,7 @@ describe('AccountsDirectoryHeader — ranking basis follows the served ranked_by
     // The Panel is titled for USD before the response too, so wait on
     // the row the response brings rather than on the title.
     await screen.findByText('$123,456');
-    expect(header).toHaveTextContent(/ranked by the total USD value/);
+    expect(header).toHaveTextContent(/ranked by total USD value/);
     expect(
       screen.getByRole('heading', { name: 'Ranked by USD wealth' }),
     ).toBeInTheDocument();

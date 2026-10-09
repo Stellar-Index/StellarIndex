@@ -1,5 +1,6 @@
 'use client';
 
+import { NoteBadge } from '@/components/NoteBadge';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
@@ -314,15 +315,15 @@ export function AccountGraphPanel({ id }: { id: string }) {
 
       {/* The honesty contract travels with the numbers, not only with
           the docs: nothing here is a live-sponsorship figure. */}
-      <p className="text-ink-faint text-[11px]">{data.note}</p>
-      <p className="text-ink-faint text-[11px]">
-        Creation history covers ledgers{' '}
-        {numFmt.format(data.coverage.creation.from_ledger)}–
-        {numFmt.format(data.coverage.creation.thru_ledger)}; sponsorship history
-        covers {numFmt.format(data.coverage.sponsorship.from_ledger)}–
-        {numFmt.format(data.coverage.sponsorship.thru_ledger)}, whose floor is
-        where sponsorship began to exist on the network, not a gap.
-      </p>
+      <NoteBadge>
+        <p>{data.note}</p>
+        <p title="The sponsorship floor is where sponsorship began to exist on the network, not a gap.">
+          Creation ledgers {numFmt.format(data.coverage.creation.from_ledger)}–
+          {numFmt.format(data.coverage.creation.thru_ledger)} · sponsorship
+          ledgers {numFmt.format(data.coverage.sponsorship.from_ledger)}–
+          {numFmt.format(data.coverage.sponsorship.thru_ledger)}
+        </p>
+      </NoteBadge>
     </Panel>
   );
 }

@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   alternates: { canonical: '/issuers' },
   title: 'Issuers — every G-account that mints classic assets on Stellar',
   description:
-    'The issuer directory ranked by total observation count. Each row is a G-strkey that has minted at least one classic asset, with home_domain (when SEP-1 has resolved it) and per-asset counts.',
+    'Every G-strkey that has minted a classic asset, ranked by observation count.',
 };
 
 export default function IssuersPage() {
@@ -16,7 +16,7 @@ export default function IssuersPage() {
       <PageHeader
         eyebrow="Directory"
         title="Issuers"
-        description="Every G-account that has minted at least one classic asset on Stellar, ranked by total observation count across their issued assets. The home_domain column populates as the SEP-1 fetcher resolves stellar.toml for each issuer."
+        description="Classic-asset issuers ranked by observation count."
       />
       <IssuersTable />
     </Container>
