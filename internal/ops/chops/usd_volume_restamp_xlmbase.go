@@ -18,31 +18,23 @@ import (
 
 // ─── `usd-volume-restamp -tier xlm-base` — the anchor re-derive ─────
 //
-// The exact-tier half of this command (usd_volume_restamp.go) repairs a
-// SQL identity. This half re-derives an ESTIMATED tier, so it is a
-// different shape of job and carries a different set of guards:
+// Unlike the exact tier (usd_volume_restamp.go), this re-derives an
+// ESTIMATED tier, so its guards differ:
 //
-//   - the value is computed in Go by the store's own
-//     usdVolumeViaXLMBaseAnchor — the function the live insert path
-//     calls — against the installed VWAPUSDFXResolver, so the restamped
-//     number and the number a re-inserted row would carry are the same
-//     number by construction, not by two implementations agreeing;
-//   - a row the anchor cannot price is REPORTED, never guessed at. The
-//     live path would fall through to the quote side; that fall-through
-//     IS the defect this tier repairs, and committing it at a high
-//     derive_generation would make it permanent;
-//   - the run is bounded and resumable: -from/-to days, each walked in
-//     -slice windows, each window's write set applied in -batch UPDATE
-//     transactions. Nothing spans a chunk, and the tool is idempotent, so
-//     a killed run is resumed by re-running it from the last printed day;
-//   - it refuses to run over a range the live ingest tail has not passed
-//     (checkRestampLiveOverlap), the same one-writer contract
-//     projected-rebuild enforces for the projector.
+//   - the value comes from usdVolumeViaXLMBaseAnchor, the function the live
+//     insert path calls, so a restamped row equals a re-inserted one by
+//     construction;
+//   - a row the anchor cannot price is REPORTED, never guessed: the live
+//     quote-side fall-through is the defect being repaired, and committing it
+//     at a high derive_generation would make it permanent;
+//   - the run is bounded, idempotent and resumable (-from/-to days, -slice
+//     windows, -batch UPDATEs, nothing spans a chunk);
+//   - it refuses a range the live ingest tail has not passed
+//     (checkRestampLiveOverlap): one writer, as projected-rebuild enforces.
 //
-// `-report` adds the decision block the operator reads BEFORE authorising
-// a production run: candidate counts, the NULL->value population, the
-// distribution of relative moves, the USD sums, the extremes and a
-// sample. It writes nothing and refuses -write.
+// `-report` prints the decision block read BEFORE authorising a production
+// run (counts, NULL->value population, move distribution, USD sums,
+// extremes, a sample); it writes nothing and refuses -write.
 
 // xlmBaseRestampStore is the slice of [timescale.Store] the re-derive
 // walks through: plan a window, apply the plan. A seam rather than the
