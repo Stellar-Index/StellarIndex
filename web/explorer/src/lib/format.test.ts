@@ -405,3 +405,20 @@ describe('formatWhole', () => {
     expect(format.formatWhole('1e5')).toBe('—');
   });
 });
+
+describe('divideDecimalString', () => {
+  it('divides exactly above 2^53', () => {
+    expect(format.divideDecimalString('18014398509481986', 2, 0)).toBe(
+      '9007199254740993',
+    );
+  });
+
+  it('keeps the value scale when it exceeds places', () => {
+    expect(format.divideDecimalString('10.0000005', 2, 2)).toBe('5.0000002');
+  });
+
+  it('returns null for a zero count or malformed value', () => {
+    expect(format.divideDecimalString('10', 0)).toBeNull();
+    expect(format.divideDecimalString('abc', 2)).toBeNull();
+  });
+});

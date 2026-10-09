@@ -436,6 +436,24 @@ export function sumDecimalStrings(
   return `${neg ? '-' : ''}${whole}${frac}`;
 }
 
+/** `value / count` over a decimal string, truncated to `places`; null for a malformed value or a non-positive count. */
+export function divideDecimalString(
+  value: string | null | undefined,
+  count: number | null | undefined,
+  places = 6,
+): string | null {
+  const d = value == null ? null : parseDecimal(value);
+  if (!d || count == null || !Number.isSafeInteger(count) || count <= 0)
+    return null;
+  const scale = Math.max(d.frac, places);
+  const q = rescale(d, scale) / BigInt(count);
+  const neg = q < 0n;
+  const digits = (neg ? -q : q).toString().padStart(scale + 1, '0');
+  const whole = digits.slice(0, digits.length - scale);
+  const frac = scale > 0 ? `.${digits.slice(digits.length - scale)}` : '';
+  return `${neg ? '-' : ''}${whole}${frac}`;
+}
+
 /**
  * ratioPct — `part / whole × 100` over two decimal strings, divided and
  * rounded (half away from zero, to `places`) in BigInt before the result

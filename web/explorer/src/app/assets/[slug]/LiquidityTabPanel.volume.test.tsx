@@ -39,6 +39,8 @@ describe('LiquidityTabPanel volume', () => {
       await LiquidityTabPanel({ assetID: ASSET, code: 'USDC' }),
     );
     expect(screen.getByText('$1,000,000T')).toBeInTheDocument();
+    // Average trade = 24h volume / 24h trades, divided exactly.
+    expect(screen.getByText('$200,000T')).toBeInTheDocument();
     const text = container.textContent ?? '';
     expect(text.indexOf('soroswap')).toBeLessThan(text.indexOf('aquarius'));
   });
