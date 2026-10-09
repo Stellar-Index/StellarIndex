@@ -7,7 +7,11 @@ import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '@/api/client';
 import type { components } from '@/api/types';
 import { assetHrefFor } from '@/lib/fiat-slugs';
-import { formatRelative } from '@/lib/format';
+import {
+  compareDecimalStrings,
+  formatPairPrice,
+  formatRelative,
+} from '@/lib/format';
 
 type PriceBatchEnvelope = components['schemas']['PriceBatchEnvelope'];
 type PriceType = components['schemas']['Price']['price_type'];
@@ -15,7 +19,7 @@ type PriceType = components['schemas']['Price']['price_type'];
 interface CurrencyRow {
   ticker: string;
   name: string;
-  rate_usd: number;
+  rate_usd: string;
   change_24h_pct?: number;
   /** How the API says this rate was derived — `peg` is a declaration. */
   price_type: PriceType | null;
@@ -85,14 +89,13 @@ export function HomeCurrencies() {
         const ticker = row.asset_id.replace(/^fiat:/, '');
         const featured = FEATURED.find((f) => f.ticker === ticker);
         if (!featured || !row.price) continue;
-        const rate = Number(row.price);
-        if (!(rate > 0)) continue;
+        if (compareDecimalStrings(row.price, '0') !== 1) continue;
         const change =
           row.change_24h_pct != null ? Number(row.change_24h_pct) : NaN;
         rows[ticker] = {
           ticker,
           name: featured.name,
-          rate_usd: rate,
+          rate_usd: row.price,
           ...(Number.isFinite(change) ? { change_24h_pct: change } : {}),
           price_type: row.price_type ?? null,
           observed_at: row.observed_at ?? null,
@@ -178,7 +181,7 @@ export function HomeCurrencies() {
                 </span>
               </div>
               <div className="text-ink mt-2 font-mono text-lg tabular-nums">
-                {row && row.rate_usd > 0 ? formatRate(row.rate_usd) : '—'}
+                {row ? formatPairPrice(row.rate_usd) : '—'}
               </div>
               {/* A declared peg is the operator's 1:1 statement, not a
                   rate anyone observed — say so on the tile rather than
@@ -223,11 +226,4 @@ export function HomeCurrencies() {
       </div>
     </section>
   );
-}
-
-function formatRate(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return '—';
-  if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
-  if (n >= 1) return n.toFixed(4);
-  return n.toFixed(6);
 }
