@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { FeeHeadroomBar, OpTypeStrip } from '@/components/ChainCharts';
-import { Container, Breadcrumbs, TxStatusBadge } from '@/components/ui';
+import { Container, PageHeader, TxStatusBadge } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import {
   type Envelope,
@@ -221,16 +221,14 @@ function Shell({
 }) {
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Transactions', href: '/transactions' },
-            { label: hash ? `${hash.slice(0, 8)}…${hash.slice(-6)}` : 'tx' },
-          ]}
-        />
-        <h1 className="text-2xl font-semibold tracking-tight">Transaction</h1>
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Transactions', href: '/transactions' },
+          { label: hash ? `${hash.slice(0, 8)}…${hash.slice(-6)}` : 'tx' },
+        ]}
+        title="Transaction"
+      />
       {children}
     </Container>
   );

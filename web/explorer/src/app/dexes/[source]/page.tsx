@@ -4,7 +4,7 @@ import { hrefFor } from '@/lib/hrefFor';
 import { notFound } from 'next/navigation';
 import { ExternalLink } from 'lucide-react';
 
-import { Container, Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { DexAnalyticsSection } from './DexAnalyticsSection';
 import { PairReservesPanel } from './PairReservesPanel';
@@ -66,23 +66,20 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
     <Container className="space-y-6 py-8">
       {/* FEC A1-6: BreadcrumbList JSON-LD derives from this Crumb[] inside
           Breadcrumbs — no hand-rolled LD. */}
-      <Breadcrumbs
-        items={[
+      <PageHeader
+        breadcrumbs={[
           { label: 'Home', href: '/' },
           { label: 'DEXes', href: '/dexes' },
           { label: info.name },
         ]}
-      />
-
-      <header className="border-line space-y-2 border-b pb-4">
-        <div className="flex flex-wrap items-baseline gap-3">
-          <h1 className="text-3xl font-semibold tracking-tight">{info.name}</h1>
+        title={info.name}
+        description={info.blurb}
+        actions={
           <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
             {info.type}
           </span>
-        </div>
-        <p className="text-ink-body max-w-3xl text-sm">{info.blurb}</p>
-      </header>
+        }
+      />
 
       <SourceStatsPanel
         source={source}

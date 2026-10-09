@@ -37,7 +37,7 @@ func main() {
     fmt.Printf("XLM/USD = %s (%s, observed %s)\\n",
         p.Data.Price, p.Data.PriceType, p.Data.ObservedAt)
 }`;
-import { Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 const PATTERNS: { title: string; blurb: string; code: string }[] = [
   {
@@ -145,155 +145,151 @@ if err != nil {
 
 export default function SDKPage() {
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-12 sm:py-16">
-      <header className="mb-10 space-y-3">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Go SDK' }]}
-        />
-        <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
-          Go SDK
-        </p>
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-          Idiomatic Go client for the Stellar Index API
-        </h1>
-        <p className="text-ink-body max-w-2xl text-base">
-          Typed, SemVer-stable, no surprises. Anonymous mode for the public
-          tier; bearer-token mode for API keys. The SDK covers the pricing/read
-          surface — prices, history, OHLC, markets, the asset catalogue, and
-          account self-service — with 40-plus typed methods; SSE streams and the
-          explorer read surface are reachable over plain HTTP.
-        </p>
-      </header>
+    <Container className="py-12 sm:py-16">
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Go SDK' }]}
+        eyebrow="Go SDK"
+        title="Idiomatic Go client for the Stellar Index API"
+        description="Typed, SemVer-stable, no surprises. Anonymous mode for the public tier; bearer-token mode for API keys. The SDK covers the pricing/read surface — prices, history, OHLC, markets, the asset catalogue, and account self-service — with 40-plus typed methods; SSE streams and the explorer read surface are reachable over plain HTTP."
+        className="mb-10"
+      />
 
-      <section className="mb-10 space-y-4">
-        <h2 className="text-xl font-semibold tracking-tight">Install</h2>
-        <p className="text-ink-body text-sm">
-          Single dependency. The module path follows the canonical{' '}
-          <code className="bg-surface-subtle rounded-sm px-1.5 py-0.5 font-mono text-xs">
-            github.com/Stellar-Index/StellarIndex
-          </code>{' '}
-          repo path.
-        </p>
-        <div className="border-line overflow-hidden rounded-xl border">
-          <CopyableSnippet snippet={INSTALL} />
-        </div>
-      </section>
-
-      <section className="mb-12 space-y-4">
-        <h2 className="text-xl font-semibold tracking-tight">Quick start</h2>
-        <p className="text-ink-body text-sm">
-          One-asset current-price lookup. Anonymous works at the public
-          rate-limit; pass <code className="font-mono text-xs">APIKey</code> to
-          bump to your tier&apos;s budget.
-        </p>
-        <div className="border-line overflow-hidden rounded-xl border">
-          <CopyableSnippet snippet={QUICKSTART} />
-        </div>
-      </section>
-
-      <section className="mb-12 space-y-6">
-        <h2 className="text-xl font-semibold tracking-tight">
-          Common patterns
-        </h2>
-        {PATTERNS.map((p) => (
-          <div key={p.title} className="space-y-3">
-            <div>
-              <h3 className="text-base font-semibold">{p.title}</h3>
-              <p className="text-ink-body mt-1 text-sm">{p.blurb}</p>
-            </div>
-            <div className="border-line overflow-hidden rounded-xl border">
-              <CopyableSnippet snippet={p.code} />
-            </div>
+      <div className="max-w-4xl">
+        <section className="mb-10 space-y-4">
+          <h2 className="text-xl font-semibold tracking-tight">Install</h2>
+          <p className="text-ink-body text-sm">
+            Single dependency. The module path follows the canonical{' '}
+            <code className="bg-surface-subtle rounded-sm px-1.5 py-0.5 font-mono text-xs">
+              github.com/Stellar-Index/StellarIndex
+            </code>{' '}
+            repo path.
+          </p>
+          <div className="border-line overflow-hidden rounded-xl border">
+            <CopyableSnippet snippet={INSTALL} />
           </div>
-        ))}
-      </section>
+        </section>
 
-      <section className="mb-12 space-y-3">
-        <h2 className="text-xl font-semibold tracking-tight">Authentication</h2>
-        <p className="text-ink-body text-sm">
-          Three modes mirror the server&apos;s auth middleware:
-        </p>
-        <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Mode
-            term="Anonymous"
-            def="No APIKey on the client. Rate-limited per IP. Good for prototyping and embedded widgets."
-          />
-          <Mode
-            term="API key"
-            def={
-              <>
-                Set{' '}
-                <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[11px]">
-                  Options.APIKey
-                </code>
-                . Sent as{' '}
-                <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[11px]">
-                  Authorization: Bearer
-                </code>{' '}
-                on every request. Sign in at{' '}
-                <Link href="/signin" className="text-brand-600 hover:underline">
-                  /signin
-                </Link>{' '}
-                (magic-link, no password) and mint a key from{' '}
-                <Link
-                  href="/dashboard"
-                  className="text-brand-600 hover:underline"
-                >
-                  /account
-                </Link>
-                .
-              </>
-            }
-          />
-          <Mode
-            term="SEP-10 — not available here"
-            def="Implemented at /v1/auth/sep10/{challenge,token}, but this deployment has no signing seed provisioned, so both routes answer 404 sep10-unavailable unless [api.sep10] is configured. Use an API key. Where an operator does enable SEP-10, the JWT goes in Options.APIKey and replaces API keys rather than joining them: a deployment verifies one credential type or the other, never both."
-          />
-        </dl>
-      </section>
+        <section className="mb-12 space-y-4">
+          <h2 className="text-xl font-semibold tracking-tight">Quick start</h2>
+          <p className="text-ink-body text-sm">
+            One-asset current-price lookup. Anonymous works at the public
+            rate-limit; pass <code className="font-mono text-xs">APIKey</code>{' '}
+            to bump to your tier&apos;s budget.
+          </p>
+          <div className="border-line overflow-hidden rounded-xl border">
+            <CopyableSnippet snippet={QUICKSTART} />
+          </div>
+        </section>
 
-      <section className="border-line bg-surface rounded-xl border p-5 text-sm">
-        <h2 className="text-base font-semibold">Reference</h2>
-        <ul className="text-ink-body mt-3 space-y-2">
-          {/* site-audit S5: the pkg.go.dev link 404'd. The module IS
+        <section className="mb-12 space-y-6">
+          <h2 className="text-xl font-semibold tracking-tight">
+            Common patterns
+          </h2>
+          {PATTERNS.map((p) => (
+            <div key={p.title} className="space-y-3">
+              <div>
+                <h3 className="text-base font-semibold">{p.title}</h3>
+                <p className="text-ink-body mt-1 text-sm">{p.blurb}</p>
+              </div>
+              <div className="border-line overflow-hidden rounded-xl border">
+                <CopyableSnippet snippet={p.code} />
+              </div>
+            </div>
+          ))}
+        </section>
+
+        <section className="mb-12 space-y-3">
+          <h2 className="text-xl font-semibold tracking-tight">
+            Authentication
+          </h2>
+          <p className="text-ink-body text-sm">
+            Three modes mirror the server&apos;s auth middleware:
+          </p>
+          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Mode
+              term="Anonymous"
+              def="No APIKey on the client. Rate-limited per IP. Good for prototyping and embedded widgets."
+            />
+            <Mode
+              term="API key"
+              def={
+                <>
+                  Set{' '}
+                  <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[11px]">
+                    Options.APIKey
+                  </code>
+                  . Sent as{' '}
+                  <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[11px]">
+                    Authorization: Bearer
+                  </code>{' '}
+                  on every request. Sign in at{' '}
+                  <Link
+                    href="/signin"
+                    className="text-brand-600 hover:underline"
+                  >
+                    /signin
+                  </Link>{' '}
+                  (magic-link, no password) and mint a key from{' '}
+                  <Link
+                    href="/dashboard"
+                    className="text-brand-600 hover:underline"
+                  >
+                    /account
+                  </Link>
+                  .
+                </>
+              }
+            />
+            <Mode
+              term="SEP-10 — not available here"
+              def="Implemented at /v1/auth/sep10/{challenge,token}, but this deployment has no signing seed provisioned, so both routes answer 404 sep10-unavailable unless [api.sep10] is configured. Use an API key. Where an operator does enable SEP-10, the JWT goes in Options.APIKey and replaces API keys rather than joining them: a deployment verifies one credential type or the other, never both."
+            />
+          </dl>
+        </section>
+
+        <section className="border-line bg-surface rounded-xl border p-5 text-sm">
+          <h2 className="text-base font-semibold">Reference</h2>
+          <ul className="text-ink-body mt-3 space-y-2">
+            {/* site-audit S5: the pkg.go.dev link 404'd. The module IS
               published (v0.20.x is on proxy.golang.org and `go get` works),
               but pkg.go.dev does not render this large monorepo — repeated
               requests still 404. Point the reference at the GitHub source,
               which renders the package's Go doc comments in-browser and
               always resolves. Swap back to pkg.go.dev if it ever indexes. */}
-          <li>
-            <a
-              href="https://github.com/Stellar-Index/StellarIndex/tree/main/pkg/client"
-              target="_blank"
-              rel="noreferrer noopener"
-              className="text-brand-600 inline-flex items-center gap-1 hover:underline"
-            >
-              API reference &amp; source (GitHub)
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          </li>
-          <li>
-            <a
-              href="https://docs.stellarindex.io"
-              target="_blank"
-              rel="noreferrer noopener"
-              className="text-brand-600 inline-flex items-center gap-1 hover:underline"
-            >
-              REST API reference (Scalar)
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          </li>
-          <li>
-            Other languages? The REST API is plain JSON — generate a client for
-            your favourite language from the OpenAPI spec at{' '}
-            <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[11px]">
-              openapi/stellar-index.v1.yaml
-            </code>
-            . First-party clients beyond Go land as the demand surfaces.
-          </li>
-        </ul>
-      </section>
-    </div>
+            <li>
+              <a
+                href="https://github.com/Stellar-Index/StellarIndex/tree/main/pkg/client"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-brand-600 inline-flex items-center gap-1 hover:underline"
+              >
+                API reference &amp; source (GitHub)
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            </li>
+            <li>
+              <a
+                href="https://docs.stellarindex.io"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-brand-600 inline-flex items-center gap-1 hover:underline"
+              >
+                REST API reference (Scalar)
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            </li>
+            <li>
+              Other languages? The REST API is plain JSON — generate a client
+              for your favourite language from the OpenAPI spec at{' '}
+              <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[11px]">
+                openapi/stellar-index.v1.yaml
+              </code>
+              . First-party clients beyond Go land as the demand surfaces.
+            </li>
+          </ul>
+        </section>
+      </div>
+    </Container>
   );
 }
 

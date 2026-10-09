@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { LedgersTable } from './LedgersTable';
 import { ThroughputPanel } from '@/components/NetworkInsight';
 
-import { Breadcrumbs, Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/ledgers' },
   title: 'Ledgers — recent Stellar ledgers',
@@ -23,17 +23,11 @@ export const metadata: Metadata = {
 export default function LedgersPage() {
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Ledgers' }]}
-        />
-        <h1 className="text-3xl font-semibold tracking-tight">Ledgers</h1>
-        <p className="text-ink-body max-w-3xl text-sm">
-          The most recent ledger closes on the Stellar network. Each row links
-          to the full ledger view — header, transactions, and the operations +
-          events those transactions emitted.
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Ledgers' }]}
+        title="Ledgers"
+        description="The most recent ledger closes on the Stellar network. Each row links to the full ledger view — header, transactions, and the operations + events those transactions emitted."
+      />
 
       {/* S-005: ledger cadence answers "is the network healthy" before
           the row list — same shared series /network renders. */}
