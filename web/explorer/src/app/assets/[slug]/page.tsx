@@ -15,7 +15,6 @@ import {
   formatCompact,
   formatCompactUnits,
   formatPriceSmall,
-  formatSubunitPrice,
   multiplyDecimalStrings,
 } from '@/lib/format';
 import {
