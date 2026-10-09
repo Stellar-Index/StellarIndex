@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { HoldersTabPanel } from './HoldersTabPanel';
+import { HoldersTabPanel, servedShares } from './HoldersTabPanel';
 
 // Native XLM has no trustlines — its holders board is the account-balance
 // ranking. The panel's empty state must therefore
@@ -97,5 +97,26 @@ describe('HoldersTabPanel', () => {
         screen.getByText(/entry-change backfill progresses/),
       ).toBeInTheDocument(),
     );
+  });
+});
+
+describe('servedShares', () => {
+  it('splits exactly over the served rows and clamps negatives', () => {
+    expect(
+      servedShares([{ balance: '30' }, { balance: '10' }, { balance: '-5' }]),
+    ).toEqual([75, 25, 0]);
+  });
+
+  it('keeps precision for balances above 2^53', () => {
+    expect(
+      servedShares([
+        { balance: '9007199254740993' },
+        { balance: '9007199254740993' },
+      ]),
+    ).toEqual([50, 50]);
+  });
+
+  it('returns null for a missing balance', () => {
+    expect(servedShares([{ balance: '10' }, {}])[1]).toBeNull();
   });
 });

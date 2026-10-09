@@ -64,6 +64,8 @@ export function HoldersTabPanel({
   });
 
   const holders = data?.holders ?? [];
+  const shares = servedShares(holders);
+  const maxShare = Math.max(0, ...shares.map((v) => v ?? 0));
   const source = asExample(`/v1/assets/${assetID}/holders`, { limit: 100 });
 
   return (
@@ -107,6 +109,13 @@ export function HoldersTabPanel({
                 <th scope="col" className="px-4 py-2 text-right">
                   Balance
                 </th>
+                <th
+                  scope="col"
+                  className="px-4 py-2 text-right"
+                  title="Share of the balance held by the served top rows, not of total supply."
+                >
+                  Share
+                </th>
               </tr>
             </thead>
             <tbody className="divide-line-subtle divide-y">
@@ -131,6 +140,9 @@ export function HoldersTabPanel({
                         Number(); an absent balance renders "—", not NaN. */}
                     {formatBaseUnits(h.balance, decimals)}
                   </td>
+                  <td className="px-4 py-3">
+                    <ShareBar pct={shares[i]} max={maxShare} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -149,6 +161,38 @@ export function HoldersTabPanel({
  * hint say so rather than implying a full-supply share. Skipped when 10
  * or fewer rows are served (top-10 vs itself is meaningless).
  */
+/** Each row's percentage of the served rows' summed balance; negatives count as zero. */
+export function servedShares(
+  holders: { balance?: string }[],
+): (number | null)[] {
+  const balances = holders.map((h) =>
+    h.balance?.trim().startsWith('-') ? '0' : h.balance,
+  );
+  const total = sumDecimalStrings(balances);
+  return balances.map((b) => ratioPct(b, total, 1));
+}
+
+function ShareBar({ pct, max }: { pct: number | null; max: number }) {
+  if (pct == null) return <span className="text-ink-faint">—</span>;
+  const width = max > 0 ? Math.max(1, (pct / max) * 100) : 0;
+  return (
+    <div
+      className="flex items-center justify-end gap-2"
+      aria-label={`${pct}% of the served rows`}
+    >
+      <div className="bg-surface-muted h-1.5 w-24 rounded-full">
+        <div
+          className="bg-brand-500 h-1.5 rounded-full"
+          style={{ width: `${width}%` }}
+        />
+      </div>
+      <span className="text-ink-muted w-12 text-right font-mono text-xs tabular-nums">
+        {pct}%
+      </span>
+    </div>
+  );
+}
+
 function HoldersConcentration({
   holders,
   decimals,
