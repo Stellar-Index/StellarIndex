@@ -1460,17 +1460,11 @@ func projectionEvidence(projOK bool, servedFrom, runFrom uint32, prior priorProj
 // published watermark (the -pass mode projection floor — see
 // projectionFloor).
 //
-// The three axes are NOT bounded by the same ledger.
-// Substrate and recognition each reconcile to the true network tip (see
-// substrateClaim, sourceRecognitionOK), so s.Tip is their correct prior
-// bound. Projection's reconcile is bounded by srW.Ledger — published as
-// s.Watermark, not s.Tip — because ComputeWatermark pins the lake watermark
-// below tip whenever a recognition or substrate problem exists in range. A
-// prior projection verdict sourced from s.Tip lets projectionClaim's rule 3
-// carry the claim over (s.Watermark, s.Tip], a band the prior run never
-// reconciled, whenever a recognition gap (e.g. an unrecognized topic) pinned
-// the watermark below tip. That publishes a false complete=true for a band
-// nobody ever reconciled.
+// Substrate and recognition reconcile to the network tip, so s.Tip bounds
+// their priors. Projection reconciles only to s.Watermark, which
+// ComputeWatermark pins below tip when a recognition or substrate problem
+// exists; bounding its prior by s.Tip would carry a clean claim over
+// (s.Watermark, s.Tip], a band no run reconciled.
 func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, priorSub, priorRec map[string]priorProjection, priorWatermark map[string]uint32) {
 	priorProj = make(map[string]priorProjection, len(snaps))
 	priorSub = make(map[string]priorProjection, len(snaps))
@@ -1811,19 +1805,12 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 
 // expectedProjection re-derives the EXPECTED side of Claim 2b once over
 // [lo, hi] and returns a per-target accessor plus the blind spots the
-// re-derive hit. Three oracles, by source class, and TWO of them can be
-// blind:
-//
-//   - the decoder-driven oracle (contract_events), and
-//   - the ContractCall census, which soft-fails PER CALL in
-//     forEachContractCallEvent — symmetric with the ch-rebuild writer that
-//     shares that same function, so a band or soroswap-router call whose
-//     Decode errors is missing from BOTH sides and the diff nets to zero.
-//
-// Only the SDEX census is genuinely per-claim rather than per-row: its
-// decoder soft-fails inside a single op's claim list and still emits the op,
-// so a malformed claim cannot remove a whole row from the expected side
-// without also removing it from served.
+// re-derive hit. Of the three oracles, two can be blind: the decoder-driven
+// one (contract_events), and the ContractCall census, which soft-fails per
+// call in forEachContractCallEvent. The ch-rebuild writer shares that
+// function, so a call whose Decode errors is missing from both sides and nets
+// to zero. The SDEX census soft-fails per claim and still emits the op, so it
+// cannot drop a whole row from one side only.
 func expectedProjection(ctx context.Context, chStreamer completeness.EventStreamer, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, completeness.BlindSpots, error) {
 	switch {
 	case src.callDec != nil:

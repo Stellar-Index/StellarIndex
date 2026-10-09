@@ -3579,11 +3579,8 @@ func prewarmHeavy(
 	if _, err := stats.GetSourceVolumeHistory24h(statsCtx); err != nil {
 		logger.Debug("prewarm sources volume history failed", "err", err)
 	}
-	// 7d history was missing from this loop while its cache slot existed
-	// (site-audit follow-up). Every /dexes/<source> page requests
-	// include=stats,sparkline,sparkline7d, so the un-warmed 7d read was
-	// paid on the request path: measured 8.54s live, against 1.09s for the
-	// same call without sparkline7d. Warming it here closes the gap.
+	// Every /dexes/<source> page requests sparkline7d; unwarmed, that read
+	// costs ~8.5s on the request path against ~1.1s without it.
 	if _, err := stats.GetSourceVolumeHistory7d(statsCtx); err != nil {
 		logger.Debug("prewarm sources volume history 7d failed", "err", err)
 	}
