@@ -954,46 +954,25 @@ const pegQuoteScaleDenominator = 10_000_000
 //
 // # Why this is a loop and not one query
 //
-// It binds one asset id, so before the loop it could only ever see the
-// ONE spelling the caller happened to hold — AGENTS.md's dual-form rule
-// ("every asset-id read path MUST loop assetAliases()") applied to the
-// tier-3/4 USD anchor. XLM is where that bites: it has three canonical
-// identities (`native`, `crypto:XLM`, its SAC) and its USD markets are
-// split across them by VENUE, so binding `native` alone made the anchor
-// structurally blind to every Soroban XLM book.
-//
-// Prices_1m buckets clearing this query's own
-// dust floor, XLM base x the operator's single declared peg:
-//
-//	base=native      x quote=USDC-GA5Z… (classic)  215,790
-//	base=CAS3J7…SAC  x quote=CCW67T…SAC (the SAC)  291,883
-//	every other base/quote combination of those forms       0
-//
-// So the two axes are not independent — only the both-alias-complete
-// predicate matches anything new, which is why the peg side widened to
-// [VWAPUSDFXResolver.pegForms] in the same change. With both, the XLM/USD
-// anchor gains ~2 years of reach. Before the Soroban XLM book began,
-// nothing is recoverable from a peg-quoted market at all — the only XLM/USD series that reaches back
-// further is the CEX `crypto:XLM/fiat:USD` one, and `fiat:USD` is not a
-// declared peg, so it stays out of scope here.
+// AGENTS.md's dual-form rule applies to the tier-3/4 USD anchor. XLM's USD
+// markets are split by venue across its three identities (`native`,
+// `crypto:XLM`, its SAC): dust-cleared buckets exist only for
+// native x USDC-GA5Z… (215,790) and the SAC x the USDC SAC (291,883), so
+// the asset and peg sides both loop their forms ([VWAPUSDFXResolver.pegForms]).
+// The CEX `crypto:XLM/fiat:USD` series reaches further back, but `fiat:USD`
+// is not a declared peg, so it stays out of scope here.
 //
 // # Order is load-bearing
 //
-// [canonical.AssetAliases] returns the equivalence class in canonical
-// PRIORITY order with the SAC form LAST, precisely so a thin Soroban pool
-// cannot outrank a deep SDEX/CEX book. This loop takes the FIRST form
-// that yields a usable row, which is that contract — a set-shaped
-// `base_asset = ANY(forms)` would instead take the freshest bucket
-// regardless of form and hand the SAC pool the rate whenever it printed
-// last. It also makes the change purely ADDITIVE: for a window where the
-// pre-existing form hits, it hits first and the result is byte-identical
-// to before; the later forms are reached only where the answer would
-// otherwise have been "no price at all".
+// [canonical.AssetAliases] returns forms in priority order with the SAC
+// LAST, so a thin Soroban pool cannot outrank a deep SDEX/CEX book. Taking
+// the first form that yields a row keeps that contract; a set-shaped
+// `base_asset = ANY(forms)` would take the freshest bucket and hand the SAC
+// pool the rate whenever it printed last.
 //
-// Freshness needs no special handling in the loop: when it is enforced it
-// is a lower bucket bound INSIDE the SQL (see [VWAPUSDFXResolver.queryDirectLeg]),
-// so any row a form returns is already fresh, and "first form that returns
-// a row" is exactly "first form that produces a usable answer".
+// Freshness, when enforced, is a lower bucket bound inside the SQL (see
+// [VWAPUSDFXResolver.queryDirectLeg]), so the first form that returns a row
+// is the first usable answer.
 func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, at time.Time) (string, time.Time, error) {
 	for _, form := range canonical.AssetAliases(asset) {
 		vwap, bucket, err := r.queryDirectLeg(ctx, form, at)
