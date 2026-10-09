@@ -1,7 +1,7 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { usePricePoll } from './hooks';
+import { usePriceFlash, usePricePoll } from './hooks';
 
 // The /v1/price poll fetch had no signal, so a hung connection left
 // the poll (and anything reading `polled`) waiting forever with no way to
@@ -52,9 +52,7 @@ describe('usePricePoll', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const hiddenSpy = vi
-      .spyOn(document, 'hidden', 'get')
-      .mockReturnValue(true);
+    const hiddenSpy = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
 
     renderHook(() =>
       usePricePoll({ asset: 'native', quote: 'fiat:USD', intervalMs: 1000 }),
@@ -164,5 +162,26 @@ describe('usePricePoll', () => {
     expect(result.current.polled).toBe(false);
 
     resolveNative?.(new Response(null, { status: 404 }));
+  });
+});
+
+describe('usePriceFlash', () => {
+  function flashAfter(first: string, second: string) {
+    const { result, rerender } = renderHook(
+      ({ p }: { p: string }) => usePriceFlash(p),
+      { initialProps: { p: first } },
+    );
+    rerender({ p: second });
+    return result.current;
+  }
+
+  it('does not flash when the same price is re-rendered with more digits', () => {
+    expect(flashAfter('1.5', '1.50')).toBeNull();
+  });
+
+  it('reads direction from the exact decimal, past double precision', () => {
+    expect(flashAfter('0.10000000000000000001', '0.10000000000000000002')).toBe(
+      'up',
+    );
   });
 });

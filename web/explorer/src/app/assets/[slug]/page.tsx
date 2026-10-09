@@ -15,7 +15,9 @@ import {
   formatCompact,
   formatCompactUnits,
   formatPriceSmall,
+  formatSubunitPrice,
   multiplyDecimalStrings,
+  positiveDecimal,
 } from '@/lib/format';
 import {
   serializeJsonLd,
@@ -605,9 +607,7 @@ export async function fetchPrice(assetId: string): Promise<PriceResp | null> {
     fetchPriceDirect('native', 'fiat:USD'),
   ]);
   if (!vsXlm?.price || !xlmUsd?.price) return null;
-  const a = Number(vsXlm.price);
-  const b = Number(xlmUsd.price);
-  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) {
+  if (!positiveDecimal(vsXlm.price) || !positiveDecimal(xlmUsd.price)) {
     return null;
   }
   const triangulated = multiplyDecimalStrings(vsXlm.price, xlmUsd.price);
@@ -979,7 +979,9 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           <AssetSidebar
             coin={coin}
             detail={detail}
-            priceUSD={price?.price || coin.price_usd || null}
+            priceUSD={
+              positiveDecimal(price?.price) ?? positiveDecimal(coin.price_usd)
+            }
             priceProvenance={headlinePriceProvenance(price, coin)}
             priceStale={Boolean(price?.flags?.stale)}
             name={globalView?.name}
@@ -1074,7 +1076,7 @@ function OverviewBody({
   detail: AssetDetail | null;
   price: PriceResp | null;
 }) {
-  const priceStr = price?.price ? formatPriceSmall(price.price) : '—';
+  const priceNum = parsePrice(price?.price);
   const hasSupply =
     detail?.circulating_supply != null ||
     detail?.total_supply != null ||
@@ -1102,7 +1104,7 @@ function OverviewBody({
         >
           <div className="flex flex-wrap items-baseline gap-4">
             <span className="font-mono text-3xl tabular-nums">
-              {priceStr === '—' ? '—' : `$${priceStr}`}
+              {priceNum != null ? `$${formatPriceSmall(priceNum)}` : '—'}
             </span>
             {(() => {
               const peg = pegBadgeCurrency(
@@ -1404,6 +1406,12 @@ function OverviewBody({
 
 // (CURATED_ASSET_ABOUT lives in ./AssetAbout.)
 
+function parsePrice(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
 function fmtUsd(raw: string | null | undefined): string {
   const s = formatCompactUnits(raw || null);
   return s === '—' ? s : `$${s}`;
@@ -1614,7 +1622,7 @@ function VerifiedCurrencyView({
   // For fiat tickers the canonical chart asset_id is `fiat:<ISO>`.
   // For crypto verified slugs we don't have a slug-level chart.
   const chartAssetID = isFiat ? `fiat:${view.ticker}` : null;
-  const priceText = view.price_usd ? formatPriceSmall(view.price_usd) : '—';
+  const priceNum = view.price_usd ? Number(view.price_usd) : null;
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <header className="space-y-3">
@@ -1630,9 +1638,12 @@ function VerifiedCurrencyView({
             {(view as GlobalAssetView & { class?: string }).class ?? 'verified'}
           </Badge>
         </h1>
-        {priceText !== '—' && (
+        {priceNum != null && Number.isFinite(priceNum) && (
           <div className="tnum text-ink font-mono text-2xl">
-            ${priceText}
+            $
+            {priceNum < 0.001
+              ? formatSubunitPrice(priceNum)
+              : priceNum.toFixed(priceNum >= 100 ? 2 : 6)}
             <span className="text-ink-muted ml-2 text-xs">USD</span>
           </div>
         )}

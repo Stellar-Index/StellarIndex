@@ -14,7 +14,7 @@ import {
   useTipStream,
 } from '@/lib/live/hooks';
 import type { components } from '@/api/types';
-import { scaleBaseUnits } from '@/lib/format';
+import { positiveDecimal, scaleBaseUnits } from '@/lib/format';
 import { downloadText, toCsv } from '@/lib/export';
 import { trailingEnvelope } from './envelope';
 
@@ -319,8 +319,8 @@ export function MarketChart({
   const clock = useLiveClock();
   const tipFresh =
     tip != null && !isFrameStale(clock, tip.receivedAt, TIP_LIVE_STALE_MS);
-  const tipNum = tipFresh ? Number(tip.data.data?.price) : NaN;
-  const livePrice = Number.isFinite(tipNum) && tipNum > 0 ? tipNum : null;
+  const tipPrice = positiveDecimal(tipFresh ? tip.data.data?.price : undefined);
+  const livePrice = tipPrice != null ? Number(tipPrice) : null;
 
   return (
     <div className="space-y-3">
