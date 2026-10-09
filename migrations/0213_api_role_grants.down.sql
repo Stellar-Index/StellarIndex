@@ -8,7 +8,6 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'stellarindex_api') THEN
         ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM stellarindex_api;
-        ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM stellarindex_api;
         REVOKE ALL ON ALL TABLES IN SCHEMA public FROM stellarindex_api;
         REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM stellarindex_api;
         REVOKE USAGE ON SCHEMA public FROM stellarindex_api;

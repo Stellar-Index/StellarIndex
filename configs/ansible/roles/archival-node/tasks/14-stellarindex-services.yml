@@ -247,15 +247,18 @@
     - Restart stellarindex-api
 
 # apply_api_role_grants() (migration 0213) is a no-op until the role
-# exists, so a role created after 0213 ran needs this call. The DO block
-# tolerates a fresh host whose migrations have not run yet.
+# exists, so a role created after 0213 ran needs this call. Without 0213 the
+# role would hold no grants and every API query would fail 42501, so the
+# play stops here before the env file below points the API at the role.
 - name: Apply the stellarindex_api role's grants
   when: postgres_pass_stellarindex_api | default('') | length > 0
   community.postgresql.postgresql_query:
     login_db: "{{ postgres_db_stellarindex }}"
     query: >-
-      DO $$ BEGIN IF to_regproc('public.apply_api_role_grants') IS NOT NULL
-      THEN PERFORM public.apply_api_role_grants(); END IF; END $$
+      DO $$ BEGIN IF to_regproc('public.apply_api_role_grants') IS NULL
+      THEN RAISE EXCEPTION 'apply_api_role_grants() missing: apply migration 0213
+      before setting postgres_pass_stellarindex_api'; END IF;
+      PERFORM public.apply_api_role_grants(); END $$
   become_user: postgres
   changed_when: false
 
