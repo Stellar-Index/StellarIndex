@@ -1034,8 +1034,8 @@
 #
 # ClickHouse can exhaust the kernel's per-process mapping limit
 # (vm.max_map_count), then goes into a std::bad_alloc storm and crashes,
-# taking dependent jobs with it. The limit is raised far above the 65530
-# default and codified (/etc/sysctl.d/10-map-count.conf); this probe
+# taking dependent jobs with it. The limit is sysctl_tunings'
+# vm.max_map_count (defaults/main.yml); this probe
 # watches headroom against it so a crash is not the first signal.
 #
 # node_exporter has no per-process mapping series (its procfs

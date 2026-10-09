@@ -2356,9 +2356,12 @@ function BackfillCoverageTable({
                         <span className="bg-line text-warn-700 rounded-sm px-1 py-0.5 text-[10px] tracking-wide uppercase">
                           {lakeComplete ? 'archive complete' : 'reconciling'}
                         </span>
+                        {/* pct is the archive watermark, not a served figure;
+                            there is no served percentage to show. */}
                         <span className="tnum">
-                          {pct.toFixed(1)}%{' '}
-                          {lakeComplete ? 'served' : 'captured'}
+                          {lakeComplete
+                            ? 'served reconciling'
+                            : `${pct.toFixed(1)}% captured`}
                         </span>
                       </span>
                     ) : (

@@ -325,6 +325,9 @@ sysctl_tunings:
   # (heuristic overcommit) — see the note there and the ClickHouse cap.
   vm.overcommit_memory: "{{ vm_overcommit_memory | default(2) }}"
   vm.overcommit_ratio: "{{ vm_overcommit_ratio | default(80) }}"
+  # ClickHouse exhausted Ubuntu's 1,048,576 mappings twice on r1 and failed
+  # every allocation with errno 12 while RAM was free.
+  vm.max_map_count: 4194304
 
 # ───── Postgres ──────────────────────────────────────────────────────
 postgres_version:        "15"

@@ -55,13 +55,12 @@ for f in "${files[@]}"; do
     scanned=$((scanned + 1))
 
     # First NON-COMMENT line that creates a repository. A `git init` inside
-    # a usage comment (public-export.sh documents one for the reader) is
-    # not a fixture and must not trip this gate.
+    # a usage comment is not a fixture and must not trip this gate.
     # Verified empirically against every real form in this tree:
     #   git init -q .            git -C "$d" init -q
     #   git -C "$tmp" init -q -b main
     # and against the shapes that must NOT trip it: a `git init` inside a
-    # comment (public-export.sh documents one), `git commit`, `git config`.
+    # comment, `git commit`, `git config`.
     init_hits=$(grep -nE '^[^#]*[^-[:alnum:]_]?git[^|#]*[[:space:]]init([[:space:]]|$)' "$f" 2>/dev/null || true)
     init_line=${init_hits%%$'\n'*}
     init_line=${init_line%%:*}

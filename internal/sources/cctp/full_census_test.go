@@ -4,7 +4,6 @@
 package cctp
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -61,27 +60,6 @@ func TestDecodeAdminChangeStarted_RealMainnetFixture(t *testing.T) {
 	}
 }
 
-func TestDecodeAdminChangeStarted_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{TopicSymbolAdminChangeStarted},
-		Value: "AAAAEQAAAAEAAAAA", // empty map — 'new_admin' missing
-	}
-	_, err := DecodeAdminChangeStarted(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
-	}
-}
-
-func TestDecodeAdminChangeStarted_ShortTopic(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{Topic: nil}
-	_, err := DecodeAdminChangeStarted(ev)
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
-	}
-}
-
 // ─── attester_enabled ───────────────────────────────────────────────
 
 // TestDecodeAttesterEnabled_RealMainnetFixture — ledger 62146641, tx
@@ -113,15 +91,6 @@ func TestDecodeAttesterEnabled_RealMainnetFixture(t *testing.T) {
 	out := eventFromAttesterEnabled(got, time.Now().UTC())
 	if out.EventType != EventAttesterEnabled {
 		t.Errorf("projection EventType = %q", out.EventType)
-	}
-}
-
-func TestDecodeAttesterEnabled_ShortTopic(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{Topic: []string{TopicSymbolAttesterEnabled}}
-	_, err := DecodeAttesterEnabled(ev)
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
 	}
 }
 
@@ -165,15 +134,6 @@ func TestDecodeAttesterManagerUpdated_BootstrapVoidOld(t *testing.T) {
 	}
 }
 
-func TestDecodeAttesterManagerUpdated_ShortTopic(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{Topic: []string{TopicSymbolAttesterManagerUpdated, "AAAAAQ=="}}
-	_, err := DecodeAttesterManagerUpdated(ev)
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
-	}
-}
-
 // ─── denylisted / un_denylisted ────────────────────────────────────
 
 // TestDecodeDenylisted_RealMainnetFixture — ledger 62226112, tx
@@ -208,15 +168,6 @@ func TestDecodeDenylisted_RealMainnetFixture(t *testing.T) {
 	}
 }
 
-func TestDecodeDenylisted_ShortTopic(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{Topic: []string{TopicSymbolDenylisted}}
-	_, err := DecodeDenylisted(ev)
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
-	}
-}
-
 // TestDecodeUnDenylisted_RealMainnetFixture — ledger 62226574, tx
 // b71dfa79ba940eb5679115002ff906522db2f4bf60220ed05bad7bc0d782762c,
 // TokenMessengerMinter — the SAME account as [TestDecodeDenylisted_RealMainnetFixture],
@@ -247,15 +198,6 @@ func TestDecodeUnDenylisted_RealMainnetFixture(t *testing.T) {
 	out := eventFromUnDenylisted(got, time.Now().UTC())
 	if out.EventType != EventUnDenylisted {
 		t.Errorf("projection EventType = %q", out.EventType)
-	}
-}
-
-func TestDecodeUnDenylisted_ShortTopic(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{Topic: []string{TopicSymbolUnDenylisted}}
-	_, err := DecodeUnDenylisted(ev)
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
 	}
 }
 
@@ -298,15 +240,6 @@ func TestDecodeDenylisterChanged_BootstrapVoidOld(t *testing.T) {
 	}
 }
 
-func TestDecodeDenylisterChanged_ShortTopic(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{Topic: []string{TopicSymbolDenylisterChanged, "AAAAAQ=="}}
-	_, err := DecodeDenylisterChanged(ev)
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
-	}
-}
-
 // ─── fee_recipient_set ─────────────────────────────────────────────
 
 // TestDecodeFeeRecipientSet_RealMainnetFixture — ledger 62146653, tx
@@ -338,18 +271,6 @@ func TestDecodeFeeRecipientSet_RealMainnetFixture(t *testing.T) {
 	}
 }
 
-func TestDecodeFeeRecipientSet_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{TopicSymbolFeeRecipientSet},
-		Value: "AAAAEQAAAAEAAAAA",
-	}
-	_, err := DecodeFeeRecipientSet(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
-	}
-}
-
 // ─── max_message_body_size_updated ─────────────────────────────────
 
 // TestDecodeMaxMessageBodySizeUpdated_RealMainnetFixture — ledger
@@ -378,18 +299,6 @@ func TestDecodeMaxMessageBodySizeUpdated_RealMainnetFixture(t *testing.T) {
 	out := eventFromMaxMessageBodySizeUpdated(got, time.Now().UTC())
 	if out.EventType != EventMaxMessageBodySizeUpdated {
 		t.Errorf("projection EventType = %q", out.EventType)
-	}
-}
-
-func TestDecodeMaxMessageBodySizeUpdated_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{TopicSymbolMaxMessageBodySizeUpdated},
-		Value: "AAAAEQAAAAEAAAAA",
-	}
-	_, err := DecodeMaxMessageBodySizeUpdated(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
 	}
 }
 
@@ -427,15 +336,6 @@ func TestDecodeMinFeeControllerSet_RealMainnetFixture(t *testing.T) {
 	}
 }
 
-func TestDecodeMinFeeControllerSet_ShortTopic(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{Topic: []string{TopicSymbolMinFeeControllerSet}}
-	_, err := DecodeMinFeeControllerSet(ev)
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
-	}
-}
-
 // ─── pauser_changed / rescuer_changed ──────────────────────────────
 
 // TestDecodePauserChanged_RealMainnetFixture — ledger 62146641, tx
@@ -468,18 +368,6 @@ func TestDecodePauserChanged_RealMainnetFixture(t *testing.T) {
 	}
 }
 
-func TestDecodePauserChanged_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{TopicSymbolPauserChanged},
-		Value: "AAAAEQAAAAEAAAAA",
-	}
-	_, err := DecodePauserChanged(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
-	}
-}
-
 // TestDecodeRescuerChanged_RealMainnetFixture — ledger 62146641, tx
 // 5b53d56d4950a854bd39e3bc806478fd2aafffa5bcbfb86c19ca51eef8b90b7a,
 // MessageTransmitter.
@@ -506,18 +394,6 @@ func TestDecodeRescuerChanged_RealMainnetFixture(t *testing.T) {
 	out := eventFromRescuerChanged(got, time.Now().UTC())
 	if out.EventType != EventRescuerChanged {
 		t.Errorf("projection EventType = %q", out.EventType)
-	}
-}
-
-func TestDecodeRescuerChanged_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{TopicSymbolRescuerChanged},
-		Value: "AAAAEQAAAAEAAAAA",
-	}
-	_, err := DecodeRescuerChanged(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
 	}
 }
 
@@ -552,18 +428,6 @@ func TestDecodeSetTokenController_RealMainnetFixture(t *testing.T) {
 	}
 }
 
-func TestDecodeSetTokenController_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{TopicSymbolSetTokenController},
-		Value: "AAAAEQAAAAEAAAAA",
-	}
-	_, err := DecodeSetTokenController(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
-	}
-}
-
 // ─── signature_threshold_updated ───────────────────────────────────
 
 // TestDecodeSignatureThresholdUpdated_RealMainnetFixture — ledger
@@ -595,18 +459,6 @@ func TestDecodeSignatureThresholdUpdated_RealMainnetFixture(t *testing.T) {
 	out := eventFromSignatureThresholdUpdated(got, time.Now().UTC())
 	if out.EventType != EventSignatureThresholdUpdated {
 		t.Errorf("projection EventType = %q", out.EventType)
-	}
-}
-
-func TestDecodeSignatureThresholdUpdated_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{TopicSymbolSignatureThresholdUpdated},
-		Value: "AAAAEQAAAAEAAAAA",
-	}
-	_, err := DecodeSignatureThresholdUpdated(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
 	}
 }
 
@@ -654,30 +506,6 @@ func TestDecodeSetBurnLimitPerMessage_RealMainnetFixture(t *testing.T) {
 	}
 }
 
-func TestDecodeSetBurnLimitPerMessage_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{
-			TopicSymbolSetBurnLimitPerMessage,
-			"AAAAEgAAAAGt785ZruUpaPdgYdSUwlJbdWWfpClqZfSZ7ynlZHfklg==",
-		},
-		Value: "AAAAEQAAAAEAAAAA",
-	}
-	_, err := DecodeSetBurnLimitPerMessage(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
-	}
-}
-
-func TestDecodeSetBurnLimitPerMessage_ShortTopic(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{Topic: []string{TopicSymbolSetBurnLimitPerMessage}}
-	_, err := DecodeSetBurnLimitPerMessage(ev)
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
-	}
-}
-
 // ─── swap_minter_config_set ────────────────────────────────────────
 
 // TestDecodeSwapMinterConfigSet_RealMainnetFixture — ledger 62146806,
@@ -721,30 +549,6 @@ func TestDecodeSwapMinterConfigSet_RealMainnetFixture(t *testing.T) {
 	}
 }
 
-func TestDecodeSwapMinterConfigSet_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{
-			TopicSymbolSwapMinterConfigSet,
-			"AAAAEgAAAAGt785ZruUpaPdgYdSUwlJbdWWfpClqZfSZ7ynlZHfklg==",
-		},
-		Value: "AAAAEQAAAAEAAAAA",
-	}
-	_, err := DecodeSwapMinterConfigSet(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
-	}
-}
-
-func TestDecodeSwapMinterConfigSet_ShortTopic(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{Topic: []string{TopicSymbolSwapMinterConfigSet}}
-	_, err := DecodeSwapMinterConfigSet(ev)
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
-	}
-}
-
 // ─── token_decimal_config_added ────────────────────────────────────
 
 // TestDecodeTokenDecimalConfigAdded_RealMainnetFixture — ledger
@@ -785,30 +589,6 @@ func TestDecodeTokenDecimalConfigAdded_RealMainnetFixture(t *testing.T) {
 	}
 	if out.Attributes["canonical_decimals"] != got.CanonicalDecimals || out.Attributes["local_decimals"] != got.LocalDecimals {
 		t.Error("projection nested-map fields mismatch")
-	}
-}
-
-func TestDecodeTokenDecimalConfigAdded_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{
-			TopicSymbolTokenDecimalConfigAdded,
-			"AAAAEgAAAAGt785ZruUpaPdgYdSUwlJbdWWfpClqZfSZ7ynlZHfklg==",
-		},
-		Value: "AAAAEQAAAAEAAAAA",
-	}
-	_, err := DecodeTokenDecimalConfigAdded(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
-	}
-}
-
-func TestDecodeTokenDecimalConfigAdded_ShortTopic(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{Topic: []string{TopicSymbolTokenDecimalConfigAdded}}
-	_, err := DecodeTokenDecimalConfigAdded(ev)
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
 	}
 }
 

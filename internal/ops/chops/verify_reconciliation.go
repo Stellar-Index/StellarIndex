@@ -168,7 +168,7 @@ func verifyReconExpected(ctx context.Context, chAddr string, src reconSource, lo
 		}
 		return func(reconTarget) map[uint32]int { return expected }, blind, nil
 	}
-	streamer := clickhouse.ReconcileEventStreamer{Addr: chAddr, NeedOpArgs: src.needsOpArgs, NeedStateWriteKeys: src.needsStateWriteKeys}
+	streamer := clickhouse.ReconcileEventStreamer{Addr: chAddr, NeedOpArgs: src.needsOpArgs, NeedStateWriteKeys: src.needsStateWriteKeys, SymbolTopic0Only: src.symbolTopic0}
 	expectedFor, blind, err := expectedProjection(ctx, streamer, chAddr, src, lo, hi)
 	if err != nil {
 		return nil, completeness.BlindSpots{}, fmt.Errorf("re-derive: %w", err)

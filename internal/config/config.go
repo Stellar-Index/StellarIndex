@@ -1856,14 +1856,13 @@ func (sc SupplyConfig) validateFullyWrappedSACs() error {
 	return nil
 }
 
-// ObsConfig wires metrics, logs, and (eventually) traces. Metrics
+// ObsConfig wires metrics and logs. Metrics
 // exposure varies per-binary: the indexer, the aggregator, and the
 // long-lived ops commands (e.g. `cross-region-monitor`,
 // `verify-archive --metrics`) each bind a dedicated `/metrics`
 // listener at [ObsConfig.MetricsListen]; the API binary serves
 // `/metrics` on its public listener (so a CDN-fronted deployment
-// doesn't need a sidecar port). Trace fields are reserved for the
-// future tracing rollout — see [ObsConfig.TraceExporter].
+// doesn't need a sidecar port).
 type ObsConfig struct {
 	MetricsListen string `toml:"metrics_listen" doc:"Bind address for the dedicated /metrics Prometheus endpoint. Read by the indexer, the aggregator, and the long-lived ops binaries (cross-region-monitor, verify-archive --metrics). The API binary serves /metrics on its public listener and ignores this field." default:"127.0.0.1:9464"`
 	// MetricsListenSet records whether obs.metrics_listen was present
@@ -1874,11 +1873,9 @@ type ObsConfig struct {
 	// this instead of comparing MetricsListen by value, so an operator
 	// who explicitly pins 127.0.0.1:9464 for the aggregator is honoured
 	// instead of silently overridden.
-	MetricsListenSet bool    `toml:"-"`
-	LogLevel         string  `toml:"log_level" doc:"Minimum log level — debug / info / warn / error." default:"info"`
-	LogFormat        string  `toml:"log_format" doc:"Log format — json / text / console ('text' and 'console' are synonyms)." default:"json"`
-	TraceExporter    string  `toml:"trace_exporter" doc:"OpenTelemetry trace exporter. Currently only 'none' is wired in this build; the 'otlp' value is reserved for the future tracing rollout and is rejected by Validate() until the exporter is implemented (so an operator setting it doesn't think tracing is on when it isn't)." default:"none"`
-	TraceSample      float64 `toml:"trace_sample" doc:"Trace sampling ratio — 0.0 (none) to 1.0 (all). Read by the future tracing rollout; ignored in this build." default:"0.1"`
+	MetricsListenSet bool   `toml:"-"`
+	LogLevel         string `toml:"log_level" doc:"Minimum log level — debug / info / warn / error." default:"info"`
+	LogFormat        string `toml:"log_format" doc:"Log format — json / text / console ('text' and 'console' are synonyms)." default:"json"`
 }
 
 // Default returns a Config pre-populated with every field's default
@@ -2018,6 +2015,8 @@ var RetiredKeys = map[string]string{
 	"region.name":                   "GH-1129: unread — region label is region.id",
 	"region.home_domain":            "GH-1129: unread — SEP-10 reads api.sep10.home_domain",
 	"stellar.core_http_endpoint":    "GH-1129: unread — no liveness probe consumes it",
+	"obs.trace_exporter":            "unread — no tracer is wired",
+	"obs.trace_sample":              "unread — no tracer is wired",
 }
 
 func Default() Config {
@@ -2124,8 +2123,6 @@ func Default() Config {
 			MetricsListen: "127.0.0.1:9464",
 			LogLevel:      "info",
 			LogFormat:     "json",
-			TraceExporter: "none",
-			TraceSample:   0.1,
 		},
 	}
 }

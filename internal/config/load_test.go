@@ -254,6 +254,18 @@ nonsense_field = "oops"
 	}
 }
 
+// A config copied from an older example.toml still carries the trace keys.
+func TestLoadReader_retiredTraceKeysStillBoot(t *testing.T) {
+	body := `
+[obs]
+trace_exporter = "none"
+trace_sample = 0.1
+`
+	if _, err := cfg.LoadReader(strings.NewReader(body), "test.toml"); err != nil {
+		t.Fatalf("LoadReader with retired obs.trace_* keys: %v", err)
+	}
+}
+
 // TestLoadReader_retiredKeyWarnsInsteadOfFailing — deleting a field
 // from Config would turn every self-hosted deployment whose config
 // descended from an old configs/example.toml into a boot-fatal "unknown

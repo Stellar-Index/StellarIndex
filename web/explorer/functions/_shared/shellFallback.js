@@ -63,12 +63,32 @@ function withSecurityHeaders(response, variant) {
   });
 }
 
-// Real HTTP 301 carrying the same security headers as the shell responses.
-export function permanentRedirect(location) {
+// A real HTTP redirect carrying the same security headers as the shell responses.
+export function redirect(location, status) {
   return withSecurityHeaders(
-    new Response(null, { status: 301, headers: { Location: location } }),
+    new Response(null, { status, headers: { Location: location } }),
     'default',
   );
+}
+
+export function permanentRedirect(location) {
+  return redirect(location, 301);
+}
+
+// The request's own static asset (or its 404), with the security headers a
+// Function response would otherwise lack.
+export async function serveAsset(context) {
+  try {
+    return withSecurityHeaders(
+      await context.env.ASSETS.fetch(context.request),
+      'default',
+    );
+  } catch {
+    return withSecurityHeaders(
+      new Response('Service temporarily unavailable', { status: 503 }),
+      'default',
+    );
+  }
 }
 
 export async function shellFallback(context, shellPath) {

@@ -38,7 +38,8 @@ func (s *Server) underReview(h http.HandlerFunc) http.HandlerFunc {
 			} else if strings.HasPrefix(rec.header.Get("Content-Type"), "text/csv") {
 				// A CSV export has no envelope; its flags travel in a header.
 				if _, held := holds.Match(*list, subjectOf(r.PathValue("asset_id"), nil)); held {
-					rec.header.Add("X-StellarIndex-Flags", "under_review")
+					flags := append(rec.header.Values("X-StellarIndex-Flags"), "under_review")
+					rec.header.Set("X-StellarIndex-Flags", strings.Join(flags, ", "))
 				}
 			}
 		}

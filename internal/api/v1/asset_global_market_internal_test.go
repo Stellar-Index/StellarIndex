@@ -113,6 +113,33 @@ func TestGlobalMarket_StellarDivergenceWarning(t *testing.T) {
 	}
 }
 
+// A fiat-pegged global warns past 1%; any other global keeps the shared 5%.
+func TestStampStellarDivergence_StablecoinThreshold(t *testing.T) {
+	cases := []struct {
+		ticker, stellar string
+		configured      float64
+		wantWarn        bool
+	}{
+		{"EURC", "1.0456", 0, true},
+		{"EURC", "1.0099", 0, false},
+		{"USDC", "0.989", 0, true},
+		{"BTC", "1.0456", 0, false},
+		{"BTC", "1.0501", 0, true},
+		{"EURC", "1.006", 0.5, true},
+	}
+	for _, tc := range cases {
+		g, err := canonical.NewCryptoAsset(tc.ticker)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gm := &AssetGlobalMarket{PriceUSD: "1"}
+		(&Server{Options: Options{DivergenceThresholdPct: tc.configured}}).stampStellarDivergence(gm, g, tc.stellar, big.NewRat(1, 1))
+		if gm.DepegWarning != tc.wantWarn {
+			t.Errorf("%s at %s: depeg_warning = %v, want %v", tc.ticker, tc.stellar, gm.DepegWarning, tc.wantWarn)
+		}
+	}
+}
+
 // Stale or non-aggregator rows are not a global market.
 func TestGlobalMarket_RefusesStaleAndNonAggregatorRows(t *testing.T) {
 	for name, u := range map[string]canonical.OracleUpdate{

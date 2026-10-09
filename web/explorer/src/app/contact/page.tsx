@@ -9,7 +9,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { GithubIcon } from '@/components/GithubIcon';
-import { Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 export const metadata: Metadata = {
   title: 'Contact',
@@ -93,23 +93,14 @@ const FAQS: { q: string; a: string }[] = [
 
 export default function ContactPage() {
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-12 sm:py-16">
-      <header className="mb-10 space-y-3">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Contact' }]}
-        />
-        <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
-          Get in touch
-        </p>
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-          Contact
-        </h1>
-        <p className="text-ink-body max-w-2xl text-base">
-          We don&apos;t run a support inbox for the public tier — issues land on
-          GitHub, sales go to email, and security goes to a separate inbox with
-          a real disclosure SLA. Pick the channel that fits your message.
-        </p>
-      </header>
+    <Container className="py-12 sm:py-16 [&>*]:max-w-4xl">
+      <PageHeader
+        className="mb-10"
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Contact' }]}
+        eyebrow="Get in touch"
+        title="Contact"
+        description="We don't run a support inbox for the public tier — issues land on GitHub, sales go to email, and security goes to a separate inbox with a real disclosure SLA. Pick the channel that fits your message."
+      />
 
       <section className="space-y-3">
         {CHANNELS.map((c) => (
@@ -151,7 +142,7 @@ export default function ContactPage() {
           buttons for rotation.
         </p>
       </section>
-    </div>
+    </Container>
   );
 }
 

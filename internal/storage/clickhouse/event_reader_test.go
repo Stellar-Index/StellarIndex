@@ -211,3 +211,26 @@ func TestContractEventsFilteredQuery_LargeGatedSetStaysUnderMaxQuerySize(t *test
 		t.Errorf("a small set must stay inlined:\n%s", q)
 	}
 }
+
+// TestReconcileEventStreamer_SymbolTopic0Only pins the symbol-only prefilter:
+// it keeps the contract and topic_0_sym filters and never reads topics_xdr,
+// while the default reconcile read still matches both encodings.
+func TestReconcileEventStreamer_SymbolTopic0Only(t *testing.T) {
+	ids, syms := []string{"CAAA"}, []string{"mint", "burn"}
+	q := contractEventsQuery(ReconcileEventStreamer{SymbolTopic0Only: true}.filterWhere(ids, syms), false, false)
+	where := q[strings.Index(q, "WHERE"):]
+	for _, s := range []string{"ledger_seq BETWEEN ? AND ?", "contract_id IN ('CAAA')", "topic_0_sym IN ('mint','burn')"} {
+		if !strings.Contains(where, s) {
+			t.Errorf("symbol-only filter missing %q:\n%s", s, where)
+		}
+	}
+	if strings.Contains(where, "topics_xdr") {
+		t.Errorf("symbol-only filter must not read topics_xdr:\n%s", where)
+	}
+	if got, want := (ReconcileEventStreamer{}).filterWhere(ids, syms), contractEventsFilterWhere(ids, syms, nil); got != want {
+		t.Errorf("default reconcile filter = %q, want both-encoding %q", got, want)
+	}
+	if got, want := (ReconcileEventStreamer{SymbolTopic0Only: true}).filterWhere(ids, nil), contractEventsFilterWhere(ids, nil, nil); got != want {
+		t.Errorf("symbol-only with no topics = %q, want %q", got, want)
+	}
+}

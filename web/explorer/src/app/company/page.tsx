@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Mail } from 'lucide-react';
 import { GithubIcon } from '@/components/GithubIcon';
-import { Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 export const metadata: Metadata = {
   title: 'Company — who we are',
@@ -13,24 +13,20 @@ export const metadata: Metadata = {
 
 export default function CompanyPage() {
   return (
-    <div className="mx-auto max-w-3xl space-y-12 px-6 py-12">
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Company' }]}
-        />
-        <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
-          Company
-        </p>
-        <h1 className="text-4xl font-semibold tracking-tight">
-          Data infrastructure for Stellar.
-        </h1>
-        <p className="text-ink-body text-base">
-          Stellar Index is a public, vendor-neutral data surface for the Stellar
-          network — complete, verified, per-protocol on-chain data, complete
-          history and supply, and aggregated prices for every Stellar asset, all
-          served by the Stellar Index API.
-        </p>
-      </header>
+    <Container className="space-y-12 py-12 [&>*]:max-w-3xl">
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Company' }]}
+        eyebrow="Company"
+        title="Data infrastructure for Stellar."
+        description={
+          <>
+            Stellar Index is a public, vendor-neutral data surface for the
+            Stellar network — complete, verified, per-protocol on-chain data,
+            complete history and supply, and aggregated prices for every Stellar
+            asset, all served by the Stellar Index API.
+          </>
+        }
+      />
 
       <section className="space-y-3">
         <h2 className="text-2xl font-semibold tracking-tight">What we do</h2>
@@ -206,6 +202,6 @@ export default function CompanyPage() {
           </Link>
         </div>
       </section>
-    </div>
+    </Container>
   );
 }

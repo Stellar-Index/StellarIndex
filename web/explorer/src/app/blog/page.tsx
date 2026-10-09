@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { loadBlogPosts } from '@/lib/blog';
-import { Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/blog' },
@@ -15,32 +15,28 @@ export default function BlogIndexPage() {
   const posts = loadBlogPosts();
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8 px-6 py-12">
-      <header className="space-y-2">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Blog' }]}
-        />
-        <div className="flex items-center justify-between">
-          <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
-            Blog
-          </p>
+    <Container className="space-y-8 py-12 [&>*]:max-w-3xl">
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Blog' }]}
+        eyebrow="Blog"
+        title="Engineering notes"
+        description={
+          <>
+            Release notes, architecture decisions, and the why behind each
+            surface. Sourced from{' '}
+            <code className="font-mono text-sm">docs/blog/*.md</code> in the
+            public repo — every post links back to its source on GitHub.
+          </>
+        }
+        actions={
           <Link
             href="/blog.atom"
             className="text-ink-muted hover:text-brand-600 font-mono text-[11px]"
           >
             atom feed →
           </Link>
-        </div>
-        <h1 className="text-4xl font-semibold tracking-tight">
-          Engineering notes
-        </h1>
-        <p className="text-ink-body text-base">
-          Release notes, architecture decisions, and the why behind each
-          surface. Sourced from{' '}
-          <code className="font-mono text-sm">docs/blog/*.md</code> in the
-          public repo — every post links back to its source on GitHub.
-        </p>
-      </header>
+        }
+      />
 
       {posts.length === 0 ? (
         <div className="border-line bg-surface rounded-xl border p-6">
@@ -90,6 +86,6 @@ export default function BlogIndexPage() {
           ))}
         </ul>
       )}
-    </div>
+    </Container>
   );
 }

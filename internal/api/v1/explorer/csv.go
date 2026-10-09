@@ -10,22 +10,22 @@ import (
 	"strings"
 )
 
-// csvPage is one page of a list endpoint rendered as text/csv. The JSON
+// CSVPage is one page of a list endpoint rendered as text/csv. The JSON
 // envelope's fields outside the rows travel as response headers: the next
 // page as a Link rel="next", true flags (by their JSON names) in
 // X-StellarIndex-Flags, and any other field in headers.
-type csvPage struct {
-	columns    []string
-	rows       [][]string
-	nextCursor string
-	flags      []string
-	headers    map[string]string
+type CSVPage struct {
+	Columns    []string
+	Rows       [][]string
+	NextCursor string
+	Flags      []string
+	Headers    map[string]string
 }
 
-// negotiateCSV reports whether the request asked for text/csv, and marks
+// NegotiateCSV reports whether the request asked for text/csv, and marks
 // the response as varying on Accept either way so no cache serves one
 // representation to a client that asked for the other.
-func negotiateCSV(w http.ResponseWriter, r *http.Request) bool {
+func NegotiateCSV(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Add("Vary", "Accept")
 	return prefersCSV(r.Header.Get("Accept"))
 }
@@ -60,35 +60,35 @@ func prefersCSV(accept string) bool {
 	return csvQ > 0 && (csvQ > jsonQ || (csvQ == jsonQ && jsonRank < 3))
 }
 
-// writeCSVPage writes p with a header row. Every cell passes through
+// WriteCSVPage writes p with a header row. Every cell passes through
 // csvSafeCell, so no caller can emit a spreadsheet formula. The export is
 // never stored in a shared cache: the URL is the JSON one, and a CDN that
 // ignores Vary would otherwise hand it to JSON clients.
-func writeCSVPage(w http.ResponseWriter, r *http.Request, p csvPage) error {
+func WriteCSVPage(w http.ResponseWriter, r *http.Request, p CSVPage) error {
 	h := w.Header()
 	h.Set("Content-Type", "text/csv; charset=utf-8")
 	h.Set("Cache-Control", "private, no-store")
-	if p.nextCursor != "" {
+	if p.NextCursor != "" {
 		q := r.URL.Query()
-		q.Set("cursor", p.nextCursor)
+		q.Set("cursor", p.NextCursor)
 		next := url.URL{Path: r.URL.Path, RawQuery: q.Encode()}
 		h.Set("Link", "<"+next.String()+`>; rel="next"`)
 	}
-	if len(p.flags) > 0 {
-		h.Set("X-StellarIndex-Flags", strings.Join(p.flags, ", "))
+	if len(p.Flags) > 0 {
+		h.Set("X-StellarIndex-Flags", strings.Join(p.Flags, ", "))
 	}
-	for k, v := range p.headers {
+	for k, v := range p.Headers {
 		if v = headerSafe(v); v != "" {
 			h.Set(k, v)
 		}
 	}
 	w.WriteHeader(http.StatusOK)
 	cw := csv.NewWriter(w)
-	if err := cw.Write(p.columns); err != nil {
+	if err := cw.Write(p.Columns); err != nil {
 		return err
 	}
-	cells := make([]string, len(p.columns))
-	for _, row := range p.rows {
+	cells := make([]string, len(p.Columns))
+	for _, row := range p.Rows {
 		for i, c := range row {
 			cells[i] = csvSafeCell(c)
 		}

@@ -64,8 +64,9 @@ var rawTopic0SymInclude = regexp.MustCompile(`topic_0_sym\s+(?i:in)\s*\(|topic_0
 func TestTopic0SymIncludePredicates_OnlyReviewedSites(t *testing.T) {
 	t.Parallel()
 	allowed := map[string]int{
-		// topic0Predicate itself.
-		"internal/storage/clickhouse/event_reader.go": 1,
+		// topic0Predicate itself, and symbolTopic0Predicate for reconcile sources whose
+		// decoder rejects a String topic[0] (pinned by the chops catalogue test).
+		"internal/storage/clickhouse/event_reader.go": 2,
 		// Watched-SEP41 census: the complement of the global scan's Symbol-only
 		// NOT IN, which already keeps every String-topic shape.
 		"internal/storage/clickhouse/recognition.go": 1,

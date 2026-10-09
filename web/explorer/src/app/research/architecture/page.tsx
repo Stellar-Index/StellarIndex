@@ -4,7 +4,7 @@ import { BookOpen } from 'lucide-react';
 
 import { loadArchitectureDocs } from '@/lib/architecture';
 
-import { Breadcrumbs, Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/research/architecture' },
   title: 'Architecture narratives — Stellar Index research',
@@ -16,25 +16,15 @@ export default function ArchitectureIndexPage() {
   const docs = loadArchitectureDocs();
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Research', href: '/research' },
-            { label: 'Architecture narratives' },
-          ]}
-        />
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Architecture narratives
-        </h1>
-        <p className="text-ink-body max-w-3xl text-base">
-          The long-form designs behind every Stellar Index subsystem.{' '}
-          <Link href="/research" className="underline decoration-dotted">
-            Back to research
-          </Link>
-          .
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Research', href: '/research' },
+          { label: 'Architecture narratives' },
+        ]}
+        title="Architecture narratives"
+        description="The long-form designs behind every Stellar Index subsystem."
+      />
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {docs.map((d) => (
           <Link
