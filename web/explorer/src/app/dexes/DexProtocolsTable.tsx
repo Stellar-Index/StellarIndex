@@ -11,6 +11,7 @@ import { sourceToneClass } from '@/lib/pillTone';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import { DexTvlHeadline } from '@/app/protocols/ProtocolTvlPanel';
 import { useProtocolTvls, type ProtocolTvl } from './useProtocolTvls';
+import { DexVolumeShare } from './DexVolumeShare';
 import { hrefFor } from '@/lib/hrefFor';
 
 interface VolumeBucket {
@@ -102,6 +103,11 @@ export function DexProtocolsTable() {
       {headline && (
         <div className="mx-4 mb-4">
           <DexTvlHeadline total={headline} />
+        </div>
+      )}
+      {statsAvailable && (
+        <div className="mx-4 mb-4">
+          <DexVolumeShare rows={rows} />
         </div>
       )}
       <div className="overflow-x-auto">

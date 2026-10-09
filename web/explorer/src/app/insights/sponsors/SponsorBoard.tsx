@@ -18,6 +18,7 @@ import {
 import { apiGet, asExample } from '@/api/client';
 import type { SponsorRow, SponsorsResp } from '@/api/relationTypes';
 import { formatCompact, truncateMiddle } from '@/lib/format';
+import { ConcentrationDonut } from '../ConcentrationDonut';
 import { type Envelope, formatTimestamp } from '../../explorer-shared';
 
 // Both board shapes come from the generated OpenAPI contract via
@@ -138,6 +139,17 @@ export function SponsorBoard() {
         source={source}
         bodyClassName="space-y-3"
       >
+        <ConcentrationDonut
+          noun="sponsors"
+          what="sponsorships started"
+          total={d.totals.sponsorships_started}
+          rows={d.sponsors.map((s) => ({
+            id: s.account,
+            label: truncateMiddle(s.account, 6, 4),
+            count: s.sponsorships_started,
+            href: `/insights/sponsors/${encodeURIComponent(s.account)}/`,
+          }))}
+        />
         <TableWrap>
           <Table>
             <THead>
