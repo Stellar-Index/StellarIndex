@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeftRight } from 'lucide-react';
 
-import { Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 import { SITE_OG_IMAGES } from '@/lib/seo';
 import { assetHrefFor } from '@/lib/fiat-slugs';
 import { buildConvertParams } from '@/lib/convert-params';
@@ -144,40 +144,25 @@ export default async function ConvertPage({ params }: { params: Params }) {
   const inverse = rate != null && rate > 0 ? 1 / rate : null;
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
-      {/* FEC A1-6: BreadcrumbList JSON-LD derives from this Crumb[] inside
-          Breadcrumbs — no hand-rolled LD. Four-step path because the
-          converter sits one level below the currency-detail page in the IA
-          (the "from" currency owns the conversion). */}
-      <Breadcrumbs
-        items={[
+    <Container className="space-y-6 py-8 [&>*]:max-w-4xl">
+      {/* The converter sits under the "from" currency's detail page. */}
+      <PageHeader
+        breadcrumbs={[
           { label: 'Home', href: '/' },
           { label: 'Assets', href: '/assets' },
           { label: f, href: assetHrefFor(f) },
           { label: `${f} → ${t}` },
         ]}
+        title={`${f} to ${t}`}
+        description={detail?.name ? `${detail.name} → ${t}` : undefined}
       />
-
-      <header className="border-line space-y-3 border-b pb-5">
-        <h1 className="text-3xl font-semibold tracking-tight">
-          {f} to {t}
-          {detail?.name && (
-            <span className="text-ink-muted ml-3 text-base font-normal">
-              {detail.name} → {t}
-            </span>
-          )}
-        </h1>
-        {/* Header rate + inverse hydrate LIVE off the shared query
-            (W8 recon 10a): the baked rate paints first, then the client
-            swaps in the live value so the header actually tracks the
-            "current" rate the copy claims. */}
-        <ConvertLiveRate
-          from={f}
-          to={t}
-          initialRate={rate}
-          initialInverse={inverse}
-        />
-      </header>
+      {/* The baked rate paints first; the client swaps in the live one. */}
+      <ConvertLiveRate
+        from={f}
+        to={t}
+        initialRate={rate}
+        initialInverse={inverse}
+      />
 
       <ConvertPair
         from={f}
@@ -219,6 +204,6 @@ export default async function ConvertPage({ params }: { params: Params }) {
           {t} cross-rates
         </Link>
       </section>
-    </div>
+    </Container>
   );
 }

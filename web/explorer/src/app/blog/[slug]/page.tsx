@@ -1,14 +1,12 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft } from 'lucide-react';
 import { GithubIcon } from '@/components/GithubIcon';
 
 import { loadBlogPost, loadBlogPosts } from '@/lib/blog';
 import { Markdown } from '@/lib/markdown';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 type Params = Promise<{ slug: string }>;
 
@@ -53,31 +51,17 @@ export default async function BlogPostPage({ params }: { params: Params }) {
   if (!post) notFound();
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-6 py-12">
-      <Breadcrumbs
-        items={[
+    <Container className="space-y-6 py-12 [&>*]:max-w-3xl">
+      <PageHeader
+        breadcrumbs={[
           { label: 'Home', href: '/' },
           { label: 'Blog', href: '/blog' },
           { label: post.title },
         ]}
+        eyebrow={`${post.date} · ${post.author}`}
+        title={post.title}
+        description={post.summary || undefined}
       />
-      <Link
-        href="/blog"
-        className="text-ink-body hover:text-brand-600 inline-flex items-center gap-1.5 text-sm"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        All posts
-      </Link>
-
-      <header className="border-line space-y-2 border-b pb-4">
-        <h1 className="text-3xl font-semibold tracking-tight">{post.title}</h1>
-        <p className="text-ink-muted text-sm">
-          {post.date} · {post.author}
-        </p>
-        {post.summary && (
-          <p className="text-ink-body text-base">{post.summary}</p>
-        )}
-      </header>
 
       <article className="prose prose-slate max-w-none">
         <Markdown source={post.body} />
@@ -94,6 +78,6 @@ export default async function BlogPostPage({ params }: { params: Params }) {
           Source: {post.source_path}
         </a>
       </footer>
-    </div>
+    </Container>
   );
 }
