@@ -77,7 +77,7 @@ export default async function ExchangeDetailPage({
         />
         <Badge
           tone="warn"
-          title={`Curated subscription, not a full mirror. From each CEX we subscribe to the pairs that triangulate to XLM (the largest XLM markets, the BTC/ETH anchors, and ~17 top-cap globals for cross-venue VWAP coverage). The full venue order book is out of scope; see internal/sources/external/cex/${name}/.`}
+          title={`Only the pairs that triangulate to XLM, not the full venue book. Source: internal/sources/external/cex/${name}/.`}
         >
           Curated feed
         </Badge>

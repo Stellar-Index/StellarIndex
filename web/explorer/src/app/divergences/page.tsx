@@ -184,38 +184,16 @@ export default function DivergencesPage() {
         ))}
       </div>
 
-      <details className="text-ink-muted text-xs">
-        <summary className="cursor-pointer">
-          Methodology and reading the board
-        </summary>
-        <div className="mt-2 max-w-3xl space-y-2">
-          <p>
-            External references never enter the canonical VWAP (they would
-            import their methodology and double-count upstream markets). The
-            worker instead compares our VWAP to each (pair, reference) every
-            refresh tick, persists the row, and feeds the confidence score that
-            gates the freeze decision (
-            <Link
-              href="/research/adr/0019"
-              className="underline decoration-dotted"
-            >
-              ADR-0019
-            </Link>
-            ).
-          </p>
-          <p>
-            The board shows the latest comparison per (pair, reference) over the
-            trailing 7 days, widest gap first. <strong>firing</strong> means the
-            last observation breached its threshold, which feeds{' '}
-            <code className="font-mono">flags.divergence_warning</code>. Δ% is{' '}
-            <code className="font-mono">
-              (our − reference) / reference × 100
-            </code>
-            ; negative means our VWAP is below the reference. Click a row to see
-            its history, with the alert threshold as the dashed band.
-          </p>
-        </div>
-      </details>
+      <p className="text-ink-muted text-xs">
+        Δ% ={' '}
+        <code className="font-mono">(our − reference) / reference × 100</code>.
+        References never enter our VWAP; a breach sets{' '}
+        <code className="font-mono">flags.divergence_warning</code> (
+        <Link href="/research/adr/0019" className="underline decoration-dotted">
+          ADR-0019
+        </Link>
+        ).
+      </p>
     </Container>
   );
 }
