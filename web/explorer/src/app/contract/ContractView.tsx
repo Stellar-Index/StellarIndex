@@ -11,7 +11,6 @@ import { DirectoryLabel } from '@/components/DirectoryLabel';
 import { Sparkline } from '@/components/primitives';
 import { apiGet, asExample, API_BASE_URL } from '@/api/client';
 import { useSACWrappers } from '@/api/hooks';
-import { assetHref } from '@/lib/fiat-slugs';
 import { isNativeXlmSac } from '@/lib/asset-label';
 import {
   type Envelope,
@@ -22,6 +21,7 @@ import {
   scaledUnits,
 } from '../explorer-shared';
 import type { paths } from '@/api/types';
+import { SacAssetPanel } from './SacAssetPanel';
 import { CrossReference } from '@/components/CrossReference';
 
 // GetJSON extracts the application/json body of a GET 200 response for
@@ -48,13 +48,10 @@ const PAGE_SIZE = 50;
  * drop the rest of a ledger that a busy contract straddles across a page.
  */
 /**
- * useContractWasm — single wasm fetch shared by the header (SAC
- * identity), WasmPanel, and CodeHistoryPanel (S-016: the three used
- * to disagree — the wasm panel said "SAC, no bytecode" while the
- * code-history panel promised a backfill would fill it in).
- * sacAsset is parsed from the API's contract-is-sac problem detail
- * ("…the Stellar Asset Contract for <asset> — …"), which the API
- * only emits after a spoof-proof derivation cross-check.
+ * useContractWasm — single wasm fetch shared by the header, WasmPanel and
+ * CodeHistoryPanel so they agree on whether the contract is a SAC. The SAC
+ * verdict comes from the problem `type`; the wrapped asset itself is
+ * resolved from /v1/assets/{contract} by SacAssetPanel.
  */
 function useContractWasm(id: string) {
   const query = useQuery<ContractWasmResp>({
@@ -70,9 +67,8 @@ function useContractWasm(id: string) {
     },
   });
   const msg = query.error instanceof Error ? query.error.message : '';
-  const isSac = msg.includes('Stellar Asset Contract');
-  const sacAsset = /Stellar Asset Contract for (\S+)/.exec(msg)?.[1] ?? null;
-  return { ...query, isSac, sacAsset };
+  const isSac = msg.includes('/errors/contract-is-sac');
+  return { ...query, isSac };
 }
 
 export function ContractView({ id: idProp }: { id?: string } = {}) {
@@ -315,40 +311,10 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
-/**
- * SacIdentity — the "what IS this contract" answer for SACs (S-016 /
- * site audit): name the wrapped asset, tag it, link its asset page.
- * Renders nothing for regular wasm contracts. Reads the same cached
- * query WasmPanel uses, so it costs no extra request.
- */
+// Renders nothing for regular wasm contracts; shares WasmPanel's cached query.
 function SacIdentity({ id }: { id: string }) {
-  const { isSac, sacAsset } = useContractWasm(id);
-  if (!isSac) return null;
-  const code = sacAsset ? sacAsset.split(/[:-]/)[0] : null;
-  return (
-    <div className="bg-surface-subtle rounded-md px-3 py-2.5 text-sm">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="bg-brand-100 text-brand-700 rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase">
-          Stellar Asset Contract
-        </span>
-        {sacAsset && (
-          <Link
-            href={assetHref(sacAsset)}
-            className="text-brand-600 font-medium hover:underline"
-          >
-            {code} — asset detail →
-          </Link>
-        )}
-      </div>
-      <p className="text-ink-body mt-1.5 text-xs leading-relaxed">
-        This address is the built-in token contract for the classic asset{' '}
-        {sacAsset ? <span className="font-mono">{sacAsset}</span> : 'it wraps'}{' '}
-        — Soroban&apos;s host-implemented interface to the same balances classic
-        operations use. It runs no user-uploaded code, so there is no WASM to
-        audit; trust derives from the asset&apos;s issuer, not from bytecode.
-      </p>
-    </div>
-  );
+  const { isSac } = useContractWasm(id);
+  return isSac ? <SacAssetPanel contractId={id} /> : null;
 }
 
 /**
@@ -365,7 +331,6 @@ function WasmPanel({ id }: { id: string }) {
     isError,
     error,
     isSac: hookSac,
-    sacAsset,
   } = useContractWasm(id);
 
   const source = asExample(`/v1/contracts/${id}/wasm`);
@@ -388,9 +353,8 @@ function WasmPanel({ id }: { id: string }) {
     const notCaptured = !isSac && msg.includes('404');
     let body: string;
     if (isSac) {
-      body = sacAsset
-        ? `This is the Stellar Asset Contract for ${sacAsset} — built-in host logic, not a user-uploaded WASM module, so there’s no bytecode to show.`
-        : 'This is a Stellar Asset Contract — the built-in SAC host logic behind a classic asset (e.g. XLM or USDC). It runs no user-uploaded WASM module, so there’s no bytecode to show.';
+      body =
+        'Stellar Asset Contract: built-in host logic, not an uploaded WASM module, so there’s no bytecode to show.';
     } else if (notCaptured) {
       body =
         'This contract’s on-chain WASM isn’t in the captured ledger window yet — its deploy-time code/instance entry predates live capture. It resolves automatically once a Phase-C backfill lands.';

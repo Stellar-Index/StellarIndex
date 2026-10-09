@@ -148,3 +148,31 @@ func TestReadContractSidecars_PanicDegradesOneRead(t *testing.T) {
 		t.Fatalf("healthy reads must be unaffected: %+v", s)
 	}
 }
+
+type countingActivityReader struct {
+	ExplorerReader
+	n *int
+}
+
+func (r countingActivityReader) ContractActivitySummaryFor(context.Context, string, int) (clickhouse.ContractActivitySummary, bool, error) {
+	*r.n++
+	return clickhouse.ContractActivitySummary{ActiveLedgersTotal: 7}, true, nil
+}
+
+// The activity card's lifetime scan costs seconds on a busy contract, so a
+// repeat view must be served from the SWR cache.
+func TestContractActivityCard_Cached(t *testing.T) {
+	var n int
+	h := &Handler{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Reader: countingActivityReader{n: &n},
+	}
+	for range 2 {
+		if av := h.contractActivityCard(context.Background(), "CX"); av == nil || av.ActiveLedgersTotal != 7 {
+			t.Fatalf("activity card = %+v, want ActiveLedgersTotal 7", av)
+		}
+	}
+	if n != 1 {
+		t.Fatalf("reader called %d times, want 1", n)
+	}
+}
