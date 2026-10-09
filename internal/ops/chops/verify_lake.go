@@ -35,9 +35,7 @@ import (
 // -textfile PATH writes lake_verify.prom only once every requested check has
 // completed; an erroring run writes nothing, so the stale alert covers it.
 //
-// Usage: verify-lake [-config PATH] [-ch-addr H:P] [-from N] [-to N]
-// [-ec-floor N] [-checks contiguity,entrychanges,hashchain,rawcensus]
-// [-textfile PATH]. Read-only; ClickHouse only.
+// Read-only; ClickHouse only.
 //
 // reconcile-balances is not composed in: it is network-bound and
 // account-sampled, not range-scoped. Run `stellarindex-ops reconcile-balances
