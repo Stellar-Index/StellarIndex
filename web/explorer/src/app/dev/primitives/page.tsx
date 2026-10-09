@@ -8,7 +8,7 @@ import {
   Sparkline,
   StreakIndicator,
 } from '@/components/primitives';
-import { Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 /**
  * /dev/primitives — Storybook-style demo page for the design-system
@@ -34,25 +34,29 @@ export default function PrimitivesPage() {
   return (
     <Container className="space-y-12 py-8">
       <main>
-        <header>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Design-system primitives
-          </h1>
-          <p className="text-ink-muted text-sm">
-            Static demo of the components in{' '}
-            <code className="font-mono text-xs">
-              src/components/primitives/
-            </code>
-            . Spec lives in{' '}
-            <a
-              className="underline decoration-dotted"
-              href="/research#6-cross-cutting-view-primitives"
-            >
-              data-inventory §6
-            </a>
-            .
-          </p>
-        </header>
+        <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Design-system primitives' },
+          ]}
+          title="Design-system primitives"
+          description={
+            <>
+              Static demo of the components in{' '}
+              <code className="font-mono text-xs">
+                src/components/primitives/
+              </code>
+              . Spec lives in{' '}
+              <a
+                className="underline decoration-dotted"
+                href="/research#6-cross-cutting-view-primitives"
+              >
+                data-inventory §6
+              </a>
+              .
+            </>
+          }
+        />
 
         <Section title="DirectionPill">
           <Row>
