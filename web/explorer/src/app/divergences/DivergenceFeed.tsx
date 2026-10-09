@@ -14,6 +14,8 @@ import { hueByIdentity } from '@/components/charts/dailyGaps';
 import type { NamedLineSeries } from '@/components/charts/LineChart';
 import type { paths } from '@/api/types';
 
+import { DivergenceMultiples } from './DivergenceMultiples';
+
 const LineChart = dynamic(
   () => import('@/components/charts/LineChart').then((m) => m.LineChart),
   { ssr: false, loading: () => <div className="h-[260px]" /> },
@@ -76,6 +78,25 @@ export function DivergenceFeed() {
 
   return (
     <>
+      {pairs.length > 1 && (
+        <Panel
+          headingLevel={2}
+          title="Widest gaps — 7d"
+          hint="Per pair, the reference furthest from our VWAP each bucket, on one shared scale; the shaded band is the alert threshold. Choose a pair to chart it below."
+          source={asExample('/v1/divergence/series', {
+            pair: 'native~fiat:USD',
+            days: 7,
+          })}
+        >
+          <DivergenceMultiples
+            pairs={pairs.slice(0, 6).map((p) => ({
+              asset: p.asset_id ?? '',
+              quote: p.quote_id ?? '',
+            }))}
+            onSelect={setSelected}
+          />
+        </Panel>
+      )}
       <DivergenceSeriesPanel sel={sel} days={days} onDays={setDays} />
 
       <BoardBars pairs={pairs} />
