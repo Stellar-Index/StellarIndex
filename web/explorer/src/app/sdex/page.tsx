@@ -4,6 +4,7 @@ import { Container } from '@/components/ui';
 import { ProtocolView } from '../protocols/[name]/ProtocolView';
 import { SdexOrderBookSection } from './SdexOrderBookSection';
 import { SdexVolumeSection } from './SdexVolumeSection';
+import { PoolsTable } from '../dexes/[source]/PoolsTable';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 export const metadata: Metadata = {
@@ -32,6 +33,7 @@ export default function SdexPage() {
       <Container className="space-y-8 pb-10">
         <SdexOrderBookSection />
         <SdexVolumeSection />
+        <PoolsTable source="sdex" sourceName="SDEX" />
       </Container>
     </>
   );

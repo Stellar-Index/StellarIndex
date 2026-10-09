@@ -175,6 +175,8 @@
 # server to normalise one onto the other.
 /protocols/sdex   /sdex/  301
 /protocols/sdex/  /sdex/  301
+/dexes/sdex       /sdex/  301
+/dexes/sdex/      /sdex/  301
 
 # Restructure (SEO plan D5) — singular category + /external aliases resolve to
 # the existing (indexed) category/source pages, so the plan's URL names work

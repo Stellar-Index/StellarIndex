@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { LEGAL_ENTITY_DETAILS, REGISTERED_OFFICE } from '../terms/page';
+import { Container } from '@/components/ui/Page';
 
 // States only what the code, migrations and ansible role do; correct it, do
 // not reword it, when they change. Each factual paragraph names its source in
@@ -21,7 +22,7 @@ const POLICY_HISTORY = [{ date: '2026-09-30', note: 'first published' }];
 
 export default function PrivacyPage() {
   return (
-    <div className="mx-auto max-w-4xl space-y-10 px-6 py-10">
+    <Container className="space-y-10 py-10 [&>*]:max-w-4xl">
       <header className="space-y-3">
         <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
           Legal
@@ -211,10 +212,10 @@ export default function PrivacyPage() {
           requested without a dashboard account. For those keys we hold a
           SHA-256 hash of the email address given, with no expiry. New keys are
           issued through <code>POST /v1/register</code>, which keys nothing on
-          an email. An unsalted hash of an email is still personal
-          data — it can be reversed by guessing the address — and we treat it as
-          such. Such a key is not part of an account, so the export and erasure
-          in section 8 do not cover it; ask us by email.
+          an email. An unsalted hash of an email is still personal data — it can
+          be reversed by guessing the address — and we treat it as such. Such a
+          key is not part of an account, so the export and erasure in section 8
+          do not cover it; ask us by email.
         </p>
         <p>
           The lawful basis for each purpose (UK GDPR and EU GDPR Art. 6(1)):
@@ -476,9 +477,9 @@ export default function PrivacyPage() {
           and audit log — as a JSON download, and{' '}
           <code>DELETE /v1/dashboard/account</code> erases it; you type the
           account slug back to confirm. The export does not include cache
-          counters, expired sign-in tokens, or the email hash kept from the retired{' '}
-          <code>POST /v1/signup</code>; ask us by email for those. The explorer has no button for
-          either yet.
+          counters, expired sign-in tokens, or the email hash kept from the
+          retired <code>POST /v1/signup</code>; ask us by email for those. The
+          explorer has no button for either yet.
         </p>
         {/* source: internal/platform/postgresstore/account_erasure.go, internal/accounterasure/eraser.go */}
         <p>
@@ -535,7 +536,7 @@ export default function PrivacyPage() {
       </Section>
 
       <PolicyHistory />
-    </div>
+    </Container>
   );
 }
 
@@ -610,7 +611,7 @@ function DefList({ rows }: { rows: { term: string; def: string }[] }) {
           key={r.term}
           className="grid grid-cols-1 gap-1 sm:grid-cols-[10rem_1fr] sm:gap-3"
         >
-          <dt className="text-brand-600 font-mono text-xs font-semibold">
+          <dt className="text-brand-600 min-w-0 font-mono text-xs font-semibold [overflow-wrap:anywhere]">
             {r.term}
           </dt>
           <dd>{r.def}</dd>

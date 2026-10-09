@@ -11,6 +11,7 @@ import { sourceToneClass } from '@/lib/pillTone';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import { DexTvlHeadline } from '@/app/protocols/ProtocolTvlPanel';
 import { useProtocolTvls, type ProtocolTvl } from './useProtocolTvls';
+import { hrefFor } from '@/lib/hrefFor';
 
 interface VolumeBucket {
   hour: string;
@@ -154,7 +155,7 @@ export function DexProtocolsTable() {
                 <tr key={r.name} className="hover:bg-surface-muted">
                   <Td>
                     <Link
-                      href={`/dexes/${r.name}`}
+                      href={hrefFor.dex(r.name)}
                       className={`inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                     >
                       {r.name}
@@ -195,7 +196,7 @@ export function DexProtocolsTable() {
                   </Td>
                   <Td align="right">
                     <Link
-                      href={`/dexes/${r.name}`}
+                      href={hrefFor.dex(r.name)}
                       className="text-brand-600 text-xs hover:underline"
                     >
                       details →
@@ -230,4 +231,3 @@ function TvlCell({ tvl }: { tvl?: ProtocolTvl }) {
     </span>
   );
 }
-

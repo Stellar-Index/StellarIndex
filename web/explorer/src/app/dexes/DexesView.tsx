@@ -26,6 +26,7 @@ import {
 import { DexProtocolsTable } from './DexProtocolsTable';
 import { useCursorPager } from '@/lib/useCursorPager';
 import { SortPill } from '@/components/SortPill';
+import { hrefFor } from '@/lib/hrefFor';
 
 interface Pool {
   source: string;
@@ -270,7 +271,7 @@ export function DexesView() {
                     </Td>
                     <Td>
                       <Link
-                        href={`/dexes/${p.source}`}
+                        href={hrefFor.dex(p.source)}
                         className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                       >
                         {p.source}
@@ -353,8 +354,8 @@ export function DexesView() {
 
       <p className="text-ink-muted text-xs">
         Drill into a single DEX&apos;s pools at{' '}
-        <Link href="/dexes/sdex" className="text-brand-600 hover:underline">
-          /dexes/sdex
+        <Link href="/sdex" className="text-brand-600 hover:underline">
+          /sdex
         </Link>
         ,{' '}
         <Link href="/dexes/soroswap" className="text-brand-600 hover:underline">

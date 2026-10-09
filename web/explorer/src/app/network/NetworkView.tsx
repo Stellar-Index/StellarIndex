@@ -44,6 +44,7 @@ import {
 import { shortAssetText } from '@/lib/asset-label';
 import { availableRoutes } from '@/lib/network-routes';
 import { CURRENT_NETWORK } from '@/lib/networks';
+import { hrefFor } from '@/lib/hrefFor';
 
 const LineChart = dynamic(
   () => import('@/components/charts/LineChart').then((m) => m.LineChart),
@@ -733,7 +734,7 @@ function TopMarkets() {
                     </Td>
                     <Td>
                       <Link
-                        href={`/dexes/${encodeURIComponent(m.source)}`}
+                        href={hrefFor.dex(m.source)}
                         className="text-ink-muted hover:text-brand-600"
                       >
                         {m.source}
