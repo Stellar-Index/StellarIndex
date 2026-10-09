@@ -66,7 +66,8 @@ export function AssetSidebar({
 }: {
   coin: SidebarCoin;
   detail: SidebarDetail | null;
-  priceUSD: number | null;
+  /** Wire decimal string. */
+  priceUSD: string | null;
   /**
    * WHAT the headline number is — rendered as a caption so the page
    * never shows a bare dollar figure of unstated provenance
@@ -89,6 +90,8 @@ export function AssetSidebar({
   name?: string | null;
   homeDomain?: string | null;
 }) {
+  // The converter and range bar compute in floats; the headline keeps the string.
+  const priceNum = priceUSD != null ? Number(priceUSD) : null;
   // market_cap / volume / fdv arrive already server-pre-scaled (USD) —
   // num() only, never divide. The supply fields (circulating / total /
   // max) are RAW smallest-unit integers, so scale them down 10^decimals.
@@ -263,11 +266,11 @@ export function AssetSidebar({
             symbol={code}
             assetId={coin.asset_id}
             image={coin.image}
-            priceUSD={priceUSD}
+            priceUSD={priceNum}
           />
           <PerformanceRange
             points={coin.price_history_24h ?? []}
-            current={priceUSD}
+            current={priceNum}
           />
         </>
       )}

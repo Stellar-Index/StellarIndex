@@ -10,7 +10,7 @@
 
 import { useChangeSummary } from '@/api/hooks';
 import { cn } from '@/lib/cn';
-import { formatPriceSmall } from '@/lib/format';
+import { formatPriceSmall, positiveDecimal } from '@/lib/format';
 import {
   isFrameStale,
   tipCaveat,
@@ -33,8 +33,8 @@ export function LivePairPrice({
 }: {
   base: string;
   quote: string;
-  /** Build-time price (already a number) — null when the build had none. */
-  initialPrice: number | null;
+  /** Build-time price as its wire decimal string — null when the build had none. */
+  initialPrice: string | null;
   initialObservedAt: string | null;
   quoteIsUsd: boolean;
   /** Short label appended for non-USD quotes (e.g. "XLM"). */
@@ -65,14 +65,13 @@ export function LivePairPrice({
   const clock = useLiveClock();
   const tipFresh =
     tip != null && !isFrameStale(clock, tip.receivedAt, TIP_LIVE_STALE_MS);
-  const tipPriceStr = tipFresh ? tip.data.data?.price : undefined;
-  const tipNumber = tipPriceStr != null ? Number(tipPriceStr) : NaN;
-  const tipActive = Number.isFinite(tipNumber) && tipNumber > 0;
-  const flash = usePriceFlash(tipActive ? tipPriceStr : undefined);
+  const tipPrice = positiveDecimal(tipFresh ? tip.data.data?.price : undefined);
+  const tipActive = tipPrice != null;
+  const flash = usePriceFlash(tipPrice ?? undefined);
   const caveat =
     tipActive && tip ? tipCaveat(tip.data.data, tip.data.flags) : null;
 
-  const shown = tipActive ? tipNumber : price;
+  const shown = tipPrice ?? price;
 
   // Same live feed the asset-sidebar change pill polls (F090), keyed on
   // this pair instead of a single coin — never a second, independently
@@ -131,12 +130,11 @@ export function LivePairPrice({
 }
 
 function formatQuotePrice(
-  n: number,
+  price: string,
   quoteIsUsd: boolean,
   quoteSuffix: string,
 ): string {
-  if (!(n > 0)) return '—';
-  const num = formatPriceSmall(n);
+  const num = formatPriceSmall(price);
   return quoteIsUsd ? `$${num}` : `${num} ${quoteSuffix}`;
 }
 

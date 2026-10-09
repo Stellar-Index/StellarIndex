@@ -153,7 +153,7 @@ describe('usePricePoll', () => {
     );
 
     await waitFor(() => expect(result.current.polled).toBe(true));
-    expect(result.current.price).toBe(9);
+    expect(result.current.price).toBe('9');
 
     // Switch to an asset whose fetch never resolves within this test —
     // the old price must not linger.

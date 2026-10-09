@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { API_BASE_URL, timeoutSignal } from '@/api/client';
 import type { components } from '@/api/types';
+import { positiveDecimal } from '@/lib/format';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 import { subscribeStream } from './streams';
@@ -411,13 +412,14 @@ export function usePricePoll({
 }: {
   asset: string;
   quote?: string;
-  initialPrice?: number | null;
+  /** Decimal string off the wire; rounded only at render. */
+  initialPrice?: string | null;
   initialObservedAt?: string | null;
   intervalMs?: number;
   /** Ask for a thin-market price instead of the withheld 404. */
   includeThin?: boolean;
 }): {
-  price: number | null;
+  price: string | null;
   observedAt: string | null;
   stale: boolean;
   triangulated: boolean;
@@ -436,7 +438,7 @@ export function usePricePoll({
   polled: boolean;
 } {
   const [state, setState] = useState({
-    price: initialPrice,
+    price: positiveDecimal(initialPrice),
     observedAt: initialObservedAt,
     stale: false,
     triangulated: false,
@@ -456,8 +458,8 @@ export function usePricePoll({
   if (pollKey !== prevPollKey) {
     setPrevPollKey(pollKey);
     setState({
-      price: null,
-      observedAt: null,
+      price: null as string | null,
+      observedAt: null as string | null,
       stale: false,
       triangulated: false,
       withheld: false,
@@ -526,11 +528,10 @@ export function usePricePoll({
             thin_market?: boolean;
           };
         };
-        const n = Number(body.data?.price);
-        if (!Number.isFinite(n) || n <= 0) return;
-        if (cancelled) return;
+        const price = positiveDecimal(body.data?.price);
+        if (price == null || cancelled) return;
         setState({
-          price: n,
+          price,
           observedAt: body.data?.observed_at ?? null,
           stale: Boolean(body.flags?.stale),
           triangulated: Boolean(body.flags?.triangulated),

@@ -50,7 +50,7 @@ describe('LiveAssetPrice', () => {
     renderPrice(
       <LiveAssetPrice
         assetID="native"
-        initialPrice={0.17}
+        initialPrice="0.17"
         initialProvenance="vwap1m"
       />,
     );
@@ -73,7 +73,7 @@ describe('LiveAssetPrice', () => {
     renderPrice(
       <LiveAssetPrice
         assetID="native"
-        initialPrice={0.17}
+        initialPrice="0.17"
         initialProvenance="vwap1m"
       />,
     );
@@ -89,7 +89,7 @@ describe('LiveAssetPrice', () => {
     renderPrice(
       <LiveAssetPrice
         assetID="AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU"
-        initialPrice={0.655}
+        initialPrice="0.655"
         initialProvenance="declared_peg"
       />,
     );
@@ -121,7 +121,7 @@ describe('LiveAssetPrice', () => {
     renderPrice(
       <LiveAssetPrice
         assetID="AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU"
-        initialPrice={0.655}
+        initialPrice="0.655"
         initialProvenance="declared_peg"
       />,
     );
@@ -156,7 +156,7 @@ describe('LiveAssetPrice', () => {
     renderPrice(
       <LiveAssetPrice
         assetID="USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-        initialPrice={0.97}
+        initialPrice="0.97"
         initialProvenance="global_market"
       />,
     );
@@ -188,7 +188,7 @@ describe('LiveAssetPrice', () => {
     renderPrice(
       <LiveAssetPrice
         assetID="native"
-        initialPrice={0.17}
+        initialPrice="0.17"
         initialProvenance="listing"
       />,
     );
@@ -277,7 +277,7 @@ describe('LiveAssetPrice', () => {
     renderPrice(
       <LiveAssetPrice
         assetID="AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU"
-        initialPrice={0.655}
+        initialPrice="0.655"
         initialProvenance="declared_peg"
       />,
     );
@@ -300,7 +300,7 @@ describe('LiveAssetPrice', () => {
     renderPrice(
       <LiveAssetPrice
         assetID="native"
-        initialPrice={0.17}
+        initialPrice="0.17"
         initialProvenance="vwap1m"
       />,
     );
@@ -322,7 +322,7 @@ describe('LiveAssetPrice — transitive provenance', () => {
     renderPrice(
       <LiveAssetPrice
         assetID="CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
-        initialPrice={7768.93}
+        initialPrice="7768.93"
         initialProvenance="transitive"
       />,
     );
@@ -337,7 +337,7 @@ describe('LiveAssetPrice — transitive provenance', () => {
     renderPrice(
       <LiveAssetPrice
         assetID="CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
-        initialPrice={7768.93}
+        initialPrice="7768.93"
         initialProvenance="transitive"
       />,
     );
@@ -351,7 +351,7 @@ describe('LiveAssetPrice — transitive provenance', () => {
     renderPrice(
       <LiveAssetPrice
         assetID="CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
-        initialPrice={7768.93}
+        initialPrice="7768.93"
         initialProvenance="transitive"
       />,
     );
@@ -404,7 +404,7 @@ describe('LiveAssetPrice — 24h change pill (F090)', () => {
     renderPrice(
       <LiveAssetPrice
         assetID="native"
-        initialPrice={0.17}
+        initialPrice="0.17"
         initialProvenance="vwap1m"
         initialChangePct={2.1}
       />,
@@ -423,7 +423,7 @@ describe('LiveAssetPrice — 24h change pill (F090)', () => {
     renderPrice(
       <LiveAssetPrice
         assetID="native"
-        initialPrice={0.17}
+        initialPrice="0.17"
         initialProvenance="vwap1m"
         initialChangePct={2.1}
       />,

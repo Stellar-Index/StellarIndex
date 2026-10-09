@@ -48,24 +48,6 @@ interface AssetShellDetail {
 }
 
 /**
- * Parse the wire's decimal STRING into the number LiveAssetPrice takes.
- *
- * ADR-0003 keeps money on the wire as an exact-rational string, and the
- * transitive path can return ~55 significant digits — far past what a
- * double holds. That is fine HERE and only here: this value is the
- * headline display figure, which is rounded for the reader anyway. It
- * must never be fed back into arithmetic that settles anything.
- *
- * Returns null for absent/empty/unparseable/non-positive, so a bad
- * value degrades to "no price" rather than rendering NaN or $0.
- */
-function priceNumber(raw: string | null | undefined): number | null {
-  if (raw == null || raw === '') return null;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-/**
  * AssetPathView — the runtime fallback for asset slugs outside the
  * build-time pre-render (same S1b pattern as /markets' PairPathView).
  *
@@ -163,7 +145,7 @@ export function AssetPathView() {
             assets that DO have a direct market. */}
         <LiveAssetPrice
           assetID={d.asset_id}
-          initialPrice={priceNumber(d.price_usd)}
+          initialPrice={d.price_usd ?? null}
           initialProvenance={provenanceFromBasis(d.price_basis, 'vwap1m')}
         />
         {d.unverified_warning?.note && (

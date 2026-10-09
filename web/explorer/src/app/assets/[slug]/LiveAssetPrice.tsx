@@ -11,7 +11,7 @@ import {
 } from '@/lib/live/hooks';
 import { ThinMarketBadge, thinMarketNote } from '@/components/ThinMarketBadge';
 import { cn } from '@/lib/cn';
-import { formatPriceSmall } from '@/lib/format';
+import { formatPriceSmall, positiveDecimal } from '@/lib/format';
 
 import { unwrapChangeSummary } from './ChangeSummaryStrip';
 
@@ -68,7 +68,8 @@ export function LiveAssetPrice({
   initialChangePct,
 }: {
   assetID: string;
-  initialPrice: number | null;
+  /** Wire decimal string; rounded only at render. */
+  initialPrice: string | null;
   initialProvenance: PriceProvenance;
   initialStale?: boolean;
   /**
@@ -132,7 +133,8 @@ export function LiveAssetPrice({
   const refused = poll.withheld || (poll.thin && derived);
   const withheld = poll.withheld && !derived;
   const thin = poll.thin && !derived;
-  const price = refused && derived ? initialPrice : poll.price;
+  const seed = positiveDecimal(initialPrice);
+  const price = refused && derived ? seed : poll.price;
   const live = poll.polled;
   const stale = poll.polled ? poll.stale : Boolean(initialStale);
   const provenance: PriceProvenance =
@@ -150,7 +152,7 @@ export function LiveAssetPrice({
   // Fresh direct markets still open immediately (no delay); everything else
   // waits one poll to learn whether the stream is servable.
   const freshDirectMarket =
-    initialProvenance === 'vwap1m' && !initialStale && initialPrice != null;
+    initialProvenance === 'vwap1m' && !initialStale && seed != null;
   const tipEnabled =
     withheld || poll.thin ? false : poll.polled ? true : freshDirectMarket;
   const tip = useTipStream(tipEnabled ? assetID : null);
@@ -159,14 +161,13 @@ export function LiveAssetPrice({
   const clock = useLiveClock();
   const tipFresh =
     tip != null && !isFrameStale(clock, tip.receivedAt, TIP_LIVE_STALE_MS);
-  const tipPriceStr = tipFresh ? tip.data.data?.price : undefined;
-  const tipNumber = tipPriceStr != null ? Number(tipPriceStr) : NaN;
-  const tipActive = Number.isFinite(tipNumber) && tipNumber > 0;
-  const flash = usePriceFlash(tipActive ? tipPriceStr : undefined);
+  const tipPrice = positiveDecimal(tipFresh ? tip.data.data?.price : undefined);
+  const tipActive = tipPrice != null;
+  const flash = usePriceFlash(tipPrice ?? undefined);
   const caveat =
     tipActive && tip ? tipCaveat(tip.data.data, tip.data.flags) : null;
 
-  const shown = tipActive ? tipNumber : price;
+  const shown = tipPrice ?? price;
 
   return (
     <>

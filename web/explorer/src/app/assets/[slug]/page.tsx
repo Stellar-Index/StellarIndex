@@ -979,13 +979,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           <AssetSidebar
             coin={coin}
             detail={detail}
-            priceUSD={
-              price?.price
-                ? Number(price.price)
-                : coin.price_usd
-                  ? Number(coin.price_usd)
-                  : null
-            }
+            priceUSD={price?.price || coin.price_usd || null}
             priceProvenance={headlinePriceProvenance(price, coin)}
             priceStale={Boolean(price?.flags?.stale)}
             name={globalView?.name}
