@@ -6,7 +6,7 @@ import { ExternalLink } from 'lucide-react';
 import { ReferencePriceAggregators } from './ReferencePriceAggregators';
 import { RoutedVolumePanel } from './RoutedVolumePanel';
 
-import { Badge, Breadcrumbs, Container } from '@/components/ui';
+import { Badge, Container, PageHeader } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'Aggregators — routers and yield wrappers on Stellar',
   description:
@@ -93,26 +93,26 @@ const ENTRIES: Entry[] = [
 export default function AggregatorsPage() {
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Aggregators' }]}
-        />
-        <h1 className="text-3xl font-semibold tracking-tight">Aggregators</h1>
-        <p className="text-ink-body flex max-w-3xl flex-wrap items-center gap-2 text-sm">
-          Routers and yield wrappers over{' '}
-          <Link href="/dexes" className="underline decoration-dotted">
-            DEXes
-          </Link>{' '}
-          and{' '}
-          <Link href="/lending" className="underline decoration-dotted">
-            lending pools
-          </Link>
-          .
-          <Badge title="Excluded from VWAP to avoid double-counting. A routed swap still emits the underlying pair's swap event, which is the one we VWAP; a vault deposit moves shares but sets no price, and Blend supplies the collateral revaluation.">
-            VWAP weight 0
-          </Badge>
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Aggregators' }]}
+        title="Aggregators"
+        description={
+          <>
+            Routers and yield wrappers over{' '}
+            <Link href="/dexes" className="underline decoration-dotted">
+              DEXes
+            </Link>{' '}
+            and{' '}
+            <Link href="/lending" className="underline decoration-dotted">
+              lending pools
+            </Link>
+            .{' '}
+            <Badge title="Excluded from VWAP to avoid double-counting. A routed swap still emits the underlying pair's swap event, which is the one we VWAP; a vault deposit moves shares but sets no price, and Blend supplies the collateral revaluation.">
+              VWAP weight 0
+            </Badge>
+          </>
+        }
+      />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {ENTRIES.map((e) => (

@@ -7,7 +7,7 @@ import { loadArchitectureDocs } from '@/lib/architecture';
 import { loadOperationsDocs } from '@/lib/operations';
 import { StatusBadge } from './StatusBadge';
 
-import { Breadcrumbs, Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/research' },
   title: 'Research — architecture decisions and methodology',
@@ -41,18 +41,11 @@ export default function ResearchPage() {
 
   return (
     <Container className="space-y-10 py-8">
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Research' }]}
-        />
-        <h1 className="text-3xl font-semibold tracking-tight">Research</h1>
-        <p className="text-ink-body max-w-3xl text-base">
-          The thinking behind every Stellar Index choice. Architecture decision
-          records (ADRs) below capture every load-bearing design call with its
-          alternatives + consequences. The operations runbooks and architecture
-          narratives live alongside the source on GitHub.
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Research' }]}
+        title="Research"
+        description="The thinking behind every Stellar Index choice. Architecture decision records (ADRs) below capture every load-bearing design call with its alternatives + consequences. The operations runbooks and architecture narratives live alongside the source on GitHub."
+      />
 
       <section className="space-y-4">
         <div className="flex items-baseline justify-between">
