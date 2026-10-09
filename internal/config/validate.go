@@ -1147,25 +1147,6 @@ func (o ObsConfig) validate() error {
 		return fmt.Errorf("%w: obs.log_format %q must be json/text/console",
 			ErrInvalidConfig, o.LogFormat)
 	}
-	switch o.TraceExporter {
-	case "none":
-		// ok — the only currently-wired value
-	case "otlp":
-		// Reserved for the future tracing rollout. Reject loud now
-		// so an operator who sets this thinks they enabled tracing
-		// when actually nothing in the binary consumes the field.
-		// Re-allow once an OTel TracerProvider + exporter are wired
-		// in cmd/stellarindex-{api,indexer,aggregator}/main.go.
-		return fmt.Errorf("%w: obs.trace_exporter %q is reserved for the future tracing rollout and is not yet wired in this build; set to \"none\"",
-			ErrInvalidConfig, o.TraceExporter)
-	default:
-		return fmt.Errorf("%w: obs.trace_exporter %q must be \"none\" (the only currently-wired value)",
-			ErrInvalidConfig, o.TraceExporter)
-	}
-	if o.TraceSample < 0 || o.TraceSample > 1 {
-		return fmt.Errorf("%w: obs.trace_sample %v must be in [0, 1]",
-			ErrInvalidConfig, o.TraceSample)
-	}
 	if o.MetricsListen != "" {
 		if _, _, err := net.SplitHostPort(o.MetricsListen); err != nil {
 			return fmt.Errorf("%w: obs.metrics_listen %q must be host:port: %w",
