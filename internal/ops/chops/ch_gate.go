@@ -216,34 +216,20 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	return nil
 }
 
-// walkCoverage is the one rule every galexie-walking subcommand in
-// this package applies before it reports on what it saw: assert
-// DELIVERED == REQUESTED, or say so and fail. Returns nil when the walk
-// covered the whole range.
+// walkCoverage is the rule every galexie-walking subcommand here applies
+// before reporting: assert DELIVERED == REQUESTED, or say so and fail.
+// Returns nil when the walk covered the whole range.
 //
-// It exists because a short walk is otherwise indistinguishable from a
-// clean one. Two mechanisms make short walks routine rather
-// than exotic:
+// A short walk otherwise looks clean, and short walks are routine: -bucket
+// defaults to the TRIMMED live bucket, and opsutil.NewBoundedLedgerStreamConfig
+// sets TolerateTrailingMissing, turning any hole within 65,536 ledgers of -to
+// into a clean finish. Either way Stream returns nil, the tallies are just
+// smaller, and a tally compared only against itself agrees over the slice
+// read and says nothing about the rest. The zero-ledger case gets its own
+// message because operators misread it as "clean".
 //
-//   - -bucket defaults to the TRIMMED live bucket, so verifying a
-//     historical range without -bucket galexie-archive walks a prefix
-//     of it, or none of it.
-//   - opsutil.NewBoundedLedgerStreamConfig always sets
-//     TolerateTrailingMissing, which converts the SDK's missing-object
-//     error into a clean walk-complete for any hole within 65,536
-//     ledgers of -to.
-//
-// Either way ledgerstream.Stream returns nil and the caller's tallies
-// are simply smaller. A tally compared only against itself — CH rows
-// against walked, drops against claims — then agrees perfectly over the
-// slice that was read and says nothing at all about the rest. The
-// zero-ledger case is called out separately because it is the loudest
-// shape of the same defect and the one an operator misreads as "clean".
-//
-// Siblings, same rule in each command's own vocabulary:
-// [backfillCoverage] (ch-backfill, "is the range in ClickHouse"),
-// ingest.censusCoverage and ingest.backfillChunkCoverage. This one is
-// worded for READ-ONLY walks, which report rather than persist, and is
+// Siblings with the same rule: [backfillCoverage], ingest.censusCoverage and
+// ingest.backfillChunkCoverage. This one is worded for READ-ONLY walks and
 // shared by ch-gate and sdex-claim-audit.
 func walkCoverage(cmd string, from, to uint32, walked int, bucket string) error {
 	requested := uint64(to) - uint64(from) + 1
