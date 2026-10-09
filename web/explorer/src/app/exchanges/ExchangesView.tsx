@@ -15,6 +15,7 @@ import {
 } from '@/lib/format';
 import { sourceToneClass } from '@/lib/pillTone';
 import { SourceSparkline } from '@/components/SourceSparkline';
+import { VolumeShare } from '@/components/charts/VolumeShare';
 import {
   Container,
   PageHeader,
@@ -140,6 +141,20 @@ export function ExchangesView() {
         source={asExample('/v1/sources', { include: 'stats' })}
         bodyClassName="-mx-4"
       >
+        {statsAvailable && (
+          <div className="px-4 pb-4">
+            <VolumeShare
+              noun="exchanges"
+              topN={8}
+              rows={rows.map((r) => ({
+                id: r.name,
+                label: LABEL[r.name] ?? r.name,
+                volume: r.volume_24h_usd,
+              }))}
+              scopeNote="Centralised venues only; on-chain DEXes are at /dexes."
+            />
+          </div>
+        )}
         <div className="overflow-x-auto">
           <Table>
             <THead>

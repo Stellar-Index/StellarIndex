@@ -5,7 +5,8 @@ import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Segmented } from '@/components/ui';
+import { Badge, Segmented } from '@/components/ui';
+import { changePct, compareDecimalStrings, formatPrice } from '@/lib/format';
 import { API_BASE_URL, asExample, timeoutSignal } from '@/api/client';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -34,29 +35,47 @@ interface ChartPoint {
  * triangulates the cross-rate via USD. Degrades to a quiet note when
  * the pair has no history.
  */
+/** Range high/low/change over the plotted rate strings, compared exactly. */
+export function rateRange(rates: readonly string[]) {
+  let lo: string | null = null;
+  let hi: string | null = null;
+  for (const r of rates) {
+    if (lo === null || compareDecimalStrings(r, lo) === -1) lo = r;
+    if (hi === null || compareDecimalStrings(r, hi) === 1) hi = r;
+  }
+  if (lo === null || hi === null) return null;
+  return { lo, hi, change: changePct(rates[0], rates[rates.length - 1], 2) };
+}
+
 export function ConvertChart({ from, to }: { from: string; to: string }) {
   const [tf, setTf] = useState<TF>('1mo');
   const spec = TIMEFRAMES.find((t) => t.key === tf) ?? TIMEFRAMES[1];
 
-  const query = useQuery<{ time: number; value: number }[], Error>({
-    queryKey: ['/v1/chart', from, to, tf, spec.granularity],
-    // fiat:{from}→fiat:{to} OHLC is empty on the lean test nets (no FX) — gate.
-    enabled: CURRENT_NETWORK.pricing,
-    queryFn: async ({ signal }) => {
-      const url = `${API_BASE_URL}/v1/chart?asset=fiat:${encodeURIComponent(from)}&quote=fiat:${encodeURIComponent(to)}&timeframe=${tf}&granularity=${spec.granularity}`;
-      const r = await fetch(url, { signal: timeoutSignal(undefined, signal) });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const env = (await r.json()) as { data?: { points?: ChartPoint[] } };
-      return (env.data?.points ?? [])
-        .map((p) => ({
-          time: Math.floor(new Date(p.t).getTime() / 1000),
-          value: p.p != null ? Number(p.p) : NaN,
-        }))
-        .filter((p) => Number.isFinite(p.value));
+  const query = useQuery<{ time: number; value: number; raw: string }[], Error>(
+    {
+      queryKey: ['/v1/chart', from, to, tf, spec.granularity],
+      // fiat:{from}→fiat:{to} OHLC is empty on the lean test nets (no FX) — gate.
+      enabled: CURRENT_NETWORK.pricing,
+      queryFn: async ({ signal }) => {
+        const url = `${API_BASE_URL}/v1/chart?asset=fiat:${encodeURIComponent(from)}&quote=fiat:${encodeURIComponent(to)}&timeframe=${tf}&granularity=${spec.granularity}`;
+        const r = await fetch(url, {
+          signal: timeoutSignal(undefined, signal),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const env = (await r.json()) as { data?: { points?: ChartPoint[] } };
+        return (env.data?.points ?? [])
+          .map((p) => ({
+            time: Math.floor(new Date(p.t).getTime() / 1000),
+            value: p.p != null ? Number(p.p) : NaN,
+            raw: p.p ?? '',
+          }))
+          .filter((p) => Number.isFinite(p.value));
+      },
     },
-  });
+  );
 
   const data = query.data ?? [];
+  const range = rateRange(data.map((d) => d.raw));
   const loading = query.isLoading;
   const error = query.error ? query.error.message : null;
 
@@ -87,6 +106,25 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
       {!loading && !error && data.length === 0 && (
         <div className="text-ink-muted flex h-[260px] items-center justify-center text-sm">
           No rate history for this pair + window yet.
+        </div>
+      )}
+      {!loading && !error && range && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <Badge tone="up" title={`Highest rate in the ${spec.label} window`}>
+            High {formatPrice(range.hi)}
+          </Badge>
+          <Badge tone="down" title={`Lowest rate in the ${spec.label} window`}>
+            Low {formatPrice(range.lo)}
+          </Badge>
+          {range.change != null && (
+            <Badge
+              tone={range.change >= 0 ? 'up' : 'down'}
+              title="First to last plotted point"
+            >
+              {range.change >= 0 ? '+' : ''}
+              {range.change.toFixed(2)}%
+            </Badge>
+          )}
         </div>
       )}
       {!loading && !error && data.length > 0 && (
