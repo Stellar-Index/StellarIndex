@@ -328,6 +328,11 @@ usd_pegged_classic_assets = []   {# pricing off (test net): no USD pegs, assets 
   [external.openexchangerates]
   enabled = false
 
+  # Interbank FX. Enabled only when the vault holds vault_exchangeratesapi_key
+  # (rendered to EXCHANGERATESAPI_KEY); without a key the poller refuses to start.
+  [external.exchangeratesapi]
+  enabled = {{ 'true' if (vault_exchangeratesapi_key | default('')) | length > 0 else 'false' }}
+
   # Fund NAV for the RWA reference surface. Enabled only when the vault
   # holds vault_tiingo_api_key (rendered to TIINGO_API_KEY in
   # /etc/default/stellarindex); without a key the poller refuses to start.
