@@ -58,11 +58,29 @@
     state: directory
     mode: "0755"
 
+- name: Ensure clickhouse-server systemd drop-in dir exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/clickhouse-server.service.d
+    state: directory
+    mode: "0755"
+
+- name: Disable core dumps for clickhouse-server
+  # apport capturing a crashed ClickHouse held the dead process ~4 min (load ~1000) and wrote
+  # a 4.7 GB core to the root disk; err.log already carries the stack trace. Applies on next start.
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/clickhouse-server.service.d/no-core.conf
+    mode: "0644"
+    content: |
+      [Service]
+      LimitCORE=0
+  register: ch_no_core
+
 - name: Enable + start clickhouse-server
   ansible.builtin.systemd:
     name: clickhouse-server
     state: started
     enabled: true
+    daemon_reload: "{{ ch_no_core is changed }}"
 
 - name: Flush handlers so the port override is live before the schema apply
   ansible.builtin.meta: flush_handlers
