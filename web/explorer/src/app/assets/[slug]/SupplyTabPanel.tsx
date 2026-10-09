@@ -323,6 +323,13 @@ function OnChainSupply({
             />
           </>
         )}
+        {storage && data.archived_balance_entries != null && (
+          <Metric
+            label="Archived"
+            value={formatSupply(data.archived_balance_total, decimals)}
+            sublabel={`${data.archived_balance_entries.toLocaleString('en-US')} balances — TTL lapsed, still restorable`}
+          />
+        )}
       </div>
       {!native && !storage && decimals != null && (
         <div className="mt-3">
