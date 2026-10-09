@@ -15,6 +15,7 @@ import {
   formatCompactUnits,
   formatPriceSmall,
   formatRelative,
+  sumDecimalStrings,
 } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { ogImageFor, shellMetadata } from '@/lib/seo';
@@ -237,15 +238,15 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
   // more than half em-dashes. Hide them; the chain-native columns
   // (circulating supply, observations, first-seen ledger) stay.
   const pricing = CURRENT_NETWORK.pricing;
-  let totalVolume24hUSD = 0;
-  let anyVolume = false;
-  for (const a of assets ?? []) {
-    const v = Number(coinPrices.get(a.asset_id)?.volume_24h_usd ?? '');
-    if (Number.isFinite(v) && v > 0) {
-      totalVolume24hUSD += v;
-      anyVolume = true;
-    }
-  }
+  // Summed exactly; a non-decimal or negative row voids the total rather than shrinking it.
+  const volumes = (assets ?? []).map(
+    (a) => coinPrices.get(a.asset_id)?.volume_24h_usd,
+  );
+  const totalVolume24hUSD = volumes.some((v) => v?.trim().startsWith('-'))
+    ? null
+    : sumDecimalStrings(volumes);
+  const anyVolume =
+    totalVolume24hUSD != null && !/^0(\.0*)?$/.test(totalVolume24hUSD);
 
   // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
   // inside Breadcrumbs below — no hand-rolled LD.
@@ -345,7 +346,9 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
             {pricing && (
               <Stat
                 label="24h volume"
-                value={anyVolume ? `$${formatCompact(totalVolume24hUSD)}` : '—'}
+                value={
+                  anyVolume ? `$${formatCompactUnits(totalVolume24hUSD)}` : '—'
+                }
               />
             )}
             <Stat
