@@ -8,6 +8,7 @@ import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import { formatRelative } from '@/lib/format';
+import { RoutedVolumeBars } from './RoutedVolumeBars';
 
 type AggregatorRow = components['schemas']['AggregatorRow'];
 
@@ -61,6 +62,11 @@ export function RoutedVolumePanel() {
       source={asExample('/v1/aggregators')}
       bodyClassName="-mx-4"
     >
+      {!q.isError && (
+        <div className="px-4 pb-4">
+          <RoutedVolumeBars rows={rows} />
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="divide-line min-w-full divide-y text-sm">
           <thead>

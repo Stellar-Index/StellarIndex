@@ -18,6 +18,7 @@ import {
 import { apiGet, asExample } from '@/api/client';
 import type { CreatorRow, CreatorsResp } from '@/api/relationTypes';
 import { formatCompact, truncateMiddle } from '@/lib/format';
+import { ConcentrationDonut } from '../ConcentrationDonut';
 import {
   type Envelope,
   stroopsToXlm,
@@ -131,6 +132,17 @@ export function CreatorBoard() {
         source={source}
         bodyClassName="space-y-3"
       >
+        <ConcentrationDonut
+          noun="creators"
+          what="accounts created"
+          total={d.totals.accounts_created}
+          rows={d.creators.map((c) => ({
+            id: c.account,
+            label: truncateMiddle(c.account, 6, 4),
+            count: c.accounts_created,
+            href: `/insights/creators/${encodeURIComponent(c.account)}/`,
+          }))}
+        />
         <TableWrap>
           <Table>
             <THead>
