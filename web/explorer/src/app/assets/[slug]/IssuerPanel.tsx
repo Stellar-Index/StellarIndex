@@ -134,7 +134,10 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
           <p className="text-ink-muted mt-2 text-xs">
             Flags are the last known values before this account was removed
             {data.auth_flags_as_of_ledger != null && (
-              <> (ledger {data.auth_flags_as_of_ledger.toLocaleString('en-US')})</>
+              <>
+                {' '}
+                (ledger {data.auth_flags_as_of_ledger.toLocaleString('en-US')})
+              </>
             )}
             , not its current policy.
           </p>
@@ -142,6 +145,55 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
       </Panel>
 
       <IssuedAssetsTable issuer={data} />
+    </div>
+  );
+}
+
+type LedgerSeen = {
+  first_seen_ledger?: number | null;
+  last_seen_ledger?: number | null;
+};
+
+/** ledgerAxis — the earliest first-seen and latest last-seen ledger across assets, or null without two distinct ledgers. */
+export function ledgerAxis(
+  assets: readonly LedgerSeen[],
+): { lo: number; hi: number } | null {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const a of assets) {
+    if (a.first_seen_ledger == null || a.last_seen_ledger == null) continue;
+    lo = Math.min(lo, a.first_seen_ledger);
+    hi = Math.max(hi, a.last_seen_ledger);
+  }
+  return hi > lo ? { lo, hi } : null;
+}
+
+function SpanBar({
+  a,
+  axis,
+}: {
+  a: LedgerSeen;
+  axis: { lo: number; hi: number };
+}) {
+  if (a.first_seen_ledger == null || a.last_seen_ledger == null) {
+    return <span className="text-ink-muted text-xs">—</span>;
+  }
+  const w = axis.hi - axis.lo;
+  const left = ((a.first_seen_ledger - axis.lo) / w) * 100;
+  const width = Math.max(
+    ((a.last_seen_ledger - a.first_seen_ledger) / w) * 100,
+    1,
+  );
+  return (
+    <div
+      className="bg-surface-muted relative h-1.5 w-32 rounded-full"
+      role="img"
+      aria-label={`Seen from ledger ${a.first_seen_ledger} to ${a.last_seen_ledger}`}
+    >
+      <div
+        className="bg-brand-500 absolute top-0 h-1.5 rounded-full"
+        style={{ left: `${left}%`, width: `${Math.min(width, 100 - left)}%` }}
+      />
     </div>
   );
 }
@@ -177,6 +229,8 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
     );
   }
 
+  const axis = ledgerAxis(assets);
+
   return (
     <Panel
       headingLevel={2}
@@ -192,6 +246,7 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
               <Th>Code</Th>
               <Th>Slug</Th>
               <Th align="right">Observations</Th>
+              {axis && <Th>Active span</Th>}
               <Th align="right">First seen</Th>
               <Th align="right">Last seen</Th>
             </tr>
@@ -217,6 +272,11 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
                     {formatCompact(a.observation_count ?? 0)}
                   </span>
                 </Td>
+                {axis && (
+                  <Td>
+                    <SpanBar a={a} axis={axis} />
+                  </Td>
+                )}
                 {/* Ledger 0 does not exist (genesis is 1) — an absent
                     first/last_seen_ledger is unknown, not "#0". */}
                 <Td align="right">
