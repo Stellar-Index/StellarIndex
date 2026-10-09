@@ -13,7 +13,7 @@ import (
 // The whole-window [FilterOutliers] scores every print against one
 // centre (the window median) and one scale (1.4826·MAD), so an AGREED
 // move larger than ~1% is trimmed wholesale until it becomes the
-// majority, then the old regime is trimmed instead: on r1 a genuine +2%
+// majority, then the old regime is trimmed instead: a genuine +2%
 // XLM/GBP step was trimmed for hours and the served VWAP then jumped in
 // one tick. A step is not an outlier; only a print that disagrees with
 // the prints AROUND it is.

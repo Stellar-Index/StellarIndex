@@ -245,15 +245,12 @@ type SupplyObservation struct {
 // 17 h 47 m old when this was measured — with nothing on the wire
 // saying so.
 //
-// The distance that opens up is not a rounding matter. Measured on r1,
-// the newest supply_1d bucket put USDC — this index's single
-// largest served market cap — at 354,858,863.57 while the observer's own
-// live row said 376,302,129.55 and Horizon's all-domain total said
-// 375,766,247.91: a 5.57% understatement, about $21M of market cap, from
-// a roll-up that was itself a faithful copy of a reading that was correct
-// when it was taken. The underlying observation log ticks every five
-// minutes and agreed with the lake's independent flow sum to within
-// 0.14% at every instant compared.
+// The distance that opens up is not a rounding matter. For USDC — this
+// index's single largest served market cap — the newest supply_1d bucket
+// can understate supply by several percent, tens of millions of dollars
+// of market cap, from a roll-up that is itself a faithful copy of a
+// reading that was correct when it was taken. The underlying observation
+// log ticks every five minutes and tracks the lake's independent flow sum.
 //
 // So the arm was reading the right pipeline through the wrong table.
 // Reading the observations directly makes the arm as fresh as the
@@ -280,9 +277,8 @@ func (s *Store) LatestSupplyObservations(ctx context.Context, maxAge time.Durati
 	// The bound is the ONLY predicate, with no `OR unbounded` escape
 	// beside it. A disjunction here cannot be resolved at plan time, so
 	// the generic plan stops excluding chunks and the read walks the
-	// whole hypertable: measured on r1, 90,118 shared buffers and 40.2ms
-	// with the disjunction against 2,067 and 4.2ms without it, for the
-	// same 48 rows.
+	// whole hypertable, at roughly ten times the buffers and latency for
+	// the same rows.
 	const q = `
         SELECT CASE WHEN asset_key = 'XLM' THEN 'native'
                     ELSE replace(asset_key, ':', '-') END AS asset_id,
@@ -788,9 +784,9 @@ const listAssetsBaseSelect = `
 // refreshAssetPriceSnapshotUpsert and the listing reads the rollup, so
 // there is nothing to push into. A filtered listing is narrowed by the
 // outer WHERE on `ca` alone, over a spine whose price side is a
-// keyed-on-PK lookup. Measured on r1 against the CTE-per-call shape,
-// the filtered listings were already the fast ones (mean 39-76 ms vs
-// 1.5-2.4 s unfiltered); it is the unfiltered path that paid.
+// keyed-on-PK lookup. Against the CTE-per-call shape the filtered
+// listings were already the fast ones (tens of milliseconds vs seconds
+// unfiltered); it is the unfiltered path that paid.
 func listAssetsBaseSelectSQL(order AssetsOrder) string {
 	// The rank-tier marker is substituted unconditionally: the SELECT is
 	// one const shared by both orders but the tier is not, and leaving

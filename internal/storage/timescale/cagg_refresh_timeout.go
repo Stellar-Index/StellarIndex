@@ -33,8 +33,8 @@ import (
 //     connection, never the pool.
 //
 // Sizing derives from the refreshed window, not the view's MinWindow,
-// because refresh cost scales with the trades under it (prices_1m: ~392k
-// rows/day on r1). The rate is a THROUGHPUT floor: a refresh that cannot
+// because refresh cost scales with the trades under it (prices_1m: hundreds
+// of thousands of rows/day). The rate is a THROUGHPUT floor: a refresh that cannot
 // cover its window at 12× real time is wedged for a history backfill.
 //
 //   - [CAGGRefreshTimeoutPerWindowHour]: 5 min of refresh per hour of
