@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
-import { Breadcrumbs, Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 import { CreatorBoard } from './CreatorBoard';
 
@@ -12,6 +12,12 @@ export const metadata: Metadata = {
   description:
     'Which accounts brought the most other accounts onto Stellar, what they funded them with, and how much of that created set still exists today.',
 };
+
+const CRUMBS = [
+  { label: 'Home', href: '/' },
+  { label: 'Insights', href: '/insights' },
+  { label: 'Account creators' },
+];
 
 export default function CreatorsPage() {
   // Route gating: this page inherits the /insights hub's `pricing`
@@ -23,9 +29,7 @@ export default function CreatorsPage() {
   if (!routeAvailable('/insights/creators')) {
     return (
       <Container className="space-y-6 py-8">
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Account creators
-        </h1>
+        <PageHeader title="Account creators" breadcrumbs={CRUMBS} />
         <NetworkUnavailable href="/insights/creators" />
       </Container>
     );
@@ -33,22 +37,16 @@ export default function CreatorsPage() {
 
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Insights', href: '/insights' },
-            { label: 'Account creators' },
-          ]}
-        />
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Account creators
-        </h1>
-        <p className="text-ink-body max-w-3xl text-sm">
-          Funders ranked by accounts onboarded, what they funded and how many
-          survive.
-        </p>
-      </header>
+      <PageHeader
+        title="Account creators"
+        breadcrumbs={CRUMBS}
+        description={
+          <>
+            Funders ranked by accounts onboarded, what they funded and how many
+            survive.
+          </>
+        }
+      />
 
       <CreatorBoard />
 

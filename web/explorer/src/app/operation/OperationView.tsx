@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import {
   Container,
-  Breadcrumbs,
+  PageHeader,
   Table,
   TableWrap,
   TBody,
@@ -343,21 +343,18 @@ function Shell({
     hash && idx != null ? `${hash.slice(0, 8)}…#${idx}` : 'operation';
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Operations', href: '/operations' },
-            ...(hash
-              ? [{ label: 'Transaction', href: `/transactions/${hash}/` }]
-              : []),
-            { label: last },
-          ]}
-        />
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {type ? type : 'Operation'}
-        </h1>
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Operations', href: '/operations' },
+          ...(hash
+            ? [{ label: 'Transaction', href: `/transactions/${hash}/` }]
+            : []),
+          { label: last },
+        ]}
+        title={type ? type : 'Operation'}
+        description="One operation inside a Stellar transaction, as recorded on the ledger."
+      />
       {children}
     </Container>
   );
