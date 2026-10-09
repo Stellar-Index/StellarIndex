@@ -51,11 +51,8 @@ else
   ok "security.txt is no longer listed as a pending promotion"
 fi
 
-# The markets ?asset= behaviour-pin lines cited "(#1189)" as the
-# shipping PR, but GitHub #1189 is now an unrelated open issue (the
-# extract-wasm-from-galexie found-before-write bug), not the PR that
-# shipped the /v1/markets ?asset= filter (that was PR #1189 at merge time
-# under an issue tracker that has since been renumbered/reused).
+# GitHub #1189 is an unrelated issue, so no line may cite it as the PR
+# that shipped the /v1/markets ?asset= filter.
 if grep -q '1189' "$SMOKE"; then
   bad "no dangling #1189 citation remains (GitHub #1189 is the unrelated extract-wasm-from-galexie issue)"
 else
