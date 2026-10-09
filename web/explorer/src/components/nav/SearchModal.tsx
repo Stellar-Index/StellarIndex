@@ -151,7 +151,7 @@ const STATIC_PAGES: Result[] = [
   {
     type: 'page',
     label: 'SDEX Markets',
-    href: '/dexes/sdex',
+    href: '/sdex',
     hint: 'native order book',
   },
   { type: 'page', label: 'AMM Pools', href: '/dexes' },

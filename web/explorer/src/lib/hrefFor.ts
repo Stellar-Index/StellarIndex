@@ -8,6 +8,9 @@
 export const hrefFor = {
   source: (name: string): string => `/sources/${encodeURIComponent(name)}`,
   exchange: (name: string): string => `/exchanges/${encodeURIComponent(name)}`,
+  // SDEX's one page is /sdex; /dexes/sdex 301s there.
+  dex: (source: string): string =>
+    source === 'sdex' ? '/sdex' : `/dexes/${encodeURIComponent(source)}`,
   protocol: (slug: string): string => `/protocols/${encodeURIComponent(slug)}`,
   // Trailing slash matches StatusPageClient's existing incident links.
   incident: (slug: string): string =>

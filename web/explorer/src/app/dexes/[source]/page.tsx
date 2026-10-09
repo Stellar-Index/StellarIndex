@@ -18,7 +18,9 @@ import { DEX_INFO } from '../registry';
 type Params = Promise<{ source: string }>;
 
 export function generateStaticParams() {
-  return Object.keys(DEX_INFO).map((source) => ({ source }));
+  return Object.keys(DEX_INFO)
+    .filter((source) => source !== 'sdex')
+    .map((source) => ({ source }));
 }
 
 export async function generateMetadata({

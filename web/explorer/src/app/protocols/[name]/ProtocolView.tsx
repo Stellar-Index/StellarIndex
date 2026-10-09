@@ -128,7 +128,9 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
 
       {/* ── KPI row ── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <Kpi label="Contracts" value={formatCompact(data.contract_count)} />
+        {data.contract_count > 0 && (
+          <Kpi label="Contracts" value={formatCompact(data.contract_count)} />
+        )}
         <Kpi
           label={`events · last ${windowDays || '—'}d`}
           value={
@@ -388,13 +390,15 @@ function AtAGlance({
   }, [data.event_breakdown]);
 
   const bits: React.ReactNode[] = [];
-  bits.push(
-    <Glance
-      key="contracts"
-      label={formatCompact(data.contract_count)}
-      unit="contracts"
-    />,
-  );
+  // SDEX is protocol-native: it has no contracts, so a 0 is noise.
+  if (data.contract_count > 0)
+    bits.push(
+      <Glance
+        key="contracts"
+        label={formatCompact(data.contract_count)}
+        unit="contracts"
+      />,
+    );
   if (data.factories.length > 0) {
     bits.push(
       <Glance

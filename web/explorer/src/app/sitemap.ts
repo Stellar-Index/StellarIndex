@@ -261,7 +261,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const sourcePages: MetadataRoute.Sitemap = [
     ...sources.map((s) => hrefFor.source(s.name)),
     ...Object.keys(CEX_INFO).map((name) => hrefFor.exchange(name)),
-    ...Object.keys(DEX_INFO).map((source) => `/dexes/${source}`),
+    ...Object.keys(DEX_INFO)
+      .filter((source) => source !== 'sdex')
+      .map((source) => `/dexes/${source}`),
   ]
     .filter((path) => routeAvailable(path))
     .map((path) => ({

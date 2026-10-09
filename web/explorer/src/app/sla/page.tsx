@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { Container } from '@/components/ui/Page';
 
 export const metadata: Metadata = {
   title: 'Service level — Stellar Index API targets and error budget',
@@ -10,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function SLAPage() {
   return (
-    <div className="mx-auto max-w-4xl space-y-10 px-6 py-10">
+    <Container className="space-y-10 py-10 [&>*]:max-w-4xl">
       <header className="space-y-3">
         <h1 className="text-3xl font-semibold tracking-tight">Service level</h1>
         <p className="text-ink-body text-base">
@@ -149,8 +150,11 @@ export default function SLAPage() {
           <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
             flags.stale
           </code>{' '}
-          left <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">false</code>,
-          since that fallback is in-contract per ADR-0018. Read{' '}
+          left{' '}
+          <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
+            false
+          </code>
+          , since that fallback is in-contract per ADR-0018. Read{' '}
           <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
             observed_at
           </code>{' '}
@@ -279,7 +283,7 @@ export default function SLAPage() {
           away.
         </p>
       </Section>
-    </div>
+    </Container>
   );
 }
 

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { Container } from '@/components/ui/Page';
 
 // States only what the code and ADRs promise (ADR-0049: anonymous reads,
 // free self-service accounts, staff-set partner limits, NO payment surface),
@@ -27,7 +28,7 @@ const POLICY_HISTORY = [{ date: '2026-09-30', note: 'first published' }];
 
 export default function TermsPage() {
   return (
-    <div className="mx-auto max-w-4xl space-y-10 px-6 py-10">
+    <Container className="space-y-10 py-10 [&>*]:max-w-4xl">
       <header className="space-y-3">
         <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
           Legal
@@ -394,7 +395,7 @@ export default function TermsPage() {
       </Section>
 
       <PolicyHistory />
-    </div>
+    </Container>
   );
 }
 

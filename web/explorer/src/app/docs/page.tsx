@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { CURRENT_NETWORK } from '@/lib/networks';
+import { Container } from '@/components/ui/Page';
 
 export const metadata: Metadata = {
   title: 'Developer docs — Stellar Index API',
@@ -114,7 +115,7 @@ const ENDPOINTS: { group: string; rows: [string, string][] }[] = [
 
 export default function DocsPage() {
   return (
-    <div className="mx-auto max-w-4xl space-y-10 px-6 py-10">
+    <Container className="space-y-10 py-10 [&>*]:max-w-4xl">
       <header className="space-y-3">
         <h1 className="text-3xl font-semibold tracking-tight">
           Developer docs
@@ -313,6 +314,6 @@ export default function DocsPage() {
           </li>
         </ul>
       </Section>
-    </div>
+    </Container>
   );
 }

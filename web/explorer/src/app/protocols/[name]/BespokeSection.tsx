@@ -7,7 +7,11 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, type RequestExample } from '@/api/client';
-import { formatCompact, sumDecimalStrings } from '@/lib/format';
+import {
+  formatCompact,
+  formatDecimalAmount,
+  sumDecimalStrings,
+} from '@/lib/format';
 import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { dropPartialTrailingDay, seriesPointTime } from '@/lib/series';
 import { CopyHash } from '../../explorer-shared';
@@ -472,7 +476,23 @@ export function BespokeSection({
 
 // ─── Bespoke KPI card — accent styling, distinct from the generic KPI row ──
 
+// Values arrive as raw decimal strings; group them as strings (ADR-0003) and
+// render USD as a dollar figure. Non-decimal values pass through untouched.
+function kpiDisplay(kpi: BespokeKpi): { value: string; unit?: string } {
+  if (kpi.unit === 'USD') {
+    const v = formatDecimalAmount(kpi.value, 2);
+    if (v != null)
+      return { value: v.startsWith('-') ? `-$${v.slice(1)}` : `$${v}` };
+  }
+  const frac = kpi.value.split('.')[1]?.length ?? 0;
+  return {
+    value: formatDecimalAmount(kpi.value, frac) ?? kpi.value,
+    unit: kpi.unit,
+  };
+}
+
 function BespokeKpiCard({ kpi }: { kpi: BespokeKpi }) {
+  const shown = kpiDisplay(kpi);
   return (
     <div className="border-brand-200/70 bg-surface/80 rounded-lg border p-3 shadow-sm">
       <div
@@ -492,10 +512,12 @@ function BespokeKpiCard({ kpi }: { kpi: BespokeKpi }) {
       </div>
       <div className="mt-1 flex items-baseline gap-1">
         <span className="text-brand-700 text-2xl font-semibold tabular-nums">
-          {kpi.value}
+          {shown.value}
         </span>
-        {kpi.unit && (
-          <span className="text-ink-muted text-xs font-medium">{kpi.unit}</span>
+        {shown.unit && (
+          <span className="text-ink-muted text-xs font-medium">
+            {shown.unit}
+          </span>
         )}
       </div>
       {kpi.hint && (
