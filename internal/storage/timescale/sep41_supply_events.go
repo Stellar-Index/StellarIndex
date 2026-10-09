@@ -168,11 +168,9 @@ type SEP41KindTotals struct {
 // — a bounded scan on the (contract_id, ledger DESC) index instead of
 // aggregating the whole per-contract history on every call. The
 // aggregator's rollup worker keeps `last_ledger` within one cadence of
-// the tip, so the delta is a handful of ledgers. The full aggregate,
-// `Σ … FILTER (WHERE event_kind = …)` over ALL of a contract's rows,
-// took minutes once `sep41_supply_events` held hundreds of millions of
-// rows — and, because the hypertable is chunked by `observed_at` while
-// the query bounds only contract_id + ledger, it prunes no chunk.
+// the tip, so the delta is a handful of ledgers. The full aggregate
+// prunes no chunk (the hypertable is chunked by `observed_at`, the query
+// bounds only contract_id + ledger) and takes minutes at scale.
 //
 // Fallback path. When the contract has no rollup row yet (the worker
 // hasn't folded it) OR the request ledger predates the checkpoint (a
