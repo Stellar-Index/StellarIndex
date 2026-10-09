@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Breadcrumbs, Container } from '@/components/ui/Page';
+import { Container, PageHeader } from '@/components/ui/Page';
 
 // States only what the code and ADRs promise (ADR-0049: anonymous reads,
 // free self-service accounts, staff-set partner limits, NO payment surface),
@@ -30,24 +30,25 @@ export default function TermsPage() {
   return (
     <Container className="space-y-10 py-10 [&>*]:max-w-4xl">
       <header className="space-y-3">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Terms of Service' }]}
+        <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Terms of Service' },
+          ]}
+          eyebrow="Legal"
+          title="Terms of Service"
+          description={
+            <>
+              These terms govern your use of the Stellar Index explorer at
+              stellarindex.io and the Stellar Index API at api.stellarindex.io
+              (together, the &ldquo;Service&rdquo;), operated by{' '}
+              {LEGAL_ENTITY_DETAILS} (the &ldquo;Operator&rdquo;,
+              &ldquo;we&rdquo;, &ldquo;us&rdquo;). By using the Service —
+              anonymously, or through an account or API key — you agree to them.
+              If you do not agree, do not use the Service.
+            </>
+          }
         />
-        <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
-          Legal
-        </p>
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Terms of Service
-        </h1>
-        <p className="text-ink-body text-base">
-          These terms govern your use of the Stellar Index explorer at
-          stellarindex.io and the Stellar Index API at api.stellarindex.io
-          (together, the &ldquo;Service&rdquo;), operated by{' '}
-          {LEGAL_ENTITY_DETAILS} (the &ldquo;Operator&rdquo;, &ldquo;we&rdquo;,
-          &ldquo;us&rdquo;). By using the Service — anonymously, or through an
-          account or API key — you agree to them. If you do not agree, do not
-          use the Service.
-        </p>
         <p className="text-ink-muted text-xs">Last updated: {LAST_UPDATED}</p>
       </header>
 
