@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 
+import { DataTrustTabs } from '@/components/nav/DataTrustTabs';
 import { Container, PageHeader, SectionHeader } from '@/components/ui';
 import { ArchivePanel } from './ArchivePanel';
 import { BackfillSummary } from './BackfillSummary';
@@ -61,6 +62,7 @@ export default function DiagnosticsPage() {
           </>
         }
       />
+      <DataTrustTabs active="/diagnostics" />
 
       <section className="space-y-4">
         <SectionHeader title="Live ingest" />

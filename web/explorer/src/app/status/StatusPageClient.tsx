@@ -23,6 +23,7 @@ import { API_BASE_URL, timeoutSignal } from '@/api/client';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { pollWhileVisible } from '@/lib/live/visiblePoll';
 import { useStatus } from '@/api/hooks';
+import { DataTrustTabs } from '@/components/nav/DataTrustTabs';
 import BackupsPanel from './BackupsPanel';
 import {
   formatCompact,
@@ -763,6 +764,7 @@ export default function StatusPageClient({
   return (
     <Container className="max-w-5xl space-y-8 py-10">
       <PageHead error={error} asOf={asOf} />
+      <DataTrustTabs active="/status" />
       <StatusNotices />
       {/* The unreachable notice sits ABOVE the headline so the verdict is
           never read without its caveat. */}
@@ -2113,7 +2115,9 @@ function coverageDataAge(
   ran: boolean,
 ): { at: string | undefined; stale: boolean; verdictStale: boolean } {
   const scanAgeS = snapshotAgeSeconds(r.coverage_snapshot_at);
-  const verdictAgeS = ran ? snapshotAgeSeconds(r.completeness_computed_at) : null;
+  const verdictAgeS = ran
+    ? snapshotAgeSeconds(r.completeness_computed_at)
+    : null;
   const verdictStale =
     verdictAgeS != null && verdictAgeS * 1000 > COMPLETENESS_STALE_MS;
   if (scanAgeS == null) {

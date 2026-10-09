@@ -27,14 +27,13 @@ export function Footer() {
   return (
     <footer className="border-line bg-surface mt-16 border-t py-8">
       <div className="text-ink-muted mx-auto max-w-7xl px-6 text-xs">
-        <div className="grid grid-cols-2 gap-8 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 lg:grid-cols-5">
           <FooterColumn
             title="Browse"
             links={[
               { label: 'Assets', href: '/assets' },
               { label: 'Markets', href: '/markets' },
               { label: 'Issuers', href: '/issuers' },
-              { label: 'Sources', href: '/sources' },
             ]}
           />
           <FooterColumn
@@ -55,6 +54,16 @@ export function Footer() {
             ]}
           />
           <FooterColumn
+            title="Data"
+            links={[
+              { label: 'API status', href: '/status' },
+              { label: 'Diagnostics', href: '/diagnostics' },
+              { label: 'Sources', href: '/sources' },
+              { label: 'Methodology', href: '/methodology' },
+              { label: 'Service level', href: '/sla' },
+            ]}
+          />
+          <FooterColumn
             title="About"
             links={[
               { label: 'API pricing', href: '/pricing' },
@@ -62,12 +71,6 @@ export function Footer() {
               { label: 'Company', href: '/company' },
               { label: 'Careers', href: '/careers' },
               { label: 'Contact', href: '/contact' },
-              { label: 'API status', href: '/status' },
-              // /sla had zero inbound links anywhere in the site — not
-              // the rail, not search, not here, not the sitemap. It is
-              // the commitment behind /pricing, so it belongs next to
-              // the status page a reader checks it against.
-              { label: 'Service level', href: '/sla' },
               // Network-agnostic, so deliberately NOT in LEAN_HIDDEN_HREFS.
               { label: 'Terms of service', href: '/terms' },
               { label: 'Privacy policy', href: '/privacy' },
@@ -87,10 +90,8 @@ export function Footer() {
               },
               { label: 'Go SDK', href: '/sdk' },
               { label: 'Widgets', href: '/widgets' },
-              { label: 'Methodology', href: '/methodology' },
               { label: 'Research', href: '/research' },
               { label: 'Changelog', href: '/changelog' },
-              { label: 'Diagnostics', href: '/diagnostics' },
             ]}
           />
         </div>

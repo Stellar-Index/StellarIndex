@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { DataTrustTabs } from '@/components/nav/DataTrustTabs';
 import { Breadcrumbs, Container } from '@/components/ui/Page';
 
 export const metadata: Metadata = {
@@ -26,6 +27,8 @@ export default function SLAPage() {
           cover.
         </p>
       </header>
+
+      <DataTrustTabs active="/sla" />
 
       <TableOfContents />
 
