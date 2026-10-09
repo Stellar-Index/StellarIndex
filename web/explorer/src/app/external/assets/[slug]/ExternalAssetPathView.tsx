@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { apiGetData } from '@/api/client';
-import { Breadcrumbs, Callout, Container, Skeleton } from '@/components/ui';
+import { Callout, Container, PageHeader, Skeleton } from '@/components/ui';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import { type GlobalAssetView } from '../../../assets/catalogue';
 
@@ -36,18 +36,14 @@ export function ExternalAssetPathView() {
 
   return (
     <Container className="space-y-8 py-8 sm:py-10">
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'External assets', href: '/external/assets' },
-            { label: slug || 'Asset' },
-          ]}
-        />
-        <h1 className="text-h1 text-ink font-semibold break-all">
-          {slug || 'Loading…'}
-        </h1>
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'External assets', href: '/external/assets' },
+          { label: slug || 'Asset' },
+        ]}
+        title={<span className="break-all">{slug || 'Loading…'}</span>}
+      />
       {!q.isError && <Skeleton className="h-32 w-full" />}
       {q.isError && (
         <Callout

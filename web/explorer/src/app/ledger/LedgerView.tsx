@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Container, Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { totalCoinsCaption } from '@/lib/xlm-supply';
@@ -217,41 +217,44 @@ function Shell({
 }) {
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Ledgers', href: '/ledgers' },
-            { label: seq != null ? `#${seq.toLocaleString('en-US')}` : '—' },
-          ]}
-        />
-        {seq != null && (
-          <div className="flex items-center gap-3 text-xs">
-            {/* Ledger 1 is genesis; there is no ledger 0 to navigate to. */}
-            {seq > 1 ? (
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Ledgers', href: '/ledgers' },
+          { label: seq != null ? `#${seq.toLocaleString('en-US')}` : '—' },
+        ]}
+        title={
+          seq != null ? `Ledger #${seq.toLocaleString('en-US')}` : 'Ledger'
+        }
+        actions={
+          seq != null && (
+            <div className="flex items-center gap-3 text-xs">
+              {/* Ledger 1 is genesis; there is no ledger 0 to navigate to. */}
+              {seq > 1 ? (
+                <Link
+                  href={`/ledgers/${seq - 1}/`}
+                  className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-2.5 py-1"
+                >
+                  ← Prev ledger
+                </Link>
+              ) : (
+                <span
+                  aria-disabled="true"
+                  className="border-line text-ink-faint cursor-not-allowed rounded-md border px-2.5 py-1"
+                >
+                  ← Prev ledger
+                </span>
+              )}
               <Link
-                href={`/ledgers/${seq - 1}/`}
+                href={`/ledgers/${seq + 1}/`}
                 className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-2.5 py-1"
               >
-                ← Prev ledger
+                Next ledger →
               </Link>
-            ) : (
-              <span
-                aria-disabled="true"
-                className="border-line text-ink-faint cursor-not-allowed rounded-md border px-2.5 py-1"
-              >
-                ← Prev ledger
-              </span>
-            )}
-            <Link
-              href={`/ledgers/${seq + 1}/`}
-              className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-2.5 py-1"
-            >
-              Next ledger →
-            </Link>
-          </div>
-        )}
-      </header>
+            </div>
+          )
+        }
+      />
       {children}
     </Container>
   );

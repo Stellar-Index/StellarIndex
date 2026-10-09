@@ -7,7 +7,7 @@ import { MevFeed } from './MevFeed';
 
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
-import { Badge, Breadcrumbs, Container } from '@/components/ui';
+import { Badge, Container, PageHeader } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'MEV — on-chain MEV detector',
   description:
@@ -74,7 +74,10 @@ export default function MevPage() {
   if (!routeAvailable('/mev')) {
     return (
       <Container className="space-y-6 py-8">
-        <h1 className="text-3xl font-semibold tracking-tight">MEV</h1>
+        <PageHeader
+          breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'MEV' }]}
+          title="MEV"
+        />
         <NetworkUnavailable href="/mev" />
       </Container>
     );
@@ -82,14 +85,11 @@ export default function MevPage() {
 
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <Breadcrumbs items={[{ label: 'Home', href: '/' }, { label: 'MEV' }]} />
-        <h1 className="text-3xl font-semibold tracking-tight">MEV</h1>
-        <p className="text-ink-body max-w-3xl text-sm">
-          Five live MEV patterns, each recorded with evidence and a note on what
-          is and is not claimed.
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'MEV' }]}
+        title="MEV"
+        description="Five live MEV patterns, each recorded with evidence and a note on what is and is not claimed."
+      />
 
       <MevFeed />
 

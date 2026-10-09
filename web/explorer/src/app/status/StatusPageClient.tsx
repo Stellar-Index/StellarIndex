@@ -11,9 +11,9 @@ import {
 
 import {
   Badge,
-  Breadcrumbs,
   Card,
   Container,
+  PageHeader,
   type BadgeTone,
 } from '@/components/ui';
 import { isSafeHref } from '@/lib/markdown';
@@ -768,7 +768,7 @@ export default function StatusPageClient({
   );
 
   return (
-    <Container className="max-w-5xl space-y-8 py-10">
+    <Container className="space-y-8 py-10 [&>*]:max-w-5xl">
       <PageHead error={error} asOf={asOf} />
       <DataTrustTabs active="/status" />
       <StatusNotices />
@@ -835,37 +835,30 @@ export default function StatusPageClient({
 
 function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Status' }]}
-        />
-        <div className="text-brand-600 mb-1.5 text-xs font-medium tracking-wider uppercase">
-          System status
-        </div>
-        <h1 className="text-h1 text-ink font-semibold">Stellar Index status</h1>
-        <p className="text-ink-muted mt-2 max-w-prose text-[15px] leading-relaxed">
-          Live health, latency, ingest freshness and a curated public-endpoint
-          matrix, probed from your browser.
-        </p>
-      </div>
-      {/* The pulse is a liveness claim: it only pulses green while the
-          latest poll succeeded. During an outage it goes grey and says how
-          old the snapshot below actually is. */}
-      {error === null ? (
-        <div className="text-ink-muted flex items-center gap-2 text-sm whitespace-nowrap">
-          <span className="animate-pulse-dot bg-ok-500 inline-block h-2 w-2 rounded-full" />
-          Live · refreshed every 30 s
-        </div>
-      ) : (
-        <div className="text-bad-700 flex items-center gap-2 text-sm whitespace-nowrap">
-          <span className="bg-ink-faint inline-block h-2 w-2 rounded-full" />
-          {asOf
-            ? `Status feed unreachable · last successful poll ${formatRelative(asOf)}`
-            : 'Status feed unreachable · no successful poll yet'}
-        </div>
-      )}
-    </div>
+    <PageHeader
+      breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Status' }]}
+      eyebrow="System status"
+      title="Stellar Index status"
+      description="Live health, latency, ingest freshness and a curated public-endpoint matrix, probed from your browser."
+      actions={
+        // The pulse is a liveness claim: it only pulses green while the
+        // latest poll succeeded. During an outage it goes grey and says how
+        // old the snapshot below actually is.
+        error === null ? (
+          <div className="text-ink-muted flex items-center gap-2 text-sm whitespace-nowrap">
+            <span className="animate-pulse-dot bg-ok-500 inline-block h-2 w-2 rounded-full" />
+            Live · refreshed every 30 s
+          </div>
+        ) : (
+          <div className="text-bad-700 flex items-center gap-2 text-sm whitespace-nowrap">
+            <span className="bg-ink-faint inline-block h-2 w-2 rounded-full" />
+            {asOf
+              ? `Status feed unreachable · last successful poll ${formatRelative(asOf)}`
+              : 'Status feed unreachable · no successful poll yet'}
+          </div>
+        )
+      }
+    />
   );
 }
 

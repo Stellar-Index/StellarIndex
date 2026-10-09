@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
-import { Breadcrumbs, EmptyState, Skeleton } from '@/components/ui';
+import { EmptyState, PageHeader, Skeleton } from '@/components/ui';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import type { Envelope } from '@/app/explorer-shared';
 
@@ -103,11 +103,12 @@ export function AssetPathView() {
 
   return (
     <div className="space-y-4">
-      <Breadcrumbs
-        items={[
+      <PageHeader
+        breadcrumbs={[
           { label: 'Assets', href: '/assets' },
           { label: d.code ?? slug },
         ]}
+        title={d.code ?? slug}
       />
       <AssetTrustFacts
         assetID={d.asset_id}
