@@ -3083,6 +3083,72 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
+                      "name": "Internal error. Body includes the request_id for correlation.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "assets",
+                            ":asset_id",
+                            "entry-changes"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum changes to return (1-200, default 25). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "25"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) Canonical asset identifier. One of `native`, `<code>-<issuer>`,\n`<code>:<issuer>` (alias), or `<contract_id>`. Strkeys\nvalidated per SEP-23. The handler is strict — short symbols\nlike `XLM` or `USDC` are NOT accepted here; use `native` or\nthe full `<code>-<G…>` form.\n",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "asset_id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Internal Server Error",
+                      "code": 500,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"span\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"fx_leg_unavailable\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
                       "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                       "originalRequest": {
                         "url": {

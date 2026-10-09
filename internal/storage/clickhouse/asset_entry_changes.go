@@ -43,10 +43,15 @@ type assetEntryChangeKey struct {
 const assetEntryChangeCols = `ledger, close_time, tx_hash, op_index, change_index, role, intra_ledger_seq,
 	entry_type, change_type, changed, account, balance, fields, ingested_at`
 
+// assetExactDedupSpan is the first ledger span the exact fallback reads below
+// the page top (~1 day); each short read widens it 4x.
+const assetExactDedupSpan = 1 << 14
+
 // assetEntryChangesSQL reads one asset's rows newest first at or below the
 // ceiling. The window form has no LIMIT 1 BY so ClickHouse can stop reading
 // in key order (native offers and claimable balances span billions of rows);
-// exactDedup keeps only the newest re-derive per key.
+// exactDedup keeps only the newest re-derive per key, above a ledger floor
+// because LIMIT 1 BY otherwise walks the asset's whole range.
 func assetEntryChangesSQL(hasCursor, exactDedup bool) string {
 	var sb strings.Builder
 	sb.WriteString("SELECT " + assetEntryChangeCols + " FROM stellar.asset_entry_changes WHERE asset = ? AND ledger <= ?")
@@ -56,7 +61,7 @@ func assetEntryChangesSQL(hasCursor, exactDedup bool) string {
 	}
 	const order = " ORDER BY ledger DESC, tx_hash DESC, op_index DESC, change_index DESC, role DESC"
 	if exactDedup {
-		sb.WriteString(order + ", ingested_at DESC LIMIT 1 BY ledger, tx_hash, op_index, change_index, role LIMIT ?")
+		sb.WriteString(" AND ledger >= ?" + order + ", ingested_at DESC LIMIT 1 BY ledger, tx_hash, op_index, change_index, role LIMIT ?")
 	} else {
 		sb.WriteString(order + " LIMIT ?")
 	}
@@ -88,7 +93,11 @@ func (r *ExplorerReader) AssetEntryChanges(ctx context.Context, asset string, li
 		},
 		func(a, b assetEntryChangeVersion) bool { return a.ingestedAt.After(b.ingestedAt) })
 	if !ok {
-		if deduped, err = r.queryAssetEntryChanges(ctx, asset, assetEntryChangesSQL(cur.IsSet(), true), append(args, limit)); err != nil {
+		top := maxLedger
+		if cur.IsSet() && cur.Ledger < top {
+			top = cur.Ledger
+		}
+		if deduped, err = r.assetEntryChangesExact(ctx, asset, cur.IsSet(), args, top, limit); err != nil {
 			return nil, err
 		}
 	}
@@ -100,6 +109,24 @@ func (r *ExplorerReader) AssetEntryChanges(ctx context.Context, asset string, li
 		out[i] = v.row
 	}
 	return out, nil
+}
+
+// assetEntryChangesExact runs the exact LIMIT 1 BY read over [floor, top],
+// widening the floor 4x until it holds limit keys or reaches ledger 0. Every
+// version of a key shares its ledger, so the first limit keys of a range that
+// holds limit keys are the unbounded query's first limit keys.
+func (r *ExplorerReader) assetEntryChangesExact(ctx context.Context, asset string, hasCursor bool, args []any, top uint32, limit int) ([]assetEntryChangeVersion, error) {
+	q := assetEntryChangesSQL(hasCursor, true)
+	for span := uint64(assetExactDedupSpan); ; span *= 4 {
+		floor := uint32(0)
+		if uint64(top) > span {
+			floor = top - uint32(span)
+		}
+		out, err := r.queryAssetEntryChanges(ctx, asset, q, append(args[:len(args):len(args)], floor, limit))
+		if err != nil || len(out) >= limit || floor == 0 {
+			return out, err
+		}
+	}
 }
 
 func (r *ExplorerReader) queryAssetEntryChanges(ctx context.Context, asset, q string, args []any) ([]assetEntryChangeVersion, error) {
