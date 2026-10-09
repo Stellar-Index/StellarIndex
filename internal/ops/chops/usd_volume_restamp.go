@@ -22,36 +22,31 @@ import (
 
 // usdVolumeRestamp is the `usd-volume-restamp` subcommand, the corrective
 // WRITE half of verify-usd-volume (docs/operations/usd-volume-rederive-*.md
-// §5). usd_volume holds two kinds of number, and the estimated kind is
-// reached three ways, hence four -tier values:
+// §5). -tier picks what it repairs:
 //
 //	exact (default): tiers 1/2/2b, a pure rescaling of an amount on the row,
-//	  repairable as a SQL identity. The measured dirty class was USDC-base
-//	  sdex rows valued by VWAP (+0.7%) instead of the $1 peg.
-//	xlm-base: the tier-4 XLM anchor, re-derived in GO through the store's
-//	  resolver because it depends on prices_1m at the row's ts. It repairs
-//	  rows valued through a thin counterparty book (43x under on the measured
-//	  row) or left NULL (usd_volume_restamp_xlmbase.go).
+//	  repairable as a SQL identity (e.g. USDC-base sdex rows valued by VWAP
+//	  instead of the $1 peg).
+//	xlm-base: the tier-4 XLM anchor, re-derived in Go through the store's
+//	  resolver because it depends on prices_1m at the row's ts; repairs rows
+//	  valued through a thin counterparty book or left NULL
+//	  (usd_volume_restamp_xlmbase.go).
 //	xlm-quote: its mirror, XLM in the quote leg.
 //	cex-fx: CEX trades quoted in non-USD fiat, valued from fx_quotes;
 //	  prices_1m holds no fiat pair, which is why these rows are NULL.
 //
-// Every tier: DRY RUN by default; a bounded window walked one -slice at a
-// time; refused if it overlaps the live ledgerstream cursor (one writer)
-// unless -allow-live-overlap; idempotent, so an interrupted run resumes by
-// re-running; reversible through usd_volume_restamp_log, written in the
-// UPDATE's own transaction (migration 0175 carries the undo); a heartbeat
-// for the ops_job stall alerts. Tier and value come from the SAME functions
-// the insert path uses, never re-spelled here. A row that cannot be priced is
-// reported and left exactly as it is, never blanked or given a second-choice
-// estimate. Token/token pairs are outside every tier on purpose: their only
-// rate is the tier-3b bridge a counterparty authors.
+// Every tier: DRY RUN by default; bounded and walked one -slice at a time;
+// refused over the live ledgerstream cursor (one writer) unless
+// -allow-live-overlap; idempotent and resumable; reversible through
+// usd_volume_restamp_log, written in the UPDATE's own transaction; a
+// heartbeat for the ops_job stall alerts. Tier and value come from the SAME
+// functions the insert path uses. An unpriceable row is reported and left
+// as is, never blanked or given a second-choice estimate. Token/token pairs
+// are excluded: their only rate is the tier-3b bridge a counterparty authors.
 //
 // Acceptance: `verify-usd-volume -day <last> -days <N>` over the span.
-//
-// -chunks (usd_volume_restamp_chunks.go) is available to every tier because
-// an in-place walk measured ~1,574 rows/min against compressed chunks, and
-// every tier writes the same column of the same chunks.
+// -chunks (usd_volume_restamp_chunks.go) works for every tier, since an
+// in-place walk over compressed chunks is far slower.
 func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, validate the tier's flag set, open+wire the store, run the live-overlap guard, dispatch — splitting scatters each guard away from the flag it guards.
 	fs := flag.NewFlagSet("usd-volume-restamp", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml (Postgres DSN + the operator's USD peg list)")
