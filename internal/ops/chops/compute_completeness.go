@@ -1668,32 +1668,18 @@ func substrateClaim(genesis, hi, scanFrom uint32, scanClean bool, problem uint32
 	}
 }
 
-// substrateFloorLoss is the bottom-edge-loss detector for the SUBSTRATE axis —
-// the twin of [detectFloorLoss] on the projection axis
-// (completeness_target_floors, migration 0116).
+// substrateFloorLoss detects bottom-edge loss on the substrate axis, the twin
+// of [detectFloorLoss] on the projection axis. An incremental run scans only
+// [subScanFrom, tip] and carries the prior [genesis, subScanFrom] verdict, so a
+// DROP PARTITION of the oldest ledgers would otherwise leave lake_complete
+// asserting a contiguous, hash-chained archive from genesis.
 //
-// An incremental run scans only [subScanFrom, tip] and [substrateClaim] rule 3
-// CARRIES the prior clean [genesis, subScanFrom] verdict. A capacity-archive
-// DROP PARTITION that deletes the source's oldest ledgers below subScanFrom is
-// therefore invisible: the [subScanFrom, tip] scan is intact and the carried
-// prefix is a lie, yet substrate_ok / lake_complete / coverage_pct=1.0 keep
-// asserting "the certified archive is contiguous + hash-chained from genesis".
-//
-// Unlike the projection floor — a served-tier MIN that must be recorded durably
-// to tell "lost" from "never written" — the substrate floor is the FIXED
-// src.genesis, the first-possible-data ledger the lake must always reach, so no
-// durable row is needed: the caller simply probes whether the lake still holds
-// `genesis`. floorHasProblem is that probe's result (a cheap 1-ledger
-// clickhouse.SubstrateProblem at genesis); a present genesis is clean, an
-// absent/broken one is bottom-edge loss.
-//
-// Fires ONLY when the run CARRIES a prefix (subScanFrom > genesis): a deep scan
-// (subScanFrom <= genesis) already re-reads genesis and its own head-presence
-// guard reports the same loss, so probing there would double-count. Like
-// detectFloorLoss this catches a rising BOTTOM edge (dropped oldest partitions),
-// not an interior hole inside the carried prefix — that needs a full re-scan and
-// is the same class the projection floor detector also cannot see. Pure —
-// unit-testable.
+// The substrate floor is the fixed src.genesis, so no durable floor row is
+// needed: floorHasProblem is a 1-ledger clickhouse.SubstrateProblem probe at
+// genesis. It fires only when the run carries a prefix (subScanFrom > genesis);
+// a deep scan re-reads genesis itself and would double-count. Like
+// detectFloorLoss it sees a rising bottom edge, not an interior hole in the
+// carried prefix, which needs a full re-scan.
 func substrateFloorLoss(genesis, subScanFrom, floorProblem uint32, floorHasProblem bool) (uint32, bool, string) {
 	if subScanFrom <= genesis || !floorHasProblem {
 		return 0, false, ""
@@ -1736,30 +1722,20 @@ func eventCensusLoss(src reconSource, genesis uint32, shortfalls []clickhouse.Ev
 	return 0, false, ""
 }
 
-// lakeCoverageProblem is the NUMERIC twin of [substrateClaim]: it returns the
-// ledger to inject into the coverage watermark's problem set when the substrate
-// CLAIM refuses an otherwise-clean suffix scan, so coverage_pct /
-// watermark_ledger / first_problem track substrate_ok exactly as srW.Complete
-// does. It covers what substrateClaim's BOOLEAN cannot:
-// on a clean suffix `problems` holds no substrate ledger, so without this the
-// watermark would read genesis-to-tip (coverage_pct=1.0, watermark=tip) while
-// substrate_ok / lake_complete are false — a consumer seeing
-// "verified to tip" next to "substrate unproven".
+// lakeCoverageProblem is the numeric twin of [substrateClaim]: the ledger to
+// inject into the coverage watermark's problem set when the claim refuses an
+// otherwise-clean suffix scan. Without it the watermark would read
+// genesis-to-tip (coverage_pct=1.0) beside substrate_ok=false.
 //
-// Returns 0 (nothing to inject) when the claim HOLDS (substrateOK) or when the
-// raw scan already surfaced the problem (!scanClean — that ledger is fed to
-// `problems` separately, and it is more precise). Otherwise the claim failed on
-// a clean suffix, mirroring substrateClaim's rules 4a/4b/4c:
-//   - a clean prior that reached prior.tip proved [genesis, prior.tip]
-//     contiguously (rule 4c) → the unverified band opens at prior.tip+1;
-//   - a missing or FAILING prior proves nothing from genesis (rules 4a/4b) →
-//     the floor is genesis itself.
+// Returns 0 when the claim holds, or when the raw scan already surfaced a more
+// precise problem ledger (!scanClean). Otherwise, mirroring substrateClaim's
+// rules 4a-4c: a clean prior proved [genesis, prior.tip], so the unverified
+// band opens at prior.tip+1; a missing or failing prior proves nothing, so the
+// floor is genesis.
 //
-// The floor is clamped to >= genesis so ComputeWatermark (which ignores
-// problems below genesis) can never silently drop it and restore the 1.0 lie.
-// In the only case the prior.tip+1 branch fires (substrateClaim rule 4c) the
-// caller has scanFrom > prior.tip+1 with scanFrom <= tip+1, so prior.tip+1 <= tip
-// and the floor lands inside [genesis, tip]. Pure — unit-testable.
+// The floor is clamped to >= genesis because ComputeWatermark ignores problems
+// below genesis and would restore the 1.0 claim; in rule 4c's case
+// prior.tip+1 <= tip, so the floor always lands inside [genesis, tip].
 func lakeCoverageProblem(genesis uint32, scanClean, substrateOK bool, prior priorProjection) uint32 {
 	if substrateOK || !scanClean {
 		return 0
