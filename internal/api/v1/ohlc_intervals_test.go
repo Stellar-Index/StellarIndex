@@ -17,8 +17,8 @@ import (
 // [timescale.OHLCRoutes] is it. The parser and its 400 body derive from
 // the table; the spec's enum and this package's duration() switch are
 // the two copies that cannot be derived (one is YAML, the other a
-// named-width lookup), so they are pinned here instead — launch plan
-// W8-20's "one declaration of the served set", extended past the
+// named-width lookup), so they are pinned here instead; this is
+// "one declaration of the served set", extended past the
 // HistoryGranularity type to every interval /v1/ohlc advertises.
 
 // TestOHLCIntervals_SpecEnumIsTheRouteTable — the published enum for

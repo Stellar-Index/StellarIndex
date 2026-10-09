@@ -305,7 +305,7 @@ func TestHandleIssuer_HappyPath_WithAssets(t *testing.T) {
 	}
 }
 
-// TestHandleIssuer_ScamSuppressesSEP1Payload — S-010 suppression must
+// TestHandleIssuer_ScamSuppressesSEP1Payload — scam-identity suppression must
 // clear SEP1Payload alongside HomeDomain/OrgName. The raw
 // stellar.toml JSONB carries the same impersonated org_name/
 // home_domain the two string fields are cleared of; served verbatim,

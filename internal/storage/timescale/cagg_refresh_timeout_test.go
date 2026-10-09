@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// TestCAGGRefreshTimeout_DerivedFromWindow pins the W8-19 bound: five
+// TestCAGGRefreshTimeout_DerivedFromWindow pins the refresh bound: five
 // minutes of refresh per hour of window, floored at ten minutes and
 // capped at four hours. The rows are the windows the backfill actually
 // asks for — a 10k-ledger chunk (~4h), the documented `-parallel 4`

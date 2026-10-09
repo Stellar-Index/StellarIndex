@@ -482,7 +482,7 @@ func curatedRWAMonthEnd(s string) (time.Time, bool) {
 //
 // Shifting the point is exact: it moves the digits the curator printed
 // and invents none, so the stored value is still the curator's own
-// figure (ADR-0003) — no float ever holds it — and is now also a figure
+// figure (ADR-0003) — no float ever holds it — and is also a figure
 // a reader can compare by eye. The sibling tolerance off-chain sources
 // use, scale.SciDecimalStringToScaledInt, is deliberately not reached
 // for here: it normalises through float64 and lands on a scaled
