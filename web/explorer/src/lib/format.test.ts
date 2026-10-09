@@ -159,6 +159,30 @@ describe('scaleBaseUnits / formatBaseUnits', () => {
   });
 });
 
+describe('baseUnitsDecimal', () => {
+  it('scales exactly, so rounding the result is exact too', () => {
+    expect(format.baseUnitsDecimal('554421152474348098', 7)).toBe(
+      '55442115247.4348098',
+    );
+    expect(format.baseUnitsDecimal('5', 7)).toBe('0.0000005');
+    expect(format.baseUnitsDecimal('-25000000', 7)).toBe('-2.5000000');
+    expect(format.baseUnitsDecimal('42', 0)).toBe('42');
+    // As a float, 2.00005 sits just below the half and rounds to 2.0000.
+    expect(formatPriceSmall(format.baseUnitsDecimal('200005000', 8)!)).toBe(
+      '2.0001',
+    );
+  });
+
+  it('is null for anything but a plain integer and a valid scale', () => {
+    expect(format.baseUnitsDecimal(undefined, 7)).toBeNull();
+    expect(format.baseUnitsDecimal('', 7)).toBeNull();
+    expect(format.baseUnitsDecimal('1.5', 7)).toBeNull();
+    expect(format.baseUnitsDecimal('1e9', 7)).toBeNull();
+    expect(format.baseUnitsDecimal('100', -1)).toBeNull();
+    expect(format.baseUnitsDecimal('100', 1.5)).toBeNull();
+  });
+});
+
 describe('formatDecimalAmount', () => {
   it('groups a headline money string exactly, at every magnitude', () => {
     expect(format.formatDecimalAmount('40538494.54')).toBe('40,538,494.54');

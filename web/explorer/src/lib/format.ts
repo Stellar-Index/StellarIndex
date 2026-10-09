@@ -360,6 +360,25 @@ export function scaleBaseUnits(
 }
 
 /**
+ * baseUnitsDecimal — smallest-unit integer string → the exact whole-unit
+ * decimal string, or null for anything that is not a plain integer.
+ */
+export function baseUnitsDecimal(
+  raw: string | null | undefined,
+  decimals: number,
+): string | null {
+  const t = raw?.trim() ?? '';
+  if (!/^-?\d+$/.test(t) || !Number.isInteger(decimals) || decimals < 0)
+    return null;
+  const neg = t.startsWith('-');
+  const padded = (neg ? t.slice(1) : t).padStart(decimals + 1, '0');
+  const cut = padded.length - decimals;
+  const out =
+    decimals > 0 ? `${padded.slice(0, cut)}.${padded.slice(cut)}` : padded;
+  return neg ? `-${out}` : out;
+}
+
+/**
  * formatBaseUnits — smallest-unit integer string → grouped whole-unit
  * display string with up to `maxFrac` fractional digits (trailing zeros
  * trimmed). Exact BigInt path for integer strings so arbitrarily large
