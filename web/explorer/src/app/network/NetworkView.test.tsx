@@ -55,10 +55,10 @@ const NATIVE = {
   supply_basis: 'xlm_sdf_reserve_exclusion',
 };
 
-function routeApi(native: unknown) {
+function routeApi(native: unknown, tip: typeof TIP = TIP) {
   vi.mocked(apiGet).mockImplementation(async (path: string) => {
     if (path === '/v1/assets/native') return { data: native };
-    if (path === '/v1/ledgers') return { data: { ledgers: [TIP] } };
+    if (path === '/v1/ledgers') return { data: { ledgers: [tip] } };
     if (path === '/v1/network/stats')
       return { data: { latest_ledger: TIP.sequence, assets_indexed: 10 } };
     if (path === '/v1/network/throughput') return { data: { buckets: [] } };
@@ -144,6 +144,15 @@ describe('NetworkView hero strip — XLM supply', () => {
       '/v1/assets/native',
       expect.anything(),
     );
+  });
+
+  it('keeps the fraction of a sub-1,000 XLM fee pool', async () => {
+    net.id = 'testnet';
+    routeApi(NATIVE, { ...TIP, fee_pool: '55000000' });
+    await renderView();
+    expect(
+      await screen.findByText(/^5\.5 XLM in fee pool$/),
+    ).toBeInTheDocument();
   });
 });
 
