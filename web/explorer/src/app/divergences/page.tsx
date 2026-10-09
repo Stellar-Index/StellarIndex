@@ -126,16 +126,11 @@ export default function DivergencesPage() {
         />
         <h1 className="text-3xl font-semibold tracking-tight">Divergences</h1>
         <p className="text-ink-body max-w-3xl text-sm">
-          Continuously cross-checks the canonical Stellar Index VWAP against
-          external references. A persistent gap flips{' '}
-          <code className="font-mono text-xs">flags.divergence_warning</code> on
-          the canonical{' '}
+          Our VWAP against external references. A persistent gap flags the{' '}
           <Link href="/assets" className="underline decoration-dotted">
-            coin pages
-          </Link>{' '}
-          and writes a row to the{' '}
-          <code className="font-mono text-xs">divergence_observations</code>{' '}
-          hypertable for the historical trail.
+            asset page
+          </Link>
+          .
         </p>
       </header>
 

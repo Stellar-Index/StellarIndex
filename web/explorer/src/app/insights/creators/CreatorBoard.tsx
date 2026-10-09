@@ -206,9 +206,7 @@ export function CreatorBoard() {
           </Table>
         </TableWrap>
         <p className="text-ink-muted text-[11px]">
-          A funded figure of 0 XLM is real, not missing: since CAP-33 an account
-          can be created with no balance of its own, its reserve covered by a
-          sponsor.
+          0 XLM funded is real: since CAP-33 a sponsor can cover the reserve.
         </p>
       </Panel>
     </>
