@@ -31,6 +31,8 @@ describe('canonicalConvertTicker', () => {
     ['crypto:XLM', 'XLM'],
     ['fiat:gbp', 'GBP'],
     ['%20jpy%20', 'JPY'],
+    ['usdt0', 'USDT0'],
+    ['yxlm', 'YXLM'],
   ])('%s -> %s', (slug, want) => {
     expect(canonicalConvertTicker(slug)).toBe(want);
   });
