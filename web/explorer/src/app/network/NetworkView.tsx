@@ -29,6 +29,7 @@ import type { paths } from '@/api/types';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { FreshnessMarker } from '@/components/primitives';
 import { OperationMixPanel } from '@/components/NetworkInsight';
+import { CountSparkline, UpgradeBadges } from '@/components/ChainCharts';
 import {
   formatCompact,
   formatCompactUnits,
@@ -179,7 +180,7 @@ export function NetworkView() {
         </nav>
       </header>
 
-      <HeroStats stats={s} tip={tip} />
+      <HeroStats stats={s} tip={tip} recent={ledgersQ.data?.ledgers} />
 
       <Panel
         headingLevel={2}
@@ -253,17 +254,7 @@ export function NetworkView() {
                   : ''
               }`}
             />
-            {upgradeMarkers.length > 0 && (
-              <p className="text-ink-muted text-xs">
-                Protocol upgrades in this window:{' '}
-                {upgradeMarkers
-                  .map(
-                    (m) =>
-                      `${m.label} on ${new Date(m.time * 1000).toISOString().slice(0, 10)}`,
-                  )
-                  .join(' · ')}
-              </p>
-            )}
+            <UpgradeBadges markers={upgradeMarkers} />
           </>
         )}
       </Panel>
@@ -433,7 +424,15 @@ function ChainEconomics({
 // HeroStats — the network at-a-glance, blending the aggregate
 // /v1/network/stats snapshot with the chain-state fields off the
 // freshest ledger header (total XLM, fee pool, protocol version).
-function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
+function HeroStats({
+  stats: s,
+  tip,
+  recent,
+}: {
+  stats?: NetworkStats;
+  tip?: Ledger;
+  recent?: Ledger[];
+}) {
   // XLM supply as SERVED on /v1/assets/native. An "XLM
   // supply 2.11× route divergence" arises if this strip shows the ledger header's
   // total_coins (~105B, which still counts the ~55B burned in 2019) as
@@ -580,6 +579,10 @@ function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
               ? `${formatCompact(tip.tx_count ?? 0)} tx · ${formatCompact(tip.op_count ?? 0)} ops last ledger`
               : CURRENT_NETWORK.tag
           }
+        />
+        <CountSparkline
+          values={[...(recent ?? [])].reverse().map((l) => l.tx_count ?? 0)}
+          label="Transactions per ledger, latest 12"
         />
       </StatCell>
     </StatGrid>

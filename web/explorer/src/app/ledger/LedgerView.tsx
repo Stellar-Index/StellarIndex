@@ -9,6 +9,7 @@ import { Container, Breadcrumbs } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { totalCoinsCaption } from '@/lib/xlm-supply';
+import { OpsPerTxBars, ResultDonut } from '@/components/ChainCharts';
 import {
   type Envelope,
   type Ledger,
@@ -305,81 +306,96 @@ function TransactionsPanel({
       </Panel>
     );
   }
+  const okCount = transactions.filter((t) => t.successful).length;
   return (
-    <Panel
-      title={`Transactions (${transactions.length})`}
-      source={source}
-      bodyClassName="-mx-4"
-    >
-      <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-              <Th>Hash</Th>
-              <Th>Source</Th>
-              <Th align="right">Ops</Th>
-              <Th>Result</Th>
-              <Th align="right">Fee</Th>
-              <Th>Memo</Th>
-            </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
-            {transactions.map((t) => (
-              <tr key={t.hash} className="hover:bg-surface-muted">
-                <Td>
-                  <Link
-                    href={`/transactions/${t.hash}/`}
-                    className="text-brand-600 font-mono text-xs hover:underline"
-                    title={t.hash}
-                  >
-                    {(t.hash ?? '').slice(0, 10)}…{(t.hash ?? '').slice(-6)}
-                  </Link>
-                </Td>
-                <Td>
-                  <Link
-                    href={`/accounts/${encodeURIComponent(t.source_account ?? '')}/`}
-                    className="text-ink-body hover:text-brand-600 font-mono text-xs"
-                    title={t.source_account}
-                  >
-                    {(t.source_account ?? '').slice(0, 6)}…
-                    {(t.source_account ?? '').slice(-4)}
-                  </Link>
-                </Td>
-                <Td align="right">
-                  <span className="text-ink-body font-mono tabular-nums">
-                    {t.operation_count}
-                  </span>
-                </Td>
-                <Td>
-                  <SuccessBadge
-                    ok={t.successful ?? false}
-                    code={t.result_code}
-                  />
-                </Td>
-                <Td align="right">
-                  <span className="text-ink-muted font-mono text-xs tabular-nums">
-                    {t.fee_charged != null ? stroopsToXlm(t.fee_charged) : '—'}
-                  </span>
-                </Td>
-                <Td>
-                  {t.memo_type && t.memo_type !== 'none' ? (
-                    <span
-                      className="text-ink-muted font-mono text-[11px]"
-                      title={t.memo ?? ''}
-                    >
-                      {t.memo_type}
-                      {t.memo ? `: ${truncate(t.memo, 18)}` : ''}
-                    </span>
-                  ) : (
-                    <span className="text-ink-faint">—</span>
-                  )}
-                </Td>
+    <>
+      <Panel
+        title="Transaction mix"
+        source={source}
+        bodyClassName="grid gap-6 sm:grid-cols-2"
+      >
+        <ResultDonut ok={okCount} failed={transactions.length - okCount} />
+        <OpsPerTxBars
+          opCounts={transactions.map((t) => t.operation_count ?? 0)}
+        />
+      </Panel>
+      <Panel
+        title={`Transactions (${transactions.length})`}
+        source={source}
+        bodyClassName="-mx-4"
+      >
+        <div className="overflow-x-auto">
+          <table className="divide-line min-w-full divide-y text-sm">
+            <thead>
+              <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
+                <Th>Hash</Th>
+                <Th>Source</Th>
+                <Th align="right">Ops</Th>
+                <Th>Result</Th>
+                <Th align="right">Fee</Th>
+                <Th>Memo</Th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Panel>
+            </thead>
+            <tbody className="divide-line-subtle divide-y">
+              {transactions.map((t) => (
+                <tr key={t.hash} className="hover:bg-surface-muted">
+                  <Td>
+                    <Link
+                      href={`/transactions/${t.hash}/`}
+                      className="text-brand-600 font-mono text-xs hover:underline"
+                      title={t.hash}
+                    >
+                      {(t.hash ?? '').slice(0, 10)}…{(t.hash ?? '').slice(-6)}
+                    </Link>
+                  </Td>
+                  <Td>
+                    <Link
+                      href={`/accounts/${encodeURIComponent(t.source_account ?? '')}/`}
+                      className="text-ink-body hover:text-brand-600 font-mono text-xs"
+                      title={t.source_account}
+                    >
+                      {(t.source_account ?? '').slice(0, 6)}…
+                      {(t.source_account ?? '').slice(-4)}
+                    </Link>
+                  </Td>
+                  <Td align="right">
+                    <span className="text-ink-body font-mono tabular-nums">
+                      {t.operation_count}
+                    </span>
+                  </Td>
+                  <Td>
+                    <SuccessBadge
+                      ok={t.successful ?? false}
+                      code={t.result_code}
+                    />
+                  </Td>
+                  <Td align="right">
+                    <span className="text-ink-muted font-mono text-xs tabular-nums">
+                      {t.fee_charged != null
+                        ? stroopsToXlm(t.fee_charged)
+                        : '—'}
+                    </span>
+                  </Td>
+                  <Td>
+                    {t.memo_type && t.memo_type !== 'none' ? (
+                      <span
+                        className="text-ink-muted font-mono text-[11px]"
+                        title={t.memo ?? ''}
+                      >
+                        {t.memo_type}
+                        {t.memo ? `: ${truncate(t.memo, 18)}` : ''}
+                      </span>
+                    ) : (
+                      <span className="text-ink-faint">—</span>
+                    )}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+    </>
   );
 }
 
