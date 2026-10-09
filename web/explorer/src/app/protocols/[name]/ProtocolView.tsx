@@ -68,6 +68,7 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
       <Shell name={name} label={label}>
         <Panel
           title="Couldn't load this protocol"
+          headingLevel={2}
           source={source}
           bodyClassName="text-sm text-ink-body"
         >
@@ -94,7 +95,8 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
     return (
       <Shell name={name} label={label}>
         <Panel
-          title={label}
+          title="On-chain analytics"
+          headingLevel={2}
           source={source}
           bodyClassName="text-sm text-ink-muted"
         >
