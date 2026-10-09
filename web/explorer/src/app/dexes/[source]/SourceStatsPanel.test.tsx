@@ -81,4 +81,36 @@ describe('SourceStatsPanel', () => {
     await waitFor(() => expect(screen.getByText('$1M')).toBeInTheDocument());
     expect(screen.queryByText('$1000.0K')).not.toBeInTheDocument();
   });
+
+  it('formats 24h volume and TVL exactly from their decimal strings', async () => {
+    vi.mocked(apiGet).mockImplementation(async (path: string) =>
+      path === '/v1/protocols'
+        ? {
+            data: {
+              protocols: [
+                {
+                  name: 'soroswap',
+                  tvl: {
+                    tvl_usd: '999.994999999999998',
+                    unpriced_pools: 0,
+                    basis: 'reserves',
+                  },
+                },
+              ],
+            },
+          }
+        : {
+            data: [
+              {
+                name: 'soroswap',
+                trade_count_24h: 5,
+                volume_24h_usd: '499.994999999999998',
+              },
+            ],
+          },
+    );
+    renderPanel();
+    expect(await screen.findByText('$999.99')).toBeInTheDocument();
+    expect(screen.getByText('$499.99')).toBeInTheDocument();
+  });
 });
