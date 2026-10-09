@@ -44,19 +44,14 @@
 //	           body   Map{ old_amount: i128, new_amount: i128 }
 //
 // The `deposit` / `withdraw` topic addresses are (caller, receiver,
-// owner), the OpenZeppelin ERC-4626 ordering. Two withdraws carry three
-// distinct addresses (63,812,795 and 63,812,816): in the second, the G
-// account in the middle slot had approved and transferred its shares to
-// the outer C contract six ledgers earlier, so the contract was caller
-// and owner and the G account the receiver. CAVEAT: every `deposit`
-// carries three identical addresses, so deposit's ordering is carried
-// over from withdraw, not independently proven.
+// owner), the OpenZeppelin ERC-4626 ordering, proven by the withdraw at
+// 63,812,816 whose three addresses are distinct. Every `deposit` carries
+// three identical addresses, so its ordering is assumed, not proven.
 //
 // Shares are NOT at the underlying's scale: genesis-era deposits mint
-// shares == assets × 1,000,000 (the ERC-4626 decimals offset of 6), and
-// later events drift off that ratio as the share price accrues. Assets
-// and shares are stored as RAW i128 (ADR-0003); no ratio or decimals
-// assumption is applied.
+// shares == assets × 1,000,000 (an ERC-4626 decimals offset of 6), then
+// drift as the share price accrues, so both are stored as raw i128
+// (ADR-0003) with no ratio assumed.
 //
 // # What is NOT decoded, and why
 //
@@ -65,12 +60,10 @@
 //     side of what `deployed_assets_changed` already reports; decoding
 //     them would double-count deployed capital.
 //   - subaccount_added / admin_set / operator_set / vault_paused /
-//     vault_unpaused — governance, no economic state (the pause pair was
-//     first emitted at 64,715,361 by the same audited WASM 4b3d9f6b…).
-//   - approve — an allowance, not a balance change. The share-token
-//     audit trail lives in internal/sources/sep41_transfers when the
-//     vault is watched; `transfer` is decoded HERE too because it is
-//     vault economics, and the two write different tables.
+//     vault_unpaused — governance, no economic state.
+//   - approve — an allowance, not a balance change. `transfer` is decoded
+//     here as vault economics and also by internal/sources/sep41_transfers
+//     when the vault is watched; the two write different tables.
 //
 // All ten are still RECOGNIZED by [classify] and gated by
 // [Decoder.Matches]: they decode to ZERO rows with no error, so the
