@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Container, Breadcrumbs } from '@/components/ui';
+import { Badge, Container, Breadcrumbs } from '@/components/ui';
 import { DirectoryLabel } from '@/components/DirectoryLabel';
 import { Sparkline } from '@/components/primitives';
 import { apiGet, asExample, API_BASE_URL } from '@/api/client';
@@ -351,13 +351,19 @@ function WasmPanel({ id }: { id: string }) {
     const msg = error instanceof Error ? error.message : '';
     const isSac = hookSac;
     const notCaptured = !isSac && msg.includes('404');
-    let body: string;
+    let body: ReactNode;
     if (isSac) {
       body =
         'Stellar Asset Contract: built-in host logic, not an uploaded WASM module, so there’s no bytecode to show.';
     } else if (notCaptured) {
-      body =
-        'This contract’s on-chain WASM isn’t in the captured ledger window yet — its deploy-time code/instance entry predates live capture. It resolves automatically once a Phase-C backfill lands.';
+      body = (
+        <Badge
+          tone="warn"
+          title="This contract’s on-chain WASM isn’t in the captured ledger window yet: its deploy-time code/instance entry predates live capture. It resolves once a Phase-C backfill lands."
+        >
+          No code
+        </Badge>
+      );
     } else {
       body = `Couldn’t load this contract’s WASM: ${msg || 'unknown error'}.`;
     }
@@ -433,9 +439,10 @@ function WasmPanel({ id }: { id: string }) {
         <CodeDisclosure label="Decompiled pseudocode" code={data.decompiled} />
       )}
 
-      <p className="text-ink-faint text-[11px] leading-snug">
+      <details className="text-ink-muted text-xs">
+        <summary className="cursor-pointer">Source</summary>
         {data.source_note}
-      </p>
+      </details>
     </Panel>
   );
 }

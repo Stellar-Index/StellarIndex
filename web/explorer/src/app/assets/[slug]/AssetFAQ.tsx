@@ -1,12 +1,5 @@
-import { Panel } from '@/components/reveal';
-
-// CURATED_FAQ — generic answers parameterised by the asset's own code so the
-// same five-question set renders sensibly for every asset. Kept out of
-// page.tsx so the section is independently reorderable/testable;
-// it's pure (no page data — just the asset code + whether it has an issuer).
-//
-// Exported because page.tsx also feeds it into the FAQPage JSON-LD schema —
-// the visible panel and the structured data share ONE source of truth.
+// Generic answers parameterised by the asset's own code. Pure; page.tsx feeds
+// them into the FAQPage JSON-LD schema only (no visible panel).
 export function assetFaqFor(
   symbol: string,
   hasIssuer: boolean,
@@ -36,45 +29,4 @@ export function assetFaqFor(
       a: `On-chain trades land in the indexer within ~6 seconds of the ledger close (the Stellar consensus cadence). CEX feeds stream live via WebSocket; the 24h VWAP recomputes continuously. The chart's last-trade timestamp shows the most recent observation we ingested for this asset.`,
     },
   ];
-}
-
-export function AssetFAQ({
-  symbol,
-  hasIssuer,
-}: {
-  symbol: string;
-  hasIssuer: boolean;
-}) {
-  const items = assetFaqFor(symbol, hasIssuer);
-  return (
-    <Panel
-      headingLevel={2}
-      title="FAQ"
-      hint="Common questions about this asset"
-      bodyClassName="space-y-2 text-sm"
-    >
-      {items.map((it, i) => (
-        <AssetFAQItem key={i} q={it.q} a={it.a} />
-      ))}
-    </Panel>
-  );
-}
-
-function AssetFAQItem({ q, a }: { q: string; a: string }) {
-  return (
-    <details className="group border-line rounded-lg border">
-      <summary className="text-ink hover:bg-surface-muted flex cursor-pointer items-center justify-between px-3 py-2 font-medium">
-        <span>{q}</span>
-        <span
-          aria-hidden
-          className="text-ink-faint text-xs transition-transform group-open:rotate-45"
-        >
-          +
-        </span>
-      </summary>
-      <p className="border-line text-ink-body border-t px-3 py-2 text-sm leading-relaxed">
-        {a}
-      </p>
-    </details>
-  );
 }

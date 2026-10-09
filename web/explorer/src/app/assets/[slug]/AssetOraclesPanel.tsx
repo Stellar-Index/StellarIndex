@@ -251,13 +251,13 @@ export function AssetOraclesPanel({
         source={example}
         bodyClassName="space-y-2 text-sm text-ink-muted"
       >
-        <p>
-          None of the oracles we ingest — Reflector, Band, RedStone, Chainlink —
-          publishes a reading for {symbol}. Oracles cover a short list of global
+        <p>No oracle we ingest publishes a reading for {symbol}.</p>
+        <details className="text-ink-muted text-xs">
+          <summary className="cursor-pointer">Why</summary>
+          Reflector, Band, RedStone and Chainlink cover a short list of global
           tickers; most Stellar assets are priced only by the markets they trade
-          in.
-        </p>
-        <p className="text-xs">{VWAP_POLICY_NOTE}</p>
+          in. {VWAP_POLICY_NOTE}
+        </details>
       </Panel>
     );
   }
@@ -354,47 +354,54 @@ function UnattributedOracles({
       bodyClassName="text-ink-body space-y-3 text-sm"
     >
       <p>
-        Oracles publish under a global ticker —{' '}
-        <span className="font-mono text-xs">{symbol}</span> — not under a
-        Stellar (code, issuer) pair. This asset uses that ticker but is not the
-        verified {verifiedName}, so the readings published for{' '}
-        <span className="font-mono text-xs">{symbol}</span> are a different
-        asset&apos;s readings and are not shown here.
+        Readings for <span className="font-mono text-xs">{symbol}</span> belong
+        to another asset and are not shown.
       </p>
-      <p>
-        <strong className="font-semibold">This is not a coverage gap.</strong>{' '}
-        We are not saying no oracle prices this asset — we are declining to
-        attribute another issuer&apos;s oracle prices to it. Identity on Stellar
-        is (code, issuer); a shared ticker is not a shared asset.
-      </p>
-      <p className="text-ink-muted">
-        {linkable ? (
-          <>
-            The verified {verifiedName}
-            {warning.verified_issuer
-              ? ` — issued by ${warning.verified_issuer} —`
-              : ''}{' '}
-            is at{' '}
-            <Link
-              href={assetHref(warning.verified_slug)}
-              className="text-brand-600 hover:underline"
-            >
-              /assets/{warning.verified_slug}
-            </Link>
-            , and its oracle feeds are on that page.
-          </>
-        ) : (
-          <>
-            No verified <span className="font-mono text-xs">{symbol}</span> is
-            issued on Stellar at all, so no Stellar asset may claim that
-            ticker&apos;s readings.
-          </>
-        )}{' '}
-        <span className="font-mono text-xs">/v1/oracle/latest</span> returns
-        nothing for this asset for the same reason: the API only translates a
-        classic asset to a global ticker when its (code, issuer) is the
-        verified-currency catalogue&apos;s own issuance.
-      </p>
+      <details className="text-ink-muted space-y-2 text-xs">
+        <summary className="cursor-pointer">Why</summary>
+        <p>
+          Oracles publish under a global ticker —{' '}
+          <span className="font-mono text-xs">{symbol}</span> — not under a
+          Stellar (code, issuer) pair. This asset uses that ticker but is not
+          the verified {verifiedName}, so the readings published for{' '}
+          <span className="font-mono text-xs">{symbol}</span> are a different
+          asset&apos;s readings and are not shown here.
+        </p>
+        <p>
+          <strong className="font-semibold">This is not a coverage gap.</strong>{' '}
+          We are not saying no oracle prices this asset — we are declining to
+          attribute another issuer&apos;s oracle prices to it. Identity on
+          Stellar is (code, issuer); a shared ticker is not a shared asset.
+        </p>
+        <p>
+          {linkable ? (
+            <>
+              The verified {verifiedName}
+              {warning.verified_issuer
+                ? ` — issued by ${warning.verified_issuer} —`
+                : ''}{' '}
+              is at{' '}
+              <Link
+                href={assetHref(warning.verified_slug)}
+                className="text-brand-600 hover:underline"
+              >
+                /assets/{warning.verified_slug}
+              </Link>
+              , and its oracle feeds are on that page.
+            </>
+          ) : (
+            <>
+              No verified <span className="font-mono text-xs">{symbol}</span> is
+              issued on Stellar at all, so no Stellar asset may claim that
+              ticker&apos;s readings.
+            </>
+          )}{' '}
+          <span className="font-mono text-xs">/v1/oracle/latest</span> returns
+          nothing for this asset for the same reason: the API only translates a
+          classic asset to a global ticker when its (code, issuer) is the
+          verified-currency catalogue&apos;s own issuance.
+        </p>
+      </details>
     </Panel>
   );
 }

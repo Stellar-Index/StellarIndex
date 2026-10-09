@@ -318,7 +318,17 @@ export function AssetsTable({
                 {pricing && (
                   <>
                     <SortableTh
-                      label="Price"
+                      label={
+                        <span
+                          title={`Verified catalogue rows first, then long-tail rows by 24h volume. ${
+                            stellarListing
+                              ? 'Rows with no price we can stand behind (no market deep enough to clear the substance floor) rank below priced ones. A thin market’s price is still shown, marked ⚠ low confidence.'
+                              : 'Rows the API served no price for rank below priced ones.'
+                          }`}
+                        >
+                          Price
+                        </span>
+                      }
                       sortKey="price"
                       sort={sort}
                       onSort={toggle}
@@ -444,30 +454,6 @@ export function AssetsTable({
           data?.next_cursor && setQuery({ cursor: data.next_cursor })
         }
       />
-
-      <p className="text-ink-muted text-xs">
-        Live data from{' '}
-        <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[11px]">
-          {endpoint}?asset_class={assetClass}
-        </code>
-        . Verified catalogue rows surface first, then long-tail Stellar-classic
-        rows by 24h volume.{' '}
-        {pricing && stellarListing && (
-          <>
-            Rows with no price we can stand behind — no market deep enough to
-            clear the substance floor — rank below the priced ones. A thin
-            market&apos;s price is still shown, marked ⚠ low confidence.{' '}
-          </>
-        )}
-        {pricing && !stellarListing && (
-          <>Rows the API served no price for rank below the priced ones. </>
-        )}
-        Per-asset issuer + on-chain pool detail lives on{' '}
-        <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[11px]">
-          /assets/&#123;slug&#125;
-        </code>
-        .
-      </p>
     </div>
   );
 }

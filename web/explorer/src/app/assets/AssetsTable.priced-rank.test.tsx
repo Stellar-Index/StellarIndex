@@ -183,8 +183,9 @@ describe('AssetsTable priced-first default ranking', () => {
 describe('AssetsTable footer note on unpriced rows', () => {
   it('names the substance floor on the Stellar listing', () => {
     renderTable();
-    expect(screen.getByText(/rank below the priced ones/)).toHaveTextContent(
-      /substance floor/,
+    expect(screen.getByTitle(/rank below priced ones/)).toHaveAttribute(
+      'title',
+      expect.stringMatching(/substance floor/),
     );
   });
 
@@ -193,8 +194,10 @@ describe('AssetsTable footer note on unpriced rows', () => {
       endpoint: '/v1/external/assets',
       basePath: '/external/assets',
     });
-    expect(screen.queryByText(/substance floor/)).toBeNull();
-    expect(screen.getByText(/rank below the priced ones/)).toBeInTheDocument();
+    expect(screen.getByTitle(/rank below priced ones/).title).not.toMatch(
+      /substance floor/,
+    );
+    expect(screen.getByTitle(/rank below priced ones/)).toBeInTheDocument();
     // The ranking itself still applies there: it partitions on the price the
     // response carried, whatever the reason a row has none.
     expect(renderedCodes()).toEqual(PRICED_FIRST);

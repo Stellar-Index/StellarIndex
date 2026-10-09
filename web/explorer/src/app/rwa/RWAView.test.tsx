@@ -1266,8 +1266,9 @@ describe('RWAView — contract arm', () => {
       expect(
         await screen.findByText(/A floor, not a total\./),
       ).toBeInTheDocument();
+      expect(screen.getByText(/4 unvalued/)).toBeInTheDocument();
       expect(
-        screen.getByText(/4 of 11 assets in the set carry no reference/),
+        screen.getByText(/of 11 assets in the set carry no reference/),
       ).toBeInTheDocument();
       expect(
         screen.getByText(/at least this much, not exactly this much/),

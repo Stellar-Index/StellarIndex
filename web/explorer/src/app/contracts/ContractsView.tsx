@@ -73,7 +73,7 @@ export function ContractsView() {
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Contracts' }]}
         eyebrow="Soroban"
         title="Contracts"
-        description="Every Soroban contract, two ways: the most active over the last 30 days (ranked by emitted events), and the attribution registry — the contracts each protocol's factory owns. Click any contract for its hub: events, decoded code, and cross-contract interaction map."
+        description="Soroban contracts: most active over 30 days, and the protocol attribution registry."
       />
 
       <div className="flex items-center gap-3">
@@ -86,11 +86,6 @@ export function ContractsView() {
             { label: 'Registry', value: 'registry' },
           ]}
         />
-        <span className="text-ink-muted text-xs">
-          {view === 'active'
-            ? 'Ranked by 30-day event volume'
-            : 'Contracts attributed to a protocol (ADR-0035)'}
-        </span>
       </div>
 
       <DeploymentStats />
@@ -100,12 +95,6 @@ export function ContractsView() {
       ) : (
         <RegistryPanel />
       )}
-
-      <p className="text-ink-muted text-xs">
-        Looking for a specific contract? Paste its{' '}
-        <code className="font-mono">C…</code> address into search, or open it
-        directly at <code className="font-mono">/contracts/&lt;C…&gt;</code>.
-      </p>
     </Container>
   );
 }
@@ -222,12 +211,11 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
       source={asExample('/v1/contracts', { days: 30, limit: 100 })}
       bodyClassName="-mx-4"
     >
-      <p className="text-ink-muted px-4 pb-3 text-xs">
-        Ranked by raw event volume, so the leaders are SACs and high-traffic
-        system contracts — attribution lives in the{' '}
-        <span className="text-ink-body font-medium">Registry</span> view, not
-        here, so most rows below carry no protocol tag by design.
-      </p>
+      <details className="text-ink-muted px-4 pb-3 text-xs">
+        <summary className="cursor-pointer">Ranked by raw event volume</summary>
+        Leaders are SACs and high-traffic system contracts. Attribution lives in
+        the Registry view, so most rows carry no protocol tag by design.
+      </details>
       {isError ? (
         <p className="text-down-strong px-4 text-sm">
           Failed to load contracts:{' '}
@@ -355,12 +343,14 @@ function RegistryPanel() {
       source={asExample('/v1/protocols')}
       bodyClassName="-mx-4"
     >
-      <p className="text-ink-muted px-4 pb-3 text-xs">
-        Each protocol below owns a set of contracts anchored to a verified
-        factory (ADR-0035) — the identity hinge that lets us attribute an event
-        to a protocol rather than a look-alike. Click a factory to open its hub,
-        or the count to see the full contract roster.
-      </p>
+      <details className="text-ink-muted px-4 pb-3 text-xs">
+        <summary className="cursor-pointer">
+          Factory-anchored (ADR-0035)
+        </summary>
+        Each protocol owns contracts anchored to a verified factory, which lets
+        us attribute an event to a protocol rather than a look-alike. Click a
+        factory for its hub, or the count for the full roster.
+      </details>
       {isError ? (
         <p className="text-down-strong px-4 text-sm">
           Failed to load the registry:{' '}

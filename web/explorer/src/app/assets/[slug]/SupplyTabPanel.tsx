@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { Badge } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { useAsset, useAssetSupply, type AssetSupply } from '@/api/hooks';
 import { FreshnessMarker } from '@/components/primitives';
@@ -147,23 +148,22 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
           <MarketCapChart assetID={assetID} />
 
           {a.supply_basis && (
-            <p className="text-ink-muted text-xs">
+            <p
+              className="text-ink-muted text-xs"
+              title="Policy under ADR-0011 that produced these numbers."
+            >
               <span className="font-mono">supply_basis</span>: {a.supply_basis}
-              {' — '}
-              policy under ADR-0011 that produced these numbers.
             </p>
           )}
 
           {(a.fixed_number || a.max_number || a.is_unlimited != null) && (
             <div className="border-line bg-surface-muted rounded-lg border p-3 text-xs">
-              <h3 className="text-ink-muted mb-1 font-semibold tracking-wider uppercase">
+              <h3
+                className="text-ink-muted mb-1 font-semibold tracking-wider uppercase"
+                title="What the issuer pledged in their stellar.toml, distinct from the live-ledger numbers above."
+              >
                 SEP-1 issuance declarations
               </h3>
-              <p className="text-ink-body">
-                What the issuer pledged in their{' '}
-                <span className="font-mono">stellar.toml</span>— distinct from
-                the live-ledger numbers above.
-              </p>
               <ul className="mt-2 space-y-1 font-mono">
                 {a.fixed_number && <li>fixed_number = {a.fixed_number}</li>}
                 {a.max_number && <li>max_number = {a.max_number}</li>}
@@ -319,20 +319,27 @@ function OnChainSupply({
         </div>
       )}
       {floor && (
-        <p className="text-warn-700 mt-2 text-xs">
-          A floor, not the exact supply: only balances that are ledger entries
-          right now are counted, and state expiry can archive a real balance out
-          of view
-          {data.supply_consistent === false
-            ? ' — the contract itself reports more than is visible.'
-            : '.'}
+        <p className="mt-2">
+          <Badge
+            tone="warn"
+            title={`A floor, not the exact supply: only balances that are ledger entries right now are counted, and state expiry can archive a real balance out of view${
+              data.supply_consistent === false
+                ? ' — the contract itself reports more than is visible.'
+                : '.'
+            }`}
+          >
+            ≥ floor
+          </Badge>
         </p>
       )}
-      <p className="text-up/80 mt-2 text-[11px]">
+      <details className="text-up/80 mt-2 text-[11px]">
+        <summary className="cursor-pointer">
+          {data.as_of_ledger != null
+            ? `Fresh to ledger ${data.as_of_ledger.toLocaleString('en-US')}`
+            : 'Basis'}
+        </summary>
         {supplyFootnote(data)}
-        {data.as_of_ledger != null &&
-          ` Fresh to ledger ${data.as_of_ledger.toLocaleString('en-US')}.`}
-      </p>
+      </details>
     </div>
   );
 }

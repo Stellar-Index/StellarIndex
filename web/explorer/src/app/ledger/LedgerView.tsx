@@ -413,7 +413,7 @@ function Field({
   label: string;
   value: string;
   mono?: boolean;
-  /** Optional muted caption under the value (what the figure IS). */
+  /** Tooltip saying what the figure IS. */
   sub?: string;
 }) {
   return (
@@ -421,13 +421,14 @@ function Field({
       <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
         {label}
       </dt>
-      <dd className={mono ? 'mt-0.5 font-mono text-xs' : 'mt-0.5 tabular-nums'}>
+      <dd
+        title={sub}
+        className={
+          (mono ? 'mt-0.5 font-mono text-xs' : 'mt-0.5 tabular-nums') +
+          (sub ? ' cursor-help' : '')
+        }
+      >
         {value}
-        {sub && (
-          <div className="text-ink-muted mt-0.5 font-sans text-[11px] normal-case">
-            {sub}
-          </div>
-        )}
       </dd>
     </div>
   );
