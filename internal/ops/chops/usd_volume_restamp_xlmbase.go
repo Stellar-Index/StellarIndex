@@ -235,32 +235,19 @@ func (r *xlmBaseRestampRun) summary(cfgPath string, from, to time.Time) string {
 	return b.String()
 }
 
-// xlmBaseRestampCAGGs is the ORDERED list of continuous aggregates a
+// xlmBaseRestampCAGGs is the ordered list of continuous aggregates a
 // finished restamp must be followed by, with each one's minimum refresh
-// window (Timescale rejects `SQLSTATE 22023: refresh window too small`
-// for anything narrower than 2× the bucket).
+// window (Timescale rejects a window narrower than 2× the bucket with
+// SQLSTATE 22023).
 //
-// # Why this is printed at all
+// The acceptance check (verify-usd-volume) reads `trades` directly, but
+// every served volume surface reads an aggregate whose auto-refresh
+// start_offset reaches back at most days to months, so without this step
+// the check goes green while the API keeps serving pre-restamp numbers.
 //
-// The `acceptance:` line below runs `verify-usd-volume`, which reads
-// `trades` DIRECTLY (TradeValuationByDay). Every SERVED volume surface —
-// /v1/markets volume, asset volume, venue rankings, market share, every
-// chart — reads a continuous aggregate instead, and none of them
-// auto-refresh anywhere near this far back. Measured `start_offset` on
-// r1: prices_1m 5 min, prices_15m 1 h, prices_1h 4 h,
-// prices_4h 1 day, prices_1d / prices_1w / dex_volume_by_pair_1d /
-// source_volume_1h / pools_per_source_1h 7 days (prices_1w 28 days,
-// prices_1mo 3 months). So without this step the acceptance check goes
-// GREEN while every served surface keeps serving pre-restamp numbers
-// indefinitely.
-//
-// # The membership + order are DERIVED, not copied
-//
-// [timescale.TradesCAGGs] is the one list: every aggregate rooted on
-// `trades`, prices_1m first and the hierarchical twaps last. A second
-// copy here would drift: two measured copies held seven and twelve
-// entries, with five of the twelve unrefreshable through
-// RefreshContinuousAggregate.
+// It aliases [timescale.TradesCAGGs] rather than copying it: hand-kept
+// copies drifted and listed aggregates RefreshContinuousAggregate cannot
+// refresh.
 var xlmBaseRestampCAGGs = timescale.TradesCAGGs
 
 // followUp is the run's post-write block: the ordered CAGG refresh every
