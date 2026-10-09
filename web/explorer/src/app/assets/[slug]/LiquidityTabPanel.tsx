@@ -5,6 +5,7 @@ import { Panel } from '@/components/reveal';
 import { asExample, API_BASE_URL } from '@/api/client';
 import {
   compareDecimalDesc,
+  divideDecimalString,
   formatCompact,
   formatCompactUnits,
   formatPairPrice,
@@ -108,11 +109,16 @@ export async function LiquidityTabPanel({
                 <th className="px-4 py-2 text-right font-medium">Last price</th>
                 <th className="px-4 py-2 text-right font-medium">24h volume</th>
                 <th className="px-4 py-2 text-right font-medium">24h trades</th>
+                <th className="px-4 py-2 text-right font-medium">Avg trade</th>
               </tr>
             </thead>
             <tbody className="divide-line-subtle divide-y">
               {merged.map((p) => {
                 const slug = encodeURIComponent(`${p.base}~${p.quote}`);
+                const avgTrade = divideDecimalString(
+                  p.volume_24h_usd,
+                  p.trade_count_24h,
+                );
                 const lpFixed = p.last_price
                   ? formatPairPrice(p.last_price)
                   : null;
@@ -164,6 +170,15 @@ export async function LiquidityTabPanel({
                       <span className="text-ink-muted font-mono tabular-nums">
                         {formatCompact(p.trade_count_24h)}
                       </span>
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      {avgTrade ? (
+                        <span className="text-ink-muted font-mono tabular-nums">
+                          ${formatCompactUnits(avgTrade)}
+                        </span>
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
                     </td>
                   </tr>
                 );
