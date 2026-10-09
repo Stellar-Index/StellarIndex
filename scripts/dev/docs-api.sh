@@ -88,7 +88,7 @@ cat > "$OUT_DIR/index.html" <<EOF
         border-bottom: 1px solid #1e2227;
       }
       .re-topbar a { color: #94a3b8; text-decoration: none; transition: color 0.1s; }
-      .re-topbar a:hover { color: #4fd1b5; }
+      .re-topbar a:hover { color: #6087f2; }
       .re-topbar .re-brand { font-weight: 600; color: #f4f6fa; display: flex; align-items: center; gap: 8px; }
       .re-topbar .re-brand svg { width: 18px; height: 18px; }
       .re-topbar .re-links { display: flex; gap: 16px; align-items: center; }
