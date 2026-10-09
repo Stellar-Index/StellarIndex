@@ -7,6 +7,8 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
+import { InlineBar } from '@/components/ContractCharts';
+import { ratioPct } from '@/lib/format';
 import {
   DirectoryLabel,
   type DirectoryInfo,
@@ -424,6 +426,20 @@ function AccountsDirectory() {
 }
 
 // ── Account state (balances / signers / trustlines / offers) ────────────
+
+/** Balance as a share of the trustline limit, divided exactly in BigInt. */
+function TrustlineUse({ balance, limit }: { balance: string; limit: string }) {
+  const pct = ratioPct(balance, limit, 1);
+  if (pct === null) return <span className="text-ink-faint">—</span>;
+  return (
+    <span className="inline-flex items-center gap-2">
+      <InlineBar value={pct} max={100} label={`${pct}% of limit used`} />
+      <span className="text-ink-muted w-12 font-mono text-xs tabular-nums">
+        {pct}%
+      </span>
+    </span>
+  );
+}
 // Mirrors api/v1.AccountStateView (GET /v1/accounts/{g}).
 interface AccountStateResp {
   account_id: string;
@@ -548,6 +564,11 @@ function AccountStatePanel({
                     {s.key.slice(0, 8)}…{s.key.slice(-6)}
                   </span>
                 )}
+                <InlineBar
+                  value={s.weight}
+                  max={255}
+                  label={`Weight ${s.weight} of 255`}
+                />
                 <span className="text-ink-faint">weight {s.weight}</span>
               </li>
             ))}
@@ -566,7 +587,8 @@ function AccountStatePanel({
                 <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
                   <th className="py-1.5 pr-4">Asset</th>
                   <th className="py-1.5 pr-4 text-right">Balance</th>
-                  <th className="py-1.5 text-right">Limit</th>
+                  <th className="py-1.5 pr-4 text-right">Limit</th>
+                  <th className="py-1.5 text-right">Limit used</th>
                 </tr>
               </thead>
               <tbody className="divide-line-subtle divide-y">
@@ -578,8 +600,11 @@ function AccountStatePanel({
                     <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
                       {stroopsToXlm(t.balance)}
                     </td>
-                    <td className="text-ink-muted py-1.5 text-right font-mono tabular-nums">
+                    <td className="text-ink-muted py-1.5 pr-4 text-right font-mono tabular-nums">
                       {stroopsToXlm(t.limit)}
+                    </td>
+                    <td className="py-1.5 text-right">
+                      <TrustlineUse balance={t.balance} limit={t.limit} />
                     </td>
                   </tr>
                 ))}

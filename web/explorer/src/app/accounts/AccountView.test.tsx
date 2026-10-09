@@ -183,3 +183,49 @@ describe('AccountView history paging — empty page with next_cursor', () => {
     expect(screen.queryByRole('button', { name: /Load older/ })).toBeNull();
   });
 });
+
+describe('AccountView state charts', () => {
+  it('bars each trustline’s limit used and each signer’s weight', async () => {
+    vi.mocked(apiGet).mockImplementation((path: string) => {
+      if (path === `/v1/accounts/${G}`) {
+        return Promise.resolve({
+          data: {
+            account_id: G,
+            exists: true,
+            balance: '100000000',
+            signers: [{ key: G, weight: 10 }],
+            trustlines: [
+              {
+                asset:
+                  'USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+                balance: '2500000000',
+                limit: '10000000000',
+                flags: 1,
+              },
+              {
+                // An i64-max limit: the share is divided in BigInt, not as doubles.
+                asset:
+                  'EURC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+                balance: '4611686018427387904',
+                limit: '9223372036854775807',
+                flags: 1,
+              },
+            ],
+          },
+        });
+      }
+      return new Promise(() => {});
+    });
+
+    renderWithClient(<AccountView id={G} />);
+
+    expect(await screen.findByText('25%')).toBeInTheDocument();
+    expect(
+      screen.getByRole('img', { name: '25% of limit used' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('50%')).toBeInTheDocument();
+    expect(
+      screen.getByRole('img', { name: 'Weight 10 of 255' }),
+    ).toBeInTheDocument();
+  });
+});

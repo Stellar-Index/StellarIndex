@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { CreatorBoard } from './CreatorBoard';
@@ -74,13 +74,24 @@ describe('CreatorBoard', () => {
 
     expect(await screen.findByText('Creators')).toBeInTheDocument();
     expect(screen.getByText('13.12K')).toBeInTheDocument();
+    const table = within(screen.getByRole('table'));
     // Created vs live are distinct columns, never summed together.
-    expect(screen.getByText('108,730')).toBeInTheDocument();
-    expect(screen.getByText('4,346')).toBeInTheDocument();
+    expect(table.getByText('108,730')).toBeInTheDocument();
+    expect(table.getByText('4,346')).toBeInTheDocument();
     // Survival is derived from the two exact counts beside it.
-    expect(screen.getByText('4.0%')).toBeInTheDocument();
+    expect(table.getByText('4.0%')).toBeInTheDocument();
     // Stroops render as XLM through the BigInt path, never Number().
-    expect(screen.getByText('529,069')).toBeInTheDocument();
+    expect(table.getByText('529,069')).toBeInTheDocument();
+  });
+
+  it('charts created against still-live for each top creator', async () => {
+    renderWithQuery(<CreatorBoard />);
+
+    const chart = within(
+      await screen.findByRole('list', { name: /created and still live/i }),
+    );
+    expect(chart.getByText('108,730')).toBeInTheDocument();
+    expect(chart.getByText('4,346')).toBeInTheDocument();
   });
 
   it('states the covered ledger span instead of implying the whole chain', async () => {
@@ -99,9 +110,10 @@ describe('CreatorBoard', () => {
   it('renders a sponsored creator’s zero funding as a real figure', async () => {
     renderWithQuery(<CreatorBoard />);
 
-    expect(await screen.findByText('52,297')).toBeInTheDocument();
+    const table = within(await screen.findByRole('table'));
+    expect(table.getByText('52,297')).toBeInTheDocument();
     // 0 stroops must reach the table as 0 XLM, not as an em dash or a gap.
-    expect(screen.getByText('0')).toBeInTheDocument();
+    expect(table.getByText('0')).toBeInTheDocument();
     expect(screen.getByText(/CAP-33/)).toBeInTheDocument();
   });
 

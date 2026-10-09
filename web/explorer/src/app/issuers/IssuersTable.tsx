@@ -5,6 +5,7 @@ import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
+import { InlineBar } from '@/components/ContractCharts';
 import { useIssuers } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
@@ -33,6 +34,10 @@ export function IssuersTable() {
       return hay.includes(q);
     });
   }, [data, filter]);
+  const maxObservations = Math.max(
+    0,
+    ...filtered.map((r) => r.total_observation_count),
+  );
 
   // Sortable columns (site-audit S36). Default keeps the API's
   // observation-count ranking until a header is clicked.
@@ -245,8 +250,15 @@ export function IssuersTable() {
                   </span>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums">
-                    {formatCompact(row.total_observation_count)}
+                  <span className="inline-flex items-center gap-2">
+                    <InlineBar
+                      value={row.total_observation_count}
+                      max={maxObservations}
+                      label={`${row.total_observation_count.toLocaleString('en-US')} observations`}
+                    />
+                    <span className="font-mono tabular-nums">
+                      {formatCompact(row.total_observation_count)}
+                    </span>
                   </span>
                 </Td>
               </tr>

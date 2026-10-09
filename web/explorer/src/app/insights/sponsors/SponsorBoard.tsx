@@ -18,6 +18,7 @@ import {
 import { apiGet, asExample } from '@/api/client';
 import type { SponsorRow, SponsorsResp } from '@/api/relationTypes';
 import { formatCompact, truncateMiddle } from '@/lib/format';
+import { PairedBars } from '@/components/charts/Bars';
 import { ConcentrationDonut } from '../ConcentrationDonut';
 import { type Envelope, formatTimestamp } from '../../explorer-shared';
 
@@ -148,6 +149,17 @@ export function SponsorBoard() {
             label: truncateMiddle(s.account, 6, 4),
             count: s.sponsorships_started,
             href: `/insights/sponsors/${encodeURIComponent(s.account)}/`,
+          }))}
+        />
+        <PairedBars
+          ariaLabel="Sponsorships started and distinct accounts sponsored, top 10 sponsors"
+          aLabel="Started"
+          bLabel="Distinct sponsored"
+          rows={d.sponsors.slice(0, 10).map((s) => ({
+            id: s.account,
+            label: truncateMiddle(s.account, 6, 4),
+            a: s.sponsorships_started,
+            b: s.distinct_sponsored,
           }))}
         />
         <TableWrap>

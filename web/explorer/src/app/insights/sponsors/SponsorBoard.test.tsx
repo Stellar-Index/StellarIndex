@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { SponsorBoard } from './SponsorBoard';
@@ -73,13 +73,24 @@ describe('SponsorBoard', () => {
     renderWithQuery(<SponsorBoard />);
 
     expect(await screen.findByText('Sponsors')).toBeInTheDocument();
-    expect(screen.getByText('30,512')).toBeInTheDocument();
-    expect(screen.getByText('28,011')).toBeInTheDocument();
+    const table = within(screen.getByRole('table'));
+    expect(table.getByText('30,512')).toBeInTheDocument();
+    expect(table.getByText('28,011')).toBeInTheDocument();
     // The heavy re-sponsor: 20,360 started over 2,036 accounts = 10x.
-    expect(screen.getByText('20,360')).toBeInTheDocument();
-    expect(screen.getByText('2,036')).toBeInTheDocument();
-    expect(screen.getByText('10.0×')).toBeInTheDocument();
-    expect(screen.getByText('261')).toBeInTheDocument();
+    expect(table.getByText('20,360')).toBeInTheDocument();
+    expect(table.getByText('2,036')).toBeInTheDocument();
+    expect(table.getByText('10.0×')).toBeInTheDocument();
+    expect(table.getByText('261')).toBeInTheDocument();
+  });
+
+  it('charts sponsorships started against distinct accounts per sponsor', async () => {
+    renderWithQuery(<SponsorBoard />);
+
+    const chart = within(
+      await screen.findByRole('list', { name: /distinct accounts sponsored/i }),
+    );
+    expect(chart.getByText('30,512')).toBeInTheDocument();
+    expect(chart.getByText('28,011')).toBeInTheDocument();
   });
 
   it('presents the protocol-14 floor as the feature’s start, not a gap', async () => {
