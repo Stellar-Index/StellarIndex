@@ -48,7 +48,7 @@ endpoint change.
 go test ./internal/api/v1/ ./pkg/client/
 bash scripts/ci/lint-docs.sh          # route↔spec bidirectional
 go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
-npx --yes @stoplight/spectral-cli lint openapi/stellar-index.v1.yaml
+npx --yes @stoplight/spectral-cli@6.15.0 lint openapi/stellar-index.v1.yaml
 cd web/explorer && pnpm typecheck     # generated types feed the UI now
 ```
 
