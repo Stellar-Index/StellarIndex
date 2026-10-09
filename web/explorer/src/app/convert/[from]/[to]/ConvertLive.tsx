@@ -1,10 +1,10 @@
 'use client';
 
-import { useMemo } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { apiGet } from '@/api/client';
-import { convertQuery } from '@/lib/convert-params';
+import { convertQuery, type ConvertAssetIds } from '@/lib/convert-params';
 import type { components } from '@/api/types';
 import { formatPairPrice, formatRelative } from '@/lib/format';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -18,6 +18,23 @@ type PriceType = components['schemas']['Price']['price_type'];
 // to Y", "1000 X to Y" all rank as distinct queries with non-trivial
 // volume even for the same currency pair.
 const SNIPPET_AMOUNTS = [1, 10, 100, 1000, 10000];
+
+const AssetIdsContext = createContext<ConvertAssetIds>({});
+
+/** The verified Stellar assets' ticker → (code, issuer) id map, for every rate read below. */
+export function ConvertAssetIdsProvider({
+  ids,
+  children,
+}: {
+  ids: ConvertAssetIds;
+  children: ReactNode;
+}) {
+  return <AssetIdsContext value={ids}>{children}</AssetIdsContext>;
+}
+
+export function useConvertAssetIds(): ConvertAssetIds {
+  return useContext(AssetIdsContext);
+}
 
 /**
  * useConvertRate — the single live rate source for the whole
@@ -102,14 +119,14 @@ export function useConvertRate({
   initialRate: number | null;
   initialInverse: number | null;
 }): ConvertRate {
+  const { asset, quote, invert } = convertQuery(from, to, useConvertAssetIds());
   const q = useQuery<ConvertRateRead>({
-    queryKey: ['/v1/price/batch', from, to, 'for-convert'],
+    queryKey: ['/v1/price/batch', asset, quote, invert, 'for-convert'],
     // No aggregator/FX on the lean test nets → /v1/price/batch is empty and the
     // 60s poll would 404-storm; the SSR-baked initialRate (also null there) is
     // used instead. The route is nav-hidden on those nets anyway.
     enabled: CURRENT_NETWORK.pricing,
     queryFn: async () => {
-      const { asset, quote, invert } = convertQuery(from, to);
       const env = await apiGet<PriceBatchEnvelope>(
         `/v1/price/batch?asset_ids=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`,
         {},

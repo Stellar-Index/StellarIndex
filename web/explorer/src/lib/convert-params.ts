@@ -32,22 +32,95 @@ const HUB_TICKERS = [
   'PLN',
 ];
 
-/** The API asset id for a /convert ticker: XLM is `native`, the rest are fiat. */
-export function convertAssetId(ticker: string): string {
-  return ticker === 'XLM' ? 'native' : `fiat:${ticker}`;
+/** Ticker → canonical asset id for the verified Stellar assets on /convert. */
+export type ConvertAssetIds = Readonly<Record<string, string>>;
+
+/** A verified Stellar credit asset the /convert routes offer. */
+export interface ConvertAsset {
+  ticker: string;
+  /** `<code>-<issuer>` from the catalogue; prices are read by this, never by ticker. */
+  assetId: string;
+  name: string;
+  slug: string;
+}
+
+/** Caps the asset × hub pages the static export bakes. */
+export const MAX_CONVERT_ASSETS = 50;
+
+/**
+ * The verified Stellar credit assets /convert offers, in catalogue order.
+ * Only rows carrying a catalogue (code, issuer) id qualify; an asset whose
+ * upper-cased ticker collides with XLM, a fiat ticker or an earlier asset is
+ * dropped, because the URL segment is the upper-cased ticker.
+ */
+export function convertAssets(
+  rows: readonly {
+    ticker: string;
+    name?: string;
+    slug?: string;
+    asset_id?: string;
+    issuer?: string;
+  }[],
+  fiat: readonly string[],
+): ConvertAsset[] {
+  const taken = new Set(['XLM', ...fiat.map((t) => t.toUpperCase())]);
+  const out: ConvertAsset[] = [];
+  for (const row of rows) {
+    if (out.length >= MAX_CONVERT_ASSETS) break;
+    if (!row.asset_id || !row.issuer || !row.ticker) continue;
+    const key = row.ticker.toUpperCase();
+    if (taken.has(key)) continue;
+    taken.add(key);
+    out.push({
+      ticker: row.ticker,
+      assetId: row.asset_id,
+      name: row.name ?? row.ticker,
+      slug: row.slug ?? row.asset_id,
+    });
+  }
+  return out;
+}
+
+/** The API asset id for a /convert ticker: XLM is `native`, a verified asset its catalogue id, the rest fiat. */
+export function convertAssetId(
+  ticker: string,
+  ids: ConvertAssetIds = {},
+): string {
+  if (ticker === 'XLM') return 'native';
+  return Object.hasOwn(ids, ticker) ? ids[ticker] : `fiat:${ticker}`;
 }
 
 /**
  * The priced read behind a {from}/{to} rate. Fiat is only priced as the
- * quote, so fiat → XLM reads XLM in {from} and the caller takes 1/price.
+ * quote, so fiat → XLM or a Stellar asset reads that asset in {from} and the
+ * caller takes 1/price.
  */
 export function convertQuery(
   from: string,
   to: string,
+  ids: ConvertAssetIds = {},
 ): { asset: string; quote: string; invert: boolean } {
-  return to === 'XLM'
-    ? { asset: 'native', quote: `fiat:${from}`, invert: true }
-    : { asset: convertAssetId(from), quote: `fiat:${to}`, invert: false };
+  const asset = convertAssetId(from, ids);
+  const quote = convertAssetId(to, ids);
+  return asset.startsWith('fiat:') && !quote.startsWith('fiat:')
+    ? { asset: quote, quote: asset, invert: true }
+    : { asset, quote, invert: false };
+}
+
+/**
+ * One direction only: every verified asset → every served hub. The `from`
+ * segment is the upper-cased ticker, the form the /convert Function
+ * canonicalises to.
+ */
+export function buildAssetConvertParams(
+  assets: readonly ConvertAsset[],
+  tickers: readonly string[],
+): { from: string; to: string }[] {
+  const served = new Set(tickers);
+  const hubs = HUB_TICKERS.filter((t) => served.has(t));
+  return assets.flatMap((a) =>
+    hubs.map((to) => ({ from: a.ticker.toUpperCase(), to })),
+  );
 }
 
 /**

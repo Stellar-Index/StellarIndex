@@ -16,13 +16,18 @@ vi.mock('./[from]/[to]/ConvertChart', () => ({
 import { apiGet } from '@/api/client';
 import { ConvertLanding } from './ConvertLanding';
 
+const USDC_ID = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'; // gitleaks:allow — public Circle issuer
+const ASSETS = [
+  { ticker: 'USDC', assetId: USDC_ID, name: 'USD Coin', slug: 'usdc' },
+];
+
 function renderLanding() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <ConvertLanding tickers={['USD', 'EUR']} />
+      <ConvertLanding tickers={['USD', 'EUR']} assets={ASSETS} />
     </QueryClientProvider>,
   );
 }
@@ -63,9 +68,39 @@ describe('ConvertLanding', () => {
     window.history.replaceState(null, '', '/convert/');
   });
 
+  it('prices XLM → a verified asset by its (code, issuer) id', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [{ asset_id: 'native', price: '0.5' }],
+    });
+    window.history.replaceState(null, '', '/convert/?from=XLM&to=USDC');
+    renderLanding();
+    expect(screen.getByLabelText('From')).toHaveValue('XLM');
+    expect(screen.getByLabelText('To')).toHaveValue('USDC');
+    expect(
+      screen.queryByText("That pair isn't available to convert"),
+    ).toBeNull();
+    expect((await screen.findAllByText(/0\.500000/)).length).toBeGreaterThan(0);
+    expect(vi.mocked(apiGet)).toHaveBeenCalledWith(
+      `/v1/price/batch?asset_ids=native&quote=${encodeURIComponent(USDC_ID)}`,
+      {},
+    );
+    window.history.replaceState(null, '', '/convert/');
+  });
+
+  it('links a verified asset → hub page under its upper-cased ticker', () => {
+    vi.mocked(apiGet).mockResolvedValue({ data: [] });
+    renderLanding();
+    fireEvent.change(screen.getByLabelText('From'), {
+      target: { value: 'USDC' },
+    });
+    expect(
+      screen.getByRole('link', { name: 'USDC → USD page' }),
+    ).toHaveAttribute('href', '/convert/USDC/USD');
+  });
+
   it('says so when the requested pair is not offered', () => {
     vi.mocked(apiGet).mockResolvedValue({ data: [] });
-    window.history.replaceState(null, '', '/convert/?from=XLM&to=USDC');
+    window.history.replaceState(null, '', '/convert/?from=XLM&to=SCAM');
     renderLanding();
     expect(screen.getByLabelText('From')).toHaveValue('XLM');
     expect(screen.getByLabelText('To')).toHaveValue('USD');

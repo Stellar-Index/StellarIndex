@@ -11,7 +11,11 @@ import { loadIncidents } from '@/lib/incidents';
 import { hrefFor } from '@/lib/hrefFor';
 import { fiatSlugFor } from '@/lib/fiat-slugs';
 import { PROTOCOLS } from './protocols/registry';
-import { buildConvertParams } from '@/lib/convert-params';
+import {
+  buildAssetConvertParams,
+  buildConvertParams,
+  convertAssets,
+} from '@/lib/convert-params';
 import { CEX_INFO } from './exchanges/registry';
 import { DEX_INFO } from './dexes/registry';
 
@@ -192,18 +196,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const [
     assetSlugs,
     issuerKeys,
-    currencyTickers,
+    verifiedRows,
     marketPairs,
     sources,
     lendingPools,
   ] = await Promise.all([
     fetchCoinSlugs(),
     fetchIssuerKeys(),
-    fetchCurrencyTickers(),
+    fetchVerifiedRows(),
     fetchMarketPairs(),
     fetchSources(),
     fetchLendingPools(),
   ]);
+  const currencyTickers = verifiedRows
+    .filter((row) => row.class === 'fiat')
+    .map((row) => row.ticker);
   // Numeric-only asset codes ("9", "818") are legal on Stellar but
   // read as junk results in a search index — keep the pages, drop
   // them from the sitemap (they also render noindex).
@@ -235,9 +242,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // hub-and-spoke matrix the route builds (shared buildConvertParams over the
   // same fiat ticker set, so the sitemap can't list a pair that 404s). These
   // were orphaned from the sitemap despite being indexed.
-  const convertPages: MetadataRoute.Sitemap = buildConvertParams(
-    currencyTickers,
-  ).map(({ from, to }) => ({
+  const convertPages: MetadataRoute.Sitemap = [
+    ...buildConvertParams(currencyTickers),
+    ...buildAssetConvertParams(
+      convertAssets(verifiedRows, currencyTickers),
+      currencyTickers,
+    ),
+  ].map(({ from, to }) => ({
     url: siteURL(`/convert/${from}/${to}`),
     lastModified: now,
     changeFrequency: 'weekly',
@@ -349,19 +360,17 @@ async function fetchMarketPairs(): Promise<string[]> {
   return rows.map((m) => `${m.base}~${m.quote}`);
 }
 
-async function fetchCurrencyTickers(): Promise<string[]> {
-  // /v1/assets/verified returns the full
-  // verified-currency catalogue with `class` ∈ {crypto, stablecoin,
-  // fiat}; filter to fiat client-side so the sitemap only includes
-  // the fiat tickers (which is what the per-currency converter
-  // pages cover).
-  const rows = requireRows(
-    await buildFetchData<Array<{ ticker: string; class: string }>>(
-      '/v1/assets/verified',
-    ),
+type VerifiedRow = Parameters<typeof convertAssets>[0][number] & {
+  class: string;
+};
+
+// The full verified catalogue: its fiat rows drive the currency pages and
+// the fiat convert matrix, its Stellar credit rows the asset convert pages.
+async function fetchVerifiedRows(): Promise<VerifiedRow[]> {
+  return requireRows(
+    await buildFetchData<VerifiedRow[]>('/v1/assets/verified'),
     '/v1/assets/verified listing for sitemap',
   );
-  return rows.filter((row) => row.class === 'fiat').map((row) => row.ticker);
 }
 
 async function fetchIssuerKeys(): Promise<string[]> {
