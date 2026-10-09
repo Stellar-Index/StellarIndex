@@ -45,7 +45,7 @@ type ProjectionDirtyWindow struct {
 //   - `projected-rebuild -write` never touches the live cursor, and its
 //     recorded range may legally sit AT it (`-to` defaults to the live
 //     cursor) or ABOVE it (`-allow-live-overlap` bypasses the one-writer
-//     guard entirely — exercised on r1).
+//     guard entirely).
 //   - `ch-rebuild -record-dirty-window`, driven by
 //     scripts/ops/ch-rebuild-projected.sh when a clean-slate window was
 //     DELETEd and its re-derive did not complete: the range is not merely

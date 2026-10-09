@@ -548,7 +548,7 @@ func (d *drainDeadline) get() time.Time {
 // (32767 parameters); each row has 12 placeholders, so 200 rows =
 // 2400 placeholders — well under. Production throughput is roughly
 // linear in this until either PG's planning cost or the events
-// channel runs dry; 200 is the operating point validated on r1.
+// channel runs dry; 200 is the validated operating point.
 const tradeBatchSize = 200
 
 // tradeBatchFlushInterval is the upper bound on staleness for events

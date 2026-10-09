@@ -14,7 +14,7 @@ import (
 // (extractInvokeContractCalls): same per-operation granularity, same
 // "decoders stay pure — the dispatcher supplies inputs" contract.
 //
-// VALUE-CHANGED, not merely written — ground-truthed on r1 ledger
+// VALUE-CHANGED, not merely written — ground-truthed on pubnet ledger
 // 62056824: the RedStone adapter's write_prices REWRITES
 // every REQUESTED feed's entry, byte-identical for feeds its freshness
 // verifier rejected (an empty-batch push still rewrote its one requested
