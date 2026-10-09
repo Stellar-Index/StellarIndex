@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { LedgersTable } from './LedgersTable';
 import { ThroughputPanel } from '@/components/NetworkInsight';
 
-import { Container } from '@/components/ui';
+import { Breadcrumbs, Container } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/ledgers' },
   title: 'Ledgers — recent Stellar ledgers',
@@ -24,6 +24,9 @@ export default function LedgersPage() {
   return (
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Ledgers' }]}
+        />
         <h1 className="text-3xl font-semibold tracking-tight">Ledgers</h1>
         <p className="text-ink-body max-w-3xl text-sm">
           The most recent ledger closes on the Stellar network. Each row links

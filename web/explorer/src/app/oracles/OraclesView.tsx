@@ -18,7 +18,7 @@ import { sourceToneClass } from '@/lib/pillTone';
 import type { Source as SourceRow } from '@/api/hooks';
 import type { components } from '@/api/types';
 
-import { Container, Th, Td } from '@/components/ui';
+import { Breadcrumbs, Container, Th, Td } from '@/components/ui';
 type OracleStream = components['schemas']['OracleReading'];
 
 // Oracle capture-totality: /v1/oracle/streams omits `raw:<symbol>` rows
@@ -104,6 +104,9 @@ export function OraclesView() {
   return (
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Oracles' }]}
+        />
         <h1 className="text-3xl font-semibold tracking-tight">Oracles</h1>
         <p className="text-ink-body max-w-3xl text-sm">
           Every on-chain Stellar oracle we ingest and cross-reference. Oracles

@@ -56,6 +56,7 @@ export function ContractsView() {
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Contracts' }]}
         eyebrow="Soroban"
         title="Contracts"
         description="Every Soroban contract, two ways: the most active over the last 30 days (ranked by emitted events), and the attribution registry — the contracts each protocol's factory owns. Click any contract for its hub: events, decoded code, and cross-contract interaction map."

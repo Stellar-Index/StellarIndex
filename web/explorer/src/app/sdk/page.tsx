@@ -37,6 +37,7 @@ func main() {
     fmt.Printf("XLM/USD = %s (%s, observed %s)\\n",
         p.Data.Price, p.Data.PriceType, p.Data.ObservedAt)
 }`;
+import { Breadcrumbs } from '@/components/ui';
 
 const PATTERNS: { title: string; blurb: string; code: string }[] = [
   {
@@ -146,6 +147,9 @@ export default function SDKPage() {
   return (
     <div className="mx-auto w-full max-w-4xl px-6 py-12 sm:py-16">
       <header className="mb-10 space-y-3">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Go SDK' }]}
+        />
         <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
           Go SDK
         </p>

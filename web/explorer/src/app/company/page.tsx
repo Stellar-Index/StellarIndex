@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Mail } from 'lucide-react';
 import { GithubIcon } from '@/components/GithubIcon';
+import { Breadcrumbs } from '@/components/ui';
 
 export const metadata: Metadata = {
   title: 'Company — who we are',
@@ -14,6 +15,9 @@ export default function CompanyPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-12 px-6 py-12">
       <header className="space-y-3">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Company' }]}
+        />
         <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
           Company
         </p>

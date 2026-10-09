@@ -3,6 +3,7 @@ import Link from 'next/link';
 
 import { CopyableSnippet } from './CopyableSnippet';
 import { CURRENT_NETWORK } from '@/lib/networks';
+import { Breadcrumbs } from '@/components/ui';
 
 export const metadata: Metadata = {
   title: 'Widgets — embeddable price cards',
@@ -50,6 +51,9 @@ export default function WidgetsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-12 px-6 py-10">
       <header className="space-y-3">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Widgets' }]}
+        />
         <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
           Embed
         </p>

@@ -1,7 +1,14 @@
 import type { Metadata } from 'next';
 import { Check, Minus } from 'lucide-react';
 
-import { Badge, ButtonLink, Card, CardBody, Container } from '@/components/ui';
+import {
+  Badge,
+  Breadcrumbs,
+  ButtonLink,
+  Card,
+  CardBody,
+  Container,
+} from '@/components/ui';
 
 export const metadata: Metadata = {
   title: 'Pricing — free access, quotas, SLAs',
@@ -67,6 +74,9 @@ const TIERS: Tier[] = [
 export default function PricingPage() {
   return (
     <Container className="space-y-12 py-10 sm:py-14">
+      <Breadcrumbs
+        items={[{ label: 'Home', href: '/' }, { label: 'Pricing' }]}
+      />
       <header className="mx-auto max-w-2xl space-y-4 text-center">
         <p className="text-brand-600 text-xs font-medium tracking-wider uppercase">
           Plans

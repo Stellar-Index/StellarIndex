@@ -7,7 +7,7 @@ import { MevFeed } from './MevFeed';
 
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
-import { Container } from '@/components/ui';
+import { Breadcrumbs, Container } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'MEV — on-chain MEV detector',
   description:
@@ -83,6 +83,7 @@ export default function MevPage() {
   return (
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
+        <Breadcrumbs items={[{ label: 'Home', href: '/' }, { label: 'MEV' }]} />
         <h1 className="text-3xl font-semibold tracking-tight">MEV</h1>
         <p className="text-ink-body max-w-3xl text-sm">
           On-chain MEV detector. Five patterns are detected live: atomic

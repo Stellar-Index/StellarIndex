@@ -7,7 +7,7 @@ import { DivergenceFeed } from './DivergenceFeed';
 
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
-import { Container } from '@/components/ui';
+import { Breadcrumbs, Container } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/divergences' },
   title: 'Divergences — cross-reference monitor',
@@ -123,6 +123,9 @@ export default function DivergencesPage() {
   return (
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Divergences' }]}
+        />
         <h1 className="text-3xl font-semibold tracking-tight">Divergences</h1>
         <p className="text-ink-body max-w-3xl text-sm">
           Continuously cross-checks the canonical Stellar Index VWAP against

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Container } from '@/components/ui/Page';
+import { Breadcrumbs, Container } from '@/components/ui/Page';
 
 // States only what the code and ADRs promise (ADR-0049: anonymous reads,
 // free self-service accounts, staff-set partner limits, NO payment surface),
@@ -30,6 +30,9 @@ export default function TermsPage() {
   return (
     <Container className="space-y-10 py-10 [&>*]:max-w-4xl">
       <header className="space-y-3">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Terms of Service' }]}
+        />
         <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
           Legal
         </p>

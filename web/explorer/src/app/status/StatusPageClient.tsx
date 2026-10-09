@@ -9,7 +9,13 @@ import {
   XCircle,
 } from 'lucide-react';
 
-import { Badge, Card, Container, type BadgeTone } from '@/components/ui';
+import {
+  Badge,
+  Breadcrumbs,
+  Card,
+  Container,
+  type BadgeTone,
+} from '@/components/ui';
 import { isSafeHref } from '@/lib/markdown';
 import { hrefFor } from '@/lib/hrefFor';
 import type { components, paths } from '@/api/types';
@@ -823,6 +829,9 @@ function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Status' }]}
+        />
         <div className="text-brand-600 mb-1.5 text-xs font-medium tracking-wider uppercase">
           System status
         </div>

@@ -72,6 +72,7 @@ function OverviewBody({ me }: { me: MeResponse }) {
     <Container>
       <Section className="space-y-8">
         <PageHeader
+          breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Dashboard' }]}
           eyebrow="Account"
           title={`Welcome back, ${firstName(me)}`}
           description="Your account at a glance — keys, plan, and where to go next."

@@ -3,6 +3,7 @@ import Link from 'next/link';
 
 import { loadReleases, versionSlug, type Release } from '@/lib/changelog';
 import { Inline } from '@/lib/markdown';
+import { Breadcrumbs } from '@/components/ui';
 
 // Cap the rendered changelog to the most recent N releases. The full
 // history (242+ sections) inlined to a ~4.4 MB page;
@@ -21,6 +22,9 @@ export default function ChangelogPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
       <header className="space-y-3">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Changelog' }]}
+        />
         <div className="flex items-baseline justify-between">
           <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
             Changelog

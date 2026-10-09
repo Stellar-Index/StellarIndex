@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Container } from '@/components/ui/Page';
+import { Breadcrumbs, Container } from '@/components/ui/Page';
 
 export const metadata: Metadata = {
   title: 'Service level — Stellar Index API targets and error budget',
@@ -13,6 +13,9 @@ export default function SLAPage() {
   return (
     <Container className="space-y-10 py-10 [&>*]:max-w-4xl">
       <header className="space-y-3">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Service level' }]}
+        />
         <h1 className="text-3xl font-semibold tracking-tight">Service level</h1>
         <p className="text-ink-body text-base">
           Four targets bind the Stellar Index API. Each is measured continuously

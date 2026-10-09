@@ -48,6 +48,11 @@ function SettingsBody({ me }: { me: MeResponse }) {
     <Container>
       <Section className="max-w-3xl space-y-6">
         <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Dashboard', href: '/dashboard' },
+            { label: 'Settings' },
+          ]}
           eyebrow="Account"
           title="Settings"
           description="Your profile, plan, and account controls."

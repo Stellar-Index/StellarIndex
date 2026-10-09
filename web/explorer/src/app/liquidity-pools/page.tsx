@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { Container } from '@/components/ui';
+import { Breadcrumbs, Container } from '@/components/ui';
 
 import { NativePoolsPanel } from './NativePoolsPanel';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -26,6 +26,12 @@ export default function LiquidityPoolsPage() {
           (FEC A1-5: frame wide, copy narrow — the /pricing pattern). */}
       <div className="max-w-3xl space-y-8">
         <header className="space-y-3">
+          <Breadcrumbs
+            items={[
+              { label: 'Home', href: '/' },
+              { label: 'Native liquidity pools' },
+            ]}
+          />
           <h1 className="text-3xl font-semibold tracking-tight">
             Native liquidity pools
           </h1>

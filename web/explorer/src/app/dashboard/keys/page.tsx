@@ -120,6 +120,11 @@ function KeysBody({ me }: { me: MeResponse }) {
     <Container>
       <Section className="space-y-6">
         <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Dashboard', href: '/dashboard' },
+            { label: 'API keys' },
+          ]}
           eyebrow="Credentials"
           title="API keys"
           description="Mint and manage the keys your apps use to authenticate against api.stellarindex.io."
