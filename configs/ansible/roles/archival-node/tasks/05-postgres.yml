@@ -264,6 +264,16 @@
   become_user: postgres
   no_log: true
 
+- name: Create stellarindex_api Postgres role (read-mostly API role, migration 0213)
+  when: postgres_pass_stellarindex_api | default('') | length > 0
+  community.postgresql.postgresql_user:
+    name: "{{ postgres_user_stellarindex_api }}"
+    password: "{{ postgres_pass_stellarindex_api }}"
+    encrypted: true
+    state: present
+  become_user: postgres
+  no_log: true
+
 - name: Create stellarindex Postgres database
   community.postgresql.postgresql_db:
     name: "{{ postgres_db_stellarindex }}"
