@@ -20,6 +20,10 @@ type ReconcileEventStreamer struct {
 	// NeedStateWriteKeys resolves StateWriteKeys from ledger_entry_changes by batched point lookups
 	// (state_write_keys.go); same opt-in rationale as NeedOpArgs.
 	NeedStateWriteKeys bool
+	// SymbolTopic0Only drops the ScvString arm of the topic[0] prefilter. Set it only for a decoder
+	// that rejects an ScvString topic[0], and never with a factory walk (phoenix's creation topic is a
+	// String).
+	SymbolTopic0Only bool
 }
 
 // reconcileStreamWindow bounds each query to at most one partition of parts (250k divides the 1M
@@ -33,9 +37,17 @@ const reconcileStreamWindow = 250_000
 // op_index, event_index), so they stay ADJACENT and the reconcile dedups by identity in O(1) memory
 // (ReDeriveOutputCountsByKindFromEvents).
 func (s ReconcileEventStreamer) StreamContractEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms []string, fn func(events.Event) error) error {
+	where := s.filterWhere(contractIDs, topic0Syms)
 	return forEachLedgerWindow(from, to, reconcileStreamWindow, func(lo, hi uint32) error {
-		return StreamContractEventsFiltered(ctx, s.Addr, lo, hi, contractIDs, topic0Syms, nil, false, s.NeedOpArgs, s.NeedStateWriteKeys, fn)
+		return streamContractEventsWhere(ctx, s.Addr, lo, hi, contractIDs, where, false, s.NeedOpArgs, s.NeedStateWriteKeys, fn)
 	})
+}
+
+func (s ReconcileEventStreamer) filterWhere(contractIDs, topic0Syms []string) string {
+	if s.SymbolTopic0Only && len(topic0Syms) > 0 {
+		return contractEventsWhere(contractIDs, symbolTopic0Predicate(topic0Syms), nil)
+	}
+	return contractEventsFilterWhere(contractIDs, topic0Syms, nil)
 }
 
 // ContiguousWatermark returns the highest ledger L such that stellar.ledgers holds every ledger in

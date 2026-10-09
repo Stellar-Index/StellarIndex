@@ -602,7 +602,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		case deferDirty:
 			// Detail is written by the window disposition below.
 		case srW.Ledger >= projFrom:
-			streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs, NeedStateWriteKeys: src.needsStateWriteKeys}
+			streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs, NeedStateWriteKeys: src.needsStateWriteKeys, SymbolTopic0Only: src.symbolTopic0}
 			scopes, servedMins, servedFrom, runFrom, serr := projectionScopes(ctx, store, src, genesis, projFrom, srW.Ledger)
 			if serr != nil {
 				return fmt.Errorf("%s: served floor: %w", src.name, serr)

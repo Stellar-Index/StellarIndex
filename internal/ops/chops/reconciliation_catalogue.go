@@ -87,9 +87,12 @@ type reconSource struct {
 	// contractIDs with no topic exclusion (as the projector does).
 	firehoseTopics bool
 	topic0Syms     []string
-	targets        []reconTarget
-	census         bool   // sdex: expected = decoder re-derive over the lake's SDEX ops
-	genesis        uint32 // first-possible-data ledger; mirrors DefaultGapDetectorTargets (WASM-audit sourced)
+	// symbolTopic0 marks a decoder that matches topic[0] only as an ScvSymbol,
+	// so the lake read skips the ScvString arm and its wide topics_xdr read.
+	symbolTopic0 bool
+	targets      []reconTarget
+	census       bool   // sdex: expected = decoder re-derive over the lake's SDEX ops
+	genesis      uint32 // first-possible-data ledger; mirrors DefaultGapDetectorTargets (WASM-audit sourced)
 
 	// servedWindowReason, when non-empty, lets the projection reconcile floor
 	// at each target's served MIN(ledger) instead of genesis: the served tier
@@ -1039,7 +1042,8 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 				sep41supply.SymbolBurn,
 				sep41supply.SymbolClawback,
 			},
-			targets: []reconTarget{{"sep41_supply_events", filter, []string{sep41supply.EventKind}}},
+			symbolTopic0: true,
+			targets:      []reconTarget{{"sep41_supply_events", filter, []string{sep41supply.EventKind}}},
 		},
 	}, nil
 }
