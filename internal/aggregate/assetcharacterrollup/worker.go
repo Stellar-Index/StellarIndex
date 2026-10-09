@@ -9,8 +9,8 @@
 // canonical assets) on a slow cadence and upserts one row per asset into
 // the rollup table, so the detail does a keyed-on-PK lookup and the listing
 // LEFT JOINs a small keyed table instead of running the ~4s per-request
-// trades roll (measured 4.09s on the USDC detail, tripping the 4s
-// per-request timeout and returning null). Runs in the aggregator binary
+// trades roll (which trips the 4s per-request timeout on busy assets and
+// returns null). Runs in the aggregator binary
 // alongside the asset-volume + protocol-events + change-summary workers.
 //
 // See migrations/0149_create_asset_volume_character_rollup.up.sql for the

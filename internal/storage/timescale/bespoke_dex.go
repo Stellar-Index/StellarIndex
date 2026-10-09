@@ -149,8 +149,8 @@ func dexActivitySeriesQuery(windowDays int) string {
 // dexWindowKPIQuery returns (usd_volume, trades, active_pairs) over the
 // window. The >1d form reads the daily CAGG; the pair count is a hash-agg
 // subquery, NOT count(DISTINCT (base,quote)) — the row-comparison sort of
-// the latter measured 6.0s on sdex 90d vs 0.67s for this shape (99,562
-// pairs). The 24h form reads source_volume_1h, which has no pair
+// the latter is about 9x slower than this shape on a 90d sdex window.
+// The 24h form reads source_volume_1h, which has no pair
 // dimension — the caller fills active-pairs from the raw KPI query
 // (dexRawWindowOK is always true at 24h); it returns the unpriced XLM
 // (dexXLMLegUnvalued) in place of the pair count.
@@ -230,8 +230,8 @@ func dexPairBreakdownQuery(windowDays int) string {
 // descending, then bucket. The >1d form joins the daily CAGG directly
 // against the top-5 CTE — CAGG rows are already unique per (source, pair,
 // bucket) (materialized_only=true), and re-aggregating them through a
-// grouped CTE first measured 19.8s on sdex 90d vs 0.87s for this shape
-// (364 rows). The 24h form buckets raw trades hourly.
+// grouped CTE first is about 20x slower than this shape on a 90d sdex
+// window. The 24h form buckets raw trades hourly.
 func dexTopPairsSeriesQuery(windowDays int) string {
 	if windowDays == 1 {
 		return `
