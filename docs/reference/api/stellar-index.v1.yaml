@@ -20386,6 +20386,8 @@ components:
         class:            { type: string, enum: [crypto, stablecoin, fiat], description: "Asset taxonomy — drives listing-side rendering + filtering." }
         circulating_supply: { type: string, description: "Natural-unit amount in circulation. For fiat: M2 (broad money). Empty for crypto/stablecoin." }
         supply_decimals:  { type: integer, description: "Exponent mapping circulating_supply to display value. 0 for fiat." }
+        asset_id:         { type: string, description: "Canonical Stellar asset id: \"native\" for XLM, \"<code>-<issuer>\" for a credit asset. Key on this, not on ticker. Omitted for entries with no Stellar issuance (fiat)." }
+        issuer:           { type: string, description: "Issuing account (G-strkey) of a credit asset. Omitted for native XLM and for entries with no Stellar issuance." }
       required: [ticker, slug, name, class]
 
     VerifiedCurrencyListEnvelope:

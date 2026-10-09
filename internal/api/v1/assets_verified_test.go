@@ -195,6 +195,9 @@ func TestAssetsVerified_ListsCatalogue(t *testing.T) {
 	if usdc.Ticker != "USDC" || usdc.Name != "USD Coin" {
 		t.Errorf("usdc entry: %+v", usdc)
 	}
+	if usdc.AssetID != "USDC-"+testUSDCIssuer || usdc.Issuer != testUSDCIssuer {
+		t.Errorf("usdc identity: asset_id=%q issuer=%q", usdc.AssetID, usdc.Issuer)
+	}
 
 	xlm, ok := bySlug["xlm"]
 	if !ok {
@@ -202,6 +205,23 @@ func TestAssetsVerified_ListsCatalogue(t *testing.T) {
 	}
 	if xlm.Ticker != "XLM" {
 		t.Errorf("xlm ticker = %q", xlm.Ticker)
+	}
+	if xlm.AssetID != "native" || xlm.Issuer != "" {
+		t.Errorf("xlm identity: asset_id=%q issuer=%q, want native and no issuer", xlm.AssetID, xlm.Issuer)
+	}
+
+	// Every Stellar-issued row serves the seed's asset_id, derived from
+	// its (code, issuer); rows without a Stellar issuance serve none.
+	cat := newTestCatalogue(t)
+	for _, e := range env.Data {
+		vc, _ := cat.LookupBySlug(e.Slug)
+		want := ""
+		if se := vc.StellarEntry(); se != nil {
+			want = se.AssetID
+		}
+		if e.AssetID != want {
+			t.Errorf("%s: asset_id=%q, want %q", e.Slug, e.AssetID, want)
+		}
 	}
 }
 

@@ -11460,6 +11460,10 @@ export interface components {
             circulating_supply?: string;
             /** @description Exponent mapping circulating_supply to display value. 0 for fiat. */
             supply_decimals?: number;
+            /** @description Canonical Stellar asset id: "native" for XLM, "<code>-<issuer>" for a credit asset. Key on this, not on ticker. Omitted for entries with no Stellar issuance (fiat). */
+            asset_id?: string;
+            /** @description Issuing account (G-strkey) of a credit asset. Omitted for native XLM and for entries with no Stellar issuance. */
+            issuer?: string;
         };
         VerifiedCurrencyListEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["VerifiedCurrencyListItem"][];
