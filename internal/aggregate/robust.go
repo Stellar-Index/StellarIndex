@@ -159,8 +159,8 @@ func robustCentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
 //	[ centre² / (centre + K·scale) , centre + K·scale ]
 //
 // — geometrically symmetric (lo·hi = centre²), always strictly
-// positive, and IDENTICAL to the old band above the centre. Below it
-// the new edge is never lower than the old one (1/(1+r) >= 1 − r), so
+// positive, and IDENTICAL to the additive band above the centre. Below it
+// the mirrored edge is never lower than the additive one (1/(1+r) >= 1 − r), so
 // this only ever tightens the downward side: nothing the additive band
 // rejects is accepted. Exact *big.Rat throughout (ADR-0003) — the
 // mirror is one multiply and one divide, so no logarithm (and no
