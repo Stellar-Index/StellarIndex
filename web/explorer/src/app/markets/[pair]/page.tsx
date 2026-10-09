@@ -30,6 +30,7 @@ import { PairChart } from './PairChart';
 import { PairPathView } from './PairPathView';
 import { SourceBreakdown } from './SourceBreakdown';
 import { SourcePriceSpread } from './SourcePriceSpread';
+import { TradeScatter } from './TradeScatter';
 import { shortAssetText } from '@/lib/asset-label';
 import { assetHref, assetHrefFor } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -518,6 +519,7 @@ export default async function PairPage({ params }: { params: Params }) {
           title="Recent trades"
           subtitle={`${history.length} most recent across all sources`}
         >
+          <TradeScatter trades={history} />
           <div className="overflow-x-auto">
             <table className="divide-line min-w-full divide-y text-sm">
               <thead>
