@@ -186,22 +186,12 @@ func countReceived(source string) {
 // [SinkMode] godoc for why the dispatcher's events-goroutine
 // skips Soroban-derived events once the projector is sole writer.
 //
-// PersistEvents launches [PersistWorkers] concurrent drain
-// goroutines, each maintaining its own trade-batch buffer + PG
-// connection. Measured on live r1: a single-goroutine
-// drain capped throughput at ~5 trades/sec (single PG roundtrip in
-// flight at any time) even with batched INSERTs; the indexer's
-// ProcessLedger goroutine was blocked on `events <- ev` waiting for
-// drain progress, so the cursor advanced ~1 ledger/min vs the ~10/min
-// network rate.
-//
-// Go's channel semantics let multiple receivers safely share one
-// channel — each receive consumes one element atomically. The
-// PostgreSQL pool (PoolMaxOpenConns = 25) carries the concurrent
-// writes; each goroutine claims a connection per flush, releases
-// it after, so a worker pool of [PersistWorkers] fits comfortably
-// under the pool ceiling alongside the aggregator + api binaries on
-// the same host.
+// PersistEvents launches [PersistWorkers] concurrent drain goroutines,
+// each with its own trade-batch buffer, sharing `in`. One goroutine keeps a
+// single PG round trip in flight and backs ProcessLedger up on `events <-
+// ev` far below the network's ledger rate. Each worker claims a pool
+// connection per flush, so [PersistWorkers] must stay well under
+// PoolMaxOpenConns alongside the other binaries on the host.
 //
 // Per-event ordering within a source is NOT preserved across workers
 // (a later event can flush before an earlier one). The trades
