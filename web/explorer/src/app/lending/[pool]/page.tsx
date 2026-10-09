@@ -4,7 +4,7 @@ import { Suspense } from 'react';
 import { ExternalLink } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
-import { Breadcrumbs, Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 import { buildFetchData, failBuild } from '@/lib/buildFetch';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, shellMetadata } from '@/lib/seo';
 import type { paths } from '@/api/types';
@@ -218,33 +218,37 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
     <Container className="space-y-6 py-8">
       {/* FEC A1-6: BreadcrumbList JSON-LD derives from this Crumb[] inside
           Breadcrumbs — no hand-rolled LD. */}
-      <Breadcrumbs
-        items={[
+      <PageHeader
+        breadcrumbs={[
           { label: 'Home', href: '/' },
           { label: 'Lending', href: '/lending' },
           { label: poolName },
         ]}
+        title={
+          <span className="font-mono break-all">
+            {pool.slice(0, 8)}…{pool.slice(-8)}
+          </span>
+        }
+        actions={
+          <>
+            <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
+              Blend
+            </span>
+            {label && (
+              <span className="bg-brand-50 text-brand-700 rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
+                {label.name}
+              </span>
+            )}
+            {label?.deployedAt && (
+              <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-[11px]">
+                deployed {label.deployedAt}
+              </span>
+            )}
+          </>
+        }
       />
 
-      <header className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
-            Blend
-          </span>
-          {label && (
-            <span className="bg-brand-50 text-brand-700 rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
-              {label.name}
-            </span>
-          )}
-          {label?.deployedAt && (
-            <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-[11px]">
-              deployed {label.deployedAt}
-            </span>
-          )}
-        </div>
-        <h1 className="font-mono text-2xl tracking-tight break-all">
-          {pool.slice(0, 8)}…{pool.slice(-8)}
-        </h1>
+      <div className="space-y-2">
         <p className="text-ink-muted font-mono text-xs break-all">{pool}</p>
         {label?.initiator && (
           <p className="text-ink-muted font-mono text-[11px]">
@@ -281,7 +285,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
             <ExternalLink className="h-3 w-3" />
           </a>
         </div>
-      </header>
+      </div>
 
       {label?.note && (
         <Panel headingLevel={2} title="About this contract">

@@ -19,7 +19,7 @@ import {
   ogImageFor,
   shellMetadata,
 } from '@/lib/seo';
-import { Container, Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 import { EntityNotFoundShell } from '@/components/EntityNotFoundShell';
 import { Sparkline } from '@/components/primitives';
 import { Suspense } from 'react';
@@ -392,25 +392,25 @@ export default async function PairPage({ params }: { params: Params }) {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(datasetLD) }}
       />
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Markets', href: '/markets' },
-            { label: `${baseLabel} / ${quoteLabel}` },
-          ]}
-        />
-        <div className="flex flex-wrap items-baseline gap-3">
-          <h1 className="text-3xl font-semibold tracking-tight">
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Markets', href: '/markets' },
+          { label: `${baseLabel} / ${quoteLabel}` },
+        ]}
+        title={
+          <>
             <AssetBadge canonical={base} /> / <AssetBadge canonical={quote} />
-          </h1>
-          {price?.price_type && (
+          </>
+        }
+        actions={
+          price?.price_type && (
             <span className="bg-surface-subtle text-ink-body rounded-sm px-2 py-0.5 font-mono text-xs tracking-wider uppercase">
               {price.price_type}
             </span>
-          )}
-        </div>
-      </header>
+          )
+        }
+      />
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Panel
