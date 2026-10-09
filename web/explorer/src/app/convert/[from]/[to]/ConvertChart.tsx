@@ -9,7 +9,7 @@ import { Badge, Segmented } from '@/components/ui';
 import { changePct, compareDecimalStrings, formatPrice } from '@/lib/format';
 import { API_BASE_URL, asExample, timeoutSignal } from '@/api/client';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { convertAssetId } from '@/lib/convert-params';
+import { convertQuery } from '@/lib/convert-params';
 
 const LineChart = dynamic(
   () => import('@/components/charts/LineChart').then((m) => m.LineChart),
@@ -51,6 +51,7 @@ export function rateRange(rates: readonly string[]) {
 export function ConvertChart({ from, to }: { from: string; to: string }) {
   const [tf, setTf] = useState<TF>('1mo');
   const spec = TIMEFRAMES.find((t) => t.key === tf) ?? TIMEFRAMES[1];
+  const { asset, quote, invert } = convertQuery(from, to);
 
   const query = useQuery<{ time: number; value: number; raw: string }[], Error>(
     {
@@ -58,17 +59,23 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
       // {from}→fiat:{to} OHLC is empty on the lean test nets (no FX) — gate.
       enabled: CURRENT_NETWORK.pricing,
       queryFn: async ({ signal }) => {
-        const url = `${API_BASE_URL}/v1/chart?asset=${encodeURIComponent(convertAssetId(from))}&quote=fiat:${encodeURIComponent(to)}&timeframe=${tf}&granularity=${spec.granularity}`;
+        const url = `${API_BASE_URL}/v1/chart?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}&timeframe=${tf}&granularity=${spec.granularity}`;
         const r = await fetch(url, {
           signal: timeoutSignal(undefined, signal),
         });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const env = (await r.json()) as { data?: { points?: ChartPoint[] } };
         return (env.data?.points ?? [])
+          .map((p) => {
+            const v = p.p != null ? Number(p.p) : NaN;
+            if (!invert) return { value: v, raw: p.p ?? '', t: p.t };
+            const inv = v > 0 ? 1 / v : NaN;
+            return { value: inv, raw: inv.toPrecision(10), t: p.t };
+          })
           .map((p) => ({
             time: Math.floor(new Date(p.t).getTime() / 1000),
-            value: p.p != null ? Number(p.p) : NaN,
-            raw: p.p ?? '',
+            value: p.value,
+            raw: p.raw,
           }))
           .filter((p) => Number.isFinite(p.value));
       },
@@ -84,8 +91,8 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
     <Panel
       title={`${from}/${to} rate history`}
       source={asExample('/v1/chart', {
-        asset: convertAssetId(from),
-        quote: `fiat:${to}`,
+        asset,
+        quote,
         timeframe: tf,
       })}
       bodyClassName="space-y-3"

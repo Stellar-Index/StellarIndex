@@ -37,7 +37,18 @@ describe('ConvertLanding', () => {
     expect(screen.getByLabelText('To')).toHaveValue('USD');
     expect(screen.getByTestId('chart')).toHaveTextContent('XLM/USD');
     expect((await screen.findAllByText(/0\.250000/)).length).toBeGreaterThan(0);
-    expect(screen.getByLabelText('Swap currencies')).toBeDisabled();
+  });
+
+  it('swaps XLM → USD into USD → XLM, priced as the inverse', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [{ asset_id: 'native', price: '0.25' }],
+    });
+    renderLanding();
+    fireEvent.click(screen.getByLabelText('Swap currencies'));
+    expect(screen.getByLabelText('From')).toHaveValue('USD');
+    expect(screen.getByLabelText('To')).toHaveValue('XLM');
+    expect(screen.getByTestId('chart')).toHaveTextContent('USD/XLM');
+    expect((await screen.findAllByText(/4\.0000/)).length).toBeGreaterThan(0);
   });
 
   it('swaps a fiat pair and links its page', () => {

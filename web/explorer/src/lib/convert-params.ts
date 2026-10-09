@@ -38,6 +38,19 @@ export function convertAssetId(ticker: string): string {
 }
 
 /**
+ * The priced read behind a {from}/{to} rate. Fiat is only priced as the
+ * quote, so fiat → XLM reads XLM in {from} and the caller takes 1/price.
+ */
+export function convertQuery(
+  from: string,
+  to: string,
+): { asset: string; quote: string; invert: boolean } {
+  return to === 'XLM'
+    ? { asset: 'native', quote: `fiat:${from}`, invert: true }
+    : { asset: convertAssetId(from), quote: `fiat:${to}`, invert: false };
+}
+
+/**
  * Hub-and-spoke: every hub × every ticker (forward) + every non-hub ticker ×
  * every hub (reverse). Pure — given the same ticker list, returns the same
  * pairs the route pre-renders.

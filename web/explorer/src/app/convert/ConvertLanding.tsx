@@ -10,7 +10,6 @@ import { ConvertPair } from './[from]/[to]/ConvertPair';
 import { ConvertChart } from './[from]/[to]/ConvertChart';
 import { ConvertLiveRate, ConvertSnippets } from './[from]/[to]/ConvertLive';
 
-/** Fiat is only ever priced as the quote, so XLM can be "from" but not "to". */
 export function ConvertLanding({ tickers }: { tickers: string[] }) {
   const [from, setFrom] = useState('XLM');
   const [to, setTo] = useState(tickers.includes('USD') ? 'USD' : tickers[0]);
@@ -62,9 +61,8 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
           <button
             type="button"
             onClick={swap}
-            disabled={from === 'XLM'}
             aria-label="Swap currencies"
-            title={from === 'XLM' ? 'Fiat to XLM is not priced' : 'Swap'}
+            title="Swap"
             className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 inline-flex h-9 items-center rounded-md border px-3 disabled:opacity-40"
           >
             <ArrowLeftRight className="h-4 w-4" />
@@ -76,7 +74,7 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
               value={to}
               onChange={(e) => pickTo(e.target.value)}
             >
-              {tickers.map((t) => (
+              {['XLM', ...tickers].map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>

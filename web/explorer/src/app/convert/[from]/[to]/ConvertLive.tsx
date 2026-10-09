@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { apiGet } from '@/api/client';
-import { convertAssetId } from '@/lib/convert-params';
+import { convertQuery } from '@/lib/convert-params';
 import type { components } from '@/api/types';
 import { formatPairPrice, formatRelative } from '@/lib/format';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -109,20 +109,19 @@ export function useConvertRate({
     // used instead. The route is nav-hidden on those nets anyway.
     enabled: CURRENT_NETWORK.pricing,
     queryFn: async () => {
+      const { asset, quote, invert } = convertQuery(from, to);
       const env = await apiGet<PriceBatchEnvelope>(
-        `/v1/price/batch?asset_ids=${encodeURIComponent(convertAssetId(from))}&quote=${encodeURIComponent(`fiat:${to}`)}`,
+        `/v1/price/batch?asset_ids=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`,
         {},
       );
-      const row = (env.data ?? []).find(
-        (r) => r.asset_id === convertAssetId(from),
-      );
-      // Forward read, so no inversion; must match the SSR `fromToRate`
-      // (page.tsx) or the live rate overwrites the baked one reversed.
+      const row = (env.data ?? []).find((r) => r.asset_id === asset);
+      // Must match the SSR `fromToRate` (page.tsx) or the live rate
+      // overwrites the baked one reversed.
       const price = row?.price != null ? Number(row.price) : 0;
       if (row == null || !(price > 0)) return { outcome: 'omitted' };
       return {
         outcome: 'priced',
-        rate: price,
+        rate: invert ? 1 / price : price,
         // A row without a stamp claims no freshness rather than
         // borrowing one.
         observedAt: row.observed_at ?? null,

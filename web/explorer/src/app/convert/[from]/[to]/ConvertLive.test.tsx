@@ -126,4 +126,25 @@ describe('ConvertLiveRate for XLM', () => {
       {},
     );
   });
+
+  // Fiat is only priced as the quote, so USD → XLM is 1 / (XLM in USD).
+  it('reads USD to XLM as the inverse of XLM in USD', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [{ asset_id: 'native', price: '0.25' }],
+    });
+    renderWithQuery(
+      <ConvertLiveRate
+        from="USD"
+        to="XLM"
+        initialRate={null}
+        initialInverse={null}
+      />,
+    );
+    expect(await screen.findByText(/4\.0000/)).toBeInTheDocument();
+    expect(screen.getByText(/0\.250000/)).toBeInTheDocument();
+    expect(vi.mocked(apiGet)).toHaveBeenCalledWith(
+      '/v1/price/batch?asset_ids=native&quote=fiat%3AUSD',
+      {},
+    );
+  });
 });
