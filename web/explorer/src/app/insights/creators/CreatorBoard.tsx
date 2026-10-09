@@ -18,6 +18,7 @@ import {
 import { apiGet, asExample } from '@/api/client';
 import type { CreatorRow, CreatorsResp } from '@/api/relationTypes';
 import { formatCompact, truncateMiddle } from '@/lib/format';
+import { PairedBars } from '@/components/charts/Bars';
 import { ConcentrationDonut } from '../ConcentrationDonut';
 import {
   type Envelope,
@@ -141,6 +142,17 @@ export function CreatorBoard() {
             label: truncateMiddle(c.account, 6, 4),
             count: c.accounts_created,
             href: `/insights/creators/${encodeURIComponent(c.account)}/`,
+          }))}
+        />
+        <PairedBars
+          ariaLabel="Accounts created and still live, top 10 creators"
+          aLabel="Created"
+          bLabel="Still live"
+          rows={d.creators.slice(0, 10).map((c) => ({
+            id: c.account,
+            label: truncateMiddle(c.account, 6, 4),
+            a: c.accounts_created,
+            b: c.live_accounts,
           }))}
         />
         <TableWrap>
