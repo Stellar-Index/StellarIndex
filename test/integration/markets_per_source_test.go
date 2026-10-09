@@ -49,6 +49,14 @@ func TestMarketsListingGrain(t *testing.T) {
 	const usdc = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	now := time.Now().UTC()
 	dayStart := now.Truncate(24 * time.Hour)
+	// Within minutes of UTC midnight, now-2m is yesterday; "today" prints
+	// must stay inside today's bucket.
+	today := func(ago time.Duration) time.Time {
+		if at := now.Add(-ago); !at.Before(dayStart) {
+			return at
+		}
+		return dayStart
+	}
 
 	// ── pair A: native/USDC on two venues, same minutes ───────────────
 	// Two older prints, one per venue (3 days back: inside the 14d
@@ -68,10 +76,10 @@ func TestMarketsListingGrain(t *testing.T) {
 
 	// ── pair B: traded yesterday at 10, again today at 20 ─────────────
 	seedGrainTrade(t, ctx, db, 30, "sdex", dayStart.Add(-6*time.Hour), "crypto:ETH", "fiat:USD", "1", "10", "10")
-	seedGrainTrade(t, ctx, db, 31, "sdex", now.Add(-1*time.Minute), "crypto:ETH", "fiat:USD", "1", "20", "20")
+	seedGrainTrade(t, ctx, db, 31, "sdex", today(time.Minute), "crypto:ETH", "fiat:USD", "1", "20", "20")
 
 	// ── pair C: first trade is TODAY ──────────────────────────────────
-	seedGrainTrade(t, ctx, db, 40, "sdex", now.Add(-2*time.Minute), "crypto:SOL", "fiat:USD", "1", "7", "7")
+	seedGrainTrade(t, ctx, db, 40, "sdex", today(2*time.Minute), "crypto:SOL", "fiat:USD", "1", "7", "7")
 
 	// prices_1m and pools_per_source_1h are materialized whole (their
 	// end_offsets are 30 s and 5 min). prices_1d is materialized only up
