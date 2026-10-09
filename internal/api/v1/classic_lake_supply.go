@@ -30,12 +30,8 @@ import (
 // other three AT ALL. It is not undercounting by accident; it is blind by
 // construction.
 //
-// Measured against Horizon on the /v1/rwa/assets set, the supply
-// invisible to the trustline sum was CETES +36.605%, TESOURO +10.594%,
-// USTRY +10.272%, USDY +1.274% — and 99.9% of it sat in SAC contract_data,
-// with claimable balances and LP reserves rounding to nothing. The served USDY
-// figure of $528.9M against the independent Dune reading of $535.6M is exactly
-// that 1.274% residual.
+// For RWA assets the invisible share reaches tens of percent, almost all of
+// it in SAC contract_data.
 //
 // # Why the fix reads flows rather than fixing the state query
 //
@@ -65,9 +61,9 @@ import (
 // BOUND on a classic asset's issued supply. A flows total BELOW that bound is
 // therefore proof that the contract's flows are incompletely seeded, not
 // evidence that the trustline sum is too high — so [higherClassicSupply] keeps
-// the trustline figure in that case. The consequence is the safety property
-// this change rests on: no asset's served circulating supply can go DOWN as a
-// result of it. It closes a known understatement and cannot open a new one.
+// the trustline figure in that case. So no asset's served circulating supply
+// can go DOWN through this path: it closes an understatement and cannot open
+// a new one.
 //
 // The floor holds only for a trustline sum of comparable vintage: one taken
 // before a burn floors nothing after it, which is why cachedClassicSupply
