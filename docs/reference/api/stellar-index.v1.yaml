@@ -14707,7 +14707,21 @@ components:
                 or the read errored for this request — a response may
                 therefore be ClickHouse-archive-only.
             Absent = both sides contributed to this response.
-      required: [account, movements]
+        coverage:
+          type: array
+          description: |
+            coverage_note as data: one entry per movement kind family
+            (transfer, mint_burn_clawback, fee, fill). fee and fill are
+            always not_served on this feed.
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [transfer, mint_burn_clawback, fee, fill] }
+              status: { type: string, enum: [served, partial, not_served] }
+              from_ledger: { type: integer, format: int64, description: First ledger served; absent when not served or unbounded. }
+              through_ledger: { type: integer, format: int64, description: Last ledger served (inclusive); absent when not served. }
+            required: [kind, status]
+      required: [account, movements, coverage]
     AccountPosition:
       type: object
       description: One folded DeFi position — a net position in a single venue for a single protocol.

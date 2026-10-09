@@ -8,7 +8,6 @@ import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
 import {
   Badge,
-  Callout,
   Select,
   Table,
   TableWrap,
@@ -35,6 +34,48 @@ import {
 
 type AccountMovementsResp = components['schemas']['AccountMovements'];
 type AccountMovement = components['schemas']['AccountMovement'];
+type KindCoverage = NonNullable<AccountMovementsResp['coverage']>[number];
+
+const KIND_LABEL: Record<KindCoverage['kind'], string> = {
+  transfer: 'Transfers',
+  mint_burn_clawback: 'Mint/burn/clawback',
+  fee: 'Fees',
+  fill: 'Order-book fills',
+};
+
+function coverageDetail(c: KindCoverage): string {
+  if (c.status === 'not_served') return 'not served';
+  const range = c.from_ledger
+    ? `ledgers ${c.from_ledger}-${c.through_ledger ?? 'tip'}`
+    : `through ledger ${c.through_ledger ?? 'tip'}`;
+  return c.status === 'partial' ? `partial, ${range}` : range;
+}
+
+function CoverageStrip({
+  coverage,
+  note,
+}: {
+  coverage: AccountMovementsResp['coverage'];
+  note?: string;
+}) {
+  return (
+    <div className="space-y-1" data-testid="movements-coverage">
+      <div className="flex flex-wrap gap-1.5">
+        {(coverage ?? []).map((c) => (
+          <Badge key={c.kind} tone={c.status === 'served' ? 'ok' : 'warn'}>
+            {KIND_LABEL[c.kind]}: {coverageDetail(c)}
+          </Badge>
+        ))}
+      </div>
+      {note && (
+        <details className="text-ink-muted text-xs">
+          <summary className="cursor-pointer">Coverage details</summary>
+          {note}
+        </details>
+      )}
+    </div>
+  );
+}
 
 const PAGE_SIZE = 25;
 
@@ -277,16 +318,9 @@ export function AccountMovementsPanel({ id }: { id: string }) {
     >
       {filters}
 
-      {/* Honest-degrade signal (ADR-0048 D5): present ONLY when this
-          response is not the full ClickHouse+Postgres merge. Rendered as
-          a real callout, not a muted footnote — a viewer relying on this
-          feed for "everything this account has ever done" needs to see
-          the gap, not stumble on it later. */}
-      {data.coverage_note && (
-        <Callout tone="warn" title="Partial coverage">
-          {data.coverage_note}
-        </Callout>
-      )}
+      {/* Gaps stay visible (ADR-0048 D5): a viewer reading this as the
+          account's full history must see what the feed does not serve. */}
+      <CoverageStrip coverage={data.coverage} note={data.coverage_note} />
 
       {movements.length > 0 && flow.length >= 2 && (
         <div className="space-y-1">

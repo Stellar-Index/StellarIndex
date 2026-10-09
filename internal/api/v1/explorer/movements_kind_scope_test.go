@@ -160,3 +160,39 @@ func TestAccountMovements_NoSupplyRangeClaimsNoSupplyKinds(t *testing.T) {
 		t.Errorf("?kind=burn note %q does not say the kind is not derived", view.CoverageNote)
 	}
 }
+
+func TestMovementsCoverage_StructuredKinds(t *testing.T) {
+	floor := timescale.SEP41MovementsFloorLedger
+	byKind := func(c []MovementKindCoverage) map[string]MovementKindCoverage {
+		m := map[string]MovementKindCoverage{}
+		for _, k := range c {
+			m[k.Kind] = k
+		}
+		return m
+	}
+	cases := []struct {
+		name         string
+		wm           uint32
+		tail         string
+		supply       supplyRange
+		wantTransfer string
+		wantSupply   string
+	}{
+		{"no archive", 0, "", supplyRange{}, "partial", "not_served"},
+		{"full", floor + 100, "", supplyRange{from: floor, thru: floor + 100}, "served", "served"},
+		{"supply backfilling", floor + 100, "", supplyRange{from: floor + 40, thru: floor + 100}, "served", "partial"},
+		{"tail errored", floor + 100, "tail down", supplyRange{from: floor, thru: floor + 100}, "partial", "served"},
+	}
+	for _, tc := range cases {
+		got := byKind(movementsCoverage(tc.wm, tc.tail, tc.supply))
+		if got["transfer"].Status != tc.wantTransfer || got["mint_burn_clawback"].Status != tc.wantSupply {
+			t.Errorf("%s: transfer=%q supply=%q, want %q/%q", tc.name, got["transfer"].Status, got["mint_burn_clawback"].Status, tc.wantTransfer, tc.wantSupply)
+		}
+		if got["fee"].Status != "not_served" || got["fill"].Status != "not_served" {
+			t.Errorf("%s: fee/fill must stay not_served: %+v", tc.name, got)
+		}
+	}
+	if s := byKind(movementsCoverage(floor+100, "", supplyRange{from: floor, thru: floor + 100}))["mint_burn_clawback"]; s.ThroughLedger != floor+100 {
+		t.Errorf("supply through = %d, want %d", s.ThroughLedger, floor+100)
+	}
+}
