@@ -1,7 +1,7 @@
 import Link from 'next/link';
 
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { formatCompact, formatPriceSmall } from '@/lib/format';
+import { formatCompact, formatPriceSmall, positiveDecimal } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { AssetSwap } from './AssetSwap';
 import { ChangeSummaryStrip } from './ChangeSummaryStrip';
@@ -91,7 +91,8 @@ export function AssetSidebar({
   homeDomain?: string | null;
 }) {
   // The converter and range bar compute in floats; the headline keeps the string.
-  const priceNum = priceUSD != null ? Number(priceUSD) : null;
+  const seed = positiveDecimal(priceUSD);
+  const priceNum = seed != null ? Number(seed) : null;
   // market_cap / volume / fdv arrive already server-pre-scaled (USD) —
   // num() only, never divide. The supply fields (circulating / total /
   // max) are RAW smallest-unit integers, so scale them down 10^decimals.

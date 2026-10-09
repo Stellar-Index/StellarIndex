@@ -17,6 +17,7 @@ import {
   formatPriceSmall,
   formatSubunitPrice,
   multiplyDecimalStrings,
+  positiveDecimal,
 } from '@/lib/format';
 import {
   serializeJsonLd,
@@ -606,9 +607,7 @@ export async function fetchPrice(assetId: string): Promise<PriceResp | null> {
     fetchPriceDirect('native', 'fiat:USD'),
   ]);
   if (!vsXlm?.price || !xlmUsd?.price) return null;
-  const a = Number(vsXlm.price);
-  const b = Number(xlmUsd.price);
-  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) {
+  if (!positiveDecimal(vsXlm.price) || !positiveDecimal(xlmUsd.price)) {
     return null;
   }
   const triangulated = multiplyDecimalStrings(vsXlm.price, xlmUsd.price);
@@ -980,7 +979,9 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           <AssetSidebar
             coin={coin}
             detail={detail}
-            priceUSD={price?.price || coin.price_usd || null}
+            priceUSD={
+              positiveDecimal(price?.price) ?? positiveDecimal(coin.price_usd)
+            }
             priceProvenance={headlinePriceProvenance(price, coin)}
             priceStale={Boolean(price?.flags?.stale)}
             name={globalView?.name}

@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { API_BASE_URL, timeoutSignal } from '@/api/client';
 import type { components } from '@/api/types';
-import { positiveDecimal } from '@/lib/format';
+import { compareDecimalStrings, positiveDecimal } from '@/lib/format';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 import { subscribeStream } from './streams';
@@ -208,9 +208,10 @@ export function usePriceFlash(
     if (price == null || price === '') return;
     const last = prev.current;
     prev.current = price;
-    if (last == null || last === price) return;
-    const dir = Number(price) > Number(last) ? 'up' : 'down';
-    setFlash(dir);
+    if (last == null) return;
+    const cmp = compareDecimalStrings(price, last);
+    if (cmp == null || cmp === 0) return;
+    setFlash(cmp > 0 ? 'up' : 'down');
     const t = setTimeout(() => setFlash(null), FLASH_MS);
     return () => clearTimeout(t);
   }, [price]);
