@@ -1,18 +1,57 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { ArrowLeftRight } from 'lucide-react';
 
-import { PageHeader, Select } from '@/components/ui';
+import { Callout, PageHeader, Select } from '@/components/ui';
 import { buildConvertParams } from '@/lib/convert-params';
 import { ConvertPair } from './[from]/[to]/ConvertPair';
 import { ConvertChart } from './[from]/[to]/ConvertChart';
 import { ConvertLiveRate, ConvertSnippets } from './[from]/[to]/ConvertLive';
 
+type Pair = { from: string; to: string };
+
+// The query string only changes on a full navigation here.
+const subscribe = () => () => {};
+
+/**
+ * The pair the /convert Function redirected with (?from=&to=): `pair` when
+ * the picker offers both sides, else `unavailable` when one was asked for.
+ */
+export function requestedPair(
+  search: string,
+  options: readonly string[],
+): { pair: Pair | null; unavailable: boolean } {
+  const q = new URLSearchParams(search);
+  const from = q.get('from');
+  const to = q.get('to');
+  if (!from && !to) return { pair: null, unavailable: false };
+  const offered = new Set(options);
+  if (from && to && from !== to && offered.has(from) && offered.has(to)) {
+    return { pair: { from, to }, unavailable: false };
+  }
+  return { pair: null, unavailable: true };
+}
+
 export function ConvertLanding({ tickers }: { tickers: string[] }) {
-  const [from, setFrom] = useState('XLM');
-  const [to, setTo] = useState(tickers.includes('USD') ? 'USD' : tickers[0]);
+  const options = useMemo(() => ['XLM', ...tickers], [tickers]);
+  const search = useSyncExternalStore(
+    subscribe,
+    () => window.location.search,
+    () => '',
+  );
+  const requested = useMemo(
+    () => requestedPair(search, options),
+    [search, options],
+  );
+  const [picked, setPicked] = useState<Pair | null>(null);
+  const { from, to } = picked ??
+    requested.pair ?? {
+      from: 'XLM',
+      to: tickers.includes('USD') ? 'USD' : tickers[0],
+    };
+  const unavailable = picked == null && requested.unavailable;
   // The link's href comes from the built page list, never from the select value.
   const pairPages = useMemo(
     () =>
@@ -21,18 +60,17 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
   );
   const pagePair = pairPages.get(`${from}/${to}`);
 
-  const pickFrom = (next: string) => {
-    setFrom(next);
-    if (next === to) setTo(tickers.find((t) => t !== next) ?? to);
-  };
-  const pickTo = (next: string) => {
-    setTo(next);
-    if (next === from) setFrom(tickers.find((t) => t !== next) ?? 'XLM');
-  };
-  const swap = () => {
-    setFrom(to);
-    setTo(from);
-  };
+  const pickFrom = (next: string) =>
+    setPicked({
+      from: next,
+      to: next === to ? (tickers.find((t) => t !== next) ?? to) : to,
+    });
+  const pickTo = (next: string) =>
+    setPicked({
+      from: next === from ? (tickers.find((t) => t !== next) ?? 'XLM') : from,
+      to: next,
+    });
+  const swap = () => setPicked({ from: to, to: from });
 
   return (
     <>
@@ -42,6 +80,11 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
           breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Convert' }]}
           description="Convert XLM and the major fiat currencies at the live mid-market rate."
         />
+        {unavailable && (
+          <Callout tone="info" title="That pair isn't available to convert">
+            The converter covers XLM and fiat currencies. Pick a pair below.
+          </Callout>
+        )}
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-ink-muted space-y-1 text-xs tracking-wider uppercase">
             <span className="block">From</span>
@@ -50,7 +93,7 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
               value={from}
               onChange={(e) => pickFrom(e.target.value)}
             >
-              {['XLM', ...tickers].map((t) => (
+              {options.map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>
@@ -73,7 +116,7 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
               value={to}
               onChange={(e) => pickTo(e.target.value)}
             >
-              {['XLM', ...tickers].map((t) => (
+              {options.map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>

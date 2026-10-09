@@ -51,6 +51,30 @@ describe('ConvertLanding', () => {
     expect((await screen.findAllByText(/4\.0000/)).length).toBeGreaterThan(0);
   });
 
+  it('preselects the pair the /convert Function redirected with', () => {
+    vi.mocked(apiGet).mockResolvedValue({ data: [] });
+    window.history.replaceState(null, '', '/convert/?from=EUR&to=XLM');
+    renderLanding();
+    expect(screen.getByLabelText('From')).toHaveValue('EUR');
+    expect(screen.getByLabelText('To')).toHaveValue('XLM');
+    expect(
+      screen.queryByText("That pair isn't available to convert"),
+    ).toBeNull();
+    window.history.replaceState(null, '', '/convert/');
+  });
+
+  it('says so when the requested pair is not offered', () => {
+    vi.mocked(apiGet).mockResolvedValue({ data: [] });
+    window.history.replaceState(null, '', '/convert/?from=XLM&to=USDC');
+    renderLanding();
+    expect(screen.getByLabelText('From')).toHaveValue('XLM');
+    expect(screen.getByLabelText('To')).toHaveValue('USD');
+    expect(
+      screen.getByText("That pair isn't available to convert"),
+    ).toBeInTheDocument();
+    window.history.replaceState(null, '', '/convert/');
+  });
+
   it('swaps a fiat pair and links its page', () => {
     vi.mocked(apiGet).mockResolvedValue({ data: [] });
     renderLanding();
