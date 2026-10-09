@@ -7,7 +7,7 @@ import { Badge, Stat } from '@/components/ui';
 import { HBarList, type HBarItem } from '@/components/charts/Bars';
 import { AssetLink } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, formatCompactUnits } from '@/lib/format';
 import { type Envelope, stroopsToXlm } from '../explorer-shared';
 
 // Mirrors api/v1 explorer.AccountsStatsView (GET /v1/accounts/stats).
@@ -89,7 +89,7 @@ export function AccountsAnalytics() {
     label: wealthBucketLabel(b.bucket),
     value: b.accounts,
     display: formatCompact(b.accounts),
-    annotation: `${formatCompact(Number(stroopsToXlm(b.xlm_stroops).replace(/,/g, '')))} XLM held`,
+    annotation: `${formatCompactUnits(b.xlm_stroops, 7)} XLM held`,
     title: `${b.accounts.toLocaleString('en-US')} accounts`,
   }));
   const trustlineItems: HBarItem[] = s.trustline_histogram.map((b) => ({
@@ -119,7 +119,7 @@ export function AccountsAnalytics() {
           <Stat label="Trustlines" value={formatCompact(s.totals.trustlines)} />
           <Stat
             label="XLM held by accounts"
-            value={`${formatCompact(Number(stroopsToXlm(s.totals.xlm_held_stroops).replace(/,/g, '')))} XLM`}
+            value={`${formatCompactUnits(s.totals.xlm_held_stroops, 7)} XLM`}
           />
           <Stat
             label="Median balance"

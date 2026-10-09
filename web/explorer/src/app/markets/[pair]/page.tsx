@@ -370,9 +370,8 @@ export default async function PairPage({ params }: { params: Params }) {
   const trend24h = points
     .map((pt) => Number(pt.p))
     .filter((n) => Number.isFinite(n));
-  // Summed exactly; converted once, for the display label only.
-  const volume24hUsd = Number(
-    sumDecimalStrings(points.map((pt) => pt.v_usd)) ?? 0,
+  const volume24hUsd = formatUsd(
+    sumDecimalStrings(points.map((pt) => pt.v_usd)),
   );
 
   // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
@@ -463,11 +462,11 @@ export default async function PairPage({ params }: { params: Params }) {
             {points[points.length - 1]?.v_usd && (
               <Stat
                 label="Last hour USD vol"
-                value={formatUsd(Number(points[points.length - 1].v_usd))}
+                value={formatUsd(points[points.length - 1].v_usd)}
               />
             )}
-            {volume24hUsd > 0 && (
-              <Stat label="24h USD vol" value={formatUsd(volume24hUsd)} />
+            {volume24hUsd !== '—' && (
+              <Stat label="24h USD vol" value={volume24hUsd} />
             )}
           </dl>
           {trend24h.length >= 2 && (
@@ -810,11 +809,12 @@ function formatQuoteAmount(n: number, quote: string): string {
   return isUsdQuote(quote) ? `$${num}` : `${num} ${shortAssetText(quote)}`;
 }
 
-function formatUsd(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return '—';
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}k`;
-  return `$${n.toFixed(2)}`;
+// Exact from the decimal string; a negative, zero or non-decimal value shows '—'.
+function formatUsd(raw: string | null | undefined): string {
+  if (raw == null || raw.trim().startsWith('-')) return '—';
+  const s = formatCompactUnits(raw);
+  if (s === '—' || /^0*\.?0*$/.test(raw.trim())) return '—';
+  return s === '0' ? '<$0.01' : `$${s}`;
 }
 
 function formatTimestamp(iso: string): string {
