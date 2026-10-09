@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { DataTrustTabs } from '@/components/nav/DataTrustTabs';
-import { Breadcrumbs, Container } from '@/components/ui/Page';
+import { Container, PageHeader } from '@/components/ui/Page';
 
 export const metadata: Metadata = {
   title: 'Methodology — how Stellar Index computes prices',
@@ -13,17 +13,11 @@ export const metadata: Metadata = {
 export default function MethodologyPage() {
   return (
     <Container className="space-y-10 py-10 [&>*]:max-w-4xl">
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Methodology' }]}
-        />
-        <h1 className="text-3xl font-semibold tracking-tight">Methodology</h1>
-        <p className="text-ink-body text-base">
-          How every price Stellar Index serves is computed, from raw on-chain
-          event to the final aggregate. Each section links to the underlying ADR
-          for the full rationale, alternatives considered, and consequences.
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Methodology' }]}
+        title="Methodology"
+        description="How every price Stellar Index serves is computed, from raw on-chain event to the final aggregate. Each section links to the underlying ADR for the full rationale, alternatives considered, and consequences."
+      />
 
       <DataTrustTabs active="/methodology" />
 
