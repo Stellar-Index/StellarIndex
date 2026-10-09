@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Breadcrumbs, Container, Stat } from '@/components/ui';
+import { Container, PageHeader, Stat } from '@/components/ui';
 import { StellarExpertLink } from '@/components/StellarExpertLink';
 import { apiGet, asExample, type Envelope } from '@/api/client';
 import { truncateMiddle } from '@/lib/format';
@@ -73,26 +73,17 @@ export function AccountRelationView({
   });
 
   const shortKey = valid ? truncateMiddle(account, 10, 6) : account;
-  const crumbs = (
-    <Breadcrumbs
-      items={[
-        { label: 'Home', href: '/' },
-        { label: 'Insights', href: '/insights' },
-        { label: vocabulary.boardLabel, href: vocabulary.board },
-        { label: shortKey || 'Account' },
-      ]}
-    />
-  );
+  const crumbs = [
+    { label: 'Home', href: '/' },
+    { label: 'Insights', href: '/insights' },
+    { label: vocabulary.boardLabel, href: vocabulary.board },
+    { label: shortKey || 'Account' },
+  ];
 
   if (!valid) {
     return (
       <Container className="space-y-6 py-8">
-        <header className="space-y-3">
-          {crumbs}
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Not a Stellar account
-          </h1>
-        </header>
+        <PageHeader title="Not a Stellar account" breadcrumbs={crumbs} />
         <Panel
           headingLevel={2}
           title="Unreadable address"
@@ -152,13 +143,12 @@ export function AccountRelationView({
   return (
     <Container className="space-y-6 py-8">
       <header className="space-y-3">
-        {crumbs}
-        <p className="text-ink-muted text-[11px] tracking-wider uppercase">
-          {vocabulary.boardLabel}
-        </p>
-        <h1 className="font-mono text-2xl font-semibold tracking-tight break-all">
-          {account}
-        </h1>
+        <PageHeader
+          title={<span className="font-mono break-all">{account}</span>}
+          eyebrow={vocabulary.boardLabel}
+          breadcrumbs={crumbs}
+          description={`This address as a ${vocabulary.actor}: the accounts it has ${creation ? 'created' : 'sponsored'}, over time and today.`}
+        />
         <div className="text-ink-body flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <Link
             href={`/accounts/${encodeURIComponent(account)}/`}

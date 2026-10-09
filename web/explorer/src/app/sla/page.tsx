@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { DataTrustTabs } from '@/components/nav/DataTrustTabs';
-import { Breadcrumbs, Container } from '@/components/ui/Page';
+import { Container, PageHeader } from '@/components/ui/Page';
 
 export const metadata: Metadata = {
   title: 'Service level — Stellar Index API targets and error budget',
@@ -13,20 +13,20 @@ export const metadata: Metadata = {
 export default function SLAPage() {
   return (
     <Container className="space-y-10 py-10 [&>*]:max-w-4xl">
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Service level' }]}
-        />
-        <h1 className="text-3xl font-semibold tracking-tight">Service level</h1>
-        <p className="text-ink-body text-base">
-          Four targets bind the Stellar Index API. Each is measured continuously
-          by a probe that runs on the API host against the service&apos;s own
-          listener, and each measurement is published as a metric, not asserted
-          in prose. This page states the targets, how they are measured, where
-          that measurement stops short, and what the targets deliberately do not
-          cover.
-        </p>
-      </header>
+      <PageHeader
+        title="Service level"
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Service level' }]}
+        description={
+          <>
+            Four targets bind the Stellar Index API. Each is measured
+            continuously by a probe that runs on the API host against the
+            service&apos;s own listener, and each measurement is published as a
+            metric, not asserted in prose. This page states the targets, how
+            they are measured, where that measurement stops short, and what the
+            targets deliberately do not cover.
+          </>
+        }
+      />
 
       <DataTrustTabs active="/sla" />
 
