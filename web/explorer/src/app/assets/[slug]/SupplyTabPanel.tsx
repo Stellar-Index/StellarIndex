@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { useAsset, useAssetSupply, type AssetSupply } from '@/api/hooks';
 import { FreshnessMarker } from '@/components/primitives';
-import { formatBaseUnits, formatCompact, scaleBaseUnits } from '@/lib/format';
+import { formatBaseUnits, formatCompactUnits } from '@/lib/format';
 import { type Envelope } from '../../explorer-shared';
 import { SupplyFlowsBar, buildSupplyFlowRows } from './SupplyFlowsBar';
 import { CurrencyDeclarations } from './CurrencyDeclarations';
@@ -79,9 +79,6 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
   }
 
   const decimals = a.decimals ?? 7;
-  const circulating = parseSmallest(a.circulating_supply, decimals);
-  const total = parseSmallest(a.total_supply, decimals);
-  const max = parseSmallest(a.max_supply, decimals);
 
   const noSupply =
     a.circulating_supply == null &&
@@ -102,7 +99,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
       {noSupply ? (
         <p className="text-ink-muted text-sm">
           {onchain.data
-            ? 'No ADR-0011 circulating/max breakdown for this asset yet — the live on-chain total above is sourced directly from mint/burn flows.'
+            ? 'No circulating/max breakdown for this asset yet — the live on-chain total above is sourced directly from mint/burn flows.'
             : 'No supply snapshot available for this asset. The supply observer may not have backfilled it yet.'}
         </p>
       ) : (
@@ -110,17 +107,17 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Metric
               label="Circulating"
-              value={circulating != null ? formatCompact(circulating) : '—'}
+              value={formatCompactUnits(a.circulating_supply, decimals)}
               sublabel={`In smallest unit: ${a.circulating_supply ?? '—'}`}
             />
             <Metric
               label="Total"
-              value={total != null ? formatCompact(total) : '—'}
+              value={formatCompactUnits(a.total_supply, decimals)}
               sublabel={a.is_unlimited ? 'Issuer asserts unbounded' : ''}
             />
             <Metric
               label="Max"
-              value={max != null ? formatCompact(max) : '—'}
+              value={formatCompactUnits(a.max_supply, decimals)}
               sublabel={
                 a.is_unlimited === true
                   ? 'Unlimited'
@@ -165,7 +162,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
           {a.supply_basis && (
             <p
               className="text-ink-muted text-xs"
-              title="Policy under ADR-0011 that produced these numbers."
+              title="Supply policy that produced these numbers."
             >
               <span className="font-mono">supply_basis</span>: {a.supply_basis}
             </p>
@@ -274,8 +271,7 @@ export function onChainSupplyDecimals(
 
 function formatSupply(raw: string | undefined, decimals: number | null) {
   if (decimals == null) return formatBaseUnits(raw, 0, 0);
-  const n = scaleBaseUnits(raw, decimals);
-  return n != null ? formatCompact(n) : '—';
+  return formatCompactUnits(raw, decimals);
 }
 
 // OnChainSupply renders the live decode-at-ingest supply (ADR-0034):
@@ -375,7 +371,7 @@ function supplyFootnote(data: AssetSupply): string {
   if (data.source === 'contract_storage_balances') {
     return 'Σ per-holder balances read from the contract’s own storage — the token emits no supply events.';
   }
-  return 'Σ mint − burn − clawback from the supply_flows lake (ADR-0034), current to the latest ledger — no refresh lag.';
+  return 'Σ mint − burn − clawback from on-chain supply flows, current to the latest ledger — no refresh lag.';
 }
 
 function Metric({
@@ -404,23 +400,7 @@ function Metric({
   );
 }
 
-// parseSmallest converts a smallest-integer-unit decimal string
-// (stroops for classic / native; contract-defined for SEP-41) to
-// a number for display. Returns null when the string is missing
-// or not finite. Display-only — never used for further arithmetic
-// (AGENTS.md invariant #1: precision lives in the string).
-function parseSmallest(
-  s: string | null | undefined,
-  decimals: number,
-): number | null {
-  if (s == null) return null;
-  const n = Number(s);
-  if (!Number.isFinite(n)) return null;
-  return n / 10 ** decimals;
-}
-
 function formatUSD(s: string): string {
-  const n = Number(s);
-  if (!Number.isFinite(n)) return s;
-  return `$${formatCompact(n)}`;
+  const c = formatCompactUnits(s);
+  return c === '—' ? s : `$${c}`;
 }

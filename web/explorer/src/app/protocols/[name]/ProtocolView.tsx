@@ -328,7 +328,7 @@ function CompletenessBadge({
     return (
       <span
         className="bg-up-subtle text-up-strong rounded-sm px-2 py-0.5 text-[11px] font-medium tracking-wider uppercase"
-        title={`Verified complete to ledger #${completeness.watermark_ledger.toLocaleString('en-US')} (ADR-0033 substrate + recognition + projection reconcile).`}
+        title={`Verified complete to ledger #${completeness.watermark_ledger.toLocaleString('en-US')}: archive hash-chained, every event recognised, served tier reconciled.`}
       >
         ✓ Verified complete
       </span>

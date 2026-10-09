@@ -47,4 +47,27 @@ describe('SourceHealthPanel — deploy-skew resilience', () => {
     );
     expect(screen.getByText('—')).toBeInTheDocument();
   });
+
+  it('renders 24h volume exactly from its decimal string', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        name: 'binance',
+        class: 'exchange',
+        trade_count_24h: 5,
+        markets_count_24h: 3,
+        entries_24h: 5,
+        // As a float this rounds up to 499.995 and renders $500.
+        volume_24h_usd: '499.994999999999999999',
+      },
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <SourceHealthPanel source="binance" />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('$499.99')).toBeInTheDocument();
+  });
 });

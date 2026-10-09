@@ -23,12 +23,11 @@ import type { components } from '@/api/types';
 import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import {
-  formatCompact,
+  formatCompactUnits,
   formatPriceSmall,
   formatRelative,
   ratioPct,
 } from '@/lib/format';
-import { scaledUnits } from '../explorer-shared';
 
 // Mirror of the slice of AccountStateResp we need (kept local so this
 // reads from the SAME React Query cache key the AccountView state panel
@@ -107,7 +106,7 @@ interface PriceBatch {
 
 interface Holding {
   asset: string;
-  amount: number; // display units (stroops → ÷1e7)
+  balance: string; // stroops
   priceUSD: number | null;
   priceType: PriceType | null;
   valueUSD: number | null;
@@ -235,10 +234,6 @@ export function AccountPositions({ id }: { id: string }) {
         ? (state.balance ?? '0')
         : ((state.trustlines ?? []).find((t) => t.asset === asset)?.balance ??
           '0');
-    // Balances are stroop integers (7 decimals, ADR-0003); scale via the
-    // string-split path so a >9e8-XLM holding doesn't lose low digits to
-    // Number() before it feeds the USD total / allocation split.
-    const amount = scaledUnits(raw, 7);
     const priced = priceMap[asset] ?? null;
     const priceUSD = priced?.price ?? null;
     // Exact BigInt multiply on the raw stroop integer and the API's
@@ -247,7 +242,7 @@ export function AccountPositions({ id }: { id: string }) {
     const valueUSD = cents != null ? Number(cents) / 100 : null;
     return {
       asset,
-      amount,
+      balance: raw,
       priceUSD,
       priceType: priced?.priceType ?? null,
       valueUSD,
@@ -285,7 +280,8 @@ export function AccountPositions({ id }: { id: string }) {
   const lowerBound = unpricedCount > 0;
   const totalText = `${lowerBound ? '≥ ' : ''}${usdFmt.format(total)}`;
   const excludedParts: string[] = [];
-  if (neverObservedCount > 0) excludedParts.push(`${neverObservedCount} unpriced`);
+  if (neverObservedCount > 0)
+    excludedParts.push(`${neverObservedCount} unpriced`);
   if (withheldCount > 0) excludedParts.push(`${withheldCount} withheld`);
   const excludedText = `excludes ${excludedParts.join(', ')}`;
   const shareOf = lowerBound ? 'of priced value' : 'of value';
@@ -398,7 +394,7 @@ export function AccountPositions({ id }: { id: string }) {
                   <AssetLink canonical={h.asset} />
                 </Td>
                 <Td align="right" className="text-ink-body font-mono">
-                  {formatCompact(h.amount)}
+                  {formatCompactUnits(h.balance, 7)}
                 </Td>
                 <Td align="right" className="font-mono">
                   {h.priceUSD != null ? (

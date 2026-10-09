@@ -273,7 +273,7 @@ export function AccountMovementsPanel({ id }: { id: string }) {
   );
 
   const panelHint =
-    'every classic-asset movement, sent or received — the pre-P23 archive merged with the live post-P23 tail (ADR-0048 D5)';
+    'every classic-asset movement, sent or received — the pre-P23 archive merged with the live post-P23 tail';
 
   if (isError) {
     return (

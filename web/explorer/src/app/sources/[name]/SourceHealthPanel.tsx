@@ -1,7 +1,7 @@
 'use client';
 
 import { useSourceHealth } from '@/api/hooks';
-import { formatCompact } from '@/lib/format';
+import { formatCompactUnits } from '@/lib/format';
 
 /**
  * SourceHealthPanel — the live health pane on /sources/[name].
@@ -61,7 +61,7 @@ export function SourceHealthPanel({ source }: { source: string }) {
             label="Volume (24h)"
             value={
               data.volume_24h_usd
-                ? `$${formatCompact(data.volume_24h_usd)}`
+                ? `$${formatCompactUnits(data.volume_24h_usd)}`
                 : '—'
             }
             sub="USD notional"

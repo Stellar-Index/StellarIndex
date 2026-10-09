@@ -1,6 +1,6 @@
 import type { components } from '@/api/types';
 import { Badge } from '@/components/ui';
-import { formatCompact } from '@/lib/format';
+import { formatCompactUnits } from '@/lib/format';
 
 export type SubstanceEvidence = components['schemas']['SubstanceEvidence'];
 
@@ -17,7 +17,7 @@ export function thinMarketNote(s?: SubstanceEvidence | null): string {
   if (!s) return base;
   return (
     `${base} Over the last ${hours(s.window_seconds)} it traded ` +
-    `$${formatCompact(s.volume_usd)} (floor $${formatCompact(s.floor.min_volume_usd)}) ` +
+    `$${formatCompactUnits(s.volume_usd)} (floor $${formatCompactUnits(s.floor.min_volume_usd)}) ` +
     `in ${s.buckets} active price buckets (floor ${s.floor.min_buckets}).`
   );
 }
