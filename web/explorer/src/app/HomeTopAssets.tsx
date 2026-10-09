@@ -23,7 +23,11 @@ import {
   THead,
   TR,
 } from '@/components/ui';
-import { formatCompact, formatPriceSmall } from '@/lib/format';
+import {
+  formatCompact,
+  formatCompactUnits,
+  formatPriceSmall,
+} from '@/lib/format';
 import { iconProxySrc, isSafePublicImageUrl } from '@/lib/safe-domain';
 import { demoteFlaggedLast } from '@/lib/directory-tags';
 import { ScamBadge } from '@/components/ScamBadge';
@@ -151,7 +155,7 @@ function Row({
   pricing: boolean;
 }) {
   const price = parseDec(coin.price_usd);
-  const volume = parseDec(coin.volume_24h_usd);
+  const volumeText = formatCompactUnits(coin.volume_24h_usd);
   return (
     <TR>
       <Td className="text-ink-faint">{rank}</Td>
@@ -208,10 +212,8 @@ function Row({
       )}
       {pricing && (
         <Td align="right">
-          {volume != null ? (
-            <span className="text-ink-body font-mono">
-              ${formatCompact(volume)}
-            </span>
+          {volumeText !== '—' ? (
+            <span className="text-ink-body font-mono">${volumeText}</span>
           ) : (
             <Dash />
           )}
