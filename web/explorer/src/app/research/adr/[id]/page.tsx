@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 
-import { Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 import { loadADR, loadADRs } from '@/lib/adr';
 import { Markdown } from '@/lib/markdown';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
@@ -63,41 +63,33 @@ export default async function ADRPage({
   if (!adr) notFound();
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
-      <Breadcrumbs
-        items={[
+    <Container className="space-y-6 py-8 [&>*]:max-w-4xl">
+      <PageHeader
+        breadcrumbs={[
           { label: 'Home', href: '/' },
           { label: 'Research', href: '/research' },
           { label: `ADR-${adr.id}` },
         ]}
-      />
-      <Link
-        href="/research"
-        className="text-ink-body hover:text-brand-600 inline-flex items-center gap-1.5 text-sm"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        Back to research
-      </Link>
-
-      <header className="border-line space-y-3 border-b pb-6">
-        <div className="flex items-center gap-3">
-          <span className="text-ink-muted text-xs font-medium tracking-wider uppercase">
-            ADR-{adr.id}
+        eyebrow={`ADR-${adr.id}`}
+        title={adr.title}
+        description={
+          <span className="inline-flex items-center gap-3">
+            <StatusBadge status={adr.status} />
+            <span className="text-xs">{adr.date}</span>
           </span>
-          <StatusBadge status={adr.status} />
-          <span className="text-ink-muted text-xs">{adr.date}</span>
-        </div>
-        <h1 className="text-2xl font-semibold tracking-tight">{adr.title}</h1>
-        <a
-          href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${adr.source_path}`}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1 text-xs"
-        >
-          View source on GitHub
-          <ExternalLink className="h-3 w-3" />
-        </a>
-      </header>
+        }
+        actions={
+          <a
+            href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${adr.source_path}`}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1 text-xs"
+          >
+            View source on GitHub
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        }
+      />
 
       <article>
         <Markdown
@@ -107,7 +99,7 @@ export default async function ADRPage({
       </article>
 
       <RelatedADRs adr={adr} />
-    </div>
+    </Container>
   );
 }
 

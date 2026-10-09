@@ -1,9 +1,8 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 
-import { Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 import { Markdown } from '@/lib/markdown';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -78,46 +77,33 @@ export function buildDocPage(config: DocPageConfig) {
     if (!doc) notFound();
 
     return (
-      <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
-        <Breadcrumbs
-          items={[
+      <Container className="space-y-6 py-8 [&>*]:max-w-4xl">
+        <PageHeader
+          breadcrumbs={[
             { label: 'Home', href: '/' },
             { label: 'Research', href: '/research' },
             { label: config.label, href: `/research/${config.category}` },
             { label: doc.title },
           ]}
+          eyebrow={
+            doc.last_verified
+              ? `${config.pillLabel} · Last verified ${doc.last_verified}`
+              : config.pillLabel
+          }
+          title={doc.title}
+          description={doc.description}
+          actions={
+            <a
+              href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${doc.source_path}`}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1 text-xs"
+            >
+              View source on GitHub
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          }
         />
-        <Link
-          href="/research"
-          className="text-ink-body hover:text-brand-600 inline-flex items-center gap-1.5 text-sm"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          Back to research
-        </Link>
-
-        <header className="border-line space-y-3 border-b pb-6">
-          <div className="flex items-center gap-3 text-xs">
-            <span className="text-ink-muted font-medium tracking-wider uppercase">
-              {config.pillLabel}
-            </span>
-            {doc.last_verified && (
-              <span className="text-ink-muted">
-                Last verified {doc.last_verified}
-              </span>
-            )}
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight">{doc.title}</h1>
-          <p className="text-ink-body text-sm">{doc.description}</p>
-          <a
-            href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${doc.source_path}`}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1 text-xs"
-          >
-            View source on GitHub
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        </header>
 
         <article>
           <Markdown
@@ -125,7 +111,7 @@ export function buildDocPage(config: DocPageConfig) {
             sourcePath={doc.source_path}
           />
         </article>
-      </div>
+      </Container>
     );
   }
 
