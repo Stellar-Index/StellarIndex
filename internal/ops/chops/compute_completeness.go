@@ -1242,25 +1242,18 @@ type servedFloor struct {
 	present bool
 }
 
-// detectFloorLoss compares each target's LIVE bottom edge against the durable
-// floor recorded by previous runs (completeness_target_floors, migration
-// 0116) and returns a detail line per target whose oldest rows have gone
-// missing.
+// detectFloorLoss compares each target's live bottom edge against the durable
+// floor earlier runs recorded (completeness_target_floors) and returns a
+// detail line per target whose oldest rows have gone missing.
 //
-// This is the check targetScope structurally cannot make. targetScope floors
-// the reconcile at MIN(ledger) of the target itself, so when the oldest rows
-// are deleted the floor RISES with the loss and the surviving rows reconcile
-// perfectly — "someone dropped the oldest 10M ledgers" and "we never
-// projected below there" produce identical verdicts. Only a floor the served
-// tier cannot rewrite can tell them apart.
+// targetScope cannot make this check: it floors the reconcile at the target's
+// own MIN(ledger), so deleting the oldest rows raises the floor with the loss
+// and "dropped the oldest 10M ledgers" reads the same as "never projected
+// below there". Only a floor the served tier cannot rewrite tells them apart.
 //
-// A target with no recorded floor is skipped, not failed: that is the
-// first-run case, and treating an absent row as floor=0 would report
-// loss-below-zero for every target at once on the first run after the
-// migration.
-//
-// An EMPTY target that previously had a floor is the maximal case — every
-// row below the floor is gone — and is reported as such rather than skipped.
+// A target with no recorded floor is skipped (first run; floor=0 would report
+// loss for every target). An empty target that had a floor is the maximal
+// loss and is reported, not skipped.
 func detectFloorLoss(src reconSource, servedMins []servedFloor, floors map[string]timescale.CompletenessTargetFloor) []string {
 	var out []string
 	for i, sm := range servedMins {
@@ -1732,27 +1725,20 @@ func lakeCoverageProblem(genesis uint32, scanClean, substrateOK bool, prior prio
 	return floor
 }
 
-// reconcileProjectionAggregate is the CH-backed projection check
-// (ADR-0033 Claim 2b). It compares STRICT
-// PER-LEDGER counts by default (via projectionDelta →
-// completeness.ReconcileCounts): a totals compare would
-// let a real drop in ledger L net against a phantom overcount
-// elsewhere in the scope and report complete=true. Sources whose
-// served `ledger` keying can differ from the re-derive's event
-// ledger over a fixed historical span opt out via
-// reconSource.aggregate, keep the totals compare up to its boundary, and
-// accept the documented netting residual there. Returns Σ|per-ledger Δ|
-// across targets (0 = clean); the name keeps its historical
-// "Aggregate" for grep continuity with older run logs.
+// reconcileProjectionAggregate is the CH-backed projection check (ADR-0033
+// Claim 2b). It compares strict per-ledger counts (projectionDelta →
+// completeness.ReconcileCounts) because a totals compare lets a real drop at
+// one ledger net against a phantom overcount elsewhere. Sources whose served
+// `ledger` keying differs from the re-derive's over a fixed historical span
+// opt out via reconSource.aggregate and accept the documented netting residual
+// up to that boundary. Returns Σ|per-ledger Δ| across targets (0 = clean).
 //
-// Scope: each target is reconciled over ITS OWN scope (projectionScopes /
-// targetScope) — the range the served tier ACTUALLY holds for that table,
-// derived from the data, raised to the incremental -from floor. scopes is
-// parallel to src.targets. The expected side is re-derived ONCE over the union
-// of those scopes and clipped per target, so a source that mixes a
-// late-starting table (trades) with a full-history one (soroswap_skim_events)
-// verifies each over its true range instead of flooring the whole source at the
-// latest.
+// Each target is reconciled over its own scope (projectionScopes /
+// targetScope, parallel to src.targets): the range the served tier holds for
+// that table, raised to the incremental -from floor. The expected side is
+// re-derived once over the union and clipped per target, so a late-starting
+// table (trades) and a full-history one (soroswap_skim_events) in the same
+// source each verify over their true range.
 func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, scopes []projectionScope) (int, completeness.BlindSpots, string, error) {
 	if len(scopes) == 0 {
 		return 0, completeness.BlindSpots{}, "", nil
