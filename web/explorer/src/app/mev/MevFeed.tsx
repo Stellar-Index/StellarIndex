@@ -8,6 +8,7 @@ import { AssetText } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
 import { formatUsdWhole } from '@/lib/format';
 import { MevKindCharts } from './MevKindCharts';
+import { MevRoute, routeHops } from './MevRoute';
 
 interface MevLeg {
   source: string;
@@ -134,8 +135,8 @@ export function MevFeed() {
         <ul className="divide-line-subtle divide-y">
           {rows.map((e) => {
             const assets = eventAssets(e);
-            const isCycle =
-              e.kind === 'arbitrage' && (e.detail.assets?.length ?? 0) > 0;
+            const route =
+              e.kind === 'arbitrage' ? routeHops(e.detail.legs ?? []) : null;
             const sources = e.detail.sources ?? [];
             const actor = e.accounts[0] ?? '';
             const tx = e.tx_hashes[0] ?? '';
@@ -152,27 +153,18 @@ export function MevFeed() {
                         : 'round trip'}
                     </span>
                   )}
-                  {assets.length > 0 && (
+                  {route && <MevRoute hops={route} />}
+                  {!route && assets.length > 0 && (
                     <span className="text-ink-body inline-flex flex-wrap items-center gap-1 font-mono text-xs">
                       {assets.map((a, i) => (
                         <span
                           key={`${a}-${i}`}
                           className="inline-flex items-center gap-1"
                         >
-                          {i > 0 && (
-                            <span className="text-ink-faint">
-                              {isCycle ? '→' : '/'}
-                            </span>
-                          )}
+                          {i > 0 && <span className="text-ink-faint">/</span>}
                           <AssetText canonical={a} />
                         </span>
                       ))}
-                      {isCycle && (
-                        <>
-                          <span className="text-ink-faint">→</span>
-                          <AssetText canonical={assets[0]} />
-                        </>
-                      )}
                     </span>
                   )}
                   {e.kind === 'liquidation_cascade' && e.detail.fill && (
