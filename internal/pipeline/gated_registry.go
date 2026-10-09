@@ -216,8 +216,9 @@ var gatedSources = map[string]GatedMeta{
 		// ONLY writer of defindex's protocol_contracts rows: the warm
 		// reconcile and seed-protocol-contracts both upsert it. Factories
 		// stay declared — they gate the factory's own create/n_fee events.
+		// Their topic[0] is the String prefix; "create" sits in topic[1].
 		Factories:   defindex.MainnetFactories,
-		CreationSym: "create",
+		CreationSym: defindex.PrefixFactory,
 		Genesis:     defindex.GenesisLedger,
 		CuratedSet:  defindex.MainnetGatedSet(),
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return defindex.NewDecoder(opts...) },

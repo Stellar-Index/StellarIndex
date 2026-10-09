@@ -5,6 +5,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
@@ -122,5 +123,22 @@ func TestGatedMetaFor_defindex(t *testing.T) {
 	}
 	if dec.Matches(events.Event{Topic: vaultTopics, ContractID: "COTHERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}) {
 		t.Error("unseeded contract event must not match")
+	}
+}
+
+// The replay gate's factory walk filters the lake on topic[0] == CreationSym,
+// so a factory create event must carry it there or the walk sees nothing.
+func TestGatedMetaFor_defindexCreationSymIsFactoryTopic0(t *testing.T) {
+	m, ok := GatedMetaFor(defindex.SourceName)
+	if !ok {
+		t.Fatal("defindex should be a gated source")
+	}
+	ev := events.Event{
+		Type:       "contract",
+		ContractID: defindex.MainnetFactories[0],
+		Topic:      []string{scval.MustEncodeString(m.CreationSym), defindex.TopicSymbolCreate},
+	}
+	if !defindex.NewDecoder().Matches(ev) {
+		t.Errorf("CreationSym %q is not the topic[0] of a defindex factory create event", m.CreationSym)
 	}
 }
