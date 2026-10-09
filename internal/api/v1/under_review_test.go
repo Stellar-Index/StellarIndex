@@ -133,8 +133,9 @@ func TestUnderReviewNativeHoldCoversPathSpellings(t *testing.T) {
 	}
 }
 
-// A CSV export has no envelope to mark, so a held asset's flag rides the
-// flags header and the body is served byte-for-byte.
+// A CSV export has no envelope to mark, so a held asset's flag joins the one
+// flags header (clients reading only its first value still see it) and the
+// body is served byte-for-byte.
 func TestUnderReviewMarksCSVExportHeader(t *testing.T) {
 	s := &Server{}
 	s.SetHolds([]holds.Hold{{Asset: "native", Reason: "r"}})
@@ -146,7 +147,7 @@ func TestUnderReviewMarksCSVExportHeader(t *testing.T) {
 		_, _ = w.Write([]byte(body))
 	}))
 	for asset, want := range map[string][]string{
-		"XLM": {"lower_bound", "under_review"},
+		"XLM": {"lower_bound, under_review"},
 		"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": {"lower_bound"},
 	} {
 		rec := httptest.NewRecorder()
