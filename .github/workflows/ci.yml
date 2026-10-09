@@ -54,6 +54,9 @@ env:
   GOLANGCI_LINT_VERSION: v2.14.0
   GOVULNCHECK_VERSION: v1.8.0
   GITLEAKS_VERSION: 8.21.2
+  # testcontainers pulls Docker Hub images unauthenticated, and runners share
+  # Docker Hub's per-IP pull limit (429s fail whole integration shards).
+  TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX: mirror.gcr.io/
 
   # SHA-256 of upstream tool tarballs that the install steps verify
   # before unpacking: an unchecked `curl | tar -xz` would let a
@@ -1667,9 +1670,9 @@ jobs:
         run: ./scripts/ci/lint-replay-plan.sh
       # ── from the former `openapi` job (openapi lint) ──
       - name: Spectral lint
-        uses: stoplightio/spectral-action@6416fd018ae38e60136775066eb3e98172143141  # v0.8.13
-        with:
-          file_glob: openapi/*.yaml
+        # The CLI exits non-zero on an error; spectral-action passed whenever it
+        # could not post its check run, and pulled node from Docker Hub (429s).
+        run: npx --yes @stoplight/spectral-cli@6.15.0 lint openapi/*.yaml
       - name: ADR-0018 URL-discipline + served-host check
         run: go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
       - name: ADR-0033 PK-discriminator check (coarse-PK data-loss guard)
