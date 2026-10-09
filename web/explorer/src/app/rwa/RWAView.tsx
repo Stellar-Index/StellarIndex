@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { RWAHistoryPanel } from './RWAHistoryPanel';
 import { RWAPremiumPanel } from './RWAPremiumPanel';
+import { PremiumBars, ShareBars } from './RWACharts';
 import { apiGetData, asExample } from '@/api/client';
 import { useAssets } from '@/api/hooks';
 import type { components } from '@/api/types';
@@ -356,6 +357,34 @@ export function RWAView() {
       {/* Everything else on this page is a snapshot. The set's whole
           claim is about real-world value on chain, and "is it growing"
           is the question a snapshot cannot answer. */}
+      {byClass.length > 0 && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Panel title="Value by instrument class" headingLevel={2}>
+            <ShareBars
+              ariaLabel="Market cap by instrument class"
+              rows={byClass.map((c) => ({
+                key: c.class,
+                label: CLASS_LABEL[c.class] ?? c.class,
+                usd: c.market_cap_usd ?? null,
+                unvalued: c.assets_unvalued,
+              }))}
+            />
+          </Panel>
+          <Panel title="Value by issuer" headingLevel={2}>
+            <ShareBars
+              ariaLabel="Market cap by issuer"
+              rows={byIssuer.map((i) => ({
+                key: i.issuer,
+                label:
+                  i.name || i.home_domain || truncateMiddle(i.issuer, 6, 6),
+                usd: i.market_cap_usd ?? null,
+                unvalued: i.assets_unvalued,
+              }))}
+            />
+          </Panel>
+        </div>
+      )}
+
       <RWAHistoryPanel />
 
       {/* And the other question a snapshot cannot answer: whether the
@@ -379,6 +408,7 @@ export function RWAView() {
           />
         ) : (
           <div className="overflow-x-auto">
+            <PremiumBars assets={assets} />
             <AssetTable assets={assets} />
           </div>
         )}

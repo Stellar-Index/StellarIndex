@@ -247,6 +247,8 @@ export type DivergingBucket = {
   pos: number;
   /** Negative-direction magnitude (e.g. sent). Rendered down. Pass the MAGNITUDE (>= 0). */
   neg: number;
+  /** Served label for the bar's value; overrides `formatValue`. */
+  display?: string;
 };
 
 /**
@@ -333,7 +335,7 @@ export function DivergingColumns({
                   height={posH}
                   fill="var(--color-up)"
                 >
-                  <title>{`${b.label} — ${posLabel}: ${formatValue(b.pos)}`}</title>
+                  <title>{`${b.label} — ${posLabel}: ${b.display ?? formatValue(b.pos)}`}</title>
                 </rect>
               )}
               {b.neg > 0 && (
@@ -344,7 +346,7 @@ export function DivergingColumns({
                   height={negH}
                   fill="var(--color-down)"
                 >
-                  <title>{`${b.label} — ${negLabel}: ${formatValue(b.neg)}`}</title>
+                  <title>{`${b.label} — ${negLabel}: ${b.display ?? formatValue(b.neg)}`}</title>
                 </rect>
               )}
             </g>

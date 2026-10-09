@@ -9,6 +9,7 @@ import { formatCompact, formatPairPrice } from '@/lib/format';
 import type { Pool as PoolRow } from '@/api/hooks';
 import { isCIStub } from '@/lib/buildFetch';
 import { shortAssetText } from '@/lib/asset-label';
+import { LiquidityVenueBars } from './LiquidityVenueBars';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -96,6 +97,7 @@ export async function LiquidityTabPanel({
         </p>
       ) : (
         <div className="overflow-x-auto">
+          <LiquidityVenueBars pools={merged} />
           <table className="divide-line min-w-full divide-y text-sm">
             <thead>
               <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
