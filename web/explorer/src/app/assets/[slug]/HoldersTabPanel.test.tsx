@@ -29,6 +29,24 @@ function renderPanel(assetID: string) {
 }
 
 describe('HoldersTabPanel', () => {
+  it('rounds an exact 12.5% top-10 share as 13%, not float 12%', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        asset: 'native',
+        holder_count: 11,
+        holders: [
+          ...Array.from({ length: 10 }, (_, i) => ({
+            account_id: `G${String(i).padStart(55, 'A')}`,
+            balance: '15',
+          })),
+          { account_id: `G${'B'.repeat(55)}`, balance: '1050' },
+        ],
+      },
+    });
+    renderPanel('native');
+    expect(await screen.findByText('13%')).toBeInTheDocument();
+  });
+
   it('renders the native holders board (account balances) when the API serves data', async () => {
     vi.mocked(apiGet).mockResolvedValue({
       data: {

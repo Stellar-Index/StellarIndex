@@ -6,7 +6,11 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { Th, Td } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact } from '@/lib/format';
+import {
+  compareDecimalStrings,
+  formatCompact,
+  formatCompactUnits,
+} from '@/lib/format';
 import { sourceToneClass } from '@/lib/pillTone';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import { DexTvlHeadline } from '@/app/protocols/ProtocolTvlPanel';
@@ -44,9 +48,11 @@ export function DexProtocolsTable() {
       return arr
         .filter((s) => s.class === 'exchange' && s.subclass === 'dex')
         .sort((a, b) => {
-          const av = a.volume_24h_usd ? Number(a.volume_24h_usd) : 0;
-          const bv = b.volume_24h_usd ? Number(b.volume_24h_usd) : 0;
-          if (bv !== av) return bv - av;
+          const c = compareDecimalStrings(
+            b.volume_24h_usd || '0',
+            a.volume_24h_usd || '0',
+          );
+          if (c) return c;
           return (b.trade_count_24h ?? 0) - (a.trade_count_24h ?? 0);
         });
     },
@@ -149,7 +155,7 @@ export function DexProtocolsTable() {
               </tr>
             )}
             {rows.map((r) => {
-              const vol = r.volume_24h_usd ? Number(r.volume_24h_usd) : null;
+              const vol = r.volume_24h_usd;
               const tone = sourceToneClass(r.name);
               return (
                 <tr key={r.name} className="hover:bg-surface-muted">
@@ -165,9 +171,9 @@ export function DexProtocolsTable() {
                     <TvlCell tvl={tvls[r.name]} />
                   </Td>
                   <Td align="right">
-                    {vol != null && Number.isFinite(vol) && vol > 0 ? (
+                    {vol && compareDecimalStrings(vol, '0') === 1 ? (
                       <span className="font-mono tabular-nums">
-                        ${formatCompact(vol)}
+                        ${formatCompactUnits(vol)}
                       </span>
                     ) : (
                       <span className="text-ink-faint">—</span>
@@ -221,13 +227,12 @@ export function DexProtocolsTable() {
  */
 function TvlCell({ tvl }: { tvl?: ProtocolTvl }) {
   if (!tvl) return <span className="text-ink-faint">—</span>;
-  const v = Number(tvl.tvl_usd);
-  if (!Number.isFinite(v) || v <= 0)
+  if (compareDecimalStrings(tvl.tvl_usd, '0') !== 1)
     return <span className="text-ink-faint">—</span>;
   const lowerBound = tvl.unpriced_pools > 0;
   return (
     <span className="font-mono tabular-nums" title={tvl.basis}>
-      {lowerBound ? '≥ ' : ''}${formatCompact(v)}
+      {lowerBound ? '≥ ' : ''}${formatCompactUnits(tvl.tvl_usd)}
     </span>
   );
 }

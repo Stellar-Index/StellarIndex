@@ -9,7 +9,13 @@ import {
   DonutChart,
   CATEGORICAL_PALETTE,
 } from '@/components/charts/DonutChart';
-import { formatBaseUnits, formatCompact, scaleBaseUnits } from '@/lib/format';
+import {
+  formatBaseUnits,
+  formatCompact,
+  ratioPct,
+  scaleBaseUnits,
+  sumDecimalStrings,
+} from '@/lib/format';
 import type { paths } from '@/api/types';
 
 // GET /v1/assets/{id}/holders response body from the generated OpenAPI
@@ -161,6 +167,15 @@ function HoldersConcentration({
   const rest = scaled.slice(10).reduce((a, b) => a + b, 0);
   const total = top10 + rest;
   if (total <= 0) return null;
+  // Negatives clamp to zero as in the donut; malformed input hides the label.
+  const balances = holders.map((h) =>
+    h.balance?.trim().startsWith('-') ? '0' : h.balance,
+  );
+  const topPct = ratioPct(
+    sumDecimalStrings(balances.slice(0, 10)),
+    sumDecimalStrings(balances),
+    0,
+  );
   return (
     <div className="border-line-subtle border-b px-4 pb-4">
       <h3 className="text-ink-muted mb-2 text-[11px] tracking-wider uppercase">
@@ -181,7 +196,7 @@ function HoldersConcentration({
         ]}
         size={128}
         thickness={18}
-        centerLabel={`${((top10 / total) * 100).toFixed(0)}%`}
+        centerLabel={topPct == null ? undefined : `${topPct}%`}
         centerSub="top 10"
         formatValue={(n) => formatCompact(n)}
       />
