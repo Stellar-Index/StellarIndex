@@ -986,11 +986,8 @@ function DigDeeper() {
 }
 
 // xlmCompact renders a stroop integer string as a compact XLM figure
-// (e.g. "50.5B"). total_coins is ~117× past 2^53, so divide as BigInt
-// first (truncating sub-XLM), then the quotient (~5e10) is safely
-// inside the float range for compact display. (ADR-0003.)
+// (e.g. "50.5B"), exact from the string (ADR-0003).
 function xlmCompact(stroops: string): string {
-  const t = stroops.trim();
-  if (!/^-?\d+$/.test(t)) return stroopsToXlm(stroops);
-  return formatCompact(Number(BigInt(t) / 10_000_000n));
+  if (!/^-?\d+$/.test(stroops.trim())) return stroopsToXlm(stroops);
+  return formatCompactUnits(stroops, 7);
 }
