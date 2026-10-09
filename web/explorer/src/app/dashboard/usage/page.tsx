@@ -90,6 +90,11 @@ function UsageBody({ me }: { me: MeResponse }) {
     <Container>
       <Section className="space-y-6">
         <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Dashboard', href: '/dashboard' },
+            { label: 'Usage' },
+          ]}
           eyebrow="Activity"
           title="Usage"
           description="Your daily request volume, per-key activity, and rate-limit headroom."
@@ -200,7 +205,8 @@ export function aggregateByDate(rows: UsageRow[]): DayAgg[] {
     byDate.set(r.date, agg);
   }
   return usageWindowUTC(rows, 30).map(
-    (date) => byDate.get(date) ?? { date, requests: 0, errors: 0, throttled: 0 },
+    (date) =>
+      byDate.get(date) ?? { date, requests: 0, errors: 0, throttled: 0 },
   );
 }
 

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { loadBlogPosts } from '@/lib/blog';
+import { Breadcrumbs } from '@/components/ui';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/blog' },
@@ -16,6 +17,9 @@ export default function BlogIndexPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-8 px-6 py-12">
       <header className="space-y-2">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Blog' }]}
+        />
         <div className="flex items-center justify-between">
           <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
             Blog

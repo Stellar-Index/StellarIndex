@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { Container } from '@/components/ui/Page';
+import { Breadcrumbs, Container } from '@/components/ui/Page';
 
 export const metadata: Metadata = {
   title: 'Developer docs — Stellar Index API',
@@ -117,6 +117,9 @@ export default function DocsPage() {
   return (
     <Container className="space-y-10 py-10 [&>*]:max-w-4xl">
       <header className="space-y-3">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Developer docs' }]}
+        />
         <h1 className="text-3xl font-semibold tracking-tight">
           Developer docs
         </h1>

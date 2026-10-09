@@ -5,7 +5,13 @@ import { ArrowLeft, ExternalLink } from 'lucide-react';
 
 import { loadIncident, loadIncidents } from '@/lib/incidents';
 import { Markdown } from '@/lib/markdown';
-import { Badge, Card, Container, type BadgeTone } from '@/components/ui';
+import {
+  Badge,
+  Breadcrumbs,
+  Card,
+  Container,
+  type BadgeTone,
+} from '@/components/ui';
 import { formatDurationLong } from '@/lib/format';
 
 // Each incident postmortem rendered as its own static page so
@@ -66,6 +72,13 @@ export default async function IncidentPage({
 
   return (
     <Container className="max-w-4xl space-y-6 py-10">
+      <Breadcrumbs
+        items={[
+          { label: 'Home', href: '/' },
+          { label: 'Status', href: '/status' },
+          { label: inc.title },
+        ]}
+      />
       <Link
         href="/status"
         className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1.5 text-sm"

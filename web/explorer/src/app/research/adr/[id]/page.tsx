@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 
+import { Breadcrumbs } from '@/components/ui';
 import { loadADR, loadADRs } from '@/lib/adr';
 import { Markdown } from '@/lib/markdown';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
@@ -63,6 +64,13 @@ export default async function ADRPage({
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
+      <Breadcrumbs
+        items={[
+          { label: 'Home', href: '/' },
+          { label: 'Research', href: '/research' },
+          { label: `ADR-${adr.id}` },
+        ]}
+      />
       <Link
         href="/research"
         className="text-ink-body hover:text-brand-600 inline-flex items-center gap-1.5 text-sm"

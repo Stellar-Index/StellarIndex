@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowRight, Mail } from 'lucide-react';
 import { GithubIcon } from '@/components/GithubIcon';
+import { Breadcrumbs } from '@/components/ui';
 
 export const metadata: Metadata = {
   title: 'Careers — work on Stellar data infrastructure',
@@ -60,6 +61,9 @@ export default function CareersPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-12 px-6 py-12">
       <header className="space-y-3">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Careers' }]}
+        />
         <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
           Careers
         </p>

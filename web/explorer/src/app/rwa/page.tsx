@@ -41,7 +41,14 @@ export default function RWAPage() {
   if (!routeAvailable('/rwa')) {
     return (
       <Container className="space-y-8 py-8 sm:py-10">
-        <PageHeader eyebrow="Tokenized instruments" title="Real-world assets" />
+        <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Real-world assets' },
+          ]}
+          eyebrow="Tokenized instruments"
+          title="Real-world assets"
+        />
         <NetworkUnavailable href="/rwa" />
       </Container>
     );
@@ -49,6 +56,10 @@ export default function RWAPage() {
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Real-world assets' },
+        ]}
         eyebrow="Tokenized instruments"
         title="Real-world assets"
         description="Stellar assets representing treasuries, commodities, equities and property — admitted only when the issuer declares the anchor in a SEP-1 file served from its own on-chain domain AND an independent directory recognises that exact issuing account. Identity is always (code, issuer); a code alone identifies nothing."

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
-import { Container } from '@/components/ui';
+import { Breadcrumbs, Container } from '@/components/ui';
 
 import { CreatorBoard } from './CreatorBoard';
 
@@ -36,6 +36,13 @@ export default function CreatorsPage() {
   return (
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
+        <Breadcrumbs
+          items={[
+            { label: 'Home', href: '/' },
+            { label: 'Insights', href: '/insights' },
+            { label: 'Account creators' },
+          ]}
+        />
         <h1 className="text-3xl font-semibold tracking-tight">
           Account creators
         </h1>

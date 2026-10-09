@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
 
-import { Container, Skeleton } from '@/components/ui';
+import { Breadcrumbs, Container, Skeleton } from '@/components/ui';
 import { OperationsView } from './OperationsView';
 
 export const metadata: Metadata = {
@@ -26,6 +26,9 @@ export default function OperationsPage() {
   return (
     <Container className="space-y-6 py-8">
       <header className="space-y-1">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Operations' }]}
+        />
         <p className="text-ink-muted text-xs tracking-wider uppercase">
           Explorer
         </p>

@@ -4,7 +4,7 @@ import { BookOpen } from 'lucide-react';
 
 import { loadArchitectureDocs } from '@/lib/architecture';
 
-import { Container } from '@/components/ui';
+import { Breadcrumbs, Container } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/research/architecture' },
   title: 'Architecture narratives — Stellar Index research',
@@ -17,6 +17,13 @@ export default function ArchitectureIndexPage() {
   return (
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
+        <Breadcrumbs
+          items={[
+            { label: 'Home', href: '/' },
+            { label: 'Research', href: '/research' },
+            { label: 'Architecture narratives' },
+          ]}
+        />
         <h1 className="text-3xl font-semibold tracking-tight">
           Architecture narratives
         </h1>

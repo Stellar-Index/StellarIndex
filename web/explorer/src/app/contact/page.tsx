@@ -9,6 +9,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { GithubIcon } from '@/components/GithubIcon';
+import { Breadcrumbs } from '@/components/ui';
 
 export const metadata: Metadata = {
   title: 'Contact',
@@ -94,6 +95,9 @@ export default function ContactPage() {
   return (
     <div className="mx-auto w-full max-w-4xl px-6 py-12 sm:py-16">
       <header className="mb-10 space-y-3">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Contact' }]}
+        />
         <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
           Get in touch
         </p>

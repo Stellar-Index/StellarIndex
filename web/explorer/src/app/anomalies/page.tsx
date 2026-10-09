@@ -7,7 +7,7 @@ import { AnomaliesFeed } from './AnomaliesFeed';
 
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
-import { Container } from '@/components/ui';
+import { Breadcrumbs, Container } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'Anomalies — freeze and outlier timeline',
   description:
@@ -63,6 +63,9 @@ export default function AnomaliesPage() {
   return (
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Anomalies' }]}
+        />
         <h1 className="text-3xl font-semibold tracking-tight">Anomalies</h1>
         <p className="text-ink-body max-w-3xl text-sm">
           Every clear→firing freeze transition, with reason + recovery + the
@@ -91,13 +94,13 @@ export default function AnomaliesPage() {
           </Link>
           , a Phase 2 freeze fires only when confidence, z-score, and source
           count ALL cross threshold together (an AND, not an OR) —{' '}
-          <code className="font-mono text-xs">divergence</code> is the
-          separate Phase 2 multi-source-disagreement path. While frozen, the
-          API still serves the last good value — but with{' '}
+          <code className="font-mono text-xs">divergence</code> is the separate
+          Phase 2 multi-source-disagreement path. While frozen, the API still
+          serves the last good value — but with{' '}
           <code className="font-mono text-xs">flags.frozen=true</code> so
-          consumers know not to act on it. A freeze holds for 10 or 30
-          minutes, extends up to four times, and then ESCALATES: an escalated
-          freeze does not auto-clear and stays firing until an operator runs{' '}
+          consumers know not to act on it. A freeze holds for 10 or 30 minutes,
+          extends up to four times, and then ESCALATES: an escalated freeze does
+          not auto-clear and stays firing until an operator runs{' '}
           <code className="font-mono text-xs">freeze-unfreeze</code>.
         </p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

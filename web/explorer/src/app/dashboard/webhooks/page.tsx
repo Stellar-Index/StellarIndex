@@ -176,6 +176,11 @@ function WebhooksBody() {
     <Container>
       <Section className="space-y-6">
         <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Dashboard', href: '/dashboard' },
+            { label: 'Webhooks' },
+          ]}
           eyebrow="Notifications"
           title="Webhooks"
           description="Register an HTTPS endpoint to receive price alerts, incidents, and anomaly events as signed JSON POSTs."

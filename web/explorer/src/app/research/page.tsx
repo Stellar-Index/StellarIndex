@@ -7,7 +7,7 @@ import { loadArchitectureDocs } from '@/lib/architecture';
 import { loadOperationsDocs } from '@/lib/operations';
 import { StatusBadge } from './StatusBadge';
 
-import { Container } from '@/components/ui';
+import { Breadcrumbs, Container } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/research' },
   title: 'Research — architecture decisions and methodology',
@@ -42,6 +42,9 @@ export default function ResearchPage() {
   return (
     <Container className="space-y-10 py-8">
       <header className="space-y-3">
+        <Breadcrumbs
+          items={[{ label: 'Home', href: '/' }, { label: 'Research' }]}
+        />
         <h1 className="text-3xl font-semibold tracking-tight">Research</h1>
         <p className="text-ink-body max-w-3xl text-base">
           The thinking behind every Stellar Index choice. Architecture decision

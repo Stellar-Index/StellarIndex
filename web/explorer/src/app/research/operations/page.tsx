@@ -4,7 +4,7 @@ import { Wrench } from 'lucide-react';
 
 import { loadOperationsDocs } from '@/lib/operations';
 
-import { Container } from '@/components/ui';
+import { Breadcrumbs, Container } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/research/operations' },
   title: 'Operations runbooks — Stellar Index research',
@@ -17,6 +17,13 @@ export default function OperationsIndexPage() {
   return (
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
+        <Breadcrumbs
+          items={[
+            { label: 'Home', href: '/' },
+            { label: 'Research', href: '/research' },
+            { label: 'Operations runbooks' },
+          ]}
+        />
         <h1 className="text-3xl font-semibold tracking-tight">
           Operations runbooks
         </h1>

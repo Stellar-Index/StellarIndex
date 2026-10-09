@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 
+import { Breadcrumbs } from '@/components/ui';
 import { Markdown } from '@/lib/markdown';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -78,6 +79,14 @@ export function buildDocPage(config: DocPageConfig) {
 
     return (
       <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
+        <Breadcrumbs
+          items={[
+            { label: 'Home', href: '/' },
+            { label: 'Research', href: '/research' },
+            { label: config.label, href: `/research/${config.category}` },
+            { label: doc.title },
+          ]}
+        />
         <Link
           href="/research"
           className="text-ink-body hover:text-brand-600 inline-flex items-center gap-1.5 text-sm"
@@ -97,9 +106,7 @@ export function buildDocPage(config: DocPageConfig) {
               </span>
             )}
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {doc.title}
-          </h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{doc.title}</h1>
           <p className="text-ink-body text-sm">{doc.description}</p>
           <a
             href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${doc.source_path}`}

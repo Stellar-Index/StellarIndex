@@ -8,6 +8,7 @@ import { loadBlogPost, loadBlogPosts } from '@/lib/blog';
 import { Markdown } from '@/lib/markdown';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { CURRENT_NETWORK } from '@/lib/networks';
+import { Breadcrumbs } from '@/components/ui';
 
 type Params = Promise<{ slug: string }>;
 
@@ -53,6 +54,13 @@ export default async function BlogPostPage({ params }: { params: Params }) {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-6 py-12">
+      <Breadcrumbs
+        items={[
+          { label: 'Home', href: '/' },
+          { label: 'Blog', href: '/blog' },
+          { label: post.title },
+        ]}
+      />
       <Link
         href="/blog"
         className="text-ink-body hover:text-brand-600 inline-flex items-center gap-1.5 text-sm"

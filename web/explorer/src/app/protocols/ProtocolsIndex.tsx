@@ -177,7 +177,12 @@ export function ProtocolsIndex({
 
   return (
     <Container className="space-y-8 py-8 sm:py-10">
-      <PageHeader eyebrow={eyebrow} title={title} description={description} />
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: title }]}
+        eyebrow={eyebrow}
+        title={title}
+        description={description}
+      />
 
       <StatGrid cols={3}>
         <StatCell>
