@@ -21,10 +21,9 @@ import { ConvertLiveRate, ConvertSnippets } from './ConvertLive';
 // The build baked 1 USD = 0.85 EUR; the live wire says 1 EUR = 2 USD,
 // i.e. 1 USD = 0.50 EUR. Post-fix the page must show 0.50, never 0.85.
 function stubLiveRate() {
-  // batch(asset_ids=fiat:EUR, quote=fiat:USD) → value of 1 EUR in USD
-  // units. price '2' ⇒ 1 EUR = 2 USD ⇒ live 1 USD = 0.5 EUR (inverted).
+  // batch(asset_ids=fiat:USD, quote=fiat:EUR) → value of 1 USD in EUR.
   vi.mocked(apiGet).mockResolvedValue({
-    data: [{ asset_id: 'fiat:EUR', price: '2' }],
+    data: [{ asset_id: 'fiat:USD', price: '0.5' }],
   });
 }
 
@@ -103,5 +102,49 @@ describe('ConvertSnippets', () => {
     expect(
       screen.queryByText(/mid-market rate of 1 USD = 0\.850000 EUR/),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe('ConvertLiveRate for XLM', () => {
+  // The rate is the value of 1 {from} in {to}; XLM reads as `native`.
+  it('reads 1 XLM in USD forward and shows it un-inverted', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [{ asset_id: 'native', price: '0.25' }],
+    });
+    renderWithQuery(
+      <ConvertLiveRate
+        from="XLM"
+        to="USD"
+        initialRate={null}
+        initialInverse={null}
+      />,
+    );
+    expect(await screen.findByText(/0\.250000/)).toBeInTheDocument();
+    expect(screen.getByText(/4\.0000/)).toBeInTheDocument();
+    expect(vi.mocked(apiGet)).toHaveBeenCalledWith(
+      '/v1/price/batch?asset_ids=native&quote=fiat%3AUSD',
+      {},
+    );
+  });
+
+  // Fiat is only priced as the quote, so USD → XLM is 1 / (XLM in USD).
+  it('reads USD to XLM as the inverse of XLM in USD', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [{ asset_id: 'native', price: '0.25' }],
+    });
+    renderWithQuery(
+      <ConvertLiveRate
+        from="USD"
+        to="XLM"
+        initialRate={null}
+        initialInverse={null}
+      />,
+    );
+    expect(await screen.findByText(/4\.0000/)).toBeInTheDocument();
+    expect(screen.getByText(/0\.250000/)).toBeInTheDocument();
+    expect(vi.mocked(apiGet)).toHaveBeenCalledWith(
+      '/v1/price/batch?asset_ids=native&quote=fiat%3AUSD',
+      {},
+    );
   });
 });

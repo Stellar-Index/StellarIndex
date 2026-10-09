@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Activity,
+  ArrowLeftRight,
   BarChart3,
   BellRing,
   BookOpen,
@@ -85,6 +86,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: '/exchanges', label: 'Markets', icon: Building2 },
       { href: '/external/assets', label: 'Assets', icon: Globe },
+      { href: '/convert', label: 'Convert', icon: ArrowLeftRight },
     ],
   },
   {
