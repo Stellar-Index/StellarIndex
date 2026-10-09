@@ -329,11 +329,12 @@ const CLOSED_AT_BUILD = new Map([
 
 // API-derived and still uncovered: a live defect, not an exemption. The
 // last test fails once its handler lands so the entry cannot outlive it.
-const KNOWN_GAPS = new Map([
-  [
-    'convert/[from]/[to]',
-    'two dynamic segments; the one-segment /<family>/shell/ contract does not fit',
-  ],
+const KNOWN_GAPS = new Map([]);
+
+// Covered by a handler that redirects an un-baked id to a page that serves
+// it live, instead of by a /<family>/shell/ document.
+const REDIRECT_FALLBACK = new Map([
+  ['convert/[from]/[to]', 'un-baked pairs 302 to the /convert/ picker'],
 ]);
 
 const familyOf = (segs) =>
@@ -372,7 +373,10 @@ const handlerFor = (family) =>
 
 describe('every growable dynamic route has a shell fallback', () => {
   const growable = dynamicRoutes.filter(
-    ({ route }) => !CLOSED_AT_BUILD.has(route) && !KNOWN_GAPS.has(route),
+    ({ route }) =>
+      !CLOSED_AT_BUILD.has(route) &&
+      !KNOWN_GAPS.has(route) &&
+      !REDIRECT_FALLBACK.has(route),
   );
 
   it.each(growable.map((r) => [r.route, r]))(
@@ -394,7 +398,11 @@ describe('every growable dynamic route has a shell fallback', () => {
 
   it('lists only routes that exist and still lack a handler', () => {
     const byRoute = new Map(dynamicRoutes.map((r) => [r.route, r]));
-    for (const route of [...CLOSED_AT_BUILD.keys(), ...KNOWN_GAPS.keys()]) {
+    for (const route of [
+      ...CLOSED_AT_BUILD.keys(),
+      ...KNOWN_GAPS.keys(),
+      ...REDIRECT_FALLBACK.keys(),
+    ]) {
       expect(byRoute.has(route), `stale entry ${route}`).toBe(true);
     }
     for (const route of KNOWN_GAPS.keys()) {
@@ -402,6 +410,12 @@ describe('every growable dynamic route has a shell fallback', () => {
         fs.existsSync(handlerFor(byRoute.get(route).family)),
         `${route} now has a handler; drop it from KNOWN_GAPS`,
       ).toBe(false);
+    }
+    for (const route of REDIRECT_FALLBACK.keys()) {
+      expect(
+        fs.existsSync(handlerFor(byRoute.get(route).family)),
+        `${route} lost its redirect handler`,
+      ).toBe(true);
     }
   });
 });
