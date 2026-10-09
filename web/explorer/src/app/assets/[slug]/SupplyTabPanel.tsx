@@ -12,6 +12,7 @@ import { formatBaseUnits, formatCompact, scaleBaseUnits } from '@/lib/format';
 import { type Envelope } from '../../explorer-shared';
 import { SupplyFlowsBar, buildSupplyFlowRows } from './SupplyFlowsBar';
 import { CurrencyDeclarations } from './CurrencyDeclarations';
+import { SupplyComposition } from './SupplyComposition';
 
 // Lazy-load the chart (~155 KB lightweight-charts) — only the supply
 // tab needs it, and only when there's market-cap history to draw.
@@ -129,6 +130,20 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
               }
             />
           </div>
+
+          <SupplyComposition
+            circulating={a.circulating_supply}
+            total={a.total_supply}
+            max={a.max_supply}
+            decimals={decimals}
+            maxDeclared={a.max_supply_basis === 'sep1_declared_max'}
+            unlimited={a.is_unlimited === true}
+            floor={
+              a.supply_basis === 'classic_trustline_sum' ||
+              a.supply_basis === 'contract_storage_balances' ||
+              onchain.data?.data?.circulating_supply_lower_bound === true
+            }
+          />
 
           {(a.market_cap_usd || a.fdv_usd) && (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
