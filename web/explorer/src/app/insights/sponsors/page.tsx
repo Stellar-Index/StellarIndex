@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
-import { Breadcrumbs, Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 import { SponsorBoard } from './SponsorBoard';
 
@@ -15,6 +15,12 @@ export const metadata: Metadata = {
     "Which accounts have paid the base reserves for other accounts' ledger entries on Stellar, how many accounts they covered, and how many sponsorships they revoked.",
 };
 
+const CRUMBS = [
+  { label: 'Home', href: '/' },
+  { label: 'Insights', href: '/insights' },
+  { label: 'Account sponsors' },
+];
+
 export default function SponsorsPage() {
   // Inherits the /insights hub's `pricing` capability by longest-prefix
   // match, for the same reason as the creators board: the lean test nets
@@ -23,9 +29,7 @@ export default function SponsorsPage() {
   if (!routeAvailable('/insights/sponsors')) {
     return (
       <Container className="space-y-6 py-8">
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Account sponsors
-        </h1>
+        <PageHeader title="Account sponsors" breadcrumbs={CRUMBS} />
         <NetworkUnavailable href="/insights/sponsors" />
       </Container>
     );
@@ -33,25 +37,19 @@ export default function SponsorsPage() {
 
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Insights', href: '/insights' },
-            { label: 'Account sponsors' },
-          ]}
-        />
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Account sponsors
-        </h1>
-        <p className="text-ink-body max-w-3xl text-sm">
-          Holding anything on Stellar costs a base reserve, and one account can
-          pay that reserve on another&apos;s behalf. This board ranks the
-          accounts doing the paying: how many sponsorship arrangements they have
-          started, how many distinct accounts those covered, and how many they
-          have revoked.
-        </p>
-      </header>
+      <PageHeader
+        title="Account sponsors"
+        breadcrumbs={CRUMBS}
+        description={
+          <>
+            Holding anything on Stellar costs a base reserve, and one account
+            can pay that reserve on another&apos;s behalf. This board ranks the
+            accounts doing the paying: how many sponsorship arrangements they
+            have started, how many distinct accounts those covered, and how many
+            they have revoked.
+          </>
+        }
+      />
 
       <SponsorBoard />
 

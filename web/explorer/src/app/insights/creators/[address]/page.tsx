@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
 import { shellMetadata } from '@/lib/seo';
-import { Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 import { CreatorDetailPathView } from './CreatorDetailPathView';
 
@@ -48,9 +48,14 @@ export default function CreatorDetailPage() {
   if (!routeAvailable('/insights/creators')) {
     return (
       <Container className="space-y-6 py-8">
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Account creators
-        </h1>
+        <PageHeader
+          title="Account creators"
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Insights', href: '/insights' },
+            { label: 'Account creators' },
+          ]}
+        />
         <NetworkUnavailable href="/insights/creators" />
       </Container>
     );

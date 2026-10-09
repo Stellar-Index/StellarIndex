@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeftRight } from 'lucide-react';
 
-import { Select } from '@/components/ui';
+import { PageHeader, Select } from '@/components/ui';
 import { buildConvertParams } from '@/lib/convert-params';
 import { ConvertPair } from './[from]/[to]/ConvertPair';
 import { ConvertChart } from './[from]/[to]/ConvertChart';
@@ -37,7 +37,11 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
   return (
     <>
       <header className="border-line space-y-4 border-b pb-5">
-        <h1 className="text-3xl font-semibold tracking-tight">Convert</h1>
+        <PageHeader
+          title="Convert"
+          breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Convert' }]}
+          description="Convert XLM and the major fiat currencies at the live mid-market rate."
+        />
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-ink-muted space-y-1 text-xs tracking-wider uppercase">
             <span className="block">From</span>

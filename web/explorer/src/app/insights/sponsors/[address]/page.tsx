@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
 import { shellMetadata } from '@/lib/seo';
-import { Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 import { SponsorDetailPathView } from './SponsorDetailPathView';
 
@@ -51,9 +51,14 @@ export default function SponsorDetailPage() {
   if (!routeAvailable('/insights/sponsors')) {
     return (
       <Container className="space-y-6 py-8">
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Account sponsors
-        </h1>
+        <PageHeader
+          title="Account sponsors"
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Insights', href: '/insights' },
+            { label: 'Account sponsors' },
+          ]}
+        />
         <NetworkUnavailable href="/insights/sponsors" />
       </Container>
     );
