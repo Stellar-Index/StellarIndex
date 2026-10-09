@@ -16,15 +16,10 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
   // The link's href comes from the built page list, never from the select value.
   const pairPages = useMemo(
     () =>
-      new Map(
-        buildConvertParams(tickers).map((p) => [
-          `${p.from}/${p.to}`,
-          `/convert/${p.from}/${p.to}`,
-        ]),
-      ),
+      new Map(buildConvertParams(tickers).map((p) => [`${p.from}/${p.to}`, p])),
     [tickers],
   );
-  const pairHref = pairPages.get(`${from}/${to}`);
+  const pagePair = pairPages.get(`${from}/${to}`);
 
   const pickFrom = (next: string) => {
     setFrom(next);
@@ -81,9 +76,9 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
               ))}
             </Select>
           </label>
-          {pairHref && (
+          {pagePair && (
             <Link
-              href={pairHref}
+              href={`/convert/${pagePair.from}/${pagePair.to}`}
               className="text-brand-600 h-9 text-sm leading-9 hover:underline"
             >
               {from} → {to} page
