@@ -74,7 +74,7 @@ export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
             </span>
           )}
         </div>
-        {!hasPrice && (
+        {priceText === '—' && (
           <p className="text-ink-muted text-sm">
             No live USD price is currently available for this asset from our
             off-chain feeds.
