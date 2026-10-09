@@ -51,6 +51,14 @@
 --          -floor-ledger <ec-floor>
 --      A window that refuses stops the run with the watermark unmoved;
 --      re-run once ch-backfill has filled that window's entry changes.
+--   4. Only once the derive covers the lake's first ledger (step 3 ran with
+--      an ec-floor equal to the lake's first ledger), record the marker that
+--      lets /v1/assets/{asset_id}/entry-changes drop lower_bound:
+--        INSERT INTO stellar.entry_history_watermark (name, thru_ledger)
+--        SELECT 'entry_history_backfill', max(thru_ledger)
+--        FROM stellar.entry_history_watermark WHERE name = 'entry_history';
+--      Rollback (back to lower_bound):
+--        DELETE FROM stellar.entry_history_watermark WHERE name = 'entry_history_backfill';
 CREATE TABLE IF NOT EXISTS stellar.account_entry_changes
 (
     account          String,

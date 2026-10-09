@@ -24,10 +24,10 @@ route absent on a test net is correct, not a gap.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **142** |
+| Paths in the OpenAPI contract | **143** |
 | Level 3 — reachable | **112** |
 | Level 2 — consumed but unreachable | **0** |
-| Level 1 — not consumed | **26** |
+| Level 1 — not consumed | **27** |
 | Deliberately excluded (operational) | **4** |
 
 Level 2 is empty and enforced: `src/lib/route-reachability.test.ts` walks the
@@ -88,6 +88,7 @@ call site; `hooks.ts:useX` is a shared hook.
 | `/assets/{asset_id}/supply` | GET | 3 | hooks.ts:useAssetSupply |
 | `/assets/{asset_id}/supply/flows` | GET | 1 | — |
 | `/assets/{asset_id}/movements` | GET | 1 | — |
+| `/assets/{asset_id}/entry-changes` | GET | 1 | — |
 | `/assets/{asset_id}/holders` | GET | 3 | app/assets/[slug]/HoldersTabPanel.tsx |
 | `/price` | GET | 3 | ../functions/og/[[path]].js |
 | `/price/at` | GET | 1 | — |
@@ -236,6 +237,7 @@ them is a product decision, not made here.
 | `/ledgers/{seq}/operations` | One ledger's decoded operations with `total`/`truncated`; the only per-ledger operations read (`/operations` refuses `?ledger=`). | Small: tab on `/ledgers/[seq]`. |
 | `/assets/{asset_id}/supply/flows` | Daily mint / burn / clawback from the `supply_flows` lake, with `net` and `history_incomplete` (SDK `AssetSupplyFlows`). | Small: chart beside the supply card. |
 | `/assets/{asset_id}/movements` | Per-asset movements read from the ClickHouse lake. | Small: tab on `/assets/[slug]`. |
+| `/assets/{asset_id}/entry-changes` | Per-asset trustline, offer and claimable-balance change history from the ClickHouse lake. | Small: tab on `/assets/[slug]`. |
 
 ### `/methodology`
 

@@ -19,6 +19,7 @@ var specOpaqueObjectAllowlist = map[string]string{
 	"sep1_payload": "issuer-authored stellar.toml content, verbatim",
 	"fields":       "per-operation-type decoded fields; one shape per op type",
 	"attributes":   "per-movement-kind remainder; one shape per kind",
+	"entry":        "decoded ledger entry; one shape per entry type",
 }
 
 // TestSpecOpaqueObjectsAreAllowlisted fails when a response property is

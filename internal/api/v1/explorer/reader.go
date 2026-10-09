@@ -296,6 +296,10 @@ type ExplorerReader interface {
 	// AssetMovementsBackfilledThru is the ledger movements_by_asset's history
 	// copy is verified through; 0 = only rows since its MV was created.
 	AssetMovementsBackfilledThru(ctx context.Context) (uint32, error)
+	AssetEntryChanges(ctx context.Context, asset string, limit int, cur clickhouse.AssetEntryChangeCursor, maxLedger uint32) ([]clickhouse.AssetEntryChange, error)
+	// EntryHistoryCoverage is the ch-entry-history derive watermark and the
+	// from-genesis backfill marker (0 = not derived / not verified).
+	EntryHistoryCoverage(ctx context.Context) (watermark, backfilledThru uint32, err error)
 	// Cap67MovementsWatermark is the highest ledger the cap67 movement
 	// derive has completed through — 0 when the feed
 	// isn't provisioned. The movements handler floors its Postgres tail

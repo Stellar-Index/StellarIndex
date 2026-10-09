@@ -581,6 +581,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assets/{asset_id}/entry-changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every trustline, offer and claimable-balance change of one asset, newest first.
+         * @description Ledger-entry history keyed by asset (`stellar.asset_entry_changes`,
+         *     derived from the lake's `ledger_entry_changes`): one entry per change
+         *     per role the asset plays in it. `role` is `holder` (a trustline),
+         *     `selling` or `buying` (an offer), `claimable` (a claimable balance;
+         *     `account` is its sponsor), or `reserve_a` / `reserve_b` (a liquidity
+         *     pool's reserve). `entry` is the decoded entry (its last state for a
+         *     removal) and `changed` names the fields an update altered.
+         *     Keyset-paged with `?cursor=` (echo back `next_cursor`).
+         *
+         *     `asset_id` is folded like `/assets/{asset_id}/movements`: `XLM`,
+         *     `crypto:XLM` and the native SAC read as `native`; `CODE:ISSUER` and a
+         *     classic asset's SAC read as `CODE-ISSUER`. A Soroban-only token has
+         *     no classic entries, so its page is empty. Off-chain ids return 400.
+         *
+         *     CEILING: the feed ends at `through_ledger`, the entry-history
+         *     derive's watermark. With no derive on the deployment it is 0 and the
+         *     page is empty with `lower_bound` true.
+         *
+         *     LOWER BOUND: until the operator verifies the derive from the lake's
+         *     first ledger, `lower_bound` is true and older pages may end early.
+         *     `amount` is the entry's post-change balance of this asset (0 once
+         *     removed) as an integer string of stroops (ADR-0003); it is omitted
+         *     for an offer's `buying` side.
+         */
+        get: operations["getAssetEntryChanges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/price": {
         parameters: {
             query?: never;
@@ -14663,6 +14705,125 @@ export interface operations {
                              */
                             through_ledger: number;
                             /** @description True while the asset-keyed history backfill is unverified: older history may be missing. */
+                            lower_bound: boolean;
+                            coverage_note: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAssetEntryChanges: {
+        parameters: {
+            query?: {
+                /** @description Maximum changes to return (1-200, default 25). Out-of-range values return 400. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's next_cursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
+                 *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
+                 *     validated per SEP-23. The handler is strict — short symbols
+                 *     like `XLM` or `USDC` are NOT accepted here; use `native` or
+                 *     the full `<code>-<G…>` form.
+                 * @example native
+                 */
+                asset_id: components["parameters"]["AssetIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The asset's entry-change feed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "changes": [
+                     *           {
+                     *             "ledger": 64802900,
+                     *             "ledger_close_time": "2026-10-06T14:02:29Z",
+                     *             "tx_hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
+                     *             "op_index": 0,
+                     *             "change_index": 1,
+                     *             "role": "holder",
+                     *             "entry_type": "trustline",
+                     *             "change_type": "updated",
+                     *             "changed": [
+                     *               "balance"
+                     *             ],
+                     *             "account": "GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N",
+                     *             "amount": "1000000000000",
+                     *             "entry": {
+                     *               "balance": "1000000000000",
+                     *               "limit": "9223372036854775807",
+                     *               "flags": 1
+                     *             }
+                     *           }
+                     *         ],
+                     *         "next_cursor": "64802900.be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36.0.1.holder",
+                     *         "through_ledger": 64802921,
+                     *         "lower_bound": true,
+                     *         "coverage_note": "entry changes through ledger 64802921; the derive is not yet verified from the lake's first ledger, so older history may be missing"
+                     *       },
+                     *       "as_of": "2026-10-06T14:03:31Z",
+                     *       "flags": {
+                     *         "divergence_warning": false,
+                     *         "triangulated": false,
+                     *         "reduced_redundancy": false,
+                     *         "stale": false,
+                     *         "degraded": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            asset: string;
+                            changes: {
+                                /** Format: int64 */
+                                ledger: number;
+                                /** Format: date-time */
+                                ledger_close_time: string;
+                                /** @description Empty for a change outside any transaction. */
+                                tx_hash: string;
+                                /**
+                                 * Format: int32
+                                 * @description -1 for a transaction-level change (fee, sequence).
+                                 */
+                                op_index: number;
+                                /** Format: int64 */
+                                change_index: number;
+                                /** @enum {string} */
+                                role: "holder" | "selling" | "buying" | "claimable" | "reserve_a" | "reserve_b" | "pool";
+                                entry_type: string;
+                                change_type: string;
+                                changed: string[];
+                                /** @description Holder, seller or sponsor; omitted for a liquidity pool. */
+                                account?: string;
+                                /** @description Post-change balance of this asset in stroops (ADR-0003); omitted for an offer's buying side. */
+                                amount?: string;
+                                /** @description The decoded ledger entry. */
+                                entry: {
+                                    [key: string]: unknown;
+                                };
+                            }[];
+                            next_cursor?: string;
+                            /**
+                             * Format: int64
+                             * @description Newest ledger this feed may serve (the derive watermark).
+                             */
+                            through_ledger: number;
+                            /** @description True while the derive is unverified from the lake's first ledger: older history may be missing. */
                             lower_bound: boolean;
                             coverage_note: string;
                         };

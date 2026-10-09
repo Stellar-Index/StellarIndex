@@ -296,6 +296,16 @@ func (r *capReader) AssetMovementsBackfilledThru(ctx context.Context) (uint32, e
 	return 0, nil
 }
 
+func (r *capReader) AssetEntryChanges(ctx context.Context, _ string, _ int, _ clickhouse.AssetEntryChangeCursor, _ uint32) ([]clickhouse.AssetEntryChange, error) {
+	r.probe.record(ctx)
+	return nil, nil
+}
+
+func (r *capReader) EntryHistoryCoverage(ctx context.Context) (uint32, uint32, error) {
+	r.probe.record(ctx)
+	return 1, 0, nil
+}
+
 // capPositions is a PositionsReader that shares the same probe — the positions
 // endpoint's lake dependency is Postgres (this seam), so its bounded context
 // arrives here rather than at capReader.
@@ -390,6 +400,7 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 		{"AccountMovements", "/v1/accounts/" + validTestAccount + "/movements", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountMovements},
 		{"AccountState", "/v1/accounts/" + validTestAccount, map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountState},
 		{"AssetHolders", "/v1/assets/native/holders", map[string]string{"asset_id": "native"}, (*Handler).AssetHolders},
+		{"AssetEntryChanges", "/v1/assets/native/entry-changes", map[string]string{"asset_id": "native"}, (*Handler).AssetEntryChanges},
 		{"AccountPositions", "/v1/accounts/" + validTestAccount + "/positions", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountPositions},
 		{"AccountsStats", "/v1/accounts/stats", nil, (*Handler).AccountsStats},
 		{"AccountCreators", "/v1/accounts/creators", nil, (*Handler).AccountCreators},
