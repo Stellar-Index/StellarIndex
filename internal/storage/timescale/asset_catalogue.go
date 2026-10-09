@@ -596,8 +596,8 @@ func listingRankTierExpr(order AssetsOrder) string {
 // is the spine plus three small hash joins, whatever the
 // limit / cursor / filter. Materialising twelve `DISTINCT ON … FROM
 // prices_1m` CTEs per call for every asset in the catalogue instead
-// measured 8,019 calls at mean 2,400 ms on r1 (`pg_stat_statements`),
-// 380,324 shared buffers each, to return ~116 rows. Keep it that way —
+// costs seconds and hundreds of thousands of buffers per call to return
+// about a hundred rows. Keep it that way —
 // if you find yourself adding a prices_1m read here, the answer is
 // another column on a rollup.
 //
