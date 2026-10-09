@@ -10,7 +10,7 @@ import { LiveChangeChip } from '../../LiveChangeChip';
 // price_history_24h / change_1h_pct / change_7d_pct).
 import type { Coin } from '@/api/hooks';
 import { API_BASE_URL } from '@/api/client';
-import { formatSubunitPrice } from '@/lib/format';
+import { formatCompactUnits, formatSubunitPrice } from '@/lib/format';
 import { isCIStub } from '@/lib/buildFetch';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -293,6 +293,11 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
   }
 
   const priceNum = coin.price_usd ? Number(coin.price_usd) : null;
+  const volumeText = formatCompactUnits(coin.volume_24h_usd);
+  const showVolume =
+    !coin.volume_24h_usd?.trim().startsWith('-') &&
+    volumeText !== '—' &&
+    volumeText !== '0';
   const change1h = coin.change_1h_pct ? Number(coin.change_1h_pct) : null;
   const change24h = coin.change_24h_pct ? Number(coin.change_24h_pct) : null;
   const change7d = coin.change_7d_pct ? Number(coin.change_7d_pct) : null;
@@ -357,10 +362,8 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
       {points.length > 0 && <Sparkline points={points} />}
       <div className="text-ink-faint mt-auto flex items-center justify-between text-[10px]">
         <span>Powered by Stellar Index</span>
-        {coin.volume_24h_usd && (
-          <span className="font-mono tabular-nums">
-            ${formatCompact(Number(coin.volume_24h_usd))} 24h vol
-          </span>
+        {showVolume && (
+          <span className="font-mono tabular-nums">${volumeText} 24h vol</span>
         )}
       </div>
     </div>
@@ -445,11 +448,4 @@ function formatPrice(n: number): string {
   if (n >= 0.001) return `$${n.toFixed(6)}`;
   if (n > 0) return `$${formatSubunitPrice(n)}`;
   return '—';
-}
-
-function formatCompact(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return '—';
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
-  return n.toFixed(2);
 }
