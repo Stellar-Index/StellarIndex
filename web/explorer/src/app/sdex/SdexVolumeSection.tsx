@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, formatCompactUnits } from '@/lib/format';
 import { dropPartialTrailingDay } from '@/lib/series';
 
 // Lazy-load lightweight-charts (~155 KB) — only this section needs it.
@@ -64,6 +64,7 @@ export function SdexVolumeSection() {
       date: pt.date,
       time: Math.floor(Date.parse(`${pt.date}T00:00:00Z`) / 1000),
       value: Number(pt.value),
+      raw: pt.value,
     }))
     .filter((pt) => Number.isFinite(pt.time) && Number.isFinite(pt.value));
 
@@ -118,7 +119,7 @@ export function SdexVolumeSection() {
             <p className="text-ink-muted text-sm">
               One complete day of volume so far —{' '}
               <span className="text-ink font-mono tabular-nums">
-                {points[0].date}: ${formatCompact(points[0].value)}
+                {points[0].date}: ${formatOneDay(points[0])}
               </span>
               . The chart appears once a second complete day lands.
             </p>
@@ -141,8 +142,14 @@ export function SdexVolumeSection() {
   );
 }
 
+// Rounded from the exact decimal string; a non-decimal value shows verbatim.
 function formatKpi(k: BespokeKpi): string {
-  const n = Number(k.value);
-  if (!Number.isFinite(n)) return k.value;
-  return k.unit === 'USD' ? `$${formatCompact(n)}` : formatCompact(n);
+  const s = formatCompactUnits(k.value);
+  if (s === '—') return k.value;
+  return k.unit === 'USD' ? `$${s}` : s;
+}
+
+function formatOneDay(pt: { raw: string; value: number }): string {
+  const s = formatCompactUnits(pt.raw);
+  return s === '—' ? formatCompact(pt.value) : s;
 }
