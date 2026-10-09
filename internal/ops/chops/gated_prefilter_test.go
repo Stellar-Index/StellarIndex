@@ -367,3 +367,30 @@ func TestCatalogue_BlendReDeriveIsContractScoped(t *testing.T) {
 		}
 	}
 }
+
+// A gated set too large to inline as a contract_id IN list falls back to an
+// unscoped read rather than a query ClickHouse rejects for max_query_size.
+func TestGatedPrefilter_OversizedSetIsUnscoped(t *testing.T) {
+	cat, _, err := buildReconciliationCatalogue(config.Config{})
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	src := catalogueSource(t, cat, "blend")
+	pf, _, err := gatedPrefilter(context.Background(), countingEventStreamer{}, src, src.genesis+10)
+	if err != nil {
+		t.Fatalf("gatedPrefilter: %v", err)
+	}
+	if len(pf) < 2 {
+		t.Fatalf("blend prefilter has %d ids; the test needs at least 2", len(pf))
+	}
+	old := maxGatedPrefilterIDs
+	maxGatedPrefilterIDs = len(pf) - 1
+	t.Cleanup(func() { maxGatedPrefilterIDs = old })
+	pf, _, err = gatedPrefilter(context.Background(), countingEventStreamer{}, src, src.genesis+10)
+	if err != nil {
+		t.Fatalf("gatedPrefilter: %v", err)
+	}
+	if pf != nil {
+		t.Errorf("oversized prefilter = %d ids, want nil (unscoped)", len(pf))
+	}
+}

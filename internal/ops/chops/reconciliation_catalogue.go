@@ -608,6 +608,9 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			dec:       sorocredit.NewDecoder(),
 			factories: []string{sorocredit.MainnetContract}, creationSym: sorocredit.TopicNewCollateralContract,
 			newGatedDec: func() gatedDecoder { return sorocredit.NewDecoder() },
+			// Its 139k+ children overflow the contract prefilter; these exact
+			// topics (none in the firehose) keep the unscoped read narrow.
+			topic0Syms: sorocredit.EventSymbols(),
 			targets: []reconTarget{
 				{"credit_positions", "", []string{"sorocredit.new_collateral_contract"}},
 				{"credit_statements", "", []string{"sorocredit.statement_published"}},
