@@ -23,7 +23,6 @@ ansible-minio-buckets-var-test.sh
 ansible-zfs-import-guard-test.sh
 audit-remediation-operator-actions-test.sh
 cache-r1-annotation-test.sh
-check-commitlint-scope-parity-test.sh
 check-deploy-relax-test.sh
 check-redirects-cap-test.sh
 ci-doc-trigger-test.sh

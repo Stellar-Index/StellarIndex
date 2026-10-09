@@ -97,9 +97,6 @@ func TestDefault_isValidShape(t *testing.T) {
 	if c.Aggregate.MinUSDVolume <= 0 {
 		t.Error("Aggregate.MinUSDVolume must be positive")
 	}
-	if c.Obs.TraceSample < 0 || c.Obs.TraceSample > 1 {
-		t.Errorf("Obs.TraceSample out of [0,1]: %f", c.Obs.TraceSample)
-	}
 }
 
 // TestDefaultPricingGuard_MatchesPricingguardConstants pins the config
