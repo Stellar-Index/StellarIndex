@@ -363,9 +363,7 @@ function RegistryPanel() {
       bodyClassName="-mx-4"
     >
       <details className="text-ink-muted px-4 pb-3 text-xs">
-        <summary className="cursor-pointer">
-          Factory-anchored (ADR-0035)
-        </summary>
+        <summary className="cursor-pointer">Factory-anchored</summary>
         Each protocol owns contracts anchored to a verified factory, which lets
         us attribute an event to a protocol rather than a look-alike. Click a
         factory for its hub, or the count for the full roster.

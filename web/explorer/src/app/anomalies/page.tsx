@@ -11,7 +11,7 @@ import { Breadcrumbs, Container } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'Anomalies — freeze and outlier timeline',
   description:
-    'Every clear→firing freeze transition, with reason + recovery + frozen-value detail. Powered by the freeze-event durable mirror per ADR-0019.',
+    'Every clear→firing freeze transition, with reason + recovery + frozen-value detail.',
   alternates: { canonical: '/anomalies' },
 };
 
@@ -33,7 +33,7 @@ const REASONS: { name: string; trigger: string; meaning: string }[] = [
     name: 'outlier_storm',
     trigger: 'Low confidence, high z-score, and a thin source count together',
     meaning:
-      'The Phase 2 confidence/z-score/source-count signals all crossed threshold at once — the ADR-0019 freeze condition is an AND of all three, not any one alone. Usually a ledger-level shock; the freeze prevents the surviving inliers from setting a misleading "VWAP".',
+      'Confidence, z-score and source count all crossed threshold at once; a freeze needs all three, not any one alone. Usually a ledger-level shock; the freeze prevents the surviving inliers from setting a misleading "VWAP".',
   },
   {
     name: 'other',

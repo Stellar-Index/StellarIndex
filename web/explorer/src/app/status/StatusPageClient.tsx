@@ -2212,9 +2212,9 @@ function BackfillCoverageTable({
       <details className="text-ink-faint mb-2 text-[11px]">
         <summary className="cursor-pointer">How to read coverage</summary>
         <p className="mt-1">
-          <strong>Coverage</strong> = verified completeness (ADR-0033). A green
-          % is <strong>fully verified</strong>: the lake is hash-chained to the
-          tip (substrate), every event shape is recognized, AND the served tier
+          <strong>Coverage</strong> = verified completeness. A green % is{' '}
+          <strong>fully verified</strong>: the lake is hash-chained to the tip
+          (substrate), every event shape is recognized, AND the served tier
           reconciles to the lake (Δ=0). <em>reconciling</em> (amber) = data is
           captured in the lake but the served tier hasn&apos;t reconciled yet —{' '}
           <em>captured, not yet verified</em>; the % shown is capture, not the
@@ -2348,7 +2348,7 @@ function BackfillCoverageTable({
                         className="text-warn-700 inline-flex items-center justify-end gap-1.5"
                         title={
                           lakeComplete
-                            ? 'Archive PROVEN genesis-complete (ADR-0034 lake_complete=true: substrate continuity + hash chain + recognition, genesis to tip). The served tier has not reconciled to it yet (ADR-0033 complete=false), so the served numbers can still be short. No data is missing; the hourly completeness verify + lake re-derive close the gap.'
+                            ? 'Archive proven complete from genesis to tip (continuous, hash-chained, every event recognised). The served tier has not reconciled to it yet, so the served numbers can still be short. No data is missing; the hourly completeness verify + lake re-derive close the gap.'
                             : 'Captured, not yet verified. The completeness watermark has been computed but NEITHER axis is complete: the archive is not yet proven genesis-complete (lake_complete=false) and the served tier has not reconciled. Genuine history may still be missing.'
                         }
                       >
@@ -2363,7 +2363,7 @@ function BackfillCoverageTable({
                     ) : (
                       <span
                         className="text-ink-muted inline-flex items-center justify-end gap-1.5"
-                        title="Completeness not yet verified (ADR-0033). The figure is a gap-free liveness signal — no large gap detected — which can read ~100% for sparse or only-partially-indexed sources. Verified completeness is pending the data-recovery backfills."
+                        title="Completeness not yet verified. The figure is a gap-free liveness signal — no large gap detected — which can read ~100% for sparse or only-partially-indexed sources. Verified completeness is pending the data-recovery backfills."
                       >
                         <span className="bg-line rounded-sm px-1 py-0.5 text-[10px] tracking-wide uppercase">
                           unverified
