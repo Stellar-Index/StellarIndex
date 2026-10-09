@@ -1,6 +1,6 @@
 'use client';
 
-import { Breadcrumbs } from '@/components/ui';
+import { PageHeader } from '@/components/ui';
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
 import { SourceTopChart } from '@/app/dexes/[source]/SourceTopChart';
 import { useSources } from '@/api/hooks';
@@ -24,21 +24,15 @@ export function SourcePathView() {
 
   return (
     <div className="space-y-6">
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Sources', href: '/sources' },
-            { label: name || 'Source' },
-          ]}
-        />
-        <h1 className="text-3xl font-semibold tracking-tight break-all">
-          {name || 'Loading…'}
-        </h1>
-        <p className="text-ink-muted text-xs">
-          Rendered live from the API (outside the build-time pre-render).
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Sources', href: '/sources' },
+          { label: name || 'Source' },
+        ]}
+        title={<span className="break-all">{name || 'Loading…'}</span>}
+        description="Rendered live from the API (outside the build-time pre-render)."
+      />
       {name && (
         <>
           <SourceHealthPanel source={name} />

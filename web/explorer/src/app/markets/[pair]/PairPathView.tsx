@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
-import { Container, Breadcrumbs, EmptyState, Skeleton } from '@/components/ui';
+import { Container, PageHeader, EmptyState, Skeleton } from '@/components/ui';
 
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import { shortAssetText } from '@/components/AssetLink';
@@ -82,22 +82,19 @@ export function PairPathView() {
 
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-1">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Markets', href: '/markets' },
-            { label: title },
-          ]}
-        />
-        <h1 className="text-h1 text-ink font-semibold">{title}</h1>
-        {valid && (
-          <p className="text-ink-muted text-sm">
-            Live pair detail, loaded from the API. This pair is outside the
-            pre-rendered set — the data below is current.
-          </p>
-        )}
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Markets', href: '/markets' },
+          { label: title },
+        ]}
+        title={title}
+        description={
+          valid
+            ? 'Live pair detail, loaded from the API. This pair is outside the pre-rendered set — the data below is current.'
+            : undefined
+        }
+      />
 
       {!valid && (
         <EmptyState

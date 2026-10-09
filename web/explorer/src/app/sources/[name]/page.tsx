@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { Suspense } from 'react';
 
 import { EntityNotFoundShell } from '@/components/EntityNotFoundShell';
-import { Container, Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 import { SourceHealthPanel } from './SourceHealthPanel';
 import { SourcePathView } from './SourcePathView';
 import { SourcePeerBars } from './SourcePeerBars';
@@ -217,53 +217,53 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
   // inside Breadcrumbs below — no hand-rolled LD.
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Sources', href: '/sources' },
-            { label: name },
-          ]}
-        />
-        <div className="flex flex-wrap items-baseline gap-3">
-          <h1 className="text-3xl font-semibold tracking-tight">{name}</h1>
-          <ClassBadge cls={source.class} />
-          {source.subclass && (
-            <span className="bg-surface-subtle text-ink-body rounded-sm px-2 py-0.5 font-mono text-xs tracking-wider uppercase">
-              {source.subclass}
-            </span>
-          )}
-          {source.paid && (
-            <span className="bg-warn-50 text-warn-700 rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase">
-              paid
-            </span>
-          )}
-        </div>
-        {/* Cross-link to the richer category view when one exists. */}
-        <div className="flex flex-wrap gap-3 text-xs">
-          {(DEX_PAGES.has(name) || source.subclass === 'dex') && (
-            <Link
-              href={`/dexes/${encodeURIComponent(name)}`}
-              className="text-brand-600 hover:underline"
-            >
-              View as DEX — pools &amp; chart →
-            </Link>
-          )}
-          {EXCHANGE_PAGES.has(name) && (
-            <Link
-              href={`/exchanges/${encodeURIComponent(name)}`}
-              className="text-brand-600 hover:underline"
-            >
-              View exchange page →
-            </Link>
-          )}
-          {source.class === 'oracle' && (
-            <Link href="/oracles" className="text-brand-600 hover:underline">
-              View in oracles →
-            </Link>
-          )}
-        </div>
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Sources', href: '/sources' },
+          { label: name },
+        ]}
+        title={name}
+        actions={
+          <>
+            <ClassBadge cls={source.class} />
+            {source.subclass && (
+              <span className="bg-surface-subtle text-ink-body rounded-sm px-2 py-0.5 font-mono text-xs tracking-wider uppercase">
+                {source.subclass}
+              </span>
+            )}
+            {source.paid && (
+              <span className="bg-warn-50 text-warn-700 rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase">
+                paid
+              </span>
+            )}
+          </>
+        }
+      />
+      {/* Cross-link to the richer category view when one exists. */}
+      <div className="flex flex-wrap gap-3 text-xs">
+        {(DEX_PAGES.has(name) || source.subclass === 'dex') && (
+          <Link
+            href={`/dexes/${encodeURIComponent(name)}`}
+            className="text-brand-600 hover:underline"
+          >
+            View as DEX — pools &amp; chart →
+          </Link>
+        )}
+        {EXCHANGE_PAGES.has(name) && (
+          <Link
+            href={`/exchanges/${encodeURIComponent(name)}`}
+            className="text-brand-600 hover:underline"
+          >
+            View exchange page →
+          </Link>
+        )}
+        {source.class === 'oracle' && (
+          <Link href="/oracles" className="text-brand-600 hover:underline">
+            View in oracles →
+          </Link>
+        )}
+      </div>
 
       <Panel title="Registry profile">
         <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">

@@ -6,7 +6,7 @@ import { IssuerAssetMix } from './IssuerAssetMix';
 import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
-import { Badge, Container, Breadcrumbs } from '@/components/ui';
+import { Badge, Container, PageHeader } from '@/components/ui';
 import { asExample } from '@/api/client';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { assetHref } from '@/lib/fiat-slugs';
@@ -192,18 +192,14 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
     );
     return (
       <Container className="space-y-6 py-8">
-        <header className="space-y-3">
-          <Breadcrumbs
-            items={[
-              { label: 'Home', href: '/' },
-              { label: 'Issuers', href: '/issuers' },
-              { label: shortKey(g_strkey) },
-            ]}
-          />
-          <h1 className="font-mono text-2xl font-semibold tracking-tight">
-            {shortKey(g_strkey)}
-          </h1>
-        </header>
+        <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Issuers', href: '/issuers' },
+            { label: shortKey(g_strkey) },
+          ]}
+          title={<span className="font-mono">{shortKey(g_strkey)}</span>}
+        />
         <Panel
           headingLevel={2}
           title="Issuer not found"
@@ -264,24 +260,26 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
         </div>
       )}
 
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Issuers', href: '/issuers' },
-            { label: detail.org_name || shortKey(g_strkey) },
-          ]}
-        />
-        {detail.org_name ? (
-          <>
-            {/* org_name is SELF-DECLARED SEP-1 metadata. Render the
-                verification state next to it so an unverified name can't pass
-                as an authoritative identity. Verified = the org's stellar.toml
-                lists this issuer back (bidirectional). */}
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-semibold tracking-tight">
-                {detail.org_name}
-              </h1>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Issuers', href: '/issuers' },
+          { label: detail.org_name || shortKey(g_strkey) },
+        ]}
+        title={
+          detail.org_name ? (
+            detail.org_name
+          ) : (
+            <span className="font-mono break-all">{g_strkey}</span>
+          )
+        }
+        actions={
+          detail.org_name ? (
+            <>
+              {/* org_name is SELF-DECLARED SEP-1 metadata. Render the
+                  verification state next to it so an unverified name can't
+                  pass as an authoritative identity. Verified = the org's
+                  stellar.toml lists this issuer back (bidirectional). */}
               {detail.org_verified ? (
                 <span
                   title="SEP-1 verified — the organisation's stellar.toml lists this issuer back (bidirectional)"
@@ -297,41 +295,44 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                   Unverified
                 </span>
               )}
-            </div>
+            </>
+          ) : undefined
+        }
+      />
+
+      {(detail.org_name || detail.home_domain) && (
+        <div className="space-y-2">
+          {detail.org_name && (
             <p className="text-ink-muted font-mono text-xs break-all">
               {g_strkey}
             </p>
-          </>
-        ) : (
-          <h1 className="font-mono text-2xl font-semibold tracking-tight break-all">
-            {g_strkey}
-          </h1>
-        )}
-        {detail.home_domain && (
-          <p className="text-ink-body text-sm">
-            {/* home_domain is attacker-controlled on-chain data — only
-                link it when it parses as a strict hostname, else render
-                as plain text (phishing guard, WA-02). */}
-            {isSafeHomeDomain(detail.home_domain) ? (
-              <a
-                href={`https://${detail.home_domain}`}
-                target="_blank"
-                rel="noreferrer noopener nofollow"
-                className="hover:text-brand-600 font-mono hover:underline"
-              >
-                {detail.home_domain}
-              </a>
-            ) : (
-              <span
-                className="text-ink-muted font-mono"
-                title="Unverified issuer-supplied domain"
-              >
-                {detail.home_domain}
-              </span>
-            )}
-          </p>
-        )}
-      </header>
+          )}
+          {detail.home_domain && (
+            <p className="text-ink-body text-sm">
+              {/* home_domain is attacker-controlled on-chain data — only
+          link it when it parses as a strict hostname, else render
+          as plain text (phishing guard, WA-02). */}
+              {isSafeHomeDomain(detail.home_domain) ? (
+                <a
+                  href={`https://${detail.home_domain}`}
+                  target="_blank"
+                  rel="noreferrer noopener nofollow"
+                  className="hover:text-brand-600 font-mono hover:underline"
+                >
+                  {detail.home_domain}
+                </a>
+              ) : (
+                <span
+                  className="text-ink-muted font-mono"
+                  title="Unverified issuer-supplied domain"
+                >
+                  {detail.home_domain}
+                </span>
+              )}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Panel
