@@ -12,9 +12,11 @@ import { type GlobalAssetView } from '../../../assets/catalogue';
  * (ExternalAssetPathView) so the two cannot drift.
  */
 export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
-  const hasPrice =
+  const priceText =
     view.price_usd != null &&
-    (compareDecimalStrings(view.price_usd, '0') ?? 0) > 0;
+    (compareDecimalStrings(view.price_usd, '0') ?? 0) > 0
+      ? `$${formatPriceSmall(view.price_usd)}`
+      : '—';
   const authorityLabel = view.price_authority
     ? (PRICE_AUTHORITY_LABELS[view.price_authority] ?? view.price_authority)
     : null;
@@ -60,7 +62,7 @@ export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
       >
         <div className="flex flex-wrap items-baseline gap-4">
           <span className="text-ink font-mono text-3xl tabular-nums">
-            {hasPrice ? `$${formatPriceSmall(view.price_usd!)}` : '—'}
+            {priceText}
           </span>
           <span className="text-ink-muted text-sm">USD</span>
           {authorityLabel && (
