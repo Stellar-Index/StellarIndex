@@ -63,10 +63,6 @@ const UNLINKED_BY_DESIGN: ReadonlyMap<string, string> = new Map([
   ['/tx', 'legacy ?hash= entry point, redirects to /transactions/{hash}'],
   // Arrived at from a magic-link email, never from inside the site.
   ['/auth/callback', 'magic-link landing; reached from the sign-in email'],
-  // The rendered design-system reference (see web/explorer/AGENTS.md).
-  // Deliberately not advertised in product navigation.
-  ['/dev/primitives', 'design-system reference, not product navigation'],
-  ['/dev/styleguide', 'design-system reference, not product navigation'],
 ]);
 
 describe('route reachability', () => {

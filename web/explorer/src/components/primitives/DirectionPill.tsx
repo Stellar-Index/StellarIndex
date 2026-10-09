@@ -9,7 +9,7 @@ export type DirectionPillProps = {
   // number — see the AGT-06 removal of the fraction-based formatPctChange
   // footgun in lib/format.ts). Fixed the doc to match the code, not the
   // other way around: doing the reverse would have broken every existing
-  // caller (dev/primitives styleguide, MultiWindowDelta).
+  // caller (MultiWindowDelta).
   /** Already a percentage-point number — 5 = +5%. Pass null for "no data". */
   deltaPct: number | null;
   /** Tightens to a smaller chip when used in dense tables. */

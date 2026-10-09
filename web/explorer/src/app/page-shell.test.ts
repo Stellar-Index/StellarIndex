@@ -37,7 +37,6 @@ const PENDING: string[] = [
   'sdk/page.tsx',
   'status/incident/[slug]/page.tsx',
   'transactions/page.tsx',
-  'dev/primitives/page.tsx',
 ];
 
 function pages(dir: string): string[] {
