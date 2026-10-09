@@ -9,7 +9,7 @@ import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import {
   Container,
-  Breadcrumbs,
+  PageHeader,
   EmptyState,
   Skeleton,
   Stat,
@@ -146,13 +146,12 @@ export function NetworkView() {
 
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-1">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Network' }]}
+      <div className="space-y-1">
+        <PageHeader
+          breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Network' }]}
+          title="Network"
+          description="Live ledgers, operations and transactions from the Stellar network."
         />
-        <h1 className="text-ink text-2xl font-semibold tracking-tight">
-          Network
-        </h1>
         {/* The rail carries one Network entry;
             the chain sub-surfaces are reached from this hub. */}
         <nav
@@ -174,7 +173,7 @@ export function NetworkView() {
             </Link>
           ))}
         </nav>
-      </header>
+      </div>
 
       <HeroStats stats={s} tip={tip} recent={ledgersQ.data?.ledgers} />
 
