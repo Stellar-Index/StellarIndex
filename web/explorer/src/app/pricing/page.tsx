@@ -3,11 +3,11 @@ import { Check, Minus } from 'lucide-react';
 
 import {
   Badge,
-  Breadcrumbs,
   ButtonLink,
   Card,
   CardBody,
   Container,
+  PageHeader,
 } from '@/components/ui';
 
 export const metadata: Metadata = {
@@ -74,26 +74,22 @@ const TIERS: Tier[] = [
 export default function PricingPage() {
   return (
     <Container className="space-y-12 py-10 sm:py-14">
-      <Breadcrumbs
-        items={[{ label: 'Home', href: '/' }, { label: 'Pricing' }]}
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Pricing' }]}
+        eyebrow="Plans"
+        title="Pricing"
+        description={
+          <>
+            Stellar Index is free — there are no paid plans. Anonymous reads
+            work without an account; a free account (one curl: POST
+            /v1/register) adds per-account usage analytics and a budget that is
+            yours alone rather than shared with everything else on your IP. It
+            is not a throughput upgrade — on the hosted deployment an anonymous
+            IP&apos;s limit deliberately exceeds a single free key&apos;s.
+            Higher partner limits are set by our staff on request.
+          </>
+        }
       />
-      <header className="mx-auto max-w-2xl space-y-4 text-center">
-        <p className="text-brand-600 text-xs font-medium tracking-wider uppercase">
-          Plans
-        </p>
-        <h1 className="text-h1 text-ink md:text-display-sm font-semibold">
-          Pricing
-        </h1>
-        <p className="text-ink-muted text-lg leading-relaxed">
-          Stellar Index is free — there are no paid plans. Anonymous reads work
-          without an account; a free account (one curl: POST /v1/register) adds
-          per-account usage analytics and a budget that is yours alone rather
-          than shared with everything else on your IP. It is not a throughput
-          upgrade — on the hosted deployment an anonymous IP&apos;s limit
-          deliberately exceeds a single free key&apos;s. Higher partner limits
-          are set by our staff on request.
-        </p>
-      </header>
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
         {TIERS.map((tier) => (

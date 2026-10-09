@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
-import { Badge, Breadcrumbs, Container } from '@/components/ui';
+import { Badge, Container, PageHeader } from '@/components/ui';
 import { type GlobalAssetView } from '../../../assets/catalogue';
 
 /**
@@ -24,23 +24,23 @@ export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <header className="space-y-3">
-        <Breadcrumbs
-          items={[
+        <PageHeader
+          breadcrumbs={[
             { label: 'Home', href: '/' },
             { label: 'External assets', href: '/external/assets' },
             { label: view.name || view.ticker },
           ]}
+          eyebrow="External asset"
+          title={
+            <span className="flex flex-wrap items-baseline gap-3">
+              <span>{view.name}</span>
+              <span className="text-ink-muted font-mono text-base">
+                {view.ticker}
+              </span>
+              <ClassBadge cls={view.class} />
+            </span>
+          }
         />
-        <div className="text-brand-600 text-xs font-medium tracking-wider uppercase">
-          External asset
-        </div>
-        <h1 className="text-h1 text-ink flex flex-wrap items-baseline gap-3 font-semibold">
-          <span>{view.name}</span>
-          <span className="text-ink-muted font-mono text-base">
-            {view.ticker}
-          </span>
-          <ClassBadge cls={view.class} />
-        </h1>
         {view.verified_issuer && (
           <p className="text-ink-body text-sm">
             Reference issuer:{' '}

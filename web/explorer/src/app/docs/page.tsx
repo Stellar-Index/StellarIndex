@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { Breadcrumbs, Container } from '@/components/ui/Page';
+import { Container, PageHeader } from '@/components/ui/Page';
 
 export const metadata: Metadata = {
   title: 'Developer docs — Stellar Index API',
@@ -116,26 +116,27 @@ const ENDPOINTS: { group: string; rows: [string, string][] }[] = [
 export default function DocsPage() {
   return (
     <Container className="space-y-10 py-10 [&>*]:max-w-4xl">
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Developer docs' }]}
-        />
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Developer docs
-        </h1>
-        <p className="text-ink-body text-base">
-          The Stellar Index API serves verified, per-protocol Stellar pricing
-          and on-chain data over REST + SSE. This page is the quickstart; the
-          full machine-readable contract is the{' '}
-          <a
-            className="text-brand-600 hover:underline"
-            href="/openapi/stellar-index.v1.yaml"
-          >
-            OpenAPI spec
-          </a>
-          .
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Developer docs' },
+        ]}
+        title="Developer docs"
+        description={
+          <>
+            The Stellar Index API serves verified, per-protocol Stellar pricing
+            and on-chain data over REST + SSE. This page is the quickstart; the
+            full machine-readable contract is the{' '}
+            <a
+              className="text-brand-600 hover:underline"
+              href="/openapi/stellar-index.v1.yaml"
+            >
+              OpenAPI spec
+            </a>
+            .
+          </>
+        }
+      />
 
       <Section id="base-url" title="Base URL & versioning">
         <p>

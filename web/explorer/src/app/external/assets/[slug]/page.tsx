@@ -4,7 +4,7 @@ import { Suspense } from 'react';
 
 import { API_BASE_URL } from '@/api/client';
 import { ogImageFor, shellMetadata } from '@/lib/seo';
-import { Breadcrumbs, Callout, Container } from '@/components/ui';
+import { Callout, Container, PageHeader } from '@/components/ui';
 import { type GlobalAssetView } from '../../../assets/catalogue';
 import { isCIStub } from '@/lib/buildFetch';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -164,16 +164,14 @@ export default async function ExternalAssetDetailPage({
   if (result.status !== 'ok') {
     return (
       <Container className="space-y-8 py-8 sm:py-10">
-        <header className="space-y-3">
-          <Breadcrumbs
-            items={[
-              { label: 'Home', href: '/' },
-              { label: 'External assets', href: '/external/assets' },
-              { label: slug },
-            ]}
-          />
-          <h1 className="text-h1 text-ink font-semibold">{slug}</h1>
-        </header>
+        <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'External assets', href: '/external/assets' },
+            { label: slug },
+          ]}
+          title={slug}
+        />
         {result.status === 'not-tracked' ? (
           <Callout tone="warn" title="External asset not found">
             <p>
