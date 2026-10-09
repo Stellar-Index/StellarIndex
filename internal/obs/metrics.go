@@ -659,7 +659,7 @@ func seedBoundedLabelSeriesTail() {
 	} {
 		CustomerWebhookDeliveryAttemptsTotal.WithLabelValues(outcome)
 	}
-	// v0.21.4 background cache workers. Seeded so the DEX-TVL /
+	// Background cache workers. Seeded so the DEX-TVL /
 	// order-book failure-rate queries read a real zero (not "no data")
 	// from process start; the load_* pair matters most — a process
 	// whose initial book load never even attempted looks identical to

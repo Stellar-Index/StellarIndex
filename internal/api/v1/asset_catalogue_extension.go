@@ -134,9 +134,8 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 		// pricing exists for. `classic_assets` requires a G-issuer
 		// (issuer_g_strkey NOT NULL), so a Soroban-native contract asset
 		// can NEVER have a row here. Returning now would make the whole
-		// feature inert for its primary case, which is exactly what
-		// happened when the fill lived below this guard: v0.46.0 shipped
-		// and CAUP7 still served price_usd:null.
+		// feature inert for its primary case: a contract asset would
+		// serve price_usd:null.
 		s.fillTransitivePrice(ctx, detail, asset, assetID)
 		return
 	}
