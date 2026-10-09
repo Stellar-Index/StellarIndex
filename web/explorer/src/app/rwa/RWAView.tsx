@@ -839,11 +839,9 @@ function UnreachedPanel({
   return (
     <Panel title="Recognised issuers we hold no token for" headingLevel={2}>
       <p className="text-ink-muted text-xs leading-relaxed">
-        An independent directory names each of these as an issuing or custodying
-        entity, and none carries a warning flag. This index holds no Stellar
-        asset for any of them — so they are absent from the set above, not
-        refused by it. Where such an entity issues through a contract, the
-        directory naming that contract is what would bring it in.
+        Named as issuers or custodians by an independent directory, unflagged.
+        We hold no Stellar asset for them, so they are absent above, not
+        refused.
       </p>
       <ul className="border-line mt-3 space-y-1.5 border-t pt-3 text-xs">
         {entities.map((e) => (
@@ -1934,9 +1932,8 @@ function DefinitionPanel({
           ))}
         </ol>
         <p className="text-ink-muted mt-3 text-xs leading-relaxed">
-          An asset failing any requirement is absent from this page — not ranked
-          lower, not hidden behind a filter. It keeps its own asset page, with
-          whatever warnings apply there. Recognised classes:{' '}
+          Failing any requirement removes an asset from this page; its own asset
+          page remains. Recognised classes:{' '}
           <span className="font-mono">
             {definition.anchor_classes.join(', ')}
           </span>
@@ -2028,22 +2025,16 @@ function DefinitionPanel({
             it — there is no market in it for them to measure.
           </p>
           <p className="mt-2">
-            Both are published because neither alone is honest here. A tokenized
-            treasury is bought and held rather than traded, so most of this set
-            has never produced a market price and the market-cap column is
-            silent about assets that plainly exist; equally, a figure the issuer
-            and its oracle assert is not evidence that anyone would pay it. They
-            are never added together, and an asset can appear in one column,
-            both, or neither. Where a token carries no reference figure, the
-            coverage panel below counts it under the reason.
+            Tokenized treasuries are held, not traded, so most never get a
+            market price; an issuer&apos;s figure is not proof anyone would pay
+            it. The two columns are never added together. Tokens with no
+            reference figure are counted, by reason, in the coverage panel.
           </p>
         </div>
         <p className="text-ink-muted mt-3 text-[11px] leading-relaxed">
           Live data from <span className="font-mono">{ENDPOINT}</span>. Market
-          valuations come from the same price, supply and trust gates the asset
-          pages use, so nothing here publishes a figure those pages withhold.
-          The full definition, with the evidence behind each requirement, is in
-          the{' '}
+          values pass the same gates as the asset pages. The full definition,
+          with the evidence behind each requirement, is in the{' '}
           <Link href="/methodology" className="hover:text-brand-600 underline">
             methodology
           </Link>
