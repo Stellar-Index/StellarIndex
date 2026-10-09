@@ -7,7 +7,8 @@ import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { useHistory, type TradeRow } from '@/api/hooks';
 import { useObservationsFollow } from '@/lib/live/hooks';
-import { formatRelative } from '@/lib/format';
+import { formatBaseUnits, formatRelative } from '@/lib/format';
+import { TradeScatter } from '../../markets/[pair]/TradeScatter';
 
 const DEFAULT_QUOTE = 'native';
 const HISTORY_LIMIT = 100;
@@ -105,6 +106,12 @@ export function HistoryTabPanel({
       })}
       bodyClassName="overflow-x-auto"
     >
+      <TradeScatter
+        trades={rows.map((r) => ({
+          ...r,
+          base_decimals: r.base_decimals ?? decimals,
+        }))}
+      />
       <table className="w-full min-w-[640px] text-sm">
         <thead className="text-ink-muted text-left text-xs tracking-wider uppercase">
           <tr className="border-line border-b">
@@ -147,12 +154,12 @@ export function HistoryTabPanel({
                 {r.ledger}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">
-                {formatStroopAmount(r.base_amount, r.base_decimals ?? decimals)}
+                {formatBaseUnits(r.base_amount, r.base_decimals ?? decimals)}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">
                 {/* quote leg is always DEFAULT_QUOTE ('native' XLM, fixed 7
                     decimals) — never the base asset's own `decimals` prop. */}
-                {formatStroopAmount(r.quote_amount, r.quote_decimals ?? 7)}
+                {formatBaseUnits(r.quote_amount, r.quote_decimals ?? 7)}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">
                 {r.price ?? '—'}
@@ -163,21 +170,6 @@ export function HistoryTabPanel({
       </table>
     </Panel>
   );
-}
-
-// Format a stroop string (10^7 scale) into a human-readable
-// fractional. Bigger amounts use compact notation (k/M/B); small
-// amounts show up to 4 decimals. Strings throughout per ADR-0003 —
-// this is a display-time conversion only, never used for further
-// arithmetic.
-function formatStroopAmount(s: string, decimals = 7): string {
-  const n = Number(s);
-  if (!Number.isFinite(n)) return s;
-  const v = n / 10 ** decimals;
-  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
-  if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(2)}k`;
-  if (Math.abs(v) >= 1) return v.toFixed(2);
-  return v.toFixed(4);
 }
 
 export type { TradeRow };
