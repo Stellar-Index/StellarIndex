@@ -9,6 +9,7 @@ import {
 } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { CountSparkline } from '@/components/ChainCharts';
 import { apiGet, asExample } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
@@ -159,6 +160,13 @@ export function LedgersTable() {
       source={source}
       bodyClassName="-mx-4"
     >
+      <div className="flex items-center gap-3 px-4 pb-3">
+        <CountSparkline
+          values={[...ledgers].reverse().map((l) => l.tx_count ?? 0)}
+          label="Transactions per ledger"
+        />
+        <span className="text-ink-muted text-xs">txs per ledger</span>
+      </div>
       <div className="overflow-x-auto">
         <table className="divide-line min-w-full divide-y text-sm">
           <thead>

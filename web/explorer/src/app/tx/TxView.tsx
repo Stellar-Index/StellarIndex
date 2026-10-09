@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { FeeHeadroomBar, OpTypeStrip } from '@/components/ChainCharts';
 import { Container, Breadcrumbs, TxStatusBadge } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import {
@@ -193,6 +194,16 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
             </span>
           </FieldWide>
         </dl>
+        <div className="mt-4 space-y-3">
+          <FeeHeadroomBar
+            charged={tx.fee_charged}
+            max={tx.max_fee}
+            format={stroopsToXlm}
+          />
+          <OpTypeStrip
+            types={(tx.operations ?? []).map((o) => o.type ?? 'unknown')}
+          />
+        </div>
       </Panel>
 
       <OperationsPanel hash={tx.hash ?? ''} operations={tx.operations ?? []} />
