@@ -17,7 +17,7 @@ import (
 // RedisLoginThrottle implements [dashboardauth.LoginThrottle] — the
 // magic-link send throttle. The /v1/auth/login
 // endpoint fires an outbound email per accepted request, bounded only by
-// the global anonymous per-IP rate-limit (6000/min on r1). That lets a single IP
+// the global anonymous per-IP rate-limit. That lets a single IP
 // (a) bomb one victim inbox and (b) burn the deployment's email-send quota
 // / sender reputation. This adds two sliding-window caps — per IP and per
 // TARGET email — and denies the send when EITHER is exhausted.
