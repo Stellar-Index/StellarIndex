@@ -11,29 +11,8 @@ import { ConvertPair } from './ConvertPair';
 import { ConvertChart } from './ConvertChart';
 import { ConvertLiveRate, ConvertSnippets } from './ConvertLive';
 import { buildFetchData, isCIStub } from '@/lib/buildFetch';
+import { fetchTickers } from '../../tickers';
 import { CURRENT_NETWORK } from '@/lib/networks';
-
-// Fallback majors so a brand-new build with no upstream still
-// produces a meaningful matrix. Same set as /currencies/[ticker]'s
-// fallback so the two routes stay aligned.
-const FALLBACK_TICKERS = [
-  'USD',
-  'EUR',
-  'GBP',
-  'JPY',
-  'CHF',
-  'CAD',
-  'AUD',
-  'CNY',
-  'INR',
-  'BRL',
-  'MXN',
-  'ZAR',
-  'NZD',
-  'SGD',
-  'HKD',
-  'SEK',
-];
 
 type Params = Promise<{ from: string; to: string }>;
 
@@ -50,33 +29,6 @@ interface CurrencyDetail {
   // reads serves per-rate provenance, and declared-but-never-populated
   // fields would leave a permanently blank "Source: …" line. Re-add only when a real provenance field
   // exists on the wire.
-}
-
-interface VerifiedCurrencyEntry {
-  ticker: string;
-  name?: string;
-  class: string;
-}
-
-async function fetchTickers(): Promise<string[]> {
-  if (isCIStub) return FALLBACK_TICKERS;
-  // Read from /v1/assets/verified; filter to class=fiat client-side.
-  //
-  // Routed through buildFetchData (not a raw fetch) so a transient
-  // 429/5xx during static export is retried and, if it persists,
-  // FAILS THE BUILD instead of silently shrinking this list — the
-  // same fail-hard contract sitemap.ts's fetchCurrencyTickers uses
-  // for the identical /v1/assets/verified listing. FALLBACK_TICKERS
-  // below covers only a genuinely empty/never-populated listing (a
-  // brand-new build with no upstream), not a transport failure.
-  const rows = await buildFetchData<VerifiedCurrencyEntry[]>(
-    '/v1/assets/verified',
-  );
-  const tickers = (rows ?? [])
-    .filter((row) => row.class === 'fiat')
-    .map((row) => row.ticker)
-    .filter(Boolean);
-  return tickers.length > 0 ? tickers : FALLBACK_TICKERS;
 }
 
 // Hub-and-spoke: top-20 majors × all-110 currencies, both directions.
@@ -103,8 +55,8 @@ export async function generateStaticParams() {
 //
 //   1. /v1/external/assets/{from} for the identity (ticker, name);
 //      /v1/assets is Stellar-only and 404s a fiat ticker
-//   2. /v1/price/batch?asset_ids=fiat:{to}&quote=fiat:{from} for
-//      the singleton from→to rate
+//   2. /v1/price/batch?asset_ids=fiat:{from}&quote=fiat:{to} for
+//      the singleton from→to rate (forward: 1 {from} in {to} units)
 //
 // The cross_rates map carries just the one entry (key = `to`)
 // rather than every ticker the pre-rc.48 endpoint returned. The
@@ -127,23 +79,19 @@ async function fetchDetail(
     // client-side every 60s, so a cold/slow price/batch at build
     // time should degrade this one pair rather than abort the export.
     buildFetchData<Array<{ asset_id: string; price: string | null }>>(
-      `/v1/price/batch?asset_ids=${encodeURIComponent(`fiat:${to.toUpperCase()}`)}&quote=${encodeURIComponent(`fiat:${from.toUpperCase()}`)}`,
+      `/v1/price/batch?asset_ids=${encodeURIComponent(`fiat:${from.toUpperCase()}`)}&quote=${encodeURIComponent(`fiat:${to.toUpperCase()}`)}`,
       { softFail: true, timeoutMs: 6_000, attempts: 2 },
     ),
   ]);
   if (!identity) return null;
   const fromUSD = identity.price_usd ? Number(identity.price_usd) : 0;
   if (!(fromUSD > 0)) return null;
-  const toRateRow = (priceRows ?? []).find(
-    (r) => r.asset_id === `fiat:${to.toUpperCase()}`,
+  const row = (priceRows ?? []).find(
+    (r) => r.asset_id === `fiat:${from.toUpperCase()}`,
   );
-  // price/batch(asset_ids=fiat:{to}, quote=fiat:{from}) returns the
-  // value of 1 {to} in {from} units (e.g. 1 EUR = 1.15 USD). The
-  // converter displays "1 {from} = ? {to}", which is the INVERSE.
-  // Shown un-inverted, /convert/USD/EUR would read "1 USD = 1.15 EUR" — actually the EUR→USD
-  // rate mislabeled. Invert here.
-  const toInFromUnits = toRateRow?.price ? Number(toRateRow.price) : 0;
-  const fromToRate = toInFromUnits > 0 ? 1 / toInFromUnits : 0;
+  // Forward read: the price is already "1 {from} = ? {to}", the
+  // direction the converter displays, so it is never inverted.
+  const fromToRate = row?.price ? Number(row.price) : 0;
   return {
     ticker: identity.ticker,
     name: identity.name,

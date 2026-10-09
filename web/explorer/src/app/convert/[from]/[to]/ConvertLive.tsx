@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { apiGet } from '@/api/client';
+import { convertAssetId } from '@/lib/convert-params';
 import type { components } from '@/api/types';
 import { formatPairPrice, formatRelative } from '@/lib/format';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -34,8 +35,8 @@ const SNIPPET_AMOUNTS = [1, 10, 100, 1000, 10000];
  * then the client re-fetches on mount and every 60s (the RT-2
  * live-hydration pattern used by LiveAssetPrice / LivePairPrice).
  *
- * We hit `/v1/price/batch?asset_ids=fiat:{to}&quote=
- * fiat:{from}`, which returns the single-pair rate the converter uses.
+ * We hit `/v1/price/batch?asset_ids={from}&quote=fiat:{to}`, the
+ * forward read: its price is the value of 1 {from} in {to} units.
  *
  * This hook keeps the whole price envelope: typing the batch response
  * as `{data: Array<{asset_id, price}>}` and returning `q.dataUpdatedAt`
@@ -109,20 +110,19 @@ export function useConvertRate({
     enabled: CURRENT_NETWORK.pricing,
     queryFn: async () => {
       const env = await apiGet<PriceBatchEnvelope>(
-        `/v1/price/batch?asset_ids=${encodeURIComponent(`fiat:${to}`)}&quote=${encodeURIComponent(`fiat:${from}`)}`,
+        `/v1/price/batch?asset_ids=${encodeURIComponent(convertAssetId(from))}&quote=${encodeURIComponent(`fiat:${to}`)}`,
         {},
       );
-      const row = (env.data ?? []).find((r) => r.asset_id === `fiat:${to}`);
-      // batch(asset_ids=fiat:{to}, quote=fiat:{from}) returns the value
-      // of 1 {to} in {from} units; the page displays "1 {from} = ? {to}",
-      // the INVERSE. Invert here so the live rate matches the SSR
-      // `fromToRate` (page.tsx) rather than silently overwriting the
-      // correct baked rate with the wrong direction (audit MONEY-2).
+      const row = (env.data ?? []).find(
+        (r) => r.asset_id === convertAssetId(from),
+      );
+      // Forward read, so no inversion; must match the SSR `fromToRate`
+      // (page.tsx) or the live rate overwrites the baked one reversed.
       const price = row?.price != null ? Number(row.price) : 0;
       if (row == null || !(price > 0)) return { outcome: 'omitted' };
       return {
         outcome: 'priced',
-        rate: 1 / price,
+        rate: price,
         // A row without a stamp claims no freshness rather than
         // borrowing one.
         observedAt: row.observed_at ?? null,
@@ -285,8 +285,8 @@ export function ConvertSnippets({
         {showingLastPublished ? (
           <>
             All values calculated at the last published rate of 1 {from} ={' '}
-            {formatPairPrice(rate)} {to}. The live rate is unavailable right now, so
-            these are not current.
+            {formatPairPrice(rate)} {to}. The live rate is unavailable right
+            now, so these are not current.
           </>
         ) : (
           <>

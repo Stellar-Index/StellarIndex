@@ -70,9 +70,9 @@ describe('ConvertPair freshness', () => {
     stubBatch({
       data: [
         {
-          asset_id: 'fiat:EUR',
-          quote: 'fiat:USD',
-          price: '2',
+          asset_id: 'fiat:USD',
+          quote: 'fiat:EUR',
+          price: '0.5',
           price_type: 'vwap',
           observed_at: hoursAgo(36),
         },
@@ -94,9 +94,9 @@ describe('ConvertPair freshness', () => {
     stubBatch({
       data: [
         {
-          asset_id: 'fiat:EUR',
-          quote: 'fiat:USD',
-          price: '2',
+          asset_id: 'fiat:USD',
+          quote: 'fiat:EUR',
+          price: '0.5',
           price_type: 'vwap',
           observed_at: hoursAgo(36),
         },
@@ -140,8 +140,8 @@ describe('ConvertPair declared basis', () => {
     stubBatch({
       data: [
         {
-          asset_id: 'fiat:EUR',
-          quote: 'fiat:USD',
+          asset_id: 'fiat:USD',
+          quote: 'fiat:EUR',
           price: '1',
           price_type: 'peg',
           observed_at: hoursAgo(2),

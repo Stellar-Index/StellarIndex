@@ -50,7 +50,7 @@ export function Footer() {
               { label: 'SDEX explained', href: '/sdex' },
               { label: 'Liquidity pools', href: '/liquidity-pools' },
               { label: 'Yield', href: '/yield' },
-              { label: 'Convert', href: '/convert/USD/EUR' },
+              { label: 'Convert', href: '/convert' },
             ]}
           />
           <FooterColumn

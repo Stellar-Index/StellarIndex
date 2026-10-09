@@ -9,6 +9,7 @@ import { Badge, Segmented } from '@/components/ui';
 import { changePct, compareDecimalStrings, formatPrice } from '@/lib/format';
 import { API_BASE_URL, asExample, timeoutSignal } from '@/api/client';
 import { CURRENT_NETWORK } from '@/lib/networks';
+import { convertAssetId } from '@/lib/convert-params';
 
 const LineChart = dynamic(
   () => import('@/components/charts/LineChart').then((m) => m.LineChart),
@@ -31,7 +32,7 @@ interface ChartPoint {
 /**
  * ConvertChart — the {from}/{to} forex rate over time, as a
  * lightweight-charts line (FX is a single-rate series, so line not
- * OHLC). Served by /v1/chart?asset=fiat:{from}&quote=fiat:{to}, which
+ * OHLC). Served by /v1/chart?asset={from}&quote=fiat:{to}, which
  * triangulates the cross-rate via USD. Degrades to a quiet note when
  * the pair has no history.
  */
@@ -57,7 +58,7 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
       // fiat:{from}→fiat:{to} OHLC is empty on the lean test nets (no FX) — gate.
       enabled: CURRENT_NETWORK.pricing,
       queryFn: async ({ signal }) => {
-        const url = `${API_BASE_URL}/v1/chart?asset=fiat:${encodeURIComponent(from)}&quote=fiat:${encodeURIComponent(to)}&timeframe=${tf}&granularity=${spec.granularity}`;
+        const url = `${API_BASE_URL}/v1/chart?asset=${encodeURIComponent(convertAssetId(from))}&quote=fiat:${encodeURIComponent(to)}&timeframe=${tf}&granularity=${spec.granularity}`;
         const r = await fetch(url, {
           signal: timeoutSignal(undefined, signal),
         });
@@ -83,7 +84,7 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
     <Panel
       title={`${from}/${to} rate history`}
       source={asExample('/v1/chart', {
-        asset: `fiat:${from}`,
+        asset: convertAssetId(from),
         quote: `fiat:${to}`,
         timeframe: tf,
       })}

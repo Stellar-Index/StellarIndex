@@ -32,6 +32,11 @@ const HUB_TICKERS = [
   'PLN',
 ];
 
+/** The API asset id for a /convert ticker: XLM is `native`, the rest are fiat. */
+export function convertAssetId(ticker: string): string {
+  return ticker === 'XLM' ? 'native' : `fiat:${ticker}`;
+}
+
 /**
  * Hub-and-spoke: every hub × every ticker (forward) + every non-hub ticker ×
  * every hub (reverse). Pure — given the same ticker list, returns the same

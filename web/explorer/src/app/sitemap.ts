@@ -79,6 +79,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     '/lending',
     '/amm',
     '/yield',
+    '/convert',
     '/sdex',
     '/liquidity-pools',
     '/aggregators',
