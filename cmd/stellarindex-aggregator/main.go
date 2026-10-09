@@ -738,8 +738,8 @@ func run(cfgPath string, dryRun bool) error {
 	// `trades` (each trade counted on BOTH sides, folded onto canonical
 	// assets) into asset_volume_character (migration 0149) so
 	// /v1/assets{,/{id}} read a keyed-on-PK lookup instead of the ~4s
-	// per-request trades roll (measured 4.09s on the USDC detail, tripping
-	// the 4s per-request timeout → null). Always on (backs a core API
+	// per-request trades roll (which tripped the 4s per-request timeout →
+	// null on busy assets). Always on (backs a core API
 	// read). Gated on store non-nil like its sibling rollups. Runs after
 	// the alias registry is installed (above), so its canonical fold
 	// matches the per-asset read.
