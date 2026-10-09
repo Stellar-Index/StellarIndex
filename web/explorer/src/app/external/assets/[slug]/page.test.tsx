@@ -78,6 +78,21 @@ describe('ExternalAssetDetailPage', () => {
       screen.queryByText('Asset detail unavailable'),
     ).not.toBeInTheDocument();
   });
+
+  it('rounds the headline price from its wire string, not a float', async () => {
+    mockFetch(async () =>
+      jsonResponse({
+        data: {
+          slug: 'btc',
+          ticker: 'BTC',
+          name: 'Bitcoin',
+          price_usd: '100.005',
+        },
+      }),
+    );
+    await renderPage('btc');
+    expect(screen.getByText('$100.01')).toBeInTheDocument();
+  });
 });
 
 // functions/external/assets/[[path]].js serves /external/assets/shell/

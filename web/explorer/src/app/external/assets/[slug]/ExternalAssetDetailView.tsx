@@ -2,7 +2,7 @@ import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
-import { formatSubunitPrice } from '@/lib/format';
+import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
 import { Badge, Breadcrumbs, Container } from '@/components/ui';
 import { type GlobalAssetView } from '../../../assets/catalogue';
 
@@ -12,9 +12,9 @@ import { type GlobalAssetView } from '../../../assets/catalogue';
  * (ExternalAssetPathView) so the two cannot drift.
  */
 export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
-  const priceNum = view.price_usd != null ? Number(view.price_usd) : null;
   const hasPrice =
-    priceNum != null && Number.isFinite(priceNum) && priceNum > 0;
+    view.price_usd != null &&
+    (compareDecimalStrings(view.price_usd, '0') ?? 0) > 0;
   const authorityLabel = view.price_authority
     ? (PRICE_AUTHORITY_LABELS[view.price_authority] ?? view.price_authority)
     : null;
@@ -60,7 +60,7 @@ export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
       >
         <div className="flex flex-wrap items-baseline gap-4">
           <span className="text-ink font-mono text-3xl tabular-nums">
-            {hasPrice ? `$${formatHeadlinePrice(priceNum)}` : '—'}
+            {hasPrice ? `$${formatPriceSmall(view.price_usd!)}` : '—'}
           </span>
           <span className="text-ink-muted text-sm">USD</span>
           {authorityLabel && (
@@ -133,15 +133,6 @@ const PRICE_AUTHORITY_LABELS: Record<string, string> = {
   aggregator_avg: 'Aggregator average',
   triangulated: 'Triangulated',
 };
-
-// formatHeadlinePrice mirrors the GlobalAssetView headline formatting
-// on the Stellar detail page's VerifiedCurrencyView: plain-decimal
-// significant digits for sub-milli prices (formatSubunitPrice, never
-// scientific notation — UXP-26), 2dp for large, 6dp otherwise.
-function formatHeadlinePrice(n: number): string {
-  if (n < 0.001) return formatSubunitPrice(n);
-  return n.toFixed(n >= 100 ? 2 : 6);
-}
 
 // ClassBadge renders the asset-class pill (Fiat / Crypto / Stablecoin),
 // tone-matched to the /assets directory table so the same class looks
