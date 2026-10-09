@@ -9,6 +9,7 @@ import { DonutChart } from '@/components/charts/DonutChart';
 import { HBarList } from '@/components/charts/Bars';
 import type { paths } from '@/api/types';
 
+import { FreezeGantt } from './FreezeGantt';
 import { ReasonHeatmap } from './ReasonHeatmap';
 
 // GET /v1/anomalies response body, derived from the generated OpenAPI
@@ -80,7 +81,7 @@ export function AnomaliesFeed() {
 
   return (
     <>
-      <AnomalyVisuals data={data} events={events} />
+      <AnomalyVisuals data={data} events={events} fetchedAt={q.dataUpdatedAt} />
       <Panel
         headingLevel={2}
         title="Freeze timeline"
@@ -146,10 +147,16 @@ export function AnomaliesFeed() {
                   <th scope="col" className="py-1.5 pr-4 font-normal">
                     Duration
                   </th>
-                  <th scope="col" className="py-1.5 pr-4 text-right font-normal">
+                  <th
+                    scope="col"
+                    className="py-1.5 pr-4 text-right font-normal"
+                  >
                     Deviation
                   </th>
-                  <th scope="col" className="py-1.5 pr-4 text-right font-normal">
+                  <th
+                    scope="col"
+                    className="py-1.5 pr-4 text-right font-normal"
+                  >
                     Frozen value
                   </th>
                   <th scope="col" className="py-1.5 font-normal">
@@ -227,9 +234,11 @@ export function AnomaliesFeed() {
 function AnomalyVisuals({
   data,
   events,
+  fetchedAt,
 }: {
   data?: AnomaliesResp;
   events: FreezeEvent[];
+  fetchedAt: number;
 }) {
   const tally = (data?.reason_tally ?? []).filter((t) => (t.count ?? 0) > 0);
   const donut = tally.map((t) => ({
@@ -265,7 +274,12 @@ function AnomalyVisuals({
       }))
     : null;
 
-  if (donut.length === 0 && histogram.length === 0 && heatCells == null)
+  if (
+    events.length === 0 &&
+    donut.length === 0 &&
+    histogram.length === 0 &&
+    heatCells == null
+  )
     return null;
 
   return (
@@ -309,6 +323,16 @@ function AnomalyVisuals({
           </Panel>
         )}
       </div>
+      {events.length > 0 && (
+        <Panel
+          headingLevel={2}
+          title="Freezes by pair"
+          hint="One row per pair, most recently frozen first. Red is still firing; amber recovered."
+          source={asExample('/v1/anomalies', { limit: 100, include: 'daily' })}
+        >
+          <FreezeGantt events={events} nowMs={fetchedAt} />
+        </Panel>
+      )}
       {heatCells != null && (
         <Panel
           headingLevel={2}
