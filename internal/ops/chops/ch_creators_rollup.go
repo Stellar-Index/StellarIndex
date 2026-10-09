@@ -16,34 +16,24 @@ import (
 // holdersRollupLockPath).
 const creatorsRollupLockPath = "/var/lib/stellarindex/ch-creators-rollup.lock"
 
-// ch-creators-rollup recomputes the account-creator league table
-// (funder → accounts created, with the created set's surviving accounts
-// and current XLM) into staging and atomically exchange it live
-// (deploy/clickhouse/account_creators_rollup.sql).
+// ch-creators-rollup recomputes the account-creator league table (funder →
+// accounts created, with the created set's surviving accounts and current
+// XLM) into staging and atomically exchanges it live
+// (deploy/clickhouse/account_creators_rollup.sql). The aggregation is
+// scan-shaped (movement_kind is not in account_movements' ORDER BY), so it is
+// paid once per cycle; the endpoint reads a keyed board and seven metric rows.
 //
-// The aggregation is scan-shaped over stellar.account_movements because
-// movement_kind is not in that table's ORDER BY, so it is a cycle cost
-// paid once, not a per-request cost: the endpoint reads a keyed board
-// and seven metric rows.
+// A creation changes representation at Protocol 23 rather than stopping:
+// classic create_account movements below the boundary, the CAP-67 transfer
+// paired with a CreateAccount operation above it. -config supplies the
+// network's boundary (stellar.movements_floor_ledger; a reset testnet starts
+// post-P23, so the classic arm owns nothing); without it the pubnet boundary
+// applies. The cycle also writes the span it aggregated, so the API never
+// assumes the board covers the whole chain.
 //
-// It reads that archive on both sides of the Protocol 23 boundary, where
-// a creation changes representation rather than stopping: the classic
-// create_account movements below it, and above it the CAP-67 transfer
-// paired with the CreateAccount operation in stellar.operations.
-// The boundary is the network's, not a constant: -config supplies
-// stellar.movements_floor_ledger (the pubnet P23 boundary on r1, the
-// chain's start on a reset testnet/futurenet, where every ledger is
-// post-P23 and the classic arm owns nothing). Without -config the pubnet
-// boundary applies.
-//
-// The same cycle writes the coverage span it aggregated, so the API
-// never has to assume the board covers the whole chain.
-//
-// Takes an exclusive advisory lock before it runs anything: this cycle
-// and ch-holders-rollup's timer both TRUNCATE -> fill -> EXCHANGE their
-// own global staging tables, and a manual `stellarindex-ops
-// ch-creators-rollup` invocation can otherwise race a concurrent one on
-// those same tables. See acquireRollupLock (rollup_lock.go).
+// It holds an exclusive advisory lock (acquireRollupLock): this cycle,
+// ch-holders-rollup and a manual run all TRUNCATE -> fill -> EXCHANGE
+// global staging tables and would otherwise race.
 func chCreatorsRollup(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-creators-rollup")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
