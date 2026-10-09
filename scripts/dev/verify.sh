@@ -510,15 +510,10 @@ fi
 #   d  everything else      ops/ansible/migration/monitoring self-tests; none of it
 #                           invokes go, invokes pnpm, or writes a tracked file
 #
-# Measured on one machine, one real run, after the doc-links
-# self-test fix above cut its cost from 227 s to 66 s: serial total 918 s,
-# with Lint 154 s, Monitoring 146 s, Test 128 s and Doc links self-test 66 s
-# as the four largest remaining costs — no longer one section dominating,
-# four roughly comparable ones (Monitoring's figure includes contention from
-# another process on the same machine; a quiet run measured this section at
-# 90 s). Grouped into the lanes above, the ceiling is lane b (Format + Vet +
-# Lint + Test + Integration build) at ~304 s against the 918 s serial total:
-# a ~2.3x reduction on a contended run, more on a quiet one.
+# No single section dominates the serial run: Lint, Monitoring, Test and the
+# Doc links self-test are four roughly comparable costs. Grouped into the
+# lanes above, the ceiling is lane b (Format + Vet + Lint + Test +
+# Integration build), about a third of the serial total.
 #
 # Lane d keeps promtool's Monitoring, amtool's Alertmanager config and
 # gitleaks' Secrets scans — none of those tools, nor anything else in lane
