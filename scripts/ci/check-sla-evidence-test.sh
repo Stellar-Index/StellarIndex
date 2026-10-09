@@ -56,8 +56,8 @@ expect() {
 mkdir -p "$TMP/empty" "$TMP/fresh" "$TMP/stale" "$TMP/decoys" "$TMP/mixed"
 # Leg 2b opens the file and requires a `generator:` line, so
 # every fixture standing in for a REAL landed report needs one — an
-# empty file is no longer indistinguishable from evidence, which is the
-# defect this leg exists to close.
+# empty file must not pass as evidence, the defect this leg exists to
+# close.
 gen_line='generator: scripts/ops/sla-proof-from-probe.sh'
 printf '%s\n' "$gen_line" > "$TMP/fresh/sla-proof-2026-08-20.md"   # 9 days old
 printf '%s\n' "$gen_line" > "$TMP/stale/sla-proof-2026-01-01.md"   # ~240 days old
