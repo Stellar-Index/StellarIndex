@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
@@ -27,6 +28,10 @@ const globalMarketMaxSkew = 5 * time.Minute
 // config default for a server built without it.
 const defaultStellarDivergenceThresholdPct = 5.0
 
+// stablecoinDepegThresholdPct caps the warning threshold for a fiat-pegged
+// global: EURC's worst measured gap (4.56%) sat under the shared 5%.
+const stablecoinDepegThresholdPct = 1.0
+
 // AssetGlobalMarket is the global-market reference for a vetted
 // same-asset token: the USD price of its global ticker across venues, and
 // how far this asset's own Stellar market sits from it.
@@ -41,7 +46,7 @@ type AssetGlobalMarket struct {
 	// two decimals; absent when no Stellar market price is served.
 	StellarDivergencePct *string `json:"stellar_divergence_pct,omitempty"`
 	// DepegWarning is true when |StellarDivergencePct| exceeds the
-	// divergence threshold.
+	// divergence threshold, capped at 1% for a fiat-pegged global.
 	DepegWarning bool `json:"depeg_warning,omitempty"`
 	// IssuerSignals names the issuer-behaviour risks present beside a
 	// depeg warning ([AssetIssuerBehaviour]); set only with DepegWarning.
@@ -137,7 +142,7 @@ func (s *Server) applyGlobalMarket(row *AssetDetail, refs map[string]rwaReferenc
 		// A thin price is served under include_thin as-is; nothing is
 		// derived from it, so no divergence, depeg warning or signals.
 	default:
-		s.stampStellarDivergence(gm, *row.PriceUSD, ref.priceUSD)
+		s.stampStellarDivergence(gm, g, *row.PriceUSD, ref.priceUSD)
 		if gm.DepegWarning {
 			gm.IssuerSignals = row.IssuerBehaviour.riskSignals()
 		}
@@ -147,7 +152,7 @@ func (s *Server) applyGlobalMarket(row *AssetDetail, refs map[string]rwaReferenc
 
 // stampStellarDivergence sets the signed divergence of the Stellar price
 // from the global one and the depeg warning, in exact rationals.
-func (s *Server) stampStellarDivergence(gm *AssetGlobalMarket, stellarPrice string, global *big.Rat) {
+func (s *Server) stampStellarDivergence(gm *AssetGlobalMarket, g canonical.Asset, stellarPrice string, global *big.Rat) {
 	stellar, ok := new(big.Rat).SetString(stellarPrice)
 	if !ok {
 		return
@@ -162,6 +167,9 @@ func (s *Server) stampStellarDivergence(gm *AssetGlobalMarket, stellarPrice stri
 	th := s.DivergenceThresholdPct
 	if !(th > 0) {
 		th = defaultStellarDivergenceThresholdPct
+	}
+	if _, stable := aggregate.FiatProxy(g); stable && th > stablecoinDepegThresholdPct {
+		th = stablecoinDepegThresholdPct
 	}
 	if thr := new(big.Rat).SetFloat64(th); thr != nil {
 		gm.DepegWarning = dev.Cmp(thr) > 0
