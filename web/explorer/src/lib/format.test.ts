@@ -68,9 +68,9 @@ describe('formatPriceSmall / formatPairPrice', () => {
 
 describe('formatPriceSmall / formatPairPrice on wire strings', () => {
   it('rounds the exact decimal, not its nearest double', () => {
-    // 1.00005's double is 1.0000499999…, which toFixed(4) rounds down.
-    expect(formatPairPrice('1.00005')).toBe('1.0001');
-    expect(formatPriceSmall('1.00005')).toBe('1.0001');
+    // 2.00005's double is 2.0000499999…, which toFixed(4) rounds down.
+    expect(formatPairPrice('2.00005')).toBe('2.0001');
+    expect(formatPriceSmall('2.00005')).toBe('2.0001');
     expect(formatPairPrice('12345678901234567.89')).toBe(
       '12345678901234567.89',
     );

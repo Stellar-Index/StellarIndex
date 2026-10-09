@@ -105,7 +105,7 @@ export function decimalOrNull(raw: string | null | undefined): number | null {
 const SUBUNIT_MAX_DECIMALS = 20;
 
 // toFixed on the exact decimal, rounding half away from zero in BigInt:
-// a float rounds "1.00005" down (its double is just below) and drops the
+// a float rounds "2.00005" down (its double is just below) and drops the
 // digits of a price past 2^53.
 function fixedExact(d: Decimal, places: number): string {
   const neg = d.units < 0n;
