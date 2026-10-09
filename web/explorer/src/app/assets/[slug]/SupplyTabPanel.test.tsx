@@ -160,6 +160,22 @@ describe('SupplyTabPanel on-chain supply', () => {
     expect(screen.getByText('Reduced redundancy')).toBeInTheDocument();
   });
 
+  it('compacts supplies exactly from their decimal strings', () => {
+    // As floats both round up to 499.995 and render 500.
+    const raw = '499994999999999999999';
+    supplyQuery.data = {
+      data: { ...storageSupply, total_supply: raw, decimals: 18 },
+    };
+    assetExtra.fields = { decimals: 18, circulating_supply: raw };
+    try {
+      renderPanel();
+      expect(screen.getAllByText('499.99')).toHaveLength(2);
+      expect(screen.queryByText('500')).not.toBeInTheDocument();
+    } finally {
+      assetExtra.fields = {};
+    }
+  });
+
   it('labels an issuer-declared max beside the circulating basis', () => {
     supplyQuery.data = undefined;
     assetExtra.fields = {

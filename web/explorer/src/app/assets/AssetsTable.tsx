@@ -13,7 +13,6 @@ import {
 } from '@/api/hooks';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import {
-  formatCompact,
   formatCompactUnits,
   formatPriceSmall,
   scaleBaseUnits,
@@ -546,7 +545,10 @@ function AssetRow({
   // in whole asset units by scaling down 10^decimals (7 for classic /
   // native, 0 for catalogue / fiat rows). market_cap / volume / price are
   // already server-pre-scaled — do NOT divide those.
-  const supply = circulatingUnits(coin);
+  const supply = formatCompactUnits(
+    coin.circulating_supply,
+    coin.decimals ?? 7,
+  );
   // The raw canonical identifier, when it says something the code above
   // does not: `JFKBANK2-GB7KFNUR…` next to code `JFKBANK2`, but nothing
   // extra for a catalogue row whose slug IS its ticker (XLM / "xlm").
@@ -671,7 +673,7 @@ function AssetRow({
         <Td align="right">
           {marketCap != null ? (
             <span className="text-ink-body font-mono tabular-nums">
-              ${formatCompact(marketCap)}
+              ${formatCompactUnits(coin.market_cap_usd)}
             </span>
           ) : coin.market_cap_decimals_mismatch ? (
             <Dash title="Refused: the on-chain decimals() and the price projection disagree (self-clearing)" />
@@ -694,10 +696,8 @@ function AssetRow({
         </Td>
       )}
       <Td align="right">
-        {supply != null ? (
-          <span className="text-ink-body font-mono tabular-nums">
-            {formatCompact(supply)}
-          </span>
+        {supply !== '—' ? (
+          <span className="text-ink-body font-mono tabular-nums">{supply}</span>
         ) : (
           <Dash title="Awaiting issuer SEP-1 fixed_number / on-chain mint observer" />
         )}
@@ -831,9 +831,9 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
   );
 }
 
-// circulatingUnits — the row's circulating supply in whole units. The sort
-// accessor and the cell share it: decimals vary per row, so ranking the raw
-// smallest-unit integers would order an 18-decimal token by 10^11 too much.
+// circulatingUnits — the row's circulating supply in whole units, for the
+// sort: decimals vary per row, so ranking the raw smallest-unit integers
+// would order an 18-decimal token by 10^11 too much.
 function circulatingUnits(c: Coin): number | null {
   return scaleBaseUnits(c.circulating_supply, c.decimals ?? 7);
 }
