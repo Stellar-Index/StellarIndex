@@ -14,6 +14,7 @@ import { isRawOracleAsset, rawOracleSymbol } from '@/lib/asset-label';
 import { assetHref } from '@/lib/fiat-slugs';
 import { formatOraclePrice, formatRelative } from '@/lib/format';
 import { sourceToneClass } from '@/lib/pillTone';
+import { SourcePriceSpread } from '../../markets/[pair]/SourcePriceSpread';
 
 import type { RequestExample } from '@/api/client';
 import type { components } from '@/api/types';
@@ -49,6 +50,22 @@ const STREAMS_PARAMS = { include_unmapped: 'true' } as const;
  * guard so a row can never land in the attributed table by a missing
  * flag alone. Same predicate as oracles/OraclesView.tsx.
  */
+/** spreadQuote — the quote most oracles publish, with its readings, when two or more agree on it. */
+export function spreadQuote(
+  rows: readonly OracleReading[],
+): { quote: string; rows: OracleReading[] } | null {
+  const byQuote = new Map<string, OracleReading[]>();
+  for (const r of rows)
+    byQuote.set(r.quote, [...(byQuote.get(r.quote) ?? []), r]);
+  let best: { quote: string; rows: OracleReading[] } | null = null;
+  for (const [quote, rs] of byQuote) {
+    if (rs.length >= 2 && (best == null || rs.length > best.rows.length)) {
+      best = { quote, rows: rs };
+    }
+  }
+  return best;
+}
+
 function isUnmapped(r: OracleReading): boolean {
   return r.mapped === false || isRawOracleAsset(r.asset);
 }
@@ -182,6 +199,8 @@ export function AssetOraclesPanel({
     [streams.data, symbol],
   );
 
+  const spread = useMemo(() => spreadQuote(rows), [rows]);
+
   if (tickerCollision) {
     return (
       <UnattributedOracles
@@ -271,6 +290,18 @@ export function AssetOraclesPanel({
         source={example}
         bodyClassName="-mx-4"
       >
+        {spread && (
+          <div className="px-4">
+            <SourcePriceSpread
+              rows={spread.rows.map((r) => ({
+                source: r.source,
+                last_price: r.price,
+              }))}
+              label={`Oracle spread vs ${spread.quote.replace(/^fiat:|^crypto:/, '')}`}
+              noun="oracles"
+            />
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="divide-line min-w-full divide-y text-sm">
             <thead>

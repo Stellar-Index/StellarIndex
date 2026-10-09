@@ -9,7 +9,7 @@ vi.mock('@/api/client', async () => {
 });
 
 import { apiGet } from '@/api/client';
-import { AssetOraclesPanel } from './AssetOraclesPanel';
+import { AssetOraclesPanel, spreadQuote } from './AssetOraclesPanel';
 
 const USDC = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 const FAKE_USDC =
@@ -370,5 +370,32 @@ describe('AssetOraclesPanel', () => {
         within(attributed).queryByText('redstone'),
       ).not.toBeInTheDocument();
     });
+  });
+});
+
+describe('spreadQuote', () => {
+  it('picks the quote two or more oracles share', () => {
+    const got = spreadQuote([BAND, REFLECTOR, COINGECKO]);
+    expect(got?.quote).toBe('fiat:USD');
+    expect(got?.rows.map((r) => r.source)).toEqual(['band', 'reflector-cex']);
+  });
+
+  it('returns null when no quote has two readings', () => {
+    expect(spreadQuote([BAND, COINGECKO])).toBeNull();
+  });
+});
+
+describe('AssetOraclesPanel spread strip', () => {
+  beforeEach(() => {
+    vi.mocked(apiGet).mockReset();
+  });
+
+  it('plots each oracle on the USD band with its exact price', async () => {
+    mockApi({ latest: [REFLECTOR, BAND] });
+    renderPanel();
+    const strip = await screen.findByLabelText(
+      /Oracle spread vs USD, 2 oracles, spread/,
+    );
+    expect(strip.querySelector('[title^="band: "]')).not.toBeNull();
   });
 });
