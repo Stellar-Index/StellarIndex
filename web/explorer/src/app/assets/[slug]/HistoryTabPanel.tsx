@@ -9,6 +9,7 @@ import { useHistory, type TradeRow } from '@/api/hooks';
 import { useObservationsFollow } from '@/lib/live/hooks';
 import { formatBaseUnits, formatRelative } from '@/lib/format';
 import { TradeScatter } from '../../markets/[pair]/TradeScatter';
+import { HBarList, type HBarItem } from '@/components/charts/Bars';
 
 const DEFAULT_QUOTE = 'native';
 const HISTORY_LIMIT = 100;
@@ -112,6 +113,7 @@ export function HistoryTabPanel({
           base_decimals: r.base_decimals ?? decimals,
         }))}
       />
+      <TradeVenueBars rows={rows} />
       <table className="w-full min-w-[640px] text-sm">
         <thead className="text-ink-muted text-left text-xs tracking-wider uppercase">
           <tr className="border-line border-b">
@@ -169,6 +171,34 @@ export function HistoryTabPanel({
         </tbody>
       </table>
     </Panel>
+  );
+}
+
+/** Trade count per venue over the rows shown, ranked. */
+export function tradeVenueRows(rows: Pick<TradeRow, 'source'>[]): HBarItem[] {
+  const counts = new Map<string, number>();
+  for (const r of rows) counts.set(r.source, (counts.get(r.source) ?? 0) + 1);
+  return [...counts]
+    .map(([source, n]) => ({
+      label: source,
+      value: n,
+      display: `${n} trade${n === 1 ? '' : 's'}`,
+      annotation: `${Math.round((n / rows.length) * 100)}%`,
+    }))
+    .sort((a, b) => b.value - a.value);
+}
+
+function TradeVenueBars({ rows }: { rows: TradeRow[] }) {
+  const items = tradeVenueRows(rows);
+  // One venue compares nothing; the Source column already names it.
+  if (items.length < 2) return null;
+  return (
+    <div className="pb-3">
+      <h3 className="text-ink-muted mb-2 text-[11px] tracking-wider uppercase">
+        Trades by venue
+      </h3>
+      <HBarList items={items} ariaLabel="Trade count by venue" />
+    </div>
   );
 }
 
