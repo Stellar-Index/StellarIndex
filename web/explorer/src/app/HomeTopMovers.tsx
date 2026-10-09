@@ -120,7 +120,7 @@ function MoverColumn({
                   )}
                 {c.price_usd && (
                   <span className="text-ink-muted font-mono text-xs tabular-nums">
-                    ${formatPriceSmall(Number(c.price_usd))}
+                    ${formatPriceSmall(c.price_usd)}
                   </span>
                 )}
                 <ScamBadge tags={c.issuer_directory_tags} />

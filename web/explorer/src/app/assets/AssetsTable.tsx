@@ -535,7 +535,10 @@ function AssetRow({
   basePath: string;
   pricing: boolean;
 }) {
-  const price = parseDec(coin.price_usd);
+  const price =
+    coin.price_usd != null && parseDec(coin.price_usd) != null
+      ? coin.price_usd
+      : null;
   // The server owns the dust-liquidity gate (single venue AND sub-floor
   // volume, native carved out): it serves market_cap_usd null and says why
   // in market_cap_low_liquidity. Render its verdict; never re-decide it.

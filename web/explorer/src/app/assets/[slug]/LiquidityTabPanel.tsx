@@ -113,8 +113,9 @@ export async function LiquidityTabPanel({
             <tbody className="divide-line-subtle divide-y">
               {merged.map((p) => {
                 const slug = encodeURIComponent(`${p.base}~${p.quote}`);
-                const lp = p.last_price ? Number(p.last_price) : null;
-                const lpFixed = lp == null ? null : formatPairPrice(lp);
+                const lpFixed = p.last_price
+                  ? formatPairPrice(p.last_price)
+                  : null;
                 return (
                   <tr
                     key={`${p.source}|${p.base}|${p.quote}|${p.side}`}

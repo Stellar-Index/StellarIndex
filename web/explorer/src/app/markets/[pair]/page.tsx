@@ -619,8 +619,7 @@ function SourceBreakdownPanel({ rows }: { rows: PoolRow[] }) {
       <ul className="space-y-2">
         {rows.map((r) => {
           const pct = ratioPct(r.volume_24h_usd, totalUSD, 1);
-          const lp = r.last_price ? Number(r.last_price) : null;
-          const lpFixed = lp == null ? null : formatPairPrice(lp);
+          const lpFixed = r.last_price ? formatPairPrice(r.last_price) : null;
           return (
             <li key={r.source} className="flex items-center gap-3 text-sm">
               <Link
