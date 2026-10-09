@@ -1017,5 +1017,45 @@
     "role": "pool",
     "audited": "2026-10-08",
     "doc": "docs/operations/wasm-audits/aquarius.md"
+  },
+  "ae3409a4090bc087b86b4e9b444d2b8017ccd97b90b069d44d005ab9f8e1468b": {
+    "sources": [
+      "defindex"
+    ],
+    "role": "vault",
+    "audited": "2026-10-09",
+    "doc": "docs/operations/wasm-audits/defindex.md"
+  },
+  "b0fe36b2b294d0af86846ccc4036279418907b60f6f74dae752847ae9d3bca0e": {
+    "sources": [
+      "defindex"
+    ],
+    "role": "factory",
+    "audited": "2026-10-09",
+    "doc": "docs/operations/wasm-audits/defindex.md"
+  },
+  "3e7a2f545e6447ddf0f6b3b338e0dce313a3f07cfb74e053d8ddebf751165176": {
+    "sources": [
+      "defindex"
+    ],
+    "role": "factory",
+    "audited": "2026-10-09",
+    "doc": "docs/operations/wasm-audits/defindex.md"
+  },
+  "0827f7213450ec893e04c3530a9c4fa6f584561caf57b81b18a31b06d35d9091": {
+    "sources": [
+      "defindex"
+    ],
+    "role": "strategy",
+    "audited": "2026-10-09",
+    "doc": "docs/operations/wasm-audits/defindex.md"
+  },
+  "39ade914159ace3fbeafb0c4cf60497bd0dbb83932832bb21102f6e41a0ed70c": {
+    "sources": [
+      "defindex"
+    ],
+    "role": "strategy",
+    "audited": "2026-10-09",
+    "doc": "docs/operations/wasm-audits/defindex.md"
   }
 }

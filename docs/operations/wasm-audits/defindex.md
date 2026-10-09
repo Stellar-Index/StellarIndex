@@ -1,6 +1,6 @@
 ---
 title: DeFindex WASM-history audit
-last_verified: 2026-07-06
+last_verified: 2026-10-09
 status: complete — BackfillSafe=true (audited 2026-05-19, live-verified post-rc.58 deploy)
 source: defindex
 backfill_safe: true
@@ -283,3 +283,22 @@ AGENTS.md's "Soroban DeFi contracts upgrade in place" rule, any future
 The *factory* `b0fe36b2...0e` (first-deploy `L57,056,338`) needs no
 decoder (dispatch is by strategy topic). Code-upload predates the walk
 window; walk-confirmed single-hash, zero upgrades over its observed life.
+
+## Vault, factory and strategy hashes (2026-10-09) — PASS
+
+The replay gate refused `[55484403, 64853197]` over five hashes that ran on
+defindex contracts but were missing from `audited_wasm.json`. Each WASM was
+pulled from `stellar.ledger_entries_current` (`contract_code`) on r1 and
+string-checked against every topic and body field the decoder reads.
+
+| hash | role | contracts | first active | finding |
+| --- | --- | --- | --- | --- |
+| `ae3409a4…468b` | vault wrapper | 85 | L57,057,068 | `DeFindexVault`; `depositor`, `withdrawer`, `amounts`, `amounts_withdrawn`, `amount_withdrawn`, `df_tokens_minted`, `df_tokens_burned`, `rebalance_method` all present — matches the Phase-B vault decoder, which was derived from this hash's events |
+| `b0fe36b2…ca0e` | factory | 3 | L56,891,175 | `DeFindexFactory` only; `Decode` returns `(nil, nil)` for factory topics, so no field dependency |
+| `3e7a2f54…5176` | factory | 1 | L55,484,312 | as `b0fe36b2` |
+| `0827f721…9091` | Blend strategy | 1 | L55,483,517 | `BlendStrategy`; body `amount`, `from` — same names as audited `11329c24…988` |
+| `39ade914…d70c` | Blend strategy | 1 | L56,890,772 | as `0827f721`; adds harvest/keeper paths, which decode to `(nil, nil)` |
+
+`07097f83…84b0` (the upgraded vault named above) has no `contract_code`
+entry in the lake and ran on no gated contract in the range. All five are
+added to `internal/wasmaudit/audited_wasm.json`; `BackfillSafe` stays `true`.
