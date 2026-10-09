@@ -515,6 +515,18 @@ export interface paths {
          *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the read
          *     is fresh to; `flags.stale` fires when the watermark's close time
          *     trails now by more than 300s.
+         *
+         *     CSV: send `Accept: text/csv` for the same board as CSV with a header
+         *     row (`asset,account_id,balance`, same `limit` cap). `balance` is the
+         *     JSON's full integer string, never a float. `holder_count` is
+         *     `X-StellarIndex-Holder-Count`, `as_of_ledger` is
+         *     `X-StellarIndex-As-Of-Ledger`, and the true flags (`stale`,
+         *     `degraded`, `under_review`) are listed in `X-StellarIndex-Flags`.
+         *     A cell a spreadsheet would evaluate as a
+         *     formula (leading `=`, `+`, `-`, `@`, tab or CR, unless it is a plain
+         *     number) is prefixed with `'`. JSON stays the default; both
+         *     representations send `Vary: Accept`, and the CSV is
+         *     `Cache-Control: private, no-store`.
          */
         get: operations["getAssetHolders"];
         put?: never;
@@ -1162,6 +1174,18 @@ export interface paths {
          *     will ship via the aggregator binary (see
          *     cmd/stellarindex-aggregator) on a different response shape —
          *     not this endpoint.
+         *
+         *     CSV: send `Accept: text/csv` for the same page as CSV with a header
+         *     row (same `limit` and `cursor`). Cells carry the JSON's exact text:
+         *     `base_amount` / `quote_amount` are the full integer strings and
+         *     `price` the decimal string, never floats; an absent `price` or
+         *     `routed_via` is an empty cell. The next page is the `Link` header's
+         *     `rel="next"`, `coverage_from` is `X-StellarIndex-Coverage-From`, and
+         *     `outside_coverage` is listed in `X-StellarIndex-Flags`. A cell a
+         *     spreadsheet would evaluate as a formula (leading `=`, `+`, `-`, `@`, tab or CR, unless it is a plain
+         *     number) is prefixed with `'`. JSON stays the default; both
+         *     representations send `Vary: Accept`, and the CSV is
+         *     `Cache-Control: private, no-store`.
          */
         get: operations["getHistory"];
         put?: never;
@@ -14502,9 +14526,20 @@ export interface operations {
             /** @description Ranked holders + total holder count. */
             200: {
                 headers: {
+                    /** @description text/csv only: comma-separated true flags (`stale`, `degraded`, `under_review`); absent when none. */
+                    "X-StellarIndex-Flags"?: string;
+                    /** @description text/csv only: the JSON's `holder_count`. */
+                    "X-StellarIndex-Holder-Count"?: number;
+                    /** @description text/csv only: the JSON's `as_of_ledger`; absent when the JSON omits it. */
+                    "X-StellarIndex-As-Of-Ledger"?: number;
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example asset,account_id,balance
+                     *     USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN,GDWL5I6SENNVRK7PS7U3CRXIQTWHLFPSBXCGA3TWKTK7AQ7XO6FBXDFG,353017552538442
+                     */
+                    "text/csv": string;
                     /**
                      * @example {
                      *       "data": {
@@ -15485,9 +15520,20 @@ export interface operations {
             /** @description Per-trade records. */
             200: {
                 headers: {
+                    /** @description text/csv only: `</v1/history?cursor=…>; rel="next"` when another page exists. */
+                    Link?: string;
+                    /** @description text/csv only: `outside_coverage` when that flag is true; absent otherwise. */
+                    "X-StellarIndex-Flags"?: string;
+                    /** @description text/csv only: the JSON's `coverage_from`; absent when the JSON omits it. */
+                    "X-StellarIndex-Coverage-From"?: string;
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example source,ledger,tx_hash,op_index,ts,base_asset,quote_asset,base_amount,quote_amount,price,base_decimals,quote_decimals,routed_via
+                     *     sdex,63302110,be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36,0,2026-07-01T12:00:00Z,native,USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN,1000000000,2650000000,2.6500000000,7,7,
+                     */
+                    "text/csv": string;
                     /**
                      * @example {
                      *       "data": [

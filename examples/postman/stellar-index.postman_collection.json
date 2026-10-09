@@ -2352,7 +2352,7 @@
                   "request": {
                     "name": "Top holders of an asset by current balance.",
                     "description": {
-                      "content": "The accounts holding the largest balances of an asset, plus the total\ncount of holders with a positive balance — reconstructed from the\nlatest `ledger_entry_changes` state per account (ADR-0038 Phase C).\nFor issued assets the balance is the holder's trustline balance; for\nnative XLM — which has no trustlines — it is the account's own XLM\nbalance, and `holder_count` is the exact number of funded accounts.\n`asset_id` is the canonical form (`CODE-ISSUER`, or `native`; the\n`crypto:XLM` alias serves the native board, echoed as\n`asset: \"native\"`). Balances are strings (ADR-0003). Coverage tracks\nthe entry-change capture.\n\nFreshness (ADR-0041): `as_of_ledger` is the lake watermark the read\nis fresh to; `flags.stale` fires when the watermark's close time\ntrails now by more than 300s.\n",
+                      "content": "The accounts holding the largest balances of an asset, plus the total\ncount of holders with a positive balance — reconstructed from the\nlatest `ledger_entry_changes` state per account (ADR-0038 Phase C).\nFor issued assets the balance is the holder's trustline balance; for\nnative XLM — which has no trustlines — it is the account's own XLM\nbalance, and `holder_count` is the exact number of funded accounts.\n`asset_id` is the canonical form (`CODE-ISSUER`, or `native`; the\n`crypto:XLM` alias serves the native board, echoed as\n`asset: \"native\"`). Balances are strings (ADR-0003). Coverage tracks\nthe entry-change capture.\n\nFreshness (ADR-0041): `as_of_ledger` is the lake watermark the read\nis fresh to; `flags.stale` fires when the watermark's close time\ntrails now by more than 300s.\n\nCSV: send `Accept: text/csv` for the same board as CSV with a header\nrow (`asset,account_id,balance`, same `limit` cap). `balance` is the\nJSON's full integer string, never a float. `holder_count` is\n`X-StellarIndex-Holder-Count`, `as_of_ledger` is\n`X-StellarIndex-As-Of-Ledger`, and the true flags (`stale`,\n`degraded`, `under_review`) are listed in `X-StellarIndex-Flags`.\nA cell a spreadsheet would evaluate as a\nformula (leading `=`, `+`, `-`, `@`, tab or CR, unless it is a plain\nnumber) is prefixed with `'`. JSON stays the default; both\nrepresentations send `Vary: Accept`, and the CSV is\n`Cache-Control: private, no-store`.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -2391,7 +2391,7 @@
                     "header": [
                       {
                         "key": "Accept",
-                        "value": "application/json"
+                        "value": "text/csv"
                       }
                     ],
                     "method": "GET",
@@ -2438,7 +2438,7 @@
                         "header": [
                           {
                             "key": "Accept",
-                            "value": "application/json"
+                            "value": "text/csv"
                           }
                         ],
                         "method": "GET",
@@ -2450,6 +2450,33 @@
                         {
                           "key": "Content-Type",
                           "value": "application/json"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "text/csv only: comma-separated true flags (`stale`, `degraded`, `under_review`); absent when none.",
+                            "type": "text/plain"
+                          },
+                          "key": "X-StellarIndex-Flags",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "text/csv only: the JSON's `holder_count`.",
+                            "type": "text/plain"
+                          },
+                          "key": "X-StellarIndex-Holder-Count",
+                          "value": "<long>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "text/csv only: the JSON's `as_of_ledger`; absent when the JSON omits it.",
+                            "type": "text/plain"
+                          },
+                          "key": "X-StellarIndex-As-Of-Ledger",
+                          "value": "<long>"
                         }
                       ],
                       "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"asset\": \"<string>\",\n    \"holder_count\": \"<long>\",\n    \"holders\": [\n      {\n        \"account_id\": \"<string>\",\n        \"balance\": \"<string>\"\n      },\n      {\n        \"account_id\": \"<string>\",\n        \"balance\": \"<string>\"\n      }\n    ],\n    \"as_of_ledger\": \"<long>\"\n  }\n}",
@@ -8359,7 +8386,7 @@
           "request": {
             "name": "Raw trade history for a pair in a time window.",
             "description": {
-              "content": "On-chain sources only: centralised-exchange trade rows are never\nserved here (exchange redistribution terms); their prices reach\nyou only in aggregate, via `/v1/vwap`.\n\nReturns per-trade records ordered (ts, ledger, tx_hash, op_index, source)\nascending. Cursor paginates across the full-PK tuple; truncating\nthe cursor at (ts, ledger) would drop rows sharing those\nvalues (high-volume ledgers).\n\nXLM's canonical spellings (`native`, `crypto:XLM`, its SAC) are\ndifferent venue populations, so a pair with no trades under the\nrequested spelling is retried under the others and the first\npopulated one answers. Each row reports the `base_asset` /\n`quote_asset` it was stored under, which is not necessarily the\nspelling that was asked for.\n\nA market is served from BOTH stored orientations. The decoder\nrecords `base/quote` and `quote/base` as separate rows, and rows\nheld the other way round are re-expressed into the orientation\nrequested: the two legs swap, the two amounts swap with them,\nand `price` — always quote/base — is the exact reciprocal of the\nstored one. The swap is performed on the smallest-unit integer\namounts, so nothing is rounded on the way. `base_asset` /\n`quote_asset` on such a row report the orientation served, not\nthe one stored. An empty first page carries `coverage_from`\n(and, when the window ends at or before it,\n`flags.outside_coverage`) measured over both orientations, the\nsame population this page returns. A page reached by `cursor`\ncarries neither: it means the window was drained, not that\nnothing was there.\n\nEvery row in the window is served EXACTLY ONCE across a drain, so\na client may append pages and sum them directly. `limit` is a\npage-size target rather than an exact count, though, and both\ndirections of that need handling:\n\n- A page may come back SHORT of `limit` while more rows exist.\n  Detect the end of the data by the ABSENCE of `pagination`,\n  never by a page shorter than `limit`.\n- A page may EXCEED `limit`. Trades sharing an exact\n  (ts, ledger, tx_hash, op_index) — one operation recorded by\n  several sources — are served together rather than split\n  across a page edge, so a page runs to the end of such a group.\n  The excess is bounded by the size of one group, i.e. by the\n  number of sources that recorded that single operation, and is\n  independent of `limit`: a `limit=1` request over a\n  three-source group returns three rows.\n\nBucketed/granularity-based history (VWAP/TWAP series at 1m/15m/...)\nwill ship via the aggregator binary (see\ncmd/stellarindex-aggregator) on a different response shape —\nnot this endpoint.\n",
+              "content": "On-chain sources only: centralised-exchange trade rows are never\nserved here (exchange redistribution terms); their prices reach\nyou only in aggregate, via `/v1/vwap`.\n\nReturns per-trade records ordered (ts, ledger, tx_hash, op_index, source)\nascending. Cursor paginates across the full-PK tuple; truncating\nthe cursor at (ts, ledger) would drop rows sharing those\nvalues (high-volume ledgers).\n\nXLM's canonical spellings (`native`, `crypto:XLM`, its SAC) are\ndifferent venue populations, so a pair with no trades under the\nrequested spelling is retried under the others and the first\npopulated one answers. Each row reports the `base_asset` /\n`quote_asset` it was stored under, which is not necessarily the\nspelling that was asked for.\n\nA market is served from BOTH stored orientations. The decoder\nrecords `base/quote` and `quote/base` as separate rows, and rows\nheld the other way round are re-expressed into the orientation\nrequested: the two legs swap, the two amounts swap with them,\nand `price` — always quote/base — is the exact reciprocal of the\nstored one. The swap is performed on the smallest-unit integer\namounts, so nothing is rounded on the way. `base_asset` /\n`quote_asset` on such a row report the orientation served, not\nthe one stored. An empty first page carries `coverage_from`\n(and, when the window ends at or before it,\n`flags.outside_coverage`) measured over both orientations, the\nsame population this page returns. A page reached by `cursor`\ncarries neither: it means the window was drained, not that\nnothing was there.\n\nEvery row in the window is served EXACTLY ONCE across a drain, so\na client may append pages and sum them directly. `limit` is a\npage-size target rather than an exact count, though, and both\ndirections of that need handling:\n\n- A page may come back SHORT of `limit` while more rows exist.\n  Detect the end of the data by the ABSENCE of `pagination`,\n  never by a page shorter than `limit`.\n- A page may EXCEED `limit`. Trades sharing an exact\n  (ts, ledger, tx_hash, op_index) — one operation recorded by\n  several sources — are served together rather than split\n  across a page edge, so a page runs to the end of such a group.\n  The excess is bounded by the size of one group, i.e. by the\n  number of sources that recorded that single operation, and is\n  independent of `limit`: a `limit=1` request over a\n  three-source group returns three rows.\n\nBucketed/granularity-based history (VWAP/TWAP series at 1m/15m/...)\nwill ship via the aggregator binary (see\ncmd/stellarindex-aggregator) on a different response shape —\nnot this endpoint.\n\nCSV: send `Accept: text/csv` for the same page as CSV with a header\nrow (same `limit` and `cursor`). Cells carry the JSON's exact text:\n`base_amount` / `quote_amount` are the full integer strings and\n`price` the decimal string, never floats; an absent `price` or\n`routed_via` is an empty cell. The next page is the `Link` header's\n`rel=\"next\"`, `coverage_from` is `X-StellarIndex-Coverage-From`, and\n`outside_coverage` is listed in `X-StellarIndex-Flags`. A cell a\nspreadsheet would evaluate as a formula (leading `=`, `+`, `-`, `@`, tab or CR, unless it is a plain\nnumber) is prefixed with `'`. JSON stays the default; both\nrepresentations send `Vary: Accept`, and the CSV is\n`Cache-Control: private, no-store`.\n",
               "type": "text/plain"
             },
             "url": {
@@ -8439,7 +8466,7 @@
             "header": [
               {
                 "key": "Accept",
-                "value": "application/json"
+                "value": "text/csv"
               }
             ],
             "method": "GET",
@@ -8527,7 +8554,7 @@
                 "header": [
                   {
                     "key": "Accept",
-                    "value": "application/json"
+                    "value": "text/csv"
                   }
                 ],
                 "method": "GET",
@@ -8539,6 +8566,33 @@
                 {
                   "key": "Content-Type",
                   "value": "application/json"
+                },
+                {
+                  "disabled": false,
+                  "description": {
+                    "content": "text/csv only: `</v1/history?cursor=…>; rel=\"next\"` when another page exists.",
+                    "type": "text/plain"
+                  },
+                  "key": "Link",
+                  "value": "<string>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
+                    "content": "text/csv only: `outside_coverage` when that flag is true; absent otherwise.",
+                    "type": "text/plain"
+                  },
+                  "key": "X-StellarIndex-Flags",
+                  "value": "<string>"
+                },
+                {
+                  "disabled": false,
+                  "description": {
+                    "content": "text/csv only: the JSON's `coverage_from`; absent when the JSON omits it.",
+                    "type": "text/plain"
+                  },
+                  "key": "X-StellarIndex-Coverage-From",
+                  "value": "<dateTime>"
                 }
               ],
               "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"source\": \"<string>\",\n      \"ledger\": \"<integer>\",\n      \"tx_hash\": \"<string>\",\n      \"op_index\": \"<integer>\",\n      \"ts\": \"<dateTime>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"base_amount\": \"<string>\",\n      \"quote_amount\": \"<string>\",\n      \"price\": \"<string,null>\",\n      \"base_decimals\": \"<integer>\",\n      \"quote_decimals\": \"<integer>\",\n      \"routed_via\": \"<string>\"\n    },\n    {\n      \"source\": \"<string>\",\n      \"ledger\": \"<integer>\",\n      \"tx_hash\": \"<string>\",\n      \"op_index\": \"<integer>\",\n      \"ts\": \"<dateTime>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"base_amount\": \"<string>\",\n      \"quote_amount\": \"<string>\",\n      \"price\": \"<string,null>\",\n      \"base_decimals\": \"<integer>\",\n      \"quote_decimals\": \"<integer>\",\n      \"routed_via\": \"<string>\"\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"pagination\": {\n    \"next\": \"<string>\"\n  }\n}",
