@@ -284,7 +284,7 @@ export default function PrivacyPage() {
           except the providers below, each acting on our instructions, and where
           the law requires us to.
         </p>
-        {/* source: internal/notify/resend.go, docs/operations/dns-email-perimeter.md (SES us-east-1; Google Workspace MX), web/explorer/wrangler.toml, web/explorer/functions/client-errors.js, configs/ansible/roles/archival-node/templates/pgbackrest.conf.j2, docs/operations/off-site-backup-plan.md, docs/adr/0015-last-closed-bucket-rate-serving.md */}
+        {/* source: internal/notify/resend.go, docs/operations/dns-email-perimeter.md (SES us-east-1; Google Workspace MX), web/explorer/wrangler.toml, web/explorer/functions/client-errors.js, configs/ansible/roles/archival-node/templates/pgbackrest.conf.j2, configs/ansible/inventory/r1.yml (pgbackrest_repo2_s3_endpoint), docs/operations/off-site-backup-plan.md, docs/adr/0015-last-closed-bucket-rate-serving.md */}
         <DefList
           rows={[
             {
@@ -308,8 +308,8 @@ export default function PrivacyPage() {
               def: 'Hosts the API servers and the database in which account data lives, in Germany (mainnet) and Finland (test networks).',
             },
             {
-              term: 'Off-site backup storage',
-              def: 'Off-site copies of the database are encrypted (AES-256) before they leave our servers and are held in an S3-compatible object store separate from the host, in the EU or under standard contractual clauses if outside it.',
+              term: 'Backblaze',
+              def: 'Holds the off-site copies of the database, in its eu-central-003 region (Amsterdam, Netherlands). The copies are encrypted (AES-256) before they leave our servers, so Backblaze cannot read them.',
             },
           ]}
         />
