@@ -218,11 +218,30 @@ func (h *Handler) readContractSidecars(ctx context.Context, cid string) contract
 	return s
 }
 
+// cachedActivitySummary carries the reader's ok flag through the SWR cache.
+type cachedActivitySummary struct {
+	s  clickhouse.ContractActivitySummary
+	ok bool
+}
+
 // contractActivityCard is the 30-day liveness card, nil when the activity
-// index is unprovisioned, errors, or holds nothing for the contract.
+// index is unprovisioned, errors, or holds nothing for the contract. It goes
+// through the SWR cache: the lifetime uniqExact over a busy contract's
+// active ledgers (the XLM SAC: 45M rows) costs seconds.
 func (h *Handler) contractActivityCard(ctx context.Context, cid string) *ContractActivityV {
-	act, ok, err := h.Reader.ContractActivitySummaryFor(ctx, cid, 30)
-	if err != nil || !ok || act.ActiveLedgersTotal == 0 {
+	v, _, _, err := h.contractDetailCached(ctx, "act:"+cid, func(rctx context.Context) (any, error) {
+		s, ok, err := h.Reader.ContractActivitySummaryFor(rctx, cid, 30)
+		if err != nil {
+			return nil, err
+		}
+		return cachedActivitySummary{s: s, ok: ok}, nil
+	})
+	if err != nil {
+		return nil
+	}
+	c, _ := v.(cachedActivitySummary)
+	act := c.s
+	if !c.ok || act.ActiveLedgersTotal == 0 {
 		return nil
 	}
 	av := &ContractActivityV{
