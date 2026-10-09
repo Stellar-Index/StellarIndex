@@ -20,6 +20,22 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.107.0] — 2026-10-09
+
+190 commits since v0.106.0, almost all comment and doc clean-up. No migrations, no `pkg/*` break.
+
+### Fixed
+
+- **timescale:** a zero USD-pegged base leg is valued at exactly $0 (#2890); SEP-41 cursor indexes clamp to smallint instead of wrapping (#2881).
+- **dashboardauth:** a signed-in browser gets its own code-lockout budget (#2878).
+- **clickhouse:** a large gated contract set is sent as an external table (#2807).
+- **indexer:** the hashdb history slice, which compared our bytes to SDF's, is dropped (#2806).
+- **ops:** pgbackrest backups get a 900s archive timeout (#2761).
+
+### Changed
+
+- Go bumped to 1.27.2 and golang.org/x/net to v0.60.0 (#2899).
+
 ## [v0.106.0] — 2026-10-08
 
 336 commits since v0.105.0. Five migrations (0208–0212), all additive. No `pkg/*` break; `pkg/client` gains `volume_lower_bound` fields.
@@ -142,18 +158,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
   same-origin `/icon` (#2280).
 - **web:** sign-in, embed price and incidents fetches are bounded at 15s
   (#2275).
-
-## [v0.102.0] — 2026-10-04
-
-2 commits since v0.101.0. No migrations, no `pkg/*` break, no API change.
-
-### Fixed
-
-- **completeness:** blend's projection read is scoped to its factories plus
-  its registered and deploy-announced pools, through the gated prefilter
-  (#2322).
-
-### Documentation
-
-- **sla:** weekly SLA proof for 2026-10-04 (not proven).
-
