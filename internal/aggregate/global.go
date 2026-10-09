@@ -406,13 +406,13 @@ var aggregatorMADFactor = big.NewRat(5, 1)
 // aggregators quoting a thin RWA or a mid-crash major reach routinely —
 // the lower edge goes non-positive and NO downward print can be
 // rejected, while the mirror-image up-move still is. A single vendor
-// publishing a decimal-shifted or stale-to-zero quote then halved the
+// publishing a decimal-shifted or stale-to-zero quote would then halve the
 // plain-mean headline that this filter exists to protect. The
 // ratio-symmetric band [centre²/(centre + K·scale), centre + K·scale] is
-// identical above the centre; below it the new edge is never lower than
-// the old one (1/(1+r) ≥ 1−r), so nothing the additive band rejects is
+// identical above the centre; below it the mirrored edge is never lower than
+// the additive one (1/(1+r) ≥ 1−r), so nothing the additive band rejects is
 // accepted — the downward side is strictly tightened, and a
-// source sitting between the old and new lower edge is now dropped.
+// source sitting between the additive and mirrored lower edge is dropped.
 //
 // It NEVER fails closed: with fewer than [aggregatorMinForOutlierReject]
 // usable sources (no majority to define consensus) it returns the input

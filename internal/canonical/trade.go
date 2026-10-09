@@ -107,7 +107,7 @@ type Trade struct {
 //
 // Panics (Must-style) if either input is negative or exceeds 0xFFFF.
 // This is the PK-collision primitive: silently masking an out-of-range
-// eventIndex (the old `& 0xFFFF`) or letting an out-of-range opIndex
+// eventIndex (a `& 0xFFFF` mask) or letting an out-of-range opIndex
 // shift into the event half would manufacture exactly the trade-ID
 // collisions this function exists to prevent — and a real ledger that
 // ever overflows 16 bits is a decoder bug we want surfaced loudly, not

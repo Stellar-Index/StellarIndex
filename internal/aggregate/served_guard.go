@@ -203,10 +203,10 @@ func robustBand(trailing []*big.Rat) (lo, hi *big.Rat, ok bool) {
 	// An additive lower edge centre − K·scale would go
 	// non-positive once the baseline's relative MAD reaches 1/(K·1.4826)
 	// = 6.75 % — ordinary long-tail volatility — and from there the guard
-	// have NO downside at all: a crafted bucket at any price down to 0 would be
+	// would have NO downside at all: a crafted bucket at any price down to 0 would be
 	// served verbatim as a confident price, while the mirror-image pump
 	// would still be caught. The mirrored edge is always strictly positive and
-	// never below the old one, so a volatile pair still earns its wider
+	// never below the additive one, so a volatile pair still earns its wider
 	// band from its own spread, symmetrically in both directions.
 	scale := new(big.Rat).Mul(madToStd, madRat(vals, centre)) // σ-equivalent
 	half := new(big.Rat).Mul(guardMADFactor, scale)           // K·scale
