@@ -323,11 +323,8 @@ func TestDecodeSetPrivilegedAddrs_realFixture(t *testing.T) {
 // TestDecodeSetPrivilegedAddrs_v2RealFixture pins the POST-57.7M wire
 // generation (ingest-pipeline.md#contract-schema-evolution): the same shape plus ONE
 // trailing plain Address. Real r1-lake bytes — the canonical router's
-// single 5-element `set_privileged_addrs` event (ledger 57,711,797,
-// closed 2025-06-25), which was one of the 41 blind
-// undecodable-but-matched events on aquarius's first full-range
-// completeness reconcile while the decoder pinned
-// arity==4.
+// single 5-element `set_privileged_addrs` event (ledger 57,711,797),
+// which a decoder pinned to arity==4 matches but cannot decode.
 func TestDecodeSetPrivilegedAddrs_v2RealFixture(t *testing.T) {
 	e := &events.Event{
 		ContractID: MainnetRouter,
