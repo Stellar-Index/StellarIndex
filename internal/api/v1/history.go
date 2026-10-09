@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	explorerpkg "github.com/Stellar-Index/StellarIndex/internal/api/v1/explorer"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 
@@ -335,6 +336,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 			"this deployment has no HistoryReader wired — check binary configuration")
 		return
 	}
+	asCSV := explorerpkg.NegotiateCSV(w, r)
 
 	base, quote, ok := parseBaseQuote(w, r)
 	if !ok {
@@ -487,6 +489,10 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		r.Context(), historyCoverageSet(pair), to, historyPageIsAmbiguous(len(trades), afterTs))
 	env.CoverageFrom, env.Flags.OutsideCoverage = wireTimePtr(coverageFrom), outsideCoverage
 	env.Pagination = historyNextCursor(next)
+	if asCSV {
+		s.writeHistoryCSV(w, r, rows, env)
+		return
+	}
 	writeEnvelope(w, env)
 }
 

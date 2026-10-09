@@ -54,7 +54,7 @@ func (h *Handler) AssetMovements(w http.ResponseWriter, r *http.Request) {
 		h.unavailable(w, r)
 		return
 	}
-	asCSV := negotiateCSV(w, r)
+	asCSV := NegotiateCSV(w, r)
 	limit, ok := h.ParseLimit(w, r, accountMovementsDefaultLimit, accountMovementsMaxLimit)
 	if !ok {
 		return
@@ -120,11 +120,11 @@ var assetMovementsCSVColumns = []string{
 // writeAssetMovementsCSV writes the page with the JSON's exact cell text:
 // the amount string, the stored asset id, and attributes as a JSON object.
 func (h *Handler) writeAssetMovementsCSV(w http.ResponseWriter, r *http.Request, v AssetMovementsView, stale, degraded bool) {
-	p := csvPage{
-		columns:    assetMovementsCSVColumns,
-		rows:       make([][]string, len(v.Movements)),
-		nextCursor: v.NextCursor,
-		headers: map[string]string{
+	p := CSVPage{
+		Columns:    assetMovementsCSVColumns,
+		Rows:       make([][]string, len(v.Movements)),
+		NextCursor: v.NextCursor,
+		Headers: map[string]string{
 			"X-StellarIndex-Through-Ledger": strconv.FormatUint(uint64(v.ThroughLedger), 10),
 			// A lower bound must name what it excludes; the CSV has no envelope.
 			"X-StellarIndex-Coverage-Note": v.CoverageNote,
@@ -135,7 +135,7 @@ func (h *Handler) writeAssetMovementsCSV(w http.ResponseWriter, r *http.Request,
 		set  bool
 	}{{"stale", stale}, {"degraded", degraded}, {"lower_bound", v.LowerBound}} {
 		if f.set {
-			p.flags = append(p.flags, f.name)
+			p.Flags = append(p.Flags, f.name)
 		}
 	}
 	for i, m := range v.Movements {
@@ -152,13 +152,13 @@ func (h *Handler) writeAssetMovementsCSV(w http.ResponseWriter, r *http.Request,
 			}
 			attrs = string(b)
 		}
-		p.rows[i] = []string{
+		p.Rows[i] = []string{
 			v.Asset, strconv.FormatUint(uint64(m.Ledger), 10), m.LedgerCloseTime, m.TxHash,
 			strconv.FormatUint(uint64(m.OpIndex), 10), strconv.FormatUint(uint64(m.LegIndex), 10),
 			m.MovementKind, m.From, m.To, m.Amount, decimals, m.Provenance, attrs,
 		}
 	}
-	if err := writeCSVPage(w, r, p); err != nil && !h.ClientAborted(r, err) {
+	if err := WriteCSVPage(w, r, p); err != nil && !h.ClientAborted(r, err) {
 		h.Logger.Warn("explorer AssetMovements CSV write failed", "err", err, "asset", v.Asset)
 	}
 }

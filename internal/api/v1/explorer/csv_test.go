@@ -231,3 +231,37 @@ func TestAssetMovementsCSVAndJSONDoNotCrossServe(t *testing.T) {
 		t.Errorf("X-StellarIndex-Flags = %q with the backfill marker set, want none", rec.Header().Get("X-StellarIndex-Flags"))
 	}
 }
+
+func TestAssetHoldersCSV(t *testing.T) {
+	reader := &holdersKeyReader{capReader: &capReader{probe: &deadlineProbe{}}}
+	h := newProbeHandler(reader, nil)
+	h.WriteJSONAt = func(http.ResponseWriter, any, bool, bool, time.Time) { t.Fatal("CSV request reached the JSON writer") }
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/assets/{asset_id}/holders", h.AssetHolders)
+	req := httptest.NewRequest(http.MethodGet, "/v1/assets/native/holders", nil)
+	req.Header.Set("Accept", "text/csv")
+	rec := httptest.NewRecorder()
+	middleware.CacheControlWithCDN(true)(mux).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/csv; charset=utf-8" {
+		t.Fatalf("code=%d content-type=%q, want 200 text/csv", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if rec.Header().Get("Vary") != "Accept" || rec.Header().Get("Cache-Control") != "private, no-store" {
+		t.Errorf("Vary=%q Cache-Control=%q, want Accept and private, no-store", rec.Header().Get("Vary"), rec.Header().Get("Cache-Control"))
+	}
+	if got := rec.Header().Get("X-StellarIndex-Holder-Count"); got != "9915982" {
+		t.Errorf("X-StellarIndex-Holder-Count = %q, want 9915982", got)
+	}
+	records, err := csv.NewReader(strings.NewReader(rec.Body.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("body is not CSV: %v\n%s", err, rec.Body.String())
+	}
+	want := [][]string{
+		{"asset", "account_id", "balance"},
+		// 554421152474348098 > 2^53: a float64 cell would read 554421152474348100.
+		{"native", validTestAccount, "554421152474348098"},
+	}
+	if !reflect.DeepEqual(records, want) {
+		t.Fatalf("records = %q, want %q", records, want)
+	}
+}
