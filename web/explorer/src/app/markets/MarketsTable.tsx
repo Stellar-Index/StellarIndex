@@ -12,7 +12,11 @@ import { SourceSparkline } from '@/components/SourceSparkline';
 import { VolumeShare } from '@/components/charts/VolumeShare';
 import { shortAssetText } from '@/lib/asset-label';
 import { useMarkets } from '@/api/hooks';
-import { formatCompact, formatRelative } from '@/lib/format';
+import {
+  formatCompact,
+  formatCompactUnits,
+  formatRelative,
+} from '@/lib/format';
 import { useLedgerStream } from '@/lib/live/hooks';
 import { LastPriceCell } from '@/components/LastPriceCell';
 import { FreshnessMarker } from '@/components/primitives';
@@ -333,7 +337,7 @@ export function MarketsTable() {
                   <Td align="right">
                     {m.volume_24h_usd ? (
                       <span className="font-mono tabular-nums">
-                        ${formatCompact(Number(m.volume_24h_usd))}
+                        ${formatCompactUnits(m.volume_24h_usd)}
                       </span>
                     ) : (
                       <span className="text-ink-faint">—</span>

@@ -31,6 +31,7 @@ import { FreshnessMarker } from '@/components/primitives';
 import { OperationMixPanel } from '@/components/NetworkInsight';
 import { CountSparkline, UpgradeBadges } from '@/components/ChainCharts';
 import {
+  compareDecimalDesc,
   formatCompact,
   formatCompactUnits,
   sumDecimalStrings,
@@ -744,7 +745,7 @@ function TopMarkets() {
                     </Td>
                     <Td align="right" className="font-mono">
                       {m.volume_24h_usd
-                        ? `$${formatCompact(Number(m.volume_24h_usd))}`
+                        ? `$${formatCompactUnits(m.volume_24h_usd)}`
                         : '—'}
                     </Td>
                   </TR>
@@ -771,9 +772,7 @@ function ActiveSources() {
   const { data, isLoading, isError } = useSources(undefined, true);
   const rows = [...(data ?? [])]
     .filter(isOnChainSource)
-    .sort(
-      (a, b) => Number(b.volume_24h_usd ?? 0) - Number(a.volume_24h_usd ?? 0),
-    )
+    .sort((a, b) => compareDecimalDesc(a.volume_24h_usd, b.volume_24h_usd))
     .slice(0, 8);
   return (
     <Panel
@@ -822,7 +821,7 @@ function ActiveSources() {
                   <Td className="text-ink-muted">{src.class}</Td>
                   <Td align="right" className="font-mono">
                     {src.volume_24h_usd
-                      ? `$${formatCompact(Number(src.volume_24h_usd))}`
+                      ? `$${formatCompactUnits(src.volume_24h_usd)}`
                       : '—'}
                   </Td>
                 </TR>
@@ -862,7 +861,7 @@ function NetworkComposition() {
       decimal: s.volume_24h_usd,
     }))
     .filter((x) => Number.isFinite(x.value) && x.value > 0)
-    .sort((a, b) => b.value - a.value);
+    .sort((a, b) => compareDecimalDesc(a.decimal, b.decimal));
   const total = sumDecimalStrings(slices.map((s) => s.decimal)) ?? '0';
 
   return (

@@ -4,8 +4,9 @@ import { hrefFor } from '@/lib/hrefFor';
 
 import { buildFetchData, requireRows } from '@/lib/buildFetch';
 import {
+  compareDecimalStrings,
   formatBaseUnits,
-  formatCompact,
+  formatCompactUnits,
   formatPairPrice,
   formatSubunitPrice,
   ratioPct,
@@ -618,7 +619,6 @@ function SourceBreakdownPanel({ rows }: { rows: PoolRow[] }) {
       <SourcePriceSpread rows={rows} />
       <ul className="space-y-2">
         {rows.map((r) => {
-          const v = r.volume_24h_usd ? Number(r.volume_24h_usd) : null;
           const pct = ratioPct(r.volume_24h_usd, totalUSD, 1);
           const lp = r.last_price ? Number(r.last_price) : null;
           const lpFixed = lp == null ? null : formatPairPrice(lp);
@@ -642,8 +642,9 @@ function SourceBreakdownPanel({ rows }: { rows: PoolRow[] }) {
                 {lpFixed ?? '—'}
               </span>
               <span className="text-ink-body w-28 text-right font-mono text-xs tabular-nums">
-                {v != null && Number.isFinite(v) && v > 0
-                  ? `$${formatCompact(v)}`
+                {r.volume_24h_usd &&
+                compareDecimalStrings(r.volume_24h_usd, '0') === 1
+                  ? `$${formatCompactUnits(r.volume_24h_usd)}`
                   : '—'}
               </span>
               <span className="text-ink-muted w-12 text-right font-mono text-xs tabular-nums">

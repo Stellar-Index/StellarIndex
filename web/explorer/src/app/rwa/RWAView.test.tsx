@@ -189,6 +189,14 @@ describe('RWAView', () => {
     );
   });
 
+  it('rounds 24h volume above 2^53 from the exact decimal', async () => {
+    apiGetData.mockResolvedValue(
+      view({ assets: [asset({ volume_24h_usd: '1000000004999999999' })] }),
+    );
+    renderView();
+    expect(await screen.findByText('$1,000,000T')).toBeInTheDocument();
+  });
+
   it('renders a withheld valuation as unavailable, never as a number', async () => {
     apiGetData.mockResolvedValue(
       view({

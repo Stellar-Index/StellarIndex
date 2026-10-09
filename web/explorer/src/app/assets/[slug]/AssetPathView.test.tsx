@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
@@ -39,5 +39,19 @@ describe('AssetPathView', () => {
 
   it('does not throw on a malformed percent-escape segment', () => {
     expect(() => renderAtPath('/assets/USDT%ZZ')).not.toThrow();
+  });
+
+  it('rounds 24h volume above 2^53 from the exact decimal', async () => {
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      data: {
+        asset_id: 'USDT-GASU4KIF',
+        code: 'USDT',
+        volume_24h_usd: '1000000004999999999',
+      },
+    });
+    renderAtPath('/assets/usdt-gasu4kif');
+    await waitFor(() =>
+      expect(screen.getByText('$1,000,000T')).toBeInTheDocument(),
+    );
   });
 });

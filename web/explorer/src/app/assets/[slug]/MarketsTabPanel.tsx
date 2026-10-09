@@ -9,7 +9,11 @@ import { asExample } from '@/api/client';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import { useMarkets, type Market } from '@/api/hooks';
 import { useLedgerFollow } from '@/lib/live/hooks';
-import { formatCompact, formatRelative } from '@/lib/format';
+import {
+  formatCompact,
+  formatCompactUnits,
+  formatRelative,
+} from '@/lib/format';
 
 /**
  * MarketsTabPanel — backs the "Markets" tab on /assets/[slug].
@@ -170,9 +174,7 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
       </Td>
       <Td align="right">
         <span className="font-mono text-xs tabular-nums">
-          {m.volume_24h_usd
-            ? `$${formatCompact(Number(m.volume_24h_usd))}`
-            : '—'}
+          {m.volume_24h_usd ? `$${formatCompactUnits(m.volume_24h_usd)}` : '—'}
         </span>
       </Td>
       <Td align="right">

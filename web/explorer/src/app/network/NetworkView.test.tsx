@@ -176,3 +176,49 @@ describe('dailyFeeBurn', () => {
     ]);
   });
 });
+
+describe('NetworkView active sources volume', () => {
+  beforeEach(() => {
+    net.id = 'mainnet';
+    vi.mocked(apiGet).mockReset();
+  });
+
+  it('ranks and rounds source volume above 2^53 from the exact decimal', async () => {
+    routeApi(NATIVE);
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string, ...rest) => {
+      if (path === '/v1/sources') {
+        return {
+          data: [
+            {
+              name: 'aquarius',
+              class: 'exchange',
+              subclass: 'amm',
+              volume_24h_usd: '9007199254740992',
+            },
+            {
+              name: 'soroswap',
+              class: 'exchange',
+              subclass: 'amm',
+              volume_24h_usd: '9007199254740993',
+            },
+            {
+              name: 'phoenix',
+              class: 'exchange',
+              subclass: 'amm',
+              volume_24h_usd: '1000000004999999999',
+            },
+          ],
+        };
+      }
+      return base(path, ...rest);
+    });
+    await renderView();
+    const heading = await screen.findByText('Most active Stellar sources');
+    const panel = heading.closest('section') as HTMLElement;
+    await waitFor(() => expect(panel).toHaveTextContent('soroswap'));
+    expect(panel).toHaveTextContent('$1,000,000T');
+    const text = panel.textContent ?? '';
+    expect(text.indexOf('soroswap')).toBeLessThan(text.indexOf('aquarius'));
+  });
+});
