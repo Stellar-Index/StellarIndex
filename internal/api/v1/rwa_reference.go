@@ -890,32 +890,25 @@ func rwaApplyReference(
 // rwaApplyContractReference attaches the LISTING-priced reference to a
 // contract member, or the reason there is none.
 //
-// # Why a contract row can carry a reference at all now
+// # Why a contract row can carry a reference
 //
-// It could not before, and the reason was sound and is unchanged:
-// nothing binds a contract ADDRESS to an oracle feed, and the available
-// joins — the contract's own SEP-41 symbol, or the curated binding's
-// instrument name — are both code-keyed joins onto a feed, which is
-// exactly what R-0 exists to refuse. The curated set records an
-// instrument and a class, not a feed, so it cannot answer a price
-// however many entries it holds.
+// Nothing binds a contract ADDRESS to an oracle feed: the contract's
+// SEP-41 symbol and the curated binding's instrument name are both
+// code-keyed joins onto a feed, which R-0 refuses. The curated set
+// records an instrument and a class, not a feed, so it cannot answer a
+// price.
 //
-// What changed is not that join. It is that this surface now holds, for
-// some contract addresses, a row from an independent listing directory
-// that NAMES the exact address and publishes a USD price for the thing
-// it named — price bound to address, in one row, by a party that did
-// not read our curated directory. No code is matched anywhere on this
-// path. A token wearing a bound instrument's symbol gets nothing here,
-// because it was never in the listing row.
+// An independent listing directory row, by contrast, NAMES the exact
+// address and publishes a USD price for it: price bound to address, in
+// one row, by a party that did not read our curated directory. No code
+// is matched on this path, so a token wearing a bound instrument's
+// symbol gets nothing here.
 //
-// It applies to any contract row the listing names, not only to rows
-// the listing ADMITTED. Those two sets overlap but are not equal: a
-// contract the curated directory attested on its own may also be named
-// by the listing, and the price that listing publishes is exactly as
-// well bound to the address in that case as in the other. Gating on the
-// recognition source would withhold a figure this surface can correctly
-// make, for a reason about how the row got in rather than about where
-// the price came from.
+// It applies to any contract row the listing names, not only rows the
+// listing ADMITTED: the price is as well bound to the address when the
+// curated directory attested the contract on its own. Gating on the
+// recognition source would withhold a correct figure for a reason about
+// how the row got in, not where the price came from.
 //
 // # What it is, stated rather than implied
 //
