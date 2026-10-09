@@ -5259,8 +5259,8 @@ paths:
                                 source:          { type: string, example: "sdex" }
                                 applies:         { type: boolean, description: "False for CEX/FX sources whose trades have no Stellar ledger." }
                                 genesis_ledger:  { type: integer, format: int64, description: "Operator-curated source genesis (1 for SDEX, contract deploy ledger for Soroban)." }
-                                earliest_ledger: { type: integer, format: int64 }
-                                latest_ledger:   { type: integer, format: int64 }
+                                earliest_ledger: { type: integer, format: int64, description: "Start of the verified range: the served floor, else genesis (completeness_snapshots). Cached range for CEX rows. Omitted until verified." }
+                                latest_ledger:   { type: integer, format: int64, description: "End of the verified range: the completeness watermark. Omitted until verified." }
                                 entries:         { type: integer, format: int64, description: "Always-on per-source ingested-entry tally — trades for exchange/DEX/CEX sources, oracle_updates for oracle sources (source_entry_counts, migration 0035). Exact even mid-backfill; renamed from trade_count 2026-05-15." }
                                 coverage_pct:    { type: number,  description: "Fraction of (genesis → tip) range with any data. 1.0 = covered. Doesn't detect internal gaps." }
                                 density_pct:     { type: number,  description: "Fraction of ledgers processed, from the union of backfill cursor intervals. 1.0 = fully backfilled. Omitted when zero." }
