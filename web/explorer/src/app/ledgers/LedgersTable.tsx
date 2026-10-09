@@ -10,6 +10,7 @@ import {
 
 import { Panel } from '@/components/reveal';
 import { CountSparkline } from '@/components/ChainCharts';
+import { InlineBar } from '@/components/ContractCharts';
 import { apiGet, asExample } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
@@ -132,6 +133,7 @@ export function LedgersTable() {
     );
   }
   const ledgers = data.ledgers ?? [];
+  const maxOps = Math.max(0, ...ledgers.map((l) => l.op_count ?? 0));
   if (ledgers.length === 0) {
     return (
       <Panel
@@ -211,8 +213,15 @@ export function LedgersTable() {
                   </span>
                 </Td>
                 <Td align="right">
-                  <span className="text-ink-body font-mono tabular-nums">
-                    {(l.op_count ?? 0).toLocaleString('en-US')}
+                  <span className="inline-flex items-center gap-2">
+                    <InlineBar
+                      value={l.op_count ?? 0}
+                      max={maxOps}
+                      label={`${(l.op_count ?? 0).toLocaleString('en-US')} operations`}
+                    />
+                    <span className="text-ink-body font-mono tabular-nums">
+                      {(l.op_count ?? 0).toLocaleString('en-US')}
+                    </span>
                   </span>
                 </Td>
                 <Td align="right">

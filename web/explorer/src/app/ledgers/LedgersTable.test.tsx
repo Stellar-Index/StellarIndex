@@ -97,4 +97,20 @@ describe('LedgersTable live follow', () => {
     // Give any wrongly-scheduled refetch a chance to fire before asserting.
     await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1));
   });
+
+  it('bars each ledger’s operations against the busiest on the page', async () => {
+    useLedgerStream.mockReturnValue(null);
+    apiGet.mockResolvedValue({
+      data: {
+        ledgers: [ledgerRow(101), { ...ledgerRow(100), op_count: 25 }],
+        next_before: 99,
+      },
+    });
+    renderTable();
+    const bar = async (n: string) =>
+      (await screen.findByRole('img', { name: `${n} operations` }))
+        .firstElementChild as HTMLElement;
+    expect((await bar('100')).style.width).toBe('100%');
+    expect((await bar('25')).style.width).toBe('25%');
+  });
 });
