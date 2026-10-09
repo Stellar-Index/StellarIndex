@@ -10811,7 +10811,7 @@ export interface components {
             as_of: string;
             /** @description (Stellar price − global price) / global price × 100 as a signed decimal with two fractional digits ("+1.27", "-0.05", "0.00"). Stellar USD prices are quoted through the deployment's USD-pegged stablecoins, so a global depeg of that proxy moves this figure too. Absent when price_usd is not a Stellar market price (a global_market or declared_peg fill, or no price), and for a declared USD peg itself, whose Stellar USD price is quoted through itself and would measure the global depeg rather than a Stellar break. */
             stellar_divergence_pct?: string;
-            /** @description True when the absolute stellar_divergence_pct exceeds the deployment's divergence threshold (divergence.threshold_pct): the Stellar market has broken from the global one. Omitted (false) otherwise. */
+            /** @description True when the absolute stellar_divergence_pct exceeds the deployment's divergence threshold (divergence.threshold_pct), capped at 1% when the global ticker is a fiat-pegged stablecoin: the Stellar market has broken from the global one. Omitted (false) otherwise. */
             depeg_warning?: boolean;
             /** @description Present only beside depeg_warning, on /v1/assets/{asset_id}: the issuer behaviours from `issuer_behaviour` that let the issuer move or freeze holders' balances — `auth_clawback_enabled` and `auth_revocable` from its live account flags, `clawback_observed` when the asset's clawback_total is non-zero. Omitted when none applies or the issuer's behaviour did not resolve. */
             issuer_signals?: ("auth_clawback_enabled" | "auth_revocable" | "clawback_observed")[];
