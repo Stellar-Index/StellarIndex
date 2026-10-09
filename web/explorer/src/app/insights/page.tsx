@@ -4,7 +4,7 @@ import { Activity, GitCompare, HandCoins, UserPlus, Zap } from 'lucide-react';
 
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { availableRoutes, routeAvailable } from '@/lib/network-routes';
-import { Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/insights' },
   title: 'Insights — anomalies, divergence and MEV on Stellar',
@@ -49,6 +49,8 @@ const SURFACES = [
   },
 ] as const;
 
+const INSIGHTS_CRUMBS = [{ label: 'Home', href: '/' }, { label: 'Insights' }];
+
 export default function InsightsPage() {
   // The whole signals layer is aggregator-derived. The rail already
   // dropped this hub on the lean test nets; a direct URL still reached it
@@ -59,19 +61,18 @@ export default function InsightsPage() {
   if (!routeAvailable('/insights')) {
     return (
       <Container className="space-y-6 py-8">
-        <h1 className="text-3xl font-semibold tracking-tight">Insights</h1>
+        <PageHeader breadcrumbs={INSIGHTS_CRUMBS} title="Insights" />
         <NetworkUnavailable href="/insights" />
       </Container>
     );
   }
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Insights</h1>
-        <p className="text-ink-body max-w-3xl text-sm">
-          Signals over the raw data.
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={INSIGHTS_CRUMBS}
+        title="Insights"
+        description="Signals over the raw data."
+      />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {availableRoutes(SURFACES).map((s) => {

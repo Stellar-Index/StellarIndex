@@ -129,6 +129,7 @@ export function DexesView() {
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'DEXes' }]}
         eyebrow="On-chain venues"
         title="DEXes"
         description={

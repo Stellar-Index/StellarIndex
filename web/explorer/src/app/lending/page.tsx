@@ -5,7 +5,7 @@ import { ExternalLink } from 'lucide-react';
 import { NoteBadge } from '@/components/NoteBadge';
 import { LendingPoolsTable } from './LendingPoolsTable';
 
-import { Badge, Container } from '@/components/ui';
+import { Badge, Container, PageHeader } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/lending' },
   title: 'Lending — collateralised lending on Stellar',
@@ -16,17 +16,20 @@ export const metadata: Metadata = {
 export default function LendingPage() {
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Lending</h1>
-        <p className="text-ink-body max-w-3xl text-sm">
-          Collateralised lending on Stellar. Yield is borrower interest; routed
-          yield is on{' '}
-          <Link href="/aggregators" className="underline decoration-dotted">
-            /aggregators
-          </Link>
-          .
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Lending' }]}
+        title="Lending"
+        description={
+          <>
+            Collateralised lending on Stellar. Yield is borrower interest;
+            routed yield is on{' '}
+            <Link href="/aggregators" className="underline decoration-dotted">
+              /aggregators
+            </Link>
+            .
+          </>
+        }
+      />
 
       <div className="border-line bg-surface rounded-xl border p-5 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">

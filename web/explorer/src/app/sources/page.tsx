@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SourcesTable } from './SourcesTable';
 
-import { Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/sources' },
   title: 'Stellar sources — every on-chain venue we index',
@@ -27,19 +27,20 @@ export const metadata: Metadata = {
 export default function SourcesPage() {
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Stellar sources
-        </h1>
-        <p className="text-ink-body max-w-3xl text-sm">
-          On-chain venues by class; only DEXes feed VWAP. Off-chain feeds are
-          under{' '}
-          <Link href="/exchanges" className="text-brand-600 hover:underline">
-            exchanges
-          </Link>
-          .
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Sources' }]}
+        title="Stellar sources"
+        description={
+          <>
+            On-chain venues by class; only DEXes feed VWAP. Off-chain feeds are
+            under{' '}
+            <Link href="/exchanges" className="text-brand-600 hover:underline">
+              exchanges
+            </Link>
+            .
+          </>
+        }
+      />
 
       <DataTrustTabs active="/sources" />
 
