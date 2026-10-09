@@ -43,24 +43,7 @@ export default function DiagnosticsPage() {
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Diagnostics' }]}
         eyebrow="System health"
         title="Diagnostics"
-        description={
-          <>
-            Public system-health view: live per-source ingest cursors from{' '}
-            <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[13px]">
-              /v1/diagnostics/cursors
-            </code>
-            , per-source completeness verdicts (decoder coverage) from{' '}
-            <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[13px]">
-              /v1/coverage
-            </code>
-            , and archive completeness from{' '}
-            <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[13px]">
-              /v1/diagnostics/archive
-            </code>
-            . SLO burn rates land with the sla-probe read endpoint; cross-region
-            consistency lands with multi-region (single-region today).
-          </>
-        }
+        description="Live ingest cursors, per-source completeness verdicts and archive completeness."
       />
       <DataTrustTabs active="/diagnostics" />
 
@@ -72,7 +55,7 @@ export default function DiagnosticsPage() {
       <section className="space-y-4">
         <SectionHeader
           title="Decoder coverage"
-          description="Per-source completeness verdicts — substrate continuity, event recognition, and projection reconciliation proven per source. Two axes: the served tier (retention-scoped) and the archive/lake (proven genesis-to-tip) can diverge (ADR-0033/0034)."
+          description="Per-source verdicts; served tier and lake can diverge (ADR-0033/0034)."
         />
         <CoveragePanel />
       </section>
@@ -80,7 +63,7 @@ export default function DiagnosticsPage() {
       <section className="space-y-4">
         <SectionHeader
           title="Archive completeness"
-          description="Daily cross-anchor history-archive scan: every expected checkpoint file present, missing ones re-fetched (ADR-0017)."
+          description="Daily history-archive scan (ADR-0017)."
         />
         <ArchivePanel />
       </section>

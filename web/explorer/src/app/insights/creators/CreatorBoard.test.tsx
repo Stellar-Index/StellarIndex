@@ -88,10 +88,12 @@ describe('CreatorBoard', () => {
 
     // The exact span the rollup aggregated, both bounds, rendered as text
     // a reader can act on — not a genesis floor the data does not back.
-    const strip = await screen.findByText(/the span the rollup/i);
+    const strip = await screen.findByTitle(/the span the rollup/i);
     expect(strip.textContent).toContain('33,000,001');
     expect(strip.textContent).toContain('50,999,990');
-    expect(strip.textContent).not.toContain('whole chain claim');
+    expect(strip.getAttribute('title')).toMatch(
+      /not a claim about the whole chain/,
+    );
   });
 
   it('renders a sponsored creator’s zero funding as a real figure', async () => {

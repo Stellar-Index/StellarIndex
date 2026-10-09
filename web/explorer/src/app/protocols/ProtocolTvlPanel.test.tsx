@@ -36,7 +36,7 @@ describe('ProtocolTvlPanel', () => {
     expect(screen.getByText('74/224 pools priced')).toBeInTheDocument();
     // …and a plain figure on the fully-priced one.
     expect(screen.getByText('$3.65M')).toBeInTheDocument();
-    expect(screen.getByText(/lower bounds/)).toBeInTheDocument();
+    expect(screen.getByText('hatched = lower bound')).toBeInTheDocument();
     // sdex has no TVL derivation — it must not appear at all.
     expect(screen.queryByText(/sdex/i)).not.toBeInTheDocument();
   });

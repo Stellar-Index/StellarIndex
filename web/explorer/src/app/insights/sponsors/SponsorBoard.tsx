@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import {
+  Badge,
   Stat,
   TableWrap,
   Table,
@@ -113,30 +114,22 @@ export function SponsorBoard() {
             value={formatCompact(d.totals.revocations_issued)}
           />
         </dl>
-        <p className="text-ink-muted text-[11px]">
-          Covers ledgers{' '}
-          <span className="tnum">
-            {d.coverage.from_ledger.toLocaleString('en-US')}
-          </span>
-          –
-          <span className="tnum">
-            {d.coverage.thru_ledger.toLocaleString('en-US')}
-          </span>{' '}
-          ({formatTimestamp(d.coverage.from_time)} to{' '}
-          {formatTimestamp(d.coverage.thru_time)}). That floor is where
-          sponsorship began on the network — protocol 14 introduced it, and no
-          sponsorship operation exists before that ledger — so this is the whole
-          history of the feature, not a truncated window. Snapshot computed{' '}
-          {formatTimestamp(d.computed_at)}.
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge title="The floor is where sponsorship began on the network (protocol 14); no sponsorship operation exists earlier, so this is the whole history of the feature, not a truncated window.">
+            ledgers {d.coverage.from_ledger.toLocaleString('en-US')}–
+            {d.coverage.thru_ledger.toLocaleString('en-US')} · computed{' '}
+            {formatTimestamp(d.computed_at)}
+          </Badge>
           {d.coverage.ambiguous_transactions > 0 && (
-            <>
-              {' '}
+            <Badge
+              tone="warn"
+              title="Transactions carrying more than one sponsor are excluded from per-sponsor attribution."
+            >
               {d.coverage.ambiguous_transactions.toLocaleString('en-US')}{' '}
-              transactions carried more than one sponsor and are excluded from
-              per-sponsor attribution.
-            </>
+              multi-sponsor txs excluded
+            </Badge>
           )}
-        </p>
+        </div>
       </Panel>
 
       <Panel
@@ -145,23 +138,27 @@ export function SponsorBoard() {
         source={source}
         bodyClassName="space-y-3"
       >
-        <p className="text-ink-muted text-xs">
-          <strong>Started</strong> counts arrangements begun;{' '}
-          <strong>accounts</strong> counts the distinct accounts they covered.
-          They diverge when a sponsor re-sponsors the same accounts, which is
-          common — the <strong>repeat</strong> column is the ratio.{' '}
-          <strong>Revoked</strong> counts revocations this account issued.
-        </p>
         <TableWrap>
           <Table>
             <THead>
               <TR>
                 <Th align="right">#</Th>
                 <Th>Sponsor</Th>
-                <Th align="right">Started</Th>
-                <Th align="right">Accounts</Th>
-                <Th align="right">Repeat</Th>
-                <Th align="right">Revoked</Th>
+                <Th align="right" title="Arrangements begun">
+                  Started
+                </Th>
+                <Th align="right" title="Distinct accounts covered">
+                  Accounts
+                </Th>
+                <Th
+                  align="right"
+                  title="Started / accounts: diverges when a sponsor re-sponsors the same accounts"
+                >
+                  Repeat
+                </Th>
+                <Th align="right" title="Revocations this account issued">
+                  Revoked
+                </Th>
                 <Th align="right">First seen</Th>
                 <Th align="right">Last seen</Th>
               </TR>

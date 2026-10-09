@@ -2,10 +2,10 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
 
-import { Panel } from '@/components/reveal';
+import { NoteBadge } from '@/components/NoteBadge';
 import { LendingPoolsTable } from './LendingPoolsTable';
 
-import { Container } from '@/components/ui';
+import { Badge, Container } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/lending' },
   title: 'Lending — collateralised lending on Stellar',
@@ -19,80 +19,29 @@ export default function LendingPage() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Lending</h1>
         <p className="text-ink-body max-w-3xl text-sm">
-          Collateralised lending protocols on Stellar. Yield comes from
-          borrowers paying interest, not from external strategies — see{' '}
+          Collateralised lending on Stellar. Yield is borrower interest; routed
+          yield is on{' '}
           <Link href="/aggregators" className="underline decoration-dotted">
             /aggregators
-          </Link>{' '}
-          for protocols that route into these.
+          </Link>
+          .
         </p>
       </header>
 
       <div className="border-line bg-surface rounded-xl border p-5 shadow-sm">
-        <div className="flex items-baseline justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-2xl font-semibold tracking-tight">Blend</h2>
-          <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
-            Live
-          </span>
-        </div>
-        <p className="text-ink-muted mt-1 text-xs tracking-wider uppercase">
-          Isolated-pool lending · Reflector-priced collateral · Comet backstop
-        </p>
-        <p className="text-ink-body mt-3 text-sm">
-          Blend is the primary lending protocol on Stellar. Each pool is
-          isolated (Aave-V3 style), with collateral and borrow assets chosen
-          per-pool by the operator. Liquidations execute against a Comet-style
-          auction backstop.
-        </p>
-        <ul className="text-ink-body mt-3 space-y-2 text-sm">
-          <li className="flex gap-2">
-            <span className="text-ink-faint">•</span>
-            <span>
-              <strong className="text-ink-body">Reflector-priced.</strong> Each
-              pool reads the SEP-40 Reflector oracle for collateral valuation. A
-              divergence between Reflector and our VWAP materially changes the
-              liquidation threshold — we surface it on the canonical coin pages
-              via{' '}
-              <code className="font-mono text-xs">
-                flags.divergence_warning
-              </code>
-              .
-            </span>
-          </li>
-          <li className="flex gap-2">
-            <span className="text-ink-faint">•</span>
-            <span>
-              <strong className="text-ink-body">
-                Backstop is a Comet pool.
-              </strong>{' '}
-              The Balancer-V1-derived Comet contract auctions liquidated
-              positions. We index the same Comet code path (see{' '}
-              <Link
-                href="/dexes"
-                className="hover:text-brand-600 underline decoration-dotted"
-              >
-                /dexes
-              </Link>
-              ); the Blend backstop is one specific contract address.
-            </span>
-          </li>
-          <li className="flex gap-2">
-            <span className="text-ink-faint">•</span>
-            <span>
-              <strong className="text-ink-body">MEV-relevant.</strong>{' '}
-              Liquidations can sandwich, especially when the oracle update and
-              the liquidate call land in the same ledger. The future{' '}
-              <Link href="/mev" className="underline decoration-dotted">
-                /mev
-              </Link>{' '}
-              page tracks Blend liquidation MEV separately from DEX MEV.
-            </span>
-          </li>
-        </ul>
-        <div className="mt-4 flex flex-wrap gap-3 text-xs">
+          <Badge tone="up">Live</Badge>
+          <Badge>Isolated pools</Badge>
+          <Badge title="Each pool reads the SEP-40 Reflector oracle for collateral valuation.">
+            Reflector-priced
+          </Badge>
+          <Badge title="Liquidations execute against a Comet-style auction backstop.">
+            Comet backstop
+          </Badge>
           <a
             href="https://github.com/blend-capital/blend-contracts"
-            className="text-ink-muted inline-flex items-center gap-1 hover:underline"
+            className="text-ink-muted ml-auto inline-flex items-center gap-1 text-xs hover:underline"
             target="_blank"
             rel="noreferrer"
           >
@@ -100,29 +49,47 @@ export default function LendingPage() {
             <ExternalLink className="h-3 w-3" />
           </a>
         </div>
+        <details className="text-ink-muted mt-3 text-xs">
+          <summary className="cursor-pointer">About Blend</summary>
+          <ul className="mt-2 space-y-1">
+            <li>
+              Each pool is isolated (Aave-V3 style); collateral and borrow
+              assets are chosen per pool by the operator.
+            </li>
+            <li>
+              Reflector divergence from our VWAP shifts the liquidation
+              threshold; it surfaces on coin pages via{' '}
+              <code className="font-mono">flags.divergence_warning</code> (see{' '}
+              <Link href="/oracles" className="underline decoration-dotted">
+                /oracles
+              </Link>
+              ).
+            </li>
+            <li>
+              The backstop is a Comet pool, the same code path indexed on{' '}
+              <Link href="/dexes" className="underline decoration-dotted">
+                /dexes
+              </Link>
+              .
+            </li>
+            <li>
+              Liquidations can sandwich oracle updates; see{' '}
+              <Link href="/mev" className="underline decoration-dotted">
+                /mev
+              </Link>
+              .
+            </li>
+          </ul>
+        </details>
       </div>
 
       <LendingPoolsTable />
 
-      <Panel title="Notes" bodyClassName="text-sm text-ink-body space-y-2">
-        <p>
-          Per-pool TVL, utilisation, and the supplied-weighted supply/borrow APY
-          columns all read live from pool storage (per-reserve USD). The table
-          lists pools observed in the auction stream, so a pool that has never
-          had a liquidation won&apos;t appear until it does.
-        </p>
-        <p>
-          For more context: head to{' '}
-          <Link href="/sources" className="underline decoration-dotted">
-            /sources
-          </Link>{' '}
-          to see Blend in the source registry, or to{' '}
-          <Link href="/oracles" className="underline decoration-dotted">
-            /oracles
-          </Link>{' '}
-          to see the Reflector dependency Blend reads from.
-        </p>
-      </Panel>
+      <NoteBadge label="partial: pools with auctions only">
+        Pools are listed once observed in the auction stream, so a pool that has
+        never had a liquidation will not appear. TVL, utilisation and
+        supply/borrow APY read live from pool storage (per-reserve USD).
+      </NoteBadge>
     </Container>
   );
 }
