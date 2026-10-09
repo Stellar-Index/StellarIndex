@@ -83,3 +83,21 @@ describe('AccountsAnalytics', () => {
     expect(screen.getByText('619.46K')).toBeInTheDocument();
   });
 });
+
+describe('AccountsAnalytics XLM held', () => {
+  it('formats stroops exactly, past where a float rounds up', async () => {
+    const { apiGet } = await import('@/api/client');
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      ...statsFixture,
+      data: {
+        ...statsFixture.data,
+        totals: {
+          ...statsFixture.data.totals,
+          xlm_held_stroops: '5123049999999999990000',
+        },
+      },
+    } as never);
+    renderWithQuery(<AccountsAnalytics />);
+    expect(await screen.findByText('512.3T XLM')).toBeInTheDocument();
+  });
+});

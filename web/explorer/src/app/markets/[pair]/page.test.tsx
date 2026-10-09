@@ -95,3 +95,52 @@ describe('markets/[pair]/page 24h change badge (CA2-A35-correct-5)', () => {
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });
 });
+
+describe('markets/[pair]/page USD volume stats', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function withPoints(vUsd: string[]) {
+    vi.mocked(buildFetchData).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/chart')) {
+        return {
+          asset_id: BASE,
+          points: vUsd.map((v, i) => ({
+            t: `2026-01-01T0${i}:00:00Z`,
+            p: '1',
+            v_usd: v,
+          })),
+        } as never;
+      }
+      return null as never;
+    });
+  }
+
+  function stat(label: string) {
+    return screen.getByText(label, { selector: 'dt' }).nextElementSibling;
+  }
+
+  it('sums and formats the hourly volumes exactly', async () => {
+    withPoints(['999.994999999999998', '0.000000000000001']);
+    await renderPair();
+    expect(stat('24h USD vol')).toHaveTextContent('$999.99');
+    expect(stat('Last hour USD vol')).toHaveTextContent('<$0.01');
+  });
+
+  it('shows a million-dollar total in compact form', async () => {
+    withPoints(['1234567', '1000']);
+    await renderPair();
+    expect(stat('24h USD vol')).toHaveTextContent('$1.24M');
+    expect(stat('Last hour USD vol')).toHaveTextContent('$1K');
+  });
+
+  it.each(['1e5', '0', '-5'])('hides a 24h total of %s', async (v) => {
+    withPoints([v]);
+    await renderPair();
+    expect(screen.queryByText('24h USD vol')).toBeNull();
+  });
+});
