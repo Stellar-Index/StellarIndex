@@ -356,6 +356,14 @@ func (s *stubExplorerReader) AssetMovementsBackfilledThru(context.Context) (uint
 	return 0, s.err
 }
 
+func (s *stubExplorerReader) AssetEntryChanges(context.Context, string, int, clickhouse.AssetEntryChangeCursor, uint32) ([]clickhouse.AssetEntryChange, error) {
+	return nil, s.err
+}
+
+func (s *stubExplorerReader) EntryHistoryCoverage(context.Context) (uint32, uint32, error) {
+	return 0, 0, s.err
+}
+
 // AccountSponsors mirrors the real reader's contract: a snapshot with no
 // covered span is not servable, however many board rows it carries.
 func (s *stubExplorerReader) AccountSponsors(_ context.Context, limit int, account string) (clickhouse.AccountSponsors, bool, error) {
