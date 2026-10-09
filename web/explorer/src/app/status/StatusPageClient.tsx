@@ -31,7 +31,8 @@ import {
   type LatencySample,
 } from './StatusCharts';
 import {
-  formatCompact,
+  compareDecimalStrings,
+  formatCompactUnits,
   formatDurationShort,
   formatRelative,
 } from '@/lib/format';
@@ -2541,11 +2542,9 @@ function Row({
 // The backend keeps full precision via ADR-0003 stringified
 // numerics; the UI rounds for display.
 function formatUSD(s: string): string {
-  // FEC audit F-A4-10: bucket math delegated to lib formatCompact (this
-  // was a byte-level re-implementation); the zero→'—' gate stays local.
-  const n = Number(s);
-  if (!Number.isFinite(n) || n === 0) return '—';
-  return `$${formatCompact(n)}`;
+  const sign = compareDecimalStrings(s, '0');
+  if (sign == null || sign === 0) return '—';
+  return `$${formatCompactUnits(s)}`;
 }
 
 // formatAge turns seconds into "12s" / "5m" / "3h" / "2d".
