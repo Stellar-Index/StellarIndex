@@ -62,6 +62,7 @@ describe('FEC guards (repo-walk)', () => {
       'app/convert/[from]/[to]/ConvertLive.tsx',
       'app/convert/[from]/[to]/ConvertPair.tsx',
       'app/HomeTopMarkets.tsx',
+      'app/HomeCurrencies.tsx',
     ]);
     const importers = sources
       .filter((f) => f.text.includes('formatPairPrice'))

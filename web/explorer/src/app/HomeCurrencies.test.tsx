@@ -111,4 +111,21 @@ describe('HomeCurrencies price envelope', () => {
     renderStrip();
     expect(await screen.findByText('-0.42%')).toBeInTheDocument();
   });
+
+  it('rounds a rate from its wire string, not a float', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [
+        {
+          asset_id: 'fiat:EUR',
+          quote: 'fiat:USD',
+          price: '2.00005',
+          observed_at: new Date().toISOString(),
+        },
+      ],
+      as_of: new Date().toISOString(),
+      sources: ['massive'],
+    });
+    renderStrip();
+    expect(await screen.findByText('2.0001')).toBeInTheDocument();
+  });
 });
