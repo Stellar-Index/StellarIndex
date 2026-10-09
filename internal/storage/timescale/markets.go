@@ -1044,42 +1044,19 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 // most-recent bucket's price re-expressed in the requested orientation
 // (inverted for the flipped direction). See canonical.Orient.
 //
-// Shape. Every both-directions read here is a UNION ALL of two
-// single-direction branches, and each aggregate is bounded by the
-// SMALLEST window that can produce it — never one wide scan reused for
-// several answers. Both rules exist because their absence was measured:
+// Shape. Every both-directions read is a UNION ALL of two single-direction
+// branches, and each aggregate reads the smallest window that produces it:
 //
-//   - The `(A AND B) OR (B AND A)` disjunction cannot drive
-//     trades_pair_ts_idx / prices_1m_pair_bucket_idx (base_asset,
-//     quote_asset, ts|bucket DESC), so the planner falls back to the
-//     bare time index with the pair as a post-index filter. This is the
-//     same defect [closedVWAP1mAtOrBeforeQuery] carries the measurement
-//     for.
-//   - The old form asked ONE 14-day aggregate for two answers that need
-//     far less: MAX(ts) needs a single backwards index probe per
-//     direction, and count_24h needs 24 hours. Reading 14 days for both
-//     meant crypto:BTC/crypto:USDT materialised 17.2 MILLION rows to
-//     return a timestamp and a count.
+//   - `(A AND B) OR (B AND A)` cannot drive trades_pair_ts_idx /
+//     prices_1m_pair_bucket_idx, so the planner falls back to the bare time
+//     index (measured in [closedVWAP1mAtOrBeforeQuery]).
+//   - MAX(ts) needs one backwards index probe per direction and count_24h
+//     needs 24 hours; one shared 14-day aggregate read 17.2M rows for
+//     crypto:BTC/crypto:USDT and ran 95.7s cold, past the 8s handler ceiling.
 //
-// Two runs per form, so the first column is a cold buffer pool and the second
-// a warm one:
-//
-//	pair                        OLD                NEW
-//	crypto:BTC/crypto:USDT   95727.9 / 4324.3   120.3 / 107.0 ms
-//	crypto:XLM/fiat:USD       1168.6 / 1202.8    22.0 /  13.6 ms
-//	native/USDC-GA5Z…         2999.3 /  741.6    26.1 /  19.5 ms
-//	native/fiat:USD (empty)     74.5 /   63.3     2.3 /   2.4 ms
-//
-// The 95.7-second cold read is past the API's 8-second handler
-// ceiling: that request could not complete at all.
-//
-// Verified set-identical against the old form over 40 sampled live pairs —
-// same last_trade_at, count_24h, vol_24h_usd and last_price. The one
-// deliberate difference is the `, base_asset` tiebreaker on the last_price
-// sort: `bucket DESC` alone is not a total order once a bucket holds both
-// orientations, so which leg won was planner-defined. Same reasoning and same
-// tiebreaker as [closedVWAP1mAtOrBeforeQuery]. Guarded by
-// TestPairMarketQueryShape.
+// The `, base_asset` tiebreaker on the last_price sort makes the order total
+// once a bucket holds both orientations, as in [closedVWAP1mAtOrBeforeQuery].
+// Guarded by TestPairMarketQueryShape.
 const pairMarketQuery = `
         WITH last_trade AS (
             SELECT MAX(ts) AS ts FROM (
