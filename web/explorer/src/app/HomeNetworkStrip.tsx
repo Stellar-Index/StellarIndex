@@ -12,6 +12,7 @@ import { CURRENT_NETWORK } from '@/lib/networks';
 import { Stat } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import {
+  compareDecimalStrings,
   formatPriceSmall,
   formatCompact,
   formatCompactUnits,
@@ -86,8 +87,8 @@ export function HomeNetworkStrip() {
     tip != null && !isFrameStale(clock, tip.receivedAt, 30_000)
       ? tip.data.data?.price
       : undefined;
-  const tipNumber = tipPriceStr != null ? Number(tipPriceStr) : NaN;
-  const tipActive = Number.isFinite(tipNumber) && tipNumber > 0;
+  const tipActive =
+    tipPriceStr != null && (compareDecimalStrings(tipPriceStr, '0') ?? 0) > 0;
   const flash = usePriceFlash(tipActive ? tipPriceStr : undefined);
   const xlmPrice = tipActive ? tipPriceStr : native.price;
   const xlmChange = native.change24hPct;
