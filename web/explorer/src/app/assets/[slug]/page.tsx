@@ -5,6 +5,7 @@ import { Suspense } from 'react';
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
+import { supplyAsOfNote, withheldNote } from './headerNotes';
 import {
   buildFetchData,
   buildFetchEnvelope,
@@ -1159,6 +1160,8 @@ function OverviewBody({
             <Stat
               label="Market cap"
               value={fmtUsd(detail?.market_cap_usd ?? coin.market_cap_usd)}
+              accent={withheldNote(detail?.price_withheld_reason)}
+              accentTone="amber"
             />
             <Stat
               label="Circulating"
@@ -1166,6 +1169,7 @@ function OverviewBody({
                 detail?.circulating_supply ?? coin.circulating_supply,
                 detail?.decimals ?? coin.decimals ?? 7,
               )}
+              accent={supplyAsOfNote(detail?.supply_as_of)}
             />
             <Stat
               label={coin.ath?.at ? `ATH · ${coin.ath.at.slice(0, 10)}` : 'ATH'}
