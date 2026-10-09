@@ -79,9 +79,8 @@ func (s TopicShape) key() shapeKey {
 
 // nonSymbolShapeCols are the non-Symbol key columns, empty for a Symbol topic[0]
 // so group-key state grows only for the rare non-Symbol shapes. They make the
-// scan read topics_xdr (measured on r1: 4.5 s / 30.6 GiB -> 12.9 s / 82.5 GiB
-// per 1M-ledger window); a recognition claim that hides shapes is not cheaper
-// to be wrong.
+// scan read topics_xdr, which roughly triples its cost; a recognition claim
+// that hides shapes is not cheaper to be wrong.
 const nonSymbolShapeCols = `if(topic_0_sym = '', topics_xdr[1], '') AS t0,
 			if(topic_0_sym = '', topics_xdr[2], '') AS t1,
 			if(topic_0_sym = '', length(topics_xdr), 0) AS tn`

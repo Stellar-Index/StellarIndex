@@ -37,12 +37,11 @@ import (
 // parameterised query over the trades hypertable, and Postgres's
 // prepared-statement logic flips it to a GENERIC plan after five
 // executions. Building that generic plan means planning across every
-// chunk of an ~870-chunk hypertable — measured 206 ms on r1 — and the
+// chunk of the hypertable takes hundreds of milliseconds, and the
 // plancache invalidates roughly once a minute in steady state
 // (autovacuum/analyze on hot chunks, compression jobs, chunk DDL), so a
-// steady ~5 % of serving requests paid a 250–325 ms BIND (caught
-// verbatim in the slow-query log) while p50 stayed ~15 ms. Custom plans
-// for the same query measure 0.2–3 ms per bind, and TimescaleDB's
+// steady share of serving requests paid that cost at BIND. Custom plans
+// for the same query bind in a few milliseconds, and TimescaleDB's
 // planner prunes chunks far better with known parameters. Forcing
 // custom plans on the SERVING pool trades ≤3 ms of per-query planning
 // for eliminating the rebuild-tail class entirely. The
