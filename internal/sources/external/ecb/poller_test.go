@@ -129,6 +129,20 @@ func TestPollOnce_MalformedXML(t *testing.T) {
 	}
 }
 
+func TestPollOnce_UnparseableDateYieldsNoUpdate(t *testing.T) {
+	srv := newTestECBServer(t, strings.Replace(fixtureXML, `time="2026-04-23"`, `time="not-a-date"`, 1), http.StatusOK)
+	defer srv.Close()
+	p := NewPoller()
+	p.Endpoint = srv.URL
+	_, updates, err := p.PollOnce(context.Background(), buildPairs(t))
+	if !errors.Is(err, ErrMalformedResponse) {
+		t.Fatalf("expected ErrMalformedResponse, got %v", err)
+	}
+	if len(updates) != 0 {
+		t.Errorf("got %d updates; a wall-clock timestamp must never be emitted", len(updates))
+	}
+}
+
 func TestPollOnce_EmptyCube(t *testing.T) {
 	srv := newTestECBServer(t, `<?xml version="1.0"?>
 <gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">
