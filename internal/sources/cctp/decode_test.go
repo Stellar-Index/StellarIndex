@@ -278,18 +278,6 @@ func TestDecodeDepositForBurn_LargeI128(t *testing.T) {
 	}
 }
 
-func TestDecodeDepositForBurn_ShortTopic(t *testing.T) {
-	t.Parallel()
-	e := &events.Event{Topic: []string{TopicSymbolDepositForBurn}} // only 1 topic
-	_, err := DecodeDepositForBurn(e)
-	if err == nil {
-		t.Fatal("expected ErrMalformedTopic")
-	}
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
-	}
-}
-
 func TestDecodeDepositForBurn_MissingBodyField(t *testing.T) {
 	t.Parallel()
 	burnToken := makeContractStrkey(t, 0x10)
@@ -360,18 +348,6 @@ func TestDecodeMintAndWithdraw_HappyPath(t *testing.T) {
 	}
 	if got.FeeCollected != "50" {
 		t.Errorf("FeeCollected = %q", got.FeeCollected)
-	}
-}
-
-func TestDecodeMintAndWithdraw_ShortTopic(t *testing.T) {
-	t.Parallel()
-	e := &events.Event{Topic: []string{TopicSymbolMintAndWithdraw}}
-	_, err := DecodeMintAndWithdraw(e)
-	if err == nil {
-		t.Fatal("expected ErrMalformedTopic")
-	}
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
 	}
 }
 
@@ -464,18 +440,6 @@ func TestDecodeMessageReceived_HappyPath(t *testing.T) {
 	}
 }
 
-func TestDecodeMessageReceived_ShortTopic(t *testing.T) {
-	t.Parallel()
-	e := &events.Event{Topic: []string{TopicSymbolMessageReceived}}
-	_, err := DecodeMessageReceived(e)
-	if err == nil {
-		t.Fatal("expected ErrMalformedTopic")
-	}
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
-	}
-}
-
 // ─── Topic-symbol encoding stability ────────────────────────────
 
 func TestTopicSymbol_StableEncoding(t *testing.T) {
@@ -511,5 +475,64 @@ func TestErrUnknownEvent_Defined(t *testing.T) {
 	}
 	if !strings.Contains(ErrUnknownEvent.Error(), "unknown event") {
 		t.Errorf("ErrUnknownEvent message stable check: got %q", ErrUnknownEvent.Error())
+	}
+}
+
+func errOnly[T any](decode func(*events.Event) (T, error)) func(*events.Event) error {
+	return func(e *events.Event) error { _, err := decode(e); return err }
+}
+
+// TestDecode_MalformedInputs pins the typed sentinel each decoder returns for
+// a topic too short for its schema or a body missing a required field.
+func TestDecode_MalformedInputs(t *testing.T) {
+	t.Parallel()
+	const emptyMap = "AAAAEQAAAAEAAAAA"
+	const sacTopic = "AAAAEgAAAAGt785ZruUpaPdgYdSUwlJbdWWfpClqZfSZ7ynlZHfklg=="
+	short := func(topic ...string) *events.Event { return &events.Event{Topic: topic} }
+	noBody := func(topic ...string) *events.Event { return &events.Event{Topic: topic, Value: emptyMap} }
+
+	cases := []struct {
+		name   string
+		decode func(*events.Event) error
+		ev     *events.Event
+		want   error
+	}{
+		{"DepositForBurn/short topic", errOnly(DecodeDepositForBurn), short(TopicSymbolDepositForBurn), ErrMalformedTopic},
+		{"MintAndWithdraw/short topic", errOnly(DecodeMintAndWithdraw), short(TopicSymbolMintAndWithdraw), ErrMalformedTopic},
+		{"MessageReceived/short topic", errOnly(DecodeMessageReceived), short(TopicSymbolMessageReceived), ErrMalformedTopic},
+		{"AdminChangeStarted/nil topic", errOnly(DecodeAdminChangeStarted), short(), ErrMalformedTopic},
+		{"AdminChangeStarted/no new_admin", errOnly(DecodeAdminChangeStarted), noBody(TopicSymbolAdminChangeStarted), ErrMalformedBody},
+		{"AttesterEnabled/short topic", errOnly(DecodeAttesterEnabled), short(TopicSymbolAttesterEnabled), ErrMalformedTopic},
+		{"AttesterManagerUpdated/short topic", errOnly(DecodeAttesterManagerUpdated), short(TopicSymbolAttesterManagerUpdated, "AAAAAQ=="), ErrMalformedTopic},
+		{"Denylisted/short topic", errOnly(DecodeDenylisted), short(TopicSymbolDenylisted), ErrMalformedTopic},
+		{"UnDenylisted/short topic", errOnly(DecodeUnDenylisted), short(TopicSymbolUnDenylisted), ErrMalformedTopic},
+		{"DenylisterChanged/short topic", errOnly(DecodeDenylisterChanged), short(TopicSymbolDenylisterChanged, "AAAAAQ=="), ErrMalformedTopic},
+		{"FeeRecipientSet/empty body", errOnly(DecodeFeeRecipientSet), noBody(TopicSymbolFeeRecipientSet), ErrMalformedBody},
+		{"MaxMessageBodySizeUpdated/empty body", errOnly(DecodeMaxMessageBodySizeUpdated), noBody(TopicSymbolMaxMessageBodySizeUpdated), ErrMalformedBody},
+		{"MinFeeControllerSet/short topic", errOnly(DecodeMinFeeControllerSet), short(TopicSymbolMinFeeControllerSet), ErrMalformedTopic},
+		{"PauserChanged/empty body", errOnly(DecodePauserChanged), noBody(TopicSymbolPauserChanged), ErrMalformedBody},
+		{"RescuerChanged/empty body", errOnly(DecodeRescuerChanged), noBody(TopicSymbolRescuerChanged), ErrMalformedBody},
+		{"SetTokenController/empty body", errOnly(DecodeSetTokenController), noBody(TopicSymbolSetTokenController), ErrMalformedBody},
+		{"SignatureThresholdUpdated/empty body", errOnly(DecodeSignatureThresholdUpdated), noBody(TopicSymbolSignatureThresholdUpdated), ErrMalformedBody},
+		{"SetBurnLimitPerMessage/short topic", errOnly(DecodeSetBurnLimitPerMessage), short(TopicSymbolSetBurnLimitPerMessage), ErrMalformedTopic},
+		{"SetBurnLimitPerMessage/empty body", errOnly(DecodeSetBurnLimitPerMessage), noBody(TopicSymbolSetBurnLimitPerMessage, sacTopic), ErrMalformedBody},
+		{"SwapMinterConfigSet/short topic", errOnly(DecodeSwapMinterConfigSet), short(TopicSymbolSwapMinterConfigSet), ErrMalformedTopic},
+		{"SwapMinterConfigSet/empty body", errOnly(DecodeSwapMinterConfigSet), noBody(TopicSymbolSwapMinterConfigSet, sacTopic), ErrMalformedBody},
+		{"TokenDecimalConfigAdded/short topic", errOnly(DecodeTokenDecimalConfigAdded), short(TopicSymbolTokenDecimalConfigAdded), ErrMalformedTopic},
+		{"TokenDecimalConfigAdded/empty body", errOnly(DecodeTokenDecimalConfigAdded), noBody(TopicSymbolTokenDecimalConfigAdded, sacTopic), ErrMalformedBody},
+		{"OwnershipTransfer/nil topic", errOnly(DecodeOwnershipTransfer), short(), ErrMalformedTopic},
+		{"OwnershipTransfer/no live_until_ledger", errOnly(DecodeOwnershipTransfer), noBody(TopicSymbolOwnershipTransfer), ErrMalformedBody},
+		{"OwnershipTransferCompleted/no new_owner", errOnly(DecodeOwnershipTransferCompleted), noBody(TopicSymbolOwnershipTransferCompleted), ErrMalformedBody},
+		{"AdminChanged/no new_admin", errOnly(DecodeAdminChanged), noBody(TopicSymbolAdminChanged), ErrMalformedBody},
+		{"RemoteTokenMessengerAdded/no domain", errOnly(DecodeRemoteTokenMessengerAdded), noBody(TopicSymbolRemoteTokenMessengerAdded), ErrMalformedBody},
+		{"TokenPairLinked/no local_token", errOnly(DecodeTokenPairLinked), noBody(TopicSymbolTokenPairLinked), ErrMalformedBody},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if err := tc.decode(tc.ev); !errors.Is(err, tc.want) {
+				t.Errorf("want %v, got %v", tc.want, err)
+			}
+		})
 	}
 }

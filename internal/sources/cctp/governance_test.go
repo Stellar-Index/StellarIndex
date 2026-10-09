@@ -4,7 +4,6 @@
 package cctp
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -66,30 +65,6 @@ func TestDecodeOwnershipTransfer_RealMainnetFixture(t *testing.T) {
 	}
 }
 
-func TestDecodeOwnershipTransfer_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{TopicSymbolOwnershipTransfer},
-		Value: "AAAAEQAAAAEAAAAA", // empty map — 'live_until_ledger' missing
-	}
-	_, err := DecodeOwnershipTransfer(ev)
-	if err == nil {
-		t.Fatal("expected ErrMalformedBody")
-	}
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
-	}
-}
-
-func TestDecodeOwnershipTransfer_ShortTopic(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{Topic: nil}
-	_, err := DecodeOwnershipTransfer(ev)
-	if !errors.Is(err, ErrMalformedTopic) {
-		t.Errorf("want ErrMalformedTopic, got %v", err)
-	}
-}
-
 // ─── ownership_transfer_completed ────────────────────────────────
 
 // TestDecodeOwnershipTransferCompleted_RealMainnetFixture — ledger
@@ -118,18 +93,6 @@ func TestDecodeOwnershipTransferCompleted_RealMainnetFixture(t *testing.T) {
 	out := eventFromOwnershipTransferCompleted(got, time.Now().UTC())
 	if out.EventType != EventOwnershipTransferCompleted {
 		t.Errorf("projection EventType = %q", out.EventType)
-	}
-}
-
-func TestDecodeOwnershipTransferCompleted_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{TopicSymbolOwnershipTransferCompleted},
-		Value: "AAAAEQAAAAEAAAAA", // empty map — 'new_owner' missing
-	}
-	_, err := DecodeOwnershipTransferCompleted(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
 	}
 }
 
@@ -195,18 +158,6 @@ func TestDecodeAdminChanged_RealTransferPopulatedOldAdmin(t *testing.T) {
 	}
 }
 
-func TestDecodeAdminChanged_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{TopicSymbolAdminChanged},
-		Value: "AAAAEQAAAAEAAAAA", // empty map — 'new_admin' missing
-	}
-	_, err := DecodeAdminChanged(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
-	}
-}
-
 // ─── remote_token_messenger_added ────────────────────────────────
 
 // TestDecodeRemoteTokenMessengerAdded_RealMainnetFixture — ledger
@@ -241,18 +192,6 @@ func TestDecodeRemoteTokenMessengerAdded_RealMainnetFixture(t *testing.T) {
 	}
 	if out.Token != "" {
 		t.Error("remote_token_messenger_added should not promote Token (no Stellar-strkey field)")
-	}
-}
-
-func TestDecodeRemoteTokenMessengerAdded_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{TopicSymbolRemoteTokenMessengerAdded},
-		Value: "AAAAEQAAAAEAAAAA", // empty map — 'domain' missing
-	}
-	_, err := DecodeRemoteTokenMessengerAdded(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
 	}
 }
 
@@ -294,18 +233,6 @@ func TestDecodeTokenPairLinked_RealMainnetFixture(t *testing.T) {
 	}
 	if out.CounterpartyDomain == nil || *out.CounterpartyDomain != 0 {
 		t.Errorf("projection CounterpartyDomain = %v, want 0", out.CounterpartyDomain)
-	}
-}
-
-func TestDecodeTokenPairLinked_MissingBodyField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Topic: []string{TopicSymbolTokenPairLinked},
-		Value: "AAAAEQAAAAEAAAAA", // empty map — 'local_token' missing
-	}
-	_, err := DecodeTokenPairLinked(ev)
-	if !errors.Is(err, ErrMalformedBody) {
-		t.Errorf("want ErrMalformedBody, got %v", err)
 	}
 }
 
