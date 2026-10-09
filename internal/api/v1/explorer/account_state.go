@@ -551,6 +551,7 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 		h.unavailable(w, r)
 		return
 	}
+	asCSV := NegotiateCSV(w, r)
 	asset := r.PathValue("asset_id")
 	if asset == "" {
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-asset-id",
@@ -621,7 +622,38 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	for i, hh := range holders {
 		out.Holders[i] = AssetHolderV{AccountID: hh.AccountID, Balance: strconv.FormatInt(hh.Balance, 10)}
 	}
+	if asCSV {
+		h.writeAssetHoldersCSV(w, r, out, stale || degraded, degraded)
+		return
+	}
 	h.writeJSONAt(w, out, stale || degraded, degraded, asOf.at)
+}
+
+var assetHoldersCSVColumns = []string{"asset", "account_id", "balance"}
+
+// writeAssetHoldersCSV writes the board with the JSON's exact cell text;
+// balance stays the integer string in the asset's smallest unit.
+func (h *Handler) writeAssetHoldersCSV(w http.ResponseWriter, r *http.Request, v AssetHoldersView, stale, degraded bool) {
+	p := CSVPage{
+		Columns: assetHoldersCSVColumns,
+		Rows:    make([][]string, len(v.Holders)),
+		Headers: map[string]string{"X-StellarIndex-Holder-Count": strconv.FormatInt(v.HolderCount, 10)},
+	}
+	if v.AsOfLedger != 0 {
+		p.Headers["X-StellarIndex-As-Of-Ledger"] = strconv.FormatUint(uint64(v.AsOfLedger), 10)
+	}
+	if stale {
+		p.Flags = append(p.Flags, "stale")
+	}
+	if degraded {
+		p.Flags = append(p.Flags, "degraded")
+	}
+	for i, hh := range v.Holders {
+		p.Rows[i] = []string{v.Asset, hh.AccountID, hh.Balance}
+	}
+	if err := WriteCSVPage(w, r, p); err != nil && !h.ClientAborted(r, err) {
+		h.Logger.Warn("explorer AssetHolders CSV write failed", "err", err, "asset", v.Asset)
+	}
 }
 
 // PrewarmAccountsWealth primes the wealth-ranking cache so no user ever

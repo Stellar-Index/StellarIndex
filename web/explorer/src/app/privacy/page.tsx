@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { LEGAL_ENTITY_DETAILS, REGISTERED_OFFICE } from '../terms/page';
-import { Breadcrumbs, Container } from '@/components/ui/Page';
+import { Container, PageHeader } from '@/components/ui/Page';
 
 // States only what the code, migrations and ansible role do; correct it, do
 // not reword it, when they change. Each factual paragraph names its source in
@@ -24,25 +24,26 @@ export default function PrivacyPage() {
   return (
     <Container className="space-y-10 py-10 [&>*]:max-w-4xl">
       <header className="space-y-3">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Privacy Policy' }]}
+        <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Privacy Policy' },
+          ]}
+          eyebrow="Legal"
+          title="Privacy Policy"
+          description={
+            <>
+              This policy explains what personal data Stellar Index collects
+              when you use the explorer at stellarindex.io or the API at
+              api.stellarindex.io, why, for how long, who processes it, and what
+              rights you have. The short version: we run no advertising or
+              analytics trackers, we never sell data, and the only personal data
+              we hold is what an account and abuse-prevention use — an email
+              address, IP addresses and browser user agents. Section 6 lists how
+              long each is kept; some records have no automatic deletion.
+            </>
+          }
         />
-        <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
-          Legal
-        </p>
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Privacy Policy
-        </h1>
-        <p className="text-ink-body text-base">
-          This policy explains what personal data Stellar Index collects when
-          you use the explorer at stellarindex.io or the API at
-          api.stellarindex.io, why, for how long, who processes it, and what
-          rights you have. The short version: we run no advertising or analytics
-          trackers, we never sell data, and the only personal data we hold is
-          what an account and abuse-prevention use — an email address, IP
-          addresses and browser user agents. Section 6 lists how long each is
-          kept; some records have no automatic deletion.
-        </p>
         <p className="text-ink-muted text-xs">Last updated: {LAST_UPDATED}</p>
       </header>
 

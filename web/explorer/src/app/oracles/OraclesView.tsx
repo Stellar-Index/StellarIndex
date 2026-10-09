@@ -18,7 +18,7 @@ import { sourceToneClass } from '@/lib/pillTone';
 import type { Source as SourceRow } from '@/api/hooks';
 import type { components } from '@/api/types';
 
-import { Badge, Breadcrumbs, Container, Th, Td } from '@/components/ui';
+import { Badge, Container, PageHeader, Th, Td } from '@/components/ui';
 type OracleStream = components['schemas']['OracleReading'];
 
 // Oracle capture-totality: /v1/oracle/streams omits `raw:<symbol>` rows
@@ -103,18 +103,18 @@ export function OraclesView() {
 
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Oracles' }]}
-        />
-        <h1 className="text-3xl font-semibold tracking-tight">Oracles</h1>
-        <p className="text-ink-body flex max-w-3xl flex-wrap items-center gap-2 text-sm">
-          On-chain Stellar oracles, shown alongside our VWAP.
-          <Badge title="Oracles are never included in the VWAP: mixing them would import their methodology and double-count the upstream markets they read.">
-            VWAP weight 0
-          </Badge>
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Oracles' }]}
+        title="Oracles"
+        description={
+          <>
+            On-chain Stellar oracles, shown alongside our VWAP.{' '}
+            <Badge title="Oracles are never included in the VWAP: mixing them would import their methodology and double-count the upstream markets they read.">
+              VWAP weight 0
+            </Badge>
+          </>
+        }
+      />
 
       <Panel
         headingLevel={2}

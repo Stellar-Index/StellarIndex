@@ -397,6 +397,46 @@ describe('StatusPageClient honest staleness', () => {
     expect(row!.querySelector('.text-ok-700')).not.toBeNull();
   });
 
+  // completeness_pct is the archive (substrate ∧ recognition) watermark;
+  // the served-tier reconcile gates only completeness_complete. A
+  // lake-complete, unreconciled row must not claim "100% served".
+  it('never labels the archive percentage as served while the served tier reconciles', async () => {
+    mockFeeds({
+      status: async () => json({ data: statusPayload({}) }),
+      ingestion: async () =>
+        json({
+          data: ingestionPayload({
+            backfill_coverage_as_of: new Date().toISOString(),
+            backfill_coverage: [
+              {
+                source: 'sdex',
+                applies: true,
+                genesis_ledger: 2,
+                earliest_ledger: 2,
+                latest_ledger: 100,
+                entries: 5,
+                completeness_pct: 1,
+                completeness_complete: false,
+                completeness_lake_complete: true,
+                completeness_computed_at: new Date().toISOString(),
+                coverage_snapshot_at: new Date().toISOString(),
+              },
+            ],
+          }),
+          as_of: new Date().toISOString(),
+          flags: { stale: false },
+        }),
+    });
+    renderPageWithClient();
+
+    await waitFor(() => expect(screen.getByText('sdex')).toBeInTheDocument());
+    const row = screen.getByText('sdex').closest('tr');
+    expect(row!.textContent).toMatch(/archive complete/i);
+    expect(row!.textContent).toMatch(/served reconciling/i);
+    expect(row!.textContent).not.toMatch(/%\s*served/);
+    expect(row!.querySelector('.text-ok-700')).toBeNull();
+  });
+
   it('ages an unverified coverage row against its own scan cadence', async () => {
     const threeHoursAgo = new Date(Date.now() - 3 * 3_600_000).toISOString();
     const unverified = (source: string, cadenceS: number) => ({

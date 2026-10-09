@@ -4,7 +4,7 @@ import { Wrench } from 'lucide-react';
 
 import { loadOperationsDocs } from '@/lib/operations';
 
-import { Breadcrumbs, Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/research/operations' },
   title: 'Operations runbooks — Stellar Index research',
@@ -16,25 +16,15 @@ export default function OperationsIndexPage() {
   const docs = loadOperationsDocs();
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Research', href: '/research' },
-            { label: 'Operations runbooks' },
-          ]}
-        />
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Operations runbooks
-        </h1>
-        <p className="text-ink-body max-w-3xl text-base">
-          Canonical recipes for standing up and operating Stellar Index.{' '}
-          <Link href="/research" className="underline decoration-dotted">
-            Back to research
-          </Link>
-          .
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Research', href: '/research' },
+          { label: 'Operations runbooks' },
+        ]}
+        title="Operations runbooks"
+        description="Canonical recipes for standing up and operating Stellar Index."
+      />
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {docs.map((d) => (
           <Link

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowRight, Mail } from 'lucide-react';
 import { GithubIcon } from '@/components/GithubIcon';
-import { Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 export const metadata: Metadata = {
   title: 'Careers — work on Stellar data infrastructure',
@@ -59,23 +59,19 @@ const CONTRIBUTING_PATHS = [
 
 export default function CareersPage() {
   return (
-    <div className="mx-auto max-w-3xl space-y-12 px-6 py-12">
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Careers' }]}
-        />
-        <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
-          Careers
-        </p>
-        <h1 className="text-4xl font-semibold tracking-tight">
-          Work on real data infrastructure.
-        </h1>
-        <p className="text-ink-body text-base">
-          We&apos;re a small team shipping the v1 platform. The codebase is
-          Apache-2.0, the architecture is public, and every PR ships against the
-          same verify-gate the operator runs before deploy.
-        </p>
-      </header>
+    <Container className="space-y-12 py-12 [&>*]:max-w-3xl">
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Careers' }]}
+        eyebrow="Careers"
+        title="Work on real data infrastructure."
+        description={
+          <>
+            We&apos;re a small team shipping the v1 platform. The codebase is
+            Apache-2.0, the architecture is public, and every PR ships against
+            the same verify-gate the operator runs before deploy.
+          </>
+        }
+      />
 
       <section className="border-line bg-surface rounded-xl border p-6 shadow-sm">
         <h2 className="text-lg font-semibold">Open roles</h2>
@@ -159,6 +155,6 @@ export default function CareersPage() {
           </a>
         </div>
       </section>
-    </div>
+    </Container>
   );
 }

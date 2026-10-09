@@ -109,6 +109,13 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 // from ledger_entry_changes (state_write_keys.go); per-source opt-in, only redstone
 // reads them.
 func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs, withStateWriteKeys bool, fn func(events.Event) error) error {
+	where := contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms)
+	return streamContractEventsWhere(ctx, addr, from, to, contractIDs, where, useFinal, withOpArgs, withStateWriteKeys, fn)
+}
+
+// streamContractEventsWhere runs the stream for a prebuilt WHERE clause, which
+// must come from contractEventsWhere over the same contractIDs.
+func streamContractEventsWhere(ctx context.Context, addr string, from, to uint32, contractIDs []string, where string, useFinal, withOpArgs, withStateWriteKeys bool, fn func(events.Event) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return err
@@ -128,8 +135,7 @@ func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uin
 	if err != nil {
 		return err
 	}
-	q := contractEventsFilteredQuery(contractIDs, topic0Syms, excludeTopic0Syms, useFinal, withOpArgs)
-	rows, err := conn.Query(qctx, q, from, to)
+	rows, err := conn.Query(qctx, contractEventsQuery(where, useFinal, withOpArgs), from, to)
 	if err != nil {
 		return fmt.Errorf("clickhouse: query contract_events filtered [%d,%d]: %w", from, to, err)
 	}
@@ -166,10 +172,21 @@ func topic0Predicate(topic0Syms []string) string {
 	return "(" + pred + ")"
 }
 
+// symbolTopic0Predicate is topic0Predicate without the ScvString arm, for a
+// decoder that matches topic[0] only as an ScvSymbol. Testing topics_xdr[1]
+// reads that wide column for every granule the contract filter keeps, while
+// topic_0_sym alone lets a selective topic filter skip them.
+func symbolTopic0Predicate(topic0Syms []string) string {
+	return "topic_0_sym IN (" + sqlQuoteList(topic0Syms) + ")"
+}
+
 // contractEventsFilteredQuery builds the query text, split out so its shape is
 // unit-testable without a ClickHouse server.
 func contractEventsFilteredQuery(contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs bool) string {
-	where := contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms)
+	return contractEventsQuery(contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms), useFinal, withOpArgs)
+}
+
+func contractEventsQuery(where string, useFinal, withOpArgs bool) string {
 	final := ""
 	if useFinal {
 		final = "FINAL"
@@ -257,6 +274,16 @@ func withContractIDsTable(ctx context.Context, contractIDs []string) (context.Co
 // clause plus the contract / topic[0] prefilters, shared by the stream and
 // the first-ledger seek so they cannot disagree about which rows match.
 func contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms []string) string {
+	topicPred := ""
+	if len(topic0Syms) > 0 {
+		topicPred = topic0Predicate(topic0Syms)
+	}
+	return contractEventsWhere(contractIDs, topicPred, excludeTopic0Syms)
+}
+
+// contractEventsWhere is contractEventsFilterWhere with the topic[0] predicate
+// already rendered ("" = none).
+func contractEventsWhere(contractIDs []string, topicPred string, excludeTopic0Syms []string) string {
 	where := "WHERE ledger_seq BETWEEN ? AND ?"
 	if len(contractIDs) > maxInlineContractIDs {
 		where += " AND contract_id IN " + contractIDsTable
@@ -264,8 +291,8 @@ func contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms []stri
 		// contractIDs is caller-supplied (a live-grown gated set), so escape it.
 		where += " AND contract_id IN (" + sqlQuoteEscapedList(contractIDs) + ")"
 	}
-	if len(topic0Syms) > 0 {
-		where += " AND " + topic0Predicate(topic0Syms)
+	if topicPred != "" {
+		where += " AND " + topicPred
 	}
 	if len(excludeTopic0Syms) > 0 {
 		where += " AND topic_0_sym NOT IN (" + sqlQuoteList(excludeTopic0Syms) + ")"

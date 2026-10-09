@@ -496,6 +496,11 @@ type VerifiedCurrencyListItem struct {
 	// round-trips on the listing). Fiat fan-out is parallel; ~19
 	// FX lookups happen concurrently per request.
 	MarketCapUSD string `json:"market_cap_usd,omitempty"`
+	// AssetID is the canonical Stellar asset id ("native" or
+	// "<code>-<issuer>"); Issuer is set for credit assets only. Both are
+	// empty for entries with no Stellar issuance (fiat).
+	AssetID string `json:"asset_id,omitempty"`
+	Issuer  string `json:"issuer,omitempty"`
 }
 
 // handleAssetsVerified serves GET /v1/assets/verified — the full
@@ -574,8 +579,29 @@ func projectVerifiedCurrencyList(entries []*currency.VerifiedCurrency) []Verifie
 			CirculatingSupply: vc.CirculatingSupply,
 			SupplyDecimals:    vc.SupplyDecimals,
 		}
+		out[i].AssetID, out[i].Issuer = verifiedStellarIdentity(vc.StellarEntry())
 	}
 	return out
+}
+
+// verifiedStellarIdentity derives the canonical asset id from the
+// entry's (code, issuer) rather than echoing the seed's asset_id
+// string, so the listing can never serve a malformed or code-only id.
+func verifiedStellarIdentity(se *currency.IssuanceEntry) (assetID, issuer string) {
+	if se == nil {
+		return "", ""
+	}
+	if se.Code == "" && se.Issuer == "" {
+		if se.AssetID == canonical.NativeAsset().String() {
+			return se.AssetID, ""
+		}
+		return "", ""
+	}
+	a, err := canonical.NewClassicAsset(se.Code, se.Issuer)
+	if err != nil {
+		return "", ""
+	}
+	return a.String(), a.Issuer
 }
 
 // attachFiatMarketCaps computes market_cap_usd for fiat rows in
