@@ -2096,21 +2096,26 @@ function SupplyCard({ supply }: { supply: IngestionSnapshot['supply'] }) {
 const DEFAULT_COVERAGE_SCAN_CADENCE_S = 30 * 60;
 const COMPLETENESS_STALE_MS = 2 * 24 * 3_600_000;
 
-// coverageDataAge — which timestamp the row's DISPLAYED figure is dated by,
-// and whether it is older than its axis allows. A verified (`ran`) row shows
-// the completeness verdict, so it is dated by the verifier's run; an
-// unverified row shows the gap-detector figure.
+// coverageDataAge — the column shows how recently the gap detector walked
+// this source to tip (minutes, per-source cadence); the daily verdict's age
+// only decides whether a verified row keeps its green tone.
 function coverageDataAge(
   r: IngestionSnapshot['backfill_coverage'][number],
   ran: boolean,
-): { at: string | undefined; stale: boolean } {
-  const at = ran ? r.completeness_computed_at : r.coverage_snapshot_at;
-  const ageS = snapshotAgeSeconds(at);
-  if (ageS == null) return { at, stale: false };
-  const limitMs = ran
-    ? COMPLETENESS_STALE_MS
-    : 2 * coverageScanCadenceS(r) * 1000;
-  return { at, stale: ageS * 1000 > limitMs };
+): { at: string | undefined; stale: boolean; verdictStale: boolean } {
+  const scanAgeS = snapshotAgeSeconds(r.coverage_snapshot_at);
+  const verdictAgeS = ran ? snapshotAgeSeconds(r.completeness_computed_at) : null;
+  const verdictStale =
+    verdictAgeS != null && verdictAgeS * 1000 > COMPLETENESS_STALE_MS;
+  if (scanAgeS == null) {
+    return { at: undefined, stale: verdictStale, verdictStale };
+  }
+  const scanStale = scanAgeS > 2 * coverageScanCadenceS(r);
+  return {
+    at: r.coverage_snapshot_at,
+    stale: scanStale || verdictStale,
+    verdictStale,
+  };
 }
 
 function coverageScanCadenceS(
@@ -2142,7 +2147,7 @@ function BackfillCoverageTable({
   // The OLDEST on-chain row's data age — the honest headline freshness of
   // the table, shown alongside (not instead of) the assembly time.
   const oldestDataAt = onChain
-    .map((r) => coverageDataAge(r, r.completeness_pct != null).at)
+    .map((r) => coverageDataAge(r, false).at)
     .filter((t): t is string => snapshotAgeSeconds(t) != null)
     .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0];
   return (
@@ -2153,11 +2158,7 @@ function BackfillCoverageTable({
         </h3>
         <span
           className="text-ink-faint text-[10px]"
-          /* "oldest data" is dominated by the ADR-0033 completeness verdict,
-             which is a DAILY job (05:30 UTC) — so a reading of a few hours is
-             the normal state, not a stall. Without saying so the figure reads
-             as a broken pipeline to anyone who assumes it tracks ingest. */
-          title="Oldest figure in the table. The completeness verdict is recomputed daily (05:30 UTC) and the gap-detector snapshot every 30 min to 6 h per source, so a few hours here is expected."
+          title="Oldest per-source gap-detector scan in the table (30 min to 6 h cadence per source)."
         >
           {oldestDataAt && (
             <>
@@ -2231,7 +2232,7 @@ function BackfillCoverageTable({
                 100;
               const tone = !ran
                 ? ('pending' as const)
-                : age.stale
+                : age.verdictStale
                   ? ('pending' as const)
                   : !reconciled
                     ? ('warn' as const)
@@ -2279,12 +2280,12 @@ function BackfillCoverageTable({
                       <div
                         className="inline-flex items-center justify-end gap-2"
                         title={
-                          age.stale
+                          age.verdictStale
                             ? 'Verified verdict is older than two compute-completeness cycles — the source may have stalled since. Treat as unverified until the verifier re-runs.'
                             : undefined
                         }
                       >
-                        {age.stale && (
+                        {age.verdictStale && (
                           <span className="bg-line text-warn-700 rounded-sm px-1 py-0.5 text-[10px] tracking-wide uppercase">
                             stale
                           </span>
@@ -2331,9 +2332,9 @@ function BackfillCoverageTable({
                   <td
                     className={`tnum px-3 py-2 text-right ${age.stale ? 'text-warn-700' : 'text-ink-muted'}`}
                     title={
-                      ran
-                        ? 'When compute-completeness last verified this source (daily timer).'
-                        : `When the gap detector last measured this source (${formatDurationShort(coverageScanCadenceS(r))} cadence).`
+                      ran && r.completeness_computed_at
+                        ? `When the gap detector last walked this source to tip (${formatDurationShort(coverageScanCadenceS(r))} cadence). Verdict computed ${formatRelative(r.completeness_computed_at)} (daily).`
+                        : `When the gap detector last walked this source to tip (${formatDurationShort(coverageScanCadenceS(r))} cadence).`
                     }
                   >
                     {age.at ? formatRelative(age.at) : '—'}
