@@ -172,10 +172,7 @@ export function PairedBars({
     (r) => valid(r.a) && valid(r.b) && (r.a !== null || r.b !== null),
   );
   if (finite.length === 0) return null;
-  const max = Math.max(
-    ...finite.flatMap((r) => [r.a ?? 0, r.b ?? 0]),
-    0,
-  );
+  const max = Math.max(...finite.flatMap((r) => [r.a ?? 0, r.b ?? 0]), 0);
   if (max <= 0) return null;
 
   return (
@@ -357,6 +354,95 @@ export function DivergingColumns({
       <div className="text-ink-faint flex justify-between font-mono text-[10px]">
         <span>{finite[0].label}</span>
         {finite.length > 1 && <span>{finite[finite.length - 1].label}</span>}
+      </div>
+    </div>
+  );
+}
+
+export type StackedBucket = {
+  label: string;
+  /** Segment magnitudes (>= 0), bottom to top, one per `series` entry. */
+  values: number[];
+};
+
+/**
+ * StackedColumns — small vertical stacked column chart (one column per
+ * bucket, one coloured segment per series) on a shared linear scale.
+ */
+export function StackedColumns({
+  buckets,
+  series,
+  formatValue = (n) => n.toLocaleString('en-US'),
+  height = 140,
+  ariaLabel,
+  className,
+}: {
+  buckets: StackedBucket[];
+  series: { label: string; color: string }[];
+  formatValue?: (n: number) => string;
+  height?: number;
+  ariaLabel: string;
+  className?: string;
+}) {
+  const totals = buckets.map((b) =>
+    b.values.reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0),
+  );
+  const max = Math.max(0, ...totals);
+  if (buckets.length === 0 || max <= 0) return null;
+
+  const plotH = height - 16;
+  const colW = 100 / buckets.length;
+
+  return (
+    <div className={cn('space-y-1.5', className)}>
+      <ul className="text-ink-muted flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        {series.map((s) => (
+          <li key={s.label} className="flex items-center gap-1.5">
+            <span
+              aria-hidden
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ background: s.color }}
+            />
+            {s.label}
+          </li>
+        ))}
+      </ul>
+      <svg
+        role="img"
+        aria-label={ariaLabel}
+        viewBox={`0 0 100 ${height}`}
+        preserveAspectRatio="none"
+        className="w-full"
+        style={{ height }}
+      >
+        {buckets.map((b, i) => {
+          let y = plotH;
+          return (
+            <g key={b.label}>
+              {b.values.map((v, j) => {
+                if (!(v > 0)) return null;
+                const h = (v / max) * (plotH - 2);
+                y -= h;
+                return (
+                  <rect
+                    key={series[j]?.label ?? j}
+                    x={i * colW + colW * 0.12}
+                    y={y}
+                    width={colW * 0.76}
+                    height={h}
+                    fill={series[j]?.color}
+                  >
+                    <title>{`${b.label} — ${series[j]?.label}: ${formatValue(v)}`}</title>
+                  </rect>
+                );
+              })}
+            </g>
+          );
+        })}
+      </svg>
+      <div className="text-ink-faint flex justify-between font-mono text-[10px]">
+        <span>{buckets[0].label}</span>
+        {buckets.length > 1 && <span>{buckets[buckets.length - 1].label}</span>}
       </div>
     </div>
   );
