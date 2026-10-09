@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import { HistoryTabPanel } from './HistoryTabPanel';
+import { HistoryTabPanel, tradeVenueRows } from './HistoryTabPanel';
 import type { TradeRow } from '@/api/hooks';
 
 // COR-04/COR-12/AGT-02: quote_amount is always the native-XLM leg
@@ -61,5 +61,20 @@ describe('HistoryTabPanel', () => {
     row.base_amount = '900719925474099312';
     render(<HistoryTabPanel assetID="SHEKEL:GABC" decimals={2} />);
     expect(screen.getByText('9,007,199,254,740,993.12')).toBeInTheDocument();
+  });
+});
+
+describe('tradeVenueRows', () => {
+  it('ranks venues by trade count with their share of the rows', () => {
+    const rows = [
+      { source: 'sdex' },
+      { source: 'soroswap' },
+      { source: 'soroswap' },
+      { source: 'soroswap' },
+    ];
+    expect(tradeVenueRows(rows)).toEqual([
+      { label: 'soroswap', value: 3, display: '3 trades', annotation: '75%' },
+      { label: 'sdex', value: 1, display: '1 trade', annotation: '25%' },
+    ]);
   });
 });
