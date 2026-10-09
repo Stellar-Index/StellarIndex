@@ -21,8 +21,8 @@ import (
 //
 // Recency window: matches /v1/markets's "active assets" semantic.
 // Without the window the UNIONed DISTINCT scans run across every
-// chunk in the trades hypertable (539M+ rows on r1) — measured at
-// 4-5 minutes per call, far past any client deadline. With the
+// chunk in the trades hypertable, taking minutes per call, far
+// past any client deadline. With the
 // 14-day cap the scan touches ~1.5M rows and finishes inside the
 // 30s API budget. Without it the unbounded query would run on every
 // /v1/assets call; the recency cap brings the endpoint into the
