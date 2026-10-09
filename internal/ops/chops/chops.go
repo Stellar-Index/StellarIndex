@@ -1,32 +1,14 @@
 // Copyright 2026 Stellar Index contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package chops holds the stellarindex-ops ClickHouse-lake
-// subcommands (named chops, not clickhouse, to avoid a same-named
-// import shadowing internal/storage/clickhouse in every file here):
-// `ch-backfill`, `ch-gate`, `ch-reproject`, `ch-rebuild`, `ch-supply`,
-// `ch-txindex-backfill`, `ch-participant-backfill`, `ch-recognition`,
-// `verify-recognition`, `verify-reconciliation`, `compute-completeness`,
-// `verify-served-values`, `verify-usd-volume`, `usd-volume-restamp`,
-// `sdex-claim-audit`, `classic-movements-backfill`, `projected-rebuild`,
-// `reconcile-balances`, `verify-contiguity`, `verify-hashchain`,
-// `verify-lake`, `verify-network-state` — ADR-0033/ADR-0034 completeness + reconciliation checks,
-// the ADR-0034 lake backfill/gate/reproject/rebuild tools, the
-// ADR-0047 pre-P23 classic-movement reconstruction backfill, the ADR-0048
-// D3 bulk catch-up path for projected sources, the reconcile-balances
-// external (Horizon) balance-reconciliation verifier, verify-contiguity's
-// standing ledger-substrate + entry_changes-coverage lake verification,
-// verify-hashchain's standing hash-chain verification (the "hash-chained
-// to genesis" half of ADR-0034's provable-100% claim that verify-contiguity
-// doesn't cover), and verify-lake's four-check "is the lake sound?"
-// invocation run daily by verify-lake.timer (the three checks above, via the
-// same package-private run* funcs verify-contiguity and verify-hashchain
-// call, plus a raw-table census of the other five raw tables), and
-// verify-network-state's comparison of derived state with the network's own
-// (hot-archive buckets, lumen conservation), which is why reconciliation_catalogue.go and gated_recon_seed.go
-// (shared re-derivation source-set + factory-child preseed helpers used
-// by ch-rebuild, ch-reproject, compute-completeness, and
-// verify-reconciliation) live here too rather than in a 7th package.
+// Package chops holds the stellarindex-ops ClickHouse-lake subcommands
+// (named chops, not clickhouse, so the import does not shadow
+// internal/storage/clickhouse): the ADR-0034 lake backfill, gate,
+// reproject and rebuild tools, the ADR-0047 classic-movement backfill, the
+// ADR-0048 projected-source catch-up, and the ADR-0033/ADR-0034
+// completeness, reconciliation, contiguity, hash-chain and network-state
+// verifiers. The re-derivation helpers those tools share
+// (reconciliation_catalogue.go, gated_recon_seed.go) live here too.
 //
 // cmd/stellarindex-ops main.go's dispatch table calls Run below.
 package chops
@@ -35,16 +17,12 @@ import (
 	"fmt"
 )
 
-// Run is the internal/ops/chops package's entry point — see
-// discovery.Run's doc comment for the calling convention shared by
-// every internal/ops/* package post-split. args[0] is the subcommand
-// verb (one of the twenty this package owns); args[1:] are its flags.
+// Run is the package's entry point; see discovery.Run for the calling
+// convention. args[0] is the subcommand verb, args[1:] its flags.
 //
-// Split across dispatch helpers by ROLE — the data-mutating tools and
-// the verifiers. The split is what keeps each switch under the gocyclo
-// ceiling as verbs accumulate, and the boundary is a real one: a `ch-*` /
-// `*-backfill` / `*-rebuild` verb rewrites lake or served DATA, while
-// nothing in the verifier half touches trade/event rows at all.
+// Dispatch is split by role, which keeps each switch under the gocyclo
+// ceiling: lake-mutating verbs rewrite lake or served data, while the
+// verifiers touch no trade or event row.
 func Run(args []string) error {
 	if fn, ok := lakeMutatorVerb(args[0]); ok {
 		return fn(args[1:])
