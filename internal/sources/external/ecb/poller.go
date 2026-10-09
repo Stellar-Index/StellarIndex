@@ -177,10 +177,9 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	day := env.Cube.Inner[0]
 	ts, err := time.Parse("2006-01-02", day.Time)
 	if err != nil {
-		// Defensive: if the date doesn't parse, fall back to now().
-		// The daily file always has a valid ISO date, so this is
-		// belt-and-braces.
-		ts = time.Now().UTC()
+		// ts is part of the oracle_updates key: a wall-clock fallback would
+		// insert a fresh duplicate row every poll.
+		return nil, nil, fmt.Errorf("%w: reference date %q: %w", ErrMalformedResponse, day.Time, err)
 	}
 
 	// Build the interest set from configured pairs. ECB gives us
