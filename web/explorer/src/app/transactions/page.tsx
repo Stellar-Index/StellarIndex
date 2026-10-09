@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
 
-import { Breadcrumbs, Container, Skeleton } from '@/components/ui';
+import { Container, PageHeader, Skeleton } from '@/components/ui';
 import { TransactionsView } from './TransactionsView';
 
 export const metadata: Metadata = {
@@ -27,21 +27,12 @@ export const metadata: Metadata = {
 export default function TransactionsPage() {
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-1">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Transactions' }]}
-        />
-        <p className="text-ink-muted text-xs tracking-wider uppercase">
-          Explorer
-        </p>
-        <h1 className="text-ink text-2xl font-semibold tracking-tight">
-          Transactions
-        </h1>
-        <p className="text-ink-muted max-w-2xl text-sm">
-          Recent transactions, newest ledger first. Click a hash for the full
-          decoded transaction — operations, events, and result codes.
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Transactions' }]}
+        eyebrow="Explorer"
+        title="Transactions"
+        description="Recent transactions, newest ledger first. Click a hash for the full decoded transaction — operations, events, and result codes."
+      />
 
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
         <TransactionsView />

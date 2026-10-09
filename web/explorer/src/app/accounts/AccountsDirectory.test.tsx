@@ -54,7 +54,7 @@ function renderDirectory() {
       <AccountsDirectoryBody />
     </QueryClientProvider>,
   );
-  const header = container.querySelector('header');
+  const header = container.querySelector('h1')?.parentElement;
   if (!header) throw new Error('directory header did not render');
   return header;
 }

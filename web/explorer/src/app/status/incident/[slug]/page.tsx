@@ -7,7 +7,7 @@ import { loadIncident, loadIncidents } from '@/lib/incidents';
 import { Markdown } from '@/lib/markdown';
 import {
   Badge,
-  Breadcrumbs,
+  PageHeader,
   Card,
   Container,
   type BadgeTone,
@@ -72,12 +72,13 @@ export default async function IncidentPage({
 
   return (
     <Container className="max-w-4xl space-y-6 py-10">
-      <Breadcrumbs
-        items={[
+      <PageHeader
+        breadcrumbs={[
           { label: 'Home', href: '/' },
           { label: 'Status', href: '/status' },
           { label: inc.title },
         ]}
+        title={inc.title}
       />
       <Link
         href="/status"
@@ -87,7 +88,7 @@ export default async function IncidentPage({
         Back to status
       </Link>
 
-      <header className="border-line space-y-4 border-b pb-6">
+      <div className="border-line space-y-4 border-b pb-6">
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={sevTone} dot>
             {inc.severity}
@@ -105,7 +106,6 @@ export default async function IncidentPage({
             {inc.date}
           </span>
         </div>
-        <h1 className="text-h2 text-ink font-semibold">{inc.title}</h1>
         <Timeline started_at={inc.started_at} resolved_at={inc.resolved_at} />
         {/* The repo is private until the v1.0 public flip, so a
                 "View source" link would 404 for every customer. Gate it
@@ -123,7 +123,7 @@ export default async function IncidentPage({
             <ExternalLink className="h-3 w-3" />
           </a>
         )}
-      </header>
+      </div>
 
       <article>
         <Markdown source={stripDuplicateH1(inc.body)} />
