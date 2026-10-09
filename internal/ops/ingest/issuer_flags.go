@@ -60,7 +60,7 @@ type issuerFlagsCounts struct {
 //
 // The flags ALREADY resolve on the read path
 // (Server.enrichIssuerFromAccountState decodes them from the lake per
-// request, 39 of the top 40 issuers when measured). What that path
+// request). What that path
 // cannot survive is a cold account-state cache: under burst the refresh
 // gate degrades and an issuer page renders "not yet resolved". The
 // Postgres columns exist for exactly this fallback (migration 0023), and
@@ -74,9 +74,9 @@ type issuerFlagsCounts struct {
 // # MERGED ISSUERS
 //
 // A live-entry read alone leaves every issuer that has MERGED ITS ACCOUNT
-// AWAY permanently unresolved — on r1, 10,239 of 59,241, and a 1,000-key
-// sample says 985 (98.5%) are merged accounts, not coverage gaps. Their
-// flags ARE knowable, so a miss falls through to
+// AWAY permanently unresolved, and most unresolved issuers are merged
+// accounts, not coverage gaps. Their flags ARE knowable, so a miss falls
+// through to
 // RemovedAccountsLastKnownAuthFlags, which recovers the pre-image the
 // account_merge left in the removing ledger. Such a reading is persisted
 // with its provenance (`last_known_before_removal` + the removal ledger)
@@ -106,8 +106,8 @@ type issuerFlagsCounts struct {
 // reader and writes back the ones the chain has moved past. It is ordered
 // last and bounded by its own -chain-recheck-limit so it cannot take budget
 // from the primary drain, and it writes only rows that actually DIFFER, so
-// re-reading the whole filled set (49,002 rows on r1) is ~98 bulk
-// lake reads and, in the steady state, no Postgres writes at all.
+// re-reading the whole filled set costs bulk lake reads and, in the steady
+// state, no Postgres writes at all.
 func issuerFlagsCmd(args []string) error {
 	fs := flag.NewFlagSet("issuer-flags", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
