@@ -26,6 +26,11 @@ import { useStatus } from '@/api/hooks';
 import { DataTrustTabs } from '@/components/nav/DataTrustTabs';
 import BackupsPanel from './BackupsPanel';
 import {
+  EndpointLatencyBars,
+  SourceVolumeCharts,
+  type LatencySample,
+} from './StatusCharts';
+import {
   formatCompact,
   formatDurationShort,
   formatRelative,
@@ -1425,9 +1430,15 @@ function EndpointMatrix({
     return Object.entries(out);
   }, [endpoints]);
 
+  const samples = useMemo(
+    () => latencySamples(endpoints, health),
+    [endpoints, health],
+  );
+
   return (
     <section>
       <SectionHead>Endpoints</SectionHead>
+      <EndpointLatencyBars samples={samples} />
       <div className="space-y-5">
         {grouped.map(([group, eps]) => (
           <div key={group}>
@@ -1461,6 +1472,25 @@ function EndpointMatrix({
       </div>
     </section>
   );
+}
+
+function latencySamples(
+  endpoints: typeof PUBLIC_ENDPOINTS,
+  health: Record<string, EndpointProbeResult>,
+): LatencySample[] {
+  const out: LatencySample[] = [];
+  for (const ep of endpoints) {
+    const p = health[ep.path];
+    if (!p || p.kind === 'static') continue;
+    const tone =
+      p.kind === 'fast'
+        ? 'ok'
+        : p.kind === 'slow' || p.kind === 'degraded'
+          ? 'warn'
+          : 'bad';
+    out.push({ path: ep.path, latencyMs: p.latencyMs, tone });
+  }
+  return out;
 }
 
 // EndpointProbeResult is the union of states the matrix renders.
@@ -2392,6 +2422,7 @@ function SourceHealthTable({ rows }: { rows: IngestionSnapshot['sources'] }) {
       <h3 className="text-ink-faint mb-2 text-[11px] font-semibold tracking-wider uppercase">
         Sources — {safeRows.length} registered
       </h3>
+      <SourceVolumeCharts rows={safeRows} />
       <div className="border-line overflow-x-auto rounded-lg border">
         <table className="w-full text-xs">
           <thead className="bg-surface-muted text-ink-faint">

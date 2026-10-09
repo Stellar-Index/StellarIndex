@@ -14,6 +14,7 @@ import {
   type Source,
 } from '@/api/hooks';
 import { formatDurationShort } from '@/lib/format';
+import { CountBar, LagDot } from './SourceListMarks';
 
 /**
  * Live sources directory backed by `/v1/sources`.
@@ -213,6 +214,10 @@ export function SourcesTable() {
               </thead>
               <tbody className="divide-line-subtle divide-y">
                 {rows.map((s) => {
+                  const maxTrades = rows.reduce(
+                    (m, r) => Math.max(m, r.trade_count_24h ?? 0),
+                    0,
+                  );
                   const cursor = latestBySource.get(s.name);
                   return (
                     <tr key={s.name} className="hover:bg-surface-muted">
@@ -243,6 +248,10 @@ export function SourcesTable() {
                         ) : (
                           <span className="text-ink-faint text-[11px]">—</span>
                         )}
+                        <CountBar
+                          value={s.trade_count_24h ?? 0}
+                          max={maxTrades}
+                        />
                       </Td>
                       <Td>
                         <SourceSparkline buckets={s.volume_history_24h} />
@@ -299,6 +308,7 @@ function CursorAgo({
   return (
     <div className="text-right">
       <div className={`font-mono text-[11px] ${tone}`}>
+        <LagDot lagSeconds={cursor.lag_seconds} />
         {formatDurationShort(cursor.lag_seconds)} ago
       </div>
       <div className="text-ink-faint font-mono text-[10px]">
