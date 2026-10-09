@@ -338,6 +338,7 @@ const contractsDirRefreshTimeout = 3 * time.Minute
 
 type contractsDirEntry struct {
 	rows     []clickhouse.ContractDirectoryRow
+	types    map[string]bool // contract id -> isSAC; nil when the lookup failed
 	since    uint32
 	cachedAt time.Time
 }
@@ -423,7 +424,16 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 			h.Logger.Warn("contracts directory detached refresh failed", "window_days", window, "err", err)
 			return
 		}
-		h.contractsDir.put(window, contractsDirEntry{rows: rows, since: since, cachedAt: time.Now()})
+		ids := make([]string, len(rows))
+		for i, row := range rows {
+			ids[i] = row.ContractID
+		}
+		types, terr := h.Reader.ContractTypes(rctx, ids)
+		if terr != nil {
+			h.Logger.Warn("contracts directory type lookup failed; serving without types", "err", terr)
+			types = nil
+		}
+		h.contractsDir.put(window, contractsDirEntry{rows: rows, types: types, since: since, cachedAt: time.Now()})
 	}()
 	return fl
 }
@@ -437,25 +447,25 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 // Returns the rows (capped at `limit`) plus the ledger floor the cached
 // aggregate used, so the response's `since_ledger` describes the data
 // actually served rather than a floor recomputed after the fact.
-func (h *Handler) recentContractsCached(ctx context.Context, window, limit int) (rows []clickhouse.ContractDirectoryRow, since uint32, asOf time.Time, degraded bool, err error) {
+func (h *Handler) recentContractsCached(ctx context.Context, window, limit int) (rows []clickhouse.ContractDirectoryRow, types map[string]bool, since uint32, asOf time.Time, degraded bool, err error) {
 	if e, ok, fresh := h.contractsDir.get(window); ok {
 		if !fresh {
 			h.refreshContractsDir(window) //nolint:contextcheck // intentional detach — see refreshContractsDir
 		}
-		return sliceContracts(e.rows, limit), e.since, e.cachedAt, !fresh, nil
+		return sliceContracts(e.rows, limit), e.types, e.since, e.cachedAt, !fresh, nil
 	}
 	fl := h.refreshContractsDir(window) //nolint:contextcheck // intentional detach — see refreshContractsDir
 	select {
 	case <-fl.done:
 		if e, ok, _ := h.contractsDir.get(window); ok {
-			return sliceContracts(e.rows, limit), e.since, e.cachedAt, false, nil
+			return sliceContracts(e.rows, limit), e.types, e.since, e.cachedAt, false, nil
 		}
 		if fl.err != nil {
-			return nil, 0, time.Time{}, false, fl.err
+			return nil, nil, 0, time.Time{}, false, fl.err
 		}
-		return nil, 0, time.Time{}, false, errRefreshFailed
+		return nil, nil, 0, time.Time{}, false, errRefreshFailed
 	case <-ctx.Done():
-		return nil, 0, time.Time{}, false, ctx.Err()
+		return nil, nil, 0, time.Time{}, false, ctx.Err()
 	}
 }
 

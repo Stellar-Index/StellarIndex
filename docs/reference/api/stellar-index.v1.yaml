@@ -11780,7 +11780,70 @@ paths:
                                 last_ledger: { type: integer, format: int64 }
                                 last_seen: { type: string, format: date-time }
                                 protocol: { type: string, description: Owning protocol when attributed; absent otherwise. }
+                                type: { type: string, enum: [sac, wasm], description: Executable kind; absent when not yet resolved. }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /contracts/stats:
+    get:
+      operationId: getContractStats
+      x-stability: experimental
+      tags: [explorer]
+      summary: Contract deployments per month and the 90-day active count.
+      description: |
+        Contracts by first-seen month, split into Stellar Asset Contracts (`sac`)
+        and WASM contracts (`wasm`), plus the number of contracts with events in
+        the last 90 days. Served from a one-hour snapshot.
+
+        While `history_complete` is false the instance history is not
+        genesis-complete: every total is a LOWER BOUND (`lower_bound` is true).
+        `active_90d` is null when the activity census is unavailable, never 0.
+      responses:
+        "200":
+          description: Deployment series and totals.
+          content:
+            application/json:
+              example:
+                data:
+                  deployments:
+                  - { month: '2024-02', sac: 120, wasm: 340 }
+                  - { month: '2024-03', sac: 80, wasm: 410 }
+                  total_deployed: 950
+                  total_sac: 200
+                  total_wasm: 750
+                  active_90d: 512
+                  history_complete: true
+                  lower_bound: false
+                as_of: '2026-07-03T22:39:07.271202524Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [deployments, total_deployed, total_sac, total_wasm, active_90d, history_complete, lower_bound]
+                        properties:
+                          deployments:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                month: { type: string, description: "UTC month, YYYY-MM." }
+                                sac: { type: integer, format: int64 }
+                                wasm: { type: integer, format: int64 }
+                          total_deployed: { type: integer, format: int64 }
+                          total_sac: { type: integer, format: int64 }
+                          total_wasm: { type: integer, format: int64 }
+                          active_90d: { type: integer, format: int64, nullable: true }
+                          history_complete: { type: boolean }
+                          lower_bound: { type: boolean, description: True while the totals exclude pre-backfill deployments. }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /contracts/{contract_id}:

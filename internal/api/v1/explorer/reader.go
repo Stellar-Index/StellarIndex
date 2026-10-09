@@ -242,6 +242,9 @@ type ExplorerReader interface {
 	// newest TTL live_until, backing the contract routes' exists + ttl.
 	ContractInstanceState(ctx context.Context, contractID string) (clickhouse.ContractInstanceState, error)
 	RecentContracts(ctx context.Context, limit int, sinceLedger uint32) ([]clickhouse.ContractDirectoryRow, error)
+	ContractStats(ctx context.Context) (clickhouse.ContractStats, error)
+	// ContractTypes maps contract ids to isSAC; ids with no instance row are absent.
+	ContractTypes(ctx context.Context, contractIDs []string) (map[string]bool, error)
 	// ContractInteractions returns the edges plus the EFFECTIVE window
 	// floor, which may be newer than the requested sinceLedger: a busy
 	// contract's window is narrowed to its own recent activity so the
@@ -460,6 +463,8 @@ type Handler struct {
 	// ready to use; see hot_reads.go for the full rationale.
 	assetHolders assetHoldersCache
 	contractsDir contractsDirCache
+	// contractStats is the single-entry snapshot behind GET /v1/contracts/stats.
+	contractStats contractStatsCache
 
 	// contractDetail is the shared bounded-TTL, single-flighted cache in
 	// front of the three per-contract detail reads (recent events /

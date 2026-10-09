@@ -205,7 +205,7 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	// /v1/ledgers/at 404s for a ts past the tip until that ledger lands,
 	// so it takes the short band rather than the closed-ledger one.
 	case path == "/v1/ledgers", path == "/v1/ledgers/at", path == "/v1/network/throughput",
-		path == "/v1/operations", path == "/v1/contracts",
+		path == "/v1/operations", path == "/v1/contracts", path == "/v1/contracts/stats",
 		contractDetailPath.MatchString(path),
 		// Network-stats strip: a 30s SWR cache carrying
 		// latest_ledger, which advances every ~5s — the 300s catalogue

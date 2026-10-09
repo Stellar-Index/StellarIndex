@@ -183,7 +183,7 @@ func TestRecentContractsCached_StaleServedDegradedAndRefreshed(t *testing.T) {
 		since: 100, cachedAt: staleAt,
 	})
 
-	rows, since, asOf, degraded, err := h.recentContractsCached(context.Background(), 30, 10)
+	rows, _, since, asOf, degraded, err := h.recentContractsCached(context.Background(), 30, 10)
 	if err != nil || len(rows) != 1 || since != 100 {
 		t.Fatalf("stale serve: rows=%d since=%d err=%v", len(rows), since, err)
 	}

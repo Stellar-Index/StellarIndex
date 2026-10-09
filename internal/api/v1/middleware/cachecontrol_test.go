@@ -48,6 +48,7 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// `private, no-store` from the default.
 		{"/v1/operations", "public, max-age=10, s-maxage=15"},
 		{"/v1/contracts", "public, max-age=10, s-maxage=15"},
+		{"/v1/contracts/stats", "public, max-age=10, s-maxage=15"},
 		{"/v1/ledgers/64000000/transactions/extra", "private, no-store"},
 
 		// Account — auth-tied
@@ -291,6 +292,7 @@ func TestPolicyForPath_CDNDisabled(t *testing.T) {
 		{"/v1/status", "public, max-age=10"},
 		{"/v1/operations", "public, max-age=10"},
 		{"/v1/contracts", "public, max-age=10"},
+		{"/v1/contracts/stats", "public, max-age=10"},
 		{"/v1/history", "public, max-age=60"},
 		{"/v1/ohlc", "public, max-age=60"},
 		{"/v1/vwap", "public, max-age=30"},

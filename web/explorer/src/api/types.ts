@@ -5004,6 +5004,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/contracts/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Contract deployments per month and the 90-day active count.
+         * @description Contracts by first-seen month, split into Stellar Asset Contracts (`sac`)
+         *     and WASM contracts (`wasm`), plus the number of contracts with events in
+         *     the last 90 days. Served from a one-hour snapshot.
+         *
+         *     While `history_complete` is false the instance history is not
+         *     genesis-complete: every total is a LOWER BOUND (`lower_bound` is true).
+         *     `active_90d` is null when the activity census is unavailable, never 0.
+         */
+        get: operations["getContractStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/contracts/{contract_id}": {
         parameters: {
             query?: never;
@@ -24664,12 +24690,92 @@ export interface operations {
                                 last_seen?: string;
                                 /** @description Owning protocol when attributed; absent otherwise. */
                                 protocol?: string;
+                                /**
+                                 * @description Executable kind; absent when not yet resolved.
+                                 * @enum {string}
+                                 */
+                                type?: "sac" | "wasm";
                             }[];
                         };
                     };
                 };
             };
             400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getContractStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deployment series and totals. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "deployments": [
+                     *           {
+                     *             "month": "2024-02",
+                     *             "sac": 120,
+                     *             "wasm": 340
+                     *           },
+                     *           {
+                     *             "month": "2024-03",
+                     *             "sac": 80,
+                     *             "wasm": 410
+                     *           }
+                     *         ],
+                     *         "total_deployed": 950,
+                     *         "total_sac": 200,
+                     *         "total_wasm": 750,
+                     *         "active_90d": 512,
+                     *         "history_complete": true,
+                     *         "lower_bound": false
+                     *       },
+                     *       "as_of": "2026-07-03T22:39:07.271202524Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            deployments: {
+                                /** @description UTC month, YYYY-MM. */
+                                month?: string;
+                                /** Format: int64 */
+                                sac?: number;
+                                /** Format: int64 */
+                                wasm?: number;
+                            }[];
+                            /** Format: int64 */
+                            total_deployed: number;
+                            /** Format: int64 */
+                            total_sac: number;
+                            /** Format: int64 */
+                            total_wasm: number;
+                            /** Format: int64 */
+                            active_90d: number | null;
+                            history_complete: boolean;
+                            /** @description True while the totals exclude pre-backfill deployments. */
+                            lower_bound: boolean;
+                        };
+                    };
+                };
+            };
             503: components["responses"]["ServiceUnavailable"];
         };
     };

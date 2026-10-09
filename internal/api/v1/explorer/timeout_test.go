@@ -551,3 +551,13 @@ func TestExplorerReads_ReturnWhenReadExceedsBudget(t *testing.T) {
 			"(C3-1 pool-exhaustion DoS regression)")
 	}
 }
+
+func (r *capReader) ContractStats(ctx context.Context) (clickhouse.ContractStats, error) {
+	r.probe.record(ctx)
+	return clickhouse.ContractStats{}, nil
+}
+
+func (r *capReader) ContractTypes(ctx context.Context, _ []string) (map[string]bool, error) {
+	r.probe.record(ctx)
+	return nil, nil
+}

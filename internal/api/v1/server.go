@@ -2106,6 +2106,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/tx/{hash}", s.explorerHandler.TxDetail)
 	s.mux.HandleFunc("GET /v1/search", s.explorerHandler.Search)
 	s.mux.HandleFunc("GET /v1/contracts", s.explorerHandler.ContractsList)
+	s.mux.HandleFunc("GET /v1/contracts/stats", s.explorerHandler.ContractStats)
 	s.mux.HandleFunc("GET /v1/contracts/{contract_id}", s.explorerHandler.ContractDetail)
 	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/wasm", s.explorerHandler.ContractWasm)
 	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/interactions", s.explorerHandler.ContractInteractions)

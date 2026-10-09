@@ -48,6 +48,7 @@ const ROUTES = [
   { name: 'directory', cls: 'lookup', w: 3, url: (d) => `${baseUrl}/directory?addresses=${pick(d.accounts)},${pick(d.contracts)}` },
   { name: 'account-state', cls: 'lookup', w: 8, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}` },
   { name: 'contracts', cls: 'scan', w: 3, url: () => `${baseUrl}/contracts?days=1&limit=50` },
+  { name: 'contracts-stats', cls: 'scan', w: 1, url: () => `${baseUrl}/contracts/stats` },
   { name: 'contract-detail', cls: 'scan', w: 5, url: (d) => `${baseUrl}/contracts/${pick(d.contracts)}?limit=50` },
   { name: 'contract-wasm', cls: 'scan', w: 1, url: (d) => `${baseUrl}/contracts/${pick(d.contracts)}/wasm` },
   { name: 'contract-interactions', cls: 'scan', w: 3, url: (d) => `${baseUrl}/contracts/${pick(d.contracts)}/interactions?days=1&limit=50` },

@@ -49,6 +49,7 @@ type RefreshGate struct {
 // is keyed on caller-chosen ids, so a client can mint cold keys at will.
 var serverKeyedClasses = map[string]bool{
 	"contracts_dir":      true,
+	"contract_stats":     true,
 	"network_throughput": true,
 	"ops_directory":      true,
 	"protocol_bespoke":   true,

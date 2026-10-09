@@ -119,9 +119,15 @@ export async function apiGet<T>(
     // text is kept first so existing `.includes('404')` checks still match.
     let extra = '';
     try {
-      const body = (await res.json()) as { title?: string; detail?: string };
+      const body = (await res.json()) as {
+        type?: string;
+        title?: string;
+        detail?: string;
+      };
       if (body?.title) extra = ` — ${body.title}`;
       if (body?.detail) extra += `${extra ? ':' : ' —'} ${body.detail}`;
+      // The stable machine key: callers match this, never the prose detail.
+      if (body?.type) extra += ` [${body.type}]`;
     } catch {
       /* non-JSON body — keep the bare status line */
     }

@@ -25,6 +25,20 @@ type ContractDirectoryEntry struct {
 	// contract is in the protocol_contracts registry — the attribution hinge.
 	// Omitted for unattributed contracts.
 	Protocol string `json:"protocol,omitempty"`
+	// Type is the executable kind, "sac" or "wasm"; omitted when unknown.
+	Type string `json:"type,omitempty"`
+}
+
+func contractTypeLabel(types map[string]bool, id string) string {
+	isSAC, ok := types[id]
+	switch {
+	case !ok:
+		return ""
+	case isSAC:
+		return "sac"
+	default:
+		return "wasm"
+	}
 }
 
 // ContractsDirectoryView is the wire response for GET /v1/contracts.
@@ -79,7 +93,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 	// while the detached re-aggregation runs; only a never-computed rung
 	// can still time out here (and its detached compute keeps running, so
 	// a retry lands warm). See hot_reads.go.
-	rows, since, asOf, degraded, err := h.recentContractsCached(ctx, window, limit)
+	rows, types, since, asOf, degraded, err := h.recentContractsCached(ctx, window, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -109,6 +123,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 			LastLedger: c.LastLedger,
 			LastSeen:   c.LastSeen.UTC().Format(time.RFC3339),
 			Protocol:   attribution[c.ContractID],
+			Type:       contractTypeLabel(types, c.ContractID),
 		}
 	}
 	h.writeJSONAt(w, out, degraded, degraded, asOf)
