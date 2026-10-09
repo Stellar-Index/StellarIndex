@@ -131,4 +131,32 @@ describe('EmbedCurrencyPage — resolves fiat identity via /v1/external/assets (
     expect(el).toHaveTextContent('$1.1000');
     expect(screen.queryByText('No data for EUR')).not.toBeInTheDocument();
   });
+
+  it('rounds the baked rate from its wire string, not a float', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.includes('/v1/external/assets/EUR')) {
+          return jsonResponse({
+            data: {
+              ticker: 'EUR',
+              name: 'Euro',
+              class: 'fiat',
+              price_usd: '2.00005',
+            },
+          });
+        }
+        if (url.includes('/v1/chart'))
+          return jsonResponse({ data: { points: [] } });
+        if (url.includes('/v1/price')) throw new Error('offline');
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    await renderPage('EUR');
+
+    const el = await screen.findByTitle('as baked at deploy');
+    expect(el).toHaveTextContent('$2.0001');
+  });
 });
