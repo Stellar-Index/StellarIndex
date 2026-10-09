@@ -23,8 +23,7 @@ import "sort"
 // different asset class with their own canonical type (asset_crypto.go).
 //
 // It also carries the FULL set the active massive.com FX feed
-// (internal/sources/external/forex) publishes into fx_quotes — 132 codes
-// observed on r1. The batch price endpoint rejects the whole request on
+// (internal/sources/external/forex) publishes into fx_quotes. The batch price endpoint rejects the whole request on
 // the first code it can't parse, so the /assets converter can only ever
 // offer the intersection of this list and the feed; aligning them lets
 // the converter surface every currency the feed carries (~109 with live

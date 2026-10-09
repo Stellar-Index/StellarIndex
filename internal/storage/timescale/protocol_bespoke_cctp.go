@@ -28,7 +28,7 @@ import (
 //  2. mint_and_forward IS NOT A SEPARATE TRANSFER. Every mint_and_forward
 //     op also emits mint_and_withdraw for the SAME funds (0 forward-only
 //     ops), and the forward amount was exactly 10× the withdraw amount on
-//     all 13,651 pairs measured on r1 — the forward event restates the
+//     every pair observed — the forward event restates the
 //     value at the LOCAL 7-decimal SAC scale while mint_and_withdraw
 //     carries the CANONICAL 6-decimal amount the SAC leg was verified
 //     against. Inbound sums use mint_and_withdraw ONLY; summing both
