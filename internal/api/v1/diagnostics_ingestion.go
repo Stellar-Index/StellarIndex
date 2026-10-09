@@ -229,9 +229,11 @@ type BackfillCoverageRow struct {
 
 	// CompletenessPct is the ADR-0033 Phase 6 watermark coverage:
 	// (watermark - genesis + 1) / (tip - genesis + 1), where the
-	// watermark is the highest ledger with substrate continuity +
-	// hash chain AND projection reconciliation both verified from
-	// genesis. Unlike GapFreePct it uses NO sparsity threshold — a
+	// watermark is the highest ledger with substrate continuity, hash
+	// chain and recognition verified from genesis. The served-tier
+	// projection reconcile is not localised to a ledger, so it gates
+	// only CompletenessComplete: this can read 100% while the served
+	// tier is short. Unlike GapFreePct it uses NO sparsity threshold — a
 	// single PROVEN gap pins it — so it is the honest 100%-confidence
 	// signal that supersedes density/gap_free as the headline.
 	// Populated by overlayCompleteness from completeness_snapshots
