@@ -1583,19 +1583,14 @@ const maxSupplyLakeClampLedgers = clickhouse.LatestLedgerLookbackLedgers
 //
 //  2. The lake's landed tip bounds it. ingestion_cursors (Postgres,
 //     realtime) leads stellar.ledgers (CH sink, lands seconds later) by
-//     design — measured on r1, the ledgerstream cursor sat
-//     exactly one ledger ahead of max(stellar.ledgers) — so an exact
-//     lookup of the cursor's own ledger routinely misses and the tick is
-//     lost. Over a 2 h window that was 9.9 % of all ticks, bursty enough
-//     to push whole cohorts of watched assets past the per-asset
-//     error_dominant threshold together. The snapshot does not need the
-//     cursor ledger specifically; it needs a real chain position with a
-//     real close time, so resolution clamps to the newest LANDED ledger
-//     at or before the cursor. The lookup reads only the
-//     [maxSupplyLakeClampLedgers] below the cursor, because that is the
-//     whole range a result could be accepted from — an unbounded
-//     `ledger_seq <= cursor` prunes no partition of stellar.ledgers and
-//     read 735.59 MiB per watched asset per tick on r1.
+//     design, so an exact lookup of the cursor's own ledger routinely
+//     misses, in bursts that push whole cohorts of watched assets past
+//     the error_dominant threshold together. The snapshot needs a real
+//     chain position with a real close time, not the cursor ledger, so
+//     resolution clamps to the newest LANDED ledger at or before the
+//     cursor. The lookup reads only the [maxSupplyLakeClampLedgers]
+//     below the cursor: an unbounded `ledger_seq <= cursor` prunes no
+//     partition of stellar.ledgers.
 //
 // Fail-closed is preserved end to end: no cursor, no landed row within
 // [maxSupplyLakeClampLedgers] of the cursor, or a lake trailing the
