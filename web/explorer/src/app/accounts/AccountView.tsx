@@ -23,6 +23,7 @@ import { AccountDefiPositionsPanel } from './AccountDefiPositions';
 import { AccountActivitySummaryPanel } from './AccountActivitySummary';
 import { AccountTradesPanel } from './AccountTrades';
 import { AccountGraphPanel } from './AccountGraph';
+import { AccountsTopBars } from './AccountsTopBars';
 import { AccountsAnalytics } from './AccountsAnalytics';
 import { useIssuers } from '@/api/hooks';
 import { apiGet, asExample } from '@/api/client';
@@ -359,6 +360,15 @@ function AccountsDirectory() {
         )}
         {q.data && q.data.accounts.length > 0 && (
           <>
+            <AccountsTopBars
+              isNative={isNative}
+              rows={q.data.accounts.flatMap((a) => {
+                const value = a.value ?? a.usd_value;
+                return value != null
+                  ? [{ account_id: a.account_id, value }]
+                  : [];
+              })}
+            />
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-line text-ink-muted border-b text-left text-[11px] tracking-wider uppercase">

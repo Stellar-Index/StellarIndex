@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { AccountDefiProtocolMix } from './AccountDefiProtocolMix';
 import {
   Badge,
   Mono,
@@ -168,6 +169,14 @@ export function AccountDefiPositionsPanel({ id }: { id: string }) {
           conditional — every position on this endpoint is a raw
           quantity, never a valuation. */}
       {data.note && <NoteBadge label="raw quantities">{data.note}</NoteBadge>}
+
+      <AccountDefiProtocolMix
+        counts={Array.from(byProtocol.entries()).map(([protocol, rows]) => ({
+          protocol,
+          label: PROTOCOL_LABEL[protocol] ?? protocol,
+          count: rows.length,
+        }))}
+      />
 
       {positions.length === 0 ? (
         <p className="text-ink-muted text-sm">
