@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 import { CopyableSnippet } from './CopyableSnippet';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 export const metadata: Metadata = {
   title: 'Widgets — embeddable price cards',
@@ -49,22 +49,20 @@ const CURRENCY_EXAMPLES: { ticker: string; label: string }[] = [
 
 export default function WidgetsPage() {
   return (
-    <div className="mx-auto max-w-5xl space-y-12 px-6 py-10">
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Widgets' }]}
-        />
-        <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
-          Embed
-        </p>
-        <h1 className="text-3xl font-semibold tracking-tight">Widgets</h1>
-        <p className="text-ink-body max-w-3xl text-base">
-          Drop-in iframe widgets for live Stellar Index prices. Paste one
-          snippet — no script, no API key, no build step. Each widget renders
-          the same data the explorer pulls from the public API; sizes
-          auto-adjust to fit their container.
-        </p>
-      </header>
+    <Container className="space-y-12 py-10 [&>*]:max-w-5xl">
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Widgets' }]}
+        eyebrow="Embed"
+        title="Widgets"
+        description={
+          <>
+            Drop-in iframe widgets for live Stellar Index prices. Paste one
+            snippet — no script, no API key, no build step. Each widget renders
+            the same data the explorer pulls from the public API; sizes
+            auto-adjust to fit their container.
+          </>
+        }
+      />
 
       <section className="space-y-4">
         <div>
@@ -195,7 +193,7 @@ export default function WidgetsPage() {
           </li>
         </ul>
       </section>
-    </div>
+    </Container>
   );
 }
 

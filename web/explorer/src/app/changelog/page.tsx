@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 import { loadReleases, versionSlug, type Release } from '@/lib/changelog';
 import { Inline } from '@/lib/markdown';
-import { Breadcrumbs } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 // Cap the rendered changelog to the most recent N releases. The full
 // history (242+ sections) inlined to a ~4.4 MB page;
@@ -20,15 +20,39 @@ export const metadata: Metadata = {
 export default function ChangelogPage() {
   const releases: Release[] = loadReleases();
   return (
-    <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Changelog' }]}
-        />
-        <div className="flex items-baseline justify-between">
-          <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
-            Changelog
-          </p>
+    <Container className="space-y-8 py-10 [&>*]:max-w-4xl">
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Changelog' }]}
+        eyebrow="Changelog"
+        title="Every release, every change."
+        description={
+          <>
+            Pulled at build time from{' '}
+            <code className="bg-surface-subtle rounded-sm px-1.5 py-0.5 font-mono text-sm">
+              CHANGELOG.md
+            </code>{' '}
+            on{' '}
+            <a
+              href="https://github.com/Stellar-Index/StellarIndex/blob/main/CHANGELOG.md"
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-brand-600 hover:underline"
+            >
+              main
+            </a>
+            . Format follows{' '}
+            <a
+              href="https://keepachangelog.com/en/1.1.0/"
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-brand-600 hover:underline"
+            >
+              Keep a Changelog
+            </a>
+            ; SemVer for the public Go SDK, CalVer for binary releases.
+          </>
+        }
+        actions={
           <a
             href="/changelog.atom"
             target="_blank"
@@ -38,36 +62,8 @@ export default function ChangelogPage() {
           >
             Subscribe (Atom) ↗
           </a>
-        </div>
-        <h1 className="text-4xl font-semibold tracking-tight">
-          Every release, every change.
-        </h1>
-        <p className="text-ink-body max-w-2xl text-base">
-          Pulled at build time from{' '}
-          <code className="bg-surface-subtle rounded-sm px-1.5 py-0.5 font-mono text-sm">
-            CHANGELOG.md
-          </code>{' '}
-          on{' '}
-          <a
-            href="https://github.com/Stellar-Index/StellarIndex/blob/main/CHANGELOG.md"
-            target="_blank"
-            rel="noreferrer noopener"
-            className="text-brand-600 hover:underline"
-          >
-            main
-          </a>
-          . Format follows{' '}
-          <a
-            href="https://keepachangelog.com/en/1.1.0/"
-            target="_blank"
-            rel="noreferrer noopener"
-            className="text-brand-600 hover:underline"
-          >
-            Keep a Changelog
-          </a>
-          ; SemVer for the public Go SDK, CalVer for binary releases.
-        </p>
-      </header>
+        }
+      />
 
       {releases.length === 0 ? (
         <div className="border-warn-300 bg-warn-50 text-warn-700 rounded-md border p-6 text-sm">
@@ -121,7 +117,7 @@ export default function ChangelogPage() {
           GitHub Releases ↗
         </a>
       </div>
-    </div>
+    </Container>
   );
 }
 
