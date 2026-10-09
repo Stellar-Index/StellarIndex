@@ -345,3 +345,15 @@ describe('formatUsdWhole', () => {
     expect(format.formatUsdWhole('1e5')).toBe('—');
   });
 });
+
+describe('formatWhole', () => {
+  it('rounds like formatUsdWhole, without the currency', () => {
+    expect(format.formatWhole('9007199254740993.5')).toBe(
+      '9,007,199,254,740,994',
+    );
+    expect(format.formatWhole('-1234.5')).toBe('-1,235');
+    expect(format.formatWhole('-0.4')).toBe('0');
+    expect(format.formatWhole(null)).toBe('—');
+    expect(format.formatWhole('1e5')).toBe('—');
+  });
+});
