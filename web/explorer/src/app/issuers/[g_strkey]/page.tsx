@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 
 import { IssuerPathView } from './IssuerPathView';
+import { IssuerAssetMix } from './IssuerAssetMix';
 import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
@@ -493,94 +494,106 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
             No issued assets observed.
           </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="divide-line min-w-full divide-y text-sm">
-              <thead>
-                <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-                  <Th>Code</Th>
-                  {pricing && <Th align="right">Price</Th>}
-                  {pricing && <Th align="right">24h %</Th>}
-                  {pricing && <Th align="right">24h volume</Th>}
-                  {pricing && <Th align="right">Market cap</Th>}
-                  <Th align="right">Circulating</Th>
-                  <Th align="right">Observations</Th>
-                  <Th align="right">First seen</Th>
-                </tr>
-              </thead>
-              <tbody className="divide-line-subtle divide-y">
-                {assets.map((a) => {
-                  const coin = coinPrices.get(a.asset_id);
-                  return (
-                    <tr key={a.asset_id} className="hover:bg-surface-muted">
-                      <Td>
-                        <Link
-                          href={assetHref(a.slug)}
-                          className="hover:text-brand-600 font-medium"
-                        >
-                          {a.code}
-                        </Link>
-                        <span className="text-ink-muted ml-2 font-mono text-[11px]">
-                          {a.slug}
-                        </span>
-                        {routeAvailable('/markets') && (
+          <>
+            {pricing && (
+              <IssuerAssetMix
+                assets={assets.map((a) => ({
+                  id: a.asset_id,
+                  code: a.code,
+                  href: assetHref(a.slug),
+                  marketCapUsd: coinPrices.get(a.asset_id)?.market_cap_usd,
+                }))}
+              />
+            )}
+            <div className="overflow-x-auto">
+              <table className="divide-line min-w-full divide-y text-sm">
+                <thead>
+                  <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
+                    <Th>Code</Th>
+                    {pricing && <Th align="right">Price</Th>}
+                    {pricing && <Th align="right">24h %</Th>}
+                    {pricing && <Th align="right">24h volume</Th>}
+                    {pricing && <Th align="right">Market cap</Th>}
+                    <Th align="right">Circulating</Th>
+                    <Th align="right">Observations</Th>
+                    <Th align="right">First seen</Th>
+                  </tr>
+                </thead>
+                <tbody className="divide-line-subtle divide-y">
+                  {assets.map((a) => {
+                    const coin = coinPrices.get(a.asset_id);
+                    return (
+                      <tr key={a.asset_id} className="hover:bg-surface-muted">
+                        <Td>
                           <Link
-                            href={`/markets?asset=${encodeURIComponent(a.asset_id)}`}
-                            className="text-brand-600 ml-2 text-[11px] hover:underline"
-                            title={`All markets for ${a.code}`}
+                            href={assetHref(a.slug)}
+                            className="hover:text-brand-600 font-medium"
                           >
-                            markets →
+                            {a.code}
                           </Link>
+                          <span className="text-ink-muted ml-2 font-mono text-[11px]">
+                            {a.slug}
+                          </span>
+                          {routeAvailable('/markets') && (
+                            <Link
+                              href={`/markets?asset=${encodeURIComponent(a.asset_id)}`}
+                              className="text-brand-600 ml-2 text-[11px] hover:underline"
+                              title={`All markets for ${a.code}`}
+                            >
+                              markets →
+                            </Link>
+                          )}
+                        </Td>
+                        {pricing && (
+                          <Td align="right">
+                            <PriceCell raw={coin?.price_usd} />
+                          </Td>
                         )}
-                      </Td>
-                      {pricing && (
+                        {pricing && (
+                          <Td align="right">
+                            <ChangeCell raw={coin?.change_24h_pct} />
+                          </Td>
+                        )}
+                        {pricing && (
+                          <Td align="right">
+                            <UsdVolumeCell raw={coin?.volume_24h_usd} />
+                          </Td>
+                        )}
+                        {pricing && (
+                          <Td align="right">
+                            <UsdVolumeCell raw={coin?.market_cap_usd} />
+                          </Td>
+                        )}
                         <Td align="right">
-                          <PriceCell raw={coin?.price_usd} />
-                        </Td>
-                      )}
-                      {pricing && (
-                        <Td align="right">
-                          <ChangeCell raw={coin?.change_24h_pct} />
-                        </Td>
-                      )}
-                      {pricing && (
-                        <Td align="right">
-                          <UsdVolumeCell raw={coin?.volume_24h_usd} />
-                        </Td>
-                      )}
-                      {pricing && (
-                        <Td align="right">
-                          <UsdVolumeCell raw={coin?.market_cap_usd} />
-                        </Td>
-                      )}
-                      <Td align="right">
-                        <span className="font-mono tabular-nums">
-                          {/* Scale by the asset's OWN decimals — the old
+                          <span className="font-mono tabular-nums">
+                            {/* Scale by the asset's OWN decimals — the old
                               /1e7 hardcode misstated supply for any
                               non-7-decimals SEP-41 asset. */}
-                          {coin?.circulating_supply
-                            ? formatCompactUnits(
-                                coin.circulating_supply,
-                                coin.decimals ?? 7,
-                              )
-                            : '—'}
-                        </span>
-                      </Td>
-                      <Td align="right">
-                        <span className="font-mono tabular-nums">
-                          {formatCompact(a.observation_count)}
-                        </span>
-                      </Td>
-                      <Td align="right">
-                        <span className="font-mono text-xs">
-                          #{a.first_seen_ledger.toLocaleString('en-US')}
-                        </span>
-                      </Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                            {coin?.circulating_supply
+                              ? formatCompactUnits(
+                                  coin.circulating_supply,
+                                  coin.decimals ?? 7,
+                                )
+                              : '—'}
+                          </span>
+                        </Td>
+                        <Td align="right">
+                          <span className="font-mono tabular-nums">
+                            {formatCompact(a.observation_count)}
+                          </span>
+                        </Td>
+                        <Td align="right">
+                          <span className="font-mono text-xs">
+                            #{a.first_seen_ledger.toLocaleString('en-US')}
+                          </span>
+                        </Td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </Panel>
     </Container>
