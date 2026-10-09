@@ -123,8 +123,7 @@ func TestHandleCoverageVerdicts_SourceWithoutVerdictCountsInDenominator(t *testi
 }
 
 // TestHandleCoverageVerdicts_LakeCompleteDecouplesFromComplete pins
-// the ADR-0033/0034 two-axis verdict wire mapping (decision brief
-// notes/DECISION-genesis-complete-verdict-2026-07-16.md, Option B): a
+// the ADR-0033/0034 two-axis verdict wire mapping: a
 // source whose certified ClickHouse archive is genesis-complete but
 // whose served-tier projection reconcile fails (soroswap trades are
 // retention-scoped per ADR-0034) must serve lake_complete=true,

@@ -15,7 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestRefreshContinuousAggregate_PerCallBound is the W8-19 proof on a
+// TestRefreshContinuousAggregate_PerCallBound proves, on a
 // real TimescaleDB: a refresh_continuous_aggregate CALL made through
 // the store runs under a per-CALL statement_timeout, and when that
 // bound fires the caller gets a typed error naming the view and the

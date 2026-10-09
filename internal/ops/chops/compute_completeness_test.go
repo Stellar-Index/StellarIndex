@@ -332,8 +332,7 @@ func TestReconciliationCatalogue_AggregateWaiversAreBounded(t *testing.T) {
 }
 
 // TestCombineWatermark_LakeDecouplesFromProjection pins the
-// ADR-0033/0034 two-axis verdict (two-axis decision brief
-// notes/DECISION-genesis-complete-verdict-2026-07-16.md, Option B): a
+// ADR-0033/0034 two-axis verdict: a
 // source whose substrate+recognition watermark reaches tip (srW.Complete
 // = lake_complete = true) but whose served-tier projection fails
 // (projOK = false) must report complete=false while lake_complete stays
@@ -582,8 +581,7 @@ func TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict(t *testing.T
 
 // TestProjectionClaim_DetailAlwaysStatesTheVerifiedRange — `complete=true` must
 // never read as a genesis-to-tip claim. The served tier legitimately holds no
-// sdex trades below ledger 61,609,957 (they were never projected — see
-// notes/DECISION-genesis-complete-verdict-2026-07-16.md), so the verdict has to
+// sdex trades below ledger 61,609,957 (they were never projected), so the verdict has to
 // say what it actually reconciled; the genesis claim is the separate
 // lake_complete axis.
 func TestProjectionClaim_DetailAlwaysStatesTheVerifiedRange(t *testing.T) {
