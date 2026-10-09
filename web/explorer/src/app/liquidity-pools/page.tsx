@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { Breadcrumbs, Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 import { NativePoolsPanel } from './NativePoolsPanel';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -25,51 +25,52 @@ export default function LiquidityPoolsPage() {
       {/* Prose stays reading-width; the live pools data below gets the full frame
           (FEC A1-5: frame wide, copy narrow — the /pricing pattern). */}
       <div className="max-w-3xl space-y-8">
-        <header className="space-y-3">
-          <Breadcrumbs
-            items={[
-              { label: 'Home', href: '/' },
-              { label: 'Native liquidity pools' },
-            ]}
-          />
-          <h1 className="text-3xl font-semibold tracking-tight">
-            Native liquidity pools
-          </h1>
-          <p className="text-ink-body text-base">
-            Protocol-native (CAP-38) constant-product pools, settled at ledger
-            close with no smart contract. Soroban AMMs (Soroswap, Aquarius,
-            Phoenix, Comet) are on{' '}
-            <Link href="/amm" className="text-brand-600 font-medium underline">
-              AMM protocols
-            </Link>
-            .
-          </p>
-          <details className="text-ink-muted text-xs">
-            <summary className="cursor-pointer">About these pools</summary>
-            <ul className="mt-2 space-y-1">
-              <li>
-                Path payments route through native pools, so their prices fold
-                into the aggregate VWAP. Trades appear in the{' '}
-                <Link href="/markets" className="underline">
-                  aggregate markets
-                </Link>
-                .
-              </li>
-              <li>
-                Reserves are read from each pool&apos;s ledger entry in the
-                lake, with a constant-product depth estimate.
-              </li>
-              <li>
-                Soroban per-pool reserve and depth views exist only for{' '}
-                <Link href="/dexes/soroswap" className="underline">
-                  Soroswap
-                </Link>
-                , the one venue whose pool storage layout is verified; each DEX
-                page states what is served.
-              </li>
-            </ul>
-          </details>
-        </header>
+        <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Native liquidity pools' },
+          ]}
+          title="Native liquidity pools"
+          description={
+            <>
+              Protocol-native (CAP-38) constant-product pools, settled at ledger
+              close with no smart contract. Soroban AMMs (Soroswap, Aquarius,
+              Phoenix, Comet) are on{' '}
+              <Link
+                href="/amm"
+                className="text-brand-600 font-medium underline"
+              >
+                AMM protocols
+              </Link>
+              .
+            </>
+          }
+        />
+        <details className="text-ink-muted text-xs">
+          <summary className="cursor-pointer">About these pools</summary>
+          <ul className="mt-2 space-y-1">
+            <li>
+              Path payments route through native pools, so their prices fold
+              into the aggregate VWAP. Trades appear in the{' '}
+              <Link href="/markets" className="underline">
+                aggregate markets
+              </Link>
+              .
+            </li>
+            <li>
+              Reserves are read from each pool&apos;s ledger entry in the lake,
+              with a constant-product depth estimate.
+            </li>
+            <li>
+              Soroban per-pool reserve and depth views exist only for{' '}
+              <Link href="/dexes/soroswap" className="underline">
+                Soroswap
+              </Link>
+              , the one venue whose pool storage layout is verified; each DEX
+              page states what is served.
+            </li>
+          </ul>
+        </details>
       </div>
 
       <NativePoolsPanel />

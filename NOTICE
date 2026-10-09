@@ -3,6 +3,8 @@ Licensed under the Apache License, Version 2.0 (see LICENSE).
 
 Third-party notices
 
+The full list with license texts is THIRD_PARTY_NOTICES.txt (generated).
+
 github.com/xdrpp/goxdr v0.1.1
   Copyright (C) 2018-19 David Mazieres. Dual-licensed: GPL version 3 or
   later, or the Apache License version 2.0, at the recipient's option

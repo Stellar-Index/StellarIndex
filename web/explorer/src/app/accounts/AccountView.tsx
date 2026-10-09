@@ -13,12 +13,7 @@ import {
   DirectoryLabel,
   type DirectoryInfo,
 } from '@/components/DirectoryLabel';
-import {
-  Container,
-  Breadcrumbs,
-  Callout,
-  TxStatusBadge,
-} from '@/components/ui';
+import { Container, PageHeader, Callout, TxStatusBadge } from '@/components/ui';
 import { AccountPositions } from './AccountPositions';
 import { AccountMovementsPanel } from './AccountMovements';
 import { AccountDefiPositionsPanel } from './AccountDefiPositions';
@@ -301,14 +296,15 @@ export function AccountsDirectoryHeader() {
   const q = useAccountsDirectoryQuery();
   const isNative = rankedInNative(q.data);
   return (
-    <header className="space-y-2">
-      <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
-      <p className="text-ink-body max-w-3xl text-sm">
-        {isNative
+    <PageHeader
+      breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Accounts' }]}
+      title="Accounts"
+      description={
+        isNative
           ? `Largest accounts on Stellar ${CURRENT_NETWORK.label}, ranked by native XLM balance.`
-          : 'Richest accounts on Stellar, ranked by total USD value of priced holdings.'}
-      </p>
-    </header>
+          : 'Richest accounts on Stellar, ranked by total USD value of priced holdings.'
+      }
+    />
   );
 }
 
@@ -658,16 +654,14 @@ function Shell({
 }) {
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Accounts', href: '/accounts' },
-            { label: id ? `${id.slice(0, 8)}…${id.slice(-6)}` : 'account' },
-          ]}
-        />
-        <h1 className="text-2xl font-semibold tracking-tight">Account</h1>
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Accounts', href: '/accounts' },
+          { label: id ? `${id.slice(0, 8)}…${id.slice(-6)}` : 'account' },
+        ]}
+        title="Account"
+      />
       {children}
     </Container>
   );

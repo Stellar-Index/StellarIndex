@@ -293,6 +293,11 @@ jobs:
           # fails the step for no reason. `sed -n` drains.
           tar -tzf dist/migrations.tar.gz | sed -n '1,5p'
 
+      - name: Ship THIRD_PARTY_NOTICES.txt with the binaries
+        # Copied before SHA256SUMS so the notices are covered by the same
+        # signature as the binaries they describe.
+        run: cp THIRD_PARTY_NOTICES.txt dist/
+
       - name: Compute SHA256SUMS
         working-directory: dist
         run: |

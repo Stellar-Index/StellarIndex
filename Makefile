@@ -488,6 +488,10 @@ docs-api: ## Regenerate API reference from openapi/stellar-index.v1.yaml (Scalar
 docs-postman: ## Regenerate examples/postman/stellar-index.postman_collection.json from the OpenAPI spec
 	@./scripts/dev/docs-postman.sh
 
+.PHONY: third-party-notices
+third-party-notices: ## Regenerate THIRD_PARTY_NOTICES.txt from Go + web/explorer production deps (needs pnpm install)
+	@./scripts/dev/third-party-notices.py
+
 .PHONY: docs-config
 docs-config: ## Regenerate config reference from struct tags
 	@$(GO) run ./cmd/stellarindex-ops docs-config > docs/reference/config/README.md
