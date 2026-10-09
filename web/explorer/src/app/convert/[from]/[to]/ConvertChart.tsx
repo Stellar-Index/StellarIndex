@@ -55,7 +55,7 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
   const query = useQuery<{ time: number; value: number; raw: string }[], Error>(
     {
       queryKey: ['/v1/chart', from, to, tf, spec.granularity],
-      // fiat:{from}→fiat:{to} OHLC is empty on the lean test nets (no FX) — gate.
+      // {from}→fiat:{to} OHLC is empty on the lean test nets (no FX) — gate.
       enabled: CURRENT_NETWORK.pricing,
       queryFn: async ({ signal }) => {
         const url = `${API_BASE_URL}/v1/chart?asset=${encodeURIComponent(convertAssetId(from))}&quote=fiat:${encodeURIComponent(to)}&timeframe=${tf}&granularity=${spec.granularity}`;
