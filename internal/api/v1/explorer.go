@@ -174,6 +174,15 @@ func (s *Server) PrewarmContractsDirectory(ctx context.Context) {
 	s.explorerHandler.PrewarmContractsDirectory(ctx)
 }
 
+// PrewarmContractStats primes the /v1/contracts/stats snapshot; see
+// [explorer.Handler.PrewarmContractStats].
+func (s *Server) PrewarmContractStats(ctx context.Context) {
+	if s.explorerHandler == nil {
+		return
+	}
+	s.explorerHandler.PrewarmContractStats(ctx)
+}
+
 // PrewarmNetworkThroughput primes the /v1/network/throughput daily
 // series. Exposed on the Server so cmd/stellarindex-api can drive it from
 // the same 5-minute prewarm loop as the wealth ranking; see

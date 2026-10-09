@@ -261,6 +261,7 @@ func lakeDownCases() []lakeDownCase {
 		{"LedgerOperations", "/v1/ledgers/42/operations", map[string]string{"seq": "42"}, (*Handler).LedgerOperations},
 		{"TxDetail", "/v1/tx/" + validTestTxHash, map[string]string{"hash": validTestTxHash}, (*Handler).TxDetail},
 		{"ContractsList", "/v1/contracts", nil, (*Handler).ContractsList},
+		{"ContractStats", "/v1/contracts/stats", nil, (*Handler).ContractStats},
 		{"ContractDetail", "/v1/contracts/" + validTestContract, contract, (*Handler).ContractDetail},
 		{"ContractWasm", "/v1/contracts/" + validTestContract + "/wasm", contract, (*Handler).ContractWasm},
 		{"ContractInteractions", "/v1/contracts/" + validTestContract + "/interactions", contract, (*Handler).ContractInteractions},
@@ -338,4 +339,12 @@ func TestExplorerReads_LakeDownCoversEveryRoute(t *testing.T) {
 			t.Errorf("notLakeBacked names %s, which is not a route handler on Handler", name)
 		}
 	}
+}
+
+func (downReader) ContractStats(context.Context) (clickhouse.ContractStats, error) {
+	return clickhouse.ContractStats{}, errLakeDown
+}
+
+func (downReader) ContractTypes(context.Context, []string) (map[string]bool, error) {
+	return nil, errLakeDown
 }

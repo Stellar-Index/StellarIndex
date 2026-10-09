@@ -674,7 +674,7 @@ func seedBoundedLabelSeriesTail() {
 		SDEXOrderBookMaintainTotal.WithLabelValues(outcome)
 	}
 	for _, cache := range []string{
-		"accounts_wealth", "asset_holders", "contract_detail", "contracts_dir",
+		"accounts_wealth", "asset_holders", "contract_detail", "contract_stats", "contracts_dir",
 		"network_throughput", "op_type_stats", "protocol_bespoke", "ttl_liveness",
 	} {
 		for _, outcome := range []string{"ok", "error"} {

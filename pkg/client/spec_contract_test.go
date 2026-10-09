@@ -139,6 +139,7 @@ var uncoveredOperations = map[string]string{
 	"GET /tx/{hash}":                            "explorer surface — SDK is pricing-first",
 	"GET /operations":                           "explorer surface — SDK is pricing-first",
 	"GET /contracts":                            "explorer surface — SDK is pricing-first",
+	"GET /contracts/stats":                      "explorer surface — SDK is pricing-first",
 	"GET /contracts/{contract_id}":              "explorer surface — SDK is pricing-first",
 	"GET /contracts/{contract_id}/wasm":         "explorer surface — SDK is pricing-first",
 	"GET /contracts/{contract_id}/interactions": "explorer surface — SDK is pricing-first",

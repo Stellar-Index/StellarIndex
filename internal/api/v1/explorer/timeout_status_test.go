@@ -311,3 +311,11 @@ func TestReadTimedOut(t *testing.T) {
 		}
 	})
 }
+
+func (r *timeoutReader) ContractStats(context.Context) (clickhouse.ContractStats, error) {
+	return clickhouse.ContractStats{}, context.DeadlineExceeded
+}
+
+func (r *timeoutReader) ContractTypes(context.Context, []string) (map[string]bool, error) {
+	return nil, context.DeadlineExceeded
+}

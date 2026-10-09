@@ -24,8 +24,8 @@ route absent on a test net is correct, not a gap.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **141** |
-| Level 3 — reachable | **111** |
+| Paths in the OpenAPI contract | **142** |
+| Level 3 — reachable | **112** |
 | Level 2 — consumed but unreachable | **0** |
 | Level 1 — not consumed | **26** |
 | Deliberately excluded (operational) | **4** |
@@ -194,6 +194,7 @@ call site; `hooks.ts:useX` is a shared hook.
 | `/tx/{hash}` | GET | 3 | app/operation/OperationView.tsx |
 | `/operations` | GET | 3 | app/operations/OperationsView.tsx |
 | `/contracts` | GET | 3 | app/contracts/ContractsView.tsx |
+| `/contracts/stats` | GET | 3 | app/contracts/ContractsView.tsx |
 | `/contracts/{contract_id}` | GET | 3 | app/contract/ContractView.tsx |
 | `/contracts/{contract_id}/wasm` | GET | 3 | app/contract/ContractView.tsx |
 | `/contracts/{contract_id}/interactions` | GET | 3 | app/contract/ContractView.tsx |

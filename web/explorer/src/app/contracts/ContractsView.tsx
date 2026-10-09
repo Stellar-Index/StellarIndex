@@ -10,7 +10,16 @@ import { useSACWrappers } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 import { isNativeXlmSac } from '@/lib/asset-label';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
-import { Container, PageHeader, Segmented } from '@/components/ui';
+import { StackedColumns } from '@/components/charts/Bars';
+import {
+  Badge,
+  Container,
+  PageHeader,
+  Segmented,
+  Stat,
+  StatCell,
+  StatGrid,
+} from '@/components/ui';
 import { categoryTone, protocolMeta } from '../protocols/registry';
 import { formatTimestamp } from '../explorer-shared';
 import type { paths } from '@/api/types';
@@ -19,6 +28,11 @@ import type { paths } from '@/api/types';
 // contract (src/api/types.ts, `make web-generate-api`).
 type DirectoryResp = NonNullable<
   paths['/contracts']['get']['responses'][200]['content']['application/json']['data']
+>;
+
+// GET /v1/contracts/stats response body.
+type StatsResp = NonNullable<
+  paths['/contracts/stats']['get']['responses'][200]['content']['application/json']['data']
 >;
 
 // Mirrors internal/api/v1/protocols.go ProtocolView — the slice the registry
@@ -79,6 +93,8 @@ export function ContractsView() {
         </span>
       </div>
 
+      <DeploymentStats />
+
       {view === 'active' ? (
         <MostActivePanel sacMap={sacMap} />
       ) : (
@@ -91,6 +107,73 @@ export function ContractsView() {
         directly at <code className="font-mono">/contracts/&lt;C…&gt;</code>.
       </p>
     </Container>
+  );
+}
+
+/** Type label for a directory row: protocol attribution wins over the on-chain kind. */
+export function contractTypeBadge(c: {
+  protocol?: string | null;
+  type?: string | null;
+}) {
+  if (c.protocol) {
+    return (
+      <Link href={`/protocols/${encodeURIComponent(c.protocol)}`}>
+        <Badge tone="brand">Protocol · {c.protocol}</Badge>
+      </Link>
+    );
+  }
+  if (c.type === 'sac') return <Badge tone="neutral">SAC</Badge>;
+  if (c.type === 'wasm') return <Badge tone="neutral">Contract</Badge>;
+  return <span className="text-ink-faint">—</span>;
+}
+
+export function DeploymentStats() {
+  const { data } = useQuery<StatsResp>({
+    queryKey: ['/v1/contracts/stats'],
+    staleTime: 300_000,
+    retry: false,
+    queryFn: async () => {
+      const env = await apiGet<{ data: StatsResp }>('/v1/contracts/stats');
+      return env.data;
+    },
+  });
+  if (!data) return null;
+
+  const prefix = data.lower_bound ? '≥ ' : '';
+  const n = (v: number) => `${prefix}${formatCompact(v)}`;
+  return (
+    <div className="space-y-4">
+      <StatGrid cols={4}>
+        <StatCell>
+          <Stat label="Total deployed" value={n(data.total_deployed)} />
+        </StatCell>
+        <StatCell>
+          <Stat label="SAC" value={n(data.total_sac)} />
+        </StatCell>
+        <StatCell>
+          <Stat label="WASM" value={n(data.total_wasm)} />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="Active (90d)"
+            value={
+              data.active_90d == null ? '—' : formatCompact(data.active_90d)
+            }
+          />
+        </StatCell>
+      </StatGrid>
+      <StackedColumns
+        ariaLabel="Contracts deployed per month"
+        series={[
+          { label: 'SAC', color: 'var(--color-brand-500)' },
+          { label: 'WASM', color: 'var(--color-up)' },
+        ]}
+        buckets={data.deployments.map((d) => ({
+          label: d.month ?? '',
+          values: [d.sac ?? 0, d.wasm ?? 0],
+        }))}
+      />
+    </div>
   );
 }
 
@@ -165,7 +248,7 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
                   Contract
                 </th>
                 <SortableTh
-                  label="Protocol"
+                  label="Type"
                   sortKey="protocol"
                   sort={cSort}
                   onSort={cToggle}
@@ -217,18 +300,7 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
                       );
                     })()}
                   </td>
-                  <td className="px-4 py-3">
-                    {c.protocol ? (
-                      <Link
-                        href={`/protocols/${encodeURIComponent(c.protocol)}`}
-                        className="bg-brand-50 text-brand-700 hover:bg-brand-100 inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase"
-                      >
-                        {c.protocol}
-                      </Link>
-                    ) : (
-                      <span className="text-ink-faint">—</span>
-                    )}
-                  </td>
+                  <td className="px-4 py-3">{contractTypeBadge(c)}</td>
                   <td className="text-ink-body px-4 py-3 text-right font-mono tabular-nums">
                     {formatCompact(c.events ?? 0)}
                   </td>
