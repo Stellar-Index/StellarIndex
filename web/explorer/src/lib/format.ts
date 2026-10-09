@@ -58,6 +58,27 @@ export function formatCompactUnits(
   return COMPACT_FORMATTER.format(Number(q) / 100);
 }
 
+const USD_WHOLE_FORMATTER = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  maximumFractionDigits: 0,
+});
+
+/**
+ * formatUsdWhole — a decimal string as whole dollars ("$1,235"), rounded
+ * half away from zero in BigInt so a figure above 2^53 keeps every digit.
+ * "—" for an absent or non-decimal value.
+ */
+export function formatUsdWhole(raw: string | null | undefined): string {
+  if (raw == null) return '—';
+  const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(raw.trim());
+  if (!m) return '—';
+  const [, sign, whole, frac = ''] = m;
+  let n = BigInt(whole);
+  if (frac.charCodeAt(0) >= 53) n += 1n;
+  return USD_WHOLE_FORMATTER.format(sign ? -n : n);
+}
+
 /**
  * decimalOrNull — a best-effort decimal wire string (a USD figure) as a JS
  * number for chart geometry, or null when it is absent or not a number:

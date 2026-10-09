@@ -610,3 +610,36 @@ func TestDecoder_Stake_PopulatesEventIndex(t *testing.T) {
 		t.Errorf("EventIndex = %d, want 20 (first field-event's index, F-1324)", se.Change.EventIndex)
 	}
 }
+
+// TestDecoder_WithdrawLiquidity_twoInOneOp mirrors ledger 63767534: one op
+// withdraws twice from the same pool (field events 6-9 and 14-17). Both
+// actions must emit, each keyed by its own first EventIndex.
+func TestDecoder_WithdrawLiquidity_twoInOneOp(t *testing.T) {
+	restore := installAddressI128Fakes(t)
+	defer restore()
+	d := newTestDecoder()
+
+	fields := []struct{ topic, body string }{
+		{TopicSymbolWLSender, "addr:" + plSender},
+		{TopicSymbolWLSharesAmount, "i128:7000000"},
+		{TopicSymbolWLReturnAmountA, "i128:99000000"},
+		{TopicSymbolWLReturnAmountB, "i128:4900000"},
+	}
+	var got []int
+	for _, start := range []int{6, 14} {
+		for i, f := range fields {
+			ev := wlField(f.topic, f.body, wlTxHash)
+			ev.EventIndex = start + i
+			emitted, err := d.Decode(ev)
+			if err != nil {
+				t.Fatalf("event %d (%s): %v", ev.EventIndex, f.topic, err)
+			}
+			for _, e := range emitted {
+				got = append(got, e.(LiquidityEvent).Change.EventIndex)
+			}
+		}
+	}
+	if len(got) != 2 || got[0] != 6 || got[1] != 14 {
+		t.Fatalf("emitted EventIndex = %v, want [6 14]", got)
+	}
+}

@@ -13,6 +13,7 @@ import {
 import {
   changePct,
   formatCompact,
+  formatCompactUnits,
   formatPriceSmall,
   formatSubunitPrice,
   multiplyDecimalStrings,
@@ -1323,7 +1324,7 @@ function OverviewBody({
                       <td className="px-4 py-3 text-right">
                         {m.volume_24h_usd ? (
                           <span className="font-mono tabular-nums">
-                            ${fmtCompact(Number(m.volume_24h_usd))}
+                            ${formatCompactUnits(m.volume_24h_usd)}
                           </span>
                         ) : (
                           <span className="text-ink-faint">—</span>
@@ -1423,10 +1424,8 @@ function parsePrice(raw: string | undefined): number | null {
 }
 
 function fmtUsd(raw: string | null | undefined): string {
-  if (!raw) return '—';
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return '—';
-  return `$${formatCompact(n)}`;
+  const s = formatCompactUnits(raw || null);
+  return s === '—' ? s : `$${s}`;
 }
 
 // fmtNum renders a RAW smallest-unit supply string (circulating / total
@@ -1434,10 +1433,7 @@ function fmtUsd(raw: string | null | undefined): string {
 // native, 0 for catalogue / fiat). market_cap / fdv arrive already
 // server-pre-scaled and go through fmtUsd, which must NOT divide.
 function fmtNum(raw: string | null | undefined, decimals: number): string {
-  if (!raw) return '—';
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return '—';
-  return formatCompact(n / 10 ** decimals);
+  return formatCompactUnits(raw || null, decimals);
 }
 
 // athDrawdown computes the % drop from ATH given the current

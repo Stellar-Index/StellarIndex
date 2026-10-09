@@ -10,8 +10,9 @@ import { HBarList, PairedBars } from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
 import {
   decimalOrNull,
-  formatCompact,
+  compareDecimalStrings,
   formatCompactUnits,
+  formatUsdWhole,
   sumDecimalStrings,
 } from '@/lib/format';
 import { scaledUnits } from '../../explorer-shared';
@@ -76,8 +77,16 @@ export function PoolReserves({ pool }: { pool: string }) {
 
   const reserves = q.data?.reserves ?? [];
   const priced = reserves
-    .filter((rv) => rv.supplied_usd != null && Number(rv.supplied_usd) > 0)
-    .sort((a, b) => Number(b.supplied_usd) - Number(a.supplied_usd));
+    .filter(
+      (rv) =>
+        rv.supplied_usd != null &&
+        compareDecimalStrings(rv.supplied_usd, '0') === 1,
+    )
+    .sort(
+      (a, b) =>
+        compareDecimalStrings(b.supplied_usd ?? '0', a.supplied_usd ?? '0') ??
+        0,
+    );
   // The served tvl_usd is this same Σ supplied_usd; the exact client sum
   // only stands in when the pool response omits it.
   const totalUsd =
@@ -108,7 +117,7 @@ export function PoolReserves({ pool }: { pool: string }) {
                 ≥{' '}
               </span>
             )}
-            {usdFmt.format(Number(q.data.tvl_usd))}
+            {formatUsdWhole(q.data.tvl_usd)}
           </span>{' '}
           <span className="text-ink-muted">
             {lowerBound ? (
@@ -122,19 +131,21 @@ export function PoolReserves({ pool }: { pool: string }) {
           </span>
         </div>
       )}
-      {priced.length > 0 && totalUsd != null && Number(totalUsd) > 0 && (
-        <DonutChart
-          data={priced.map((rv) => ({
-            id: rv.asset,
-            label: shortAssetText(rv.asset),
-            value: Number(rv.supplied_usd),
-            decimal: rv.supplied_usd,
-          }))}
-          centerLabel={`${lowerBound ? '≥ ' : ''}$${formatCompactUnits(totalUsd)}`}
-          centerSub="TVL"
-          formatValue={(n) => usdFmt.format(n)}
-        />
-      )}
+      {priced.length > 0 &&
+        totalUsd != null &&
+        compareDecimalStrings(totalUsd, '0') === 1 && (
+          <DonutChart
+            data={priced.map((rv) => ({
+              id: rv.asset,
+              label: shortAssetText(rv.asset),
+              value: Number(rv.supplied_usd),
+              decimal: rv.supplied_usd,
+            }))}
+            centerLabel={`${lowerBound ? '≥ ' : ''}$${formatCompactUnits(totalUsd)}`}
+            centerSub="TVL"
+            formatValue={(n) => usdFmt.format(n)}
+          />
+        )}
       {/* ── Real per-reserve bars (replaces the old 16px in-cell strips) ── */}
       {priced.length > 0 && (
         <div className="border-line/60 space-y-4 border-y py-4">
@@ -146,7 +157,7 @@ export function PoolReserves({ pool }: { pool: string }) {
               ariaLabel={`Supplied vs borrowed per priced reserve: ${priced
                 .map(
                   (rv) =>
-                    `${shortAssetText(rv.asset)} $${formatCompact(Number(rv.supplied_usd))} supplied, ${rv.borrowed_usd != null ? `$${formatCompact(Number(rv.borrowed_usd))}` : 'unpriced'} borrowed`,
+                    `${shortAssetText(rv.asset)} $${formatCompactUnits(rv.supplied_usd)} supplied, ${rv.borrowed_usd != null ? `$${formatCompactUnits(rv.borrowed_usd)}` : 'unpriced'} borrowed`,
                 )
                 .join('; ')}`}
               aLabel="Supplied"
@@ -158,10 +169,10 @@ export function PoolReserves({ pool }: { pool: string }) {
                 label: shortAssetText(rv.asset),
                 a: Number(rv.supplied_usd),
                 b: decimalOrNull(rv.borrowed_usd),
-                aDisplay: `$${formatCompact(Number(rv.supplied_usd))}`,
+                aDisplay: `$${formatCompactUnits(rv.supplied_usd)}`,
                 bDisplay:
                   rv.borrowed_usd != null
-                    ? `$${formatCompact(Number(rv.borrowed_usd))}`
+                    ? `$${formatCompactUnits(rv.borrowed_usd)}`
                     : '—',
                 title: rv.asset,
               }))}
@@ -283,7 +294,7 @@ export function PoolReserves({ pool }: { pool: string }) {
                       <span
                         title={`${tokenAmount(rv.supplied, rv.decimals)} tokens`}
                       >
-                        {usdFmt.format(Number(rv.supplied_usd))}
+                        {formatUsdWhole(rv.supplied_usd)}
                       </span>
                     ) : (
                       tokenAmount(rv.supplied, rv.decimals)
@@ -291,7 +302,7 @@ export function PoolReserves({ pool }: { pool: string }) {
                   </td>
                   <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
                     {rv.borrowed_usd
-                      ? usdFmt.format(Number(rv.borrowed_usd))
+                      ? formatUsdWhole(rv.borrowed_usd)
                       : tokenAmount(rv.borrowed, rv.decimals)}
                   </td>
                   {/* The old 16px in-cell strip is superseded by the real
