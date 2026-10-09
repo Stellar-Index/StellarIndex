@@ -7,7 +7,7 @@ import { AnomaliesFeed } from './AnomaliesFeed';
 
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
-import { Breadcrumbs, Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 export const metadata: Metadata = {
   title: 'Anomalies — freeze and outlier timeline',
   description:
@@ -54,7 +54,10 @@ export default function AnomaliesPage() {
   if (!routeAvailable('/anomalies')) {
     return (
       <Container className="space-y-6 py-8">
-        <h1 className="text-3xl font-semibold tracking-tight">Anomalies</h1>
+        <PageHeader
+          breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Anomalies' }]}
+          title="Anomalies"
+        />
         <NetworkUnavailable href="/anomalies" />
       </Container>
     );
@@ -62,16 +65,17 @@ export default function AnomaliesPage() {
 
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-2">
-        <Breadcrumbs
-          items={[{ label: 'Home', href: '/' }, { label: 'Anomalies' }]}
-        />
-        <h1 className="text-3xl font-semibold tracking-tight">Anomalies</h1>
-        <p className="text-ink-body max-w-3xl text-sm">
-          Every clear→firing freeze, with reason, recovery and the frozen value
-          still served via <code className="font-mono text-xs">/v1/price</code>.
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Anomalies' }]}
+        title="Anomalies"
+        description={
+          <>
+            Every clear→firing freeze, with reason, recovery and the frozen
+            value still served via{' '}
+            <code className="font-mono text-xs">/v1/price</code>.
+          </>
+        }
+      />
 
       <AnomaliesFeed />
 
