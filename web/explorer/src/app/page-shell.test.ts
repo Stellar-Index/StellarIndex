@@ -1,5 +1,5 @@
 // Guard: every page renders the shared PageHeader, directly or through the
-// local component it renders (one import level), so a new page cannot ship
+// local component it renders (two import levels), so a new page cannot ship
 // without the common breadcrumbs + title shell.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -16,15 +16,18 @@ const EXEMPT: Record<string, string> = {
   'page.tsx': 'home page has its own hero',
   'auth/callback/page.tsx':
     'transient spinner while the OAuth callback completes',
-  'ledger/page.tsx': 'legacy ?id= shim, client-redirects to /ledgers/[seq]',
-  'tx/page.tsx': 'legacy ?id= shim, client-redirects to /transactions/[hash]',
 };
 
 /**
- * PENDING: pages converted by open PRs #3033-#3036. Delete this block once
+ * PENDING: pages converted by open PRs #3033-#3036 (found via their View components). Delete this block once
  * those merge; the test then enforces them.
  */
 const PENDING: string[] = [
+  'accounts/page.tsx',
+  'status/page.tsx',
+  'sdex/page.tsx',
+  'ledger/page.tsx',
+  'tx/page.tsx',
   'mev/page.tsx',
   'pricing/page.tsx',
   'signup/page.tsx',
@@ -35,14 +38,6 @@ const PENDING: string[] = [
   'status/incident/[slug]/page.tsx',
   'transactions/page.tsx',
   'dev/primitives/page.tsx',
-];
-
-/** TODO: not yet converted and not in any open PR; convert, then delete. */
-const UNCONVERTED: string[] = [
-  'accounts/page.tsx',
-  'sdex/page.tsx',
-  'signin/page.tsx',
-  'status/page.tsx',
 ];
 
 function pages(dir: string): string[] {
@@ -66,13 +61,14 @@ function resolveImport(from: string, spec: string): string | null {
   return null;
 }
 
-function rendersShell(file: string): boolean {
+function rendersShell(file: string, depth = 2): boolean {
   const src = readFileSync(file, 'utf8');
   if (/\bPageHeader\b/.test(src)) return true;
+  if (depth === 0) return false;
   const specs = [...src.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]);
   return specs.some((s) => {
     const f = resolveImport(file, s);
-    return f !== null && /\bPageHeader\b/.test(readFileSync(f, 'utf8'));
+    return f !== null && rendersShell(f, depth - 1);
   });
 }
 
@@ -85,7 +81,7 @@ function onlyRedirects(src: string): boolean {
 
 describe('page shell', () => {
   it('every page renders PageHeader', () => {
-    const skip = new Set([...Object.keys(EXEMPT), ...PENDING, ...UNCONVERTED]);
+    const skip = new Set([...Object.keys(EXEMPT), ...PENDING]);
     const bad = pages(APP)
       .map((f) => relative(APP, f))
       .filter((rel) => !rel.startsWith('embed/') && !skip.has(rel))
@@ -102,7 +98,7 @@ describe('page shell', () => {
   });
 
   it('allowlist entries still exist', () => {
-    for (const rel of [...Object.keys(EXEMPT), ...PENDING, ...UNCONVERTED]) {
+    for (const rel of [...Object.keys(EXEMPT), ...PENDING]) {
       expect(existsSync(join(APP, rel)), rel).toBe(true);
     }
   });

@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { PageHeader } from '@/components/ui';
+
 import { SignInForm } from './SignInForm';
 
 export const metadata: Metadata = {
@@ -19,12 +21,11 @@ export default function SignInPage() {
     // rhythm is harmonized with /signup (py-12 sm:py-16); widths diverge
     // on purpose. Allowlisted for the census-2 route-frame tripwire.
     <div className="mx-auto max-w-md space-y-6 px-6 py-12 sm:py-16">
-      <header className="space-y-2 text-center">
-        <h1 className="text-3xl font-semibold tracking-tight">Sign in</h1>
-        <p className="text-ink-body text-sm">
-          Magic-link email — no passwords.
-        </p>
-      </header>
+      <PageHeader
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Sign in' }]}
+        title="Sign in"
+        description="Magic-link email — no passwords."
+      />
       <SignInForm mode="signin" />
       <p className="text-ink-muted text-center text-sm">
         Don&apos;t have an account?{' '}
