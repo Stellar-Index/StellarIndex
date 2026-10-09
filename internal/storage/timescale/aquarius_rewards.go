@@ -138,8 +138,8 @@ func (s *Store) InsertAquariusRewardsEvent(ctx context.Context, e AquariusReward
 
 // ─── Read side: rewards-gauge analytics for the Aquarius bespoke block ───
 //
-// These reads serve the full-history aquarius_rewards_events table (7.3M+
-// rows when measured) that this file's Insert side writes, for
+// These reads serve the full-history aquarius_rewards_events table (millions of
+// rows) that this file's Insert side writes, for
 // internal/storage/timescale/protocol_bespoke.go (aquariusRewardsBlocks),
 // which augments the Aquarius DEX bespoke block —
 // see docs/protocols/aquarius.md "Rewards + governance analytics surface".

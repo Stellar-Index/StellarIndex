@@ -39,8 +39,8 @@ const (
 )
 
 // DeFiPositionHolders returns every open-or-closed position across the six
-// folds. Sized for a daily rollup, not a request: when measured, the six
-// tables held ~190k distinct owners between them, so the whole set is a
+// folds. Sized for a daily rollup, not a request: the six tables hold
+// on the order of 10^5 distinct owners between them, so the whole set is a
 // few hundred thousand rows — small beside the 25M-row cohort membership
 // it is joined to on the ClickHouse side, which is why the join happens
 // there and not here.

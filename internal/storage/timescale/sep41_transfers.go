@@ -622,7 +622,7 @@ func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string,
 	// `from_addr = $2 OR to_addr = $2` — the same OR disease
 	// account_trades.go documents. The OR can't ride either
 	// address-leading partial index in output order, so on the COMPRESSED
-	// sep41_transfers chunks (no btrees; 30 of 32 when measured) the
+	// sep41_transfers chunks (no btrees) the
 	// planner decompress-scanned every chunk and blew the statement
 	// timeout, and the movements handler soft-failed the tail, silently
 	// stopping busy accounts' /movements at the P23 boundary. Each arm

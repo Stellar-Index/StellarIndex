@@ -13,8 +13,8 @@ import (
 // asset_volume_character rollup (migration 0149) — a keyed-on-PK lookup,
 // folded to the asset's canonical form. Production impl is *timescale.Store.
 //
-// It REPLACES the pre-rollup per-request trades roll, which measured 4.09s
-// on the USDC detail and tripped a 4s timeout, returning null: the rollup
+// It REPLACES the pre-rollup per-request trades roll, which tripped a 4s
+// timeout on busy assets, returning null: the rollup
 // worker moved that compute off the request path. A nil reader, a
 // fiat/native-only asset, a rollup miss (found=false), or a lookup error
 // all leave the fields omitted and never fail the asset response.

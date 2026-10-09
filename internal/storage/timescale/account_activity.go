@@ -35,7 +35,7 @@ type DefiActionCount struct {
 // arm except blend_auctions rides the same user-leading index its
 // positions-fold sibling documents (migrations 0044/0050/0090/0099/0107).
 // blend_auctions has no user-leading index but is a small lifecycle
-// table (~10k rows on r1 when measured) — a filtered scan, accepted and
+// table (~10k rows) — a filtered scan, accepted and
 // documented rather than silently absent. sorocredit's credit_events
 // carries no owner column (only collateral_contract), so its only
 // per-account count is positions opened (credit_positions.owner).
@@ -105,7 +105,7 @@ type BridgeActivity struct {
 //
 // Neither predicate is index-served and that is a measured, documented
 // decision, not an oversight: rozo_events is a few hundred rows and
-// cctp_events ~32k on r1 when measured — both orders of magnitude under
+// cctp_events tens of thousands — both orders of magnitude under
 // any threshold where an index or a GIN over the jsonb would pay for
 // itself. CCTP parties live inside the `attributes` jsonb (migration
 // 0038: "a storage blob, not a query surface"):
