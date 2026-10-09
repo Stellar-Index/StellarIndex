@@ -107,7 +107,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
       {noSupply ? (
         <p className="text-ink-muted text-sm">
           {onchain.data
-            ? 'No ADR-0011 circulating/max breakdown for this asset yet — the live on-chain total above is sourced directly from mint/burn flows.'
+            ? 'No circulating/max breakdown for this asset yet — the live on-chain total above is sourced directly from mint/burn flows.'
             : 'No supply snapshot available for this asset. The supply observer may not have backfilled it yet.'}
         </p>
       ) : (
@@ -170,7 +170,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
           {a.supply_basis && (
             <p
               className="text-ink-muted text-xs"
-              title="Policy under ADR-0011 that produced these numbers."
+              title="Supply policy that produced these numbers."
             >
               <span className="font-mono">supply_basis</span>: {a.supply_basis}
             </p>
@@ -380,7 +380,7 @@ function supplyFootnote(data: AssetSupply): string {
   if (data.source === 'contract_storage_balances') {
     return 'Σ per-holder balances read from the contract’s own storage — the token emits no supply events.';
   }
-  return 'Σ mint − burn − clawback from the supply_flows lake (ADR-0034), current to the latest ledger — no refresh lag.';
+  return 'Σ mint − burn − clawback from on-chain supply flows, current to the latest ledger — no refresh lag.';
 }
 
 function Metric({

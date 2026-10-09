@@ -55,7 +55,7 @@ export default function DiagnosticsPage() {
       <section className="space-y-4">
         <SectionHeader
           title="Decoder coverage"
-          description="Per-source verdicts; served tier and lake can diverge (ADR-0033/0034)."
+          description="Per-source verdicts; served tier and lake can diverge."
         />
         <CoveragePanel />
       </section>
@@ -63,7 +63,7 @@ export default function DiagnosticsPage() {
       <section className="space-y-4">
         <SectionHeader
           title="Archive completeness"
-          description="Daily history-archive scan (ADR-0017)."
+          description="Daily history-archive scan."
         />
         <ArchivePanel />
       </section>

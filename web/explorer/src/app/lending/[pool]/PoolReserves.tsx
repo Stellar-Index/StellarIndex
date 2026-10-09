@@ -104,7 +104,7 @@ export function PoolReserves({ pool }: { pool: string }) {
     <Panel
       headingLevel={2}
       title="Reserve composition"
-      hint="Real current-state TVL / utilisation / supply+borrow APR, decoded from the pool contract's Soroban storage (ADR-0039)."
+      hint="Real current-state TVL / utilisation / supply+borrow APR, decoded from the pool contract's Soroban storage."
       source={asExample(`/v1/lending/pools/${pool}/reserves`, {})}
       bodyClassName="space-y-3"
     >

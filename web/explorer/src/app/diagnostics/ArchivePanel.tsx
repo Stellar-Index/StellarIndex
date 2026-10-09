@@ -84,9 +84,7 @@ export function ArchivePanel() {
             </span>
           )}
         </div>
-        <span className="text-ink-faint text-xs">
-          ADR-0017 · /v1/diagnostics/archive
-        </span>
+        <span className="text-ink-faint text-xs">/v1/diagnostics/archive</span>
       </header>
 
       <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">

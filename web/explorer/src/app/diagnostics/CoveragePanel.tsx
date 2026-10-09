@@ -89,7 +89,7 @@ export function CoveragePanel() {
           </span>
         </div>
         <span className="text-ink-faint text-xs">
-          ADR-0033/0034 · /v1/coverage ·{' '}
+          /v1/coverage ·{' '}
           <Link href="/status" className="text-brand-600 hover:underline">
             status →
           </Link>

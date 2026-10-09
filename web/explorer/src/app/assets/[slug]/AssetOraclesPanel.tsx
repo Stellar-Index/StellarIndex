@@ -520,7 +520,7 @@ function ReadingRow({ r }: { r: OracleReading }) {
       <Td align="right">
         <span
           className="text-ink-muted font-mono text-xs tabular-nums"
-          title="Source-declared scale for price_raw (ADR-0003: the raw integer is never lost)"
+          title="Source-declared scale for price_raw; the raw integer is kept as published"
         >
           {r.decimals}
         </span>
