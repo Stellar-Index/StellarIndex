@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { DataTrustTabs } from '@/components/nav/DataTrustTabs';
 import { Breadcrumbs, Container } from '@/components/ui/Page';
 
 export const metadata: Metadata = {
@@ -23,6 +24,8 @@ export default function MethodologyPage() {
           for the full rationale, alternatives considered, and consequences.
         </p>
       </header>
+
+      <DataTrustTabs active="/methodology" />
 
       <TableOfContents />
 

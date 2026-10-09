@@ -1,3 +1,4 @@
+import { DataTrustTabs } from '@/components/nav/DataTrustTabs';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SourcesTable } from './SourcesTable';
@@ -42,6 +43,8 @@ export default function SourcesPage() {
           .
         </p>
       </header>
+
+      <DataTrustTabs active="/sources" />
 
       <SourcesTable />
     </Container>
