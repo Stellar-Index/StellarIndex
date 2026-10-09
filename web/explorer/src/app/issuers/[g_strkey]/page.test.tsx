@@ -104,6 +104,52 @@ describe('IssuerDetailPage issued-asset tiles', () => {
   });
 });
 
+// Money: the 24h volume tile sums decimal strings exactly. Float addition
+// reaches 999.995 here and rounds to "$1K"; the exact total is 999.99499….
+describe('IssuerDetailPage 24h volume tile', () => {
+  const asset = (code: string) => ({
+    asset_id: `${code}-${G}`,
+    code,
+    slug: code.toLowerCase(),
+    first_seen_ledger: 100,
+    last_seen_ledger: 200,
+    observation_count: 1,
+  });
+
+  function mockWithVolumes(volumes: string[]) {
+    const codes = volumes.map((_, i) => `A${i}`);
+    vi.mocked(buildFetchData).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/issuers/'))
+        return { g_strkey: G, assets: codes.map(asset) } as never;
+      return codes.map((c, i) => ({
+        asset_id: `${c}-${G}`,
+        volume_24h_usd: volumes[i],
+      })) as never;
+    });
+  }
+
+  it.runIf(CURRENT_NETWORK.pricing)('sums volumes exactly', async () => {
+    mockWithVolumes(['999.994999999999998', '0.000000000000001']);
+    await renderPage();
+    expect(
+      screen.getByText('24h volume', { selector: 'dt' }).nextElementSibling
+        ?.textContent,
+    ).toBe('$999.99');
+  });
+
+  it.runIf(CURRENT_NETWORK.pricing).each([
+    ['not a decimal', 'NaN'],
+    ['negative', '-6000'],
+  ])('abstains when one row is %s', async (_, bad) => {
+    mockWithVolumes(['5000', bad]);
+    await renderPage();
+    expect(
+      screen.getByText('24h volume', { selector: 'dt' }).nextElementSibling
+        ?.textContent,
+    ).toBe('—');
+  });
+});
+
 // F086: functions/issuers/[[path]].js serves THIS route's baked static
 // HTML verbatim for every issuer beyond the pre-rendered top-100 (a 404
 // sub-fetches /issuers/shell/ and returns its body at 200). Whatever
