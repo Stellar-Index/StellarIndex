@@ -2,7 +2,7 @@ module github.com/Stellar-Index/StellarIndex
 
 go 1.27.0
 
-toolchain go1.27.1
+toolchain go1.27.2
 
 // Direct production dependencies.
 //
@@ -180,7 +180,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260924152758-ed294f943157 // indirect
 	golang.org/x/text v0.42.0 // indirect
