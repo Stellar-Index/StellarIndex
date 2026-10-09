@@ -7,6 +7,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import {
+  compareDecimalDesc,
+  compareDecimalStrings,
   formatCompact,
   formatCompactUnits,
   formatPairPrice,
@@ -51,11 +53,7 @@ export function ExchangesView() {
       const arr = env.data ?? [];
       return arr
         .filter((s) => s.class === 'exchange' && s.subclass === 'cex')
-        .sort((a, b) => {
-          const av = a.volume_24h_usd ? Number(a.volume_24h_usd) : 0;
-          const bv = b.volume_24h_usd ? Number(b.volume_24h_usd) : 0;
-          return bv - av;
-        });
+        .sort((a, b) => compareDecimalDesc(a.volume_24h_usd, b.volume_24h_usd));
     },
   });
 
@@ -200,7 +198,6 @@ export function ExchangesView() {
                 </tr>
               )}
               {rows.map((r, i) => {
-                const vol = r.volume_24h_usd ? Number(r.volume_24h_usd) : 0;
                 const tone = sourceToneClass(r.name);
                 const label = LABEL[r.name] ?? r.name;
                 const share = ratioPct(r.volume_24h_usd, totalVol) ?? 0;
@@ -220,9 +217,10 @@ export function ExchangesView() {
                       </Link>
                     </Td>
                     <Td align="right">
-                      {vol > 0 ? (
+                      {r.volume_24h_usd &&
+                      compareDecimalStrings(r.volume_24h_usd, '0') === 1 ? (
                         <span className="font-mono tabular-nums">
-                          ${formatCompact(vol)}
+                          ${formatCompactUnits(r.volume_24h_usd)}
                         </span>
                       ) : (
                         <span className="text-ink-faint">—</span>
@@ -318,11 +316,9 @@ function AllCEXMarkets({
         }),
       );
       const merged = all.flat();
-      return merged.sort((a, b) => {
-        const av = a.volume_24h_usd ? Number(a.volume_24h_usd) : 0;
-        const bv = b.volume_24h_usd ? Number(b.volume_24h_usd) : 0;
-        return bv - av;
-      });
+      return merged.sort((a, b) =>
+        compareDecimalDesc(a.volume_24h_usd, b.volume_24h_usd),
+      );
     },
   });
 
@@ -392,7 +388,6 @@ function AllCEXMarkets({
             )}
             {markets.map((m, i) => {
               const slug = `${m.base}~${m.quote}`;
-              const vol = m.volume_24h_usd ? Number(m.volume_24h_usd) : null;
               const tone = sourceToneClass(m.source ?? '');
               return (
                 <TR key={`${m.source}|${m.base}|${m.quote}`}>
@@ -428,9 +423,10 @@ function AllCEXMarkets({
                     )}
                   </Td>
                   <Td align="right">
-                    {vol != null && Number.isFinite(vol) && vol > 0 ? (
+                    {m.volume_24h_usd &&
+                    compareDecimalStrings(m.volume_24h_usd, '0') === 1 ? (
                       <span className="font-mono tabular-nums">
-                        ${formatCompact(vol)}
+                        ${formatCompactUnits(m.volume_24h_usd)}
                       </span>
                     ) : (
                       <span className="text-ink-faint">—</span>

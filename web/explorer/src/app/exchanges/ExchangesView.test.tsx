@@ -105,4 +105,56 @@ describe('ExchangesView', () => {
       .sort();
     expect(marketSources).toEqual([...cex].sort());
   });
+  it('orders and formats volumes above 2^53 from the exact decimal', async () => {
+    vi.mocked(apiGet).mockReset();
+    vi.mocked(apiGet).mockImplementation(async (path, params) => {
+      if (path === '/v1/sources') {
+        return {
+          data: [
+            {
+              name: 'binance',
+              class: 'exchange',
+              subclass: 'cex',
+              volume_24h_usd: '9007199254740992',
+            },
+            {
+              name: 'kraken',
+              class: 'exchange',
+              subclass: 'cex',
+              volume_24h_usd: '9007199254740993',
+            },
+            {
+              name: 'coinbase',
+              class: 'exchange',
+              subclass: 'cex',
+              volume_24h_usd: '1000000004999999999',
+            },
+          ],
+        };
+      }
+      const source = (params as { source?: string } | undefined)?.source;
+      const vol: Record<string, string> = {
+        binance: '9007199254740992',
+        kraken: '9007199254740993',
+      };
+      return {
+        data: vol[source ?? '']
+          ? [
+              {
+                base: `crypto:${source}`,
+                quote: 'fiat:USD',
+                volume_24h_usd: vol[source ?? ''],
+                trade_count_24h: 1,
+              },
+            ]
+          : [],
+      };
+    });
+    renderView();
+    await screen.findAllByText('$1,000,000T');
+    const order = (await screen.findAllByRole('row'))
+      .map((r) => /Kraken|Binance/.exec(r.textContent ?? '')?.[0])
+      .filter(Boolean);
+    expect(order.slice(0, 2)).toEqual(['Kraken', 'Binance']);
+  });
 });

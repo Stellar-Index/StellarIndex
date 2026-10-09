@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 import * as format from './format';
 import {
+  compareDecimalDesc,
   formatPrice,
   formatCompact,
   formatPriceSmall,
@@ -318,5 +319,17 @@ describe('decimalOrNull', () => {
     expect(format.decimalOrNull(null)).toBeNull();
     expect(format.decimalOrNull('')).toBeNull();
     expect(format.decimalOrNull('n/a')).toBeNull();
+  });
+});
+
+describe('compareDecimalDesc', () => {
+  it('orders exactly above 2^53, treats absent as 0, ties malformed', () => {
+    const rows = ['9007199254740992', null, '9007199254740993', ''];
+    expect([...rows].sort(compareDecimalDesc)[0]).toBe('9007199254740993');
+    expect(compareDecimalDesc(null, '')).toBe(0);
+    expect(compareDecimalDesc('1', null)).toBe(-1);
+    expect(compareDecimalDesc('x', '1')).toBe(1);
+    // A malformed row ranks as 0, so it cannot scramble the valid rows.
+    expect(['1', 'x', '5'].sort(compareDecimalDesc)).toEqual(['5', '1', 'x']);
   });
 });

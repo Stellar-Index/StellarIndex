@@ -374,6 +374,20 @@ export function compareDecimalStrings(a: string, b: string): number | null {
   return d < 0n ? -1 : d > 0n ? 1 : 0;
 }
 
+/**
+ * compareDecimalDesc — a descending sort comparator over optional decimal
+ * strings. Absent, empty and malformed all rank as 0, which keeps the order
+ * total: a malformed value that tied with everything would scramble the rest.
+ */
+export function compareDecimalDesc(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): number {
+  const rank = (v: string | null | undefined) =>
+    v && compareDecimalStrings(v, '0') != null ? v : '0';
+  return compareDecimalStrings(rank(b), rank(a)) ?? 0;
+}
+
 interface Decimal {
   units: bigint;
   frac: number;

@@ -11,7 +11,7 @@ import { apiGetData, asExample } from '@/api/client';
 import { useAssets } from '@/api/hooks';
 import type { components } from '@/api/types';
 import {
-  formatCompact,
+  formatCompactUnits,
   formatDecimalAmount,
   formatOraclePrice,
   formatRelative,
@@ -1590,7 +1590,7 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
   const volume =
     asset.volume_24h_usd == null
       ? null
-      : formatCompact(Number(asset.volume_24h_usd));
+      : formatCompactUnits(asset.volume_24h_usd);
   const flagged = hasDirectoryScamFlag(asset.issuer_directory_tags);
   const reason = VALUATION_REASON[asset.valuation.status];
 

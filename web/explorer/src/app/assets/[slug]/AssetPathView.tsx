@@ -14,7 +14,7 @@ import { AssetScamCallout } from './AssetScamCallout';
 import { AssetTrustFacts } from './AssetTrustFacts';
 import { LiveAssetPrice } from './LiveAssetPrice';
 import { type PriceBasis, provenanceFromBasis } from './priceProvenance';
-import { formatCompact } from '@/lib/format';
+import { formatCompactUnits } from '@/lib/format';
 
 interface AssetShellDetail {
   asset_id?: string;
@@ -199,7 +199,7 @@ export function AssetPathView() {
             <div>
               <dt className="text-ink-muted">Volume (24h)</dt>
               <dd className="font-mono">
-                ${formatCompact(Number(d.volume_24h_usd))}
+                ${formatCompactUnits(d.volume_24h_usd)}
               </dd>
             </div>
           )}

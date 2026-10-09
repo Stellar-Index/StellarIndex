@@ -3,7 +3,12 @@ import { hrefFor } from '@/lib/hrefFor';
 
 import { Panel } from '@/components/reveal';
 import { asExample, API_BASE_URL } from '@/api/client';
-import { formatCompact, formatPairPrice } from '@/lib/format';
+import {
+  compareDecimalDesc,
+  formatCompact,
+  formatCompactUnits,
+  formatPairPrice,
+} from '@/lib/format';
 // /v1/pools row from the generated OpenAPI contract (spec PoolRow, via
 // the shared alias in src/api/hooks.ts).
 import type { Pool as PoolRow } from '@/api/hooks';
@@ -68,11 +73,7 @@ export async function LiquidityTabPanel({
       ...p,
       side: (p.base === assetID ? 'base' : 'quote') as 'base' | 'quote',
     }))
-    .sort((a, b) => {
-      const av = Number(a.volume_24h_usd ?? '0');
-      const bv = Number(b.volume_24h_usd ?? '0');
-      return (Number.isFinite(bv) ? bv : 0) - (Number.isFinite(av) ? av : 0);
-    });
+    .sort((a, b) => compareDecimalDesc(a.volume_24h_usd, b.volume_24h_usd));
 
   return (
     <Panel
@@ -152,7 +153,7 @@ export async function LiquidityTabPanel({
                     <td className="px-4 py-2 text-right">
                       {p.volume_24h_usd ? (
                         <span className="font-mono tabular-nums">
-                          ${formatCompact(Number(p.volume_24h_usd))}
+                          ${formatCompactUnits(p.volume_24h_usd)}
                         </span>
                       ) : (
                         <span className="text-ink-faint">—</span>

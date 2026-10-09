@@ -15,7 +15,11 @@ import {
   THead,
   TR,
 } from '@/components/ui';
-import { formatCompact, formatPairPrice } from '@/lib/format';
+import {
+  formatCompact,
+  formatCompactUnits,
+  formatPairPrice,
+} from '@/lib/format';
 import { shortAssetText } from '@/lib/asset-label';
 
 /**
@@ -108,11 +112,13 @@ export function HomeTopMarkets() {
                       </Link>
                     </Td>
                     <Td align="right" className="text-ink-body font-mono">
-                      {m.last_price ? formatPairPrice(Number(m.last_price)) : '—'}
+                      {m.last_price
+                        ? formatPairPrice(Number(m.last_price))
+                        : '—'}
                     </Td>
                     <Td align="right" className="font-mono">
                       {m.volume_24h_usd
-                        ? `$${formatCompact(Number(m.volume_24h_usd))}`
+                        ? `$${formatCompactUnits(m.volume_24h_usd)}`
                         : '—'}
                     </Td>
                     <Td align="right" className="text-ink-body font-mono">

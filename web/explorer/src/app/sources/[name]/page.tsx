@@ -10,7 +10,11 @@ import { SourcePeerBars } from './SourcePeerBars';
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
 import { SourceTopChart } from '@/app/dexes/[source]/SourceTopChart';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
-import { formatCompact, formatPairPrice } from '@/lib/format';
+import {
+  formatCompact,
+  formatCompactUnits,
+  formatPairPrice,
+} from '@/lib/format';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, shellMetadata } from '@/lib/seo';
 import { shortAssetText } from '@/lib/asset-label';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -444,7 +448,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
                         <td className="px-4 py-2 text-right">
                           {m.volume_24h_usd ? (
                             <span className="font-mono tabular-nums">
-                              ${formatCompact(Number(m.volume_24h_usd))}
+                              ${formatCompactUnits(m.volume_24h_usd)}
                             </span>
                           ) : (
                             <span className="text-ink-faint">—</span>
