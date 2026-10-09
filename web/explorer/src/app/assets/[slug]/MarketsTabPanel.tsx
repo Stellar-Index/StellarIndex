@@ -53,6 +53,8 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
     );
   }, [markets.data]);
 
+  const barMax = useMemo(() => maxVolume(matched), [matched]);
+
   // A next cursor means the server holds more rows than this page: the count
   // is a lower bound, never a total.
   const truncated = Boolean(markets.data?.nextCursor);
@@ -126,7 +128,12 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
           </thead>
           <tbody className="divide-line-subtle divide-y">
             {matched.map((m) => (
-              <Row key={`${m.base}|${m.quote}`} m={m} assetID={assetID} />
+              <Row
+                key={`${m.base}|${m.quote}`}
+                m={m}
+                assetID={assetID}
+                barMax={barMax}
+              />
             ))}
           </tbody>
         </table>
@@ -135,7 +142,28 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
   );
 }
 
-function Row({ m, assetID }: { m: Market; assetID: string }) {
+/** Largest listed 24h USD volume; bar geometry only, never a displayed number. */
+export function maxVolume(
+  markets: readonly { volume_24h_usd?: string | null }[],
+): number {
+  return Math.max(
+    0,
+    ...markets.map((m) => Number(m.volume_24h_usd)).filter(Number.isFinite),
+  );
+}
+
+function Row({
+  m,
+  assetID,
+  barMax,
+}: {
+  m: Market;
+  assetID: string;
+  barMax: number;
+}) {
+  const vol = Number(m.volume_24h_usd);
+  const barPct =
+    barMax > 0 && Number.isFinite(vol) && vol > 0 ? (vol / barMax) * 100 : 0;
   // The server expands a catalogue slug ("usdc") into its
   // asset_ids, so strict equality against the slug never matched and
   // rows where the asset IS the base rendered "quote · vs itself".
@@ -176,6 +204,17 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
         <span className="font-mono text-xs tabular-nums">
           {m.volume_24h_usd ? `$${formatCompactUnits(m.volume_24h_usd)}` : '—'}
         </span>
+        {barPct > 0 && (
+          <span
+            aria-hidden
+            className="bg-surface-muted mt-1 ml-auto block h-1 w-24 overflow-hidden rounded-full"
+          >
+            <span
+              className="bg-brand-500 block h-full rounded-full"
+              style={{ width: `${Math.max(barPct, 2)}%`, marginLeft: 'auto' }}
+            />
+          </span>
+        )}
       </Td>
       <Td align="right">
         <span className="font-mono tabular-nums">
