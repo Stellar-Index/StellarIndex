@@ -70,13 +70,24 @@ const USD_WHOLE_FORMATTER = new Intl.NumberFormat('en-US', {
  * "—" for an absent or non-decimal value.
  */
 export function formatUsdWhole(raw: string | null | undefined): string {
-  if (raw == null) return '—';
+  const n = roundWhole(raw);
+  return n == null ? '—' : USD_WHOLE_FORMATTER.format(n);
+}
+
+/** formatWhole — formatUsdWhole without the currency ("1,235"). */
+export function formatWhole(raw: string | null | undefined): string {
+  const n = roundWhole(raw);
+  return n == null ? '—' : n.toLocaleString('en-US');
+}
+
+function roundWhole(raw: string | null | undefined): bigint | null {
+  if (raw == null) return null;
   const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(raw.trim());
-  if (!m) return '—';
+  if (!m) return null;
   const [, sign, whole, frac = ''] = m;
   let n = BigInt(whole);
   if (frac.charCodeAt(0) >= 53) n += 1n;
-  return USD_WHOLE_FORMATTER.format(sign ? -n : n);
+  return sign ? -n : n;
 }
 
 /**

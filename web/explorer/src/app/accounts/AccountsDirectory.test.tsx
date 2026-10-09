@@ -29,14 +29,14 @@ const G = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 
 // Only the directory endpoint resolves; the analytics strip's own fetches
 // stay pending so it sits in its harmless loading state.
-function mockDirectory(ranked_by: 'usd' | 'native_xlm') {
+function mockDirectory(ranked_by: 'usd' | 'native_xlm', value = '123456') {
   vi.mocked(apiGet).mockImplementation((path: string) => {
     if (path === '/v1/accounts') {
       return Promise.resolve({
         data: {
           priced_assets: ranked_by === 'usd' ? 12 : 0,
           ranked_by,
-          accounts: [{ account_id: G, value: '123456' }],
+          accounts: [{ account_id: G, value }],
         },
       });
     }
@@ -91,6 +91,22 @@ describe('AccountsDirectoryHeader — ranking basis follows the served ranked_by
     expect(header).toHaveTextContent(/ranked by total USD value/);
     expect(
       screen.getByRole('heading', { name: 'Ranked by USD wealth' }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('AccountsDirectory wealth column', () => {
+  it('rounds USD wealth exactly from the decimal string', async () => {
+    mockDirectory('usd', '1234.4999999999999999');
+    renderDirectory();
+    expect(await screen.findByText('$1,234')).toBeInTheDocument();
+  });
+
+  it('keeps every digit of an XLM balance above 2^53', async () => {
+    mockDirectory('native_xlm', '9007199254740993');
+    renderDirectory();
+    expect(
+      await screen.findByText('9,007,199,254,740,993 XLM'),
     ).toBeInTheDocument();
   });
 });

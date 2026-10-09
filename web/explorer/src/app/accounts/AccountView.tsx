@@ -8,7 +8,7 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
 import { InlineBar } from '@/components/ContractCharts';
-import { ratioPct } from '@/lib/format';
+import { formatUsdWhole, formatWhole, ratioPct } from '@/lib/format';
 import {
   DirectoryLabel,
   type DirectoryInfo,
@@ -254,16 +254,6 @@ interface AccountsListResp {
 
 const DIRECTORY_SIZE = 100;
 
-const usdFmt = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 0,
-});
-
-const xlmFmt = new Intl.NumberFormat('en-US', {
-  maximumFractionDigits: 0,
-});
-
 /**
  * GET /v1/accounts — the directory's one query. The header and the table
  * both subscribe under this key, so react-query fetches once and the two
@@ -336,9 +326,10 @@ function AccountsDirectory() {
   const q = useAccountsDirectoryQuery();
   const isNative = rankedInNative(q.data);
   const fmtWealth = (row: { value?: string; usd_value?: string }) => {
-    const n = Number(row.value ?? row.usd_value ?? '0');
-    if (!Number.isFinite(n)) return '—';
-    return isNative ? `${xlmFmt.format(n)} XLM` : usdFmt.format(n);
+    const raw = row.value ?? row.usd_value ?? '0';
+    if (!isNative) return formatUsdWhole(raw);
+    const xlm = formatWhole(raw);
+    return xlm === '—' ? xlm : `${xlm} XLM`;
   };
 
   return (
