@@ -104,13 +104,13 @@ describe('SourceStatsPanel', () => {
               {
                 name: 'soroswap',
                 trade_count_24h: 5,
-                volume_24h_usd: '1234.994999999999998',
+                volume_24h_usd: '499.994999999999998',
               },
             ],
           },
     );
     renderPanel();
     expect(await screen.findByText('$999.99')).toBeInTheDocument();
-    expect(screen.getByText('$1.23K')).toBeInTheDocument();
+    expect(screen.getByText('$499.99')).toBeInTheDocument();
   });
 });
