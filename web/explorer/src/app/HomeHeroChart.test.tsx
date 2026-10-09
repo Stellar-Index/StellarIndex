@@ -100,6 +100,18 @@ describe('HomeHeroChart', () => {
     expect(screen.getByText(/live USD price/i)).toBeInTheDocument();
   });
 
+  it('rounds the tip price from its wire string, not a float', async () => {
+    mockPriceFetch('0.17', false);
+    useTipStream.mockReturnValue({
+      data: { data: { price: '2.00005' }, as_of: '2026-08-08T00:00:00Z' },
+      receivedAt: Date.now(),
+    });
+    renderHero();
+
+    // The double nearest 2.00005 sits just below it, so toFixed(4) gave 2.0000.
+    expect(await screen.findByText('$2.0001')).toBeInTheDocument();
+  });
+
   it('no tip stream and a stale polled price is captioned stale, not live', async () => {
     mockPriceFetch('0.17', true);
     useTipStream.mockReturnValue(null);
