@@ -13,6 +13,7 @@ import {
   formatCompact,
   formatCompactUnits,
   formatRelative,
+  divideDecimalString,
 } from '@/lib/format';
 
 /**
@@ -122,6 +123,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
               <Th>Pair</Th>
               <Th align="right">24h volume</Th>
               <Th align="right">24h trades</Th>
+              <Th align="right">Avg trade</Th>
               <Th>24h chart</Th>
               <Th align="right">Last trade</Th>
             </tr>
@@ -181,6 +183,7 @@ function Row({
   const isBase = matches(m.base ?? '');
   const counterparty = isBase ? m.quote : m.base;
   const pairSlug = `${m.base}~${m.quote}`;
+  const avgTrade = divideDecimalString(m.volume_24h_usd, m.trade_count_24h);
   return (
     <tr className="hover:bg-surface-muted">
       <Td>
@@ -219,6 +222,11 @@ function Row({
       <Td align="right">
         <span className="font-mono tabular-nums">
           {formatCompact(m.trade_count_24h)}
+        </span>
+      </Td>
+      <Td align="right">
+        <span className="font-mono text-xs tabular-nums">
+          {avgTrade ? `$${formatCompactUnits(avgTrade)}` : '—'}
         </span>
       </Td>
       <Td>

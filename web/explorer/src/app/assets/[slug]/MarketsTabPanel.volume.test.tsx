@@ -38,4 +38,9 @@ describe('MarketsTabPanel volume', () => {
     render(<MarketsTabPanel assetID="native" />);
     expect(screen.getByText('$1,000,000T')).toBeInTheDocument();
   });
+
+  it('divides 24h volume by 24h trades on the exact decimal', () => {
+    render(<MarketsTabPanel assetID="native" />);
+    expect(screen.getByText('$33,333.33T')).toBeInTheDocument();
+  });
 });
