@@ -414,9 +414,10 @@ function AllCEXMarkets({
                     </Link>
                   </Td>
                   <Td align="right">
-                    {m.last_price && Number.isFinite(Number(m.last_price)) ? (
+                    {m.last_price &&
+                    compareDecimalStrings(m.last_price, '0') != null ? (
                       <span className="text-ink-body font-mono tabular-nums">
-                        {formatPairPrice(Number(m.last_price))}
+                        {formatPairPrice(m.last_price)}
                       </span>
                     ) : (
                       <span className="text-ink-faint">—</span>

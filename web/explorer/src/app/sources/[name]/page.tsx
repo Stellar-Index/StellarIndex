@@ -471,7 +471,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
 }
 
 function formatLastPrice(raw: string): string {
-  return formatPairPrice(Number(raw));
+  return formatPairPrice(raw);
 }
 
 function Panel({

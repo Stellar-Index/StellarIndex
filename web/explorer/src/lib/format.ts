@@ -104,6 +104,52 @@ export function decimalOrNull(raw: string | null | undefined): number | null {
 
 const SUBUNIT_MAX_DECIMALS = 20;
 
+// toFixed on the exact decimal, rounding half away from zero in BigInt:
+// a float rounds "2.00005" down (its double is just below) and drops the
+// digits of a price past 2^53.
+function fixedExact(d: Decimal, places: number): string {
+  const neg = d.units < 0n;
+  let q = neg ? -d.units : d.units;
+  const drop = d.frac - places;
+  if (drop > 0) {
+    const div = 10n ** BigInt(drop);
+    const r = q % div;
+    q /= div;
+    if (2n * r >= div) q += 1n;
+  } else {
+    q *= 10n ** BigInt(-drop);
+  }
+  const digits = q.toString().padStart(places + 1, '0');
+  const int = digits.slice(0, digits.length - places);
+  const sign = neg && q !== 0n ? '-' : '';
+  return places > 0 ? `${sign}${int}.${digits.slice(-places)}` : sign + int;
+}
+
+// formatSubunitPrice for an exact decimal.
+function subunitExact(d: Decimal, sig: number): string {
+  if (d.units === 0n) return '0';
+  const abs = (d.units < 0n ? -d.units : d.units).toString();
+  const lead = Math.max(0, d.frac - abs.length);
+  let out = fixedExact(d, Math.min(lead + sig, SUBUNIT_MAX_DECIMALS));
+  out = out.replace(/0+$/, '').replace(/\.$/, '');
+  if (out === '0' || out === '-0') {
+    return `${d.units < 0n ? '-' : ''}<0.${'0'.repeat(SUBUNIT_MAX_DECIMALS - 1)}1`;
+  }
+  return out;
+}
+
+// Rounds `raw` exactly under the first band whose floor it meets, else as a
+// sub-unit price; '—' when it is not a plain decimal.
+function bandedExact(raw: string, bands: [string, number][]): string {
+  const d = parseDecimal(raw);
+  if (!d) return '—';
+  for (const [floor, places] of bands) {
+    if ((compareDecimalStrings(raw, floor) ?? -1) >= 0)
+      return fixedExact(d, places);
+  }
+  return subunitExact(d, 4);
+}
+
 // formatSubunitPrice — a tiny positive (or bad-data negative) value as
 // a PLAIN DECIMAL with `sig` significant digits and no exponent:
 // 3.353e-4 renders "0.0003353", never "$3.353e-4" (scientific
@@ -137,7 +183,13 @@ export function formatSubunitPrice(n: number, sig = 4): string {
 // as the single source so the asset-detail sidebar and any other
 // USD-price cell share ONE implementation instead of each re-deriving
 // the thresholds.
-export function formatPriceSmall(n: number): string {
+export function formatPriceSmall(n: number | string): string {
+  if (typeof n === 'string')
+    return bandedExact(n, [
+      ['100', 2],
+      ['1', 4],
+      ['0.001', 6],
+    ]);
   if (!Number.isFinite(n)) return '—';
   if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
   if (n >= 0.001) return n.toFixed(6);
@@ -153,8 +205,14 @@ export function formatPriceSmall(n: number): string {
 // and pair tables. Same shape as formatPriceSmall but tuned for pair
 // prices (a >=1000 band and a lower 0.0001 plain-decimal cutoff) so a
 // cheap pair never renders "0.0000" — or scientific notation.
-// Returns '—' for a non-finite value.
-export function formatPairPrice(n: number): string {
+// Returns '—' for a non-finite value. Pass the wire string to round exactly.
+export function formatPairPrice(n: number | string): string {
+  if (typeof n === 'string')
+    return bandedExact(n, [
+      ['1000', 2],
+      ['1', 4],
+      ['0.0001', 6],
+    ]);
   if (!Number.isFinite(n)) return '—';
   return n >= 1000
     ? n.toFixed(2)

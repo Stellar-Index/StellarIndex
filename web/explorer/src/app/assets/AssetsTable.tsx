@@ -13,6 +13,7 @@ import {
 } from '@/api/hooks';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import {
+  compareDecimalStrings,
   formatCompactUnits,
   formatPriceSmall,
   scaleBaseUnits,
@@ -535,7 +536,10 @@ function AssetRow({
   basePath: string;
   pricing: boolean;
 }) {
-  const price = parseDec(coin.price_usd);
+  const price =
+    coin.price_usd != null && compareDecimalStrings(coin.price_usd, '0') != null
+      ? coin.price_usd
+      : null;
   // The server owns the dust-liquidity gate (single venue AND sub-floor
   // volume, native carved out): it serves market_cap_usd null and says why
   // in market_cap_low_liquidity. Render its verdict; never re-decide it.

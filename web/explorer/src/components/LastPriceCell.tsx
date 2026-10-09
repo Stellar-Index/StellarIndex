@@ -20,8 +20,8 @@ import { formatPairPrice } from '@/lib/format';
 export function LastPriceCell({ raw }: { raw?: string | null }) {
   const flash = usePriceFlash(raw ?? undefined);
   if (!raw) return <span className="text-ink-faint">—</span>;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
+  const price = formatPairPrice(raw);
+  if (price === '—') return <span className="text-ink-faint">—</span>;
   return (
     <span
       className={cn(
@@ -30,7 +30,7 @@ export function LastPriceCell({ raw }: { raw?: string | null }) {
         flash === 'down' && 'flash-down',
       )}
     >
-      {formatPairPrice(n)}
+      {price}
     </span>
   );
 }

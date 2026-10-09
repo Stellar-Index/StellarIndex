@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { formatPriceSmall } from '@/lib/format';
+import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
 import { demoteFlaggedLast } from '@/lib/directory-tags';
 import { ScamBadge } from '@/components/ScamBadge';
 
@@ -118,11 +118,12 @@ function MoverColumn({
                       </svg>
                     </span>
                   )}
-                {c.price_usd && (
-                  <span className="text-ink-muted font-mono text-xs tabular-nums">
-                    ${formatPriceSmall(Number(c.price_usd))}
-                  </span>
-                )}
+                {c.price_usd &&
+                  compareDecimalStrings(c.price_usd, '0') != null && (
+                    <span className="text-ink-muted font-mono text-xs tabular-nums">
+                      ${formatPriceSmall(c.price_usd)}
+                    </span>
+                  )}
                 <ScamBadge tags={c.issuer_directory_tags} />
               </Link>
               <span

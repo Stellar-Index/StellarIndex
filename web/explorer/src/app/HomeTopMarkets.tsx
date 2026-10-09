@@ -112,9 +112,7 @@ export function HomeTopMarkets() {
                       </Link>
                     </Td>
                     <Td align="right" className="text-ink-body font-mono">
-                      {m.last_price
-                        ? formatPairPrice(Number(m.last_price))
-                        : '—'}
+                      {m.last_price ? formatPairPrice(m.last_price) : '—'}
                     </Td>
                     <Td align="right" className="font-mono">
                       {m.volume_24h_usd

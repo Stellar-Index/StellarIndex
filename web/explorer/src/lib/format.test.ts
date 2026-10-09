@@ -66,6 +66,30 @@ describe('formatPriceSmall / formatPairPrice', () => {
   });
 });
 
+describe('formatPriceSmall / formatPairPrice on wire strings', () => {
+  it('rounds the exact decimal, not its nearest double', () => {
+    // 2.00005's double is 2.0000499999…, which toFixed(4) rounds down.
+    expect(formatPairPrice('2.00005')).toBe('2.0001');
+    expect(formatPriceSmall('2.00005')).toBe('2.0001');
+    expect(formatPairPrice('12345678901234567.89')).toBe(
+      '12345678901234567.89',
+    );
+  });
+
+  it('keeps the number path bands and the sub-unit tail', () => {
+    expect(formatPriceSmall('150')).toBe('150.00');
+    expect(formatPriceSmall('0.0123456')).toBe('0.012346');
+    expect(formatPriceSmall('0.0005')).toBe('0.0005');
+    expect(formatPairPrice('0.00001234567')).toBe('0.00001235');
+    expect(formatPairPrice('0.000000000000000000001')).toBe(
+      '<0.00000000000000000001',
+    );
+    expect(formatPriceSmall('0')).toBe('0');
+    expect(formatPriceSmall('-0.5')).toBe('-0.5');
+    expect(formatPairPrice('abc')).toBe('—');
+  });
+});
+
 describe('formatOraclePrice', () => {
   // Extracted from oracles/OraclesView so the /oracles table and
   // the per-asset oracle panel cannot drift apart. These pin the exact
