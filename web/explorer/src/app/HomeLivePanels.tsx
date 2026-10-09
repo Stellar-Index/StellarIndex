@@ -12,7 +12,8 @@ import {
   type CoverageVerdicts,
 } from '@/api/hooks';
 import { isLiveCursorSource } from '@/lib/cursors';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, formatDurationShort } from '@/lib/format';
+import { HBarList } from '@/components/charts/Bars';
 
 /**
  * NetworkLivePanel — live count of classic assets indexed +
@@ -135,6 +136,53 @@ export function SystemHealthLivePanel() {
         <Link
           href="/diagnostics"
           className="text-brand-600 inline-flex items-center gap-1 pt-1 text-[11px] hover:underline"
+        >
+          Open diagnostics <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+    </Panel>
+  );
+}
+
+/** IngestLagLivePanel — how far behind the tip ingest runs: the freshest
+ * live cursor as the headline, the five slowest as bars. */
+export function IngestLagLivePanel() {
+  const { data } = useCursors();
+  const live = (data ?? []).filter((c) => isLiveCursorSource(c.source));
+  const fastest = live.length
+    ? Math.min(...live.map((c) => c.lag_seconds))
+    : null;
+  const slowest = [...live]
+    .sort((a, b) => b.lag_seconds - a.lag_seconds)
+    .slice(0, 5)
+    .map((c) => {
+      const label = c.sub_source ? `${c.source}/${c.sub_source}` : c.source;
+      return {
+        id: label,
+        label,
+        value: c.lag_seconds,
+        display: formatDurationShort(c.lag_seconds),
+      };
+    });
+
+  return (
+    <Panel
+      headingLevel={2}
+      title="Ingest lag"
+      hint="Seconds behind the network tip, per live cursor"
+      source={asExample('/v1/diagnostics/cursors')}
+    >
+      <div className="space-y-3">
+        <div>
+          <div className="text-2xl font-bold tabular-nums">
+            {fastest !== null ? formatDurationShort(fastest) : '—'}
+          </div>
+          <div className="text-ink-muted text-xs">behind tip</div>
+        </div>
+        <HBarList items={slowest} ariaLabel="Slowest live cursors by lag" />
+        <Link
+          href="/diagnostics"
+          className="text-brand-600 inline-flex items-center gap-1 text-xs hover:underline"
         >
           Open diagnostics <ArrowRight className="h-3 w-3" />
         </Link>

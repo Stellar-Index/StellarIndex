@@ -33,6 +33,7 @@ import { demoteFlaggedLast } from '@/lib/directory-tags';
 import { ScamBadge } from '@/components/ScamBadge';
 import { ThinMarketBadge } from '@/components/ThinMarketBadge';
 import { CURRENT_NETWORK } from '@/lib/networks';
+import { InlineBar } from '@/components/ContractCharts';
 
 /**
  * HomeTopAssets — the top 10 assets ranked by trailing-24h trading
@@ -67,6 +68,10 @@ export function HomeTopAssets() {
   useLedgerFollow(['/v1/assets']);
 
   const coins = rankTopAssets(nativeCoin, data?.coins, pricing);
+  const maxVolume = Math.max(
+    0,
+    ...coins.map((c) => Number(c.volume_24h_usd) || 0),
+  );
 
   return (
     <section className="space-y-3">
@@ -77,7 +82,7 @@ export function HomeTopAssets() {
           </h2>
           <p className="text-ink-body text-sm">
             {pricing
-              ? 'Ranked by trailing-24h trading volume across every venue we ingest — native XLM included. Volume sums every (base, quote) pair the asset trades in.'
+              ? 'By 24h volume across every pair and venue, XLM included.'
               : 'Ranked by observed on-chain trade count — native XLM included. This network runs no price aggregator, so the USD columns are omitted rather than served empty.'}
           </p>
         </div>
@@ -125,6 +130,7 @@ export function HomeTopAssets() {
                   coin={coin}
                   rank={idx + 1}
                   pricing={pricing}
+                  maxVolume={maxVolume}
                   // Withhold the badge from ticker-collision look-alikes:
                   // COALESCE(slug, code) makes an impersonator's slug the
                   // verified code, so gate on the per-row API flag too.
@@ -148,11 +154,13 @@ function Row({
   rank,
   verified,
   pricing,
+  maxVolume,
 }: {
   coin: Coin;
   rank: number;
   verified: boolean;
   pricing: boolean;
+  maxVolume: number;
 }) {
   const price = parseDec(coin.price_usd);
   const volumeText = formatCompactUnits(coin.volume_24h_usd);
@@ -213,7 +221,14 @@ function Row({
       {pricing && (
         <Td align="right">
           {volumeText !== '—' ? (
-            <span className="text-ink-body font-mono">${volumeText}</span>
+            <span className="text-ink-body inline-flex items-center gap-2 font-mono">
+              <InlineBar
+                value={Number(coin.volume_24h_usd)}
+                max={maxVolume}
+                label="24h volume relative to the top asset"
+              />
+              ${volumeText}
+            </span>
           ) : (
             <Dash />
           )}
