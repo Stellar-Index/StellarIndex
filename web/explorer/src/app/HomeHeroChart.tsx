@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { MarketChart } from '@/components/charts/MarketChart';
 import { useNativeUsdPrice } from '@/api/hooks';
 import { FreshnessMarker } from '@/components/primitives';
+import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
   isFrameStale,
@@ -40,12 +41,9 @@ export function HomeHeroChart() {
   // A frozen pair's /v1/price holds a value the tip stream no longer
   // agrees with; show the held one rather than a live-looking number.
   const tipStr = tipFresh && !frozen ? tip.data.data.price : undefined;
-  const tipActive = tipStr != null && Number.isFinite(Number(tipStr));
-  const livePrice = tipActive
-    ? Number(tipStr)
-    : price != null
-      ? Number(price)
-      : null;
+  const tipActive =
+    tipStr != null && compareDecimalStrings(tipStr, '0') != null;
+  const livePrice = tipActive ? tipStr : price;
   const flash = usePriceFlash(tipActive ? tipStr : undefined);
 
   return (
@@ -76,7 +74,7 @@ export function HomeHeroChart() {
                 flash === 'down' && 'flash-down',
               )}
             >
-              ${livePrice >= 1 ? livePrice.toFixed(4) : livePrice.toFixed(6)}
+              ${formatPriceSmall(livePrice)}
             </span>
           )}
           {/* stale is already in the caption; the rest (frozen above all)
