@@ -52,10 +52,14 @@ describe('HistoryTabPanel', () => {
     // the bug scaled quote_amount by this value instead of 10^7.
     render(<HistoryTabPanel assetID="SHEKEL:GABC" decimals={2} />);
 
-    // Correct: 123456789 / 10^7 = 12.3456789 -> abs>=1 branch -> "12.35"
-    expect(screen.getByText('12.35')).toBeInTheDocument();
-    // Buggy behaviour divides by 10^2 (the base asset's decimals) instead,
-    // producing 1234567.89 -> the M-scale branch -> "1.23M".
-    expect(screen.queryByText('1.23M')).not.toBeInTheDocument();
+    // 123456789 / 10^7, truncated to 4 places; 10^2 would give 1,234,567.89
+    expect(screen.getByText('12.3456')).toBeInTheDocument();
+    expect(screen.queryByText('1,234,567.89')).not.toBeInTheDocument();
+  });
+
+  it('renders amounts above 2^53 digit for digit', () => {
+    row.base_amount = '900719925474099312';
+    render(<HistoryTabPanel assetID="SHEKEL:GABC" decimals={2} />);
+    expect(screen.getByText('9,007,199,254,740,993.12')).toBeInTheDocument();
   });
 });
