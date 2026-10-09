@@ -8,7 +8,15 @@ export type SpreadRow = { source: string; last_price?: string | null };
  * prices already in the venue list. Last prices are each venue's own most
  * recent trade, so they are not simultaneous quotes. Needs two priced venues.
  */
-export function SourcePriceSpread({ rows }: { rows: readonly SpreadRow[] }) {
+export function SourcePriceSpread({
+  rows,
+  label = 'Last-price spread',
+  noun = 'venues',
+}: {
+  rows: readonly SpreadRow[];
+  label?: string;
+  noun?: string;
+}) {
   const priced = rows.filter(
     (r): r is { source: string; last_price: string } =>
       r.last_price != null && compareDecimalStrings(r.last_price, '0') === 1,
@@ -25,11 +33,11 @@ export function SourcePriceSpread({ rows }: { rows: readonly SpreadRow[] }) {
   return (
     <div className="mb-3 space-y-1.5" data-testid="source-price-spread">
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-ink-muted">Last-price spread</span>
+        <span className="text-ink-muted">{label}</span>
         {spread != null && (
           <Badge
             tone={spread >= 1 ? 'warn' : 'ok'}
-            title="(highest - lowest) / lowest last price across venues"
+            title={`(highest - lowest) / lowest price across ${noun}`}
           >
             {spread.toFixed(2)}%
           </Badge>
@@ -40,7 +48,7 @@ export function SourcePriceSpread({ rows }: { rows: readonly SpreadRow[] }) {
       </div>
       <div
         role="img"
-        aria-label={`Last price by venue, ${sorted.length} venues, spread ${spread?.toFixed(2) ?? 'n/a'}%`}
+        aria-label={`${label}, ${sorted.length} ${noun}, spread ${spread?.toFixed(2) ?? 'n/a'}%`}
         className="bg-surface-subtle relative h-3 rounded-full"
       >
         {sorted.map((r) => (
