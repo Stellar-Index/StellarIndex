@@ -1848,8 +1848,8 @@ type TxOutcome struct {
 // The predicate is the EXACT SET of the page's ledgers, never a [lo,hi] range: a sparse
 // account's page can straddle millions of ledgers, and a range selects every granule between
 // them, leaving the tx_hash bloom (about 39% false positives at 50 hashes) as the only
-// filter. Measured on r1: the range form read 1.7-2.0B rows and did not finish in 60 s;
-// the exact-set form reads 319k-508k rows in 32-61 ms. The set is lossless: an op's parent
+// filter, and the range form reads billions of rows where the exact set reads a few
+// hundred thousand. The set is lossless: an op's parent
 // tx is in the op's own ledger. This bounds cost by page size (ParseLimit).
 // FINAL stays: transactions holds real duplicates and ingested_at ties (see
 // txByLedgerAndHash); with ledger_seq a point set FINAL merges only a handful of parts,
