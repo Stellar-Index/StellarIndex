@@ -4,7 +4,11 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact } from '@/lib/format';
+import {
+  compareDecimalStrings,
+  formatCompact,
+  formatCompactUnits,
+} from '@/lib/format';
 import { SourceActivityChart } from './SourceActivityChart';
 import { useProtocolTvls } from '../useProtocolTvls';
 
@@ -60,7 +64,9 @@ export function SourceStatsPanel({
   const failed = isError && data === undefined;
   const placeholder = isPending ? '…' : '—';
   const trades = data?.trade_count_24h;
-  const volume = data?.volume_24h_usd ? Number(data.volume_24h_usd) : undefined;
+  const volume = data?.volume_24h_usd
+    ? formatCompactUnits(data.volume_24h_usd)
+    : '—';
   const markets = data?.markets_count_24h;
 
   // TVL comes from the /v1/protocols snapshot (background-refreshed
@@ -69,12 +75,11 @@ export function SourceStatsPanel({
   // fabricated zero. A snapshot with unpriced pools is a lower bound
   // ("≥" prefix; provenance in the hover title).
   const tvl = useProtocolTvls().data?.byProtocol[source];
-  const tvlValue = tvl ? Number(tvl.tvl_usd) : 0;
   // Only DEX protocols with an absolute reserve source have a
   // snapshot — the stat disappears entirely (not a dash) for CEX
   // venues and reserve-less DEXes, since this panel is reused on
   // /exchanges/{name} and /sources/{name} too.
-  const showTvl = tvl != null && Number.isFinite(tvlValue) && tvlValue > 0;
+  const showTvl = tvl != null && compareDecimalStrings(tvl.tvl_usd, '0') === 1;
 
   return (
     <Panel
@@ -90,11 +95,7 @@ export function SourceStatsPanel({
       >
         <Stat
           label="24h volume"
-          value={
-            volume != null && Number.isFinite(volume)
-              ? `$${formatCompact(volume)}`
-              : placeholder
-          }
+          value={volume !== '—' ? `$${volume}` : placeholder}
         />
         <Stat
           label="24h trades"
@@ -109,7 +110,7 @@ export function SourceStatsPanel({
         {showTvl && tvl && (
           <Stat
             label="TVL"
-            value={`${tvl.unpriced_pools > 0 ? '≥ ' : ''}$${formatCompact(tvlValue)}`}
+            value={`${tvl.unpriced_pools > 0 ? '≥ ' : ''}$${formatCompactUnits(tvl.tvl_usd)}`}
             title={tvl.basis}
           />
         )}
