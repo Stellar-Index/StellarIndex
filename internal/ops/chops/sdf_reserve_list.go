@@ -15,47 +15,28 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// SDF reserve-list drift — the LIST-level companion to the
+// SDF reserve-list drift: the LIST-level companion to the
 // xlm_circulating_supply VALUE cross-check.
 //
-// The value check reconciles our served circulating supply against
-// dashboard.stellar.org within 2% of circulating (~700M XLM). That
-// bound is what the check is FOR (methodology residuals such as the
-// fee pool), but it is also a blind spot: SDF adding or retiring one
-// reserve account moves the total by whatever that account holds, and
-// the smaller program hot wallets hold well under 2% of circulating,
-// so a stale `supply.sdf_reserve_accounts` would over- or under-state
-// circulating supply indefinitely behind a green value check.
+// The value check's 2% bound (~700M XLM) hides SDF adding or retiring a
+// small reserve account, so a stale `supply.sdf_reserve_accounts` could
+// misstate circulating supply indefinitely behind a green check. This diffs
+// the configured account SET against the one SDF publishes.
 //
-// This check closes that gap by diffing the configured account SET
-// against the set SDF publishes. What SDF publishes machine-readably
-// is NOT the dashboard API — every version of it (/api/lumens,
-// /api/v2/lumens, /api/v3/lumens, /api/v3/lumens/all) returns program-level sums (`sdfMandate`,
-// `upgradeReserve`, `programs.*`) and never an account id. The list
-// itself lives in the source of that dashboard, stellar/dashboard
-// `common/lumens.js`: an `accounts` table plus the
-// `networkUpgradeReserveAccount` constant, which together are exactly
-// what `noncirculatingSupply()` subtracts (the fee pool aside) to
-// produce the `circulatingSupply` figure the value check reads. That
-// is the same source the configured list was transcribed from
-// (see configs/ansible/roles/archival-node/defaults/main.yml),
-// so a diff against it is a diff against the operator's own citation.
+// The dashboard API returns only program-level sums, never an account id,
+// so the list is read from the dashboard's source, stellar/dashboard
+// `common/lumens.js`: the `accounts` table plus
+// `networkUpgradeReserveAccount`, exactly what `noncirculatingSupply()`
+// subtracts. The configured list cites the same source
+// (configs/ansible/roles/archival-node/defaults/main.yml). `voidAccount` is
+// the burn address, subtracted from total supply, so it is excluded.
 //
-// The `voidAccount` in the same file is the BURN address: it is
-// subtracted from total supply, not from circulating, and is
-// deliberately not part of the published set here.
-//
-// Parsing JavaScript source is the honest option, not the elegant one,
-// so the parser is narrow and fails CLOSED into "skipped": a missing,
-// empty or unclosed accounts block, ANY row outside the `key: "G…"`
-// grammar, or a missing upgrade-reserve constant is a truth-source
-// outage (served_value_skipped=1, no drift verdict), never a partial
-// list and so never a spurious drift. A diff that retires more than
-// maxPlausibleReserveRetirements configured accounts at once is refused
-// the same way. The
-// stellarindex_served_value_persistently_skipped alert then names the
-// source once it stays dark for two runs, the same as for the value
-// checks.
+// Parsing JavaScript is fragile, so the parser fails CLOSED into "skipped"
+// (served_value_skipped=1, no verdict): a missing or malformed accounts
+// block, any row outside the `key: "G…"` grammar, a missing upgrade-reserve
+// constant, or retiring more than maxPlausibleReserveRetirements accounts at
+// once. stellarindex_served_value_persistently_skipped fires after two dark
+// runs.
 
 // sdfReserveListURL is the reserve list SDF publishes: the source of
 // dashboard.stellar.org's circulatingSupply computation.
