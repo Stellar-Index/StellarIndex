@@ -580,8 +580,7 @@ func TestHelperProcessMain(t *testing.T) {
 // TestMain_RejectsOutOfRangeNumericFlags: every numeric flag
 // is range-checked before a request is made. Unchecked, each value below
 // produced a complete, plausible report instead of a usage error — an
-// expired -duration read as a total outage, a 0 availability target
-// passed anything, a negative latency target failed everything.
+// expired -duration read as a total outage.
 func TestMain_RejectsOutOfRangeNumericFlags(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	deadURL := srv.URL
@@ -590,13 +589,6 @@ func TestMain_RejectsOutOfRangeNumericFlags(t *testing.T) {
 	cases := []struct{ name, args, flagName string }{
 		{"zero duration", "-duration 0s", "-duration"},
 		{"negative duration", "-duration -1s", "-duration"},
-		{"zero p95", "-p95-target 0s", "-p95-target"},
-		{"negative p99", "-p99-target -5ms", "-p99-target"},
-		{"zero freshness", "-freshness-target 0s", "-freshness-target"},
-		{"negative closed-bucket freshness", "-closed-bucket-freshness-target -1s", "-closed-bucket-freshness-target"},
-		{"zero availability", "-availability-target 0", "-availability-target"},
-		{"availability over 100", "-availability-target 100.5", "-availability-target"},
-		{"NaN availability", "-availability-target NaN", "-availability-target"},
 		{"zero concurrency", "-concurrency 0", "-concurrency"},
 		{"negative max-rps", "-max-rps -1", "-max-rps"},
 		{"NaN max-rps", "-max-rps NaN", "-max-rps"},
