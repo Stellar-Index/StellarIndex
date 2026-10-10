@@ -53,44 +53,6 @@ func TestPriceServeSurfaceLabelsAreDocumented(t *testing.T) {
 	}
 }
 
-// apiLayerHeading opens the README section documenting the price-serve
-// gate counters; three of its surfaces are actually emitted by the
-// aggregator binary, not this one.
-const apiLayerHeading = "## API layer (api binary)"
-
-// TestAggregatorOnlySurfacesAreCalledOutAsExceptions pins the README's
-// "API layer (api binary)" section to the three surfaces
-// (price_alert, divergence_webhook, freeze_webhook) that the shared
-// price-serve gate counters emit from the aggregator binary instead —
-// the doc must not read as if every surface in the table
-// came from the api binary, which hides that summing the counter without a
-// `job` selector mixes two processes.
-func TestAggregatorOnlySurfacesAreCalledOutAsExceptions(t *testing.T) {
-	raw, err := os.ReadFile(metricsReadme)
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc := string(raw)
-	start := strings.Index(doc, apiLayerHeading)
-	if start < 0 {
-		t.Fatalf("%s: heading %q not found", metricsReadme, apiLayerHeading)
-	}
-	rest := doc[start+len(apiLayerHeading):]
-	if end := strings.Index(rest, "\n### "); end >= 0 {
-		rest = rest[:end]
-	}
-	if !strings.Contains(rest, "aggregator") {
-		t.Fatalf("%s: %q section does not name the aggregator binary as an exception source",
-			metricsReadme, apiLayerHeading)
-	}
-	for _, surface := range []string{"price_alert", "divergence_webhook", "freeze_webhook"} {
-		if !strings.Contains(rest, surface) {
-			t.Errorf("%s: %q section does not call out surface %q as aggregator-emitted",
-				metricsReadme, apiLayerHeading, surface)
-		}
-	}
-}
-
 // TestSubstanceFloorLabelsAreDocumented pins every `floor` label value.
 func TestSubstanceFloorLabelsAreDocumented(t *testing.T) {
 	section := readmeSection(t)

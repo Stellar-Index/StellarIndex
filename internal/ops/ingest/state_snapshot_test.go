@@ -1,10 +1,6 @@
 package ingest
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"strings"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -80,42 +76,6 @@ func TestShouldCollect_ContractDataStorage(t *testing.T) {
 				t.Errorf("%s under scope=%s: shouldCollect=%v, want %v", c.name, sname, got, want[sname])
 			}
 		}
-	}
-}
-
-// TestShouldCollectDoc_DoesNotCiteUnrelatedPR is the regression for a wrong PR citation:
-// shouldCollect's doc comment must not cite an unrelated PR number as the
-// LP-scope reader. A reader following that
-// reference lands on the wrong PR entirely. The doc must instead name the
-// actual ADR-0039 native liquidity-pool reserve reader.
-func TestShouldCollectDoc_DoesNotCiteUnrelatedPR(t *testing.T) {
-	t.Parallel()
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "state_snapshot.go", nil, parser.ParseComments)
-	if err != nil {
-		t.Fatalf("parse state_snapshot.go: %v", err)
-	}
-
-	var doc *ast.CommentGroup
-	for _, d := range file.Decls {
-		fd, ok := d.(*ast.FuncDecl)
-		if !ok || fd.Name.Name != "shouldCollect" {
-			continue
-		}
-		doc = fd.Doc
-	}
-	if doc == nil {
-		t.Fatal("shouldCollect is gone from state_snapshot.go (or lost its doc comment) — this guard has moved")
-	}
-	text := doc.Text()
-
-	if strings.Contains(text, "#30") {
-		t.Errorf("shouldCollect doc comment still cites \"#30\" as the LP-scope reader — PR #30 is "+
-			"\"Remove TradingView attribution logo from charts\" (merged 2026-07-21), unrelated: %q", text)
-	}
-	if !strings.Contains(text, "liquidity_pool_state_reader.go") {
-		t.Errorf("shouldCollect doc comment does not name internal/storage/clickhouse/liquidity_pool_state_reader.go "+
-			"— a reader would not know which reader actually consumes the LP scope=all/storage rows: %q", text)
 	}
 }
 

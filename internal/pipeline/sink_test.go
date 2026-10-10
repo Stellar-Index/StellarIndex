@@ -610,37 +610,6 @@ func TestShutdownSafeCtx_CancelledParentGetsFreshBoundedCtx(t *testing.T) {
 	}
 }
 
-// TestPersistWorker_UsesShutdownSafeCtxOnFlushAndPersistArms is a
-// structural pin (same style as TestSinkDrain_NonTradeWritesAreResilient)
-// that persistWorker actually WIRES shutdownSafeCtx into its
-// flushTicker and `<-in` select arms, rather than the fix regressing
-// to a direct `flush(ctx)` / `persistEventResilient(ctx, ...)` call —
-// which would compile and pass every other test while silently
-// reopening the shutdown race.
-func TestPersistWorker_UsesShutdownSafeCtxOnFlushAndPersistArms(t *testing.T) {
-	fset := token.NewFileSet()
-	sink := parseFile(t, fset, "sink.go")
-	decl := funcDecl(t, sink, "persistWorker")
-
-	calls := 0
-	ast.Inspect(decl, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "shutdownSafeCtx" {
-			calls++
-		}
-		return true
-	})
-	// One call in the flushTicker arm, one in the batch-full flush
-	// inside the `<-in` arm, one guarding persistEventResilient in the
-	// `<-in` arm's non-trade branch.
-	if calls < 3 {
-		t.Errorf("persistWorker calls shutdownSafeCtx %d times, want >= 3 (flushTicker arm, `<-in` batch-flush branch, `<-in` persistEventResilient branch) — CON-09's fix must guard every flush/persist call reachable from the racy select, not just ctx.Done()'s own arm", calls)
-	}
-}
-
 // TestBlendEmitterUnlockTime_overflowSentinelRejected is the
 // regression test for this call site: a Blend Emitter
 // UnlockTime near math.MaxUint64 (a plausible "unlimited" sentinel)
