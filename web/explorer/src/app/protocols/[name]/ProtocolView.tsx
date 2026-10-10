@@ -170,7 +170,6 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
       {/* ── Activity chart ── */}
       <Panel
         title={`On-chain activity (events/day, last ${windowDays || ''}d)`}
-        hint="Decoded contract events per day across every contract + factory the protocol owns, from the certified lake."
         source={source}
       >
         {!analyticsAvailable ? (
@@ -198,11 +197,7 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
       {/* ── Event-type breakdown ── */}
       <Panel
         title="Event-type breakdown"
-        hint={
-          analyticsAvailable
-            ? `Every decoded event type and how often it fired, last ${windowDays}d.`
-            : undefined
-        }
+        hint={analyticsAvailable ? `Last ${windowDays}d` : undefined}
         source={source}
       >
         {!analyticsAvailable ? (
@@ -672,7 +667,7 @@ function ContractRoster({
   return (
     <Panel
       title={`Contract roster (${contracts.length})`}
-      hint={`${factories.length} ${factories.length === 1 ? 'factory' : 'factories'} · ${instances.length} instances${analyticsAvailable && rosterHasActivity ? ' · events over the analytics window' : ' · per-contract event counts unavailable'}`}
+      hint={`${factories.length} ${factories.length === 1 ? 'factory' : 'factories'} · ${instances.length} instances`}
       source={source}
       bodyClassName="-mx-4"
     >
@@ -908,9 +903,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
 function AnalyticsUnavailable() {
   return (
     <p className="text-ink-muted py-6 text-center text-sm">
-      Lake analytics unavailable — the certified-lake reader is currently
-      unreachable. The contract registry below is served independently and is
-      unaffected.
+      Lake analytics unavailable.
     </p>
   );
 }

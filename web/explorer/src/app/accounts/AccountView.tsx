@@ -503,9 +503,7 @@ function AccountStatePanel({
         source={source}
         bodyClassName="text-sm text-ink-muted"
       >
-        No live account state in the captured ledger window yet — the account
-        wasn’t touched since entry-change capture began. Sourced activity still
-        shows below.
+        No account state captured yet.
       </Panel>
     );
   }

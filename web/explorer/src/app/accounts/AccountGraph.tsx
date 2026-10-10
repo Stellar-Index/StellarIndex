@@ -149,14 +149,10 @@ export function AccountGraphPanel({ id }: { id: string }) {
     `/v1/accounts/${id}/graph`,
     relation ? { relation, limit: PAGE_SIZE } : undefined,
   );
-  const panelHint =
-    'who created and sponsored this account, and whom it created and sponsored';
-
   if (isError) {
     return (
       <Panel
         title="Sponsorship + creation graph"
-        hint={panelHint}
         source={source}
         bodyClassName="text-sm text-ink-body"
       >
@@ -170,7 +166,6 @@ export function AccountGraphPanel({ id }: { id: string }) {
     return (
       <Panel
         title="Sponsorship + creation graph"
-        hint={panelHint}
         source={source}
         bodyClassName="text-sm text-ink-muted"
       >
@@ -199,7 +194,6 @@ export function AccountGraphPanel({ id }: { id: string }) {
   return (
     <Panel
       title="Sponsorship + creation graph"
-      hint={panelHint}
       source={source}
       bodyClassName="space-y-4"
     >
