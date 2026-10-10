@@ -563,3 +563,44 @@ func TestDecodeCAP0038Revocation_failedOp_emitsNothing(t *testing.T) {
 		t.Errorf("got %d movements from a failed op, want 0", len(movements))
 	}
 }
+
+// TestDecodeCAP0038Revocation_ignoresPreexistingBalances: only a
+// claimable balance CREATED by the revoking op is a liquidation; a
+// balance that merely appears as state/updated in the same meta was
+// already escrowed and must not be re-emitted as pool exit.
+func TestDecodeCAP0038Revocation_ignoresPreexistingBalances(t *testing.T) {
+	native := xdr.MustNewNativeAsset()
+	state := mkClaimableBalanceCreatedChange(t, 0x61, native, 800)
+	state.ChangeType = "state"
+	updated := mkClaimableBalanceCreatedChange(t, 0x62, native, 900)
+	updated.ChangeType = "updated"
+
+	got, err := DecodeCAP0038Revocation(1, time.Time{}, "tx", 0, mkAllowTrustOp(t, 0x63, "USDC", 0),
+		mkAllowTrustSuccessResult(), []EntryChangeXDR{state, updated})
+	if err != nil {
+		t.Fatalf("DecodeCAP0038Revocation: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d movements from pre-existing balances, want 0", len(got))
+	}
+}
+
+// TestDecodeCAP0038Revocation_amountBeyond32Bits pins the full int64
+// stroop amount on both liquidation legs (ADR-0003: no narrowing).
+func TestDecodeCAP0038Revocation_amountBeyond32Bits(t *testing.T) {
+	const amount = 5_000_000_000_123
+	changes := []EntryChangeXDR{mkClaimableBalanceCreatedChange(t, 0x64, xdr.MustNewNativeAsset(), amount)}
+	got, err := DecodeCAP0038Revocation(1, time.Time{}, "tx", 0, mkAllowTrustOp(t, 0x65, "USDC", 0),
+		mkAllowTrustSuccessResult(), changes)
+	if err != nil {
+		t.Fatalf("DecodeCAP0038Revocation: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d movements, want 2", len(got))
+	}
+	for i, m := range got {
+		if m.Amount.String() != "5000000000123" {
+			t.Errorf("movements[%d].Amount = %s, want 5000000000123", i, m.Amount)
+		}
+	}
+}

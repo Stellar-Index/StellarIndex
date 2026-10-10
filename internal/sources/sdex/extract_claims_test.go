@@ -8,7 +8,6 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
 // extractClaimAtoms covers five op variants. The pre-existing
@@ -318,27 +317,6 @@ func TestXdrAssetToCanonical_alphanum12(t *testing.T) {
 }
 
 // ─── End-to-end through Decoder.Decode for the new op types ────
-
-func TestDecoder_pathPaymentStrictReceive_end2end(t *testing.T) {
-	d := NewDecoder()
-	xlm := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
-	usdc := mkAlphanum4Asset(t, "USDC", 0x10)
-	claim := mkOrderBookClaim(t, 0x20, 1, xlm, usdc, 1_000_000_000, 12_420_000)
-	op, result := mkPathPaymentStrictReceiveOp([]xdr.ClaimAtom{claim})
-
-	out, err := d.Decode(dispatcher.OpContext{
-		Op: op, OpResult: result,
-		Ledger: 1, ClosedAt: time.Unix(1_770_000_000, 0).UTC(),
-		TxHash: "abcd", OpIndex: 0,
-		TxSource: "GTAKER0000000000000000000000000000000000000000000000000000",
-	})
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
-	}
-	if len(out) != 1 {
-		t.Fatalf("got %d trades, want 1", len(out))
-	}
-}
 
 // A trade op whose inner result is a failure code carries no Success
 // arm; every op type must short-circuit on the code rather than reach

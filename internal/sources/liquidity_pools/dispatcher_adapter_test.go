@@ -194,3 +194,25 @@ func TestObserver_RoundTripThroughDispatcher(t *testing.T) {
 		t.Errorf("dispatcher round-trip lost the observation")
 	}
 }
+
+// A ConstantProduct-typed body with no ConstantProduct arm (only
+// constructible in memory, not over the wire) must be skipped, not
+// dereferenced.
+func TestObserver_MatchesNilConstantProductIsFalse(t *testing.T) {
+	o, err := NewObserver([]string{"USDC:" + gIssuerA})
+	if err != nil {
+		t.Fatalf("NewObserver: %v", err)
+	}
+	change := xdr.LedgerEntryChange{
+		Type: xdr.LedgerEntryChangeTypeLedgerEntryUpdated,
+		Updated: &xdr.LedgerEntry{Data: xdr.LedgerEntryData{
+			Type: xdr.LedgerEntryTypeLiquidityPool,
+			LiquidityPool: &xdr.LiquidityPoolEntry{Body: xdr.LiquidityPoolEntryBody{
+				Type: xdr.LiquidityPoolTypeLiquidityPoolConstantProduct,
+			}},
+		}},
+	}
+	if o.Matches(change) {
+		t.Fatal("Matches = true for a body with no ConstantProduct arm")
+	}
+}

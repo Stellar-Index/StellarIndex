@@ -51,3 +51,15 @@ func TestUpgradeKey_WritesOnlyWithWriteFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestUpgradeKey_RequiresReasonAndCeiling(t *testing.T) {
+	base := []string{"-config", "/nonexistent.toml", "-key-id", "kid_x", "-actor", "alice"}
+	if err := Upgrade(append(append([]string{}, base...), "-rate-limit-per-min", "5000")); err == nil ||
+		!strings.Contains(err.Error(), "-reason is required") {
+		t.Errorf("upgrade-key without -reason = %v, want -reason is required", err)
+	}
+	if err := Upgrade(append(append([]string{}, base...), "-reason", "r", "-rate-limit-per-min", "10000000")); err == nil ||
+		!strings.Contains(err.Error(), "must be in [0, 100000]") {
+		t.Errorf("upgrade-key above the ceiling = %v, want a bound error", err)
+	}
+}

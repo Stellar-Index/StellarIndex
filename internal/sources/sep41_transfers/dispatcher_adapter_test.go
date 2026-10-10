@@ -11,6 +11,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 const (
@@ -438,5 +439,89 @@ func TestDecode_PopulatesEventIndex(t *testing.T) {
 	}
 	if got.EventIndex != 3 {
 		t.Errorf("EventIndex = %d, want 3 (F-1324)", got.EventIndex)
+	}
+}
+
+// TestDecoder_RejectsForeignBodyShapes pins the refusal (with ErrBadValue)
+// of body shapes that are close to, but not, the documented ones — each is
+// a way a non-conforming contract could otherwise be mis-decoded.
+func TestDecoder_RejectsForeignBodyShapes(t *testing.T) {
+	d, _ := NewDecoder([]string{cWatched})
+	u64v := xdr.Uint64(5)
+	u64 := xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &u64v}
+	u128 := xdr.ScVal{Type: xdr.ScValTypeScvU128, U128: &xdr.UInt128Parts{Lo: 5}}
+	cases := []struct {
+		name string
+		ev   events.Event
+		body xdr.ScVal
+	}{
+		{"transfer bare u128", transferEvent(t, cWatched, 0), u128},
+		{"transfer map amount u64", transferEvent(t, cWatched, 0), transferMap(u64, true)},
+		{"transfer map amount u128", transferEvent(t, cWatched, 0), transferMap(u128, false)},
+		{"approve 3-arity vec", approveEvent(t, cWatched, 0, 0), vec(i128(5), u32(9), u32(9))},
+		{"approve 1-arity vec", approveEvent(t, cWatched, 0, 0), vec(i128(5))},
+		{"approve amount u64", approveEvent(t, cWatched, 0, 0), vec(u64, u32(9))},
+		{"approve live_until u64", approveEvent(t, cWatched, 0, 0), vec(i128(5), u64)},
+		{"approve bare i128", approveEvent(t, cWatched, 0, 0), i128(5)},
+		{"set_admin symbol body", setAdminEvent(t, cWatched, true), sym("admin")},
+		{"set_authorized u32 body", setAuthorizedEvent(t, cWatched, true), u32(1)},
+	}
+	for _, tc := range cases {
+		tc.ev.Value = encScVal(t, tc.body)
+		outs, err := d.Decode(tc.ev)
+		if !errors.Is(err, ErrBadValue) {
+			t.Errorf("%s: Decode = (%v, %v), want ErrBadValue", tc.name, outs, err)
+		}
+	}
+}
+
+// TestDecoder_VoidAddressTopicRejectedOutsideSetAdmin: a Void in a required
+// address slot must fail the event, never decode to "" — an empty from_addr
+// on a transfer is read back as a "self" movement by the explorer.
+func TestDecoder_VoidAddressTopicRejectedOutsideSetAdmin(t *testing.T) {
+	d, _ := NewDecoder([]string{cWatched})
+	void := encScVal(t, xdr.ScVal{Type: xdr.ScValTypeScvVoid})
+	cases := []struct {
+		name string
+		ev   events.Event
+		idx  int
+	}{
+		{"transfer.from", transferEvent(t, cWatched, 3), 1},
+		{"transfer.to", transferEvent(t, cWatched, 3), 2},
+		{"approve.from", approveEvent(t, cWatched, 3, 9), 1},
+		{"approve.spender", approveEvent(t, cWatched, 3, 9), 2},
+		{"set_authorized.id", setAuthorizedEvent(t, cWatched, true), 1},
+	}
+	for _, tc := range cases {
+		tc.ev.Topic[tc.idx] = void
+		outs, err := d.Decode(tc.ev)
+		if !errors.Is(err, scval.ErrScValType) {
+			t.Errorf("%s Void: Decode = (%v, %v), want ErrScValType", tc.name, outs, err)
+		}
+	}
+}
+
+// TestDecoder_SetAdminVoidAdminTopicDecodesEmpty: set_admin's topic[1] is
+// optional, so it is the one address slot where Void decodes to "".
+func TestDecoder_SetAdminVoidAdminTopicDecodesEmpty(t *testing.T) {
+	d, _ := NewDecoder([]string{cWatched})
+	ev := setAdminEvent(t, cWatched, true)
+	ev.Topic[1] = encScVal(t, xdr.ScVal{Type: xdr.ScValTypeScvVoid})
+	out := decodeOne(t, d, ev)
+	if out.FromAddr != "" || out.ToAddr != gTo {
+		t.Fatalf("got from=%q to=%q, want \"\"/%q", out.FromAddr, out.ToAddr, gTo)
+	}
+}
+
+// TestDecoder_MatchesOnlyContractEvents: a system/diagnostic event carrying
+// a transfer topic from a watched contract id must not match.
+func TestDecoder_MatchesOnlyContractEvents(t *testing.T) {
+	d, _ := NewDecoder([]string{cWatched})
+	for _, typ := range []string{"system", "diagnostic", ""} {
+		ev := transferEvent(t, cWatched, 1)
+		ev.Type = typ
+		if d.Matches(ev) {
+			t.Errorf("Matches(type=%q) = true, want false", typ)
+		}
 	}
 }

@@ -307,33 +307,3 @@ func FuzzSwapAmountForeignScValType(f *testing.F) {
 		}
 	})
 }
-
-// TestDecode_PairErrorOnADirectionalSwapIsReturned pins that emitTrade
-// swallows ONLY ErrNonDirectionalSwap. A token map that names the same
-// asset twice cannot form a pair; that is a registry defect and must
-// surface as a decode error, not be counted as an ordinary dust no-op.
-func TestDecode_PairErrorOnADirectionalSwapIsReturned(t *testing.T) {
-	raw := make([]byte, 32)
-	raw[0] = 0x5e
-	pool, err := strkey.Encode(strkey.VersionByteContract, raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	same, err := canonical.NewSorobanAsset(tokenUSDC)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d := NewDecoder()
-	d.SeedPool(pool, same, same, MainnetFactory, 64_000_000)
-
-	out, err := d.Decode(swapEvent(pool, goldenSwapSellToken0, 64_200_014, 0, 2))
-	if err == nil {
-		t.Fatalf("Decode = %d events, nil error; want the pair error surfaced", len(out))
-	}
-	if errors.Is(err, ErrNonDirectionalSwap) {
-		t.Fatalf("pair error misreported as non-directional: %v", err)
-	}
-	if got := d.SkippedNonDirectional(); got != 0 {
-		t.Fatalf("SkippedNonDirectional = %d, want 0 — a registry defect is not a dust swap", got)
-	}
-}

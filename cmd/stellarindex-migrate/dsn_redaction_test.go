@@ -620,3 +620,313 @@ func TestMigrate_ADSNMissingItsSlashesIsRefusedWithoutEchoingIt(t *testing.T) {
 		t.Errorf("a hostless socket DSN was refused before the driver:\n%s", out)
 	}
 }
+
+// THE DEFECT. `down` calls m.Steps(-n) — a destructive rollback —
+// with no confirmation prompt, no -yes/-force flag and no TTY guard: an
+// operator who fat-fingers `down` (or a script that inherits the wrong
+// $STELLARINDEX_POSTGRES_DSN) drops production migrations with no
+// chance to notice, and the command prints success. `up` is the only
+// verb any deploy pipeline runs (deploy-binary.yml); `down` is a manual,
+// break-glass command, so the safe default is to ask first and to
+// refuse — never guess — when nothing can answer the prompt, matching
+// scripts/dev/cut-release.sh's rule for the same class of prompt.
+//
+// THE TEST BUILDS THE REAL BINARY, because the gate has to run before
+// `newMigrator` ever opens a connection: it asserts on WHICH failure
+// comes back, not just that one occurs, and only the real dispatch in
+// main() proves the gate runs first.
+func TestMigrate_DownRefusesWithoutConfirmationOnNonTTYStdin(t *testing.T) {
+	bin := buildMigrateBinary(t)
+
+	// Port 1 on loopback refuses immediately with no DNS or connect
+	// timeout, so the test only takes real time if the gate is missing
+	// and the tool goes on to actually try to connect.
+	const dsn = "postgres://u:p@127.0.0.1:1/db?sslmode=disable"
+
+	cmd := exec.Command(bin, "-dsn", dsn, "-i-know", "down", "1")
+	// exec.Command leaves Stdin nil, which os/exec wires to /dev/null —
+	// guaranteed non-interactive, exactly the shape this gate must
+	// refuse rather than guess on.
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected a non-zero exit refusing the unconfirmed rollback, got success:\n%s", out)
+	}
+
+	got := string(out)
+	if !strings.Contains(got, "not a TTY") || !strings.Contains(got, "-yes") {
+		t.Fatalf("expected the confirmation refusal naming -yes and the non-TTY stdin, got:\n%s", got)
+	}
+	// The defect this replaces: on unfixed code there is no gate, so the
+	// tool goes straight to newMigrator and this message never appears —
+	// this asserts the connection was never attempted.
+	if strings.Contains(got, "connect") || strings.Contains(got, "refused") || strings.Contains(got, "open migrator") {
+		t.Fatalf("rollback should have been refused before any connection attempt, got:\n%s", got)
+	}
+}
+
+// -yes must actually skip the prompt and let the command proceed to the
+// real work, not just always fail differently.
+func TestMigrate_DownYesSkipsConfirmationAndReachesTheMigrator(t *testing.T) {
+	bin := buildMigrateBinary(t)
+
+	const dsn = "postgres://u:p@127.0.0.1:1/db?sslmode=disable"
+
+	cmd := exec.Command(bin, "-dsn", dsn, "-yes", "-i-know", "down", "1")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected a non-zero exit (connection refused), got success:\n%s", out)
+	}
+
+	got := string(out)
+	if strings.Contains(got, "not a TTY") || strings.Contains(got, "-i-know") {
+		t.Fatalf("-yes -i-know should have passed both gates, got:\n%s", got)
+	}
+	if !strings.Contains(got, "open migrator") {
+		t.Fatalf("expected the tool to go on and open the migrator, got:\n%s", got)
+	}
+}
+
+// -yes only skips the prompt; it is what every non-interactive caller
+// passes, so it cannot also be the acknowledgement that the rollback may
+// discard data. r1 production reaches Postgres at 127.0.0.1
+// (14-stellarindex-services.yml), so this is the production-shape DSN
+// and the refusal must not depend on the host looking remote.
+func TestMigrate_DownRefusesWithoutIKnowOnProductionShapeDSN(t *testing.T) {
+	bin := buildMigrateBinary(t)
+
+	for _, dsn := range []string{
+		"postgres://stellarindex:p@127.0.0.1:1/stellarindex?sslmode=disable",
+		"postgres://stellarindex:p@localhost:1/stellarindex?sslmode=disable",
+		"postgres://stellarindex:p@/stellarindex?host=db.invalid&port=1",
+		"postgres://stellarindex:p@db.invalid:1/stellarindex?sslmode=disable",
+	} {
+		cmd := exec.Command(bin, "-dsn", dsn, "-yes", "down", "1")
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("down -yes without -i-know exited 0:\n%s", out)
+		}
+		got := string(out)
+		if !strings.Contains(got, "refusing") || !strings.Contains(got, "-i-know") {
+			t.Fatalf("expected a refusal naming -i-know, got:\n%s", got)
+		}
+		if strings.Contains(got, "127.0.0.1") || strings.Contains(got, "db.invalid") ||
+			strings.Contains(got, "localhost") || strings.Contains(got, "open migrator") {
+			t.Fatalf("down without -i-know went on to dial the database:\n%s", got)
+		}
+	}
+}
+
+// -i-know is an acknowledgement, not a prompt skip: on a non-TTY stdin
+// the confirmation gate still refuses when -yes is absent.
+func TestMigrate_DownIKnowAloneDoesNotSkipConfirmation(t *testing.T) {
+	bin := buildMigrateBinary(t)
+
+	const dsn = "postgres://u:p@db.invalid:1/db?sslmode=disable"
+	out, err := exec.Command(bin, "-dsn", dsn, "-i-know", "down", "1").CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected the non-TTY confirmation refusal, got success:\n%s", out)
+	}
+	if got := string(out); !strings.Contains(got, "not a TTY") {
+		t.Fatalf("-i-know must not skip the confirmation prompt, got:\n%s", got)
+	}
+}
+
+// buildMigrateBinary compiles the real binary once per test into a temp
+// dir, matching the other black-box tests in this package.
+func buildMigrateBinary(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "stellarindex-migrate")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// An empty or repeated -dsn must be refused before anything is dialled.
+// The environment DSN stands in for production: an explicit `-dsn ""`
+// (the quoted expansion of an unset variable) must not fall through to it,
+// and a second -dsn must not silently replace the first. Both hosts are
+// unresolvable, so the host named in the output is the evidence of which
+// database the tool would have written to.
+func TestMigrate_EmptyOrRepeatedDSNIsRefusedBeforeAnyDial(t *testing.T) {
+	bin, migDir := buildMigrate(t)
+
+	const envHost = "env-host-stands-for-production.invalid"
+	const hostA = "flag-host-a.invalid"
+	const hostB = "flag-host-b.invalid"
+	envDSN := "STELLARINDEX_POSTGRES_DSN=postgres://u:p@" + envHost + ":5432/db?sslmode=disable"
+	dsnA := "postgres://u:p@" + hostA + ":5432/a?sslmode=disable"
+	dsnB := "postgres://u:p@" + hostB + ":5432/b?sslmode=disable"
+
+	run := func(args ...string) (string, int) {
+		t.Helper()
+		cmd := exec.Command(bin, append([]string{"-migrations", migDir}, args...)...)
+		cmd.Env = append(os.Environ(), envDSN)
+		out, err := cmd.CombinedOutput()
+		var ee *exec.ExitError
+		switch {
+		case err == nil:
+			return string(out), 0
+		case errors.As(err, &ee):
+			return string(out), ee.ExitCode()
+		default:
+			t.Fatalf("run %v: %v", args, err)
+			return "", 0
+		}
+	}
+
+	// Controls: the instrument can see each host, so an absent host below
+	// means "not dialled", not "not reported".
+	if out, _ := run("status"); !strings.Contains(out, envHost) {
+		t.Fatalf("no -dsn: expected the env host to be dialled, got:\n%s", out)
+	}
+	if out, _ := run("-dsn", dsnA, "status"); !strings.Contains(out, hostA) || strings.Contains(out, envHost) {
+		t.Fatalf("-dsn once: expected only %s to be dialled, got:\n%s", hostA, out)
+	}
+
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"empty before verb", []string{"-dsn", "", "status"}, "empty"},
+		{"empty with equals", []string{"-dsn=", "status"}, "empty"},
+		{"empty after verb", []string{"status", "-dsn", ""}, "empty"},
+		{"blank value", []string{"-dsn", "  ", "up"}, "empty"},
+		{"empty on down -yes", []string{"-dsn", "", "-yes", "-i-know", "down", "2"}, "empty"},
+		{"repeated before verb", []string{"-dsn", dsnA, "-dsn", dsnB, "status"}, "more than once"},
+		{"repeated across verb", []string{"-dsn", dsnA, "status", "-dsn", dsnB}, "more than once"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, code := run(tc.args...)
+			if code != 2 {
+				t.Errorf("exit %d, want 2 (usage error)\n%s", code, out)
+			}
+			for _, h := range []string{envHost, hostA, hostB} {
+				if strings.Contains(out, h) {
+					t.Errorf("dialled %s — the flag must be refused before any connection:\n%s", h, out)
+				}
+			}
+			if !strings.Contains(out, "-dsn") || !strings.Contains(out, tc.want) {
+				t.Errorf("diagnostic must name -dsn and say %q, got:\n%s", tc.want, out)
+			}
+		})
+	}
+}
+
+// A flag must reach the tool wherever the operator puts it — and if it
+// cannot, the tool must say so rather than run against something else.
+//
+// THE DEFECT. Go's flag package stops parsing at the first non-flag
+// argument, so a single Parse over the whole argv stopped at the verb.
+// In `stellarindex-migrate down 1 -dsn postgres://staging/…` the -dsn was
+// never parsed, was silently dropped, and the DSN fell back to
+// $STELLARINDEX_POSTGRES_DSN — so an operator dropping a migration on
+// what they believed was staging dropped it on PRODUCTION, and the
+// command printed success. All four verbs were affected, and so was
+// -migrations.
+//
+// THE TEST BUILDS THE REAL BINARY AND ASSERTS ON THE HOST IT DIALS,
+// because that is the only thing that separates the bug from the fix —
+// both spellings otherwise "work" and both print a plausible result. A
+// unit test on an internal helper could not have caught a defect that
+// lives entirely in argv handling at main(). Both hostnames are
+// unresolvable, so nothing connects anywhere; the name in the error is
+// the evidence.
+func TestMigrate_FlagsReachTheToolInEitherPosition(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "stellarindex-migrate")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+
+	const envHost = "env-host-stands-for-production.invalid"
+	const flagHost = "flag-host-stands-for-staging.invalid"
+	env := append(os.Environ(),
+		"STELLARINDEX_POSTGRES_DSN=postgres://u:p@"+envHost+":5432/db?sslmode=disable")
+	flagDSN := "postgres://u:p@" + flagHost + ":5432/staging?sslmode=disable"
+
+	// A real migrations directory, so every invocation gets far enough to
+	// DIAL. Without it the tool fails on the source first and the test
+	// would pass while proving nothing.
+	migDir, err := filepath.Abs(filepath.Join("..", "..", "migrations"))
+	if err != nil {
+		t.Fatalf("resolve migrations dir: %v", err)
+	}
+	if _, err := os.Stat(migDir); err != nil {
+		t.Fatalf("migrations dir %s: %v", migDir, err)
+	}
+	base := []string{"-migrations", migDir}
+
+	run := func(tail ...string) (string, int) {
+		args := append(append([]string{}, base...), tail...)
+		cmd := exec.Command(bin, args...)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		code := 0
+		if err != nil {
+			var ee *exec.ExitError
+			if !errors.As(err, &ee) {
+				t.Fatalf("run %v: %v", args, err)
+			}
+			code = ee.ExitCode()
+		}
+		return string(out), code
+	}
+
+	// The reported trap, and the same shape on every verb: an explicit
+	// -dsn AFTER the verb must be honoured, never silently replaced by
+	// the environment.
+	for _, tail := range [][]string{
+		{"down", "1", "-dsn", flagDSN, "-yes", "-i-know"},
+		{"up", "-dsn", flagDSN},
+		{"status", "-dsn", flagDSN},
+		{"force", "153", "-dsn", flagDSN},
+	} {
+		out, _ := run(tail...)
+		if strings.Contains(out, envHost) {
+			t.Errorf("%v DIALED THE ENV HOST %q — an explicit -dsn was ignored and the "+
+				"command ran against a different database than it was asked for:\n%s",
+				tail, envHost, out)
+		}
+		if !strings.Contains(out, flagHost) {
+			t.Errorf("%v did not reach the flag's host %q:\n%s", tail, flagHost, out)
+		}
+	}
+
+	// The historical placement keeps working, so no runbook or playbook
+	// breaks on the fix.
+	for _, tail := range [][]string{
+		{"-dsn", flagDSN, "-yes", "-i-know", "down", "1"},
+		{"-dsn", flagDSN, "up"},
+		{"-dsn", flagDSN, "status"},
+	} {
+		out, _ := run(tail...)
+		if !strings.Contains(out, flagHost) {
+			t.Errorf("%v did not reach the flag's host %q:\n%s", tail, flagHost, out)
+		}
+	}
+
+	// A positional AFTER the flags is ambiguous — is `1` a count or a
+	// flag value? It is refused rather than guessed.
+	out, code := run("down", "-dsn", flagDSN, "1")
+	if code == 0 {
+		t.Errorf("`down -dsn … 1` exited 0; an ambiguous positional must be refused:\n%s", out)
+	}
+	if !strings.Contains(out, "unexpected argument") {
+		t.Errorf("`down -dsn … 1` did not explain the refusal:\n%s", out)
+	}
+
+	// An unknown flag is a parse error, in either position.
+	for _, tail := range [][]string{{"status", "-nope"}, {"-nope", "status"}} {
+		if out, code := run(tail...); code == 0 {
+			t.Errorf("%v accepted an unknown flag:\n%s", tail, out)
+		}
+	}
+
+	// No flag at all: the environment is the documented fallback and must
+	// keep working, or every deploy breaks.
+	if out, _ := run("status"); !strings.Contains(out, envHost) {
+		t.Errorf("bare `status` did not fall back to the env DSN:\n%s", out)
+	}
+}

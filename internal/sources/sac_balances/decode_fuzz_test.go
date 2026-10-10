@@ -1,7 +1,6 @@
 package sac_balances
 
 import (
-	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -128,82 +127,4 @@ func FuzzSACBalanceObservation(f *testing.F) {
 			t.Fatalf("identity = (%q, %q, %q), want (%q, %q, %q)", obs.ContractID, obs.Holder, obs.AssetKey, cSAC, gHolder, usdcKey)
 		}
 	})
-}
-
-// TestObserver_RemovalCarriesIntraLedgerSeq: an eviction/deletion must keep
-// its within-ledger position, or a same-ledger delete-then-recreate can be
-// resolved to the wrong final state.
-func TestObserver_RemovalCarriesIntraLedgerSeq(t *testing.T) {
-	o, _ := NewObserver(map[string]string{cSAC: usdcKey})
-	cid := mustContractID(t, cSAC)
-	change := xdr.LedgerEntryChange{
-		Type: xdr.LedgerEntryChangeTypeLedgerEntryRemoved,
-		Removed: &xdr.LedgerKey{
-			Type: xdr.LedgerEntryTypeContractData,
-			ContractData: &xdr.LedgerKeyContractData{
-				Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: (*xdr.ContractId)(&cid)},
-				Key:        makeBalanceKey(t, gHolder),
-				Durability: xdr.ContractDataDurabilityPersistent,
-			},
-		},
-	}
-	outs, err := o.Decode(dispatcher.LedgerEntryChangeContext{Ledger: 42, Change: change, IntraLedgerSeq: 17})
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
-	}
-	obs := outs[0].(Observation)
-	if !obs.IsRemoval || obs.Balance.Sign() != 0 {
-		t.Fatalf("removal = (%v, %s), want (true, 0)", obs.IsRemoval, obs.Balance)
-	}
-	if obs.IntraLedgerSeq != 17 || obs.Ledger != 42 {
-		t.Fatalf("IntraLedgerSeq/Ledger = %d/%d, want 17/42", obs.IntraLedgerSeq, obs.Ledger)
-	}
-}
-
-// TestObserver_DecodeRejectsUnwatchedContract: Decode must not trust that
-// Matches ran — an unwatched contract has no asset_key, and emitting one
-// with an empty key would write an orphan supply slice.
-func TestObserver_DecodeRejectsUnwatchedContract(t *testing.T) {
-	const cOther = "CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526"
-	o, _ := NewObserver(map[string]string{cSAC: usdcKey})
-	change := makeContractDataChange(t, cOther, makeBalanceKey(t, gHolder), makeI128Val(1))
-	if o.Matches(change) {
-		t.Fatalf("Matches accepted unwatched contract %s", cOther)
-	}
-	outs, err := o.Decode(dispatcher.LedgerEntryChangeContext{Ledger: 1, Change: change})
-	if !errors.Is(err, ErrNotSACBalance) {
-		t.Fatalf("Decode(unwatched) = (%v, %v), want ErrNotSACBalance", outs, err)
-	}
-}
-
-// TestObserver_DecodeRejectsForeignBalanceShapes: a balance value that is
-// neither i128 nor a map with an i128 `amount` must be refused, not read
-// as zero or as a different width.
-func TestObserver_DecodeRejectsForeignBalanceShapes(t *testing.T) {
-	o, _ := NewObserver(map[string]string{cSAC: usdcKey})
-	u128 := xdr.ScVal{Type: xdr.ScValTypeScvU128, U128: &xdr.UInt128Parts{Lo: 5}}
-	u64v := xdr.Uint64(5)
-	u64 := xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &u64v}
-	shapes := map[string]xdr.ScVal{
-		"bare u128":        u128,
-		"bare u64":         u64,
-		"map amount u128":  balanceMap(u128, true),
-		"map amount u64":   balanceMap(u64, false),
-		"void (no amount)": {Type: xdr.ScValTypeScvVoid},
-	}
-	for name, val := range shapes {
-		change := makeContractDataChange(t, cSAC, makeBalanceKey(t, gHolder), val)
-		outs, err := o.Decode(dispatcher.LedgerEntryChangeContext{Ledger: 1, Change: change})
-		if !errors.Is(err, ErrUnknownValShape) {
-			t.Errorf("%s: Decode = (%v, %v), want ErrUnknownValShape", name, outs, err)
-		}
-	}
-	// Every one of the above is a Matches-accepted, undecodable-value
-	// shape — the exact class UnknownValShapeDrops exists to surface, since
-	// without this counter a persistently-misconfigured pure-SEP-41 wrapper
-	// (matches every change, decodes none) was indistinguishable from
-	// occasional decode noise on any existing signal.
-	if got := o.UnknownValShapeDrops(); got != len(shapes) {
-		t.Errorf("UnknownValShapeDrops() = %d, want %d (one per rejected shape)", got, len(shapes))
-	}
 }

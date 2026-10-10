@@ -18,6 +18,8 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // fakeReader returns canned snapshots keyed by pair string. The
@@ -417,4 +419,267 @@ func TestPublisher_PollTimeoutIsNotShutdown(t *testing.T) {
 	if !strings.Contains(logBuf.String(), "reader missed poll deadline") {
 		t.Errorf("expected a poll-deadline WARN log, got: %s", logBuf.String())
 	}
+}
+
+// TestPublisher_NormalizesNonstandardDecimals proves the SSE closed-bucket
+// producer applies the SAME dex-nonstandard-decimals correction
+// /v1/price applies before serving: reader.LatestPrice returns
+// the RAW closed-1m ratio, and without normalization the wire payload
+// would carry that raw (wrong by 10^11) value instead of the true price.
+//
+// Golden shape mirrors TestPriceTip_NonstandardDecimals_Normalizes: an
+// 18dp Soroban base leg against a 7dp quote, ohlcPriceDigits=10 fixed
+// formatting.
+func TestPublisher_NormalizesNonstandardDecimals(t *testing.T) {
+	sorobanContract := "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO" // gitleaks:allow — public Stellar contract id, not a secret
+	decimals := v1.NewNonstandardDecimalsCache(&fakeDecimalsReader{
+		rows: []timescale.NonstandardDecimalsAsset{{Asset: sorobanContract, Decimals: 18}},
+	}, nil)
+	if err := decimals.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	hub := streaming.NewHub(0)
+	reader := &fakeReader{}
+	asset := mustParse(t, sorobanContract)
+	quote := mustParse(t, "fiat:USD")
+	topic := v1.PriceStreamTopic(asset, quote, 60)
+
+	bucket := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	reader.SetSnapshot(asset, quote, v1.PriceSnapshot{
+		AssetID: sorobanContract, Quote: "fiat:USD", Price: "0.00000000005",
+		PriceType: "vwap", ObservedAt: v1.WireTime(bucket), WindowSeconds: 60,
+	})
+
+	pub := streampublish.New(hub, reader, time.Second, nil, streampublish.Options{Decimals: decimals})
+
+	ch, cancel, err := hub.Subscribe([]string{topic}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+
+	ctx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+
+	done := make(chan struct{})
+	go func() {
+		_ = pub.Run(ctx, []canonical.Pair{{Base: asset, Quote: quote}})
+		close(done)
+	}()
+
+	select {
+	case ev := <-ch:
+		var payload struct {
+			Data v1.PriceSnapshot `json:"data"`
+		}
+		if err := json.Unmarshal(ev.Data, &payload); err != nil {
+			t.Fatalf("unmarshal payload: %v", err)
+		}
+		// Raw ratio 5e-11 scaled by 10^(18-7) = 5.0000000000, ohlcPriceDigits=10.
+		// Unnormalized, the wire would carry the raw "0.00000000005".
+		if payload.Data.Price != "5.0000000000" {
+			t.Errorf("payload Price = %q, want normalized \"5.0000000000\"", payload.Data.Price)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no event received within 2s of publisher start")
+	}
+
+	cancelRun()
+	<-done
+}
+
+// fakeDecimalsReader satisfies v1.NonstandardDecimalsReader with a fixed
+// set of confirmed non-7-decimal assets, no database required.
+type fakeDecimalsReader struct {
+	rows []timescale.NonstandardDecimalsAsset
+}
+
+func (r *fakeDecimalsReader) LoadNonstandardDecimalsAssets(context.Context) ([]timescale.NonstandardDecimalsAsset, error) {
+	return r.rows, nil
+}
+
+// TestPublisher_FrozenPairPublishesTheFreezeNotTheRefusedBucket — under
+// an ADR-0019 freeze the raw prices_1m bucket is the value the freeze
+// refused, and /v1/price never serves it under the flag. The stream
+// would publish it every minute as a price_update with flags
+// {stale:false} and no frozen key — the same bytes as a healthy pair.
+// The marker of ANY spelling governs (the reader does not report which
+// alias its bucket came from), so a freeze on crypto:XLM covers native.
+func TestPublisher_FrozenPairPublishesTheFreezeNotTheRefusedBucket(t *testing.T) {
+	ev := firstEvent(t, fakeFreeze{frozen: map[string]bool{"crypto:XLM/fiat:USD": true}}, true)
+	if ev.Type != "price_frozen" {
+		t.Fatalf("event type = %q, want price_frozen", ev.Type)
+	}
+	p := decodeStreamed(t, ev)
+	if _, hasPrice := p.Data["price"]; hasPrice {
+		t.Errorf("price_frozen carries the refused bucket's price: %s", ev.Data)
+	}
+	if p.Data["observed_at"] != "2026-05-02T12:00:00Z" {
+		t.Errorf("observed_at = %v, want the refused bucket's 2026-05-02T12:00:00Z", p.Data["observed_at"])
+	}
+	if !p.Flags["frozen"] || !p.Flags["frozen_checked"] {
+		t.Errorf("flags = %v, want frozen and frozen_checked true", p.Flags)
+	}
+	// The reader called the refused bucket stale; the freeze must not
+	// launder that into stale:false.
+	if stale, present := p.Flags["stale"]; !present || !stale {
+		t.Errorf("flags = %v, want stale true (the reader's verdict on the refused bucket)", p.Flags)
+	}
+}
+
+// TestPublisher_UnfrozenPairSaysTheFreezeWasChecked — a healthy pair's
+// price_update must be distinguishable from one whose freeze was never
+// evaluated: frozen_checked is present only when every marker was read.
+func TestPublisher_UnfrozenPairSaysTheFreezeWasChecked(t *testing.T) {
+	ev := firstEvent(t, fakeFreeze{}, false)
+	if ev.Type != "price_update" {
+		t.Fatalf("event type = %q, want price_update", ev.Type)
+	}
+	p := decodeStreamed(t, ev)
+	if p.Data["price"] != "0.07" {
+		t.Errorf("price = %v, want 0.07", p.Data["price"])
+	}
+	if !p.Flags["frozen_checked"] {
+		t.Errorf("flags = %v, want frozen_checked true", p.Flags)
+	}
+	if _, present := p.Flags["frozen"]; present {
+		t.Errorf("flags = %v, want no frozen key on an unfrozen pair", p.Flags)
+	}
+
+	failed := decodeStreamed(t, firstEvent(t, fakeFreeze{err: errors.New("redis down")}, false))
+	if _, present := failed.Flags["frozen_checked"]; present {
+		t.Errorf("flags = %v after a failed marker read, want frozen_checked absent (not evaluated)", failed.Flags)
+	}
+}
+
+// fakeFreeze is a v1.FrozenLooker keyed by "<asset>/<quote>".
+type fakeFreeze struct {
+	frozen map[string]bool
+	err    error
+}
+
+func (f fakeFreeze) FrozenForPair(_ context.Context, asset, quote canonical.Asset) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	return f.frozen[asset.String()+"/"+quote.String()], nil
+}
+
+// firstEvent runs the publisher over one pair with a fresh bucket and
+// returns the first event it publishes.
+func firstEvent(t *testing.T, looker v1.FrozenLooker, stale bool) streaming.Event {
+	t.Helper()
+	hub := streaming.NewHub(0)
+	reader := &fakeReader{stale: stale}
+	asset := mustParse(t, "native")
+	quote := mustParse(t, "fiat:USD")
+	reader.SetSnapshot(asset, quote, v1.PriceSnapshot{
+		AssetID: "native", Quote: "fiat:USD", Price: "0.07", PriceType: "vwap",
+		ObservedAt: v1.WireTime(time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)), WindowSeconds: 60,
+	})
+	ch, cancelSub, err := hub.Subscribe([]string{v1.PriceStreamTopic(asset, quote, 60)}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancelSub()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pub := streampublish.New(hub, reader, time.Second, nil, streampublish.Options{Frozen: looker})
+	go func() { _ = pub.Run(ctx, []canonical.Pair{{Base: asset, Quote: quote}}) }()
+	select {
+	case ev := <-ch:
+		return ev
+	case <-time.After(2 * time.Second):
+		t.Fatal("no event within 2s of publisher start")
+	}
+	return streaming.Event{}
+}
+
+type streamedPrice struct {
+	Data  map[string]any  `json:"data"`
+	Flags map[string]bool `json:"flags"`
+}
+
+func decodeStreamed(t *testing.T, ev streaming.Event) streamedPrice {
+	t.Helper()
+	var p streamedPrice
+	if err := json.Unmarshal(ev.Data, &p); err != nil {
+		t.Fatalf("unmarshal %s payload: %v", ev.Type, err)
+	}
+	return p
+}
+
+// TestPublisher_WithheldPairPublishesTheWithholding — a pair that becomes
+// withheld while subscribers are attached must say so on the wire once,
+// not fall silent like a pair with no trades, and its bucket must be
+// republished when it is served again.
+func TestPublisher_WithheldPairPublishesTheWithholding(t *testing.T) {
+	hub := streaming.NewHub(0)
+	reader := &fakeReader{}
+	asset := mustParse(t, "native")
+	quote := mustParse(t, "fiat:USD")
+	reader.SetSnapshot(asset, quote, v1.PriceSnapshot{
+		AssetID: "native", Quote: "fiat:USD", Price: "0.07", PriceType: "vwap",
+		ObservedAt: v1.WireTime(time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)), WindowSeconds: 60,
+	})
+	ch, cancelSub, err := hub.Subscribe([]string{v1.PriceStreamTopic(asset, quote, 60)}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancelSub()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pub := streampublish.New(hub, reader, time.Second, nil, streampublish.Options{})
+	go func() { _ = pub.Run(ctx, []canonical.Pair{{Base: asset, Quote: quote}}) }()
+
+	if ev := nextEvent(t, ch, 2*time.Second); ev.Type != "price_update" {
+		t.Fatalf("first event = %s, want price_update", ev.Type)
+	}
+
+	reader.SetErr(v1.PriceWithheldError(pricingguard.WithheldThinMarket))
+	ev := nextEvent(t, ch, 2500*time.Millisecond)
+	if ev.Type != "price_withheld" {
+		t.Fatalf("event after the pair was withheld = %s, want price_withheld", ev.Type)
+	}
+	var body struct {
+		AssetID string `json:"asset_id"`
+		Quote   string `json:"quote"`
+		Reason  string `json:"reason"`
+	}
+	if err := json.Unmarshal(ev.Data, &body); err != nil {
+		t.Fatalf("unmarshal price_withheld: %v", err)
+	}
+	if body.AssetID != "native" || body.Quote != "fiat:USD" || body.Reason != "substance" {
+		t.Fatalf("price_withheld data = %+v, want native/fiat:USD reason substance", body)
+	}
+
+	// Still withheld on the next tick: the marker is not repeated.
+	select {
+	case ev := <-ch:
+		t.Fatalf("unexpected %s while the verdict was unchanged", ev.Type)
+	case <-time.After(1500 * time.Millisecond):
+	}
+
+	reader.SetErr(nil)
+	if ev := nextEvent(t, ch, 2500*time.Millisecond); ev.Type != "price_update" {
+		t.Fatalf("event once served again = %s, want the bucket republished as price_update", ev.Type)
+	}
+}
+
+func (r *fakeReader) SetErr(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.err = err
+}
+
+func nextEvent(t *testing.T, ch <-chan streaming.Event, within time.Duration) streaming.Event {
+	t.Helper()
+	select {
+	case ev := <-ch:
+		return ev
+	case <-time.After(within):
+		t.Fatalf("no event within %s", within)
+	}
+	return streaming.Event{}
 }
