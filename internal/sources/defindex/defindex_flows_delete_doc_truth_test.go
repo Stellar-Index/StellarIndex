@@ -1,6 +1,8 @@
 package defindex
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -97,4 +99,13 @@ func contractSet(stmt string) []string {
 
 func equalSets(a, b []string) bool {
 	return strings.Join(a, ",") == strings.Join(b, ",")
+}
+
+func readDefindexDoc(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "protocols", "defindex.md"))
+	if err != nil {
+		t.Fatalf("read docs/protocols/defindex.md: %v", err)
+	}
+	return string(b)
 }

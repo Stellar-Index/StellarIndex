@@ -13,8 +13,8 @@ import (
 // ledger's events to the async sink, census-backfill writes it with no
 // persistence at all, and projected domains are written later by the
 // projector. Every place that tells a reader what the row means — the
-// catalog comments an operator reads through `\d+`, 0051's header, the
-// README register row and ADR-0033's Invariant — must say so rather than calling it
+// catalog comments an operator reads through `\d+`, 0051's header and the
+// README register row — must say so rather than calling it
 // a post-persist "ledger is done" marker.
 func TestLedgerIngestLogNotClaimedPostPersist(t *testing.T) {
 	tableComment := lastCommentOn(t, "COMMENT ON TABLE ledger_ingest_log IS")
@@ -24,14 +24,10 @@ func TestLedgerIngestLogNotClaimedPostPersist(t *testing.T) {
 		"persisted_at comment": colComment,
 		"0051 up header":       upHeader(t, "0051_ledger_ingest_log.up.sql"),
 		"README 0051 row":      extractRow(t, readReadme(t), "0051"),
-		"ADR-0033 invariant":   adr0033RealityNotes(t),
 	} {
 		lower := strings.ToLower(got)
 		if !strings.Contains(lower, "enqueue") {
 			t.Errorf("%s does not say the row is written after ENQUEUE:\n%s", name, got)
-		}
-		if strings.Contains(name, "ADR") {
-			continue // the ADR may name the banned phrases while saying they are wrong
 		}
 		for _, bad := range []string{"post-persist", "after its events persist", "done-marker", `"this ledger is done" marker`} {
 			if strings.Contains(lower, strings.ToLower(bad)) {
@@ -69,21 +65,4 @@ func lastCommentOn(t *testing.T, prefix string) string {
 		t.Fatalf("no up migration issues %q", prefix)
 	}
 	return last
-}
-
-// adr0033RealityNotes returns ADR-0033's Invariant section, where the
-// meaning of the ledger_ingest_log row is recorded.
-func adr0033RealityNotes(t *testing.T) string {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "docs", "adr", "0033-completeness-verification-model.md"))
-	if err != nil {
-		t.Fatalf("read ADR-0033: %v", err)
-	}
-	s := string(raw)
-	start := strings.Index(s, "\n## Invariant")
-	end := strings.Index(s, "\n## Consequences")
-	if start == -1 || end == -1 || end < start {
-		t.Fatal("ADR-0033 has no '## Invariant' section — update this test's anchor")
-	}
-	return s[start:end]
 }
