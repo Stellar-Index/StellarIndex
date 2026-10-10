@@ -101,3 +101,24 @@ describe('OperationsView live flash', () => {
     expect(rowFor(1999)).not.toHaveClass('live-tick');
   });
 });
+
+describe('OperationsView type filter', () => {
+  it('sends the chip type to the API and keeps it on the next page', async () => {
+    useLedgerStream.mockReturnValue(null);
+    search.params = new URLSearchParams('type=payment');
+    apiGet.mockResolvedValue(page(100));
+    render(view(new QueryClient()));
+    await screen.findByText('100');
+    expect(apiGet).toHaveBeenCalledWith('/v1/operations', {
+      limit: 50,
+      type: 'payment',
+    });
+    expect(
+      screen.getByRole('link', { name: 'Older operations →' }),
+    ).toHaveAttribute('href', '/operations?type=payment&cursor=next');
+    expect(screen.getByRole('link', { name: 'Payments' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+});

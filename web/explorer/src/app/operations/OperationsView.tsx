@@ -32,18 +32,48 @@ type OperationsResp = NonNullable<
 
 const PAGE_SIZE = 50;
 
+// Values are the API's comma-joined `type` filter.
+const TYPE_CHIPS: { label: string; type: string }[] = [
+  { label: 'Payments', type: 'payment' },
+  {
+    label: 'Path payments',
+    type: 'path_payment_strict_send,path_payment_strict_receive',
+  },
+  {
+    label: 'Offers',
+    type: 'manage_sell_offer,manage_buy_offer,create_passive_sell_offer',
+  },
+  { label: 'Contract calls', type: 'invoke_host_function' },
+  { label: 'Trustlines', type: 'change_trust,set_trust_line_flags' },
+  { label: 'New accounts', type: 'create_account' },
+  {
+    label: 'Liquidity pools',
+    type: 'liquidity_pool_deposit,liquidity_pool_withdraw',
+  },
+];
+
+function opsHref(type: string, cursor?: string): string {
+  const q = new URLSearchParams();
+  if (type) q.set('type', type);
+  if (cursor) q.set('cursor', cursor);
+  const s = q.toString();
+  return s ? `/operations?${s}` : '/operations';
+}
+
 /** Minimum gap between live-follow refetches (RT-2). */
 const LIVE_REFETCH_MIN_MS = 10_000;
 
 export function OperationsView() {
   const params = useSearchParams();
   const cursor = params.get('cursor') ?? '';
+  const type = params.get('type') ?? '';
 
   const q = useQuery<OperationsResp>({
-    queryKey: ['/v1/operations', cursor],
+    queryKey: ['/v1/operations', cursor, type],
     queryFn: async () => {
       const args: Record<string, string | number> = { limit: PAGE_SIZE };
       if (cursor) args.cursor = cursor;
+      if (type) args.type = type;
       const env = await apiGet<Envelope<OperationsResp>>(
         '/v1/operations',
         args,
@@ -109,6 +139,27 @@ export function OperationsView() {
         </div>
       )}
 
+      <nav
+        aria-label="Filter by operation type"
+        className="flex flex-wrap gap-2"
+      >
+        {[{ label: 'All', type: '' }, ...TYPE_CHIPS].map((c) => (
+          <Link
+            key={c.label}
+            href={opsHref(c.type)}
+            aria-current={c.type === type ? 'page' : undefined}
+            className={cn(
+              'rounded-full border px-2.5 py-0.5 text-xs font-medium',
+              c.type === type
+                ? 'border-brand-500 text-brand-600'
+                : 'border-line text-ink-body hover:bg-surface-muted',
+            )}
+          >
+            {c.label}
+          </Link>
+        ))}
+      </nav>
+
       {q.data?.coverage_note && (
         // Honest-degrade banner: the parent-transaction outcome read failed,
         // so rows without a status below are of UNKNOWN outcome (possibly a
@@ -126,7 +177,10 @@ export function OperationsView() {
             : 'Recent operations'
         }
         hint={following ? 'live' : undefined}
-        source={asExample('/v1/operations', { limit: PAGE_SIZE })}
+        source={asExample('/v1/operations', {
+          limit: PAGE_SIZE,
+          ...(type ? { type } : {}),
+        })}
         bodyClassName="-mx-4"
       >
         {q.isError && (
@@ -241,7 +295,7 @@ export function OperationsView() {
       {q.data?.next_cursor && (
         <div className="flex justify-center">
           <Link
-            href={`/operations?cursor=${encodeURIComponent(q.data.next_cursor)}`}
+            href={opsHref(type, q.data.next_cursor)}
             className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-4 py-2 text-sm"
           >
             Older operations →
@@ -251,7 +305,7 @@ export function OperationsView() {
       {cursor && (
         <div className="flex justify-center">
           <Link
-            href="/operations"
+            href={opsHref(type)}
             className="text-brand-600 text-xs hover:underline"
           >
             ← Back to latest
