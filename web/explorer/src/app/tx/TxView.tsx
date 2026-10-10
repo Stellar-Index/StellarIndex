@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { CrossReference } from '@/components/CrossReference';
 import { FeeHeadroomBar, OpTypeStrip } from '@/components/ChainCharts';
 import { Container, PageHeader, TxStatusBadge } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
@@ -230,6 +231,7 @@ function Shell({
         title="Transaction"
       />
       {children}
+      {hash && <CrossReference kind="tx" id={hash} />}
     </Container>
   );
 }

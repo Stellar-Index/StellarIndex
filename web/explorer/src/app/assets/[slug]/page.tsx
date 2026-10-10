@@ -54,7 +54,7 @@ import {
   getCatalogue,
   type GlobalAssetView,
 } from '../catalogue';
-import { StellarExpertLink } from '@/components/StellarExpertLink';
+import { CrossReference } from '@/components/CrossReference';
 
 /**
  * /assets/[slug] — single asset detail page.
@@ -1229,43 +1229,10 @@ function OverviewBody({
           volume for this asset. */}
       <SourceBreakdown headingLevel={2} asset={coin.asset_id} />
 
-      <Panel
-        headingLevel={2}
-        title="External views"
-        hint="Cross-reference this asset on other Stellar explorers"
-        bodyClassName="text-sm text-ink-body"
-      >
-        <ul className="space-y-2">
-          <li>
-            <StellarExpertLink
-              kind="asset"
-              id={coin.asset_id === 'native' ? 'XLM' : coin.asset_id}
-              className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"
-            >
-              stellar.expert
-              <span className="text-ink-faint text-[10px] tracking-wider uppercase">
-                ↗
-              </span>
-            </StellarExpertLink>
-            <span className="text-ink-faint ml-2 text-xs">
-              holders, supply, on-chain history
-            </span>
-          </li>
-          {coin.issuer && (
-            <li>
-              <Link
-                href={`/issuers/${coin.issuer}`}
-                className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"
-              >
-                Issuer detail
-              </Link>
-              <span className="text-ink-faint ml-2 font-mono text-xs">
-                {coin.issuer.slice(0, 8)}…{coin.issuer.slice(-4)}
-              </span>
-            </li>
-          )}
-        </ul>
-      </Panel>
+      <CrossReference
+        kind="asset"
+        id={coin.asset_id === 'native' ? 'XLM' : coin.asset_id}
+      />
 
       {coin.top_markets && coin.top_markets.length > 0 && (
         <Panel

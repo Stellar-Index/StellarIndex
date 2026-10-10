@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { CrossReference } from '@/components/CrossReference';
 import { Container, PageHeader } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
@@ -256,6 +257,7 @@ function Shell({
         }
       />
       {children}
+      {seq != null && <CrossReference kind="ledger" id={String(seq)} />}
     </Container>
   );
 }
