@@ -57,8 +57,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
 
-// SLA targets — match the stated thresholds. Configurable via
-// flags at runtime.
+// SLA targets — match the stated thresholds.
 const (
 	defaultP95Target     = 200 * time.Millisecond
 	defaultP99Target     = 500 * time.Millisecond
@@ -326,36 +325,20 @@ func validateConcurrency(c int) error {
 // probeFlags is every numeric flag, checked together by
 // validateProbeFlags before any request is made.
 type probeFlags struct {
-	concurrency                          int
-	duration, p95, p99, fresh, closedFsh time.Duration
-	availability, maxRPS                 float64
+	concurrency int
+	duration    time.Duration
+	maxRPS      float64
 }
 
 // validateProbeFlags rejects numeric flags that would still produce a
 // complete, plausible report: a non-positive -duration expires before the
-// first request (a total-outage report from a probe that sent nothing), a
-// non-positive target fails or passes every run by arithmetic, and an
-// availability target outside (0, 100] is unreachable or vacuous.
+// first request (a total-outage report from a probe that sent nothing).
 func validateProbeFlags(f probeFlags) error {
 	if err := validateConcurrency(f.concurrency); err != nil {
 		return err
 	}
-	for _, d := range []struct {
-		name string
-		v    time.Duration
-	}{
-		{"-duration", f.duration},
-		{"-p95-target", f.p95},
-		{"-p99-target", f.p99},
-		{"-freshness-target", f.fresh},
-		{"-closed-bucket-freshness-target", f.closedFsh},
-	} {
-		if d.v <= 0 {
-			return fmt.Errorf("%s must be > 0, got %v", d.name, d.v)
-		}
-	}
-	if !(f.availability > 0 && f.availability <= 100) {
-		return fmt.Errorf("-availability-target must be in (0, 100], got %v", f.availability)
+	if f.duration <= 0 {
+		return fmt.Errorf("-duration must be > 0, got %v", f.duration)
 	}
 	if !(f.maxRPS >= 0) {
 		return fmt.Errorf("-max-rps must be >= 0, got %v", f.maxRPS)
@@ -381,11 +364,6 @@ func main() {
 		maxRPS       = flag.Float64("max-rps", defaultMaxRPS, "Request rate cap shared by all workers; keep a run under the API key's per-minute rate limit. 0 = unpaced")
 		pairFlag     = stringSliceFlag{}
 		reportFormat = flag.String("report-format", "text", "Output format: text | json")
-		p95Target    = flag.Duration("p95-target", defaultP95Target, "p95 latency SLA target")
-		p99Target    = flag.Duration("p99-target", defaultP99Target, "p99 latency SLA target")
-		freshTarget  = flag.Duration("freshness-target", defaultFreshTarget, "Price-freshness SLA target (applied to /price/tip — the rolling-window freshness surface)")
-		closedFresh  = flag.Duration("closed-bucket-freshness-target", defaultClosedBucketFreshTarget, "Freshness bound for /price, whose closed-bucket contract (ADR-0015) makes observed_at structurally 30-150s old")
-		availTarget  = flag.Float64("availability-target", defaultAvailabilityT, "Per-endpoint availability SLA target (percent)")
 		textfileOut  = flag.String("textfile-output", "", "Path to write Prometheus textfile (node_exporter textfile_collector format). Empty = no metrics emit.")
 		apiKey       = flag.String("api-key", "", "API key for Authorization: Bearer header. Defaults to $STELLARINDEX_PROBE_API_KEY. Without one the probe hits the anonymous-tier rate limit (60 req/min) and reads as a fail.")
 		showVersion  = flag.Bool("version", false, "Print version and exit")
@@ -405,8 +383,7 @@ func main() {
 	}
 
 	if err := validateProbeFlags(probeFlags{
-		concurrency: *concurrency, duration: *duration, availability: *availTarget, maxRPS: *maxRPS,
-		p95: *p95Target, p99: *p99Target, fresh: *freshTarget, closedFsh: *closedFresh,
+		concurrency: *concurrency, duration: *duration, maxRPS: *maxRPS,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "stellarindex-sla-probe: %v\n", err)
 		os.Exit(2)
@@ -425,17 +402,17 @@ func main() {
 			fmt.Fprintf(os.Stderr, "stellarindex-sla-probe: invalid -pair %q (want asset,quote)\n", p)
 			os.Exit(2)
 		}
-		endpoints = append(endpoints, pairEndpoints(parts[0], parts[1], *closedFresh)...)
+		endpoints = append(endpoints, pairEndpoints(parts[0], parts[1], defaultClosedBucketFreshTarget)...)
 	}
 
 	key := resolveAPIKey(*apiKey)
 	endpoints = dropNoPriceEndpoints(endpoints, fetchNetwork(*baseURL, key), os.Stderr)
 
 	rep := runProbe(*baseURL, key, endpoints, *duration, *concurrency, *maxRPS, slaTargets{
-		P95MS:           durationMS(*p95Target),
-		P99MS:           durationMS(*p99Target),
-		FreshnessSec:    freshTarget.Seconds(),
-		AvailabilityPct: *availTarget,
+		P95MS:           durationMS(defaultP95Target),
+		P99MS:           durationMS(defaultP99Target),
+		FreshnessSec:    defaultFreshTarget.Seconds(),
+		AvailabilityPct: defaultAvailabilityT,
 	})
 
 	switch *reportFormat {
