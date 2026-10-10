@@ -365,7 +365,7 @@ func NewService(opts ServiceOptions) (*Service, error) {
 	}
 	timeout := opts.PerReferenceTimeout
 	if timeout <= 0 {
-		timeout = 5 * time.Second
+		timeout = DefaultPerReferenceTimeout
 	}
 	// WarningPersistence: 0 (unset) → default debounce; a NEGATIVE
 	// value is the explicit "disable the gate" opt-out and is left
