@@ -11,38 +11,29 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// ohlcSeriesFiatCombined builds a fiat-denominated (e.g. XLM/USD) OHLC
-// series by combining every USD-pegged constituent per bucket, rather
-// than the first-hit single-pair read used for non-fiat quotes.
+// ohlcSeriesFiatCombined builds a fiat-denominated (e.g. XLM/USD) OHLC series by
+// combining every USD-pegged constituent per bucket, not the first-hit single-pair
+// read used for non-fiat quotes.
 //
-// `fiat:USD` itself only has recent CEX trades; the deep history sits
-// under the stablecoin pairs. Combining over the live aggregator's own
-// constituent set (aggregate.ExpandTargetPairWithClassicPegs) gives the
-// multi-year series and keeps bars consistent with /v1/price, where
-// stablecoin-as-fiat is late-bound at compute time.
+// `fiat:USD` itself only has recent CEX trades; the deep history sits under the
+// stablecoin pairs. Combining over the aggregator's own constituent set
+// (aggregate.ExpandTargetPairWithClassicPegs) gives the multi-year series and keeps
+// bars consistent with /v1/price.
 //
-// Per bucket, exact in NUMERIC/big.Rat: volumes are summed, high/low are
-// max/min, open/close are base-volume-weighted (the VWAP definition) —
-// approximate only where more than one constituent traded.
+// Per bucket, exact in NUMERIC/big.Rat: volumes summed, high/low max/min, open/close
+// base-volume-weighted. Amounts are at per-source scales (DEX 7dp, CEX 8, FX 6) and a
+// bucket can mix them, so each bar is lifted to the maximum scale before summing: an
+// exact multiply, no division (ADR-0003). Scale comes from the bar's own
+// [OHLCSeriesBar.Sources], not its pair spelling.
 //
-// Amounts are smallest units at a per-source scale (DEX 7dp, CEX 8, FX 6),
-// and one bucket can mix them, so each bar is lifted to the response's
-// maximum scale before summing: an exact multiply, no division (ADR-0003).
-// This is the bar-level twin of [aggregate.NormalizeAmountScale] on
-// [Server.fiatCombinedTrades]. Scale comes from the bar's own
-// [OHLCSeriesBar.Sources], not its pair spelling: on-chain venues stamp at
-// the asset's decimals, so spelling is not scale.
+// Established constituents are always combined. Held-back ones (a declared peg's SAC
+// wrapper) fill only a bucket no established spelling answered: merged into a
+// book-backed bucket, one $0.60 Soroban print moved a real bar's high by +37%. Gating
+// per bucket keeps a day rendering the same whatever window it is read in
+// (docs/architecture/aggregation-plan.md, section 7.5).
 //
-// Established constituents are always combined. Held-back ones (a declared
-// peg's SAC wrapper) fill only a bucket no established spelling answered:
-// merged into a book-backed bucket, one $0.60 Soroban print moved a real
-// bar's high by +37%. Gating per bucket, not per response, keeps a day
-// rendering the same whatever window it is read in; see
-// [docs/architecture/aggregation-plan.md §"The direction fold"] §7.5.
-//
-// Reads go through the cached HistoryReader. The bool is `proxied`: some
-// contributing bar's quote leg differs from `pair.Quote`, as in
-// [Server.mergeConstituentTrades]; it drives `flags.triangulated`.
+// The bool is `proxied` (a bar's quote leg differs from `pair.Quote`); it drives
+// `flags.triangulated`.
 func (s *Server) ohlcSeriesFiatCombined(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -85,35 +76,24 @@ func (s *Server) ohlcSeriesFiatCombined(
 	return newestCombinedBars(out, limit), estProxied || heldBackProxied, nil
 }
 
-// newestCombinedBars keeps the NEWEST `limit` of an ascending merged
-// series. Which end survives is not a presentation choice here — it is
-// what decides whether the served bars are CORRECT.
+// newestCombinedBars keeps the NEWEST `limit` of an ascending merged series. Which
+// end survives decides whether the served bars are CORRECT.
 //
-// Every constituent read carries the same `limit`, and a capped
-// [timescale.Store.OHLCSeries] read keeps that constituent's newest
-// `limit` buckets. So the merge is a union of per-constituent TAILS: a
-// dense constituent is cut to its last few buckets while a sparse one
-// still reaches far back, and the old end of the union is made of
-// buckets the dense constituent traded in but was never asked for.
-// Keeping the EARLIEST `limit` — what this did while the store ordered
-// ASC — serves precisely those: measured through the handler, a 12h
-// window at limit=3 over an every-hour book (n=100) and a one-print
-// venue at 00/04/08/11 served 04:00 and 08:00 as n=1 bars where the
-// market printed 101.
+// Every constituent read carries the same `limit` and a capped
+// [timescale.Store.OHLCSeries] read keeps that constituent's newest `limit`
+// buckets, so the merge is a union of per-constituent TAILS: a dense constituent is
+// cut to its last buckets while a sparse one reaches far back, and the old end of
+// the union holds buckets the dense one traded in but was never asked for. Keeping
+// the EARLIEST `limit` served exactly those (a 12h window at limit=3 served 04:00
+// and 08:00 as n=1 bars where the market printed 101).
 //
-// The newest `limit` are safe, by counting. Let t be among the newest
-// `limit` buckets of the union U. A constituent C contributes a subset
-// of U, so C has at most as many buckets at-or-after t as U does — at
-// most `limit` — and therefore every bucket C holds from t onward is
-// inside C's own newest `limit` and was read. Every served bar is thus
-// complete. The same count covers the held-back gate: had an
-// established constituent traded at t without that bar being read, it
-// would hold `limit` newer buckets, all of them in U, and t would not
-// be among U's newest `limit` — so a served bucket is never one the
-// held-back pass wrongly took for unanswered.
+// The newest `limit` are safe by counting: for t among U's newest `limit` buckets, a
+// constituent C (a subset of U) has at most `limit` buckets at or after t, all
+// inside its own newest `limit`, so every served bar is complete. The same count
+// covers the held-back gate: an established constituent that traded at t would hold
+// `limit` newer buckets in U, so t would not be among them.
 //
-// Only bites on an explicit window wider than `limit` intervals; the
-// handler sizes a default window to fit.
+// Only bites on an explicit window wider than `limit` intervals.
 func newestCombinedBars(out []OHLCSeriesBar, limit int) []OHLCSeriesBar {
 	if limit > 0 && len(out) > limit {
 		return out[len(out)-limit:]
@@ -134,45 +114,28 @@ func (s *Server) usdPeggedConstituents(pair canonical.Pair) []canonical.Pair {
 	return append(out, heldBack...)
 }
 
-// usdPeggedConstituentSets partitions the source (base,quote) cagg pairs
-// of a fiat-quoted target into the set that is COMBINED and the set that
-// is read only where the first has left a bucket unanswered.
+// usdPeggedConstituentSets partitions the source (base,quote) cagg pairs of a
+// fiat-quoted target into the set that is COMBINED and the set read only where the
+// first left a bucket unanswered.
 //
-// `established` is the aggregator's own source set — every XLM dual-form
-// base alias (native ↔ crypto:XLM ↔ the SAC) crossed with the USD-peg
-// expansion (direct pair + stablecoin backers + operator-declared
-// classic pegs), each quote in the priority-first spelling the expansion
-// named it in.
+// `established` is the aggregator's own source set: every XLM dual-form base alias
+// crossed with the USD-peg expansion (direct pair, stablecoin backers, declared
+// classic pegs). `heldBack` is the remaining canonical FORM of each quote, in
+// practice a declared classic peg's SAC wrapper. A declared peg is an ASSET, not a
+// spelling: Soroban AMMs trade the wrapper, so a token whose only USD depth is an
+// Aquarius / Phoenix / Soroswap pool is stored quoted in the USDC SAC and nothing the
+// expansion names (r1, 365 days of prices_1d: 43 assets, $14.63M a spelling-only
+// expansion answers as absent).
 //
-// `heldBack` is the remaining canonical FORM of each of those quotes —
-// in practice a declared classic peg's SAC wrapper. A declared peg is an
-// ASSET, not a spelling: Soroban AMMs trade the wrapper, so a token
-// whose only USD depth is an Aquarius / Phoenix / Soroswap pool is
-// stored quoted in the USDC SAC and in nothing the expansion names.
-// Measured on r1 over 365 days of prices_1d, 43 assets are in
-// exactly that state, carrying 260,833 prints and $14.63M of volume that a
-// spelling-only expansion answers as absent.
+// The two passes are [Server.usdPegProxyQuotes]'s classic-then-SAC across ALL peg
+// families. A pool is far thinner than the book, so a SAC form reachable before EVERY
+// established spelling of EVERY family missed would let a few prints re-price an
+// answer the book can give; gating on the family's own classic is not enough (see
+// docs/architecture/aggregation-plan.md, "The fiat quote leg, per bucket").
 //
-// The split is [tipMergePairs]'s merge/last rule at the constituent-set
-// grain, and the two passes are [Server.usdPegProxyQuotes]'s
-// classic-pass-then-SAC-pass across ALL peg families rather than within
-// one. Both matter for the same reason: a pool is routinely orders of
-// magnitude thinner than the book of the same family, so a SAC form that
-// could be reached before EVERY established spelling of EVERY family had
-// missed would let a handful of prints re-price an answer the book can
-// give. Gating a family's SAC form on that family's own classic being
-// empty is not enough — the pool would then be admitted into another
-// family's populated bucket. See
-// [docs/architecture/aggregation-plan.md] §"The fiat quote leg, per bucket".
-//
-// Deduplicated by MARKET, across both sets together. The ordered pair
-// was the whole market back when a read bound one orientation; both
-// readers these sets feed — Store.TradesInRange for the point path and
-// Store.OHLCSeries for the series — now span both stored directions, so
-// a constituent and its flip would be read twice and merged into one
-// bucket. A held-back pair whose flip is already established (reachable
-// when base and quote are one family) is dropped from the held-back set
-// rather than promoted, so the established set keeps its priority.
+// Deduplicated by MARKET across both sets: both readers span both stored directions,
+// so a constituent and its flip would be read twice into one bucket. A held-back pair
+// whose flip is established is dropped, not promoted.
 func (s *Server) usdPeggedConstituentSets(pair canonical.Pair) (established, heldBack []canonical.Pair) {
 	seen := make(map[string]struct{})
 	add := func(dst *[]canonical.Pair, sp canonical.Pair) {
@@ -236,41 +199,29 @@ func dropMarketsIn(pairs, kept []canonical.Pair) []canonical.Pair {
 	return out
 }
 
-// fiatCombinedTrades is the POINT-path twin of
-// [Server.ohlcSeriesFiatCombined]: it reads the raw trades of EVERY
-// constituent of a fiat-quoted target — the SAME set
-// [Server.usdPeggedConstituents] feeds the series combine — and merges them
-// into one chronologically-ordered population, lifted to one amount scale.
-// Returns (window, proxied, err); `proxied` drives flags.triangulated.
+// fiatCombinedTrades is the POINT-path twin of [Server.ohlcSeriesFiatCombined]: it
+// reads the raw trades of EVERY constituent of a fiat-quoted target (the SAME set
+// [Server.usdPeggedConstituents] feeds the series) and merges them into one
+// chronologically-ordered population at one amount scale. Returns
+// (window, proxied, err); `proxied` drives flags.triangulated.
 //
-// Reading the LITERAL pair and falling back to the FIRST non-empty
-// classic peg would back a point quote with exactly one constituent while
-// the series combines all of them, so
-// `/v1/vwap?base=native&quote=fiat:USD` and
-// `/v1/ohlc?interval=1h&base=native&quote=fiat:USD` — the same question
-// asked two ways — would answer from different trade populations. The
-// series methodology is the authority (it is the live aggregator's own
-// source set, aggregate.ExpandTargetPairWithClassicPegs — see
-// [Server.ohlcSeriesFiatCombined]); the point path derives from the
-// identical constituent selection, so point == series at shared timestamps.
+// Reading the LITERAL pair and falling back to the first non-empty classic peg would
+// back a point quote with one constituent while the series combines all, so
+// `/v1/vwap?quote=fiat:USD` and `/v1/ohlc?interval=1h&quote=fiat:USD` would answer
+// from different populations. The series methodology is the authority; point ==
+// series at shared timestamps.
 //
-// That statement carries a grain. Both paths run one
-// rule over one constituent split — established spellings answer, and a
-// held-back spelling answers a bucket they left empty — but a "bucket" is
-// whatever the caller asked for. This path resolves at
-// [fiatPointGateInterval], the finest interval the series accepts, so the
-// equality is EXACT against `interval=1m`. A coarser series suppresses
-// more, because a coarser bucket is likelier to hold an established
+// Both paths run one rule over one constituent split, but a "bucket" is whatever the
+// caller asked for. This path resolves at [fiatPointGateInterval], the finest
+// interval the series accepts, so equality is EXACT against `interval=1m`; a coarser
+// series suppresses more because a coarser bucket likelier holds an established
 // print. That is the question changing, not the population splitting.
 //
-// Constituent read errors PROPAGATE rather than being skipped: dropping a
-// constituent would silently split point and series, and a
-// quietly-narrower money answer is worse than a 500.
-// This matches [Server.ohlcSeriesFiatCombined], which also propagates.
+// Constituent read errors PROPAGATE (as in the series): dropping one would silently
+// split point and series, and a quietly narrower money answer is worse than a 500.
 //
-// Each constituent is fetched with the caller's `maxTrades` cap (newest-N
-// per pair, per the reader's `ts DESC` LIMIT) and the merged set is
-// then trimmed to the newest `maxTrades` overall, preserving the callers'
+// Each constituent is fetched with the caller's `maxTrades` cap (newest-N per pair)
+// and the merged set is trimmed to the newest `maxTrades`, preserving the callers'
 // `len(trades) == maxTrades` truncation signal.
 func (s *Server) fiatCombinedTrades(
 	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,

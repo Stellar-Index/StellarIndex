@@ -13,40 +13,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// The contract arm of GET /v1/rwa/assets — membership, valuation and the
-// coverage signal, for tokens that have no (code, issuer) pair.
+// The contract arm of GET /v1/rwa/assets: membership, valuation and the coverage
+// signal for tokens that have no (code, issuer) pair. The definition is
+// internal/rwa/contract.go; this file is the read path.
 //
-// The definition itself is internal/rwa/contract.go, where the argument
-// for what replaces the issuer-bound SEP-1 attestation lives. This file
-// is the read path: where the candidate population comes from, how a
-// contract row is valued, and what the response says about the entities
-// it still cannot reach.
+// Why this arm exists: the classic arm walks issuers, and only the classic-asset
+// registry writes that table (registerIssuerSeen, insertIssuersBatch). An entity
+// issuing only contract tokens gets no row, so no SEP-1 fetch and never becomes a
+// candidate (`sep1-refresh -issuer` for Franklin Templeton and Spiko both return
+// `sql: no rows in result set` though both sit in the curated directory). That is
+// a population they were never in, the silent-discard shape the funnel exists to
+// prevent, so this arm draws its population from the one table tying a real-world
+// entity to a Stellar address without classic issuance.
 //
-// # Why this arm exists at all
-//
-// The classic arm walks issuers, and only the classic-asset registry
-// writes that table (registerIssuerSeen, insertIssuersBatch). An
-// entity issuing only contract tokens gets no row there, so it gets no
-// SEP-1 fetch and never becomes a candidate. Measured on r1,
-// `sep1-refresh -issuer` for Franklin Templeton and for Spiko both
-// return `sql: no rows in result set`, while both accounts sit in the
-// curated directory tagged `issuer` with their real domains.
-//
-// That is not a requirement refusing them. It is a population they were
-// never in, which is the silent-discard shape the funnel exists to make
-// impossible. So this arm draws its population from the one table that
-// records the tie between a real-world entity and a Stellar address
-// without passing through classic issuance.
-//
-// # Two things this arm reports that nothing else could
-//
-//  1. Contracts an independent party named, evaluated and counted, with
-//     each refusal attributed.
-//  2. Entities that are recognised, unflagged, real — and for which this
-//     index holds no Stellar token at all. Those are not refused by any
-//     requirement; there is nothing to refuse. Unnamed, they would be
-//     invisible, and a reader could not tell such an entity from one
-//     that does not exist. They are named on the response.
+// It reports two things nothing else could: contracts an independent party named,
+// evaluated and counted with each refusal attributed; and entities that are
+// recognised, unflagged, real, yet hold no Stellar token in this index. Nothing
+// refuses those, so unnamed they would be indistinguishable from an entity that
+// does not exist; they are named on the response.
 
 // rwaContractScanCap bounds the contracts one rebuild evaluates. The
 // recognised-contract set is small by construction — a third party has
@@ -419,52 +403,29 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 
 // ─── valuation ──────────────────────────────────────────────────────
 
-// rwaContractListingRows reads the admitted contracts through the same
-// /v1/assets post-query pipeline the classic arm runs, then fills the
-// two things that pipeline structurally cannot fill for a contract.
+// rwaContractListingRows reads the admitted contracts through the same /v1/assets
+// post-query pipeline the classic arm runs, then fills the two things that pipeline
+// cannot fill for a contract.
 //
-// # What the shared pipeline does and does not do here
+// Every step runs in the listing's order, as in [Server.rwaListingRows], so the
+// surface cannot drift from /v1/assets one omission at a time
+// (TestRWAContractPipelineMatchesTheAssetsListing). The substance gate is NOT a
+// no-op: it covers canonical.AssetSoroban, so a thin-market price is withheld here.
 //
-// Every step runs, in the listing's order, for the same reason
-// [Server.rwaListingRows] runs them: a surface that ran only the steps
-// it believed it needed would drift from /v1/assets one omission at a
-// time. Three of them are no-ops on a contract row and that is fine —
-// running a no-op costs nothing and keeps the sequence provably equal to
-// the listing's (TestRWAContractPipelineMatchesTheAssetsListing).
-//
-// The substance gate is NOT a no-op: it explicitly covers
-// canonical.AssetSoroban, so a contract token whose price came from too
-// thin a market has that price withheld here exactly as it would be on
-// /v1/assets.
-//
-// # The two fills the pipeline cannot do
-//
-//  1. SUPPLY AND MARKET CAP. fillMarketCapsFromSupply reads three maps:
-//     the precise supply observations, the SAC lake flows and a
-//     trustline-balance sum. Only the precise map can reach a contract
-//     row (its asset_key is the contract id for a pure SEP-41 token), and
-//     only for the few tokens the supply observer watches; every other
-//     contract row would be `supply_unavailable` forever. The supply for
-//     these tokens lives in the certified lake (stellar.supply_flows),
-//     which is where /v1/assets/{id} and /v1/assets/{id}/supply already
-//     read it from. fillContractMarketCaps reuses that reader, and it is
-//     the last word on a contract row's cap: it drops whatever cap the
-//     generic fill wrote once it holds its own supply reading, and every
+//  1. SUPPLY AND MARKET CAP. Only the precise supply map reaches a contract row, and
+//     only for tokens the supply observer watches; the rest would be
+//     `supply_unavailable` forever. Their supply lives in the lake
+//     (stellar.supply_flows); fillContractMarketCaps reads it and is the last word,
+//     dropping the generic fill's cap once it holds its own supply reading, and every
 //     cap on a row whose scale was not read.
-//  2. THE SCAM SUPPRESSION. fillIssuerDirectoryTags runs before the
-//     contract fills below, so its suppression cannot reach a figure they
-//     produce afterwards. On this surface the directory is the
-//     PROVENANCE requirement, so leaving its flag unread at valuation
-//     time would mean admitting a contract on a
-//     directory entry and then declining to read the same entry when it
-//     turns hostile. The tags are re-read at valuation time, not reused
-//     from the membership build, so a flag acquired inside the ten
-//     minute membership TTL still suppresses.
+//  2. THE SCAM SUPPRESSION. fillIssuerDirectoryTags runs before the contract fills,
+//     so it cannot reach figures they produce. The directory is the PROVENANCE
+//     requirement here, so tags are re-read at valuation time (not reused from the
+//     membership build): a flag acquired inside the ten-minute TTL still suppresses.
 //
-// valuationCut reports that ctx ended while the contract fills were still
-// reading, so some rows lack a valuation because it was never read, not
-// because it was refused. The caller must say so rather than serve the
-// gap as the answer.
+// valuationCut reports that ctx ended mid-fill, so some rows lack a valuation because
+// it was never read, not refused. The caller must say so, not serve the gap as the
+// answer.
 func (s *Server) rwaContractListingRows(
 	ctx context.Context, members []rwaContractMember,
 ) (byID map[string]AssetDetail, notObserved int, valuationCut bool, err error) {
@@ -527,41 +488,25 @@ func (s *Server) rwaContractListingRows(
 
 // fillContractDecimals overlays each contract's real on-chain decimals.
 //
-// assetDetailFromAssetRow hardcodes 7 for every row, which is right for
-// classic assets and for SACs and wrong for any SEP-41 token that
-// declares otherwise. It matters here more than anywhere else on the
-// surface: market cap divides supply by 10^decimals, so a 6-decimal
-// token valued at 7 publishes a tenth of its real capitalisation and a
-// 18-decimal one publishes a hundred billion times it. A wrong decimals
-// reading is not a display defect on this page, it is the number.
+// assetDetailFromAssetRow hardcodes 7, right for classic assets and SACs, wrong for
+// SEP-41 tokens declaring otherwise. Here the error IS the published money figure:
+// market cap divides supply by 10^decimals, so a 5-decimal fund read at 7 publishes
+// one hundredth of its capitalisation and an 18-decimal token eleven orders of
+// magnitude too much.
 //
-// A token with no readable metadata keeps the default of 7, which is
-// what /v1/assets/{id} does — and on THIS surface that default may not
-// be multiplied by anything. The set of addresses whose scale was
-// actually READ is returned, and a row absent from it carries no
-// valuation of either kind.
+// A token with no readable metadata keeps 7 (as /v1/assets/{id} does), but on THIS
+// surface that default may not be multiplied by anything. The set of addresses whose
+// scale was actually READ is returned, and a row absent from it carries no valuation
+// of either kind.
 //
-// # Why the default is not good enough here
+// The reading goes missing four ways, only one an outage: the decimals reader is
+// unwired or fails while the SUPPLY reader stays up (separate ClickHouse dials); the
+// contract instance is not in the lake; the METADATA map declares no scale under
+// either spelling; or it declares both with DIFFERENT values, which the lake reader
+// refuses. In each the honest answer is "scale unknown", a refusal, not a 7.
 //
-// Everywhere else a missed reading costs a wrong display amount on a
-// token that, by construction, has no market. Here it is the published
-// money figure, and the error is not small: the measured population
-// holds 5-decimal funds (read at 7 they publish one HUNDREDTH of their
-// capitalisation) and an 18-decimal token (read at 7 it publishes
-// eleven orders of magnitude too much).
-//
-// The reading can go missing four ways, and only one of them is an
-// outage: the decimals reader is unwired or fails while the SUPPLY
-// reader stays up (they are separate ClickHouse dials in the API
-// binary, so this is a reachable process state rather than a
-// hypothetical); the contract instance is not captured in the lake; the
-// METADATA map declares no scale under either spelling; or the contract
-// declares both spellings with DIFFERENT values, which the lake reader
-// refuses outright. In every one of them the honest answer is that we
-// do not know the scale — which is a refusal, not a 7.
-//
-// A fifth way is not a refusal at all: ctx ending mid-walk. cut reports
-// it, and the walk stops there — every later read would fail the same way.
+// A fifth is not a refusal: ctx ending mid-walk. cut reports it and the walk stops,
+// since every later read would fail the same way.
 func (s *Server) fillContractDecimals(
 	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
 ) (resolved map[string]struct{}, cut bool) {
