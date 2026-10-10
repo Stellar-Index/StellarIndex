@@ -27,6 +27,7 @@ import {
 } from '../explorer-shared';
 import type { paths } from '@/api/types';
 import { SacAssetPanel } from './SacAssetPanel';
+import { CodeTimeline, TokenFlowSummary } from './ContractInsights';
 import { CrossReference } from '@/components/CrossReference';
 
 // GetJSON extracts the application/json body of a GET 200 response for
@@ -533,6 +534,7 @@ function CodeHistoryPanel({ id }: { id: string }) {
       source={source}
       bodyClassName="-mx-4"
     >
+      <CodeTimeline versions={versions} />
       <div className="overflow-x-auto">
         <table className="divide-line min-w-full divide-y text-sm">
           <thead>
@@ -672,49 +674,56 @@ function TransfersPanel({ id }: { id: string }) {
     <Panel
       title={`Token flows (last ${rows.length})`}
       source={asExample(`/v1/contracts/${id}/transfers`, { limit: 25 })}
-      bodyClassName="-mx-4 overflow-x-auto"
+      bodyClassName="-mx-4"
     >
-      <table className="divide-line min-w-full divide-y text-sm">
-        <thead>
-          <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-            <th className="px-4 py-2">Time</th>
-            <th className="px-4 py-2">Kind</th>
-            <th className="px-4 py-2">From</th>
-            <th className="px-4 py-2">To</th>
-            <th className="px-4 py-2 text-right">Amount</th>
-            <th className="px-4 py-2">Tx</th>
-          </tr>
-        </thead>
-        <tbody className="divide-line-subtle divide-y">
-          {rows.map((t, i) => (
-            <tr key={`${t.tx_hash}-${i}`} className="hover:bg-surface-muted">
-              <td className="text-ink-muted px-4 py-2 text-xs whitespace-nowrap">
-                {t.ledger_close_time ? relativeAge(t.ledger_close_time) : '—'}
-              </td>
-              <td className="px-4 py-2">
-                <code className="text-xs">{t.event_kind ?? '—'}</code>
-              </td>
-              <td className="px-4 py-2">{gLink(t.from)}</td>
-              <td className="px-4 py-2">{gLink(t.to)}</td>
-              <td className="px-4 py-2 text-right font-mono tabular-nums">
-                {t.amount ? transferAmount(t.amount, decimals) : '—'}
-              </td>
-              <td className="px-4 py-2">
-                {t.tx_hash ? (
-                  <Link
-                    href={`/transactions/${t.tx_hash}/`}
-                    className="text-brand-600 font-mono text-xs hover:underline"
-                  >
-                    {t.tx_hash.slice(0, 8)}…
-                  </Link>
-                ) : (
-                  '—'
-                )}
-              </td>
+      <TokenFlowSummary
+        rows={rows}
+        decimals={decimals}
+        formatAmount={(raw) => transferAmount(raw, decimals)}
+      />
+      <div className="overflow-x-auto">
+        <table className="divide-line min-w-full divide-y text-sm">
+          <thead>
+            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
+              <th className="px-4 py-2">Time</th>
+              <th className="px-4 py-2">Kind</th>
+              <th className="px-4 py-2">From</th>
+              <th className="px-4 py-2">To</th>
+              <th className="px-4 py-2 text-right">Amount</th>
+              <th className="px-4 py-2">Tx</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-line-subtle divide-y">
+            {rows.map((t, i) => (
+              <tr key={`${t.tx_hash}-${i}`} className="hover:bg-surface-muted">
+                <td className="text-ink-muted px-4 py-2 text-xs whitespace-nowrap">
+                  {t.ledger_close_time ? relativeAge(t.ledger_close_time) : '—'}
+                </td>
+                <td className="px-4 py-2">
+                  <code className="text-xs">{t.event_kind ?? '—'}</code>
+                </td>
+                <td className="px-4 py-2">{gLink(t.from)}</td>
+                <td className="px-4 py-2">{gLink(t.to)}</td>
+                <td className="px-4 py-2 text-right font-mono tabular-nums">
+                  {t.amount ? transferAmount(t.amount, decimals) : '—'}
+                </td>
+                <td className="px-4 py-2">
+                  {t.tx_hash ? (
+                    <Link
+                      href={`/transactions/${t.tx_hash}/`}
+                      className="text-brand-600 font-mono text-xs hover:underline"
+                    >
+                      {t.tx_hash.slice(0, 8)}…
+                    </Link>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Panel>
   );
 }

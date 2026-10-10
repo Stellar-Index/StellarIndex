@@ -24,6 +24,7 @@ import type { components } from '@/api/types';
 
 import { formatTimestamp } from '../explorer-shared';
 import { RELATION, errorStatus, type Relation } from './accountRelation';
+import { SurvivalDonut } from './SurvivalDonut';
 
 type CohortResp = components['schemas']['AccountCohort'];
 type CohortHolding = components['schemas']['AccountCohortHolding'];
@@ -44,7 +45,8 @@ const HOLDINGS_SHOWN = 25;
 function assetLabel(asset: string, kind: CohortHolding['kind']): string {
   if (kind === 'native') return 'XLM';
   if (kind === 'classic') return asset.split('-')[0] ?? asset;
-  if (kind === 'pool_share') return `pool ${truncateMiddle(asset.slice(5), 10)}`;
+  if (kind === 'pool_share')
+    return `pool ${truncateMiddle(asset.slice(5), 10)}`;
   return truncateMiddle(asset, 12);
 }
 
@@ -57,7 +59,11 @@ function usd(s: string | undefined): string {
 /** The priced-holdings total as a stat, and why it is a lower bound when
  * it is one: a lookup cut short by the request deadline or a holding
  * outside the price cap may have a live price the total leaves out. */
-function valuationSummary(v: CohortValuation): { value: string; sub: string; excluded: string[] } {
+function valuationSummary(v: CohortValuation): {
+  value: string;
+  sub: string;
+  excluded: string[];
+} {
   const excluded: string[] = [];
   if (v.degraded) {
     excluded.push(
@@ -70,14 +76,20 @@ function valuationSummary(v: CohortValuation): { value: string; sub: string; exc
     );
   }
   const total = v.total_usd !== undefined ? usd(v.total_usd) : '—';
-  const value = excluded.length > 0 && v.total_usd !== undefined ? `≥ ${total}` : total;
+  const value =
+    excluded.length > 0 && v.total_usd !== undefined ? `≥ ${total}` : total;
   if (v.priced_holdings === 0 && excluded.length === 0) {
     return { value, sub: 'nothing here has a live price', excluded };
   }
   const notLookedUp = v.unpriced_over_cap;
   const inCap = v.unpriced_holdings - notLookedUp;
   const parts = [`${v.priced_holdings} priced`];
-  if (inCap > 0) parts.push(v.degraded ? `${inCap} unpriced or not reached` : `${inCap} no live price`);
+  if (inCap > 0)
+    parts.push(
+      v.degraded
+        ? `${inCap} unpriced or not reached`
+        : `${inCap} no live price`,
+    );
   if (notLookedUp > 0) parts.push(`${notLookedUp} not looked up`);
   return { value, sub: parts.join(' · '), excluded };
 }
@@ -87,7 +99,8 @@ function valuationSummary(v: CohortValuation): { value: string; sub: string; exc
  * on the index's markets. */
 type UsdBasis = 'today' | 'then';
 
-type UsdSide = 'inflow_usd' | 'outflow_usd' | 'inflow_usd_then' | 'outflow_usd_then';
+type UsdSide =
+  'inflow_usd' | 'outflow_usd' | 'inflow_usd_then' | 'outflow_usd_then';
 
 /** The month point's served USD sum for one side: exact on the server and
  * rounded once, over the one basket both bases share. Absent is no point,
@@ -106,9 +119,13 @@ function monthTime(p: CohortPoint): number {
 /** The moved-in / moved-out lines for one basis: a month contributes a
  * point only where its basket — assets priced on both bases — is non-empty,
  * so the two bases always draw the same months over the same assets. */
-function usdLines(points: CohortPoint[], basis: UsdBasis): { in: LinePoint[]; out: LinePoint[] } {
+function usdLines(
+  points: CohortPoint[],
+  basis: UsdBasis,
+): { in: LinePoint[]; out: LinePoint[] } {
   const inSide: UsdSide = basis === 'then' ? 'inflow_usd_then' : 'inflow_usd';
-  const outSide: UsdSide = basis === 'then' ? 'outflow_usd_then' : 'outflow_usd';
+  const outSide: UsdSide =
+    basis === 'then' ? 'outflow_usd_then' : 'outflow_usd';
   const inLine: LinePoint[] = [];
   const outLine: LinePoint[] = [];
   for (const p of points) {
@@ -154,7 +171,12 @@ export function AccountRelationCohort({
 
   if (isLoading) {
     return (
-      <Panel headingLevel={2} title={title} source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        headingLevel={2}
+        title={title}
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         Loading the cohort…
       </Panel>
     );
@@ -162,7 +184,12 @@ export function AccountRelationCohort({
   if (isError) {
     const status = errorStatus(error);
     return (
-      <Panel headingLevel={2} title={title} source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        headingLevel={2}
+        title={title}
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         {status === 503
           ? 'The cohort rollup has not completed its first cycle on this deployment yet — retry shortly.'
           : 'The cohort could not be read.'}
@@ -173,18 +200,23 @@ export function AccountRelationCohort({
 
   if (!data.covered) {
     return (
-      <Panel headingLevel={2} title={title} source={source} bodyClassName="space-y-2 text-sm text-ink-muted">
+      <Panel
+        headingLevel={2}
+        title={title}
+        source={source}
+        bodyClassName="space-y-2 text-sm text-ink-muted"
+      >
         <p>
           The rollup does not carry this {vocabulary.actor}&rsquo;s cohort: it
           covers every sponsor and every creator with at least ten accounts to
           its name, and this address has fewer edges than that in this relation
-          — the per-account pages are the better read for a handful of
-          accounts. This is not a statement that the cohort holds nothing.
+          — the per-account pages are the better read for a handful of accounts.
+          This is not a statement that the cohort holds nothing.
         </p>
         {data.cycle && (
           <p className="text-ink-faint text-[11px]">
-            Rollup last computed {formatTimestamp(data.cycle.computed_at)} at ledger{' '}
-            {numFmt.format(data.cycle.tip_ledger)}.
+            Rollup last computed {formatTimestamp(data.cycle.computed_at)} at
+            ledger {numFmt.format(data.cycle.tip_ledger)}.
           </p>
         )}
       </Panel>
@@ -210,16 +242,49 @@ export function AccountRelationCohort({
 
   return (
     <>
-      <Panel headingLevel={2} title={title} source={source} bodyClassName="space-y-4">
+      <Panel
+        headingLevel={2}
+        title={title}
+        source={source}
+        bodyClassName="space-y-4"
+      >
         {cohort && (
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
-            <Stat label="Accounts" value={numFmt.format(cohort.accounts)} sub={`${vocabulary.counterparties}`} />
-            <Stat label="Still live" value={numFmt.format(cohort.live_accounts)} sub="have an account entry now" />
-            <Stat label="Active 30d" value={numFmt.format(cohort.active_30d)} sub="seen in the last 30 days" />
-            <Stat label="Active 90d" value={numFmt.format(cohort.active_90d)} />
-            <Stat label="Active 1y" value={numFmt.format(cohort.active_365d)} />
-            <Stat label="Holdings, priced" value={valuation.value} sub={valuation.sub} />
-          </dl>
+          <div className="flex flex-col gap-4 md:flex-row md:items-center">
+            <SurvivalDonut
+              accounts={cohort.accounts}
+              live={cohort.live_accounts}
+            />
+            <dl className="grid flex-1 grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
+              <Stat
+                label="Accounts"
+                value={numFmt.format(cohort.accounts)}
+                sub={`${vocabulary.counterparties}`}
+              />
+              <Stat
+                label="Still live"
+                value={numFmt.format(cohort.live_accounts)}
+                sub="have an account entry now"
+              />
+              <Stat
+                label="Active 30d"
+                value={numFmt.format(cohort.active_30d)}
+                sub="seen in the last 30 days"
+              />
+              <Stat
+                label="Active 90d"
+                value={numFmt.format(cohort.active_90d)}
+              />
+              <Stat
+                label="Active 1y"
+                value={numFmt.format(cohort.active_365d)}
+              />
+              <Stat
+                label="Holdings, priced"
+                value={valuation.value}
+                sub={valuation.sub}
+              />
+            </dl>
+          </div>
         )}
         {valuation.excluded.length > 0 && (
           <Callout tone="info" title="The priced total is a lower bound">
@@ -247,12 +312,20 @@ export function AccountRelationCohort({
                       {assetLabel(h.asset, h.kind)}
                     </span>
                     {h.kind === 'pool_share' && (
-                      <span className="text-ink-faint ml-2 text-[11px]">liquidity-pool share</span>
+                      <span className="text-ink-faint ml-2 text-[11px]">
+                        liquidity-pool share
+                      </span>
                     )}
                   </Td>
                   <Td align="right">{numFmt.format(h.holders)}</Td>
                   <Td align="right">{formatCompactUnits(h.balance)}</Td>
-                  <Td align="right">{h.value_usd !== undefined ? usd(h.value_usd) : <span className="text-ink-faint">unpriced</span>}</Td>
+                  <Td align="right">
+                    {h.value_usd !== undefined ? (
+                      usd(h.value_usd)
+                    ) : (
+                      <span className="text-ink-faint">unpriced</span>
+                    )}
+                  </Td>
                 </TR>
               ))}
               {holdings.length === 0 && (
@@ -267,20 +340,29 @@ export function AccountRelationCohort({
         </TableWrap>
         {(hidden > 0 || data.holdings_truncated) && (
           <p className="text-ink-faint text-[11px]">
-            {hidden > 0 && `${numFmt.format(hidden)} more asset${hidden === 1 ? '' : 's'} held, not shown. `}
-            {data.holdings_truncated && 'The read cap applied: these are the most widely held assets, not all of them.'}
+            {hidden > 0 &&
+              `${numFmt.format(hidden)} more asset${hidden === 1 ? '' : 's'} held, not shown. `}
+            {data.holdings_truncated &&
+              'The read cap applied: these are the most widely held assets, not all of them.'}
           </p>
         )}
         <p className="text-ink-faint text-[11px]">
-          Current balances of the cohort, valued at the live rate where one was found.
-          A pool share is a classic liquidity-pool position and is never priced;
-          nothing unpriced is counted at zero.
+          Current balances of the cohort, valued at the live rate where one was
+          found. A pool share is a classic liquidity-pool position and is never
+          priced; nothing unpriced is counted at zero.
         </p>
       </Panel>
 
-      <Panel headingLevel={2} title="Value moved by month" source={source} bodyClassName="space-y-3">
+      <Panel
+        headingLevel={2}
+        title="Value moved by month"
+        source={source}
+        bodyClassName="space-y-3"
+      >
         {data.flows.points.length === 0 ? (
-          <p className="text-sm text-ink-muted">No movements recorded for this cohort.</p>
+          <p className="text-ink-muted text-sm">
+            No movements recorded for this cohort.
+          </p>
         ) : (
           <>
             <LineChart
@@ -288,16 +370,25 @@ export function AccountRelationCohort({
               height={200}
               positive
               ariaLabel={`Members of the ${vocabulary.actor}'s cohort active each month`}
-              legend={{ valueLabel: 'Active accounts', formatValue: (n) => numFmt.format(n) }}
+              legend={{
+                valueLabel: 'Active accounts',
+                formatValue: (n) => numFmt.format(n),
+              }}
             />
             {basis !== null ? (
               <>
                 <div className="flex items-center gap-2 text-xs">
                   <span className="text-ink-muted">Value in</span>
-                  <SortPill active={basis === 'today'} onClick={() => setBasisChoice('today')}>
+                  <SortPill
+                    active={basis === 'today'}
+                    onClick={() => setBasisChoice('today')}
+                  >
                     USD today
                   </SortPill>
-                  <SortPill active={basis === 'then'} onClick={() => setBasisChoice('then')}>
+                  <SortPill
+                    active={basis === 'then'}
+                    onClick={() => setBasisChoice('then')}
+                  >
                     USD then
                   </SortPill>
                 </div>
@@ -314,39 +405,49 @@ export function AccountRelationCohort({
                       : "USD value moved into and out of the cohort each month, at today's prices"
                   }
                   legend={{
-                    valueLabel: basis === 'then' ? 'USD, at that month’s prices' : 'USD, at today’s prices',
+                    valueLabel:
+                      basis === 'then'
+                        ? 'USD, at that month’s prices'
+                        : 'USD, at today’s prices',
                     formatValue: (n) => usd(String(n)),
                   }}
                 />
               </>
             ) : (
               <Callout tone="info" title="No priced asset moved">
-                None of the cohort&rsquo;s moved assets is priced both live and on
-                the index&rsquo;s own markets in the same month, so there is no USD
-                line to draw; the activity line above is exact.
+                None of the cohort&rsquo;s moved assets is priced both live and
+                on the index&rsquo;s own markets in the same month, so there is
+                no USD line to draw; the activity line above is exact.
               </Callout>
             )}
             <p className="text-ink-faint text-[11px]">
-              Received minus sent per asset per calendar month, from the movements
-              archive. &ldquo;USD today&rdquo; values each month&rsquo;s quantity at
-              today&rsquo;s price — one unit across months, not what the month was
-              worth then; &ldquo;USD then&rdquo; values it at that month&rsquo;s
-              volume-weighted USD price on this index&rsquo;s own markets. Both
-              lines sum the same assets each month — those priced on both bases —
-              so switching changes the price, never the basket; an asset priced
-              on one basis alone is left out of both, and a month with no such
-              asset draws no point. Broken out for{' '}
-              {data.flows.assets.length} asset{data.flows.assets.length === 1 ? '' : 's'}
-              ; the activity line counts every asset. A month with no movement
-              emits no point.
+              Received minus sent per asset per calendar month, from the
+              movements archive. &ldquo;USD today&rdquo; values each
+              month&rsquo;s quantity at today&rsquo;s price — one unit across
+              months, not what the month was worth then; &ldquo;USD then&rdquo;
+              values it at that month&rsquo;s volume-weighted USD price on this
+              index&rsquo;s own markets. Both lines sum the same assets each
+              month — those priced on both bases — so switching changes the
+              price, never the basket; an asset priced on one basis alone is
+              left out of both, and a month with no such asset draws no point.
+              Broken out for {data.flows.assets.length} asset
+              {data.flows.assets.length === 1 ? '' : 's'}; the activity line
+              counts every asset. A month with no movement emits no point.
             </p>
           </>
         )}
       </Panel>
 
-      <Panel headingLevel={2} title="Protocols the cohort moved value through" source={source} bodyClassName="space-y-3">
+      <Panel
+        headingLevel={2}
+        title="Protocols the cohort moved value through"
+        source={source}
+        bodyClassName="space-y-3"
+      >
         {data.contracts.length === 0 ? (
-          <p className="text-sm text-ink-muted">No contract counterparties in the cohort&rsquo;s movements.</p>
+          <p className="text-ink-muted text-sm">
+            No contract counterparties in the cohort&rsquo;s movements.
+          </p>
         ) : (
           <TableWrap>
             <Table>
@@ -372,7 +473,11 @@ export function AccountRelationCohort({
                         ))}
                     </Td>
                     <Td>
-                      <Link href={`/contracts/${c.contract_id}`} className="font-mono text-xs underline-offset-2 hover:underline" title={c.contract_id}>
+                      <Link
+                        href={`/contracts/${c.contract_id}`}
+                        className="font-mono text-xs underline-offset-2 hover:underline"
+                        title={c.contract_id}
+                      >
                         {truncateMiddle(c.contract_id, 14)}
                       </Link>
                     </Td>
@@ -387,16 +492,24 @@ export function AccountRelationCohort({
           </TableWrap>
         )}
         <p className="text-ink-faint text-[11px]">
-          The C… counterparties of the cohort&rsquo;s movements — the value-moving
-          subset of interaction; a call that moved no balance is not counted.
+          The C… counterparties of the cohort&rsquo;s movements — the
+          value-moving subset of interaction; a call that moved no balance is
+          not counted.
           {unlabelled > 0 &&
             ` ${numFmt.format(unlabelled)} contract${unlabelled === 1 ? '' : 's'} no protocol on the roster claims; a token contract the lake can name is shown as \u201ctoken \u2026\u201d.`}
         </p>
       </Panel>
 
-      <Panel headingLevel={2} title="DeFi positions held by the cohort" source={source} bodyClassName="space-y-3">
+      <Panel
+        headingLevel={2}
+        title="DeFi positions held by the cohort"
+        source={source}
+        bodyClassName="space-y-3"
+      >
         {data.positions.length === 0 ? (
-          <p className="text-sm text-ink-muted">No open positions in the protocols the served tier folds.</p>
+          <p className="text-ink-muted text-sm">
+            No open positions in the protocols the served tier folds.
+          </p>
         ) : (
           <TableWrap>
             <Table>
@@ -412,15 +525,28 @@ export function AccountRelationCohort({
               </THead>
               <TBody>
                 {data.positions.map((p) => (
-                  <TR key={`${p.protocol}:${p.venue}:${p.asset ?? ''}:${p.position_kind}`}>
+                  <TR
+                    key={`${p.protocol}:${p.venue}:${p.asset ?? ''}:${p.position_kind}`}
+                  >
                     <Td>{p.protocol}</Td>
                     <Td>{p.position_kind.replace(/_/g, ' ')}</Td>
                     <Td>
-                      <Link href={`/contracts/${p.venue}`} className="font-mono text-xs underline-offset-2 hover:underline" title={p.venue}>
+                      <Link
+                        href={`/contracts/${p.venue}`}
+                        className="font-mono text-xs underline-offset-2 hover:underline"
+                        title={p.venue}
+                      >
                         {truncateMiddle(p.venue, 14)}
                       </Link>
                     </Td>
-                    <Td>{p.asset_label ?? (p.asset ? truncateMiddle(p.asset, 12) : <span className="text-ink-faint">venue shares</span>)}</Td>
+                    <Td>
+                      {p.asset_label ??
+                        (p.asset ? (
+                          truncateMiddle(p.asset, 12)
+                        ) : (
+                          <span className="text-ink-faint">venue shares</span>
+                        ))}
+                    </Td>
                     <Td align="right">{numFmt.format(p.holders)}</Td>
                     <Td align="right">{formatCompactUnits(p.amount)}</Td>
                   </TR>
@@ -430,11 +556,12 @@ export function AccountRelationCohort({
           </TableWrap>
         )}
         <p className="text-ink-faint text-[11px]">
-          From the served tier&rsquo;s per-protocol folds (blend, blend backstop,
-          phoenix stake, defindex vaults, sorocredit, aquarius gauges) joined to
-          the cohort. Amount is the fold&rsquo;s own unit summed across holders —
-          a magnitude, not a settlement figure.
-          {data.cycle && ` Rollup computed ${formatTimestamp(data.cycle.computed_at)}.`}
+          From the served tier&rsquo;s per-protocol folds (blend, blend
+          backstop, phoenix stake, defindex vaults, sorocredit, aquarius gauges)
+          joined to the cohort. Amount is the fold&rsquo;s own unit summed
+          across holders — a magnitude, not a settlement figure.
+          {data.cycle &&
+            ` Rollup computed ${formatTimestamp(data.cycle.computed_at)}.`}
         </p>
       </Panel>
     </>
