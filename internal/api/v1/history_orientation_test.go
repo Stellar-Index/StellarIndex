@@ -406,9 +406,7 @@ func TestHistory_PageBoundaryAcrossDirections(t *testing.T) {
 		t.Fatalf("drained %d rows in pages %v, want %d — a page boundary between the two directions must not drop a row",
 			len(served), sizes, len(rows))
 	}
-	seen := map[string]int{}
 	for i, row := range served {
-		seen[row.TxHash]++
 		if row.BaseAsset != aqua.String() || row.QuoteAsset != usdc.String() {
 			t.Errorf("row %d pair = %s/%s, want %s/%s", i, row.BaseAsset, row.QuoteAsset, aqua, usdc)
 		}
@@ -417,11 +415,7 @@ func TestHistory_PageBoundaryAcrossDirections(t *testing.T) {
 				i, row.Timestamp, i-1, served[i-1].Timestamp)
 		}
 	}
-	for _, r := range rows {
-		if seen[r.TxHash] != 1 {
-			t.Errorf("tx %s served %d times, want exactly 1", r.TxHash, seen[r.TxHash])
-		}
-	}
+	assertServedExactlyOnce(t, served, rows, sizes)
 }
 
 // TestHistory_PageBoundaryWithinOneLedger tightens the boundary onto a
@@ -493,15 +487,7 @@ func TestHistory_PageIsNotCutThroughATieGroup(t *testing.T) {
 	if len(served) != len(rows) {
 		t.Fatalf("drained %d rows in pages %v, want %d", len(served), sizes, len(rows))
 	}
-	seen := map[string]int{}
-	for _, row := range served {
-		seen[row.TxHash+"|"+row.Source]++
-	}
-	for _, r := range rows {
-		if seen[r.TxHash+"|"+r.Source] != 1 {
-			t.Errorf("row %s/%s served %d times, want exactly 1", r.Source, r.TxHash, seen[r.TxHash+"|"+r.Source])
-		}
-	}
+	assertServedExactlyOnce(t, served, rows, sizes)
 }
 
 // TestHistory_FlippedRowWithZeroAmountRendersNullPrice pins a flipped
@@ -553,52 +539,46 @@ func TestHistory_FlippedRowWithZeroAmountRendersNullPrice(t *testing.T) {
 // never served on any page. The read completes the group first, by
 // re-reading the truncated direction with a raised limit.
 
-// TestHistory_OverLimitTieGroupIsCompletedBeforeItIsServed is that case
-// at its smallest client-reachable size: `limit` validates to [1, 10000],
-// so limit=1 with a three-source group is something a caller can ask for.
+// TestHistory_OverLimitTieGroupIsCompletedBeforeItIsServed: `limit`
+// validates to [1, 10000], so a caller can ask for limit=1 against a
+// three-source group. The flipped row's source sorts ABOVE the stored row
+// a short read leaves unfetched, so a page that serves the group without
+// completing it mints a cursor past that row. Limit 2 repeats it one size
+// up so limit=1 cannot be read as a boundary artefact.
 func TestHistory_OverLimitTieGroupIsCompletedBeforeItIsServed(t *testing.T) {
 	t.Parallel()
 	usdc := mustParseAsset(t, usdcClassicID)
 	aqua := mustParseAsset(t, aquaClassicID)
 
-	// One group. Two rows stored one way, one the other; the flipped
-	// row's source sorts ABOVE the stored row that a limit=1 read leaves
-	// unfetched, so a page that serves the group without completing it
-	// mints a cursor past that row.
-	rows := []canonical.Trade{
-		storedTrade(t, "aaa_src", 10, "1e", aqua, usdc, 1, 41),
-		storedTrade(t, "bbb_src", 10, "1e", aqua, usdc, 1, 42),
-		storedTrade(t, "ccc_src", 10, "1e", usdc, aqua, 43, 1),
+	for _, tc := range []struct {
+		name  string
+		limit int
+		rows  []canonical.Trade
+		// firstPageWhole pins that the group is completed, then served on one page.
+		firstPageWhole bool
+	}{
+		{"limit 1", 1, []canonical.Trade{
+			storedTrade(t, "aaa_src", 10, "1e", aqua, usdc, 1, 41),
+			storedTrade(t, "bbb_src", 10, "1e", aqua, usdc, 1, 42),
+			storedTrade(t, "ccc_src", 10, "1e", usdc, aqua, 43, 1),
+		}, true},
+		{"limit 2", 2, []canonical.Trade{
+			storedTrade(t, "aaa_src", 10, "2f", aqua, usdc, 1, 51),
+			storedTrade(t, "bbb_src", 10, "2f", aqua, usdc, 1, 52),
+			storedTrade(t, "ccc_src", 10, "2f", aqua, usdc, 1, 53), // unfetched at limit=2
+			storedTrade(t, "ddd_src", 10, "2f", usdc, aqua, 54, 1), // flipped, highest source
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := httpTestServer(t, v1.New(v1.Options{History: &orientedTradeStore{rows: tc.rows}}))
+			served, sizes := drainHistory(t, ts, orientationQuery(aqua, usdc, tc.limit))
+			assertServedExactlyOnce(t, served, tc.rows, sizes)
+			if tc.firstPageWhole && (len(sizes) == 0 || sizes[0] != len(tc.rows)) {
+				t.Errorf("first page = %v, want the whole group (%d rows) on one page", sizes, len(tc.rows))
+			}
+		})
 	}
-	store := &orientedTradeStore{rows: rows}
-	ts := httpTestServer(t, v1.New(v1.Options{History: store}))
-
-	served, sizes := drainHistory(t, ts, orientationQuery(aqua, usdc, 1))
-	assertServedExactlyOnce(t, served, rows, sizes)
-	if len(sizes) == 0 || sizes[0] != len(rows) {
-		t.Errorf("first page = %v, want the whole group (%d rows) on one page — the group is completed, then served whole",
-			sizes, len(rows))
-	}
-}
-
-// TestHistory_OverLimitTieGroupAtLimitTwo repeats it one size up, so the
-// limit=1 case cannot be read as a boundary artefact.
-func TestHistory_OverLimitTieGroupAtLimitTwo(t *testing.T) {
-	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
-
-	rows := []canonical.Trade{
-		storedTrade(t, "aaa_src", 10, "2f", aqua, usdc, 1, 51),
-		storedTrade(t, "bbb_src", 10, "2f", aqua, usdc, 1, 52),
-		storedTrade(t, "ccc_src", 10, "2f", aqua, usdc, 1, 53), // unfetched at limit=2
-		storedTrade(t, "ddd_src", 10, "2f", usdc, aqua, 54, 1), // flipped, highest source
-	}
-	store := &orientedTradeStore{rows: rows}
-	ts := httpTestServer(t, v1.New(v1.Options{History: store}))
-
-	served, sizes := drainHistory(t, ts, orientationQuery(aqua, usdc, 2))
-	assertServedExactlyOnce(t, served, rows, sizes)
 }
 
 // TestHistory_TieGroupSweepLosesNothing walks every arrangement of four
