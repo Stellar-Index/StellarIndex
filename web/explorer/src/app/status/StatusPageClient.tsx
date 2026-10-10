@@ -1053,7 +1053,7 @@ function NoticeBanner({ notice }: { notice: StatusNotice }) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-ink text-base font-semibold">{notice.title}</h2>
+            <h2 className="text-h3 text-ink font-semibold">{notice.title}</h2>
             <Badge tone={tone.badge}>{tone.label}</Badge>
           </div>
           {/* Plain-text body rendered as a React child — escaped by
@@ -2643,7 +2643,7 @@ function SectionHead({
 }) {
   return (
     <div className="mb-3 flex items-baseline justify-between gap-3">
-      <h2 className="text-ink-muted text-sm font-semibold tracking-wider uppercase">
+      <h2 className="text-h3 text-ink font-semibold">
         {children}
         {aside && (
           <span className="text-ink-faint ml-2 text-xs font-normal tracking-normal normal-case">

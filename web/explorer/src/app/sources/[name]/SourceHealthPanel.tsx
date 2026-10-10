@@ -23,9 +23,7 @@ export function SourceHealthPanel({ source }: { source: string }) {
   return (
     <section className="border-line bg-surface rounded-lg border p-4">
       <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-ink-body text-sm font-semibold tracking-wider uppercase">
-          Live health
-        </h2>
+        <h2 className="text-h3 text-ink font-semibold">Live health</h2>
         <span className="text-ink-faint text-xs">
           /v1/sources/{source}/health · refreshes every 15s
         </span>

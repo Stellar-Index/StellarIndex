@@ -49,7 +49,7 @@ export default function ResearchPage() {
 
       <section className="space-y-4">
         <div className="flex items-baseline justify-between">
-          <h2 className="text-xl font-semibold tracking-tight">
+          <h2 className="text-h3 text-ink font-semibold">
             Architecture narratives
           </h2>
           <span className="text-ink-muted text-xs">
@@ -102,7 +102,7 @@ export default function ResearchPage() {
 
       <section className="space-y-4">
         <div className="flex items-baseline justify-between">
-          <h2 className="text-xl font-semibold tracking-tight">
+          <h2 className="text-h3 text-ink font-semibold">
             Operations runbooks
           </h2>
           <span className="text-ink-muted text-xs">
@@ -154,7 +154,7 @@ export default function ResearchPage() {
 
       <section className="space-y-4">
         <div className="flex items-baseline justify-between">
-          <h2 className="text-xl font-semibold tracking-tight">
+          <h2 className="text-h3 text-ink font-semibold">
             Architecture decision records
           </h2>
           <span className="text-ink-muted text-xs">
@@ -219,9 +219,7 @@ export default function ResearchPage() {
 
       {TOPICS.length > 0 && (
         <section className="space-y-3">
-          <h2 className="text-xl font-semibold tracking-tight">
-            Browse by topic
-          </h2>
+          <h2 className="text-h3 text-ink font-semibold">Browse by topic</h2>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {TOPICS.map((t) =>
               t.href ? (
@@ -250,7 +248,9 @@ export default function ResearchPage() {
       )}
 
       <section className="border-line bg-surface rounded-xl border p-5 text-sm">
-        <h2 className="text-base font-semibold">Why we publish all of this</h2>
+        <h2 className="text-h3 text-ink font-semibold">
+          Why we publish all of this
+        </h2>
         <p className="text-ink-body mt-2">
           Stellar already has Horizon. The reason a second pricing stack adds
           value is methodology — what gets included in the VWAP, how we handle

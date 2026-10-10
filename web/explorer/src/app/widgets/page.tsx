@@ -65,7 +65,7 @@ export default function WidgetsPage() {
 
       <section className="space-y-4">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">Asset card</h2>
+          <h2 className="text-h3 text-ink font-semibold">Asset card</h2>
           <p className="text-ink-body mt-1 text-sm">
             Live price, 24h change, and a sparkline for one asset. Source path
             is{' '}
@@ -96,7 +96,7 @@ export default function WidgetsPage() {
 
       <section className="space-y-4">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">Pair card</h2>
+          <h2 className="text-h3 text-ink font-semibold">Pair card</h2>
           <p className="text-ink-body mt-1 text-sm">
             Live VWAP for a (base, quote) pair. Source path is{' '}
             <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-xs">
@@ -127,9 +127,7 @@ export default function WidgetsPage() {
 
       <section className="space-y-4">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">
-            Currency card
-          </h2>
+          <h2 className="text-h3 text-ink font-semibold">Currency card</h2>
           <p className="text-ink-body mt-1 text-sm">
             Live USD-base rate + 7d change for one fiat currency. Source path is{' '}
             <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-xs">
@@ -158,7 +156,7 @@ export default function WidgetsPage() {
       </section>
 
       <section className="border-line bg-surface rounded-xl border p-5 text-sm">
-        <h2 className="text-base font-semibold">Notes</h2>
+        <h2 className="text-h3 text-ink font-semibold">Notes</h2>
         <ul className="text-ink-body mt-3 space-y-2">
           <li>
             <strong>No auth, no API key.</strong> The widgets read from the

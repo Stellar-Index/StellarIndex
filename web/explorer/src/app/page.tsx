@@ -105,7 +105,7 @@ export default function HomePage() {
             <p className="text-brand-600 text-xs font-medium tracking-wider uppercase">
               Stellar Index API
             </p>
-            <h2 className="text-h2 text-ink font-semibold">
+            <h2 className="text-h3 text-ink font-semibold">
               One verified price for every Stellar pair.
             </h2>
             <p
@@ -165,7 +165,7 @@ export default function HomePage() {
 
       <section className="space-y-4">
         <div className="space-y-1">
-          <h2 className="text-h2 text-ink font-semibold">Try the API</h2>
+          <h2 className="text-h3 text-ink font-semibold">Try the API</h2>
           <p className="text-ink-muted text-sm">
             No key needed.{' '}
             <Link

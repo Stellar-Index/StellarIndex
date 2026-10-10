@@ -38,7 +38,7 @@ function Section({
 }) {
   return (
     <section id={id} className="scroll-mt-24 space-y-4">
-      <h2 className="text-ink text-xl font-semibold tracking-tight">
+      <h2 className="text-h3 text-ink font-semibold">
         <a href={`#${id}`} className="hover:text-brand-600">
           {title}
         </a>

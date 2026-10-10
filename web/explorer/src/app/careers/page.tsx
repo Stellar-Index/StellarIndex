@@ -73,7 +73,7 @@ export default function CareersPage() {
       />
 
       <section className="border-line bg-surface rounded-xl border p-6 shadow-sm">
-        <h2 className="text-lg font-semibold">Open roles</h2>
+        <h2 className="text-h3 text-ink font-semibold">Open roles</h2>
         <p className="text-ink-body mt-3 text-sm">
           No open roles listed today. We&apos;re focused on shipping v1 and the
           post-launch backlog with the existing team. When we open a role
@@ -89,7 +89,7 @@ export default function CareersPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-2xl font-semibold tracking-tight">How we work</h2>
+        <h2 className="text-h3 text-ink font-semibold">How we work</h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {VALUES.map((v) => (
             <div
@@ -105,9 +105,7 @@ export default function CareersPage() {
 
       <section className="space-y-4">
         <div className="space-y-2">
-          <h2 className="text-2xl font-semibold tracking-tight">
-            Contribute via PRs
-          </h2>
+          <h2 className="text-h3 text-ink font-semibold">Contribute via PRs</h2>
           <p className="text-ink-body text-sm">
             The fastest path to working on this codebase is to land a PR.
             Apache-2.0 means you don&apos;t need our permission to fork, build,
@@ -134,7 +132,7 @@ export default function CareersPage() {
       </section>
 
       <section className="border-line bg-surface rounded-xl border p-6 shadow-sm">
-        <h2 className="text-lg font-semibold">Get in touch</h2>
+        <h2 className="text-h3 text-ink font-semibold">Get in touch</h2>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Link
             href="/contact"

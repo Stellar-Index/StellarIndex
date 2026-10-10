@@ -55,7 +55,7 @@ export function ConvertPair({
 
   return (
     <section className="border-line bg-surface rounded-xl border p-5 shadow-sm">
-      <h2 className="mb-4 text-lg font-semibold tracking-tight">
+      <h2 className="text-h3 text-ink mb-4 font-semibold">
         Convert {fromLabel} → {toLabel}
       </h2>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr]">

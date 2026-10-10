@@ -33,7 +33,7 @@ export default function LendingPage() {
 
       <div className="border-line bg-surface rounded-xl border p-5 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-2xl font-semibold tracking-tight">Blend</h2>
+          <h2 className="text-h3 text-ink font-semibold">Blend</h2>
           <Badge tone="up">Live</Badge>
           <Badge>Isolated pools</Badge>
           <Badge title="Each pool reads the SEP-40 Reflector oracle for collateral valuation.">

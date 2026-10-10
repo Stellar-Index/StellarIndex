@@ -133,7 +133,7 @@ function ReleaseCard({ release }: { release: Release }) {
       className="border-line bg-surface scroll-mt-20 rounded-lg border p-6 shadow-sm"
     >
       <header className="border-line-subtle mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b pb-3">
-        <h2 className="font-mono text-2xl font-semibold tracking-tight">
+        <h2 className="text-h3 text-ink font-semibold">
           <a href={`#${id}`} className="hover:text-brand-600">
             {release.version}
           </a>

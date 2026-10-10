@@ -116,9 +116,7 @@ export function HomeCurrencies() {
     <section className="space-y-3">
       <div className="flex items-baseline justify-between">
         <div className="space-y-1">
-          <h2 className="text-2xl font-semibold tracking-tight">
-            World currencies
-          </h2>
+          <h2 className="text-h3 text-ink font-semibold">World currencies</h2>
           <p className="text-ink-body text-sm">
             USD-base rates for the major fiat currencies — the full reference
             set (19 fiat plus 15 reference coins) at{' '}

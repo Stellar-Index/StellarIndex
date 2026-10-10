@@ -28,7 +28,7 @@ export default function CompanyPage() {
       />
 
       <section className="space-y-3">
-        <h2 className="text-2xl font-semibold tracking-tight">What we do</h2>
+        <h2 className="text-h3 text-ink font-semibold">What we do</h2>
         <p className="text-ink-body text-sm">
           We ingest every trade on the Stellar network — on-chain DEXes
           (Soroswap, Phoenix, Aquarius, SDEX, Comet), classic SDEX orderbooks,
@@ -42,7 +42,7 @@ export default function CompanyPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-2xl font-semibold tracking-tight">How we ship</h2>
+        <h2 className="text-h3 text-ink font-semibold">How we ship</h2>
         <ul className="text-ink-body space-y-2 text-sm">
           <li className="flex gap-2">
             <span className="text-ink-faint">•</span>
@@ -139,7 +139,7 @@ export default function CompanyPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-2xl font-semibold tracking-tight">Funding</h2>
+        <h2 className="text-h3 text-ink font-semibold">Funding</h2>
         <p className="text-ink-body text-sm">
           Development was supported by a grant from the Stellar Community Fund.
           The platform is free — there are no paid tiers; the public tier and
@@ -148,9 +148,7 @@ export default function CompanyPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-2xl font-semibold tracking-tight">
-          What&apos;s next
-        </h2>
+        <h2 className="text-h3 text-ink font-semibold">What&apos;s next</h2>
         <p className="text-ink-body text-sm">
           We&apos;re still pre-v1 and shipping continuously rather than against
           a fixed date. The roadmap that gets us to v1 lives in{' '}
@@ -175,7 +173,7 @@ export default function CompanyPage() {
       </section>
 
       <section className="border-line bg-surface rounded-xl border p-6 shadow-sm">
-        <h2 className="text-lg font-semibold">Get in touch</h2>
+        <h2 className="text-h3 text-ink font-semibold">Get in touch</h2>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Link
             href="/contact"

@@ -79,7 +79,7 @@ export default function SignupPage() {
       </section>
 
       <section className="mb-12">
-        <h2 className="text-ink mb-4 text-xl font-semibold">Tiers</h2>
+        <h2 className="text-h3 text-ink mb-4 font-semibold">Tiers</h2>
         {/* overflow-x-auto, not -hidden: WCAG 1.4.10 Reflow — the nowrap
             tier headers were CLIPPED at 320px with no way to reach them.
             The radius still clips. */}

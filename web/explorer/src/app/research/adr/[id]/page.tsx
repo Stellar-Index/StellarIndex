@@ -132,9 +132,7 @@ function RelatedADRs({ adr }: { adr: ReturnType<typeof loadADR> }) {
   if (related.length === 0) return null;
   return (
     <section className="border-line border-t pt-6">
-      <h2 className="text-ink-muted mb-3 text-sm font-semibold tracking-wider uppercase">
-        Related
-      </h2>
+      <h2 className="text-h3 text-ink mb-3 font-semibold">Related</h2>
       <ul className="space-y-2 text-sm">
         {related.map((r) => (
           <li key={r.id}>

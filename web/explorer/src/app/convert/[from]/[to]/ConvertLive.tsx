@@ -276,7 +276,7 @@ export function ConvertSnippets({
   if (rate == null) return null;
   return (
     <section className="rounded-card border-line bg-surface border p-5">
-      <h2 className="mb-4 text-lg font-semibold tracking-tight">
+      <h2 className="text-h3 text-ink mb-4 font-semibold">
         {from} to {to} at common amounts
       </h2>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">

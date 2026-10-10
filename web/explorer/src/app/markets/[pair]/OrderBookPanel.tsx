@@ -62,9 +62,7 @@ export function OrderBookPanel({
   return (
     <section className="border-line bg-surface rounded-lg border p-4">
       <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-ink-body text-sm font-semibold tracking-wider uppercase">
-          SDEX order book
-        </h2>
+        <h2 className="text-h3 text-ink font-semibold">SDEX order book</h2>
         {book && (
           <span className="text-ink-faint text-xs">
             as of ledger {book.as_of_ledger.toLocaleString('en-US')}
