@@ -19,16 +19,6 @@ export default function LendingPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Lending' }]}
         title="Lending"
-        description={
-          <>
-            Collateralised lending on Stellar. Yield is borrower interest;
-            routed yield is on{' '}
-            <Link href="/aggregators" className="underline decoration-dotted">
-              /aggregators
-            </Link>
-            .
-          </>
-        }
       />
 
       <div className="border-line bg-surface rounded-xl border p-5 shadow-sm">
@@ -89,9 +79,7 @@ export default function LendingPage() {
       <LendingPoolsTable />
 
       <NoteBadge label="partial: pools with auctions only">
-        Pools are listed once observed in the auction stream, so a pool that has
-        never had a liquidation will not appear. TVL, utilisation and
-        supply/borrow APY read live from pool storage (per-reserve USD).
+        Only pools that have had an auction are listed.
       </NoteBadge>
     </Container>
   );

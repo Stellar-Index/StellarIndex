@@ -286,14 +286,10 @@ export function AccountMovementsPanel({ id }: { id: string }) {
     </div>
   );
 
-  const panelHint =
-    'every classic-asset movement, sent or received — the pre-P23 archive merged with the live post-P23 tail';
-
   if (isError) {
     return (
       <Panel
         title="Activity (movements)"
-        hint={panelHint}
         source={source}
         bodyClassName="space-y-3"
       >
@@ -310,7 +306,6 @@ export function AccountMovementsPanel({ id }: { id: string }) {
     return (
       <Panel
         title="Activity (movements)"
-        hint={panelHint}
         source={source}
         bodyClassName="space-y-3"
       >
@@ -326,7 +321,6 @@ export function AccountMovementsPanel({ id }: { id: string }) {
   return (
     <Panel
       title={`Activity (movements) (${movements.length})`}
-      hint={panelHint}
       source={source}
       bodyClassName="space-y-3"
     >

@@ -60,7 +60,6 @@ export default async function BlogPostPage({ params }: { params: Params }) {
         ]}
         meta={`${post.date} · ${post.author}`}
         title={post.title}
-        description={post.summary || undefined}
       />
 
       <article className="prose prose-slate max-w-none">

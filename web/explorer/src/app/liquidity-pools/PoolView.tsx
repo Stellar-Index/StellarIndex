@@ -167,7 +167,6 @@ export function PoolView({ id }: { id: string }) {
           { label: id ? `${id.slice(0, 6)}…${id.slice(-4)}` : 'pool' },
         ]}
         title="Liquidity pool"
-        description="A Stellar native liquidity pool's reserves and depth."
       />
       {body}
     </Container>

@@ -16,7 +16,6 @@ export default function MethodologyPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Methodology' }]}
         title="Methodology"
-        description="How every price Stellar Index serves is computed, from raw on-chain event to the final aggregate. Each section links to the underlying ADR for the full rationale, alternatives considered, and consequences."
       />
 
       <DataTrustTabs active="/methodology" />

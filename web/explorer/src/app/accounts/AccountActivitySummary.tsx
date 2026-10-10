@@ -52,14 +52,10 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
   });
 
   const source = asExample(`/v1/accounts/${id}/activity`);
-  const panelHint =
-    'all-time segmented counts — operations by type, attributed trades, DeFi actions, bridge transfers';
-
   if (isError) {
     return (
       <Panel
         title="Activity"
-        hint={panelHint}
         source={source}
         bodyClassName="text-sm text-ink-body"
       >
@@ -73,7 +69,6 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
     return (
       <Panel
         title="Activity"
-        hint={panelHint}
         source={source}
         bodyClassName="text-sm text-ink-muted"
       >
@@ -100,12 +95,7 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
   }
 
   return (
-    <Panel
-      title="Activity"
-      hint={panelHint}
-      source={source}
-      bodyClassName="space-y-4"
-    >
+    <Panel title="Activity" source={source} bodyClassName="space-y-4">
       {data.coverage_note && <NoteBadge>{data.coverage_note}</NoteBadge>}
 
       <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-4">

@@ -68,13 +68,6 @@ export default function AnomaliesPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Anomalies' }]}
         title="Anomalies"
-        description={
-          <>
-            Every clear→firing freeze, with reason, recovery and the frozen
-            value still served via{' '}
-            <code className="font-mono text-xs">/v1/price</code>.
-          </>
-        }
       />
 
       <AnomaliesFeed />
