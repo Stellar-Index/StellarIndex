@@ -26,20 +26,20 @@ export function Section({ className, ...props }: ComponentProps<'section'>) {
 export type Crumb = { label: string; href?: string };
 
 /**
- * PageHeader is the consistent top-of-page block: optional breadcrumb +
- * eyebrow, an h1 title, a description, and a right-aligned actions slot.
+ * PageHeader is the consistent top-of-page block: breadcrumbs, an h1 title,
+ * an optional muted meta line (date, author, type), a description, and actions.
  */
 export function PageHeader({
   title,
   description,
-  eyebrow,
+  meta,
   breadcrumbs,
   actions,
   className,
 }: {
   title: ReactNode;
   description?: ReactNode;
-  eyebrow?: ReactNode;
+  meta?: ReactNode;
   breadcrumbs?: Crumb[];
   actions?: ReactNode;
   className?: string;
@@ -55,12 +55,8 @@ export function PageHeader({
         {breadcrumbs && breadcrumbs.length > 0 && (
           <Breadcrumbs items={breadcrumbs} />
         )}
-        {eyebrow && (
-          <div className="text-brand-600 mb-1.5 text-xs font-medium tracking-wider uppercase">
-            {eyebrow}
-          </div>
-        )}
         <h1 className="text-h1 text-ink font-semibold">{title}</h1>
+        {meta && <div className="text-ink-faint mt-1 text-xs">{meta}</div>}
         {description && (
           <p className="text-ink-muted mt-2 max-w-prose text-[15px] leading-relaxed">
             {description}

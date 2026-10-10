@@ -85,7 +85,7 @@ export function buildDocPage(config: DocPageConfig) {
             { label: config.label, href: `/research/${config.category}` },
             { label: doc.title },
           ]}
-          eyebrow={
+          meta={
             doc.last_verified
               ? `${config.pillLabel} · Last verified ${doc.last_verified}`
               : config.pillLabel

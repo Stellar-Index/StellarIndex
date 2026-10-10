@@ -125,7 +125,6 @@ function KeysBody({ me }: { me: MeResponse }) {
             { label: 'Dashboard', href: '/dashboard' },
             { label: 'API keys' },
           ]}
-          eyebrow="Credentials"
           title="API keys"
           description="Mint and manage the keys your apps use to authenticate against api.stellarindex.io."
           actions={

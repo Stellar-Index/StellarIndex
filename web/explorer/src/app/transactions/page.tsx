@@ -29,7 +29,6 @@ export default function TransactionsPage() {
     <Container className="space-y-6 py-8">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Transactions' }]}
-        eyebrow="Explorer"
         title="Transactions"
         description="Recent transactions, newest ledger first. Click a hash for the full decoded transaction — operations, events, and result codes."
       />

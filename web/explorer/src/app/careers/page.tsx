@@ -62,7 +62,6 @@ export default function CareersPage() {
     <Container className="space-y-12 py-12 [&>*]:max-w-3xl">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Careers' }]}
-        eyebrow="Careers"
         title="Work on real data infrastructure."
         description={
           <>

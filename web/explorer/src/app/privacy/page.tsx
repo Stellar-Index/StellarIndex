@@ -29,7 +29,6 @@ export default function PrivacyPage() {
             { label: 'Home', href: '/' },
             { label: 'Privacy Policy' },
           ]}
-          eyebrow="Legal"
           title="Privacy Policy"
           description={
             <>

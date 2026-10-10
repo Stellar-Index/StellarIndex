@@ -56,12 +56,10 @@ interface ProtocolCard {
  */
 export function ProtocolsIndex({
   lockedCategory,
-  eyebrow = 'Directory',
   title = 'Protocols',
   description = 'Every Stellar protocol we index: DEXes, AMMs, lending, yield, bridges and oracles.',
 }: {
   lockedCategory?: string;
-  eyebrow?: string;
   title?: string;
   description?: string;
 } = {}) {
@@ -179,7 +177,6 @@ export function ProtocolsIndex({
     <Container className="space-y-8 py-8 sm:py-10">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: title }]}
-        eyebrow={eyebrow}
         title={title}
         description={description}
       />

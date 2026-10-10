@@ -76,7 +76,6 @@ export function ContractsView() {
     <Container className="space-y-8 py-8 sm:py-10">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Contracts' }]}
-        eyebrow="Soroban"
         title="Contracts"
         description="Soroban contracts: most active over 30 days, and the protocol attribution registry."
       />

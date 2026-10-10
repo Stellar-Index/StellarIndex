@@ -15,7 +15,6 @@ export default function IssuersPage() {
     <Container className="space-y-8 py-8 sm:py-10">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Issuers' }]}
-        eyebrow="Directory"
         title="Issuers"
         description="Classic-asset issuers ranked by observation count."
       />

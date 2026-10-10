@@ -145,7 +145,6 @@ export function AccountRelationView({
       <header className="space-y-3">
         <PageHeader
           title={<span className="font-mono break-all">{account}</span>}
-          eyebrow={vocabulary.boardLabel}
           breadcrumbs={crumbs}
           description={`This address as a ${vocabulary.actor}: the accounts it has ${creation ? 'created' : 'sponsored'}, over time and today.`}
         />
