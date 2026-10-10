@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   title: 'Accounts — Stellar accounts by wealth',
   description: CURRENT_NETWORK.pricing
     ? 'The richest Stellar accounts ranked by total USD holdings, plus per-account detail: balances, trustlines, offers, and sourced activity decoded straight from the certified raw lake.'
-    : `The largest Stellar ${CURRENT_NETWORK.label} accounts ranked by native XLM balance, plus per-account detail: balances, trustlines, offers, and sourced activity decoded straight from the certified raw lake.`,
+    : `The largest Stellar ${CURRENT_NETWORK.label} accounts ranked by XLM balance, plus per-account detail: balances, trustlines, offers, and sourced activity decoded straight from the certified raw lake.`,
 };
 
 /**

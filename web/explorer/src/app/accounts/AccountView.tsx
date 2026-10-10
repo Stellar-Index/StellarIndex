@@ -405,7 +405,7 @@ function AccountsDirectory() {
             </table>
             <p className="text-ink-muted text-xs">
               {isNative
-                ? 'Native XLM balance · accounts outside the captured window are excluded'
+                ? 'XLM balance · accounts outside the captured window are excluded'
                 : `Summed across ${q.data.priced_assets} priced asset${q.data.priced_assets === 1 ? '' : 's'} · wealth outside the captured window is excluded`}
             </p>
           </>
