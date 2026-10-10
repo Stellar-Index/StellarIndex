@@ -21,7 +21,13 @@ import {
 import { DonutChart, type DonutSlice } from '@/components/charts/DonutChart';
 import type { LinePoint } from '@/components/charts/LineChart';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact, formatReadable, sumDecimalStrings } from '@/lib/format';
+import {
+  baseUnitsDecimal,
+  formatCompact,
+  formatReadable,
+  formatUnitsReadable,
+  sumDecimalStrings,
+} from '@/lib/format';
 import type { components } from '@/api/types';
 import {
   type Envelope,
@@ -128,10 +134,14 @@ export function AccountTradesPanel({ id }: { id: string }) {
   });
 
   const source = asExample(`/v1/accounts/${id}/trades`, { limit: PAGE_SIZE });
+  const panelHint =
+    'historic trades where this address is the recorded taker or maker';
+
   if (isError) {
     return (
       <Panel
         title="Trades"
+        hint={panelHint}
         source={source}
         bodyClassName="text-sm text-ink-body"
       >
@@ -145,6 +155,7 @@ export function AccountTradesPanel({ id }: { id: string }) {
     return (
       <Panel
         title="Trades"
+        hint={panelHint}
         source={source}
         bodyClassName="text-sm text-ink-muted"
       >
@@ -159,6 +170,7 @@ export function AccountTradesPanel({ id }: { id: string }) {
   return (
     <Panel
       title={`Trades (${trades.length}${data.next_cursor ? '+' : ''})`}
+      hint={panelHint}
       source={source}
       bodyClassName="space-y-3"
     >
@@ -252,6 +264,15 @@ export function AccountTradesPanel({ id }: { id: string }) {
   );
 }
 
+// Without a known scale the raw integer is the only honest rendering.
+function TradeAmount({ raw, decimals }: { raw: string; decimals?: number }) {
+  if (decimals == null) return <span title="base units">{raw}</span>;
+  const scaled = baseUnitsDecimal(raw, decimals);
+  const exact =
+    scaled == null ? raw : decimals > 0 ? scaled.replace(/\.?0+$/, '') : scaled;
+  return <span title={exact}>{formatUnitsReadable(raw, decimals)}</span>;
+}
+
 function TradeRow({ t }: { t: AccountTrade }) {
   return (
     <TR>
@@ -286,10 +307,10 @@ function TradeRow({ t }: { t: AccountTrade }) {
         </span>
       </Td>
       <Td align="right" className="font-mono text-xs tabular-nums">
-        {t.base_amount}
+        <TradeAmount raw={t.base_amount} decimals={t.base_decimals} />
       </Td>
       <Td align="right" className="font-mono text-xs tabular-nums">
-        {t.quote_amount}
+        <TradeAmount raw={t.quote_amount} decimals={t.quote_decimals} />
       </Td>
       <Td
         align="right"

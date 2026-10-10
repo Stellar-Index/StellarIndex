@@ -197,6 +197,52 @@ func TestAccountTrades_HappyPathAndCursor(t *testing.T) {
 	}
 }
 
+// Each side carries its own scale; an unreadable token omits it rather
+// than defaulting to 7, which would misstate an 18-decimal amount 10^11-fold.
+func TestAccountTrades_StampsPerAssetDecimals(t *testing.T) {
+	const unreadable = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+	ts := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	stub := &stubTradesReader{rows: []timescale.AccountTradeRow{
+		{
+			Source: "aquarius", Ledger: 100, TxHash: strings.Repeat("a", 64), Ts: ts, Role: "taker",
+			BaseAsset: "native", QuoteAsset: validTestContract, BaseAmount: "10000000", QuoteAmount: "1",
+		},
+		{
+			Source: "soroswap", Ledger: 99, TxHash: strings.Repeat("b", 64), Ts: ts, Role: "taker",
+			BaseAsset: "USDC-" + validTestAccount, QuoteAsset: unreadable, BaseAmount: "1", QuoteAmount: "1",
+		},
+	}}
+	h, captured := newActivityHandler(&capReader{probe: &deadlineProbe{}}, nil, stub)
+	calls := 0
+	h.TokenDecimals = func(_ context.Context, contractID string) (int, bool) {
+		calls++
+		return 18, contractID == validTestContract
+	}
+
+	w := getAccount(h, (*Handler).AccountTrades, "/v1/accounts/"+validTestAccount+"/trades")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	view := (*captured).(AccountTradesView)
+	dec := func(p *int) any {
+		if p == nil {
+			return nil
+		}
+		return *p
+	}
+	got := [][2]any{
+		{dec(view.Trades[0].BaseDecimals), dec(view.Trades[0].QuoteDecimals)},
+		{dec(view.Trades[1].BaseDecimals), dec(view.Trades[1].QuoteDecimals)},
+	}
+	want := [][2]any{{7, 18}, {7, nil}}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("decimals = %v, want %v", got, want)
+	}
+	if calls != 2 {
+		t.Errorf("TokenDecimals calls = %d, want 2 (one per distinct contract)", calls)
+	}
+}
+
 func TestAccountTrades_InvalidCursor400(t *testing.T) {
 	var rec problemRecord
 	h, _ := newActivityHandler(&capReader{probe: &deadlineProbe{}}, nil, &stubTradesReader{})

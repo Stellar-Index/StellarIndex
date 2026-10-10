@@ -15110,6 +15110,12 @@ components:
         quote_asset: { type: string, description: Canonical quote asset id. }
         base_amount: { type: string, description: "Decimal string, raw integer at the base asset's scale." }
         quote_amount: { type: string, description: "Decimal string, raw integer at the quote asset's scale." }
+        base_decimals:
+          type: integer
+          description: Divide base_amount by 10^base_decimals for whole units. ABSENT when the asset's scale is unknown.
+        quote_decimals:
+          type: integer
+          description: Divide quote_amount by 10^quote_decimals for whole units. ABSENT when the asset's scale is unknown.
         usd_volume:
           type: string
           description: |

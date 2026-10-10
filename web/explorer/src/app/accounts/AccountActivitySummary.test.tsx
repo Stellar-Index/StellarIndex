@@ -77,7 +77,8 @@ describe('AccountTradesPanel', () => {
             source: 'sdex',
             base_asset: 'native',
             quote_asset: `USDC-${G}`,
-            base_amount: '10000000',
+            base_amount: '90071992547409930000000',
+            base_decimals: 7,
             quote_amount: '1234567',
             usd_volume: '0.12345600',
             tx_hash:
@@ -93,11 +94,12 @@ describe('AccountTradesPanel', () => {
 
     renderWithClient(<AccountTradesPanel id={G} />);
 
-    // Amounts render verbatim as decimal strings (never reformatted
-    // through a float).
+    // A scaled amount reads compact with the exact decimal in its title
+    // (2^53+1, so a float path would show ...992); an unscaled one stays raw.
     await waitFor(() =>
-      expect(screen.getByText('10000000')).toBeInTheDocument(),
+      expect(screen.getByText('9007.2T')).toBeInTheDocument(),
     );
+    expect(screen.getByTitle('9007199254740993')).toBeInTheDocument();
     expect(screen.getByText('1234567')).toBeInTheDocument();
     expect(screen.getByText('$0.1235')).toBeInTheDocument();
     expect(screen.getByText('taker')).toBeInTheDocument();
