@@ -164,7 +164,7 @@ SLA_PROOF_ENDED_AT="$ended_at" \
 The renderer writes `docs/operations/sla-proof-<end-date>.md` and prints the path. Commit
 it: that file is the deliverable and the only thing
 [`check-sla-evidence.sh`](../../scripts/ci/check-sla-evidence.sh) counts as evidence.
-`make test-load-mixed` is for exploratory runs only (no `--summary-export`, cannot become a
+`make test-load SCENARIO=mixed` is for exploratory runs only (no `--summary-export`, cannot become a
 proof report).
 
 ### What the k6 renderer refuses (exit 2, writes nothing)

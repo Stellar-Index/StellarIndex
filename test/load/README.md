@@ -39,7 +39,10 @@ export STELLARINDEX_LOAD_API_KEY="<paste from vault>"
 k6 run --out experimental-prometheus-rw test/load/scenarios/01-price-hot-path.js
 
 # Run the canonical proof scenario:
-make test-load-mixed
+make test-load SCENARIO=mixed
+
+# Run another scenario (price, vwap, history, batch, streaming, explorer):
+make test-load SCENARIO=price
 
 # Run everything (slow):
 make test-load
