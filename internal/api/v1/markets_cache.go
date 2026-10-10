@@ -12,41 +12,29 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// CachedMarketsReader wraps a [MarketsReader] with a small per-key
-// TTL cache. The five list endpoints it backs (DistinctPairsExt,
-// SourceMarkets, AssetMarkets, AllPools,
-// GetPairsVolumeHistory24hBatch) all run
-// the same expensive 24h-trades-hypertable scan; the explorer hits
-// them on every /markets, /pools, and /dexes page load.
+// CachedMarketsReader wraps a [MarketsReader] with a small per-key TTL cache. The
+// five list endpoints it backs (DistinctPairsExt, SourceMarkets, AssetMarkets,
+// AllPools, GetPairsVolumeHistory24hBatch) all run the same expensive
+// 24h-trades-hypertable scan, hit by the explorer on every /markets, /pools and
+// /dexes page load.
 //
-// Cache key: a stable string derived from the call's args. The
-// most-trafficked queries (/v1/pools?source=aquarius&limit=20 etc.)
-// hit the same key, sharing one upstream call across many visitors.
+// Cache key: a stable string derived from the call's args, so the most-trafficked
+// queries share one upstream call. Single-flight + error-not-cached match the
+// SourcesStatsReader wrapper. Per-pair lookups (PairMarket) and the sparkline
+// batch are pass-through: keyed too narrowly to benefit and already fast.
 //
-// Single-flight + error-not-cached match the SourcesStatsReader
-// wrapper's semantics. Long-tail (cursor-paginated, oddly-ordered)
-// calls also hit upstream once-per-key but are amortised across
-// any concurrent callers.
+// Ownership: the cache owns what it stores, the caller owns what it gets. Every
+// serving branch of fetchPairs / fetchPools returns a COPY of the entry's row
+// slice. handleMarkets and handlePools write their rows in place (the
+// dex-nonstandard-decimals last_price correction, plus ?include=sparkline /
+// inception enrichment), and the correction is not idempotent: handed the shared
+// array, every hit would re-multiply the corrected price by K (41.32 -> 4132 ->
+// 413200 ...), opt-in enrichment would leak into requests that never asked for
+// it, and concurrent requests would race.
 //
-// Per-pair lookups (PairMarket) and the sparkline batch are
-// pass-through — they're keyed too narrowly to benefit, and the
-// underlying queries are already fast.
-//
-// Ownership: the cache owns what it stores, the caller owns what it
-// gets. Every serving branch of fetchPairs / fetchPools returns a COPY
-// of the entry's row slice, never the entry's own backing array.
-// handleMarkets and handlePools write their rows in place (the
-// dex-nonstandard-decimals last_price correction, plus the
-// ?include=sparkline / inception enrichment), and that correction is
-// not idempotent: handed the shared array, every hit would re-multiply
-// the already-corrected price by K (41.32 → 4132 → 413200 → …), opt-in
-// enrichment would leak into requests that never asked for it, and
-// concurrent requests would race on the same elements.
-//
-// The copy is one level deep — the row structs. Pointer and slice
-// FIELDS (LastPrice, Volume24hUSD, VolumeHistory24h, …) still alias
-// the cached values, so a caller may REPLACE a field on its row but
-// must never write THROUGH one.
+// The copy is one level deep (the row structs). Pointer and slice FIELDS
+// (LastPrice, Volume24hUSD, VolumeHistory24h, ...) still alias the cached values,
+// so a caller may REPLACE a field on its row but must never write THROUGH one.
 type CachedMarketsReader struct {
 	// logger sinks a panic recovered in a detached refresh goroutine.
 	// It is the PROCESS DEFAULT rather than the API Server's logger:
@@ -258,31 +246,22 @@ func (c *CachedMarketsReader) AllPoolsStale(ctx context.Context, filter timescal
 // assetsRefreshBudget.
 const marketsRefreshBudget = 30 * time.Second
 
-// fetchPairs is the shared TTL + single-flight + stale-while-
-// revalidate loop for the pair-returning methods. `op` is the
-// metric label (`distinct_pairs` / `source_markets` /
-// `asset_markets`) so the hit/miss/stale counter breaks down per
-// cached method. SWR semantics are identical to asset_catalogue_cache.go's
-// fetchRows (proven race-clean): an expired entry serves its stale
-// rows IMMEDIATELY and a single background refresh runs off the
-// request path — the AllPools/DistinctPairs scan never lands on a
-// user request even though it cannot be made cheap (no per-source
-// pre-aggregate exists).
+// fetchPairs is the shared TTL + single-flight + stale-while-revalidate loop for
+// the pair-returning methods. `op` is the metric label (`distinct_pairs` /
+// `source_markets` / `asset_markets`). SWR semantics match asset_catalogue_cache.go's
+// fetchRows: an expired entry serves its stale rows IMMEDIATELY and a single
+// background refresh runs off the request path, because the AllPools/DistinctPairs
+// scan cannot be made cheap (no per-source pre-aggregate exists).
 //
-// Return values: the served rows + next cursor, plus observedAt (the
-// timestamp the served rows were fetched from upstream — e.at) and stale
-// (true whenever the served bytes are past the TTL, i.e. taken from the
-// SWR branch). /v1/markets stamps these into the envelope's as_of +
-// flags.stale so a stale-serve (refresh failing) is never asserted as
-// fresh (the same age>TTL bound /v1/contracts uses). observedAt
-// is the zero time on a cold miss/error, where there is nothing served to
-// date.
+// Returns the served rows + next cursor, observedAt (when the served rows were
+// fetched upstream; zero on a cold miss/error) and stale (true whenever the
+// served bytes are past the TTL). /v1/markets stamps these into as_of and
+// flags.stale so a stale-serve (refresh failing) is never asserted as fresh.
 //
-// The rows returned are always a copy (slices.Clone) — including to the
-// cold LEADER, whose upstream result is the very slice the entry keeps.
-// The clone runs outside the mutex: a stored backing array is never
-// written again (a refresh swaps in a new slice rather than editing the
-// old one), so reading it unlocked is safe. See the type comment.
+// The rows returned are always a copy (slices.Clone), including to the cold
+// LEADER, whose upstream result is the slice the entry keeps. The clone runs
+// outside the mutex: a stored backing array is never written again (a refresh
+// swaps in a new slice), so reading it unlocked is safe. See the type comment.
 func (c *CachedMarketsReader) fetchPairs(
 	ctx context.Context,
 	op, key string,

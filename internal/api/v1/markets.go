@@ -161,49 +161,34 @@ type Pool struct {
 	LastPrice *string `json:"last_price,omitempty"`
 }
 
-// handlePools serves GET /v1/pools — DEX/AMM liquidity pools only.
-// One row per (source, base, quote) where source is a DEX
-// (Subclass=DEX in the source registry: soroswap, phoenix,
-// aquarius, sdex, comet). CEX pairs go through /v1/markets;
-// "pool" is AMM/DEX terminology and applying it to centralised
-// venues misnames the data.
+// handlePools serves GET /v1/pools: DEX/AMM liquidity pools only. One row per
+// (source, base, quote) where source is a DEX (Subclass=DEX in the source
+// registry). CEX pairs go through /v1/markets; "pool" misnames centralised
+// venues.
 //
 // Query params:
 //   - cursor   (optional): opaque, from a prior pagination.next.
 //   - limit    (optional): integer 1-500, default 100.
 //   - order_by (optional): "volume_24h_usd_desc" (default) or "pair".
-//   - source   (optional): single DEX name. Restricts the result to
-//     that one DEX's pools. Unknown / non-DEX
-//     source names return an empty list.
-//   - base     (optional): canonical asset_id. Restricts to pools
-//     where this asset is on the base side. AND-combined with
-//     `quote` if both are passed (single-pair lookup).
-//   - quote    (optional): canonical asset_id. Same as `base` but
-//     on the quote side.
-//   - asset    (optional): canonical asset_id. Restricts to pools
-//     where this asset appears on either side (base OR quote).
-//     Mutually exclusive with `base`/`quote` — combining the two
-//     filter shapes (AND vs OR) has no well-defined semantics.
-//     Backs the explorer's /assets/{slug} Liquidity tab.
+//   - source   (optional): single DEX name. Unknown / non-DEX names return an
+//     empty list.
+//   - base / quote (optional): canonical asset_id restricting the base / quote
+//     side; AND-combined when both are passed (single-pair lookup).
+//   - asset    (optional): canonical asset_id appearing on either side. Mutually
+//     exclusive with `base`/`quote`: AND vs OR has no well-defined combination.
 //
-// canonicaliseAssetFilter documents why every ?asset=/?base=/?quote=
-// filter on this file's handlers re-spells the caller's input through
-// canonical.ParseAsset before it reaches SQL or a cache key.
+// canonicaliseAssetFilter documents why every ?asset=/?base=/?quote= filter on
+// this file's handlers re-spells the caller's input through canonical.ParseAsset
+// before it reaches SQL or a cache key. ParseAsset deliberately ACCEPTS spellings
+// whose Asset.String() differs from the input (bare "XLM" and "NATIVE", the
+// Horizon-style "CODE:ISSUER") while the stores hold only the canonical form and
+// the SQL compares with `=`. Discarding the parsed value would make those aliases
+// produce an authoritative HTTP 200 with an EMPTY list, cached under their own
+// key for 60s (/v1/markets?asset=XLM returned 0 rows while ?asset=native
+// returned 5).
 //
-// ParseAsset deliberately ACCEPTS spellings whose Asset.String() differs
-// from the input — bare "XLM" and "NATIVE" (added so CoinGecko/CMC users
-// can type what they know) and the Horizon-style "CODE:ISSUER" — while
-// the stores hold only the canonical form and the SQL compares with `=`.
-// Validating and then discarding the parsed value would make those
-// documented aliases produce an authoritative HTTP 200 with an EMPTY list,
-// cached under their own key for 60s. Measured on r1 without the
-// canonicalisation: /v1/markets?asset=XLM returned 0 rows while
-// ?asset=native returned 5.
-//
-// Residual (separate, pre-existing): `native` and `crypto:XLM` are stored
-// as distinct rows, so canonicalising to one form does not merge them —
-// that is the XLM dual-form class tracked elsewhere, not something this
-// re-spelling attempts to solve.
+// Residual: `native` and `crypto:XLM` are stored as distinct rows, so
+// canonicalising to one form does not merge them (the XLM dual-form class).
 func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo,funlen // option parsing + DEX-source filter + asset/base+quote validation + 8s-timeout guard are linear; splitting fragments the request lifecycle
 	cursor := r.URL.Query().Get("cursor")
 	limit := 100
@@ -377,34 +362,22 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 
 // Market is the wire shape for /v1/markets entries.
 //
-// TradeCount24h may be zero even when LastTradeAt is recent — they
-// measure different windows (activity vs most-recent event). The
-// fields are designed to let clients sort markets by "current"
-// activity vs total history.
+// TradeCount24h may be zero even when LastTradeAt is recent: they measure
+// different windows (activity vs most-recent event).
 //
-// Volume24hUSD is the trailing-24h USD volume summed from
-// prices_1m's per-bucket volume_usd. Pointer + omitempty so a
-// pair with no USD-equivalent trades emits null instead of "0"
-// — important for client-side sorting (treat null as "unknown",
-// 0 as "definitely zero").
+// Volume24hUSD is the trailing-24h USD volume summed from prices_1m's per-bucket
+// volume_usd. Pointer + omitempty so a pair with no USD-equivalent trades emits
+// null instead of "0": null is "unknown", 0 is "definitely zero".
 //
 // LastTradeAt vs BucketCloseAt:
-//   - LastTradeAt is the most recent prices_1m bucket-start that
-//     observed a trade in the pair (minute precision) when the
-//     pair traded in the trailing 24h. For pairs idle >24h but
-//     active in the 14d recency window, it falls back to the
-//     daily bucket-start. Clients computing freshness against
-//     `now()` should use this field.
-//   - BucketCloseAt is the start of the most recent prices_1d
-//     bucket the pair was active in (aligns to UTC midnight by
-//     construction). Provided for symmetry with the daily VWAP
-//     surfaces; do NOT use for staleness computations.
-//
-// `last_trade_at` is minute-precise for any pair that traded in the
-// trailing 24h rather than `MAX(prices_1d.bucket)` (daily bucket-start):
-// that would put exactly-midnight UTC values on most rows and show
-// clients spuriously-large staleness, so the two semantics are split
-// across the two fields.
+//   - LastTradeAt is the most recent prices_1m bucket-start that observed a trade
+//     (minute precision) when the pair traded in the trailing 24h; for pairs idle
+//     >24h but active in the 14d recency window it falls back to the daily
+//     bucket-start. Use it for freshness against `now()`. MAX(prices_1d.bucket)
+//     would put exactly-midnight UTC values on most rows and show spuriously
+//     large staleness.
+//   - BucketCloseAt is the start of the most recent prices_1d bucket the pair was
+//     active in (UTC midnight by construction). Do NOT use it for staleness.
 type Market struct {
 	Base          string   `json:"base"`
 	Quote         string   `json:"quote"`

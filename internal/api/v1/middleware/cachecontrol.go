@@ -151,47 +151,30 @@ var (
 )
 
 // ledgerPolicy classifies the operator probes and the explorer's ledger/tx
-// surface. ok=false means "not one of mine — fall through to the main
-// switch".
+// surface. ok=false means "not one of mine, fall through to the main switch".
 //
 //   - A ledger's own row, its transaction/operation list and a transaction by
-//     hash are IMMUTABLE once the ledger closes; the conservative default's
-//     `private, no-store` would make the explorer re-fetch a 71 KB transaction
-//     list on every visit to a ledger page. The band is deliberately modest
-//     (1 min client / 5 min CDN), not a year: policyForPath knows nothing
-//     about the tip, and a ledger a few seconds old can be served before
-//     every downstream projection for it has landed, so a long TTL could pin
-//     a partial view.
+//     hash are IMMUTABLE once the ledger closes, but the band is deliberately
+//     modest (1 min client / 5 min CDN): policyForPath knows nothing about the
+//     tip, and a ledger a few seconds old can be served before every downstream
+//     projection for it has landed, so a long TTL could pin a partial view.
 //
-//   - /v1/ledgers (the list) moves every ~5 s and /v1/network/throughput
-//     already has a server-side cache; both get the status-like short band.
+//   - /v1/ledgers moves every ~5 s and /v1/network/throughput has a server-side
+//     cache; both get the status-like short band.
 //
-//   - /v1/operations joins them. It is /v1/ledgers' sibling listing — the
-//     network-wide operations directory, advancing once per ledger — and it
-//     too already has a server-side cache (opsDirCache, 10 s TTL +
-//     stale-while-revalidate). The conservative default would ship it
-//     `private, no-store`: an 18 KB body that no client and no CDN could
-//     reuse for even one ledger. Nothing in it is per-user or auth-tied.
+//   - /v1/operations (network-wide directory, one advance per ledger) sits behind
+//     opsDirCache (10 s TTL + stale-while-revalidate); nothing in it is per-user.
+//     It is NOT given the longer 60 s/300 s band: opsDirCache refreshes only ON a
+//     request, so at a low arrival rate an entry's age is bounded by the
+//     inter-arrival gap rather than the TTL (an `as_of` 93 s behind was measured
+//     after a quiet window), and a 300 s edge TTL would compound that.
 //
-//     The directory is deliberately NOT given the longer 60 s/300 s band:
-//     opsDirCache serves stale on expiry and only refreshes ON a request, so at
-//     a low arrival rate an entry's age is bounded by the inter-arrival gap
-//     rather than by the TTL (measured on r1: an `as_of` 93 s behind after a
-//     quiet window). A 300 s edge TTL would compound that real staleness.
-//
-//   - /v1/contracts joins them on the same evidence. It is the contracts
-//     directory, fronted by the same stale-while-revalidate server cache
-//     (recentContractsCached), and nothing in it is per-user or auth-tied.
-//     The EXACT-path match matters: /v1/contracts/{id} is a different
-//     surface and keeps its own adjudication.
-//
-//   - /v1/contracts/{id}, /interactions and /code-history take the same band:
-//     they are served through contractDetailCached, the same
-//     stale-while-revalidate shape as recentContractsCached, so a long edge
-//     TTL would compound real staleness. /transfers is not cached server-side
-//     but is the contract's latest-N transfer listing with no cursor — its
-//     first page moves with every new transfer, so it is tip-advancing, not
-//     closed history, and gets the short band rather than the catalogue one.
+//   - /v1/contracts (EXACT path) is the contracts directory behind the same
+//     stale-while-revalidate cache (recentContractsCached). /v1/contracts/{id},
+//     /interactions and /code-history (contractDetailCached) take the same band.
+//     /transfers is not cached server-side but is a latest-N listing with no
+//     cursor whose first page moves with every transfer, so it gets the short band
+//     rather than the catalogue one.
 func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	switch {
 	// Operator endpoints — probed by systemd/Prometheus/uptime checks; a
@@ -220,47 +203,32 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	return "", false
 }
 
-// ─── Closed-bucket price surfaces — VERY short shared cache ──
-// ADR-0015/0018 is a DETERMINISM contract (byte-identical for the
-// same (pair, window, from_ts)), not a freshness bound — so a shared
-// cache serving a previous closed bucket keeps determinism while
-// breaking the "MOST RECENT closed bucket" clause, which is exactly
-// what the SLA probe measures (150 s target: 60 s bucket + 30 s CAGG
-// end_offset + <=30 s schedule + runtime).
+// ─── Closed-bucket price surfaces: VERY short shared cache ──
+// ADR-0015/0018 is a DETERMINISM contract (byte-identical for the same (pair,
+// window, from_ts)), not a freshness bound. A shared cache serving a previous
+// closed bucket keeps determinism but breaks the "MOST RECENT closed bucket"
+// clause, which is what the SLA probe measures (150 s target: 60 s bucket + 30 s
+// CAGG end_offset + <=30 s schedule + runtime).
 //
-// A shared TTL of d adds d to the worst-case age of `observed_at`,
-// makes the per-request `as_of` lie by up to d, and extends by d the
-// window in which a pre-freeze price is served with `frozen=false`
-// after a phase-2 freeze fires. An s-maxage of 60 is not provable
-// on any of the three: it can serve a bucket a full bucket behind
-// origin (age <= 210 s, past the 150 s probe bound) and stale
-// `frozen` / `confidence` for two 30 s aggregator ticks.
+// A shared TTL of d adds d to the worst-case age of `observed_at`, makes `as_of`
+// lie by up to d, and extends by d the window in which a pre-freeze price is
+// served with `frozen=false` after a phase-2 freeze. s-maxage 60 can serve a
+// bucket a full bucket behind origin (age <= 210 s, past the probe bound) and
+// stale `frozen` / `confidence` for two aggregator ticks. 5 s stays inside the
+// probe bound (<=155 s) and one aggregator tick. `max-age` stays 30 s: private
+// client reuse is the client's own copy. (The only PROVABLE alternative is a
+// per-response s-maxage = secondsUntil(bucketEnd + 30 s), which needs bucket
+// phase this layer does not have.)
 //
-// 5 s is: inside the probe bound (<=155 s), inside one aggregator
-// tick, and inside one bucket for the large majority of fills.
-// `max-age` stays 30 s — private client reuse is the client's own
-// copy, not a shared-cache lie. (The only PROVABLE alternative is a
-// per-response s-maxage = secondsUntil(bucketEnd + 30 s); it needs
-// bucket phase in the middleware, which this layer does not have.)
-//
-// /v1/oracle/latest joins them: it is a "latest observation per
-// source" surface with NO closed-bucket contract and no staleness
-// flag; only the `/v1/oracle/` prefix arm below would put it in the
-// 300 s catalogue band.
-//
-// The other three SEP-40 passthrough endpoints share the same hazard
-// and the same band: /v1/oracle/lastprice and /v1/oracle/x_last_price
-// are both "last observed price" surfaces with the identical
-// no-closed-bucket-contract nature as /v1/oracle/latest, and
-// /v1/oracle/prices is itself a closed-bucket surface (it excludes
-// the in-progress bucket, same as /v1/price/changes above) — none of
-// them belong in the 300 s catalogue band's `/v1/oracle/` prefix
-// arm either.
+// /v1/oracle/latest, /lastprice and /x_last_price are "last observed price"
+// surfaces with no closed-bucket contract, and /v1/oracle/prices is itself a
+// closed-bucket surface (it excludes the in-progress bucket, like
+// /v1/price/changes), so none belong in the 300 s catalogue band of the
+// `/v1/oracle/` prefix arm.
 //
 // SLOPriceRoutes names every route above so
-// TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe iterates the actual
-// set instead of a hand-typed copy, which can silently omit a route
-// carved out here.
+// TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe iterates the actual set
+// instead of a hand-typed copy, which can silently omit a carved-out route.
 var SLOPriceRoutes = []string{
 	"/v1/price",
 	"/v1/price/batch",

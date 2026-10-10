@@ -110,33 +110,26 @@ type NotApplicableSourceView struct {
 	Reason string `json:"reason"`
 }
 
-// RecognitionAxisView is the ADR-0033 RECOGNITION audit axis: distinct
-// on-chain event shapes in the certified lake that sit on contracts NO
-// indexed source owns.
+// RecognitionAxisView is the ADR-0033 RECOGNITION audit axis: distinct on-chain
+// event shapes in the certified lake that sit on contracts NO indexed source
+// owns.
 //
-// It is deliberately NOT a [CoverageVerdictView], although
-// compute-completeness writes it to the same completeness_snapshots
-// table under the reserved source name "recognition". As a row in
-// `sources[]` the public headline would count it as one more source
-// that had failed, and every per-source field on it would be a fiction
-// of that shape: substrate_ok/projection_ok hardcoded true,
-// complete/lake_complete false PERMANENTLY BY CONSTRUCTION (they can
-// only be true if no un-indexed Soroban contract exists anywhere on the
-// network), and coverage_pct measuring
-// ledgers-until-the-first-foreign-contract, a number that only ever
-// decreases. A permanently-red row in a completeness board teaches
-// every reader to ignore the board.
+// It is deliberately NOT a [CoverageVerdictView], although compute-completeness
+// writes it to the same completeness_snapshots table under the reserved source
+// name "recognition". As a row in `sources[]` the headline would count it as one
+// more failed source, and its per-source fields would be fiction:
+// substrate_ok/projection_ok hardcoded true, complete/lake_complete false
+// PERMANENTLY BY CONSTRUCTION (true only if no un-indexed Soroban contract exists
+// anywhere), and coverage_pct only ever decreasing. A permanently-red row teaches
+// readers to ignore the board.
 //
-// So it gets its own vocabulary here, at the top level, with the
-// numbers the audit actually produces. The deployed metrics already
-// draw this line — see the two `WHERE source <> 'recognition'` clauses
-// in configs/ansible/roles/archival-node/files/data-freshness.sh —
-// this is the public API agreeing with them.
+// The deployed metrics already draw this line: the two `WHERE source <>
+// 'recognition'` clauses in
+// configs/ansible/roles/archival-node/files/data-freshness.sh.
 //
-// What it does NOT mean: it is not missing data and not a gap in any
-// source we publish. A source silently dropping its OWN events is a
-// different bucket entirely — that surfaces as `recognition_ok: false`
-// on THAT source's row in Sources, and fails the headline.
+// It is not missing data and not a gap in any published source. A source silently
+// dropping its OWN events surfaces as `recognition_ok: false` on THAT source's
+// row in Sources, and fails the headline.
 type RecognitionAxisView struct {
 	// AllShapesRecognized is true when every event shape in the audited
 	// lake belongs to a contract some indexed source owns — i.e. the
@@ -470,47 +463,39 @@ func recognitionAxisView(sn timescale.CompletenessSnapshot) *RecognitionAxisView
 	return v
 }
 
-// coverageVerdictsStale is the live-tip gate on the completeness
-// verdicts. It answers the only question a
-// consumer of a trust surface actually has — "is this `complete: true`
-// a statement about the chain as it is NOW?" — which the rows
-// themselves cannot answer: `tip_ledger`, `coverage_pct` and every
-// claim boolean are stamped at the audit's compute time, so a verdict
-// from a dead audit still reads `coverage_pct: 1` ("verified to tip")
-// against a tip that is hours behind the network.
+// coverageVerdictsStale is the live-tip gate on the completeness verdicts. It
+// answers "is this `complete: true` a statement about the chain as it is NOW?",
+// which the rows cannot: `tip_ledger`, `coverage_pct` and every claim boolean are
+// stamped at the audit's compute time, so a dead audit still reads
+// `coverage_pct: 1` against a tip hours behind the network.
 //
-// Two independent signals, OR'd (fail-closed — either alone is enough
-// to say the response is below the surface's baseline contract, which
-// is what `flags.stale` means per ADR-0018):
+// Four independent signals, OR'd (fail-closed; any one means the response is
+// below the surface's baseline contract, which is what `flags.stale` means per
+// ADR-0018):
 //
-//   - LEDGER GAP: the network tip has provably run more than
-//     [coverageVerdictStaleLedgers] past the verdict's own tip. The
-//     network tip is the ledgerstream cursor extrapolated by wall-clock
-//     time since it last advanced ([completeness.NetworkTipLowerBound]),
-//     not the bare cursor: compute-completeness resolves its `tip` from
-//     that cursor, so a frozen cursor would otherwise always agree with
-//     the verdict it produced.
-//   - VERDICT AGE: computed_at older than [coverageVerdictStaleAge], or
-//     absent entirely (an unknown-age verdict cannot be claimed fresh).
-//   - EVIDENCE AGE: a source claiming projection_ok whose
-//     projection_evidenced_at is older than
-//     [coverageVerdictEvidenceStaleAge], or unknown. computed_at is
-//     restamped by a run that only carried the claim forward, so it alone
-//     cannot see a claim whose last real proof is weeks old. Audit axes
-//     carry no projection claim and are exempt.
-//   - INGEST STALL: the ledgerstream cursor itself has not been written
-//     for [coverageIngestStallAge]. The signals above both measure
-//     against that cursor, so a frozen cursor plus a still-running audit
-//     keeps the gap at 0 and computed_at fresh while tip_ledger falls
-//     behind the network; the cursor's wall-clock age is the reference
-//     that does not move with it.
+//   - LEDGER GAP: the network tip has run more than [coverageVerdictStaleLedgers]
+//     past the verdict's own tip. The network tip is the ledgerstream cursor
+//     extrapolated by wall-clock time since it last advanced
+//     ([completeness.NetworkTipLowerBound]), not the bare cursor:
+//     compute-completeness resolves its `tip` from that cursor, so a frozen cursor
+//     would always agree with the verdict it produced.
+//   - VERDICT AGE: computed_at older than [coverageVerdictStaleAge], or absent
+//     (an unknown-age verdict cannot be claimed fresh).
+//   - EVIDENCE AGE: a source claiming projection_ok whose projection_evidenced_at
+//     is older than [coverageVerdictEvidenceStaleAge], or unknown. computed_at is
+//     restamped by a run that only carried the claim forward, so it cannot see a
+//     claim whose last real proof is weeks old. Audit axes carry no projection
+//     claim and are exempt.
+//   - INGEST STALL: the ledgerstream cursor has not been written for
+//     [coverageIngestStallAge]. A frozen cursor plus a running audit keeps the gap
+//     at 0 and computed_at fresh while tip_ledger falls behind; the cursor's
+//     wall-clock age is the reference that does not move with it.
 //
-// A verdict list that is EMPTY is not flagged: there is no claim to
-// qualify, and the summary counts (0/0) already say so.
+// An EMPTY verdict list is not flagged: there is no claim to qualify.
 //
-// The gate degrades rather than fails: no CursorsReader, no
-// ledgerstream cursor yet, or a slow/failing cursor read leaves the
-// ledger-gap signal unavailable and the age signal alone decides.
+// The gate degrades rather than fails: no CursorsReader, no cursor yet, or a
+// slow/failing cursor read leaves the ledger-gap signal unavailable and the age
+// signal alone decides.
 func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.CompletenessSnapshot) bool {
 	if len(snaps) == 0 {
 		return false

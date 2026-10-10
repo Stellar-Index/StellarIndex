@@ -139,33 +139,24 @@ type CompletenessReader interface {
 
 // BackfillCoverageRow is the per-source coverage projection.
 //
-// Per ADR-0031, DensityPct is the **data-derived** signal —
-// `distinct_ledger_count / (tip - genesis + 1)`, computed by the gap
-// detector in the aggregator binary and persisted to
-// `source_coverage_snapshots`. The diagnostic handler reads the
-// snapshot row at request time (single cheap query, no
-// recomputation).
+// DensityPct is the data-derived signal (ADR-0031):
+// `distinct_ledger_count / (tip - genesis + 1)`, computed by the gap detector in
+// the aggregator and persisted to `source_coverage_snapshots`; the handler reads
+// the snapshot row at request time. It is data-derived rather than cursor-derived
+// because cursors can say "fine" while the data says "missing".
 //
-// Data-derived rather than cursor-derived because cursors can say
-// "fine" while the data says "missing". The API surfaces data;
-// cursors remain as operational journal.
+// GenesisLedger is the source's earliest-possible-data ledger (2 for SDEX, the
+// contract deploy ledger for Soroban, 0 for CEX/FX), hardcoded in
+// `sourceGenesisLedger`.
 //
-// GenesisLedger is the source's earliest-possible-data ledger —
-// 2 for SDEX, the contract deploy ledger for Soroban contracts,
-// 0 ("not applicable") for CEX/FX. Hardcoded in
-// `sourceGenesisLedger`; when an operator deploys a new source
-// add a row there.
+// EarliestLedger / LatestLedger are display context: for on-chain sources the
+// verified range from completeness_snapshots (served floor, else genesis,
+// through the watermark); for cache-only CEX rows the cached range.
 //
-// EarliestLedger / LatestLedger are display context — for
-// on-chain sources the verified range from completeness_snapshots
-// (served floor, else genesis, through the watermark); for
-// cache-only CEX rows the cached range.
-//
-// GapFreePct is `1 - max_gap / expected`. Goes to
-// 1.0 when no contiguous gap above the per-target threshold
-// (ADR-0030 + MinGapSizeOverride). A sparse source running
-// cleanly hits 1.0 here even though its DensityPct is naturally
-// low. This is the "is something wrong" signal the alert reads.
+// GapFreePct is `1 - max_gap / expected`: 1.0 when no contiguous gap exceeds the
+// per-target threshold (ADR-0030 + MinGapSizeOverride). A sparse source running
+// cleanly hits 1.0 even though its DensityPct is naturally low, so this is the
+// "is something wrong" signal the alert reads.
 type BackfillCoverageRow struct {
 	Source         string `json:"source"`
 	Applies        bool   `json:"applies"`
@@ -265,34 +256,20 @@ type BackfillCoverageRow struct {
 	CompletenessComputedAt *WireTime `json:"completeness_computed_at,omitempty"`
 }
 
-// sourceGenesisLedger is the operator-curated map of "what's the
-// earliest ledger this source can possibly have data for". Values:
-//   - 2                : SDEX. Stellar pubnet's network-genesis is
-//     ledger 1, but ledger 1 carries zero operations by design —
-//     it's the genesis spec record — so no SDEX trade can ever
-//     live in it. The earliest ledger an SDEX trade can occupy is
-//     ledger 2. Setting this to 1 would lock DensityPct at
-//     99.99999...% no matter how complete the indexer is (a full
-//     gap-fill measured 62,688,969 / 62,688,970 with the
-//     residual = ledger 1). The 100%-density mission needs 100%
-//     reachable; this is the minimum-honest denominator floor.
-//   - <first deploy>    : the EXACT ledger the source's first
-//     contract WASM was installed on mainnet — the minimum
-//     create_contract ledger across ALL of that protocol's
-//     contracts (factory + every instance; multi-contract,
-//     upgrade-in-place aware). Zero slack: this is the denominator
-//     of DensityPct, so a value before the real deploy makes 100%
-//     unreachable (counts pre-existence ledgers) and a value after
-//     it silently hides genuine early-history gaps. Sourced from
-//     the per-source WASM-audit walk evidence
-//     (docs/operations/wasm-audits/).
-//   - 0 (default)      : not applicable (CEX/FX/aggregator/oracle —
-//     these sources don't have a Stellar-ledger genesis concept).
+// sourceGenesisLedger is the operator-curated map of the earliest ledger a
+// source can possibly have data for:
+//   - 2: SDEX. Ledger 1 is the genesis spec record with zero operations, so no
+//     trade can live in it; using 1 would lock DensityPct below 100% however
+//     complete the indexer is.
+//   - <first deploy>: the EXACT ledger of the minimum create_contract across ALL
+//     of that protocol's contracts (factory and every instance), from the
+//     per-source WASM-audit evidence (docs/operations/wasm-audits/). Zero slack:
+//     it is the DensityPct denominator, so too early makes 100% unreachable and
+//     too late hides genuine early-history gaps.
+//   - 0: not applicable (CEX/FX/aggregator/oracle).
 //
-// When a new on-chain source ships, add its exact first-deploy
-// ledger here from its WASM audit (not a rounded estimate). The
-// list intentionally sits next to the projection so a reviewer
-// notices it during PR review.
+// When a new on-chain source ships, add its exact first-deploy ledger here from
+// its WASM audit, not a rounded estimate.
 var sourceGenesisLedger = map[string]int64{
 	"sdex": 2,
 	// Soroban contracts — exact first-deploy ledgers, MIN across
@@ -737,32 +714,23 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 	return out
 }
 
-// overlaySourceCoverageV2 reads source_coverage_snapshots and fills
-// DensityPct + CoveredLedgers + GapFreePct + CoverageSnapshotAt
-// on every matching row. ADR-0031 Phase 2 — this IS the
-// authoritative coverage signal.
+// overlaySourceCoverageV2 reads source_coverage_snapshots and fills DensityPct,
+// CoveredLedgers, GapFreePct and CoverageSnapshotAt on every matching row. It is
+// the authoritative coverage signal.
 //
-// Multi-table sources (blend has 4 tables, phoenix has 2) take
-// the per-source AGGREGATE: density_pct = MIN(per-table density)
-// because a single empty target means the source as a whole isn't
-// fully covered. gap_free_pct = MIN(per-table gap_free_pct) for
-// the same reason. covered_ledgers = MIN(per-table distinct) so
-// the absolute number stays consistent with the percentage.
-// snapshot_at = OLDEST per-table last_updated — "how stale is
-// the stalest read in this source's aggregation".
+// Multi-table sources (blend has 4 tables, phoenix 2) take the per-source
+// AGGREGATE: density_pct, gap_free_pct and covered_ledgers are the MIN across
+// tables, because a single empty target means the source is not fully covered;
+// snapshot_at is the OLDEST per-table last_updated.
 //
-// expected_ledgers is overwritten from the snapshot too: since the
-// gap detector scans a trailing window (a full-span scan saturates
-// IO), covered_ledgers is the distinct count WITHIN that
-// window and the snapshot's expected_ledgers is the window size —
-// not tip-genesis+1. Replacing the whole-span value seeded by
-// buildBackfillCoverage keeps the covered/expected pair coherent
-// with density_pct (all three window-scoped).
+// expected_ledgers is overwritten from the snapshot too: the gap detector scans a
+// trailing window, so covered_ledgers is the distinct count WITHIN that window
+// and expected_ledgers is the window size, not tip-genesis+1. This keeps the
+// covered/expected pair coherent with density_pct.
 //
-// Soft-fail: a reader error or empty table leaves the row's
-// data-derived fields at zero. The UI should render "Pending"
-// for zero DensityPct + nil CoverageSnapshotAt rather than
-// claim 0% coverage.
+// Soft-fail: a reader error or empty table leaves the data-derived fields at
+// zero. The UI should render "Pending" for zero DensityPct + nil
+// CoverageSnapshotAt rather than claim 0% coverage.
 //
 //nolint:gocognit // linear pipeline; multi-table aggregation reads better inline than as a separate helper.
 func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCoverageRow) {

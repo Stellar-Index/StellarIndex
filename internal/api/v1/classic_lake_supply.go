@@ -18,56 +18,33 @@ import (
 
 // # Why a classic asset needs a supply reading that is not a trustline sum
 //
-// The broad-coverage classic supply map ([Server.cachedClassicSupply]) is
-// `sum(balance) … WHERE entry_type = 'trustline'` over the lake's current-state
-// projection. A trustline is one of FOUR places a classic asset's supply can
-// sit — the other three are claimable balances, liquidity-pool reserves, and
-// the balances a Stellar Asset Contract holds for CONTRACT (C-address) holders
-// in its own contract_data. `stellar.ledger_entries_current` populates its
-// `asset` column for trustlines ONLY (internal/storage/clickhouse/
-// extract_entry_changes.go, ownerAndAsset: "asset is empty for everything but
-// trustlines"), so a query keyed on `asset = 'CODE-ISSUER'` cannot see the
-// other three AT ALL. It is not undercounting by accident; it is blind by
-// construction.
+// The classic supply map ([Server.cachedClassicSupply]) sums trustline balances
+// from the lake's current-state projection. A trustline is one of FOUR places a
+// classic asset's supply can sit; the others are claimable balances,
+// liquidity-pool reserves and balances a Stellar Asset Contract holds for
+// CONTRACT holders. `stellar.ledger_entries_current` fills its `asset` column for
+// trustlines ONLY, so an `asset = 'CODE-ISSUER'` query is blind to the other
+// three by construction. For RWA assets the invisible share reaches tens of
+// percent.
 //
-// For RWA assets the invisible share reaches tens of percent, almost all of
-// it in SAC contract_data.
+// # Why the fix reads flows rather than widening the state query
 //
-// # Why the fix reads flows rather than fixing the state query
-//
-// The three missing domains cannot be recovered by widening that query:
-//
-//   - A liquidity pool holds TWO assets and TWO reserves in one row, so one
-//     (asset, balance) column pair structurally cannot represent it.
-//   - A SAC Balance entry names its CONTRACT, never its asset. Recovering the
-//     asset means mapping contract → asset, which is a one-way hash in that
-//     direction; it is only derivable FORWARD, from the asset.
-//
-// So the projector cannot stamp what is not in the entry, and the lake's
-// 600M-row contract_data slice would have to be decoded to get at a number the
-// lake already holds elsewhere: `stellar.supply_flows`, the decode-at-ingest
-// CAP-67 / SEP-41 mint/burn/clawback log whose amounts are already i128-decoded
-// at write time. Σmint − Σburn − Σclawback over a classic asset's SAC contract
-// is its supply REGARDLESS of which of the four domains currently holds it —
-// a flow does not know where the tokens came to rest. That is the same figure
-// GET /v1/assets/{asset_id}/supply already serves for this exact asset
-// (asset_supply.go, resolveSupplyContractID → the deterministic SAC address),
-// and the same reader; this file stops the listing surfaces from publishing a
-// smaller, blinder number than the endpoint next door.
+// A liquidity pool holds two assets in one row, which one (asset, balance)
+// column pair cannot represent. A SAC balance entry names its CONTRACT, never
+// its asset, and contract -> asset is derivable only FORWARD. So the lake reads
+// `stellar.supply_flows` (decode-at-ingest, i128 amounts): Σmint − Σburn −
+// Σclawback over the asset's SAC is its supply wherever the tokens rest. It is
+// the figure GET /v1/assets/{asset_id}/supply already serves, from the same
+// reader; the listing surfaces must not publish a blinder number.
 //
 // # Why it can only ever raise the served figure
 //
 // Every trustline balance was minted, so the trustline sum is a PROVABLE LOWER
-// BOUND on a classic asset's issued supply. A flows total BELOW that bound is
-// therefore proof that the contract's flows are incompletely seeded, not
-// evidence that the trustline sum is too high — so [higherClassicSupply] keeps
-// the trustline figure in that case. So no asset's served circulating supply
-// can go DOWN through this path: it closes an understatement and cannot open
-// a new one.
-//
-// The floor holds only for a trustline sum of comparable vintage: one taken
-// before a burn floors nothing after it, which is why cachedClassicSupply
-// stops serving the map once it is classicSupplyMaxAge old.
+// BOUND on issued supply. A flows total BELOW it means the flows are
+// incompletely seeded, so [higherClassicSupply] keeps the trustline figure. The
+// floor holds only for a trustline sum of comparable vintage: one taken before a
+// burn floors nothing after it, hence cachedClassicSupply stops serving the map
+// once it is classicSupplyMaxAge old.
 
 const (
 	// classicLakeSupplyTTL bounds how long one asset's lake-flows reading is
@@ -211,35 +188,24 @@ func higherClassicSupply(lake, trustline string) (string, supply.Basis) {
 // classicSupplyReading resolves one listing row's circulating supply and names
 // the basis that produced it.
 //
-// It is the ONE place the listing path's three-arm preference order lives.
-// Every surface that publishes a listing-derived circulating supply calls it —
-// [Server.fillRowMarketCap] on /v1/assets, [Server.rwaFillMissingSupply] on
-// /v1/rwa/assets — because two copies of a preference chain is how one surface
-// ends up publishing a floor while the other publishes a four-domain total
-// under the same field name.
+// It is the ONE place the listing path's preference order lives. Every surface
+// publishing a listing-derived circulating supply calls it ([Server.fillRowMarketCap],
+// [Server.rwaFillMissingSupply]); two copies of the chain would let one surface
+// publish a floor while the other publishes a four-domain total under the same
+// field name.
 //
-// # Why the observation still outranks the lake
+// Order: the ADR-0011 supply observation, then the lake-flows total, then the
+// trustline sum, never below the trustline floor. A served figure below both the
+// lake and Horizon looks like a reason to invert this, and is not: the lake arm
+// over-counts when its flow history carries replayed mints whose burns are
+// missing (BLND +11.53%, PHO +156.79%), which no completeness check in the
+// reading can see (see [supply.BasisClassicLakeFlows]), while the observation
+// matched Horizon.
 //
-// The order is the ADR-0011 supply observation first, then the lake-flows
-// total, then the trustline sum, never below the trustline floor. A served
-// figure below both the lake and Horizon (USDC measured 5.57% under) looks
-// exactly like a reason to invert it, and is not.
-//
-// Measured against Horizon's all-domain totals on r1, the lake
-// arm is the one that cannot be promoted. It read BLND at 128,119,614.53
-// against 114,854,773.04 outstanding (+11.53%) and PHO at 199,999,999.31
-// against 77,882,787.15 (+156.79%), because its flow history carries replayed
-// historical mints whose matching burns are missing — an over-count no
-// completeness check in the reading can see (see [supply.BasisClassicLakeFlows]).
-// On the same day the observation arm matched Horizon to the stroop on PHO and
-// to 0.02% on BLND.
-//
-// What goes wrong with the observation is its VINTAGE, so the read takes the
-// observer's live row instead of a daily roll-up of it
-// (timescale.Store.LatestSupplyObservations), bounded by [preciseSupplyMaxAge].
-// An observation older than that bound is not offered here at all, so a
-// stale-but-present reading cannot outrank a live lake figure that disagrees
-// with it.
+// The observation's weakness is VINTAGE, so the read takes the observer's live
+// row (timescale.Store.LatestSupplyObservations) bounded by [preciseSupplyMaxAge];
+// an older observation is not offered, so a stale reading cannot outrank a live
+// lake figure that disagrees with it.
 func classicSupplyReading(
 	assetID string, precise map[string]timescale.SupplyObservation, lake, broad map[string]string,
 ) (string, supply.Basis) {
@@ -484,28 +450,19 @@ func (s *Server) endClassicLakeSupplyFlight(done chan struct{}) {
 	close(done)
 }
 
-// PrewarmClassicLakeSupply fills the lake-flows supply cache out of band, so
-// the supply /v1/assets and /v1/rwa/assets publish does not depend on how
-// recently somebody looked.
+// PrewarmClassicLakeSupply fills the lake-flows supply cache out of band, so the
+// supply /v1/assets and /v1/rwa/assets publish does not depend on how recently
+// somebody looked.
 //
-// Request-path warming only converges under traffic. Without it, entries
-// expire at [classicLakeSupplyTTL] and the listing falls back to the
-// trustline-only sum, which misses claimable balances, LP reserves and
-// SAC-held supply (measured on r1 after ~19h idle: PYUSD 73% and XRF 82%
-// understated). Source ranking is unchanged (ADR-0011 observation outranks
-// the lake), and every failure path serves what an unwarmed entry would.
+// Request-path warming converges only under traffic. Without it, entries expire
+// at [classicLakeSupplyTTL] and the listing falls back to the trustline-only
+// sum, which misses claimable balances, LP reserves and SAC-held supply. It
+// lives in the API process because s.lakeSupply is per-process memory.
 //
-// It lives in the API process because s.lakeSupply is per-process memory;
-// warming from a job would need a materialised table and a new staleness
-// contract.
-//
-// Coverage is the pages `opts` names (production: the same
-// assetListingPrewarmOptions() prewarmAssetListings warms) plus the
-// /v1/rwa/assets membership. Asking each surface which assets it serves
-// cannot drift from what it serves; "every classic asset" would be 450k+
-// SAC lookups. RWA members are chosen by attestation, not rank, and are
-// held rather than traded, so listing pages alone left them cold: the
-// trustline floor rotated across members (USTRY 9%, TESOURO 15% short).
+// Coverage is the pages `opts` names plus the /v1/rwa/assets membership: asking
+// each surface which assets it serves cannot drift from what it serves, and
+// "every classic asset" would be 450k+ SAC lookups. RWA members are chosen by
+// attestation, not rank, so listing pages alone left them cold.
 //
 // Best-effort: a missing reader or capability, or a listing or lake error,
 // leaves the cache as it was.

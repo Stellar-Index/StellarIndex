@@ -15,41 +15,29 @@ import (
 )
 
 // CoverageFloorReader answers one question for a pair: when does this
-// deployment's served history for it BEGIN? It exists because an empty
-// series is two completely different answers wearing the same wire
-// shape — "the market was quiet across the window" and "the window is
-// before anything held for this pair" — and no serving read can tell
-// them apart, because both return zero rows.
+// deployment's served history for it BEGIN? An empty series is two different
+// answers in the same wire shape ("the market was quiet" vs "the window is before
+// anything held for this pair"), and no serving read can tell them apart.
 //
-// Production wiring is timescale.Store: one bounded, index-backed
-// `min(bucket)` over prices_<granularity>. The three methods differ
-// only in WHICH stored rows they span, and a surface picks the one its
-// own serving read spans — never a wider one, because a floor measured
-// over rows a surface cannot serve is a coverage claim about bars that
-// will never arrive:
+// Production wiring is timescale.Store: one bounded, index-backed `min(bucket)`
+// over prices_<granularity>. The methods differ only in WHICH stored rows they
+// span, and a surface picks the one its own serving read spans, never a wider
+// one: a floor over rows a surface cannot serve is a coverage claim about bars
+// that will never arrive.
 //
-//   - EarliestBucket folds both legs' alias families and both stored
-//     directions, matching a read that walks the spellings of both
-//     legs (chartMergeAliasPairs, lookupPriceAt, the non-fiat
-//     ohlcSeriesWithAliases, tradesInRangeAfterWithAliases) over a read
-//     that combines base/quote and quote/base rows into the requested
-//     orientation — in SQL for the CAGG-backed surfaces, in the caller
-//     for the raw-trade page.
-//   - EarliestBucketAsStored reads the requested orientation only,
-//     matching a read that takes the stored orientation as given.
-//     No surface takes it today: the raw-trade page read
-//     (TradesInRangeAfter) never flips, but its caller now reads both
-//     directions and folds them, so /v1/history measures the first
-//     method.
-//   - EarliestBucketLiteralQuote drops the alias fold on the quote leg,
-//     matching the fiat combine (ohlcSeriesFiatCombined), which reads
-//     each USD-pegged constituent under the one quote spelling the peg
-//     expansion named it in and never walks that quote's family.
+//   - EarliestBucket folds both legs' alias families and both stored directions,
+//     matching reads that walk the spellings of both legs (chartMergeAliasPairs,
+//     lookupPriceAt, the non-fiat ohlcSeriesWithAliases,
+//     tradesInRangeAfterWithAliases) and combine base/quote and quote/base rows.
+//   - EarliestBucketAsStored reads the requested orientation only. No surface
+//     takes it today.
+//   - EarliestBucketLiteralQuote drops the alias fold on the quote leg, matching
+//     the fiat combine (ohlcSeriesFiatCombined), which reads each USD-pegged
+//     constituent under the one quote spelling the peg expansion named.
 //
-// [from, to) is half-open and `to` MUST be after `from`; the store
-// rejects a degenerate window rather than reporting it empty, so a
-// caller that computes a bad probe range fails loudly instead of
-// silently claiming a pair has no coverage.
+// [from, to) is half-open and `to` MUST be after `from`; the store rejects a
+// degenerate window rather than reporting it empty, so a bad probe range fails
+// loudly instead of claiming a pair has no coverage.
 type CoverageFloorReader interface {
 	EarliestBucket(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error)
 	EarliestBucketAsStored(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error)
@@ -307,30 +295,23 @@ type coverageSet struct {
 
 // ohlcCoverageSet mirrors [Server.ohlcSeriesWithAliases].
 //
-// A non-fiat quote is served by the alias walk in that function, which
-// tries every spelling of both legs over a store read that folds the
-// two stored directions — so the pair itself under the default span is
+// A non-fiat quote is served by the alias walk in that function, over a store
+// read that folds both stored directions, so the pair under the default span is
 // exactly its population.
 //
-// A fiat quote is served by [Server.ohlcSeriesFiatCombined], which
-// reads the LITERAL pairs [Server.usdPeggedConstituents] enumerates:
-// every base spelling crossed with the peg expansion, each quote in
-// every canonical form of the asset the expansion named — the
-// established spellings, then the held-back SAC wrappers. Those literal
-// pairs are the set, and [spanLiteralQuote] is the span, because
-// [Store.OHLCSeries] takes the quote spelling it is given. The base leg
-// keeps its fold because the combine enumerates every base spelling
-// itself, and the memo collapses the repeats to one read per quote
-// spelling.
+// A fiat quote is served by [Server.ohlcSeriesFiatCombined], which reads the
+// LITERAL pairs [Server.usdPeggedConstituents] enumerates: every base spelling
+// crossed with the peg expansion, each quote in every canonical form (established
+// spellings, then held-back SAC wrappers). Those literal pairs are the set and
+// [spanLiteralQuote] is the span, because [Store.OHLCSeries] takes the quote
+// spelling it is given. The base leg keeps its fold, and the memo collapses
+// repeats to one read per quote spelling.
 //
-// The held-back spellings belong in the set even though the combine
-// admits their bars only into buckets nothing established answered:
-// this floor is consulted ONLY on an empty answer, and an empty answer
-// is by construction one where every constituent — held-back included —
-// was read and returned nothing. Leaving them out would put the probe
-// behind the read, so a window a SAC-quoted pool could have served
-// would carry no explanation at all. A test pins the probed and requested
-// populations equal.
+// The held-back spellings belong in the set even though the combine admits their
+// bars only into buckets nothing established answered: the floor is consulted
+// ONLY on an empty answer, which by construction means every constituent was read
+// and returned nothing. Leaving them out would put the probe behind the read. A
+// test pins the probed and requested populations equal.
 func (s *Server) ohlcCoverageSet(pair canonical.Pair) coverageSet {
 	if pair.Quote.Type != canonical.AssetFiat {
 		return coverageSet{direct: []canonical.Pair{pair}}
