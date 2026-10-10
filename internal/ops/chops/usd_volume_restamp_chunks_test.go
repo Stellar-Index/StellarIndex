@@ -21,103 +21,50 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── `usd-volume-restamp -tier xlm-base -chunks` — the chunk walk ────────
-//
-// The store-side bracket (decompress → work → compress, compress-on-failure
-// included) is pinned on the scripted driver in
-// internal/storage/timescale/trades_chunks_test.go. What is pinned HERE is
-// the walk that drives it: the dry run prints the chunk plan and touches
-// no chunk; a write run brackets every chunk it changes and scopes every
-// scan to that chunk's slice of the window; a chunk with nothing to change
-// is probed read-only and skipped; a failure stops the walk after the
-// failing chunk; the free-space pre-flight refuses a write run before any
-// chunk is decompressed and again before each later decompress; the
-// compression policy is paused for the run and re-enabled on every exit;
-// a live-adjacent window is refused; the by-hand repair is printed before
-// each statement a SIGKILL could interrupt; the run lock is taken before
-// the policy is touched and released after it is put back; a policy
-// already unscheduled at start is refused without -resume-paused-policy;
-// a policy run in flight is waited out; the chunks are listed again after
-// the pause; and a chunk re-compressed underneath the run stops the walk.
+// The walk that drives the chunk bracket. The bracket itself is pinned on the
+// scripted driver in internal/storage/timescale/trades_chunks_test.go.
 
-// fakeChunkStore is the chunk walk's seam double. It holds a set of DIRTY
-// rows (by timestamp); a plan over a window returns the dirty rows in it
-// that have not been applied yet, and an apply marks them applied — the
-// same idempotence the real planner has (a row already holding the
-// anchor's value is not a candidate), which is what makes "a rerun skips
-// the finished chunks" observable here without a database.
+// fakeChunkStore holds DIRTY rows by timestamp; a plan returns the unapplied
+// ones in its window and an apply marks them done, which is the real
+// planner's idempotence and makes "a rerun skips finished chunks" observable.
 type fakeChunkStore struct {
 	chunks []timescale.TradeChunk
 	path   string
 	dirty  []time.Time
 	done   map[time.Time]bool
 
-	// failApplyAt makes the n-th Apply call (1-based) fail.
-	failApplyAt int
-	applies     int
-	// cancelInApply cancels this context from inside the n-th Apply —
-	// the operator's SIGTERM arriving mid-chunk.
-	cancelInApply context.CancelFunc
+	failApplyAt   int // the n-th Apply (1-based) fails
+	applies       int
+	cancelInApply context.CancelFunc // SIGTERM arriving mid-chunk
 
-	// policy is what TradesCompressionPolicy answers; policyErr replaces
-	// it when set.
-	policy    timescale.TradesCompressionPolicy
-	policyErr error
-	// scheduleCtxErr records ctx.Err() as seen by each SetJobScheduled
-	// call, in order — the re-enable must run on a context that survives
-	// the run's cancellation.
-	scheduleCtxErr []error
-	// paused mirrors the policy's scheduled flag as the fake's own state;
-	// relistCompressed, when set, overrides chunks' Compressed in listings
-	// taken while paused — the policy compressed something between the
-	// plan's listing and the pause.
+	policy         timescale.TradesCompressionPolicy
+	policyErr      error
+	scheduleCtxErr []error // ctx.Err() seen by each SetJobScheduled
+	// relistCompressed overrides Compressed in listings taken while paused.
 	paused           bool
 	relistCompressed map[string]bool
-	// errw is the run's stderr; errAtPause is what it held at the moment
-	// the pause was issued.
-	errw       *bytes.Buffer
-	errAtPause string
+	errw             *bytes.Buffer
+	errAtPause       string // errw's content when the pause was issued
 
-	// lockHeld makes TryUSDVolumeRestampLock answer that another session
-	// holds the lock. unlockCtxErr records ctx.Err() at release.
-	lockHeld     bool
-	unlockCtxErr error
-	// runningPolls is how many JobRunning polls answer true before the
-	// policy reads idle.
-	runningPolls int
-	// recompressUnderneath names a chunk whose in-chunk apply finds it
-	// compressed again.
+	lockHeld             bool
+	unlockCtxErr         error
+	runningPolls         int // JobRunning answers true this many times
 	recompressUnderneath string
 
-	// ─── the chunk's live on-disk size, as the byte-progress poll reads it ──
-	//
-	// bmu guards this group ALONE: the poll runs on its own goroutine for
-	// as long as the walk is inside a chunk, so it races everything else
-	// the fake records. Nothing here touches `log` for the same reason.
+	// bmu guards only the byte-poll group: the poll runs on its own goroutine,
+	// so nothing here touches log.
 	bmu sync.Mutex
-	// byteScript is what successive TradesChunkBytes calls answer; the
-	// last entry repeats once it is exhausted, which is what makes the
-	// observed movement a FIXED total however many extra times the poll
-	// fires. Empty = the chunk's listed uncompressed size, unchanging, so
-	// every test that does not care reports no byte movement at all.
+	// byteScript's last entry repeats, so the observed movement is a fixed
+	// total however often the poll fires. Empty = the listed size, unchanging.
 	byteScript []int64
 	byteReads  int
-	// byteScriptDrained closes when the whole script has been served.
-	// RestampTradesChunk waits on it before running the work, which is
-	// how a test holds a chunk in its "decompress" — completing no rows —
-	// for exactly as long as it takes the poll to observe the movement.
+	// RestampTradesChunk holds the "decompress" open until this closes.
 	byteScriptDrained chan struct{}
-	// onWork runs immediately before the work callback, i.e. at the
-	// instant the decompress has finished and not one row has been
-	// written.
-	onWork func()
+	onWork            func() // runs after the decompress, before any row
 
 	log []string
 }
 
-// TradesChunkBytes is the chunk's live on-disk total, as the walk's
-// byte-progress poll reads it. Deliberately silent in `log`: it is called
-// from the poll goroutine.
 func (f *fakeChunkStore) TradesChunkBytes(_ context.Context, c timescale.TradeChunk) (int64, error) {
 	f.bmu.Lock()
 	defer f.bmu.Unlock()
@@ -135,7 +82,6 @@ func (f *fakeChunkStore) TradesChunkBytes(_ context.Context, c timescale.TradeCh
 	return f.byteScript[i], nil
 }
 
-// reads is how many times the byte poll has read the chunk's size.
 func (f *fakeChunkStore) reads() int {
 	f.bmu.Lock()
 	defer f.bmu.Unlock()
@@ -193,9 +139,6 @@ func (f *fakeChunkStore) TryUSDVolumeRestampLock(context.Context) (func(context.
 	}, nil
 }
 
-// ApplyXLMBaseUSDVolumeRestampInChunk is the guarded apply: the named
-// chunk reads compressed again and the batch is refused; otherwise it is
-// the plain apply, logged with the chunk it ran inside.
 func (f *fakeChunkStore) ApplyXLMBaseUSDVolumeRestampInChunk(ctx context.Context, c timescale.TradeChunk, plan *timescale.XLMBaseRestampPlan, generation int64, batch int) (int64, error) {
 	if c.Name == f.recompressUnderneath {
 		f.log = append(f.log, "apply refused in-chunk="+c.Name)
@@ -228,9 +171,8 @@ func (f *fakeChunkStore) TradesDataVolumePath(context.Context) (string, error) {
 	return f.path, nil
 }
 
-// RestampTradesChunk mirrors the store's contract: a chunk compressed at
-// listing is bracketed (and the hook fires before each half); one that
-// was not is neither decompressed nor compressed.
+// RestampTradesChunk mirrors the store contract: a chunk compressed at
+// listing is bracketed (hook before each half); one that was not is left as is.
 func (f *fakeChunkStore) RestampTradesChunk(ctx context.Context, c timescale.TradeChunk, work func(context.Context) error, before func(timescale.ChunkRestampStep)) (timescale.TradeChunkRestampResult, error) {
 	if before == nil {
 		before = func(timescale.ChunkRestampStep) {}
@@ -246,11 +188,8 @@ func (f *fakeChunkStore) RestampTradesChunk(ctx context.Context, c timescale.Tra
 	}
 	before(timescale.ChunkRestampDecompress)
 	f.log = append(f.log, "decompress "+c.Name)
-	// A scripted chunk holds its "decompress" open until the byte poll
-	// has observed the whole script — the real decompress runs for up to
-	// about 1.5 hours before the work can write its first row. BOUNDED,
-	// so a walk that never polls fails its
-	// assertions instead of hanging the suite until the go test timeout.
+	// Bounded, so a walk that never polls fails its assertions instead of
+	// hanging the suite.
 	if f.byteScriptDrained != nil {
 		timeout := time.NewTimer(3 * time.Second)
 		select {
@@ -306,8 +245,7 @@ func (f *fakeChunkStore) ApplyXLMBaseUSDVolumeRestamp(_ context.Context, plan *t
 	return int64(len(plan.Rows)), nil
 }
 
-// index returns the position of the first log line with the prefix, -1
-// when there is none.
+// index is the position of the first log line with the prefix, or -1.
 func (f *fakeChunkStore) index(prefix string) int {
 	for i, l := range f.log {
 		if strings.HasPrefix(l, prefix) {
@@ -334,8 +272,8 @@ func chunkFixture(name string, start, end time.Time, uncompressed, compressed in
 	}
 }
 
-// Three weekly chunks; the run window [Jan 5, Jan 18] starts INSIDE the
-// first and ends INSIDE the last, so the clamping is observable.
+// Three weekly chunks; the window [Jan 5, Jan 18] starts inside the first and
+// ends inside the last, so the clamping is observable.
 func threeChunks() ([]timescale.TradeChunk, time.Time, time.Time) {
 	d := func(day int) time.Time { return time.Date(2026, 1, day, 0, 0, 0, 0, time.UTC) }
 	chunks := []timescale.TradeChunk{
@@ -353,10 +291,9 @@ func chunkTestOptions(write bool) (xlmBaseRestampOptions, chunkRestampOptions, *
 		MaxGeneration: 1_756_800_000, Generation: 1_756_800_000,
 	}
 	copts := chunkRestampOptions{
-		Batch:     20_000,
-		FreeBytes: func(string) (uint64, error) { return 4_690 << 30, nil }, // 4.69 TB free
-		// Months after the window: nowhere near the policy's 7-day lag.
-		Now:        time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
+		Batch:      20_000,
+		FreeBytes:  func(string) (uint64, error) { return 4_690 << 30, nil },
+		Now:        time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC), // far past the policy's 7-day lag
 		Out:        &out,
 		Err:        io.Discard,
 		PolicyPoll: time.Millisecond,
@@ -364,9 +301,8 @@ func chunkTestOptions(write bool) (xlmBaseRestampOptions, chunkRestampOptions, *
 	return opts, copts, &out
 }
 
-// wantTeardown asserts a write run's last two store calls: the policy
-// re-enabled, THEN the run lock released — in that order, so a run waiting
-// on the lock never inherits a paused policy.
+// wantTeardown asserts the policy is re-enabled THEN the lock released, so a
+// run waiting on the lock never inherits a paused policy.
 func wantTeardown(t *testing.T, store *fakeChunkStore) {
 	t.Helper()
 	n := len(store.log)
@@ -421,7 +357,6 @@ func TestXLMBaseChunkRestamp_DryRunPrintsThePlanAndTouchesNoChunk(t *testing.T) 
 
 func TestXLMBaseChunkRestamp_BracketsEachChunkAndScopesEveryScanToIt(t *testing.T) {
 	chunks, from, to := threeChunks()
-	// One dirty row per chunk, inside the window.
 	store := newFakeChunkStore(chunks, from.Add(3*time.Hour), from.AddDate(0, 0, 5), to.Add(2*time.Hour))
 	opts, copts, out := chunkTestOptions(true)
 
@@ -431,8 +366,7 @@ func TestXLMBaseChunkRestamp_BracketsEachChunkAndScopesEveryScanToIt(t *testing.
 	if len(store.done) != 3 {
 		t.Fatalf("applied %d row(s), want 3", len(store.done))
 	}
-	// Every chunk was bracketed exactly once, in range order, and every
-	// apply happened INSIDE its chunk's bracket.
+	log := strings.Join(store.log, "\n")
 	var brackets []string
 	open := ""
 	for _, l := range store.log {
@@ -450,7 +384,7 @@ func TestXLMBaseChunkRestamp_BracketsEachChunkAndScopesEveryScanToIt(t *testing.
 			open = ""
 		case strings.HasPrefix(l, "apply "):
 			if open == "" {
-				t.Fatalf("apply outside a bracket: %s\n%s", l, strings.Join(store.log, "\n"))
+				t.Fatalf("apply outside a bracket: %s\n%s", l, log)
 			}
 			if !strings.Contains(l, "batch=20000") {
 				t.Errorf("apply inside a decompressed chunk used %s, want the chunk batch (20000)", l)
@@ -460,19 +394,35 @@ func TestXLMBaseChunkRestamp_BracketsEachChunkAndScopesEveryScanToIt(t *testing.
 			}
 		}
 	}
-	// The lock is taken before the policy is paused, and both happen
-	// before the first decompress.
-	if lock, pause := store.index("lock"), store.index("pause job"); lock < 0 || pause < 0 || lock > pause || pause > brackets0(store) {
-		t.Errorf("order of lock (%d), pause (%d), first decompress (%d):\n%s", lock, pause, brackets0(store), strings.Join(store.log, "\n"))
+	// Lock, then a single policy pause, both before the first decompress.
+	lock, pause, first := store.index("lock"), store.index("pause job 1000"), store.index("decompress ")
+	if lock < 0 || pause < 0 || first < 0 || lock > pause || pause > first {
+		t.Errorf("order of lock (%d), pause (%d), first decompress (%d):\n%s", lock, pause, first, log)
+	}
+	if n := store.count("pause job"); n != 1 {
+		t.Errorf("policy paused %d time(s), want exactly once", n)
 	}
 	wantTeardown(t, store)
 	if want := []string{"_hyper_1_1_chunk", "_hyper_1_2_chunk", "_hyper_1_3_chunk"}; strings.Join(brackets, ",") != strings.Join(want, ",") {
 		t.Errorf("brackets = %v, want %v", brackets, want)
 	}
+	// The policy is read again under the lock and the chunks listed again
+	// after the pause, so the state restored is one nothing else is changing.
+	if n := store.count("policy"); n != 2 || store.log[lock+1] != "policy" {
+		t.Errorf("policy read %d time(s); want a second read right after the lock:\n%s", n, log)
+	}
+	lists := []int{}
+	for i, l := range store.log {
+		if strings.HasPrefix(l, "list ") {
+			lists = append(lists, i)
+		}
+	}
+	if len(lists) != 2 || lists[1] < pause {
+		t.Errorf("chunk listings at %v, want two with the second after the pause (%d):\n%s", lists, pause, log)
+	}
 
-	// Every scan is bounded by the chunk that is open at the time, AND by
-	// the run window — the first chunk starts 4 days before -from and the
-	// last ends 4 days after -to, and neither overhang is scanned.
+	// Every scan is bounded by the open chunk AND the run window; the first
+	// and last chunks overhang the window by 4 days and neither is scanned.
 	windowEnd := to.AddDate(0, 0, 1)
 	open = ""
 	for _, l := range store.log {
@@ -509,8 +459,7 @@ func TestXLMBaseChunkRestamp_BracketsEachChunkAndScopesEveryScanToIt(t *testing.
 		"300.0 MB -> 4.0 GB -> 300.0 MB",
 		"restamped 3 row(s)",
 		"refresh_continuous_aggregate('prices_1m'",
-		// -day is the LAST day and -days counts back from it, so this
-		// covers exactly [2026-01-05, 2026-01-18].
+		// -day is the LAST day and -days counts back: exactly [01-05, 01-18].
 		"acceptance: stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml -day 2026-01-18 -days 14",
 	} {
 		if !strings.Contains(got, want) {
@@ -519,7 +468,6 @@ func TestXLMBaseChunkRestamp_BracketsEachChunkAndScopesEveryScanToIt(t *testing.
 	}
 }
 
-// brackets0 is the index of the first decompress in the fake's log.
 func brackets0(store *fakeChunkStore) int { return store.index("decompress ") }
 
 // parsePlanWindow reads the window back out of a fake "plan [a, b)" line.
@@ -558,7 +506,6 @@ func TestXLMBaseChunkRestamp_RerunSkipsChunksAlreadyAtGeneration(t *testing.T) {
 		t.Errorf("the clean chunk was not reported as skipped:\n%s", out.String())
 	}
 
-	// The rerun — same generation, same command.
 	store.log = nil
 	out.Reset()
 	if err := runXLMBaseChunkRestamp(ctx, store, "/etc/stellarindex.toml", from, to, opts, copts); err != nil {
@@ -578,9 +525,8 @@ func TestXLMBaseChunkRestamp_RerunSkipsChunksAlreadyAtGeneration(t *testing.T) {
 	}
 }
 
-// A chunk skipped as clean is still inside the window the closing report
-// names, so its rows must be counted there — as the day walk and the dry
-// run count them.
+// A chunk skipped as clean is still inside the reported window, so its rows
+// are counted, as the day walk and the dry run count them.
 func TestXLMBaseChunkRestamp_ReportCountsTheRowsOfASkippedChunk(t *testing.T) {
 	chunks, from, to := threeChunks()
 	clean := from.AddDate(0, 0, 4) // Jan 9, inside chunk 2
@@ -617,9 +563,9 @@ func TestXLMBaseChunkRestamp_FailureStopsAfterTheFailingChunk(t *testing.T) {
 		t.Fatalf("err = %v, want the apply failure", err)
 	}
 	log := strings.Join(store.log, "\n")
-	// The failing chunk was re-compressed (the store contract the fake
-	// mirrors), the policy re-enabled right after, and the walk did not
-	// go on to the third chunk.
+	if store.index("pause job 1000") < 0 {
+		t.Errorf("the policy was never paused:\n%s", log)
+	}
 	if !strings.Contains(log, "decompress _hyper_1_2_chunk\n") || !strings.HasSuffix(log, "compress _hyper_1_2_chunk\nresume job 1000\nunlock") {
 		t.Errorf("log does not end with the failing chunk's re-compress, the policy re-enable and the unlock:\n%s", log)
 	}
@@ -634,6 +580,7 @@ func TestXLMBaseChunkRestamp_FailureStopsAfterTheFailingChunk(t *testing.T) {
 
 func TestXLMBaseChunkRestamp_PreflightRefusesAWriteRunBeforeAnyDecompress(t *testing.T) {
 	chunks, from, to := threeChunks()
+	statfsErr := errors.New("statfs: no such file or directory")
 	cases := []struct {
 		name    string
 		free    uint64
@@ -652,26 +599,19 @@ func TestXLMBaseChunkRestamp_PreflightRefusesAWriteRunBeforeAnyDecompress(t *tes
 			name: "exactly floor+headroom is not more than", free: 620 << 30, path: "/var/lib/postgresql/data",
 			wantErr: "is not more than 620.0 GB",
 		},
+		{name: "unmeasurable and no override", freeErr: statfsErr, path: "/var/lib/postgresql/data", wantErr: "-min-free-bytes"},
+		{name: "data directory unreadable and no override", path: "", wantErr: "-min-free-bytes"},
 		{
-			name: "unmeasurable and no override", freeErr: errors.New("statfs: no such file or directory"), path: "/var/lib/postgresql/data",
-			wantErr: "-min-free-bytes",
-		},
-		{
-			name: "data directory unreadable and no override", path: "",
-			wantErr: "-min-free-bytes",
-		},
-		{
-			name: "override too small", freeErr: errors.New("statfs: no such file or directory"), path: "/var/lib/postgresql/data", minFree: 100 << 30,
+			name: "override too small", freeErr: statfsErr, path: "/var/lib/postgresql/data", minFree: 100 << 30,
 			wantErr: "free space 100.0 GB (-min-free-bytes, NOT measured)",
 		},
 		{
-			// Clears the old max(floor, headroom)=320 GiB requirement but not
-			// the correct floor+headroom=620 GiB one — the watchdog-gap band.
-			name: "override just under floor+headroom", freeErr: errors.New("statfs: no such file or directory"), path: "/var/lib/postgresql/data", minFree: 600 << 30,
+			// Clears max(floor, headroom)=320 GiB but not floor+headroom=620 GiB.
+			name: "override just under floor+headroom", freeErr: statfsErr, path: "/var/lib/postgresql/data", minFree: 600 << 30,
 			wantErr: "free space 600.0 GB (-min-free-bytes, NOT measured) is not more than 620.0 GB",
 		},
 		{
-			name: "override large enough", freeErr: errors.New("statfs: no such file or directory"), path: "/var/lib/postgresql/data", minFree: 700 << 30,
+			name: "override large enough", freeErr: statfsErr, path: "/var/lib/postgresql/data", minFree: 700 << 30,
 			wantOut: "WARNING: trusting -min-free-bytes",
 		},
 	}
@@ -702,8 +642,7 @@ func TestXLMBaseChunkRestamp_PreflightRefusesAWriteRunBeforeAnyDecompress(t *tes
 		})
 	}
 
-	// A DRY RUN prints the verdict it would refuse on, and carries on
-	// read-only: the plan is still the thing the operator came for.
+	// A dry run prints the verdict it would refuse on and carries on read-only.
 	store := newFakeChunkStore(chunks, from.Add(3*time.Hour))
 	opts, copts, out := chunkTestOptions(false)
 	copts.FreeBytes = func(string) (uint64, error) { return 1 << 30, nil }
@@ -719,17 +658,17 @@ func TestClampTradesChunk(t *testing.T) {
 	t.Parallel()
 	d := func(day int) time.Time { return time.Date(2026, 1, day, 0, 0, 0, 0, time.UTC) }
 	c := chunkFixture("_hyper_1_2_chunk", d(8), d(15), 1, 1)
-	lo, hi := clampTradesChunk(c, d(5), d(19))
-	if !lo.Equal(d(8)) || !hi.Equal(d(15)) {
-		t.Errorf("chunk inside window: [%s, %s)", lo, hi)
-	}
-	lo, hi = clampTradesChunk(c, d(10), d(12))
-	if !lo.Equal(d(10)) || !hi.Equal(d(12)) {
-		t.Errorf("window inside chunk: [%s, %s)", lo, hi)
-	}
-	lo, hi = clampTradesChunk(c, d(1), d(9))
-	if !lo.Equal(d(8)) || !hi.Equal(d(9)) {
-		t.Errorf("window overlaps the chunk's start: [%s, %s)", lo, hi)
+	for _, tc := range []struct {
+		name                     string
+		from, to, wantLo, wantHi int
+	}{
+		{"chunk inside window", 5, 19, 8, 15},
+		{"window inside chunk", 10, 12, 10, 12},
+		{"window overlaps the chunk's start", 1, 9, 8, 9},
+	} {
+		if lo, hi := clampTradesChunk(c, d(tc.from), d(tc.to)); !lo.Equal(d(tc.wantLo)) || !hi.Equal(d(tc.wantHi)) {
+			t.Errorf("%s: [%s, %s)", tc.name, lo, hi)
+		}
 	}
 }
 
@@ -751,9 +690,6 @@ func TestValidateRestampChunkFlags(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "-chunk-batch") {
 		t.Errorf("-batch with -chunks: err = %v, want a redirect to -chunk-batch", err)
 	}
-	// Which of the chunk flags each TIER may pass is
-	// TestValidateRestampTierFlags_ChunkModeIsAvailableToBothTiers's
-	// business: the walk itself is available to both.
 }
 
 func TestFmtBytes(t *testing.T) {
@@ -776,70 +712,9 @@ func TestFmtBytes(t *testing.T) {
 	}
 }
 
-// ─── the compression policy is paused for the run ────────────────────────
-//
-// migrations/0001 attaches add_compression_policy('trades', '7 days') on a
-// 12-hour schedule; its proc selects every chunk older than the lag that
-// is not fully compressed — a chunk this walk has decompressed IS one —
-// and compresses it. Over a multi-day run the policy would re-compress
-// the open chunk between two batches, and the next batch would crawl
-// through the per-row decompression path this mode exists to escape,
-// without an error. So: paused before the first decompress, re-enabled
-// after the last chunk, re-enabled on failure, re-enabled on a cancelled
-// context — on a context that survives the cancellation.
-
-func TestXLMBaseChunkRestamp_PausesTheCompressionPolicyForTheRun(t *testing.T) {
-	chunks, from, to := threeChunks()
-	store := newFakeChunkStore(chunks, from.Add(3*time.Hour), to.Add(2*time.Hour))
-	opts, copts, out := chunkTestOptions(true)
-
-	if err := runXLMBaseChunkRestamp(context.Background(), store, "/etc/stellarindex.toml", from, to, opts, copts); err != nil {
-		t.Fatalf("%v\n%s", err, out.String())
-	}
-	log := strings.Join(store.log, "\n")
-	pause, first := store.index("pause job 1000"), store.index("decompress ")
-	if pause < 0 || first < 0 || pause > first {
-		t.Fatalf("the compression policy was not paused before the first decompress (pause at %d, first decompress at %d):\n%s", pause, first, log)
-	}
-	wantTeardown(t, store)
-	if n := store.count("pause job"); n != 1 {
-		t.Errorf("policy paused %d time(s), want exactly once", n)
-	}
-	// The policy is read again UNDER the lock, and the chunks are listed
-	// again AFTER the pause: the state the walk restores is the one nothing
-	// else is changing.
-	lock := store.index("lock")
-	if n := store.count("policy"); n != 2 || store.log[lock+1] != "policy" {
-		t.Errorf("policy read %d time(s); want a second read right after the lock:\n%s", n, log)
-	}
-	lists := []int{}
-	for i, l := range store.log {
-		if strings.HasPrefix(l, "list ") {
-			lists = append(lists, i)
-		}
-	}
-	if len(lists) != 2 || lists[1] < pause {
-		t.Errorf("chunk listings at %v, want two with the second after the pause (%d):\n%s", lists, pause, log)
-	}
-}
-
-func TestXLMBaseChunkRestamp_ReenablesTheCompressionPolicyOnFailure(t *testing.T) {
-	chunks, from, to := threeChunks()
-	store := newFakeChunkStore(chunks, from.Add(3*time.Hour), from.AddDate(0, 0, 5), to.Add(2*time.Hour))
-	store.failApplyAt = 2
-	opts, copts, _ := chunkTestOptions(true)
-
-	err := runXLMBaseChunkRestamp(context.Background(), store, "/etc/stellarindex.toml", from, to, opts, copts)
-	if err == nil || !strings.Contains(err.Error(), "deadlock detected") {
-		t.Fatalf("err = %v, want the apply failure", err)
-	}
-	log := strings.Join(store.log, "\n")
-	wantTeardown(t, store)
-	if store.index("pause job 1000") < 0 {
-		t.Errorf("the policy was never paused:\n%s", log)
-	}
-}
-
+// The trades compression policy would re-compress an open chunk mid-run and
+// silently push later batches onto the per-row path, so it is paused for the
+// run and re-enabled on every exit, on a context that survives cancellation.
 func TestXLMBaseChunkRestamp_ReenablesTheCompressionPolicyOnACancelledContext(t *testing.T) {
 	chunks, from, to := threeChunks()
 	store := newFakeChunkStore(chunks, from.Add(3*time.Hour), from.AddDate(0, 0, 5), to.Add(2*time.Hour))
@@ -853,9 +728,6 @@ func TestXLMBaseChunkRestamp_ReenablesTheCompressionPolicyOnACancelledContext(t 
 		t.Fatal("a cancelled run returned nil")
 	}
 	wantTeardown(t, store)
-	// The re-enable and the unlock ran on a context that had NOT been
-	// cancelled — a cancelled one would fail the very statements that put
-	// the policy back and let the next run in.
 	if n := len(store.scheduleCtxErr); n != 2 {
 		t.Fatalf("SetJobScheduled called %d time(s), want 2 (pause, re-enable)", n)
 	}
@@ -866,8 +738,6 @@ func TestXLMBaseChunkRestamp_ReenablesTheCompressionPolicyOnACancelledContext(t 
 		t.Errorf("the unlock saw ctx.Err() = %v; it must run on a context that survives the cancellation", store.unlockCtxErr)
 	}
 }
-
-// ─── the policy must exist ───────────────────────────────────────────────
 
 func TestXLMBaseChunkRestamp_RefusesToStartWithoutACompressionPolicy(t *testing.T) {
 	chunks, from, to := threeChunks()
@@ -885,8 +755,6 @@ func TestXLMBaseChunkRestamp_RefusesToStartWithoutACompressionPolicy(t *testing.
 		}
 	}
 }
-
-// ─── live-adjacent windows ───────────────────────────────────────────────
 
 func TestCheckRestampLiveAdjacent(t *testing.T) {
 	t.Parallel()
@@ -910,7 +778,6 @@ func TestCheckRestampLiveAdjacent(t *testing.T) {
 	if adj, err := checkRestampLiveAdjacent(time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC), now, lag, true); !adj || err != nil {
 		t.Errorf("override: adjacent=%v err=%v", adj, err)
 	}
-	// Exactly on the edge is not past it.
 	if adj, err := checkRestampLiveAdjacent(edge.Truncate(24*time.Hour).AddDate(0, 0, -1), edge.Truncate(24*time.Hour).Add(lag), lag, false); adj || err != nil {
 		t.Errorf("window ending exactly on the edge: adjacent=%v err=%v", adj, err)
 	}
@@ -920,7 +787,7 @@ func TestXLMBaseChunkRestamp_RefusesALiveAdjacentWindow(t *testing.T) {
 	chunks, from, to := threeChunks()
 	store := newFakeChunkStore(chunks, from.Add(3*time.Hour))
 	opts, copts, _ := chunkTestOptions(true)
-	copts.Now = to.AddDate(0, 0, 3) // three days after -to: inside the 7-day lag
+	copts.Now = to.AddDate(0, 0, 3) // inside the 7-day lag
 
 	err := runXLMBaseChunkRestamp(context.Background(), store, "/etc/stellarindex.toml", from, to, opts, copts)
 	if err == nil || !strings.Contains(err.Error(), "-allow-live-adjacent") {
@@ -930,7 +797,6 @@ func TestXLMBaseChunkRestamp_RefusesALiveAdjacentWindow(t *testing.T) {
 		t.Errorf("a refused run went on to touch the store:\n%s", got)
 	}
 
-	// The override walks it, warns, and the policy dance still happens.
 	var errw bytes.Buffer
 	store = newFakeChunkStore(chunks, from.Add(3*time.Hour))
 	copts.AllowLiveAdjacent, copts.Err = true, &errw
@@ -944,8 +810,6 @@ func TestXLMBaseChunkRestamp_RefusesALiveAdjacentWindow(t *testing.T) {
 		t.Errorf("override run:\n%s", strings.Join(store.log, "\n"))
 	}
 }
-
-// ─── an uncompressed chunk stays uncompressed ────────────────────────────
 
 func TestXLMBaseChunkRestamp_LeavesAnUncompressedChunkUncompressed(t *testing.T) {
 	chunks, from, to := threeChunks()
@@ -976,8 +840,6 @@ func TestXLMBaseChunkRestamp_LeavesAnUncompressedChunkUncompressed(t *testing.T)
 		}
 	}
 }
-
-// ─── free space is re-checked before EVERY decompress ────────────────────
 
 func TestXLMBaseChunkRestamp_RechecksFreeSpaceBeforeEachDecompress(t *testing.T) {
 	chunks, from, to := threeChunks()
@@ -1010,8 +872,6 @@ func TestXLMBaseChunkRestamp_RechecksFreeSpaceBeforeEachDecompress(t *testing.T)
 	}
 }
 
-// ─── the by-hand repair is on stderr before the statement it repairs ─────
-
 func TestXLMBaseChunkRestamp_PrintsTheByHandRepairBeforeEachDecompressAndRecompress(t *testing.T) {
 	chunks, from, to := threeChunks()
 	store := newFakeChunkStore(chunks, from.Add(3*time.Hour), from.AddDate(0, 0, 5), to.Add(2*time.Hour))
@@ -1025,7 +885,6 @@ func TestXLMBaseChunkRestamp_PrintsTheByHandRepairBeforeEachDecompressAndRecompr
 	}
 	got := errw.String()
 	const reenable = "SELECT alter_job(1000, scheduled => true);"
-	// Up front, before anything is decompressed: the policy re-enable.
 	pausing, firstDecompress := strings.Index(got, "PAUSING"), strings.Index(got, "decompressing")
 	if pausing < 0 || firstDecompress < 0 || pausing > firstDecompress {
 		t.Errorf("the policy notice is not before the first decompress (at %d vs %d):\n%s", pausing, firstDecompress, got)
@@ -1033,15 +892,11 @@ func TestXLMBaseChunkRestamp_PrintsTheByHandRepairBeforeEachDecompressAndRecompr
 	if !strings.Contains(got[:firstDecompress], reenable) {
 		t.Errorf("the re-enable SQL is not printed up front:\n%s", got)
 	}
-	// And BEFORE the pause is issued — what stderr held at the moment
-	// SetJobScheduled(false) ran already carried it. A SIGKILL between the
-	// two would otherwise leave the policy paused with no trace of how to
-	// put it back.
+	// Already on stderr when the pause is issued: a SIGKILL between the two
+	// would otherwise leave the policy paused with no trace of the repair.
 	if !strings.Contains(store.errAtPause, reenable) {
 		t.Errorf("the re-enable SQL was not on stderr when the pause was issued; stderr at that moment:\n%s", store.errAtPause)
 	}
-	// Per chunk: the exact compress_chunk twice (before the decompress and
-	// before the re-compress), each with the re-enable beside it.
 	for _, name := range []string{"_hyper_1_1_chunk", "_hyper_1_2_chunk", "_hyper_1_3_chunk"} {
 		byHand := "SELECT compress_chunk('_timescaledb_internal." + name + "');"
 		if n := strings.Count(got, byHand); n != 2 {
@@ -1056,8 +911,6 @@ func TestXLMBaseChunkRestamp_PrintsTheByHandRepairBeforeEachDecompressAndRecompr
 		t.Errorf("stderr lacks the re-compress warning, or does not end with the re-enable notice then the unlock notice:\n%s", got)
 	}
 }
-
-// ─── the RESUME line carries everything that shaped the population ───────
 
 func TestChunkRestampResumeHint_CarriesEveryPopulationFlag(t *testing.T) {
 	t.Parallel()
@@ -1074,8 +927,7 @@ func TestChunkRestampResumeHint_CarriesEveryPopulationFlag(t *testing.T) {
 	if !strings.Contains(got, want) {
 		t.Errorf("resume hint:\n%s\nwant containing:\n%s", got, want)
 	}
-	// Defaults are not repeated: -max-generation equal to the generation
-	// is the default, and so are the batch, slice, and no sources.
+	// Defaults are not repeated.
 	opts = xlmBaseRestampOptions{Slice: time.Hour, Generation: 7, MaxGeneration: 7}
 	copts = chunkRestampOptions{Batch: defaultChunkBatch}
 	got = chunkRestampResumeHint("/etc/x.toml", from, to, newXLMBaseRestampRun(newFakeChunkStore(nil), opts), opts, copts)
@@ -1085,8 +937,6 @@ func TestChunkRestampResumeHint_CarriesEveryPopulationFlag(t *testing.T) {
 		}
 	}
 }
-
-// ─── -generation cannot be in the future ─────────────────────────────────
 
 func TestValidateRestampGeneration(t *testing.T) {
 	t.Parallel()
@@ -1099,7 +949,7 @@ func TestValidateRestampGeneration(t *testing.T) {
 	if err := validateRestampGeneration(-1, now); err == nil || !strings.Contains(err.Error(), ">= 0") {
 		t.Errorf("negative: err = %v", err)
 	}
-	// 1756800000 typed as 17568000000 — one extra digit, five centuries out.
+	// 1756800000 typed with one extra digit: five centuries out.
 	err := validateRestampGeneration(17_568_000_000, now)
 	if err == nil || !strings.Contains(err.Error(), "in the future") || !strings.Contains(err.Error(), "never be re-derived") {
 		t.Errorf("future: err = %v", err)
@@ -1108,8 +958,6 @@ func TestValidateRestampGeneration(t *testing.T) {
 		t.Error("one second in the future was accepted")
 	}
 }
-
-// ─── -max-generation cannot exceed the run's generation ─────────────────
 
 func TestResolveRestampMaxGeneration(t *testing.T) {
 	t.Parallel()
@@ -1130,12 +978,8 @@ func TestResolveRestampMaxGeneration(t *testing.T) {
 	}
 }
 
-// ─── one run at a time: the run lock ─────────────────────────────────────
-//
-// run-heavy-job.sh's lock is per job NAME, so the wrapper does not stop a
-// second -write launched under another name from starting beside a live
-// one. The session advisory lock does.
-
+// run-heavy-job.sh locks per job NAME, so only the session advisory lock stops
+// a second -write launched under another name.
 func TestXLMBaseChunkRestamp_RefusesToStartWhileAnotherRunHoldsTheLock(t *testing.T) {
 	chunks, from, to := threeChunks()
 	store := newFakeChunkStore(chunks, from.Add(3*time.Hour))
@@ -1151,8 +995,6 @@ func TestXLMBaseChunkRestamp_RefusesToStartWhileAnotherRunHoldsTheLock(t *testin
 			t.Errorf("err lacks %q: %v", want, err)
 		}
 	}
-	// Nothing after the lock ran: no pause, no decompress, no unlock (there
-	// is nothing to release), and the policy was not touched.
 	if store.count("pause job") != 0 || store.count("decompress ") != 0 || store.count("unlock") != 0 || store.count("resume job") != 0 {
 		t.Errorf("a refused run touched the store:\n%s", strings.Join(store.log, "\n"))
 	}
@@ -1171,8 +1013,6 @@ func TestXLMBaseChunkRestamp_RefusesToStartWhileAnotherRunHoldsTheLock(t *testin
 	}
 }
 
-// ─── a policy already unscheduled at start ───────────────────────────────
-
 func TestXLMBaseChunkRestamp_RefusesAnAlreadyPausedPolicyWithoutTheFlag(t *testing.T) {
 	chunks, from, to := threeChunks()
 	store := newFakeChunkStore(chunks, from.Add(3*time.Hour))
@@ -1188,9 +1028,7 @@ func TestXLMBaseChunkRestamp_RefusesAnAlreadyPausedPolicyWithoutTheFlag(t *testi
 			t.Errorf("err lacks %q: %v", want, err)
 		}
 	}
-	// Refused under the lock, before the pause: nothing decompressed, the
-	// policy NOT touched (it is the operator's to re-enable), the lock
-	// released.
+	// The policy is the operator's to re-enable: untouched, lock released.
 	if store.count("pause job") != 0 || store.count("resume job") != 0 || store.count("decompress ") != 0 {
 		t.Errorf("a refused run touched the policy or a chunk:\n%s", strings.Join(store.log, "\n"))
 	}
@@ -1198,7 +1036,6 @@ func TestXLMBaseChunkRestamp_RefusesAnAlreadyPausedPolicyWithoutTheFlag(t *testi
 		t.Errorf("last store call = %q, want the lock released after the refusal:\n%s", last, strings.Join(store.log, "\n"))
 	}
 
-	// With the flag: proceeds, notes it on stderr, and still re-enables.
 	var errw bytes.Buffer
 	store = newFakeChunkStore(chunks, from.Add(3*time.Hour))
 	store.policy.Scheduled = false
@@ -1214,8 +1051,6 @@ func TestXLMBaseChunkRestamp_RefusesAnAlreadyPausedPolicyWithoutTheFlag(t *testi
 		t.Errorf("no note about taking over the paused policy:\n%s", errw.String())
 	}
 }
-
-// ─── a policy run in flight is waited out ────────────────────────────────
 
 func TestXLMBaseChunkRestamp_WaitsForAPolicyRunInFlightBeforeTheFirstDecompress(t *testing.T) {
 	chunks, from, to := threeChunks()
@@ -1247,8 +1082,7 @@ func TestXLMBaseChunkRestamp_WaitsForAPolicyRunInFlightBeforeTheFirstDecompress(
 	}
 	wantTeardown(t, store)
 
-	// Bounded: a job that never goes idle is a refusal, the policy is
-	// re-enabled and the lock released, and nothing was decompressed.
+	// Bounded: a job that never goes idle is a refusal with a full teardown.
 	store = newFakeChunkStore(chunks, from.Add(3*time.Hour))
 	store.runningPolls = 1 << 30
 	copts.PolicyIdleTimeout = 20 * time.Millisecond
@@ -1262,8 +1096,6 @@ func TestXLMBaseChunkRestamp_WaitsForAPolicyRunInFlightBeforeTheFirstDecompress(
 	wantTeardown(t, store)
 }
 
-// ─── the chunks are listed again after the pause ─────────────────────────
-
 func TestXLMBaseChunkRestamp_WalksTheListingTakenAfterThePause(t *testing.T) {
 	chunks, from, to := threeChunks()
 	chunks[2] = chunkFixture("_hyper_1_3_chunk", chunks[2].RangeStart, chunks[2].RangeEnd, 2<<30, 0) // uncompressed when the plan is listed
@@ -1275,8 +1107,6 @@ func TestXLMBaseChunkRestamp_WalksTheListingTakenAfterThePause(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 	log := strings.Join(store.log, "\n")
-	// The plan said "1 not compressed"; the walk bracketed the chunk,
-	// because the listing it walks is the post-pause one.
 	if !strings.Contains(out.String(), "2 compressed, 1 not") {
 		t.Errorf("the printed plan is not the pre-pause listing:\n%s", out.String())
 	}
@@ -1287,8 +1117,6 @@ func TestXLMBaseChunkRestamp_WalksTheListingTakenAfterThePause(t *testing.T) {
 		t.Errorf("no drift line for the re-listing:\n%s", out.String())
 	}
 }
-
-// ─── a chunk re-compressed underneath the run stops the walk ─────────────
 
 func TestXLMBaseChunkRestamp_StopsWhenTheChunkIsRecompressedUnderneath(t *testing.T) {
 	chunks, from, to := threeChunks()
@@ -1306,8 +1134,6 @@ func TestXLMBaseChunkRestamp_StopsWhenTheChunkIsRecompressedUnderneath(t *testin
 		}
 	}
 	log := strings.Join(store.log, "\n")
-	// No row was written into chunk 2, the walk did not go on to chunk 3,
-	// and the teardown ran.
 	if !strings.Contains(log, "apply refused in-chunk=_hyper_1_2_chunk") || strings.Contains(log, "_hyper_1_3_chunk") || len(store.done) != 1 {
 		t.Errorf("after the guard tripped (%d rows done):\n%s", len(store.done), log)
 	}
@@ -1317,13 +1143,8 @@ func TestXLMBaseChunkRestamp_StopsWhenTheChunkIsRecompressedUnderneath(t *testin
 	wantTeardown(t, store)
 }
 
-// ─── the acceptance line the runbook quotes ──────────────────────────────
-
-// TestXLMBaseRestampSummary_AcceptanceLineForTheRunbookWindow pins the
-// exact acceptance command the tool prints for the runbook window;
-// the runbook's Acceptance line describes the `-day`/`-days` shape
-// generically. -day is the LAST day and -days counts
-// back from it, so that window is 202 days ending on 07-21.
+// -day is the LAST day and -days counts back, so the runbook window is 202
+// days ending on 07-21.
 func TestXLMBaseRestampSummary_AcceptanceLineForTheRunbookWindow(t *testing.T) {
 	t.Parallel()
 	opts, _, _ := chunkTestOptions(true)
@@ -1335,35 +1156,13 @@ func TestXLMBaseRestampSummary_AcceptanceLineForTheRunbookWindow(t *testing.T) {
 	}
 }
 
-// ─── the decompress must not read as a hung job ──────────────────────────
-
-// TestChunkRestamp_ReportsChunkByteProgressThroughADecompressThatWritesNoRow
-// is the false no-progress regression: without byte progress,
-// `stellarindex_ops_job_no_progress` fires on EVERY healthy chunked restamp.
-//
-// The walk cannot restamp a row in a compressed chunk until the chunk is
-// decompressed, and that decompress ran 49+ minutes on a 17.3 GB chunk on
-// r1 (about 1.5 hours on the 159.7 GB outlier). The heartbeat's only
-// progress signal counted restamped ROWS, which is structurally zero for
-// all of it, so the alert's `changes(progress_total[30m]) == 0 and
-// running == 1` matched a job that was working perfectly — and an alert
-// that tickets every healthy run is one the operator stops reading.
-//
-// The fix is not to mute the phase (a wedge there is real and dangerous)
-// but to report the work that IS happening: the chunk's on-disk size
-// climbs continuously while a decompress runs. This pins that the walk
-// publishes that movement as byte progress, and pins the AMOUNT — the
-// total distance the chunk's size travelled — because a signal that
-// merely exists would still go flat on a run whose figure the walk never
-// actually read.
+// A decompress restamps no row for up to ~1.5h, so row progress alone trips
+// the no-progress alert on every healthy run. The walk publishes the chunk's
+// size movement instead, and the AMOUNT is pinned, not just its presence.
 func TestChunkRestamp_ReportsChunkByteProgressThroughADecompressThatWritesNoRow(t *testing.T) {
 	const gib = int64(1) << 30
-	// What an observer session sees while decompress_chunk runs: the
-	// chunk's own heap and indexes being extended. The last entry repeats
-	// once the script is exhausted, so the total movement is exactly
-	// 160-10 = 150 GiB however many extra times the poll fires.
 	script := []int64{10 * gib, 40 * gib, 90 * gib, 160 * gib}
-	const wantMoved = uint64(150) << 30
+	const wantMoved = uint64(150) << 30 // 160-10, however often the poll fires
 
 	day := func(d int) time.Time { return time.Date(2026, 6, d, 0, 0, 0, 0, time.UTC) }
 	chunks := []timescale.TradeChunk{chunkFixture("_hyper_1_9_chunk", day(6), day(13), 160*gib, 10*gib)}
@@ -1373,15 +1172,11 @@ func TestChunkRestamp_ReportsChunkByteProgressThroughADecompressThatWritesNoRow(
 	store.byteScript = script
 	store.byteScriptDrained = make(chan struct{})
 
-	// A REAL heartbeat, so what is asserted is the series an operator's
-	// Prometheus would scrape and not an intermediate the walk owns.
+	// A real heartbeat, so the assertion is on the series Prometheus scrapes.
 	path := filepath.Join(t.TempDir(), "ops_job_usd_volume_restamp.prom")
 	hb := opsutil.NewJobHeartbeat("usd-volume-restamp", path, nil)
 	hb.Start()
 
-	// At the instant the decompress finishes: the poll has read the whole
-	// script, and not one row has been applied. That pairing IS the
-	// defect — work being done with the row counter pinned at zero.
 	var readsAtWork, appliesAtWork int
 	store.onWork = func() { readsAtWork, appliesAtWork = store.reads(), store.applies }
 
@@ -1408,117 +1203,76 @@ func TestChunkRestamp_ReportsChunkByteProgressThroughADecompressThatWritesNoRow(
 	}
 }
 
-// fakeVolumePathStore is the minimal chunkRestampPreflight store seam: it
-// only needs to answer where the trades data volume lives.
-type fakeVolumePathStore struct {
-	path string
-	err  error
-}
-
-func (f fakeVolumePathStore) TradesDataVolumePath(context.Context) (string, error) {
-	return f.path, f.err
-}
-
-// The disk watchdog (run-heavy-job in the ansible role) kills ANY heavy
-// job once the shared ZFS pool drops under its own floor, regardless of
-// what this CLI's own headroom math decided. A run that only checked
-// 2x-the-largest-chunk could clear pre-flight and still get killed
-// mid-decompress. Required must be the max of the two, read from
-// the same HEAVY_MIN_DATA_KB the watchdog uses, so they cannot disagree.
+// The disk watchdog kills any heavy job under its own floor regardless of this
+// CLI's headroom math, so Required is floor PLUS headroom, never max().
 func TestChunkRestampPreflight_WatchdogFloorAddsToHeadroom(t *testing.T) {
-	t.Setenv("HEAVY_MIN_DATA_KB", "1048576") // 1 GiB floor, in KB
-	store := fakeVolumePathStore{path: "/data"}
-	const largest = 10 * 1024 * 1024 // 10 MiB chunk: headroom alone needs only 20 MiB
-	const free = 512 * 1024 * 1024   // 512 MiB free: clears headroom, well under the 1 GiB floor
-	copts := chunkRestampOptions{
-		FreeBytes: func(string) (uint64, error) { return free, nil },
-	}
-
-	p := chunkRestampPreflight(context.Background(), store, largest, copts)
-
-	headroom := uint64(float64(largest) * chunkFreeSpaceHeadroom)
-	floor := uint64(1048576) * 1024
-	wantRequired := floor + headroom // the floor PLUS the chunk's own headroom, not max()
-	if p.Required != wantRequired {
-		t.Errorf("Required = %d bytes, want floor+headroom %d bytes (floor alone would have been %d)",
-			p.Required, wantRequired, floor)
-	}
-	if p.Err == nil {
-		t.Errorf("pre-flight passed with %d bytes free against a %d byte requirement; want a refusal", free, wantRequired)
-	}
-}
-
-// A run whose free space sits strictly between a max(floor, headroom)
-// requirement and the correct floor+headroom sum must not
-// clear pre-flight and then be killed by the watchdog mid-chunk, because
-// the watchdog's own floor has no knowledge of the chunk's headroom math and
-// enforces it unconditionally. This free-space figure sits exactly in that
-// gap: it is below floor+headroom (must refuse) but above max(floor,
-// headroom) (a max-only check lets it through).
-func TestChunkRestampPreflight_RefusesInTheWatchdogGapBand(t *testing.T) {
-	t.Setenv("HEAVY_MIN_DATA_KB", "314572800") // 300 GiB, KB (watchdog default)
-	store := fakeVolumePathStore{path: "/data"}
-	const largest = 17_000_000_000 // 17 GB uncompressed chunk (the 330 GiB example)
-	floor := heavyMinDataFloorBytes()
-	headroom := uint64(float64(largest) * chunkFreeSpaceHeadroom)
-	oldMax := floor
-	if headroom > oldMax {
-		oldMax = headroom
-	}
-	// 10 GiB above the old max() requirement, but still short of floor+headroom.
-	free := oldMax + 10*1024*1024*1024
-
-	copts := chunkRestampOptions{
-		FreeBytes: func(string) (uint64, error) { return free, nil },
-	}
-
-	p := chunkRestampPreflight(context.Background(), store, largest, copts)
-
-	if p.Err == nil {
-		t.Fatalf("pre-flight passed with %s free (only %s above max(floor,headroom)) — "+
-			"the watchdog floor (%s) still has to absorb this chunk's growth (%s) on top of it; "+
-			"want a refusal", fmtBytes(int64(free)), fmtBytes(10*1024*1024*1024), fmtBytes(int64(floor)), fmtBytes(int64(headroom)))
-	}
-}
-
-// Unclassified, any freeBytesOnPath failure — permission denied on
-// the right host, a transient EIO, or a genuinely wrong host — would print the
-// same "this host is not the database host" line, sending an operator with
-// the right host and the wrong role chasing a host that was never wrong.
-func TestStatfsHostMismatchErr_ClassifiesErrno(t *testing.T) {
-	cases := []struct {
-		name       string
-		err        error
-		wantSubstr string
+	for _, tc := range []struct {
+		name    string
+		floorKB uint64
+		largest int64
+		free    func(floor, headroom uint64) uint64
 	}{
-		{"ENOENT is wrong host", fmt.Errorf("statfs /data: %w", syscall.ENOENT), "this host is not the database host"},
-		{"ENOTDIR is wrong host", fmt.Errorf("statfs /data: %w", syscall.ENOTDIR), "this host is not the database host"},
-		{"EACCES is wrong role", fmt.Errorf("statfs /data: %w", syscall.EACCES), "cannot stat the path"},
-		{"EPERM is wrong role", fmt.Errorf("statfs /data: %w", syscall.EPERM), "cannot stat the path"},
-		{"EIO is transient", fmt.Errorf("statfs /data: %w", syscall.EIO), "transient statfs failure"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := statfsHostMismatchErr("/data", c.err)
-			if !strings.Contains(got.Error(), c.wantSubstr) {
-				t.Errorf("statfsHostMismatchErr(%v) = %q, want it to contain %q", c.err, got, c.wantSubstr)
+		{
+			// 512 MiB clears the 20 MiB headroom but not the 1 GiB floor.
+			name: "under the floor", floorKB: 1 << 20, largest: 10 << 20,
+			free: func(uint64, uint64) uint64 { return 512 << 20 },
+		},
+		{
+			// 10 GiB above max(floor, headroom), still short of their sum.
+			name: "watchdog gap band", floorKB: 300 << 20, largest: 17_000_000_000,
+			free: func(floor, headroom uint64) uint64 { return max(floor, headroom) + 10<<30 },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HEAVY_MIN_DATA_KB", fmt.Sprint(tc.floorKB))
+			floor := tc.floorKB * 1024
+			if got := heavyMinDataFloorBytes(); got != floor {
+				t.Fatalf("heavyMinDataFloorBytes() = %d, want %d", got, floor)
+			}
+			headroom := uint64(float64(tc.largest) * chunkFreeSpaceHeadroom)
+			free := tc.free(floor, headroom)
+			copts := chunkRestampOptions{FreeBytes: func(string) (uint64, error) { return free, nil }}
+
+			p := chunkRestampPreflight(context.Background(), &fakeChunkStore{path: "/data"}, tc.largest, copts)
+			if p.Required != floor+headroom {
+				t.Errorf("Required = %d bytes, want floor+headroom %d bytes (floor alone is %d)", p.Required, floor+headroom, floor)
+			}
+			if p.Err == nil {
+				t.Errorf("pre-flight passed with %s free against floor %s + headroom %s; want a refusal",
+					fmtBytes(int64(free)), fmtBytes(int64(floor)), fmtBytes(int64(headroom)))
 			}
 		})
 	}
 }
 
-// A data_directory path that merely EXISTS on an ops host (postgresql-client
-// creates /var/lib/postgresql) must not let a local statfs stand in for the
-// database host's free space when the DSN dials another machine.
+// Only a missing path means the wrong host; a permission or I/O error must not
+// send the operator chasing a host that was never wrong.
+func TestStatfsHostMismatchErr_ClassifiesErrno(t *testing.T) {
+	for errno, want := range map[syscall.Errno]string{
+		syscall.ENOENT:  "this host is not the database host",
+		syscall.ENOTDIR: "this host is not the database host",
+		syscall.EACCES:  "cannot stat the path",
+		syscall.EPERM:   "cannot stat the path",
+		syscall.EIO:     "transient statfs failure",
+	} {
+		err := fmt.Errorf("statfs /data: %w", errno)
+		if got := statfsHostMismatchErr("/data", err); !strings.Contains(got.Error(), want) {
+			t.Errorf("statfsHostMismatchErr(%v) = %q, want it to contain %q", err, got, want)
+		}
+	}
+}
+
+// postgresql-client creates /var/lib/postgresql on ops hosts, so a local
+// statfs must not stand in for a remote database host's free space.
 func TestChunkRestampPreflight_RefusesLocalStatfsForRemoteDSN(t *testing.T) {
 	t.Setenv("HEAVY_MIN_DATA_KB", "0")
-	store := fakeVolumePathStore{path: "/var/lib/postgresql/16/main"}
+	store := &fakeChunkStore{path: "/var/lib/postgresql/16/main"}
 	measured := false
 	copts := chunkRestampOptions{
 		RemoteDBHost: "db.internal",
 		FreeBytes: func(string) (uint64, error) {
 			measured = true
-			return 5 << 40, nil // 5 TiB free on THIS host
+			return 5 << 40, nil
 		},
 	}
 
@@ -1540,21 +1294,18 @@ func TestChunkRestampPreflight_RefusesLocalStatfsForRemoteDSN(t *testing.T) {
 }
 
 func TestRemoteDSNHost(t *testing.T) {
-	cases := []struct {
-		dsn, want string
-	}{
-		{"postgres://u:p@localhost:5432/db", ""},
-		{"postgres://u:p@127.0.0.1:5432/db", ""},
-		{"postgres://u:p@[::1]:5432/db", ""},
-		{"host=/var/run/postgresql dbname=db", ""},
-		{"host=10.0.0.5 dbname=db", "10.0.0.5"},
-		{"postgres://u:p@db.internal:5432/db", "db.internal"},
-		{"postgres://u:p@localhost:5432,db.internal:5433/db", "db.internal"},
-		{"postgres://u:p@local host/db", "(unparseable DSN)"},
-	}
-	for _, c := range cases {
-		if got := remoteDSNHost(c.dsn); got != c.want {
-			t.Errorf("remoteDSNHost(%q) = %q, want %q", c.dsn, got, c.want)
+	for dsn, want := range map[string]string{
+		"postgres://u:p@localhost:5432/db":                  "",
+		"postgres://u:p@127.0.0.1:5432/db":                  "",
+		"postgres://u:p@[::1]:5432/db":                      "",
+		"host=/var/run/postgresql dbname=db":                "",
+		"host=10.0.0.5 dbname=db":                           "10.0.0.5",
+		"postgres://u:p@db.internal:5432/db":                "db.internal",
+		"postgres://u:p@localhost:5432,db.internal:5433/db": "db.internal",
+		"postgres://u:p@local host/db":                      "(unparseable DSN)",
+	} {
+		if got := remoteDSNHost(dsn); got != want {
+			t.Errorf("remoteDSNHost(%q) = %q, want %q", dsn, got, want)
 		}
 	}
 }
