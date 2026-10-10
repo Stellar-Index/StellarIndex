@@ -127,7 +127,12 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
             value={`#${sequence.toLocaleString('en-US')}`}
           />
           <Field label="Close time" value={formatTimestamp(l.close_time)} />
-          <Field label="Protocol" mono value={String(l.protocol_version)} />
+          <Field
+            label="Protocol"
+            mono
+            value={String(l.protocol_version)}
+            sub="Stellar protocol version in force when this ledger closed"
+          />
           {/* Two bases: the tx/op counts are the whole tx set (failed txs
               included), events exist only for applied txs. Say which. */}
           <Field
@@ -159,11 +164,13 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
             label="Fee pool"
             mono
             value={l.fee_pool ? `${stroopsToXlm(l.fee_pool)} XLM` : '—'}
+            sub="All fees collected network-wide; not redistributed since inflation ended"
           />
           <Field
             label="Base fee"
             mono
             value={l.base_fee != null ? `${l.base_fee} stroops` : '—'}
+            sub="Minimum fee per operation (1 XLM = 10,000,000 stroops); txs bid above it under surge pricing"
           />
           <Field
             label="Base reserve"
@@ -173,6 +180,7 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
                 ? `${stroopsToXlm(l.base_reserve)} XLM`
                 : '—'
             }
+            sub="Minimum balance unit: an account holds 2 base reserves plus 1 per subentry"
           />
           <FieldWide label="Hash">
             <CopyHash value={l.hash} head={12} tail={12} />
@@ -327,6 +335,20 @@ function TransactionsPanel({
       <Panel
         title={`Transactions (${transactions.length})`}
         source={source}
+        download={{
+          name: `ledger-${seq}-transactions`,
+          columns: TX_CSV_COLUMNS,
+          rows: transactions.map((t) => ({
+            hash: t.hash,
+            source_account: t.source_account,
+            operation_count: t.operation_count,
+            successful: t.successful,
+            result_code: t.result_code,
+            fee_charged: t.fee_charged,
+            memo_type: t.memo_type,
+            memo: t.memo,
+          })),
+        }}
         bodyClassName="-mx-4"
       >
         <div className="overflow-x-auto">
@@ -424,6 +446,17 @@ function SuccessBadge({ ok, code }: { ok: boolean; code?: number }) {
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
+
+const TX_CSV_COLUMNS = [
+  'hash',
+  'source_account',
+  'operation_count',
+  'successful',
+  'result_code',
+  'fee_charged',
+  'memo_type',
+  'memo',
+] as const;
 
 function Field({
   label,
