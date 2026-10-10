@@ -88,6 +88,15 @@ cat /var/lib/node_exporter/textfile_collector/network_state_verify.prom
       `stellarindex_network_state_verify_failures` series reads 0 and both
       alerts clear within one scrape.
 
+## Seed entry state from a history-archive checkpoint
+
+Use this when the lake has no earlier state for entries that were dormant before its capture window (ADR-0021; the supply seeder reports such accounts). It reads one checkpoint's ledger-entry state and fills `ledger_entry_changes`. Size the write set first with `-dry-run`; `-write` needs `-limit 0`.
+
+```sh
+stellarindex-ops state-snapshot -config /etc/stellarindex.toml -scope contracts -limit 0 -dry-run
+stellarindex-ops state-snapshot -config /etc/stellarindex.toml -scope contracts -limit 0 -write
+```
+
 ## Related
 
 - [lake-verify](lake-verify.md) — soundness of the raw lake against its own meta.

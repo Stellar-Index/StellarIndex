@@ -85,6 +85,16 @@ cat /var/lib/node_exporter/textfile_collector/lake_verify.prom
       `stellarindex_lake_verify_failures` series reads 0 and both alerts
       clear within one scrape.
 
+## Re-check just the hash chain
+
+`verify-lake -checks hashchain` runs the same check as part of the timer. To run it alone over a range, read-only, with the exit code equal to the number of broken links (capped at 255):
+
+```sh
+stellarindex-ops verify-hashchain -config /etc/stellarindex.toml -from <ledger> -to <ledger>
+```
+
+Run `verify-contiguity` first to tell a missing ledger from a present ledger with a wrong hash.
+
 ## Related
 
 - [ch-lake-backup](ch-lake-backup.md) — verify-lake is the restore acceptance gate.

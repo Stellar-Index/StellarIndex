@@ -178,6 +178,14 @@ sum by (outcome) (increase(stellarindex_chainlink_feed_polls_total{pair="<pair>"
 
 Clears on the first poll returning a round within budget. A retired feed stays dark until removed from config; correct, the last round must not be re-served as current. Code: `internal/sources/external/chainlink/poller.go` (`checkRoundCurrent`, `recordFeedOutcome`).
 
+### Backfill Chainlink history
+
+The live poller writes only current rounds. To fill a block range of past rounds for every configured feed (the `AnswerUpdated` log, one `oracle_updates` row per round), run the command below. It is the only history path for this source and is idempotent. A dry run unless `-write`; an all-time run over every feed takes about 7 hours at the free RPC tier, so pass `-from-block` and `-to-block` for a gap.
+
+```sh
+stellarindex-ops backfill-chainlink -config /etc/stellarindex.toml -from-block <N> -to-block <N> -write
+```
+
 ## stellarindex_external_fx_feed_stale
 
 Trips: `(time() - max(stellarindex_external_fx_last_quote_unix)) > 21600` (6 h), `for: 15m`, `severity: ticket` (P2). The freshest gauge across all FX sources is > 6 h stale: the hourly `massive` (massive.com) forex worker (in the API binary) stopped committing fresh upstream rates.

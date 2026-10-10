@@ -214,7 +214,7 @@ func TestGate_ProtocolContractsAdmittedContractIsChecked(t *testing.T) {
 	}
 }
 
-// backfill-router replays soroswap-router: an upgrade of the router to a hash
+// ch-rebuild -contract-calls replays soroswap-router: an upgrade of the router to a hash
 // the manifest does not attest refuses any range it is active in.
 func TestGate_SoroswapRouterUnauditedHashRefused(t *testing.T) {
 	m := mustLoad(t)

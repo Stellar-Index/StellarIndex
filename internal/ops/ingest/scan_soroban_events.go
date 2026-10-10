@@ -268,3 +268,30 @@ func renderSCVal(sv sdkxdr.ScVal, depth int) any { //nolint:gocyclo,gocognit,fun
 		return sv.Type.String()
 	}
 }
+
+// rangeWalkCoverage fails a bounded walk whose delivered count is not exactly
+// the ledgers [from, to] holds. TolerateTrailingMissing ends a walk at a missing object
+// with a nil error, so the delivered count is the only sign the range was cut short.
+func rangeWalkCoverage(cmd string, from, to uint32, walked int, bucket string) error {
+	requested := uint64(to) - uint64(from) + 1
+	switch {
+	case walked == 0:
+		return fmt.Errorf(
+			"%s walked 0 of %d ledgers in range [%d,%d] from bucket %q — "+
+				"the bucket likely has no files there; historical ranges need the archive bucket, "+
+				"and the archive's hourly mirror of live may not yet hold a -to near the tip",
+			cmd, requested, from, to, bucket)
+	case uint64(walked) < requested:
+		return fmt.Errorf(
+			"%s walked only %d of %d ledgers in range [%d,%d] from bucket %q — %d trailing ledgers were NOT walked: "+
+				"an object is missing and the trailing-missing tolerance ended the walk early (see the ledgerstream "+
+				"WARN above). The range is NOT complete; re-run once the objects exist",
+			cmd, walked, requested, from, to, bucket, requested-uint64(walked))
+	case uint64(walked) > requested:
+		return fmt.Errorf(
+			"%s walked %d ledgers but range [%d,%d] holds only %d — the delivered count is untrustworthy; "+
+				"refusing to report the range complete",
+			cmd, walked, from, to, requested)
+	}
+	return nil
+}

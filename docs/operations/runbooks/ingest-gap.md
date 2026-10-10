@@ -84,6 +84,18 @@ This is the F-0020 cascade pattern. Pause heavy walks (any running `stellarindex
 4. Watch the live cursor advance via `/v1/diagnostics/cursors`.
 5. Once live ingest is recovered, schedule the historic-gap backfill above.
 
+#### Back-tag trade columns after a gap
+
+A projector replay, lake outage or SDEX history backfill leaves trades older than the live sweepers' 30-minute lookback without their derived tags. Each command is a dry run until `-write`, first-wins and safe to re-run. Run them on uncompressed chunks only.
+
+```sh
+stellarindex-ops tag-signer -config /etc/stellarindex.toml -from <ledger> -to <ledger> -write
+stellarindex-ops tag-tx-index -config /etc/stellarindex.toml -from <RFC3339> -to <RFC3339> -write
+stellarindex-ops tag-routed-via -config /etc/stellarindex.toml -from <ledger> -to <ledger> -write
+```
+
+`tag-signer` sets `trades.signer`, `tag-tx-index` sets `trades.tx_index`, and `tag-routed-via` sets `trades.routed_via` for Soroswap trades. Run `tag-routed-via` only after the router record (`ch-rebuild -contract-calls`) is complete.
+
 ### Known false-positive patterns
 
 - **First boot after rc.84+ deploy.** The detector's first cycle runs immediately on startup (light targets are scanned; the 6h-cadence `sdex`/`soroban-events` targets are scanned only if their cadence has elapsed since the persisted `gap-detector-scan` cursor, otherwise their last-known gauges are re-emitted from `source_coverage_snapshots`), so the gauge is non-empty before the first tick; if a historic gap is preserved from before deploy the alert fires within 15 min. Resolve via the standard targeted-backfill path.
