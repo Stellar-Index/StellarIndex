@@ -21,7 +21,7 @@ import {
 import { DonutChart, type DonutSlice } from '@/components/charts/DonutChart';
 import type { LinePoint } from '@/components/charts/LineChart';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact, sumDecimalStrings } from '@/lib/format';
+import { formatCompact, formatReadable, sumDecimalStrings } from '@/lib/format';
 import type { components } from '@/api/types';
 import {
   type Envelope,
@@ -295,7 +295,7 @@ function TradeRow({ t }: { t: AccountTrade }) {
         align="right"
         className="text-ink-muted font-mono text-xs tabular-nums"
       >
-        {t.usd_volume ? `$${t.usd_volume}` : '—'}
+        {formatReadable(t.usd_volume, true) ?? '—'}
       </Td>
       <Td>
         <Badge tone={t.role === 'taker' ? 'brand' : 'neutral'}>{t.role}</Badge>

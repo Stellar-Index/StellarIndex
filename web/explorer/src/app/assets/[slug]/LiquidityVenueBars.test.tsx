@@ -45,7 +45,7 @@ describe('LiquidityVenueBars', () => {
       { source: 'amm', volume_24h_usd: '100' },
       { source: 'amm', volume_24h_usd: null },
     ]);
-    expect(row?.display).toBe('≥ $100');
+    expect(row?.display).toBe('≥ $100.00');
     expect(row?.hatchTail).toBe(true);
   });
 });

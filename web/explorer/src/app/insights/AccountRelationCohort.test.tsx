@@ -191,7 +191,7 @@ describe('AccountRelationCohort', () => {
   it('asks for the relation it was given and renders holdings, value, protocols and positions', async () => {
     serve(cohort());
     renderCohort('sponsored');
-    expect(await screen.findByText('$525')).toBeInTheDocument();
+    expect(await screen.findByText('$525.00')).toBeInTheDocument();
     expect(apiGet.mock.calls[0]?.[0]).toBe(
       `/v1/accounts/${ACCOUNT}/graph/cohort?relation=sponsored`,
     );
@@ -249,8 +249,8 @@ describe('AccountRelationCohort', () => {
   ])('renders %s', async (_name, over, counts, shown, hidden) => {
     serve(cohort({ valuation: valuation(over) }));
     renderCohort();
-    expect(await screen.findByText('≥ $525')).toBeInTheDocument();
-    expect(screen.queryByText('$525')).not.toBeInTheDocument();
+    expect(await screen.findByText('≥ $525.00')).toBeInTheDocument();
+    expect(screen.queryByText('$525.00')).not.toBeInTheDocument();
     expect(screen.getByText(counts)).toBeInTheDocument();
     expect(
       screen.getByText('The priced total is a lower bound'),
@@ -306,7 +306,7 @@ describe('AccountRelationCohort', () => {
     );
     serve(c);
     renderCohort();
-    await screen.findByText('$525');
+    await screen.findByText('$525.00');
 
     const chart = () => screen.getAllByTestId('line-chart')[1]!;
     const series = () =>

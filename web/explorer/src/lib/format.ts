@@ -100,8 +100,15 @@ export function formatReadable(
         ? formatWhole(body)
         : whole === '0'
           ? formatSubunitPrice(Number(body))
-          : formatCompactUnits(body);
+          : centsPad(formatCompactUnits(body), usd);
   return `${sign && out !== '0' ? '-' : ''}${usd ? '$' : ''}${out}`;
+}
+
+// Dollars under 1K read as cents: "$69.50", never "$69.5".
+function centsPad(s: string, usd: boolean): string {
+  if (!usd || !/^\d+(\.\d+)?$/.test(s)) return s;
+  const [w, f = ''] = s.split('.');
+  return `${w}.${f.padEnd(2, '0')}`;
 }
 
 function roundWhole(raw: string | null | undefined): bigint | null {
