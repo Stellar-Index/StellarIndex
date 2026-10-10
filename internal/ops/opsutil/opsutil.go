@@ -207,7 +207,7 @@ func RequireExplicitRange(fs *flag.FlagSet, full bool, jobName, rowEstimate stri
 }
 
 // SignalContext returns a context that cancels on SIGINT / SIGTERM so
-// long-running passes (backfill-router, tag-routed-via, the ch-*
+// long-running passes (tag-routed-via, the ch-*
 // ClickHouse walkers) can flush a final checkpoint and exit cleanly.
 // Pulled out so callers can defer cancel() right after the call site.
 //

@@ -40,12 +40,6 @@ func TestPreviewPathsNeverReachTheStore(t *testing.T) {
 		}
 	})
 
-	t.Run("backfill-router", func(t *testing.T) {
-		if err := insertRouterSwap(ctx, store, false, timescale.SoroswapRouterSwap{Ledger: 42}); err != nil {
-			t.Errorf("preview returned %v, want nil", err)
-		}
-	})
-
 	t.Run("seed-protocol-contracts", func(t *testing.T) {
 		// A curated-set source: its whole write is the in-code set, so
 		// the preview must report the set size and upsert none of it.

@@ -13,7 +13,6 @@
 //
 //   - Ingest / backfill (internal/ops/ingest): `backfill`,
 //     `backfill-external`, `backfill-chainlink`,
-//     `backfill-router`,
 //     `detect-gaps`, `list-cursors`, `reap-cursors`, `resume-stalled`,
 //     `find-data-gaps`, `census-backfill`, `tag-routed-via`,
 //     `seed-soroswap-pairs`, `seed-protocol-contracts`,
@@ -138,7 +137,6 @@ var subcommands = map[string]func(args []string) error{
 	"backfill":                ingest.Run,
 	"backfill-external":       ingest.Run,
 	"backfill-chainlink":      ingest.Run,
-	"backfill-router":         ingest.Run,
 	"detect-gaps":             ingest.Run,
 	"list-cursors":            ingest.Run,
 	"reap-cursors":            ingest.Run,

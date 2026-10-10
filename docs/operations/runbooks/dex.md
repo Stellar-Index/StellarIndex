@@ -732,3 +732,11 @@ recomputation after the re-derive.
   completeness proves row presence, not economic correctness.
 - AGENTS.md "Soroban DeFi contracts upgrade in place" — the schema-drift
   trap that most often produces this class of decoder bug.
+
+## Bootstrap: seed the Soroswap pair registry
+
+Run once on a new deployment, before the first Soroswap swap is decoded. The indexer refuses to start without the registry (`soroswap_pairs`); live `new_pair` events keep it current afterwards. The command walks the factory's `all_pairs()` through stellar-rpc, inserts pairs not yet registered, and fails if a registered pair disagrees. It is a dry run until `-write`.
+
+```sh
+stellarindex-ops seed-soroswap-pairs -config /etc/stellarindex.toml -write
+```

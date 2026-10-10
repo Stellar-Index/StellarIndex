@@ -72,6 +72,14 @@ is not checked at all. To bring it under the check: write its audit log in
 currently run, then seed those hashes into `audited_wasm.json`. The next run
 checks it.
 
+## Discover what a contract really emits
+
+Before writing or auditing a decoder, dump the on-chain events of a bounded ledger range as JSON (topics and body field types). Read-only; it is the in-infra analogue of `hubble-soroban-events`.
+
+```sh
+stellarindex-ops scan-soroban-events -config /etc/stellarindex.toml -from <ledger> -to <ledger> -contract <C...> -limit 50
+```
+
 ## Related
 
 - `internal/ops/chops/wasm_drift.go` — the check; `internal/pipeline/gated_registry.go` — the gated sources it walks.

@@ -573,6 +573,16 @@ already unions both directions and every alias spelling of each leg, and
 de-dupes with `GROUP BY bucket`. It is
 the *ad-hoc diagnosis query* that misleads, not the production measurement.
 
+### Clear a false-positive directory scam flag
+
+A scam-class directory tag withholds the issuer's price. When the flag is wrong, `directory-sync` would re-apply it on the next run, so correct it durably with an override instead of editing the row:
+
+```sh
+stellarindex-ops directory-override -config /etc/stellarindex.toml -address <G... or C...> -clear-scam-flag -reason "<why>" -write
+```
+
+The row becomes `operator-override` with only the scam-class tags removed, and `directory-sync` no longer updates or prunes it. `-delete` hands the address back to the next sync. It is a dry run until `-write`.
+
 ### Decision tree — `stellarindex_assets_popular_priceless`
 
 | Finding | Likely cause | Mitigation |

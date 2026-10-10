@@ -583,16 +583,6 @@ Subcommands:
                               -config /etc/stellarindex.toml \
                               -from 21000000 -to 25000000 \
                               -source sdex,band -write
-  backfill-router -config PATH -from N -to N [-resume] [-bucket NAME] [-write]
-                          Reconstruct soroswap_router_swaps for a ledger
-                          range by replaying the soroswap-router
-                          ContractCallDecoder over raw Galexie ledger
-                          metadata (the router emits no Soroban events, so
-                          the projector cannot rebuild it). Idempotent;
-                          stamps a derive_generation so a re-walk corrects
-                          stored rows; checkpoints into ingestion_cursors
-                          for resume. Superseded on the lake path by
-                          ch-rebuild -contract-calls.
   resume-stalled -config PATH [-min-lag DUR] [-max-resumes N] [-source-filter S] [-parallel N] [-write]
                           Resume every stalled backfill cursor that still
                           has a remaining range, marching each toward the

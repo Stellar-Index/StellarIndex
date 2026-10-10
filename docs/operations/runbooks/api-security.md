@@ -33,6 +33,15 @@ curl -fs http://localhost:9464/metrics | grep stellarindex_api_cors_decisions_to
 2. If the API is meant to be publicly, anonymously readable with no credentialed cross-origin flow, the wildcard may be intentional. Downgrade to an acknowledged exception by adjusting the alert's severity/routing; do not silence it or widen `.gitleaksignore`-style suppression lists.
 3. Verify: `allowed_wildcard` stops incrementing and (if origins were pinned) `allowed_origin` picks up the same traffic.
 
+## Operator-issued API keys
+
+Mint a key for a partner, or change a key's rate limit. Both write an audit log row and need a `-reason`. The customer's plaintext key keeps working after an upgrade; the new budget applies on the next request.
+
+```sh
+stellarindex-ops mint-key -config /etc/stellarindex.toml -identifier <id> -label <label> -reason "<why>" -rate-limit-per-min <N> -write
+stellarindex-ops upgrade-key -config /etc/stellarindex.toml -key-id <kid> -rate-limit-per-min <N> -reason "<why>" -write
+```
+
 ## Related
 
 - [api](api.md): API-side alerts.

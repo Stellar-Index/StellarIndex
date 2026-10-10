@@ -384,6 +384,14 @@ Response:
 - [ ] A new id needs a code change in `internal/sources/spectra/events.go` plus a WASM audit (string-check the bytes, record it in `internal/wasmaudit/audited_wasm.json`). It cannot be admitted at runtime.
 - [ ] After it ships, re-drive with `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source spectra -from <ledger of the change> -write`.
 
+## Preview what a re-derive would change
+
+`ch-reproject` re-derives a range from the lake and compares per-ledger counts with the served tables, per source. It writes nothing. It exits non-zero on any divergence. Soroswap is re-derived without pair seeding, so a range holding pairs created before `-from` diverges by construction.
+
+```sh
+stellarindex-ops ch-reproject -config /etc/stellarindex.toml -from <ledger> -to <ledger>
+```
+
 ## Related
 
 - `data-freshness.md#stellarindex_completeness_incomplete`: ADR-0033 completeness verdict that sustained skips eventually flip to `complete=false`.

@@ -101,7 +101,7 @@ func scanSorobanEvents(args []string) error { //nolint:funlen,gocognit,gocyclo /
 		totalLedgers, col.matched)
 	// Reaching -limit stops the walk on purpose; only an unfilled scan owes the whole range.
 	if col.matched < col.limit {
-		return rangeWalkCoverage("scan-soroban-events", uint32(*from), uint32(*to), totalLedgers, bucket)
+		return rangeWalkCoverage(uint32(*from), uint32(*to), totalLedgers, bucket)
 	}
 	return nil
 }
@@ -267,4 +267,31 @@ func renderSCVal(sv sdkxdr.ScVal, depth int) any { //nolint:gocyclo,gocognit,fun
 	default:
 		return sv.Type.String()
 	}
+}
+
+// rangeWalkCoverage fails a bounded walk whose delivered count is not exactly
+// the ledgers [from, to] holds. TolerateTrailingMissing ends a walk at a missing object
+// with a nil error, so the delivered count is the only sign the range was cut short.
+func rangeWalkCoverage(from, to uint32, walked int, bucket string) error {
+	requested := uint64(to) - uint64(from) + 1
+	switch {
+	case walked == 0:
+		return fmt.Errorf(
+			"scan-soroban-events walked 0 of %d ledgers in range [%d,%d] from bucket %q — "+
+				"the bucket likely has no files there; historical ranges need the archive bucket, "+
+				"and the archive's hourly mirror of live may not yet hold a -to near the tip",
+			requested, from, to, bucket)
+	case uint64(walked) < requested:
+		return fmt.Errorf(
+			"scan-soroban-events walked only %d of %d ledgers in range [%d,%d] from bucket %q — %d trailing ledgers were NOT walked: "+
+				"an object is missing and the trailing-missing tolerance ended the walk early (see the ledgerstream "+
+				"WARN above). The range is NOT complete; re-run once the objects exist",
+			walked, requested, from, to, bucket, requested-uint64(walked))
+	case uint64(walked) > requested:
+		return fmt.Errorf(
+			"scan-soroban-events walked %d ledgers but range [%d,%d] holds only %d — the delivered count is untrustworthy; "+
+				"refusing to report the range complete",
+			walked, from, to, requested)
+	}
+	return nil
 }

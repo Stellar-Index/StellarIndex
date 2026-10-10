@@ -54,7 +54,6 @@ var subcommandClasses = map[string]subcommandClass{
 	"backfill":                gate(),
 	"backfill-external":       gate(),
 	"backfill-chainlink":      gate(),
-	"backfill-router":         gate(),
 	"detect-gaps":             ro(),
 	"list-cursors":            ro(),
 	"reap-cursors":            gate(),

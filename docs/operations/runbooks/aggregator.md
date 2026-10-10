@@ -601,6 +601,14 @@ sudo -u postgres psql stellarindex -c 'SELECT source, events_24h FROM protocol_e
 
 **See also:** [`stellarindex_protocol_events_rollup_sweeps_total`](../../reference/metrics/README.md#stellarindex_protocol_events_rollup_sweeps_total), [`stellarindex_protocol_events_rollup_sweep_duration_seconds`](../../reference/metrics/README.md#stellarindex_protocol_events_rollup_sweep_duration_seconds); worker `internal/aggregate/protoeventsrollup/worker.go` (wired in `cmd/stellarindex-aggregator/main.go`); SQL `internal/storage/timescale/protocol_stats.go`; table `migrations/0086_create_protocol_events_24h_rollup.up.sql`; [alerts-catalog.md](../alerts-catalog.md).
 
+## Clear a bad all-time high or low
+
+`change_summary_5m` ratchets `ath` and `atl` with `GREATEST`/`LEAST`, so a bad extreme can only be cleared by deleting the row. The aggregator's change-summary worker rebuilds it from the trailing 30 days within 5 minutes. A dry run unless `-write`; deleting an absent row is a no-op.
+
+```sh
+stellarindex-ops change-summary-reset -config /etc/stellarindex.toml -entity-type coin -entity-id crypto:XLM -write
+```
+
 ## Related
 
 - [dex-nonstandard-decimals](../runbooks/dex.md#dex-nonstandard-decimals) (`docs/operations/runbooks/dex.md#dex-nonstandard-decimals`): full decimals-guard procedure.

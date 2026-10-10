@@ -52,7 +52,7 @@ type ProjectionDirtyWindow struct {
 //     rewritten, it is EMPTY until the recovery run finishes.
 //   - `ch-rebuild -write` rewrites the range from the lake, recorded before
 //     its first write. Like projected-rebuild it never touches the cursor.
-//   - `backfill` and `backfill-router -write` rewrite NON-projected served
+//   - `backfill -write` rewrites NON-projected served
 //     rows (sdex, band, soroswap-router), recorded before their first write.
 //     They have no projector cursor at all. `backfill -source soroban-events`
 //     also stamps the full range on every PROJECTED source with a cursor: the
@@ -103,8 +103,8 @@ func CHRebuildWriteReason(from, to uint32) string {
 	return fmt.Sprintf("%s[%d,%d]", reasonCHRebuildWritePrefix, from, to)
 }
 
-// BackfillWriteReason is the Reason `backfill` and `backfill-router -write`
-// stamp on the window they are about to rewrite.
+// BackfillWriteReason is the Reason `backfill -write`
+// stamps on the window they are about to rewrite.
 func BackfillWriteReason(from, to uint32) string {
 	return fmt.Sprintf("%s[%d,%d]", reasonBackfillWritePrefix, from, to)
 }

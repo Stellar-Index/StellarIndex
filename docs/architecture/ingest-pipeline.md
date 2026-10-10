@@ -283,7 +283,7 @@ movement events). A new factory can run beside the old one for months.
   (`internal/wasmaudit/gate.go`) refuses a range unless every WASM active
   in it on every admitted contract is attested in
   `internal/wasmaudit/audited_wasm.json`. It runs in `backfill` (and so
-  `resume-stalled`), `backfill-router`, `projector-replay`,
+  `resume-stalled`), `projector-replay`,
   `projected-rebuild` and `ch-rebuild -write`. Known gap:
   `ch-cap67-movements` uses the standard SEP-41 decoders, which the
   gate's policy check exempts.

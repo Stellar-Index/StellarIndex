@@ -28,8 +28,7 @@ r1 (**20 cores**, also running live ingest + aggregator) runs **exactly one
 heavy backfill at a time**; a second stalls live ingest (the ledgerstream
 cursor stops advancing).
 
-- **Never** launch a recovery while another heavy job (`backfill-router`,
-  another `backfill`, a census run) is active:
+- **Never** launch a recovery while another heavy job (another `backfill`, a census run) is active:
   `pgrep -af "stellarindex-ops (backfill|census-backfill)"`.
 - **Cap CPU per worker**: `GOMAXPROCS=2 nice -n 19`. Go defaults
   `GOMAXPROCS` to the core count, so N unbounded workers oversubscribe ~N×20
