@@ -244,3 +244,28 @@ describe('NetworkView active sources volume', () => {
     expect(text.indexOf('soroswap')).toBeLessThan(text.indexOf('aquarius'));
   });
 });
+
+describe('throughputSummary', () => {
+  it('returns the total, the per-second mean and the busiest day', async () => {
+    const { throughputSummary } = await import('./NetworkView');
+    const got = throughputSummary(
+      [
+        { day: '2026-10-01', ops: 864_000 },
+        { day: '2026-10-02', ops: 1_728_000 },
+      ] as Parameters<typeof throughputSummary>[0],
+      'ops',
+    );
+    expect(got.total).toBe(2_592_000);
+    expect(got.perSecond).toBe(15);
+    expect(got.peak).toEqual({ day: '2026-10-02', value: 1_728_000 });
+  });
+
+  it('has no peak for an empty window', async () => {
+    const { throughputSummary } = await import('./NetworkView');
+    expect(throughputSummary([], 'txs')).toEqual({
+      total: 0,
+      perSecond: 0,
+      peak: null,
+    });
+  });
+});

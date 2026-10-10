@@ -122,7 +122,7 @@ export function NetworkView() {
     time: Math.floor(Date.parse(`${b.day ?? ''}T00:00:00Z`) / 1000),
     value: b[metric] ?? 0,
   }));
-  const total = completeBuckets.reduce((s, b) => s + (b[metric] ?? 0), 0);
+  const summary = throughputSummary(completeBuckets, metric);
   // Protocol-upgrade step markers: a marker on the day the end-of-day
   // protocol_version first differs from the previous complete day's.
   // Empty when the API doesn't serve protocol_version yet (no
@@ -187,6 +187,18 @@ export function NetworkView() {
         source={asExample('/v1/network/throughput', {
           window_days: windowDays,
         })}
+        download={{
+          name: `network-throughput-${windowDays}d`,
+          columns: THROUGHPUT_CSV_COLUMNS,
+          rows: completeBuckets.map((b) => ({
+            day: b.day,
+            ledgers: b.ledgers,
+            txs: b.txs,
+            ops: b.ops,
+            events: b.events,
+            protocol_version: b.protocol_version,
+          })),
+        }}
         bodyClassName="space-y-4"
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -237,10 +249,28 @@ export function NetworkView() {
           <>
             <p className="text-ink-body text-sm">
               <span className="font-mono tabular-nums">
-                {formatCompact(total)}
+                {formatCompact(summary.total)}
               </span>{' '}
               {METRICS.find((m) => m.key === metric)?.label.toLowerCase()} over
               the last {completeBuckets.length} complete days
+              {metric !== 'ledgers' && (
+                <>
+                  {' · '}
+                  <span className="font-mono tabular-nums">
+                    {summary.perSecond.toFixed(1)}
+                  </span>
+                  /s average
+                </>
+              )}
+              {summary.peak && (
+                <>
+                  {' · peak '}
+                  <span className="font-mono tabular-nums">
+                    {formatCompact(summary.peak.value)}
+                  </span>{' '}
+                  on {summary.peak.day}
+                </>
+              )}
             </p>
             <LineChart
               data={points}
@@ -279,6 +309,35 @@ export function NetworkView() {
       <DigDeeper />
     </Container>
   );
+}
+
+const THROUGHPUT_CSV_COLUMNS = [
+  'day',
+  'ledgers',
+  'txs',
+  'ops',
+  'events',
+  'protocol_version',
+] as const;
+
+/** Window total, mean rate per second, and the busiest complete day for one metric. */
+export function throughputSummary(
+  buckets: NonNullable<ThroughputResp['buckets']>,
+  metric: Metric,
+): {
+  total: number;
+  perSecond: number;
+  peak: { day: string; value: number } | null;
+} {
+  let total = 0;
+  let peak: { day: string; value: number } | null = null;
+  for (const b of buckets) {
+    const v = b[metric] ?? 0;
+    total += v;
+    if (!peak || v > peak.value) peak = { day: b.day ?? '', value: v };
+  }
+  const seconds = buckets.length * 86_400;
+  return { total, perSecond: seconds > 0 ? total / seconds : 0, peak };
 }
 
 const isStroops = (s: string | undefined): s is string =>
