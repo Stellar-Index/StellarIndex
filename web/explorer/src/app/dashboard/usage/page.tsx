@@ -96,7 +96,6 @@ function UsageBody({ me }: { me: MeResponse }) {
             { label: 'Usage' },
           ]}
           title="Usage"
-          description="Your daily request volume, per-key activity, and rate-limit headroom."
         />
 
         {error && (

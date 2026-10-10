@@ -24,7 +24,6 @@ export default function SignInPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Sign in' }]}
         title="Sign in"
-        description="Magic-link email — no passwords."
       />
       <SignInForm mode="signin" />
       <p className="text-ink-muted text-center text-sm">

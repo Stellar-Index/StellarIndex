@@ -63,13 +63,6 @@ export default function CareersPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Careers' }]}
         title="Work on real data infrastructure."
-        description={
-          <>
-            We&apos;re a small team shipping the v1 platform. The codebase is
-            Apache-2.0, the architecture is public, and every PR ships against
-            the same verify-gate the operator runs before deploy.
-          </>
-        }
       />
 
       <section className="border-line bg-surface rounded-xl border p-6 shadow-sm">

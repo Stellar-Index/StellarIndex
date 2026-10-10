@@ -21,7 +21,7 @@ describe('AnalyticsStatusNote', () => {
       /temporarily unavailable/i,
     );
     expect(screen.getByRole('status').textContent).toMatch(
-      /not.*activity is zero/i,
+      /do not mean zero activity/i,
     );
   });
 
@@ -44,7 +44,7 @@ describe('BespokeUnavailable', () => {
   it('names the degraded state explicitly', () => {
     render(<BespokeUnavailable />);
     expect(
-      screen.getByText(/analytics suite is temporarily unavailable/i),
+      screen.getByText(/Analytics temporarily unavailable/i),
     ).toBeInTheDocument();
   });
 });

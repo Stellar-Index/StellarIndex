@@ -23,7 +23,6 @@ export default function OperationsIndexPage() {
           { label: 'Operations runbooks' },
         ]}
         title="Operations runbooks"
-        description="Canonical recipes for standing up and operating Stellar Index."
       />
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {docs.map((d) => (

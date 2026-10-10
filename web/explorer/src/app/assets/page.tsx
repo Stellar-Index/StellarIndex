@@ -34,7 +34,6 @@ export default async function AssetsPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Assets' }]}
         title="Assets"
-        description="Every classic and Soroban asset observed on Stellar, with live VWAP price."
       />
       <p className="text-ink-muted text-sm">
         Looking for fiat &amp; reference prices?{' '}

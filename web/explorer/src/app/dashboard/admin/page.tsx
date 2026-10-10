@@ -61,7 +61,6 @@ function AdminBody({ me }: { me: MeResponse }) {
             { label: 'Admin' },
           ]}
           title="Staff cockpit"
-          description="Customer look-up by email or account slug. Tier overrides are set via the admin API; incident tooling ships in Phase 1.5."
           actions={
             <Badge tone="brand" dot>
               Staff access

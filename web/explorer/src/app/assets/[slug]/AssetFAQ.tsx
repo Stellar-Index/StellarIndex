@@ -2,15 +2,23 @@
 // them into the FAQPage JSON-LD schema only (no visible panel).
 export function assetFaqFor(
   symbol: string,
-  hasIssuer: boolean,
+  kind: 'native' | 'classic' | 'contract',
 ): { q: string; a: string }[] {
-  const issuerNote = hasIssuer
-    ? `As a classic credit asset, ${symbol} has a designated issuer account holding the canonical issuance authority — see the Issuer panel above for SEP-1 metadata, auth flags, and the home domain that pinned the issuer's identity.`
-    : `As a Soroban-native or smart-contract token, ${symbol} doesn't have a classic Stellar issuer account. Its issuance is governed by the contract's own logic; on-chain mint/burn events drive its supply.`;
+  const issuerNote =
+    kind === 'native'
+      ? `XLM has no issuer. It is the network's own asset, created at genesis.`
+      : kind === 'classic'
+        ? `As a classic credit asset, ${symbol} has a designated issuer account holding the canonical issuance authority — see the Issuer panel above for SEP-1 metadata, auth flags, and the home domain that pinned the issuer's identity.`
+        : `As a Soroban-native or smart-contract token, ${symbol} doesn't have a classic Stellar issuer account. Its issuance is governed by the contract's own logic; on-chain mint/burn events drive its supply.`;
   return [
     {
       q: `What is ${symbol}?`,
-      a: `${symbol} is one of the assets we index on the Stellar network. Stellar Index pulls live trades for it from the Soroban DEX corpus (Soroswap, Phoenix, Aquarius, Comet) plus the classic SDEX order book, plus CEX feeds (Binance, Coinbase, Kraken, Bitstamp) where the symbol exists. The price you see is a 24h-trailing VWAP across every active venue.`,
+      a:
+        kind === 'native'
+          ? `Stellar Lumens (XLM) is the native asset of the Stellar network. It pays transaction fees and account reserves.`
+          : kind === 'classic'
+            ? `${symbol} is a classic Stellar asset, identified by its code and issuer account.`
+            : `${symbol} is a Soroban token, identified by its contract address.`,
     },
     {
       q: `Where does the price come from?`,
@@ -21,7 +29,7 @@ export function assetFaqFor(
       a: `For classic credit assets we use the issuer's current balance held by non-issuer accounts (the on-chain definition of "in circulation"); for Soroban tokens we track mint/burn events on the contract. SEP-1 fixed_number / max_number declarations from the issuer's stellar.toml override the on-chain count when the issuer pledges a hard cap.`,
     },
     {
-      q: `${symbol} issuer details`,
+      q: `Who issues ${symbol}?`,
       a: issuerNote,
     },
     {

@@ -31,7 +31,6 @@ export function SourcePathView() {
           { label: name || 'Source' },
         ]}
         title={<span className="break-all">{name || 'Loading…'}</span>}
-        description="Rendered live from the API (outside the build-time pre-render)."
       />
       {name && (
         <>

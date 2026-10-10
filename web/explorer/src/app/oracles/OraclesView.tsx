@@ -106,13 +106,10 @@ export function OraclesView() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Oracles' }]}
         title="Oracles"
-        description={
-          <>
-            On-chain Stellar oracles, shown alongside our VWAP.{' '}
-            <Badge title="Oracles are never included in the VWAP: mixing them would import their methodology and double-count the upstream markets they read.">
-              VWAP weight 0
-            </Badge>
-          </>
+        meta={
+          <Badge title="Oracles are never included in the VWAP: mixing them would import their methodology and double-count the upstream markets they read.">
+            VWAP weight 0
+          </Badge>
         }
       />
 
