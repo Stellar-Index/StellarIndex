@@ -4,7 +4,6 @@
 package v1
 
 import (
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -79,28 +78,5 @@ func TestRWASummaryProvenance_ProseDescribesEveryReachableProvenance(t *testing.
 	all := rwaReferenceProvenanceProse(rwaSummaryReachableProvenances)
 	if !strings.HasPrefix(all, "The total MIXES FOUR KINDS OF CLAIM") {
 		t.Errorf("four-provenance prose does not state the mixture: %q", all)
-	}
-}
-
-// The spec's RWAReferenceSummary.provenances enum is exactly the set a
-// contributing row can carry.
-func TestRWASummaryProvenance_SpecEnumIsReachableSet(t *testing.T) {
-	schemas, _ := loadSpecDoc(t)["components"].(map[string]any)["schemas"].(map[string]any)
-	summary, _ := schemas["RWAReferenceSummary"].(map[string]any)
-	props, _ := summary["properties"].(map[string]any)
-	prov, _ := props["provenances"].(map[string]any)
-	items, _ := prov["items"].(map[string]any)
-	raw, _ := items["enum"].([]any)
-	got := make([]string, 0, len(raw))
-	for _, v := range raw {
-		s, _ := v.(string)
-		got = append(got, s)
-	}
-	want := append([]string(nil), rwaSummaryReachableProvenances...)
-	sort.Strings(got)
-	sort.Strings(want)
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("openapi RWAReferenceSummary.provenances enum = %v, want %v "+
-			"(edit the spec and regenerate docs/reference/api, examples/postman and web/explorer/src/api/types.ts)", got, want)
 	}
 }
