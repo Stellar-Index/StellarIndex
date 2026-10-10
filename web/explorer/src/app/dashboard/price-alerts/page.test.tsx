@@ -1,5 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/api/hooks', async () => {
@@ -23,28 +22,14 @@ vi.mock('@/api/account', async (importOriginal) => ({
   listPriceAlerts,
 }));
 
-import { useMe } from '@/api/hooks';
+import { renderSignedInPage } from '../../../../test/dashboard-page';
 import PriceAlertsPage from './page';
 
 afterEach(() => {
   listPriceAlerts.mockReset();
 });
 
-function renderPriceAlertsPage() {
-  vi.mocked(useMe).mockReturnValue({
-    isLoading: false,
-    isError: false,
-    data: { user: { email: 'a@b.com' } },
-    refetch: vi.fn(),
-  } as unknown as ReturnType<typeof useMe>);
-
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <PriceAlertsPage />
-    </QueryClientProvider>,
-  );
-}
+const renderPriceAlertsPage = () => renderSignedInPage(<PriceAlertsPage />);
 
 describe('/dashboard/price-alerts', () => {
   it('shows the empty state when the account has no alerts', async () => {

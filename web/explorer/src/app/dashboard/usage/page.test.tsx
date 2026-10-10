@@ -1,5 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '@/api/account';
@@ -27,7 +26,7 @@ vi.mock('@/api/account', async (importOriginal) => ({
   listKeys,
 }));
 
-import { useMe } from '@/api/hooks';
+import { renderSignedInPage } from '../../../../test/dashboard-page';
 import UsagePage from './page';
 
 afterEach(() => {
@@ -35,21 +34,7 @@ afterEach(() => {
   listKeys.mockReset();
 });
 
-function renderUsagePage() {
-  vi.mocked(useMe).mockReturnValue({
-    isLoading: false,
-    isError: false,
-    data: { user: { email: 'a@b.com' } },
-    refetch: vi.fn(),
-  } as unknown as ReturnType<typeof useMe>);
-
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <UsagePage />
-    </QueryClientProvider>,
-  );
-}
+const renderUsagePage = () => renderSignedInPage(<UsagePage />);
 
 const EMPTY_COPY = /No tracked requests yet for this account/;
 

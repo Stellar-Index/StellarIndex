@@ -1,5 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/api/hooks', async () => {
@@ -23,29 +22,18 @@ vi.mock('next/navigation', async () => {
   };
 });
 
-import { useMe, type MeResponse } from '@/api/hooks';
+import { type MeResponse } from '@/api/hooks';
 
+import { renderSignedInPage } from '../../../test/dashboard-page';
 import AccountOverviewPage from './page';
 
 afterEach(() => {
   listKeys.mockReset();
 });
 
-function renderDashboard(me: MeResponse) {
-  vi.mocked(useMe).mockReturnValue({
-    isLoading: false,
-    isError: false,
-    data: me,
-  } as ReturnType<typeof useMe>);
-  listKeys.mockResolvedValue([]);
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={client}>
-      <AccountOverviewPage />
-    </QueryClientProvider>,
-  );
+function renderDashboard(me: MeResponse, keys: unknown[] = []) {
+  listKeys.mockResolvedValue(keys);
+  return renderSignedInPage(<AccountOverviewPage />, me);
 }
 
 // Render side. A partner comped to 5,000/min is what the API
@@ -96,32 +84,22 @@ describe('AccountOverviewPage — GH-1074 enforced rate limit', () => {
 // "Active key" even though it is unrevoked.
 describe('AccountOverviewPage — GH-1073 expired keys are not active', () => {
   it('counts an expired, unrevoked key as expired, not active', async () => {
-    vi.mocked(useMe).mockReturnValue({
-      isLoading: false,
-      isError: false,
-      data: {
+    renderDashboard(
+      {
         user: { id: 'u1', email: 'owner@acme.example' },
         account: { id: 'acct-1', slug: 'acme', tier: 'free', status: 'active' },
       } as MeResponse,
-    } as ReturnType<typeof useMe>);
-    listKeys.mockResolvedValue([
-      {
-        id: 'k1',
-        name: 'old',
-        key_prefix: 'sip_oldoldol',
-        tier: 'apikey',
-        rate_limit_per_min: 60,
-        created_at: '2026-01-01T00:00:00Z',
-        expires_at: '2026-02-01T00:00:00Z',
-      },
-    ]);
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    render(
-      <QueryClientProvider client={client}>
-        <AccountOverviewPage />
-      </QueryClientProvider>,
+      [
+        {
+          id: 'k1',
+          name: 'old',
+          key_prefix: 'sip_oldoldol',
+          tier: 'apikey',
+          rate_limit_per_min: 60,
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: '2026-02-01T00:00:00Z',
+        },
+      ],
     );
 
     expect(await screen.findByText('1 expired')).toBeInTheDocument();

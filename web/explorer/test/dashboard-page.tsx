@@ -5,11 +5,14 @@ import { vi } from 'vitest';
 import { useMe } from '@/api/hooks';
 
 // The calling test file must vi.mock('@/api/hooks') with `useMe: vi.fn()`.
-export function renderSignedInPage(ui: React.ReactElement) {
+export function renderSignedInPage(
+  ui: React.ReactElement,
+  me: object = { user: { email: 'a@b.com' } },
+) {
   vi.mocked(useMe).mockReturnValue({
     isLoading: false,
     isError: false,
-    data: { user: { email: 'a@b.com' } },
+    data: me,
     refetch: vi.fn(),
   } as unknown as ReturnType<typeof useMe>);
 
