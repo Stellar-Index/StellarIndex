@@ -272,34 +272,37 @@ func (s *Server) labelOracleSACs(ctx context.Context, blk *timescale.BespokeBloc
 		return
 	}
 	memo := map[string]string{}
-	relabel := func(text string) string {
-		toks := strings.Split(text, " ")
-		for i, tok := range toks {
-			if len(tok) != 56 || tok[0] != 'C' {
-				continue
-			}
-			name, seen := memo[tok]
-			if !seen {
-				name = tok
-				if asset, ok := s.resolveSACToClassic(ctx, tok); ok {
-					name = asset.String()
-				}
-				memo[tok] = name
-			}
-			toks[i] = name
-		}
-		return strings.Join(toks, " ")
-	}
 	for i := range blk.Breakdowns {
 		for j := range blk.Breakdowns[i].Rows {
-			blk.Breakdowns[i].Rows[j].Label = relabel(blk.Breakdowns[i].Rows[j].Label)
+			blk.Breakdowns[i].Rows[j].Label = s.relabelSACTokens(ctx, memo, blk.Breakdowns[i].Rows[j].Label)
 		}
 	}
 	for i := range blk.Tables {
 		for _, row := range blk.Tables[i].Rows {
 			for k := range row {
-				row[k] = relabel(row[k])
+				row[k] = s.relabelSACTokens(ctx, memo, row[k])
 			}
 		}
 	}
+}
+
+// relabelSACTokens replaces each space-separated SAC id in text, resolving
+// each distinct id once through memo.
+func (s *Server) relabelSACTokens(ctx context.Context, memo map[string]string, text string) string {
+	toks := strings.Split(text, " ")
+	for i, tok := range toks {
+		if len(tok) != 56 || tok[0] != 'C' {
+			continue
+		}
+		name, seen := memo[tok]
+		if !seen {
+			name = tok
+			if asset, ok := s.resolveSACToClassic(ctx, tok); ok {
+				name = asset.String()
+			}
+			memo[tok] = name
+		}
+		toks[i] = name
+	}
+	return strings.Join(toks, " ")
 }
