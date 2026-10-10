@@ -25,28 +25,26 @@ import (
 const claimableSeedBatchSize = 2000
 
 // supplySeedClaimableBalances seeds claimable_observations from the
-// ClickHouse lake for every CURRENTLY-LIVE claimable balance paying a classic
+// ClickHouse lake for every currently-live claimable balance paying a classic
 // credit asset (ADR-0022 / migration 0012). It is the claimable analogue of
 // `supply seed-sac-balances -full-history`.
 //
 // The live observer only sees balances created since it started, so older
-// unclaimed balances were missing from Algorithm-2 classic supply; for AQUA
-// the claimable component was the whole gap to Horizon (−13.2% with it,
-// +0.61% without).
+// unclaimed balances were missing from Algorithm-2 classic supply.
 //
 // The seed reduces ClaimableBalanceEntry state latest-write-wins out of
-// stellar.ledger_entry_changes, so it is always correct to run and
-// idempotent: rows land at each balance's true last-modified ledger with
-// intra_ledger_seq = [timescale.SeedIntraLedgerSeq], so a later live
-// observation (notably a claim's is_removal row) always wins. A balance the
-// served tier holds as live but the lake shows claimed is written as an
-// is_removal tombstone at the claim's ledger; one the lake has no record of
-// fails the pass by name after the writes.
+// stellar.ledger_entry_changes, so it is idempotent: rows land at each
+// balance's true last-modified ledger with intra_ledger_seq =
+// [timescale.SeedIntraLedgerSeq], so a later live observation (notably a
+// claim's is_removal row) always wins. A balance the served tier holds as
+// live but the lake shows claimed is written as an is_removal tombstone at
+// the claim's ledger; one the lake has no record of fails the pass by name
+// after the writes.
 //
-// Every classic credit asset is seeded by default: a seed that covered only
-// some would leave the rest under-reported. -assets narrows a run and prints
-// a PARTIAL banner. Native claimable balances belong to Algorithm 1 and are
-// never seeded.
+// Every classic credit asset is seeded by default, since a partial seed
+// leaves the rest under-reported; -assets narrows a run and prints a PARTIAL
+// banner. Native claimable balances belong to Algorithm 1 and are never
+// seeded.
 //
 // The walk covers a ~150-billion-row table: run it under run-heavy-job.sh on
 // r1. It takes hours and prints nothing until the last ledger window is
@@ -57,20 +55,17 @@ const claimableSeedBatchSize = 2000
 //	-config PATH     Required. Operator TOML config (Postgres DSN).
 //	-ch-addr ADDR    ClickHouse native address (default 127.0.0.1:9300).
 //	-assets LIST     Comma-separated classic assets (CODE-ISSUER or
-//	                 CODE:ISSUER) to scope the seed to. EMPTY (default) =
-//	                 every classic credit asset.
+//	                 CODE:ISSUER) to scope the seed to (default: all).
 //	-timeout DUR     Whole-run deadline (default 12h). All writes happen at
-//	                 the end, so a deadline that expires mid-scan loses the
-//	                 whole pass.
+//	                 the end, so a deadline expiring mid-scan loses the pass.
 //	-heartbeat PATH  node_exporter textfile for the ops-job heartbeat
-//	                 (default: the textfile-collector dir when present),
-//	                 reporting ledgers reduced during the silent scan.
+//	                 (default: the textfile-collector dir when present).
 //	-write           Apply. Without it the pass is a dry run: read + print
 //	                 per-asset claimable count + summed balance, nothing
 //	                 written (-dry-run is a no-op alias).
 //
-// A failed batch insert is retried row by row; rows that still fail are
-// named and exit non-zero. Only a clean pass upserts claimable_seed_provenance
+// A failed batch insert is retried row by row; rows that still fail are named
+// and exit non-zero. Only a clean pass upserts claimable_seed_provenance
 // (migration 0184), one row per asset, with the ledger the lake was verified
 // through. There is no resume cursor: every write is an idempotent upsert, so
 // a re-run is the resume.

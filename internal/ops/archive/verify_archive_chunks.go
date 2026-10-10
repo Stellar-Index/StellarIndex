@@ -125,38 +125,22 @@ type chunkResult struct {
 	CheckpointsUnmirrored int
 }
 
-// stitchChunks validates the boundary between adjacent NON-EMPTY
-// chunks: the last hash of the left chunk must equal the first
-// PreviousLedgerHash of the right chunk, AND left.LastSeq + 1 must
-// equal right.FirstSeq (no gap). Returns nil when every consecutive
-// non-empty pair stitches cleanly.
+// stitchChunks validates the boundary between adjacent NON-EMPTY chunks: the
+// left chunk's last hash must equal the right chunk's first
+// PreviousLedgerHash, and left.LastSeq + 1 must equal right.FirstSeq.
 //
-// Single-chunk (or single-non-empty-chunk) results have no boundary
-// to check; they pass.
+// Empty chunks (zero ledgers) are skipped when choosing which pairs to
+// compare, but the check is re-targeted at the nearest non-empty neighbours,
+// so an empty chunk cannot absorb an interior gap.
 //
-// Empty chunks (zero ledgers processed — the SDK's stream may
-// legitimately yield zero ledgers for ranges before a bucket exists)
-// are skipped when choosing WHICH pairs to compare, but never skip the
-// check itself: the boundary is re-targeted at the nearest non-empty
-// neighbours on each side, so an empty chunk sitting between two
-// non-empty chunks — which would mask a genuine mid-range hole if the
-// check were skipped outright — still surfaces as a seq/hash mismatch
-// between those surrounding chunks. An empty chunk cannot silently
-// absorb an interior gap.
-//
-// A boundary failure increments obs.VerifyArchiveMismatchesTotal
-// under the same reason taxonomy verifyChunk uses (a gap is
-// "sequence", a hash break is "chain"), labelled with the LEFT
-// chunk's index — the boundary belongs to the chunk whose last
-// ledger it hangs off. That increment is what makes the failure
-// PAGEABLE: the P1 stellarindex_stellar_archive_divergence rule
-// selects that counter, so without it a break landing on one of the
-// ~11 worker-chunk boundaries (rather than inside a chunk) would abort
-// the run without touching it, surfacing only as the severity-ticket
-// stellarindex_verify_archive_unit_failed. Same divergence class,
-// same page. The counter reaches Prometheus via
-// verify_archive_textfile.go, which reads the live collector on the
-// way out and so picks these up automatically.
+// A boundary failure increments obs.VerifyArchiveMismatchesTotal with the
+// same reasons as verifyChunk ("sequence" for a gap, "chain" for a hash
+// break), labelled with the LEFT chunk's index. That increment makes the
+// failure pageable: the P1 stellarindex_stellar_archive_divergence rule
+// selects that counter, so without it a break on a worker-chunk boundary
+// would only surface as the ticket-severity
+// stellarindex_verify_archive_unit_failed. verify_archive_textfile.go exports
+// the counter.
 func stitchChunks(results []chunkResult) error {
 	nonEmpty := make([]chunkResult, 0, len(results))
 	for _, r := range results {

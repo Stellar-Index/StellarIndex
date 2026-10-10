@@ -27,49 +27,45 @@ type rollupTruthReader interface {
 	SEP41SupplyEventKindResum(ctx context.Context, contractID string, asOfLedger uint32, statementTimeout time.Duration) (timescale.SEP41KindTotals, error)
 }
 
-// supplyVerifyRollup wires internal/completeness.ReconcileRunningTotals
-// — the fourth ADR-0033 integrity check, the DERIVED-CHECKPOINT
-// reconcile — into a runnable operator command.
+// supplyVerifyRollup runs internal/completeness.ReconcileRunningTotals, the
+// fourth ADR-0033 integrity check (derived-checkpoint reconcile).
 //
-// It diffs every watched contract's sep41_supply_rollup checkpoint against
-// a re-sum of the sep41_supply_events rows it folds (ledger ≤ last_ledger)
-// and reports any (contract, kind) that differ by more than -tolerance. It
-// catches a checkpoint double-fold, which row-count reconciles cannot see
-// because the raw rows are correct.
+// It diffs every watched contract's sep41_supply_rollup checkpoint against a
+// re-sum of the sep41_supply_events rows it folds (ledger <= last_ledger) and
+// reports any (contract, kind) differing by more than -tolerance. It catches a
+// checkpoint double-fold, which row-count reconciles cannot see because the
+// raw rows are correct.
 //
 // The re-sum is the same-source PG aggregate, not the lake: the PG observer
-// is watched-set-gated and bare-i128-only, so per-contract totals
-// legitimately differ from the lake (migrations 0085/0088). The projection
-// reconcile proves sep41_supply_events faithful to the lake, so agreement
-// here implies agreement with the lake.
+// is watched-set-gated and bare-i128-only, so per-contract totals legitimately
+// differ from the lake (migrations 0085/0088). The projection reconcile
+// proves sep41_supply_events faithful to the lake, so agreement here implies
+// agreement with the lake.
 //
 // Each re-sum can scan every chunk of a hundreds-of-millions-row hypertable,
-// so this is a one-shot post-re-derive check, never a per-tick job. Run it
-// on r1 under the heavy-job wrapper:
+// so this is a one-shot post-re-derive check, never a per-tick job. Run it on
+// r1 under the heavy-job wrapper:
 //
 //	run-heavy-job.sh verify-rollup stellarindex-ops supply verify-rollup -config /etc/stellarindex/stellarindex.toml
 //
 // Flags:
 //
 //	-config PATH             Required. Operator TOML (Postgres DSN).
-//	-contracts C1,C2,...     Restrict the check to these contract
-//	                         C-strkeys (default: the operator's
-//	                         [supply].watched_sep41_contracts; falls back
-//	                         to every sep41_supply_rollup row when that
-//	                         list is empty). A requested contract with no
-//	                         checkpoint row is reported MISSING and fails
-//	                         the run.
-//	-tolerance N             Absolute stroop tolerance per (contract,
-//	                         kind) before a diff is reported (default 0;
-//	                         a small value absorbs a worker advance racing
-//	                         the re-sum).
+//	-contracts C1,C2,...     Restrict the check to these contract C-strkeys
+//	                         (default: [supply].watched_sep41_contracts, or
+//	                         every sep41_supply_rollup row when that is
+//	                         empty). A requested contract with no checkpoint
+//	                         row is reported MISSING and fails the run.
+//	-tolerance N             Absolute stroop tolerance per (contract, kind)
+//	                         (default 0; a small value absorbs a worker
+//	                         advance racing the re-sum).
 //	-statement-timeout DUR   PG statement_timeout for EACH per-contract
 //	                         re-sum (default 15m).
 //	-timeout DUR             Overall wall-clock budget (default 2h).
-//	-textfile-output PATH    Path to write a Prometheus textfile
-//	                         (node_exporter textfile_collector format) so
-//	                         a "clean" claim is a scrape, not a pasted
-//	                         transcript. Empty = no metrics emit.
+//	-textfile-output PATH    Prometheus textfile (node_exporter
+//	                         textfile_collector format) so a "clean" claim is
+//	                         a scrape, not a pasted transcript. Empty = no
+//	                         metrics emit.
 func supplyVerifyRollup(args []string) error {
 	fs := flag.NewFlagSet("supply verify-rollup", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

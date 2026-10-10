@@ -377,43 +377,26 @@ func writeCodeUploadsOutput(path string, workers []workerResult) error {
 	return nil
 }
 
-// wasmHistoryMergeJSONL reconstructs the canonical wasm-history JSON
-// output from the per-worker JSONL transition logs that
-// `wasm-history -checkpoint-dir` produced. Used to recover from a
-// walk that died after writing transitions to JSONL but before
-// reaching its end-of-run JSON write.
+// wasmHistoryMergeJSONL rebuilds the canonical wasm-history JSON from the
+// per-worker JSONL transition logs that `wasm-history -checkpoint-dir`
+// wrote, to recover a walk that died before its end-of-run JSON write.
 //
-// Required flags:
+// Flags:
 //   - -checkpoint-dir: directory containing wasm-history-w*.jsonl files.
-//   - -to:             upper-bound ledger from the original walk's range.
-//     Used to close the last open range per contract.
+//   - -to:             upper-bound ledger of the original walk; closes the
+//     last open range per contract.
+//   - -output:         path for the merged JSON (default stdout).
 //
-// Optional:
-//   - -output: path to write the merged JSON to. Empty = stdout.
+// The merge mirrors [mergeWasmHistories]: read the files in lexical (worker)
+// order, collect and sort each contract's transitions by at_ledger, collapse
+// adjacent same-hash transitions (a worker's first sight of an already-known
+// hash is not a transition), then build wasmRange[] where each range closes
+// at the next transition's at_ledger - 1 and the last closes at -to.
 //
-// The merge logic mirrors what `wasmHistory` does at end-of-run
-// (see [mergeWasmHistories]):
-//
-//  1. Read every wasm-history-w*.jsonl in lexical order (which is
-//     worker order — w0, w1, …).
-//  2. Per contract, collect all transitions across all workers.
-//  3. Sort each contract's transitions by at_ledger. Within a single
-//     worker the transitions are already in ledger-ascending order;
-//     across workers, sort merges them.
-//  4. Collapse adjacent same-hash transitions (a worker's first
-//     observation of a contract that already has the same hash from
-//     the previous worker is not a real transition).
-//  5. Build wasmRange[]: each transition starts a range that closes
-//     at the next transition's at_ledger - 1; the last range closes
-//     at -to.
-//  6. Emit the same JSON shape `wasmHistory` does.
-//
-// Empty-history contracts (the "ran but saw nothing" signal that
-// wasmHistory emits as `{"contract":"...","ranges":null}`) are NOT
-// emitted by this tool because the JSONL only carries observed
-// transitions. The original walk's JSON IS the canonical artefact;
-// this tool's purpose is purely "recover what we did see when the
-// walk crashed."
+// Empty-history contracts (`{"contract":"...","ranges":null}` from
+// wasmHistory) are NOT emitted: the JSONL only carries observed transitions.
+// The original walk's JSON is the canonical artefact; this only recovers what
+// was seen before the crash.
 func wasmHistoryMergeJSONL(args []string) error {
 	fs := flag.NewFlagSet("wasm-history-merge-jsonl", flag.ContinueOnError)
 	checkpointDir := fs.String("checkpoint-dir", "",

@@ -67,34 +67,30 @@ func openSeedStore(ctx context.Context, dryRun bool, dsn string) (*timescale.Sto
 	return timescale.Open(ctx, dsn)
 }
 
-// supplySeedObservations seeds account_observations from the ClickHouse
-// lake for every `[supply] sdf_reserve_accounts` entry (ADR-0021).
+// supplySeedObservations seeds account_observations from the ClickHouse lake
+// for every `[supply] sdf_reserve_accounts` entry (ADR-0021).
 //
-// Why this exists: the live AccountEntry observer only writes a row
-// when an account CHANGES after the observer started. A dormant
-// reserve account therefore never gets an observation, and the
-// chained reserve-balance reader (live-LCM first, operator-static
-// fallback) stays on the hand-maintained static map forever. One
-// seeding pass reads each account's latest AccountEntry from
-// stellar.ledger_entries_current (point lookup via the account_id
-// skip-index — cheap) and inserts it at the account's true
-// last-modified ledger; the live observer supersedes it on the next
-// real change, and the insert is idempotent (`ON CONFLICT DO
-// NOTHING` on (account_id, ledger)).
+// The live AccountEntry observer only writes a row when an account CHANGES
+// after it started, so a dormant reserve account never gets an observation
+// and the chained reserve-balance reader stays on the static map. One pass
+// reads each account's latest AccountEntry from stellar.ledger_entries_current
+// (cheap point lookup via the account_id skip-index) and inserts it at the
+// account's true last-modified ledger; the live observer supersedes it on the
+// next change, and the insert is idempotent (`ON CONFLICT DO NOTHING` on
+// (account_id, ledger)).
 //
-// Accounts with no lake row (dormant since before the lake's
-// entry-change capture window) are reported, not fabricated — run
-// `stellarindex-ops state-snapshot` with the account-state scope
-// first to fill the dormant tail from a history-archive checkpoint.
+// Accounts with no lake row (dormant since before the entry-change capture
+// window) are reported, not fabricated: run `stellarindex-ops state-snapshot`
+// with the account-state scope first to fill them from a history-archive
+// checkpoint.
 //
 // A pass that reaches the end of its watchlist upserts
 // account_observation_seed_provenance (migration 0189): which accounts were
-// watched and missing (so a `missing` count traces to a specific G-strkey,
-// even after the configured watchlist later changes), counts seeded/missing/
-// removed, plus the seeded accounts' ledger range. Unlike seed-claimable-
-// balances there is no -assets-style scope, so the table holds a single
-// row, overwritten by each complete pass. -dry-run never writes it, and an
-// error mid-pass returns before it is reached.
+// watched and missing (so a `missing` count traces to a specific G-strkey
+// even after the watchlist changes), seeded/missing/removed counts, and the
+// seeded accounts' ledger range. With no -assets-style scope the table holds
+// a single row, overwritten by each complete pass. -dry-run never writes it,
+// and an error mid-pass returns before it.
 //
 // Flags:
 //

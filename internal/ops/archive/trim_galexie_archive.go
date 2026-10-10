@@ -29,36 +29,28 @@ import (
 
 // ─── stellarindex-ops trim-galexie-archive ──────────────────────
 //
-// Per ADR-0027 §Decision: the DESTRUCTIVE operator that deletes
-// cold-eligible LCM files from the local hot tier (galexie-archive
-// MinIO bucket on r1) once their presence in the cold tier has
-// been verified. Reclaims pool capacity by tiering off the bulky
-// historical mirror; the cold tier (aws-public-blockchain) serves
-// reads for those ranges through the TieredDataStore fallback.
+// Per ADR-0027 §Decision: the DESTRUCTIVE operator that deletes cold-eligible
+// LCM files from the local hot tier (galexie-archive MinIO bucket) once their
+// presence in the cold tier is verified. Reads for those ranges fall back to
+// the cold tier through TieredDataStore.
 //
 // Safety stack (each is independent):
 //
-//   1. --dry-run is the DEFAULT. Actual deletion requires the
-//      explicit --commit flag (or its alias, the shared -write) —
-//      there is no "are you sure?" prompt because the dry-run output
-//      IS the review step. Mismatched flags (e.g. --dry-run --commit)
-//      are refused before any S3 call.
-//   2. Upstream verification is the DEFAULT (there is no flag to
-//      turn it on). Every candidate is HEAD'd against the cold tier
-//      before being marked for deletion. If cold.Exists returns
-//      false, the candidate is SKIPPED. Pass --no-verify-upstream
-//      only for an isolated restore-from-backup workflow where
-//      you've already proven the upstream copy by other means.
-//   3. --max-files caps deletions per run. Default 100000, refused
-//      above trimMaxFilesCeiling.
+//   1. --dry-run is the DEFAULT; deletion needs --commit (or the shared
+//      -write). The dry-run output is the review step. Mismatched flags
+//      (--dry-run --commit) are refused before any S3 call.
+//   2. Upstream verification is always on: every candidate is HEAD'd against
+//      the cold tier and SKIPPED if cold.Exists is false.
+//      --no-verify-upstream is only for restore-from-backup workflows where
+//      the upstream copy is already proven.
+//   3. --max-files caps deletions per run (default 100000, refused above
+//      trimMaxFilesCeiling).
 //   4. --older-than-ledger is REQUIRED and must sit at least
-//      trimMinHotWindowLedgers below the hot archive's newest
-//      ledger. No implicit "trim everything below tip - N".
-//   5. Cold-tier MUST be configured (cfg.Storage.S3ColdBucketArchive
-//      non-empty). Refuses to run otherwise — without a cold tier
-//      every "trim" is unrecoverable data loss.
-//   6. A deletion counts only once the hot datastore no longer
-//      resolves the path; see deleteTrimCandidates.
+//      trimMinHotWindowLedgers below the hot archive's newest ledger.
+//   5. The cold tier MUST be configured (cfg.Storage.S3ColdBucketArchive);
+//      without one every trim is unrecoverable data loss.
+//   6. A deletion counts only once the hot datastore no longer resolves the
+//      path; see deleteTrimCandidates.
 
 const (
 	// trimMaxFilesCeiling bounds --max-files: ~1.6% of the 63.6M-object
@@ -350,46 +342,25 @@ func deleteTrimCandidates(ctx context.Context, logger *slog.Logger, del s3Object
 
 // ─── partition-scoped enumeration ────────────────────────────────
 //
-// One unbounded listing cannot enumerate this archive. A single call to
+// One unbounded hot.ListFilePaths call cannot enumerate this archive: the SDK
+// clamps it to 1000 keys (support/datastore listFilePathsMaxLimit), so
+// Limit:0 means "1000", not "all". galexie-archive holds ~63.6M objects
+// (one per ledger, 64000 per partition).
 //
-//	hot.ListFilePaths(rootCtx, datastore.ListFileOptions{})
+// Worse, those 1000 are the wrong ones. Partition directories are named
+// "%08X--<start>-<end>/" with hex = MaxUint32-start, so hex descends as the
+// ledger ascends and a lexicographic listing returns the NEWEST objects
+// first, all above any useful cutoff. The result is "candidates=0", which is
+// also what a fully-trimmed archive looks like, so it reads like success.
 //
-// returns at most 1000 keys: the SDK clamps an unbounded request —
-// support/datastore/datastore.go:24 `listFilePathsMaxLimit = 1000`,
-// applied in s3.go's ListFilePaths as `if remaining <= 0 || remaining >
-// listFilePathsMaxLimit { remaining = listFilePathsMaxLimit }` — so
-// Limit:0 means "1000", not "all". galexie-archive holds ~63.6 MILLION
-// objects (.config.json: ledgersPerBatch=1, batchesPerPartition=64000;
-// 995 partitions; one object per ledger).
+// Instead: discover partitions (one delimited listing), skip those entirely
+// at/above the cutoff, and page StartAfter through the rest. A partition
+// that straddles the cutoff is enumerated and filtered per file.
 //
-// Worse, those 1000 are always the WRONG 1000. Partition directories
-// are named "%08X--<start>-<end>/" where the hex is MaxUint32-start
-// (SDK DataStoreSchema.GetObjectKeyFromSequenceNumber), so the hex
-// DESCENDS as the ledger ASCENDS: "FFFFFFFF--0-63999/" sorts before
-// "FC354BFF--63616000-63679999/". A lexicographic listing therefore
-// returns the NEWEST objects first, and the newest 1000 are above any
-// cutoff worth naming. Measured on r1 with a single listing:
-//
-//	trim-galexie-archive -older-than-ledger 10000000 -dry-run
-//	  hot file enumeration  total_files=1000
-//	  trim plan ready       candidates=0 skipped_too_fresh=999
-//	                        skipped_not_in_cold=0 verify_errors=0
-//
-// "candidates=0" is what a fully-trimmed archive looks like too, so a
-// single listing trims nothing and reads like success.
-//
-// Partition-scoped enumeration covers the archive without brute-forcing 63,600
-// sequential pages over the whole bucket: discover the partitions
-// (one delimited listing), skip whole partitions that sit entirely
-// at/above the cutoff without reading their contents, and page
-// StartAfter through the rest. A partition that STRADDLES the cutoff
-// is neither skipped nor trimmed wholesale — it is enumerated and
-// filtered per file.
-//
-// The per-file safety chain (ParseRangeFromObjectKey bucketing, the
-// cold-tier HEAD, --max-files, --dry-run) applies to every enumerated
-// file. --max-files caps DELETIONS FOR THE WHOLE RUN, not per partition: the
-// counter lives on trimPlan, which spans every partition scanned.
+// The per-file safety chain (ParseRangeFromObjectKey bucketing, cold-tier
+// HEAD, --max-files, --dry-run) applies to every file. --max-files caps
+// deletions for the whole run, not per partition: the counter lives on
+// trimPlan.
 
 // trimListPageSize is the SDK's hard per-call ceiling (see above). We
 // request it explicitly rather than relying on the Limit:0 default,

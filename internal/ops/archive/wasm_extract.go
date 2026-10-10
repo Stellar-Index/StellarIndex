@@ -20,25 +20,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// extractWasmFromGalexie pulls raw WASM bytes for one or more
-// Soroban-contract WASM hashes by walking the local Galexie LCM
-// archive — the truer source than RPC `getLedgerEntry` because:
+// extractWasmFromGalexie pulls raw WASM bytes for Soroban-contract WASM
+// hashes by walking the local Galexie LCM archive. It beats RPC
+// `getLedgerEntry` because it works for evicted (TTL-expired) WASMs, does not
+// depend on a public RPC's retention, and runs offline.
 //
-//  1. It works for evicted WASMs (TTL-expired bytes are no longer
-//     in active ledger state but ARE preserved in galexie LCM).
-//  2. It doesn't depend on a public RPC's retention policy.
-//  3. It runs offline against r1's full archive.
-//
-// For each target hash, the tool scans LCM in [from, to] looking
-// for a `LedgerEntryChange` whose `Data.Type == ContractCode` and
-// whose `ContractCode.Hash` matches the target. The WASM bytes
-// (`ContractCode.Code`) are written to `<output-dir>/<hash>.wasm`.
-//
-// Each WASM is uploaded to chain via an `INVOKE_HOST_FUNCTION` op
-// of type `HOST_FUNCTION_TYPE_UPLOAD_CONTRACT_WASM`, which on
-// success creates a `ContractCode` LedgerEntry. We catch this
-// `Created` change. Restored entries (a TTL-extension of an
-// already-installed WASM) also carry the bytes, so we accept both.
+// For each target hash it scans LCM in [from, to] for a `LedgerEntryChange`
+// with `Data.Type == ContractCode` and a matching `ContractCode.Hash`, and
+// writes `ContractCode.Code` to `<output-dir>/<hash>.wasm`. Both Created
+// (UPLOAD_CONTRACT_WASM) and Restored changes carry the bytes, so both are
+// accepted.
 //
 // CLI usage:
 //
@@ -48,9 +39,8 @@ import (
 //	    -output-dir /var/wasm-audit \
 //	    [-from N] [-to N] [-parallel N]
 //
-// Defaults: from=2 (genesis is fine; the walker skips pre-Soroban
-// LCMs). to=0 means walk to archive tip — the caller should set
-// it explicitly when running parallel.
+// Defaults: from=2 (the walker skips pre-Soroban LCMs). to=0 walks to archive
+// tip; set it explicitly when running parallel.
 func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocyclo // linear diagnostic, splitting reduces readability
 	fs := flag.NewFlagSet("extract-wasm-from-galexie", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

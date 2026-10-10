@@ -17,38 +17,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// ─── cross-region-check ─────────────────────────────────────────
+// cross-region-check queries each region's /v1/vwap (or twap/ohlc) for the
+// same closed-bucket window and asserts the responses agree on every stable
+// user-visible field.
 //
-// Queries each configured region's /v1/vwap (or /v1/twap, /v1/ohlc)
-// for the same closed-bucket window and asserts the responses are
-// equivalent on every stable user-visible field in the response
-// contract.
-//
-// Per ADR-0015, closed-bucket aggregations are deterministic given
-// the same trade inputs — once postgres replication has carried
-// trades to all regions, every region computes the same VWAP for
-// the same [from, to) window. Divergence here means one of:
-//
-//   1. Replication lag: a region hasn't caught up yet (transient,
-//      should self-resolve within seconds-to-minutes).
-//   2. Decoder version drift: regions disagree on what trades
-//      exist for the window because they're running different
-//      decoder logic against the same upstream bytes.
-//   3. Upstream divergence: a region is reading a different
-//      ledger-meta source that disagrees with the others (caught
-//      by Tier D periodically, but this cross-region check finds
-//      it faster via the indexer-output side effect).
-//   4. Postgres replication broken: a region's trade-row corpus
-//      genuinely differs.
-//
-// The tool is intentionally conservative — it samples a few recent
-// closed buckets and asserts ALL regions agree on each. Any
-// disagreement exits non-zero with a structured diff for ops to
-// triage.
-//
-// Foundation for the periodic monitoring job that runs on the
-// observability box (see docs/architecture/ha-plan.md §3.6 once
-// that lands).
+// Per ADR-0015, closed-bucket aggregations are deterministic given the same
+// trades, so divergence means one of: replication lag (transient), decoder
+// version drift, upstream ledger-meta divergence, or broken Postgres
+// replication. Any disagreement exits non-zero with a structured diff.
 
 type crossRegionMetric string
 

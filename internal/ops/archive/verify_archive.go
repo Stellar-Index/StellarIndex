@@ -27,45 +27,31 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// verifyArchive runs one or more verification tiers against a
-// galexie bucket. Per `docs/operations/galexie-backfill.md` and
-// ADR-0017, each tier addresses a distinct trust failure mode:
+// verifyArchive runs one or more verification tiers against a galexie
+// bucket. Per `docs/operations/galexie-backfill.md` and ADR-0017, each tier
+// addresses a distinct trust failure mode:
 //
-//   - Tier A (chain): chain-link integrity — for each ledger N,
-//     ledger[N].Header.PreviousLedgerHash == ledger[N-1].Hash.
-//     Catches internal corruption, dropped ledgers, replay
-//     divergence regardless of upstream trust.
+//   - Tier A (chain): ledger[N].Header.PreviousLedgerHash == ledger[N-1].Hash.
+//     Catches internal corruption and dropped ledgers.
+//   - Tier B (checkpoint): cross-check our LCM's hash at every 64-ledger
+//     checkpoint against the local history-archive (`ledger-XXXXXXXX.xdr.gz`).
+//     Catches single-source corruption that is still chain-link-consistent.
+//   - Tier D (peers): sample checkpoints and cross-compare
+//     history-XXXXXXXX.json across N tier-1 validator archives.
+//   - Tier E (archivist): `stellar-archivist scan --verify`: re-hashes every
+//     referenced bucket and checkpoint file.
+//   - Tier C (sdf-sample): ETag+size compare of N random ledgers with SDF's
+//     public dataset (verify_archive_sdf_sample.go).
 //
-//   - Tier B (checkpoint): cross-check our LCM's hash at every
-//     64-ledger checkpoint against the canonical header-hash
-//     in the local history-archive (`ledger-XXXXXXXX.xdr.gz`).
-//     Catches single-source corruption that's still chain-link-
-//     consistent.
-//
-//   - Tier D (peers): sample checkpoints within the range and
-//     cross-compare history-XXXXXXXX.json across N tier-1
-//     validator archives. Consensus-level cryptographic
-//     agreement.
-//
-//   - Tier E (archivist): `stellar-archivist scan --verify` of the
-//     archive: re-hashes every referenced bucket and checkpoint file.
-//
-//   - Tier C (sdf-sample): ETag+size compare of N random ledgers with
-//     SDF's public dataset (verify_archive_sdf_sample.go).
-//
-// `-tier all` (A, B, D, E) runs every tier sequentially. Any tier mismatch is
-// a hard stop with the diverging ledger numbers and hashes
-// printed for diagnosis.
+// `-tier all` (A, B, D, E) runs every tier sequentially. Any mismatch is a
+// hard stop with the diverging ledger numbers and hashes printed.
 //
 // Defaults:
-//   - bucket: cfg.Storage.S3BucketArchive, falling back to
-//     S3BucketLive when -bucket is unset AND S3BucketArchive is
-//     empty. Usually set -bucket explicitly when verifying the
+//   - bucket: cfg.Storage.S3BucketArchive, falling back to S3BucketLive when
+//     both it and -bucket are unset. Set -bucket explicitly for the
 //     historical half.
-//   - from: 2 (ledger 1 has no predecessor; the chain-link check
-//     starts from ledger 2).
-//   - to: 0 = unbounded. For a bounded verify of a specific range
-//     set both -from and -to.
+//   - from: 2 (ledger 1 has no predecessor).
+//   - to: 0 = unbounded. Set both -from and -to for a bounded verify.
 func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocyclo // linear diagnostic; splitting reduces readability
 	fs := flag.NewFlagSet("verify-archive", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -451,31 +437,18 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	}
 	defer cancel()
 
-	// Resolve `-to=0` to the current tip when parallel chunking was
-	// asked for. `opsutil.SplitRange(from, 0, n)` hits the `to <= from` guard
-	// and silently returns ONE chunk — `-workers N` is then dead code,
-	// and what should be an N-way parallel walk degrades to a serial
-	// one: a manual `-from 2 -to 0 -workers 6` bootstrap run that hit
-	// it crawled for 22h instead of ~4h. The systemd timer's
-	// `-from-last-verified` incremental mode would hit the same shape
-	// on every fresh-state bootstrap.
+	// Resolve `-to=0` to the current tip when parallel chunking was asked
+	// for: opsutil.SplitRange(from, 0, n) hits its `to <= from` guard and
+	// returns ONE chunk, so `-workers N` silently degrades to a serial walk.
+	// Build a one-shot DataStore, query FindLatestLedgerSequence and use that
+	// as the upper bound. Skipped when workers <= 1 (to=0 is the live-tail
+	// path there) or when `to` is already explicit.
 	//
-	// Resolution: build a one-shot DataStore from the same DataStore
-	// config the walkers will use, query FindLatestLedgerSequence,
-	// adopt that as the upper bound for opsutil.SplitRange. Closed
-	// immediately — the parallel walkers each construct their own.
-	// Skipped when workers ≤ 1 (single-chunk serial walk is what
-	// `to=0` is FOR; resolving tip there would defeat the live-tail
-	// path) and when `to` already names an explicit upper bound.
-	//
-	// Fail-soft: tip resolution AND the per-chunk workers'
-	// BoundedRange PrepareRange both require bucket `ListObjectsV2`
-	// permission. Setups with least-privilege MinIO IAM (r1's
-	// `stellarindex_reader` grants GetObject only) deny it. Rather
-	// than crash the whole walk, log a clear message and demote to
-	// single-chunk serial (UnboundedRange, which works without List).
-	// An operator who genuinely wants the parallel speedup grants
-	// `s3:ListBucket` to the reader and the next walk picks it up.
+	// Fail-soft: tip resolution and the per-chunk BoundedRange PrepareRange
+	// both need bucket ListObjectsV2, which least-privilege MinIO IAM (r1's
+	// `stellarindex_reader`, GetObject only) denies. Log and demote to
+	// single-chunk serial (UnboundedRange needs no List) rather than crash;
+	// granting `s3:ListBucket` restores the parallel walk.
 	if to == 0 && workers > 1 {
 		// First: if there's a prior in-progress run whose plan we can
 		// reuse, adopt its pinned tip and skip live-tip resolution.
@@ -1254,31 +1227,23 @@ func checkpointsEqual(a, b historyCheckpoint) bool {
 	return true
 }
 
-// archiveMirrorCoverage is the checkpoint span the local cross-anchor
-// mirror (`-archive-root`, /srv/history-archive on r1) actually holds,
-// discovered from the mirror itself rather than assumed.
+// archiveMirrorCoverage is the checkpoint span the local cross-anchor mirror
+// (`-archive-root`) actually holds, discovered from the mirror rather than
+// assumed.
 //
-// It exists because ADR-0017 contract 3 is written against
-// `network_head` ("for every checkpoint seq <= network_head the file
-// exists") while the mirror is filled by its own periodic job, so in
-// steady state the newest checkpoints the LCM walk reaches have no
-// mirror file yet and never did. Measured on r1: the mirror
-// holds 1,007,807 of the 1,007,807 checkpoint files between ledger 63
-// and its high-water 64,499,647 — not one hole — while the fill job
-// lands at 02:2x UTC and the tier-B walk runs at 04:38 UTC, so the walk
-// asks about the ~23 checkpoints closed in between. Counting those as
-// "missing from the archive" is the walk over-asking, not a
-// completeness breach; it accounted for all of the unit's `missed=23`.
+// ADR-0017 contract 3 is written against `network_head`, but the mirror is
+// filled by its own periodic job, so the newest checkpoints the LCM walk
+// reaches have no mirror file yet. On r1 the fill job lands at 02:2x UTC and
+// the tier-B walk runs at 04:38 UTC, so the ~23 checkpoints closed in between
+// were counted as "missing" (all of the unit's `missed=23`) though the mirror
+// had no interior hole. That is the walk over-asking, not a completeness
+// breach; it mirrors TolerateTrailingMissing on the LCM side (see
+// verifyArchiveLCMWalk): trailing absence is delivery lag, interior is a
+// defect.
 //
-// The distinction is the same one the LCM side already draws with
-// TolerateTrailingMissing for the galexie bucket's trailing edge (see
-// verifyArchiveLCMWalk): a trailing absence is a delivery lag, an
-// interior one is a defect.
-//
-// Known == false means the mirror could not be read at all (missing
-// root, no ledger/ tree, unreadable). Every absence then counts as a
-// genuine miss, so a broken -archive-root can never be mistaken for
-// "everything is outside coverage".
+// Known == false means the mirror could not be read at all. Every absence
+// then counts as a genuine miss, so a broken -archive-root is never mistaken
+// for "everything is outside coverage".
 type archiveMirrorCoverage struct {
 	Floor     uint32 // lowest checkpoint ledger the mirror holds
 	HighWater uint32 // highest checkpoint ledger the mirror holds

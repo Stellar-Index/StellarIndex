@@ -17,34 +17,29 @@ import (
 // supplySeedSEP41Genesis seeds each watched SEP-41 contract's pre-Soroban
 // per-kind OPENING BALANCE into sep41_supply_rollup (migration 0088).
 //
-// Why this exists. The SEP-41 Algorithm-3 supply refresher derives total as
-// Σmint−Σburn−Σclawback from `sep41_supply_events` (Postgres), which the
-// supply observer fills ONLY over the Soroban era [50457424, tip]. A classic
-// asset's SAC wrapper (VELO, AQUA, yXLM, LIBRE, ACT, MBC, XAU, BTC, GQX, …)
-// was largely issued BEFORE Soroban existed, so over the Soroban-era-only
-// window it reads Σburn > Σmint → negative total → the negative-total guard
-// rejects it and the refresh + cross-check alerts fire. The certified
-// ClickHouse lake (stellar.supply_flows, ADR-0034) carries those pre-Soroban
-// mint/burn/clawback flows (the post-P23 CAP-67 replay synthesized the unified
-// asset events for classic history). This one-time seed sums them below the
-// Soroban genesis ledger and writes the per-kind baseline that the reader adds
-// to the Soroban-era totals so lifetime supply comes out correct + positive.
+// The Algorithm-3 refresher derives total as Σmint−Σburn−Σclawback from
+// `sep41_supply_events`, which the observer fills ONLY over the Soroban era
+// [50457424, tip]. A classic asset's SAC wrapper (VELO, AQUA, yXLM, ...) was
+// largely issued before Soroban, so over that window Σburn > Σmint, the total
+// goes negative, the negative-total guard rejects it and the refresh and
+// cross-check alerts fire. The certified lake (stellar.supply_flows, ADR-0034)
+// carries the pre-Soroban flows (the post-P23 CAP-67 replay synthesized asset
+// events for classic history). This seed sums them below the Soroban genesis
+// ledger and writes the per-kind baseline the reader adds to the Soroban-era
+// totals.
 //
-// PROVENANCE (ADR-0033). The pre-Soroban supply_flows rows are REPLAY-DERIVED
-// and thus core-version-dependent; genesis_baseline_ledger + genesis_seeded_at
-// record the boundary + capture time so a re-seed is auditable.
+// PROVENANCE (ADR-0033): the pre-Soroban supply_flows rows are replay-derived
+// and core-version-dependent; genesis_baseline_ledger + genesis_seeded_at
+// record the boundary and capture time so a re-seed is auditable. If that
+// history is re-derived, re-run this seed.
 //
 // Idempotent: the baseline is SET (not added), and the rollup fold beneath it
 // is rebuilt under the new floor in the same transaction
-// ([timescale.Store.UpsertSEP41GenesisBaseline]), so re-running converges on
-// the same row and also repairs a fold that swept the pre-boundary band in
-// before the contract was first seeded. That rebuild is one floored aggregate
-// over the contract's Soroban-era events, run one contract at a time; it holds
-// the contract's rollup row while it runs, and a contending aggregator pass
-// yields rather than waits. A Soroban-only contract (no pre-genesis flows) is
-// seeded with a zero baseline, leaving its served total unchanged. NOTE: if the
-// CH supply_flows history below the boundary is re-derived, re-run this seed
-// to refresh the baseline.
+// ([timescale.Store.UpsertSEP41GenesisBaseline]), which also repairs a fold
+// that swept the pre-boundary band in before the first seed. The rebuild is
+// one floored aggregate per contract, holds that contract's rollup row, and a
+// contending aggregator pass yields rather than waits. A Soroban-only
+// contract is seeded with a zero baseline, leaving its total unchanged.
 //
 // Flags:
 //

@@ -18,53 +18,35 @@ import (
 
 // Textfile export of the verify-archive mismatch counter.
 //
-// WHY THIS EXISTS. `stellarindex_stellar_archive_divergence` is the
-// P1 page for "our archive's bytes are not the network's bytes". It
-// selects `stellarindex_verify_archive_mismatches_total`, which the
-// chunk walk increments (verify_archive_chunks.go) — but the only
-// other export path for that counter is the opt-in `-metrics-listen`
-// HTTP endpoint, which neither the tier-a nor the tier-b unit
-// passes, and `configs/prometheus/prometheus.r1.yml` has no
-// verify-archive scrape job for it to scrape. Without this file the
-// counter would have no producer in the deployed topology and the page
-// could not fire: a real divergence would surface only as the
-// severity-`ticket` `stellarindex_verify_archive_unit_failed`.
+// WHY THIS EXISTS. The P1 `stellarindex_stellar_archive_divergence` page
+// selects `stellarindex_verify_archive_mismatches_total`, but the only other
+// export path is the opt-in `-metrics-listen` endpoint, which neither the
+// tier-a nor tier-b unit passes and prometheus.r1.yml does not scrape.
+// Without this file the counter has no producer and a real divergence would
+// surface only as the ticket-severity `stellarindex_verify_archive_unit_failed`.
 //
-// A short-lived batch job cannot be scraped reliably (the process is
-// gone before the next scrape), so this uses the same node_exporter
-// textfile-collector pattern every other batch emitter in the repo
-// uses (sla-probe, supply-snapshot, archive-completeness,
-// timescale-jobs-probe): the run writes a `.prom` file into
-// `--collector.textfile.directory` and node_exporter serves it on
-// its own /metrics.
+// A short-lived batch job cannot be scraped reliably, so this uses the
+// node_exporter textfile-collector pattern of the other batch emitters
+// (sla-probe, supply-snapshot, archive-completeness, timescale-jobs-probe).
 //
 // Three properties make the counter usable by `increase()`:
 //
-//  1. CUMULATIVE. The file holds a running host total, not a
-//     per-run fragment — each run adds its own increments to what
-//     the previous run left on disk. The `_total` suffix and the
-//     `# TYPE … counter` line promise monotonicity; a per-run
-//     rewrite would break `increase()` on every clean run.
-//  2. ZERO-SEEDED. All three `reason` values are emitted on every
-//     run even at 0. Without a pre-existing sample, a counter whose
-//     series first APPEARS at 1 and then stays flat yields
-//     `increase() == 0` (there is no earlier point to subtract), so
-//     the page would still not fire on the very first divergence —
-//     the same "absence reads as health" trap (compare
+//  1. CUMULATIVE. The file holds a running host total; each run adds to what
+//     the previous run left on disk. A per-run rewrite would break
+//     `increase()` on every clean run.
+//  2. ZERO-SEEDED. All three `reason` values are emitted on every run even at
+//     0. A series that first APPEARS at 1 and stays flat yields
+//     `increase() == 0`, so the page would miss the first divergence (compare
 //     obs.seedBoundedLabelSeries, archivecompleteness.writeLastSuccess).
-//  3. AGGREGATED OVER chunk_idx. The in-process counter is labelled
-//     by chunk_idx so an operator can dashboard a multi-hour walk
-//     live. chunk_idx is a per-run worker index — chunk 7 covers a
-//     different ledger range every night — so it carries no
-//     cross-run meaning and would defeat property 2 (a mismatch on
-//     a never-before-seen chunk_idx creates a brand-new series).
-//     The per-chunk detail stays in journald and the state file.
+//  3. AGGREGATED OVER chunk_idx. chunk_idx is a per-run worker index with no
+//     cross-run meaning, and a mismatch on a never-seen chunk_idx would
+//     create a new series, defeating property 2. Per-chunk detail stays in
+//     journald and the state file.
 //
-// The `tier` label is the run's `-tier` value. It keeps the tier-a
-// and tier-b units' `.prom` files from exposing the SAME label set
-// through one node_exporter target, which the textfile collector
-// rejects as a duplicate metric (and which would make the two units
-// race on each other's carry-forward).
+// The `tier` label (the run's `-tier`) stops the tier-a and tier-b units'
+// `.prom` files exposing the same label set through one node_exporter, which
+// the textfile collector rejects as a duplicate and which would make the two
+// race on each other's carry-forward.
 
 const (
 	// verifyArchiveMismatchMetric is the counter the P1
