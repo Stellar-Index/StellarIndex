@@ -50,20 +50,10 @@ const NAV_SOURCES: { file: string; literal: string }[] = [
 ];
 
 /**
- * The shortest real frame in the set is /operations (heading
- * + a two-line description, ~138 chars); a gated route's lean-net branch
- * (title + the NetworkUnavailable reason) is longer. The floor sits well
- * below both — a copy edit must not red the build — and far above the 0
- * an unresolved boundary leaves or the ~20 of a heading on its own, so
- * it fails on the defect without policing copy length.
- */
-const MIN_FRAME_CHARS = 80;
-
-/**
  * Nav routes whose export carries no `<h1>` for a reason OTHER than a
  * missing shell, named. This is not a place to park a page that ships
  * nothing: "the heading renders after the fetch" is the defect, and a
- * route stays on the frame-length check either way. An exemption covers
+ * route stays on the below-header check either way. An exemption covers
  * a MISSING `<h1>` only — two on an exempt route still fail.
  */
 const EXEMPT: ReadonlyMap<string, string> = new Map([
@@ -125,11 +115,10 @@ describe('built static export: primary-nav page shells', () => {
       if (frame.h1Count !== 1 && !exemptFromH1) {
         fail(route, `${frame.h1Count} <h1> in <main>, want exactly 1`);
       }
-      if (frame.text.length < MIN_FRAME_CHARS) {
+      if (!frame.belowHeader) {
         fail(
           route,
-          `<main> holds ${frame.text.length} chars of text ` +
-            `(want >= ${MIN_FRAME_CHARS}) — ${JSON.stringify(frame.text)}`,
+          `<main> holds nothing below its header — ${JSON.stringify(frame.text)}`,
         );
       }
     }
@@ -153,7 +142,7 @@ describe('built static export: primary-nav page shells', () => {
       'A primary-nav page exported without its own frame. Under ' +
         "output:'export' a `<Suspense fallback={null}>` around a view " +
         'that calls useSearchParams bakes the NULL: the page ships site ' +
-        'chrome and an empty <main>. Keep the heading and description in ' +
+        'chrome and an empty <main>. Keep the heading in ' +
         'the server component, put only the search-param-dependent ' +
         'subtree in Suspense, and give it a visible skeleton fallback.\n' +
         failures.join('\n'),

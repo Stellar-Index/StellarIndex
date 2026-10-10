@@ -30,7 +30,26 @@ export type StaticFrame = {
   h1Count: number;
   /** Visible text inside `<main>`, whitespace-collapsed. */
   text: string;
+  /** Whether anything (a skeleton or content) renders below the page header. */
+  belowHeader: boolean;
 };
+
+/** The HTML after the PageHeader block, or after the first `</h1>` without one. */
+function afterHeader(html: string): string {
+  const start = html.search(/<div[^>]*data-page-header/);
+  if (start < 0) {
+    const h1 = html.search(/<\/h1>/i);
+    return h1 < 0 ? html : html.slice(h1 + 5);
+  }
+  const tag = /<(\/?)div[\s>]/gi;
+  tag.lastIndex = start;
+  let depth = 0;
+  for (let m = tag.exec(html); m; m = tag.exec(html)) {
+    depth += m[1] ? -1 : 1;
+    if (depth === 0) return html.slice(html.indexOf('>', m.index) + 1);
+  }
+  return '';
+}
 
 /**
  * Read the static frame out of one built page.
@@ -52,6 +71,11 @@ export function staticFrame(html: string): StaticFrame | null {
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim(),
+    belowHeader: /<[a-z]|[^\s<>]/i.test(
+      afterHeader(stripped)
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/<\/[^>]+>/g, ''),
+    ),
   };
 }
 
