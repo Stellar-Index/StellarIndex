@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ExternalLink } from 'lucide-react';
 
-import { loadIncident, loadIncidents } from '@/lib/incidents';
+import { loadIncident, loadIncidents, splitH2Sections } from '@/lib/incidents';
 import { Markdown } from '@/lib/markdown';
 import {
   Badge,
@@ -58,8 +58,13 @@ export default async function IncidentPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const inc = loadIncident(slug);
-  if (!inc) notFound();
+  const all = loadIncidents();
+  const idx = all.findIndex((i) => i.slug === slug);
+  if (idx < 0) notFound();
+  const inc = all[idx]!;
+  const newer = all[idx - 1];
+  const older = all[idx + 1];
+  const { intro, sections } = splitH2Sections(stripDuplicateH1(inc.body));
 
   const sevTone: BadgeTone =
     inc.severity === 'SEV-1' ? 'bad' : inc.severity === 'SEV-2' ? 'warn' : 'ok';
@@ -125,9 +130,53 @@ export default async function IncidentPage({
         )}
       </div>
 
-      <article>
-        <Markdown source={stripDuplicateH1(inc.body)} />
+      <article className="space-y-3">
+        {intro && <Markdown source={intro} />}
+        {sections.map((sec, i) => (
+          <details
+            key={sec.title}
+            open={i < 2}
+            className="border-line group rounded-sm border"
+          >
+            <summary className="hover:bg-surface-subtle cursor-pointer px-4 py-2">
+              <h2 className="text-ink inline text-base font-semibold">
+                {sec.title}
+              </h2>
+            </summary>
+            <div className="px-4 pb-4">
+              <Markdown source={sec.body} />
+            </div>
+          </details>
+        ))}
       </article>
+
+      {(older || newer) && (
+        <nav
+          aria-label="Other incidents"
+          className="border-line flex flex-wrap justify-between gap-3 border-t pt-4 text-sm"
+        >
+          {older ? (
+            <Link
+              href={`/status/incident/${encodeURIComponent(older.slug)}`}
+              className="text-brand-600 inline-flex items-center gap-1.5 hover:underline"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Older: {older.title}
+            </Link>
+          ) : (
+            <span />
+          )}
+          {newer && (
+            <Link
+              href={`/status/incident/${encodeURIComponent(newer.slug)}`}
+              className="text-brand-600 inline-flex items-center gap-1.5 hover:underline"
+            >
+              Newer: {newer.title}
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          )}
+        </nav>
+      )}
     </Container>
   );
 }

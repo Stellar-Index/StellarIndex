@@ -268,3 +268,27 @@ function parseFrontmatter(
   }
   return { fm, body };
 }
+
+/** Splits a postmortem body into the text before its first H2 and one entry per H2. */
+export function splitH2Sections(body: string): {
+  intro: string;
+  sections: { title: string; body: string }[];
+} {
+  const sections: { title: string; body: string }[] = [];
+  const intro: string[] = [];
+  let fence = false;
+  for (const line of body.split('\n')) {
+    if (line.trimStart().startsWith('```')) fence = !fence;
+    if (!fence && line.startsWith('## ')) {
+      sections.push({ title: line.slice(3).trim(), body: '' });
+      continue;
+    }
+    const cur = sections[sections.length - 1];
+    if (cur) cur.body += `${line}\n`;
+    else intro.push(line);
+  }
+  return {
+    intro: intro.join('\n').trim(),
+    sections: sections.map((s) => ({ ...s, body: s.body.trim() })),
+  };
+}
