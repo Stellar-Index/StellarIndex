@@ -53,12 +53,9 @@ go-ast internal/divergence/worker_test.go
 go-ast internal/httpx/keyed_client_guard_test.go
 go-ast internal/metadata/cache_test.go
 go-ast internal/ops/chops/catalogue_completeness_test.go
-go-ast internal/ops/chops/ch_rebuild_trade_lockstep_test.go
 go-ast internal/ops/chops/completeness_panic_guard_test.go
-go-ast internal/ops/chops/projected_rebuild_backfillsafe_test.go
-go-ast internal/ops/chops/soroswap_seed_failclosed_test.go
-go-ast internal/ops/diagnostics/hubble_bq_cap_test.go
-go-ast internal/ops/diagnostics/silent_verdict_test.go
+go-ast internal/ops/chops/source_shape_rules_test.go
+go-ast internal/ops/diagnostics/source_shape_rules_test.go
 go-ast internal/ops/ingest/projector_replay_refresh_test.go
 go-ast internal/ops/opsutil/range_cursor_key_test.go
 go-ast internal/pipeline/gated_registry_curated_test.go
@@ -71,11 +68,10 @@ go-ast internal/pricingguard/gate_guard_test.go
 go-ast internal/pricingguard/surface_labels_test.go
 go-ast internal/sources/aquarius/source_test.go
 go-ast internal/storage/timescale/cagg_refresh_set_test.go
-go-ast internal/storage/timescale/closed_bucket_guard_test.go
-go-ast internal/storage/timescale/issuer_home_domain_writers_test.go
 go-ast internal/storage/timescale/pair_direction_guard_test.go
 go-ast internal/storage/timescale/prices_1m_direction_union_test.go
 go-ast internal/storage/timescale/retention_policy_test.go
+go-ast internal/storage/timescale/source_shape_rules_test.go
 go-ast internal/supply/basis_lower_bound_test.go
 go-ast pkg/client/doc_coverage_test.go
 go-ast pkg/client/godoc_links_test.go

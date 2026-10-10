@@ -16,9 +16,6 @@ package chops
 // pipeline/lockstep_ast_test.go walks its five sites.
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"regexp"
 	"sort"
@@ -27,89 +24,6 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
-
-// tradeOfExempt registers trade-shaped event types that belong in
-// pipeline.tradeFromEvent but deliberately NOT in tradeOf. Keep reasons.
-var tradeOfExempt = map[string]string{
-	"external.TradeEvent": "off-chain CEX/FX venues. They have no Soroban events and no ledger, so ch-rebuild (a lake re-derive) can never produce them; their writer is the external poller.",
-}
-
-// caseTypesOfSwitch returns the type names (`pkg.Type`) of every case
-// clause in the type-switch inside the named function of the parsed file.
-func caseTypesOfSwitch(t *testing.T, path, fn string) map[string]bool {
-	t.Helper()
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, path, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
-	out := map[string]bool{}
-	var found bool
-	for _, decl := range f.Decls {
-		fd, ok := decl.(*ast.FuncDecl)
-		if !ok || fd.Name == nil || fd.Name.Name != fn {
-			continue
-		}
-		found = true
-		ast.Inspect(fd, func(n ast.Node) bool {
-			cc, ok := n.(*ast.CaseClause)
-			if !ok {
-				return true
-			}
-			for _, expr := range cc.List {
-				sel, ok := expr.(*ast.SelectorExpr)
-				if !ok {
-					continue
-				}
-				pkg, ok := sel.X.(*ast.Ident)
-				if !ok {
-					continue
-				}
-				out[pkg.Name+"."+sel.Sel.Name] = true
-			}
-			return true
-		})
-	}
-	if !found {
-		t.Fatalf("function %s not found in %s", fn, path)
-	}
-	if len(out) == 0 {
-		t.Fatalf("%s in %s has no type-switch cases — the walk found nothing to check", fn, path)
-	}
-	return out
-}
-
-// TestLockstep_ChRebuildTradeOfCoversEveryProjectedTradeSource is the guard.
-func TestLockstep_ChRebuildTradeOfCoversEveryProjectedTradeSource(t *testing.T) {
-	want := caseTypesOfSwitch(t, "../../pipeline/sink.go", "tradeFromEvent")
-	got := caseTypesOfSwitch(t, "ch_rebuild.go", "tradeOf")
-
-	for typeName := range want {
-		if got[typeName] {
-			continue
-		}
-		if reason, exempt := tradeOfExempt[typeName]; exempt {
-			t.Logf("%s exempt from tradeOf: %s", typeName, reason)
-			continue
-		}
-		t.Errorf("%s is a trade-shaped event in pipeline.tradeFromEvent but has no arm in ch_rebuild.go tradeOf — "+
-			"scripts/ops/ch-rebuild-projected.sh would DELETE its trades and never rewrite them. "+
-			"Add the case, or register an exemption with a reason in tradeOfExempt.", typeName)
-	}
-
-	for typeName := range got {
-		if !want[typeName] {
-			t.Errorf("%s has an arm in ch_rebuild.go tradeOf but is not a trade-shaped event in "+
-				"pipeline.tradeFromEvent — one of the two is stale", typeName)
-		}
-	}
-
-	for typeName := range tradeOfExempt {
-		if !want[typeName] {
-			t.Errorf("stale tradeOfExempt entry %s — it is no longer in pipeline.tradeFromEvent", typeName)
-		}
-	}
-}
 
 // reconciliationTargetsBySource maps each catalogue source name to the
 // set of table names ch-rebuild can re-derive for it.
