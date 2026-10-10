@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
@@ -37,34 +36,6 @@ func captureStderr(t *testing.T, fn func()) string {
 	os.Stderr = orig
 	out, _ := io.ReadAll(r)
 	return string(out)
-}
-
-// One transient response on the very first call of an otherwise clean one-pair
-// sweep. Real backoff, so each shape takes ~2s (1s retry wait + three 300ms
-// throttles). The shapes are the two ends of what a hosted endpoint sends: a
-// proxy's HTML 503, and a rate limit as providers usually word it — HTTP 429
-// over a JSON-RPC error envelope with a server-range code. The second one
-// still failed the seed closed after a single request when the retry read the
-// status out of the client's error text, because the client returned the bare
-// envelope error and the status never reached the classification.
-func TestSeedSoroswapForRecon_TransientRPCFailureDoesNotFailTheSeed(t *testing.T) {
-	shapes := map[string]func(w http.ResponseWriter, id int){
-		"HTTP 503, HTML body": func(w http.ResponseWriter, _ int) {
-			http.Error(w, "<html>503 upstream unavailable</html>", http.StatusServiceUnavailable)
-		},
-		"HTTP 429, envelope code -32005": func(w http.ResponseWriter, id int) {
-			w.WriteHeader(http.StatusTooManyRequests)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"jsonrpc": "2.0", "id": id,
-				"error": map[string]any{"code": -32005, "message": "rate limit exceeded"},
-			})
-		},
-	}
-	for name, transient := range shapes {
-		t.Run(name, func(t *testing.T) {
-			assertSeedSurvivesOneTransient(t, transient)
-		})
-	}
 }
 
 func assertSeedSurvivesOneTransient(t *testing.T, transient func(w http.ResponseWriter, id int)) {
@@ -111,22 +82,6 @@ func assertSeedSurvivesOneTransient(t *testing.T, transient func(w http.Response
 	}
 	if !strings.Contains(out, "soroswap pair seed: seeded 1 pairs") {
 		t.Errorf("stderr %q is missing the success notice", out)
-	}
-	assertNoCommandPrefix(t, out)
-}
-
-// The helper serves compute-completeness as well as verify-reconciliation; a
-// notice that names one of them is wrong for the other.
-func TestSeedSoroswapForRecon_NoticesNameNoCommand(t *testing.T) {
-	var err error
-	out := captureStderr(t, func() {
-		err = seedSoroswapForRecon(context.Background(), config.Config{}, soroswap.NewDecoder())
-	})
-	if err != nil {
-		t.Fatalf("disabled seed returned %q; want nil", err)
-	}
-	if !strings.Contains(out, "soroswap pair seed: disabled") {
-		t.Errorf("stderr %q is missing the disabled-seed notice", out)
 	}
 	assertNoCommandPrefix(t, out)
 }

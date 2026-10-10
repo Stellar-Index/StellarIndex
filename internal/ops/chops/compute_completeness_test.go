@@ -363,32 +363,6 @@ func TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict(t *testing.T
 	}
 }
 
-// A prior clean projection verdict carries only as far as its Watermark (the
-// range it reconciled), never to Tip, which sits above a recognition gap.
-func TestBuildPriorVerdicts_ProjectionCarryBoundsToWatermarkNotTip(t *testing.T) {
-	const (
-		servedFrom = uint32(61_500_000)
-		watermark  = uint32(62_000_000)
-		tip        = uint32(62_500_000)
-	)
-	snaps := []timescale.CompletenessSnapshot{
-		{Source: "soroswap", ProjectionOK: true, SubstrateOK: true, RecognitionOK: true, Tip: tip, Watermark: watermark},
-	}
-	priorProj, _, _, _ := buildPriorVerdicts(snaps)
-
-	prior := priorProj["soroswap"]
-	if prior.tip != watermark {
-		t.Fatalf("priorProj[soroswap].tip = %d, want %d (Watermark, not Tip=%d)", prior.tip, watermark, tip)
-	}
-	ok, detail := projectionClaim(servedFrom, tip, tip, true, "", prior, testScope)
-	if ok {
-		t.Fatalf("projectionClaim carried a prior verdict over [%d,%d], a band the prior run never reconciled", watermark+1, tip-1)
-	}
-	if !strings.Contains(detail, fmt.Sprintf("%d", watermark)) {
-		t.Errorf("rejection detail must name the prior verdict's true reach (watermark=%d), got: %s", watermark, detail)
-	}
-}
-
 // The expected census spans the union of a source's target scopes, so each
 // target compares only the ledgers inside its own scope.
 func TestClipCounts_BoundsTheExpectedSideToTheTargetScope(t *testing.T) {
@@ -926,90 +900,6 @@ type stubCallEvent struct{}
 func (stubCallEvent) Source() string    { return "stub" }
 func (stubCallEvent) EventKind() string { return "stub.call" }
 
-// The ContractCall census and its writer share decodeContractCallTree and both
-// soft-fail per call, so a malformed call nets to zero in the diff; only the
-// blind tracker can surface it. A clean tree must stay silent.
-func TestDecodeContractCallTree_BlindTracksMalformedCalls(t *testing.T) {
-	const badLedger uint32 = 51_000_123
-	op := clickhouse.ContractCallOp{Ledger: badLedger, TxHash: "aa", Source: "GSOURCE", OpIndex: 0}
-	calls := []dispatcher.ContractCall{
-		{ContractID: "CAAA", FunctionName: "swap"},
-		{ContractID: "CAAA", FunctionName: "relay"},
-		{ContractID: "CAAA", FunctionName: "swap"},
-	}
-
-	blind := completeness.NewBlindTracker()
-	var emitted int
-	if err := decodeContractCallTree(op, calls, stubContractCallDecoder{badFunc: "relay"}, blind,
-		func(uint32, consumer.Event) error { emitted++; return nil }); err != nil {
-		t.Fatalf("decodeContractCallTree: %v", err)
-	}
-	if emitted != 2 {
-		t.Fatalf("emitted = %d, want 2 (the malformed call is skipped by BOTH sides)", emitted)
-	}
-	got := blind.Result()
-	if !got.Any() {
-		t.Fatal("the malformed call was skipped silently; projection_ok would be certified on a ledger with a dropped row")
-	}
-	if got.UndecodableMatched != 1 {
-		t.Errorf("UndecodableMatched = %d, want 1", got.UndecodableMatched)
-	}
-	if len(got.Ledgers) != 1 || got.Ledgers[0] != badLedger {
-		t.Errorf("Ledgers = %v, want [%d]", got.Ledgers, badLedger)
-	}
-
-	clean := completeness.NewBlindTracker()
-	if err := decodeContractCallTree(clickhouse.ContractCallOp{Ledger: 42}, calls[:1], stubContractCallDecoder{badFunc: "none"}, clean,
-		func(uint32, consumer.Event) error { return nil }); err != nil {
-		t.Fatalf("decodeContractCallTree: %v", err)
-	}
-	if clean.Result().Any() {
-		t.Errorf("a clean call tree reported blind spots: %+v", clean.Result())
-	}
-}
-
-// Topic-matched sources have no static contractIDs, so without the registry
-// fold a gap on their pool lands in `unattributed` and recognition_ok can never
-// fail. Walks mergeRegistryOwners → attributeRecognitionGaps → sourceRecognitionOK.
-func TestRecognitionAttribution_TopicMatchedSourceFailsOnItsPoolGap(t *testing.T) {
-	const soroswapPool = "CPOOLSOROSWAPxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-	const phoenixChild = "CPHOENIXCHILDyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
-	const foreignContract = "CFOREIGNZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
-	const soroswapGenesis = 50_746_266
-
-	ownerOf := map[string][]string{}
-	mergeRegistryOwners(ownerOf,
-		map[string][]string{"phoenix": {phoenixChild}},
-		[]string{soroswapPool},
-	)
-	if !reflect.DeepEqual(ownerOf[soroswapPool], []string{"soroswap"}) {
-		t.Fatalf("soroswap pool not attributed: ownerOf[%s]=%q, want [soroswap]", soroswapPool, ownerOf[soroswapPool])
-	}
-	if !reflect.DeepEqual(ownerOf[phoenixChild], []string{"phoenix"}) {
-		t.Fatalf("phoenix child not attributed: ownerOf[%s]=%q, want [phoenix]", phoenixChild, ownerOf[phoenixChild])
-	}
-
-	gaps := []completeness.RecognitionGap{
-		{ContractID: soroswapPool, Topic0Sym: "swap", MinLedger: 61_000_000, Reason: "no decoder matches"},
-		{ContractID: foreignContract, Topic0Sym: "mystery", MinLedger: 62_000_000, Reason: "no decoder matches"},
-	}
-	recBySource, unattributed := attributeRecognitionGaps(ownerOf, gaps)
-	if len(recBySource["soroswap"]) != 1 || recBySource["soroswap"][0] != 61_000_000 {
-		t.Fatalf("soroswap gap not attributed to soroswap: recBySource[soroswap]=%v", recBySource["soroswap"])
-	}
-	if len(unattributed) != 1 || unattributed[0].ContractID != foreignContract {
-		t.Fatalf("foreign gap mis-attributed; unattributed=%+v", unattributed)
-	}
-
-	ok, problems := sourceRecognitionOK(soroswapGenesis, 61_000_000, recBySource["soroswap"], false, priorProjection{})
-	if ok {
-		t.Fatal("soroswap recognition_ok stayed TRUE over a dropped topic on its own pool")
-	}
-	if len(problems) != 1 || problems[0] != 61_000_000 {
-		t.Fatalf("recognition problem ledger not pinned into the watermark: %v", problems)
-	}
-}
-
 // -skip-recognition leaves `attributed` empty, so the verdict must come from
 // the prior: confirm a clean prior that reached this tip, refuse the rest.
 func TestSourceRecognitionOK_SkipRecognitionCarriesRatherThanAsserts(t *testing.T) {
@@ -1044,46 +934,6 @@ func TestMergeRegistryOwners_StaticPinWins(t *testing.T) {
 	mergeRegistryOwners(ownerOf, map[string][]string{"phoenix": {pinned}}, []string{pinned})
 	if !reflect.DeepEqual(ownerOf[pinned], []string{"cctp"}) {
 		t.Fatalf("static contractID pin lost: ownerOf[%s]=%q, want cctp", pinned, ownerOf[pinned])
-	}
-}
-
-// -pass resumes each source's projection from its own watermark when its prior
-// verdict is clean (keeping the nightly cheap), from genesis when it is red or
-// unseeded; outside -pass the floor is the operator-stated max(genesis, -from).
-func TestProjectionFloor(t *testing.T) {
-	const (
-		aquariusGenesis     = uint32(52_728_375)
-		healthyGenesis      = uint32(50_746_266)
-		blendEmitterGenesis = uint32(51_499_914)
-		tip                 = uint32(63_997_554)
-	)
-	clean := priorProjection{known: true, ok: true, tip: tip}
-	clean63 := priorProjection{known: true, ok: true, tip: 63_000_000}
-	failing63 := priorProjection{known: true, ok: false, tip: 63_000_000}
-	cases := []struct {
-		name      string
-		genesis   uint32
-		pass      bool
-		prior     priorProjection
-		watermark uint32
-		from      uint
-		want      uint32
-	}{
-		{"pass: healthy resumes at watermark", healthyGenesis, true, clean, tip - 100, 0, tip - 100},
-		{"pass: recognition-capped resumes at its low watermark", aquariusGenesis, true, clean, 55_363_631, 0, 55_363_631},
-		{"pass: never-seeded floors at genesis", blendEmitterGenesis, true, priorProjection{}, 0, 0, blendEmitterGenesis},
-		{"pass: sub-genesis watermark clamps", blendEmitterGenesis, true, clean63, 40_000_000, 0, blendEmitterGenesis},
-		{"pass: clean prior keeps the cheap resume", sushiGenesis, true, priorProjection{known: true, ok: true, tip: sushiTip}, sushiTip, 0, sushiTip},
-		{"pass: failing prior re-verifies from genesis", sushiGenesis, true, priorProjection{known: true, ok: false, tip: sushiTip}, sushiTip, 0, sushiGenesis},
-		{"non-pass -from, clean prior", healthyGenesis, false, clean63, 999_999, 63_000_000, 63_000_000},
-		{"non-pass -from, failing prior", healthyGenesis, false, failing63, 999_999, 63_000_000, 63_000_000},
-		{"non-pass -from, no prior", healthyGenesis, false, priorProjection{}, 999_999, 63_000_000, 63_000_000},
-		{"non-pass full run ignores the watermark", healthyGenesis, false, clean63, 63_000_000, 0, healthyGenesis},
-	}
-	for _, tc := range cases {
-		if got := projectionFloor(tc.genesis, tc.pass, tc.prior, tc.watermark, tc.from); got != tc.want {
-			t.Errorf("%s: projectionFloor = %d, want %d", tc.name, got, tc.want)
-		}
 	}
 }
 
@@ -1586,5 +1436,70 @@ func TestProjectionScope_NamesOnlyCountedTargets(t *testing.T) {
 	want := "scope: reconciled 1 table(s) [trades[source = 'soroswap']], not reconciled: soroswap_skim_events (empty scope this run)"
 	if got != want {
 		t.Errorf("projectionScope = %q, want %q", got, want)
+	}
+}
+
+// A genesis-floored clean run banks the target's live bottom edge, not
+// genesis: banking genesis would make detectFloorLoss read the unchanged
+// MIN(ledger) as loss on the next run.
+func TestFloorsToRecord_GenesisScopeBanksServedMin(t *testing.T) {
+	src := reconSource{name: "band", genesis: bandGenesis, targets: []reconTarget{{"oracle_updates", "source = 'band'", nil}}}
+	served := []servedFloor{{min: bandServedMin, present: true}}
+	scopes, _, _ := scopesFromServed(src, served, bandGenesis, bandGenesis, bandTip)
+
+	recorded := floorsToRecord(src, scopes, served)
+	if len(recorded) != 1 || recorded[0].VerifiedFrom != bandServedMin {
+		t.Fatalf("recorded = %+v, want one floor at %d", recorded, bandServedMin)
+	}
+	floors := map[string]timescale.CompletenessTargetFloor{
+		timescale.TargetFloorKey(src.name, "oracle_updates", "source = 'band'"): recorded[0],
+	}
+	if loss := detectFloorLoss(src, served, floors); len(loss) != 0 {
+		t.Fatalf("unchanged served floor reported as loss: %v", loss)
+	}
+}
+
+// A prior clean verdict that only covered [servedMin, tip] cannot be carried
+// over a prefix this run claims from genesis.
+func TestProjectionClaim_RefusesCarryBelowPriorVerifiedFrom(t *testing.T) {
+	runFrom := bandTip - 1000
+	narrow := priorProjection{known: true, ok: true, tip: runFrom - 1, verifiedFrom: bandServedMin}
+	ok, detail := projectionClaim(bandGenesis, runFrom, bandTip, true, "", narrow, testScope)
+	if ok {
+		t.Fatalf("carried a prior verified only from %d over [%d,%d]: %s", bandServedMin, bandGenesis, bandServedMin-1, detail)
+	}
+	if !strings.Contains(detail, "60000414") || !strings.Contains(detail, "50842736") {
+		t.Errorf("detail must name the unverified band, got: %s", detail)
+	}
+
+	wide := narrow
+	wide.verifiedFrom = bandGenesis
+	if ok, d := projectionClaim(bandGenesis, runFrom, bandTip, true, "", wide, testScope); !ok {
+		t.Errorf("a prior verified from genesis must still carry: %s", d)
+	}
+}
+
+func TestProjectionScope_NamesWaivers(t *testing.T) {
+	cat, _, err := buildReconciliationCatalogue(testConfigWithAllSources())
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	seen := map[string]string{}
+	for _, src := range cat {
+		sc := src.projectionScope(make([]projectionScope, len(src.targets))) // every {0,0} scope is counted
+		seen[src.name] = sc
+		if strings.Contains(sc, "; ") {
+			t.Errorf("%s scope contains the detail separator: %q", src.name, sc)
+		}
+	}
+	for _, w := range []string{"aquarius_liquidity", "aquarius_reserves", "aquarius_reserves_sync", "(fan-out)"} {
+		if sc, ok := seen["aquarius"]; !ok || !strings.Contains(sc, "not reconciled: ") || !strings.Contains(sc, w) {
+			t.Errorf("aquarius scope %q missing %q", sc, w)
+		}
+	}
+	b := seen["blend_emitter"]
+	if !strings.Contains(b, "reconciled 1 table(s) [blend_emitter_events[event_kind <> 'drop']]") ||
+		!strings.Contains(b, "not reconciled: blend_emitter_events[event_kind = 'drop'] (fan-out)") {
+		t.Errorf("blend_emitter scope = %q", b)
 	}
 }

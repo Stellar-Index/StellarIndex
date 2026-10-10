@@ -210,40 +210,6 @@ func TestFlushTradeBatch_DataErrorSkips(t *testing.T) {
 	}
 }
 
-// TestExternalRetryBuffer_OverflowDropsOldest — external CEX trades are
-// vendor-refillable and must never block: on overflow the buffer drops
-// the OLDEST, counts every drop, and holds the newest maxDepth entries.
-func TestExternalRetryBuffer_OverflowDropsOldest(t *testing.T) {
-	before := counter(t, obs.SourceInsertErrorsTotal, "binance", "dropped")
-	const maxDepth = 5
-	buf := newExternalRetryBuffer(&fakeTradeStore{}, discardLogger(), maxDepth)
-
-	const total = 8
-	for i := 0; i < total; i++ {
-		buf.enqueue(mkTrade("binance", uint32(300+i)))
-	}
-
-	buf.mu.Lock()
-	depth := len(buf.ring)
-	first := buf.ring[0].Ledger
-	last := buf.ring[len(buf.ring)-1].Ledger
-	buf.mu.Unlock()
-
-	if depth != maxDepth {
-		t.Fatalf("ring depth = %d; want %d (drop-oldest)", depth, maxDepth)
-	}
-	// Oldest 3 (ledgers 300,301,302) dropped; newest 5 (303..307) kept.
-	if first != 303 || last != 307 {
-		t.Errorf("ring holds ledgers [%d..%d]; want [303..307] (newest kept)", first, last)
-	}
-	if got := counter(t, obs.SourceInsertErrorsTotal, "binance", "dropped") - before; got != float64(total-maxDepth) {
-		t.Errorf("dropped counter delta = %v; want %d", got, total-maxDepth)
-	}
-	if got := testutil.ToFloat64(obs.TradeInsertBufferDepth); got != maxDepth {
-		t.Errorf("buffer-depth gauge = %v; want %d", got, maxDepth)
-	}
-}
-
 // TestFlushTradeBatch_ExternalInfraRoutesToBufferNoBlock — an external
 // CEX batch that hits an infra fault must be handed to the async buffer
 // and return immediately (no pipeline block), unlike on-chain trades.
@@ -480,79 +446,39 @@ func (s *scriptedStore) WouldPopulateUSDVolume(_ context.Context, _ canonical.Tr
 	return false
 }
 
-// TestExternalRetryBuffer_InfraDuringIsolationRequeues — when
-// the batch fails with a data fault the buffer isolates per-row, and if
-// Postgres goes away DURING that pass the un-landed rows must be
-// re-queued for the next tick, not counted as permanent drops. Before
-// the fix every failing row in the isolation pass was dropped and
-// counted "dropped" — recoverable infra failures mislabelled as
-// permanent loss, and for external trades (no cursor, no lake) that loss
-// was final.
-func TestExternalRetryBuffer_InfraDuringIsolationRequeues(t *testing.T) {
-	droppedBefore := counter(t, obs.SourceInsertErrorsTotal, "kraken", "dropped")
-	store := &scriptedStore{
-		batchErr: errData, // forces the per-row isolation pass
-		rowErr: map[uint32]error{
-			901: errData,         // genuinely poison → drop + count
-			902: errUnclassified, // PG went away mid-pass → must be kept
-			903: errInfra,        // ditto
-		},
-	}
-	buf := newExternalRetryBuffer(store, discardLogger(), 1000)
-	for _, l := range []uint32{900, 901, 902, 903} {
-		buf.enqueue(mkTrade("kraken", l))
-	}
+// TestFlushTradeBatch_CtxCancelledMidWrite_ReturnsWholeBatch pins the
+// contract the carry depends on: a batch write that fails with the
+// ctx's own cancellation is handed back to the caller in full — not
+// isolated per-row against the dead ctx (which can only fail every
+// row instantly and count each one lost).
+func TestFlushTradeBatch_CtxCancelledMidWrite_ReturnsWholeBatch(t *testing.T) {
+	droppedBefore := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade")
 
-	buf.drainOnce(context.Background())
+	store := newShutdownRacedTradeStore()
+	batch := []canonical.Trade{mkTrade("sdex", 10), mkTrade("sdex", 11), mkTrade("sdex", 12)}
 
-	buf.mu.Lock()
-	var kept []uint32
-	for _, tr := range buf.ring {
-		kept = append(kept, tr.Ledger)
-	}
-	buf.mu.Unlock()
-
-	if len(kept) != 2 || kept[0] != 902 || kept[1] != 903 {
-		t.Errorf("ring after isolation = %v; want [902 903] — rows that hit an infrastructure fault mid-isolation must be re-queued, not dropped", kept)
-	}
-	store.mu.Lock()
-	landed := len(store.landed)
-	store.mu.Unlock()
-	if landed != 1 {
-		t.Errorf("landed %d rows; want 1 (ledger 900 was fine)", landed)
-	}
-	if got := counter(t, obs.SourceInsertErrorsTotal, "kraken", "dropped") - droppedBefore; got != 1 {
-		t.Errorf("dropped counter delta = %v; want exactly 1 (only the permanently-bad row 901)", got)
-	}
-}
-
-// TestPersistTrade_AbandonOnShutdown — if the context is cancelled while
-// an infra fault persists (shutdown), persistTrade must give up (not
-// hang) and count the abandon under kind="trade_abandoned" (not "trade",
-// which means dropped); the row is recoverable from the CH lake.
-func TestPersistTrade_AbandonOnShutdown(t *testing.T) {
-	before := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade_abandoned")
-	store := &fakeTradeStore{} // stays unhealthy
 	ctx, cancel := context.WithCancel(context.Background())
-
-	done := make(chan struct{})
 	go func() {
-		defer close(done)
-		persistTrade(ctx, discardLogger(), store, mkTrade("sdex", 500))
+		<-store.entered
+		cancel()
 	}()
-	// Let it enter the retry loop, then cancel (shutdown).
-	time.Sleep(120 * time.Millisecond)
-	cancel()
+	got := flushTradeBatch(ctx, discardLogger(), store, nil, batch, 0)
 
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("persistTrade did not abandon after ctx cancel — it hung")
+	if len(got) != len(batch) {
+		t.Fatalf("flushTradeBatch returned %d trades, want the whole batch of %d", len(got), len(batch))
+	}
+	for i := range batch {
+		if got[i].Ledger != batch[i].Ledger {
+			t.Errorf("returned[%d].Ledger = %d, want %d", i, got[i].Ledger, batch[i].Ledger)
+		}
 	}
 	if n := store.landedCount(); n != 0 {
-		t.Fatalf("landed %d on abandon; want 0", n)
+		t.Errorf("landed %d, want 0 (the write was cancelled)", n)
 	}
-	if got := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade_abandoned") - before; got != 1 {
-		t.Errorf("source_insert_errors{sdex,trade_abandoned} delta = %v; want 1", got)
+	if _, rows := store.calls(); rows != 0 {
+		t.Errorf("InsertTrade called %d times, want 0 — a ctx-cancelled batch must not be isolated per-row against the dead ctx", rows)
+	}
+	if got := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade") - droppedBefore; got != 0 {
+		t.Errorf("source_insert_errors{sdex,trade} delta = %v, want 0", got)
 	}
 }

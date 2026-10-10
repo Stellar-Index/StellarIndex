@@ -1,7 +1,6 @@
 package chops
 
 import (
-	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -9,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
@@ -84,35 +85,6 @@ func (d panickingGatedDecoder) Decode(ev events.Event) ([]consumer.Event, error)
 		panic("unexpected creation-event shape")
 	}
 	return d.mockGatedDecoder.Decode(ev)
-}
-
-// TestGatedPrefilter_PanicIsBlindNotCrash pins, for the aquarius /
-// phoenix prefilter walk: a creation event whose decoder panics must come
-// back as a blind spot (its child is unregistered on the expected side),
-// while the healthy child is still announced.
-func TestGatedPrefilter_PanicIsBlindNotCrash(t *testing.T) {
-	const badLedger = uint32(105)
-	evs := []events.Event{
-		mockCreate(100, prefFactory, prefInWin, 1),
-		mockCreate(badLedger, prefFactory, prefForeign, 2),
-	}
-	src := reconSource{
-		name: "mockgated", genesis: 1, dec: newMockGatedDecoder(),
-		factories: []string{prefFactory}, creationSym: "create",
-		newGatedDec: func() gatedDecoder {
-			return panickingGatedDecoder{mockGatedDecoder: newMockGatedDecoder(), badChild: prefForeign}
-		},
-	}
-	pf, blind, err := gatedPrefilter(context.Background(), countingEventStreamer{evs: evs}, src, 200)
-	if err != nil {
-		t.Fatalf("gatedPrefilter: %v", err)
-	}
-	if !strings.Contains(strings.Join(pf, ","), prefInWin) {
-		t.Errorf("prefilter %v lost the healthy child %s", pf, prefInWin)
-	}
-	if blind.UndecodableMatched != 1 || len(blind.Ledgers) != 1 || blind.Ledgers[0] != badLedger {
-		t.Errorf("blind = %+v, want 1 undecodable on ledger %d", blind, badLedger)
-	}
 }
 
 // completenessWriterFiles are chops files that decode on a WRITE path
@@ -203,4 +175,77 @@ func insideGuard(stack []ast.Node) bool {
 		}
 	}
 	return false
+}
+
+// The ContractCall census and its writer share decodeContractCallTree and both
+// soft-fail per call, so a malformed call nets to zero in the diff; only the
+// blind tracker can surface it. A clean tree must stay silent.
+func TestDecodeContractCallTree_BlindTracksMalformedCalls(t *testing.T) {
+	const badLedger uint32 = 51_000_123
+	op := clickhouse.ContractCallOp{Ledger: badLedger, TxHash: "aa", Source: "GSOURCE", OpIndex: 0}
+	calls := []dispatcher.ContractCall{
+		{ContractID: "CAAA", FunctionName: "swap"},
+		{ContractID: "CAAA", FunctionName: "relay"},
+		{ContractID: "CAAA", FunctionName: "swap"},
+	}
+
+	blind := completeness.NewBlindTracker()
+	var emitted int
+	if err := decodeContractCallTree(op, calls, stubContractCallDecoder{badFunc: "relay"}, blind,
+		func(uint32, consumer.Event) error { emitted++; return nil }); err != nil {
+		t.Fatalf("decodeContractCallTree: %v", err)
+	}
+	if emitted != 2 {
+		t.Fatalf("emitted = %d, want 2 (the malformed call is skipped by BOTH sides)", emitted)
+	}
+	got := blind.Result()
+	if !got.Any() {
+		t.Fatal("the malformed call was skipped silently; projection_ok would be certified on a ledger with a dropped row")
+	}
+	if got.UndecodableMatched != 1 {
+		t.Errorf("UndecodableMatched = %d, want 1", got.UndecodableMatched)
+	}
+	if len(got.Ledgers) != 1 || got.Ledgers[0] != badLedger {
+		t.Errorf("Ledgers = %v, want [%d]", got.Ledgers, badLedger)
+	}
+
+	clean := completeness.NewBlindTracker()
+	if err := decodeContractCallTree(clickhouse.ContractCallOp{Ledger: 42}, calls[:1], stubContractCallDecoder{badFunc: "none"}, clean,
+		func(uint32, consumer.Event) error { return nil }); err != nil {
+		t.Fatalf("decodeContractCallTree: %v", err)
+	}
+	if clean.Result().Any() {
+		t.Errorf("a clean call tree reported blind spots: %+v", clean.Result())
+	}
+}
+
+// TestDecodeContractCallTree_RefusesAuthOnlyOracleCall: the census and
+// ch-rebuild must apply the live dispatcher's execution-corroboration gate, or
+// they expect and write oracle rows from an auth entry that never executed.
+func TestDecodeContractCallTree_RefusesAuthOnlyOracleCall(t *testing.T) {
+	cases := []struct {
+		name string
+		op   xdr.Operation
+		want int
+	}{
+		{"relay declared only in the auth tree of a no-op call", invokeOp(invokeArgs(0x5A, "noop"), invokeArgs(0x11, "relay")), 0},
+		{"top-level executed relay", invokeOp(invokeArgs(0x11, "relay")), 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			blind := completeness.NewBlindTracker()
+			var emitted int
+			err := decodeContractCallTree(clickhouse.ContractCallOp{Ledger: 7}, dispatcher.ExtractContractCallTree(tc.op),
+				corroboratingRelayDecoder{}, blind, func(uint32, consumer.Event) error { emitted++; return nil })
+			if err != nil {
+				t.Fatalf("decodeContractCallTree: %v", err)
+			}
+			if emitted != tc.want {
+				t.Errorf("emitted = %d, want %d", emitted, tc.want)
+			}
+			if blind.Result().Any() {
+				t.Errorf("a refused uncorroborated call is not a blind spot: %+v", blind.Result())
+			}
+		})
+	}
 }

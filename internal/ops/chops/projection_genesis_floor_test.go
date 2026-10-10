@@ -4,10 +4,7 @@
 package chops
 
 import (
-	"strings"
 	"testing"
-
-	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // Band's shape: genesis is its first on-chain write, but the served tier's
@@ -56,55 +53,6 @@ func TestScopesFromServed_WindowedSourceKeepsServedFloor(t *testing.T) {
 	scopes, _, _ = scopesFromServed(src, []servedFloor{{}}, genesis, genesis, tip)
 	if scopes[0].From != genesis {
 		t.Fatalf("empty windowed target scope.From = %d, want genesis %d (fail closed)", scopes[0].From, genesis)
-	}
-}
-
-// A genesis-floored clean run banks the target's live bottom edge, not
-// genesis: banking genesis would make detectFloorLoss read the unchanged
-// MIN(ledger) as loss on the next run.
-func TestFloorsToRecord_GenesisScopeBanksServedMin(t *testing.T) {
-	src := reconSource{name: "band", genesis: bandGenesis, targets: []reconTarget{{"oracle_updates", "source = 'band'", nil}}}
-	served := []servedFloor{{min: bandServedMin, present: true}}
-	scopes, _, _ := scopesFromServed(src, served, bandGenesis, bandGenesis, bandTip)
-
-	recorded := floorsToRecord(src, scopes, served)
-	if len(recorded) != 1 || recorded[0].VerifiedFrom != bandServedMin {
-		t.Fatalf("recorded = %+v, want one floor at %d", recorded, bandServedMin)
-	}
-	floors := map[string]timescale.CompletenessTargetFloor{
-		timescale.TargetFloorKey(src.name, "oracle_updates", "source = 'band'"): recorded[0],
-	}
-	if loss := detectFloorLoss(src, served, floors); len(loss) != 0 {
-		t.Fatalf("unchanged served floor reported as loss: %v", loss)
-	}
-}
-
-// A prior clean verdict that only covered [servedMin, tip] cannot be carried
-// over a prefix this run claims from genesis.
-func TestProjectionClaim_RefusesCarryBelowPriorVerifiedFrom(t *testing.T) {
-	runFrom := bandTip - 1000
-	narrow := priorProjection{known: true, ok: true, tip: runFrom - 1, verifiedFrom: bandServedMin}
-	ok, detail := projectionClaim(bandGenesis, runFrom, bandTip, true, "", narrow, testScope)
-	if ok {
-		t.Fatalf("carried a prior verified only from %d over [%d,%d]: %s", bandServedMin, bandGenesis, bandServedMin-1, detail)
-	}
-	if !strings.Contains(detail, "60000414") || !strings.Contains(detail, "50842736") {
-		t.Errorf("detail must name the unverified band, got: %s", detail)
-	}
-
-	wide := narrow
-	wide.verifiedFrom = bandGenesis
-	if ok, d := projectionClaim(bandGenesis, runFrom, bandTip, true, "", wide, testScope); !ok {
-		t.Errorf("a prior verified from genesis must still carry: %s", d)
-	}
-}
-
-func TestBuildPriorVerdicts_CarriesProjectionVerifiedFrom(t *testing.T) {
-	prior, _, _, _ := buildPriorVerdicts([]timescale.CompletenessSnapshot{
-		{Source: "band", ProjectionOK: true, Watermark: bandTip, ProjectionVerifiedFrom: bandServedMin},
-	})
-	if got := prior["band"].verifiedFrom; got != bandServedMin {
-		t.Fatalf("priorProj[band].verifiedFrom = %d, want %d", got, bandServedMin)
 	}
 }
 

@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -122,26 +121,6 @@ func TestPersistTrade_AbandonIsNotCountedAsADrop(t *testing.T) {
 	}
 }
 
-// TestHandleEvent_PermanentlyInvalidTradeReturnsDrop drives the PRODUCTION
-// entry point the projector's sink is bound to (cmd/stellarindex-indexer:
-// sinkFn → pipeline.HandleEvent). A zero-value trade fails
-// canonical.Trade.Validate inside Store.InsertTrade before any SQL runs, so
-// a nil store is never dereferenced.
-func TestHandleEvent_PermanentlyInvalidTradeReturnsDrop(t *testing.T) {
-	ev := soroswap.TradeEvent{Trade: canonical.Trade{Source: "soroswap", Ledger: 703}}
-	err := HandleEvent(context.Background(), discardLogger(), nil, ev)
-	if err == nil {
-		t.Fatal("HandleEvent returned nil for a trade the store permanently rejected — the projector counts it emitted/ok")
-	}
-	var dropped *TradeDroppedError
-	if !errors.As(err, &dropped) {
-		t.Fatalf("err = %T (%v); want *TradeDroppedError", err, err)
-	}
-	if !errors.Is(err, canonical.ErrInvalidTrade) {
-		t.Errorf("err = %v; want it to wrap canonical.ErrInvalidTrade (the projector's value-shape skip arm)", err)
-	}
-}
-
 // TestPersistTradeRouted_ExternalPermanentFaultIsReported — the external
 // (CEX/FX) arm never goes through persistTrade, so it carried its own copy
 // of the nil-on-drop contract.
@@ -178,4 +157,35 @@ func firstExternalSource(t *testing.T) string {
 	}
 	t.Fatal("no external source name found")
 	return ""
+}
+
+// TestPersistTrade_AbandonOnShutdown — if the context is cancelled while
+// an infra fault persists (shutdown), persistTrade must give up (not
+// hang) and count the abandon under kind="trade_abandoned" (not "trade",
+// which means dropped); the row is recoverable from the CH lake.
+func TestPersistTrade_AbandonOnShutdown(t *testing.T) {
+	before := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade_abandoned")
+	store := &fakeTradeStore{} // stays unhealthy
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		persistTrade(ctx, discardLogger(), store, mkTrade("sdex", 500))
+	}()
+	// Let it enter the retry loop, then cancel (shutdown).
+	time.Sleep(120 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("persistTrade did not abandon after ctx cancel — it hung")
+	}
+	if n := store.landedCount(); n != 0 {
+		t.Fatalf("landed %d on abandon; want 0", n)
+	}
+	if got := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade_abandoned") - before; got != 1 {
+		t.Errorf("source_insert_errors{sdex,trade_abandoned} delta = %v; want 1", got)
+	}
 }

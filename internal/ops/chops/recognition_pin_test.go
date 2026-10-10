@@ -202,3 +202,45 @@ func TestCatalogue_RecognitionPinsMatchDecoderIdentity(t *testing.T) {
 		t.Error("rozo contractIDs aliases rozo.MainnetPaymentContracts — a catalogue-side append/sort would mutate the decoder's trust root")
 	}
 }
+
+// Topic-matched sources have no static contractIDs, so without the registry
+// fold a gap on their pool lands in `unattributed` and recognition_ok can never
+// fail. Walks mergeRegistryOwners → attributeRecognitionGaps → sourceRecognitionOK.
+func TestRecognitionAttribution_TopicMatchedSourceFailsOnItsPoolGap(t *testing.T) {
+	const soroswapPool = "CPOOLSOROSWAPxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+	const phoenixChild = "CPHOENIXCHILDyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+	const foreignContract = "CFOREIGNZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+	const soroswapGenesis = 50_746_266
+
+	ownerOf := map[string][]string{}
+	mergeRegistryOwners(ownerOf,
+		map[string][]string{"phoenix": {phoenixChild}},
+		[]string{soroswapPool},
+	)
+	if !reflect.DeepEqual(ownerOf[soroswapPool], []string{"soroswap"}) {
+		t.Fatalf("soroswap pool not attributed: ownerOf[%s]=%q, want [soroswap]", soroswapPool, ownerOf[soroswapPool])
+	}
+	if !reflect.DeepEqual(ownerOf[phoenixChild], []string{"phoenix"}) {
+		t.Fatalf("phoenix child not attributed: ownerOf[%s]=%q, want [phoenix]", phoenixChild, ownerOf[phoenixChild])
+	}
+
+	gaps := []completeness.RecognitionGap{
+		{ContractID: soroswapPool, Topic0Sym: "swap", MinLedger: 61_000_000, Reason: "no decoder matches"},
+		{ContractID: foreignContract, Topic0Sym: "mystery", MinLedger: 62_000_000, Reason: "no decoder matches"},
+	}
+	recBySource, unattributed := attributeRecognitionGaps(ownerOf, gaps)
+	if len(recBySource["soroswap"]) != 1 || recBySource["soroswap"][0] != 61_000_000 {
+		t.Fatalf("soroswap gap not attributed to soroswap: recBySource[soroswap]=%v", recBySource["soroswap"])
+	}
+	if len(unattributed) != 1 || unattributed[0].ContractID != foreignContract {
+		t.Fatalf("foreign gap mis-attributed; unattributed=%+v", unattributed)
+	}
+
+	ok, problems := sourceRecognitionOK(soroswapGenesis, 61_000_000, recBySource["soroswap"], false, priorProjection{})
+	if ok {
+		t.Fatal("soroswap recognition_ok stayed TRUE over a dropped topic on its own pool")
+	}
+	if len(problems) != 1 || problems[0] != 61_000_000 {
+		t.Fatalf("recognition problem ledger not pinned into the watermark: %v", problems)
+	}
+}

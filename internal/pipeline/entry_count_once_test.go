@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 )
 
@@ -44,5 +46,25 @@ func TestHandleEvent_EntryCountFollowsTheLandedInsert(t *testing.T) {
 				t.Fatalf("err = %v, want the store's own pre-SQL rejection", err)
 			}
 		})
+	}
+}
+
+// TestHandleEvent_PermanentlyInvalidTradeReturnsDrop drives the PRODUCTION
+// entry point the projector's sink is bound to (cmd/stellarindex-indexer:
+// sinkFn → pipeline.HandleEvent). A zero-value trade fails
+// canonical.Trade.Validate inside Store.InsertTrade before any SQL runs, so
+// a nil store is never dereferenced.
+func TestHandleEvent_PermanentlyInvalidTradeReturnsDrop(t *testing.T) {
+	ev := soroswap.TradeEvent{Trade: canonical.Trade{Source: "soroswap", Ledger: 703}}
+	err := HandleEvent(context.Background(), discardLogger(), nil, ev)
+	if err == nil {
+		t.Fatal("HandleEvent returned nil for a trade the store permanently rejected — the projector counts it emitted/ok")
+	}
+	var dropped *TradeDroppedError
+	if !errors.As(err, &dropped) {
+		t.Fatalf("err = %T (%v); want *TradeDroppedError", err, err)
+	}
+	if !errors.Is(err, canonical.ErrInvalidTrade) {
+		t.Errorf("err = %v; want it to wrap canonical.ErrInvalidTrade (the projector's value-shape skip arm)", err)
 	}
 }

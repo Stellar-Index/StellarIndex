@@ -5,6 +5,7 @@ package chops
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -532,4 +533,28 @@ func emptyAccountsTable(t *testing.T, fixture string) string {
 		t.Fatal("accounts table not found — fixture shape changed")
 	}
 	return fixture[:i] + open + fixture[i+j+1:]
+}
+
+// TestRenderServedValueProm — the textfile body has the three gauge
+// families, quotes check names, and omits rel_err for NaN.
+func TestRenderServedValueProm(t *testing.T) {
+	body := renderServedValueProm([]servedValueResult{
+		{name: "a", relErr: 0.001, ok: true},
+		{name: "b", relErr: math.NaN(), ok: true},
+	}, nil, time.Unix(1_751_000_000, 0))
+	for _, want := range []string{
+		`stellarindex_served_value_rel_err{check="a"} 0.001`,
+		`stellarindex_served_value_ok{check="a"} 1`,
+		`stellarindex_served_value_ok{check="b"} 1`,
+		`stellarindex_served_value_skipped{check="a"} 0`,
+		`stellarindex_served_value_skipped{check="b"} 0`,
+		"stellarindex_served_value_last_run_unix 1751000000",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("textfile body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `rel_err{check="b"}`) {
+		t.Error("NaN rel_err must be omitted, not rendered")
+	}
 }

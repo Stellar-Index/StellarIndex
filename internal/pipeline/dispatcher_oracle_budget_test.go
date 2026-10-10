@@ -9,8 +9,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/redstone"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
@@ -254,5 +256,28 @@ func TestBuildDispatcher_NoOverridesLeavesEveryAssetOnTheDefault(t *testing.T) {
 		if got := obs.OracleStalenessBudget(reflector.SourceCEX, asset); got != want {
 			t.Errorf("budget(%s, %s) = %v, want %v", reflector.SourceCEX, asset, got, want)
 		}
+	}
+}
+
+// TestBuildDispatcher_FoldsWhitespaceAndCaseInSourceNames pins that the
+// dispatcher's own switch must normalise ingestion.enabled_sources entries
+// the SAME way internal/config/validate.go's KnownSources check already
+// does (lowercase + trim). Lowercasing alone would let a name with
+// leading/trailing whitespace pass config.Validate (which trims) but then
+// hard-error here as "unknown source" — a boot-time crash on input the
+// config layer had already accepted as valid.
+func TestBuildDispatcher_FoldsWhitespaceAndCaseInSourceNames(t *testing.T) {
+	disp, err := BuildDispatcher([]string{"  Comet  "}, config.OracleConfig{}, nil)
+	if err != nil {
+		t.Fatalf("BuildDispatcher(%q): %v", "  Comet  ", err)
+	}
+	ev := events.Event{
+		ContractID: comet.MainnetBackstopPool,
+		Topic:      []string{comet.TopicSymbolPool, comet.TopicSymbolSwap},
+	}
+	name, ok := disp.Recognize(ev)
+	if !ok || name != comet.SourceName {
+		t.Fatalf("Recognize() = (%q, %v), want (%q, true) — %q must register the comet decoder",
+			name, ok, comet.SourceName, "  Comet  ")
 	}
 }

@@ -15,8 +15,13 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
+	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // fakeProtocolContractStore is an in-memory protocol_contracts double.
@@ -518,4 +523,90 @@ func callsRegSeed(f *ast.File) bool {
 		return !found
 	})
 	return found
+}
+
+// A market found after the hand-kept list has bare protocol_contracts rows;
+// only its spectra_markets row restores the PT and YT roles after a restart.
+func TestGatedRegistryOptions_SpectraMarketRowsRestoreRoles(t *testing.T) {
+	const pt = "CDVBYETOFG7UYJAD6CMOAQZXBHEK3PD5ZDZKWMWIY5OXIWATPX4VGMY3"
+	const yt = "CBQHNAXSI55GX2GN6D67GK7BHVPSLJUGZQEU7WKQU3X7PTUSXHMYZJRR"
+	for _, id := range []string{pt, yt} {
+		if _, ok := spectra.MainnetContracts[id]; ok {
+			t.Fatalf("%s is hand-kept; the test needs a market outside the list", id)
+		}
+	}
+	rows := map[string][]string{spectra.SourceName: {pt, yt}}
+	ptMinted := events.Event{ContractID: pt, Topic: []string{scval.MustEncodeSymbol(spectra.EventPTMinted)}}
+	ytTransfer := events.Event{ContractID: yt, Topic: []string{scval.MustEncodeSymbol(spectra.EventTransfer)}}
+
+	bare, err := gatedRegistryOptions(context.Background(),
+		&fakeProtocolContractStore{rows: rows}, quietLogger(), context.Background(), false)
+	if err != nil {
+		t.Fatalf("gatedRegistryOptions (bare): %v", err)
+	}
+	if d := spectra.NewDecoder(bare[spectra.SourceName]...); d.Matches(ptMinted) || d.Matches(ytTransfer) {
+		t.Fatal("a role-less protocol_contracts row was admitted; it must fail closed")
+	}
+
+	store := &fakeSpectraStore{
+		fakeProtocolContractStore: fakeProtocolContractStore{rows: rows},
+		markets:                   []timescale.SpectraMarket{{PT: pt, YT: yt}},
+	}
+	got, err := gatedRegistryOptions(context.Background(), store, quietLogger(), context.Background(), false)
+	if err != nil {
+		t.Fatalf("gatedRegistryOptions: %v", err)
+	}
+	d := spectra.NewDecoder(got[spectra.SourceName]...)
+	if !d.Matches(ptMinted) {
+		t.Error("the recorded PT lost its role across the warm")
+	}
+	if !d.Matches(ytTransfer) {
+		t.Error("the recorded YT lost its role or market across the warm")
+	}
+}
+
+func TestGatedRegistryOptions_SushiswapPoolRowsSeedAttrsAndLiveCreationIsPersisted(t *testing.T) {
+	const pool = "CDVBYETOFG7UYJAD6CMOAQZXBHEK3PD5ZDZKWMWIY5OXIWATPX4VGMY3"
+	const newPool = "CBQHNAXSI55GX2GN6D67GK7BHVPSLJUGZQEU7WKQU3X7PTUSXHMYZJRR"
+	// Two valid contract ids stand in for the token pair.
+	tok0, tok1 := sushiswap_v3.MainnetFactory, "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2"
+	store := &fakeSushiStore{
+		fakeProtocolContractStore: fakeProtocolContractStore{rows: map[string][]string{}},
+		pools:                     []timescale.SushiswapV3Pool{{PoolID: pool, FactoryID: sushiswap_v3.MainnetFactory, Token0: tok0, Token1: tok1}},
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	got, err := gatedRegistryOptions(context.Background(), store, logger, context.Background(), true)
+	if err != nil {
+		t.Fatalf("gatedRegistryOptions: %v", err)
+	}
+	opts := got[sushiswap_v3.SourceName]
+
+	d := sushiswap_v3.NewDecoder(opts...)
+	found := false
+	for _, id := range d.GatedContractSet() {
+		found = found || id == pool
+	}
+	if !found {
+		t.Fatal("persisted pool row did not reach the decoder gate")
+	}
+	if n := len(store.written); n != 0 {
+		t.Fatalf("warm wrote %d pool rows, want 0", n)
+	}
+
+	reg := contractid.New(opts...)
+	if a := reg.AllAttrs()[pool]; a[sushiswap_v3.AttrToken0] != tok0 || a[sushiswap_v3.AttrToken1] != tok1 {
+		t.Fatalf("seeded attrs = %v, want tokens %s / %s", a, tok0, tok1)
+	}
+
+	reg.SeedWithAttrs(newPool, sushiswap_v3.MainnetFactory, 77, contractid.Attrs{
+		sushiswap_v3.AttrToken0: tok0, sushiswap_v3.AttrToken1: tok1,
+		sushiswap_v3.AttrFeePips: "3000", sushiswap_v3.AttrTickSpacing: "60",
+	})
+	want := timescale.SushiswapV3Pool{
+		PoolID: newPool, FactoryID: sushiswap_v3.MainnetFactory, Token0: tok0, Token1: tok1,
+		FeePips: 3000, TickSpacing: 60, CreationLedger: 77,
+	}
+	if len(store.written) != 1 || store.written[0] != want {
+		t.Fatalf("written = %+v, want exactly [%+v]", store.written, want)
+	}
 }
