@@ -2,14 +2,22 @@ package sep10_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/network"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
+	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/auth/sep10"
@@ -453,4 +461,433 @@ func TestVerifyJWT_RejectsWrongIssuer(t *testing.T) {
 	if _, err := v1.VerifyJWT(context.Background(), tok.JWT); !errors.Is(err, auth.ErrUnauthorized) {
 		t.Errorf("v1 accepted v2's token; err = %v", err)
 	}
+}
+
+func randomKP(t *testing.T) *keypair.Full {
+	t.Helper()
+	kp, err := keypair.Random()
+	if err != nil {
+		t.Fatalf("keypair.Random: %v", err)
+	}
+	return kp
+}
+
+// verifySignedBy issues a challenge for client, signs it with each of
+// signers in turn, and submits it.
+func verifySignedBy(t *testing.T, v *sep10.Validator, client *keypair.Full, signers ...*keypair.Full) (auth.Token, error) {
+	t.Helper()
+	ch, err := v.Challenge(context.Background(), client.Address())
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	xdr := ch.TransactionXDR
+	for _, s := range signers {
+		xdr = signChallenge(t, xdr, s)
+	}
+	return v.Verify(context.Background(), xdr)
+}
+
+func wantUnauthorized(t *testing.T, tok auth.Token, err error) {
+	t.Helper()
+	if !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("err = %v, want ErrUnauthorized", err)
+	}
+	if tok.JWT != "" {
+		t.Fatal("a JWT was issued for a rejected challenge")
+	}
+}
+
+func wantAuthenticatedAs(t *testing.T, tok auth.Token, err error, account string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if tok.JWT == "" || tok.Subject.Identifier != account {
+		t.Fatalf("token subject = %q (jwt empty=%v), want %q", tok.Subject.Identifier, tok.JWT == "", account)
+	}
+}
+
+// A master key the holder rotated to weight 0 (control moved to a
+// cosigner) cannot sign for the account on chain, so it must not
+// authenticate here either.
+func TestVerify_RotatedMasterKeyIsRejected(t *testing.T) {
+	client, cosigner := randomKP(t), randomKP(t)
+	v, _, _ := newTestValidatorWithAccounts(t, fakeAccounts{client.Address(): {
+		Exists: true, MasterWeight: 0, MedThreshold: 1,
+		Signers: []sep10.Signer{{Key: cosigner.Address(), Weight: 1}},
+	}})
+
+	tok, err := verifySignedBy(t, v, client, client)
+	wantUnauthorized(t, tok, err)
+}
+
+// Medium threshold 0 must not let a weight-0 master key through as a
+// "weight 0 >= threshold 0" match.
+func TestVerify_ZeroWeightMasterRejectedAtZeroThreshold(t *testing.T) {
+	client, cosigner := randomKP(t), randomKP(t)
+	v, _, _ := newTestValidatorWithAccounts(t, fakeAccounts{client.Address(): {
+		Exists: true, MasterWeight: 0, MedThreshold: 0,
+		Signers: []sep10.Signer{{Key: cosigner.Address(), Weight: 1}},
+	}})
+
+	tok, err := verifySignedBy(t, v, client, client)
+	wantUnauthorized(t, tok, err)
+}
+
+// A 2-of-2 account: the master key alone is below the medium threshold;
+// master plus cosigner meets it.
+func TestVerify_MultisigNeedsMediumThreshold(t *testing.T) {
+	client, cosigner := randomKP(t), randomKP(t)
+	v, _, _ := newTestValidatorWithAccounts(t, fakeAccounts{client.Address(): {
+		Exists: true, MasterWeight: 1, MedThreshold: 2,
+		Signers: []sep10.Signer{{Key: cosigner.Address(), Weight: 1}},
+	}})
+
+	tok, err := verifySignedBy(t, v, client, client)
+	wantUnauthorized(t, tok, err)
+
+	tok, err = verifySignedBy(t, v, client, client, cosigner)
+	wantAuthenticatedAs(t, tok, err, client.Address())
+}
+
+// An account controlled by a cosigner (master weight 0) authenticates
+// with that cosigner's signature alone when its weight meets the
+// threshold.
+func TestVerify_CosignerMeetingThresholdAuthenticates(t *testing.T) {
+	client, cosigner := randomKP(t), randomKP(t)
+	v, _, _ := newTestValidatorWithAccounts(t, fakeAccounts{client.Address(): {
+		Exists: true, MasterWeight: 0, MedThreshold: 2,
+		Signers: []sep10.Signer{{Key: cosigner.Address(), Weight: 2}},
+	}})
+
+	tok, err := verifySignedBy(t, v, client, cosigner)
+	wantAuthenticatedAs(t, tok, err, client.Address())
+}
+
+// An account not yet on chain can only be proven by its master key.
+func TestVerify_UnfundedAccountNeedsMasterKey(t *testing.T) {
+	client, other := randomKP(t), randomKP(t)
+	v, _, _ := newTestValidatorWithAccounts(t, fakeAccounts{})
+
+	tok, err := verifySignedBy(t, v, client, other)
+	wantUnauthorized(t, tok, err)
+
+	tok, err = verifySignedBy(t, v, client, client)
+	wantAuthenticatedAs(t, tok, err, client.Address())
+}
+
+type failingAccounts struct{ err error }
+
+func (f failingAccounts) LoadAccountSigners(context.Context, string) (sep10.AccountSigners, error) {
+	return sep10.AccountSigners{}, f.err
+}
+
+// A signer lookup that fails must fail the verification closed, never
+// fall back to accepting the master key.
+func TestVerify_SignerLookupFailureFailsClosed(t *testing.T) {
+	lakeDown := errors.New("lake unreachable")
+	v, _, _ := newTestValidatorWithAccounts(t, failingAccounts{err: lakeDown})
+	client := randomKP(t)
+
+	tok, err := verifySignedBy(t, v, client, client)
+	if !errors.Is(err, lakeDown) {
+		t.Fatalf("err = %v, want the lookup error", err)
+	}
+	if tok.JWT != "" {
+		t.Fatal("a JWT was issued without a signer lookup")
+	}
+}
+
+// newReplayValidator builds a Validator wired to a real Redis-backed
+// replay guard (miniredis), the production configuration for SEP-10 auth.
+func newReplayValidator(t *testing.T) (*sep10.Validator, *keypair.Full) {
+	t.Helper()
+	v, server, _ := newReplayValidatorWithRedis(t)
+	return v, server
+}
+
+// newReplayValidatorWithRedis is [newReplayValidator] that also hands
+// back the miniredis instance so a test can simulate key eviction.
+func newReplayValidatorWithRedis(t *testing.T) (*sep10.Validator, *keypair.Full, *miniredis.Miniredis) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	server, err := keypair.Random()
+	if err != nil {
+		t.Fatalf("keypair.Random: %v", err)
+	}
+	v, err := sep10.NewValidator(sep10.Options{
+		ServerSeed:        server.Seed(),
+		NetworkPassphrase: network.TestNetworkPassphrase,
+		WebAuthDomain:     testWebDomain,
+		HomeDomain:        testHomeDomain,
+		ChallengeTTL:      15 * time.Minute,
+		JWTTTL:            time.Hour,
+		JWTSecret:         testJWTSecret,
+		ReplayGuard:       sep10.NewRedisReplayGuard(rdb),
+		AccountLoader:     fakeAccounts{},
+	})
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	return v, server, mr
+}
+
+// TestVerify_ReplayGuard_RejectsSecondRedemption pins the
+// baseline the malleability test below builds on: the *same* signed XDR,
+// submitted twice, only mints one JWT.
+func TestVerify_ReplayGuard_RejectsSecondRedemption(t *testing.T) {
+	v, _ := newReplayValidator(t)
+	client, _ := keypair.Random()
+	ctx := context.Background()
+
+	ch, err := v.Challenge(ctx, client.Address())
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	signedXDR := signChallenge(t, ch.TransactionXDR, client)
+
+	if _, err := v.Verify(ctx, signedXDR); err != nil {
+		t.Fatalf("first redemption: %v", err)
+	}
+	if _, err := v.Verify(ctx, signedXDR); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("second redemption: want auth.ErrUnauthorized, got %v", err)
+	}
+}
+
+// TestVerify_ReplayGuard_EvictedMarkerFailsClosed pins eviction
+// handling. R1's Redis runs `maxmemory-policy allkeys-lru`, which can
+// evict ANY key before its TTL. With a bare SETNX spent-marker, an
+// evicted marker re-opens the slot: a captured signed XDR replayed after
+// the eviction finds it free and mints a second JWT. The guard must
+// instead require a marker reserved at challenge issuance, so an
+// eviction refuses the redemption rather than re-admitting a replay.
+func TestVerify_ReplayGuard_EvictedMarkerFailsClosed(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("replay after eviction of the spent state is refused", func(t *testing.T) {
+		v, _, mr := newReplayValidatorWithRedis(t)
+		client, _ := keypair.Random()
+		ch, err := v.Challenge(ctx, client.Address())
+		if err != nil {
+			t.Fatalf("Challenge: %v", err)
+		}
+		signedXDR := signChallenge(t, ch.TransactionXDR, client)
+		if _, err := v.Verify(ctx, signedXDR); err != nil {
+			t.Fatalf("first redemption: %v", err)
+		}
+
+		mr.FlushAll() // allkeys-lru evicts every replay-guard key
+
+		if _, err := v.Verify(ctx, signedXDR); !errors.Is(err, auth.ErrUnauthorized) {
+			t.Fatalf("replay after eviction: want auth.ErrUnauthorized, got %v", err)
+		}
+	})
+
+	t.Run("eviction before redemption refuses rather than admits", func(t *testing.T) {
+		v, _, mr := newReplayValidatorWithRedis(t)
+		client, _ := keypair.Random()
+		ch, err := v.Challenge(ctx, client.Address())
+		if err != nil {
+			t.Fatalf("Challenge: %v", err)
+		}
+		signedXDR := signChallenge(t, ch.TransactionXDR, client)
+
+		mr.FlushAll()
+
+		if _, err := v.Verify(ctx, signedXDR); !errors.Is(err, auth.ErrUnauthorized) {
+			t.Fatalf("redemption of an unreserved challenge: want auth.ErrUnauthorized, got %v", err)
+		}
+	})
+}
+
+// reorderSignatures re-serialises signedXDR with its two decorated
+// signatures swapped. Same transaction, same signatures, same canonical
+// hash — a different byte string. No forgery is involved: the envelope's
+// signature list simply has no canonical order, and the SEP-10 verifier
+// accepts either arrangement (confirmed against the SDK in-tree).
+func reorderSignatures(t *testing.T, signedXDR string) string {
+	t.Helper()
+	gtx, err := txnbuild.TransactionFromXDR(signedXDR)
+	if err != nil {
+		t.Fatalf("TransactionFromXDR: %v", err)
+	}
+	inner, ok := gtx.Transaction()
+	if !ok {
+		t.Fatal("expected inner transaction")
+	}
+	env := inner.ToXDR()
+	sigs := env.Signatures()
+	if len(sigs) != 2 {
+		t.Fatalf("expected 2 signatures (server + client), got %d", len(sigs))
+	}
+	env.V1.Signatures = []xdr.DecoratedSignature{sigs[1], sigs[0]}
+	out, err := xdr.MarshalBase64(env)
+	if err != nil {
+		t.Fatalf("MarshalBase64: %v", err)
+	}
+	return out
+}
+
+// TestVerify_ReplayGuard_RejectsReEncodedChallenge is the
+// re-encoding attack.
+//
+// Attack: an attacker who captures ONE signed challenge XDR (e.g. an XSS
+// exfil from a client wallet) redeems it,
+// then re-submits the SAME transaction under a different SPELLING. Two
+// independent re-spellings are verified here, both confirmed against
+// this SDK to sail through ReadChallengeTx + VerifyChallengeTxSigners
+// unchanged:
+//
+//   - swapping the order of the envelope's two decorated signatures
+//     (XDR imposes no canonical order and the verifier is order-blind);
+//   - inserting a newline into the base64 (Go's decoder, which the SDK's
+//     XDR unmarshal uses, skips "\r"/"\n").
+//
+// A dedupe key of SHA-256 of the submitted STRING would let every
+// re-spelling claim a fresh unused slot, minting a JWT per submission for
+// the whole challenge window. The key is the parsed transaction's
+// canonical hash, which no re-encoding changes.
+func TestVerify_ReplayGuard_RejectsReEncodedChallenge(t *testing.T) {
+	v, _ := newReplayValidator(t)
+	client, _ := keypair.Random()
+	ctx := context.Background()
+
+	ch, err := v.Challenge(ctx, client.Address())
+	if err != nil {
+		t.Fatalf("Challenge: %v", err)
+	}
+	signedXDR := signChallenge(t, ch.TransactionXDR, client)
+
+	// Legitimate redemption — burns the challenge.
+	if _, err := v.Verify(ctx, signedXDR); err != nil {
+		t.Fatalf("first redemption: %v", err)
+	}
+
+	variants := map[string]string{
+		"reordered signatures": reorderSignatures(t, signedXDR),
+		"embedded newline":     signedXDR[:8] + "\n" + signedXDR[8:],
+		"leading newline":      "\n" + signedXDR,
+	}
+	for name, variant := range variants {
+		t.Run(name, func(t *testing.T) {
+			if variant == signedXDR {
+				t.Fatal("variant is identical to the original — the test would be vacuous")
+			}
+			tok, err := v.Verify(ctx, variant)
+			if err == nil {
+				t.Fatalf("re-encoded challenge (%s) minted a fresh JWT (sub=%s) — a redeemed "+
+					"challenge must stay redeemed however the XDR is spelled (CON-05)",
+					name, tok.Subject.Identifier)
+			}
+			if !errors.Is(err, auth.ErrUnauthorized) {
+				t.Fatalf("re-encoded challenge (%s): want auth.ErrUnauthorized (replay), got %v",
+					name, err)
+			}
+		})
+	}
+}
+
+// TestVerifyJWT_RejectsOtherNetworksToken pins the network binding: two
+// deployments sharing home_domain and jwt_secret but on different Stellar
+// networks must not accept each other's tokens.
+func TestVerifyJWT_RejectsOtherNetworksToken(t *testing.T) {
+	testnet, _, clk := newTestValidator(t)
+	server, _ := keypair.Random()
+	pubnet, err := sep10.NewValidator(sep10.Options{
+		ServerSeed:        server.Seed(),
+		NetworkPassphrase: network.PublicNetworkPassphrase,
+		WebAuthDomain:     testWebDomain,
+		HomeDomain:        testHomeDomain,
+		JWTSecret:         testJWTSecret,
+		AccountLoader:     fakeAccounts{},
+		Now:               clk.Now, // same clock, so only the network differs
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client, _ := keypair.Random()
+	ch, err := pubnet.Challenge(context.Background(), client.Address())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := pubnet.Verify(context.Background(), signPubnetChallenge(t, ch.TransactionXDR, client))
+	if err != nil {
+		t.Fatalf("pubnet Verify: %v", err)
+	}
+	if _, err := pubnet.VerifyJWT(context.Background(), tok.JWT); err != nil {
+		t.Fatalf("pubnet rejected its own token: %v", err)
+	}
+	if _, err := testnet.VerifyJWT(context.Background(), tok.JWT); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Errorf("testnet validator accepted a pubnet token; err = %v, want wrap of ErrUnauthorized", err)
+	}
+}
+
+// TestVerifyJWT_RejectsTokenWithoutNetworkClaim — a correctly signed token
+// that carries no network claim is refused (fail closed), while the same
+// token carrying this validator's network id verifies.
+func TestVerifyJWT_RejectsTokenWithoutNetworkClaim(t *testing.T) {
+	v, _, clk := newTestValidator(t)
+	client, _ := keypair.Random()
+	now := clk.Now().Unix()
+	body := map[string]any{
+		"iss": testHomeDomain,
+		"sub": client.Address(),
+		"iat": now,
+		"exp": now + 3600,
+		"nbf": now,
+	}
+
+	if _, err := v.VerifyJWT(context.Background(), forgeHS256(t, body)); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Errorf("token without network claim: err = %v, want wrap of ErrUnauthorized", err)
+	}
+
+	id := network.ID(network.TestNetworkPassphrase)
+	body["network_id"] = hex.EncodeToString(id[:])
+	subj, err := v.VerifyJWT(context.Background(), forgeHS256(t, body))
+	if err != nil {
+		t.Fatalf("token with matching network claim: %v", err)
+	}
+	if subj.Identifier != client.Address() {
+		t.Errorf("Subject.Identifier = %q, want %q", subj.Identifier, client.Address())
+	}
+}
+
+// forgeHS256 signs body with the shared test secret in the exact shape the
+// validator issues.
+func forgeHS256(t *testing.T, body map[string]any) string {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := base64.RawURLEncoding
+	input := enc.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`)) + "." + enc.EncodeToString(raw)
+	mac := hmac.New(sha256.New, testJWTSecret)
+	mac.Write([]byte(input))
+	return input + "." + enc.EncodeToString(mac.Sum(nil))
+}
+
+func signPubnetChallenge(t *testing.T, xdr string, client *keypair.Full) string {
+	t.Helper()
+	tx, err := txnbuild.TransactionFromXDR(xdr)
+	if err != nil {
+		t.Fatalf("TransactionFromXDR: %v", err)
+	}
+	inner, ok := tx.Transaction()
+	if !ok {
+		t.Fatal("expected inner transaction")
+	}
+	signed, err := inner.Sign(network.PublicNetworkPassphrase, client)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	out, err := signed.Base64()
+	if err != nil {
+		t.Fatalf("Base64: %v", err)
+	}
+	return out
 }
