@@ -3,7 +3,6 @@ import { render } from '@testing-library/react';
 
 import {
   DirectionPill,
-  RankBadge,
   Sparkline,
   MultiWindowDelta,
   StreakIndicator,
@@ -25,13 +24,6 @@ describe('domain primitives — render without throwing', () => {
     expect(up.container.textContent).toBe('+5.20%');
     const none = render(<DirectionPill deltaPct={null} />);
     expect(none.container.firstChild).not.toBeNull();
-  });
-
-  it('RankBadge: moved and brand-new both render', () => {
-    expect(render(<RankBadge delta={3} />).container.firstChild).not.toBeNull();
-    expect(
-      render(<RankBadge delta={0} isNew />).container.firstChild,
-    ).not.toBeNull();
   });
 
   it('Sparkline draws an <svg> from its values', () => {

@@ -4,14 +4,22 @@ import { ArrowLeftRight } from 'lucide-react';
 
 import { Container, PageHeader } from '@/components/ui';
 import { SITE_OG_IMAGES } from '@/lib/seo';
-import { assetHrefFor } from '@/lib/fiat-slugs';
-import { buildConvertParams } from '@/lib/convert-params';
+import { assetHref, assetHrefFor } from '@/lib/fiat-slugs';
+import {
+  buildAssetConvertParams,
+  buildConvertParams,
+  type ConvertAsset,
+} from '@/lib/convert-params';
 import { formatPairPrice } from '@/lib/format';
 import { ConvertPair } from './ConvertPair';
 import { ConvertChart } from './ConvertChart';
-import { ConvertLiveRate, ConvertSnippets } from './ConvertLive';
+import {
+  ConvertAssetIdsProvider,
+  ConvertLiveRate,
+  ConvertSnippets,
+} from './ConvertLive';
 import { buildFetchData, isCIStub } from '@/lib/buildFetch';
-import { fetchTickers } from '../../tickers';
+import { fetchConvertCatalogue } from '../../tickers';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 type Params = Promise<{ from: string; to: string }>;
@@ -22,8 +30,6 @@ type Params = Promise<{ from: string; to: string }>;
 interface CurrencyDetail {
   ticker: string;
   name: string;
-  rate_usd: number; // 1 USD = N {from}
-  inverse_usd: number; // 1 {from} = N USD
   cross_rates: Record<string, number>; // {to: 1 {from} = N {to}}
   // NOTE: no `source`/`published_at` here — neither endpoint this page
   // reads serves per-rate provenance, and declared-but-never-populated
@@ -36,7 +42,8 @@ interface CurrencyDetail {
 // 20,000-file/deploy ceiling once Next.js's .html/.meta/.rsc trio
 // per route is counted. The full N×N (12k pages, ~36k files) blows
 // the cap; this design captures the SEO surface that matters.
-// HUB_TICKERS + the pair-builder live in @/lib/convert-params so the
+// Verified Stellar assets add one direction only: asset → each hub (≤50 × 20).
+// HUB_TICKERS + the pair-builders live in @/lib/convert-params so the
 // sitemap mirrors this exact set (no drift → no 404s in the sitemap).
 export async function generateStaticParams() {
   // NOTE: with output:export a dynamic route may NOT return an empty param set
@@ -44,7 +51,41 @@ export async function generateStaticParams() {
   // /convert tree by building zero pages. The route is instead hidden from the
   // Footer nav on the lean test nets (see Footer LEAN_HIDDEN_HREFS); its live
   // rate/chart fetches are gated below so a direct visit doesn't 404-storm.
-  return buildConvertParams(await fetchTickers());
+  const { fiat, assets } = await fetchConvertCatalogue();
+  return [
+    ...buildConvertParams(fiat),
+    ...buildAssetConvertParams(assets, fiat),
+  ];
+}
+
+/** The verified asset a (upper-cased) path segment names, if any. */
+async function convertAssetFor(
+  segment: string,
+): Promise<ConvertAsset | undefined> {
+  const { assets } = await fetchConvertCatalogue();
+  return assets.find((a) => a.ticker.toUpperCase() === segment);
+}
+
+// A verified asset's identity is the catalogue row; /v1/external/assets is
+// keyed by bare ticker and must never stand in for a (code, issuer) asset.
+async function fetchAssetDetail(
+  asset: ConvertAsset,
+  to: string,
+): Promise<CurrencyDetail | null> {
+  if (isCIStub) return null;
+  const rows = await buildFetchData<
+    Array<{ asset_id: string; price: string | null }>
+  >(
+    `/v1/price/batch?asset_ids=${encodeURIComponent(asset.assetId)}&quote=${encodeURIComponent(`fiat:${to}`)}`,
+    { softFail: true, timeoutMs: 6_000, attempts: 2 },
+  );
+  const row = (rows ?? []).find((r) => r.asset_id === asset.assetId);
+  const rate = row?.price ? Number(row.price) : 0;
+  return {
+    ticker: asset.ticker,
+    name: asset.name,
+    cross_rates: rate > 0 ? { [to]: rate } : {},
+  };
 }
 
 // fetchDetail returns the SSR snapshot the converter shell needs:
@@ -95,10 +136,6 @@ async function fetchDetail(
   return {
     ticker: identity.ticker,
     name: identity.name,
-    // rate_usd: 1 USD = N {from}  →  inverse of fromUSD (which
-    // is 1 {from} = N USD)
-    rate_usd: 1 / fromUSD,
-    inverse_usd: fromUSD,
     cross_rates: fromToRate > 0 ? { [to.toUpperCase()]: fromToRate } : {},
   };
 }
@@ -109,17 +146,21 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { from, to } = await params;
-  const f = from.toUpperCase();
   const t = to.toUpperCase();
-  const detail = await fetchDetail(f, t);
+  const asset = await convertAssetFor(from.toUpperCase());
+  const f = asset?.ticker ?? from.toUpperCase();
+  const detail = asset
+    ? await fetchAssetDetail(asset, t)
+    : await fetchDetail(f, t);
   const rate = detail?.cross_rates?.[t];
+  const path = `/convert/${f.toUpperCase()}/${t}`;
   const ratePart =
     rate != null ? ` 1 ${f} = ${formatPairPrice(rate)} ${t}.` : '';
   return {
     title: `${f} to ${t} — live exchange rate + currency converter`,
     description: `Convert ${f} to ${t} at the live mid-market rate.${ratePart} Real-time forex rate, interactive converter, and ${f}/${t} cross-rates at common amounts (1, 10, 100, 1000, 10000).`,
     alternates: {
-      canonical: `${CURRENT_NETWORK.explorerUrl}/convert/${f}/${t}`,
+      canonical: `${CURRENT_NETWORK.explorerUrl}${path}`,
     },
     openGraph: {
       title: `${f} to ${t} converter`,
@@ -127,7 +168,7 @@ export async function generateMetadata({
         rate != null
           ? `1 ${f} = ${formatPairPrice(rate)} ${t} — live forex rate.`
           : `Live ${f} to ${t} forex rate + converter.`,
-      url: `${CURRENT_NETWORK.explorerUrl}/convert/${f}/${t}`,
+      url: `${CURRENT_NETWORK.explorerUrl}${path}`,
       type: 'website',
       images: SITE_OG_IMAGES,
     },
@@ -136,74 +177,87 @@ export async function generateMetadata({
 
 export default async function ConvertPage({ params }: { params: Params }) {
   const { from, to } = await params;
-  const f = from.toUpperCase();
   const t = to.toUpperCase();
+  const asset = await convertAssetFor(from.toUpperCase());
+  const f = asset?.ticker ?? from.toUpperCase();
+  const fromHref = asset ? assetHref(asset.slug) : assetHrefFor(f);
+  // Only asset → fiat is baked; the landing picker prices the reverse.
+  const reverseHref = asset
+    ? `/convert/?${new URLSearchParams({ from: t, to: f })}`
+    : `/convert/${t}/${f}`;
+  // The landing reads its pair from the query string on load, so that hop is a
+  // full navigation rather than a client transition.
+  const ReverseLink = asset ? 'a' : Link;
 
-  const detail = await fetchDetail(f, t);
+  const detail = asset
+    ? await fetchAssetDetail(asset, t)
+    : await fetchDetail(f, t);
   const rate = detail?.cross_rates?.[t] ?? null;
   const inverse = rate != null && rate > 0 ? 1 / rate : null;
 
   return (
-    <Container className="space-y-6 py-8 [&>*]:max-w-4xl">
-      {/* The converter sits under the "from" currency's detail page. */}
-      <PageHeader
-        breadcrumbs={[
-          { label: 'Home', href: '/' },
-          { label: 'Assets', href: '/assets' },
-          { label: f, href: assetHrefFor(f) },
-          { label: `${f} → ${t}` },
-        ]}
-        title={`${f} to ${t}`}
-        description={detail?.name ? `${detail.name} → ${t}` : undefined}
-      />
-      {/* The baked rate paints first; the client swaps in the live one. */}
-      <ConvertLiveRate
-        from={f}
-        to={t}
-        initialRate={rate}
-        initialInverse={inverse}
-      />
+    <ConvertAssetIdsProvider ids={asset ? { [f]: asset.assetId } : {}}>
+      <Container className="space-y-6 py-8 [&>*]:max-w-4xl">
+        {/* The converter sits under the "from" currency's detail page. */}
+        <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Assets', href: '/assets' },
+            { label: f, href: fromHref },
+            { label: `${f} → ${t}` },
+          ]}
+          title={`${f} to ${t}`}
+          description={detail?.name ? `${detail.name} → ${t}` : undefined}
+        />
+        {/* The baked rate paints first; the client swaps in the live one. */}
+        <ConvertLiveRate
+          from={f}
+          to={t}
+          initialRate={rate}
+          initialInverse={inverse}
+        />
 
-      <ConvertPair
-        from={f}
-        to={t}
-        initialRate={rate}
-        initialInverse={inverse}
-      />
+        <ConvertPair
+          from={f}
+          to={t}
+          initialRate={rate}
+          initialInverse={inverse}
+        />
 
-      <ConvertChart from={f} to={t} />
+        <ConvertChart from={f} to={t} />
 
-      {/* Common-amounts ladder hydrates LIVE off the same shared query
+        {/* Common-amounts ladder hydrates LIVE off the same shared query
           so its "= Y" values and "current mid-market rate" caption track
           the same live rate as the widget (W8 recon 10a). */}
-      <ConvertSnippets
-        from={f}
-        to={t}
-        initialRate={rate}
-        initialInverse={inverse}
-      />
+        <ConvertSnippets
+          from={f}
+          to={t}
+          initialRate={rate}
+          initialInverse={inverse}
+        />
 
-      <section className="flex flex-wrap gap-2 text-sm">
-        <Link
-          href={`/convert/${t}/${f}`}
-          className="border-line bg-surface text-ink-body hover:border-brand-500 hover:text-brand-600 inline-flex items-center gap-1.5 rounded-md border px-3 py-2"
-        >
-          <ArrowLeftRight className="h-3.5 w-3.5" />
-          Convert {t} to {f} instead
-        </Link>
-        <Link
-          href={assetHrefFor(f)}
-          className="border-line bg-surface text-ink-body hover:border-brand-500 hover:text-brand-600 inline-flex items-center rounded-md border px-3 py-2"
-        >
-          {f} cross-rates
-        </Link>
-        <Link
-          href={assetHrefFor(t)}
-          className="border-line bg-surface text-ink-body hover:border-brand-500 hover:text-brand-600 inline-flex items-center rounded-md border px-3 py-2"
-        >
-          {t} cross-rates
-        </Link>
-      </section>
-    </Container>
+        <section className="flex flex-wrap gap-2 text-sm">
+          <ReverseLink
+            href={reverseHref}
+            className="border-line bg-surface text-ink-body hover:border-brand-500 hover:text-brand-600 inline-flex items-center gap-1.5 rounded-md border px-3 py-2"
+          >
+            <ArrowLeftRight className="h-3.5 w-3.5" />
+            Convert {t} to {f} instead
+          </ReverseLink>
+          <Link
+            href={fromHref}
+            className="border-line bg-surface text-ink-body hover:border-brand-500 hover:text-brand-600 inline-flex items-center rounded-md border px-3 py-2"
+          >
+            {asset ? `${f} details` : `${f} cross-rates`}
+          </Link>
+          <Link
+            href={assetHrefFor(t)}
+            className="border-line bg-surface text-ink-body hover:border-brand-500 hover:text-brand-600 inline-flex items-center rounded-md border px-3 py-2"
+          >
+            {t} cross-rates
+          </Link>
+        </section>
+      </Container>
+    </ConvertAssetIdsProvider>
   );
 }

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { CategoryHub } from '@/components/CategoryHub';
+import { CategoryHub } from './CategoryHub';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 export const metadata: Metadata = {

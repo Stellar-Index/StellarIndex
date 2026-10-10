@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { API_BASE_URL } from '@/api/client';
+import { PageHeader } from '@/components/ui';
 
 import { SignInForm } from '../signin/SignInForm';
 
@@ -45,16 +46,15 @@ export default function SignupPage() {
     // auth micro-surface. Vertical rhythm (py-12 sm:py-16) is the shared
     // auth-pair rhythm. Allowlisted for the census-2 route-frame tripwire.
     <div className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16">
-      <header className="mb-10">
-        <h1 className="text-ink text-3xl font-bold tracking-tight sm:text-4xl">
-          Create your account
-        </h1>
-        <p className="text-ink-body mt-3 max-w-2xl text-base">
-          Magic-link sign-in — no passwords. Once you&apos;re in, mint API keys
-          and watch usage under your account. Accounts are free; higher partner
-          rate limits are staff-set on request.
-        </p>
-      </header>
+      <PageHeader
+        className="mb-10"
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Create account' },
+        ]}
+        title="Create your account"
+        description="Magic-link sign-in — no passwords. Once you're in, mint API keys and watch usage under your account. Accounts are free; higher partner rate limits are staff-set on request."
+      />
 
       <section className="border-line bg-surface mb-12 rounded-xl border p-6 shadow-sm sm:p-8">
         <SignInForm mode="signup" />

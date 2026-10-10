@@ -17,7 +17,7 @@ TanStack Query. Customer dashboard at `/dashboard/*`. ~80 routes (82
 1. **Reuse the design system.** Build from `@/components/ui` (Button, Card,
    Badge, Stat, Table, Tabs, Page/Container/Section, Input, Feedback, Mono) and
    the domain atoms in `@/components/primitives` (Sparkline, DirectionPill,
-   RankBadge, …). If a pattern recurs, promote it to a primitive — don't inline
+   MultiWindowDelta, …). If a pattern recurs, promote it to a primitive — don't inline
    a bespoke one. **This is a hand-rolled system — NOT shadcn/ui.**
 2. **Tokens, not hex.** Colors / type scale / radius / shadow are semantic
    tokens in the `@theme` block of `src/app/globals.css` (Tailwind 4 — there is
@@ -58,5 +58,3 @@ doesn't fight the test. See the `*.test.tsx` beside the primitives and
 - **Structure & redesign playbook →** `docs/frontend/redesign-readiness.md` —
   per-page decomposition status, ranked extract-first list, and how to
   restyle / reorder / restructure safely.
-- **Living rendered reference →** the `/dev/styleguide` and `/dev/primitives`
-  routes (every token + component, on screen).

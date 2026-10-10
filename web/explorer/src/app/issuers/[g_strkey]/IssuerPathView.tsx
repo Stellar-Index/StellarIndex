@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
-import { Container, Breadcrumbs, EmptyState, Skeleton } from '@/components/ui';
+import { Container, PageHeader, EmptyState, Skeleton } from '@/components/ui';
 
 import { assetHref } from '@/lib/fiat-slugs';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
@@ -59,18 +59,14 @@ export function IssuerPathView() {
 
   return (
     <Container className="space-y-6 py-8">
-      <header className="space-y-1">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'Issuers', href: '/issuers' },
-            { label: valid ? `${g.slice(0, 8)}…${g.slice(-4)}` : 'Issuer' },
-          ]}
-        />
-        <h1 className="text-ink text-2xl font-semibold tracking-tight">
-          {title}
-        </h1>
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Issuers', href: '/issuers' },
+          { label: valid ? `${g.slice(0, 8)}…${g.slice(-4)}` : 'Issuer' },
+        ]}
+        title={title}
+      />
 
       {!valid && (
         <Panel

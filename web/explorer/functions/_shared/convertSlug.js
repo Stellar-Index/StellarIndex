@@ -1,5 +1,7 @@
 // Slug normalisation for /convert/{from}/{to}. The baked pages are keyed by
-// upper-case ticker (XLM or an ISO 4217 fiat code).
+// upper-case ticker: XLM, an ISO 4217 fiat code or a verified Stellar asset's
+// catalogue ticker (USDC, USDT0, YXLM). The page resolves the ticker to its
+// catalogue (code, issuer) id.
 const ALIASES = new Map([
   ['native', 'XLM'],
   ['crypto:xlm', 'XLM'],
@@ -17,7 +19,7 @@ export function canonicalConvertTicker(segment) {
   if (alias) return alias;
   const bare = raw.startsWith('fiat:') ? raw.slice('fiat:'.length) : raw;
   // A code-issuer id (USDC-GA5Z…) must never collapse to its bare code.
-  return /^[a-z]{3,5}$/.test(bare) ? bare.toUpperCase() : null;
+  return /^[a-z0-9]{3,12}$/.test(bare) ? bare.toUpperCase() : null;
 }
 
 /** {from, to} parsed from a /convert/{from}/{to}[/] path, or null. */

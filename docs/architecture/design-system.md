@@ -16,8 +16,7 @@ is a redirect-only stub (`web/status/public/_redirects` 301s
 `status.stellarindex.io` → `stellarindex.io/status`), so its leftover
 `src/app/globals.css` light-palette tokens render nowhere.
 
-**Live reference:** `/dev/styleguide` (+ `/dev/primitives`) in the explorer
-renders every token and component. **Tokens:** the `@theme` block in
+**Tokens:** the `@theme` block in
 `web/explorer/src/app/globals.css` — Tailwind 4 defines the design tokens inline
 in CSS, there is **no `tailwind.config.ts`**. **Components:**
 `web/explorer/src/components/ui/` (barrel: `@/components/ui`). Direction +

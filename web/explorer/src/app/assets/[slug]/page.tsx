@@ -28,7 +28,7 @@ import {
 } from '@/lib/seo';
 import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { Badge, Breadcrumbs, Container } from '@/components/ui';
+import { Badge, Container, PageHeader } from '@/components/ui';
 import { AssetScamCallout } from './AssetScamCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
@@ -784,12 +784,10 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     // networkless export still hydrates and retries from the browser.
     return (
       <Container className="space-y-8 py-8 sm:py-10">
-        <header className="space-y-3">
-          <Breadcrumbs
-            items={[{ label: 'Assets', href: '/assets' }, { label: slug }]}
-          />
-          <h1 className="text-h1 text-ink font-semibold">{slug}</h1>
-        </header>
+        <PageHeader
+          breadcrumbs={[{ label: 'Assets', href: '/assets' }, { label: slug }]}
+          title={slug}
+        />
         <AssetClientFallback slug={slug} />
       </Container>
     );
@@ -872,46 +870,48 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(datasetLD) }}
       />
       <header className="space-y-3">
-        <Breadcrumbs
-          items={[
+        <PageHeader
+          breadcrumbs={[
             { label: 'Assets', href: '/assets' },
             { label: assetSymbol(coin) },
           ]}
+          title={assetSymbol(coin)}
+          description={
+            globalView?.name && globalView.name !== coin.code
+              ? globalView.name
+              : undefined
+          }
+          actions={
+            <>
+              {globalView && (
+                <Badge
+                  tone="ok"
+                  title={
+                    globalView.verified_issuer
+                      ? `Verified by ${globalView.verified_issuer}`
+                      : 'Verified currency'
+                  }
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="h-3 w-3"
+                    aria-hidden="true"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                  Verified
+                </Badge>
+              )}
+              {detail?.type && <Badge title="Asset type">{detail.type}</Badge>}
+            </>
+          }
         />
-        <div className="flex flex-wrap items-baseline gap-4">
-          <h1 className="text-h1 text-ink font-semibold">
-            {assetSymbol(coin)}
-          </h1>
-          {globalView?.name && globalView.name !== coin.code && (
-            <span className="text-ink-muted text-lg">{globalView.name}</span>
-          )}
-          {globalView && (
-            <Badge
-              tone="ok"
-              title={
-                globalView.verified_issuer
-                  ? `Verified by ${globalView.verified_issuer}`
-                  : 'Verified currency'
-              }
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-                className="h-3 w-3"
-                aria-hidden="true"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              Verified
-            </Badge>
-          )}
-          {detail?.type && <Badge title="Asset type">{detail.type}</Badge>}
-        </div>
         {globalView?.verified_issuer && (
           <p className="text-ink-body text-sm">
             Issued by{' '}
@@ -1630,18 +1630,24 @@ function VerifiedCurrencyView({
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       <header className="space-y-3">
-        <Breadcrumbs
-          items={[{ label: 'Assets', href: '/assets' }, { label: view.ticker }]}
+        <PageHeader
+          breadcrumbs={[
+            { label: 'Assets', href: '/assets' },
+            { label: view.ticker },
+          ]}
+          title={
+            <span className="flex flex-wrap items-baseline gap-3">
+              <span>{view.name}</span>
+              <span className="text-ink-muted font-mono text-base">
+                {view.ticker}
+              </span>
+              <Badge>
+                {(view as GlobalAssetView & { class?: string }).class ??
+                  'verified'}
+              </Badge>
+            </span>
+          }
         />
-        <h1 className="text-h1 text-ink flex flex-wrap items-baseline gap-3 font-semibold">
-          <span>{view.name}</span>
-          <span className="text-ink-muted font-mono text-base">
-            {view.ticker}
-          </span>
-          <Badge>
-            {(view as GlobalAssetView & { class?: string }).class ?? 'verified'}
-          </Badge>
-        </h1>
         {priceNum != null && Number.isFinite(priceNum) && (
           <div className="tnum text-ink font-mono text-2xl">
             $

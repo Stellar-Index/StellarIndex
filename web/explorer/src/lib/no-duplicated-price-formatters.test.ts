@@ -57,7 +57,7 @@ describe('no hand-rolled price-ladder forks exist outside lib/format.ts', () => 
     'app/embed/currency/[ticker]/page.tsx',
     'app/embed/pair/[pair]/page.tsx',
     'app/markets/[pair]/page.tsx',
-    'components/charts/DepthChart.tsx',
+    'app/markets/[pair]/DepthChart.tsx',
   ]);
 
   it('formatPairPrice / formatPriceSmall are the only ladder implementations', () => {

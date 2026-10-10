@@ -246,6 +246,42 @@
     - Restart stellarindex-aggregator
     - Restart stellarindex-api
 
+# apply_api_role_grants() (migration 0213) is a no-op until the role
+# exists, so a role created after 0213 ran needs this call. Without 0213 the
+# role would hold no grants and every API query would fail 42501, so the
+# play stops here before the env file below points the API at the role.
+- name: Apply the stellarindex_api role's grants
+  when: postgres_pass_stellarindex_api | default('') | length > 0
+  community.postgresql.postgresql_query:
+    login_db: "{{ postgres_db_stellarindex }}"
+    query: >-
+      DO $$ BEGIN IF to_regproc('public.apply_api_role_grants') IS NULL
+      THEN RAISE EXCEPTION 'apply_api_role_grants() missing: apply migration 0213
+      before setting postgres_pass_stellarindex_api'; END IF;
+      PERFORM public.apply_api_role_grants(); END $$
+  become_user: postgres
+  changed_when: false
+
+- name: Template /etc/default/stellarindex-api (API's own Postgres DSN)
+  # Read after /etc/default/stellarindex by the api unit, so its DSN wins
+  # for the API only; indexer, aggregator and ops keep the owner role.
+  when: postgres_pass_stellarindex_api | default('') | length > 0
+  ansible.builtin.copy:
+    content: "STELLARINDEX_POSTGRES_DSN={{ postgres_dsn_stellarindex_api }}\n"
+    dest: /etc/default/stellarindex-api
+    owner: root
+    group: stellarindex
+    mode: "0640"
+  no_log: true
+  notify: Restart stellarindex-api
+
+- name: Remove /etc/default/stellarindex-api when no API role password is set
+  when: postgres_pass_stellarindex_api | default('') | length == 0
+  ansible.builtin.file:
+    path: /etc/default/stellarindex-api
+    state: absent
+  notify: Restart stellarindex-api
+
 - name: Template /etc/stellarindex.toml
   # The on-disk config carries everything except secrets. Secrets
   # come from /etc/default/stellarindex via EnvironmentFile (the

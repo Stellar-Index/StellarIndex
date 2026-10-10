@@ -5,10 +5,18 @@ import Link from 'next/link';
 import { ArrowLeftRight } from 'lucide-react';
 
 import { Callout, PageHeader, Select } from '@/components/ui';
-import { buildConvertParams } from '@/lib/convert-params';
+import {
+  buildAssetConvertParams,
+  buildConvertParams,
+  type ConvertAsset,
+} from '@/lib/convert-params';
 import { ConvertPair } from './[from]/[to]/ConvertPair';
 import { ConvertChart } from './[from]/[to]/ConvertChart';
-import { ConvertLiveRate, ConvertSnippets } from './[from]/[to]/ConvertLive';
+import {
+  ConvertAssetIdsProvider,
+  ConvertLiveRate,
+  ConvertSnippets,
+} from './[from]/[to]/ConvertLive';
 
 type Pair = { from: string; to: string };
 
@@ -18,24 +26,42 @@ const subscribe = () => () => {};
 /**
  * The pair the /convert Function redirected with (?from=&to=): `pair` when
  * the picker offers both sides, else `unavailable` when one was asked for.
+ * The Function upper-cases tickers, so the match ignores case.
  */
 export function requestedPair(
   search: string,
   options: readonly string[],
 ): { pair: Pair | null; unavailable: boolean } {
   const q = new URLSearchParams(search);
-  const from = q.get('from');
-  const to = q.get('to');
-  if (!from && !to) return { pair: null, unavailable: false };
-  const offered = new Set(options);
-  if (from && to && from !== to && offered.has(from) && offered.has(to)) {
+  if (!q.get('from') && !q.get('to')) return { pair: null, unavailable: false };
+  const find = (t: string | null) =>
+    t == null
+      ? undefined
+      : options.find((o) => o.toUpperCase() === t.toUpperCase());
+  const from = find(q.get('from'));
+  const to = find(q.get('to'));
+  if (from && to && from !== to) {
     return { pair: { from, to }, unavailable: false };
   }
   return { pair: null, unavailable: true };
 }
 
-export function ConvertLanding({ tickers }: { tickers: string[] }) {
-  const options = useMemo(() => ['XLM', ...tickers], [tickers]);
+export function ConvertLanding({
+  tickers,
+  assets = [],
+}: {
+  tickers: string[];
+  assets?: ConvertAsset[];
+}) {
+  const assetTickers = useMemo(() => assets.map((a) => a.ticker), [assets]);
+  const options = useMemo(
+    () => ['XLM', ...assetTickers, ...tickers],
+    [assetTickers, tickers],
+  );
+  const ids = useMemo(
+    () => Object.fromEntries(assets.map((a) => [a.ticker, a.assetId])),
+    [assets],
+  );
   const search = useSyncExternalStore(
     subscribe,
     () => window.location.search,
@@ -55,10 +81,15 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
   // The link's href comes from the built page list, never from the select value.
   const pairPages = useMemo(
     () =>
-      new Map(buildConvertParams(tickers).map((p) => [`${p.from}/${p.to}`, p])),
-    [tickers],
+      new Map(
+        [
+          ...buildConvertParams(tickers),
+          ...buildAssetConvertParams(assets, tickers),
+        ].map((p) => [`${p.from}/${p.to}`, p]),
+      ),
+    [tickers, assets],
   );
-  const pagePair = pairPages.get(`${from}/${to}`);
+  const pagePair = pairPages.get(`${from.toUpperCase()}/${to.toUpperCase()}`);
 
   const pickFrom = (next: string) =>
     setPicked({
@@ -72,17 +103,40 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
     });
   const swap = () => setPicked({ from: to, to: from });
 
-  return (
+  const optionList = (
     <>
+      <option value="XLM">XLM</option>
+      {assetTickers.length > 0 && (
+        <optgroup label="Verified Stellar assets">
+          {assetTickers.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </optgroup>
+      )}
+      <optgroup label="Fiat currencies">
+        {tickers.map((t) => (
+          <option key={t} value={t}>
+            {t}
+          </option>
+        ))}
+      </optgroup>
+    </>
+  );
+
+  return (
+    <ConvertAssetIdsProvider ids={ids}>
       <header className="border-line space-y-4 border-b pb-5">
         <PageHeader
           title="Convert"
           breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Convert' }]}
-          description="Convert XLM and the major fiat currencies at the live mid-market rate."
+          description="Convert XLM, verified Stellar assets and the major fiat currencies at the live mid-market rate."
         />
         {unavailable && (
           <Callout tone="info" title="That pair isn't available to convert">
-            The converter covers XLM and fiat currencies. Pick a pair below.
+            The converter covers XLM, verified Stellar assets and fiat
+            currencies. Pick a pair below.
           </Callout>
         )}
         <div className="flex flex-wrap items-end gap-3">
@@ -93,11 +147,7 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
               value={from}
               onChange={(e) => pickFrom(e.target.value)}
             >
-              {options.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
+              {optionList}
             </Select>
           </label>
           <button
@@ -116,11 +166,7 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
               value={to}
               onChange={(e) => pickTo(e.target.value)}
             >
-              {options.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
+              {optionList}
             </Select>
           </label>
           {pagePair && (
@@ -157,6 +203,6 @@ export function ConvertLanding({ tickers }: { tickers: string[] }) {
         initialRate={null}
         initialInverse={null}
       />
-    </>
+    </ConvertAssetIdsProvider>
   );
 }

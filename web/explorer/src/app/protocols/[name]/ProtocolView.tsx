@@ -15,7 +15,7 @@ import { TimeSeriesChart } from './TimeSeriesChart';
 import { AnalyticsStatusNote, BespokeUnavailable } from './AnalyticsStatusNote';
 import { BespokeSection, type Bespoke } from './BespokeSection';
 import type { paths } from '@/api/types';
-import { Breadcrumbs, Container } from '@/components/ui';
+import { Container, PageHeader } from '@/components/ui';
 
 // ─── Wire shapes — derived from the generated OpenAPI contract
 // (src/api/types.ts, `make web-generate-api`); mirror
@@ -68,6 +68,7 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
       <Shell name={name} label={label}>
         <Panel
           title="Couldn't load this protocol"
+          headingLevel={2}
           source={source}
           bodyClassName="text-sm text-ink-body"
         >
@@ -94,7 +95,8 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
     return (
       <Shell name={name} label={label}>
         <Panel
-          title={label}
+          title="On-chain analytics"
+          headingLevel={2}
           source={source}
           bodyClassName="text-sm text-ink-muted"
         >
@@ -109,23 +111,27 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
   const windowDays = data.activity_window_days ?? 0;
 
   return (
-    <Shell name={name} label={label}>
-      {/* ── Header ── */}
-      <header className="border-line space-y-3 border-b pb-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-3xl font-semibold tracking-tight">{label}</h1>
+    <Shell
+      name={name}
+      label={label}
+      description={data.description}
+      actions={
+        <>
           <CategoryChip category={data.category} />
           <CompletenessBadge completeness={data.completeness} />
-        </div>
-        <p className="text-ink-body max-w-3xl text-sm">{data.description}</p>
-        <AtAGlance
-          data={data}
-          analyticsAvailable={analyticsAvailable}
-          windowDays={windowDays}
-        />
-        <ProtocolCrossLinks name={name} category={data.category} />
-      </header>
-
+        </>
+      }
+      intro={
+        <>
+          <AtAGlance
+            data={data}
+            analyticsAvailable={analyticsAvailable}
+            windowDays={windowDays}
+          />
+          <ProtocolCrossLinks name={name} category={data.category} />
+        </>
+      }
+    >
       {/* ── KPI row ── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {data.contract_count > 0 && (
@@ -273,25 +279,35 @@ function ProtocolCrossLinks({
 function Shell({
   name,
   label,
+  description,
+  actions,
+  intro,
   children,
 }: {
   name: string;
   label: string;
+  description?: React.ReactNode;
+  actions?: React.ReactNode;
+  intro?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <Container className="space-y-6 py-8">
-      {/* FEC A1-6: the visible trail + its BreadcrumbList JSON-LD render
-          from the SAME Crumb[] (Breadcrumbs derives the LD). Replaces the
-          hand-rolled "← All protocols / <label>" nav AND the page-level
-          hand-rolled LD that had no visible counterpart. */}
-      <Breadcrumbs
-        items={[
-          { label: 'Home', href: '/' },
-          { label: 'Protocols', href: '/protocols' },
-          { label: label || name },
-        ]}
-      />
+      <header
+        className={intro ? 'border-line space-y-3 border-b pb-5' : undefined}
+      >
+        <PageHeader
+          breadcrumbs={[
+            { label: 'Home', href: '/' },
+            { label: 'Protocols', href: '/protocols' },
+            { label: label || name },
+          ]}
+          title={label}
+          description={description}
+          actions={actions}
+        />
+        {intro}
+      </header>
       {children}
     </Container>
   );

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 
-import { Breadcrumbs } from '@/components/ui';
+import { PageHeader } from '@/components/ui';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 
 import { PoolReserves } from './PoolReserves';
@@ -24,27 +24,23 @@ export function LendingPoolPathView() {
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs
-        items={[
+      <PageHeader
+        breadcrumbs={[
           { label: 'Home', href: '/' },
           { label: 'Lending', href: '/lending' },
           { label: pool ? `${pool.slice(0, 8)}…${pool.slice(-8)}` : 'Pool' },
         ]}
+        title={
+          <span className="font-mono break-all">{pool || 'Loading…'}</span>
+        }
+        description="Rendered live from the API (outside the build-time pre-render)."
       />
-      <header className="space-y-2">
-        <h1 className="font-mono text-2xl tracking-tight break-all">
-          {pool || 'Loading…'}
-        </h1>
-        <p className="text-ink-muted text-xs">
-          Rendered live from the API (outside the build-time pre-render).
-        </p>
-        <Link
-          href="/protocols/blend"
-          className="text-brand-600 inline-block text-xs hover:underline"
-        >
-          Blend protocol →
-        </Link>
-      </header>
+      <Link
+        href="/protocols/blend"
+        className="text-brand-600 inline-block text-xs hover:underline"
+      >
+        Blend protocol →
+      </Link>
       {pool && <PoolReserves pool={pool} />}
     </div>
   );
