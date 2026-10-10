@@ -54,7 +54,6 @@ var subcommandClasses = map[string]subcommandClass{
 	"backfill":                gate(),
 	"backfill-external":       gate(),
 	"backfill-chainlink":      gate(),
-	"backfill-index":          gate(),
 	"backfill-router":         gate(),
 	"detect-gaps":             ro(),
 	"list-cursors":            ro(),
@@ -129,7 +128,6 @@ var subcommandClasses = map[string]subcommandClass{
 	"verify-served-values":         exemptBecause("verifier; writes its -textfile metrics only"),
 	"verify-usd-volume":            ro(),
 	"usd-volume-restamp":           gate(),
-	"sdex-claim-audit":             ro(),
 
 	"classic-movements-backfill": gate(),
 	"projected-rebuild":          gate(),
@@ -159,7 +157,6 @@ var pinnedReadOnly = []string{
 	"reconcile-balances",
 	"rpc-probe",
 	"scan-soroban-events",
-	"sdex-claim-audit",
 	"supply audit",
 	"verify-contiguity",
 	"verify-decoders",

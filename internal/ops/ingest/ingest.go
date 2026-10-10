@@ -28,8 +28,6 @@ func Run(args []string) error { //nolint:gocyclo // flat command-dispatch switch
 		return backfill(args[1:])
 	case "backfill-external":
 		return backfillExternal(args[1:])
-	case "backfill-index":
-		return BackfillIndex(args[1:])
 	case "backfill-chainlink":
 		return backfillChainlink(args[1:])
 	case "backfill-router":

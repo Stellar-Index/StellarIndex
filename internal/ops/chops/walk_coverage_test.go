@@ -74,8 +74,8 @@ func TestWalkCoverage(t *testing.T) {
 
 	t.Run("command name is carried through", func(t *testing.T) {
 		t.Parallel()
-		err := walkCoverage("sdex-claim-audit", from, to, 5, bucket)
-		if err == nil || !strings.Contains(err.Error(), "sdex-claim-audit") {
+		err := walkCoverage("other-audit", from, to, 5, bucket)
+		if err == nil || !strings.Contains(err.Error(), "other-audit") {
 			t.Fatalf("err = %v, want it prefixed with the calling subcommand", err)
 		}
 	})
@@ -105,7 +105,7 @@ func TestWalkCoverage(t *testing.T) {
 
 // funcBody returns the source text of the named top-level function in
 // the given file of this package. The call-site wiring below is pinned
-// at the source because chGate and sdexClaimAudit each need a config
+// at the source because chGate needs a config
 // file, a galexie bucket over S3 and (for the gate) a live ClickHouse
 // before they will run a single line — the same reason
 // ingest.TestRunBackfillChunk_CoverageCheckPrecedesRefreshAndCompletion
@@ -126,42 +126,4 @@ func funcBody(t *testing.T, file, fn string) string {
 		body = body[:end]
 	}
 	return body
-}
-
-// TestSdexClaimAudit_GatesOnRequestedCoverage pins the sdex-claim-audit
-// call site. REQUESTED is -to minus -from plus one; DELIVERED is
-// `walked`, incremented once per ledger inside the stream callback.
-// Coverage matters
-// more here than almost anywhere: the tool's output exists to be
-// differenced against an EXTERNAL anchor's trade count for the same
-// range, so ledgers the walk never read become a phantom decoder gap of
-// exactly that size.
-//
-// It also pins the bucket default. Resolving through
-// opsutil.ResolveStreamBucket puts the seam policy in one place; the old
-// local default sent every historic audit at the trimmed live bucket.
-func TestSdexClaimAudit_GatesOnRequestedCoverage(t *testing.T) {
-	t.Parallel()
-	body := funcBody(t, "sdex_claim_audit.go", "sdexClaimAudit")
-
-	if !strings.Contains(body, "walked++") {
-		t.Error("sdexClaimAudit does not count the ledgers it walked — it cannot assert " +
-			"delivered == requested without the delivered half")
-	}
-	if !strings.Contains(body, `walkCoverage("sdex-claim-audit", uint32(*from), uint32(*to), walked, streamBucket)`) {
-		t.Error("sdexClaimAudit never calls walkCoverage — a short walk exits 0 and its " +
-			"claim-atom tally reads as a decoder gap (RLT-282)")
-	}
-	if !strings.Contains(body, "claimAuditVerdict(coverageErr, readerFailures, txReadFailures, totalClaims)") {
-		t.Error("sdexClaimAudit does not gate on reader/tx read failures — a ledger the reader " +
-			"couldn't open or a transaction the SDK couldn't read is silently excluded from " +
-			"\"total claim atoms (= Hubble trade count)\" and the run must not certify that as complete")
-	}
-	if !strings.Contains(body, "opsutil.ResolveStreamBucket(cfg, *bucket, uint32(*from), uint32(*to))") {
-		t.Error("the galexie bucket must come from opsutil.ResolveStreamBucket, not a local default")
-	}
-	if strings.Contains(body, ":= cfg.Storage.S3BucketLive") {
-		t.Error("sdexClaimAudit still defaults to the TRIMMED live bucket, which cannot hold " +
-			"a historic range (the flag help text may name it; the code must not pick it)")
-	}
 }

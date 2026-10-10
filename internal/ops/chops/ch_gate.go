@@ -230,7 +230,7 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 //
 // Siblings with the same rule: [backfillCoverage], ingest.censusCoverage and
 // ingest.backfillChunkCoverage. This one is worded for READ-ONLY walks and
-// shared by ch-gate and sdex-claim-audit.
+// used by ch-gate.
 func walkCoverage(cmd string, from, to uint32, walked int, bucket string) error {
 	requested := uint64(to) - uint64(from) + 1
 	if uint64(walked) == requested {

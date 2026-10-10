@@ -161,7 +161,7 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	fmt.Fprintf(os.Stderr, "verify-decoders: registered %d decoders: %s\n",
 		len(registered), strings.Join(registered, ", "))
 	// Seam-aware bucket choice with a -bucket escape hatch, shared with
-	// ch-backfill / census-backfill / sdex-claim-audit rather than
+	// ch-backfill / census-backfill rather than
 	// re-derived. There was no flag at all here and the bucket was
 	// hardcoded to cfg.Storage.S3BucketLive, which is TRIMMED: pointing
 	// verify-decoders at a historic range read a prefix of it or none of

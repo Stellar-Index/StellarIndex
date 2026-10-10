@@ -118,8 +118,6 @@ func verifierVerb(verb string) (func([]string) error, bool) {
 		return verifyServedValues, true
 	case "verify-usd-volume":
 		return verifyUSDVolume, true
-	case "sdex-claim-audit":
-		return sdexClaimAudit, true
 	case "reconcile-balances":
 		return reconcileBalances, true
 	case "verify-contiguity":
