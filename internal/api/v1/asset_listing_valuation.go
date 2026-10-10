@@ -14,34 +14,33 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// A listing-sourced valuation for a verified-catalogue asset whose
-// market cap this index declines to publish (e.g. USDT0, whose ~$100/day
-// Stellar market trips the dust-liquidity guard). Supply times an
-// independent listing's USD price is true and separately checkable;
-// folded into market cap it would be false. So, like the RWA surface
-// (rwa_reference.go), it ships as a `reference` block plus a `valuation`
-// block, labelled with provenance and never written into `market_cap_usd`.
+// A listing-sourced valuation for a verified-catalogue asset whose market cap
+// this index declines to publish (e.g. USDT0, whose ~$100/day Stellar market
+// trips the dust-liquidity guard). Supply times an independent listing's USD price
+// is true and separately checkable; folded into market cap it would be false. So,
+// like the RWA surface (rwa_reference.go), it ships as a `reference` block plus a
+// `valuation` block with provenance and is never written into `market_cap_usd`.
 //
-// The listing must name the asset exactly: its classic CODE-GISSUER id or
-// its SAC address. A SAC address derives from one (code, issuer) pair, so
-// an impersonator's contract never matches. Both forms are read because
-// the upstream uses each for about half the set. Matching by code is never
-// done: this network carries impersonating PYUSD, USDT, USDC and XLM issuers.
+// The listing must name the asset exactly: its classic CODE-GISSUER id or its SAC
+// address (derived from one (code, issuer) pair, so an impersonator's contract
+// never matches). Both forms are read because the upstream uses each for about
+// half the set. Matching by code is never done: this network carries impersonating
+// PYUSD, USDT, USDC and XLM issuers.
 //
-// Membership in the verified catalogue (internal/currency/data/seed.yaml)
-// is a second, independent gate: the listing corroborates, the catalogue
-// attests. [Server.listingValuationFor] then fills only a price hole:
+// Membership in the verified catalogue (internal/currency/data/seed.yaml) is a
+// second, independent gate: the listing corroborates, the catalogue attests.
+// [Server.listingValuationFor] then fills only a price hole:
 //
 //   - a published market cap wins ([ListingValuationMarketCapPublished]);
-//   - an observed, substance-gated market price means the hole is in our
-//     own data, not the price ([ListingValuationMarketPriceObserved]);
-//     a declared-peg or transitive `price_basis` is not an observation;
+//   - an observed, substance-gated market price means the hole is in our own
+//     data, not the price ([ListingValuationMarketPriceObserved]); a declared-peg
+//     or transitive `price_basis` is not an observation;
 //   - scam-flagged and unverified-collision rows get no valuation at all.
 //
-// An unreadable or empty snapshot publishes nothing
-// ([ListingValuationUnavailable]) rather than carrying an old price
-// forward, as [Server.rwaListingSnapshot] does. Price age uses the RWA
-// bounds: [rwaReferenceStaleAfter] labels, [rwaReferenceMaxAge] withholds.
+// An unreadable or empty snapshot publishes nothing ([ListingValuationUnavailable])
+// rather than carrying an old price forward, as [Server.rwaListingSnapshot] does.
+// Price age uses the RWA bounds: [rwaReferenceStaleAfter] labels,
+// [rwaReferenceMaxAge] withholds.
 
 // ─── wire shape ─────────────────────────────────────────────────────
 
@@ -589,38 +588,26 @@ func listingReferenceOf(entry timescale.ListingEntry, form string, now time.Time
 	}
 }
 
-// publishListingValuation multiplies the row's supply by the reference
-// price already attached to it, or records why it cannot.
+// publishListingValuation multiplies the row's supply by the reference price
+// already attached to it, or records why it cannot.
 //
 // # Which supply, and why it is not the one on the row
 //
-// `lake` is Σmint − Σburn − Σclawback over the asset's Stellar Asset
-// Contract, and [listingSupplyReading] prefers it over the row's own
-// reading whenever that reading is a trustline FLOOR (or absent) and the
-// lake is the larger of the two; an ADR-0011 observation on the row is
-// kept. That preference is the
-// difference between a correct figure and one that is wrong by two
-// orders of magnitude, and USDT0 is the proof: its trustline sum is
-// 6,469 tokens against 2,581,052 by mint−burn, because a trustline query
-// is blind by construction to tokens held by contracts, by claimable
-// balances and by liquidity pools. Valuing the trustline sum would have
-// published a figure 400 times too small and looked entirely plausible
-// doing it.
-//
-// The floor guard in [higherClassicSupply] is what makes taking the
-// larger safe rather than merely optimistic: every trustline balance was
-// minted, so the trustline sum is a provable LOWER BOUND on issued
-// supply, and a lake total below it is evidence of incomplete flow
-// seeding rather than of a smaller truth.
+// `lake` is Σmint − Σburn − Σclawback over the asset's Stellar Asset Contract.
+// [listingSupplyReading] prefers it over the row's own reading whenever that
+// reading is a trustline FLOOR (or absent) and the lake is larger; an ADR-0011
+// observation on the row is kept. The difference can be two orders of magnitude:
+// USDT0's trustline sum is 6,469 tokens against 2,581,052 by mint-burn, because a
+// trustline query is blind to tokens held by contracts, claimable balances and
+// liquidity pools. The floor guard in [higherClassicSupply] makes taking the
+// larger safe: the trustline sum is a provable LOWER BOUND on issued supply, and a
+// lake total below it means incomplete flow seeding.
 //
 // The reading is published INSIDE the valuation block and the row's own
-// `circulating_supply` is left exactly as every other producer left it.
-// Two reasons, and they point the same way. A dollar figure whose
-// multiplicand is invisible is a total with no traceable source, so the
-// number has to appear somewhere; and overwriting the row's field would
-// change what an existing, widely-consumed field means on the strength
-// of a third party's row, which is a much larger claim than this arm is
-// making.
+// `circulating_supply` is left as every other producer left it. A dollar figure
+// whose multiplicand is invisible is a total with no traceable source, and
+// overwriting the field would change what a widely-consumed field means on the
+// strength of a third party's row.
 func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
 	circ, reading := listingSupplyReading(row, lake)
 	if circ == "" {

@@ -313,33 +313,24 @@ func (p *PrometheusStatusBackend) Latency(ctx context.Context) (StatusLatency, e
 	return out, nil
 }
 
-// activeSourcesQuery and totalSourcesQuery are the numerator and
-// denominator of the status page's "Active sources" headline. They are
-// package-level so the invariant BETWEEN them — that the numerator is a
-// strict subset of the denominator — can be asserted without standing up
-// a Prometheus.
+// activeSourcesQuery and totalSourcesQuery are the numerator and denominator of
+// the status page's "Active sources" headline. They are package-level so the
+// invariant between them (numerator a strict subset of denominator) can be
+// asserted without a Prometheus.
 //
-// The numerator MUST join on stellarindex_source_enabled. Without it the
-// counts come from different populations and the ratio can exceed 1: six
-// always-on supply observers (trustlines, sep41_supply, sep41_transfers,
-// sac_balances, liquidity_pools, claimable_balances) emit events but
-// carry no `enabled` config flag, because they are wired into the indexer
-// rather than configured. Measured on r1, that produced a public status
-// page reading "26 / 25".
+// The numerator MUST join on stellarindex_source_enabled. Without it the counts
+// come from different populations and the ratio can exceed 1: six always-on supply
+// observers (trustlines, sep41_supply, sep41_transfers, sac_balances,
+// liquidity_pools, claimable_balances) emit events but carry no `enabled` flag
+// (a public page read "26 / 25").
 //
-// The population is every scraped stellarindex_source_enabled series,
-// whichever binary emits it: the indexer publishes the gauge for its
-// configured sources and connectors, and the `massive` FX worker
-// (internal/sources/external/forex) publishes its own from the API
-// binary, so an API-hosted source counts in both numbers exactly as an
-// indexer-hosted one does. A feed with no gauge is counted on NEITHER
-// side, and the headline reads one low on both. Both queries count
-// series, which assumes one scrape target per source — true on r1 (one
-// indexer, one API process); a second scraped API replica would count
+// The population is every scraped stellarindex_source_enabled series, whichever
+// binary emits it (the indexer, and the `massive` FX worker from the API binary).
+// A feed with no gauge is counted on NEITHER side. Both queries count series,
+// assuming one scrape target per source: a second scraped API replica would count
 // `massive` twice. deploy/monitoring/rule-tests/status-source-counts_test.yml
-// evaluates both expressions under promtool, and
-// TestStatusSourceCountQueries_MatchPromtoolFixture holds that fixture
-// to these exact strings.
+// evaluates both under promtool, and TestStatusSourceCountQueries_MatchPromtoolFixture
+// holds that fixture to these exact strings.
 const activeSourcesQuery = `count(
 	(rate(stellarindex_source_events_total[7d]) > 0)
 	and on (source) (stellarindex_source_enabled == 1)
@@ -756,47 +747,38 @@ func heartbeatServices(names []string, hb map[string]time.Time) []StatusService 
 // may be before /v1/status calls it down.
 const statusHeartbeatStaleAfter = 60 * time.Second
 
-// rollupOverall computes the customer-facing `overall` field from
-// the per-service rollup plus the two cross-cutting signals
-// (metrics-backend unreachable; page-severity alert firing).
+// rollupOverall computes the customer-facing `overall` field from the per-service
+// rollup plus the two cross-cutting signals (metrics-backend unreachable;
+// page-severity alert firing).
 //
 // Precedence (worst wins):
 //
 //   - "down": any service is down.
-//   - "degraded": any service is degraded, OR backendErr, OR
-//     a page-severity alert is firing, OR a latency SLO is breached,
-//     OR services are in a mixed known state (e.g. one ok + one
-//     unknown — partial visibility is honest degradation, not "ok").
+//   - "degraded": any service is degraded, OR backendErr, OR a page-severity
+//     alert is firing, OR a latency SLO is breached, OR services are in a mixed
+//     known state (one ok + one unknown: partial visibility is honest
+//     degradation, not "ok").
 //
-// The latency input exists because a roll-up that judges only service
-// LIVENESS (api/indexer/aggregator "last seen Ns ago") reported "All
-// systems operational · Every service is reporting healthy" while the
-// very same response carried p95 840ms against a 200ms target and p99
-// 2096ms against 500ms — both rendered in red directly beneath the green
-// banner. A status page that contradicts its own panels is worse than no
-// status page.
-// TICKET incidents are deliberately NOT an input, and the omission is worth
-// stating because the payload invites the question: `incidents.active_count`
-// sits in the same response as `overall`, so a reader can see "ok" beside 8
-// active incidents. Measured on r1: overall ok, 30 ticket + 1
-// informational alerts firing, 0 page. That is the rule working — `page` is
-// the severity that means customers are affected, `ticket` means someone
-// should look during working hours — but it is one step from the latency case
-// above, where a green banner sits over red panels. If `overall` is ever meant
-// to reflect open tickets, that is a change to what "ok" PROMISES on a public
-// surface, not a tuning knob; it belongs in a decision, not a patch.
+// The latency input exists because a roll-up judging only service LIVENESS
+// reported "All systems operational" while the same response carried p95 840ms
+// against a 200ms target, rendered in red beneath the green banner. A status
+// page that contradicts its own panels is worse than none.
+//
+// TICKET incidents are deliberately NOT an input, though `incidents.active_count`
+// sits beside `overall` and a reader can see "ok" next to active tickets. `page`
+// means customers are affected; `ticket` means look during working hours. If
+// `overall` is ever meant to reflect open tickets, that changes what "ok"
+// PROMISES on a public surface and belongs in a decision, not a patch.
 //
 // An active-source SHORTFALL (freshness.active_sources < total_sources) is
-// likewise not an input: the count is over a 7-day window, so it describes
-// ingest coverage, not whether customers are served now, and a stalled source
-// already raises its own alert. It surfaces as freshness_status "degraded"
-// only. A failed freshness QUERY does degrade, via backendErr, like every
-// other panel.
+// likewise not an input: the count is over a 7-day window, so it describes ingest
+// coverage, not whether customers are served now, and a stalled source raises its
+// own alert. It surfaces as freshness_status "degraded" only. A failed freshness
+// QUERY does degrade, via backendErr, like every other panel.
 //
-//   - "unknown": every service is unknown (or has a zero LastSeen).
-//     Distinct from "down" — we have no signal at all, rather than
-//     a definite negative one. Without this branch, a full
-//     metrics-backend outage would read overall=ok.
+//   - "unknown": every service is unknown (or has a zero LastSeen). Distinct from
+//     "down": no signal at all. Without this branch a full metrics-backend outage
+//     would read overall=ok.
 //   - "ok": every service is ok and no canary signal trips.
 func rollupOverall(services []StatusService, backendErr, pageFiring, latencyBreached bool) string {
 	var anyDown, anyDegraded, anyOK, anyUnknown bool

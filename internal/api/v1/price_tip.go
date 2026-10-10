@@ -46,31 +46,22 @@ const (
 
 // handlePriceTip serves GET /v1/price/tip per ADR-0018.
 //
-// Two in-contract response branches:
+// Two in-contract branches: window VWAP (at least one trade in
+// [now-window_seconds, now); price_type="vwap"), and last-good fallback (empty
+// window; PriceReader.LatestPrice as-is, no synthetic age cap, the customer reads
+// observed_at and decides).
 //
-//   - Window VWAP: at least one trade in [now-window_seconds, now). The
-//     handler returns the VWAP with price_type="vwap", window_seconds=N.
-//   - Last-good fallback: window is empty. The handler returns
-//     PriceReader.LatestPrice's most-recent observation as-is — no
-//     synthetic age cap, the customer reads observed_at and decides.
+// flags.stale is always false here: both branches are in-contract per ADR-0018.
+// The freeze flag stays unset too, since freeze is a closed-bucket concept.
+// Divergence flagging still applies (asset-level).
 //
-// flags.stale is **always false** on this surface — both branches are
-// in-contract per ADR-0018 §"flags.stale semantic". The freeze flag
-// also stays unset here: freeze is a closed-bucket concept and the tip
-// surface has no closed-bucket guarantee. Divergence flagging still
-// applies (asset-level, not bucket-level).
+// ?granularity= is rejected with 400: accepting a closed-bucket concept on the
+// tip URL would let a stray query string silently change the surface's contract.
 //
-// URL discipline: ?granularity= is rejected with 400 — granularity is
-// a closed-bucket concept and accepting it on the tip URL would let a
-// stray query string silently turn a tip request into something
-// closed-bucket-shaped (ADR-0018 §"URL discipline").
-//
-// Window semantics vs the other price surfaces: a 5 s (default) rolling
-// window against /v1/price's last CLOSED 1 m bucket and against the
-// trailing-24 h catalogue overlay behind /v1/assets' price_usd. On a
-// moving pair the three legitimately differ by ~0.1–0.2 % — see the
-// "Current-price surfaces and their windows" section in the package
-// doc, which enumerates every producer and its window.
+// The default 5 s rolling window differs from /v1/price's last CLOSED 1 m bucket
+// and from the trailing-24 h overlay behind /v1/assets' price_usd, so on a
+// moving pair they legitimately differ by ~0.1-0.2 %. See "Current-price
+// surfaces and their windows" in the package doc.
 func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 	// PriceReader is the fallback path; without it the tip surface
 	// can't degrade and there's nothing meaningful to serve. The
@@ -169,40 +160,25 @@ func (s *Server) tipFlags(ctx context.Context, snap PriceSnapshot, asset, quote 
 // "stream cannot start" on the stream endpoint. Any other error is
 // surfaced as-is for caller-side logging + 500 mapping.
 func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, windowSeconds int) (PriceSnapshot, []string, error) {
-	// Withholding gates, checked before any read: the tip surface
-	// promises freshness, not provability (ADR-0018), but it is still
-	// an aggregated "the price of X is P" claim — and the rolling-
-	// window VWAP below is computed straight from raw trades, so
-	// without this check a dust-authored market would serve its
-	// attacker-written rate here even after /v1/price started
-	// withholding it. One gate call
-	// covers every branch of this function; the reader-level gates
-	// inside LatestPrice would otherwise cover only the middle one.
+	// Withholding gates, checked before any read: the tip surface promises
+	// freshness, not provability (ADR-0018), but it is still an aggregated "the
+	// price of X is P" claim, and the rolling-window VWAP is computed from raw
+	// trades, so without this check a dust-authored market would serve its
+	// attacker-written rate here after /v1/price started withholding it. One gate
+	// call covers every branch; the reader-level gates inside LatestPrice cover only
+	// the middle one.
 	//
-	// Deliberately NOT given a best-effort sub-budget the way the
-	// event's divergence lookup is (see [tipStreamDivergenceBudget]).
-	// That treatment is only available to a signal with a safe unknown
-	// to degrade to: the divergence flag has one, because
-	// `divergence_checked: false` already means "could not verify". A
-	// withholding gate has none — it decides whether to serve AT ALL,
-	// and the only two things a timed-out gate could do are refuse a
-	// price that is fine or publish one the gate exists to withhold.
-	// Timing this out on the emit path would republish the
-	// attacker-authored rate these gates exist to withhold, so a slow
-	// gate correctly costs the emission instead.
+	// Deliberately NOT given a best-effort sub-budget like the divergence lookup
+	// ([tipStreamDivergenceBudget]): that is only possible for a signal with a safe
+	// unknown to degrade to (`divergence_checked: false`). A withholding gate decides
+	// whether to serve AT ALL; timing it out on the emit path would republish the
+	// rate it exists to withhold, so a slow gate correctly costs the emission.
 	//
-	// Scam-issuer gate: same posture as the substance gate on this
-	// surface — a directory-scam-flagged issuer's live tip is still an
-	// aggregated price claim we decline to publish. Both are folded by
-	// [withheldBy], scam asked first, so a pair both gates refuse is
-	// reported as flagged rather than as merely thin.
-	//
-	// Asked about BOTH legs, via [scamWithheld], because the withholding
-	// decision is a property of the MARKET rather than of whichever leg
-	// the client named first. Keying on the base alone does not cover
-	// every quote: the tip of `?asset=native&quote=<FLAGGED>` is the
-	// flagged market's own price inverted. The fold over both legs
-	// happens inside pricingguard, in one call.
+	// The scam-issuer gate has the same posture as the substance gate. Both are
+	// folded by [withheldBy], scam asked first, so a pair both refuse is reported as
+	// flagged rather than merely thin. It is asked about BOTH legs via
+	// [scamWithheld]: withholding is a property of the MARKET, and the tip of
+	// `?asset=native&quote=<FLAGGED>` is the flagged market's own price inverted.
 	if w := withheldBy(ctx, s.Substance, s.Scam, asset, quote, "tip"); w != pricingguard.NotWithheld {
 		return PriceSnapshot{}, nil, PriceWithheldError(w)
 	}
@@ -488,39 +464,28 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 }
 
 // tipMergePairs partitions the alias-pair combinations of a requested
-// (asset, quote) into the set the tip window MERGES and the set it reads
-// LAST — only after every other read has missed.
+// (asset, quote) into the set the tip window MERGES and the set it reads LAST,
+// only after every other read has missed.
 //
-// Both sides alias, because XLM appears as a quote too (AQUA/XLM), and
-// the merge is what lets ?asset=native reach the CEX prints stored under
-// crypto:XLM — the two established XLM forms are deep, disjoint venue
-// populations of one asset.
+// Both sides alias (XLM is a quote too, AQUA/XLM); the merge is what lets
+// ?asset=native reach CEX prints stored under crypto:XLM.
 //
-// Every SAC-wrapped classic has the same dual identity — the families the
-// operator declares in `[supply].sac_wrappers` — and its Soroban SAC/SAC
-// pool is routinely orders of magnitude thinner than its SDEX book. A
-// merge that admitted the pool unasked let ONE trade on a
-// few-hundred-dollar pool be the served tip of a classic-quoted request
-// in every 30s window the SDEX book was silent, with no gate on the pool
-// itself: the substance gate measures the alias union, which the deep
-// book clears on the pool's behalf, the trailing-baseline guard never
-// runs on this surface, and the window VWAP is computed straight from
-// raw trades. That is the thin-pool third-alias shape the alias family's
-// SAC-LAST ordering exists to stop (see canonical.AssetAliases); a merge
-// has no "last", so this gives it one. A SAC-form combination the caller
-// did not name is never merged: it is returned in `last`, and computeTip
-// reads it only after the established combinations' window, the
-// closed-bucket read and every other fallback have missed — where the
-// alternative is no price at all. A wrapped classic with no classic
-// venue (a Soroban-only market) therefore still serves from its pool —
-// gated by the substance floor, which for such an asset measures the
-// pool alone — and a SAC print can never displace, or blend into, an
-// answer the established forms can give.
+// A SAC-wrapped classic's Soroban SAC/SAC pool is routinely orders of magnitude
+// thinner than its SDEX book. Merging it unasked would let ONE trade on a tiny
+// pool be the served tip whenever the SDEX book was silent in the window, with no
+// gate on the pool itself: the substance gate measures the alias union (which the
+// deep book clears on the pool's behalf), the trailing-baseline guard never runs
+// on this surface, and the window VWAP reads raw trades. That is the thin-pool
+// third-alias shape the SAC-LAST ordering of canonical.AssetAliases exists to
+// stop; a merge has no "last", so this gives it one. A SAC-form combination the
+// caller did not name is returned in `last`, and computeTip reads it only after
+// the established combinations, the closed-bucket read and every other fallback
+// have missed. A Soroban-only market therefore still serves from its pool, and a
+// SAC print can never displace or blend into an answer the established forms can
+// give.
 //
-// A caller who names a SAC form is asking about that market and keeps
-// the full cross — the pool merged with its classic sibling — in
-// `merge`, with nothing held back. Identity combinations
-// (native/crypto:XLM collapsing) are dropped.
+// A caller who names a SAC form keeps the full cross in `merge`. Identity
+// combinations (native/crypto:XLM collapsing) are dropped.
 func tipMergePairs(asset, quote canonical.Asset) (merge, last []canonical.Pair) {
 	sacNamed := asset.Type == canonical.AssetSoroban || quote.Type == canonical.AssetSoroban
 	for _, a := range assetAliases(asset) {

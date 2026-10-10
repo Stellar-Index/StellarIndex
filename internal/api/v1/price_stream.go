@@ -93,33 +93,28 @@ const closedStreamGateSurface = "price_stream"
 // stalled DB pays the budget, in latency rather than a re-exposed price.
 const closedStreamGateBudget = tipStreamTickTimeout
 
-// closedStreamWithheld reports whether an aggregated closed-bucket
-// price claim for (asset, quote) may be published on this surface.
+// closedStreamWithheld reports whether an aggregated closed-bucket price claim
+// for (asset, quote) may be published on this surface.
 //
 // Both gates, never one. /v1/price consults substance AND scam through
-// cmd/stellarindex-api's priceWithheld chokepoint, and a hand-written
-// site that consults one and forgets the other is exactly the
-// drift that chokepoint exists to prevent (see
-// TestWithholdingGatesAreSpelledOnlyAtTheChokepoint): an operator
-// setting disable_substance_gate=true to diagnose a coverage complaint
-// would otherwise start fanning out a directory-flagged issuer's VWAP.
+// cmd/stellarindex-api's priceWithheld chokepoint, and a hand-written site that
+// consults one and forgets the other is the drift that chokepoint exists to
+// prevent (TestWithholdingGatesAreSpelledOnlyAtTheChokepoint): an operator setting
+// disable_substance_gate=true to diagnose a coverage complaint would otherwise
+// start fanning out a flagged issuer's VWAP.
 //
-// Keyed on the requested (asset, quote): the substance gate measures
-// the pair's ALIAS UNION and the scam gate resolves each leg to its
-// canonical family form internally, so one consultation covers every
-// alias spelling this connection subscribes to.
+// Keyed on the requested (asset, quote): the substance gate measures the pair's
+// ALIAS UNION and the scam gate resolves each leg to its canonical family form, so
+// one consultation covers every alias spelling the connection subscribes to.
 //
-// BOTH LEGS on the scam side too, via [scamWithheld]. The base-only
-// question would let a flagged issuer named as the QUOTE open the stream
-// at 200 and be fanned its own market's price, inverted, once per closed
-// bucket for the hours an SSE connection lives, while the same issuer
-// named as the asset is refused. The fold over legs belongs inside
-// pricingguard, never hand-written at a call site.
+// BOTH LEGS on the scam side, via [scamWithheld]: a flagged issuer named as the
+// QUOTE would otherwise open the stream and be fanned its own market's price,
+// inverted, once per closed bucket. The fold over legs belongs inside
+// pricingguard, never at a call site.
 //
-// The scam gate is asked first so a pair both gates refuse is reported
-// under the flag, not as a thin market (see [writePriceWithheldProblem]).
-//
-// Nil gates (operator disabled [pricing_guard]) withhold nothing.
+// The scam gate is asked first so a pair both refuse is reported under the flag,
+// not as a thin market (see [writePriceWithheldProblem]). Nil gates (operator
+// disabled [pricing_guard]) withhold nothing.
 func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonical.Asset) pricingguard.Withholding {
 	if s.Substance == nil && s.Scam == nil {
 		return pricingguard.NotWithheld
@@ -339,37 +334,24 @@ func sendClosedStreamBatch(ctx context.Context, ch chan<- streaming.Event, batch
 // stage staler prices behind a slow client.
 const closedStreamQueueDepth = 4
 
-// handlePriceStream serves GET /v1/price/stream — the SSE endpoint
-// carrying the strict ADR-0015 closed-bucket consistency contract
-// that /v1/price serves. Unlike the tip + observations streams (per-
-// connection tick), this surface is Hub-driven: the aggregator
-// publishes one event per closed bucket, and every subscriber on
-// the same (asset, quote) topic receives the same byte-identical
-// payload — the same cross-region consistency property that
-// /v1/price itself exposes.
+// handlePriceStream serves GET /v1/price/stream, the SSE endpoint carrying the
+// strict ADR-0015 closed-bucket contract that /v1/price serves. Unlike the tip +
+// observations streams (per-connection tick) it is Hub-driven: the aggregator
+// publishes one event per closed bucket and every subscriber on the same
+// (asset, quote) topic receives the same byte-identical payload.
 //
-// Wire shape:
+// Wire shape: SSE headers on connect, optional buffered replay from
+// `Last-Event-ID` (the Hub keeps a per-topic ring buffer); per closed bucket one
+// `price_update` event shaped like a `/v1/price` response, or `price_withheld`
+// while a withholding gate refuses the pair; 15 s heartbeats as comment lines.
 //
-//   - On connect: SSE headers, optional buffered-replay from
-//     `Last-Event-ID` (Hub maintains a per-topic ring buffer).
-//   - Per closed bucket: one `price_update` event with the same
-//     envelope shape as a `/v1/price` response, or `price_withheld`
-//     while a withholding gate refuses the pair.
-//   - Heartbeats every 15 s as comment lines.
-//
-// Pre-flight 503: when no Hub is wired (typical pre-launch state
-// where the aggregator isn't running yet), the endpoint returns
-// 503 — same posture as the other Hub-dependent surfaces.
-//
-// Pre-flight 404 `errors/price-withheld`: the same consistency
-// contract carries the same WITHHOLDING contract. The aggregator
-// publishes a closed bucket for every pair it computes and the
-// Redis→Hub bridge sanitises the envelope but asks no gate, so without
-// one here a thin dust market's attacker-authored VWAP and a
-// directory-scam-flagged issuer's price would be available in real time
-// to anyone who spelled the pair into a query string. Both gates are
-// applied here, at connect AND on every forwarded bucket (see
-// [Server.forwardClosedStream]).
+// Pre-flight 503 when no Hub is wired. Pre-flight 404 `errors/price-withheld`:
+// the same consistency contract carries the same WITHHOLDING contract. The
+// aggregator publishes a closed bucket for every pair it computes and the
+// Redis->Hub bridge sanitises the envelope but asks no gate, so without one here a
+// thin dust market's attacker-authored VWAP and a scam-flagged issuer's price
+// would be available in real time. Both gates apply at connect AND on every
+// forwarded bucket (see [Server.forwardClosedStream]).
 func (s *Server) handlePriceStream(w http.ResponseWriter, r *http.Request) {
 	if s.Hub == nil {
 		writeProblem(w, r,

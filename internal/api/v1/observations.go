@@ -9,36 +9,30 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// handleObservations serves GET /v1/observations per ADR-0018
-// Surface 3 — the lowest-level, no-aggregation surface.
+// handleObservations serves GET /v1/observations per ADR-0018 Surface 3, the
+// lowest-level, no-aggregation surface.
 //
-// Wire shape: an array of TradeRow entries, one per source that has
-// ever recorded a trade on the (asset, quote) pair. Empty array (NOT
-// 404) when the pair has no observations — the array shape lets a
-// caller polling for "any source data on this pair" cleanly observe
-// the transition from zero → some without contract changes.
+// Wire shape: an array of TradeRow entries, one per source that has ever recorded
+// a trade on the (asset, quote) pair. Empty array (NOT 404) when there are none,
+// so a caller polling for "any source data" sees zero -> some without a contract
+// change.
 //
 // Query parameters:
 //
-//   - asset (required) — canonical asset id; mirrors /v1/price.
+//   - asset (required): canonical asset id; mirrors /v1/price.
 //   - quote (optional, default fiat:USD)
-//   - source (optional) — narrow to a single on-chain source; result is
-//     then a 0- or 1-element array. Off-chain names, exchanges included, 400 (rawTradeSourceFilterOK).
-//   - aggregate=latest (optional) — collapse to the single most-recent
-//     trade across all sources. Returns a 0- or 1-element array
-//     (preserves the array wire shape; aggregate=latest does NOT
-//     change the response wrapper).
+//   - source (optional): narrow to a single on-chain source (0- or 1-element
+//     array). Off-chain names, exchanges included, 400 (rawTradeSourceFilterOK).
+//   - aggregate=latest (optional): collapse to the single most-recent trade across
+//     all sources; the array wire shape is preserved.
 //
-// flags.stale is **always false** on this surface — there is no
-// aggregation contract to fall short of (ADR-0018 §"flags.stale
-// semantic"). Freeze + divergence flags are also intentionally NOT
-// consulted here: observations is the rawest surface, and adding
-// flags would imply an aggregation layer we explicitly didn't build.
+// flags.stale is always false here (no aggregation contract to fall short of,
+// ADR-0018). Freeze + divergence flags are intentionally NOT consulted: adding
+// them would imply an aggregation layer we did not build.
 //
-// URL discipline (ADR-0018 §"URL discipline"): ?granularity= and
-// ?window_seconds= return 400 — those are closed-bucket and tip
-// concepts respectively; accepting them on /v1/observations would
-// silently let a stray query param select between consistency tiers.
+// ?granularity= and ?window_seconds= return 400 (ADR-0018 URL discipline):
+// accepting closed-bucket and tip concepts here would let a stray query param
+// select between consistency tiers.
 func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	if s.History == nil {
 		writeProblem(w, r,
@@ -125,34 +119,21 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	// byte-identical across requests (the response-equality contract).
 	sort.Strings(srcs)
 
-	// Single-source flag: true when exactly one source contributed
-	// (informational). Stale and Frozen stay false on this surface
-	// per ADR-0018.
+	// Single-source flag: true when exactly one source contributed (informational).
 	//
-	// FRESHNESS CONTRACT: this is the RAW per-source surface, so
-	// there is no single staleness verdict — flags.stale is always false
-	// here BY DESIGN, and the envelope's as_of is the response time (shared
-	// writeJSON), NOT the data's age. A source can be arbitrarily stale (a
-	// venue that last traded the pair weeks ago still returns its last
-	// trade). Consumers assess freshness PER OBSERVATION, from each row's
-	// own trade timestamp — never from the envelope as_of or flags.stale on
-	// this endpoint. Documented on the /v1/observations OpenAPI schema.
+	// FRESHNESS CONTRACT: this is the RAW per-source surface, so there is no single
+	// staleness verdict. flags.stale is always false here BY DESIGN and the
+	// envelope's as_of is the response time (shared writeJSON), NOT the data's age: a
+	// venue that last traded the pair weeks ago still returns its last trade.
+	// Consumers assess freshness PER OBSERVATION from each row's own trade timestamp.
 	//
-	// divergence_checked is ALSO structurally false here, BY DESIGN, and
-	// s.Divergence is deliberately never consulted. The cross-reference
-	// worker compares the aggregator's VWAP for a base against external
-	// references and caches one verdict per base; /v1/price, its windowed
-	// variant, /v1/price/tip, /v1/price/tip/stream and /v1/vwap all serve
-	// an aggregated number that verdict speaks to, so they carry it. This
-	// surface serves raw
-	// per-source trades — there is no aggregated value for the verdict to
-	// vouch for, and stamping a base-level verdict onto every venue's last
-	// trade would read as "each of these rows was cross-checked" when none
-	// was. A false here means exactly what it says: this
-	// surface does not verify. Pinned by
-	// TestObservations_DivergenceCheckedStructurallyFalse; the stream twin
-	// (observationsStreamEvent) mirrors it. Documented on the Flags schema
-	// and the /v1/observations description in the OpenAPI spec.
+	// divergence_checked is also structurally false here, and s.Divergence is
+	// deliberately never consulted. The cross-reference verdict is cached per base and
+	// speaks to an aggregated number (/v1/price, its windowed variant, /v1/price/tip,
+	// the tip stream and /v1/vwap carry it). Stamping a base-level verdict onto every
+	// venue's last trade would read as "each of these rows was cross-checked" when
+	// none was. Pinned by TestObservations_DivergenceCheckedStructurallyFalse; the
+	// stream twin (observationsStreamEvent) mirrors it.
 	flags := Flags{SingleSource: len(srcs) == 1}
 
 	// Triangulation hint: an empty observations array is genuinely
