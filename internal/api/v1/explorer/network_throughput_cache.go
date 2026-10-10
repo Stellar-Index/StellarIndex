@@ -11,32 +11,25 @@ import (
 )
 
 // This file extends the stale-while-revalidate layer (hot_reads.go) to
-// GET /v1/network/throughput — the /network page's daily
-// ledger/tx/op/event series and chain-economics panel.
+// GET /v1/network/throughput, the /network page's daily ledger/tx/op/event
+// series and chain-economics panel.
 //
-// Why: the read is a FINAL scan over up to a YEAR of stellar.ledgers with
-// three argMax columns. Run INLINE on the 8-second explorerReadTimeout, it
-// missed that budget on a cold or loaded box, the handler 503'd (or the
-// page rendered the panel absent), and — because the scan died WITH the
-// request — no retry could ever land warm. The holders board and the
-// contracts directory are cached here for the same failure shape.
+// Why: the read is a FINAL scan over up to a YEAR of stellar.ledgers with three
+// argMax columns. Inline on the 8s explorerReadTimeout it missed on a cold or
+// loaded box, and because the scan died WITH the request no retry could land
+// warm.
 //
-// Two properties beyond the plain SWR shape:
+// Beyond plain SWR:
 //
-//   - ONE cache entry, not one per window. The entry always holds the
-//     MAXIMUM window (365 days) and every request slices its tail, exactly
-//     as the holders/contracts caches hold the maximum page and slice by
-//     `limit`. Daily buckets are independent aggregates, so the last N
-//     buckets of the 365-day series ARE the N-day series — no rounding,
-//     no ladder, no echo change. It also collapses the key space to 1, so
-//     an unauthenticated caller cannot walk ?window_days=1..365 to buy 365
-//     distinct year-class scans.
-//   - `partial` is READ from the cached bucket, not recomputed at serve
-//     time. ExplorerReader.NetworkThroughput derives it from the query's
-//     own max(close_time) — deterministic and data-derived, so a stale
-//     entry (or a cross-region peer whose wall clock disagrees near the
-//     UTC boundary) can never mislabel a bucket that is genuinely still
-//     incomplete, or genuinely complete, the other way.
+//   - ONE cache entry, not one per window. It always holds the MAXIMUM window
+//     (365 days) and every request slices its tail; daily buckets are
+//     independent aggregates, so the last N buckets ARE the N-day series. It
+//     also collapses the key space to 1, so an unauthenticated caller cannot
+//     walk ?window_days=1..365 to buy 365 year-class scans.
+//   - `partial` is READ from the cached bucket, not recomputed at serve time.
+//     ExplorerReader.NetworkThroughput derives it from the query's own
+//     max(close_time), so a stale entry (or a peer region whose clock disagrees
+//     near the UTC boundary) cannot mislabel a bucket.
 
 // networkThroughputTTL bounds how stale the cached series may be. The
 // panel is a DAILY aggregate over closed ledgers: every bucket but

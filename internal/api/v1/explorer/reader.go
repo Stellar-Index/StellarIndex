@@ -94,32 +94,25 @@ func retryableColdMiss(callCtx context.Context, err error) bool {
 	return lakeUnreachable(err)
 }
 
-// lakeUnreachable reports whether err is a TRANSPORT-layer failure below
-// the query layer: the ClickHouse server refused the connection, the
-// socket died mid-query, or its host stopped resolving. None of these can
-// be provoked by the query, so none is a bug in this process — they are
-// "the dependency is down, retry", the same class as the saturation
+// lakeUnreachable reports whether err is a TRANSPORT-layer failure below the
+// query layer (connection refused, socket died mid-query, host stopped
+// resolving). The query cannot provoke these, so none is a bug in this
+// process: "dependency down, retry", the same class as the saturation
 // sentinels above.
 //
-// Matching only net.Error values whose Timeout() is TRUE is not enough:
-// a hard-down lake does not time out — it answers instantly with
-// `dial tcp 127.0.0.1:9300: connect: connection refused`, a *net.OpError
-// whose Timeout() is false. Unmatched, that falls through to
-// `errors/internal` 500 on 20+ unauthenticated explorer routes, so a
-// ClickHouse outage is indistinguishable from a code bug in the logs,
-// in the 5xx SLA probe, and in every alert built on them.
+// Matching only net.Error with Timeout() true is not enough: a hard-down lake
+// answers instantly with `dial tcp ...: connection refused`, a *net.OpError
+// with Timeout() false. Unmatched, it falls to `errors/internal` 500 on 20+
+// unauthenticated explorer routes, so a ClickHouse outage reads as a code bug
+// in logs, the 5xx SLA probe and every alert built on them.
 //
-// The rule ("any error from below the query layer is transient") is the
-// one package v1 already applies to its two other storage seams:
-// IsCacheUnavailable treats any *net.OpError from Redis as 503
-// (cache_errors.go), and transientStorageErr does the same for Postgres
-// (envelope.go) — keep the three in step.
+// Same rule as the package's other storage seams: IsCacheUnavailable
+// (cache_errors.go) for Redis and transientStorageErr (envelope.go) for
+// Postgres. Keep the three in step.
 //
-// *net.OpError covers dial/read/write on a live conn; *net.DNSError
-// covers "no such host" (a DNSError reached bare is NOT wrapped in an
-// OpError, and its Timeout() is false); the bare errno arms catch a
-// driver that re-wrapped only the underlying syscall error and dropped
-// the *net.OpError on the way up.
+// *net.OpError covers dial/read/write; *net.DNSError covers "no such host"
+// (reached bare, not wrapped in an OpError, Timeout() false); the bare errno
+// arms catch a driver that re-wrapped only the syscall error.
 func lakeUnreachable(err error) bool {
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {

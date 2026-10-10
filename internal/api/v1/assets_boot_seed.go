@@ -9,33 +9,26 @@ import (
 
 // Boot-seeding the /v1/assets listing cache.
 //
-// The problem this file exists to solve is a race the prewarm cannot
-// win. The process starts listening milliseconds after start, the first
-// /v1/assets requests arrive within seconds, and the cold listing
-// aggregate takes around ten seconds. No prewarm ordering fixes that: the
-// cost IS the first fill, and traffic arrives before it can complete.
+// A race the prewarm cannot win: the process listens within milliseconds, the
+// first /v1/assets requests arrive within seconds, and the cold listing
+// aggregate takes ~10s. The cost IS the first fill.
 //
-// The fix is to give [CachedAssetsReader.fetchRows] something to serve.
-// Seed the entries at boot from the previous process's last-good
-// page-set (persisted to Redis by the prewarm — see
-// cmd/stellarindex-api/assets_listing_snapshot.go) with the rows' REAL
-// observation time. fetchRows then takes branch (A'): serve stale
-// immediately, one detached refresh behind it. An 11 s block becomes a
-// millisecond answer that is honestly labelled `flags.stale` with an
-// `as_of` of when the data was actually observed.
+// So seed the entries at boot from the previous process's last-good page-set
+// (persisted to Redis by the prewarm, see
+// cmd/stellarindex-api/assets_listing_snapshot.go), with the rows' REAL
+// observation time. [CachedAssetsReader.fetchRows] then takes branch (A'):
+// serve stale immediately, one detached refresh behind it, honestly labelled
+// `flags.stale` with the true `as_of`.
 //
-// Two invariants make that honest rather than merely fast:
+// Two invariants keep that honest:
 //
-//   - The seeded entry's `at` is the observation time carried in the
-//     snapshot, never `time.Now()`. A snapshot re-persisted from a
-//     stale serve therefore keeps its ORIGINAL observation time, so
-//     age can only be reset by a real upstream refresh.
-//   - [Server.listAssetsExtAt] reports that observation time and the
-//     staleness verdict to the handler, which stamps them on the
-//     envelope. This mirrors [CachedMarketsReader.DistinctPairsExtAt]
-//     exactly — same `…At` shape, same `Flags{Stale: stale}` +
-//     `env.AsOf = observedAt` treatment on the handler side — rather
-//     than inventing a second staleness convention.
+//   - The seeded entry's `at` is the snapshot's observation time, never
+//     `time.Now()`, so a snapshot re-persisted from a stale serve keeps its
+//     ORIGINAL time and age resets only on a real upstream refresh.
+//   - [Server.listAssetsExtAt] reports observation time and staleness to the
+//     handler, mirroring [CachedMarketsReader.DistinctPairsExtAt] (same
+//     `Flags{Stale: stale}` + `env.AsOf = observedAt`): one staleness
+//     convention.
 
 // listAssetsCacheKey derives the [CachedAssetsReader.entries] key for a
 // ListAssetsExt call.

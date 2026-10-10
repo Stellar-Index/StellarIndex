@@ -7,36 +7,26 @@ import (
 	"strings"
 )
 
-// Diagnosing a slow endpoint means knowing WHICH request was slow, and
-// on this API that is decided almost entirely by the query string.
-// `/v1/assets` is one route and many queries: the limit picks a cache
-// key, `order_by` picks a different index path, a cursor turns a first
-// page into a keyset scan. The access log records `path` only, so a
-// slow-request investigation could see "/v1/assets was 9.7s" and not
-// which of those it was.
+// Diagnosing a slow endpoint means knowing WHICH request was slow, and on this
+// API the query string decides that: `/v1/assets` is one route and many
+// queries (limit picks a cache key, `order_by` an index path, a cursor a keyset
+// scan). The access log records `path` only.
 //
-// The obvious fix is wrong. The Logger doc says plainly that it does
-// not log query parameters because they "may carry API keys or PII",
-// and that is not hypothetical here — customer emails can reach edge
-// logs through query strings. Logging the raw
-// query to diagnose latency would create a privacy defect to fix a
-// performance one.
+// Logging the raw query is wrong: the Logger doc says query parameters "may
+// carry API keys or PII" (customer emails can reach edge logs this way). So
+// this records the SHAPE of a request, never its content:
 //
-// So this records the SHAPE of a request, never its content:
-//
-//   - A parameter on the allow-list below contributes `name=value`.
-//     These are the ones that select a query plan — limits, orderings,
-//     granularities, type filters. Their values are drawn from small
-//     enumerations or are integers; none can carry a secret or identify
+//   - An allow-listed parameter contributes `name=value`. These select a query
+//     plan (limits, orderings, granularities, type filters), and their values
+//     are small enumerations or integers that cannot carry a secret or identify
 //     a person.
-//   - Any other parameter contributes `name=<set>`. The NAME is what
-//     makes a request shape distinct (a cursor page is a different plan
-//     from a first page), and the name alone is enough to tell those
-//     apart. The value never appears.
+//   - Any other parameter contributes `name=<set>`: the name distinguishes the
+//     shape (a cursor page is a different plan from a first page), the value
+//     never appears.
 //
-// The result is that an operator sees `limit=500&order_by=volume_24h_usd_desc`
-// or `cursor=<set>&q=<set>`, which is exactly enough to reproduce the
-// slow request, and never enough to leak one.
+// An operator sees `limit=500&order_by=volume_24h_usd_desc` or
+// `cursor=<set>&q=<set>`: enough to reproduce a slow request, never enough to
+// leak one.
 
 // shapeSafeParams are query parameters whose VALUES may be logged.
 //

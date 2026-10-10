@@ -290,31 +290,25 @@ const catalogueUSDRoundDigits = 10
 const catalogueUSDMinQuanta = 1000
 
 // normalizeCatalogueUSD applies the dex-nonstandard-decimals forward
-// normalisation to a USD price the asset-catalogue readers produced from
-// RAW prices_1m / prices_1d ratios. Returns ok=false when the value must
-// be withheld instead.
+// normalisation to a USD price the catalogue readers produced from RAW
+// prices_1m / prices_1d ratios. Returns ok=false when the value must be
+// withheld.
 //
-// ONE FACTOR. Every catalogue price is the asset's ratio against a USD
-// proxy (classic USDC, its SAC, fiat:USD) or against XLM times XLM/USD —
-// every quote leg on the standard scale, inverted arms included — so the
-// factor is 10^(asset decimals − standard) whichever arm answered; see
-// [Server.normalizeTransitiveUSD] for why a chained product telescopes
-// to the same thing.
+// ONE FACTOR: every catalogue price is the asset's ratio against a USD proxy
+// (classic USDC, its SAC, fiat:USD) or against XLM times XLM/USD, with every
+// quote leg on the standard scale, so the factor is 10^(asset decimals -
+// standard) whichever arm answered; see [Server.normalizeTransitiveUSD] for why
+// a chained product telescopes. Byte-identical, no parse round-trip, for assets
+// with no confirmed non-7-decimals row (every classic asset and native XLM).
 //
-// Byte-identical, with no parse round-trip, for an asset with no
-// confirmed non-7-decimals row — every classic asset and native XLM, by
-// protocol.
-//
-// WITHHOLDING. For a flagged asset an unparseable or non-positive value
-// cannot be corrected, and publishing it raw is the defect this exists
-// to remove, so it is dropped. And when `rounded`, the SQL has already
-// cut the RAW ratio to catalogueUSDRoundDigits places: scaling UP by
-// 10^k promotes that rounding error by the same 10^k. An 18-decimals
-// token worth $1 has a raw ratio of 1e-11, which the SQL rounds to zero
-// — and one worth $14 comes back as exactly $10. Below
-// catalogueUSDMinQuanta the corrected number would be precise-looking
-// fiction, so the point is a gap instead. Scaling DOWN only shrinks the
-// error and needs no floor.
+// WITHHOLDING: for a flagged asset an unparseable or non-positive value cannot
+// be corrected, and publishing it raw is the defect this removes. When
+// `rounded`, the SQL already cut the RAW ratio to catalogueUSDRoundDigits
+// places, and scaling UP by 10^k promotes that rounding error by 10^k: an
+// 18-decimals token worth $1 has a raw ratio of 1e-11, which rounds to zero, and
+// one worth $14 comes back as exactly $10. Below catalogueUSDMinQuanta the
+// result would be precise-looking fiction, so the point is a gap. Scaling DOWN
+// only shrinks the error and needs no floor.
 func (s *Server) normalizeCatalogueUSD(value string, asset canonical.Asset, rounded bool) (string, bool) {
 	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, asset)
 	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, defaultPriceQuote)

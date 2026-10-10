@@ -13,33 +13,29 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// BackupsDiagnostics is the wire shape of GET /v1/diagnostics/backups —
-// the public status page's "Backups" panel. One snapshot of backup +
-// DR-evidence freshness for the region, judged against the SLO
-// thresholds echoed in `slo` (same convention as StatusLatency's
-// P95TargetMs: the API declares the thresholds it judges by, the UI
-// never carries its own literals).
+// BackupsDiagnostics is the wire shape of GET /v1/diagnostics/backups, the
+// status page's "Backups" panel: a snapshot of backup and DR-evidence freshness
+// for the region, judged against the SLO thresholds echoed in `slo` (as
+// StatusLatency's P95TargetMs does: the API declares its thresholds, the UI
+// carries no literals).
 //
-// SOURCE OF TRUTH: Prometheus, via the same [PrometheusStatusBackend]
-// that backs /v1/status. The API never shells out to pgbackrest; it
-// reads what the host already exports —
-//   - woblerr/pgbackrest_exporter (job `pgbackrest_exporter`, port 9854;
-//     16-prometheus-exporters.yml): `pgbackrest_backup_*` series with
-//     `stanza`, `backup_type`, `backup_name`, `repo_key` labels;
+// SOURCE OF TRUTH: Prometheus via the same [PrometheusStatusBackend] as
+// /v1/status. The API never shells out to pgbackrest.
+//   - woblerr/pgbackrest_exporter (job `pgbackrest_exporter`, port 9854):
+//     `pgbackrest_backup_*` with `stanza`, `backup_type`, `backup_name`,
+//     `repo_key` labels;
 //   - node_exporter textfile collector: `stellarindex_restore_drill_*`
-//     (scripts/ops/restore-drill.sh) and
-//     `stellarindex_ch_schema_snapshot_*` (scripts/ops/ch-schema-snapshot.sh),
-//     plus node_exporter's own `node_textfile_mtime_seconds` for the
-//     drill's last-run time (the script stamps last_success ONLY on a
+//     (scripts/ops/restore-drill.sh) and `stellarindex_ch_schema_snapshot_*`
+//     (scripts/ops/ch-schema-snapshot.sh), plus `node_textfile_mtime_seconds`
+//     for the drill's last-run time (the script stamps last_success ONLY on a
 //     clean run, so mtime is the only "it ran at all" signal).
 //
-// Every timestamp / age is a pointer: nil means "no data" (series
-// absent, or the query failed) and the matching freshness verdict is
-// "unknown". The panel renders that grey, never as a fresh zero.
+// Every timestamp / age is a pointer: nil means "no data" (series absent or
+// query failed) and the freshness verdict is "unknown", rendered grey, never as
+// a fresh zero.
 //
-// No secrets, no filesystem paths, no hostnames: repo keys are the
-// pgBackRest `repoN` ordinals, backup labels are pgBackRest's own
-// `YYYYMMDD-HHMMSS[F|D|I]` names.
+// No secrets, paths or hostnames: repo keys are pgBackRest `repoN` ordinals,
+// backup labels are its own `YYYYMMDD-HHMMSS[F|D|I]` names.
 type BackupsDiagnostics struct {
 	// SourceStatus is the tri-state trust signal for the whole
 	// document (same rationale as StatusResponse.IncidentsStatus):

@@ -33,34 +33,25 @@ const tipStreamProducerQueueDepth = 4
 // — see there for why an auxiliary read must not inherit this one.
 const tipStreamTickTimeout = 8 * time.Second
 
-// tipStreamDivergenceBudget bounds the per-event divergence lookup —
-// the one auxiliary read inside an emission — separately from the tick
-// and pre-flight budgets that carry the tip computation itself.
+// tipStreamDivergenceBudget bounds the per-event divergence lookup, the one
+// auxiliary read inside an emission, separately from the tick and pre-flight
+// budgets that carry the tip computation.
 //
-// Without it the lookup inherited [tipStreamTickTimeout], so a stalled
-// verdict store held the whole 8s: measured at 8.0036s, during which the
-// SSE response headers were not written and no further event was
-// emitted. That is backwards. The cadence is the product; the verdict is
-// an overlay whose documented absent state, `divergence_checked: false`,
-// already means "could not verify" — so a degraded auxiliary
-// signal must degrade the FLAG, never the stream.
+// The cadence is the product; the verdict is an overlay whose absent state,
+// `divergence_checked: false`, already means "could not verify". A degraded
+// auxiliary signal must degrade the FLAG, never the stream; sharing
+// [tipStreamTickTimeout] let a stalled verdict store hold an emission 8s with
+// no headers written.
 //
-// One second is chosen against two references rather than picked. The
-// first is the read itself: one GET of the requested pair's div: record
-// (divergence.Service.LookupCachedPairVerdict), no alias walk and no
-// per-base fan-out, and the record is precomputed by the cross-reference
-// worker out of band, so a healthy read is low-millisecond. It is
-// deliberately NOT ample for a wedged store: a read still pending after a
-// second sends the event out unchecked, which is the trade this constant
-// exists to make.
-//
-// The second reference is the cadence: a second is an eighth of the tick
-// budget and at most a fifth of the DEFAULT 5s window, so a wedged store
-// shifts an emission by a fraction of its period instead of consuming
-// the period whole. The package's sibling best-effort reads sit at 2s
-// ([tokenMetadataReadTimeout] and the coverage-floor probe); those run
-// under the 15s REQUEST budget, and the tighter cadence being protected
-// here is why this one is tighter.
+// One second: the read is a single GET of the pair's div: record
+// (divergence.Service.LookupCachedPairVerdict), precomputed out of band, so a
+// healthy read is low-millisecond. A read still pending after a second sends
+// the event out unchecked, which is the intended trade. It is also an eighth of
+// the tick budget and at most a fifth of the DEFAULT 5s window, so a wedged
+// store shifts an emission by a fraction of its period. Sibling best-effort
+// reads sit at 2s ([tokenMetadataReadTimeout], the coverage-floor probe) but run
+// under the 15s REQUEST budget; the tighter cadence here warrants a tighter
+// bound.
 const tipStreamDivergenceBudget = time.Second
 
 // tipStreamDivergenceStallInterval bounds how often a divergence lookup

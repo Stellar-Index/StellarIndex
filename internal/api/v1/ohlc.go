@@ -29,39 +29,26 @@ const ohlcDefaultOutlierSigma = 4.0
 // OHLCBar is the wire shape for /v1/ohlc entries. All prices are
 // decimal strings (ADR-0003).
 //
-// The volume fields are the RAW smallest-unit sums, and the smallest
-// unit is a per-SOURCE scale, NOT a fixed stroop: an on-chain DEX leg is
-// 7-decimal, a CEX leg 8 (internal/sources/external/coinbase.
-// externalAmountDecimals), an FX poller 6 — the scale
-// [amountScaleDecimalsFor] resolves from the trade's source. They are
-// not "stroop-equivalent" for any CEX-fed pair (crypto:XLM/fiat:USD
-// among them), and a consumer that divides by a fixed 1e7 overstates the
-// figure tenfold.
+// The volume fields are RAW smallest-unit sums, and the smallest unit is a
+// per-SOURCE scale, NOT a fixed stroop: on-chain DEX legs are 7-decimal, CEX 8
+// (external.externalAmountDecimals), FX 6, as resolved by
+// [amountScaleDecimalsFor]. A consumer dividing by a fixed 1e7 overstates a
+// CEX-fed pair tenfold.
 //
-// BaseVolumeDecimals / QuoteVolumeDecimals state that scale on the wire,
-// so a consumer renders asset units as volume / 10^decimals rather than
-// guessing a constant. Every point window is lifted to ONE common scale
-// by [aggregate.NormalizeAmountScale] before the sums are taken, and the
-// stated value is that lift target — resolved by
-// [commonAmountScaleDecimals] over the PRE-outlier-filter population, the
-// set the lift ran over, so it remains the served integers' true scale
-// even in a window where the filter removes the only max-scale venue. The
-// two are equal today by construction (a source stamps both legs at one
-// scale); they are carried separately because a scale belongs to an
-// amount, not to a pair.
+// BaseVolumeDecimals / QuoteVolumeDecimals state that scale on the wire.
+// Every point window is lifted to ONE common scale by
+// [aggregate.NormalizeAmountScale] before summing; the stated value is that
+// lift target, resolved by [commonAmountScaleDecimals] over the
+// PRE-outlier-filter population so it stays the served integers' true scale
+// even when the filter removes the only max-scale venue.
 //
-// This is the per-SOURCE axis only. A leg whose asset is in
-// `nonstandard_decimals_assets` is stamped on-chain at the ASSET's own
-// decimals, which NormalizeAmountScale does not model either — the same
-// gap [aggregate.AdjustPrice] patches on the price axis, and out of this
-// endpoint's reach.
+// This is the per-SOURCE axis only: a leg in `nonstandard_decimals_assets`
+// is stamped at the ASSET's own decimals, which NormalizeAmountScale does not
+// model (the gap [aggregate.AdjustPrice] patches on the price axis).
 //
-// Truncated signals the window hit the server's per-request trade
-// cap — Open/High/Low may not reflect the actual window values
-// (only those of the chronologically-LAST N trades, since the reader
-// drops the OLDEST rows under the LIMIT). Close is unaffected: it is
-// the newest print either way. See VWAPResult.Truncated for the same
-// semantics and which end survives.
+// Truncated signals the window hit the per-request trade cap: Open/High/Low
+// reflect only the chronologically-LAST N trades (the reader drops the OLDEST
+// under the LIMIT). Close is unaffected. See VWAPResult.Truncated.
 type OHLCBar struct {
 	From        WireTime `json:"from"`
 	To          WireTime `json:"to"`

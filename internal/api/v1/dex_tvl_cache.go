@@ -129,31 +129,24 @@ type TVLUSDPegInfo interface {
 // TVLValueGate is the serving-side TRUST gate on a reserve leg: may this
 // platform publish a USD valuation of this asset at all?
 //
-// It is the same question — and, in production, literally the same
-// decision function — every other served price surface asks. Without
-// it, `rateFor` consults only the resolver, whose sole floor is one
-// cent of quote notional, so a directory-scam-flagged issuer's token
-// with a single self-traded $0.01 minute would be valued into a pool's
-// TVL at its own VWAP and summed into the protocol headline. A number
-// an attacker authors is not a lower bound, it is a lie with a "≥" in
-// front of it.
+// It is, in production, literally the decision function every other served
+// price surface asks. Without it `rateFor` consults only the resolver, whose
+// sole floor is one cent of quote notional, so a scam-flagged issuer's token
+// with one self-traded $0.01 minute would be valued into a pool's TVL and summed
+// into the protocol headline. An attacker-authored number is not a lower bound,
+// it is a lie with a "≥" in front.
 //
-// Production wiring routes to cmd/stellarindex-api's priceWithheld
-// chokepoint (substance gate OR scam gate — the invariant that the two
-// are never consulted separately). Nil is a valid allow-everything
-// gate, so a deployment with [pricing_guard] disabled keeps ungated
-// figures — and the production builder
-// (cmd/stellarindex-api's buildDEXTVLValueGate) returns a nil INTERFACE
-// when neither guard is wired, because an interface holding a
-// non-pointer struct is never == nil however empty the struct is.
+// Production wiring routes to cmd/stellarindex-api's priceWithheld chokepoint
+// (substance gate OR scam gate; never consulted separately). Nil is a valid
+// allow-everything gate, so a deployment with [pricing_guard] disabled keeps
+// ungated figures. buildDEXTVLValueGate must return a nil INTERFACE when
+// neither guard is wired, because an interface holding a non-pointer struct is
+// never == nil.
 //
-// Two things belong to that production adapter rather than here,
-// because that is where the gates and the operator's peg list already
-// live: the quote set a "does this asset have a publishable USD price"
-// question expands to (vs XLM / vs fiat:USD / vs a declared peg — the
-// same three [Server.listingPriceAllowed] tries), and the
-// low-cardinality metric label the guards count the verdict under
-// (obs.PriceServe{Scam,Substance}WithheldTotal).
+// The quote set behind "does this asset have a publishable USD price" (vs XLM /
+// fiat:USD / a declared peg, as [Server.listingPriceAllowed] tries) and the
+// metric label (obs.PriceServe{Scam,Substance}WithheldTotal) belong to that
+// adapter, where the gates and the operator's peg list live.
 type TVLValueGate interface {
 	ValueWithheld(ctx context.Context, asset canonical.Asset) bool
 

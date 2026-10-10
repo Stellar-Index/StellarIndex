@@ -66,35 +66,24 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Scam-issuer gate. /v1/vwap and /v1/twap must withhold a flagged
-	// issuer's aggregated price exactly as /v1/price, /v1/price/tip,
-	// /v1/price/batch, the SEP-40 oracle and the asset headline do. The
-	// reader-seam gate does not cover these two endpoints, and no
-	// middleware does asset-level withholding.
+	// Scam-issuer gate. /v1/vwap and /v1/twap must withhold a flagged issuer's
+	// aggregated price as /v1/price, /v1/price/tip, /v1/price/batch, the SEP-40
+	// oracle and the asset headline do. Neither the reader-seam gate nor any
+	// middleware covers these two endpoints.
 	//
-	// Asked about BOTH legs, via the package's one spelling of the
-	// decision (scamWithheld → pricingguard's pair fold). Keyed on the
-	// base alone it would cover every quote but not itself as one: the
-	// price of XLM in a flagged issuer's asset IS the flagged market's
-	// price, inverted, so `?base=native&quote=<FLAGGED>` would serve the
-	// exact reciprocal of the number this handler withholds for the other
-	// orientation. Both orientations name one market.
+	// Ask about BOTH legs (scamWithheld, pricingguard's pair fold). Keyed on base
+	// alone, `?base=native&quote=<FLAGGED>` would serve the exact reciprocal of the
+	// price withheld for the other orientation: both name one market.
 	//
-	// SCAM ONLY, deliberately not the substance gate. The scam gate is
-	// targeted (flagged issuers) and directly implements the scam
-	// withholding decision. The substance gate would newly 404 every
-	// THIN pair here, which is both a breaking change for existing clients and arguably
-	// wrong on principle: VWAPResult's own doc and ADR-0015 position
-	// /v1/vwap as the "narrow the window and compute it yourself" surface
-	// OPPOSITE /v1/price. That is an owner decision, not part of the
-	// scam gate.
+	// SCAM ONLY, not the substance gate: the substance gate would newly 404 every
+	// THIN pair here, a breaking change and arguably wrong, since VWAPResult's doc
+	// and ADR-0015 position /v1/vwap as the "narrow the window and compute it
+	// yourself" surface opposite /v1/price. That is an owner decision.
 	//
-	// The gate goes in the HANDLER, not in the shared
-	// tradesInRangeWithStablecoinFallback: that helper is also the fetch
-	// behind the single-bar /v1/ohlc, and scam.go, substance.go, the
-	// config docs and the withheld problem's own guidance text all
-	// promise /v1/ohlc stays visible. Gating there would make our own
-	// error message's escape-hatch advice a lie.
+	// The gate lives in the HANDLER, not in tradesInRangeWithStablecoinFallback:
+	// that helper also feeds the single-bar /v1/ohlc, and scam.go, substance.go,
+	// the config docs and the withheld problem's guidance text all promise /v1/ohlc
+	// stays visible.
 	if s.writeIfScamWithheld(w, r, base, quote, "twap") {
 		return
 	}

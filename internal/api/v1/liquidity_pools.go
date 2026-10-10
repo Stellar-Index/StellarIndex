@@ -12,36 +12,28 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// GET /v1/liquidity-pools — CURRENT two-sided reserves + a
-// constant-product depth approximation for Stellar's protocol-native
-// (CAP-38) liquidity pools, read from the `liquidity_pool` LedgerEntry
-// in the certified lake's current-state table (ADR-0039 pattern, the
-// same read-time-decode design as /v1/pools/reserves and
-// /v1/lending/pools/{pool}/reserves).
+// GET /v1/liquidity-pools: CURRENT two-sided reserves plus a constant-product
+// depth approximation for protocol-native (CAP-38) liquidity pools, read from
+// the `liquidity_pool` LedgerEntry in the lake's current-state table (ADR-0039
+// read-time-decode, like /v1/pools/reserves).
 //
-// Native pools carry TWO-sided reserves on-chain (ReserveA + ReserveB
-// in the entry), so — unlike the Soroban AMM path, where reserves are
-// consumed transiently at trade decode and persisted nowhere — the full
-// per-pool reserve state is honestly available for every native pool.
-// (The supply-verification `lp_reserve_observations` path only records
-// the operator-watched side of watched-asset pools; this endpoint reads
-// both sides of every pool straight from the ledger entry.)
+// Native pools carry both reserves on-chain (ReserveA + ReserveB), unlike the
+// Soroban AMM path where reserves are consumed at trade decode and persisted
+// nowhere; `lp_reserve_observations` only records the watched side of
+// watched-asset pools.
 //
 // Query params:
-//   - pool (optional): a native pool id — L-strkey (SEP-23) or 32-byte
-//     hex. Restricts the response to that one pool; 404 when the id
-//     isn't a captured native pool.
-//   - limit (optional, listing only): 1-100, default 25. The listing
-//     returns the top-N native pools ranked by pool-share trustline
-//     count (number of liquidity providers) — the only cross-pool-
-//     comparable size signal without USD pricing of arbitrary pool
-//     assets.
-//   - asset (optional, listing only): a canonical asset id; restricts the
-//     ranked listing to pools holding any of its alias forms on either side.
+//   - pool (optional): L-strkey (SEP-23) or 32-byte hex; restricts to that
+//     pool, 404 when not a captured native pool.
+//   - limit (optional, listing only): 1-100, default 25. Ranked by pool-share
+//     trustline count, the only cross-pool-comparable size signal without USD
+//     pricing of arbitrary pool assets.
+//   - asset (optional, listing only): canonical asset id; restricts to pools
+//     holding any of its alias forms on either side.
 //
-// Consistency surface: current ledger-entry state (tip-adjacent, per-
-// pool `as_of_ledger` stamps the exact state ledger) — not closed-
-// bucket. ADR-0041 Decision 4: `flags.stale` reflects lake freshness.
+// Consistency: current ledger-entry state (tip-adjacent; per-pool
+// `as_of_ledger` stamps the state ledger), not closed-bucket. ADR-0041
+// Decision 4: `flags.stale` reflects lake freshness.
 
 // classicAssetDecimals is the fixed decimal scale of every classic
 // Stellar asset (7 = stroops). Native-pool reserves are always at this

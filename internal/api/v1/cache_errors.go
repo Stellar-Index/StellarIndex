@@ -11,39 +11,27 @@ import (
 )
 
 // IsCacheUnavailable reports whether err is a Redis transport-or-state
-// failure that should surface to clients as HTTP 503 + Retry-After
-// (vs HTTP 500 for a true internal-error/code-bug).
+// failure that should surface as HTTP 503 + Retry-After rather than 500.
 //
 // Covers:
-//   - go-redis v9 transport errors (net.OpError + transport-layer
-//     sentinels: ErrClosed, ErrPoolExhausted, ErrPoolTimeout).
-//   - MISCONF replies — Redis returns "MISCONF Redis is configured to
-//     save RDB snapshots, but it's currently unable to persist to
-//     disk" once `stop-writes-on-bgsave-error` is active and BGSAVE
-//     has failed. Then every cache write returns MISCONF, the
-//     orchestrator's per-pair Set fails, and downstream the
-//     cascade-affected handlers — /v1/oracle/*, /v1/lending/pools,
-//     /v1/vwap, /v1/observations*, /v1/price/tip* — would otherwise
-//     surface HTTP 500 generic-internal-error to clients. 503 +
-//     Retry-After lets well-behaved clients back off automatically
-//     while operators unblock the writes.
+//   - go-redis v9 transport errors (net.OpError, ErrClosed,
+//     ErrPoolExhausted, ErrPoolTimeout).
+//   - MISCONF replies: with `stop-writes-on-bgsave-error` active and BGSAVE
+//     failing, every cache write returns MISCONF and cascade-affected handlers
+//     (/v1/oracle/*, /v1/lending/pools, /v1/vwap, /v1/observations*,
+//     /v1/price/tip*) would otherwise 500. 503 + Retry-After lets clients back
+//     off while operators unblock writes.
 //
 // Returns false for:
-//   - nil (no error).
-//   - ErrPriceNotFound (an application-layer "no data" sentinel — not
-//     a cache failure).
-//   - Plain context.Canceled / context.DeadlineExceeded (handler-side
-//     deadlines are surfaced as their own per-handler 503s via
-//     handlerTimedOut + the in-handler timeout problem-type URLs;
-//     mixing them into the cache-unavailable branch would mis-label
-//     a server-side timeout as a Redis blip).
-//   - Any other generic Redis reply error (e.g. WRONGTYPE) — those
-//     are programming errors, NOT operational outages, and stay on
-//     the 500 path so an alert fires.
+//   - nil, and ErrPriceNotFound (an application "no data" sentinel).
+//   - Plain context.Canceled / DeadlineExceeded: handler deadlines have their
+//     own 503s (handlerTimedOut); folding them in would mislabel a
+//     server-side timeout as a Redis blip.
+//   - Other Redis reply errors (e.g. WRONGTYPE): programming errors that must
+//     stay on the 500 path so an alert fires.
 //
-// The function is deliberately narrow: it covers MISCONF + transport-
-// layer failures, nothing else. A new branch is added only when a
-// specific outage shape gets a runbook entry.
+// Deliberately narrow: add a branch only when an outage shape gets a runbook
+// entry.
 func IsCacheUnavailable(err error) bool {
 	if err == nil {
 		return false

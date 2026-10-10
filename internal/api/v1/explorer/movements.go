@@ -208,33 +208,26 @@ func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (m
 	return out, true
 }
 
-// AccountMovements serves GET /v1/accounts/{g_strkey}/movements
-// (ADR-0048 D5) — the unified account-activity feed, newest first,
-// keyset-paged by the opaque composite (ledger, tx_hash, op_index,
-// leg_index) cursor, with optional ?kind=/?direction=/?asset= filters.
+// AccountMovements serves GET /v1/accounts/{g_strkey}/movements (ADR-0048 D5):
+// the unified account-activity feed, newest first, keyset-paged by the opaque
+// (ledger, tx_hash, op_index, leg_index) cursor, with optional
+// ?kind=/?direction=/?asset= filters.
 //
-// Merge seam: ClickHouse's stellar.account_movements (the classic-movement
-// archive, ADR-0047/0048 D2, plus the cap67-derived rows up to its
-// watermark) covers every ledger BELOW the merge boundary; Postgres'
-// sep41_transfers 'transfer' rows (ADR-0048 D5's "recent tail",
-// ListSEP41TransfersByAddress) cover every ledger AT OR ABOVE it. The
-// boundary is movementsSplit's pgFloor: timescale.MovementsFloor() (the
-// P23 ledger on pubnet, genesis on a test net), raised to one past the
-// cap67 archive watermark when that is higher. The two ranges cannot
-// overlap by construction — assertMovementsNonOverlap checks that
-// invariant on every request rather than only trusting the doc comment.
-// Because the ranges never overlap, merging two DESC-sorted per-store
-// pages degenerates to "drain whichever side's next row is newer", which
-// mergeAccountMovementRows implements as a real two-pointer merge (not a
-// special-cased concatenation) so the endpoint stays correct even if a
-// regression elsewhere ever violates that invariant.
+// Merge seam: ClickHouse's stellar.account_movements (classic archive plus
+// cap67-derived rows up to its watermark) covers every ledger BELOW the merge
+// boundary; Postgres' sep41_transfers 'transfer' rows cover every ledger AT OR
+// ABOVE it. The boundary is movementsSplit's pgFloor: timescale.MovementsFloor()
+// (P23 ledger on pubnet, genesis on a test net), raised to one past the cap67
+// watermark when higher. The ranges cannot overlap by construction, and
+// assertMovementsNonOverlap checks that on every request. Because they never
+// overlap, mergeAccountMovementRows is a real two-pointer merge of DESC-sorted
+// pages (not a concatenation), so the endpoint stays correct if a regression
+// ever violates that.
 //
-// Honest empty-state: classic-movements-backfill is a historical-only,
-// operator-run job (AGENTS.md "Heavy one-shot jobs on r1"), so
-// stellar.account_movements is EMPTY on every deployment until an
-// operator runs it — before that, this endpoint serves only the
-// Postgres tail, and CoverageNote says so explicitly rather than
-// silently presenting a partial feed as complete.
+// Honest empty-state: classic-movements-backfill is an operator-run historical
+// job, so stellar.account_movements is EMPTY until an operator runs it. Until
+// then only the Postgres tail is served, and CoverageNote says so rather than
+// presenting a partial feed as complete.
 func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

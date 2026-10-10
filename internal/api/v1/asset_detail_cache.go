@@ -22,32 +22,21 @@ type assetDetailEntry struct {
 	degraded bool
 }
 
-// assetDetailResponseCache is the response-level cache for
-// /v1/assets/{id}. Keyed by the normalised asset_id path segment
-// (post-`normaliseAssetIDInput`); value is the full pre-rendered
-// JSON bytes so the warm path can replay the wire body without
-// re-running the handler chain.
+// assetDetailResponseCache is the response-level cache for /v1/assets/{id}.
+// Keyed by the normalised asset_id (post-`normaliseAssetIDInput`); the value is
+// the full pre-rendered JSON, so the warm path replays the wire body without
+// the handler chain.
 //
-// Why a response cache instead of per-reader caches: the underlying
-// readers fan out wide (Volume24hUSDForAsset, supply.LatestSupply,
-// lookupUSDPrice × 2, applyAssetExtensionFields 7 readers,
-// applySep1Overlay metadata fetch, ...). Wrapping every reader is
-// 5+ new wrapper types. The handler-level cache is one type and
-// covers every cost.
-//
-// Drift-safe: the cached entry IS what the handler would produce
-// because the handler IS what populates the cache. New fields,
-// new overlays, new readers all flow through without any
-// per-reader plumbing.
+// Why a response cache: the handler fans out wide (Volume24hUSDForAsset,
+// supply.LatestSupply, lookupUSDPrice x2, applyAssetExtensionFields' 7 readers,
+// applySep1Overlay), and wrapping every reader is 5+ new types. Drift-safe: the
+// entry IS what the handler produces, so new fields and overlays flow through
+// with no per-reader plumbing.
 //
 // TTL (120s in production, set in server.New) MUST exceed the
-// selfPrewarmAssetEndpoints cadence so the prewarm pass always
-// refreshes an entry before it expires — otherwise the cache is
-// cold for the gap between TTL expiry and the next prewarm, and
-// every request in that window pays the full handler cost.
-// The underlying data updates per-minute (closed-bucket prices_1m)
-// and per-tx (volume / supply); 120s staleness is well inside the
-// "closed-bucket only" API contract per ADR-0015.
+// selfPrewarmAssetEndpoints cadence, or the cache is cold between expiry and
+// the next prewarm and every request in that gap pays full handler cost. 120s
+// staleness is inside the closed-bucket contract (ADR-0015).
 type assetDetailResponseCache struct {
 	mu      sync.RWMutex
 	entries map[string]*assetDetailEntry

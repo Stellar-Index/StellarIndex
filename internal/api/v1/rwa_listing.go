@@ -9,33 +9,32 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// C2's second arm on the read path: the independent listing directory,
-// and the candidate population it opens up. The RULE, and why a listing
-// map corroborates rather than attests, lives in internal/rwa/contract.go.
+// C2's second arm on the read path: the independent listing directory and the
+// candidate population it opens up. The RULE, and why a listing map
+// corroborates rather than attests, lives in internal/rwa/contract.go.
 //
 // # The population this arm exists to reach
 //
-// Candidates drawn only from the curated account directory's issuing-tagged
-// contracts silently skip every address it has never heard of. Measured on
-// production: the curated directory names 387 contract addresses and the
-// listing directory 17, with FOUR in both; the in-repo curated binding set
-// names five, and the directory names NONE of them.
+// Candidates drawn only from the curated directory's issuing-tagged contracts
+// skip every address it has never heard of. Measured on production: the
+// curated directory names 387 contract addresses, the listing directory 17,
+// FOUR in both; the in-repo curated binding set names five and the directory
+// none of them.
 //
-// So the population is the UNION of the directory's addresses and every
-// address the in-repo binding set names (bounded by a hand-reviewed table,
-// so it cannot grow without a code change). Enumerating is NOT admitting:
-// a curated binding still has to be named independently by the listing
-// directory to pass C2. What enumeration buys is that its refusal is
-// REPORTED under contract_curated_binding_without_independent_listing
-// instead of vanishing before the accounting starts.
+// So the population is the UNION of the directory's addresses and every address
+// the in-repo binding set names (a hand-reviewed table, so it cannot grow
+// without a code change). Enumerating is NOT admitting: a curated binding must
+// still be named by the listing directory to pass C2. Enumeration makes its
+// refusal REPORTED under contract_curated_binding_without_independent_listing
+// instead of vanishing before accounting starts.
 //
 // # Why the two arms are reported separately
 //
-// They narrow different populations from different roots, so their stage
-// counts reconcile only within themselves. The candidate sets are made
-// DISJOINT: an address the curated directory recognises is evaluated by the
-// directory arm and removed from this one, or the served set would carry it
-// twice — a double-counted market cap.
+// They narrow different populations from different roots, so stage counts
+// reconcile only within each. The candidate sets are made DISJOINT: an address
+// the curated directory recognises is evaluated by the directory arm and
+// removed here, or the served set would carry it twice (a double-counted
+// market cap).
 
 // ─── storage seam ───────────────────────────────────────────────────
 

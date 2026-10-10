@@ -502,33 +502,24 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 	}
 	usdPrice := *detail.PriceUSD
 	_ = ctx
-	// Valuation-integrity guard: when the backing price came from a single
-	// venue AND the asset's trailing-24h USD volume is below the operator
-	// floor, suppress BOTH market_cap_usd and fdv_usd (leave them null) and
-	// flag it — one dust trade ("0.00001 of an asset for $10") must not
-	// present an obscure asset as worth billions. detail.VolumeUSD24h is
-	// populated by the concurrent populateVolume24h before this join. The
-	// price_usd itself still serves; we guard the valuation, not the price.
+	// Valuation-integrity guard: when the backing price came from a single venue
+	// AND trailing-24h USD volume is below the operator floor, suppress BOTH
+	// market_cap_usd and fdv_usd (null) and flag it: one dust trade must not
+	// present an obscure asset as worth billions. detail.VolumeUSD24h is populated
+	// by the concurrent populateVolume24h before this join. price_usd still
+	// serves; we guard the valuation, not the price.
 	//
-	// L2 — native carve-out for list/detail parity: the listing SQL forces
-	// native XLM's source_count to NULL (asset_catalogue.go: `WHEN
-	// ca.asset_id = 'native' THEN NULL::int`), so XLM — triangulated and
-	// definitionally liquid — is NEVER dust-suppressed there. Mirror that
-	// exactly here so /v1/assets/native and the /v1/assets listing can't
-	// disagree on the flag.
+	// Native carve-out for list/detail parity: the listing SQL forces native XLM's
+	// source_count to NULL (asset_catalogue.go), so XLM is NEVER dust-suppressed
+	// there. Mirror that so /v1/assets/native and the listing cannot disagree.
 	//
-	// Residual (documented, not silently assumed): for NON-native assets the
-	// two endpoints derive the guard's venue count from DIFFERENT fallback
-	// price routes. The detail path counts the venues that actually back its
-	// served price — direct fiat:USD via readPriceWithAliases, else the USDC
-	// stablecoin proxy in lookupUSDPriceWithSources — while the listing SQL
-	// COALESCEs direct-fiat:USD then asset/XLM triangulation. So an asset
-	// whose venue count differs across the USDC vs XLM route can still
-	// suppress on one endpoint and not the other; the detail path is
-	// deliberately the STRICTER (it gates on the venues behind the value it
-	// serves, and must not be weakened to match the listing's XLM-route
-	// count). Full parity requires unifying the two price bases at the
-	// aggregator/SQL layer — out of scope for these two API files.
+	// Known residual: for NON-native assets the endpoints derive the venue count
+	// from DIFFERENT fallback routes. Detail counts the venues backing its served
+	// price (direct fiat:USD via readPriceWithAliases, else the USDC proxy in
+	// lookupUSDPriceWithSources); the listing SQL COALESCEs direct fiat:USD then
+	// asset/XLM triangulation. An asset can suppress on one and not the other. The
+	// detail path is deliberately the STRICTER and must not be weakened to match;
+	// full parity needs unifying the price bases at the aggregator/SQL layer.
 	if refused, lowLiquidity := s.marketCapRefused(asset, priceSourceCount, detail.VolumeUSD24h); refused {
 		detail.MarketCapLowLiquidity = lowLiquidity
 		return

@@ -11,40 +11,29 @@ import (
 // Issuer directory-label overlay for /v1/assets + /v1/assets/{id}.
 //
 // Joins each asset's issuer G-address (a contract token's own C-address)
-// against the curated third-party
-// account_directory table (migration 0136; synced from the MIT-licensed
-// stellar-expert/public-directory) and stamps the additive
+// against the account_directory table and stamps the additive
 // issuer_directory_{tags,domain,name} fields onto AssetDetail.
 //
-// DISPLAY-ONLY invariant — with TWO deliberate exceptions, both scoped to
-// the SCAM-CLASS tags (malicious/unsafe/fraud/scam/hack/phishing). The
-// tags remain third-party attribution that never affects the verified
+// DISPLAY-ONLY, with two deliberate exceptions scoped to SCAM-CLASS tags
+// (malicious/unsafe/fraud/scam/hack/phishing). Tags never affect verified
 // status or the substance/decimals gates.
 //
-//  1. A scam-class tag WITHHOLDS every published dollar
-//     figure on the row (price, market cap, and the listing-sourced
-//     reference/valuation pair), via suppressScamIssuerPricing below and
-//     the reader-seam
-//     pricingguard.ScamGate: a scam token must not publish a
-//     price/market-cap that lends it legitimacy, even when its market
-//     clears the substance floor (RIO-GBNLJIYH… did).
-//  2. A scam-class tag DEMOTES the asset in the
-//     /v1/assets listing: timescale's listingRankTierExpr ranks a flagged
-//     issuer's assets below every unflagged one whatever the sort key.
-//     Withholding the numbers while still ranking the token on raw volume
-//     put a `malicious`/`unsafe` asset at rank 12 on the flagship /assets
-//     page. The row and its warning fields stay — we refuse to
-//     rank a flagged asset, we never hide it.
+//  1. A scam-class tag WITHHOLDS every published dollar figure on the row
+//     (price, market cap, listing reference/valuation pair) via
+//     suppressScamIssuerPricing and the reader-seam pricingguard.ScamGate:
+//     a scam token must not lend itself legitimacy with a price, even when
+//     its market clears the substance floor.
+//  2. A scam-class tag DEMOTES the asset in the /v1/assets listing
+//     (timescale's listingRankTierExpr), whatever the sort key. The row and
+//     its warning fields stay: we refuse to rank a flagged asset, never hide it.
 //
 // Raw trade surfaces stay visible.
 //
-// Best-effort for the LABELS: a nil reader, an unlisted issuer (the common
-// case), or a lookup failure leaves the fields omitted and never fails the
-// asset response. The price suppression is not best-effort: a failed lookup
-// means nobody checked for a scam flag, so the rows it covered are marked
-// issuerDirectoryUnchecked and their dollar figures withheld exactly as a
-// flagged row's are. A nil reader (no directory wired) still prices
-// normally, and the SQL ranking demotion still fails open.
+// Labels are best-effort: a nil reader, an unlisted issuer or a lookup
+// failure omits the fields and never fails the response. Price suppression is
+// not: a failed lookup means nobody checked, so the rows it covered are marked
+// issuerDirectoryUnchecked and withheld like a flagged row. A nil reader (no
+// directory wired) still prices normally, and the SQL demotion fails open.
 
 // stampIssuerDirectory copies one curated directory label onto the
 // detail. Tags are set only when non-empty so an unlabelled entry
