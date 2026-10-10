@@ -205,6 +205,7 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
           <div className="mt-0.5">
             <CopyHash value={data.contract_id || id} head={16} tail={16} />
           </div>
+          <ContractLiveness exists={data.exists} ttl={data.ttl} />
           {data.directory && (
             <div className="mt-2">
               <DirectoryLabel info={data.directory} />
@@ -290,6 +291,55 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
 }
 
 // ── On-chain WASM ("see the code") ──────────────────────────────────────
+// ContractLiveness — the instance entry's state-archival verdict at the lake
+// watermark; an archived contract cannot be invoked until restored.
+export function ContractLiveness({
+  exists,
+  ttl,
+}: Pick<ContractResp, 'exists' | 'ttl'>) {
+  if (ttl) {
+    const left = ttl.live_until - ttl.as_of_ledger;
+    return (
+      <div className="mt-2 flex items-center gap-2 text-xs">
+        {ttl.state === 'archived' ? (
+          <Badge
+            tone="bad"
+            title={`Instance TTL lapsed at ledger ${ttl.live_until.toLocaleString('en-US')}; restore it to invoke the contract.`}
+          >
+            Archived
+          </Badge>
+        ) : (
+          <Badge
+            tone="ok"
+            title={`Instance entry live until ledger ${ttl.live_until.toLocaleString('en-US')}; it archives unless its TTL is extended first.`}
+          >
+            Live
+          </Badge>
+        )}
+        {left > 0 && (
+          <span className="text-ink-muted font-mono">
+            {left.toLocaleString('en-US')} ledgers to expiry (as of ledger{' '}
+            {ttl.as_of_ledger.toLocaleString('en-US')})
+          </span>
+        )}
+      </div>
+    );
+  }
+  if (exists === false) {
+    return (
+      <div className="mt-2">
+        <Badge
+          tone="neutral"
+          title="The lake holds no evidence this contract was deployed: no events, activity, instance entry or TTL row."
+        >
+          Not captured
+        </Badge>
+      </div>
+    );
+  }
+  return null;
+}
+
 // Mirrors api/v1.ContractWasmView (GET /v1/contracts/{id}/wasm): the
 // contract's resolved wasm hash + size, its exported function table (always
 // present — parsed natively), and best-effort WAT + wasm-decompile pseudocode
