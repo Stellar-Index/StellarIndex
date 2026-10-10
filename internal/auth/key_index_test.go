@@ -28,7 +28,7 @@ import (
 // indexDenier is a go-redis hook that rejects every command naming a
 // key of the `apikey-index:*` family, the way a lockdown Redis ACL that
 // has not been given `~apikey-index:*` does. The reply text is the one
-// a real server sends (see test/integration/apikey_index_acl_test.go,
+// a real server sends (see test/integration/redis_test.go,
 // which proves the same behaviour against redis-server itself).
 type indexDenier struct {
 	deny   atomic.Bool

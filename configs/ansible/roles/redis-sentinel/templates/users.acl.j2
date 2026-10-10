@@ -4,7 +4,7 @@
 {# FORMAT: an aclfile takes one `user …` rule per line and nothing else. #}
 {# Redis refuses to start on a `#` comment or a `\` continuation, so every #}
 {# note here is a jinja comment and every rule stays on ONE line. #}
-{# test/integration/redis_acl_template_load_test.go loads the rendered #}
+{# test/integration/redis_test.go loads the rendered #}
 {# file into a real redis-server. #}
 {# #}
 {# This file closes the legacy default-user surface (`on nopass ~* &* #}
