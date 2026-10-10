@@ -18,10 +18,8 @@ import (
 // order, and records BOTH the SQL text and the bound arguments of every
 // statement it was asked to run.
 //
-// It is the ONLY no-database driver double in this package. It replaced
-// the query-only `cannedConn` (formerly in vwap_direction_combine_test.go),
-// which recorded the SQL but not the bound arguments and could not Exec at
-// all; every one of its call sites now uses [newScriptedStore]. Store
+// It is the ONLY no-database driver double in this package; unlike a
+// query-only double it records the bound arguments and can Exec. Store
 // methods whose contract lives in the PLACEHOLDER BINDING — "$1 is the
 // kind, $2 is the limit", "the ON CONFLICT guard gets this store's
 // derive_generation", "the window bound is since.UTC()" — cannot be pinned

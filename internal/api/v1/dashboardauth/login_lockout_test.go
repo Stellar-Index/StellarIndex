@@ -193,7 +193,7 @@ func TestLockout_SuccessfulLoginClearsTheCounter(t *testing.T) {
 // TestLockout_MagicLinkStillWorksWhileLocked — the availability property
 // that makes a 24-hour lockout defensible, and the reason this cannot be
 // used to lock a victim out of their own account: the lockout gates the
-// CODE door only, exactly as the pre-existing per-token cap does.
+// CODE door only, exactly as the per-token cap does.
 func TestLockout_MagicLinkStillWorksWhileLocked(t *testing.T) {
 	const email = "locked@example.com"
 	lr := newLockoutRig(t)
