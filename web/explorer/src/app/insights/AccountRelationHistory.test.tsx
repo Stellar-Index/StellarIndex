@@ -114,7 +114,7 @@ describe('AccountRelationHistory', () => {
     expect(points.map((p) => p.value)).toEqual([4, null, null, 2]);
   });
 
-  it('carries the cumulative line across the gap and explains why that is not interpolation', async () => {
+  it('carries the cumulative line across the gap', async () => {
     renderPanel();
     await screen.findByTestId('line-chart');
 
@@ -146,7 +146,9 @@ describe('AccountRelationHistory', () => {
   it('states the break copy, the placed/unplaced split, the payload note and the coverage span', async () => {
     renderPanel();
     expect(
-      await screen.findByText(/a month with no activity emits no point/i),
+      await screen.findByText(
+        /a break in the line is a month with no observed activity/i,
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText('Placed in a month')).toBeInTheDocument();
     expect(screen.getByText('Not placeable')).toBeInTheDocument();

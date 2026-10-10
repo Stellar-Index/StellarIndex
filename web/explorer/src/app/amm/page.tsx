@@ -22,7 +22,6 @@ export default function AmmPage() {
     <CategoryHub
       category="amm"
       title="AMM protocols"
-      description="Automated market makers on Stellar — Soroban contracts running constant-product and weighted liquidity pools. Each protocol page has live pool, swap, and volume analytics."
       footnote={
         <>
           Looking for the order book? See{' '}

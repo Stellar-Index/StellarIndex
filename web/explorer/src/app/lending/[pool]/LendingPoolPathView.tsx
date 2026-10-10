@@ -33,7 +33,6 @@ export function LendingPoolPathView() {
         title={
           <span className="font-mono break-all">{pool || 'Loading…'}</span>
         }
-        description="Rendered live from the API (outside the build-time pre-render)."
       />
       <Link
         href="/protocols/blend"

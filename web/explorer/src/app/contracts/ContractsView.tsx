@@ -77,7 +77,6 @@ export function ContractsView() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Contracts' }]}
         title="Contracts"
-        description="Soroban contracts: most active over 30 days, and the protocol attribution registry."
       />
 
       <div className="flex items-center gap-3">

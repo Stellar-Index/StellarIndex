@@ -60,7 +60,6 @@ export default function RWAPage() {
           { label: 'Real-world assets' },
         ]}
         title="Real-world assets"
-        description="Tokenized treasuries, commodities, equities and property on Stellar, keyed by (code, issuer)."
       />
 
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>

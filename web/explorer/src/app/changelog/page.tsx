@@ -24,33 +24,6 @@ export default function ChangelogPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Changelog' }]}
         title="Every release, every change."
-        description={
-          <>
-            Pulled at build time from{' '}
-            <code className="bg-surface-subtle rounded-sm px-1.5 py-0.5 font-mono text-sm">
-              CHANGELOG.md
-            </code>{' '}
-            on{' '}
-            <a
-              href="https://github.com/Stellar-Index/StellarIndex/blob/main/CHANGELOG.md"
-              target="_blank"
-              rel="noreferrer noopener"
-              className="text-brand-600 hover:underline"
-            >
-              main
-            </a>
-            . Format follows{' '}
-            <a
-              href="https://keepachangelog.com/en/1.1.0/"
-              target="_blank"
-              rel="noreferrer noopener"
-              className="text-brand-600 hover:underline"
-            >
-              Keep a Changelog
-            </a>
-            ; SemVer for the public Go SDK, CalVer for binary releases.
-          </>
-        }
         actions={
           <a
             href="/changelog.atom"

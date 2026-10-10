@@ -931,7 +931,6 @@ function Shell({
           { label: id ? `${id.slice(0, 8)}…${id.slice(-6)}` : 'contract' },
         ]}
         title="Contract"
-        description="A Soroban smart contract and its on-chain activity."
       />
       {children}
     </Container>
