@@ -19,16 +19,6 @@ export default function LendingPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Lending' }]}
         title="Lending"
-        description={
-          <>
-            Collateralised lending on Stellar. Yield is borrower interest;
-            routed yield is on{' '}
-            <Link href="/aggregators" className="underline decoration-dotted">
-              /aggregators
-            </Link>
-            .
-          </>
-        }
       />
 
       <div className="border-line bg-surface rounded-xl border p-5 shadow-sm">

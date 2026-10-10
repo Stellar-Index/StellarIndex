@@ -131,7 +131,6 @@ export function ConvertLanding({
         <PageHeader
           title="Convert"
           breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Convert' }]}
-          description="Convert XLM, verified Stellar assets and the major fiat currencies at the live mid-market rate."
         />
         {unavailable && (
           <Callout tone="info" title="That pair isn't available to convert">

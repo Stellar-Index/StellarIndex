@@ -529,15 +529,6 @@ describe('probeEndpoint body-shape check', () => {
 });
 
 describe('StatusPageClient header and incident history', () => {
-  // PUBLIC_ENDPOINTS is a curated subset; "full" is a claim the page can't back.
-  it('describes the public-endpoint matrix as curated, not full', async () => {
-    mockFeeds({ status: status() });
-    renderPage();
-
-    await screen.findByText(/curated public-endpoint matrix/i);
-    absent(/full public-endpoint matrix/i);
-  });
-
   const seed = (entry: Partial<IncidentHistoryEntry>) => {
     mockFeeds({ status: status() });
     renderPage([

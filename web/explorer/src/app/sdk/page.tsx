@@ -149,7 +149,6 @@ export default function SDKPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Go SDK' }]}
         title="Idiomatic Go client for the Stellar Index API"
-        description="Typed, SemVer-stable, no surprises. Anonymous mode for the public tier; bearer-token mode for API keys. The SDK covers the pricing/read surface — prices, history, OHLC, markets, the asset catalogue, and account self-service — with 40-plus typed methods; SSE streams and the explorer read surface are reachable over plain HTTP."
         className="mb-10"
       />
 

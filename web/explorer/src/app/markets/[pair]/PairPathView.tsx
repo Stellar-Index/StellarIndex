@@ -89,11 +89,6 @@ export function PairPathView() {
           { label: title },
         ]}
         title={title}
-        description={
-          valid
-            ? 'Live pair detail, loaded from the API. This pair is outside the pre-rendered set — the data below is current.'
-            : undefined
-        }
       />
 
       {!valid && (

@@ -73,7 +73,6 @@ export default async function ExchangeDetailPage({
           ]}
           meta={info.type}
           title={info.name}
-          description={info.blurb}
         />
         <Badge
           tone="warn"

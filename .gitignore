@@ -188,3 +188,6 @@ gcp-key*.json
 # refused a prepush ("working tree is not clean") and would have been swept
 # into a commit by `git add -A`.
 /migrations.deploy.tar.gz
+
+# Python bytecode from scripts/ci self-tests
+__pycache__/

@@ -301,32 +301,12 @@ function rankedInNative(data: AccountsListResp | undefined): boolean {
   return data ? data.ranked_by === 'native_xlm' : !CURRENT_NETWORK.pricing;
 }
 
-/**
- * The /accounts directory frame — heading + standing description.
- *
- * Split out of AccountsDirectory so the STATIC document can carry it:
- * the body reads the URL through useSearchParams and so sits inside a
- * Suspense boundary, and that boundary's fallback is all the export
- * bakes. useQuery forces no such bailout, so the header subscribes to
- * the same /v1/accounts query as the table below it. The export ships
- * the network's pricing fallback — the copy the page metadata declares
- * — and once the response lands the served `ranked_by` wins here and in
- * the Panel at once: the API ranks by native XLM whenever its price
- * catalogue degrades, mainnet included, and this sentence must never
- * claim a USD ranking above a table titled "Ranked by XLM balance".
- */
+/** The /accounts header; the ranking basis lives on the table's Panel title. */
 export function AccountsDirectoryHeader() {
-  const q = useAccountsDirectoryQuery();
-  const isNative = rankedInNative(q.data);
   return (
     <PageHeader
       breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Accounts' }]}
       title="Accounts"
-      description={
-        isNative
-          ? `Largest accounts on Stellar ${CURRENT_NETWORK.label}, ranked by native XLM balance.`
-          : 'Richest accounts on Stellar, ranked by total USD value of priced holdings.'
-      }
     />
   );
 }
