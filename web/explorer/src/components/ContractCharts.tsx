@@ -36,22 +36,30 @@ export function InlineBar({
   );
 }
 
+/** Sums `value` per protocol; rows with no protocol tag share one Unattributed slice. */
+export function protocolSlices<T extends { protocol?: string | null }>(
+  rows: T[],
+  value: (r: T) => number,
+): { label: string; value: number; color?: string }[] {
+  const byKey = new Map<string, number>();
+  for (const r of rows) {
+    const k = r.protocol || UNATTRIBUTED;
+    byKey.set(k, (byKey.get(k) ?? 0) + value(r));
+  }
+  return [...byKey].map(([label, v]) => ({
+    label,
+    value: v,
+    ...(label === UNATTRIBUTED ? { color: CATEGORICAL_PALETTE.at(-1) } : {}),
+  }));
+}
+
 /** Events per protocol; contracts with no protocol tag get their own slice. */
 export function ProtocolMixDonut({
   rows,
 }: {
   rows: { protocol?: string | null; events?: number | null }[];
 }) {
-  const byKey = new Map<string, number>();
-  for (const r of rows) {
-    const k = r.protocol || UNATTRIBUTED;
-    byKey.set(k, (byKey.get(k) ?? 0) + (r.events ?? 0));
-  }
-  const data = [...byKey].map(([label, value]) => ({
-    label,
-    value,
-    ...(label === UNATTRIBUTED ? { color: CATEGORICAL_PALETTE.at(-1) } : {}),
-  }));
+  const data = protocolSlices(rows, (r) => r.events ?? 0);
   if (data.every((d) => d.value <= 0)) return null;
   return (
     <DonutChart
@@ -148,7 +156,7 @@ export function RegistryCharts({ rows }: { rows: RegistryRow[] }) {
   );
 }
 
-/** Top counterparties by shared transactions. */
+/** Top counterparties by shared transactions, plus their protocol mix by shared txs. */
 export function CounterpartyBars({
   edges,
   nameFor,
@@ -174,12 +182,26 @@ export function CounterpartyBars({
       };
     });
   if (items.length === 0) return null;
+  const slices = protocolSlices(edges, (e) => e.shared_txs ?? 0);
   return (
     <div className="space-y-1 px-4 pb-4">
-      <HBarList
-        ariaLabel="Top counterparties by shared transactions"
-        items={items}
-      />
+      <div className="flex flex-wrap items-start gap-x-10 gap-y-4">
+        {slices.some((d) => d.value > 0) && (
+          <DonutChart
+            data={slices}
+            size={120}
+            thickness={16}
+            centerLabel={String(edges.length)}
+            centerSub="counterparties"
+            formatValue={formatCompact}
+          />
+        )}
+        <HBarList
+          className="min-w-[16rem] flex-1"
+          ariaLabel="Top counterparties by shared transactions"
+          items={items}
+        />
+      </div>
       <p className="text-ink-faint text-[11px]">
         Counts are lower bounds for busy contracts: the window narrows to the
         contract&apos;s recent activity.

@@ -215,6 +215,11 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
           ? `Most active (${formatCompact(rows.length)})`
           : 'Most active'
       }
+      hint={
+        <span title="Leaders are SACs and high-traffic system contracts. Attribution lives in the Registry view, so most rows carry no protocol tag by design.">
+          ranked by raw event volume · 30d
+        </span>
+      }
       source={asExample('/v1/contracts', { days: 30, limit: 100 })}
       bodyClassName="-mx-4"
     >
@@ -223,11 +228,6 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
           <ProtocolMixDonut rows={rows} />
         </div>
       )}
-      <details className="text-ink-muted px-4 pb-3 text-xs">
-        <summary className="cursor-pointer">Ranked by raw event volume</summary>
-        Leaders are SACs and high-traffic system contracts. Attribution lives in
-        the Registry view, so most rows carry no protocol tag by design.
-      </details>
       {isError ? (
         <p className="text-down-strong px-4 text-sm">
           Failed to load contracts:{' '}
@@ -359,15 +359,14 @@ function RegistryPanel() {
           ? `Attributed protocols (${formatCompact(rows.length)})`
           : 'Registry'
       }
+      hint={
+        <span title="Each protocol owns contracts anchored to a verified factory, which lets us attribute an event to a protocol rather than a look-alike. Click a factory for its hub, or the count for the full roster.">
+          factory-anchored attribution
+        </span>
+      }
       source={asExample('/v1/protocols')}
       bodyClassName="-mx-4"
     >
-      <details className="text-ink-muted px-4 pb-3 text-xs">
-        <summary className="cursor-pointer">Factory-anchored</summary>
-        Each protocol owns contracts anchored to a verified factory, which lets
-        us attribute an event to a protocol rather than a look-alike. Click a
-        factory for its hub, or the count for the full roster.
-      </details>
       {isError ? (
         <p className="text-down-strong px-4 text-sm">
           Failed to load the registry:{' '}
