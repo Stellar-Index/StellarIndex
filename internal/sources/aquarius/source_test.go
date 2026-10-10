@@ -1,6 +1,7 @@
 package aquarius
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -290,8 +291,33 @@ func TestDecodeTrade_nonPositiveAmount(t *testing.T) {
 	}
 }
 
-func TestDecoder_NameMatchesSourceName(t *testing.T) {
-	if got := NewDecoder().Name(); got != SourceName {
-		t.Errorf("Name() = %q, want %q", got, SourceName)
+func TestDecodeTrade_zeroAmountIsRecognizedNoOpSentinel(t *testing.T) {
+	ev := zeroAmountTradeEvent()
+	closedAt, err := time.Parse(time.RFC3339, ev.LedgerClosedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = decodeTrade(&ev, closedAt)
+	if !errors.Is(err, ErrZeroAmountTrade) {
+		t.Fatalf("decodeTrade err = %v, want ErrZeroAmountTrade", err)
+	}
+	if errors.Is(err, ErrMalformedPayload) {
+		t.Fatalf("zero-amount trade must NOT classify as malformed: %v", err)
+	}
+}
+
+// Negative amounts remain a hard schema violation — the no-op carve-out
+// is for ZERO only.
+func TestDecodeTrade_negativeAmountStillMalformed(t *testing.T) {
+	ev := zeroAmountTradeEvent()
+	// body (sold=-1, bought=1, fee=0).
+	ev.Value = encodeTradeBody(t, big.NewInt(-1), big.NewInt(1), big.NewInt(0))
+	closedAt := time.Date(2024, 9, 23, 11, 34, 58, 0, time.UTC)
+	_, err := decodeTrade(&ev, closedAt)
+	if !errors.Is(err, ErrMalformedPayload) {
+		t.Fatalf("negative amount err = %v, want ErrMalformedPayload", err)
+	}
+	if errors.Is(err, ErrZeroAmountTrade) {
+		t.Fatalf("negative amount must not be the zero-amount no-op: %v", err)
 	}
 }

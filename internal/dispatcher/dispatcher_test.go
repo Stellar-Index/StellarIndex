@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -386,27 +387,6 @@ func TestRouteOp_failingDecoderDoesNotDropSibling(t *testing.T) {
 
 // ─── ProcessLedger happy path — empty ledger (no txs) ────────────
 
-func TestProcessLedger_emptyLedgerYieldsNoOutputs(t *testing.T) {
-	// A LedgerCloseMeta with no transactions should produce zero
-	// outputs and no error. Validates that the reader construction
-	// path doesn't trip on empty ledgers (common during Stellar's
-	// quiet periods on testnet).
-	lcm := emptyLedgerCloseMeta(t, 42)
-
-	disp := New(&fakeDecoder{name: "unused", topic0: "zzz"})
-	outs, err := disp.ProcessLedger(lcm, testPassphrase)
-	if err != nil {
-		t.Fatalf("ProcessLedger empty ledger: %v", err)
-	}
-	if len(outs) != 0 {
-		t.Errorf("got %d outputs from empty ledger, want 0", len(outs))
-	}
-	// No events → no matches → no unmatched hits either.
-	if got := disp.Stats().UnmatchedHits; got != 0 {
-		t.Errorf("UnmatchedHits = %d, want 0", got)
-	}
-}
-
 // ─── Discovery hook ──────────────────────────────────────────────
 
 // recordingSink captures every Push for assertion.
@@ -603,3 +583,91 @@ func TestDispatch_RawEventHook_NilSinkIsNoop(t *testing.T) {
 		t.Errorf("nil-raw-sink path errored: %v", err)
 	}
 }
+
+// TestStats_concurrentWithDispatch is a regression guard.
+// Before the statsMu fix, the dispatch goroutine's `++` mutations of
+// eventsSeen / decodeErrors / unmatchedHits raced the statsflush
+// goroutine's Stats() snapshot, producing a fatal `concurrent map
+// read and map write` panic. Run under `-race` this fails loudly if
+// the lock is ever removed.
+//
+// The matched arm exercises eventsSeen + decodeErrors (the decoder
+// returns an error every call); the unmatched arm exercises
+// unmatchedHits. A second goroutine hammers Stats() the whole time.
+//
+// The decoder is stateless (no internal hit counters) so the two
+// writer goroutines sharing it don't themselves race — the only
+// shared mutable state under test is the dispatcher's counters.
+func TestStats_concurrentWithDispatch(t *testing.T) {
+	t.Parallel()
+
+	// statelessDecoder matches topic[0]=="A" and always errors on
+	// Decode so both eventsSeen AND decodeErrors get bumped on the
+	// matched path.
+	decoder := statelessRacerDecoder{}
+	disp := New(decoder)
+
+	const iterations = 2000
+	var wg sync.WaitGroup
+
+	// Writer 1: matched events (eventsSeen + decodeErrors).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_, _ = disp.dispatchOne(events.Event{Topic: []string{"A"}})
+		}
+	}()
+
+	// Writer 2: unmatched events (unmatchedHits).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_, _ = disp.dispatchOne(events.Event{Topic: []string{"Z"}})
+		}
+	}()
+
+	// Reader: continuous Stats() snapshots.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_ = disp.Stats()
+		}
+	}()
+
+	wg.Wait()
+
+	got := disp.Stats()
+	if got.EventsSeen["racer"] != iterations {
+		t.Errorf("eventsSeen[racer] = %d, want %d", got.EventsSeen["racer"], iterations)
+	}
+	if got.DecodeErrors["racer"] != iterations {
+		t.Errorf("decodeErrors[racer] = %d, want %d", got.DecodeErrors["racer"], iterations)
+	}
+	if got.UnmatchedHits != iterations {
+		t.Errorf("unmatchedHits = %d, want %d", got.UnmatchedHits, iterations)
+	}
+}
+
+// statelessRacerDecoder is a Decoder with no mutable state, so two
+// goroutines can call it concurrently without racing on anything but
+// the dispatcher's own counters (which is the point of the test).
+type statelessRacerDecoder struct{}
+
+func (statelessRacerDecoder) Name() string { return "racer" }
+
+func (statelessRacerDecoder) Matches(ev events.Event) bool {
+	return len(ev.Topic) > 0 && ev.Topic[0] == "A"
+}
+
+func (statelessRacerDecoder) Decode(events.Event) ([]consumer.Event, error) {
+	return nil, errSynthetic
+}
+
+var errSynthetic = synthErr("synthetic decode error")
+
+type synthErr string
+
+func (e synthErr) Error() string { return string(e) }

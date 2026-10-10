@@ -105,7 +105,7 @@ Aquarius differs from Soroswap and Phoenix operationally:
 | `decode_admin.go` | the eight governance/upgrade kinds -> `AdminEvent` (migration 0100) |
 | `dispatcher_adapter.go` | contract-identity-gated dispatcher-facing decoder |
 | `consumer.go` | `consumer.Event` wrappers emitted after decode (`TradeEvent`, `ReservesEvent`, `LiquidityEvent`, `RewardsEvent`, `AdminEvent`) |
-| `decode_test.go`, `adapter_test.go`, `source_test.go`, `topic_decoder_reject_test.go`, `real_fixture_test.go`, `liquidity_decode_test.go`, `decode_rewards_test.go`, `decode_admin_test.go`, `gate_rewards_admin_test.go` | unit + reject-path + real-fixture coverage |
+| `decode_test.go`, `adapter_test.go`, `source_test.go`, `topic_decoder_reject_test.go`, `real_fixture_test.go`, `liquidity_decode_test.go`, `decode_rewards_test.go`, `decode_admin_test.go` | unit + reject-path + real-fixture coverage |
 
 ## Relationship to other connectors
 

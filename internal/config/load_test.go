@@ -11,7 +11,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 	cfg "github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
@@ -807,5 +809,60 @@ max_dormant_component_ledgers = 0
 	if c.Supply.StaleComponentLedgers != 0 || c.Supply.MaxDormantComponentLedgers != 0 {
 		t.Fatalf("explicit zeros decoded as (%d, %d), want (0, 0)",
 			c.Supply.StaleComponentLedgers, c.Supply.MaxDormantComponentLedgers)
+	}
+}
+
+// TestLoadReader_RetiredKeysBootWithWarning: fields nothing outside
+// internal/config reads are on config.RetiredKeys, so an old config that
+// still carries them (even with invalid values) boots instead of failing.
+func TestLoadReader_RetiredKeysBootWithWarning(t *testing.T) {
+	body := `
+[region]
+id = "r1"
+
+[stellar]
+network = "pubnet"
+core_http_endpoint = "not-a-url"
+rpc_endpoints = ["http://127.0.0.1:8000"]
+history_archive_url = "https://history.stellar.org/prd/core-live/core_live_001"
+
+[ingestion]
+cursor_store_scheme = "kafka"
+backfill_batch_size = 0
+
+[aggregate]
+vwap_window_seconds = 0
+twap_window_seconds = 0
+`
+	_, err := config.LoadReader(strings.NewReader(body), "test.toml")
+	if err != nil {
+		t.Fatalf("config carrying only retired GH-1129 keys should boot with a warning, not fail: %v", err)
+	}
+}
+
+// TestLoadReader_DwellWindowsConfigurable: api.rate_limit_dwell and
+// api.monthly_quota_dwell are operator-tunable and must round-trip through
+// config.
+func TestLoadReader_DwellWindowsConfigurable(t *testing.T) {
+	body := `
+[region]
+id = "r1"
+
+[stellar]
+network = "pubnet"
+
+[api]
+rate_limit_dwell    = "5m"
+monthly_quota_dwell = "2m"
+`
+	c, err := config.LoadReader(strings.NewReader(body), "test.toml")
+	if err != nil {
+		t.Fatalf("LoadReader: %v", err)
+	}
+	if c.API.RateLimitDwell != 5*time.Minute {
+		t.Errorf("api.rate_limit_dwell = %v, want 5m", c.API.RateLimitDwell)
+	}
+	if c.API.MonthlyQuotaDwell != 2*time.Minute {
+		t.Errorf("api.monthly_quota_dwell = %v, want 2m", c.API.MonthlyQuotaDwell)
 	}
 }

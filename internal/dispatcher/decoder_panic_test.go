@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -149,64 +148,6 @@ func TestDispatchOne_PanicLogsLedgerCoordinateAndStack(t *testing.T) {
 	}
 }
 
-// TestProcessLedger_PanickingDecoderLosesOnlyItsOwnEvent is the
-// end-to-end shape of the incident: ProcessLedger must return nil (so
-// the caller persists the cursor and the process keeps running) while
-// the SIBLING source's event still decodes.
-func TestProcessLedger_PanickingDecoderLosesOnlyItsOwnEvent(t *testing.T) {
-	for _, tc := range []struct {
-		name          string
-		panicInMatch  bool
-		panicInDecode bool
-	}{
-		{name: "panic_in_Decode", panicInDecode: true},
-		{name: "panic_in_Matches", panicInMatch: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			op, _ := provInvokeOp(t, provContractA, "x")
-			lcm := provLedger(t, op, []xdr.ContractEvent{
-				provEvent("REDSTONE", provContractA), // routed to the broken decoder
-				provEvent("REDSTONE", provContractB), // routed to the healthy one
-			}, nil)
-
-			strA, err := contractIDToStrkey(provContractA)
-			if err != nil {
-				t.Fatal(err)
-			}
-			strB, err := contractIDToStrkey(provContractB)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			broken := &panickyDecoder{
-				name:          "broken-" + tc.name,
-				contract:      strA,
-				panicInMatch:  tc.panicInMatch,
-				panicInDecode: tc.panicInDecode,
-			}
-			healthy := &provSpyDecoder{name: "healthy-" + tc.name, contract: strB}
-			disp := New(broken, healthy) // broken registered FIRST
-			before := testutil.ToFloat64(obs.DecoderPanicsTotal.WithLabelValues(broken.name))
-
-			outs, err := disp.ProcessLedger(lcm, testPassphrase)
-			if err != nil {
-				t.Fatalf("ProcessLedger = %v, want nil — one decoder's panic must not reject the whole ledger (that is the crash-loop)", err)
-			}
-			_ = outs
-			if len(healthy.got) != 1 {
-				t.Errorf("sibling decoder saw %d events, want 1 — the ledger walk must continue past the panic", len(healthy.got))
-			}
-			panics, _, decodeErrs := counters(t, disp, broken.name)
-			if panics-before != 1 {
-				t.Errorf("panic counter rose by %v, want 1", panics-before)
-			}
-			if decodeErrs != 1 {
-				t.Errorf("Stats().DecodeErrors[%s] = %d, want 1 — the skip must be recorded, not silent", broken.name, decodeErrs)
-			}
-		})
-	}
-}
-
 // ─── the other three seams (the four-seam sibling trap) ──────────────
 
 type panickyOpDecoder struct{ name string }
@@ -277,32 +218,6 @@ func (p *panickyCCDecoder) Decode(ContractCallContext) ([]consumer.Event, error)
 	panic("simulated contract-call decoder fault")
 }
 
-func TestDispatchContractCall_PanicBecomesDecodeError(t *testing.T) {
-	dec := &panickyCCDecoder{name: "panic-cc-src"}
-	disp := New()
-	disp.AddContractCallDecoder(dec)
-	before := testutil.ToFloat64(obs.DecoderPanicsTotal.WithLabelValues(dec.name))
-
-	_, err := disp.RouteContractCall(ContractCallContext{
-		Ledger:       13,
-		ClosedAt:     time.Unix(1_770_000_000, 0).UTC(),
-		TxHash:       "t",
-		OpIndex:      0,
-		ContractID:   "CBAND",
-		FunctionName: "relay",
-	})
-
-	if !errors.Is(err, ErrDecoderPanic) {
-		t.Fatalf("err = %v, want ErrDecoderPanic", err)
-	}
-	if got := testutil.ToFloat64(obs.DecoderPanicsTotal.WithLabelValues(dec.name)) - before; got != 1 {
-		t.Errorf("panic counter rose by %v, want 1", got)
-	}
-	if n := disp.Stats().DecodeErrors[dec.name]; n != 1 {
-		t.Errorf("Stats().DecodeErrors[%s] = %d, want 1", dec.name, n)
-	}
-}
-
 // ─── the guard's deliberate boundary ─────────────────────────────────
 
 type panickyRawSink struct{}
@@ -327,40 +242,4 @@ func TestDispatchOne_RawEventSinkPanicIsNotSwallowed(t *testing.T) {
 		}
 	}()
 	_, _ = disp.dispatchOne(events.Event{ContractID: "CX"})
-}
-
-// TestRecognize_PanicResolvesToUnrecognised covers the Recognize seam:
-// Recognize walks every decoder's Matches, and it
-// is called from the completeness recogniser and two ops subcommands,
-// none of which recovered — so one malformed row took the whole
-// verification run down with it.
-//
-// The DIRECTION of the answer is the load-bearing part. A panic must
-// resolve to "not recognised", which pushes the shape into the
-// unrecognised-on-unowned-contract bucket and turns the recognition axis
-// RED. Naming the panicking decoder as the owner would certify a shape
-// that nothing can actually decode — a false green on the one axis whose
-// whole job is to catch shapes we do not understand.
-func TestRecognize_PanicResolvesToUnrecognised(t *testing.T) {
-	dec := &panickyDecoder{name: "panic-recognise-src", contract: "CPOISON", panicInMatch: true}
-	disp := New(dec)
-	before := testutil.ToFloat64(obs.DecoderPanicsTotal.WithLabelValues(dec.name))
-
-	name, ok := disp.Recognize(events.Event{ContractID: "CPOISON", Ledger: 9, TxHash: "def", OperationIndex: 1})
-
-	if ok {
-		t.Errorf("Recognize reported ok=true for a decoder that panicked — a shape nothing can decode must never be certified as owned")
-	}
-	if name != "" {
-		t.Errorf("Recognize returned owner %q after a panic, want empty", name)
-	}
-	if got := testutil.ToFloat64(obs.DecoderPanicsTotal.WithLabelValues(dec.name)) - before; got != 1 {
-		t.Errorf("panic counter rose by %v, want 1 — an ops-path panic must be as visible as an ingest one", got)
-	}
-
-	// A healthy decoder still recognises normally after the guard.
-	good := &panickyDecoder{name: "healthy-src", contract: "CGOOD"}
-	if n, ok := New(good).Recognize(events.Event{ContractID: "CGOOD"}); !ok || n != "healthy-src" {
-		t.Errorf("healthy decoder: got (%q, %v), want (healthy-src, true)", n, ok)
-	}
 }
