@@ -303,7 +303,9 @@ function OnChainSupply({
       </h3>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Metric
-          label={floor ? 'Total (at least)' : 'Total'}
+          label={
+            native ? 'Ledger total_coins' : floor ? 'Total (at least)' : 'Total'
+          }
           value={total !== '—' && floor ? `≥ ${total}` : total}
           sublabel={supplySublabel(data, decimals)}
         />
@@ -364,7 +366,7 @@ function OnChainSupply({
 
 function supplySublabel(data: AssetSupply, decimals: number | null): string {
   if (decimals == null) return 'base units — the contract declares no scale';
-  if (data.source === 'ledger_total_coins') return 'ledger total_coins';
+  if (data.source === 'ledger_total_coins') return 'includes burned XLM';
   if (data.source === 'contract_storage_balances') {
     return `${(data.balance_entries ?? 0).toLocaleString('en-US')} balances`;
   }
@@ -373,7 +375,7 @@ function supplySublabel(data: AssetSupply, decimals: number | null): string {
 
 function supplyFootnote(data: AssetSupply): string {
   if (data.source === 'ledger_total_coins') {
-    return 'Native XLM total from the ledger header — current to the latest ledger.';
+    return 'The ledger header’s total_coins counter. XLM burned by sending it to an unspendable account (SDF’s 2019 burn) still counts here, so it exceeds the total supply.';
   }
   if (data.source === 'contract_storage_balances') {
     return 'Σ per-holder balances read from the contract’s own storage — the token emits no supply events.';
