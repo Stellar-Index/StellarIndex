@@ -34,14 +34,14 @@ export default function MarketsPage() {
   // and "Active markets" tiles, and it rendered a permanently empty table.
   if (!routeAvailable('/markets')) {
     return (
-      <Container className="space-y-8 py-8 sm:py-10">
+      <Container className="space-y-6 py-8">
         <PageHeader breadcrumbs={MARKETS_CRUMBS} title="Markets" />
         <NetworkUnavailable href="/markets" />
       </Container>
     );
   }
   return (
-    <Container className="space-y-8 py-8 sm:py-10">
+    <Container className="space-y-6 py-8">
       <PageHeader breadcrumbs={MARKETS_CRUMBS} title="Markets" />
 
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>

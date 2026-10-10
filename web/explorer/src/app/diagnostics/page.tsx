@@ -38,7 +38,7 @@ export const metadata: Metadata = {
  */
 export default function DiagnosticsPage() {
   return (
-    <Container className="space-y-10 py-8 sm:py-10">
+    <Container className="space-y-6 py-8">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Diagnostics' }]}
         title="Diagnostics"

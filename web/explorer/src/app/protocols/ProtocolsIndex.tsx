@@ -172,7 +172,7 @@ export function ProtocolsIndex({
   }, [cards]);
 
   return (
-    <Container className="space-y-8 py-8 sm:py-10">
+    <Container className="space-y-6 py-8">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: title }]}
         title={title}

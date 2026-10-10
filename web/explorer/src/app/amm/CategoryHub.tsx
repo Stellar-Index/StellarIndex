@@ -37,7 +37,7 @@ export function CategoryHub({
   };
 
   return (
-    <Container className="space-y-8 py-8 sm:py-10">
+    <Container className="space-y-6 py-8">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(itemListLD) }}
