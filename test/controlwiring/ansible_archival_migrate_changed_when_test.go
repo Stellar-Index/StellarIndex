@@ -118,7 +118,7 @@ func recapShowsChanged(out string) bool {
 	return false
 }
 
-func TestGH1171_ArchivalMigrateChangedWhenMatchesRealCmdUpOutput(t *testing.T) {
+func TestArchivalMigrateChangedWhenMatchesRealCmdUpOutput(t *testing.T) {
 	t.Parallel()
 
 	bin, err := exec.LookPath("ansible-playbook")

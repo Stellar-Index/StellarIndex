@@ -59,7 +59,7 @@ import (
 // recovering the accept loop leaves a live process serving nothing. If
 // another site should be fatal, argue it here in content the same way — do
 // not add a name to a list.
-func TestK012_EveryGoroutineInTheAPIProcessRecovers(t *testing.T) {
+func TestAPIProcess_EveryGoroutineRecovers(t *testing.T) {
 	// The guards any body in this process may register. A bare recover()
 	// is deliberately not among them: swallowing a panic without moving
 	// stellarindex_worker_panics_total turns a loud crash into a silent

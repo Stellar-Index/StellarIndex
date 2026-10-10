@@ -508,14 +508,14 @@ func TestPrometheusStatusBackend_IncidentsNormalizesUnknownSeverity(t *testing.T
 	}
 }
 
-// TestStatus_OverallRollup_F0055 pins that the
+// TestStatus_OverallRollup pins that the
 // customer-facing `overall` field is computed from the worst-case
 // per-service state plus the two cross-cutting canaries
 // (backend-error, page-firing). Each table row exercises one
 // branch of the precedence chain in rollupOverall; flags.stale is
 // asserted as the inverse of overall=="ok" so the wire envelope
 // stays consistent with the rollup verdict.
-func TestStatus_OverallRollup_F0055(t *testing.T) {
+func TestStatus_OverallRollup(t *testing.T) {
 	now := time.Now().UTC()
 	recent := now.Add(-3 * time.Second) // within 60s threshold
 	stale := now.Add(-10 * time.Minute) // past 60s threshold

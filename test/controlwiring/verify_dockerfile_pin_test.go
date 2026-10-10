@@ -16,7 +16,7 @@ import (
 // guard that catches the next unpinned FROM instead of relying on review.
 var verifyDockerfileFromRe = regexp.MustCompile(`(?m)^FROM\s+(\S+)`)
 
-func TestGH652_VerifyDockerfileFromLinesArePinnedByDigest(t *testing.T) {
+func TestVerifyDockerfileFromLinesArePinnedByDigest(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
 

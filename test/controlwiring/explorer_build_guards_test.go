@@ -41,7 +41,7 @@ var explorerGuards = map[string]string{
 	"scripts/ci/explorer-seo-lint.sh (title/description/canonical on indexable pages)": "explorer-seo-lint",
 }
 
-func TestK023_ExplorerBuildRunsExportGuards(t *testing.T) {
+func TestExplorerBuildRunsExportGuards(t *testing.T) {
 	t.Parallel()
 	chain := explorerBuildChain(t)
 	for guard, marker := range explorerGuards {
@@ -59,7 +59,7 @@ func TestK023_ExplorerBuildRunsExportGuards(t *testing.T) {
 // too — 404s on every <Link> hover across the site
 // (docs/operations/postmortems/2026-08-27-explorer-console-errors.md).
 // Run the wired command against a synthetic export and pin both halves.
-func TestK023_ExplorerPruneKeepsTreeSegmentFiles(t *testing.T) {
+func TestExplorerPruneKeepsTreeSegmentFiles(t *testing.T) {
 	t.Parallel()
 	prune := explorerPruneCommand(t)
 	dir := t.TempDir()

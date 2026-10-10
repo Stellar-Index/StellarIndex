@@ -34,7 +34,7 @@ import (
 // inert, and ch-recognition (one exemplar per (contract, topic_0_sym)
 // shape, run through Matches) could then report the factory as
 // recognised while nothing is admitted.
-func TestK023_PhoenixFactoryCreateEventIsAdmissible(t *testing.T) {
+func TestPhoenixFactoryCreateEventIsAdmissible(t *testing.T) {
 	t.Parallel()
 	type seeded struct {
 		child, factory string
@@ -72,13 +72,13 @@ func TestK023_PhoenixFactoryCreateEventIsAdmissible(t *testing.T) {
 	}
 }
 
-// TestK023_PhoenixFactoryCreateFromForeignEmitterIsNotAdmitted is the
+// TestPhoenixFactoryCreateFromForeignEmitterIsNotAdmitted is the
 // property any fix must keep: topic shape is forgeable, so the same
 // real event republished by a contract that is NOT the factory must
 // neither match nor seed. It is the security half of the pair: the fix
 // that turns the test above green must not do it by trusting the topic
 // alone, and the decoder's gate is reg.IsFactory for this action.
-func TestK023_PhoenixFactoryCreateFromForeignEmitterIsNotAdmitted(t *testing.T) {
+func TestPhoenixFactoryCreateFromForeignEmitterIsNotAdmitted(t *testing.T) {
 	t.Parallel()
 	hooked := 0
 	dec := phoenix.NewDecoder(contractid.WithHook(func(string, string, uint32) { hooked++ }))
