@@ -22,63 +22,33 @@ func newDedupeStore() *Store {
 	return &Store{}
 }
 
-// TestShouldSkipAssetRegistryUpsert_NoCache — first call for an
-// asset returns false (don't skip; the upsert needs to run).
-func TestShouldSkipAssetRegistryUpsert_NoCache(t *testing.T) {
-	s := newDedupeStore()
-	if s.shouldSkipAssetRegistryUpsert("USDC-GA5Z", time.Now()) {
-		t.Error("first-time check returned skip=true; want false (no cache → must upsert)")
-	}
-}
-
-// TestShouldSkipAssetRegistryUpsert_WithinTTL — call inside the
-// 60s window after a recorded upsert returns true (skip the
-// DB round-trip — a cache without a TTL would preserve this behaviour
-// indefinitely; the TTL only preserves it for the window).
-func TestShouldSkipAssetRegistryUpsert_WithinTTL(t *testing.T) {
-	s := newDedupeStore()
+// TestShouldSkipAssetRegistryUpsert covers the dedupe gate. The PastTTL
+// row is the stale-cache regression: a cache with no TTL would skip
+// forever and the row would freeze at first observation.
+func TestShouldSkipAssetRegistryUpsert(t *testing.T) {
 	now := time.Now()
-	s.assetRegistryDedupe.Store("USDC-GA5Z", now.Add(-5*time.Second))
-	if !s.shouldSkipAssetRegistryUpsert("USDC-GA5Z", now) {
-		t.Error("5s-after-upsert returned skip=false; want true (within 60s TTL)")
-	}
-}
-
-// TestShouldSkipAssetRegistryUpsert_PastTTL — call outside the
-// 60s window returns false (upsert must run so `last_seen_*` +
-// `observation_count` advance). This is the stale-cache regression
-// — a cache with no TTL would return true on every subsequent call
-// and the row would freeze at first observation.
-func TestShouldSkipAssetRegistryUpsert_PastTTL(t *testing.T) {
-	s := newDedupeStore()
-	now := time.Now()
-	s.assetRegistryDedupe.Store("USDC-GA5Z", now.Add(-2*time.Minute))
-	if s.shouldSkipAssetRegistryUpsert("USDC-GA5Z", now) {
-		t.Error("2min-after-upsert returned skip=true; want false (past 60s TTL)")
-	}
-}
-
-// TestShouldSkipAssetRegistryUpsert_DifferentAssetMisses — the
-// cache is per-asset; an entry for asset A doesn't suppress
-// asset B.
-func TestShouldSkipAssetRegistryUpsert_DifferentAssetMisses(t *testing.T) {
-	s := newDedupeStore()
-	now := time.Now()
-	s.assetRegistryDedupe.Store("USDC-GA5Z", now)
-	if s.shouldSkipAssetRegistryUpsert("AQUA-GBNZ", now) {
-		t.Error("different-asset returned skip=true; want false (per-asset cache)")
-	}
-}
-
-// TestShouldSkipAssetRegistryUpsert_CacheCorruption — if some
-// future code mistakenly stores a non-time.Time value (a
-// bug shape from a sentinel pattern), the gate
-// fails open (returns false) so the upsert still runs.
-func TestShouldSkipAssetRegistryUpsert_CacheCorruption(t *testing.T) {
-	s := newDedupeStore()
-	s.assetRegistryDedupe.Store("USDC-GA5Z", struct{}{}) // sentinel-value shape
-	if s.shouldSkipAssetRegistryUpsert("USDC-GA5Z", time.Now()) {
-		t.Error("corrupt-cache returned skip=true; want false (fail-open to allow upsert)")
+	for _, tc := range []struct {
+		name  string
+		seed  any // stored for USDC-GA5Z; nil stores nothing
+		asset string
+		want  bool
+	}{
+		{"no cache must upsert", nil, "USDC-GA5Z", false},
+		{"within 60s TTL skips", now.Add(-5 * time.Second), "USDC-GA5Z", true},
+		{"past 60s TTL must upsert", now.Add(-2 * time.Minute), "USDC-GA5Z", false},
+		{"cache is per-asset", now, "AQUA-GBNZ", false},
+		// A non-time value fails open so the upsert still runs.
+		{"corrupt cache fails open", struct{}{}, "USDC-GA5Z", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newDedupeStore()
+			if tc.seed != nil {
+				s.assetRegistryDedupe.Store("USDC-GA5Z", tc.seed)
+			}
+			if got := s.shouldSkipAssetRegistryUpsert(tc.asset, now); got != tc.want {
+				t.Errorf("skip = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

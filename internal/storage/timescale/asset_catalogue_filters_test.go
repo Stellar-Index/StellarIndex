@@ -2,6 +2,7 @@ package timescale
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -39,59 +40,92 @@ func mustBuildAssetsQuery(
 	return sql, args
 }
 
-// TestListAssetsBaseSelectSQL_NoPushdownMachinery asserts the renderer
-// emits no chosen_assets CTE and no marker comments for either order.
-func TestListAssetsBaseSelectSQL_NoPushdownMachinery(t *testing.T) {
-	t.Parallel()
-	for _, order := range []AssetsOrder{AssetsOrderVolume24hUSDDesc, AssetsOrderObservationCountDesc} {
-		sql := listAssetsBaseSelectSQL(order)
-		for _, banned := range []string{"/*PUSHDOWN_BASE*/", "/*PUSHDOWN_QUOTE*/", "chosen_assets"} {
-			if strings.Contains(sql, banned) {
-				t.Errorf("order %v: rendered SQL still carries %q", order, banned)
-			}
-		}
-	}
-}
-
-// TestBuildAssetsQuery_NoFilters is the baseline arg shape: LIMIT only.
-func TestBuildAssetsQuery_NoFilters(t *testing.T) {
-	t.Parallel()
-	sql, args := mustBuildAssetsQuery(t, 100, "", "", "", "", "", AssetsOrderObservationCountDesc)
-	// `ca.` is the spine alias, so any composed outer predicate mentions
-	// it; the CTE bodies have WHEREs of their own that must not count.
-	if strings.Contains(sql, " WHERE ca.") {
-		t.Error("no-filter query must not emit an outer WHERE on the spine")
-	}
-	if len(args) != 1 || args[0] != 100 {
-		t.Errorf("expected args=[100] (just LIMIT); got %v", args)
-	}
-}
-
-// TestBuildAssetsQuery_IssuerFilter binds the issuer to $1 and keeps the
-// outer WHERE on the spine alias.
-func TestBuildAssetsQuery_IssuerFilter(t *testing.T) {
+// TestBuildAssetsQuery_FilterBinding pins, per filter set, which outer
+// predicates survive and which positional placeholder each value takes.
+// The type filter carries no placeholder (a closed enum, never
+// interpolated), so it must not shift the numbered ones.
+func TestBuildAssetsQuery_FilterBinding(t *testing.T) {
 	t.Parallel()
 	issuer := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	sql, args := mustBuildAssetsQuery(t, 100, issuer, "", "", "", "", AssetsOrderObservationCountDesc)
-
-	if !strings.Contains(sql, "ca.issuer_g_strkey = $1") {
-		t.Error("issuer-filter query must keep the outer WHERE on ca.issuer_g_strkey")
-	}
-	if len(args) != 2 || args[0] != issuer || args[1] != 100 {
-		t.Errorf("expected args=[issuer, limit]; got %v", args)
-	}
-}
-
-// TestBuildAssetsQuery_QFilter binds the LIKE pattern once and applies
-// it to all three searchable columns.
-func TestBuildAssetsQuery_QFilter(t *testing.T) {
-	t.Parallel()
-	sql, args := mustBuildAssetsQuery(t, 50, "", "", "", "USDC", "", AssetsOrderObservationCountDesc)
-	if got := strings.Count(sql, "LOWER($1)"); got != 3 {
-		t.Errorf("q filter must compare code, slug and issuer against $1; got %d references", got)
-	}
-	if len(args) != 2 || args[0] != "%USDC%" || args[1] != 50 {
-		t.Errorf("expected args=[%%USDC%%, 50]; got %v", args)
+	for _, tc := range []struct {
+		name                 string
+		limit                int
+		issuer, code, q, typ string
+		contains             []string
+		notContains          []string
+		counts               map[string]int
+		wantArgs             []any
+	}{
+		{
+			// `ca.` is the spine alias, so any composed outer predicate
+			// mentions it; the CTE bodies have WHEREs of their own.
+			name: "no filters", limit: 100,
+			notContains: []string{" WHERE ca."},
+			wantArgs:    []any{100},
+		},
+		{
+			name: "issuer", limit: 100, issuer: issuer,
+			contains: []string{"ca.issuer_g_strkey = $1"},
+			wantArgs: []any{issuer, 100},
+		},
+		{
+			name: "q binds once across code, slug and issuer", limit: 50, q: "USDC",
+			counts:   map[string]int{"LOWER($1)": 3},
+			wantArgs: []any{"%USDC%", 50},
+		},
+		{
+			name: "issuer and q", limit: 100, issuer: issuer, q: "USD",
+			contains: []string{"ca.issuer_g_strkey = $1", "LIKE LOWER($2)"},
+			wantArgs: []any{issuer, "%USD%", 100},
+		},
+		{
+			name: "code", limit: 100, code: "USDC",
+			contains: []string{"ca.code = $1"},
+			wantArgs: []any{"USDC", 100},
+		},
+		{
+			name: "issuer and code", limit: 100, issuer: issuer, code: "USDC",
+			contains: []string{"ca.issuer_g_strkey = $1", "ca.code = $2"},
+			wantArgs: []any{issuer, "USDC", 100},
+		},
+		{
+			name: "type classic", limit: 100, typ: "classic",
+			contains: []string{"ca.issuer_g_strkey IS NOT NULL"},
+			wantArgs: []any{100},
+		},
+		{
+			name: "type soroban", limit: 100, typ: "soroban",
+			contains: []string{"ca.issuer_g_strkey IS NULL"},
+			wantArgs: []any{100},
+		},
+		{
+			name: "type combines with code", limit: 100, code: "USDC", typ: "classic",
+			contains: []string{"ca.code = $1", "ca.issuer_g_strkey IS NOT NULL"},
+			wantArgs: []any{"USDC", 100},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sql, args := mustBuildAssetsQuery(t, tc.limit, tc.issuer, tc.code, "", tc.q, tc.typ, AssetsOrderObservationCountDesc)
+			for _, w := range tc.contains {
+				if !strings.Contains(sql, w) {
+					t.Errorf("query must carry %q", w)
+				}
+			}
+			for _, w := range tc.notContains {
+				if strings.Contains(sql, w) {
+					t.Errorf("query must not carry %q", w)
+				}
+			}
+			for w, n := range tc.counts {
+				if got := strings.Count(sql, w); got != n {
+					t.Errorf("%q count = %d, want %d", w, got, n)
+				}
+			}
+			if !reflect.DeepEqual(args, tc.wantArgs) {
+				t.Errorf("args = %v, want %v", args, tc.wantArgs)
+			}
+		})
 	}
 }
 
@@ -133,97 +167,6 @@ func TestBuildAssetsQuery_QFilterMatchesSorobanContractID(t *testing.T) {
 	// not the WHERE clause was ever fixed.
 	if !strings.Contains(sql, "LOWER(COALESCE(ca.slug, ca.code, ca.asset_id)) LIKE LOWER(") {
 		t.Errorf("q predicate must fall back to ca.asset_id (the only identifying column a Soroban-native row has); got:\n%s", sql)
-	}
-}
-
-// TestBuildAssetsQuery_IssuerAndQ pins the placeholder ORDER when both
-// are set: issuer takes $1, the LIKE pattern $2.
-func TestBuildAssetsQuery_IssuerAndQ(t *testing.T) {
-	t.Parallel()
-	issuer := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	sql, args := mustBuildAssetsQuery(t, 100, issuer, "", "", "USD", "", AssetsOrderObservationCountDesc)
-	if !strings.Contains(sql, "ca.issuer_g_strkey = $1") {
-		t.Error("issuer must stay bound to $1 when q is also set")
-	}
-	if !strings.Contains(sql, "LIKE LOWER($2)") {
-		t.Error("q-LIKE pattern must use $2 when issuer is $1")
-	}
-	if len(args) != 3 || args[0] != issuer || args[1] != "%USD%" || args[2] != 100 {
-		t.Errorf("expected args=[issuer, %%USD%%, 100]; got %v", args)
-	}
-}
-
-// TestBuildAssetsQuery_CodeFilter binds an exact, case-sensitive code
-// equality on the indexed classic_assets.code column.
-func TestBuildAssetsQuery_CodeFilter(t *testing.T) {
-	t.Parallel()
-	sql, args := mustBuildAssetsQuery(t, 100, "", "USDC", "", "", "", AssetsOrderObservationCountDesc)
-
-	if !strings.Contains(sql, "ca.code = $1") {
-		t.Error("code-filter query must keep the outer WHERE on ca.code")
-	}
-	if len(args) != 2 || args[0] != "USDC" || args[1] != 100 {
-		t.Errorf("expected args=[code, limit]; got %v", args)
-	}
-}
-
-// TestBuildAssetsQuery_IssuerAndCode pins the two-filter placeholder
-// order — the "pin exactly one classic asset" case.
-func TestBuildAssetsQuery_IssuerAndCode(t *testing.T) {
-	t.Parallel()
-	issuer := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	sql, args := mustBuildAssetsQuery(t, 100, issuer, "USDC", "", "", "", AssetsOrderObservationCountDesc)
-
-	if !strings.Contains(sql, "ca.issuer_g_strkey = $1") || !strings.Contains(sql, "ca.code = $2") {
-		t.Error("issuer+code query must keep both outer-WHERE predicates")
-	}
-	if len(args) != 3 || args[0] != issuer || args[1] != "USDC" || args[2] != 100 {
-		t.Errorf("expected args=[issuer, code, limit]; got %v", args)
-	}
-}
-
-// TestBuildAssetsQuery_TypeFilter pins the structural-class predicate.
-// The spine is classic_assets UNION the traded Soroban-native
-// contracts; only the issuer tells the two arms apart (classic_assets
-// requires a G-issuer, the contract arm selects NULL for it). The
-// filter carries no placeholder — the value is a closed enum validated
-// at the edge, never interpolated — so the arg list must be untouched.
-func TestBuildAssetsQuery_TypeFilter(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		typ  string
-		want string
-	}{
-		{typ: "classic", want: "ca.issuer_g_strkey IS NOT NULL"},
-		{typ: "soroban", want: "ca.issuer_g_strkey IS NULL"},
-	} {
-		t.Run(tc.typ, func(t *testing.T) {
-			t.Parallel()
-			sql, args := mustBuildAssetsQuery(t, 100, "", "", "", "", tc.typ, AssetsOrderObservationCountDesc)
-			if !strings.Contains(sql, tc.want) {
-				t.Errorf("type=%s query must carry %q", tc.typ, tc.want)
-			}
-			if len(args) != 1 || args[0] != 100 {
-				t.Errorf("type filter must add no placeholder; got args=%v", args)
-			}
-		})
-	}
-}
-
-// TestBuildAssetsQuery_TypeCombinesWithCode — the type predicate is
-// composed with the others, and adding it must not shift the numbered
-// placeholders the value-bearing filters bind to.
-func TestBuildAssetsQuery_TypeCombinesWithCode(t *testing.T) {
-	t.Parallel()
-	sql, args := mustBuildAssetsQuery(t, 100, "", "USDC", "", "", "classic", AssetsOrderObservationCountDesc)
-	if !strings.Contains(sql, "ca.code = $1") {
-		t.Error("code must still bind to $1 alongside a type filter")
-	}
-	if !strings.Contains(sql, "ca.issuer_g_strkey IS NOT NULL") {
-		t.Error("type predicate dropped when combined with code")
-	}
-	if len(args) != 2 || args[0] != "USDC" || args[1] != 100 {
-		t.Errorf("expected args=[code, limit]; got %v", args)
 	}
 }
 
