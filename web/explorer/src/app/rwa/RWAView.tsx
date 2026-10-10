@@ -2010,18 +2010,7 @@ function DefinitionPanel({
               Which tokens are compared against an instrument.
             </strong>{' '}
             Only the exact <span className="font-mono">(code, issuer)</span>{' '}
-            pairs listed below. A code is not an identity: anyone can issue a
-            token called USTRY, and answering one of those with the real
-            instrument&rsquo;s value would publish a discount to a security it
-            has nothing to do with. The list is short by construction, and a
-            pair missing from it shows the reason rather than a number.
-          </p>
-          <p className="mt-2">
-            What the comparison rests on is that one token is one unit of the
-            named instrument. The evidence is the issuer&rsquo;s own
-            domain-bound declaration and the independent recognition of its
-            account — the same evidence that admitted the asset — and is not a
-            separate measurement.
+            pairs below; anyone can issue a token called USTRY.
           </p>
           {definition.bound_instruments.length > 0 && (
             <ul className="mt-2 space-y-0.5">
@@ -2067,28 +2056,17 @@ function DefinitionPanel({
             <strong className="text-ink-body">
               Two valuations, kept apart on purpose.
             </strong>{' '}
-            <em>Market cap</em> is circulating supply times a price somebody was
-            observed paying, and it reaches this page only after the same
-            thin-market, dust-liquidity and scam-issuer gates the asset pages
-            apply have each declined to withhold it. <em>Value of backing</em>{' '}
-            is circulating supply times{' '}
+            <em>Market cap</em> is supply times an observed trade price.{' '}
+            <em>Value of backing</em> is supply times{' '}
             {oracleOnly(provenances)
-              ? 'what an independent oracle says one unit of the underlying instrument is worth'
+              ? 'an independent oracle price for the underlying'
               : MIXED_REFERENCE_PROSE}
-            . Nobody was observed paying that, and none of those gates can check
-            it — there is no market in it for them to measure.
-          </p>
-          <p className="mt-2">
-            Tokenized treasuries are held, not traded, so most never get a
-            market price; an issuer&apos;s figure is not proof anyone would pay
-            it. The two columns are never added together. Tokens with no
-            reference figure are counted, by reason, in the coverage panel.
+            . The two are never added together.
           </p>
         </div>
         <p className="text-ink-muted mt-3 text-[11px] leading-relaxed">
-          Live data from <span className="font-mono">{ENDPOINT}</span>. Market
-          values pass the same gates as the asset pages. The full definition,
-          with the evidence behind each requirement, is in the{' '}
+          Live data from <span className="font-mono">{ENDPOINT}</span>. Full
+          definition in the{' '}
           <Link href="/methodology" className="hover:text-brand-600 underline">
             methodology
           </Link>
