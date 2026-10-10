@@ -92,6 +92,13 @@ func TestAPIRoleGrants_ReadEverythingWriteOnlyPlatform(t *testing.T) {
 	applyMigrations(t, dsn)
 	owner := openDB(t, dsn)
 
+	var proconfig []string
+	mustScan(t, ctx, owner, &proconfig,
+		`SELECT coalesce(proconfig, '{}') FROM pg_proc WHERE oid = 'apply_api_role_grants'::regproc`)
+	if want := "search_path=pg_catalog, public, pg_temp"; len(proconfig) != 1 || proconfig[0] != want {
+		t.Errorf("apply_api_role_grants proconfig = %q, want exactly [%q]", proconfig, want)
+	}
+
 	pair := ohlcDustPair{base: "GRNT-" + priceableIssuer, quote: "native"}
 	t0 := time.Now().UTC().Add(-48 * time.Hour).Truncate(24 * time.Hour).Add(time.Hour)
 	seed(t, owner, ctx, pair, []seedTrade{{off: 0, base: "1000", quote: "5000", usd: "1"}}, t0)
@@ -218,6 +225,13 @@ func TestAPIRoleGrants_ReadEverythingWriteOnlyPlatform(t *testing.T) {
 	}
 	if anyPriv {
 		t.Error("0213 down left stellarindex_api a grant or left apply_api_role_grants()")
+	}
+	var defACLs int
+	mustScan(t, ctx, owner, &defACLs, `
+		SELECT count(*) FROM pg_default_acl d, aclexplode(d.defaclacl) a
+		 WHERE a.grantee = 'stellarindex_api'::regrole`)
+	if defACLs != 0 {
+		t.Errorf("0213 down left %d pg_default_acl entries granting stellarindex_api", defACLs)
 	}
 }
 
