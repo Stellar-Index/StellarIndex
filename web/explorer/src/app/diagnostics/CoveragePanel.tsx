@@ -68,7 +68,7 @@ export function CoveragePanel() {
     <section className="border-line bg-surface rounded-lg border p-4">
       <header className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex flex-wrap items-baseline gap-3">
-          <h3 className="text-ink-body text-sm font-semibold tracking-wider uppercase">
+          <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
             Completeness verdicts
           </h3>
           <span

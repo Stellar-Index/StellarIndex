@@ -43,7 +43,7 @@ export function LiquidityVenueBars({ pools }: { pools: PoolVolume[] }) {
   if (items.length < 2) return null;
   return (
     <div className="px-4 pb-3">
-      <h3 className="text-ink-muted mb-2 text-[11px] tracking-wider uppercase">
+      <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
         24h volume by venue
       </h3>
       <HBarList items={items} ariaLabel="24h USD volume by venue" />

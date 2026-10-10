@@ -35,7 +35,7 @@ export function EndpointLatencyBars({
   if (items.length === 0) return null;
   return (
     <div className="mb-5">
-      <h3 className="text-ink-faint mb-2 text-[11px] font-semibold tracking-wider uppercase">
+      <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
         Slowest endpoints
       </h3>
       <HBarList
@@ -79,7 +79,7 @@ export function SourceVolumeCharts({
     <div className="mb-4 grid gap-6 md:grid-cols-[1fr_auto]">
       {bars.length > 0 && (
         <div>
-          <h3 className="text-ink-faint mb-2 text-[11px] font-semibold tracking-wider uppercase">
+          <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
             24h volume by source
             {hidden > 0 ? ` — top ${bars.length} of ${withVolume.length}` : ''}
           </h3>
