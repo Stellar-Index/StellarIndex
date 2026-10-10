@@ -3,7 +3,7 @@ import {
   HBarList,
   type HBarItem,
 } from '@/components/charts/Bars';
-import { formatDecimalAmount } from '@/lib/format';
+import { formatReadable } from '@/lib/format';
 
 export type ShareRow = {
   key: string;
@@ -33,13 +33,13 @@ export function ShareBars({
       id: r.key,
       label: r.label,
       value: Number(r.usd),
-      display: `${r.unvalued > 0 ? '≥ ' : ''}$${formatDecimalAmount(r.usd, 0)}`,
+      display: `${r.unvalued > 0 ? '≥ ' : ''}${formatReadable(r.usd, true)}`,
       annotation: r.unvalued > 0 ? `${r.unvalued} unvalued` : undefined,
       hatchTail: r.unvalued > 0,
       title:
         r.unvalued > 0
-          ? 'A floor: members without a valuation are not counted.'
-          : undefined,
+          ? `≥ $${r.usd}. A floor: members without a valuation are not counted.`
+          : `$${r.usd}`,
     }))
     .sort((a, b) => b.value - a.value);
   if (items.length === 0) return null;

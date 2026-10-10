@@ -29,7 +29,8 @@ describe('LiquidityVenueBars', () => {
       },
       { source: 'sdex', volume_24h_usd: '2' },
     ]);
-    expect(rows[0].display).toBe('≥ $9,007,199,254,740,995');
+    expect(rows[0].display).toBe('≥ $9007.2T');
+    expect(rows[0].title).toMatch(/^≥ \$9007199254740995\. /);
     expect(rows[0].hatchTail).toBe(true);
   });
 

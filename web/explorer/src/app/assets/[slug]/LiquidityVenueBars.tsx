@@ -1,5 +1,5 @@
 import { HBarList, type HBarItem } from '@/components/charts/Bars';
-import { formatDecimalAmount, sumDecimalStrings } from '@/lib/format';
+import { formatReadable, sumDecimalStrings } from '@/lib/format';
 
 type PoolVolume = {
   source: string;
@@ -26,12 +26,12 @@ export function buildVenueRows(pools: PoolVolume[]): HBarItem[] {
     rows.push({
       label: source,
       value: Number(sum),
-      display: `${lower ? '≥ ' : ''}$${formatDecimalAmount(sum, 0)}`,
+      display: `${lower ? '≥ ' : ''}${formatReadable(sum, true)}`,
       annotation: `${ps.length} pool${ps.length === 1 ? '' : 's'}`,
       hatchTail: lower,
       title: lower
-        ? 'Lower bound: unvalued pools and trades without a trade-time USD value are excluded.'
-        : undefined,
+        ? `≥ $${sum}. Lower bound: unvalued pools and trades without a trade-time USD value are excluded.`
+        : `$${sum}`,
     });
   }
   return rows.sort((a, b) => b.value - a.value);

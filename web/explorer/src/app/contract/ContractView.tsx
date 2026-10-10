@@ -23,8 +23,8 @@ import {
   CopyHash,
   formatTimestamp,
   relativeAge,
-  scaledUnits,
 } from '../explorer-shared';
+import { baseUnitsDecimal, formatReadable } from '@/lib/format';
 import type { paths } from '@/api/types';
 import { SacAssetPanel } from './SacAssetPanel';
 import { CodeTimeline, TokenFlowSummary } from './ContractInsights';
@@ -666,15 +666,10 @@ interface TransferRow {
   amount?: string;
 }
 
-// transferAmount scales a raw i128 base-unit transfer amount (string) to
-// display units by 10^decimals via the exact string-split path — never
-// Number() on the raw integer, which loses precision above 2^53 and
-// invents float dust (ADR-0003). Falls back to the raw string if the
-// value isn't a clean integer.
+// transferAmount scales a raw i128 amount by 10^decimals in BigInt before
+// rounding for display (ADR-0003); the raw string is the fallback.
 function transferAmount(amount: string, decimals: number): string {
-  const n = scaledUnits(amount, decimals);
-  if (!Number.isFinite(n)) return amount;
-  return n.toLocaleString('en-US', { maximumFractionDigits: 4 });
+  return formatReadable(baseUnitsDecimal(amount, decimals)) ?? amount;
 }
 
 /**

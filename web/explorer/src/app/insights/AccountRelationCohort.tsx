@@ -19,7 +19,11 @@ import {
   TR,
 } from '@/components/ui';
 import { apiGet, asExample, type Envelope } from '@/api/client';
-import { formatCompactUnits, truncateMiddle } from '@/lib/format';
+import {
+  formatCompactUnits,
+  formatReadable,
+  truncateMiddle,
+} from '@/lib/format';
 import type { components } from '@/api/types';
 
 import { formatTimestamp } from '../explorer-shared';
@@ -32,11 +36,6 @@ type CohortPoint = components['schemas']['AccountCohortFlowPoint'];
 type CohortValuation = components['schemas']['AccountCohortValuation'];
 
 const numFmt = new Intl.NumberFormat('en-US');
-const usdFmt = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 0,
-});
 
 const HOLDINGS_SHOWN = 25;
 
@@ -52,8 +51,7 @@ function assetLabel(asset: string, kind: CohortHolding['kind']): string {
 
 function usd(s: string | undefined): string {
   if (s === undefined) return '—';
-  const n = Number(s);
-  return Number.isFinite(n) ? usdFmt.format(n) : s;
+  return formatReadable(s, true) ?? s;
 }
 
 /** The priced-holdings total as a stat, and why it is a lower bound when
