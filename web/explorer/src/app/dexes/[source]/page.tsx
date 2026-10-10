@@ -126,20 +126,10 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
       )}
       {source === 'sushiswap_v3' && (
         <p className="text-ink-muted text-xs">
-          No reserve or TVL figure is served for {info.name}, and that is a
-          methodology decision rather than a gap: a concentrated-liquidity pool
-          spreads its depth across per-position tick ranges, so the pool&apos;s
-          token balances are not a two-sided reserve and summing them would
-          answer a different question than the one asked. Running the
-          constant-product path over them anyway would put a meaningless number
-          on this page, so none is derived —{' '}
-          <code className="font-mono">/v1/protocols/sushiswap_v3/tvl</code> says
-          the same thing, and the venue is named in the{' '}
-          <Link href="/dexes" className="text-brand-600 hover:underline">
-            headline TVL
-          </Link>
-          &apos;s <code className="font-mono">excluded</code> list. Swap volume,
-          trades and pools above are complete.
+          <span title="A concentrated-liquidity pool spreads depth across tick ranges, so its token balances are not a two-sided reserve.">
+            No reserve or TVL by design (concentrated liquidity)
+          </span>
+          ; volume, trades and pools are complete.
         </p>
       )}
       {(source === 'phoenix' || source === 'comet') && (
@@ -158,10 +148,8 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
           >
             Aquarius
           </Link>{' '}
-          only — {info.name} emits liquidity flows, not post-state reserves, and
-          its pool-storage layout hasn&apos;t been verified against the ledger
-          lake yet. We don&apos;t serve guesses, so it also carries no TVL
-          figure.
+          only. {info.name} has no verified reserve source yet, so no TVL is
+          shown.
         </p>
       )}
 

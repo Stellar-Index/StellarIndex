@@ -323,12 +323,9 @@ export function PoolReserves({ pool }: { pool: string }) {
         </div>
       )}
       <p className="text-ink-muted text-[11px]">
-        Supplied / borrowed / utilisation are exact current-state from the
-        reserve&apos;s on-chain b_rate/d_rate. APR (the pool&apos;s own
-        interest-rate model) shows when the reserve&apos;s rate config is in the
-        captured storage window, else <span className="font-mono">—</span>. USD
-        values are shown for reserves we hold a price for. Distinct from the
-        auction-stream window proxy on the pools list.
+        Exact current state from on-chain b_rate/d_rate. APR shows{' '}
+        <span className="font-mono">—</span> when the rate config is outside the
+        captured storage window.
       </p>
     </Panel>
   );

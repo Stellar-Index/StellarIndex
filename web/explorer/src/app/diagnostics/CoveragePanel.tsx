@@ -232,12 +232,8 @@ function RecognitionAxisCard({ rec }: { rec: RecognitionAxis }) {
         <strong className="text-ink-muted font-medium">
           a discovery backlog, not missing data
         </strong>
-        . No source in the table above is dropping events because of it, and
-        this number can never reach zero while contracts we do not index keep
-        being deployed, which is why it is not counted in the headline. A source
-        silently dropping its <em>own</em> events is the opposite case: that
-        shows as a red <code className="font-mono">recognition</code> claim on
-        that source&apos;s row, and it does fail the headline.
+        , so it is not in the headline. A source dropping its own events shows
+        as a red <code className="font-mono">recognition</code> claim.
       </p>
       {rec.detail && (
         <p className="text-ink-faint mt-1 font-mono text-[11px] leading-relaxed">

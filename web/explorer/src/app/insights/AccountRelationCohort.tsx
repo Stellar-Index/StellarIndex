@@ -421,18 +421,12 @@ export function AccountRelationCohort({
               </Callout>
             )}
             <p className="text-ink-faint text-[11px]">
-              Received minus sent per asset per calendar month, from the
-              movements archive. &ldquo;USD today&rdquo; values each
-              month&rsquo;s quantity at today&rsquo;s price — one unit across
-              months, not what the month was worth then; &ldquo;USD then&rdquo;
-              values it at that month&rsquo;s volume-weighted USD price on this
-              index&rsquo;s own markets. Both lines sum the same assets each
-              month — those priced on both bases — so switching changes the
-              price, never the basket; an asset priced on one basis alone is
-              left out of both, and a month with no such asset draws no point.
-              Broken out for {data.flows.assets.length} asset
-              {data.flows.assets.length === 1 ? '' : 's'}; the activity line
-              counts every asset. A month with no movement emits no point.
+              <span title="USD today values each month's quantity at today's price; USD then uses that month's VWAP on this index's markets. Both lines use the same assets (priced on both bases), so switching changes the price, never the basket.">
+                Net received minus sent per asset per month
+              </span>
+              , {data.flows.assets.length} asset
+              {data.flows.assets.length === 1 ? '' : 's'} broken out; the
+              activity line counts every asset.
             </p>
           </>
         )}

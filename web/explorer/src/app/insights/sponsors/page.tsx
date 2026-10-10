@@ -1,10 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { Panel } from '@/components/reveal';
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
-import { Container, PageHeader } from '@/components/ui';
+import { Badge, Container, PageHeader } from '@/components/ui';
 
 import { SponsorBoard } from './SponsorBoard';
 
@@ -19,6 +18,21 @@ const CRUMBS = [
   { label: 'Home', href: '/' },
   { label: 'Insights', href: '/insights' },
   { label: 'Account sponsors' },
+];
+
+const NOTES = [
+  {
+    label: 'History, not live',
+    tip: 'Replayed from sponsorship operations. A sponsorship also lapses when the entry is deleted or the account merges, with no operation, so no "currently sponsoring" count is shown.',
+  },
+  {
+    label: 'Effective ops only',
+    tip: 'Operations in failed transactions are excluded: about 1 in 9 sponsorship operations sit in a failed transaction.',
+  },
+  {
+    label: 'Revocations: lower bound',
+    tip: 'Revocations issued undercounts arrangements that ended, since lapses leave no operation.',
+  },
 ];
 
 export default function SponsorsPage() {
@@ -42,63 +56,28 @@ export default function SponsorsPage() {
         breadcrumbs={CRUMBS}
         description={
           <>
-            Holding anything on Stellar costs a base reserve, and one account
-            can pay that reserve on another&apos;s behalf. This board ranks the
-            accounts doing the paying: how many sponsorship arrangements they
-            have started, how many distinct accounts those covered, and how many
-            they have revoked.
+            Accounts that pay base reserves for other accounts: arrangements
+            started, accounts covered, and revocations.
           </>
         }
       />
 
       <SponsorBoard />
 
-      <Panel
-        headingLevel={2}
-        title="This is history, not a live sponsor list"
-        bodyClassName="text-sm text-ink-body space-y-2"
-      >
-        <p>
-          Every number here is derived by replaying sponsorship{' '}
-          <strong>operations</strong> — the begin/end pair that opens an
-          arrangement, and the revocations that end one. That tells you exactly
-          what an account has done: the board covers every sponsorship operation
-          that <strong>took effect</strong> since protocol 14 introduced the
-          feature.
-        </p>
-        <p>
-          Operations submitted in transactions that <strong>failed</strong> are
-          excluded, because nothing about them ever happened — no reserve was
-          paid and no arrangement was opened. They are a real share of the
-          record rather than a rounding error: about one sponsorship operation
-          in nine on the network sits in a failed transaction, and a board that
-          counted them would rank accounts on work the ledger rejected.
-        </p>
-        <p>
-          What it deliberately does <strong>not</strong> tell you is who is
-          sponsoring what <em>right now</em>. A sponsorship also lapses without
-          any operation at all — when the sponsored entry is simply deleted, or
-          the sponsored account merges away. So a &quot;currently
-          sponsoring&quot; count built from this source would be too high, and
-          none is shown. Answering that question needs the sponsor recorded on
-          each live ledger entry, which is a separate reader this API does not
-          expose yet.
-        </p>
-        <p>
-          For the same reason <strong>revocations issued</strong> is a lower
-          bound on arrangements that ended, not a total. And sponsorship is not
-          account creation: creating an account is immutable and happens once,
-          sponsoring is revocable and repeatable, so the{' '}
-          <Link
-            href="/insights/creators"
-            className="underline decoration-dotted"
-          >
-            creators board
-          </Link>{' '}
-          answers a different question and the two should not be added together.
-          An account can rank highly on both.
-        </p>
-      </Panel>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        {NOTES.map((n) => (
+          <Badge key={n.label} tone="neutral" title={n.tip}>
+            {n.label}
+          </Badge>
+        ))}
+        <Link
+          href="/insights/creators"
+          className="text-ink-muted underline decoration-dotted"
+          title="Account creation is one-off and immutable; sponsorship is revocable. Don't add the two boards together."
+        >
+          Not account creation → creators board
+        </Link>
+      </div>
     </Container>
   );
 }

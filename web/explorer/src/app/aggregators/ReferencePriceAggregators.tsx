@@ -136,11 +136,10 @@ export function ReferencePriceAggregators() {
         </table>
       </div>
       <p className="border-line text-ink-muted border-t px-4 py-2 text-xs">
-        Reference aggregators are <strong>excluded from VWAP</strong> by policy
-        — they aggregate the same upstream venues we already index, so including
-        them would double-count those underlying markets and let their
-        methodology bleed into ours. They show up here so divergence flags can
-        attribute &ldquo;us vs CG&rdquo; cleanly.
+        <span title="They aggregate venues we already index, so including them would double-count those markets.">
+          Excluded from VWAP
+        </span>
+        ; used only for divergence checks.
       </p>
     </Panel>
   );
