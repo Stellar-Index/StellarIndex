@@ -99,7 +99,7 @@ export default function ContactPage() {
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Contact' }]}
         eyebrow="Get in touch"
         title="Contact"
-        description="We don't run a support inbox for the public tier — issues land on GitHub, sales go to email, and security goes to a separate inbox with a real disclosure SLA. Pick the channel that fits your message."
+        description="Issues go to GitHub, sales to email, and security to a separate inbox with a disclosure SLA."
       />
 
       <section className="space-y-3">

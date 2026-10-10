@@ -50,7 +50,7 @@ export default function MarketsPage() {
         breadcrumbs={MARKETS_CRUMBS}
         eyebrow="Trading pairs"
         title="Markets"
-        description="Top 100 (base, quote) pairs by 24h USD volume, of the thousands that traded on Stellar in the last 14 days. Heatmap, per-venue sub-tables, and a live trade tape land in subsequent passes."
+        description="Top 100 pairs by 24h USD volume, of the thousands that traded on Stellar in the last 14 days."
       />
 
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>

@@ -44,7 +44,7 @@ export default function ResearchPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Research' }]}
         title="Research"
-        description="The thinking behind every Stellar Index choice. Architecture decision records (ADRs) below capture every load-bearing design call with its alternatives + consequences. The operations runbooks and architecture narratives live alongside the source on GitHub."
+        description="Architecture decision records: every load-bearing design call, with its alternatives and consequences."
       />
 
       <section className="space-y-4">

@@ -26,7 +26,7 @@ export default function LedgersPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Ledgers' }]}
         title="Ledgers"
-        description="The most recent ledger closes on the Stellar network. Each row links to the full ledger view — header, transactions, and the operations + events those transactions emitted."
+        description="The most recent ledger closes on the Stellar network."
       />
 
       {/* S-005: ledger cadence answers "is the network healthy" before

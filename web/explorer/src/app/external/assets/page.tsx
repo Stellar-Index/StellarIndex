@@ -33,7 +33,7 @@ export default function ExternalAssetsPage() {
         ]}
         eyebrow="Directory"
         title="External assets"
-        description="Non-Stellar assets tracked for pricing: fiat currencies and reference-price coins (BTC, ETH, …). These are split off /assets — the Stellar-only asset directory — and priced from off-chain venues and reference feeds."
+        description="Fiat currencies and reference coins (BTC, ETH, …) priced from off-chain venues and feeds."
       />
       <p className="text-ink-muted text-sm">
         <Link
