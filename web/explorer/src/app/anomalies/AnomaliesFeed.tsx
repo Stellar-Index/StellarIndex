@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { AssetText } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
+import { formatPairPrice } from '@/lib/format';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { HBarList } from '@/components/charts/Bars';
 import type { paths } from '@/api/types';
@@ -229,8 +230,11 @@ export function AnomaliesFeed() {
                           ? `${dev > 0 ? '+' : ''}${dev.toFixed(2)}%`
                           : '—'}
                       </td>
-                      <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
-                        {e.frozen_value}
+                      <td
+                        className="py-1.5 pr-4 text-right font-mono tabular-nums"
+                        title={e.frozen_value}
+                      >
+                        {e.frozen_value ? formatPairPrice(e.frozen_value) : '—'}
                       </td>
                       <td className="py-1.5">
                         {e.firing ? (
