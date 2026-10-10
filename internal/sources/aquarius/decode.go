@@ -449,37 +449,23 @@ func decodeFee(e *events.Event, closedAt time.Time, kind string) (FeeEvent, erro
 	return fe, nil
 }
 
-// decodeSetProtocolFee fills the set_protocol_fee fields from EITHER of
-// the two real on-chain body shapes (branch on the parsed SCVal kind):
+// decodeSetProtocolFee fills the set_protocol_fee fields from EITHER real body shape
+// (branch on the parsed SCVal kind):
 //
 //	Map[ fee_protocol{0,1}_{new,old}: u32 ]
-//	    the per-token old→new transition, decoded by field name
-//	    (schema-evolution safe). This is the shape the migration-0129
-//	    pass sampled (values 0→4 / 0→10). NOTE: the lake holds this Map
-//	    shape ONLY on contracts that are NOT registered Aquarius pools,
-//	    so contract-identity gating means it is not reached in
-//	    production — kept because the wire shape is real and the decode
-//	    is cheap and lossless.
+//	    per-token old→new transition, decoded by field name (schema-evolution safe).
+//	    The lake holds it only on contracts that are NOT registered Aquarius pools, so
+//	    contract-identity gating never reaches it in production; kept because the wire
+//	    shape is real and the decode is lossless.
 //
 //	Vec[ u32 ]
-//	    a SINGLE pool-wide NEW protocol-fee fraction — the shape EVERY
-//	    REGISTERED Aquarius pool emits. All 163 lake-wide occurrences are
-//	    the byte-identical body Vec[u32(5000)] (the governance sweep
-//	    that set 160 registered pools in one tx — ledger 57,697,910 —
-//	    plus later stragglers). The pool contract's fee API is a SINGLE
-//	    `set_protocol_fee_fraction` / `get_protocol_fee_fraction` with a
-//	    `new_fraction` topic — verified across every pool-WASM
-//	    generation's disassembly in docs/operations/wasm-audits/evidence/
-//	    (the strings `set_protocol_fee_fraction`, `new_fraction`,
-//	    `get_protocol_fee_fraction`, and NO per-token `fee_protocol*`
-//	    keys in any Aquarius pool WASM). So the one u32 is
-//	    the new fraction for the WHOLE pool; it maps to BOTH token sides
-//	    (Fee0New == Fee1New == fraction). The body carries NO old value
-//	    and NO per-token split — HasOldFee stays false so the sink lands
-//	    the fee_protocol*_old columns NULL rather than a fabricated 0
-//	    (do-not-invent: the prior fraction is genuinely not on the wire).
-//	    The raw u32 is stored verbatim; the Aquarius fee-fraction
-//	    denominator is a downstream interpretation, not asserted here.
+//	    a SINGLE pool-wide NEW protocol-fee fraction, the shape EVERY REGISTERED pool
+//	    emits (e.g. Vec[u32(5000)]). Pool WASMs expose only `set_protocol_fee_fraction`
+//	    with a `new_fraction` topic, no per-token fee_protocol* keys (evidence in
+//	    docs/operations/wasm-audits/evidence/), so the u32 maps to BOTH sides
+//	    (Fee0New == Fee1New). There is NO old value, so HasOldFee stays false and the
+//	    sink lands fee_protocol*_old NULL rather than a fabricated 0. The raw u32 is
+//	    stored verbatim; its denominator is a downstream interpretation.
 func decodeSetProtocolFee(sv scval.ScVal, fe *FeeEvent) error {
 	// Map form — the per-token old→new transition.
 	if entries, err := scval.AsMap(sv); err == nil {

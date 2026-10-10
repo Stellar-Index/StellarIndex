@@ -19,39 +19,23 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// FreezeUnfreeze is the OPERATOR half of ADR-0019's freeze lifecycle.
+// FreezeUnfreeze is the OPERATOR half of ADR-0019's freeze lifecycle: the manual
+// unfreeze that an ESCALATED freeze (one that climbed the whole extension ladder)
+// waits for.
 //
-// ADR-0019 is explicit that an ESCALATED freeze — one that climbed the whole
-// 4 × 30-minute extension ladder without earning its auto-unfreeze — "stays
-// active until manual unfreeze". Every other piece of that lifecycle is
-// implemented (the orchestrator fires and extends, the policy escalates, the
-// recovery worker closes the durable row when a marker lapses) except the
-// manual unfreeze itself, which had no code path anywhere in the binary set.
-// The only way to end an escalated freeze was to `redis-cli DEL` the marker
-// by hand — untyped, unlogged, un-mirrored into `freeze_events`, and easy to
-// get wrong on an asset id that the canonical parser would have rejected.
+// It appends a "freeze.unfreeze" audit_log row (actor, reason) and writes the
+// freeze:override tombstone, so the aggregator counts the release as an operator one.
+// Then, in order:
 //
-// This is that path, and it does BOTH halves in the right order:
-//
-//  1. delete the Redis marker (freeze.Writer.Clear) — the serving path's
-//     authority for `flags.frozen`, so the price republishes immediately
-//     rather than after the remaining hold TTL elapses;
+//  1. delete the Redis marker (freeze.Writer.Clear), the serving path's authority for
+//     `flags.frozen`, so the price republishes immediately;
 //  2. stamp `recovered_at` on the open `freeze_events` row
-//     (FreezeEventSink.MarkRecovered) — the durable timeline the explorer
-//     /anomalies view reads.
+//     (FreezeEventSink.MarkRecovered), the timeline /anomalies reads.
 //
-// Before either, it appends a "freeze.unfreeze" audit_log row (actor,
-// reason) and writes the freeze:override tombstone the aggregator reads to
-// count the release as an operator one rather than a lapse.
-//
-// Doing only (1) works eventually — the recovery worker polls and would
-// close the row within ~60 s — but doing both here means the operator's
-// action is complete and observable the moment the command exits, and the
-// command is honest about which half failed if one does.
-//
-// Idempotent: clearing an absent marker is a no-op by contract, and
-// MarkRecovered on an already-closed pair reports "no open row" rather than
-// erroring the run.
+// Step 1 alone would be healed by the recovery worker's ~60 s poll; doing both makes
+// the action complete when the command exits and says which half failed.
+// Idempotent: clearing an absent marker is a no-op and MarkRecovered on a closed pair
+// reports "no open row".
 //
 // Usage:
 //
@@ -59,10 +43,9 @@ import (
 //	stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
 //	    -asset native -quote 'USDC-GA5ZS…' -reason "oracle recovered, verified by hand"
 //
-// -reason is REQUIRED for a mutation, mirroring the X-Reason discipline the
-// admin API applies to every privileged write: an unfreeze overrides an
-// automated safety control on a money surface, and "who and why" has to be
-// in the record, not in someone's memory.
+// -reason is REQUIRED for a mutation (as X-Reason is on admin writes): an unfreeze
+// overrides an automated safety control on a money surface, so who and why must be
+// recorded.
 func FreezeUnfreeze(args []string) error {
 	fs := flag.NewFlagSet("freeze-unfreeze", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -159,33 +142,23 @@ func resolveUnfreezeMutationInputs(list bool, assetFlag, quoteFlag, reasonFlag, 
 	return reason, actor, nil
 }
 
-// newFreezeWriterForOps builds the freeze.Writer this command reads and
-// clears through. Extracted from [FreezeUnfreeze] so the WIRING itself is
-// unit-testable — it is the load-bearing part, not an incidental detail.
+// newFreezeWriterForOps builds the freeze.Writer this command reads and clears
+// through. Extracted from [FreezeUnfreeze] so the WIRING is unit-testable.
 //
-// The ladder store (migration 0119) is what makes both halves of this
-// command correct, and neither is obvious:
+// The ladder store (migration 0119) matters twice:
 //
-//  1. `-list` reads the ladder through [freeze.Writer.LoadState]. Without
-//     the store that read is Redis-only, so after a Redis flush the exact
-//     situation an operator is most likely to be investigating — an
-//     escalated freeze whose marker evaporated — prints as `MARKER GONE`
-//     with `EXTS 0 / ESCALATED false`, i.e. it lies about the ladder in the
-//     direction of "nothing to see here".
+//  1. `-list` reads the ladder via [freeze.Writer.LoadState]; without the store that
+//     is Redis-only, so after a Redis flush an escalated freeze prints as
+//     `MARKER GONE` with `EXTS 0 / ESCALATED false`, understating the ladder.
 //
-//  2. The unfreeze itself. [freeze.Writer.Clear] RETIRES the durable ladder
-//     (writes back a zero State, nulling hold_until) as well as deleting the
-//     marker. Without the store wired here, Clear only touches Redis, and
-//     the durable row stays authoritative until MarkRecovered lands one DB
-//     round trip later — a window in which an aggregator tick reads "marker
-//     gone, durable ladder live", rehydrates, and re-writes the marker. The
-//     operator's unfreeze is then silently defeated: MarkRecovered closes a
-//     row the aggregator has already replaced. With the store wired the
-//     ladder is retired at the same instant the marker is, so the tick sees
-//     the freeze as over and the override wins by construction.
+//  2. [freeze.Writer.Clear] RETIRES the durable ladder (zero State, hold_until NULL)
+//     as well as deleting the marker. Without the store, an aggregator tick between
+//     Clear and MarkRecovered sees "marker gone, durable ladder live", rehydrates and
+//     re-writes the marker, silently defeating the unfreeze. With it the ladder
+//     retires at the same instant, so the override wins.
 //
-// The TTL is irrelevant here — this command only ever Clears and
-// LoadStates, never Marks — but NewWriter requires a positive one.
+// The TTL is irrelevant (this only Clears and LoadStates) but NewWriter requires a
+// positive one.
 func newFreezeWriterForOps(rdb freeze.RedisCache, ladder freeze.LadderStore) (*freeze.Writer, error) {
 	return freeze.NewWriter(rdb, time.Minute,
 		freeze.WithLadderStore(ladder, 0), // 0 → freeze.DefaultLadderGrace

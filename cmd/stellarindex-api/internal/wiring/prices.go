@@ -240,40 +240,19 @@ func (g GlobalPriceReader) LookupTriangulated(ctx context.Context, base, quote c
 // stale=false for the ~250k dormant/delisted long-tail).
 const defaultVWAPFreshness = 15 * time.Minute
 
-// PriceWithheld is THE withholding chokepoint for every price-serving
-// read seam (MSP cluster, wave D). The scam/substance decision lives
-// here rather than inline in each reader, because a new seam has no
-// obligation to remember it. Every seam that serves a
-// number derived from a closed VWAP bucket routes through here, and
-// TestPriceServingSeamsAreGated enumerates those seams so a new
-// ungated one fails CI rather than shipping.
+// PriceWithheld is THE withholding chokepoint for every price-serving read seam.
+// One function keeps the scam and substance gates SYMMETRIC: hand-written call
+// sites drifted (one consulted substance but not scam, so disable_substance_gate=true
+// also un-withheld flagged issuers). TestPriceServingSeamsAreGated derives the seam
+// set from calls to this function by name, and
+// TestWithholdingGatesAreSpelledOnlyAtTheChokepoint fails if a call site spells a
+// gate out itself. The expression lives in pricingguard.Gate, shared with the
+// aggregator's webhook surfaces.
 //
-// Routing through one function is also what keeps the two gates
-// SYMMETRIC. Hand-written call sites drifted apart: the last-trade arm
-// of LatestPrice consulted substance but not scam, so an operator who
-// set disable_substance_gate=true to widen pricing coverage silently
-// also un-withheld every directory-flagged issuer. Callers
-// cannot make that mistake here — there is one expression, and
-// TestWithholdingGatesAreSpelledOnlyAtTheChokepoint fails if a future
-// call site spells either gate out again.
-//
-// The expression itself lives in pricingguard.Gate, shared with the
-// aggregator's customer-webhook surfaces. This function stays because
-// the seam guard above derives its subject set from calls to it by name.
-//
-// Both gates are nil-receiver safe (nil == allow-everything), so an
-// operator who disabled [pricing_guard] keeps today's behaviour.
-//
-// It returns WHICH gate fired, and a reader seam hands that to
-// v1.PriceWithheldError so the response names the real cause: a
-// flagged issuer's market must not be described as merely thin.
-//
-// A seam that serves the price AS OF a past instant says so with
-// [AsOfInstant], and the thin-market half is then measured over the
-// window ending at that instant instead of at now. It is an
-// option on THIS function rather than a second chokepoint so that both
-// structural guards keep holding by construction: there is still one
-// name a seam must call, and still no gate method spelled outside it.
+// Both gates are nil-receiver safe (nil == allow-everything). It returns WHICH gate
+// fired so v1.PriceWithheldError can name the real cause. [AsOfInstant] measures the
+// thin-market half over the window ending at that instant instead of now; it is an
+// option here, not a second chokepoint, so both guards keep holding.
 func PriceWithheld(
 	ctx context.Context,
 	substance *pricingguard.SubstanceGate,
@@ -398,32 +377,17 @@ func (r StorePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 		return v1.PriceSnapshot{}, nil, false, err
 	}
 
-	// Primary path: most-recent CLOSED 1-minute VWAP from the prices_1m
-	// CAGG (per ADR-0015 we serve only closed buckets). Note the CAGG is a
-	// bare Σ(quote)/Σ(base) per bucket — it is NOT the orchestrator's
-	// filtered VWAP. The σ-outlier filter, the min-USD-volume gate, and
-	// freeze value-protection all live on the ORCHESTRATOR path that writes
-	// the filtered value to Redis (which this CAGG bypasses). Freeze is the
-	// one of the three this reader's callers make good: on a pair with a
-	// live freeze marker /v1/price and /v1/price/batch discard this bucket
-	// for the value the freeze is holding (v1.Server.resolveFrozenServe)
-	// — the other surfaces that read this bucket do not. A pair with no
-	// prices_1m rows at all (pure-synthetic fiat like native/fiat:USD —
-	// SDEX native trades are quoted in issuer-stablecoins, never fiat:USD)
-	// misses here (ErrNoRows) and the handler's Redis-VWAP fallback — which
-	// IS filtered — serves it. But any pair with real prices_1m rows serves
-	// this raw bucket: that includes directly-quoted DEX/CEX pairs (a
-	// Soroban token priced in USDC-GA5Z…, crypto:BTC/crypto:USDT) AND
-	// headline pairs with a real fiat CEX market (crypto:XLM/fiat:USD via
-	// Kraken/Coinbase). A single fat-finger / manipulation trade in the
-	// served minute would otherwise corrupt the price with stale=false, no
-	// outlier rejection, no volume floor. pricingguard.GuardServedVWAP1mConfidence
-	// applies a robust sanity bound over the pair's recent trailing closed
-	// buckets and serves last-known-good when the latest is grossly off
-	// (adversarial-review HIGH). It is a pass-through (byte-identical) on a
-	// healthy bucket — a liquid pair like crypto:XLM/fiat:USD sits tightly
-	// clustered and always passes — so it only ever changes the served value
-	// for a manipulated bucket.
+	// Primary path: most-recent CLOSED 1-minute VWAP from the prices_1m CAGG (ADR-0015
+	// serves only closed buckets). The CAGG is a bare Σ(quote)/Σ(base), NOT the
+	// orchestrator's filtered VWAP: the σ-outlier filter, min-USD-volume gate and
+	// freeze protection live on the orchestrator path. Of those, only freeze is made
+	// good by callers (/v1/price and /v1/price/batch, v1.Server.resolveFrozenServe).
+	// A pair with no prices_1m rows (pure-synthetic fiat like native/fiat:USD) misses
+	// here (ErrNoRows) and the handler's filtered Redis-VWAP fallback serves it; every
+	// pair with real rows, including crypto:XLM/fiat:USD, serves this raw bucket.
+	// pricingguard.GuardServedVWAP1mConfidence therefore bounds the latest bucket
+	// against the trailing closed buckets and serves last-known-good when it is
+	// grossly off; it is byte-identical on a healthy bucket.
 	row, err := r.S.LatestClosedVWAP1mForPair(ctx, pair)
 	if err == nil {
 		// Thin-market substance gate ([pricing_guard]) — checked before

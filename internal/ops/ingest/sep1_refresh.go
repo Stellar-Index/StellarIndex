@@ -355,28 +355,19 @@ func sep1Candidates(
 
 // Systemic-outage guard.
 //
-// A backoff cannot tell "this domain is dead" from "our DNS is down". Left alone,
-// an outage on our side walks the whole population up the ladder (six bad days
-// reaches the 30-day cap) and the job goes quiet. The data-freshness watchdog
-// cannot catch it either: it reads `max(sep1_resolved_at)`, which a failed attempt
-// stamps just like a success.
+// A backoff cannot tell "this domain is dead" from "our DNS is down", and the
+// freshness watchdog reads max(sep1_resolved_at), which a failed attempt stamps like
+// a success. So the run judges ITSELF only on domains that HAVE served a stellar.toml
+// (the row holds a payload): a never-answering domain failing again says nothing about
+// us, and counting them made the verdict a property of the network. When it trips:
 //
-// So the run judges ITSELF on the one population whose failures carry information:
-// domains that HAVE served a stellar.toml (the row holds a payload). A domain that
-// never answered failing again says nothing about us; counting those made the
-// verdict a property of the network (on testnet a healthy run went 19 ok / 731
-// failed, tripped the guard, and its unwind kept the junk off the ladder so the
-// next run was the same). When the verdict lands, the run:
-//
-//  1. Unwinds the ladder step it applied to every domain it failed, so recovery is
+//  1. The ladder step applied to every failed domain is unwound, so recovery is
 //     immediate rather than metered over 30 days.
-//  2. Returns an error, so the systemd oneshot fails and
-//     stellarindex_systemd_unit_failed (infra.yml, 15m) tickets it, instead of
-//     exiting 0 on "0 succeeded, 750 failed".
+//  2. The run returns an error, so the systemd oneshot fails and
+//     stellarindex_systemd_unit_failed (infra.yml) tickets it.
 //
-// On r1 a healthy run failed 291 of 500, all domains that never produced a payload
-// (migration 0159), so the regression rate of a healthy run is near zero. 90% sits
-// far above that and below "everything is broken". minAttempts counts only reached
+// A healthy run's regression rate is near zero (migration 0159), so 90% sits far
+// above that and below "everything is broken". minAttempts counts only reached
 // domains, so a short run cannot trip it on a handful.
 const (
 	defaultSystemicFailureRate = 0.90
