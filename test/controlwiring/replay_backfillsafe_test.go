@@ -1,9 +1,6 @@
 package controlwiring
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,32 +66,6 @@ func TestReplayPathsConsultBackfillSafe(t *testing.T) {
 		// The static policy alone is not enough for a BackfillPerWASM
 		// source: the per-WASM instance-index gate must also run.
 		assertCallsGateReplay(t, cmd, globs)
-	}
-}
-
-func assertFuncCallsGateReplay(t *testing.T, relPath, fn string) {
-	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), filepath.Join(repoRoot(t), relPath), nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", relPath, err)
-	}
-	var found bool
-	for _, d := range f.Decls {
-		fd, ok := d.(*ast.FuncDecl)
-		if !ok || fd.Name.Name != fn || fd.Body == nil {
-			continue
-		}
-		ast.Inspect(fd.Body, func(n ast.Node) bool {
-			if c, ok := n.(*ast.CallExpr); ok {
-				if sel, ok := c.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "GateReplay" {
-					found = true
-				}
-			}
-			return !found
-		})
-	}
-	if !found {
-		t.Errorf("%s: func %s never calls GateReplay itself (a BackfillPerWASM replay would skip the per-WASM gate)", relPath, fn)
 	}
 }
 
