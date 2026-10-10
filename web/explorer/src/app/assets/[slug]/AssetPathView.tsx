@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { EmptyState, PageHeader, Skeleton } from '@/components/ui';
+import { offChainAssetHref } from '@/lib/assetRoute';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import type { Envelope } from '@/app/explorer-shared';
 
@@ -62,9 +63,14 @@ interface AssetShellDetail {
 export function AssetPathView() {
   const slug = useLastPathSegment();
 
+  const offChain = offChainAssetHref(slug);
+  useEffect(() => {
+    if (offChain) window.location.replace(offChain);
+  }, [offChain]);
+
   const detail = useQuery({
     queryKey: ['asset-shell', slug],
-    enabled: Boolean(slug),
+    enabled: Boolean(slug) && !offChain,
     queryFn: () =>
       apiGet<Envelope<AssetShellDetail>>(
         `/v1/assets/${encodeURIComponent(slug!)}`,
@@ -84,7 +90,7 @@ export function AssetPathView() {
     }
   }, [loadedCode, kindNoun]);
 
-  if (!slug || detail.isLoading) {
+  if (!slug || offChain || detail.isLoading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-64" />
