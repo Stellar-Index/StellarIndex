@@ -1018,7 +1018,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           />
 
           <Suspense fallback={null}>
-            <AssetTabs slug={coin.slug} hasIssuer={false} />
+            <AssetTabs slug={coin.slug} />
           </Suspense>
 
           <Suspense fallback={null}>
