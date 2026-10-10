@@ -10,6 +10,7 @@ import { apiGet, type RequestExample } from '@/api/client';
 import {
   formatCompact,
   formatDecimalAmount,
+  formatReadable,
   sumDecimalStrings,
 } from '@/lib/format';
 import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
@@ -479,9 +480,12 @@ export function BespokeSection({
 // render USD as a dollar figure. Non-decimal values pass through untouched.
 function kpiDisplay(kpi: BespokeKpi): { value: string; unit?: string } {
   if (kpi.unit === 'USD') {
-    const v = formatDecimalAmount(kpi.value, 2);
-    if (v != null)
-      return { value: v.startsWith('-') ? `-$${v.slice(1)}` : `$${v}` };
+    const v = formatReadable(kpi.value, true);
+    if (v != null) return { value: v };
+  }
+  if (!IDENTIFIER_LABEL.test(kpi.label)) {
+    const v = formatReadable(kpi.value);
+    if (v != null) return { value: v, unit: kpi.unit };
   }
   const frac = kpi.value.split('.')[1]?.length ?? 0;
   return {
@@ -510,7 +514,10 @@ function BespokeKpiCard({ kpi }: { kpi: BespokeKpi }) {
         )}
       </div>
       <div className="mt-1 flex items-baseline gap-1">
-        <span className="text-brand-700 text-2xl font-semibold tabular-nums">
+        <span
+          className="text-brand-700 text-2xl font-semibold tabular-nums"
+          title={kpi.value}
+        >
           {shown.value}
         </span>
         {shown.unit && (
@@ -580,7 +587,10 @@ export function BespokeTablePanel({
                           : ''
                       }`}
                     >
-                      <Cell value={row[ci] ?? ''} />
+                      <Cell
+                        value={row[ci] ?? ''}
+                        column={table.columns[ci] ?? ''}
+                      />
                     </td>
                   ))}
                 </tr>
@@ -597,7 +607,7 @@ export function BespokeTablePanel({
 // explorer (contracts → /contract, accounts → /accounts); shortens any other
 // long id (e.g. a CODE-ISSUER canonical asset) copyably; everything else plain.
 // The store ships RAW ids — all shortening/linking is presentation, done here.
-function Cell({ value }: { value: string }) {
+function Cell({ value, column }: { value: string; column: string }) {
   if (value === '' || value === '—') {
     return <span className="text-ink-faint">—</span>;
   }
@@ -632,6 +642,10 @@ function Cell({ value }: { value: string }) {
     );
   }
   if (CLASSIC_ASSET_ID.test(value)) return <AssetText canonical={value} />;
+  const readable = IDENTIFIER_LABEL.test(column)
+    ? null
+    : formatReadable(value, /usd/i.test(column));
+  if (readable != null) return <span title={value}>{readable}</span>;
   if (value.length > 28) {
     return <CopyHash value={value} head={10} tail={6} />;
   }
@@ -639,6 +653,9 @@ function Cell({ value }: { value: string }) {
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────
+
+// Columns and KPIs whose numbers are identifiers, shown verbatim.
+const IDENTIFIER_LABEL = /ledger|seq|\bid\b|hash|year|nonce|version/i;
 
 const CLASSIC_ASSET_ID = /^[A-Za-z0-9]{1,12}-G[A-Z2-7]{55}$/;
 
