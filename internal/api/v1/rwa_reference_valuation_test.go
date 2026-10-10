@@ -52,6 +52,46 @@ func containsFold(haystack, needle string) bool {
 	return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
 }
 
+// sumDecimals adds served 2-dp money strings (nil entries skipped) with
+// exact rational arithmetic and renders the sum at 2 dp.
+func sumDecimals(t *testing.T, vals []*string) string {
+	t.Helper()
+	sum := newRat()
+	for _, v := range vals {
+		if v != nil {
+			addDecimal(t, sum, *v)
+		}
+	}
+	return sum.FloatString(2)
+}
+
+// dropsByReason indexes a funnel stage's drops by their reason.
+func dropsByReason(st v1.RWAFunnelStage) map[string]v1.RWAFunnelDrop {
+	out := map[string]v1.RWAFunnelDrop{}
+	for _, d := range st.Dropped {
+		out[d.Reason] = d
+	}
+	return out
+}
+
+// assertNoReferenceValue checks that a refused row carries the stated
+// refusal and no figure, no reference block, and reaches no reference total.
+func assertNoReferenceValue(t *testing.T, v v1.RWAAssetsView, a v1.RWAAsset, wantStatus, what string) {
+	t.Helper()
+	if a.ReferenceValuation.Status != wantStatus {
+		t.Errorf("reference_valuation.status = %q, want %q", a.ReferenceValuation.Status, wantStatus)
+	}
+	if a.ReferenceValuation.ValueUSD != nil {
+		t.Errorf("%s was valued: %s", what, *a.ReferenceValuation.ValueUSD)
+	}
+	if a.Reference != nil {
+		t.Errorf("a reference block reached %s: %+v", what, a.Reference)
+	}
+	if v.Summary.ReferenceValuation.ValueUSD != nil {
+		t.Errorf("a withheld row reached the reference total: %s", *v.Summary.ReferenceValuation.ValueUSD)
+	}
+}
+
 // rwaOndoIssuer is the account internal/rwa binds the USDY instrument
 // to — a different issuer from the Etherfuse account behind CETES,
 // USTRY and TESOURO, so the fixture exercises the per-issuer breakdown
@@ -244,27 +284,28 @@ func TestRWAAssets_MarketCapIsUnchangedByTheReferenceBasis(t *testing.T) {
 		}
 	}
 
-	// The breakdowns carry the same total on the market basis, and the
-	// reference basis did not move a row between groups either.
-	if len(withOracle.ByClass) != len(without.ByClass) {
-		t.Fatalf("by_class rows = %d vs %d", len(withOracle.ByClass), len(without.ByClass))
-	}
-	for i := range withOracle.ByClass {
-		a, b := withOracle.ByClass[i], without.ByClass[i]
-		if a.Class != b.Class || optString(a.MarketCapUSD) != optString(b.MarketCapUSD) ||
-			a.Assets != b.Assets || a.AssetsUnvalued != b.AssetsUnvalued {
-			t.Errorf("by_class[%d] market basis moved: %+v vs %+v", i, a, b)
+	// The breakdowns carry the same market basis, and the reference basis
+	// did not move a row between groups either.
+	breakdowns := func(v v1.RWAAssetsView) (classes, issuers []string) {
+		for _, g := range v.ByClass {
+			classes = append(classes, strings.Join([]string{
+				g.Class, optString(g.MarketCapUSD), strconv.Itoa(g.Assets), strconv.Itoa(g.AssetsUnvalued),
+			}, "|"))
 		}
-	}
-	if len(withOracle.ByIssuer) != len(without.ByIssuer) {
-		t.Fatalf("by_issuer rows = %d vs %d", len(withOracle.ByIssuer), len(without.ByIssuer))
-	}
-	for i := range withOracle.ByIssuer {
-		a, b := withOracle.ByIssuer[i], without.ByIssuer[i]
-		if a.Issuer != b.Issuer || optString(a.MarketCapUSD) != optString(b.MarketCapUSD) ||
-			a.Assets != b.Assets || a.AssetsUnvalued != b.AssetsUnvalued {
-			t.Errorf("by_issuer[%d] market basis moved: %+v vs %+v", i, a, b)
+		for _, g := range v.ByIssuer {
+			issuers = append(issuers, strings.Join([]string{
+				g.Issuer, optString(g.MarketCapUSD), strconv.Itoa(g.Assets), strconv.Itoa(g.AssetsUnvalued),
+			}, "|"))
 		}
+		return classes, issuers
+	}
+	classesA, issuersA := breakdowns(withOracle)
+	classesB, issuersB := breakdowns(without)
+	if got, want := strings.Join(classesA, "\n"), strings.Join(classesB, "\n"); got != want {
+		t.Errorf("by_class market basis moved:\n%s\nvs\n%s", got, want)
+	}
+	if got, want := strings.Join(issuersA, "\n"), strings.Join(issuersB, "\n"); got != want {
+		t.Errorf("by_issuer market basis moved:\n%s\nvs\n%s", got, want)
 	}
 }
 
@@ -333,40 +374,33 @@ func TestRWAAssets_ReferenceValuationCoversTheAssetsNobodyTrades(t *testing.T) {
 func TestRWAAssets_ReferenceTotalIsTheSumOfTheRows(t *testing.T) {
 	v := getRWA(t, rwaProductionShapedServer(t, true))
 
-	sum := newRat()
-	rows := 0
+	var rowVals []*string
 	for _, a := range v.Assets {
-		if a.ReferenceValuation.ValueUSD == nil {
-			continue
+		if a.ReferenceValuation.ValueUSD != nil {
+			rowVals = append(rowVals, a.ReferenceValuation.ValueUSD)
 		}
-		addDecimal(t, sum, *a.ReferenceValuation.ValueUSD)
-		rows++
 	}
-	if rows != v.Summary.ReferenceValuation.AssetsValued {
-		t.Errorf("%d rows carry a figure but assets_valued = %d", rows, v.Summary.ReferenceValuation.AssetsValued)
+	if len(rowVals) != v.Summary.ReferenceValuation.AssetsValued {
+		t.Errorf("%d rows carry a figure but assets_valued = %d", len(rowVals), v.Summary.ReferenceValuation.AssetsValued)
 	}
-	if got, want := sum.FloatString(2), optString(v.Summary.ReferenceValuation.ValueUSD); got != want {
-		t.Errorf("rows sum to %s but the total says %s", got, want)
+	total := optString(v.Summary.ReferenceValuation.ValueUSD)
+	if got := sumDecimals(t, rowVals); got != total {
+		t.Errorf("rows sum to %s but the total says %s", got, total)
 	}
 
 	// The per-issuer and per-class breakdowns are the same sum, split.
-	perIssuer := newRat()
+	var issuerVals, classVals []*string
 	for _, i := range v.ByIssuer {
-		if i.ReferenceValueUSD != nil {
-			addDecimal(t, perIssuer, *i.ReferenceValueUSD)
-		}
+		issuerVals = append(issuerVals, i.ReferenceValueUSD)
 	}
-	if got, want := perIssuer.FloatString(2), optString(v.Summary.ReferenceValuation.ValueUSD); got != want {
-		t.Errorf("by_issuer reference totals sum to %s but the summary says %s", got, want)
-	}
-	perClass := newRat()
 	for _, c := range v.ByClass {
-		if c.ReferenceValueUSD != nil {
-			addDecimal(t, perClass, *c.ReferenceValueUSD)
-		}
+		classVals = append(classVals, c.ReferenceValueUSD)
 	}
-	if got, want := perClass.FloatString(2), optString(v.Summary.ReferenceValuation.ValueUSD); got != want {
-		t.Errorf("by_class reference totals sum to %s but the summary says %s", got, want)
+	if got := sumDecimals(t, issuerVals); got != total {
+		t.Errorf("by_issuer reference totals sum to %s but the summary says %s", got, total)
+	}
+	if got := sumDecimals(t, classVals); got != total {
+		t.Errorf("by_class reference totals sum to %s but the summary says %s", got, total)
 	}
 }
 
@@ -619,21 +653,8 @@ func TestRWAAssets_FlaggedIssuerGetsNoReferenceValuationEither(t *testing.T) {
 	if len(v.Assets) != 1 {
 		t.Fatalf("assets = %v", rwaAssetIDs(v))
 	}
-	a := v.Assets[0]
-	if a.ReferenceValuation.Status != v1.RWAPremiumIssuerFlagged {
-		t.Errorf("reference_valuation.status = %q, want %q",
-			a.ReferenceValuation.Status, v1.RWAPremiumIssuerFlagged)
-	}
-	if a.ReferenceValuation.ValueUSD != nil {
-		t.Errorf("a flagged issuer was handed a real instrument's valuation times its own float: %s",
-			*a.ReferenceValuation.ValueUSD)
-	}
-	if a.Reference != nil {
-		t.Errorf("a reference block reached a flagged issuer: %+v", a.Reference)
-	}
-	if v.Summary.ReferenceValuation.ValueUSD != nil {
-		t.Errorf("a withheld row reached the reference total: %s", *v.Summary.ReferenceValuation.ValueUSD)
-	}
+	assertNoReferenceValue(t, v, v.Assets[0], v1.RWAPremiumIssuerFlagged,
+		"a flagged issuer (a real instrument's valuation times its own float)")
 }
 
 // rwaValuationArm returns the funnel's valuation stages, and fails if
@@ -677,10 +698,7 @@ func TestRWAAssets_FunnelAccountsForEveryUnvaluedRow(t *testing.T) {
 		t.Errorf("valuation stages count %q then %q, want assets throughout", stages[0].Unit, stages[1].Unit)
 	}
 
-	drops := map[string]v1.RWAFunnelDrop{}
-	for _, d := range stages[0].Dropped {
-		drops[d.Reason] = d
-	}
+	drops := dropsByReason(stages[0])
 	// XAU and AUMTL fail for different reasons and the funnel says
 	// which, rather than collapsing both into one bucket.
 	for reason, want := range map[string]struct {
@@ -783,10 +801,7 @@ func TestRWAAssets_FunnelValuationArmDoesNotAdmitOrRefuse(t *testing.T) {
 	if stages[1].Count != 0 {
 		t.Errorf("reference-valued = %d with no oracle wired, want 0", stages[1].Count)
 	}
-	withDrops := map[string]int{}
-	for _, d := range rwaValuationArm(t, withOracle)[0].Dropped {
-		withDrops[d.Reason] = d.Count
-	}
+	withDrops := dropsByReason(rwaValuationArm(t, withOracle)[0])
 	outage := 0
 	for _, d := range stages[0].Dropped {
 		if d.Reason == v1.RWAPremiumReferenceUnavailable {
@@ -796,9 +811,9 @@ func TestRWAAssets_FunnelValuationArmDoesNotAdmitOrRefuse(t *testing.T) {
 			}
 			continue
 		}
-		if withDrops[d.Reason] != d.Count {
+		if withDrops[d.Reason].Count != d.Count {
 			t.Errorf("drop %q = %d without the oracle, %d with it: an unbound row's verdict moved with an oracle outage",
-				d.Reason, d.Count, withDrops[d.Reason])
+				d.Reason, d.Count, withDrops[d.Reason].Count)
 		}
 	}
 	if outage == 0 {
@@ -866,19 +881,8 @@ func TestRWAAssets_ContractMemberStatesWhyItIsNotReferenceValued(t *testing.T) {
 	if a.ContractID == "" {
 		t.Fatalf("the served row is not contract-issued: %+v", a)
 	}
-	if a.ReferenceValuation.Status != v1.RWAPremiumContractNotBound {
-		t.Errorf("reference_valuation.status = %q, want %q",
-			a.ReferenceValuation.Status, v1.RWAPremiumContractNotBound)
-	}
-	if a.ReferenceValuation.ValueUSD != nil {
-		t.Errorf("a contract token was valued through its own declared symbol: %q", *a.ReferenceValuation.ValueUSD)
-	}
-	if a.Reference != nil {
-		t.Errorf("a reference reached a contract row: %+v", a.Reference)
-	}
-	if v.Summary.ReferenceValuation.ValueUSD != nil {
-		t.Errorf("a contract row reached the reference total: %q", *v.Summary.ReferenceValuation.ValueUSD)
-	}
+	assertNoReferenceValue(t, v, a, v1.RWAPremiumContractNotBound,
+		"a contract token (through its own declared symbol)")
 
 	// The market basis is untouched by any of that: the row still
 	// carries the market cap the pipeline computed for it, at the
@@ -966,17 +970,14 @@ func TestRWAAssets_FunnelDistinguishesACoverageGapFromARefusal(t *testing.T) {
 	}
 
 	stages := rwaValuationArm(t, v)
-	actors := map[string]string{}
-	for _, d := range stages[0].Dropped {
-		actors[d.Reason] = d.Actor
-	}
-	if got := actors[v1.RWAReferenceValuationNoSupply]; got != "operator" {
+	drops := dropsByReason(stages[0])
+	if got := drops[v1.RWAReferenceValuationNoSupply].Actor; got != "operator" {
 		t.Errorf("a missing supply reading was attributed to %q, want operator — it is a gap here, not a refusal", got)
 	}
-	if got := actors[v1.RWAPremiumNotInstrumentScoped]; got != "definition" {
+	if got := drops[v1.RWAPremiumNotInstrumentScoped].Actor; got != "definition" {
 		t.Errorf("an ounce-priced feed was attributed to %q, want definition — nobody can act on it", got)
 	}
-	if actors[v1.RWAReferenceValuationNoSupply] == actors[v1.RWAPremiumNotInstrumentScoped] {
+	if drops[v1.RWAReferenceValuationNoSupply].Actor == drops[v1.RWAPremiumNotInstrumentScoped].Actor {
 		t.Error("a coverage gap and a refusal carry the same actor; the field distinguishes nothing")
 	}
 	if !v.Funnel.Balanced {

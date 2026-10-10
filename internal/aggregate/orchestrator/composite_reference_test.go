@@ -11,6 +11,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
@@ -74,32 +75,35 @@ type compositeRefResult struct {
 	window      time.Duration
 }
 
-func runCompositeRefScenario(t *testing.T, sc compositeRefScenario) compositeRefResult {
+// compositeFixture is the production-shaped orchestrator: the single-venue
+// target [leg, fx] chain, target listed BEFORE its leg on purpose.
+type compositeFixture struct {
+	o      *Orchestrator
+	store  *mockStore
+	cache  *redis.Client
+	mr     *miniredis.Miniredis
+	marker *recordingFreezeMarker
+	leg    canonical.Pair
+	target canonical.Pair
+}
+
+func newCompositeFixture(t *testing.T, quote string, fx *fakeFXStore, enabled bool, now time.Time) *compositeFixture {
 	t.Helper()
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
-	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
-	window := time.Minute
-	now := time.Now().UTC()
-
+	fxPair := mkPair(t, "fiat", "USD", "fiat", quote)
+	target := mkPair(t, "crypto", "XLM", "fiat", quote)
 	store := &mockStore{perPair: map[string][]canonical.Trade{}}
 	cache, mr := newTestRedis(t)
 	marker := &recordingFreezeMarker{}
-	fx := &fakeFXStore{
-		quote:      big.NewRat(80, 100), // USD/GBP = 0.80
-		observedAt: now.Add(-sc.fxObservedAge),
-		source:     sc.fxSource,
-	}
-	chain := TriangulationChain{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}
 	var cr CompositeReferenceConfig
-	if sc.enabled {
-		cr = CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmGBP}}
+	if enabled {
+		cr = CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{target}}
 	}
 	o := New(store, cache, Config{
-		Pairs:          []canonical.Pair{xlmGBP, xlmUSD}, // target BEFORE leg on purpose
-		Windows:        []time.Duration{window},
+		Pairs:          []canonical.Pair{target, xlmUSD},
+		Windows:        []time.Duration{time.Minute},
 		Interval:       time.Hour, // no sample ages out mid-test
-		Triangulations: []TriangulationChain{chain},
+		Triangulations: []TriangulationChain{{Target: target, Legs: []canonical.Pair{xlmUSD, fxPair}}},
 		FXStore:        fx,
 		FreezeWriter:   marker,
 		Baselines: stubBaselineSource{
@@ -108,22 +112,84 @@ func runCompositeRefScenario(t *testing.T, sc compositeRefScenario) compositeRef
 		},
 		CompositeReference: cr,
 	})
+	return &compositeFixture{o: o, store: store, cache: cache, mr: mr, marker: marker, leg: xlmUSD, target: target}
+}
 
-	setTrades := func(legQuote, targetQuote int64, ts time.Time) {
-		leg := make([]canonical.Trade, 0, len(sc.legSources))
-		for i, src := range sc.legSources {
-			q := legQuote
+// setTrades prints the leg on legSources (legQuotes[i] each) and the
+// target on targetSources (all at targetQuote), 100_000_000 base apiece.
+func (f *compositeFixture) setTrades(t *testing.T, legSources []string, legQuotes []int64, targetSources []string, targetQuote int64, ts time.Time) {
+	t.Helper()
+	leg := make([]canonical.Trade, 0, len(legSources))
+	for i, src := range legSources {
+		leg = append(leg, makeTradeOn(t, f.leg, src, 100_000_000, legQuotes[i], ts))
+	}
+	target := make([]canonical.Trade, 0, len(targetSources))
+	for _, src := range targetSources {
+		target = append(target, makeTradeOn(t, f.target, src, 100_000_000, targetQuote, ts))
+	}
+	f.store.perPair[f.leg.String()] = leg
+	f.store.perPair[f.target.String()] = target
+}
+
+func (f *compositeFixture) tick(t *testing.T, label string) {
+	t.Helper()
+	if err := f.o.Tick(context.Background()); err != nil {
+		t.Fatalf("%s: %v", label, err)
+	}
+}
+
+// compositeEvaluator is an orchestrator with no store, for driving
+// resolveCompositeReference directly.
+func newCompositeEvaluator(t *testing.T) (o *Orchestrator, xlmUSD, usdGBP, xlmGBP canonical.Pair, now time.Time) {
+	t.Helper()
+	xlmUSD = mkPair(t, "crypto", "XLM", "fiat", "USD")
+	usdGBP = mkPair(t, "fiat", "USD", "fiat", "GBP")
+	xlmGBP = mkPair(t, "crypto", "XLM", "fiat", "GBP")
+	now = time.Now().UTC()
+	o = New(nil, nil, Config{
+		Windows:            []time.Duration{time.Minute},
+		Triangulations:     []TriangulationChain{{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}},
+		FXStore:            &fakeFXStore{quote: big.NewRat(80, 100), observedAt: now.Add(-time.Hour), source: "massive"},
+		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmGBP}},
+	})
+	return o, xlmUSD, usdGBP, xlmGBP, now
+}
+
+// defaultCompositeScenario is the venue-specific-spike control; callers
+// override the field under test.
+func defaultCompositeScenario() compositeRefScenario {
+	return compositeRefScenario{
+		legSources:    []string{"kraken", "coinbase"},
+		legPriceT2:    10_000_000,
+		fxObservedAge: time.Hour,
+		fxSource:      "massive",
+		targetSources: []string{"soroswap"},
+		enabled:       true,
+	}
+}
+
+func runCompositeRefScenario(t *testing.T, sc compositeRefScenario) compositeRefResult {
+	t.Helper()
+	window := time.Minute
+	now := time.Now().UTC()
+	f := newCompositeFixture(t, "GBP", &fakeFXStore{
+		quote:      big.NewRat(80, 100), // USD/GBP = 0.80
+		observedAt: now.Add(-sc.fxObservedAge),
+		source:     sc.fxSource,
+	}, sc.enabled, now)
+	o, cache, marker := f.o, f.cache, f.marker
+	xlmGBP, xlmUSD := f.target, f.leg
+	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
+
+	set := func(legQuote, targetQuote int64, ts time.Time) {
+		quotes := make([]int64, len(sc.legSources))
+		for i := range quotes {
+			quotes[i] = legQuote
 			if i > 0 && sc.legSecondVenueQuoteT2 != 0 && legQuote != 10_000_000 {
-				q = sc.legSecondVenueQuoteT2
+				quotes[i] = sc.legSecondVenueQuoteT2
 			}
-			leg = append(leg, makeTradeOn(t, xlmUSD, src, 100_000_000, q, ts))
 		}
-		target := make([]canonical.Trade, 0, len(sc.targetSources))
-		for _, src := range sc.targetSources {
-			target = append(target, makeTradeOn(t, xlmGBP, src, 100_000_000, targetQuote, ts))
-		}
-		store.perPair[xlmUSD.String()] = leg
-		store.perPair[xlmGBP.String()] = target
+		f.setTrades(t, sc.legSources, quotes, sc.targetSources, targetQuote, ts)
 	}
 	served := func() string {
 		v, _ := cache.Get(context.Background(),
@@ -132,32 +198,26 @@ func runCompositeRefScenario(t *testing.T, sc compositeRefScenario) compositeRef
 	}
 
 	// Tick 1: XLM/USD 0.10, XLM/GBP 0.08 — direct == composite.
-	setTrades(10_000_000, 8_000_000, now.Add(-30*time.Second))
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("tick 1: %v", err)
-	}
+	set(10_000_000, 8_000_000, now.Add(-30*time.Second))
+	f.tick(t, "tick 1")
 	// Tick 2: XLM/GBP jumps to 0.12 (+50%, z≈50, single venue).
-	setTrades(sc.legPriceT2, 12_000_000, now.Add(-10*time.Second))
+	set(sc.legPriceT2, 12_000_000, now.Add(-10*time.Second))
 	nextBucket(o)
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("tick 2: %v", err)
-	}
+	f.tick(t, "tick 2")
 	res := compositeRefResult{
-		o: o, mr: mr, marker: marker,
+		o: o, mr: f.mr, marker: marker,
 		froze:    len(marker.marks) > 0,
 		servedT2: served(),
-		t2Trades: store.perPair[xlmGBP.String()],
+		t2Trades: f.store.perPair[xlmGBP.String()],
 		stateKey: xlmGBP.String() + ":" + window.String(),
 		xlmGBP:   xlmGBP, xlmUSD: xlmUSD, usdGBP: usdGBP, window: window,
 	}
 	res.metaT2, res.metaT2OK = readCompositeMeta(t, cache, xlmGBP, window)
 
 	// Tick 3: the print PERSISTS at 0.12.
-	setTrades(sc.legPriceT2, 12_000_000, now.Add(-5*time.Second))
+	set(sc.legPriceT2, 12_000_000, now.Add(-5*time.Second))
 	nextBucket(o)
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("tick 3: %v", err)
-	}
+	f.tick(t, "tick 3")
 	res.heldOnTick3 = o.freezeStates[res.stateKey].Active()
 	res.prevAfter = o.prevVWAPs[res.stateKey]
 	res.servedT3 = served()
@@ -173,14 +233,7 @@ func runCompositeRefScenario(t *testing.T, sc compositeRefScenario) compositeRef
 // stays the last-known-good. The reason string names the basis and
 // keeps `sources=1` (the composite never widens the count).
 func TestCompositeReference_VenueSpecificSpikeStillFreezes(t *testing.T) {
-	res := runCompositeRefScenario(t, compositeRefScenario{
-		legSources:    []string{"kraken", "coinbase"},
-		legPriceT2:    10_000_000, // XLM/USD flat at 0.10
-		fxObservedAge: time.Hour,
-		fxSource:      "massive",
-		targetSources: []string{"soroswap"},
-		enabled:       true,
-	})
+	res := runCompositeRefScenario(t, defaultCompositeScenario())
 	if !res.froze {
 		t.Fatal("venue-specific z≈50 spike did NOT freeze with the composite reference ON — " +
 			"the reference (composite flat at 0.08 vs print 0.12) must REFUTE it")
@@ -225,14 +278,9 @@ func TestCompositeReference_MarketWideMoveDoesNotFreeze(t *testing.T) {
 	// the firing pair, not folded into one process-wide tally.
 	unrelatedPair := mkPair(t, "crypto", "BTC", "fiat", "USD")
 	beforeUnrelated := testutil.ToFloat64(obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(unrelatedPair.String(), windowLabel(15*time.Minute)))
-	res := runCompositeRefScenario(t, compositeRefScenario{
-		legSources:    []string{"kraken", "coinbase"},
-		legPriceT2:    15_000_000, // XLM/USD moved WITH the venue → composite 0.12
-		fxObservedAge: time.Hour,
-		fxSource:      "massive",
-		targetSources: []string{"soroswap"},
-		enabled:       true,
-	})
+	sc := defaultCompositeScenario()
+	sc.legPriceT2 = 15_000_000 // XLM/USD moved WITH the venue → composite 0.12
+	res := runCompositeRefScenario(t, sc)
 	if res.froze {
 		t.Fatalf("freeze ENGAGED on a market-wide move the current-bucket composite reproduces "+
 			"(reason %q) — the composite must CORROBORATE it", res.marker.marks[0].decision.Reason)
@@ -276,74 +324,52 @@ func TestCompositeReference_MarketWideMoveDoesNotFreeze(t *testing.T) {
 	}
 }
 
-// TestCompositeReference_StaleFXLegCannotCorroborate — the FX snap is
-// older than its staleness budget (100h > 76h): even though XLM/USD
-// moved with the venue (a genuine move), the reference is UNAVAILABLE
-// and the bucket freezes exactly as before, with the reason saying why.
-func TestCompositeReference_StaleFXLegCannotCorroborate(t *testing.T) {
-	res := runCompositeRefScenario(t, compositeRefScenario{
-		legSources:    []string{"kraken", "coinbase"},
-		legPriceT2:    15_000_000,
-		fxObservedAge: 100 * time.Hour,
-		fxSource:      "massive",
-		targetSources: []string{"soroswap"},
-		enabled:       true,
-	})
-	assertUnavailableFroze(t, res, "composite_unavailable: fx_stale")
-}
-
-// TestCompositeReference_SingleVenueLegCannotCorroborate — XLM/USD
-// printed on ONE venue this bucket, below min_leg_sources (2). The
-// composite is only as strong as its weakest leg: no corroboration,
-// freeze as before, reason `composite_unavailable: leg_sources=1`.
-//
-// The leg is kept FLAT here: a single-venue XLM/USD that itself jumped
-// +50% freezes on its own 3-signal AND and publishes nothing, so the
-// target reads "leg_not_refreshed" — equally fail-closed, but a
-// different cause. The agreeing-but-thin case (the leg moved with the
-// venue on one exchange) is pinned on the evaluator in
+// TestCompositeReference_UnavailableReferenceFreezes — each way the
+// reference can be unavailable leaves the freeze exactly as before, with
+// the reason saying why. The leg is kept FLAT in the single-venue case: a
+// single-venue XLM/USD that itself jumped +50% freezes on its own and
+// publishes nothing, so the target reads "leg_not_refreshed" (a different
+// cause). The agreeing-but-thin case is pinned on the evaluator in
 // TestCompositeReference_ToleranceBoundary/thin_leg_agreeing.
-func TestCompositeReference_SingleVenueLegCannotCorroborate(t *testing.T) {
-	res := runCompositeRefScenario(t, compositeRefScenario{
-		legSources:    []string{"kraken"},
-		legPriceT2:    10_000_000,
-		fxObservedAge: time.Hour,
-		fxSource:      "massive",
-		targetSources: []string{"soroswap"},
-		enabled:       true,
-	})
-	assertUnavailableFroze(t, res, "composite_unavailable: leg_sources=1")
-	if !strings.Contains(res.marker.marks[0].decision.Reason, "composite_leg_sources={crypto:XLM/fiat:USD:1}") {
-		t.Errorf("reason %q should carry the thin leg's count", res.marker.marks[0].decision.Reason)
+func TestCompositeReference_UnavailableReferenceFreezes(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		mutate     func(*compositeRefScenario)
+		wantReason string
+		wantExtra  string
+	}{
+		{"stale_fx_older_than_budget", func(sc *compositeRefScenario) {
+			sc.legPriceT2 = 15_000_000 // a genuine move, still UNAVAILABLE
+			sc.fxObservedAge = 100 * time.Hour
+		}, "composite_unavailable: fx_stale", ""},
+		{"single_venue_leg", func(sc *compositeRefScenario) {
+			sc.legSources = []string{"kraken"}
+		}, "composite_unavailable: leg_sources=1", "composite_leg_sources={crypto:XLM/fiat:USD:1}"},
+		{"oracle_fx_leg", func(sc *compositeRefScenario) {
+			sc.legPriceT2 = 15_000_000
+			sc.fxSource = "reflector-fx"
+		}, "composite_unavailable: fx_source_class=reflector-fx", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := defaultCompositeScenario()
+			tc.mutate(&sc)
+			res := runCompositeRefScenario(t, sc)
+			assertUnavailableFroze(t, res, tc.wantReason)
+			if reason := res.marker.marks[0].decision.Reason; !strings.Contains(reason, tc.wantExtra) {
+				t.Errorf("reason %q should carry %q", reason, tc.wantExtra)
+			}
+		})
 	}
-}
-
-// TestCompositeReference_OracleFXLegCannotCorroborate — the FX leg
-// must come from the FX source class (massive), never an oracle.
-func TestCompositeReference_OracleFXLegCannotCorroborate(t *testing.T) {
-	res := runCompositeRefScenario(t, compositeRefScenario{
-		legSources:    []string{"kraken", "coinbase"},
-		legPriceT2:    15_000_000,
-		fxObservedAge: time.Hour,
-		fxSource:      "reflector-fx",
-		targetSources: []string{"soroswap"},
-		enabled:       true,
-	})
-	assertUnavailableFroze(t, res, "composite_unavailable: fx_source_class=reflector-fx")
 }
 
 // TestCompositeReference_ECBStandbyFXLegCorroborates — rows the forex
 // worker's ECB standby wrote while the primary was down are an FX leg.
 func TestCompositeReference_ECBStandbyFXLegCorroborates(t *testing.T) {
 	for _, src := range []string{"ecb", "ecb+massive"} {
-		res := runCompositeRefScenario(t, compositeRefScenario{
-			legSources:    []string{"kraken", "coinbase"},
-			legPriceT2:    15_000_000,
-			fxObservedAge: time.Hour,
-			fxSource:      src,
-			targetSources: []string{"soroswap"},
-			enabled:       true,
-		})
+		sc := defaultCompositeScenario()
+		sc.legPriceT2 = 15_000_000
+		sc.fxSource = src
+		res := runCompositeRefScenario(t, sc)
 		if res.froze {
 			t.Errorf("fx source %q: freeze engaged (reason %q) — the standby's FX leg was refused",
 				src, res.marker.marks[0].decision.Reason)
@@ -396,13 +422,9 @@ func TestCompositeReference_MultiVenueTargetByteIdentical(t *testing.T) {
 		}
 		return out
 	}
-	base := compositeRefScenario{
-		legSources:    []string{"kraken", "coinbase"},
-		legPriceT2:    15_000_000,
-		fxObservedAge: time.Hour,
-		fxSource:      "massive",
-		targetSources: []string{"kraken", "bitstamp"}, // TWO real venues
-	}
+	base := defaultCompositeScenario()
+	base.legPriceT2 = 15_000_000
+	base.targetSources = []string{"kraken", "bitstamp"} // TWO real venues
 	off := base
 	off.enabled = false
 	on := base
@@ -427,18 +449,8 @@ func TestCompositeReference_MultiVenueTargetByteIdentical(t *testing.T) {
 // the evaluator directly: 75 bps inside → corroborated, just outside →
 // refuted; the composite never changes, only the verdict.
 func TestCompositeReference_ToleranceBoundary(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
-	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
+	o, xlmUSD, usdGBP, xlmGBP, now := newCompositeEvaluator(t)
 	window := time.Minute
-	now := time.Now().UTC()
-	fx := &fakeFXStore{quote: big.NewRat(80, 100), observedAt: now.Add(-time.Hour), source: "massive"}
-	o := New(nil, nil, Config{
-		Windows:            []time.Duration{window},
-		Triangulations:     []TriangulationChain{{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}},
-		FXStore:            fx,
-		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmGBP}},
-	})
 	o.tickLegRefs = map[time.Duration]map[string]legRef{
 		window: {xlmUSD.String(): {price: big.NewRat(10, 100), sources: 3}},
 	}
@@ -519,15 +531,10 @@ func TestCompositeReference_RefreshOrderPutsLegsFirst(t *testing.T) {
 // still freezes, and the dispersion is in the reason. The agreeing
 // two-venue case is TestCompositeReference_MarketWideMoveDoesNotFreeze.
 func TestCompositeReference_LegDispersionCannotCorroborate(t *testing.T) {
-	res := runCompositeRefScenario(t, compositeRefScenario{
-		legSources:            []string{"kraken", "coinbase"},
-		legPriceT2:            15_000_000,
-		legSecondVenueQuoteT2: 15_450_000, // +3 % on the second venue
-		fxObservedAge:         time.Hour,
-		fxSource:              "massive",
-		targetSources:         []string{"soroswap"},
-		enabled:               true,
-	})
+	sc := defaultCompositeScenario()
+	sc.legPriceT2 = 15_000_000
+	sc.legSecondVenueQuoteT2 = 15_450_000 // +3 % on the second venue
+	res := runCompositeRefScenario(t, sc)
 	assertUnavailableFroze(t, res, "composite_unavailable: leg_dispersion=")
 	reason := res.marker.marks[0].decision.Reason
 	if !strings.Contains(reason, "composite_leg_dispersion_bps={crypto:XLM/fiat:USD:1") {
@@ -543,18 +550,8 @@ func TestCompositeReference_LegDispersionCannotCorroborate(t *testing.T) {
 // evaluator: dispersion at the band corroborates, just above it does
 // not, and the leg VWAP / sources are otherwise identical.
 func TestCompositeReference_LegDispersionBoundary(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
-	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
+	o, xlmUSD, _, xlmGBP, now := newCompositeEvaluator(t)
 	window := time.Minute
-	now := time.Now().UTC()
-	fx := &fakeFXStore{quote: big.NewRat(80, 100), observedAt: now.Add(-time.Hour), source: "massive"}
-	o := New(nil, nil, Config{
-		Windows:            []time.Duration{window},
-		Triangulations:     []TriangulationChain{{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}},
-		FXStore:            fx,
-		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmGBP}},
-	})
 	for _, tc := range []struct {
 		name       string
 		dispersion *big.Rat
@@ -611,18 +608,8 @@ func TestLegDispersion_MeasuresWorstVenue(t *testing.T) {
 // with `leg_dispersion=uncomputable`, end to end through recordLegRef →
 // referenceLeg, and the target's spike still freezes.
 func TestCompositeReference_UncomputableDispersionFailsClosed(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
-	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
+	o, xlmUSD, _, xlmGBP, now := newCompositeEvaluator(t)
 	window := time.Minute
-	now := time.Now().UTC()
-	fx := &fakeFXStore{quote: big.NewRat(80, 100), observedAt: now.Add(-time.Hour), source: "massive"}
-	o := New(nil, nil, Config{
-		Windows:            []time.Duration{window},
-		Triangulations:     []TriangulationChain{{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}},
-		FXStore:            fx,
-		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmGBP}},
-	})
 	trades := []canonical.Trade{
 		makeTradeOn(t, xlmUSD, "kraken", 100_000_000, 10_000_000, now),
 		makeTradeOn(t, xlmUSD, "coinbase", 0, 10_000_000, now), // zero-base: venue VWAP uncomputable
@@ -650,44 +637,18 @@ func TestCompositeReference_UncomputableDispersionFailsClosed(t *testing.T) {
 // the streak earns the auto-release. With the shared 5 % band the
 // +4 % offset would have released (red proof).
 func TestCompositeReference_ReleaseBandHoldsVenueOffset(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
-	xlmGBP := mkPair(t, "crypto", "XLM", "fiat", "GBP")
 	window := time.Minute
 	clock := time.Now().UTC()
-
-	store := &mockStore{perPair: map[string][]canonical.Trade{}}
-	cache, _ := newTestRedis(t)
-	marker := &recordingFreezeMarker{}
-	fx := &fakeFXStore{quote: big.NewRat(80, 100), observedAt: clock.Add(-time.Hour), source: "massive"}
-	o := New(store, cache, Config{
-		Pairs:          []canonical.Pair{xlmUSD, xlmGBP},
-		Windows:        []time.Duration{window},
-		Interval:       time.Hour,
-		Triangulations: []TriangulationChain{{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}},
-		FXStore:        fx,
-		FreezeWriter:   marker,
-		Baselines: stubBaselineSource{
-			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: maxDay30Returns}},
-			computedAt: clock,
-		},
-		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmGBP}},
-	})
+	f := newCompositeFixture(t, "GBP",
+		&fakeFXStore{quote: big.NewRat(80, 100), observedAt: clock.Add(-time.Hour), source: "massive"}, true, clock)
+	o, xlmGBP := f.o, f.target
 	o.clock = func() time.Time { return clock }
 	stateKey := xlmGBP.String() + ":" + window.String()
 	tick := func(targetQuote int64) {
 		t.Helper()
-		ts := clock.Add(-10 * time.Second)
-		store.perPair[xlmUSD.String()] = []canonical.Trade{
-			makeTradeOn(t, xlmUSD, "kraken", 100_000_000, 10_000_000, ts),
-			makeTradeOn(t, xlmUSD, "coinbase", 100_000_000, 10_000_000, ts),
-		}
-		store.perPair[xlmGBP.String()] = []canonical.Trade{
-			makeTradeOn(t, xlmGBP, "soroswap", 100_000_000, targetQuote, ts),
-		}
-		if err := o.Tick(context.Background()); err != nil {
-			t.Fatal(err)
-		}
+		f.setTrades(t, []string{"kraken", "coinbase"}, []int64{10_000_000, 10_000_000},
+			[]string{"soroswap"}, targetQuote, clock.Add(-10*time.Second))
+		f.tick(t, "tick")
 		clock = clock.Add(time.Minute)
 	}
 	active := func() bool { return o.freezeStates[stateKey].Active() }
@@ -769,45 +730,16 @@ func compositeSeriesFor(t *testing.T, c prometheus.Collector, pair, window strin
 func TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet(t *testing.T) {
 	// A target no other test in this package uses, so the series counted
 	// here can only have come from this test.
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdCHF := mkPair(t, "fiat", "USD", "fiat", "CHF")
-	xlmCHF := mkPair(t, "crypto", "XLM", "fiat", "CHF")
 	window := time.Minute
 	now := time.Now().UTC()
-
-	store := &mockStore{perPair: map[string][]canonical.Trade{}}
-	cache, _ := newTestRedis(t)
-	o := New(store, cache, Config{
-		Pairs:          []canonical.Pair{xlmCHF, xlmUSD},
-		Windows:        []time.Duration{window},
-		Interval:       time.Hour,
-		Triangulations: []TriangulationChain{{Target: xlmCHF, Legs: []canonical.Pair{xlmUSD, usdCHF}}},
-		FXStore:        &fakeFXStore{quote: big.NewRat(90, 100), observedAt: now.Add(-time.Hour), source: "massive"},
-		FreezeWriter:   &recordingFreezeMarker{},
-		Baselines: stubBaselineSource{
-			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: maxDay30Returns}},
-			computedAt: now,
-		},
-		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmCHF}},
-	})
-
-	setTrades := func(targetSources []string, ts time.Time) {
-		store.perPair[xlmUSD.String()] = []canonical.Trade{
-			makeTradeOn(t, xlmUSD, "kraken", 100_000_000, 10_000_000, ts),
-			makeTradeOn(t, xlmUSD, "coinbase", 100_000_000, 10_000_000, ts),
-		}
-		target := make([]canonical.Trade, 0, len(targetSources))
-		for _, src := range targetSources {
-			target = append(target, makeTradeOn(t, xlmCHF, src, 100_000_000, 9_000_000, ts))
-		}
-		store.perPair[xlmCHF.String()] = target
-	}
+	f := newCompositeFixture(t, "CHF",
+		&fakeFXStore{quote: big.NewRat(90, 100), observedAt: now.Add(-time.Hour), source: "massive"}, true, now)
+	o, store, xlmCHF := f.o, f.store, f.target
+	legSources, legQuotes := []string{"kraken", "coinbase"}, []int64{10_000_000, 10_000_000}
 
 	// Tick 1: single-venue target → evaluated, verdict published.
-	setTrades([]string{"soroswap"}, now.Add(-30*time.Second))
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("tick 1: %v", err)
-	}
+	f.setTrades(t, legSources, legQuotes, []string{"soroswap"}, 9_000_000, now.Add(-30*time.Second))
+	f.tick(t, "tick 1")
 	pairLabel, windowLabelValue := xlmCHF.String(), windowLabel(window)
 	if n := compositeSeriesFor(t, obs.AggregatorCompositeCorroboration, pairLabel, windowLabelValue); n != len(compositeVerdicts) {
 		t.Fatalf("after an evaluated tick: %d verdict series for %s/%s, want %d",
@@ -823,11 +755,9 @@ func TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet(t *
 	}
 
 	// Tick 2: the target gains a SECOND venue → not evaluated at all.
-	setTrades([]string{"soroswap", "aquarius"}, now.Add(-5*time.Second))
+	f.setTrades(t, legSources, legQuotes, []string{"soroswap", "aquarius"}, 9_000_000, now.Add(-5*time.Second))
 	nextBucket(o)
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("tick 2: %v", err)
-	}
+	f.tick(t, "tick 2")
 	if o.compositeReferenceEligible(xlmCHF, store.perPair[xlmCHF.String()]) {
 		t.Fatal("a two-venue bucket must not be composite-reference eligible — test setup is wrong")
 	}
@@ -850,40 +780,17 @@ func TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet(t *
 func TestCompositeReference_LegSeriesRetiredWhenLegDropsOnEligibleTarget(t *testing.T) {
 	// A target no other test in this package uses, so the series counted
 	// here can only have come from this test.
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdJPY := mkPair(t, "fiat", "USD", "fiat", "JPY")
-	xlmJPY := mkPair(t, "crypto", "XLM", "fiat", "JPY")
 	window := time.Minute
 	now := time.Now().UTC()
-
-	store := &mockStore{perPair: map[string][]canonical.Trade{}}
-	cache, _ := newTestRedis(t)
-	o := New(store, cache, Config{
-		Pairs:          []canonical.Pair{xlmJPY, xlmUSD},
-		Windows:        []time.Duration{window},
-		Interval:       time.Hour,
-		Triangulations: []TriangulationChain{{Target: xlmJPY, Legs: []canonical.Pair{xlmUSD, usdJPY}}},
-		FXStore:        &fakeFXStore{quote: big.NewRat(150, 1), observedAt: now.Add(-time.Hour), source: "massive"},
-		FreezeWriter:   &recordingFreezeMarker{},
-		Baselines: stubBaselineSource{
-			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: maxDay30Returns}},
-			computedAt: now,
-		},
-		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmJPY}},
-	})
+	f := newCompositeFixture(t, "JPY",
+		&fakeFXStore{quote: big.NewRat(150, 1), observedAt: now.Add(-time.Hour), source: "massive"}, true, now)
+	o, store, xlmJPY := f.o, f.store, f.target
 	pairLabel, windowLabelValue := xlmJPY.String(), windowLabel(window)
 
 	// Tick 1: two-venue leg, single-venue target → every leg series set.
-	store.perPair[xlmUSD.String()] = []canonical.Trade{
-		makeTradeOn(t, xlmUSD, "kraken", 100_000_000, 10_000_000, now.Add(-30*time.Second)),
-		makeTradeOn(t, xlmUSD, "coinbase", 100_000_000, 10_000_000, now.Add(-30*time.Second)),
-	}
-	store.perPair[xlmJPY.String()] = []canonical.Trade{
-		makeTradeOn(t, xlmJPY, "soroswap", 100_000_000, 1_500_000_000, now.Add(-30*time.Second)),
-	}
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("tick 1: %v", err)
-	}
+	f.setTrades(t, []string{"kraken", "coinbase"}, []int64{10_000_000, 10_000_000},
+		[]string{"soroswap"}, 1_500_000_000, now.Add(-30*time.Second))
+	f.tick(t, "tick 1")
 	if n := compositeSeriesFor(t, obs.AggregatorCompositeReferenceLegSources, pairLabel, windowLabelValue); n == 0 {
 		t.Fatal("tick 1: no leg-source series published — test setup is wrong")
 	}
@@ -892,14 +799,10 @@ func TestCompositeReference_LegSeriesRetiredWhenLegDropsOnEligibleTarget(t *test
 	}
 
 	// Tick 2: the XLM/USD leg goes dry; the target is still single-venue.
-	store.perPair[xlmUSD.String()] = nil
-	store.perPair[xlmJPY.String()] = []canonical.Trade{
-		makeTradeOn(t, xlmJPY, "soroswap", 100_000_000, 1_500_000_000, now.Add(-5*time.Second)),
-	}
+	f.setTrades(t, nil, nil, []string{"soroswap"}, 1_500_000_000, now.Add(-5*time.Second))
+	store.perPair[f.leg.String()] = nil
 	nextBucket(o)
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("tick 2: %v", err)
-	}
+	f.tick(t, "tick 2")
 	if g := testutil.ToFloat64(obs.AggregatorCompositeCorroboration.WithLabelValues(
 		pairLabel, windowLabelValue, string(compositeVerdictUnavailable))); g != 1 {
 		t.Fatalf("tick 2: composite_corroboration{verdict=unavailable} = %v, want 1 (still evaluated, leg dry)", g)

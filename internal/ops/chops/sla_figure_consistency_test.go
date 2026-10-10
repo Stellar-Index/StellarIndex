@@ -418,3 +418,11 @@ func TestSLAProbeVerdictUsesThePublishedTargets(t *testing.T) {
 		}
 	}
 }
+
+var goLineComment = regexp.MustCompile(`(?m)^[\t ]*//[\t ]?`)
+
+// flattenProse renders markdown or a Go comment block as a single
+// whitespace-normalised line, so matchers are insensitive to wrapping.
+func flattenProse(s string) string {
+	return strings.Join(strings.Fields(goLineComment.ReplaceAllString(s, "")), " ")
+}
