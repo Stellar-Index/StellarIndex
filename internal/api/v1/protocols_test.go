@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math/big"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -818,5 +819,89 @@ func TestHandleProtocols_TVLJoin(t *testing.T) {
 	}
 	if denv.Data.TVL == nil || denv.Data.TVL.TVLUSD != "10.00" {
 		t.Errorf("detail tvl = %+v, want 10.00", denv.Data.TVL)
+	}
+}
+
+// TestHandleProtocolsList_TVLJoinIsAtomicAcrossRefresh is the
+// regression: GET /v1/protocols joins the per-protocol tvl block and
+// the headline tvl_total from the DEX TVL cache. Both must come from
+// the SAME refresh cycle. Serving them via two independent
+// Snapshot()/Total() reads lets a concurrent Refresh() land between
+// them, pairing one cycle's per-protocol figure with a different
+// cycle's total — here made observable because the toggling reader
+// makes each cycle's aquarius figure exactly $10.00 or $20.00, so a
+// mismatch shows up as tvl_total.tvl_usd disagreeing with the
+// aquarius row it names in tvl_total.protocols.
+func TestHandleProtocolsList_TVLJoinIsAtomicAcrossRefresh(t *testing.T) {
+	reader := &togglingAquariusReader{}
+	cache := v1.NewDEXTVLCache(v1.DEXTVLSources{
+		AquariusReserves: reader,
+		Pricer:           stubTVLPricerT{},
+	})
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("seed refresh: %v", err)
+	}
+	srv := v1.New(v1.Options{DEXTVL: cache})
+	ts := httpTestServer(t, srv)
+
+	const iterations = 400
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	// Hammer Refresh() concurrently so the cache alternates generation
+	// as fast as possible while the reader loop below is mid-request.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = cache.Refresh(context.Background())
+			}
+		}
+	}()
+
+	var mismatches int
+	for i := 0; i < iterations; i++ {
+		resp := mustGet(t, ts.URL+"/v1/protocols")
+		var env struct {
+			Data v1.ProtocolsView `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		resp.Body.Close()
+		if env.Data.TVLTotal == nil {
+			continue
+		}
+		aq := protocolRow(t, env.Data.Protocols, "aquarius")
+		included := false
+		for _, name := range env.Data.TVLTotal.Protocols {
+			if name == "aquarius" {
+				included = true
+			}
+		}
+		if !included || aq.TVL == nil {
+			continue
+		}
+		// aquarius is the only protocol the toggling reader feeds, so
+		// the reconciled total must equal that row's own figure
+		// exactly — any disagreement means the response paired a
+		// per-protocol row from one refresh cycle with a total from
+		// another.
+		if aq.TVL.TVLUSD != env.Data.TVLTotal.TVLUSD {
+			mismatches++
+		}
+	}
+
+	close(stop)
+	wg.Wait()
+
+	if mismatches > 0 {
+		t.Errorf("tvl_total.tvl_usd disagreed with the aquarius row it names in %d/%d requests — "+
+			"protocols[].tvl and tvl_total were read from different refresh cycles",
+			mismatches, iterations)
 	}
 }

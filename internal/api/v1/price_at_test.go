@@ -5,6 +5,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -212,5 +213,41 @@ func TestHandlePriceAt_StablecoinFallback(t *testing.T) {
 		"/v1/price/at?asset=native&quote=fiat:EUR&ts="+ts.Format(time.RFC3339), nil))
 	if rec.Code != 404 {
 		t.Errorf("fiat:EUR quote: status %d, want 404", rec.Code)
+	}
+}
+
+// TestHandlePriceAt_ReaderFailureIsNotNotFound: a reader error that is
+// neither ErrPriceAtUnavailable nor withheld-class says nothing about
+// whether a bucket exists, so /v1/price/at must not answer the
+// "no closed bucket" 404 — a timeout is a retryable 503, any other
+// failure a 500.
+func TestHandlePriceAt_ReaderFailureIsNotNotFound(t *testing.T) {
+	ts := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+	nativeUSD, err := canonical.NewPair(canonical.NativeAsset(), canonical.Asset{Type: canonical.AssetFiat, Code: "USD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name       string
+		stub       priceAtReadFailStub
+		wantStatus int
+		wantType   string
+	}{
+		{"db timeout", priceAtReadFailStub{err: context.DeadlineExceeded}, http.StatusServiceUnavailable, "price-unavailable"},
+		{"plain reader error", priceAtReadFailStub{err: errors.New("pq: relation does not exist")}, http.StatusInternalServerError, "internal"},
+		// The walk must stop at the failed orientation: serving a later
+		// alias would substitute another market for an unknown answer.
+		{"first orientation fails, alias would serve", priceAtReadFailStub{
+			err: context.DeadlineExceeded, failPair: nativeUSD.Base.String() + "/" + nativeUSD.Quote.String(),
+		}, http.StatusServiceUnavailable, "price-unavailable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{Options: Options{PriceAt: tc.stub}, logger: discardLogger()}
+			rec := httptest.NewRecorder()
+			s.handlePriceAt(rec, httptest.NewRequest(http.MethodGet,
+				"/v1/price/at?asset=native&quote=fiat:USD&ts="+ts.Format(time.RFC3339), nil))
+			assertReadFailureProblem(t, rec, tc.wantStatus, tc.wantType)
+		})
 	}
 }

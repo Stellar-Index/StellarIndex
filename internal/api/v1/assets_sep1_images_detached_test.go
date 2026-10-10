@@ -284,3 +284,36 @@ func waitForSep1Flight(t *testing.T, s *Server) {
 	}
 	t.Fatal("detached SEP-1 refresh never finished")
 }
+
+func TestCachedSep1Images_TTLSingleQuery(t *testing.T) {
+	stub := &stubSep1ImagesReader{imgs: []timescale.Sep1Image{
+		{Code: "USDC", Issuer: imgIssuerUSDC, Image: "https://circle.com/usdc.svg"},
+	}}
+	s := discardServer(stub)
+
+	s.PrewarmSep1Images(context.Background())
+	for i := 0; i < 3; i++ {
+		m := s.cachedSep1Images(context.Background())
+		if got := m[sep1ImageKey("USDC", imgIssuerUSDC)]; got != "https://circle.com/usdc.svg" {
+			t.Fatalf("call %d: image = %q", i, got)
+		}
+	}
+	if stub.calls != 1 {
+		t.Errorf("AllSep1Images called %d times; TTL cache should query once", stub.calls)
+	}
+}
+
+func TestCachedSep1Images_NoReaderIsNoOp(t *testing.T) {
+	// sep1Cache that lacks AllSep1Images (plain Sep1CachedReader) → nil map,
+	// and fillImagesFromSep1 leaves rows untouched.
+	s := discardServer(&plainSep1Cache{})
+	s.PrewarmSep1Images(context.Background()) // must be a no-op, not a panic
+	if m := s.cachedSep1Images(context.Background()); m != nil {
+		t.Errorf("expected nil map when reader lacks AllSep1Images, got %v", m)
+	}
+	rows := []AssetDetail{{AssetID: "USDC-" + imgIssuerUSDC, Type: "classic", Code: "USDC", Issuer: ptr(imgIssuerUSDC)}}
+	s.fillImagesFromSep1(context.Background(), rows)
+	if rows[0].Image != nil {
+		t.Errorf("row should be untouched when no image reader wired: %v", rows[0].Image)
+	}
+}

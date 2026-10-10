@@ -6,6 +6,7 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -234,4 +235,35 @@ func (s priceChangesPairStub) PriceAt(
 		return v, ts, 60, nil
 	}
 	return "", time.Time{}, 0, ErrPriceAtUnavailable
+}
+
+// TestHandlePriceChanges_ReaderFailureIsNotAbsence: a failed read of the
+// current anchor is not "no current price" (404), and a failed read of
+// one horizon is not available=false beside populated siblings — the
+// spec defines that shape as "no data that far back", never an error.
+func TestHandlePriceChanges_ReaderFailureIsNotAbsence(t *testing.T) {
+	cases := []struct {
+		name       string
+		stub       priceAtReadFailStub
+		wantStatus int
+		wantType   string
+	}{
+		{"anchor db timeout", priceAtReadFailStub{err: context.DeadlineExceeded}, http.StatusServiceUnavailable, "price-unavailable"},
+		{"anchor plain reader error", priceAtReadFailStub{err: errors.New("boom")}, http.StatusInternalServerError, "internal"},
+		{"7d horizon db timeout", priceAtReadFailStub{
+			err: context.DeadlineExceeded, failOlderThan: 3 * 24 * time.Hour,
+		}, http.StatusServiceUnavailable, "price-unavailable"},
+		{"7d horizon plain reader error", priceAtReadFailStub{
+			err: errors.New("boom"), failOlderThan: 3 * 24 * time.Hour,
+		}, http.StatusInternalServerError, "internal"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{Options: Options{PriceAt: tc.stub}, logger: discardLogger()}
+			rec := httptest.NewRecorder()
+			s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet,
+				"/v1/price/changes?asset=native&quote=fiat:USD", nil))
+			assertReadFailureProblem(t, rec, tc.wantStatus, tc.wantType)
+		})
+	}
 }

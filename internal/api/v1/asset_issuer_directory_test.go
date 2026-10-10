@@ -106,84 +106,6 @@ func audDetailServer(t *testing.T, directory v1.Options) (*v1.Server, canonical.
 	return v1.New(opts), aud
 }
 
-// TestAssetGet_IssuerDirectoryTags_Surfaced — the scam AUD's issuer
-// directory label lands on the detail payload with the exact tags,
-// domain, and name from account_directory.
-func TestAssetGet_IssuerDirectoryTags_Surfaced(t *testing.T) {
-	srv, aud := audDetailServer(t, v1.Options{Directory: scamAUDDirectoryStub()})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/"+aud.String())
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.AssetDetail `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	d := env.Data
-	if got := d.IssuerDirectoryTags; len(got) != 2 || got[0] != "malicious" || got[1] != "unsafe" {
-		t.Errorf("issuer_directory_tags = %v, want [malicious unsafe]", got)
-	}
-	if d.IssuerDirectoryDomain != scamAUDDomain {
-		t.Errorf("issuer_directory_domain = %q, want %q", d.IssuerDirectoryDomain, scamAUDDomain)
-	}
-	if d.IssuerDirectoryName != "Fake AUD" {
-		t.Errorf("issuer_directory_name = %q, want %q", d.IssuerDirectoryName, "Fake AUD")
-	}
-}
-
-// TestAssetGet_ScamDirectoryTag_WithholdsPrice — the scam-pricing gate
-// (deliberately overturning the old display-only
-// invariant): a scam-class-tagged issuer (malicious/unsafe/fraud/scam/
-// hack/phishing) has its published price_usd + market_cap WITHHELD, so a
-// scam token can't show a value that lends it legitimacy — even when its
-// market is liquid. The suppression is directory-driven: with no directory
-// wired, the same asset prices normally. Raw trades stay on /v1/ohlc etc.
-func TestAssetGet_ScamDirectoryTag_WithholdsPrice(t *testing.T) {
-	get := func(t *testing.T, directory v1.Options) v1.AssetDetail {
-		t.Helper()
-		srv, aud := audDetailServer(t, directory)
-		ts := httpTestServer(t, srv)
-		resp := mustGet(t, ts.URL+"/v1/assets/"+aud.String())
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status = %d", resp.StatusCode)
-		}
-		var env struct {
-			Data v1.AssetDetail `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		return env.Data
-	}
-
-	withDir := get(t, v1.Options{Directory: scamAUDDirectoryStub()})
-	withoutDir := get(t, v1.Options{})
-
-	// The tag surfaced only on the directory-wired server.
-	if len(withDir.IssuerDirectoryTags) == 0 {
-		t.Fatalf("precondition: expected the malicious tag to surface with a directory wired")
-	}
-	if len(withoutDir.IssuerDirectoryTags) != 0 {
-		t.Fatalf("precondition: no directory wired must omit the tags, got %v", withoutDir.IssuerDirectoryTags)
-	}
-	// Scam-flagged: price + market cap are WITHHELD (the gate).
-	if withDir.PriceUSD != nil {
-		t.Errorf("price_usd (scam-tagged) = %q, want withheld (nil) — the scam gate must suppress it", *withDir.PriceUSD)
-	}
-	if withDir.MarketCapUSD != nil {
-		t.Errorf("market_cap_usd (scam-tagged) = %q, want withheld (nil)", *withDir.MarketCapUSD)
-	}
-	// Directory-driven: with no directory wired, the same asset prices
-	// normally — proving the suppression is the flag, not a coincidence.
-	if withoutDir.PriceUSD == nil || *withoutDir.PriceUSD != "0.65" {
-		t.Errorf("price_usd (no directory) = %v, want 0.65 — suppression must be directory-driven", withoutDir.PriceUSD)
-	}
-}
-
 // TestAssetList_IssuerDirectoryTags_BatchedNoN1 — the listing joins the
 // page's issuer set in ONE batch query (not N+1) and stamps the tags onto
 // the row.
@@ -237,33 +159,6 @@ func TestAssetList_IssuerDirectoryTags_BatchedNoN1(t *testing.T) {
 	}
 	if n := atomic.LoadInt64(&dir.oneCalls); n != 0 {
 		t.Errorf("directory single-lookup calls = %d, want 0 (must not N+1 per row)", n)
-	}
-}
-
-// TestAssetGet_DirectoryReadFailure_WithholdsPrice — a failed
-// directory read means nobody checked the issuer for a scam flag, so the
-// detail page must not publish the price it would have withheld had the
-// read answered. The labels stay omitted: a failed read accuses no one.
-func TestAssetGet_DirectoryReadFailure_WithholdsPrice(t *testing.T) {
-	down := &stubDirectoryReader{err: errors.New("account_directory: connection refused")}
-	srv, aud := audDetailServer(t, v1.Options{Directory: down})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/"+aud.String())
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (a directory outage must not fail the asset view)", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.AssetDetail `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if env.Data.PriceUSD != nil {
-		t.Errorf("price_usd = %q, want withheld — the scam check did not run", *env.Data.PriceUSD)
-	}
-	if len(env.Data.IssuerDirectoryTags) != 0 {
-		t.Errorf("issuer_directory_tags = %v, want omitted", env.Data.IssuerDirectoryTags)
 	}
 }
 

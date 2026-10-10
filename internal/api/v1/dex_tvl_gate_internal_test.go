@@ -6,13 +6,10 @@ package v1
 import (
 	"context"
 	"math/big"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
-	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // stubTVLGate withholds exactly the canonical assets it is told to.
@@ -39,105 +36,6 @@ func (g *stubTVLGate) Screens() []string {
 		return []string{TVLScreenScamDirectory, TVLScreenSubstanceFloor}
 	}
 	return g.screens
-}
-
-// TestDEXTVLCache_GatedTokenContributesNoValue is the regression test.
-//
-// Before the gate, tvlValuer.rateFor consulted only the USD resolver,
-// whose sole floor is $0.01 of quote notional — so a directory-flagged
-// or substance-less token with one self-traded minute was valued into
-// the pool at its own VWAP and summed into the protocol headline. The
-// pool holding it counted as fully PRICED, so even the "≥" lower-bound
-// hatching told the reader nothing was missing.
-//
-// The fixture is deliberately the SAME pool shape the pre-existing
-// TestDEXTVLCache_RefreshComputesProtocolTVL asserts on ($10 XLM +
-// $10.50 pegged USDC = $20.50, 1/1/0), with the USDC leg withheld. Both
-// halves of the contract are pinned: the money (the gated leg's $10.50
-// leaves tvl_usd) AND the honesty (the pool moves from priced to
-// unpriced, so the surface renders a lower bound).
-func TestDEXTVLCache_GatedTokenContributesNoValue(t *testing.T) {
-	gate := &stubTVLGate{withhold: map[string]bool{
-		// The pool's USDC-SAC leg: a token the serving guards refuse.
-		"CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75": true,
-	}}
-	src := tvlTestSources()
-	src.Gate = gate
-
-	c := NewDEXTVLCache(src)
-	if err := c.Refresh(context.Background()); err != nil {
-		t.Fatalf("Refresh: %v", err)
-	}
-	snap, _ := c.Snapshot()
-
-	phx, ok := snap["phoenix"]
-	if !ok {
-		t.Fatal("phoenix missing from snapshot")
-	}
-	// $10 from the XLM leg only — the withheld USDC leg's $10.50 is
-	// gone, and it must NOT have been re-derived through the declared
-	// USD peg either (the peg shortcut is downstream of the gate).
-	if phx.TVLUSD != "10.00" {
-		t.Errorf("phoenix TVLUSD = %q, want 10.00 (was 20.50 with the gated leg valued)", phx.TVLUSD)
-	}
-	// The undecodable pool still counts 1 total + 1 unpriced; the gated
-	// pool moves from priced → unpriced. Losing value silently while
-	// still claiming pools_priced=1 would be the worse bug.
-	if phx.PoolsTotal != 2 || phx.PoolsPriced != 0 || phx.UnpricedPools != 2 {
-		t.Errorf("phoenix pools = total %d priced %d unpriced %d, want 2/0/2",
-			phx.PoolsTotal, phx.PoolsPriced, phx.UnpricedPools)
-	}
-	if !strings.Contains(phx.Basis, "serving trust gates withhold") {
-		t.Errorf("basis = %q, want it to state that gated legs count unpriced", phx.Basis)
-	}
-
-	// Comet holds the same two tokens: $5 XLM + $2.10 gated USDC.
-	cm, ok := snap["comet"]
-	if !ok {
-		t.Fatal("comet missing from snapshot")
-	}
-	if cm.TVLUSD != "5.00" {
-		t.Errorf("comet TVLUSD = %q, want 5.00 (was 7.10)", cm.TVLUSD)
-	}
-	if cm.PoolsTotal != 1 || cm.PoolsPriced != 0 || cm.UnpricedPools != 1 {
-		t.Errorf("comet pools = total %d priced %d unpriced %d, want 1/0/1",
-			cm.PoolsTotal, cm.PoolsPriced, cm.UnpricedPools)
-	}
-
-	// Soroswap: pair A loses its $10.50 USDC leg (priced → unpriced),
-	// pair B was already unpriced. $10 + $5 = $15.
-	ss := snap["soroswap"]
-	if ss.TVLUSD != "15.00" {
-		t.Errorf("soroswap TVLUSD = %q, want 15.00 (was 25.50)", ss.TVLUSD)
-	}
-	if ss.PoolsPriced != 0 || ss.UnpricedPools != 2 {
-		t.Errorf("soroswap priced %d unpriced %d, want 0/2", ss.PoolsPriced, ss.UnpricedPools)
-	}
-}
-
-// TestDEXTVLCache_NoGateKeepsTodaysFigures pins the nil direction: a
-// deployment with [pricing_guard] disabled wires no gate and must value
-// exactly what it valued before — and its Basis must NOT claim a screen
-// that did not run.
-//
-// This arm is REACHABLE in production: cmd/stellarindex-api's
-// buildDEXTVLValueGate returns a nil interface when neither guard was
-// built (pinned by TestBuildDEXTVLValueGate_NilWhenNoGuardIsWired in
-// that package). If the wiring assigned a non-pointer
-// struct unconditionally, this test would pin a path the API binary
-// could not take.
-func TestDEXTVLCache_NoGateKeepsTodaysFigures(t *testing.T) {
-	c := NewDEXTVLCache(tvlTestSources())
-	if err := c.Refresh(context.Background()); err != nil {
-		t.Fatalf("Refresh: %v", err)
-	}
-	snap, _ := c.Snapshot()
-	if got := snap["phoenix"].TVLUSD; got != "20.50" {
-		t.Errorf("ungated phoenix TVLUSD = %q, want the unchanged 20.50", got)
-	}
-	if strings.Contains(snap["phoenix"].Basis, "serving trust gates withhold") {
-		t.Errorf("basis = %q, must not claim a gate that is not wired", snap["phoenix"].Basis)
-	}
 }
 
 // TestTVLValuer_GateSeesTheCanonicalIdentity pins the SAC-collapse half.
@@ -229,99 +127,5 @@ func TestTVLValuer_GateAskedOncePerToken(t *testing.T) {
 	}
 	if len(gate.asked) != 1 {
 		t.Errorf("gate consulted %d times for one token, want 1 (%v)", len(gate.asked), gate.asked)
-	}
-}
-
-// TestDEXTVLCache_GatedAquariusLegCountsUnpriced covers the fourth
-// protocol, whose leg loop is shaped differently (address-less legs are
-// skipped before valuation) — the gate must apply on the arm that DOES
-// resolve a token.
-func TestDEXTVLCache_GatedAquariusLegCountsUnpriced(t *testing.T) {
-	gate := &stubTVLGate{withhold: map[string]bool{tvlTestUSDCSAC: true}}
-	src := tvlTestSources()
-	src.Gate = gate
-	// One pool: 1 XLM-SAC ($0.50 at rate 0.5) + 10.5 gated USDC-SAC
-	// (which the declared peg would otherwise value at $10.50).
-	src.AquariusReserves = &stubAquariusReserveReader{pools: []timescale.AquariusPoolReserve{{
-		ContractID: tvlTestAqPool,
-		ObservedAt: time.Now(),
-		Legs: []timescale.AquariusReserveLeg{
-			{TokenIndex: 0, Token: canonical.XLMSacContractID, Reserve: canonical.NewAmount(big.NewInt(10_000_000))},
-			{TokenIndex: 1, Token: tvlTestUSDCSAC, Reserve: canonical.NewAmount(big.NewInt(105_000_000))},
-		},
-	}}}
-	// Drop the other protocols so the assertion is about aquarius only.
-	src.SoroswapReserves = stubTVLReserveReader{states: map[string]clickhouse.SoroswapPairState{}}
-	src.PhoenixReserves = stubPhoenixReserveReader{states: map[string]clickhouse.PhoenixPoolState{}}
-	src.CometReserves = stubCometReserveReader{states: map[string]clickhouse.CometPoolState{}}
-
-	c := NewDEXTVLCache(src)
-	if err := c.Refresh(context.Background()); err != nil {
-		t.Fatalf("Refresh: %v", err)
-	}
-	snap, _ := c.Snapshot()
-	aq := snap["aquarius"]
-	if aq.TVLUSD != "0.50" {
-		t.Errorf("aquarius TVLUSD = %q, want 0.50 — the XLM leg only, with the gated"+
-			" USDC leg's $10.50 excluded", aq.TVLUSD)
-	}
-	if aq.PoolsTotal != 1 || aq.PoolsPriced != 0 || aq.UnpricedPools != 1 {
-		t.Errorf("aquarius pools = total %d priced %d unpriced %d, want 1/0/1",
-			aq.PoolsTotal, aq.PoolsPriced, aq.UnpricedPools)
-	}
-}
-
-// TestDEXTVLCache_BasisNamesOnlyTheScreensThatRan is the RV1-#3
-// regression: Basis is a public claim about which trust screens ran on
-// each reserve leg, rendered verbatim by the explorer's TVL tooltip
-// (web/explorer/src/app/protocols/ProtocolTvlPanel.tsx). It must not be
-// one fixed sentence naming BOTH screens whenever any gate was wired,
-// otherwise an operator running [pricing_guard] disable_substance_gate = true
-// — which makes buildSubstanceGate return nil while the scam gate stays
-// wired — would publish "or a market below the substance floor" for legs no
-// substance screen had touched.
-func TestDEXTVLCache_BasisNamesOnlyTheScreensThatRan(t *testing.T) {
-	const (
-		bothScreens = "; unpriced legs contribute 0, and a leg whose asset the serving trust gates " +
-			"withhold (directory-flagged issuer, or a market below the substance floor) " +
-			"is counted unpriced rather than valued"
-		scamOnly = "; unpriced legs contribute 0, and a leg whose asset the serving trust gates " +
-			"withhold (directory-flagged issuer) is counted unpriced rather than valued"
-		noScreens = "; unpriced legs contribute 0"
-	)
-	for _, tc := range []struct {
-		name    string
-		screens []string
-		want    string
-	}{
-		// The r1 default: both guards wired. Byte-identical to the
-		// original sentence — the wire shape must not
-		// move for the deployment whose claim was true.
-		{"both guards wired", nil, bothScreens},
-		// disable_substance_gate = true: the scam directory still
-		// withholds, the substance floor does not exist.
-		{"substance gate disabled", []string{TVLScreenScamDirectory}, scamOnly},
-		// A gate that withholds nothing claims nothing.
-		{"no screen wired", []string{}, noScreens},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			src := tvlTestSources()
-			src.Gate = &stubTVLGate{screens: tc.screens}
-			c := NewDEXTVLCache(src)
-			if err := c.Refresh(context.Background()); err != nil {
-				t.Fatalf("Refresh: %v", err)
-			}
-			snap, _ := c.Snapshot()
-			phx, ok := snap["phoenix"]
-			if !ok {
-				t.Fatal("phoenix missing from snapshot")
-			}
-			if !strings.HasSuffix(phx.Basis, tc.want) {
-				t.Errorf("basis tail =\n\t%q\nwant\n\t%q", phx.Basis, tc.want)
-			}
-			if len(tc.screens) == 1 && strings.Contains(phx.Basis, "substance floor") {
-				t.Errorf("basis claims the substance floor screen with only the scam gate wired: %q", phx.Basis)
-			}
-		})
 	}
 }

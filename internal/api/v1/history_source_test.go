@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
-	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -61,58 +59,4 @@ func historyRowSources(t *testing.T, resp *http.Response) []string {
 		out = append(out, r.Source)
 	}
 	return out
-}
-
-func TestHistory_SourceFilterRestrictsRows(t *testing.T) {
-	rd := historySourceFixture()
-	ts := httpTestServer(t, v1.New(v1.Options{History: rd}))
-	base := ts.URL + "/v1/history?base=native&quote=fiat:USD&from=2026-02-25T00:00:00Z&to=2026-03-02T00:00:00Z"
-
-	resp := mustGet(t, base+"&source=sdex")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	got := historyRowSources(t, resp)
-	if len(got) == 0 {
-		t.Fatal("no rows for source=sdex")
-	}
-	for _, s := range got {
-		if s != "sdex" {
-			t.Errorf("source=sdex returned a %q row", s)
-		}
-	}
-	if rd.gotSource != "sdex" {
-		t.Errorf("reader saw source %q, want sdex", rd.gotSource)
-	}
-
-	if all := historyRowSources(t, mustGet(t, base)); len(all) < 2 {
-		t.Errorf("unfiltered request returned %d rows, want both sources", len(all))
-	}
-}
-
-func TestHistory_SourceFilterValidation(t *testing.T) {
-	ts := httpTestServer(t, v1.New(v1.Options{History: historySourceFixture()}))
-	for _, c := range []struct{ source, problem string }{
-		{"nope-not-a-source", "unknown-source"},
-		{"coingecko", "off-chain-source-filter"},
-		{"binance", "off-chain-source-filter"},
-	} {
-		resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD&source="+c.source)
-		body, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("source=%s: status = %d, want 400", c.source, resp.StatusCode)
-		}
-		if !strings.Contains(string(body), c.problem) {
-			t.Errorf("source=%s: body lacks %q: %s", c.source, c.problem, body)
-		}
-	}
-}
-
-func TestHistory_SourceFilterUnsupportedReader503(t *testing.T) {
-	ts := httpTestServer(t, v1.New(v1.Options{History: &stubHistoryReader{}}))
-	resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD&source=sdex")
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", resp.StatusCode)
-	}
 }

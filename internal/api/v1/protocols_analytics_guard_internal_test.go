@@ -648,3 +648,83 @@ func TestBuildProtocolDetail_VerdictReadErrorDegradesStatus(t *testing.T) {
 			v.Analytics, protocolAnalyticsUnavailable)
 	}
 }
+
+// TestBuildProtocolDetail_BespokeSurvivesFailingBattery is the regression
+// guard for the grounding incident: once a page has built, a later
+// rebuild whose bespoke battery blows its budget must NOT return a view
+// without the suite ("protocol bespoke build failed … context deadline
+// exceeded" → CCTP page missing its visual suite).
+func TestBuildProtocolDetail_BespokeSurvivesFailingBattery(t *testing.T) {
+	stub := &bespokeStub{}
+	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: stub})
+	meta, ok := protocolByName("cctp")
+	if !ok {
+		t.Fatal("cctp missing from registry")
+	}
+
+	first := srv.buildProtocolDetail(context.Background(), meta, protocolActivityWindowDays)
+	if first.Bespoke == nil || first.Analytics.Status != protocolAnalyticsOK {
+		t.Fatalf("first build: bespoke=%v status=%q, want a healthy suite", first.Bespoke, first.Analytics.Status)
+	}
+	waitBespokeIdle(t, srv, protocolBespokeCacheKey(meta.Name, meta.Category, protocolActivityWindowDays))
+
+	stub.fail.Store(true)
+	again := srv.buildProtocolDetail(context.Background(), meta, protocolActivityWindowDays)
+	if again.Bespoke == nil {
+		t.Fatal("a failing battery dropped the bespoke block — the page must keep the last good suite")
+	}
+	if again.Analytics.Status != protocolAnalyticsOK {
+		t.Errorf("status = %q, want %q: a served last-good block inside its horizon is not degradation",
+			again.Analytics.Status, protocolAnalyticsOK)
+	}
+}
+
+// TestBuildProtocolDetail_StaleBespokeIsHonestAndStillComplete: a block
+// past the staleness horizon is still SERVED (complete page) but the view
+// says so, and such an entry counts as healthy for cache displacement —
+// it is not the blank state the guard defends against.
+func TestBuildProtocolDetail_StaleBespokeIsHonestAndStillComplete(t *testing.T) {
+	stub := &bespokeStub{block: make(chan struct{})}
+	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: stub})
+	meta, _ := protocolByName("cctp")
+	key := protocolBespokeCacheKey(meta.Name, meta.Category, protocolActivityWindowDays)
+	ageBespokeEntry(t, srv, stub, key, &timescale.BespokeBlock{Category: meta.Category})
+
+	view := srv.buildProtocolDetail(context.Background(), meta, protocolActivityWindowDays)
+	if view.Bespoke == nil {
+		t.Fatal("stale block dropped, want it served")
+	}
+	if view.Analytics.Status != protocolAnalyticsStale {
+		t.Errorf("status = %q, want %q", view.Analytics.Status, protocolAnalyticsStale)
+	}
+	if !protoDetailEntryHealthy(protoDetailEntry{view: view}) {
+		t.Error("a COMPLETE page with a stale bespoke block counted as unhealthy — it would be pinned out of the cache")
+	}
+	close(stub.block)
+	waitBespokeIdle(t, srv, key)
+}
+
+// TestBuildProtocolDetail_DegradationIsExplicit verifies a build whose
+// analytics components are missing stamps analytics.status
+// "unavailable" — absence/zeros must be distinguishable from real zeros
+// on the wire — and that stale-serving such an entry keeps the worse
+// state (unavailable, not stale).
+func TestBuildProtocolDetail_DegradationIsExplicit(t *testing.T) {
+	srv := New(Options{}) // no analytics readers wired at all
+	meta, ok := protocolByName("cctp")
+	if !ok {
+		t.Fatal("cctp missing from registry")
+	}
+	view := srv.buildProtocolDetail(context.Background(), meta, protocolActivityWindowDays)
+	if view.Analytics == nil || view.Analytics.Status != protocolAnalyticsUnavailable {
+		t.Fatalf("analytics = %+v, want status %q", view.Analytics, protocolAnalyticsUnavailable)
+	}
+	if view.Analytics.AsOf == "" {
+		t.Error("analytics.as_of empty, want build timestamp")
+	}
+	staled := staleProtocolDetail(view)
+	if staled.Analytics.Status != protocolAnalyticsUnavailable {
+		t.Errorf("stale overlay rewrote status %q → %q; unavailable must win over stale",
+			protocolAnalyticsUnavailable, staled.Analytics.Status)
+	}
+}

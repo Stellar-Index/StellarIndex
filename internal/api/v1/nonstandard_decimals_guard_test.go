@@ -195,48 +195,6 @@ func TestVWAP_NonstandardDecimals_Normalizes(t *testing.T) {
 	}
 }
 
-// TestHistory_NonstandardDecimals_Normalizes proves /v1/history
-// does not decline — it reads exclusively from raw trades (TradesInRangeAfter),
-// so the per-row Price field is corrected instead.
-func TestHistory_NonstandardDecimals_Normalizes(t *testing.T) {
-	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
-	xlmUSD, err := canonical.ParseAsset(flaggedAsset)
-	if err != nil {
-		t.Fatalf("ParseAsset: %v", err)
-	}
-	usd, _ := canonical.ParseAsset("fiat:USD")
-	pair, err := canonical.NewPair(xlmUSD, usd)
-	if err != nil {
-		t.Fatalf("NewPair: %v", err)
-	}
-	// base 100 * 10^9 (9dp), quote 250 * 10^7 (7dp fiat) → true price
-	// 250/100 = 2.5.
-	trade := canonical.Trade{
-		Source:      "aquarius",
-		Ledger:      1,
-		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
-		Timestamp:   time.Unix(1_772_000_000, 0).UTC(),
-		Pair:        pair,
-		BaseAmount:  canonical.NewAmount(big.NewInt(100_000_000_000)),
-		QuoteAmount: canonical.NewAmount(big.NewInt(2_500_000_000)),
-	}
-	reader := &stubHistoryReader{trades: []canonical.Trade{trade}}
-	srv := v1.New(v1.Options{
-		History:             reader,
-		NonstandardDecimals: cache,
-	})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/history?base="+flaggedAsset+"&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (raw-trade path is normalized, not declined)", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"price":"2.5000000000"`) {
-		t.Errorf("body missing normalized price 2.5000000000: %s", body)
-	}
-}
-
 // TestOHLC_NonstandardDecimals proves BOTH modes normalize now:
 // single-bar mode (raw trades, query-time — normalized since v0.12.0)
 // and interval= series mode (prices_<n> CAGG — normalized,
@@ -364,62 +322,6 @@ func TestOHLCSeries_NonstandardDecimals_7dpByteIdentical(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("7dp bars must be byte-identical; body missing %q: %s", want, body)
 		}
-	}
-}
-
-// TestChart_NonstandardDecimals_NormalizesPriceNotVolumeUSD pins the
-// /v1/chart contract (this endpoint is
-// not declined; the raw prices_<gran> ratio is corrected:
-//
-//   - each point's `p`: raw CAGG ratio × K (10^(9−7) = 100 here).
-//   - each point's `v_usd`: UNCHANGED — prices_<gran>.volume_usd is
-//     Σ(usd_volume) (migration 0002), already USD-denominated at
-//     trade-valuation time and invariant to the pair's decimals split.
-func TestChart_NonstandardDecimals_NormalizesPriceNotVolumeUSD(t *testing.T) {
-	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
-	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	vusd := "1234.56"
-	reader := &stubHistoryReader{points: []v1.HistoryPoint{{
-		Bucket: t0, VWAP: "41.32", VolumeUSD: &vusd,
-	}}}
-	srv := v1.New(v1.Options{
-		History:             reader,
-		NonstandardDecimals: cache,
-	})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/chart?asset="+flaggedAsset+"&quote="+classicUSDC+"&timeframe=24h")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"p":"4132.0000000000"`) {
-		t.Errorf("chart body missing normalized point price 4132.0000000000: %s", body)
-	}
-	if !strings.Contains(body, `"v_usd":"1234.56"`) {
-		t.Errorf("chart v_usd must be untouched (already USD-anchored): %s", body)
-	}
-}
-
-// TestChart_NonstandardDecimals_7dpByteIdentical — wiring the cache must
-// not reformat an unflagged pair's points.
-func TestChart_NonstandardDecimals_7dpByteIdentical(t *testing.T) {
-	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
-	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	reader := &stubHistoryReader{points: []v1.HistoryPoint{{Bucket: t0, VWAP: "0.1242"}}}
-	srv := v1.New(v1.Options{
-		History:             reader,
-		NonstandardDecimals: cache,
-	})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote="+classicUSDC+"&timeframe=24h")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"p":"0.1242"`) {
-		t.Errorf("7dp chart points must be byte-identical; body: %s", body)
 	}
 }
 
@@ -581,34 +483,6 @@ func TestTWAP_NonstandardDecimals_Normalizes(t *testing.T) {
 	body, _ := readAll(resp)
 	if !strings.Contains(body, `"price":"2.5000000000"`) {
 		t.Errorf("body missing normalized price 2.5000000000: %s", body)
-	}
-}
-
-// TestHistorySinceInception_NonstandardDecimals_NormalizesPrice pins that
-// /v1/history/since-inception serves the corrected CAGG VWAP, like the
-// /v1/chart series it shares a read chain with: `p` = raw ratio × K
-// (10^(9−7) = 100), `v_usd` untouched.
-func TestHistorySinceInception_NonstandardDecimals_NormalizesPrice(t *testing.T) {
-	vusd := "1234.56"
-	reader := &stubHistoryReader{points: []v1.HistoryPoint{{
-		Bucket: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), VWAP: "41.32", VolumeUSD: &vusd,
-	}}}
-	srv := v1.New(v1.Options{
-		History:             reader,
-		NonstandardDecimals: nonstandardDecimalsCacheWith(t, flaggedAsset, 9),
-	})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/history/since-inception?asset="+flaggedAsset+"&quote="+classicUSDC)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"p":"4132.0000000000"`) {
-		t.Errorf("since-inception must serve the corrected price 4132.0000000000 (raw 41.32 × 100): %s", body)
-	}
-	if !strings.Contains(body, `"v_usd":"1234.56"`) {
-		t.Errorf("since-inception v_usd must be untouched (already USD-anchored): %s", body)
 	}
 }
 

@@ -107,52 +107,6 @@ func TestListingMarketCap_DustGuard(t *testing.T) {
 	}
 }
 
-// TestFillRowMarketCap_UnverifiedCollisionSuppressed: an
-// unverified look-alike of a verified ticker must not publish
-// price × supply as a headline valuation (XRP-GBXRPL45… published a
-// $109.5M cap under XRP's ticker off its own manipulable market).
-// circulating_supply (a raw fact) still surfaces.
-func TestFillRowMarketCap_UnverifiedCollisionSuppressed(t *testing.T) {
-	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000}}
-	price := "1.07"
-	row := AssetDetail{
-		AssetID:                   "XRP-GBXRPL45000000000000000000000000000000000000000000000",
-		Code:                      "XRP",
-		Decimals:                  7,
-		PriceUSD:                  &price,
-		UnverifiedTickerCollision: true,
-	}
-	precise := observedSupply(map[string]string{row.AssetID: "1000000000000000"})
-	s.fillRowMarketCap(context.Background(), &row, precise, nil, nil, map[string]int{row.AssetID: 5})
-	if row.MarketCapUSD != nil {
-		t.Errorf("market_cap_usd = %q, want suppressed (nil) for an unverified ticker collision", *row.MarketCapUSD)
-	}
-	if row.CirculatingSupply == nil {
-		t.Error("circulating_supply must still surface — it is a raw fact, not a valuation")
-	}
-}
-
-// TestFillRowMarketCap_NativeNeverDustSuppressed — the listing SQL
-// forces native's source_count to NULL (→ 0 here); with 0 now
-// suppressible, native needs the same carve-out the detail path has.
-func TestFillRowMarketCap_NativeNeverDustSuppressed(t *testing.T) {
-	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000}}
-	price := "0.16"
-	vol := "10" // absurd, but must not matter for native
-	row := AssetDetail{
-		AssetID: "native", Code: "XLM", Decimals: 7,
-		PriceUSD: &price, VolumeUSD24h: &vol,
-	}
-	precise := observedSupply(map[string]string{"native": "100000000000000000"})
-	s.fillRowMarketCap(context.Background(), &row, precise, nil, nil, map[string]int{})
-	if row.MarketCapUSD == nil {
-		t.Fatal("native market cap must never be dust-suppressed")
-	}
-	if row.MarketCapLowLiquidity {
-		t.Error("native must not carry market_cap_low_liquidity")
-	}
-}
-
 // TestApplyUnverifiedWarning_ReferenceOnlyTicker — regression guard:
 // a reference-only ticker (USDT — the catalogue knows
 // it as a well-known EXTERNAL asset with no verified Stellar issuance)

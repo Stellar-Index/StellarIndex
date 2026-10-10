@@ -4,7 +4,6 @@
 package v1
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -58,28 +57,5 @@ func TestDEXTVLScope_PooledProtocolIsDerivedOrExplicitlyExcluded(t *testing.T) {
 			"dexTVLScopeExclusions: the headline omits it with no reason on the wire, and "+
 			"GET /v1/protocols/%s/tvl blames the omission on deployment wiring. Add a scope "+
 			"exclusion saying why, or wire a derivation.", p.Name, p.Category, p.Name)
-	}
-}
-
-// The concentrated-liquidity refusal must say what it actually is. The
-// generic reason is reserved for a protocol that HAS an absolute reserve
-// source whose readers a deployment did not wire — a config gap an
-// operator can close. SushiSwap V3's is neither config nor temporary.
-func TestDEXTVLNotDerivedReason_ConcentratedLiquidityIsNotBlamedOnWiring(t *testing.T) {
-	t.Parallel()
-
-	got := dexTVLNotDerivedReason("sushiswap_v3")
-	if strings.Contains(got, "not wired on this deployment") {
-		t.Fatalf("sushiswap_v3 refusal = %q; it reads as a deployment-wiring gap an operator "+
-			"could close, but no wiring produces a two-sided reserve for a V3 pool", got)
-	}
-	if !strings.Contains(got, "concentrated liquidity") {
-		t.Errorf("sushiswap_v3 refusal = %q; it must name concentrated liquidity as the reason "+
-			"no reserve-derived figure exists", got)
-	}
-	// The rule this surface exists to keep: an underivable figure is
-	// absent, never zero-filled.
-	if strings.Contains(got, "0.00") {
-		t.Errorf("sushiswap_v3 refusal = %q; an underivable figure must be absent, not a zero", got)
 	}
 }

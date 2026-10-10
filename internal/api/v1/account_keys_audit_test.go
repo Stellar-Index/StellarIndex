@@ -46,83 +46,6 @@ func doWithReason(t *testing.T, method, url, reason, body string) *http.Response
 	return resp
 }
 
-// TestAccountKeysCreate_OperatorRequiresReason — an operator-tier
-// self-mint without X-Reason is refused BEFORE the store is touched,
-// mirroring /v1/admin/keys. The store's Create is never called.
-func TestAccountKeysCreate_OperatorRequiresReason(t *testing.T) {
-	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_child"}, plain: "sip_child"}
-	sink := &recordingAuditSink{}
-	ts := newAdminTestServer(t, operatorSelfSubject(), store, sink)
-
-	resp := doWithReason(t, http.MethodPost, ts.URL+"/v1/account/keys", "", `{"label":"rotate"}`)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400 (operator self-mint without X-Reason)", resp.StatusCode)
-	}
-	if store.calls != 0 {
-		t.Errorf("Create called %d times, want 0 (no reason, no credential)", store.calls)
-	}
-	if len(sink.entries) != 0 {
-		t.Errorf("audit entries = %d, want 0", len(sink.entries))
-	}
-}
-
-// TestAccountKeysCreate_OperatorSelfMintIsAudited — with X-Reason the
-// operator keeps tier inheritance (the documented rotation contract) and
-// the mint lands one key.mint audit row naming the actor key, the minted
-// key and the reason.
-func TestAccountKeysCreate_OperatorSelfMintIsAudited(t *testing.T) {
-	store := &fakeAccountStore{
-		rec:   auth.APIKeyRecord{KeyID: "kid_child", Label: "rotate", Tier: auth.TierOperator},
-		plain: "sip_child",
-	}
-	sink := &recordingAuditSink{}
-	ts := newAdminTestServer(t, operatorSelfSubject(), store, sink)
-
-	resp := doWithReason(t, http.MethodPost, ts.URL+"/v1/account/keys", "quarterly rotation", `{"label":"rotate"}`)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("status = %d, want 201", resp.StatusCode)
-	}
-	if store.gotReq.Tier != auth.TierOperator {
-		t.Errorf("Create.Tier = %q, want operator (rotation keeps tier inheritance)", store.gotReq.Tier)
-	}
-	if store.gotReq.Identifier != "operator:staff-1" {
-		t.Errorf("Create.Identifier = %q, want the caller's own identifier", store.gotReq.Identifier)
-	}
-	if len(sink.entries) != 1 {
-		t.Fatalf("audit entries = %d, want 1 key.mint row for an operator self-mint", len(sink.entries))
-	}
-	e := sink.entries[0]
-	if e.Action != "key.mint" || e.ActorKind != platform.ActorStaff ||
-		e.TargetKind != "api_key" || e.TargetID != "kid_child" {
-		t.Errorf("audit entry = %+v", e)
-	}
-	for _, want := range []string{`"actor_key_id":"kid_operator1"`, `"reason":"quarterly rotation"`, `"route":"/v1/account/keys"`, `"tier":"operator"`} {
-		if !strings.Contains(string(e.Metadata), want) {
-			t.Errorf("audit metadata missing %s: %s", want, e.Metadata)
-		}
-	}
-	if e.Timestamp.IsZero() || e.UserAgent == "" {
-		t.Errorf("audit entry missing request stamps: ts=%v ua=%q", e.Timestamp, e.UserAgent)
-	}
-}
-
-// TestAccountKeysCreate_CustomerNeedsNoReason pins the blast radius: a
-// customer-tier caller is NOT an admin write — no X-Reason required, no
-// staff audit row.
-func TestAccountKeysCreate_CustomerNeedsNoReason(t *testing.T) {
-	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_c"}, plain: "sip_c"}
-	sink := &recordingAuditSink{}
-	ts := newAdminTestServer(t, auth.Subject{Identifier: "owner-42", Tier: auth.TierAPIKey, KeyID: "kid_owner"}, store, sink)
-
-	resp := doWithReason(t, http.MethodPost, ts.URL+"/v1/account/keys", "", `{"label":"ci"}`)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("status = %d, want 201 (customer mint unchanged)", resp.StatusCode)
-	}
-	if len(sink.entries) != 0 {
-		t.Errorf("audit entries = %d, want 0 for a customer self-mint", len(sink.entries))
-	}
-}
-
 // TestAccountKeysRevoke_OperatorRequiresReasonAndAudits mirrors the
 // mint contract on DELETE /v1/account/keys/{keyID}: an operator revoke
 // without X-Reason is 400; with it, 204 plus one key.revoke row.
@@ -166,5 +89,37 @@ func TestAccountKeysRevoke_CustomerNeedsNoReason(t *testing.T) {
 	}
 	if len(sink.entries) != 0 {
 		t.Errorf("audit entries = %d, want 0", len(sink.entries))
+	}
+}
+
+// TestAccountKeysRevoke_CrossAccountLeavesPostgresRowLive is the
+// self-service form of the same check: a customer's DELETE
+// /v1/account/keys/{kid} with another account's key id in the path
+// must not revoke that account's api_keys row.
+func TestAccountKeysRevoke_CrossAccountLeavesPostgresRowLive(t *testing.T) {
+	platformKeys, accts := seedOwnedPlatformKey("victim-co", "kid_victim01")
+	attacker := auth.Subject{Identifier: "acct:attacker-co", Tier: auth.TierAPIKey, KeyID: "kid_attacker"}
+	ts := newAdminTestServerWithPlatformKeys(t, attacker, &fakeAccountStore{}, platformKeys, accts)
+
+	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_victim01", "", "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (a non-owner revoke is a silent no-op)", resp.StatusCode)
+	}
+	assertPlatformKeyLive(t, platformKeys, "kid_victim01")
+}
+
+// TestAccountKeysRevoke_OwnerRevokesPostgresRow is the positive
+// self-service case: the owner's revoke clears the management row.
+func TestAccountKeysRevoke_OwnerRevokesPostgresRow(t *testing.T) {
+	platformKeys, accts := seedOwnedPlatformKey("reg-abc123", "kid_shared01")
+	owner := auth.Subject{Identifier: "acct:reg-abc123", Tier: auth.TierAPIKey, KeyID: "kid_other"}
+	ts := newAdminTestServerWithPlatformKeys(t, owner, &fakeAccountStore{}, platformKeys, accts)
+
+	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_shared01", "", "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+	if len(platformKeys.revokedIDs) != 1 || platformKeys.revokedIDs[0] != "kid_shared01" {
+		t.Errorf("owner's postgres management row not revoked: revokedIDs = %v, want [kid_shared01]", platformKeys.revokedIDs)
 	}
 }

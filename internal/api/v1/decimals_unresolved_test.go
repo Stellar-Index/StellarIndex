@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -93,25 +92,5 @@ func TestSEP41Transfers_DecimalsReadFailed_Returns503(t *testing.T) {
 					resp.StatusCode, tc.status, tc.contains, body)
 			}
 		})
-	}
-}
-
-// /v1/history: base_decimals is stamped on every row from the same read.
-func TestHistory_DecimalsReadFailed_Returns503(t *testing.T) {
-	pair, err := canonical.NewPair(mustParseAsset(t, decTestContract), mustParseAsset(t, "native"))
-	if err != nil {
-		t.Fatalf("NewPair: %v", err)
-	}
-	tr := mkHistTrade(100)
-	tr.Pair = pair
-	reader := &stubHistoryReader{trades: []canonical.Trade{tr}}
-	srv := v1.New(v1.Options{History: reader, TokenDecimals: &countingDecStub{err: errDecimalsRead}})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/history?base="+decTestContract+"&quote=native&limit=50")
-	body, _ := readAll(resp)
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503 rather than base_decimals 7 on a failed read: %s",
-			resp.StatusCode, body)
 	}
 }

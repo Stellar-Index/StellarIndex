@@ -123,3 +123,197 @@ func TestAssetsListing_Sparkline7d_UnflaggedSeriesIsByteIdentical(t *testing.T) 
 		}
 	}
 }
+
+// TestAssetsListing_Sparkline7d_CatalogueRowsKeyOnStellarTwin — the
+// core: a catalogue row's series must be read under its Stellar twin's
+// asset_id (the id its price and its change_7d_pct already come from),
+// never under the catalogue slug the row carries on the wire.
+func TestAssetsListing_Sparkline7d_CatalogueRowsKeyOnStellarTwin(t *testing.T) {
+	stub := &sparklineStub{
+		stubAssetsReaderExt: &stubAssetsReaderExt{},
+		byID: map[string]timescale.AssetRow{
+			nativeAssetID: {AssetID: nativeAssetID, Code: "XLM", Slug: "xlm", PriceUSD: sptr("0.1790411226")},
+			aquaAssetID: {
+				AssetID: aquaAssetID, Code: "AQUA", Slug: "aqua",
+				IssuerGStrkey: otherRealIssuer, PriceUSD: sptr("0.0003433943"),
+			},
+		},
+		series: map[string][]string{
+			nativeAssetID: sparklineSeries("0.1980", "0.1930", "0.1900", "0.1870", "0.1850", "0.1810", "0.1790"),
+			aquaAssetID:   sparklineSeries("0.00037", "0.00037", "0.00036", "0.00036", "0.00035", "0.00035", "0.00034"),
+		},
+	}
+	srv := v1.New(v1.Options{AssetsReader: stub, VerifiedCurrencies: newTestCatalogue(t)})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets?asset_class=all&limit=11&include=sparkline7d")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.AssetDetail `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+
+	ids := stub.requestedIDs()
+	for _, slug := range []string{"xlm", "aqua"} {
+		if containsID(ids, slug) {
+			t.Errorf("series requested under the catalogue SLUG %q — slugs never match a prices_1m row; "+
+				"the row's Stellar twin asset_id is what its price and change_7d_pct key on. requested=%v", slug, ids)
+		}
+	}
+	for _, want := range []string{nativeAssetID, aquaAssetID} {
+		if !containsID(ids, want) {
+			t.Errorf("series never requested for %q; requested=%v", want, ids)
+		}
+	}
+
+	for _, tc := range []struct {
+		slug string
+		want []string
+	}{
+		{"xlm", stub.series[nativeAssetID]},
+		{"aqua", stub.series[aquaAssetID]},
+	} {
+		row := findRowBySlug(env.Data, tc.slug)
+		if row == nil {
+			t.Fatalf("%s row missing from the listing page", tc.slug)
+		}
+		if row.PriceUSD == nil {
+			t.Fatalf("%s has no price_usd — the honesty gate would legitimately withhold its chart; fix the fixture", tc.slug)
+		}
+		got := pricedPoints(row.PriceHistory7d)
+		if len(got) != len(tc.want) {
+			t.Fatalf("%s price_history_7d has %d priced points, want %d (%v) — a priced row must never render an empty chart",
+				tc.slug, len(got), len(tc.want), row.PriceHistory7d)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("%s price_history_7d[%d] = %q, want %q", tc.slug, i, got[i], tc.want[i])
+			}
+		}
+	}
+}
+
+// TestAssetsListing_Sparkline7d_DefaultListingHonoursInclude — the
+// listing served WITHOUT asset_class (the /v1/assets shape the issue
+// reproduced with, and the one every SDK consumer gets) ignored
+// `include=sparkline7d` entirely: the response was byte-identical with
+// and without it.
+func TestAssetsListing_Sparkline7d_DefaultListingHonoursInclude(t *testing.T) {
+	const xrp = "XRP-" + otherRealIssuer
+	stub := &sparklineStub{
+		stubAssetsReaderExt: &stubAssetsReaderExt{},
+		classic: []timescale.AssetRow{
+			{AssetID: xrp, Code: "XRP", Slug: "xrp", IssuerGStrkey: otherRealIssuer, PriceUSD: sptr("1.39")},
+		},
+		series: map[string][]string{
+			xrp: sparklineSeries("1.51", "1.48", "1.46", "1.44", "1.42", "1.40", "1.39"),
+		},
+	}
+	srv := v1.New(v1.Options{AssetsReader: stub})
+	ts := httpTestServer(t, srv)
+
+	var env struct {
+		Data []v1.AssetDetail `json:"data"`
+	}
+	mustDecode(t, mustGet(t, ts.URL+"/v1/assets?limit=10&include=sparkline7d"), &env)
+	row := findRowByAssetID(env.Data, xrp)
+	if row == nil {
+		t.Fatalf("XRP row missing: %+v", env.Data)
+	}
+	got := pricedPoints(row.PriceHistory7d)
+	want := stub.series[xrp]
+	if len(got) != len(want) {
+		t.Fatalf("price_history_7d has %d priced points, want %d — ?include=sparkline7d must be honoured on the default listing (%+v)",
+			len(got), len(want), row.PriceHistory7d)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("price_history_7d[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	// …and stays opt-in: no include, no series, no batch read.
+	var plain struct {
+		Data []v1.AssetDetail `json:"data"`
+	}
+	mustDecode(t, mustGet(t, ts.URL+"/v1/assets?limit=10"), &plain)
+	if row := findRowByAssetID(plain.Data, xrp); row == nil || len(row.PriceHistory7d) != 0 {
+		t.Errorf("price_history_7d served without ?include=sparkline7d: %+v", plain.Data)
+	}
+}
+
+// TestAssetsListing_Sparkline7d_WithheldPriceRendersNoChart — the
+// honesty rule in the other direction. A row whose price we withhold
+// (scam-flagged issuer) or that has no price at all must render NO
+// chart, and must not even be looked up: the last point of the series
+// IS the number we refused to publish.
+func TestAssetsListing_Sparkline7d_WithheldPriceRendersNoChart(t *testing.T) {
+	const (
+		scamID  = "JFKBANK2-" + scamAUDIssuer
+		plainID = "MJQ-" + otherRealIssuer
+		okID    = "XRP-" + testUSDCIssuer
+	)
+	stub := &sparklineStub{
+		stubAssetsReaderExt: &stubAssetsReaderExt{},
+		classic: []timescale.AssetRow{
+			// Priced by the listing query, then withheld by the scam gate.
+			{AssetID: scamID, Code: "JFKBANK2", Slug: "jfkbank2", IssuerGStrkey: scamAUDIssuer, PriceUSD: sptr("0.42")},
+			// Never priced (thin market / no USD leg).
+			{AssetID: plainID, Code: "MJQ", Slug: "mjq", IssuerGStrkey: otherRealIssuer},
+			// Control: a published price keeps its chart.
+			{AssetID: okID, Code: "XRP", Slug: "xrp", IssuerGStrkey: testUSDCIssuer, PriceUSD: sptr("1.39")},
+		},
+		series: map[string][]string{
+			scamID:  sparklineSeries("0.51", "0.48", "0.46", "0.44", "0.42", "0.43", "0.42"),
+			plainID: sparklineSeries("9.10", "9.20", "9.30", "9.40", "9.50", "9.60", "9.70"),
+			okID:    sparklineSeries("1.51", "1.48", "1.46", "1.44", "1.42", "1.40", "1.39"),
+		},
+	}
+	srv := v1.New(v1.Options{
+		AssetsReader:       stub,
+		VerifiedCurrencies: newTestCatalogue(t),
+		Directory:          scamAUDDirectoryStub(),
+	})
+	ts := httpTestServer(t, srv)
+
+	// The classic phase of the unified listing (the shape the explorer's
+	// /assets directory renders).
+	var env struct {
+		Data []v1.AssetDetail `json:"data"`
+	}
+	mustDecode(t, mustGet(t, ts.URL+"/v1/assets?asset_class=all&cursor=classic:&limit=10&include=sparkline7d"), &env)
+
+	for _, tc := range []struct {
+		name    string
+		assetID string
+	}{
+		{"scam-flagged issuer (price withheld)", scamID},
+		{"no published price", plainID},
+	} {
+		row := findRowByAssetID(env.Data, tc.assetID)
+		if row == nil {
+			t.Fatalf("%s: row %s missing from listing", tc.name, tc.assetID)
+		}
+		if row.PriceUSD != nil {
+			t.Fatalf("%s: fixture broken — price_usd = %q, want null", tc.name, *row.PriceUSD)
+		}
+		if len(row.PriceHistory7d) != 0 {
+			t.Errorf("%s: price_history_7d = %+v, want none — a withheld price must not be republished as a picture of itself",
+				tc.name, row.PriceHistory7d)
+		}
+		if containsID(stub.requestedIDs(), tc.assetID) {
+			t.Errorf("%s: series requested for %s; an unpriced row must not even be looked up", tc.name, tc.assetID)
+		}
+	}
+
+	row := findRowByAssetID(env.Data, okID)
+	if row == nil {
+		t.Fatalf("control row %s missing", okID)
+	}
+	if got := pricedPoints(row.PriceHistory7d); len(got) != 7 {
+		t.Errorf("control row price_history_7d has %d priced points, want 7 (%+v) — gating must not cost a priced row its chart",
+			len(got), row.PriceHistory7d)
+	}
+}

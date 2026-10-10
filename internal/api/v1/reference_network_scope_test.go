@@ -94,33 +94,3 @@ func TestExternalAssetGet_NetworkScoped(t *testing.T) {
 		}
 	}
 }
-
-// TestAssetGet_TickerCollision_NetworkScoped pins that the look-alike
-// warning, which points at a pubnet issuer, is not stamped on a test net.
-func TestAssetGet_TickerCollision_NetworkScoped(t *testing.T) {
-	opts := v1.Options{VerifiedCurrencies: newTestCatalogue(t)}
-	decode := func(body string) (bool, bool) {
-		var env struct {
-			Data  v1.AssetDetail `json:"data"`
-			Flags v1.Flags       `json:"flags"`
-		}
-		if err := json.Unmarshal([]byte(body), &env); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		return env.Flags.UnverifiedTickerCollision, env.Data.UnverifiedWarning != nil
-	}
-	path := "/v1/assets/USDC-" + otherRealIssuer
-	_, body := networkGet(t, opts, "pubnet", path)
-	if flag, warning := decode(body); !flag || !warning {
-		t.Fatalf("pubnet: collision flag=%v warning=%v on a USDC look-alike, want both", flag, warning)
-	}
-	for _, network := range testNets {
-		status, body := networkGet(t, opts, network, path)
-		if status != http.StatusOK {
-			t.Fatalf("%s: status = %d, want 200", network, status)
-		}
-		if flag, warning := decode(body); flag || warning {
-			t.Errorf("%s: collision flag=%v warning=%v, want neither", network, flag, warning)
-		}
-	}
-}

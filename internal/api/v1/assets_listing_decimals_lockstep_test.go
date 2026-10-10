@@ -9,6 +9,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // Without this, /v1/assets would never resolve a Soroban row's decimals() on the
@@ -115,5 +116,86 @@ func TestFillRowMarketCap_SorobanLockstep_Agreement(t *testing.T) {
 	}
 	if row.Decimals != 9 {
 		t.Errorf("decimals = %d, want 9", row.Decimals)
+	}
+}
+
+// TestFillRowMarketCap_PublishesTheBasisItUsed — whichever arm answered, the
+// row must say which one did. A market cap whose multiplicand has no named
+// provenance is a total with no traceable source.
+func TestFillRowMarketCap_PublishesTheBasisItUsed(t *testing.T) {
+	const asset = "FOO-GAFOO"
+	price := "1.00"
+	cases := []struct {
+		name      string
+		precise   map[string]timescale.SupplyObservation
+		lake      map[string]string
+		broad     map[string]string
+		wantBasis supply.Basis
+	}{
+		{"observation", observedSupply(map[string]string{asset: "10000000"}), nil, nil, supply.BasisIssuerExclusion},
+		{"lake flows", nil, map[string]string{asset: "10000000"}, nil, supply.BasisClassicLakeFlows},
+		{"trustline floor", nil, nil, map[string]string{asset: "10000000"}, supply.BasisClassicTrustlineSum},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000}}
+			row := AssetDetail{AssetID: asset, Code: "FOO", Decimals: 7, PriceUSD: &price}
+			s.fillRowMarketCap(context.Background(), &row, tc.precise, tc.lake, tc.broad, map[string]int{asset: 5})
+			if row.CirculatingSupply == nil {
+				t.Fatal("circulating_supply not published")
+			}
+			if row.SupplyBasis == nil {
+				t.Fatal("supply_basis not published — the served figure must say which arm produced it")
+			}
+			if *row.SupplyBasis != string(tc.wantBasis) {
+				t.Errorf("supply_basis = %q, want %q", *row.SupplyBasis, tc.wantBasis)
+			}
+		})
+	}
+}
+
+// TestFillRowMarketCap_UnverifiedCollisionSuppressed: an
+// unverified look-alike of a verified ticker must not publish
+// price × supply as a headline valuation (XRP-GBXRPL45… published a
+// $109.5M cap under XRP's ticker off its own manipulable market).
+// circulating_supply (a raw fact) still surfaces.
+func TestFillRowMarketCap_UnverifiedCollisionSuppressed(t *testing.T) {
+	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000}}
+	price := "1.07"
+	row := AssetDetail{
+		AssetID:                   "XRP-GBXRPL45000000000000000000000000000000000000000000000",
+		Code:                      "XRP",
+		Decimals:                  7,
+		PriceUSD:                  &price,
+		UnverifiedTickerCollision: true,
+	}
+	precise := observedSupply(map[string]string{row.AssetID: "1000000000000000"})
+	s.fillRowMarketCap(context.Background(), &row, precise, nil, nil, map[string]int{row.AssetID: 5})
+	if row.MarketCapUSD != nil {
+		t.Errorf("market_cap_usd = %q, want suppressed (nil) for an unverified ticker collision", *row.MarketCapUSD)
+	}
+	if row.CirculatingSupply == nil {
+		t.Error("circulating_supply must still surface — it is a raw fact, not a valuation")
+	}
+}
+
+// TestFillRowMarketCap_NativeNeverDustSuppressed — the listing SQL
+// forces native's source_count to NULL (→ 0 here); with 0 now
+// suppressible, native needs the same carve-out the detail path has.
+func TestFillRowMarketCap_NativeNeverDustSuppressed(t *testing.T) {
+	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000}}
+	price := "0.16"
+	vol := "10" // absurd, but must not matter for native
+	row := AssetDetail{
+		AssetID: "native", Code: "XLM", Decimals: 7,
+		PriceUSD: &price, VolumeUSD24h: &vol,
+	}
+	precise := observedSupply(map[string]string{"native": "100000000000000000"})
+	s.fillRowMarketCap(context.Background(), &row, precise, nil, nil, map[string]int{})
+	if row.MarketCapUSD == nil {
+		t.Fatal("native market cap must never be dust-suppressed")
+	}
+	if row.MarketCapLowLiquidity {
+		t.Error("native must not carry market_cap_low_liquidity")
 	}
 }

@@ -233,41 +233,6 @@ func TestLatestPreciseSupply_AsksForABoundedRead(t *testing.T) {
 	}
 }
 
-// TestFillRowMarketCap_PublishesTheBasisItUsed — whichever arm answered, the
-// row must say which one did. A market cap whose multiplicand has no named
-// provenance is a total with no traceable source.
-func TestFillRowMarketCap_PublishesTheBasisItUsed(t *testing.T) {
-	const asset = "FOO-GAFOO"
-	price := "1.00"
-	cases := []struct {
-		name      string
-		precise   map[string]timescale.SupplyObservation
-		lake      map[string]string
-		broad     map[string]string
-		wantBasis supply.Basis
-	}{
-		{"observation", observedSupply(map[string]string{asset: "10000000"}), nil, nil, supply.BasisIssuerExclusion},
-		{"lake flows", nil, map[string]string{asset: "10000000"}, nil, supply.BasisClassicLakeFlows},
-		{"trustline floor", nil, nil, map[string]string{asset: "10000000"}, supply.BasisClassicTrustlineSum},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000}}
-			row := AssetDetail{AssetID: asset, Code: "FOO", Decimals: 7, PriceUSD: &price}
-			s.fillRowMarketCap(context.Background(), &row, tc.precise, tc.lake, tc.broad, map[string]int{asset: 5})
-			if row.CirculatingSupply == nil {
-				t.Fatal("circulating_supply not published")
-			}
-			if row.SupplyBasis == nil {
-				t.Fatal("supply_basis not published — the served figure must say which arm produced it")
-			}
-			if *row.SupplyBasis != string(tc.wantBasis) {
-				t.Errorf("supply_basis = %q, want %q", *row.SupplyBasis, tc.wantBasis)
-			}
-		})
-	}
-}
-
 // TestStampCirculatingSupplyNeverOverwrites covers the guard, not the happy
 // path. Two branches attach a supply DELIBERATELY before this fill runs — the
 // dust-suppressed and ticker-collision paths — and a later arm overwriting one

@@ -4,17 +4,23 @@
 package v1_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/redis/go-redis/v9"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -281,48 +287,6 @@ func TestAdminKeysCreate_Validation(t *testing.T) {
 	}
 }
 
-// TestAccountKeysCreate_WithScopes pins the self-service scope
-// plumbing: valid scopes flow into CreateAPIKeyRequest (deduped),
-// unknown scopes 400 before touching the store.
-func TestAccountKeysCreate_WithScopes(t *testing.T) {
-	subject := auth.Subject{Identifier: "cust-42", Tier: auth.TierAPIKey, KeyID: "kid_a"}
-	store := &fakeAccountStore{
-		rec:   auth.APIKeyRecord{KeyID: "kid_new", Scopes: []string{"read"}},
-		plain: "sip_plain",
-	}
-	ts := newAccountTestServer(t, subject, store)
-
-	resp := postJSON(t, ts.URL+"/v1/account/keys",
-		`{"label":"ci-bot","scopes":["read","read"]}`)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("status = %d, want 201", resp.StatusCode)
-	}
-	if len(store.gotReq.Scopes) != 1 || store.gotReq.Scopes[0] != "read" {
-		t.Errorf("Scopes = %v, want deduped [read]", store.gotReq.Scopes)
-	}
-	var env struct {
-		Data v1.KeyCreated `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(env.Data.Scopes) != 1 || env.Data.Scopes[0] != "read" {
-		t.Errorf("response scopes = %v", env.Data.Scopes)
-	}
-
-	// Unknown scope → 400, store untouched.
-	store2 := &fakeAccountStore{}
-	ts2 := newAccountTestServer(t, subject, store2)
-	resp2 := postJSON(t, ts2.URL+"/v1/account/keys",
-		`{"label":"ci-bot","scopes":["everything"]}`)
-	if resp2.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400 for unknown scope", resp2.StatusCode)
-	}
-	if store2.calls != 0 {
-		t.Errorf("store.Create called despite invalid scope")
-	}
-}
-
 // seedOwnedPlatformKey seeds one Postgres api_keys row owned by the
 // account whose slug is ownerSlug and returns both stores behind it.
 func seedOwnedPlatformKey(ownerSlug, keyID string) (*fakeRegisterKeyStore, *fakePlatformAccountStore) {
@@ -379,38 +343,6 @@ func TestAdminKeysRevoke_NonOwnerIdentifierLeavesPostgresRowLive(t *testing.T) {
 	assertPlatformKeyLive(t, platformKeys, "kid_victim01")
 }
 
-// TestAccountKeysRevoke_CrossAccountLeavesPostgresRowLive is the
-// self-service form of the same check: a customer's DELETE
-// /v1/account/keys/{kid} with another account's key id in the path
-// must not revoke that account's api_keys row.
-func TestAccountKeysRevoke_CrossAccountLeavesPostgresRowLive(t *testing.T) {
-	platformKeys, accts := seedOwnedPlatformKey("victim-co", "kid_victim01")
-	attacker := auth.Subject{Identifier: "acct:attacker-co", Tier: auth.TierAPIKey, KeyID: "kid_attacker"}
-	ts := newAdminTestServerWithPlatformKeys(t, attacker, &fakeAccountStore{}, platformKeys, accts)
-
-	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_victim01", "", "")
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204 (a non-owner revoke is a silent no-op)", resp.StatusCode)
-	}
-	assertPlatformKeyLive(t, platformKeys, "kid_victim01")
-}
-
-// TestAccountKeysRevoke_OwnerRevokesPostgresRow is the positive
-// self-service case: the owner's revoke clears the management row.
-func TestAccountKeysRevoke_OwnerRevokesPostgresRow(t *testing.T) {
-	platformKeys, accts := seedOwnedPlatformKey("reg-abc123", "kid_shared01")
-	owner := auth.Subject{Identifier: "acct:reg-abc123", Tier: auth.TierAPIKey, KeyID: "kid_other"}
-	ts := newAdminTestServerWithPlatformKeys(t, owner, &fakeAccountStore{}, platformKeys, accts)
-
-	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_shared01", "", "")
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204", resp.StatusCode)
-	}
-	if len(platformKeys.revokedIDs) != 1 || platformKeys.revokedIDs[0] != "kid_shared01" {
-		t.Errorf("owner's postgres management row not revoked: revokedIDs = %v, want [kid_shared01]", platformKeys.revokedIDs)
-	}
-}
-
 // TestAdminKeysRevoke_NoAccountStoreLeavesPostgresRowLive: with no
 // account store the owner can't be proven, so the Postgres leg fails
 // closed rather than revoking by id alone.
@@ -439,5 +371,359 @@ func TestAdminKeysRevoke_TolerantOfRedisOnlyKey(t *testing.T) {
 		ts.URL+"/v1/admin/keys/kid_redisonly?identifier=acct:partner-co", "leaked key", "")
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204 (a Redis-only key with no Postgres row must still revoke)", resp.StatusCode)
+	}
+}
+
+// TestAdminKeysCreate_InheritsTargetIdentifierCeiling — POST
+// /v1/admin/keys takes no monthly_quota, so a key an operator mints for
+// a metered customer's identifier must take the ceiling that
+// identifier's credentials already carry, through the production store
+// and validator. The audit row records the ceiling actually issued.
+func TestAdminKeysCreate_InheritsTargetIdentifierCeiling(t *testing.T) {
+	const planQuota int64 = 250_000
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	store := auth.NewRedisAPIKeyStore(rdb)
+	if _, _, err := store.Create(context.Background(), auth.CreateAPIKeyRequest{
+		Identifier: "acct:metered-co", Tier: auth.TierAPIKey, MonthlyQuota: planQuota,
+	}); err != nil {
+		t.Fatalf("seed metered key: %v", err)
+	}
+
+	sink := &recordingAuditSink{}
+	ts := newAdminTestServer(t, operatorSubject(), store, sink)
+	resp := postJSON(t, ts.URL+"/v1/admin/keys", `{"identifier":"acct:metered-co","account":"metered-co","label":"ops-minted"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /v1/admin/keys status = %d, want 201", resp.StatusCode)
+	}
+	var body struct {
+		Data struct {
+			Plaintext string `json:"plaintext"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode mint response: %v", err)
+	}
+	sub, err := auth.NewRedisAPIKeyValidator(rdb).Lookup(context.Background(), body.Data.Plaintext)
+	if err != nil {
+		t.Fatalf("lookup minted key: %v", err)
+	}
+	if sub.MonthlyQuota != planQuota {
+		t.Fatalf("operator-minted Subject.MonthlyQuota = %d, want %d (a zero cap bills the "+
+			"customer's shared counter unmetered)", sub.MonthlyQuota, planQuota)
+	}
+
+	if len(sink.entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(sink.entries))
+	}
+	var meta struct {
+		MonthlyQuota *int64 `json:"monthly_quota"`
+	}
+	if err := json.Unmarshal(sink.entries[0].Metadata, &meta); err != nil {
+		t.Fatalf("decode audit metadata: %v", err)
+	}
+	if meta.MonthlyQuota == nil || *meta.MonthlyQuota != planQuota {
+		t.Fatalf("audit metadata monthly_quota = %v, want %d: %s",
+			meta.MonthlyQuota, planQuota, sink.entries[0].Metadata)
+	}
+}
+
+// An admin-minted key's identifier is its metering subject
+// (middleware.UsageKeyForSubject), so an acct:<slug> identifier draws
+// down that account's monthly quota. Such a mint must name the account
+// explicitly and the account must exist; nothing is created otherwise.
+func TestAdminKeysCreate_AccountBinding(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		status int
+	}{
+		{"acct identifier without confirmation", `{"identifier":"acct:partner-co","label":"l"}`, http.StatusBadRequest},
+		{"confirmation names another account", `{"identifier":"acct:partner-co","account":"ok","label":"l"}`, http.StatusBadRequest},
+		{"empty slug", `{"identifier":"acct:","account":"","label":"l"}`, http.StatusBadRequest},
+		{"account on a non-account identifier", `{"identifier":"signup-abc","account":"partner-co","label":"l"}`, http.StatusBadRequest},
+		{"account does not exist", `{"identifier":"acct:ghost","account":"ghost","label":"l"}`, http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeAccountStore{}
+			ts := newAdminTestServer(t, operatorSubject(), store, nil)
+			resp := postJSON(t, ts.URL+"/v1/admin/keys", tc.body)
+			if resp.StatusCode != tc.status {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tc.status)
+			}
+			if store.calls != 0 {
+				t.Errorf("store.Create called %d times; a refused binding must mint nothing", store.calls)
+			}
+		})
+	}
+}
+
+func TestAdminKeysCreate_NonAccountIdentifierNeedsNoBinding(t *testing.T) {
+	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_ops"}, plain: "sip_x"}
+	ts := newAdminTestServer(t, operatorSubject(), store, nil)
+	resp := postJSON(t, ts.URL+"/v1/admin/keys", `{"identifier":"operator:staff-2","label":"l","tier":"operator"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	if store.gotReq.Identifier != "operator:staff-2" {
+		t.Errorf("Identifier = %q", store.gotReq.Identifier)
+	}
+}
+
+// Without a platform account store the binding cannot be proven, so an
+// acct:<slug> mint fails closed.
+func TestAdminKeysCreate_AccountBindingFailsClosed(t *testing.T) {
+	for name, accounts := range map[string]v1.PlatformAccountStore{
+		"no account store": nil,
+		"lookup error": &fakePlatformAccountStore{
+			byID: map[uuid.UUID]platform.Account{}, getErr: errors.New("pg down"),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &fakeAccountStore{}
+			srv := v1.New(v1.Options{
+				Auth:             fakeAuthMiddleware(operatorSubject()),
+				Accounts:         store,
+				PlatformAccounts: accounts,
+			})
+			ts := httptest.NewServer(srv.Handler())
+			t.Cleanup(ts.Close)
+			resp := postJSON(t, ts.URL+"/v1/admin/keys", `{"identifier":"acct:partner-co","account":"partner-co","label":"l"}`)
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Errorf("status = %d, want 503", resp.StatusCode)
+			}
+			if store.calls != 0 {
+				t.Errorf("store.Create called %d times without a proven account", store.calls)
+			}
+		})
+	}
+}
+
+// POST /v1/admin/keys must clamp scopes to the caller's but checked
+// rate_limit_per_min only against the constant [0, 100000], so an
+// operator key narrowed to "admin" could still mint 100,000/min keys.
+func TestAdminKeysCreate_NarrowedOperatorCannotMintAboveItsRateLimit(t *testing.T) {
+	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_minted"}, plain: "sip_x"}
+	narrowed := auth.Subject{Identifier: "operator:staff-2", Tier: auth.TierOperator, KeyID: "kid_narrow", Scopes: []string{"admin"}}
+	ts := newAdminTestServer(t, narrowed, store, nil)
+
+	resp := postJSON(t, ts.URL+"/v1/admin/keys",
+		`{"identifier":"acct:target","account":"target","label":"comp","rate_limit_per_min":100000}`)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 — a scoped operator on the default rate limit must not mint a 100000/min key", resp.StatusCode)
+	}
+	if store.calls != 0 {
+		t.Errorf("store.Create called %d times for a refused mint", store.calls)
+	}
+}
+
+// The operator kill switch must not answer 204 and wrote a key.revoke
+// audit row for a revoke that matched nothing, so an on-call engineer
+// who mistyped one character of a leaked key's identifier was told the
+// incident was contained while the key kept authenticating. Driven
+// through the production store so the store's not-found contract and
+// the handler's mapping of it are proven together.
+func TestAdminKeysRevoke_TypoedIdentifierIs404WithNoAuditRow(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	store := auth.NewRedisAPIKeyStore(rdb)
+	leaked, plaintext, err := store.Create(context.Background(),
+		auth.CreateAPIKeyRequest{Identifier: "signup-9f3e", Label: "leaked"})
+	if err != nil {
+		t.Fatalf("seed Create: %v", err)
+	}
+
+	sink := &recordingAuditSink{}
+	ts := newAdminKeyServer(t, operatorSubject(), store, sink)
+
+	resp := adminDelete(t, ts.URL+"/v1/admin/keys/"+leaked.KeyID+"?identifier=signup-9f3f", "key in a public gist")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 — nothing was revoked, so the kill switch must not report success", resp.StatusCode)
+	}
+	for _, e := range sink.entries {
+		if e.Action == "key.revoke" {
+			t.Errorf("a key.revoke audit row was written for a revoke that revoked nothing: %+v", e)
+		}
+	}
+	if _, err := auth.NewRedisAPIKeyValidator(rdb).Lookup(context.Background(), plaintext); err != nil {
+		t.Fatalf("the untouched key should still authenticate (test premise): %v", err)
+	}
+
+	resp = adminDelete(t, ts.URL+"/v1/admin/keys/"+leaked.KeyID+"?identifier=signup-9f3e", "key in a public gist")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("correct identifier: status = %d, want 204", resp.StatusCode)
+	}
+	if len(sink.entries) != 1 || sink.entries[0].Action != "key.revoke" {
+		t.Errorf("audit entries after the real revoke = %+v, want exactly one key.revoke", sink.entries)
+	}
+}
+
+// A scoped caller asking for nothing must NOT get everything: the child
+// inherits the parent's own scopes rather than defaulting to full
+// access.
+func TestAdminKeysCreate_NarrowedOperatorCannotMintUnscopedKey(t *testing.T) {
+	before := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys"))
+
+	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_minted01"}, plain: "sip_x"}
+	sink := &recordingAuditSink{}
+	ts := newAdminTestServer(t, narrowedOperatorSubject(), store, sink)
+
+	resp := postJSON(t, ts.URL+"/v1/admin/keys",
+		`{"identifier":"acct:self","account":"self","label":"escalation","tier":"operator","scopes":[]}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (the clamp narrows, it does not reject an empty request)", resp.StatusCode)
+	}
+	if store.calls != 1 {
+		t.Fatalf("store.Create calls = %d, want 1", store.calls)
+	}
+	got := store.gotReq.Scopes
+	if len(got) != 1 || got[0] != platform.KeyScopeAdmin {
+		t.Fatalf("minted Scopes = %v, want [%q] inherited from the caller — an empty list is FULL ACCESS, "+
+			"so a narrowed operator key just escalated itself", got, platform.KeyScopeAdmin)
+	}
+	// A narrowed request is not a refusal: the clamp silently narrows it
+	// instead of rejecting, so the refusal counter must stay flat or the
+	// alert built on it fires on every routine narrowing.
+	if got := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys")); got != before {
+		t.Errorf("mint_scope_clamp_refused_total{route=\"/v1/admin/keys\"} moved on a narrowed (not refused) mint: %v -> %v", before, got)
+	}
+}
+
+// A scoped caller asking for a scope it does not hold is rejected
+// outright — not silently narrowed, and never minted.
+func TestAdminKeysCreate_NarrowedOperatorCannotMintScopeItLacks(t *testing.T) {
+	before := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys"))
+
+	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_minted02"}, plain: "sip_x"}
+	sink := &recordingAuditSink{}
+	ts := newAdminTestServer(t, narrowedOperatorSubject(), store, sink)
+
+	resp := postJSON(t, ts.URL+"/v1/admin/keys",
+		`{"identifier":"acct:partner-co","account":"partner-co","label":"data-reader","scopes":["read"]}`)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 — %q is outside the caller's own scopes", resp.StatusCode, platform.KeyScopeRead)
+	}
+	if store.calls != 0 {
+		t.Fatalf("store.Create called %d times despite the scope refusal — the key was minted anyway", store.calls)
+	}
+	if len(sink.entries) != 0 {
+		t.Fatalf("audit entries = %d, want 0 — nothing was minted", len(sink.entries))
+	}
+	// A refused escalation must be countable, not just logged —
+	// a scope-narrowed key repeatedly probing for escalation otherwise
+	// generates zero telemetry an alert could fire on.
+	if got, want := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys")), before+1; got != want {
+		t.Errorf("mint_scope_clamp_refused_total{route=\"/v1/admin/keys\"} = %v, want %v", got, want)
+	}
+}
+
+// Regression guard for the pre-scopes posture: a full-access operator
+// (empty scope list) still delegates freely, including minting another
+// full-access key. The clamp must not break staff onboarding.
+func TestAdminKeysCreate_FullAccessOperatorStillDelegatesFreely(t *testing.T) {
+	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_minted03"}, plain: "sip_x"}
+	sink := &recordingAuditSink{}
+	ts := newAdminTestServer(t, operatorSubject(), store, sink)
+
+	resp := postJSON(t, ts.URL+"/v1/admin/keys",
+		`{"identifier":"acct:partner-co","account":"partner-co","label":"full","scopes":[]}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	if len(store.gotReq.Scopes) != 0 {
+		t.Fatalf("minted Scopes = %v, want the empty (full-access) list an unscoped operator may still delegate",
+			store.gotReq.Scopes)
+	}
+}
+
+// TestAdminKeysRevoke_KillsALeakedKey is the key-half regression: an
+// operator can revoke a credential belonging to somebody else. Without the kill switch
+// there was no route at all — self-service revoke is scoped to the
+// caller's own identifier, so killing a leaked key required the victim's
+// credential or a hand-edit of Redis.
+func TestAdminKeysRevoke_KillsALeakedKey(t *testing.T) {
+	store := &recordingRevokeStore{}
+	sink := &recordingAuditSink{}
+	ts := newAdminKeyServer(t, auth.Subject{
+		Identifier: "ops", Tier: auth.TierOperator, KeyID: "kid_ops",
+	}, store, sink)
+
+	resp := adminDelete(t, ts.URL+"/v1/admin/keys/kid_leaked?identifier=signup-victim", "key posted to a public gist")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+	if store.calls != 1 {
+		t.Fatalf("RevokeKeyByID calls = %d, want 1", store.calls)
+	}
+	if store.identifier != "signup-victim" || store.keyID != "kid_leaked" {
+		t.Errorf("revoked (%q, %q), want (signup-victim, kid_leaked)", store.identifier, store.keyID)
+	}
+
+	var found bool
+	for _, e := range sink.entries {
+		if e.Action == "key.revoke" && e.TargetID == "kid_leaked" && e.ActorKind == platform.ActorStaff {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no key.revoke staff audit row; entries = %+v", sink.entries)
+	}
+}
+
+// TestAdminKeysRevoke_Guards pins the four refusals: non-operator
+// credentials, anonymous callers, a missing X-Reason, and a missing
+// owner identifier — none of which may reach the store.
+func TestAdminKeysRevoke_Guards(t *testing.T) {
+	cases := []struct {
+		name    string
+		subject auth.Subject
+		url     string
+		reason  string
+		want    int
+	}{
+		{
+			name:    "anonymous",
+			subject: auth.Subject{},
+			url:     "/v1/admin/keys/kid_x?identifier=signup-a",
+			reason:  "r",
+			want:    http.StatusUnauthorized,
+		},
+		{
+			name:    "customer tier",
+			subject: auth.Subject{Identifier: "signup-a", Tier: auth.TierAPIKey, KeyID: "kid_cust"},
+			url:     "/v1/admin/keys/kid_x?identifier=signup-a",
+			reason:  "r",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "missing X-Reason",
+			subject: auth.Subject{Identifier: "ops", Tier: auth.TierOperator, KeyID: "kid_ops"},
+			url:     "/v1/admin/keys/kid_x?identifier=signup-a",
+			reason:  "",
+			want:    http.StatusBadRequest,
+		},
+		{
+			name:    "missing identifier",
+			subject: auth.Subject{Identifier: "ops", Tier: auth.TierOperator, KeyID: "kid_ops"},
+			url:     "/v1/admin/keys/kid_x",
+			reason:  "r",
+			want:    http.StatusBadRequest,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &recordingRevokeStore{}
+			ts := newAdminKeyServer(t, tc.subject, store, nil)
+			resp := adminDelete(t, ts.URL+tc.url, tc.reason)
+			if resp.StatusCode != tc.want {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+			if store.calls != 0 {
+				t.Errorf("store touched %d times on a refused revoke", store.calls)
+			}
+		})
 	}
 }

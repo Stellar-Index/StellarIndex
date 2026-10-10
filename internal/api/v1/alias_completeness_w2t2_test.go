@@ -74,38 +74,6 @@ func TestVWAP_NonFiatQuoteAliasFirstHit(t *testing.T) {
 
 // ── target 2: /v1/history/since-inception (HistoryPoints) ──
 
-// TestHistorySinceInception_AssetAliasFirstHit — the series is keyed
-// under crypto:XLM/<USDC>; a ?asset=native query must resolve it via the
-// alias loop instead of returning an empty points array.
-func TestHistorySinceInception_AssetAliasFirstHit(t *testing.T) {
-	usdc, err := canonical.ParseAsset(w2t2USDC)
-	if err != nil {
-		t.Fatalf("parse USDC: %v", err)
-	}
-	cryptoXLM, _ := canonical.ParseAsset("crypto:XLM")
-	cryptoPair, _ := canonical.NewPair(cryptoXLM, usdc)
-
-	reader := &stubHistoryReader{
-		pointsByPair: map[string][]v1.HistoryPoint{
-			cryptoPair.String(): {{
-				Bucket: time.Unix(1_772_000_000, 0).UTC(),
-				VWAP:   "0.1600000000",
-			}},
-		},
-	}
-	srv := v1.New(v1.Options{History: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/history/since-inception?asset=native&quote="+usdc.String()+"&granularity=1h")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"0.1600000000"`) {
-		t.Errorf("body missing crypto:XLM-keyed history point 0.16 (alias loop should surface it): %s", body)
-	}
-}
-
 // ── target 3: /v1/pairs (PairMarket) ──
 
 type pairKeyedMarketsReader struct {

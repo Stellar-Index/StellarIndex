@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -207,5 +208,152 @@ func TestHandlerOwnBudget_AssetSupplyNonDeadlineFaultStays502(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502 — a lake read that actually failed is an upstream fault "+
 			"(body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandlerOwnBudget_MarketSourcesDeadlineOnLiveRequestIs503 is the
+// regression guard: /v1/markets/sources had no per-handler budget
+// and no handlerTimedOut branch, so a store-side deadline — however it
+// fired — fell through the bare `if err != nil` as a plain 500
+// market-sources-error: indistinguishable from a real bug, and booked as
+// a permanent availability failure rather than the retryable capacity
+// signal a deadline actually is. It must report a retryable 503 naming
+// the specific endpoint that stalled — the same shape as the cold-path
+// aggregates that carry their own per-call context (history.go,
+// chart.go's `-timeout` types), rather than the generic
+// requestTimeoutType writeProblemErr sites (twap, liquidity-pools) fall
+// back to when they have no context of their own to inspect.
+func TestHandlerOwnBudget_MarketSourcesDeadlineOnLiveRequestIs503(t *testing.T) {
+	for _, q := range []string{
+		"/v1/markets/sources?asset=native",
+		"/v1/markets/sources?base=native&quote=fiat:USD",
+	} {
+		s := quietServer()
+		s.MarketSources = deadlineMarketSourceReader{}
+
+		req := httptest.NewRequest(http.MethodGet, q, nil)
+		if err := req.Context().Err(); err != nil {
+			t.Fatalf("%s: request context must be alive for this test to mean anything: %v", q, err)
+		}
+		rec := httptest.NewRecorder()
+		s.handleMarketSources(rec, req)
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s: status = %d, want 503 — the handler's own budget expiring is retryable "+
+				"capacity, and a 500 books it as a permanent availability failure (body %s)",
+				q, rec.Code, rec.Body.String())
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("%s: Cache-Control = %q, want no-store", q, cc)
+		}
+		var p Problem
+		if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+			t.Fatalf("%s: decode problem: %v (body %s)", q, err, rec.Body.String())
+		}
+		if !strings.Contains(p.Type, "market-sources-timeout") {
+			t.Errorf("%s: problem type = %q, want it to name market-sources-timeout", q, p.Type)
+		}
+	}
+}
+
+// TestHandlerOwnBudget_MarketSourcesNonDeadlineFaultStays500 guards
+// against satisfying the upgrade above by relabelling EVERY failure as a
+// timeout, which would hide real storage faults from the 5xx dashboards
+// that separate "we are broken" from "we are slow".
+func TestHandlerOwnBudget_MarketSourcesNonDeadlineFaultStays500(t *testing.T) {
+	s := quietServer()
+	s.MarketSources = brokenMarketSourceReader{}
+
+	rec := httptest.NewRecorder()
+	s.handleMarketSources(rec, httptest.NewRequest(http.MethodGet, "/v1/markets/sources?asset=native", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 — a storage fault with budget left is a real internal "+
+			"error (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandlerOwnBudget_OracleSEP40DeadlineOnLiveRequestIs503 is the
+// regression guard. /v1/oracle/lastprice, /v1/oracle/prices and
+// /v1/oracle/x_last_price passed r.Context() straight to the PriceReader
+// with no per-handler budget and no handlerTimedOut branch, so a
+// store-side deadline fell through the bare `if err != nil` as a plain
+// 500 — indistinguishable from a real bug, and booked as a permanent
+// availability failure rather than the retryable capacity signal a
+// deadline actually is. Each must report a retryable 503 naming the
+// specific endpoint that stalled, the same contract as
+// /v1/markets/sources.
+func TestHandlerOwnBudget_OracleSEP40DeadlineOnLiveRequestIs503(t *testing.T) {
+	cases := []struct {
+		name       string
+		query      string
+		wantInType string
+		handle     func(*Server, http.ResponseWriter, *http.Request)
+	}{
+		{
+			name:       "lastprice",
+			query:      "/v1/oracle/lastprice?asset=native",
+			wantInType: "oracle-lastprice-timeout",
+			handle:     (*Server).handleOracleLastPrice,
+		},
+		{
+			name:       "prices",
+			query:      "/v1/oracle/prices?asset=native",
+			wantInType: "oracle-prices-timeout",
+			handle:     (*Server).handleOraclePrices,
+		},
+		{
+			name:       "x_last_price",
+			query:      "/v1/oracle/x_last_price?base=native&quote=fiat:USD",
+			wantInType: "oracle-xlastprice-timeout",
+			handle:     (*Server).handleOracleXLastPrice,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := quietServer()
+			s.Prices = deadlinePriceReader{}
+
+			req := httptest.NewRequest(http.MethodGet, tc.query, nil)
+			if err := req.Context().Err(); err != nil {
+				t.Fatalf("request context must be alive for this test to mean anything: %v", err)
+			}
+			rec := httptest.NewRecorder()
+			tc.handle(s, rec, req)
+
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503 — the handler's own budget expiring is retryable "+
+					"capacity, and a 500 books it as a permanent availability failure (body %s)",
+					rec.Code, rec.Body.String())
+			}
+			if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+				t.Errorf("Cache-Control = %q, want no-store", cc)
+			}
+			var p Problem
+			if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+				t.Fatalf("decode problem: %v (body %s)", err, rec.Body.String())
+			}
+			if !strings.Contains(p.Type, tc.wantInType) {
+				t.Errorf("problem type = %q, want it to name %s", p.Type, tc.wantInType)
+			}
+		})
+	}
+}
+
+// TestHandlerOwnBudget_OracleSEP40NonDeadlineFaultStays500 guards against
+// satisfying the upgrade above by relabelling EVERY failure as a timeout,
+// which would hide real storage faults from the 5xx dashboards that
+// separate "we are broken" from "we are slow".
+func TestHandlerOwnBudget_OracleSEP40NonDeadlineFaultStays500(t *testing.T) {
+	s := quietServer()
+	s.Prices = brokenPriceReader{}
+
+	rec := httptest.NewRecorder()
+	s.handleOracleLastPrice(rec, httptest.NewRequest(http.MethodGet, "/v1/oracle/lastprice?asset=native", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 — a storage fault with budget left is a real internal "+
+			"error (body %s)", rec.Code, rec.Body.String())
 	}
 }

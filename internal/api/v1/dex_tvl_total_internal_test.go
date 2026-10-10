@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -349,5 +351,19 @@ func TestDEXTVLTotal_AllRefusedPublishesNoTotal(t *testing.T) {
 	if got := testutil.ToFloat64(obs.DEXTVLReconcileTotal.WithLabelValues("divergent")); got != divergentBefore+1 {
 		t.Errorf("divergent counter = %v, want %v — an omitted total is still a divergence "+
 			"and must be visible to an operator, not silently absent", got, divergentBefore+1)
+	}
+}
+
+// TestDEXTVLTotal_NoStaleIssueCitation guards against citing the closed D4 DEX
+// TVL tracking issue, and dex_tvl_total.go's comments and the
+// classic-liquidity-pools exclusion Reason must not cite it as if it were
+// still open tracking work.
+func TestDEXTVLTotal_NoStaleIssueCitation(t *testing.T) {
+	src, err := os.ReadFile("dex_tvl_total.go")
+	if err != nil {
+		t.Fatalf("read dex_tvl_total.go: %v", err)
+	}
+	if strings.Contains(string(src), "#338") {
+		t.Fatal("dex_tvl_total.go still cites closed issue #338 (RLT-429)")
 	}
 }

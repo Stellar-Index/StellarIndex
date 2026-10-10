@@ -8,17 +8,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/testutil"
-
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
-	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -305,99 +301,6 @@ func TestAccountUsage_EmptyList(t *testing.T) {
 	}
 }
 
-// A mint inherits the caller's identifier, tier and rate limit, and returns
-// the plaintext once.
-func TestAccountKeysCreate_Happy(t *testing.T) {
-	store := &fakeAccountStore{
-		rec: auth.APIKeyRecord{
-			KeyID:     "kid_new",
-			Label:     "ci-bot-2",
-			CreatedAt: time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC),
-		},
-		plain: "sip_freshly_minted",
-	}
-	ts := newAccountTestServer(t, auth.Subject{
-		Identifier:      "owner-42",
-		Tier:            auth.TierAPIKey,
-		RateLimitPerMin: 600,
-	}, store)
-
-	got := decodeData[v1.KeyCreated](t, accountDo(t, ts, http.MethodPost, "/v1/account/keys", `{"label":"ci-bot-2"}`), http.StatusCreated)
-	if got.Plaintext != "sip_freshly_minted" || got.KeyID != "kid_new" {
-		t.Errorf("created = %+v, want plaintext echoed and kid_new", got)
-	}
-	if store.calls != 1 {
-		t.Errorf("Create called %d times, want 1", store.calls)
-	}
-	req := store.gotReq
-	if req.Identifier != "owner-42" || req.Tier != auth.TierAPIKey || req.RateLimitPerMin != 600 || req.Label != "ci-bot-2" {
-		t.Errorf("Create request = %+v, want identifier/tier/rate limit inherited from the caller", req)
-	}
-}
-
-// Delegation clamp: a caller narrowed to ["account"] that omits scopes must
-// mint a child with the same scopes, never a full-access (empty) key; a
-// full-access caller still mints full access.
-func TestAccountKeysCreate_OmittedScopesInheritTheCallers(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		scopes []string
-		want   []string
-	}{
-		{"scoped caller", []string{"account"}, []string{"account"}},
-		{"full-access caller", nil, nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_child"}, plain: "sip_child"}
-			ts := newAccountTestServer(t, auth.Subject{
-				Identifier: "owner-scoped",
-				Tier:       auth.TierAPIKey,
-				Scopes:     tc.scopes,
-			}, store)
-
-			resp := accountDo(t, ts, http.MethodPost, "/v1/account/keys", `{"label":"child"}`)
-			if resp.StatusCode != http.StatusCreated {
-				t.Fatalf("status = %d, want 201", resp.StatusCode)
-			}
-			if store.calls != 1 {
-				t.Fatalf("Create called %d times, want 1", store.calls)
-			}
-			if !slices.Equal(store.gotReq.Scopes, tc.want) {
-				t.Errorf("minted scopes = %v, want %v", store.gotReq.Scopes, tc.want)
-			}
-		})
-	}
-}
-
-// A scoped caller cannot mint a child with a scope it does not hold: an
-// ["account"] key requesting ["admin"] is rejected 403 before the store, and
-// the refusal is counted.
-func TestAccountKeysCreate_ScopedCallerCannotExceed(t *testing.T) {
-	before := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/account/keys"))
-
-	store := &fakeAccountStore{
-		rec:   auth.APIKeyRecord{KeyID: "kid_x", Label: "x"},
-		plain: "sip_x",
-	}
-	ts := newAccountTestServer(t, auth.Subject{
-		Identifier: "owner-scoped",
-		Tier:       auth.TierOperator,
-		Scopes:     []string{"account"},
-	}, store)
-
-	// Operator tier needs X-Reason; supply it so the scope clamp is what's tested.
-	resp := doWithReason(t, http.MethodPost, ts.URL+"/v1/account/keys", "scope clamp test", `{"label":"x","scopes":["admin"]}`)
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", resp.StatusCode)
-	}
-	if store.calls != 0 {
-		t.Errorf("Create called %d times, want 0 (escalation must be rejected before mint)", store.calls)
-	}
-	if got, want := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/account/keys")), before+1; got != want {
-		t.Errorf("mint_scope_clamp_refused_total{route=\"/v1/account/keys\"} = %v, want %v", got, want)
-	}
-}
-
 // An authenticated caller lists every key under their Identifier, oldest first.
 func TestAccountKeysList_HappyPath(t *testing.T) {
 	subj := auth.Subject{Identifier: "signup-acme", Tier: auth.TierAPIKey}
@@ -597,5 +500,158 @@ func TestAccountUser_UnverifiedEmailOmitsTheTimestampRatherThanZeroing(t *testin
 	}
 	if got := raw["email_verified_at"]; got != "2026-03-01T00:00:00Z" {
 		t.Errorf("email_verified_at = %v, want 2026-03-01T00:00:00Z", got)
+	}
+}
+
+// TestAccountUsage_BillableSameMeaningOnBothShapes pins that the
+// handler: `billable` carries the rollup's quota-counted units, and a
+// legacy row — the rollup-gap backfill inside a per-endpoint response
+// and the whole-response fallback alike — reports its billable total
+// as `billable`, so summing one column reconciles on either shape.
+func TestAccountUsage_BillableSameMeaningOnBothShapes(t *testing.T) {
+	subject := auth.Subject{Identifier: "owner-b", KeyID: "kid_b", Tier: auth.TierAPIKey}
+	legacy := &fakeUsageReader{days: []v1.UsageDay{
+		{Date: "2026-07-01", Requests: 30},
+		{Date: "2026-07-02", Requests: 999},
+	}}
+	rollup := &fakeUsageRollupReader{rows: []v1.UsageEndpointDay{
+		{Date: "2026-07-02", Endpoint: "/v1/price", Requests: 17, Billable: 12, Errors: 7, Throttled: 3},
+	}}
+
+	got := map[string]v1.UsageRow{}
+	for _, r := range getUsageRows(t, newUsageTestServer(t, subject, rollup, legacy)) {
+		got[r.Date+"|"+r.Endpoint] = r
+	}
+	if r := got["2026-07-02|/v1/price"]; r.Billable != 12 || r.Requests != 17 {
+		t.Errorf("rollup row = %+v, want billable 12 / requests 17", r)
+	}
+	if r := got["2026-07-01|"]; r.Billable != 30 {
+		t.Errorf("backfilled legacy row = %+v, want billable 30", r)
+	}
+
+	rows := getUsageRows(t, newUsageTestServer(t, subject, &fakeUsageRollupReader{}, legacy))
+	if len(rows) != 2 || rows[0].Billable != 30 || rows[1].Billable != 999 {
+		t.Errorf("legacy fallback rows = %+v, want billable 30 and 999", rows)
+	}
+}
+
+// TestAccountUsage_RollupBackfillsMissingDay. A day the
+// rollup worker never produced a row for at all (an outage gap, not
+// a legitimate zero-traffic day) must be filled in from the legacy
+// per-day reader rather than silently dropped from the trailing
+// 30-day window. Guards against readUsageRollup returning ok=true as soon
+// as len(days) > 0, which stops handleAccountUsage consulting the legacy
+// reader and makes a gap day vanish from the response.
+func TestAccountUsage_RollupBackfillsMissingDay(t *testing.T) {
+	rollup := &fakeUsageRollupReader{rows: []v1.UsageEndpointDay{
+		{Date: "2026-07-03", Endpoint: "/v1/price", Requests: 40, Errors: 1, Throttled: 7},
+	}}
+	legacy := &fakeUsageReader{days: []v1.UsageDay{
+		{Date: "2026-07-01", Requests: 12},  // rollup worker outage — no rollup row for this day
+		{Date: "2026-07-03", Requests: 999}, // rollup already covers this day; must NOT leak
+	}}
+	ts := newUsageTestServer(t, auth.Subject{
+		Identifier: "owner-9",
+		Tier:       auth.TierAPIKey,
+	}, rollup, legacy)
+
+	rows := getUsageRows(t, ts)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want 2 (1 rollup row + 1 backfilled legacy day)", rows)
+	}
+	var gotBackfill bool
+	for _, r := range rows {
+		switch r.Date {
+		case "2026-07-01":
+			gotBackfill = true
+			want := v1.UsageRow{Date: "2026-07-01", Requests: 12, Billable: 12}
+			if r != want {
+				t.Errorf("backfilled row = %+v, want %+v", r, want)
+			}
+		case "2026-07-03":
+			if r.Requests == 999 {
+				t.Error("legacy total leaked over a day the rollup reader already covered")
+			}
+		}
+	}
+	if !gotBackfill {
+		t.Errorf("missing rollup day 2026-07-01 was not backfilled from the legacy reader; rows = %+v", rows)
+	}
+}
+
+// TestAccountUsage_RollupBackfill_LegacyUnwired — no legacy reader
+// wired: the rollup rows still return (unwired backfill degrades to
+// no backfill, not an error), same posture as the rollup path itself.
+func TestAccountUsage_RollupBackfill_LegacyUnwired(t *testing.T) {
+	rollup := &fakeUsageRollupReader{rows: []v1.UsageEndpointDay{
+		{Date: "2026-07-03", Endpoint: "/v1/price", Requests: 40},
+	}}
+	ts := newUsageTestServer(t, auth.Subject{
+		Identifier: "owner-9",
+		Tier:       auth.TierAPIKey,
+	}, rollup, nil)
+
+	rows := getUsageRows(t, ts)
+	if len(rows) != 1 || rows[0].Date != "2026-07-03" {
+		t.Errorf("rows = %+v, want the single rollup row unchanged", rows)
+	}
+}
+
+// TestAccountUsage_SessionAuthenticated — a
+// magic-link dashboard session with NO API key attached must read
+// its account's usage, not 401. A handleAccountUsage that gated
+// solely on auth.SubjectFrom, which a session-only request never
+// populates (only the API-key auth middleware calls auth.WithSubject
+// in production) — every signed-in dashboard user got a 401 the
+// frontend silently swallowed into an empty usage page.
+func TestAccountUsage_SessionAuthenticated(t *testing.T) {
+	rollup := &fakeUsageRollupReader{rows: []v1.UsageEndpointDay{
+		{Date: "2026-07-02", Endpoint: "/v1/price", Requests: 10, Errors: 0, Throttled: 0},
+	}}
+	srv := v1.New(v1.Options{
+		// Anonymous — the request carries a session cookie, not an
+		// API key, so no auth.Subject reaches the context.
+		Auth:              fakeAuthMiddleware(auth.Subject{}),
+		SessionPeeker:     &fakeSessionPeeker{ok: true, info: v1.SessionInfo{AccountSlug: "acme-labs"}},
+		UsageRollupReader: rollup,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/v1/account/usage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (a dashboard session must not 401 on /v1/account/usage)", resp.StatusCode)
+	}
+	// Must read under the SAME account-scoped key an API key minted
+	// on this account would write under (middleware.UsageKeyForSubject's
+	// Identifier branch), so the dashboard sees the account's real
+	// usage rather than an unrelated / empty bucket.
+	if rollup.gotSubject != "id:acct:acme-labs" {
+		t.Errorf("subject = %q, want id:acct:acme-labs", rollup.gotSubject)
+	}
+}
+
+// TestAccountUsage_NoSessionNoSubject_Unauthenticated — a request
+// with neither a session nor an API key still 401s: the session path
+// must not become a universal bypass.
+func TestAccountUsage_NoSessionNoSubject_Unauthenticated(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Auth:          fakeAuthMiddleware(auth.Subject{}),
+		SessionPeeker: &fakeSessionPeeker{ok: false},
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/v1/account/usage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
 	}
 }

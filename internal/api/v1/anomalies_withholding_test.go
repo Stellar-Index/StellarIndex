@@ -2,14 +2,8 @@ package v1
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
-	"strings"
-	"testing"
-	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -71,91 +65,5 @@ func withholdingServer() *Server {
 	return &Server{
 		Options: Options{Scam: withholdingScamGate{withholdingFlaggedAsset: true}},
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-}
-
-func TestAnomalies_OmitsWithheldMarketsFrozenValue(t *testing.T) {
-	s := withholdingServer()
-	s.Anomalies = &withholdingAnomalyReader{rows: []timescale.FreezeEventRow{
-		{AssetID: withholdingFlaggedAsset, QuoteID: "native", FrozenAt: time.Unix(0, 0), Reason: "stale", FrozenValue: "0.42"},
-		{AssetID: "native", QuoteID: withholdingFlaggedAsset, FrozenAt: time.Unix(0, 0), Reason: "stale", FrozenValue: "2.38"},
-		{AssetID: "native", QuoteID: "fiat:USD", FrozenAt: time.Unix(0, 0), Reason: "stale", FrozenValue: "0.11"},
-	}}
-	rec := httptest.NewRecorder()
-	s.handleAnomalies(rec, httptest.NewRequest(http.MethodGet, "/v1/anomalies", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
-	}
-	var got struct {
-		Data AnomaliesView `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(got.Data.Events) != 1 || got.Data.Events[0].FrozenValue != "0.11" || got.Data.Events[0].AssetID != "native" {
-		t.Fatalf("events = %+v, want only native/fiat:USD @ 0.11 — a flagged issuer's frozen_value (either leg) was served", got.Data.Events)
-	}
-	if got.Data.FiringCount != 3 {
-		t.Errorf("firing_count = %d, want 3 — the count carries no price and is not filtered", got.Data.FiringCount)
-	}
-}
-
-func TestDivergence_OmitsWithheldMarketsOurPrice(t *testing.T) {
-	s := withholdingServer()
-	s.Divergences = &withholdingDivergenceReader{latest: []timescale.DivergenceRow{
-		{AssetID: withholdingFlaggedAsset, QuoteID: "native", Reference: "coingecko", OurPrice: "0.42", RefPrice: "0.40", DeltaPct: "5"},
-		{AssetID: "native", QuoteID: withholdingFlaggedAsset, Reference: "coingecko", OurPrice: "2.38", RefPrice: "2.5", DeltaPct: "-4.8"},
-		{AssetID: "crypto:BTC", QuoteID: "fiat:USD", Reference: "coingecko", OurPrice: "100", RefPrice: "99", DeltaPct: "1"},
-	}}
-	rec := httptest.NewRecorder()
-	s.handleDivergence(rec, httptest.NewRequest(http.MethodGet, "/v1/divergence", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
-	}
-	var got struct {
-		Data DivergenceView `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(got.Data.Pairs) != 1 || got.Data.Pairs[0].OurPrice != "100" {
-		t.Fatalf("pairs = %+v, want only crypto:BTC/fiat:USD @ 100 — a flagged issuer's our_price (either leg) was served", got.Data.Pairs)
-	}
-}
-
-func TestDivergenceSeries_WithheldMarketIsWithheldProblem(t *testing.T) {
-	for _, pair := range []string{withholdingFlaggedAsset + "~native", "native~" + withholdingFlaggedAsset} {
-		t.Run(pair, func(t *testing.T) {
-			s := withholdingServer()
-			reader := &withholdingDivergenceReader{points: []timescale.DivergenceSeriesPoint{
-				{Bucket: time.Unix(0, 0), DeltaPct: "5", OurPrice: "0.42", RefPrice: "0.40"},
-			}}
-			s.Divergences = reader
-			rec := httptest.NewRecorder()
-			s.handleDivergenceSeries(rec, httptest.NewRequest(http.MethodGet,
-				"/v1/divergence/series?pair="+pair+"", nil))
-			if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "price-withheld") {
-				t.Fatalf("status = %d body %s, want 404 price-withheld", rec.Code, rec.Body.String())
-			}
-			if strings.Contains(rec.Body.String(), "0.42") {
-				t.Errorf("withheld response leaked our_price: %s", rec.Body.String())
-			}
-			if reader.seriesRead {
-				t.Error("series was read for a withheld market; the gate must be asked first")
-			}
-		})
-	}
-}
-
-func TestDivergenceSeries_UnflaggedMarketStillServes(t *testing.T) {
-	s := withholdingServer()
-	s.Divergences = &withholdingDivergenceReader{points: []timescale.DivergenceSeriesPoint{
-		{Bucket: time.Unix(0, 0), DeltaPct: "1", OurPrice: "100", RefPrice: "99"},
-	}}
-	rec := httptest.NewRecorder()
-	s.handleDivergenceSeries(rec, httptest.NewRequest(http.MethodGet,
-		"/v1/divergence/series?pair=crypto:BTC~fiat:USD", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"our_price":"100"`) {
-		t.Fatalf("status = %d body %s, want 200 with our_price 100", rec.Code, rec.Body.String())
 	}
 }

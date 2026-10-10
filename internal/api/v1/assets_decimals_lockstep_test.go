@@ -241,3 +241,67 @@ func TestAssetsF2_DecimalsLockstep_StandardTokenUnaffected(t *testing.T) {
 		t.Errorf("flag must be omitted for a 7dp token: %s", body)
 	}
 }
+
+func TestAssetsF2_NonstandardDecimals_NormalizesPriceAndCaps(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	// Supply: 1000 tokens circulating, 2000 max, both @9dp (stroops).
+	circ := new(big.Int).Mul(big.NewInt(1000), new(big.Int).Exp(big.NewInt(10), big.NewInt(9), nil))
+	maxSupply := new(big.Int).Mul(big.NewInt(2000), new(big.Int).Exp(big.NewInt(10), big.NewInt(9), nil))
+	srv := v1.New(v1.Options{
+		Prices: &stubPriceReader{
+			snapshots: map[string]v1.PriceSnapshot{flaggedAsset + "/fiat:USD": {
+				AssetID: flaggedAsset, Quote: "fiat:USD", Price: "41.32", PriceType: "vwap",
+			}},
+		},
+		Supply:              &stubSupplyLooker{hit: true, snap: supply.Supply{CirculatingSupply: circ, MaxSupply: maxSupply}},
+		TokenDecimals:       &decStub{d: 9, found: true}, // detail.Decimals = 9 (supply divisor)
+		NonstandardDecimals: cache,
+	})
+	tsrv := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, tsrv.URL+"/v1/assets/"+flaggedAsset)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("status = %d: %s", resp.StatusCode, body)
+	}
+	body, _ := readAll(resp)
+	// price_usd: raw 41.32 × K(100) = 4132, not the raw 41.32.
+	if !strings.Contains(body, `"price_usd":"4132.0000000000"`) {
+		t.Errorf("price_usd not normalized (want 4132.0000000000): %s", body)
+	}
+	// market_cap = 1000 tokens × $4132 = $4,132,000, not 1000 × 41.32 = 41,320.
+	if !strings.Contains(body, `"market_cap_usd":"4132000.00"`) {
+		t.Errorf("market_cap_usd not normalized (want 4132000.00): %s", body)
+	}
+	// fdv = 2000 tokens × $4132 = $8,264,000.
+	if !strings.Contains(body, `"fdv_usd":"8264000.00"`) {
+		t.Errorf("fdv_usd not normalized (want 8264000.00): %s", body)
+	}
+}
+
+func TestAssetsF2_7dpUnchanged(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9) // flagged asset NOT this pair
+	srv := v1.New(v1.Options{
+		Prices: &stubPriceReader{
+			snapshots: map[string]v1.PriceSnapshot{"native/fiat:USD": {
+				AssetID: "native", Quote: "fiat:USD", Price: "0.07", PriceType: "vwap",
+			}},
+		},
+		Supply:              &stubSupplyLooker{hit: true, snap: xlmSupplySnap()},
+		NonstandardDecimals: cache,
+	})
+	tsrv := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, tsrv.URL+"/v1/assets/native")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	// Identical to TestF2_NativeAssetWithSupplyAndPrice — wiring the cache is a no-op.
+	if !strings.Contains(body, `"price_usd":"0.07"`) {
+		t.Errorf("7dp price_usd must be unchanged: %s", body)
+	}
+	if !strings.Contains(body, `"market_cap_usd":"3493000000.00"`) {
+		t.Errorf("7dp market_cap_usd must be unchanged: %s", body)
+	}
+}

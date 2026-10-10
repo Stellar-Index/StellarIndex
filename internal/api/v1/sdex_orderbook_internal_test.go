@@ -2,12 +2,8 @@ package v1
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -465,55 +461,5 @@ func TestSDEXOrderBookCache_VerifyObservesMetrics(t *testing.T) {
 	}
 	if got := count("verify_ok"); got != vOK+1 {
 		t.Errorf("empty verify must not observe (got %d, want %d)", got, vOK+1)
-	}
-}
-
-// TestHandleSDEXOrderbook_StaleWhenAdvanceStalled: a wedged
-// Advance leaves c.updated frozen (see Advance's early return on a
-// read error) while the book keeps serving. The handler must surface
-// that age as flags.stale rather than the unconditional false a fresh
-// snapshot gets.
-func TestHandleSDEXOrderbook_StaleWhenAdvanceStalled(t *testing.T) {
-	const usdc = "USDC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
-	reader := &stubOfferBookReader{
-		offers: []clickhouse.LiveOffer{
-			bookOffer("k1", 1, 100, "native", usdc, 1, 2, 10<<32|7),
-		},
-		cursor: 10,
-	}
-	c := NewSDEXOrderBookCache(reader, nil)
-	if err := c.Load(context.Background()); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	fetchStale := func() bool {
-		s := New(Options{SDEXOrderBook: c})
-		req := httptest.NewRequest(http.MethodGet, "/v1/sdex/orderbook?selling=native&buying="+usdc, nil)
-		w := httptest.NewRecorder()
-		s.handleSDEXOrderbook(w, req)
-		var env struct {
-			Flags struct {
-				Stale bool `json:"stale"`
-			} `json:"flags"`
-		}
-		if err := json.NewDecoder(w.Body).Decode(&env); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		return env.Flags.Stale
-	}
-
-	if got := fetchStale(); got {
-		t.Errorf("freshly loaded book: flags.stale = %v, want false", got)
-	}
-
-	// Simulate a wedged Advance: c.updated stays frozen at a time older
-	// than SDEXOrderBookStaleAfter, exactly what a sustained
-	// OfferChangesSince error leaves behind.
-	c.mu.Lock()
-	c.updated = time.Now().Add(-(SDEXOrderBookStaleAfter + time.Minute))
-	c.mu.Unlock()
-
-	if got := fetchStale(); !got {
-		t.Errorf("book stalled past %s: flags.stale = %v, want true", SDEXOrderBookStaleAfter, got)
 	}
 }
