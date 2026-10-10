@@ -41,7 +41,7 @@ func FuzzDisplayB64(f *testing.F) {
 	seeds := []string{
 		"", // the early-return
 		// Real mainnet SEP-41 bodies (internal/sources/sep41_supply
-		// golden_dropped_mint_test.go): a bare i128 burn amount and the
+		// dispatcher_adapter_test.go): a bare i128 burn amount and the
 		// CAP-67 map { amount, to_muxed_id } that an i128-only decode
 		// would drop.
 		"AAAACgAAAAAAAAAAAAAAABOrZoA=",

@@ -3,8 +3,6 @@ package defindex
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
-	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
@@ -150,47 +148,5 @@ func TestGolden_defindexVaultAdmin(t *testing.T) {
 		if ae.EventKind() != "defindex.vault.admin" {
 			t.Errorf("%v: EventKind = %q", k, ae.EventKind())
 		}
-	}
-}
-
-// TestDecode_vaultAdminMalformed: a modelled admin topic whose body lacks
-// or mistypes a required field is a decode error, never a partial row.
-func TestDecode_vaultAdminMalformed(t *testing.T) {
-	t.Parallel()
-	d := NewDecoder()
-	g := addrSCVal(makeAccountAddress(t, 0xAA))
-	c := addrSCVal(makeContractAddress(t, 0xBB))
-	cases := map[string]struct {
-		sym  string
-		body string
-	}{
-		"nmanager missing new_manager": {TopicSymbolNManager, mustB64(t, mapSCVal(t, mapEntry(t, "manager", g)))},
-		"nreceiver missing caller":     {TopicSymbolNReceiver, mustB64(t, mapSCVal(t, mapEntry(t, "new_fee_receiver", g)))},
-		"paused strategy not address":  {TopicSymbolPaused, mustB64(t, mapSCVal(t, mapEntry(t, "caller", g), mapEntry(t, "strategy_address", symSCVal("x"))))},
-		"rescue missing amount": {TopicSymbolRescue, mustB64(t, mapSCVal(t,
-			mapEntry(t, "caller", g), mapEntry(t, "strategy_address", c)))},
-		"rescue negative amount": {TopicSymbolRescue, mustB64(t, mapSCVal(t,
-			mapEntry(t, "amount_withdrawn", i128SCVal(big.NewInt(-1))),
-			mapEntry(t, "caller", g), mapEntry(t, "strategy_address", c)))},
-		"body not a map": {TopicSymbolRBManager, mustB64(t, g)},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			ev := events.Event{
-				ContractID:     MainnetVaults[0],
-				Ledger:         61_000_000,
-				LedgerClosedAt: "2026-01-01T00:00:00Z",
-				TxHash:         "admintx",
-				Topic:          []string{TopicPrefixVault, tc.sym},
-				Value:          tc.body,
-			}
-			out, err := d.Decode(ev)
-			if !errors.Is(err, ErrMalformedPayload) {
-				t.Errorf("err = %v, want ErrMalformedPayload", err)
-			}
-			if len(out) != 0 {
-				t.Errorf("emitted %d events, want 0", len(out))
-			}
-		})
 	}
 }

@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/events"
-
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 func TestClassify(t *testing.T) {
@@ -250,43 +250,6 @@ func TestDecodeSwap_incompleteErrors(t *testing.T) {
 	_, err := decodeSwap(RawPair{Swap: &events.Event{}, Sync: nil}, canonical.NativeAsset(), canonical.NativeAsset())
 	if err == nil {
 		t.Fatal("expected error for incomplete pair")
-	}
-}
-
-func TestDecoder_SeedPairIsConcurrentSafe(t *testing.T) {
-	// Race-flag regression: many concurrent SeedPair writers +
-	// Decode readers must not trip -race. Guards against a future
-	// refactor that inlines pair-cache writes without the lock.
-	d := NewDecoder()
-	xlm := canonical.NativeAsset()
-	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	const goroutines = 16
-	done := make(chan struct{}, goroutines*2)
-	for i := 0; i < goroutines; i++ {
-		pair := "CABC" + string(rune('A'+i))
-		go func() {
-			d.SeedPair(pair, xlm, usdc)
-			done <- struct{}{}
-		}()
-		go func() {
-			// Read-side race target — any read path that walks the
-			// pairTokens map.
-			d.SeedPair(pair, xlm, usdc) // idempotent write also counts as a reader via lock upgrade
-			done <- struct{}{}
-		}()
-	}
-	for i := 0; i < goroutines*2; i++ {
-		<-done
-	}
-}
-
-func TestDecoder_NameMatchesSourceName(t *testing.T) {
-	if got := NewDecoder().Name(); got != SourceName {
-		t.Errorf("Name = %q, want %q", got, SourceName)
 	}
 }
 

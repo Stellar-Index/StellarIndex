@@ -126,3 +126,20 @@ func TestDefaultPairList_MatchesMap(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultPairList_matchesDefaultPairs(t *testing.T) {
+	m, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	list, err := DefaultPairList()
+	if err != nil {
+		t.Fatalf("DefaultPairList: %v", err)
+	}
+	if len(list) != len(m) {
+		t.Errorf("list len = %d, want %d (DefaultPairs entry count)", len(list), len(m))
+	}
+	if len(list) == 0 {
+		t.Error("DefaultPairList returned empty slice")
+	}
+}

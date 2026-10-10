@@ -121,3 +121,14 @@ func TestParseMicrotimestamp_secondsMalformed(t *testing.T) {
 		t.Errorf("error %q missing \"timestamp\" fragment", err.Error())
 	}
 }
+
+func TestParseMicrotimestamp_FallbackToSeconds(t *testing.T) {
+	// When microtimestamp is absent, fall back to seconds.
+	ts, err := parseMicrotimestamp("", "1745000000")
+	if err != nil {
+		t.Fatalf("parseMicrotimestamp: %v", err)
+	}
+	if ts.Unix() != 1_745_000_000 {
+		t.Errorf("ts = %v, Unix = %d want 1745000000", ts, ts.Unix())
+	}
+}

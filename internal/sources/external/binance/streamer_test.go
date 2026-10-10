@@ -12,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // newTestWSServer spins up an httptest server that accepts a single
@@ -149,5 +150,68 @@ func TestStreamer_BuildStreamURL(t *testing.T) {
 	// Order of the streams query param is preserved; case lowered.
 	if !strings.Contains(u, "streams=xlmusdt%40aggTrade%2Fbtcusdt%40aggTrade") {
 		t.Errorf("URL missing expected streams query: %s", u)
+	}
+}
+
+// Trivial accessor tests for the external.Connector / Streamer
+// surface. These look pointless in isolation but the values feed
+// per-source metric labels and the aggregator's source-class
+// filter; a future rename that broke them would mislabel every
+// Binance trade in production.
+
+func TestStreamer_Name(t *testing.T) {
+	s := NewStreamer(map[string]canonical.Pair{})
+	if got := s.Name(); got != SourceName {
+		t.Errorf("Name() = %q, want %q", got, SourceName)
+	}
+}
+
+func TestStreamer_Class(t *testing.T) {
+	s := NewStreamer(map[string]canonical.Pair{})
+	if got := s.Class(); got != external.ClassExchange {
+		t.Errorf("Class() = %q, want %q", got, external.ClassExchange)
+	}
+}
+
+// Streamer.Start has two pre-network reject paths: empty pairs
+// slice (Binance requires explicit subscription, no auto-enum) and
+// a pair not in the PairMap. Pin both — silent fallthrough would
+// dial Binance with no subscription frame.
+
+func TestStreamer_Start_emptyPairsRejected(t *testing.T) {
+	pm, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	s := NewStreamer(pm)
+
+	if _, err := s.Start(context.Background(), nil); err == nil {
+		t.Error("expected error on empty pairs, got nil")
+	}
+}
+
+func TestStreamer_Start_unknownPairRejected(t *testing.T) {
+	pm, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	s := NewStreamer(pm)
+
+	// MATIC is in the ADR-0014 allow-list but intentionally not in
+	// DefaultPairs (skipped pending MATIC→POL migration). Stable
+	// "known unknown" placeholder.
+	matic, _ := canonical.NewCryptoAsset("MATIC")
+	usdt, _ := canonical.NewCryptoAsset("USDT")
+	missing, err := canonical.NewPair(matic, usdt)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+
+	_, err = s.Start(context.Background(), []canonical.Pair{missing})
+	if err == nil {
+		t.Fatal("expected error for unknown MATIC/USDT pair, got nil")
+	}
+	if !strings.Contains(err.Error(), "MATIC") {
+		t.Errorf("error %q should cite the offending asset", err.Error())
 	}
 }
