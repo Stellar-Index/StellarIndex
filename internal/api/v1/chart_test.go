@@ -24,61 +24,6 @@ func (s *stubFXHistoryReader) ListFXHistory(_ context.Context, _ string, _, _ ti
 	return s.points, s.err
 }
 
-func TestChart_Fiat_USDtoCNY_ReturnsInverseSeries(t *testing.T) {
-	// Reader returns USD-base rates: 1 USD = 7.18 CNY etc.
-	d1 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
-	d2 := time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC)
-	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
-		{Bucket: d1, RateUSDText: "7.18", InverseUSDText: "0.13927576601671309192"},
-		{Bucket: d2, RateUSDText: "7.20", InverseUSDText: "0.13888888888888888889"},
-	}}
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=fiat:USD&quote=fiat:CNY&timeframe=1y&granularity=1d")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d want 200", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.ChartSeries `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got := len(env.Data.Points); got != 2 {
-		t.Fatalf("got %d points, want 2", got)
-	}
-	// USD→CNY: useInverse=false, P should be RateUSD (~7.18).
-	if env.Data.Points[0].P == "" {
-		t.Errorf("point[0].P empty")
-	}
-}
-
-func TestChart_Fiat_CNYtoUSD_UsesInverse(t *testing.T) {
-	d1 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
-	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
-		{Bucket: d1, RateUSDText: "7.18", InverseUSDText: "0.13927576601671309192"},
-	}}
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=fiat:CNY&quote=fiat:USD&timeframe=1y&granularity=1d")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d want 200", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.ChartSeries `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(env.Data.Points) != 1 {
-		t.Fatalf("got %d points, want 1", len(env.Data.Points))
-	}
-	// Should be ~0.139 (= 1/7.18) — inverse path. Quick "starts with 0." check.
-	if env.Data.Points[0].P[:2] != "0." {
-		t.Errorf("inverse rate %q not in 0.x form", env.Data.Points[0].P)
-	}
-}
-
 // TestChart_Fiat_GranularitySnappedToDaily covers CA2-A02-correct-2:
 // fx_quotes is a one-row-per-UTC-day series, so a fiat:fiat chart must
 // report granularity=1d (never the requested sub-daily grain) and must
@@ -192,43 +137,6 @@ func TestChart_Fiat_CrossPair_NoSharedDays_EmptySeries(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&env)
 	if len(env.Data.Points) != 0 {
 		t.Errorf("no shared buckets should yield an empty series, got %d", len(env.Data.Points))
-	}
-}
-
-func TestChart_Fiat_NoFXHistoryReader_EmptySeries(t *testing.T) {
-	// FXHistory nil → empty series, not 500.
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=fiat:CNY&quote=fiat:USD&timeframe=1y&granularity=1d")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d want 200", resp.StatusCode)
-	}
-}
-
-func TestChart_503WhenReaderNil(t *testing.T) {
-	srv := v1.New(v1.Options{})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=native")
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status=%d want 503", resp.StatusCode)
-	}
-}
-
-func TestChart_MissingAsset400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/chart")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status=%d want 400", resp.StatusCode)
-	}
-}
-
-func TestChart_InvalidTimeframe400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&timeframe=2y")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status=%d want 400 for unknown timeframe", resp.StatusCode)
 	}
 }
 
@@ -358,34 +266,6 @@ func TestChart_TWAP_StablecoinFallback(t *testing.T) {
 	}
 }
 
-func TestChart_InvalidPriceType400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&price_type=mean")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status=%d want 400 for unknown price_type", resp.StatusCode)
-	}
-}
-
-func TestChart_BadGranularity400(t *testing.T) {
-	reader := &stubHistoryReader{pointsErr: v1.ErrUnknownGranularity}
-	srv := v1.New(v1.Options{History: reader})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&granularity=2h")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status=%d want 400 for unknown granularity", resp.StatusCode)
-	}
-}
-
-func TestChart_IdentityPair400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=native")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status=%d want 400 (asset=quote)", resp.StatusCode)
-	}
-}
-
 // TestChart_DefaultsTimeframeAndGranularity covers two defaults at
 // once: timeframe=24h and granularity=15m (per ADR-0020 table).
 func TestChart_DefaultsTimeframeAndGranularity(t *testing.T) {
@@ -432,69 +312,6 @@ func TestChart_DefaultsTimeframeAndGranularity(t *testing.T) {
 	delta := time.Since(reader.lastCall.from) - 24*time.Hour
 	if delta < -5*time.Second || delta > 5*time.Second {
 		t.Errorf("from window = %v from now, want ~24h", time.Since(reader.lastCall.from))
-	}
-}
-
-// TestChart_TimeframeAllNoLowerBound — `all` means no `from` filter
-// (since-inception equivalent). Reader sees zero from-time.
-func TestChart_TimeframeAllNoLowerBound(t *testing.T) {
-	reader := &stubHistoryReader{points: []v1.HistoryPoint{}}
-	srv := v1.New(v1.Options{History: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&timeframe=all")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", resp.StatusCode)
-	}
-	if !reader.lastCall.from.IsZero() {
-		t.Errorf("timeframe=all sent from=%v, want zero (no lower bound)", reader.lastCall.from)
-	}
-	if reader.lastCall.granularity != "1d" {
-		t.Errorf("timeframe=all default granularity = %q, want 1d", reader.lastCall.granularity)
-	}
-}
-
-// TestChart_PerTimeframeDefaultGranularity walks the ADR-0020 table.
-// One assertion per row.
-func TestChart_PerTimeframeDefaultGranularity(t *testing.T) {
-	cases := map[string]string{
-		"1h":  "1m",
-		"24h": "15m",
-		"1w":  "1h",
-		"1mo": "4h",
-		"1y":  "1d",
-		"all": "1d",
-	}
-	for tf, wantG := range cases {
-		t.Run(tf, func(t *testing.T) {
-			reader := &stubHistoryReader{points: []v1.HistoryPoint{}}
-			srv := v1.New(v1.Options{History: reader})
-			ts := httpTestServer(t, srv)
-			resp := mustGet(t, ts.URL+"/v1/chart?asset=native&timeframe="+tf)
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("timeframe=%s: status=%d", tf, resp.StatusCode)
-			}
-			if reader.lastCall.granularity != wantG {
-				t.Errorf("timeframe=%s: default granularity=%q want %q",
-					tf, reader.lastCall.granularity, wantG)
-			}
-		})
-	}
-}
-
-// TestChart_GranularityOverride confirms an explicit granularity
-// overrides the timeframe-table default.
-func TestChart_GranularityOverride(t *testing.T) {
-	reader := &stubHistoryReader{points: []v1.HistoryPoint{}}
-	srv := v1.New(v1.Options{History: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&timeframe=1h&granularity=15m")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", resp.StatusCode)
-	}
-	if reader.lastCall.granularity != "15m" {
-		t.Errorf("granularity=%q, want 15m (explicit override)", reader.lastCall.granularity)
 	}
 }
 
@@ -777,62 +594,6 @@ func TestChart_TruncatedFlagOnRetentionShortfall(t *testing.T) {
 	}
 }
 
-// TestChart_NotTruncatedWhenDataReachesWindowStart — when data
-// covers the full requested window, Truncated stays false and the
-// helper fields stay omitted from the JSON payload entirely.
-func TestChart_NotTruncatedWhenDataReachesWindowStart(t *testing.T) {
-	// Deeper history than the 24h request — first point is well
-	// before `from`. Nothing is truncated.
-	now := time.Now().UTC()
-	reader := &stubHistoryReader{
-		points: []v1.HistoryPoint{
-			{Bucket: now.Add(-25 * time.Hour), VWAP: "0.16"},
-			{Bucket: now.Add(-1 * time.Hour), VWAP: "0.17"},
-		},
-	}
-	srv := v1.New(v1.Options{History: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&timeframe=24h")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.ChartSeries `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	if env.Data.Truncated {
-		t.Error("Truncated = true, want false (data reaches window start)")
-	}
-	if env.Data.DataStartsAt != nil {
-		t.Errorf("DataStartsAt = %v, want nil when not truncated", env.Data.DataStartsAt)
-	}
-}
-
-// TestChart_TimeframeAllNeverTruncated — `timeframe=all` means
-// "everything you have" by definition, so a short result is the
-// full result, never truncated.
-func TestChart_TimeframeAllNeverTruncated(t *testing.T) {
-	now := time.Now().UTC()
-	reader := &stubHistoryReader{
-		points: []v1.HistoryPoint{{Bucket: now.Add(-1 * time.Hour), VWAP: "0.16"}},
-	}
-	srv := v1.New(v1.Options{History: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&timeframe=all")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.ChartSeries `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	if env.Data.Truncated {
-		t.Error("Truncated = true on timeframe=all; that timeframe means 'everything', never truncated")
-	}
-}
-
 // A timeframe=all read that fills the 50k row cap holds the OLDEST slice;
 // the response must say so, and a bounded or under-cap read must not.
 func TestChart_TimeframeAllRowCapTruncated(t *testing.T) {
@@ -1021,31 +782,6 @@ func TestChart_MarketCap_Crypto_Computed(t *testing.T) {
 	}
 }
 
-func TestChart_MarketCap_Crypto_NoSupplyReader_Unavailable(t *testing.T) {
-	// On-chain market_cap needs the supply reader wired; without it, 503.
-	srv := v1.New(v1.Options{
-		History:            &stubHistoryReader{},
-		VerifiedCurrencies: newTestCatalogue(t),
-	})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&price_type=market_cap&timeframe=1y&granularity=1d")
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status=%d want 503", resp.StatusCode)
-	}
-}
-
-func TestChart_MarketCap_QuoteMustBeUSD_400(t *testing.T) {
-	srv := v1.New(v1.Options{
-		History:            &stubHistoryReader{},
-		VerifiedCurrencies: newTestCatalogue(t),
-	})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=fiat:CNY&quote=fiat:EUR&price_type=market_cap")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status=%d want 400", resp.StatusCode)
-	}
-}
-
 // /v1/chart accepts `base=` as alias
 // for `asset=` so URLs from /v1/twap don't 400 on first try.
 func TestChart_BaseParamAcceptedAsAssetAlias(t *testing.T) {
@@ -1057,11 +793,133 @@ func TestChart_BaseParamAcceptedAsAssetAlias(t *testing.T) {
 	}
 }
 
-func TestChart_BothAssetAndBase400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&base=native")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status=%d want 400 (both asset+base)", resp.StatusCode)
+func getChartOpts(t *testing.T, opts v1.Options, query string) v1.ChartSeries {
+	t.Helper()
+	resp := mustGet(t, httpTestServer(t, v1.New(opts)).URL+"/v1/chart?"+query)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d want 200", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.ChartSeries `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	return body.Data
+}
+
+func TestChart_Fiat_RateDirection(t *testing.T) {
+	d1 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+	d2 := time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC)
+	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
+		{Bucket: d1, RateUSDText: "7.18", InverseUSDText: "0.13927576601671309192"},
+		{Bucket: d2, RateUSDText: "7.20", InverseUSDText: "0.13888888888888888889"},
+	}}
+	for _, tc := range []struct {
+		name, query string
+		want        []string
+	}{
+		{"USD to CNY serves the rate", "asset=fiat:USD&quote=fiat:CNY", []string{"7.1800000000", "7.2000000000"}},
+		{"CNY to USD serves the inverse", "asset=fiat:CNY&quote=fiat:USD", []string{"0.1392757660", "0.1388888888"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := getChartOpts(t, v1.Options{History: &stubHistoryReader{}, FXHistory: fx}, tc.query+"&timeframe=1y&granularity=1d")
+			if len(s.Points) != len(tc.want) {
+				t.Fatalf("got %d points, want %d", len(s.Points), len(tc.want))
+			}
+			for i, w := range tc.want {
+				if s.Points[i].P != w {
+					t.Errorf("point[%d].P = %q, want %q", i, s.Points[i].P, w)
+				}
+			}
+		})
+	}
+}
+
+func TestChart_Status(t *testing.T) {
+	hist := func(*testing.T) v1.Options { return v1.Options{History: &stubHistoryReader{}} }
+	withCatalogue := func(t *testing.T) v1.Options {
+		return v1.Options{History: &stubHistoryReader{}, VerifiedCurrencies: newTestCatalogue(t)}
+	}
+	for _, tc := range []struct {
+		name, query string
+		opts        func(*testing.T) v1.Options
+		want        int
+	}{
+		{"reader nil", "asset=native", func(*testing.T) v1.Options { return v1.Options{} }, http.StatusServiceUnavailable},
+		{"fiat without FX reader serves empty", "asset=fiat:CNY&quote=fiat:USD&timeframe=1y&granularity=1d", hist, http.StatusOK},
+		{"missing asset", "", hist, http.StatusBadRequest},
+		{"unknown timeframe", "asset=native&timeframe=2y", hist, http.StatusBadRequest},
+		{"unknown price_type", "asset=native&price_type=mean", hist, http.StatusBadRequest},
+		{
+			"unknown granularity", "asset=native&granularity=2h",
+			func(*testing.T) v1.Options {
+				return v1.Options{History: &stubHistoryReader{pointsErr: v1.ErrUnknownGranularity}}
+			}, http.StatusBadRequest,
+		},
+		{"asset equals quote", "asset=native&quote=native", hist, http.StatusBadRequest},
+		{"both asset and base", "asset=native&base=native", hist, http.StatusBadRequest},
+		{
+			"market_cap needs supply reader", "asset=native&quote=fiat:USD&price_type=market_cap&timeframe=1y&granularity=1d",
+			withCatalogue, http.StatusServiceUnavailable,
+		},
+		{"market_cap quote must be USD", "asset=fiat:CNY&quote=fiat:EUR&price_type=market_cap", withCatalogue, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := mustGet(t, httpTestServer(t, v1.New(tc.opts(t))).URL+"/v1/chart?"+tc.query)
+			if resp.StatusCode != tc.want {
+				t.Errorf("status=%d want %d", resp.StatusCode, tc.want)
+			}
+		})
+	}
+}
+
+func TestChart_TimeframeGranularityWindow(t *testing.T) {
+	for _, tc := range []struct {
+		query, wantGran string
+		wantZeroFrom    bool
+	}{
+		{"timeframe=1h", "1m", false},
+		{"timeframe=24h", "15m", false},
+		{"timeframe=1w", "1h", false},
+		{"timeframe=1mo", "4h", false},
+		{"timeframe=1y", "1d", false},
+		{"timeframe=all", "1d", true},
+		{"timeframe=1h&granularity=15m", "15m", false},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			reader := &stubHistoryReader{points: []v1.HistoryPoint{}}
+			getChartOpts(t, v1.Options{History: reader}, "asset=native&"+tc.query)
+			if reader.lastCall.granularity != tc.wantGran {
+				t.Errorf("granularity=%q want %q", reader.lastCall.granularity, tc.wantGran)
+			}
+			if reader.lastCall.from.IsZero() != tc.wantZeroFrom {
+				t.Errorf("from=%v, zero want %v", reader.lastCall.from, tc.wantZeroFrom)
+			}
+		})
+	}
+}
+
+// A window with data reaching its start is not truncated, and timeframe=all
+// is never truncated by definition.
+func TestChart_NotTruncated(t *testing.T) {
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name, timeframe string
+		points          []v1.HistoryPoint
+	}{
+		{"data reaches window start", "24h", []v1.HistoryPoint{
+			{Bucket: now.Add(-25 * time.Hour), VWAP: "0.16"},
+			{Bucket: now.Add(-1 * time.Hour), VWAP: "0.17"},
+		}},
+		{"timeframe all", "all", []v1.HistoryPoint{{Bucket: now.Add(-1 * time.Hour), VWAP: "0.16"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := getChartSeries(t, &stubHistoryReader{points: tc.points}, "timeframe="+tc.timeframe)
+			if s.Truncated {
+				t.Error("Truncated = true, want false")
+			}
+			if s.DataStartsAt != nil {
+				t.Errorf("DataStartsAt = %v, want nil when not truncated", s.DataStartsAt)
+			}
+		})
 	}
 }
