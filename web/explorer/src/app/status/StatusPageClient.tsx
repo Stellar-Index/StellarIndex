@@ -838,7 +838,6 @@ function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
     <PageHeader
       breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Status' }]}
       title="Stellar Index status"
-      description="Live health, latency, ingest freshness and a curated public-endpoint matrix, probed from your browser."
       actions={
         // The pulse is a liveness claim: it only pulses green while the
         // latest poll succeeded. During an outage it goes grey and says how

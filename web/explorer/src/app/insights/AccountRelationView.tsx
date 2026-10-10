@@ -146,7 +146,6 @@ export function AccountRelationView({
         <PageHeader
           title={<span className="font-mono break-all">{account}</span>}
           breadcrumbs={crumbs}
-          description={`This address as a ${vocabulary.actor}: the accounts it has ${creation ? 'created' : 'sponsored'}, over time and today.`}
         />
         <div className="text-ink-body flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <Link

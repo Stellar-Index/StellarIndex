@@ -37,16 +37,7 @@ export default function CreatorsPage() {
 
   return (
     <Container className="space-y-6 py-8">
-      <PageHeader
-        title="Account creators"
-        breadcrumbs={CRUMBS}
-        description={
-          <>
-            Funders ranked by accounts onboarded, what they funded and how many
-            survive.
-          </>
-        }
-      />
+      <PageHeader title="Account creators" breadcrumbs={CRUMBS} />
 
       <CreatorBoard />
 

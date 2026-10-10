@@ -54,7 +54,6 @@ function SettingsBody({ me }: { me: MeResponse }) {
             { label: 'Settings' },
           ]}
           title="Settings"
-          description="Your profile, plan, and account controls."
         />
 
         <ProfileCard me={me} />

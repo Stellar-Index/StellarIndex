@@ -36,18 +36,16 @@ export default function TermsPage() {
             { label: 'Terms of Service' },
           ]}
           title="Terms of Service"
-          description={
-            <>
-              These terms govern your use of the Stellar Index explorer at
-              stellarindex.io and the Stellar Index API at api.stellarindex.io
-              (together, the &ldquo;Service&rdquo;), operated by{' '}
-              {LEGAL_ENTITY_DETAILS} (the &ldquo;Operator&rdquo;,
-              &ldquo;we&rdquo;, &ldquo;us&rdquo;). By using the Service —
-              anonymously, or through an account or API key — you agree to them.
-              If you do not agree, do not use the Service.
-            </>
-          }
         />
+        <p className="text-ink-muted text-[15px] leading-relaxed">
+          These terms govern your use of the Stellar Index explorer at
+          stellarindex.io and the Stellar Index API at api.stellarindex.io
+          (together, the &ldquo;Service&rdquo;), operated by{' '}
+          {LEGAL_ENTITY_DETAILS} (the &ldquo;Operator&rdquo;, &ldquo;we&rdquo;,
+          &ldquo;us&rdquo;). By using the Service — anonymously, or through an
+          account or API key — you agree to them. If you do not agree, do not
+          use the Service.
+        </p>
         <p className="text-ink-muted text-xs">Last updated: {LAST_UPDATED}</p>
       </header>
 

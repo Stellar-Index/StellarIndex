@@ -876,7 +876,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             { label: assetSymbol(coin) },
           ]}
           title={assetSymbol(coin)}
-          description={
+          meta={
             globalView?.name && globalView.name !== coin.code
               ? globalView.name
               : undefined

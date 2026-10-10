@@ -126,7 +126,6 @@ function KeysBody({ me }: { me: MeResponse }) {
             { label: 'API keys' },
           ]}
           title="API keys"
-          description="Mint and manage the keys your apps use to authenticate against api.stellarindex.io."
           actions={
             !showForm && (
               <Button onClick={() => setShowForm(true)}>

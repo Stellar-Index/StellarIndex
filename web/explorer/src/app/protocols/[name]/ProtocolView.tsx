@@ -114,7 +114,6 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
     <Shell
       name={name}
       label={label}
-      description={data.description}
       actions={
         <>
           <CategoryChip category={data.category} />
@@ -279,14 +278,12 @@ function ProtocolCrossLinks({
 function Shell({
   name,
   label,
-  description,
   actions,
   intro,
   children,
 }: {
   name: string;
   label: string;
-  description?: React.ReactNode;
   actions?: React.ReactNode;
   intro?: React.ReactNode;
   children: React.ReactNode;
@@ -303,7 +300,6 @@ function Shell({
             { label: label || name },
           ]}
           title={label}
-          description={description}
           actions={actions}
         />
         {intro}

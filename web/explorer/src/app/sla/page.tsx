@@ -16,16 +16,6 @@ export default function SLAPage() {
       <PageHeader
         title="Service level"
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Service level' }]}
-        description={
-          <>
-            Four targets bind the Stellar Index API. Each is measured
-            continuously by a probe that runs on the API host against the
-            service&apos;s own listener, and each measurement is published as a
-            metric, not asserted in prose. This page states the targets, how
-            they are measured, where that measurement stops short, and what the
-            targets deliberately do not cover.
-          </>
-        }
       />
 
       <DataTrustTabs active="/sla" />

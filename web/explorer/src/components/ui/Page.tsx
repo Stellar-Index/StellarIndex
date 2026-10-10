@@ -27,18 +27,16 @@ export type Crumb = { label: string; href?: string };
 
 /**
  * PageHeader is the consistent top-of-page block: breadcrumbs, an h1 title,
- * an optional muted meta line (date, author, type), a description, and actions.
+ * an optional muted meta line (date, author, type), and actions.
  */
 export function PageHeader({
   title,
-  description,
   meta,
   breadcrumbs,
   actions,
   className,
 }: {
   title: ReactNode;
-  description?: ReactNode;
   meta?: ReactNode;
   breadcrumbs?: Crumb[];
   actions?: ReactNode;
@@ -57,11 +55,6 @@ export function PageHeader({
         )}
         <h1 className="text-h1 text-ink font-semibold">{title}</h1>
         {meta && <div className="text-ink-faint mt-1 text-xs">{meta}</div>}
-        {description && (
-          <p className="text-ink-muted mt-2 max-w-prose text-[15px] leading-relaxed">
-            {description}
-          </p>
-        )}
       </div>
       {actions && (
         <div className="flex shrink-0 items-center gap-2">{actions}</div>

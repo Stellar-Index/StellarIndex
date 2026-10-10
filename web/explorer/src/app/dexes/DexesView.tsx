@@ -131,19 +131,6 @@ export function DexesView() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'DEXes' }]}
         title="DEXes"
-        description={
-          <>
-            Every Stellar DEX we ingest — Soroswap, Phoenix, Aquarius, Comet,
-            and the Stellar-native order book SDEX. The first table summarises
-            each protocol; the second lists every (DEX, base, quote) pool
-            we&apos;ve observed in the last 14 days. CEX trading pairs (Binance,
-            Coinbase, Kraken, Bitstamp) live at{' '}
-            <Link href="/exchanges" className="text-brand-600 hover:underline">
-              /exchanges
-            </Link>
-            ; &ldquo;pool&rdquo; is AMM/DEX terminology.
-          </>
-        }
       />
 
       <DexProtocolsTable />

@@ -154,7 +154,6 @@ export function NetworkView() {
         <PageHeader
           breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Network' }]}
           title="Network"
-          description="Live ledgers, operations and transactions from the Stellar network."
         />
         {/* The rail carries one Network entry;
             the chain sub-surfaces are reached from this hub. */}

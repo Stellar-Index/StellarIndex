@@ -30,7 +30,6 @@ export default function TransactionsPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Transactions' }]}
         title="Transactions"
-        description="Recent transactions, newest ledger first. Click a hash for the full decoded transaction — operations, events, and result codes."
       />
 
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>

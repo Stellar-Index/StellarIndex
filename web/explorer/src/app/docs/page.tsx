@@ -122,20 +122,6 @@ export default function DocsPage() {
           { label: 'Developer docs' },
         ]}
         title="Developer docs"
-        description={
-          <>
-            The Stellar Index API serves verified, per-protocol Stellar pricing
-            and on-chain data over REST + SSE. This page is the quickstart; the
-            full machine-readable contract is the{' '}
-            <a
-              className="text-brand-600 hover:underline"
-              href="/openapi/stellar-index.v1.yaml"
-            >
-              OpenAPI spec
-            </a>
-            .
-          </>
-        }
       />
 
       <Section id="base-url" title="Base URL & versioning">

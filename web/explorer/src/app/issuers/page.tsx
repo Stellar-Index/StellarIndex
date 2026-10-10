@@ -16,7 +16,6 @@ export default function IssuersPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Issuers' }]}
         title="Issuers"
-        description="Classic-asset issuers ranked by observation count."
       />
       <IssuersTable />
     </Container>

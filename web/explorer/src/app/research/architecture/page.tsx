@@ -23,7 +23,6 @@ export default function ArchitectureIndexPage() {
           { label: 'Architecture narratives' },
         ]}
         title="Architecture narratives"
-        description="The long-form designs behind every Stellar Index subsystem."
       />
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {docs.map((d) => (
