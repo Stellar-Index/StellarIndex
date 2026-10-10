@@ -193,7 +193,7 @@ function TradeVenueBars({ rows }: { rows: TradeRow[] }) {
   if (items.length < 2) return null;
   return (
     <div className="pb-3">
-      <h3 className="text-ink-muted mb-2 text-[11px] tracking-wider uppercase">
+      <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
         Trades by venue
       </h3>
       <HBarList items={items} ariaLabel="Trade count by venue" />
