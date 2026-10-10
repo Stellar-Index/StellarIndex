@@ -6688,6 +6688,10 @@ export interface components {
             base_amount: string;
             /** @description Decimal string, raw integer at the quote asset's scale. */
             quote_amount: string;
+            /** @description Divide base_amount by 10^base_decimals for whole units. ABSENT when the asset's scale is unknown. */
+            base_decimals?: number;
+            /** @description Divide quote_amount by 10^quote_decimals for whole units. ABSENT when the asset's scale is unknown. */
+            quote_decimals?: number;
             /**
              * @description USD-equivalent volume as a decimal string, when the
              *     aggregator valued the trade at ingest. ABSENT = unknown

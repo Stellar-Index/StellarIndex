@@ -850,18 +850,26 @@ const movementDecimalsBudget = 2 * time.Second
 func (h *Handler) accountMovementEntries(ctx context.Context, merged []clickhouse.AccountMovementRow) []AccountMovementEntry {
 	dctx, cancel := context.WithTimeout(ctx, movementDecimalsBudget)
 	defer cancel()
-	scales := make(map[string]*int)
+	scale := h.assetScales(dctx)
 	out := make([]AccountMovementEntry, len(merged))
 	for i, m := range merged {
-		d, seen := scales[m.Asset]
-		if !seen {
-			d = h.movementAssetDecimals(dctx, m.Asset)
-			scales[m.Asset] = d
-		}
 		out[i] = accountMovementEntryView(m)
-		out[i].Decimals = d
+		out[i].Decimals = scale(m.Asset)
 	}
 	return out
+}
+
+// assetScales memoises movementAssetDecimals per asset for one page.
+func (h *Handler) assetScales(ctx context.Context) func(asset string) *int {
+	scales := make(map[string]*int)
+	return func(asset string) *int {
+		d, seen := scales[asset]
+		if !seen {
+			d = h.movementAssetDecimals(ctx, asset)
+			scales[asset] = d
+		}
+		return d
+	}
 }
 
 // movementAssetDecimals returns a movement asset's smallest-unit scale, or

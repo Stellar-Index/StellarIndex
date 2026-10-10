@@ -48,19 +48,23 @@ const accountTradesScopeNote = "On-chain trades where this address is recorded a
 // needs per-asset decimals — serving quote/base raw would be a wrong
 // number with a right-looking name.
 type AccountTradeEntry struct {
-	Ts           string `json:"ts"`
-	Source       string `json:"source"`
-	BaseAsset    string `json:"base_asset"`
-	QuoteAsset   string `json:"quote_asset"`
-	BaseAmount   string `json:"base_amount"`
-	QuoteAmount  string `json:"quote_amount"`
-	USDVolume    string `json:"usd_volume,omitempty"`
-	TxHash       string `json:"tx_hash"`
-	Ledger       uint32 `json:"ledger"`
-	OpIndex      uint32 `json:"op_index"`
-	Role         string `json:"role"`
-	Counterparty string `json:"counterparty,omitempty"`
-	RoutedVia    string `json:"routed_via,omitempty"`
+	Ts          string `json:"ts"`
+	Source      string `json:"source"`
+	BaseAsset   string `json:"base_asset"`
+	QuoteAsset  string `json:"quote_asset"`
+	BaseAmount  string `json:"base_amount"`
+	QuoteAmount string `json:"quote_amount"`
+	// BaseDecimals / QuoteDecimals scale each amount to whole units;
+	// omitted when the asset's scale is unknown.
+	BaseDecimals  *int   `json:"base_decimals,omitempty"`
+	QuoteDecimals *int   `json:"quote_decimals,omitempty"`
+	USDVolume     string `json:"usd_volume,omitempty"`
+	TxHash        string `json:"tx_hash"`
+	Ledger        uint32 `json:"ledger"`
+	OpIndex       uint32 `json:"op_index"`
+	Role          string `json:"role"`
+	Counterparty  string `json:"counterparty,omitempty"`
+	RoutedVia     string `json:"routed_via,omitempty"`
 	// Signer is the transaction source account (fee-payer / initiator)
 	// behind an AMM/Soroban swap — the human/EOA a router or contract
 	// call hides behind the pool `taker`. Empty for non-AMM trades or
@@ -264,8 +268,13 @@ func (h *Handler) AccountTrades(w http.ResponseWriter, r *http.Request) {
 		Trades:  make([]AccountTradeEntry, len(rows)),
 		Note:    note,
 	}
+	dctx, dcancel := context.WithTimeout(ctx, movementDecimalsBudget)
+	defer dcancel()
+	scale := h.assetScales(dctx)
 	for i, t := range rows {
 		out.Trades[i] = accountTradeEntryView(t)
+		out.Trades[i].BaseDecimals = scale(t.BaseAsset)
+		out.Trades[i].QuoteDecimals = scale(t.QuoteAsset)
 	}
 	if len(rows) == limit {
 		out.NextCursor = encodeAccountTradesCursor(rows[len(rows)-1])
