@@ -376,20 +376,15 @@ func (*decodeErrDecoder) Decode(events.Event) ([]consumer.Event, error) {
 	return nil, errors.New("field-mapping regression: cannot decode 7-field swap")
 }
 
-// ---------------------------------------------------------------------------
-// a DETERMINISTIC store validation error must not wedge the source.
-// ---------------------------------------------------------------------------
-
-// TestCycle_ValidationErrorDoesNotWedge pins that a
-// Validate-failing row — here an OracleUpdate rejected by canonical
-// validation, exactly what Store.InsertOracleUpdate returns verbatim — is a
-// DETERMINISTIC data fault. It carries no *pgconn.PgError, so the old
-// permanent/transient boolean classified it transient and held the cursor
-// below its ledger FOREVER; there is no second writer, so the
-// whole per-source projection stopped advancing from one bad row.
+// TestCycle_ValidationErrorDoesNotWedge pins that a Validate-failing row (an
+// OracleUpdate rejected by canonical validation, which carries no
+// *pgconn.PgError) is a deterministic data fault: it is skipped and counted on
+// the first cycle, the cursor advances, and a later cycle over the still-poisoned
+// range keeps making progress.
 //
-// The corrected behaviour: skip the row on the FIRST cycle, count it, and
-// advance the cursor to the window's end.
+// Ledger 102 commits alongside the poison row: that is the sink-health proof the
+// skip arm needs. A lone poison row with nothing else committing is the
+// global-fault shape instead, pinned (holding) in poison_shed_health_proof_test.go.
 func TestCycle_ValidationErrorDoesNotWedge(t *testing.T) {
 	const source = "cor11-validation"
 	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
@@ -397,52 +392,19 @@ func TestCycle_ValidationErrorDoesNotWedge(t *testing.T) {
 
 	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
 		if ev.(ledgerEvent).ledger == 101 {
-			// Verbatim shape of timescale.Store.InsertOracleUpdate's
-			// `u.Validate()` return for a self-priced / non-positive-price
-			// update published by a live oracle source.
 			return fmt.Errorf("%w: price must be positive, got 0", canonical.ErrInvalidOracle)
 		}
 		return nil
 	})
 
 	h.cycle()
-
 	if got := h.store.cursor(); got != 105 {
-		t.Fatalf("cursor = %d, want 105 (the projector must advance past a deterministic validation failure, not wedge on it)", got)
+		t.Fatalf("cycle 1: cursor = %d, want 105 (advance past a deterministic validation failure)", got)
 	}
 	if got := decodedCount(t, source, "sink_permanent") - before; got != 1 {
-		t.Errorf("sink_permanent counter delta = %v, want 1 (the skipped row must be counted for investigation)", got)
-	}
-}
-
-// TestCycle_ValidationErrorStillAdvancesAcrossCycles is the "stays unwedged"
-// half: a second cycle over a still-poisoned range keeps making progress
-// rather than re-stalling.
-//
-// The skip arm takes the same sink-health proof the quarantine arm does, so the
-// poison row is accompanied by one that COMMITS — which is the shape a
-// scattered poison row actually has in production, and the shape this case
-// always meant ("a still-poisoned RANGE keeps making progress"). A lone poison
-// row with nothing else committing is the GLOBAL-fault shape instead, and
-// pinning a cycle-one advance for it is what let a bad migration shed a whole
-// backlog in one pass; that case is pinned, holding, in
-// poison_shed_health_proof_test.go.
-func TestCycle_ValidationErrorStillAdvancesAcrossCycles(t *testing.T) {
-	const source = "cor11-validation-repeat"
-	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
-	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
-		if ev.(ledgerEvent).ledger == 101 {
-			return fmt.Errorf("%w: tx_hash %q is not 64 hex chars", canonical.ErrInvalidOracle, "deadbeef")
-		}
-		return nil // ledger 102 commits: the cycle's proof the sink is healthy
-	})
-
-	h.cycle()
-	if got := h.store.cursor(); got != 105 {
-		t.Fatalf("cycle 1: cursor = %d, want 105", got)
+		t.Errorf("sink_permanent counter delta = %v, want 1 (the skipped row must be counted)", got)
 	}
 
-	// Tip moves on; the source must keep tracking it.
 	h.store.mu.Lock()
 	h.store.tipLedger = 205
 	h.store.mu.Unlock()
@@ -505,30 +467,59 @@ func TestCycle_NegativeSEP41AmountQuarantinesAfterBudget(t *testing.T) {
 // work.
 // ---------------------------------------------------------------------------
 
-// TestCycle_InfraErrorRetriesForever pins the anti-over-correction property: a
-// positively-identified infrastructure fault (Postgres unreachable) is NEVER
-// quarantined, however many cycles it lasts. Shedding live rows because the
-// database is down is the loss this projector exists to prevent.
-func TestCycle_InfraErrorRetriesForever(t *testing.T) {
-	const source = "infra-retry-forever"
-	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
-	beforeQuarantined := decodedCount(t, source, "sink_quarantined")
-
-	h := newWedgeHarness(t, source, rows, 105, func(consumer.Event) error {
-		return errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
-	})
-
-	for i := 0; i < QuarantineAfterCycles*3; i++ {
-		h.cycle()
-		if got := h.store.cursor(); got != 100 {
-			t.Fatalf("cycle %d: cursor = %d, want 100 (an infra outage must hold the cursor, never skip rows)", i, got)
-		}
+// TestCycle_HoldsCursorAndNeverQuarantines pins the anti-over-correction
+// property: an infrastructure outage, or a global sink failure where nothing
+// commits (no health proof), must hold the cursor and never shed rows.
+func TestCycle_HoldsCursorAndNeverQuarantines(t *testing.T) {
+	tests := []struct {
+		name      string
+		source    string
+		rows      []events.Event
+		cycles    int
+		sinkErr   error
+		perCycle  bool
+		wantRetry bool
+	}{
+		{
+			name:      "infra outage retries forever",
+			source:    "infra-retry-forever",
+			rows:      []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)},
+			cycles:    QuarantineAfterCycles * 3,
+			sinkErr:   errors.New("dial tcp 127.0.0.1:5432: connect: connection refused"),
+			perCycle:  true,
+			wantRetry: true,
+		},
+		{
+			name:    "global failure stalls visibly",
+			source:  "global-failure-stalls",
+			rows:    []events.Event{lakeEvent(101, 1), lakeEvent(102, 2), lakeEvent(103, 3)},
+			cycles:  QuarantineAfterCycles * 2,
+			sinkErr: &pgconn.PgError{Code: "42703", Message: `column "amount" does not exist`},
+		},
 	}
-	if got := decodedCount(t, source, "sink_quarantined") - beforeQuarantined; got != 0 {
-		t.Errorf("sink_quarantined delta = %v, want 0 (infra faults are never quarantined)", got)
-	}
-	if got := decodedCount(t, source, "sink_retry"); got == 0 {
-		t.Error("sink_retry counter did not move; a held row must be visible as a retry")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			beforeQuarantined := decodedCount(t, tt.source, "sink_quarantined")
+			h := newWedgeHarness(t, tt.source, tt.rows, 105, func(consumer.Event) error { return tt.sinkErr })
+
+			for i := 0; i < tt.cycles; i++ {
+				h.cycle()
+				if tt.perCycle {
+					if got := h.store.cursor(); got != 100 {
+						t.Fatalf("cycle %d: cursor = %d, want 100", i, got)
+					}
+				}
+			}
+			if got := h.store.cursor(); got != 100 {
+				t.Fatalf("cursor = %d, want 100 (must stall visibly, never shed rows)", got)
+			}
+			if got := decodedCount(t, tt.source, "sink_quarantined") - beforeQuarantined; got != 0 {
+				t.Errorf("sink_quarantined delta = %v, want 0", got)
+			}
+			if tt.wantRetry && decodedCount(t, tt.source, "sink_retry") == 0 {
+				t.Error("sink_retry counter did not move; a held row must be visible as a retry")
+			}
+		})
 	}
 }
 
@@ -568,30 +559,6 @@ func TestCycle_DeadlockRetriesBeforeQuarantine(t *testing.T) {
 	// projects both rows exactly once.
 	if got := decodedCount(t, source, "ok") - beforeOK; got != 2 {
 		t.Errorf("ok delta = %v, want 2 (both rows project once the deadlock clears)", got)
-	}
-}
-
-// TestCycle_GlobalFailureDoesNotShedRows pins the guard against the obvious
-// over-correction: when NOTHING commits (a schema drift / wedged sink — every
-// row fails), the short budget must not apply, so the projector stalls
-// visibly instead of quarantining the whole window.
-func TestCycle_GlobalFailureDoesNotShedRows(t *testing.T) {
-	const source = "global-failure-stalls"
-	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2), lakeEvent(103, 3)}
-	beforeQuarantined := decodedCount(t, source, "sink_quarantined")
-
-	h := newWedgeHarness(t, source, rows, 105, func(consumer.Event) error {
-		return &pgconn.PgError{Code: "42703", Message: `column "amount" does not exist`}
-	})
-
-	for i := 0; i < QuarantineAfterCycles*2; i++ {
-		h.cycle()
-	}
-	if got := h.store.cursor(); got != 100 {
-		t.Fatalf("cursor = %d, want 100 (a global sink failure must stall visibly, never shed rows)", got)
-	}
-	if got := decodedCount(t, source, "sink_quarantined") - beforeQuarantined; got != 0 {
-		t.Errorf("sink_quarantined delta = %v, want 0 (no health proof ⇒ no quarantine on the short budget)", got)
 	}
 }
 
@@ -887,80 +854,61 @@ func TestCycle_AdjacentDuplicateRowsDecodeOnce(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Alerting half: ADR-0003's SEV-1 promise on ErrI128Overflow.
-// ---------------------------------------------------------------------------
-
-// TestCycle_I128OverflowGetsItsOwnOutcomeNotSinkPermanent pins the counter the
-// stellarindex_projector_i128_overflow rule watches.
-//
-// canonical.ErrI128Overflow is one of valueShapeSentinels, so before this it
-// was skipped and counted as an ordinary outcome="sink_permanent" drop —
-// indistinguishable from a bad on-chain value, and outcome="sink_permanent"
-// had no rule at all. ADR-0003 §Consequences promises the opposite:
-// "any observed errors.Is(err, canonical.ErrI128Overflow) in production fires
-// a SEV-1. It indicates an int64 sneaking in somewhere" — our bug, on an
-// amount path, so every value that path touched is suspect.
-//
-// The two outcomes must PARTITION: the overflow is counted once, under
-// sink_i128_overflow and not also under sink_permanent, or every expression
-// that sums the metric across outcomes double-counts the row.
-func TestCycle_I128OverflowGetsItsOwnOutcomeNotSinkPermanent(t *testing.T) {
-	const source = "rlt131-i128-overflow"
-	// Ledger 101 overflows; 102 commits — the sink-health proof, so the row is
-	// shed on cycle one and the counters land in the same cycle.
-	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
-	i128Before := decodedCount(t, source, "sink_i128_overflow")
-	permBefore := decodedCount(t, source, "sink_permanent")
-	okBefore := decodedCount(t, source, "ok")
-
-	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
-		if ev.(ledgerEvent).ledger == 101 {
-			return fmt.Errorf("%w: trade amount %s exceeds 128 bits", canonical.ErrI128Overflow,
-				"340282366920938463463374607431768211456")
-		}
-		return nil
-	})
-
-	h.cycle()
-
-	if got := decodedCount(t, source, "sink_i128_overflow") - i128Before; got != 1 {
-		t.Errorf("outcome=sink_i128_overflow delta = %v, want 1 — ADR-0003's SEV-1 rule watches this child; without it the promise has no implementation", got)
+// The i128 overflow outcome must PARTITION from sink_permanent (counted once,
+// never under both) so a sum across outcomes does not double-count the row, and
+// an ordinary class-23502 drop must never reach the SEV-1 overflow child.
+func TestCycle_I128OverflowOutcomePartitionsFromSinkPermanent(t *testing.T) {
+	tests := []struct {
+		name         string
+		source       string
+		poisonErr    error
+		wantOverflow float64
+		wantPerm     float64
+	}{
+		{
+			name:   "i128 overflow gets its own outcome",
+			source: "rlt131-i128-overflow",
+			poisonErr: fmt.Errorf("%w: trade amount %s exceeds 128 bits", canonical.ErrI128Overflow,
+				"340282366920938463463374607431768211456"),
+			wantOverflow: 1,
+			wantPerm:     0,
+		},
+		{
+			name:         "ordinary poison row is not an overflow",
+			source:       "rlt131-i128-negative-control",
+			poisonErr:    notNullViolation(),
+			wantOverflow: 0,
+			wantPerm:     1,
+		},
 	}
-	if got := decodedCount(t, source, "sink_permanent") - permBefore; got != 0 {
-		t.Errorf("outcome=sink_permanent delta = %v, want 0 — the outcomes must partition, or a sum across them counts this row twice", got)
-	}
-	if got := decodedCount(t, source, "ok") - okBefore; got != 1 {
-		t.Errorf("outcome=ok delta = %v, want 1 (only ledger 102 durably committed)", got)
-	}
-	if got := h.store.cursor(); got != 105 {
-		t.Fatalf("cursor = %d, want 105 — an overflow is still a deterministic drop and must not wedge the source", got)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Ledger 102 commits: the sink-health proof, so the poison row is shed on cycle one.
+			rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
+			i128Before := decodedCount(t, tt.source, "sink_i128_overflow")
+			permBefore := decodedCount(t, tt.source, "sink_permanent")
+			okBefore := decodedCount(t, tt.source, "ok")
 
-// TestCycle_OrdinaryPoisonRowIsNotCountedAsAnI128Overflow is the
-// anti-false-page half: the SEV-1 child must stay at zero for the ordinary
-// class-22/23 drop the projector sees routinely, or the rule pages on every
-// poison row and stops meaning anything.
-func TestCycle_OrdinaryPoisonRowIsNotCountedAsAnI128Overflow(t *testing.T) {
-	const source = "rlt131-i128-negative-control"
-	rows := []events.Event{lakeEvent(101, 1), lakeEvent(102, 2)}
-	i128Before := decodedCount(t, source, "sink_i128_overflow")
-	permBefore := decodedCount(t, source, "sink_permanent")
+			h := newWedgeHarness(t, tt.source, rows, 105, func(ev consumer.Event) error {
+				if ev.(ledgerEvent).ledger == 101 {
+					return tt.poisonErr
+				}
+				return nil
+			})
+			h.cycle()
 
-	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
-		if ev.(ledgerEvent).ledger == 101 {
-			return notNullViolation()
-		}
-		return nil
-	})
-
-	h.cycle()
-
-	if got := decodedCount(t, source, "sink_i128_overflow") - i128Before; got != 0 {
-		t.Errorf("outcome=sink_i128_overflow delta = %v, want 0 — a class-23502 rejection is a data verdict, not proof of an int64 in our own pipeline", got)
-	}
-	if got := decodedCount(t, source, "sink_permanent") - permBefore; got != 1 {
-		t.Errorf("outcome=sink_permanent delta = %v, want 1", got)
+			if got := decodedCount(t, tt.source, "sink_i128_overflow") - i128Before; got != tt.wantOverflow {
+				t.Errorf("outcome=sink_i128_overflow delta = %v, want %v", got, tt.wantOverflow)
+			}
+			if got := decodedCount(t, tt.source, "sink_permanent") - permBefore; got != tt.wantPerm {
+				t.Errorf("outcome=sink_permanent delta = %v, want %v", got, tt.wantPerm)
+			}
+			if got := decodedCount(t, tt.source, "ok") - okBefore; got != 1 {
+				t.Errorf("outcome=ok delta = %v, want 1 (only ledger 102 durably committed)", got)
+			}
+			if got := h.store.cursor(); got != 105 {
+				t.Fatalf("cursor = %d, want 105 (a deterministic drop must not wedge the source)", got)
+			}
+		})
 	}
 }
