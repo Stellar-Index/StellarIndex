@@ -53,11 +53,7 @@ export function AssetScamCallout({
         )}
         {directoryDomain && <> ({directoryDomain})</>}.
       </p>
-      <p className="mt-1 font-medium">
-        Do not trust this asset, establish trustlines, or execute the prices
-        below as if they reflected an honest market. StellarIndex relays this
-        third-party directory flag; it does not imply the asset is safe.
-      </p>
+      <p className="mt-1 font-medium">Do not trust this asset or its prices.</p>
     </Callout>
   );
 }

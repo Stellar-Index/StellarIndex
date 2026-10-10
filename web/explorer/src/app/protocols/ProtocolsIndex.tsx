@@ -198,9 +198,7 @@ export function ProtocolsIndex({
 
       {isError && (
         <Callout tone="warn" title="Live stats unavailable">
-          The protocol directory endpoint is unreachable, so the cards below
-          show the static registry without live counts. The per-protocol pages
-          still work.
+          Showing the registry without live counts.
         </Callout>
       )}
 

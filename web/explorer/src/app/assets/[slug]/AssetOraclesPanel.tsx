@@ -442,7 +442,7 @@ function UnattributedOracles({
  *
  * These rows are matched to this page by STRING EQUALITY on the symbol
  * and nothing else, which is precisely why they render under their own
- * heading, with the non-attribution in the body, and never in the table
+ * heading, with the non-attribution in the hint, and never in the table
  * above.
  */
 function SymbolMatchedRawFeeds({
@@ -463,13 +463,6 @@ function SymbolMatchedRawFeeds({
       source={asExample('/v1/oracle/streams', STREAMS_PARAMS)}
       bodyClassName="-mx-4"
     >
-      <p className="text-ink-muted px-4 pb-3 text-xs">
-        An oracle publishes these symbols under no canonical asset, so we record
-        them verbatim and compare them to nothing. They appear here only because
-        the symbol string matches this asset&apos;s code — that is a
-        resemblance, not an identity, and these prices are not this asset&apos;s
-        prices.
-      </p>
       <div className="overflow-x-auto">
         <table className="divide-line min-w-full divide-y text-sm">
           <thead>
