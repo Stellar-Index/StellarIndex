@@ -189,13 +189,10 @@ export function RoutedVolumePanel() {
         </table>
       </div>
       <p className="border-line text-ink-muted border-t px-4 py-2 text-xs">
-        Attribution joins each router invocation to the pair-level swap trades
-        in the same transaction (first-wins, never re-tagged). Volume is the USD
-        valuation of the routed trades; &ldquo;—&rdquo; means the window&apos;s
-        routed trades haven&apos;t received a USD valuation yet, not zero. A
-        sub-invocation call (an aggregator wrapping the router) is attributed to
-        that aggregator&apos;s own row when it&apos;s a registered contract;
-        rows marked{' '}
+        <span title="Each router invocation is joined to the swap trades in the same transaction (first-wins, never re-tagged); a wrapping aggregator gets its own row when registered.">
+          Routed volume, USD
+        </span>
+        ; &ldquo;—&rdquo; means not yet valued, not zero. Rows marked{' '}
         <span className="border-line rounded border px-1 py-0.5 text-[9px] tracking-wider uppercase">
           unverified
         </span>{' '}

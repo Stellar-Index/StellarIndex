@@ -307,13 +307,6 @@ export function OraclesView() {
           source={asExample('/v1/oracle/streams', STREAMS_PARAMS)}
           bodyClassName="-mx-4"
         >
-          <p className="text-ink-muted px-4 pb-3 text-xs">
-            An oracle sometimes publishes a symbol we cannot map to a canonical
-            asset. Capture totality means the observation is still recorded —
-            under its raw on-wire symbol — but it is never compared, aggregated,
-            or attributed to an asset page. These rows are listed here and kept
-            out of the price-stream table above.
-          </p>
           <div className="overflow-x-auto">
             <table className="divide-line min-w-full divide-y text-sm">
               <thead>
