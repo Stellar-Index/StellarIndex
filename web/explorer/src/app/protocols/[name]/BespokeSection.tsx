@@ -15,6 +15,7 @@ import {
 import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { dropPartialTrailingDay, seriesPointTime } from '@/lib/series';
 import { CopyHash } from '../../explorer-shared';
+import { AssetText } from '@/components/AssetLink';
 import { TimeSeriesChart, type ChartTone } from './TimeSeriesChart';
 import { Segmented, Skeleton } from '@/components/ui';
 import {
@@ -630,8 +631,7 @@ function Cell({ value }: { value: string }) {
       </Link>
     );
   }
-  // Long non-strkey id (e.g. "USDC-G…" canonical asset) — shorten + copy, no
-  // link (no asset-by-id route). Short labels ("native", codes) pass through.
+  if (CLASSIC_ASSET_ID.test(value)) return <AssetText canonical={value} />;
   if (value.length > 28) {
     return <CopyHash value={value} head={10} tail={6} />;
   }
@@ -639,6 +639,8 @@ function Cell({ value }: { value: string }) {
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────
+
+const CLASSIC_ASSET_ID = /^[A-Za-z0-9]{1,12}-G[A-Z2-7]{55}$/;
 
 // toChartNumber — parse a bespoke series string to a JS number for chart
 // geometry only (values can exceed 2^53 — ADR-0003; never use the result as

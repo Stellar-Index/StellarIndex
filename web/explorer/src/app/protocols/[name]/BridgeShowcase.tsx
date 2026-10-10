@@ -163,6 +163,19 @@ export function perChainLines(
 // (via toChartNumber) drives arc geometry only; `decimal` (via
 // toDecimalString) carries the exact wire string so DonutChart computes the
 // legend/tooltip percentage from sumDecimalStrings/ratioPct, not floats.
+// A donut legend has no room for a 56-char issuer; keep its head so two
+// same-code assets from different issuers stay distinct slices.
+function shortAssetLabel(label: string): string {
+  return label
+    .split(' ')
+    .map((t) =>
+      /^[A-Za-z0-9]{1,12}-G[A-Z2-7]{55}$/.test(t)
+        ? `${t.slice(0, t.indexOf('-') + 5)}…`
+        : t,
+    )
+    .join(' ');
+}
+
 export function donutSlices(b: BespokeBreakdown): DonutSlice[] {
   const rows = b.rows
     .flatMap((r) => {
@@ -170,7 +183,7 @@ export function donutSlices(b: BespokeBreakdown): DonutSlice[] {
       const decimal = toDecimalString(r.value);
       return value == null || value <= 0
         ? []
-        : [{ label: r.label, value, decimal }];
+        : [{ label: shortAssetLabel(r.label), value, decimal }];
     })
     .sort((a, x) => x.value - a.value);
   const top = rows
