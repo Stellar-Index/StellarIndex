@@ -9,45 +9,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// decode_admin.go decodes the eight governance/upgrade admin event
-// kinds found by the lake topic census. Same provenance caveat as
-// decode_rewards.go: AquaToken's soroban-amm contract source is not
-// publicly reachable, so every function below is reverse-engineered
-// from real r1 ClickHouse lake bytes, not a cloned Rust source. Wire
-// types/arity/positions are exact; business-meaning names beyond that
-// are BEST-EFFORT where noted.
+// decode_admin.go decodes the eight governance/upgrade admin event kinds found by the
+// lake topic census. AquaToken's soroban-amm source is not public, so every function
+// is reverse-engineered from real r1 lake bytes: wire types/arity/positions are exact,
+// business-meaning names beyond that are BEST-EFFORT where noted.
 //
-// GATING NOTE: SEVEN of these kinds —
-// apply_upgrade, commit_upgrade, set_privileged_addrs,
-// apply_transfer_ownership, commit_transfer_ownership,
-// enable_emergency_mode, disable_emergency_mode — are emitted by the
-// REGISTERED Aquarius POOLS as well as the router, so
-// dispatcher_adapter.go gates them on `reg.Has || reg.IsFactory` (the
-// same protocol trust boundary as the pool-flow kinds, plus the
-// router). A full-history r1 census counts ~1,679 pool-emitted events
-// across these seven kinds (earliest ledger 55,363,632): a
-// protocol-wide staged WASM upgrade upgraded 320/337 pools
-// (apply_upgrade / commit_upgrade), plus pool-level ownership
-// transfers, privileged-address sets, and emergency-mode toggles. A
-// router-only gate (reg.IsFactory alone) would fail-close every one of
-// these into an ADR-0033 recognition gap AND drop it from Decode,
-// silently losing real governance history. Two kinds are router-only —
-// config_rewards and pool_gauge_switch_token — because the same census
-// finds ZERO pool-emitted occurrences of either.
+// GATING NOTE: SEVEN kinds (apply_upgrade, commit_upgrade, set_privileged_addrs,
+// apply_transfer_ownership, commit_transfer_ownership, enable_emergency_mode,
+// disable_emergency_mode) are emitted by REGISTERED Aquarius POOLS as well as the
+// router, so dispatcher_adapter.go gates them on `reg.Has || reg.IsFactory`. A
+// router-only gate would fail-close ~1,679 real pool-emitted events (e.g. a staged
+// WASM upgrade across 320/337 pools) into an ADR-0033 recognition gap and drop them
+// from Decode. config_rewards and pool_gauge_switch_token are router-only: the census
+// finds no pool-emitted occurrences.
 //
 // The FLAGGED parallel router CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ
-// and a small family of NEITHER-pool-NOR-router contracts (e.g.
-// CDWVENDOPYZJV7VDIA55LDWVQOPXZPPGTHJ3HQJDBRM3YC5NC4IYWN5C,
-// CAEYKKJ5LTBLVQ5EM6H433YFHKOUJRDWOW3NF355ZS3FHQZKHXLQIHKA — see
-// docs/protocols/aquarius.md "Flagged — excluded from the gate") remain
-// OUTSIDE the trust boundary: being in neither reg.Has nor
-// reg.IsFactory, they fail closed per ADR-0035: a visible ADR-0033
-// recognition gap, never a silent mis-attribution.
-// The decode functions below are exercised against real bytes from BOTH
-// registered pools and the flagged/sibling contracts in
-// decode_admin_test.go — decode correctness and gate membership are
-// independent concerns (the same split real_fixture_test.go /
-// adapter_test.go use for the trade path).
+// and the neither-pool-nor-router family (docs/protocols/aquarius.md "Flagged —
+// excluded from the gate") stay OUTSIDE the trust boundary and fail closed per
+// ADR-0035: a visible recognition gap, never silent mis-attribution.
+// decode_admin_test.go exercises the decoders on bytes from both registered and
+// flagged contracts; decode correctness and gate membership are independent concerns.
 
 // decodeAdminEvent dispatches on the already-classified event kind
 // and returns the decoded AdminEvent. Called from Decode() after

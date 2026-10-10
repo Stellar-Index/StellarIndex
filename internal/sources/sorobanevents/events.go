@@ -1,53 +1,31 @@
-// Package sorobanevents is the catch-all raw-event landing zone
-// for Soroban contract events (ADR-0029).
+// Package sorobanevents is the catch-all raw-event landing zone for Soroban
+// contract events (ADR-0029).
 //
-// Every Soroban contract event the dispatcher routes is also
-// captured here as a raw row in the `soroban_events` hypertable
-// (migration 0041). This is ORTHOGONAL to the existing per-source
-// decoders — soroswap / phoenix / aquarius / blend / cctp / rozo /
-// reflector / redstone / band / sep41_supply / etc. all continue
-// to write their domain-specific tables from the live event
-// stream. The soroban_events table exists so that future per-source
-// decoders that ship AFTER an event was emitted on-chain can
-// backfill via SQL queries rather than MinIO re-walks:
-//
-//	INSERT INTO blend_positions / cctp_events / whatever
-//	  SELECT ...
-//	    FROM soroban_events
-//	   WHERE contract_id IN (...) AND topic_0_sym IN (...)
-//
-// — milliseconds-to-minutes instead of hours-per-source.
+// Every contract event the dispatcher routes is also captured as a raw row in the
+// `soroban_events` hypertable (migration 0041), orthogonal to the per-source
+// decoders. It exists so decoders shipped AFTER an event was emitted can backfill
+// via SQL over soroban_events instead of MinIO re-walks.
 //
 // # Wiring
 //
-//   - [RawEventSink] is the interface the dispatcher's
-//     [dispatcher.SetRawEventSink] hook accepts (added in ADR-0029).
-//     The hook fires AFTER per-source decoders for every Soroban
-//     contract event (does NOT filter on topic[0] or contract_id —
-//     this is the catch-all).
-//   - [Capture] converts a [events.Event] into a [Row] suitable for
-//     batched insert.
-//   - The consumer (cmd/stellarindex-indexer / stellarindex-ops
-//     backfill) wires an [AsyncSink] that batches Rows and calls
-//     [timescale.Store.InsertSorobanEventsBatch].
+//   - [RawEventSink] is what the dispatcher's [dispatcher.SetRawEventSink] hook
+//     accepts. It fires AFTER the per-source decoders for every Soroban contract
+//     event, with no topic[0] or contract_id filter.
+//   - [Capture] converts a [events.Event] into a [Row] for batched insert.
+//   - The consumer (cmd/stellarindex-indexer / stellarindex-ops backfill) wires an
+//     [AsyncSink] that batches Rows into [timescale.Store.InsertSorobanEventsBatch].
 //
 // # Encoding
 //
-// Topics 0-3 are stored as their raw XDR bytes (base64-decoded from
-// the wire). topic_0_sym is a convenience column populated when
-// topic[0]'s XDR decodes to a Symbol or String. The event body is
-// the raw XDR body (un-base64'd). op_args_xdr is the
-// XDR-marshalled `xdr.ScVec` of the originating InvokeContract
-// op's args, NULL when the event didn't come from an
-// InvokeContract op (system events, CAP-67 classic-op events,
-// etc.).
+// Topics 0-3 are raw XDR bytes; topic_0_sym is populated when topic[0] decodes to a
+// Symbol or String. The body is raw XDR. op_args_xdr is the marshalled xdr.ScVec of
+// the originating InvokeContract op's args, NULL for other origins (system events,
+// CAP-67 classic-op events).
 //
 // # Contract ID encoding
 //
-// `contract_id` is the C-strkey (`C...`) form for human SQL;
-// `contract_id_hex` is the raw 32 bytes (for index-efficient
-// byte-equality joins). Both come from the same underlying
-// strkey decode.
+// `contract_id` is the C-strkey for human SQL; `contract_id_hex` the raw 32 bytes
+// for index-efficient byte-equality joins.
 package sorobanevents
 
 import (

@@ -21,49 +21,21 @@ import (
 
 // ─── stellarindex-ops hubble-check ──────────────────────────────────
 //
-// Compares our SDEX trades hypertable against SDF's published
-// `crypto-stellar.crypto_stellar.history_trades` BigQuery table for
-// the same ledger range. Reports every ledger where our row count
-// disagrees with Hubble's.
+// Compares our SDEX trades hypertable against SDF's
+// `crypto-stellar.crypto_stellar.history_trades` BigQuery table over the same ledger
+// range and reports every ledger whose row count disagrees: short means a decoder
+// coverage gap, long means over-eagerness. It gates backfill correctness.
 //
-// What this catches that nothing else does:
+// Not covered: per-trade amount errors that net to zero within a ledger; Soroban DEX
+// trades (see hubble-soroban-events); off-chain sources (Hubble is on-chain only).
 //
-//   - Decoder coverage gaps (we missed a ClaimAtom shape we should
-//     have decoded; row count is short).
-//   - Decoder over-eagerness (we emitted extra rows for events that
-//     aren't trades; row count is long).
-//   - Backfill correctness gate before the since-inception OHLC ships
-//     to API consumers.
+// Cost: a 1M-ledger range scans ~5–10 GB (<= $0.05 on-demand). Every query carries
+// -max-bytes-billed (default 100 GB) so a mistyped range fails unbilled;
+// -dry-run-bytes prints the estimate first.
 //
-// What it does NOT catch (yet):
-//
-//   - Per-trade amount errors that net to zero across a ledger
-//     (vanishingly rare). v2 will add per-(ledger, tx_hash, asset
-//     pair) sum comparison.
-//   - Soroban DEX trades. Hubble has no decoded `history_trades`
-//     view of Soroswap/Aquarius/Phoenix/Comet — they live as raw
-//     events in `history_contract_events`. A Soroban-aware count
-//     check is a separate subcommand we'll build once the per-WASM
-//     decoder audit lands.
-//   - Off-chain (CEX/FX) sources. Hubble is on-chain only.
-//
-// Cost. The query is a count(*) over `history_trades` filtered by
-// `ledger_sequence` between two values, partitioned by close_at —
-// BigQuery prunes to the relevant partitions. A 1 M-ledger range
-// scans roughly 5–10 GB at $5/TB on-demand, so ≤$0.05 per check.
-// Reservation pricing is roughly free at our scale. Operators who
-// need to cap spend can pass -dry-run-bytes to print the dry-run
-// estimate before executing. Every query carries -max-bytes-billed
-// (default 100 GB), so a mistyped range fails unbilled instead of
-// scanning the whole table.
-//
-// Auth. Uses Application Default Credentials. Easiest:
-//
-//   gcloud auth application-default login --project=<your-bq-project>
-//
-// or set GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON
-// with roles/bigquery.dataViewer + roles/bigquery.jobUser on the
-// supplied -bigquery-project.
+// Auth: Application Default Credentials (`gcloud auth application-default login
+// --project=<your-bq-project>` or GOOGLE_APPLICATION_CREDENTIALS) with
+// roles/bigquery.dataViewer + roles/bigquery.jobUser on -bigquery-project.
 
 func hubbleCheck(args []string) error { //nolint:gocognit,gocyclo,funlen // flag parse + several diagnostic early-exit modes; linear, splitting reduces clarity.
 	fs := flag.NewFlagSet("hubble-check", flag.ContinueOnError)

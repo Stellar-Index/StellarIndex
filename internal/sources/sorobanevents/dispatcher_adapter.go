@@ -525,35 +525,23 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 	}
 }
 
-// flushBatch writes one batch with the same asymmetric ADR-0041
-// failure policy the trades path uses: a write failure blocks-and-retries with capped
-// backoff by DEFAULT; only a POSITIVELY-classified permanent data
-// fault (the injected IsPermanentFault predicate — pq class 22/23) is
-// isolated and dropped. Dropping on ANY error — including a
-// transient infra fault during a Postgres outage — would silently
-// discard the whole batch after one Warn log, permanently losing
-// that window of raw soroban_events rows with no operator signal and
-// no re-derive hint (this table is ADR-0029's catch-all landing
-// zone, the last-resort source of truth Row.Ledger the census +
-// completeness tooling reconcile against).
+// flushBatch writes one batch under the asymmetric ADR-0041 failure policy the trades
+// path uses: a write failure blocks and retries with capped backoff by DEFAULT; only
+// a POSITIVELY-classified permanent data fault (the injected IsPermanentFault
+// predicate, pq class 22/23) is isolated and dropped. Dropping on any error would
+// silently lose a window of raw soroban_events rows (ADR-0029's last-resort source of
+// truth) during a transient Postgres outage.
 //
-// The retry loop is bounded by s.abortFlush. Steady state that is
-// s.stopping: an in-flight attempt is cancelled the instant Stop()
-// fires (so shutdown isn't held hostage by a stuck write) and the
-// rows that have not landed are RETURNED so the worker can carry
-// them into drainOnStop, which retries them under DrainGrace. They
-// are not abandoned here — a Stop() that raced a healthy
-// in-flight write (the write's own ctx is cancelled, it returns
-// context.Canceled) would otherwise count a whole batch as lost on every restart
-// or deploy, which
-// TestAsyncSink_StopDrainsPendingRows_NoChannelClose catches as "WrittenCount =
-// 6, want 10" (10 rows minus one BatchSize=4 batch). During the
-// drain abortFlush is the grace timer, and a batch that still hasn't
-// landed when it fires is abandoned loudly via
-// [AsyncSink.abandonBatch] rather than retried forever.
+// The retry loop is bounded by s.abortFlush. In steady state that is s.stopping:
+// Stop() cancels an in-flight attempt and the unlanded rows are RETURNED for the
+// worker to carry into drainOnStop (retried under DrainGrace), not abandoned here;
+// otherwise a Stop() racing a healthy write would count a whole batch as lost on
+// every deploy (TestAsyncSink_StopDrainsPendingRows_NoChannelClose). During the drain
+// abortFlush is the grace timer, and a batch still unlanded then is abandoned loudly
+// via [AsyncSink.abandonBatch].
 //
-// Returns the rows that were neither written nor abandoned (nil in
-// the drain, and in steady state unless Stop interrupted).
+// Returns the rows neither written nor abandoned (nil in the drain, and in steady
+// state unless Stop interrupted).
 func (s *AsyncSink) flushBatch(rows []Row) []Row {
 	abort := s.abortFlush
 	backoff := asyncSinkRetryInitialBackoff

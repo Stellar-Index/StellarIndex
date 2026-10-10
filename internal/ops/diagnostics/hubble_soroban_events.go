@@ -18,42 +18,24 @@ import (
 
 // ─── stellarindex-ops hubble-soroban-events ─────────────────────────
 //
-// Per-ledger event-count primitive against
-// `crypto-stellar.crypto_stellar.history_contract_events` for a
-// specified set of contract IDs, with an optional topic[0]/topic[1]
-// filter.
+// Per-ledger event counts from `crypto-stellar.crypto_stellar.history_contract_events`
+// for a set of contract IDs, with an optional topic[0]/topic[1] filter. hubble-check
+// cannot cover Soroban DEXes: history_trades has no decoded view of them.
 //
-// Why this exists. The SDEX hubble-check (see hubble_check.go) queries
-// `history_trades`, which doesn't cover Soroban DEXes — Hubble has
-// no decoded view of Soroswap/Aquarius/Phoenix/Comet swaps; their
-// events sit raw in `history_contract_events`. So decoder-coverage
-// cross-checks for those sources need a different primitive: query
-// Hubble for the events that *would* have produced a trade, then
-// compare to our trades count for the same range outside this tool.
+// Deliberately NOT a built-in cross-check: the events-to-trades ratio differs per
+// source, so the operator picks the filter and compares with our row counts
+// (docs/operations/hubble-event-counts.md):
 //
-// Why this is NOT a built-in cross-check. Each Soroban source has
-// a different (events ↔ trades) ratio:
+//   - Soroswap: 2 events per trade (swap + sync) → filter topic[1]='swap'
+//   - Aquarius: 1 per trade (topic[0]='trade')
+//   - Phoenix:  8 per trade (one per field) → filter topic[1]='offer_amount'
+//   - Comet:    1 per swap (topic[0]='POOL', topic[1]='swap')
+//   - Reflector: 1 event fans out to N OracleUpdate rows
+//   - Redstone:  1 event per write_prices call → N rows
+//   - Band:      ZERO events; coverage cannot be checked here
 //
-//   - Soroswap: 2 events per trade (swap + sync) → filter topic[1]='swap' to count one event per trade
-//   - Aquarius: 1 event per trade (topic[0]='trade')
-//   - Phoenix:  8 events per trade (one per field) → filter topic[1]='offer_amount' for one-per-trade
-//   - Comet:    1 event per swap (topic[0]='POOL', topic[1]='swap')
-//   - Reflector: 1 event fans out to N OracleUpdate rows in our DB
-//   - Redstone:  1 event per write_prices call → fans to N rows
-//   - Band:      ZERO events; this tool can't detect Band coverage
-//
-// Bundling all those rules into the tool would make it a
-// per-source-quirk amalgam. Instead, this tool emits the raw
-// per-ledger Hubble counts; the operator runs it with the right
-// filter for the source and compares to our DB row counts using
-// the documented per-source ratio. See
-// docs/operations/hubble-event-counts.md for the recipe.
-//
-// Cost. SELECT/COUNT/GROUP-BY against history_contract_events
-// scans more than history_trades because the events table is
-// per-event, not per-trade. Ballpark 20–40 GB per 1M-ledger range
-// with a contract_id filter. -dry-run-bytes prints the byte
-// estimate before executing; -max-bytes-billed caps the real query.
+// Cost: ~20–40 GB scanned per 1M-ledger range with a contract_id filter.
+// -dry-run-bytes prints the estimate; -max-bytes-billed caps the real query.
 
 func hubbleSorobanEvents(args []string) error {
 	fs := flag.NewFlagSet("hubble-soroban-events", flag.ContinueOnError)

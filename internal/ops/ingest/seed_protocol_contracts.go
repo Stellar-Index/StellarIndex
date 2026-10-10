@@ -20,30 +20,17 @@ import (
 )
 
 // seedProtocolContracts is the genesis bootstrap for a factory-anchored gated
-// decoder's pool/vault registry (ADR-0035). It walks the source's factory creation
-// events (e.g. Blend pool-factory `deploy`) from the factory genesis ledger forward
-// in the lake's contract_events and upserts every announced child into
-// protocol_contracts.
+// decoder's pool/vault registry (ADR-0035): it walks the source's factory creation
+// events (e.g. Blend pool-factory `deploy`) from the factory genesis ledger in the
+// lake's contract_events and upserts every announced child into protocol_contracts.
 //
-// Run once per FACTORY-anchored source as a DEPLOY PRECONDITION: until it runs the
-// registry holds no discovered children and (per ADR-0035) drops their events.
-// CURATED-set sources (ADR-0040 §1 mechanism 3) do not need it, since the indexer
-// seeds their registry on every boot; it remains useful there as a repair step.
+// Run once per FACTORY-anchored source as a DEPLOY PRECONDITION: until then the
+// registry holds no discovered children and (ADR-0035) drops their events.
+// CURATED-set sources (ADR-0040 §1 mechanism 3) are seeded by the indexer on every
+// boot; this remains a repair step for them.
 //
-// Idempotent (UpsertProtocolContract is ON CONFLICT DO UPDATE) and cheap (creation
-// events are rare and the walk is filtered on factory ids and topic).
-//
-// Flags:
-//
-//	-config PATH   TOML config (required) — postgres DSN.
-//	-source NAME   gated source to seed (required): blend, …
-//	               (`-source all` seeds every gated source).
-//	-to LEDGER     last ledger to walk (inclusive); 0 = the lake's max
-//	               ledger.
-//	-ch-addr H:P   ClickHouse native address.
-//	-timeout DUR   wall-clock budget. Default 15m.
-//	-write         apply. WITHOUT it the run is a fail-closed DRY RUN
-//	               (opsutil.WriteGate) that reports the children it WOULD upsert.
+// Idempotent (UpsertProtocolContract is ON CONFLICT DO UPDATE). Without -write the
+// run is a fail-closed DRY RUN (opsutil.WriteGate) reporting what it WOULD upsert.
 func seedProtocolContracts(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("seed-protocol-contracts")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")

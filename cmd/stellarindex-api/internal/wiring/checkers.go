@@ -134,31 +134,19 @@ func (c ClickhouseChecker) Ping(ctx context.Context) error {
 	return err
 }
 
-// ClickhouseReadyChecks returns the readiness checkers for ClickHouse:
-// none when no address is configured, and exactly one when there is —
-// wired or not.
+// ClickhouseReadyChecks returns the readiness checkers for ClickHouse: none when
+// no address is configured, exactly one otherwise, wired or not.
 //
-// The "or not" is the whole point. A checker
-// appended inside the success branch of the boot dial means a ClickHouse
-// that was already down when the API started published NO
-// `stellarindex_dependency_up{dependency="clickhouse"}` series at all.
-// The alert over it is `stellarindex_dependency_up == 0`, with an
-// in-file rationale deliberately rejecting absent() — so it would have no
-// series to match, and the one state the annotation calls "the only
-// signal that it is gone" would be the state with no signal. Endpoints
-// would 503 and nothing would page.
+// A checker registered only in the boot-dial success branch would leave a
+// ClickHouse that was down at startup with no stellarindex_dependency_up series;
+// the alert (== 0, deliberately not absent()) would have nothing to match while
+// endpoints 503. So one still unreachable when dialLakeReadersAtBoot's window ends
+// registers a checker that reports down for the process's lifetime: the lake seams
+// are never re-dialled, so a Ping that went green would hide endpoints still
+// 503ing. Only a ClickHouse that answers before the last attempt
+// (clickhouseBootDialMinAttempt) avoids this.
 //
-// A ClickHouse still unreachable when dialLakeReadersAtBoot's window ends
-// therefore registers a checker that reports down for the process's
-// lifetime. That is the truth: none of the lake-backed seams is
-// re-dialled after that, so a Ping that re-dialled and went green would
-// hide endpoints that are still 503ing until the process restarts. Only a
-// ClickHouse that answers before the last attempt (at least
-// clickhouseBootDialMinAttempt before the window ends) avoids this state.
-//
-// No address configured is the one case that publishes nothing, and
-// that is correct: a deployment without a lake has no such dependency,
-// and a 0 there would page for a component it does not run.
+// No address means no lake and no dependency, so nothing is published.
 func ClickhouseReadyChecks(addr string, er *clickhouse.ExplorerReader, dialErr error, dialBudget time.Duration) []v1.ReadyChecker {
 	if addr == "" {
 		return nil
