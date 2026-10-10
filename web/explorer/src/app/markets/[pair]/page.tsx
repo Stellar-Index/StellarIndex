@@ -681,9 +681,7 @@ function Panel({
       className={`border-line bg-surface rounded-lg border p-4 ${className ?? ''}`}
     >
       <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-ink-body text-sm font-semibold tracking-wider uppercase">
-          {title}
-        </h2>
+        <h2 className="text-h3 text-ink font-semibold">{title}</h2>
         {subtitle && <span className="text-ink-faint text-xs">{subtitle}</span>}
       </header>
       {children}

@@ -77,7 +77,7 @@ export function HomeTopAssets() {
     <section className="space-y-3">
       <div className="flex items-baseline justify-between">
         <div className="space-y-1">
-          <h2 className="text-2xl font-semibold tracking-tight">
+          <h2 className="text-h3 text-ink font-semibold">
             Top assets by activity
           </h2>
           <p className="text-ink-body text-sm">

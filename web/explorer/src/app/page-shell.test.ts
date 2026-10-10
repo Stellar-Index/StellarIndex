@@ -6,6 +6,8 @@ import { dirname, join, relative, resolve } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { SECTION_HEADING_CLASS } from '@/components/ui/Page';
+
 vi.setConfig({ testTimeout: 30_000 });
 
 const SRC = join(__dirname, '..');
@@ -50,6 +52,16 @@ function rendersShell(file: string, depth = 2): boolean {
   });
 }
 
+function sources(dir: string): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) out.push(...sources(p));
+    else if (name.endsWith('.tsx') && !name.endsWith('.test.tsx')) out.push(p);
+  }
+  return out;
+}
+
 function onlyRedirects(src: string): boolean {
   return (
     /\b(permanentRedirect|redirect)\(/.test(src) &&
@@ -79,5 +91,23 @@ describe('page shell', () => {
     for (const rel of Object.keys(EXEMPT)) {
       expect(existsSync(join(APP, rel)), rel).toBe(true);
     }
+  });
+
+  it('every section <h2> uses the shared heading style', () => {
+    const bad: string[] = [];
+    for (const f of sources(APP)) {
+      for (const m of readFileSync(f, 'utf8').matchAll(
+        /<h2 className="([^"]*)"/g,
+      )) {
+        const cls = m[1].split(/\s+/);
+        const ok =
+          SECTION_HEADING_CLASS.split(' ').every((c) => cls.includes(c)) &&
+          !cls.some((c) =>
+            /^(uppercase|tracking-|text-(xs|sm|base|lg|\d?xl)$)/.test(c),
+          );
+        if (!ok) bad.push(`${relative(APP, f)}: ${m[1]}`);
+      }
+    }
+    expect(bad).toEqual([]);
   });
 });

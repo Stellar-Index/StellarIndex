@@ -156,7 +156,7 @@ export default function SDKPage() {
 
       <div className="max-w-4xl">
         <section className="mb-10 space-y-4">
-          <h2 className="text-xl font-semibold tracking-tight">Install</h2>
+          <h2 className="text-h3 text-ink font-semibold">Install</h2>
           <p className="text-ink-body text-sm">
             Single dependency. The module path follows the canonical{' '}
             <code className="bg-surface-subtle rounded-sm px-1.5 py-0.5 font-mono text-xs">
@@ -170,7 +170,7 @@ export default function SDKPage() {
         </section>
 
         <section className="mb-12 space-y-4">
-          <h2 className="text-xl font-semibold tracking-tight">Quick start</h2>
+          <h2 className="text-h3 text-ink font-semibold">Quick start</h2>
           <p className="text-ink-body text-sm">
             One-asset current-price lookup. Anonymous works at the public
             rate-limit; pass <code className="font-mono text-xs">APIKey</code>{' '}
@@ -182,9 +182,7 @@ export default function SDKPage() {
         </section>
 
         <section className="mb-12 space-y-6">
-          <h2 className="text-xl font-semibold tracking-tight">
-            Common patterns
-          </h2>
+          <h2 className="text-h3 text-ink font-semibold">Common patterns</h2>
           {PATTERNS.map((p) => (
             <div key={p.title} className="space-y-3">
               <div>
@@ -199,9 +197,7 @@ export default function SDKPage() {
         </section>
 
         <section className="mb-12 space-y-3">
-          <h2 className="text-xl font-semibold tracking-tight">
-            Authentication
-          </h2>
+          <h2 className="text-h3 text-ink font-semibold">Authentication</h2>
           <p className="text-ink-body text-sm">
             Three modes mirror the server&apos;s auth middleware:
           </p>
@@ -248,7 +244,7 @@ export default function SDKPage() {
         </section>
 
         <section className="border-line bg-surface rounded-xl border p-5 text-sm">
-          <h2 className="text-base font-semibold">Reference</h2>
+          <h2 className="text-h3 text-ink font-semibold">Reference</h2>
           <ul className="text-ink-body mt-3 space-y-2">
             {/* site-audit S5: the pkg.go.dev link 404'd. The module IS
               published (v0.20.x is on proxy.golang.org and `go get` works),

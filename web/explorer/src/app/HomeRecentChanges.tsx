@@ -29,9 +29,7 @@ export function HomeRecentChanges() {
     <section className="space-y-3">
       <div className="flex items-baseline justify-between">
         <div className="space-y-1">
-          <h2 className="text-2xl font-semibold tracking-tight">
-            Recently shipped
-          </h2>
+          <h2 className="text-h3 text-ink font-semibold">Recently shipped</h2>
           <p className="text-ink-body text-sm">
             What landed in the last release. Scrolling history at{' '}
             <Link href="/changelog" className="text-brand-600 hover:underline">

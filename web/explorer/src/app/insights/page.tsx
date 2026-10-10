@@ -85,7 +85,7 @@ export default function InsightsPage() {
             >
               <div className="flex items-center gap-2.5">
                 <Icon className="text-brand-600 h-5 w-5" />
-                <h2 className="group-hover:text-brand-600 text-lg font-semibold tracking-tight">
+                <h2 className="text-h3 text-ink group-hover:text-brand-600 font-semibold">
                   {s.label}
                 </h2>
               </div>

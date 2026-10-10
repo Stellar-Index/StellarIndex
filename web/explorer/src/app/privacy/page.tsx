@@ -559,9 +559,7 @@ const TOC = [
 function TableOfContents() {
   return (
     <nav className="border-line bg-surface rounded-xl border p-4">
-      <h2 className="text-ink-muted mb-2 text-xs font-semibold tracking-wider uppercase">
-        Contents
-      </h2>
+      <h2 className="text-h3 text-ink mb-2 font-semibold">Contents</h2>
       <ol className="space-y-1 text-sm">
         {TOC.map((t, i) => (
           <li key={t.id}>
@@ -589,7 +587,7 @@ function Section({
   return (
     <section id={id} className="scroll-mt-24 space-y-4">
       <header className="space-y-1">
-        <h2 className="text-2xl font-semibold tracking-tight">
+        <h2 className="text-h3 text-ink font-semibold">
           <a
             href={`#${id}`}
             className="hover:text-brand-600"
@@ -636,9 +634,7 @@ function Aside({ children }: { children: React.ReactNode }) {
 function PolicyHistory() {
   return (
     <section id="history" className="scroll-mt-24 space-y-2">
-      <h2 className="text-ink-muted text-xs font-semibold tracking-wider uppercase">
-        Policy history
-      </h2>
+      <h2 className="text-h3 text-ink font-semibold">Policy history</h2>
       <ul className="text-ink-body space-y-1 text-sm">
         {POLICY_HISTORY.map((h) => (
           <li key={h.date}>

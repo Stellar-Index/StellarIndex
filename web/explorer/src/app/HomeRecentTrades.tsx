@@ -108,7 +108,7 @@ export function HomeRecentTrades() {
     <section className="space-y-3">
       <div className="flex items-baseline justify-between">
         <div className="space-y-1">
-          <h2 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+          <h2 className="text-h3 text-ink flex items-center gap-2 font-semibold">
             Recent trades
             <span
               className="relative inline-flex h-2 w-2"

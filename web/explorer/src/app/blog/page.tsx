@@ -68,7 +68,7 @@ export default function BlogIndexPage() {
             >
               <Link href={`/blog/${p.slug}`} className="group block space-y-2">
                 <div className="flex items-baseline justify-between gap-2">
-                  <h2 className="group-hover:text-brand-600 text-xl font-semibold tracking-tight">
+                  <h2 className="text-h3 text-ink group-hover:text-brand-600 font-semibold">
                     {p.title}
                   </h2>
                   <span className="text-ink-muted font-mono text-xs">

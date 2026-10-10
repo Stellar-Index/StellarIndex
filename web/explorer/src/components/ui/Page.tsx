@@ -125,6 +125,9 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
   );
 }
 
+/** The one section-heading style; page-shell.test.ts holds every app <h2> to it. */
+export const SECTION_HEADING_CLASS = 'text-h3 text-ink font-semibold';
+
 /** A lightweight section heading used inside pages (between cards). */
 export function SectionHeader({
   title,
@@ -140,7 +143,7 @@ export function SectionHeader({
   return (
     <div className={cn('mb-4 flex items-end justify-between gap-4', className)}>
       <div className="min-w-0">
-        <h2 className="text-h3 text-ink font-semibold">{title}</h2>
+        <h2 className={SECTION_HEADING_CLASS}>{title}</h2>
         {description && (
           <p className="text-ink-muted mt-1 text-sm">{description}</p>
         )}

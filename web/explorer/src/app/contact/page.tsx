@@ -109,7 +109,7 @@ export default function ContactPage() {
       </section>
 
       <section className="mt-12 space-y-4">
-        <h2 className="text-xl font-semibold tracking-tight">FAQ</h2>
+        <h2 className="text-h3 text-ink font-semibold">FAQ</h2>
         <div className="space-y-3">
           {FAQS.map((f) => (
             <details
@@ -156,7 +156,7 @@ function ChannelCard({ channel }: { channel: Channel }) {
       </div>
       <div className="flex-1 space-y-1.5">
         <div className="flex items-baseline gap-2">
-          <h2 className="text-sm font-semibold">{channel.title}</h2>
+          <h2 className="text-h3 text-ink font-semibold">{channel.title}</h2>
           <code className="text-ink-muted font-mono text-xs">
             {channel.destination}
           </code>

@@ -50,7 +50,7 @@ export function HomeTopMarkets() {
     <section className="space-y-3">
       <div className="flex items-baseline justify-between">
         <div className="space-y-1">
-          <h2 className="text-2xl font-semibold tracking-tight">Top markets</h2>
+          <h2 className="text-h3 text-ink font-semibold">Top markets</h2>
           <p className="text-ink-body text-sm">
             By 24h USD volume, all sources.
           </p>

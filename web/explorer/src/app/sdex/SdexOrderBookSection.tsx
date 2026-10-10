@@ -48,7 +48,7 @@ export function SdexOrderBookSection() {
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-ink text-lg font-semibold">Live order book</h2>
+        <h2 className="text-h3 text-ink font-semibold">Live order book</h2>
         <Link
           href={`/markets/${encodeURIComponent(pairSlug)}/`}
           className="text-brand-600 text-sm hover:underline"

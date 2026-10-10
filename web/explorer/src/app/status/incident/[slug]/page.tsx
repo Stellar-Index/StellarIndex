@@ -139,7 +139,7 @@ export default async function IncidentPage({
             className="border-line group rounded-sm border"
           >
             <summary className="hover:bg-surface-subtle cursor-pointer px-4 py-2">
-              <h2 className="text-ink inline text-base font-semibold">
+              <h2 className="text-h3 text-ink inline font-semibold">
                 {sec.title}
               </h2>
             </summary>

@@ -131,7 +131,7 @@ function Card({ entry }: { entry: Entry }) {
   return (
     <div className="rounded-card border-line bg-surface shadow-card border p-5">
       <div className="flex items-baseline justify-between gap-2">
-        <h2 className="text-lg font-semibold tracking-tight">{entry.name}</h2>
+        <h2 className="text-h3 text-ink font-semibold">{entry.name}</h2>
         <span
           className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] tracking-wider uppercase ${
             entry.type === 'router'

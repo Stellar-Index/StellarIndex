@@ -60,7 +60,7 @@ export function CategoryHub({
             href={hrefFor.protocol(p.name)}
             className="group border-line bg-surface hover:border-brand-300 hover:bg-surface-subtle rounded-xl border p-5 transition-colors"
           >
-            <h2 className="text-ink group-hover:text-brand-600 text-lg font-semibold">
+            <h2 className="text-h3 text-ink group-hover:text-brand-600 font-semibold">
               {p.label}
             </h2>
             <p className="text-ink-body mt-1.5 text-sm leading-relaxed">
