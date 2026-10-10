@@ -47,6 +47,7 @@ export function CursorsTable() {
   }, [data, filter, hideStale]);
 
   const grouped = useMemo(() => groupBySource(filtered), [filtered]);
+  const maxLag = filtered.reduce((m, c) => Math.max(m, c.lag_seconds), 0);
 
   if (isError) {
     return (
@@ -164,7 +165,10 @@ export function CursorsTable() {
                     </span>
                   </Td>
                   <Td align="right">
-                    <LagPill seconds={c.lag_seconds} />
+                    <span className="inline-flex items-center gap-2">
+                      <LagBar seconds={c.lag_seconds} max={maxLag} />
+                      <LagPill seconds={c.lag_seconds} />
+                    </span>
                   </Td>
                 </tr>
               )),
@@ -176,11 +180,44 @@ export function CursorsTable() {
   );
 }
 
+function lagTier(seconds: number): 'ok' | 'slow' | 'stale' {
+  return seconds <= 60 ? 'ok' : seconds <= 600 ? 'slow' : 'stale';
+}
+
+/**
+ * lagBarPct — bar width for a lag on a log scale against the largest
+ * visible lag. Log, because lags run from seconds to weeks and a linear
+ * bar would flatten every live cursor to nothing.
+ */
+export function lagBarPct(seconds: number, max: number): number {
+  if (!(seconds > 0) || !(max > 0)) return 0;
+  return Math.min(100, (Math.log10(1 + seconds) / Math.log10(1 + max)) * 100);
+}
+
+function LagBar({ seconds, max }: { seconds: number; max: number }) {
+  const tier = lagTier(seconds);
+  const fill =
+    tier === 'ok' ? 'bg-up' : tier === 'slow' ? 'bg-warn-500' : 'bg-down';
+  return (
+    <span
+      aria-hidden
+      title="Lag, log scale against the largest visible lag"
+      className="bg-surface-muted hidden h-1.5 w-20 overflow-hidden rounded-xs sm:inline-block"
+    >
+      <span
+        className={`block h-full ${fill}`}
+        style={{ width: `${lagBarPct(seconds, max)}%` }}
+      />
+    </span>
+  );
+}
+
 function LagPill({ seconds }: { seconds: number }) {
+  const tier = lagTier(seconds);
   const tone =
-    seconds <= 60
+    tier === 'ok'
       ? 'bg-up-subtle text-up-strong'
-      : seconds <= 600
+      : tier === 'slow'
         ? 'bg-warn-50 text-warn-700'
         : 'bg-down-subtle text-down-strong';
   return (
@@ -207,4 +244,3 @@ function groupBySource(rows: Cursor[]): { source: string; rows: Cursor[] }[] {
   out.sort((a, b) => a.source.localeCompare(b.source));
   return out;
 }
-

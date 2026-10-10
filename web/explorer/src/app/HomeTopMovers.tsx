@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
 import { demoteFlaggedLast } from '@/lib/directory-tags';
 import { ScamBadge } from '@/components/ScamBadge';
+import { InlineBar } from '@/components/ContractCharts';
 
 import { useCoins, useVerifiedSlugs, coinSlug, type Coin } from '@/api/hooks';
 import { assetHref } from '@/lib/fiat-slugs';
@@ -25,6 +26,11 @@ export function HomeTopMovers() {
   useLedgerFollow(['/v1/assets']);
 
   const { gainers, losers } = pickMovers(data?.coins ?? []);
+  // One scale across both columns so a +3% and a −30% are not drawn alike.
+  const maxAbs = Math.max(
+    0,
+    ...[...gainers, ...losers].map((c) => Math.abs(Number(c.change_24h_pct))),
+  );
 
   if (isError) {
     return null;
@@ -46,6 +52,7 @@ export function HomeTopMovers() {
           coins={gainers}
           isLoading={isLoading && !data}
           verifiedSlugs={verifiedSlugs}
+          maxAbs={maxAbs}
         />
         <MoverColumn
           title="Losers"
@@ -53,6 +60,7 @@ export function HomeTopMovers() {
           coins={losers}
           isLoading={isLoading && !data}
           verifiedSlugs={verifiedSlugs}
+          maxAbs={maxAbs}
         />
       </div>
     </section>
@@ -65,12 +73,14 @@ function MoverColumn({
   coins,
   isLoading,
   verifiedSlugs,
+  maxAbs,
 }: {
   title: string;
   tone: 'up' | 'down';
   coins: Coin[];
   isLoading: boolean;
   verifiedSlugs?: Set<string>;
+  maxAbs: number;
 }) {
   return (
     <div className="rounded-card border-line bg-surface overflow-hidden border">
@@ -126,13 +136,20 @@ function MoverColumn({
                   )}
                 <ScamBadge tags={c.issuer_directory_tags} />
               </Link>
-              <span
-                className={`font-mono text-xs tabular-nums ${
-                  Number(c.change_24h_pct) > 0 ? 'text-up' : 'text-down'
-                }`}
-              >
-                {Number(c.change_24h_pct) > 0 ? '+' : ''}
-                {Number(c.change_24h_pct).toFixed(2)}%
+              <span className="inline-flex items-center gap-2">
+                <InlineBar
+                  value={Math.abs(Number(c.change_24h_pct))}
+                  max={maxAbs}
+                  label="24h change relative to the largest move listed"
+                />
+                <span
+                  className={`font-mono text-xs tabular-nums ${
+                    Number(c.change_24h_pct) > 0 ? 'text-up' : 'text-down'
+                  }`}
+                >
+                  {Number(c.change_24h_pct) > 0 ? '+' : ''}
+                  {Number(c.change_24h_pct).toFixed(2)}%
+                </span>
               </span>
             </li>
           ))}

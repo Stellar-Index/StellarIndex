@@ -8,6 +8,8 @@ import {
   type RecognitionAxis,
 } from '@/api/hooks';
 
+import { CoverageGrid } from './CoverageGrid';
+
 /**
  * CoveragePanel — the decoder-coverage panel on /diagnostics.
  *
@@ -101,6 +103,7 @@ export function CoveragePanel() {
       >
         Served tier (retention window) vs archive lake (genesis to tip)
       </p>
+      <CoverageGrid sources={data.sources} />
       <div className="-mx-4 overflow-x-auto">
         <table className="divide-line min-w-full divide-y text-sm">
           <thead>
