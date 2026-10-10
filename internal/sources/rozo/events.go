@@ -38,51 +38,22 @@ const GenesisLedger uint32 = 60_829_397
 // Source: https://github.com/RozoAI/rozo-intents-contracts (v1).
 const MainnetPaymentContract = "CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL"
 
-// MainnetPaymentContracts is the full set of Rozo bridge-out C
-// contracts on Stellar pubnet. The original three were confirmed by
-// RozoAI — all emit the same PaymentEvent / FlushEvent
-// schemas. The decoder matches PaymentEvent / FlushEvent by topic[0],
-// so adding a contract here is a watchlist concern (cross-validation
-// + scoping), not a decoder-shape change.
+// MainnetPaymentContracts is the set of Rozo bridge-out C contracts on pubnet.
+// All emit the same PaymentEvent / FlushEvent schemas and the decoder matches by
+// topic[0], so adding a contract is a watchlist concern, not a decoder-shape
+// change.
 //
-// User flows: most bridge-out volume flows through C wallets when
-// the user can't supply a memo (memo-less wallets, contract callers).
-// G-wallet relayer flows handle the memo-bearing path — see
-// [MainnetRelayerAccounts].
+// Most bridge-out volume flows through these C wallets (callers without a
+// memo); memo-bearing G-wallet flows go through [MainnetRelayerAccounts].
 //
-// The 4th entry (`CAFO6OUZ…`) was admitted after a recognition audit
-// found it had emitted exactly ONE payment_event (ledger 61522543)
-// while off this list. Evidence, all independently verified against
-// the ClickHouse lake on r1 (read-only: no operator confirmation from
-// RozoAI obtained for this one):
-//
-//   - WASM hash bytewise IDENTICAL to the original three
-//     (`b56aedeaf80c3d4b7c4c2ddf3893ac47c3ecff1a0a6f19152ca993e5bb294414`,
-//     per docs/operations/wasm-audits/rozo.md) — read from its
-//     contract-instance ledger entry at ledger 61522475.
-//   - Instance storage carries the same 3-key init shape as the
-//     others (`dest` Address, `usdc` Address, `init` bool). `dest` =
-//     `GB4CLV3UMXDPFP5OQJQKUCWPRJXPXPJSHTUKZEJLAIZFZR7UHYAQ6EB4` —
-//     an exact match to the second [MainnetRelayerAccounts] entry.
-//     `usdc` = `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`
-//     — the canonical Circle USDC SAC used elsewhere in this repo.
-//   - Its one payment_event's `destination` field independently
-//     resolves to that same relayer account.
-//   - The contract was deployed+initialized at ledger 61522475 and
-//     the payment fired 68 ledgers later with memo "test payment
-//     0.01 USDC" — a deploy-then-smoke-test pattern, not a
-//     spoof/collision (see decode.go's Classify doc for the topic-
-//     collision risk this package guards against; two OTHER
-//     contracts found in the same lake sweep — CDSXS5GK…, CCP6WOKM…
-//     — collide on the short-form `payment` symbol but have unrelated
-//     body schemas and are correctly NOT on this list).
-//
-// Because the WASM hash is bytewise identical to the already-audited
-// hash (docs/operations/wasm-audits/rozo.md), this contract is covered
-// by that same audit's findings by construction — no separate
-// wasm-history walk needed. This is the doc's own documented re-audit
-// trigger ("a new Rozo deploy beyond MainnetPaymentContracts"); the
-// audit doc records the addition.
+// The 4th entry (CAFO6OUZ…) was admitted on lake evidence alone, without RozoAI
+// confirmation. Its WASM hash is bytewise identical to the original three
+// (b56aedea…4414, docs/operations/wasm-audits/rozo.md), so that audit covers it
+// by construction. Its instance storage matches theirs (dest = the second
+// [MainnetRelayerAccounts] entry, usdc = Circle's USDC SAC), and its single
+// payment_event, 68 ledgers after deploy, was a smoke test rather than a spoof.
+// Two other contracts collide on the short-form `payment` symbol with unrelated
+// bodies and are correctly excluded (see Classify in decode.go).
 var MainnetPaymentContracts = []string{
 	"CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL",
 	"CCRLTS3CMJHYHFD7MYRBJPNW6R3LCXNDO2B6TK6AS6FSXAHR6GBMGLRE",
@@ -144,38 +115,20 @@ var (
 	TopicSymbolFlushEvent   = scval.MustEncodeSymbol(symFlushEvent)   // topic[0] of flush events (live)
 )
 
-// Payment is the canonical Go-side projection of one
-// PaymentEvent emitted by Rozo v1's `pay(from, amount, memo)`
-// function.
+// Payment is the canonical projection of one PaymentEvent emitted by Rozo v1's
+// `pay(from, amount, memo)`.
 //
-// On-wire body shape (from v1/stellar/payment/src/lib.rs):
+// Body (v1/stellar/payment/src/lib.rs): ScMap { from: Address, destination:
+// Address, amount: i128, memo: String }.
 //
-//	#[contracttype]
-//	pub struct PaymentEvent {
-//	    pub from: Address,
-//	    pub destination: Address,
-//	    pub amount: i128,
-//	    pub memo: String,
-//	}
+// The upstream source suggests topics (symbol_short!("payment"), from), but the
+// deployed contract does not emit that: all 3 real lake fixtures (ledgers
+// 61859684, 63147040, 61797898) have topic_count=1, a single Symbol
+// ("payment_event",). `from` lives only in the body; decode it via
+// DecodePayment's map lookup, never topic[1].
 //
-// The upstream source's `env.events().publish((PAYMENT,
-// from.clone()), PaymentEvent { … })` call suggests a 2-tuple
-// topic `(symbol_short!("payment"), from: Address)`, but that is
-// NOT what the deployed mainnet contract emits. Verified against
-// 3/3 real lake fixtures (ledgers 61859684, 63147040, 61797898):
-// every observed payment_event has topic_count=1 — a single Symbol
-// `("payment_event",)`, no second topic element. `from` is carried
-// ONLY in the body ScMap, not duplicated as topic[1]. Do not rely on
-// topic[1] for `from`; decode it via DecodePayment's map lookup like
-// every other field.
-// Body shape: the struct above as a ScMap (Soroban's
-// `#[contracttype]` macro lays out struct fields as a Map).
-//
-// USDC is the only token v1 handles — the contract hardcodes
-// `USDC_CONTRACT` at init and `pay` transfers via the USDC
-// token client. We don't surface the token field on the event
-// because v1 has exactly one token; v2 (when it lands) will
-// add a token field that varies per call.
+// USDC is the only token v1 handles (hardcoded at init), so no token field is
+// surfaced; v2 will add one that varies per call.
 type Payment struct {
 	// Ledger / TxHash / OpIndex / ClosedAt come from the Event
 	// envelope — included on the canonical struct so a downstream

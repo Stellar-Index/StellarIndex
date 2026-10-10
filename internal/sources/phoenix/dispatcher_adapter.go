@@ -46,33 +46,27 @@ type Decoder struct {
 
 // NewDecoder constructs a phoenix Decoder with a fresh buffer.
 //
-// Contract-identity gating (ADR-0035/0040), factory-anchored: the
-// curated mainnet set (pools + stake contracts,
-// docs/protocols/phoenix.md) is ALWAYS seeded as the cold-start warm
-// root, and the factory's ("create","liquidity_pool") events — in the
-// lake from ledger 51,572,026, real captures under
-// test/fixtures/phoenix/factory-create — self-register the pools they
-// announce, blend/aquarius style, so a pool created after the last
-// hand-edit of MainnetPools is still admitted.
+// Contract-identity gating (ADR-0035/0040), factory-anchored: the curated
+// mainnet set (pools + stake contracts, docs/protocols/phoenix.md) is always
+// seeded as the cold-start warm root, and the factory's
+// ("create","liquidity_pool") events (lake from ledger 51,572,026; captures in
+// test/fixtures/phoenix/factory-create) self-register the pools they announce.
 //
-// The trust this extends is stated deliberately: admission is on
-// contract IDENTITY (upstream, create_liquidity_pool requires the
-// sender's auth AND membership of the factory's whitelisted_accounts,
-// and publishes the address the FACTORY deployed, never a caller
-// argument), but the factory is admin-upgradeable, so an admitted pool
-// ultimately trusts the phoenix factory admin — the same trust the
-// curated seed extends by hand. Tokens are
-// creator-chosen, so this is not price trust; the pricing guards
-// downstream are. See docs/operations/wasm-audits/phoenix.md, "Factory
-// create event".
+// Trust: admission is on contract identity (upstream, create_liquidity_pool
+// needs the sender's auth and membership in whitelisted_accounts, and publishes
+// the address the factory deployed). But the factory is admin-upgradeable, so an
+// admitted pool ultimately trusts the factory admin, as the curated seed does by
+// hand. Tokens are creator-chosen, so this is not price trust; the downstream
+// pricing guards are (docs/operations/wasm-audits/phoenix.md, "Factory create
+// event").
 //
-// STAKE contracts are NOT announced by the factory (the POOL deploys
-// its stake contract), so they are admitted only by the curated seed or
-// the protocol_contracts warm — see MainnetStakeContracts.
+// STAKE contracts are not announced by the factory (the pool deploys them), so
+// only the curated seed or the protocol_contracts warm admits them; see
+// MainnetStakeContracts.
 //
-// Caller opts layer the protocol_contracts DB warm and the live-upsert
-// hook on top; the warm remains the operator seam for admitting a
-// contract without a redeploy, and stays the override.
+// Caller opts layer the protocol_contracts DB warm and live-upsert hook on top;
+// the warm is the operator seam for admitting a contract without a redeploy and
+// stays the override.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories([]string{MainnetFactory}),

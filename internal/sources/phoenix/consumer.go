@@ -31,33 +31,20 @@ func (TradeEvent) Source() string { return SourceName }
 var _ consumer.Event = TradeEvent{}
 
 // LiquidityChange is the canonical projection of one completed
-// provide_liquidity / withdraw_liquidity event (5-event or 4-event
-// reassembly respectively). Mirrors the phoenix_liquidity row shape
-// (migration 0044): pool + sender + per-token (asset,amount) +
-// withdraw-only shares amount.
+// provide_liquidity (5-event) or withdraw_liquidity (4-event) reassembly.
+// Mirrors the phoenix_liquidity row (migration 0044).
 //
-// Field semantics:
-//   - Action: one of EventActionProvideLiquidity /
-//     EventActionWithdrawLiquidity — drives the row's action column
-//     and the SQL discriminator.
-//   - Pool: emitting contract's C-strkey (event.ContractID).
-//   - Sender: G/C-strkey of the LP. On withdraw this is the user
-//     burning shares; on provide it's the user depositing tokens.
-//   - TokenA / TokenB: classic-or-Soroban asset addresses for the
-//     pool's two assets. Withdraw events DO NOT carry these — the
-//     contract emits return_amount_a / return_amount_b without the
-//     paired token addresses — so they stay empty on withdraw rows.
-//     Downstream joins phoenix_liquidity.pool to a recent
-//     provide_liquidity row for the same pool to resolve the
-//     addresses if needed.
-//   - AmountA / AmountB: per-token amount. On provide that's the
-//     `actual received` deposit (after slippage truncation); on
-//     withdraw that's `return_amount_a` / `return_amount_b`.
-//   - SharesAmount: only populated on withdraw rows. The number of
-//     LP-share tokens burned. On provide, LP-shares-minted is NOT
-//     emitted by the pool contract — the share-token mint shows up
-//     as a SEP-41 mint event on the pool's share-token contract,
-//     which the sep41_supply observer handles separately.
+// Fields:
+//   - Action: EventActionProvideLiquidity or EventActionWithdrawLiquidity.
+//   - Pool: the emitting contract's C-strkey. Sender: the LP's G/C-strkey.
+//   - TokenA / TokenB: withdraw events carry no token addresses (only
+//     return_amount_a / return_amount_b), so these stay empty on withdraw rows;
+//     join to a recent provide row for the same pool.
+//   - AmountA / AmountB: on provide, the `actual received` deposit (after
+//     slippage truncation); on withdraw, return_amount_a / return_amount_b.
+//   - SharesAmount: LP shares burned, withdraw rows only. The pool does not
+//     emit provide-side minting; it appears as a SEP-41 mint on the share-token
+//     contract, handled by the sep41_supply observer.
 type LiquidityChange struct {
 	Action  string
 	Pool    string

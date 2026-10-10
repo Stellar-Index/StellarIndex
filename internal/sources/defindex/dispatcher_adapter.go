@@ -112,31 +112,21 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		return d.decodeVault(&ev, kind)
 	}
 	if classifyFactory(&ev) != "" {
-		// create / n_fee — recognised so the dispatcher's drop-counter
-		// doesn't file them as "unmatched topic"; neither is itself a
-		// consumer.Event, and neither's BODY is decoded.
+		// create / n_fee are recognised so the drop counter doesn't file them as
+		// "unmatched topic"; neither is a consumer.Event and neither body is decoded.
 		//
-		// SECURITY: the DeFindex factory is PERMISSIONLESS —
-		// anyone can create a vault — and a `create` body's
-		// `assets[].strategies[].address` fields are
-		// attacker-controlled. Matches() proving ev.ContractID is
-		// a canonical factory does NOT make those NAMED addresses
-		// genuine DeFindex strategies; it only proves the real
-		// factory announced SOME (possibly attacker-owned) vault.
-		// A fan-out that Seeded them would let an attacker
-		// register arbitrary contracts as "strategies" merely by
-		// naming them, and their subsequent ("BlendStrategy",…)
-		// events would then decode as recognised DeFindex flows,
-		// contaminating flow/TVL attribution.
+		// SECURITY: the factory is permissionless and a `create` body's
+		// assets[].strategies[].address fields are attacker-controlled. Matches()
+		// proving ev.ContractID is the real factory does not make the NAMED addresses
+		// genuine strategies. Seeding them would let anyone register arbitrary
+		// contracts as strategies by naming them, and their ("BlendStrategy",…) events
+		// would then contaminate flow/TVL attribution.
 		//
-		// No execution-corroboration signal (the dispatcher's
-		// ExecutionCorroborated — an ACTUAL invocation of the strategy)
-		// is available on this event decode path, so we fail closed: a
-		// strategy is recognised ONLY when it is in the curated,
-		// evidence-verified trust root (MainnetStrategies) or an operator
-		// has verified its provenance and seeded protocol_contracts — the
-		// SAME posture vaults already have. A named-but-unverified
-		// strategy fail-closes into an ADR-0033 recognition gap.
+		// No execution-corroboration signal (the dispatcher's ExecutionCorroborated)
+		// exists on this decode path, so fail closed: a strategy is recognised only via
+		// the curated MainnetStrategies root or an operator-seeded protocol_contracts
+		// row, the same posture as vaults. Unverified strategies surface as an ADR-0033
+		// recognition gap.
 		return nil, nil
 	}
 	// Defensive — Matches should have filtered.

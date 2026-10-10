@@ -266,39 +266,26 @@ var ErrTOMLTooDeep = errors.New("sep1: TOML nests tables deeper than the parse b
 
 // Nesting bounds enforced by [checkTOMLNesting].
 //
-// maxTOMLNestingDepth is the real limit, measured by a scan that knows
-// where strings and comments are. 32 is far past anything SEP-1
-// describes — the deepest construct the spec has is an inline table
-// inside an array of tables, two levels — and bounds the decoder's work
-// on a full-size body to a few hundred KB of allocation.
+// maxTOMLNestingDepth is the real limit, measured by a scan that knows where
+// strings and comments are. 32 is far past SEP-1's deepest construct (an inline
+// table inside an array of tables, two levels) and bounds decoder allocation on
+// a full-size body to a few hundred KB.
 //
-// maxRawTOMLNestingDepth bounds a second, context-free count that
-// ignores strings and comments, so opening brackets and dots in data
-// raise it. It is a backstop for a string-aware scan that loses track of
-// a string, not a guarantee: a closing bracket in data lowers it, so a
-// body that pairs every hidden opener with a closer in a comment or
-// string defeats it. The guarantee is the string-aware scans ending
-// every string and comment where the decoder's lexer does, which
-// TestSkipTOMLStringMatchesDecoder checks exhaustively over short
-// strings. At the raw bound the decoder allocates ~8 MiB.
+// maxRawTOMLNestingDepth is a context-free backstop for a string-aware scan that
+// loses track of a string. It is not a guarantee: a closing bracket in data
+// lowers the count. The guarantee is the string-aware scans ending every string
+// and comment where the decoder's lexer does (TestSkipTOMLStringMatchesDecoder).
+// At the raw bound the decoder allocates ~8 MiB. Because it cannot tell data
+// from structure, 256 unclosed brackets or dots inside one string refuse the
+// document; accepted, since resetting at string edges would blind it to the one
+// case it exists for.
 //
-// The raw scans cannot tell data from structure, so literal text alone
-// trips them: 256 unclosed brackets in a string, or 256 dots on one line
-// of one (a long single-line ORG_DESCRIPTION), refuses the document and
-// that issuer's SEP-1 metadata is not refreshed. This is an accepted
-// cost. Resetting the raw count at string edges would blind it to the
-// one case it exists for, a string the string-aware scan misreads.
-//
-// Both bounds also apply to table nesting spelled with dots, which
-// brackets never see: every segment of `a.b.c = 1` or `[a.b.c]` is a
-// table the decoder creates, and its cost is quadratic in the length of
-// the full key path. The path a key reaches — its table header, the keys
-// owning every inline table it sits in, and its own segments — is held
-// to maxTOMLNestingDepth; SEP-1's deepest is two (`[[CURRENCIES]]` then
-// `code`). A full body of 32-segment paths costs ~110 MiB of transient
-// allocation where one unbounded 16,000-segment key cost 4.75 GiB. The
-// raw bound is looser for dots than for brackets: a full body of
-// 251-segment keys, which only it would stop, allocates ~1 GiB.
+// Both bounds also cover dotted table nesting (`a.b.c = 1`, `[a.b.c]`), which
+// creates a table per segment at cost quadratic in key-path length. The full
+// path a key reaches is held to maxTOMLNestingDepth: 32-segment paths across a
+// full body cost ~110 MiB transient, one 16,000-segment key cost 4.75 GiB. The
+// raw bound is looser for dots: 251-segment keys, which only it stops, allocate
+// ~1 GiB.
 const (
 	maxTOMLNestingDepth    = 32
 	maxRawTOMLNestingDepth = 256
@@ -1064,49 +1051,25 @@ func (d *ssrfDialer) isBlocked(ip net.IP) bool {
 
 // ─── partial parse ──────────────────────────────────────────────────
 
-// recoverSEP1Sections reads a document that does not parse whole, one
-// top-level table at a time, and returns what it could read plus the
-// tables it could not.
+// recoverSEP1Sections reads a document that does not parse whole, one top-level
+// table at a time, and returns what it could read plus the tables it could not.
 //
-// # Why this exists
+// A stellar.toml is published by the issuer, and a syntax error in one table is
+// no evidence about the others. Discarding the whole document turns an issuer's
+// typo into our silence about assets that exist (WisdomTree's file has an
+// unterminated string in ACCOUNTS while thirteen of its [[CURRENCIES]] declare
+// an RWA anchor class).
 //
-// A stellar.toml is published by the issuer, not by us, and a syntax
-// error in one table is not evidence about the others. WisdomTree's
-// file (stellar.wisdomtree.com) ends its ACCOUNTS
-// array with an unterminated string on line 20. Every one of its
-// eighteen [[CURRENCIES]] tables is well-formed, thirteen of them
-// declare an RWA anchor class, and those thirteen carry 7,023,543
-// tokens across roughly 30,000 trustlines each. A whole-document parse
-// threw all of it away over a missing quotation mark in an unrelated
-// table.
+// This is not a lenient parser: nothing is repaired or guessed. Each kept
+// section goes through the same toml.Unmarshal with the same strictness and a
+// failing section is dropped and named, so the result is only ever a subset of
+// what valid TOML would produce. An attacker gains nothing: they control their
+// own file anyway.
 //
-// Discarding a whole document for a defect in one table is the same
-// class of mistake as counting a missing field as a zero: it turns an
-// issuer's typo into OUR silence about assets that demonstrably exist.
-//
-// # What this is NOT
-//
-// It is not a lenient parser. Nothing is repaired, guessed or
-// re-punctuated. Each kept section is handed to the SAME toml.Unmarshal
-// with the SAME strictness; a section that does not parse is dropped
-// and named. The result can therefore only ever be a SUBSET of what a
-// valid document would have produced — recovery can never admit a
-// declaration that strict TOML would have rejected.
-//
-// An attacker gains nothing: they control their own file, so anything
-// they could smuggle through here they could simply have written as
-// valid TOML in the first place.
-//
-// # Why the multi-line-string gate
-//
-// Splitting on lines that start a table is only sound if such a line
-// cannot be DATA. Without multi-line strings it cannot be: TOML has no
-// other construct in which a bare [[NAME]] at column zero is a value.
-// Inside a triple-quoted literal it could be, and then this function
-// would read a table the real parser would have seen as text. So a
-// document containing either delimiter is refused outright rather than
-// split on a guess — which is why the gate is on the DOCUMENT and not
-// on the section.
+// Splitting on table-start lines is sound only if such a line cannot be data. A
+// bare [[NAME]] at column zero can be text inside a triple-quoted literal, so a
+// document containing either multi-line delimiter is refused outright; the gate
+// is on the document, not the section.
 func recoverSEP1Sections(body []byte) (map[string]any, []SkippedSection, error) {
 	text := string(body)
 	if strings.Contains(text, `"""`) || strings.Contains(text, `'''`) {

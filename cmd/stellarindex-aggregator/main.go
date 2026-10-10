@@ -924,36 +924,23 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── Decimals-assumption guard ─
-	// The served price is Σ(quote)/Σ(base) on RAW smallest-unit
-	// integers (prices_* CAGGs + aggregate.VWAP); the per-asset
-	// decimals cancel ONLY when base and quote share a scale. That
-	// holds for every 7-decimal token, but a non-7-decimal SEP-41
-	// token getting DEX liquidity silently skews every served price on
-	// its pairs by 10^(7-decimals) with no other alarm. This sweep
-	// resolves each recently-DEX-traded Soroban token's on-chain
+	// The served price is Σ(quote)/Σ(base) on raw smallest-unit integers; per-asset
+	// decimals cancel only when base and quote share a scale. A non-7-decimal
+	// SEP-41 token with DEX liquidity silently skews every price on its pairs by
+	// 10^(7-decimals). This sweep resolves each recently traded Soroban token's
 	// decimals() from the lake and raises
-	// stellarindex_dex_trade_nonstandard_decimals_total the moment one
-	// is != 7 — detection AND confirmation: Writer below persists into
-	// nonstandard_decimals_assets, which decimalsLookup (wired into
-	// orchestrator.Config.DecimalsLookup above) consumes to apply the
-	// forward normalization to this binary's own published VWAP. This
-	// guard's own logic is detection-only; it does not normalize.
+	// stellarindex_dex_trade_nonstandard_decimals_total when one is != 7. The sweep
+	// only detects; Writer persists into nonstandard_decimals_assets, which
+	// decimalsLookup (orchestrator.Config.DecimalsLookup) uses to normalize.
 	//
-	// Needs the lake for decimals(). A ClickHouse that is not answering
-	// YET must delay this guard, never disable it: with a single inline
-	// dial at startup, one failure would mean no Backfill and no Sweep
-	// for the whole process lifetime, behind one WARN line. After a
-	// reboot clickhouse-server spends minutes loading metadata for the
-	// 150B-row lake while this unit's After= ordering does not name it,
-	// so the cold-boot race is the EXPECTED shape, and a one-shot dial
-	// leaves the aggregator silently unguarded until someone restarts
-	// it. The dial lives inside the guard's own goroutine and retries
-	// with backoff until it succeeds or the process is shutting down.
+	// The lake dial must retry with backoff inside the guard's own goroutine, never
+	// a single inline dial at startup: after a reboot clickhouse-server spends
+	// minutes loading metadata and this unit's After= does not name it, so one
+	// failed dial would leave the aggregator unguarded until someone restarts it.
 	//
-	// MarkEnabled seeds the sweep heartbeat BEFORE the dial and Backfill, so
-	// stellarindex_decimals_guard_sweep_stale measures a cold boot from now
-	// (never-armed arm) and a lake-less aggregator, whose gauge stays 0, is
-	// distinguishable as "disabled" rather than "stale".
+	// MarkEnabled seeds the sweep heartbeat before the dial and Backfill, so
+	// stellarindex_decimals_guard_sweep_stale measures a cold boot from now and a
+	// lake-less aggregator reads "disabled", not "stale".
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		decimalsguard.MarkEnabled(time.Now())
 		refresherWG.Add(1)
@@ -1554,51 +1541,35 @@ const supplyChainCursorSource = "ledgerstream"
 const maxSupplyLakeClampLedgers = clickhouse.LatestLedgerLookbackLedgers
 
 // supplyAggregatorLedgers adapts the ingestion cursors + the lake to
-// supply.LedgerLookup. Same shape as
-// internal/ops/supply/supply.go::resolveSnapshotLedger (auto branch),
-// inlined here so the aggregator path stays self-contained.
+// supply.LedgerLookup (same shape as the auto branch of
+// internal/ops/supply/supply.go::resolveSnapshotLedger).
 //
-// The snapshot's ObservedAt is the resolved
-// ledger's real close_time from ClickHouse stellar.ledgers, NEVER
-// time.Now(). Stamping the wall-clock write-time corrupts point-in-time
-// supply queries (worst on the operator's constant supply re-derives).
+// ObservedAt is the resolved ledger's real close_time from ClickHouse
+// stellar.ledgers, never time.Now(): a wall-clock stamp corrupts point-in-time
+// supply queries.
 //
-// Resolution has two steps, and both are load-bearing:
+// Resolution has two load-bearing steps:
 //
-//  1. The chain cursor names the position.
-//     MAX(last_ledger) over every ingestion cursor let any ops job decide
-//     what ledger the money snapshot claims to be as-of: with the indexer
-//     behind (restart, re-derive, maintenance) and an operator
-//     backfilling near the tip, the backfill cursor wins the max and the
-//     snapshot is stamped at a ledger no component balance was observed
-//     at. The MAX fallback survives, named, for the pre-first-run case.
+//  1. The chain cursor names the position, not MAX(last_ledger) over every
+//     cursor. An operator backfilling near the tip would win the max and stamp
+//     the snapshot at a ledger no component was observed at. MAX survives only
+//     as the named pre-first-run fallback.
 //
-//  2. The lake's landed tip bounds it. ingestion_cursors (Postgres,
-//     realtime) leads stellar.ledgers (CH sink, lands seconds later) by
-//     design, so an exact lookup of the cursor's own ledger routinely
-//     misses, in bursts that push whole cohorts of watched assets past
-//     the error_dominant threshold together. The snapshot needs a real
-//     chain position with a real close time, not the cursor ledger, so
-//     resolution clamps to the newest LANDED ledger at or before the
-//     cursor. The lookup reads only the [maxSupplyLakeClampLedgers]
-//     below the cursor: an unbounded `ledger_seq <= cursor` prunes no
-//     partition of stellar.ledgers.
+//  2. The lake's landed tip bounds it. ingestion_cursors leads stellar.ledgers
+//     by seconds, so an exact lookup of the cursor's ledger routinely misses.
+//     Resolution clamps to the newest landed ledger at or before the cursor,
+//     reading only the [maxSupplyLakeClampLedgers] below it (an unbounded
+//     `ledger_seq <= cursor` prunes no partition).
 //
-// Fail-closed is preserved end to end: no cursor, no landed row within
-// [maxSupplyLakeClampLedgers] of the cursor, or a lake trailing the
-// cursor by more than that, all return an error (retryable no_ledger
-// outcome) rather than a wall-clock guess.
+// Fail-closed: no cursor, no landed row within the clamp, or a lake trailing the
+// cursor by more than that, returns a retryable no_ledger error, never a
+// wall-clock guess.
 //
-// This stamps a real chain position, but the supply-component readers
-// (LatestAccountObservationAtOrBefore, trustline / claimable /
-// LP-reserve / SAC-balance / SEP-41) return whatever row they have
-// at-or-before the picked ledger, even when that row is much older.
-// A computer that can tell records its oldest component's ledger as
-// `supply.Supply.MinComponentLedger` (zero passes the gate). The
-// Refresher rejects a snapshot whose components lag past the
-// stale-component threshold ([supply.WithStaleComponentLedgers]) and
-// moved since the last tick; a lagging snapshot that stayed frozen is
-// kept as dormant until the dormancy horizon, then rejected.
+// The supply-component readers return whatever at-or-before row they have, even
+// a much older one. supply.Supply.MinComponentLedger records the oldest (zero
+// passes the gate); the Refresher rejects snapshots whose components lag past
+// [supply.WithStaleComponentLedgers] and moved since the last tick, and keeps a
+// frozen lagging one as dormant until the dormancy horizon.
 type supplyAggregatorLedgers struct {
 	s          supplyCursorLister
 	closeTimes ledgerCloseTimeReader

@@ -1,57 +1,22 @@
-// Package cctp decodes Circle's CCTP v2 contract events on
-// Stellar (Soroban).
+// Package cctp decodes Circle's CCTP v2 contract events on Stellar (Soroban)
+// from three contracts: TokenMessengerMinter, MessageTransmitter and
+// CctpForwarder (addresses in the Mainnet* constants below).
 //
-// Three on-chain contracts:
+// Transfer flow: deposit_for_burn and mint_and_withdraw (TokenMessengerMinter),
+// message_sent and message_received (MessageTransmitter), mint_and_forward
+// (CctpForwarder). The governance/admin events (ownership, admin, pauser,
+// attester, denylist, fee and limit config) were each verified against real
+// mainnet events; the list lives in decode.go and the cctp_events CHECK
+// constraint (migration 0094).
 //
-//	TokenMessengerMinter  CAE2G5Z77UP7GYPYGFOWFGW7C7J6I4YP2AFGSADRKQY62SYUFLPNFTXL
-//	MessageTransmitter    CACMENFFJPJMSDAJQLX4R7K3SFZIW2LJSE3R2UMLGSWHFHS353FVXAZV
-//	CctpForwarder         CBZL2IH7F6BIDAA3WBNXYKIXSATJGMSW7K5P5MJ6STX5RXN47TZJDF5T
+// One outbound deposit_for_burn emits both a DepositForBurn and a MessageSent in
+// the same transaction; inbound pairs MessageReceived with MintAndWithdraw.
+// Correlate by (ledger, tx_hash).
 //
-// Transfer-flow events:
-//
-//	deposit_for_burn   (TokenMessengerMinter) — outbound transfer
-//	mint_and_withdraw  (TokenMessengerMinter) — inbound mint
-//	message_sent       (MessageTransmitter)   — wire envelope (outbound)
-//	message_received   (MessageTransmitter)   — wire envelope (inbound)
-//	mint_and_forward   (CctpForwarder)        — inbound mint relayed onward
-//
-// Governance/admin events (all three contracts unless noted; every one
-// verified against real mainnet events in the lake):
-//
-//	ownership_transfer             — 2-step ownership transfer initiated
-//	ownership_transfer_completed   — 2-step ownership transfer accepted
-//	admin_changed                  — admin role reassigned
-//	admin_change_started           — 2-step admin change initiated
-//	remote_token_messenger_added   (TokenMessengerMinter only) — remote-domain TokenMessenger registered
-//	token_pair_linked              (TokenMessengerMinter only) — local↔remote token link registered
-//	attester_enabled               (MessageTransmitter only) — an attester public key was enabled
-//	attester_manager_updated       (MessageTransmitter only) — the attester-manager role was reassigned
-//	signature_threshold_updated    (MessageTransmitter only) — attestation signature threshold changed
-//	max_message_body_size_updated  (MessageTransmitter only) — message size ceiling changed
-//	pauser_changed                 — the pause-role address was reassigned
-//	rescuer_changed                — the rescue-role address was reassigned
-//	denylisted / un_denylisted     (TokenMessengerMinter only) — an account entered/left the denylist
-//	denylister_changed             (TokenMessengerMinter only) — the denylister role was reassigned
-//	fee_recipient_set              (TokenMessengerMinter only) — the fee-recipient address changed
-//	min_fee_controller_set         (TokenMessengerMinter only) — the min-fee-controller role was reassigned
-//	set_token_controller           (TokenMessengerMinter only) — the token-controller role was reassigned
-//	set_burn_limit_per_message     (TokenMessengerMinter only) — per-message burn ceiling set for a local token
-//	swap_minter_config_set         (TokenMessengerMinter only) — swap-minter config set for a local token
-//	token_decimal_config_added     (TokenMessengerMinter only) — canonical/local decimal mapping added for a local token
-//
-// One outbound `deposit_for_burn` call emits BOTH a DepositForBurn
-// event AND a MessageSent event in the same transaction —
-// correlate by (ledger, tx_hash) when assembling a logical
-// outbound-transfer record. Same for inbound (MessageReceived +
-// MintAndWithdraw).
-//
-// Design rationale and full per-event schemas extracted from the
-// contracts' Rust source: docs/protocols/cctp.md.
-//
-// Wiring: decode.go decodes; consumer.go projects each event into the
-// canonical cctp.Event row; dispatcher_adapter.go is the dispatcher
-// Decoder; the indexer's sink persists via Store.InsertCCTPEvent into
-// the cctp_events hypertable (migration 0038). See README.md §Wiring.
+// Per-event schemas from the contracts' Rust source: docs/protocols/cctp.md.
+// Wiring: decode.go decodes, consumer.go projects into the canonical cctp.Event,
+// dispatcher_adapter.go is the dispatcher Decoder, and the sink persists via
+// Store.InsertCCTPEvent (README.md §Wiring).
 package cctp
 
 import (
@@ -166,37 +131,18 @@ var (
 	TopicSymbolUnDenylisted              = scval.MustEncodeSymbol(EventUnDenylisted)
 )
 
-// DepositForBurn is the canonical projection of one
-// `DepositForBurn` event from TokenMessengerMinter (v2).
+// DepositForBurn is the canonical projection of one `deposit_for_burn` event
+// from TokenMessengerMinter (v2); schema in docs/protocols/cctp.md.
 //
-// Source schema (token-messenger-minter-v2/src/lib.rs:#[contractevent]):
+// Wire: topics = ["deposit_for_burn", burn_token, depositor,
+// min_finality_threshold]; body = ScMap { amount, mint_recipient,
+// destination_domain, destination_token_messenger, destination_caller, max_fee,
+// hook_data }.
 //
-//	pub struct DepositForBurn {
-//	    #[topic] pub burn_token: Address,
-//	    pub amount: i128,
-//	    #[topic] pub depositor: Address,
-//	    pub mint_recipient: BytesN<32>,
-//	    pub destination_domain: u32,
-//	    pub destination_token_messenger: BytesN<32>,
-//	    pub destination_caller: BytesN<32>,
-//	    pub max_fee: i128,
-//	    #[topic] pub min_finality_threshold: u32,
-//	    pub hook_data: Bytes,
-//	}
-//
-// On the wire:
-//
-//	topics = ["deposit_for_burn", burn_token, depositor, min_finality_threshold]
-//	body   = ScMap { amount, mint_recipient, destination_domain,
-//	                 destination_token_messenger, destination_caller,
-//	                 max_fee, hook_data }
-//
-// `mint_recipient` / `destination_token_messenger` /
-// `destination_caller` are 32-byte buffers — for EVM destination
-// chains the leading 12 bytes are zero padding and the trailing
-// 20 bytes are the EVM address. We surface them as raw hex
-// (lowercase, no 0x prefix) — downstream decides whether to
-// re-format for a specific destination chain.
+// mint_recipient, destination_token_messenger and destination_caller are 32-byte
+// buffers (for EVM destinations: 12 zero-pad bytes, then the 20-byte address).
+// They are surfaced as raw lowercase hex without 0x; downstream re-formats per
+// destination chain.
 type DepositForBurn struct {
 	Ledger     uint32
 	TxHash     string
