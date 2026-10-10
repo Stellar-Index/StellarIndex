@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -1510,4 +1511,124 @@ func newJSONServer(t *testing.T, wantPath, body string) *client.Client {
 		_, _ = w.Write([]byte(body))
 	})
 	return c
+}
+
+// TestIsWithheld_DiscriminatesTheTwo404s: /v1/price answers 404 both for
+// "no data" and for "price withheld"; IsNotFound cannot tell them apart,
+// so the SDK must expose the problem type's verdict directly.
+func TestIsWithheld_DiscriminatesTheTwo404s(t *testing.T) {
+	for _, tc := range []struct {
+		typ          string
+		wantWithheld bool
+	}{
+		{client.ProblemTypePriceWithheld, true},
+		{client.ProblemTypePriceNotFound, false},
+	} {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"type":"` + tc.typ + `","title":"t","status":404}`))
+		}))
+		_, err := client.New(client.Options{BaseURL: ts.URL}).Price(context.Background(),
+			client.PriceQuery{Asset: "native", Quote: "fiat:USD"})
+		ts.Close()
+		var apiErr *client.APIError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("%s: err = %v, want *APIError", tc.typ, err)
+		}
+		if got := apiErr.IsWithheld(); got != tc.wantWithheld {
+			t.Errorf("%s: IsWithheld = %v, want %v", tc.typ, got, tc.wantWithheld)
+		}
+		if !apiErr.IsNotFound() {
+			t.Errorf("%s: IsNotFound = false; both are 404s", tc.typ)
+		}
+	}
+}
+
+// TestEnvelope_DecodesWithheld: the batch envelope's withheld list must
+// reach the caller, or the server-side discriminator is invisible.
+func TestEnvelope_DecodesWithheld(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[],"withheld":["native"],"as_of":"2026-04-28T10:00:00Z","flags":{}}`))
+	}))
+	t.Cleanup(ts.Close)
+	env, err := client.New(client.Options{BaseURL: ts.URL}).PriceBatch(context.Background(),
+		client.PriceBatchQuery{AssetIDs: []string{"native"}})
+	if err != nil {
+		t.Fatalf("PriceBatch: %v", err)
+	}
+	if len(env.Withheld) != 1 || env.Withheld[0] != "native" {
+		t.Errorf("Withheld = %v, want [native]", env.Withheld)
+	}
+}
+
+// TestAPIError_DecodesWithheldReason: the withheld cause must reach the
+// caller as a field, not only inside Title.
+func TestAPIError_DecodesWithheldReason(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"type":"` + client.ProblemTypePriceWithheld + `","title":"t","status":404,"reason":"scam_issuer"}`))
+	}))
+	t.Cleanup(ts.Close)
+	_, err := client.New(client.Options{BaseURL: ts.URL}).Price(context.Background(),
+		client.PriceQuery{Asset: "native", Quote: "fiat:USD"})
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v, want *APIError", err)
+	}
+	if apiErr.Reason != "scam_issuer" {
+		t.Errorf("Reason = %q, want scam_issuer", apiErr.Reason)
+	}
+}
+
+// TestSources_IncludeSendsCommaJoinedParam. [Source] documents
+// TradeCount24h/VolumeUSD24h/MarketsCount24h/VolumeHistory24h as
+// populated only when the request used `?include=stats` (etc), but
+// without an Include option the SDK could never request those fields.
+func TestSources_IncludeSendsCommaJoinedParam(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("include"); got != "stats,sparkline" {
+			t.Errorf("include = %q, want %q", got, "stats,sparkline")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data": [], "as_of": "2026-04-28T10:00:00Z", "flags": {}}`))
+	})
+	_, err := c.Sources(context.Background(), client.SourcesOptions{
+		Include: []string{"stats", "sparkline"},
+	})
+	if err != nil {
+		t.Fatalf("Sources: %v", err)
+	}
+}
+
+// TestMarkets_IncludeSourceAssetQueryParams. MarketsOptions
+// must have a field for the spec's `include` (sparkline/inception),
+// `source`, or `asset` query parameters despite [Market] documenting
+// include-gated fields and the OpenAPI spec documenting `source` +
+// `asset` filters on GET /v1/markets.
+func TestMarkets_IncludeSourceAssetQueryParams(t *testing.T) {
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if got := q.Get("include"); got != "sparkline,inception" {
+			t.Errorf("include = %q, want %q", got, "sparkline,inception")
+		}
+		if got := q.Get("source"); got != "sdex" {
+			t.Errorf("source = %q, want %q", got, "sdex")
+		}
+		if got := q.Get("asset"); got != "native" {
+			t.Errorf("asset = %q, want %q", got, "native")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data": [], "as_of": "2026-04-28T10:00:00Z", "flags": {}}`))
+	})
+	_, err := c.Markets(context.Background(), client.MarketsOptions{
+		Include: []string{"sparkline", "inception"},
+		Source:  "sdex",
+		Asset:   "native",
+	})
+	if err != nil {
+		t.Fatalf("Markets: %v", err)
+	}
 }

@@ -35,4 +35,4 @@ A NAV feed never carries a quote that is not its reserve asset, and a suffixed f
 ## Evidence
 
 - `internal/canonical/asset.go`, `asset_rwa.go`, `asset_raw.go`; `internal/canonical/asset_fiat_test.go` keeps XAU off the fiat list.
-- `internal/sources/redstone/feeds.go`, `feeds_test.go`; `internal/sources/external/registry.go` (`IncludeInVWAP=false`).
+- `internal/sources/redstone/feeds.go`, `decode_test.go`; `internal/sources/external/registry.go` (`IncludeInVWAP=false`).

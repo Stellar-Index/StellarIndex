@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -357,5 +358,201 @@ func TestCoinbaseCandlesToTrades_malformedCandleFailsPage(t *testing.T) {
 	empty := []coinbaseCandle{{json.Number("1745000000"), json.Number("0.1"), json.Number("0.2"), json.Number("0.1"), json.Number("0.15"), json.Number("0")}}
 	if trades, err := coinbaseCandlesToTrades(empty, "XLM-USD", makePair(t), 3600, far, far); err != nil || len(trades) != 0 {
 		t.Errorf("zero-volume candle = (%d trades, %v), want a silent skip", len(trades), err)
+	}
+}
+
+// scriptedCoinbaseREST answers call i with responder(i) and records the
+// time of every request.
+func scriptedCoinbaseREST(t *testing.T, responder func(call int, w http.ResponseWriter)) (*httptest.Server, func() []time.Time) {
+	t.Helper()
+	var mu sync.Mutex
+	var seen []time.Time
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		call := len(seen)
+		seen = append(seen, time.Now())
+		mu.Unlock()
+		responder(call, w)
+	}))
+	return srv, func() []time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]time.Time(nil), seen...)
+	}
+}
+
+func coinbaseXLMUSD(t *testing.T) canonical.Pair {
+	t.Helper()
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	p, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	return p
+}
+
+// One 429 must not discard the walk: the window is retried.
+func TestCoinbaseBackfill_RetriesRateLimitedWindow(t *testing.T) {
+	const startSec = int64(1_745_002_800)
+	candles := synthesiseCoinbaseCandles(5, startSec, 3600)
+	srv, _ := scriptedCoinbaseREST(t, func(call int, w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		switch call {
+		case 0:
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"message":"Slow down"}`))
+		case 1:
+			_ = json.NewEncoder(w).Encode(candles)
+		default:
+			_ = json.NewEncoder(w).Encode([]coinbaseCandle{})
+		}
+	})
+	defer srv.Close()
+
+	m, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	s := NewStreamer(m)
+	s.Endpoint = srv.URL
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	from := time.Unix(startSec, 0).UTC()
+	trades, err := s.Backfill(ctx, coinbaseXLMUSD(t), from, from.Add(6*time.Hour), time.Hour)
+	if err != nil {
+		t.Fatalf("Backfill after one 429: %v", err)
+	}
+	if len(trades) != 5 {
+		t.Fatalf("got %d trades, want 5", len(trades))
+	}
+}
+
+// Requests are paced, not fired back-to-back into the venue's limit.
+func TestCoinbaseBackfill_PacesRequests(t *testing.T) {
+	const startSec = int64(1_745_002_800)
+	srv, seen := scriptedCoinbaseREST(t, func(_ int, w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]coinbaseCandle{})
+	})
+	defer srv.Close()
+
+	m, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	s := NewStreamer(m)
+	s.Endpoint = srv.URL
+	from := time.Unix(startSec, 0).UTC()
+	// 1500 hourly candles = five 300-candle windows.
+	if _, err := s.Backfill(context.Background(), coinbaseXLMUSD(t), from, from.Add(1500*time.Hour), time.Hour); err != nil {
+		t.Fatalf("Backfill: %v", err)
+	}
+	times := seen()
+	if len(times) != 5 {
+		t.Fatalf("got %d requests, want 5", len(times))
+	}
+	span := times[len(times)-1].Sub(times[0])
+	if minSpan := 4 * candlesRequestInterval * 9 / 10; span < minSpan {
+		t.Fatalf("5 requests spanned %v, want >= %v (unpaced)", span, minSpan)
+	}
+}
+
+// coinbaseCandleToTrade has three early-exit error branches the
+// existing backfill_test.go's happy-path TestCoinbaseCandleToTrade_LHOC_Ordering
+// doesn't reach. They guard against malformed upstream rows
+// landing in the trades hypertable as zero-volume or zero-price
+// observations.
+
+func makePair(t *testing.T) canonical.Pair {
+	t.Helper()
+	xlm, err := canonical.NewCryptoAsset("XLM")
+	if err != nil {
+		t.Fatalf("NewCryptoAsset XLM: %v", err)
+	}
+	usd, err := canonical.ParseAsset("fiat:USD")
+	if err != nil {
+		t.Fatalf("ParseAsset USD: %v", err)
+	}
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	return pair
+}
+
+func TestCoinbaseCandleToTrade_missingTimeRejected(t *testing.T) {
+	// First slot is the open-time epoch; an empty slice fails
+	// openTimeSec.
+	row := coinbaseCandle{}
+	_, err := coinbaseCandleToTrade(row, "XLM-USD", makePair(t), 3600)
+	if err == nil {
+		t.Error("expected \"missing time\" error, got nil")
+	}
+	if !strings.Contains(err.Error(), "time") {
+		t.Errorf("error %q missing \"time\" fragment", err.Error())
+	}
+}
+
+func TestCoinbaseCandleToTrade_zeroVolumeRejected(t *testing.T) {
+	// Volume=0 is treated as missing — it would translate into a
+	// zero-amount Trade that breaks downstream VWAP weighting.
+	row := coinbaseCandle{
+		json.Number("1700000000"), // time
+		json.Number("0.17500"),    // low
+		json.Number("0.17600"),    // high
+		json.Number("0.17582"),    // open
+		json.Number("0.17582"),    // close
+		json.Number("0.0"),        // volume = 0 → reject
+	}
+	_, err := coinbaseCandleToTrade(row, "XLM-USD", makePair(t), 3600)
+	if err == nil {
+		t.Error("expected \"zero volume\" error, got nil")
+	}
+	if !strings.Contains(err.Error(), "volume") {
+		t.Errorf("error %q missing \"volume\" fragment", err.Error())
+	}
+}
+
+func TestCoinbaseCandleToTrade_missingVolumeRejected(t *testing.T) {
+	// volume slot is the wrong type — volumeFloat returns ok=false.
+	row := coinbaseCandle{
+		json.Number("1700000000"), json.Number("0.17500"), json.Number("0.17600"), json.Number("0.17582"), json.Number("0.17582"),
+		"100.0", // string, not a JSON number — volumeStr rejects
+	}
+	_, err := coinbaseCandleToTrade(row, "XLM-USD", makePair(t), 3600)
+	if err == nil {
+		t.Error("expected error for non-number volume, got nil")
+	}
+}
+
+func TestCoinbaseCandleToTrade_zeroCloseRejected(t *testing.T) {
+	// Close=0 is treated as missing — would yield a zero-quote-
+	// amount Trade that downstream callers would mistake for a
+	// free trade.
+	row := coinbaseCandle{
+		json.Number("1700000000"), json.Number("0.17500"), json.Number("0.17600"), json.Number("0.17582"),
+		json.Number("0.0"),   // close = 0 → reject
+		json.Number("100.0"), // volume
+	}
+	_, err := coinbaseCandleToTrade(row, "XLM-USD", makePair(t), 3600)
+	if err == nil {
+		t.Error("expected \"zero close\" error, got nil")
+	}
+	if !strings.Contains(err.Error(), "close") {
+		t.Errorf("error %q missing \"close\" fragment", err.Error())
+	}
+}
+
+func TestCoinbaseCandleToTrade_missingCloseRejected(t *testing.T) {
+	row := coinbaseCandle{
+		json.Number("1700000000"), json.Number("0.17500"), json.Number("0.17600"), json.Number("0.17582"),
+		"0.18", // string, not a JSON number
+		json.Number("100.0"),
+	}
+	_, err := coinbaseCandleToTrade(row, "XLM-USD", makePair(t), 3600)
+	if err == nil {
+		t.Error("expected error for non-number close, got nil")
 	}
 }

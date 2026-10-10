@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -470,5 +471,361 @@ func TestRunIssuerFlags_DeadlineMidChainRecheckCountsOnlyReadRows(t *testing.T) 
 	want := "chain re-check processed 1 of 2 filled row(s) — corrected=0 agreed=0 unread=1"
 	if !strings.Contains(out, want) {
 		t.Errorf("output lacks %q:\n%s", want, out)
+	}
+}
+
+// The `issuer-flags` drain's CHAIN RE-CHECK pass.
+//
+// `issuers.home_domain` stopped being write-once, but nothing scheduled ever
+// re-read a row that already held one: the primary queue is `auth_required IS
+// NULL` and the last-known re-check covers only merged accounts, so a FILLED,
+// live-sourced row was invisible to both. `issuer-enrich`, the job whose whole
+// purpose is to sync the column, is a manual one-shot with no timer. An anchor
+// that moved domain with SetOptions and let the old name lapse therefore kept
+// the lapsed name until someone ran a backfill by hand — while the hourly
+// SEP-1 refresh kept fetching it, and whoever registered it next could serve a
+// stellar.toml listing the anchor's issuer account back and inherit its
+// verified org identity.
+//
+// The founding case's real keys: the ex-apay ETH issuer moved to
+// ultracapital.xyz when Ultra Stellar acquired apay.io's wrapped assets.
+const (
+	// A filled, live-sourced row on r1 whose stored domain has lapsed.
+	lapsedDomainIssuer       = "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55"
+	lapsedDomainIssuerLedger = uint32(64228661)
+)
+
+// onRecord builds one persisted row the way the served tier holds it.
+func onRecord(g string, flags uint32, domain, source string, asOf uint32) timescale.IssuerAuthFlagsOnRecord {
+	req, rev, imm, claw := flags&0x1 != 0, flags&0x2 != 0, flags&0x4 != 0, flags&0x8 != 0
+	rec := timescale.IssuerAuthFlagsOnRecord{
+		GStrkey:    g,
+		Required:   &req,
+		Revocable:  &rev,
+		Immutable:  &imm,
+		Clawback:   &claw,
+		HomeDomain: domain,
+		Source:     source,
+	}
+	if asOf > 0 {
+		l := asOf
+		rec.AsOfLedger = &l
+	}
+	return rec
+}
+
+// TestRunIssuerFlags_ChainRecheckCorrectsALapsedHomeDomain is the defect.
+//
+// The row is the exact shape the drain leaves behind: flags resolved, source
+// `live`, and a home_domain that was true when it was written. The account has
+// since declared a different one on-chain. A run must re-read it and write the
+// chain's answer back — that is the on-chain remediation path, which
+// would otherwise have no effect.
+func TestRunIssuerFlags_ChainRecheckCorrectsALapsedHomeDomain(t *testing.T) {
+	store := &stubIssuerFlagsStore{
+		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
+			onRecord(lapsedDomainIssuer, 0x1, "lapsed-former.example",
+				timescale.AuthFlagsSourceLive, 64100000),
+		},
+	}
+	reader := &stubIssuerFlagsReader{
+		live: map[string]clickhouse.AccountAuthFlags{
+			lapsedDomainIssuer: liveReading(lapsedDomainIssuerLedger, 0x1, "ultracapital.xyz"),
+		},
+	}
+	if err := runIssuerFlags(context.Background(), store, reader, runOpts()); err != nil {
+		t.Fatalf("runIssuerFlags: %v", err)
+	}
+
+	got, ok := store.allPersisted()[lapsedDomainIssuer]
+	if !ok {
+		t.Fatalf("the filled row was never re-read; persisted = %v — a lapsed domain is only "+
+			"correctable on-chain if something re-offers a row the drain has already filled",
+			store.allPersisted())
+	}
+	if got.HomeDomain != "ultracapital.xyz" {
+		t.Errorf("home_domain = %q, want ultracapital.xyz — the account's own current entry, "+
+			"not the copy taken before it moved", got.HomeDomain)
+	}
+	if got.Source != timescale.AuthFlagsSourceLive {
+		t.Errorf("source = %q, want %q", got.Source, timescale.AuthFlagsSourceLive)
+	}
+	if got.AsOfLedger == nil || *got.AsOfLedger != lapsedDomainIssuerLedger {
+		t.Errorf("as-of = %v, want %d (the entry read now, not the one on record)",
+			got.AsOfLedger, lapsedDomainIssuerLedger)
+	}
+}
+
+// TestRunIssuerFlags_ChainRecheckWritesOnlyWhatTheChainChanged — re-offering
+// the whole filled set (r1: 49,002 rows) is only affordable because a run that
+// changes nothing writes nothing. It also keeps the `written` counter meaning
+// "rows the chain corrected" rather than "rows we touched".
+func TestRunIssuerFlags_ChainRecheckWritesOnlyWhatTheChainChanged(t *testing.T) {
+	const agreeing = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+	store := &stubIssuerFlagsStore{
+		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
+			onRecord(agreeing, 0x2, "aqua.network", timescale.AuthFlagsSourceLive, 64100000),
+			onRecord(lapsedDomainIssuer, 0x1, "lapsed-former.example",
+				timescale.AuthFlagsSourceLive, 64100000),
+			// Not in the lake's current-state projection at all.
+			onRecord(absentIssuer, 0, "somewhere.example", timescale.AuthFlagsSourceLive, 64100000),
+		},
+	}
+	reader := &stubIssuerFlagsReader{
+		live: map[string]clickhouse.AccountAuthFlags{
+			agreeing:           liveReading(64100000, 0x2, "aqua.network"),
+			lapsedDomainIssuer: liveReading(lapsedDomainIssuerLedger, 0x1, "ultracapital.xyz"),
+		},
+	}
+	if err := runIssuerFlags(context.Background(), store, reader, runOpts()); err != nil {
+		t.Fatalf("runIssuerFlags: %v", err)
+	}
+
+	got := store.allPersisted()
+	if len(got) != 1 {
+		t.Fatalf("persisted %d row(s), want exactly 1 — only the row the chain moved past: %v", len(got), got)
+	}
+	if _, ok := got[lapsedDomainIssuer]; !ok {
+		t.Errorf("persisted %v, want the corrected row %s", got, lapsedDomainIssuer)
+	}
+	if _, ok := got[absentIssuer]; ok {
+		t.Errorf("%s was rewritten, but the live reader did not answer for it — absence from the "+
+			"current-state projection is a merged account AND a coverage gap, so this pass may not act on it",
+			absentIssuer)
+	}
+}
+
+// TestRunIssuerFlags_ChainRecheckClearsADomainTheChainNoLongerDeclares is the
+// cleared-domain half of the lapsed-domain takeover. BulkAccountAuthFlags
+// returns every LIVE account and decodes home_domain from its entry, so an
+// empty reading is the account declaring none — not a field the lake did not
+// return. The anchor below ran SetOptions(home_domain="") at the SAME ledger
+// the row was filled at, so nothing but the domain distinguishes the reading
+// from the record: the pass must still write it, or the lapsed name stays in
+// the SEP-1 refresh queue.
+func TestRunIssuerFlags_ChainRecheckClearsADomainTheChainNoLongerDeclares(t *testing.T) {
+	store := &stubIssuerFlagsStore{
+		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
+			onRecord(lapsedDomainIssuer, 0x1, "lapsed-former.example",
+				timescale.AuthFlagsSourceLive, 64100000),
+		},
+	}
+	reader := &stubIssuerFlagsReader{
+		live: map[string]clickhouse.AccountAuthFlags{
+			lapsedDomainIssuer: liveReading(64100000, 0x1, ""),
+		},
+	}
+	if err := runIssuerFlags(context.Background(), store, reader, runOpts()); err != nil {
+		t.Fatalf("runIssuerFlags: %v", err)
+	}
+	got, ok := store.allPersisted()[lapsedDomainIssuer]
+	if !ok {
+		t.Fatalf("persisted %v, want %s rewritten — the chain no longer declares the stored domain",
+			store.allPersisted(), lapsedDomainIssuer)
+	}
+	if got.Source != timescale.AuthFlagsSourceLive || got.HomeDomain != "" {
+		t.Errorf("persisted source=%q home_domain=%q, want a live reading declaring none", got.Source, got.HomeDomain)
+	}
+}
+
+// TestRunIssuerFlags_ChainRecheckLeavesAnUnchangedDeclaredNoneAlone keeps the
+// pass writing only differences: a row that already holds no domain agrees
+// with a live entry that declares none.
+func TestRunIssuerFlags_ChainRecheckLeavesAnUnchangedDeclaredNoneAlone(t *testing.T) {
+	store := &stubIssuerFlagsStore{
+		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
+			onRecord(lapsedDomainIssuer, 0x1, "", timescale.AuthFlagsSourceLive, 64100000),
+		},
+	}
+	reader := &stubIssuerFlagsReader{
+		live: map[string]clickhouse.AccountAuthFlags{
+			lapsedDomainIssuer: liveReading(64100000, 0x1, ""),
+		},
+	}
+	if err := runIssuerFlags(context.Background(), store, reader, runOpts()); err != nil {
+		t.Fatalf("runIssuerFlags: %v", err)
+	}
+	if got := store.allPersisted(); len(got) != 0 {
+		t.Errorf("persisted %v, want nothing — the row already agrees with the chain", got)
+	}
+}
+
+// TestRunIssuerFlags_ChainRecheckRelabelsAnIssuerThatMergedAfterFilling is the
+// merged half. A row filled `live` whose account has since merged is absent
+// from the live reader; a pass that leaves it alone keeps its `live`
+// label and home_domain for good. It must ask the last-known reader, and
+// write what that reader returns: the removal-ledger flags and NO domain. A
+// key neither reader answers for (a coverage gap) is still left untouched.
+func TestRunIssuerFlags_ChainRecheckRelabelsAnIssuerThatMergedAfterFilling(t *testing.T) {
+	store := &stubIssuerFlagsStore{
+		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
+			onRecord(mergedIssuerA, 0, "stellarbrunch.com", timescale.AuthFlagsSourceLive, 50000000),
+			onRecord(absentIssuer, 0, "somewhere.example", timescale.AuthFlagsSourceLive, 64100000),
+		},
+	}
+	reader := &stubIssuerFlagsReader{
+		lastKnown: map[string]clickhouse.AccountAuthFlags{
+			mergedIssuerA: lastKnownReading(mergedIssuerALedger, 0),
+		},
+	}
+	if err := runIssuerFlags(context.Background(), store, reader, runOpts()); err != nil {
+		t.Fatalf("runIssuerFlags: %v", err)
+	}
+	persisted := store.allPersisted()
+	got, ok := persisted[mergedIssuerA]
+	if !ok {
+		t.Fatalf("persisted %v, want %s relabelled — it merged after its row was filled", persisted, mergedIssuerA)
+	}
+	if got.Source != timescale.AuthFlagsSourceLastKnownBeforeRemoval || got.HomeDomain != "" ||
+		got.AsOfLedger == nil || *got.AsOfLedger != mergedIssuerALedger {
+		t.Errorf("persisted %+v, want a last-known reading as of %d with no home_domain", got, mergedIssuerALedger)
+	}
+	if _, ok := persisted[absentIssuer]; ok {
+		t.Errorf("%s was rewritten, but neither reader answered for it", absentIssuer)
+	}
+}
+
+// TestRunIssuerFlags_ChainRecheckClearsAMergedRowsStoredDomain covers rows
+// already labelled last-known that still hold a domain stored while the
+// account was live. The queue offers them; the account is still merged, and
+// re-writing the same reading clears the identity.
+func TestRunIssuerFlags_ChainRecheckClearsAMergedRowsStoredDomain(t *testing.T) {
+	store := &stubIssuerFlagsStore{
+		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
+			onRecord(mergedIssuerA, 0, "stellarbrunch.com",
+				timescale.AuthFlagsSourceLastKnownBeforeRemoval, mergedIssuerALedger),
+		},
+	}
+	reader := &stubIssuerFlagsReader{
+		lastKnown: map[string]clickhouse.AccountAuthFlags{
+			mergedIssuerA: lastKnownReading(mergedIssuerALedger, 0),
+		},
+	}
+	if err := runIssuerFlags(context.Background(), store, reader, runOpts()); err != nil {
+		t.Fatalf("runIssuerFlags: %v", err)
+	}
+	if got, ok := store.allPersisted()[mergedIssuerA]; !ok || got.HomeDomain != "" {
+		t.Errorf("persisted %v, want %s re-written with no home_domain", store.allPersisted(), mergedIssuerA)
+	}
+}
+
+// TestRunIssuerFlags_ChainRecheckFillsAnUnlabelledRow — a pre-migration-0153
+// row carries flags with no provenance label. Its VALUES may well agree with
+// the chain, but "unknown provenance" is not the same claim as `live`, so the
+// pass must still write it once and stamp it.
+func TestRunIssuerFlags_ChainRecheckFillsAnUnlabelledRow(t *testing.T) {
+	store := &stubIssuerFlagsStore{
+		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
+			onRecord(lapsedDomainIssuer, 0x1, "ultracapital.xyz", "", 0),
+		},
+	}
+	reader := &stubIssuerFlagsReader{
+		live: map[string]clickhouse.AccountAuthFlags{
+			lapsedDomainIssuer: liveReading(lapsedDomainIssuerLedger, 0x1, "ultracapital.xyz"),
+		},
+	}
+	if err := runIssuerFlags(context.Background(), store, reader, runOpts()); err != nil {
+		t.Fatalf("runIssuerFlags: %v", err)
+	}
+	got, ok := store.allPersisted()[lapsedDomainIssuer]
+	if !ok {
+		t.Fatalf("the unlabelled row was not stamped; persisted = %v", store.allPersisted())
+	}
+	if got.Source != timescale.AuthFlagsSourceLive {
+		t.Errorf("source = %q, want %q — an absent label is UNKNOWN, never a claim that the "+
+			"reading is current", got.Source, timescale.AuthFlagsSourceLive)
+	}
+}
+
+// TestRunIssuerFlags_ChainRecheckHasItsOwnBound — the widened queue must not
+// silently inherit -limit (5,000 nightly on r1), because it is ordered by
+// primary key: a cap would re-read the same head every run and never reach the
+// tail. It gets its own knob, defaulting to "every filled row", and the pass
+// runs LAST so it cannot take budget from the primary drain either way.
+func TestRunIssuerFlags_ChainRecheckHasItsOwnBound(t *testing.T) {
+	store := &stubIssuerFlagsStore{}
+	reader := &stubIssuerFlagsReader{}
+	o := runOpts()
+	o.limit = 250
+	o.chainRecheckLimit = 40
+	if err := runIssuerFlags(context.Background(), store, reader, o); err != nil {
+		t.Fatalf("runIssuerFlags: %v", err)
+	}
+	if store.flagsLimit != 250 {
+		t.Errorf("primary queue limit = %d, want 250", store.flagsLimit)
+	}
+	if store.chainRecheckLimit != 40 {
+		t.Errorf("chain re-check limit = %d, want 40 — the pass must be bounded independently of -limit",
+			store.chainRecheckLimit)
+	}
+}
+
+// TestRunIssuerFlags_ChainRecheckDryRunWritesNothing — the write gate covers
+// the third pass too; an ungated pass would be a nightly writer an operator
+// could not rehearse.
+func TestRunIssuerFlags_ChainRecheckDryRunWritesNothing(t *testing.T) {
+	store := &stubIssuerFlagsStore{
+		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
+			onRecord(lapsedDomainIssuer, 0x1, "lapsed-former.example",
+				timescale.AuthFlagsSourceLive, 64100000),
+		},
+	}
+	reader := &stubIssuerFlagsReader{
+		live: map[string]clickhouse.AccountAuthFlags{
+			lapsedDomainIssuer: liveReading(lapsedDomainIssuerLedger, 0x1, "ultracapital.xyz"),
+		},
+	}
+	o := runOpts()
+	o.dryRun = true
+	if err := runIssuerFlags(context.Background(), store, reader, o); err != nil {
+		t.Fatalf("runIssuerFlags: %v", err)
+	}
+	if len(store.persisted) != 0 {
+		t.Errorf("dry run persisted %d batch(es), want 0", len(store.persisted))
+	}
+}
+
+// TestRunIssuerFlags_ChainRecheckStartsAtTheDaysBatch — the queue is ordered
+// by primary key and a run can stop on its timeout, so a walk that always
+// starts at the head leaves the same tail unexamined every night. Each day's
+// run must start one batch further on and wrap, putting every batch at the
+// head of the walk once per cycle.
+func TestRunIssuerFlags_ChainRecheckStartsAtTheDaysBatch(t *testing.T) {
+	keys := []string{"GA", "GB", "GC", "GD", "GE"}
+	recs := make([]timescale.IssuerAuthFlagsOnRecord, 0, len(keys))
+	for _, g := range keys {
+		recs = append(recs, onRecord(g, 0x1, "same.example", timescale.AuthFlagsSourceLive, 100))
+	}
+	// batch 2 over 5 rows = 3 batches; day d starts at row 2*(d mod 3) and wraps.
+	for day, wantFirst := range map[int][]string{
+		0: {"GA", "GB"},
+		1: {"GC", "GD"},
+		2: {"GE", "GA"},
+		3: {"GA", "GB"},
+	} {
+		store := &stubIssuerFlagsStore{needChainRead: recs}
+		reader := &stubIssuerFlagsReader{}
+		o := runOpts()
+		o.batch, o.day = 2, day
+		if err := runIssuerFlags(context.Background(), store, reader, o); err != nil {
+			t.Fatalf("day %d: runIssuerFlags: %v", day, err)
+		}
+		if len(reader.liveCalls) != 3 {
+			t.Fatalf("day %d: %d live reads, want 3 (one per batch): %v", day, len(reader.liveCalls), reader.liveCalls)
+		}
+		if got := fmt.Sprint(reader.liveCalls[0]); got != fmt.Sprint(wantFirst) {
+			t.Errorf("day %d: first batch read = %s, want %s", day, got, fmt.Sprint(wantFirst))
+		}
+		seen := map[string]int{}
+		for _, call := range reader.liveCalls {
+			for _, g := range call {
+				seen[g]++
+			}
+		}
+		for _, g := range keys {
+			if seen[g] != 1 {
+				t.Errorf("day %d: %s read %d time(s), want exactly 1 — the rotation must still cover every row", day, g, seen[g])
+			}
+		}
 	}
 }

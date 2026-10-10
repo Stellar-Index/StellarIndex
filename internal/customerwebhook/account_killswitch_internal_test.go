@@ -15,7 +15,7 @@ import (
 // switch ([AccountStatusReader]), so the package's white-box fakes —
 // which model the webhook tables only and never a suspended account —
 // complete the contract here by reporting every account active. The
-// kill switch's own behaviour is pinned in account_killswitch_test.go
+// kill switch's own behaviour is pinned in worker_test.go
 // (delivery path) and in
 // test/integration/pg_auth_webhooks_test.go (SQL).
 

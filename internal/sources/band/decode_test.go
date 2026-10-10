@@ -12,6 +12,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
 // ─── fixture helpers ─────────────────────────────────────────────
@@ -575,5 +577,359 @@ func TestDecodeRelay_FutureResolveTimeBeyondContractWindowIsDropped(t *testing.T
 				t.Errorf("ts = %s, want the declared resolve_time (inside the contract's window)", got)
 			}
 		})
+	}
+}
+
+// decodeRelayArgs has many reject paths — existing tests cover
+// happy/USD-skip/unknown-symbol/empty-rates/too-few-args. This file
+// pins the remaining structural rejects so a malformed Band
+// invocation can't slip through to the storage layer:
+//   - force_relay with too few args
+//   - unknown function name (returns ErrNotBandCall — guards the
+//     ContractCallDecoder routing seam)
+//   - resolve_time pre-epoch fallback to ledger close time
+
+func TestDecodeForceRelay_TooFewArgs_Malformed(t *testing.T) {
+	// force_relay needs 3 args; pass 1.
+	args := []string{
+		encodeSymbolRatesArg(t, []struct {
+			Symbol string
+			Rate   uint64
+		}{{"BTC", 1}}),
+	}
+	_, err := decodeRelayArgs(FnForceRelay, args, adapterC,
+		52_000_000, "abcd", 0, "", "", time.Now())
+	if !errors.Is(err, ErrMalformedArgs) {
+		t.Errorf("expected ErrMalformedArgs, got %v", err)
+	}
+}
+
+func TestDecodeRelayArgs_UnknownFunction_NotBandCall(t *testing.T) {
+	// A future Band ABI extension — or a misrouted call — must NOT
+	// be decoded as relay/force_relay. ErrNotBandCall is the marker
+	// the dispatcher uses to keep dispatching downstream.
+	_, err := decodeRelayArgs("get_ref_data", nil, adapterC,
+		52_000_000, "abcd", 0, "", "", time.Now())
+	if !errors.Is(err, ErrNotBandCall) {
+		t.Errorf("expected ErrNotBandCall for unknown function, got %v", err)
+	}
+}
+
+func TestDecodeRelay_PreEpochResolveTimeIsDropped(t *testing.T) {
+	// resolve_time=0 is well below Band's own resolve_time < close+OFFSET
+	// acceptance window's floor of sanity (pre-2001) — the contract's
+	// relay() would silently no-op the call on-chain even though the tx
+	// succeeds. Clamping it to closedAt and still writing it (the old
+	// behaviour) let a rate the chain never applied win the latest-read
+	// ORDER BY ts DESC. relay() must drop the update instead.
+	closedAt := time.Unix(1_745_000_500, 0).UTC()
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeSymbolRatesArg(t, []struct {
+			Symbol string
+			Rate   uint64
+		}{{"BTC", 50_000_000_000_000}}),
+		encodeU64Arg(t, 0), // pre-epoch — the contract would no-op
+		encodeU64Arg(t, 1),
+	}
+	_, err := decodeRelayArgs(FnRelay, args, adapterC,
+		52_000_000, "abcd", 0, "", "", closedAt)
+	if !errors.Is(err, ErrEmptyRates) {
+		t.Fatalf("decodeRelayArgs error = %v, want ErrEmptyRates (relay() would no-op)", err)
+	}
+}
+
+func TestDecodeForceRelay_PreEpochResolveTimeFallsBackToClosedAt(t *testing.T) {
+	// force_relay is the unconditional admin path — it has no
+	// resolve_time acceptance window to mirror, so a garbage
+	// resolve_time still clamps to ledger close rather than being
+	// dropped.
+	closedAt := time.Unix(1_745_000_500, 0).UTC()
+	args := []string{
+		encodeSymbolRatesArg(t, []struct {
+			Symbol string
+			Rate   uint64
+		}{{"BTC", 50_000_000_000_000}}),
+		encodeU64Arg(t, 0), // pre-epoch — triggers fallback, not a drop
+		encodeU64Arg(t, 1),
+	}
+	updates, err := decodeRelayArgs(FnForceRelay, args, adapterC,
+		52_000_000, "abcd", 0, "", "", closedAt)
+	if err != nil {
+		t.Fatalf("decodeRelayArgs: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("got %d updates, want 1", len(updates))
+	}
+	if !updates[0].Timestamp.Equal(closedAt) {
+		t.Errorf("Timestamp = %v, want closedAt %v (force_relay pre-epoch resolve_time should fall back)",
+			updates[0].Timestamp, closedAt)
+	}
+}
+
+func TestDecodeRelay_FutureResolveTimeBeyondOffsetIsDropped(t *testing.T) {
+	// resolve_time >= close+OFFSET (1h) is outside relay()'s own
+	// acceptance window even though it's well inside
+	// canonical.SafeUnixSeconds's looser 24h ceiling — must still drop.
+	closedAt := time.Unix(1_745_000_500, 0).UTC()
+	future := uint64(closedAt.Add(2 * time.Hour).Unix())
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeSymbolRatesArg(t, []struct {
+			Symbol string
+			Rate   uint64
+		}{{"BTC", 50_000_000_000_000}}),
+		encodeU64Arg(t, future),
+		encodeU64Arg(t, 1),
+	}
+	_, err := decodeRelayArgs(FnRelay, args, adapterC,
+		52_000_000, "abcd", 0, "", "", closedAt)
+	if !errors.Is(err, ErrEmptyRates) {
+		t.Fatalf("decodeRelayArgs error = %v, want ErrEmptyRates (future resolve_time beyond Band's OFFSET)", err)
+	}
+}
+
+func TestDecodeRelay_MalformedSymbolRatesArg_Rejected(t *testing.T) {
+	// Pass a non-Vec for symbol_rates — the parse step itself
+	// succeeds but AsVec must reject. Surface as ErrMalformedArgs
+	// so dispatcher's drop-stat counter increments rather than
+	// crashing the ledger pass.
+	notAVec := xdr.ScSymbol("not-a-vec")
+	bogusSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &notAVec}
+	bogusBytes, err := bogusSv.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	bogus := base64.StdEncoding.EncodeToString(bogusBytes)
+
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		bogus, // symbol_rates not a Vec
+		encodeU64Arg(t, 1_745_000_000),
+		encodeU64Arg(t, 1),
+	}
+	_, err = decodeRelayArgs(FnRelay, args, adapterC,
+		52_000_000, "abcd", 0, "", "", time.Now())
+	if !errors.Is(err, ErrMalformedArgs) {
+		t.Errorf("expected ErrMalformedArgs for non-Vec symbol_rates, got %v", err)
+	}
+}
+
+// keep the canonical import live — used implicitly by the
+// happy-path test in this same package via shared types.
+var _ = canonical.NewFiatAsset
+
+// oracle_updates carries ts in its primary key, so a decoder change that
+// shifts the ts of an already-stored event makes a re-derive INSERT a second
+// row instead of conflicting. These goldens pin the exact ts per input for
+// both entry points; a failure here means a ts-derivation change needs its
+// own cleanup run (see "Re-deriving a timestamp" in
+// docs/architecture/ingest-pipeline.md).
+func TestDecodeRelayArgs_TimestampGolden(t *testing.T) {
+	closedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	sec := func(d time.Duration) uint64 { return uint64(closedAt.Add(d).Unix()) }
+
+	type tc struct {
+		resolve  uint64
+		want     time.Time
+		wantDrop bool
+	}
+	cases := map[string]map[string]tc{
+		FnRelay: {
+			"past resolve_time kept": {1_745_000_000, time.Unix(1_745_000_000, 0), false},
+			"equal to close kept":    {sec(0), closedAt, false},
+			"close+3599s kept":       {sec(time.Hour - time.Second), closedAt.Add(time.Hour - time.Second), false},
+			"close+3600s dropped":    {sec(time.Hour), time.Time{}, true},
+			"close+24h dropped":      {sec(24 * time.Hour), time.Time{}, true},
+			"zero dropped":           {0, time.Time{}, true},
+			"pre-2001 dropped":       {999_999_999, time.Time{}, true},
+			"at 2001 floor kept":     {1_000_000_000, time.Unix(1_000_000_000, 0), false},
+			"u64 max dropped":        {^uint64(0), time.Time{}, true},
+		},
+		FnForceRelay: {
+			"past resolve_time kept":      {1_745_000_000, time.Unix(1_745_000_000, 0), false},
+			"close+3599s kept":            {sec(time.Hour - time.Second), closedAt.Add(time.Hour - time.Second), false},
+			"close+3600s clamps to close": {sec(time.Hour), closedAt, false},
+			"close+24h clamps to close":   {sec(24 * time.Hour), closedAt, false},
+			"zero clamps to close":        {0, closedAt, false},
+			"pre-2001 clamps to close":    {999_999_999, closedAt, false},
+			"at 2001 floor kept":          {1_000_000_000, time.Unix(1_000_000_000, 0), false},
+			"u64 max clamps to close":     {^uint64(0), closedAt, false},
+		},
+	}
+
+	for fn, group := range cases {
+		for name, c := range group {
+			t.Run(fn+"/"+name, func(t *testing.T) {
+				rates := encodeSymbolRatesArg(t, []struct {
+					Symbol string
+					Rate   uint64
+				}{{"BTC", 500_000_000_000_000}})
+				var args []string
+				if fn == FnRelay {
+					args = []string{encodeAddressArg(t, relayerG), rates, encodeU64Arg(t, c.resolve), encodeU64Arg(t, 1)}
+				} else {
+					args = []string{rates, encodeU64Arg(t, c.resolve), encodeU64Arg(t, 1)}
+				}
+				got, err := decodeRelayArgs(fn, args, adapterC, 52_000_000, "abcd", 0, "", "", closedAt)
+				if c.wantDrop {
+					if err == nil && len(got) != 0 {
+						t.Fatalf("expected the relay to be dropped, got %d rows (ts %s)", len(got), got[0].Timestamp)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("decodeRelayArgs: %v", err)
+				}
+				if len(got) != 1 {
+					t.Fatalf("got %d updates, want 1", len(got))
+				}
+				if !got[0].Timestamp.Equal(c.want) {
+					t.Errorf("ts = %s, want %s", got[0].Timestamp, c.want)
+				}
+			})
+		}
+	}
+}
+
+// Exactly opIndexFanoutStride symbol_rates fit one call's OpIndex block;
+// one more would spill into the next operation's block and is refused.
+func TestDecodeRelay_FanoutStrideEdges(t *testing.T) {
+	closedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	decode := func(n int) (int, error) {
+		pairs := make([]struct {
+			Symbol string
+			Rate   uint64
+		}, n)
+		for i := range pairs {
+			pairs[i].Symbol, pairs[i].Rate = "BTC", uint64(i+1)
+		}
+		args := []string{
+			encodeAddressArg(t, relayerG),
+			encodeSymbolRatesArg(t, pairs),
+			encodeU64Arg(t, uint64(closedAt.Unix())),
+			encodeU64Arg(t, 1),
+		}
+		updates, err := decodeRelayArgs(FnRelay, args, adapterC, 52_000_000, "abcd", 1, "", "", closedAt)
+		if err == nil {
+			if last := updates[len(updates)-1].OpIndex; last != 2*opIndexFanoutStride-1 {
+				t.Errorf("last OpIndex = %d, want %d", last, 2*opIndexFanoutStride-1)
+			}
+		}
+		return len(updates), err
+	}
+	if n, err := decode(opIndexFanoutStride); err != nil || n != opIndexFanoutStride {
+		t.Fatalf("%d pairs: got (%d, %v), want all decoded", opIndexFanoutStride, n, err)
+	}
+	if _, err := decode(opIndexFanoutStride + 1); err == nil {
+		t.Fatalf("%d pairs decoded; must be refused", opIndexFanoutStride+1)
+	}
+}
+
+// ─── consumer.go ──────────────────────────────────────────────────
+
+func TestUpdateEvent_implementsConsumerEvent(t *testing.T) {
+	ue := UpdateEvent{}
+	if got := ue.EventKind(); got != "band.update" {
+		t.Errorf("EventKind() = %q, want \"band.update\"", got)
+	}
+	if got := ue.Source(); got != SourceName {
+		t.Errorf("Source() = %q, want %q", got, SourceName)
+	}
+	var _ consumer.Event = ue
+}
+
+// ─── dispatcher_adapter.go ────────────────────────────────────────
+
+func TestDecoder_Name(t *testing.T) {
+	if got := NewDecoder(adapterC).Name(); got != SourceName {
+		t.Errorf("Name() = %q, want %q", got, SourceName)
+	}
+}
+
+func TestDecoder_Decode_RoutesToDecodeRelayArgs(t *testing.T) {
+	// End-to-end through the adapter: build a relay() call's args,
+	// hand them to Decoder.Decode via a ContractCallContext, and
+	// verify the resulting UpdateEvent slice carries the expected
+	// observations. Effectively the same shape as decode_test.go's
+	// TestDecodeRelay_HappyPath but exercises the adapter's
+	// out-array packing.
+	const resolveSec = uint64(1_745_000_000)
+	const btcRateE9 = uint64(500_000_000_000_000)
+
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeSymbolRatesArg(t, []struct {
+			Symbol string
+			Rate   uint64
+		}{
+			{"BTC", btcRateE9},
+		}),
+		encodeU64Arg(t, resolveSec),
+		encodeU64Arg(t, 42),
+	}
+	ctx := dispatcher.ContractCallContext{
+		Ledger:       52_000_000,
+		ClosedAt:     time.Now().UTC(),
+		TxHash:       "abcd",
+		ContractID:   adapterC,
+		FunctionName: FnRelay,
+		Args:         args,
+	}
+	d := NewDecoder(adapterC)
+	out, err := d.Decode(ctx)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1", len(out))
+	}
+	ue, ok := out[0].(UpdateEvent)
+	if !ok {
+		t.Fatalf("expected UpdateEvent, got %T", out[0])
+	}
+	if ue.Update.Source != SourceName {
+		t.Errorf("Update.Source = %q, want %q", ue.Update.Source, SourceName)
+	}
+}
+
+func TestDecoder_Decode_MalformedArgsReturnsError(t *testing.T) {
+	d := NewDecoder(adapterC)
+	ctx := dispatcher.ContractCallContext{
+		Ledger:       52_000_000,
+		ClosedAt:     time.Now().UTC(),
+		TxHash:       "abcd",
+		ContractID:   adapterC,
+		FunctionName: FnRelay,
+		Args:         []string{"not-base64"}, // too few args + invalid encoding
+	}
+	if _, err := d.Decode(ctx); err == nil {
+		t.Error("expected decode error on malformed args, got nil")
+	}
+}
+
+func TestDecoder_Decode_EmptyRatesIsNoOp(t *testing.T) {
+	// A decode error here would count the call undecodable and blind the
+	// ledger's completeness verdict; an empty batch has nothing to project.
+	d := NewDecoder(adapterC)
+	ctx := dispatcher.ContractCallContext{
+		Ledger:       52_000_000,
+		ClosedAt:     time.Unix(1_745_000_000, 0).UTC(),
+		TxHash:       "abcd",
+		ContractID:   adapterC,
+		FunctionName: FnRelay,
+		Args: []string{
+			encodeAddressArg(t, relayerG),
+			encodeSymbolRatesArg(t, nil),
+			encodeU64Arg(t, 1_745_000_000),
+			encodeU64Arg(t, 1),
+		},
+	}
+	out, err := d.Decode(ctx)
+	if err != nil {
+		t.Fatalf("Decode(empty symbol_rates) = %v, want a nil-error no-op", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("got %d events, want 0", len(out))
 	}
 }

@@ -30,7 +30,7 @@ import (
 // re-derive path CALLS the external gate" (a comment mentioning it, or a
 // local helper whose name merely ends in BackfillSafe, does not count).
 // The behavioural tests that drive each real entry point are
-// internal/ops/ingest/projector_backfillsafe_test.go,
+// internal/ops/ingest/projector_replay_refresh_test.go,
 // internal/ops/chops/ch_rebuild_backfillsafe_test.go,
 // internal/ops/chops/projected_rebuild_backfillsafe_test.go and
 // internal/ops/ingest/resume_stalled_test.go (the backfill chunk path); the

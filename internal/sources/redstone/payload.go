@@ -33,7 +33,7 @@ import (
 // medians can disagree with the adapter's; usually that refuses.
 //
 // F1 CAVEAT: it misattributes only when (1) signer-filter divergence hits a surviving feed, (2) a dropped
-// feed's median equals that price (the BENJI twins in statewrite_test.go), and (3) the dropped feed sits
+// feed's median equals that price (the BENJI twins in decode_test.go), and (3) the dropped feed sits
 // between survivors so the bijection is unique. Fallback path only; corroborateFallback refuses it when
 // state writes name the op's feeds. Closing it fully needs redstone-core's secp256k1 recovery and roster.
 var redstoneMarker = []byte{0x00, 0x00, 0x02, 0xed, 0x57, 0x01, 0x1e, 0x00, 0x00}

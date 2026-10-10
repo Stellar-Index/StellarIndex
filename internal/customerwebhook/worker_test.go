@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -762,4 +764,490 @@ func TestStop_BeforeRunReturns(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Stop() blocked for 1s on a Worker whose Run was never called")
 	}
+}
+
+// The account kill switch was INBOUND-ONLY. Suspending
+// or closing an account stopped its API keys authenticating, but nothing
+// in the webhook fan-out, claim or delivery path read account status —
+// so a suspended or closed customer kept RECEIVING our data at the
+// endpoints they had registered, and rows kept being queued against
+// them.
+//
+// These tests pin the delivery end of the gate. The store end (the
+// resolver, the two enqueue writers and the claim query, all SQL) is
+// pinned against real Postgres in
+// test/integration/pg_auth_webhooks_test.go.
+
+// WebhookAccountStatus completes the DeliveryStore contract for the
+// package's in-memory fake. That fake models the customer_webhooks table
+// only and has no notion of an owning account, so every account it knows
+// is active — which is what the pre-existing tests around it assume.
+// Non-active statuses are driven through [killSwitchStore] below.
+func (s *fakeStore) WebhookAccountStatus(context.Context, uuid.UUID) (platform.AccountStatus, error) {
+	return platform.AccountActive, nil
+}
+
+// killSwitchStore is the package fake with an owning account bolted on:
+// every webhook it serves belongs to an account with `status`, or to one
+// whose status cannot be read when `err` is set.
+type killSwitchStore struct {
+	*fakeStore
+	status platform.AccountStatus
+	err    error
+	// calls counts WebhookAccountStatus lookups, so a test can tell "the
+	// gate ran and allowed it" from "the gate was never consulted".
+	calls atomic.Int64
+}
+
+func (s *killSwitchStore) WebhookAccountStatus(context.Context, uuid.UUID) (platform.AccountStatus, error) {
+	s.calls.Add(1)
+	if s.err != nil {
+		return "", s.err
+	}
+	return s.status, nil
+}
+
+// killSwitchFixture stands up an endpoint that counts the POSTs it
+// receives, an enabled webhook pointing at it, and one due delivery,
+// then drains a single tick with the account in `status`. It returns the
+// store and the number of requests the customer's endpoint actually
+// received.
+func killSwitchFixture(
+	t *testing.T, status platform.AccountStatus, statusErr error,
+) (*killSwitchStore, uuid.UUID, *int64) {
+	t.Helper()
+
+	var posts int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt64(&posts, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(ts.Close)
+
+	base := newFakeStore()
+	webhookID := uuid.New()
+	base.addWebhook(platform.CustomerWebhook{
+		ID:         webhookID,
+		AccountID:  uuid.New(),
+		URL:        ts.URL,
+		SigningKey: []byte("test-secret-bytes"),
+		Enabled:    true,
+	})
+	deliveryID := uuid.New()
+	base.enqueue(platform.WebhookDelivery{
+		ID:            deliveryID,
+		WebhookID:     webhookID,
+		EventType:     string(platform.WebhookEventIncidentSEV1),
+		Payload:       []byte(`{"incident_id":"abc"}`),
+		NextAttemptAt: time.Now().Add(-time.Second),
+	})
+
+	store := &killSwitchStore{fakeStore: base, status: status, err: statusErr}
+	// The production client's SSRF guard rejects 127.0.0.1, which is
+	// where httptest lives, so build the worker without it.
+	w := customerwebhook.NewUnguardedForTest(store, customerwebhook.Options{
+		PollInterval: 30 * time.Millisecond,
+		HTTPClient:   &http.Client{Timeout: 10 * time.Second},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_ = w.Run(ctx)
+
+	return store, deliveryID, &posts
+}
+
+// TestWorker_SuspendedAccountIsNeverPOSTed is the core regression. Before
+// the fix the worker's only gate was `wh.Enabled` — the CUSTOMER's
+// switch — so a suspended account's enabled webhook was signed and
+// POSTed exactly like an active one's.
+func TestWorker_SuspendedAccountIsNeverPOSTed(t *testing.T) {
+	store, deliveryID, posts := killSwitchFixture(t, platform.AccountSuspended, nil)
+
+	if got := atomic.LoadInt64(posts); got != 0 {
+		t.Errorf("customer endpoint received %d POST(s) for a SUSPENDED account, want 0 — "+
+			"the account kill switch does not reach the outbound path", got)
+	}
+	if store.calls.Load() == 0 {
+		t.Error("WebhookAccountStatus was never consulted; the delivery path has no account gate")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if _, ok := store.delivered[deliveryID]; ok {
+		t.Error("delivery marked delivered for a suspended account")
+	}
+	// Suspension is reversible (AccountStore.Unsuspend), so the row is
+	// PARKED for lease expiry, not destroyed: nothing is recorded against
+	// it and it is still there to deliver if the account is reinstated.
+	if fails := store.failures[deliveryID]; len(fails) != 0 {
+		t.Errorf("suspended delivery recorded %d outcome(s), want 0 (park, do not destroy): %+v",
+			len(fails), fails)
+	}
+}
+
+// TestWorker_ClosedAccountIsTerminallyFailed — a closed account is not
+// coming back, so its queued events are terminally failed rather than
+// parked, and still never POSTed.
+func TestWorker_ClosedAccountIsTerminallyFailed(t *testing.T) {
+	store, deliveryID, posts := killSwitchFixture(t, platform.AccountClosed, nil)
+
+	if got := atomic.LoadInt64(posts); got != 0 {
+		t.Errorf("customer endpoint received %d POST(s) for a CLOSED account, want 0", got)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	fails := store.failures[deliveryID]
+	if len(fails) != 1 {
+		t.Fatalf("closed-account delivery recorded %d outcome(s), want exactly 1 terminal: %+v",
+			len(fails), fails)
+	}
+	if !fails[0].terminal {
+		t.Errorf("closed-account delivery was rescheduled for %s, want terminal", fails[0].nextAt)
+	}
+	if fails[0].msg != "owning account is closed" {
+		t.Errorf("recorded reason = %q, want %q", fails[0].msg, "owning account is closed")
+	}
+}
+
+// TestWorker_UnreadableAccountStatusFailsClosed — an unresolved status is
+// not evidence of an active account. The delivery is withheld and left
+// for lease expiry (a Postgres blip delays deliveries; it must not POST
+// to a customer we may have just suspended, nor destroy the row).
+func TestWorker_UnreadableAccountStatusFailsClosed(t *testing.T) {
+	store, deliveryID, posts := killSwitchFixture(t, "", errors.New("connection reset"))
+
+	if got := atomic.LoadInt64(posts); got != 0 {
+		t.Errorf("customer endpoint received %d POST(s) on an UNREADABLE account status, want 0", got)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.failures[deliveryID]) != 0 {
+		t.Errorf("unreadable status recorded an outcome, want the row left for lease expiry: %+v",
+			store.failures[deliveryID])
+	}
+	if _, ok := store.delivered[deliveryID]; ok {
+		t.Error("delivery marked delivered despite an unreadable account status")
+	}
+}
+
+// TestWorker_ActiveAccountStillDelivers is the other half of the gate:
+// the fix must not cost an active customer their events.
+func TestWorker_ActiveAccountStillDelivers(t *testing.T) {
+	store, deliveryID, posts := killSwitchFixture(t, platform.AccountActive, nil)
+
+	if got := atomic.LoadInt64(posts); got != 1 {
+		t.Errorf("active account's endpoint received %d POST(s), want 1", got)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if status, ok := store.delivered[deliveryID]; !ok || status != http.StatusOK {
+		t.Errorf("active delivery not marked delivered: delivered=%v", store.delivered)
+	}
+}
+
+// storeWithoutAccountGate satisfies DeliveryStore and nothing else — it
+// cannot answer the account kill switch.
+type storeWithoutAccountGate struct{}
+
+func (storeWithoutAccountGate) ListPendingDeliveries(context.Context, int) ([]platform.WebhookDelivery, error) {
+	return nil, nil
+}
+
+func (storeWithoutAccountGate) GetWebhook(context.Context, uuid.UUID) (platform.CustomerWebhook, error) {
+	return platform.CustomerWebhook{}, platform.ErrNotFound
+}
+
+func (storeWithoutAccountGate) MarkDelivered(context.Context, uuid.UUID, int) error { return nil }
+
+func (storeWithoutAccountGate) MarkAttemptFailed(
+	context.Context, uuid.UUID, string, int, time.Time,
+) error {
+	return nil
+}
+
+// TestNew_RefusesAStoreThatCannotAnswerTheKillSwitch — the requirement is
+// enforced at construction. A store that silently skipped the account
+// check would restore the inbound-only kill switch without a single test
+// going red.
+func TestNew_RefusesAStoreThatCannotAnswerTheKillSwitch(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("New accepted a store with no account-status reader; " +
+				"the kill switch must not be bypassable")
+		}
+	}()
+	_ = customerwebhook.New(storeWithoutAccountGate{}, customerwebhook.Options{})
+}
+
+// TestFanout_SuppressedEnqueueIsNotALostEvent — the enqueue gate's
+// refusal is a POLICY decision, not a lost customer event. Before the
+// fix every enqueue error alike was counted as a permanently lost event,
+// returned as a Publish error, and fed the alertable loss counter — so
+// the kill switch doing its job would have paged an operator.
+//
+// The positive half (the refusal lands in PublishResult.Suppressed) is
+// asserted end-to-end against real Postgres in
+// test/integration/pg_auth_webhooks_test.go; keeping
+// it out of this file lets the file compile — and so fail on its
+// assertions rather than on a build error — against code lacking the fix.
+func TestFanout_SuppressedEnqueueIsNotALostEvent(t *testing.T) {
+	live, gone := subscriber(), subscriber()
+	store := newFanoutStore(live, gone)
+	store.failFor[gone.ID] = suppressedEnqueueErr{}
+
+	before := fanoutFailures(t, platform.WebhookEventIncidentSEV1, obs.FanoutFailureEnqueue)
+	res, err := newTestFanout(store).Publish(
+		context.Background(), platform.WebhookEventIncidentSEV1, []byte(`{"a":1}`))
+	after := fanoutFailures(t, platform.WebhookEventIncidentSEV1, obs.FanoutFailureEnqueue)
+
+	if err != nil {
+		t.Errorf("Publish returned an error for a suppressed delivery: %v", err)
+	}
+	if res.Failed != 0 {
+		t.Errorf("Failed = %d for a suppressed delivery, want 0 — "+
+			"Failed means the customer LOST the event and is alerted on", res.Failed)
+	}
+	if res.Enqueued != 1 {
+		t.Errorf("Enqueued = %d, want 1 (the still-active subscriber)", res.Enqueued)
+	}
+	if after != before {
+		t.Errorf("lost-event counter moved %v→%v for a deliberate suppression", before, after)
+	}
+}
+
+// suppressedEnqueueErr mimics what the Postgres store returns when the
+// owning account went non-active between the resolve and the insert.
+type suppressedEnqueueErr struct{}
+
+func (suppressedEnqueueErr) Error() string           { return "account is suspended, not active" }
+func (suppressedEnqueueErr) WebhookSuppressed() bool { return true }
+
+// TestWorker_EveryDeliveryHeaderIsInSpec delivers one webhook and requires
+// every X-StellarIndex-* header the receiver saw to be named in the
+// OpenAPI spec, so a customer building a verifier from the spec is told
+// about every header the sender sets.
+func TestWorker_EveryDeliveryHeaderIsInSpec(t *testing.T) {
+	spec, err := os.ReadFile("../../openapi/stellar-index.v1.yaml")
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	specLower := strings.ToLower(string(spec))
+
+	var (
+		mu   sync.Mutex
+		seen = map[string]bool{}
+	)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		for name := range r.Header {
+			if strings.HasPrefix(strings.ToLower(name), "x-stellarindex-") {
+				seen[name] = true
+			}
+		}
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	store := newFakeStore()
+	webhookID, secret := makeWebhook(t, ts.URL, true)
+	// A rotation overlap is open so the -Previous signature headers are sent too.
+	store.addWebhook(platform.CustomerWebhook{
+		ID: webhookID, URL: ts.URL, SigningKey: secret, Enabled: true,
+		PreviousSigningKey: []byte("previous-key"), PreviousSecretExpiresAt: time.Now().Add(time.Hour),
+	})
+	store.enqueue(platform.WebhookDelivery{
+		ID:            uuid.New(),
+		WebhookID:     webhookID,
+		EventType:     string(platform.WebhookEventDivergenceFiring),
+		Payload:       []byte(`{}`),
+		NextAttemptAt: time.Now().Add(-time.Second),
+	})
+	runOneTick(t, store, customerwebhook.Options{PollInterval: 30 * time.Millisecond})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) < 4 {
+		t.Fatalf("receiver saw %d X-StellarIndex-* headers (%v), want at least 4 — the delivery did not run", len(seen), seen)
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if !strings.Contains(specLower, "`"+strings.ToLower(name)+"`") {
+			t.Errorf("delivery header %s is sent but not documented in openapi/stellar-index.v1.yaml", name)
+		}
+	}
+}
+
+// deliverWithKeys runs one delivery for a webhook whose key was rotated
+// from previous to current, with the overlap ending at expiresAt, and
+// returns the headers the receiver saw plus the payload sent.
+func deliverWithKeys(t *testing.T, current, previous []byte, expiresAt time.Time) (http.Header, uuid.UUID, []byte) {
+	t.Helper()
+	var hdr http.Header
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hdr = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	store := newFakeStore()
+	webhookID := uuid.New()
+	store.addWebhook(platform.CustomerWebhook{
+		ID: webhookID, URL: ts.URL, SigningKey: current, Enabled: true,
+		PreviousSigningKey: previous, PreviousSecretExpiresAt: expiresAt,
+	})
+	deliveryID := uuid.New()
+	payload := []byte(`{"event":"incident.sev1"}`)
+	store.enqueue(platform.WebhookDelivery{
+		ID: deliveryID, WebhookID: webhookID,
+		EventType: string(platform.WebhookEventIncidentSEV1),
+		Payload:   payload, NextAttemptAt: time.Now().Add(-time.Second),
+	})
+	runOneTick(t, store, customerwebhook.Options{PollInterval: 30 * time.Millisecond})
+	if hdr == nil {
+		t.Fatal("no delivery reached the endpoint")
+	}
+	return hdr, deliveryID, payload
+}
+
+func macHex(key []byte, parts ...string) string {
+	mac := hmac.New(sha256.New, key)
+	for _, p := range parts {
+		mac.Write([]byte(p))
+	}
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+// TestWorker_RotationOverlapSignsWithBothKeys: inside the overlap a
+// receiver holding EITHER key can verify, so rotating never forces a
+// window in which every delivery is rejected.
+func TestWorker_RotationOverlapSignsWithBothKeys(t *testing.T) {
+	current, previous := []byte("wsec_current"), []byte("wsec_previous")
+	hdr, deliveryID, payload := deliverWithKeys(t, current, previous, time.Now().Add(time.Hour))
+
+	ts := hdr.Get("X-StellarIndex-Timestamp")
+	v1 := func(key []byte) string { return macHex(key, ts, ".", string(payload)) }
+	v2 := func(key []byte) string {
+		return macHex(key, ts, ".", deliveryID.String(), ".", string(platform.WebhookEventIncidentSEV1), ".", string(payload))
+	}
+	for _, c := range []struct {
+		header string
+		want   string
+	}{
+		{"X-StellarIndex-Signature", v1(current)},
+		{"X-StellarIndex-Signature-V2", v2(current)},
+		{"X-StellarIndex-Signature-Previous", v1(previous)},
+		{"X-StellarIndex-Signature-V2-Previous", v2(previous)},
+	} {
+		if got := hdr.Get(c.header); got != c.want {
+			t.Errorf("%s = %q, want %q", c.header, got, c.want)
+		}
+	}
+}
+
+// TestWorker_ExpiredPreviousKeyStopsSigning: once the overlap ends the old
+// key signs nothing, so a leaked old key stops verifying anywhere that
+// checks only the current headers.
+func TestWorker_ExpiredPreviousKeyStopsSigning(t *testing.T) {
+	hdr, _, _ := deliverWithKeys(t, []byte("wsec_current"), []byte("wsec_previous"), time.Now().Add(-time.Second))
+	for _, h := range []string{"X-StellarIndex-Signature-Previous", "X-StellarIndex-Signature-V2-Previous"} {
+		if got := hdr.Get(h); got != "" {
+			t.Errorf("%s = %q after the overlap ended, want absent", h, got)
+		}
+	}
+	if hdr.Get("X-StellarIndex-Signature") == "" {
+		t.Error("current-key signature missing")
+	}
+}
+
+// TestWorker_StalledEndpointDoesNotBlockOthers: the batch was
+// delivered strictly serially, so one endpoint that holds its connection
+// open delayed every other customer's delivery by the full attempt
+// timeout per row. Here endpoint A stalls on both its rows, which are
+// claimed AHEAD of endpoint B's; B must still be delivered while A is
+// stalled, and A must never have two POSTs in flight at once.
+func TestWorker_StalledEndpointDoesNotBlockOthers(t *testing.T) {
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unstall := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unstall)
+
+	var aInFlight, aMaxInFlight atomic.Int32
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := aInFlight.Add(1)
+		defer aInFlight.Add(-1)
+		for {
+			m := aMaxInFlight.Load()
+			if n <= m || aMaxInFlight.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer stalled.Close()
+
+	bDelivered := make(chan struct{}, 1)
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		select {
+		case bDelivered <- struct{}{}:
+		default:
+		}
+	}))
+	defer healthy.Close()
+
+	store := newFakeStore()
+	secret := []byte("test-secret-bytes")
+	a := platform.CustomerWebhook{ID: uuid.New(), URL: stalled.URL, SigningKey: secret, Enabled: true}
+	b := platform.CustomerWebhook{ID: uuid.New(), URL: healthy.URL, SigningKey: secret, Enabled: true}
+	store.addWebhook(a)
+	store.addWebhook(b)
+	due := time.Now().Add(-time.Second)
+	for _, hook := range []uuid.UUID{a.ID, a.ID, b.ID} {
+		store.enqueue(platform.WebhookDelivery{
+			ID: uuid.New(), WebhookID: hook, EventType: string(platform.WebhookEventIncidentSEV1),
+			Payload: []byte(`{}`), NextAttemptAt: due,
+		})
+	}
+
+	w := customerwebhook.NewUnguardedForTest(store, customerwebhook.Options{
+		PollInterval: time.Hour,
+		HTTPClient:   &http.Client{Timeout: 10 * time.Second},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = w.Run(ctx); close(done) }()
+
+	select {
+	case <-bDelivered:
+	case <-time.After(3 * time.Second):
+		t.Error("endpoint B was not delivered while endpoint A stalled: one slow endpoint is blocking the queue")
+	}
+	unstall()
+	deadline := time.Now().Add(5 * time.Second)
+	for deliveredCount(store) < 3 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	if got := aMaxInFlight.Load(); got != 1 {
+		t.Errorf("endpoint A had %d POSTs in flight at once, want 1 (per-endpoint deliveries must stay serial)", got)
+	}
+	if got := deliveredCount(store); got != 3 {
+		t.Errorf("delivered %d of 3 rows once A recovered", got)
+	}
+}
+
+func deliveredCount(s *fakeStore) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.delivered)
 }

@@ -138,7 +138,7 @@ in the token's **reserve asset**, so `SolvBTC_FUNDAMENTAL` is quoted
 `SolvBTC_FUNDAMENTAL/USD` sibling priced at `$78,313.02974310`. The
 `_FUNDAMENTAL` feeds whose reserve genuinely is dollars (`BENJI`,
 `iBENJI`, `USST`, `savUSD`) keep `fiat:USD`, each attested with
-evidence in `feeds_test.go`;
+evidence in `decode_test.go`;
 `TestFeedRegistry_NAVFeedsQuoteTheirReserveAsset` fails CI for any
 new bare `_FUNDAMENTAL` feed given a fiat quote without it. See
 `docs/protocols/redstone.md` §NAV feeds and ADR-0028 §Decision.
