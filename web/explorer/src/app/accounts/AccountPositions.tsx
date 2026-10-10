@@ -312,7 +312,7 @@ export function AccountPositions({ id }: { id: string }) {
   return (
     <Panel
       title="Positions"
-      hint="Native XLM + trustline balances, valued at the USD price the pricing API serves for each one. A price it declares as something other than an observed market rate is labelled in the Price column. Holdings it won't price are listed without a USD value — labelled 'withheld' when the API saw the market and refused it, plain '—' when it has never observed one at all."
+      hint="XLM + trustline balances, valued at the USD price the pricing API serves for each one. A price it declares as something other than an observed market rate is labelled in the Price column. Holdings it won't price are listed without a USD value — labelled 'withheld' when the API saw the market and refused it, plain '—' when it has never observed one at all."
       source={asExample(`/v1/accounts/${id}`)}
       bodyClassName="space-y-4"
     >

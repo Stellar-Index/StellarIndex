@@ -134,7 +134,7 @@ export function AccountsAnalytics() {
             value={`${s.concentration.top100_share_pct.toFixed(2)}%`}
           />
         </dl>
-        <Badge title="Snapshot recomputed every 30 minutes from the captured ledger state. Balance statistics cover funded accounts' native XLM.">
+        <Badge title="Snapshot recomputed every 30 minutes from the captured ledger state. Balance statistics cover funded accounts' XLM.">
           computed {s.computed_at}
         </Badge>
       </Panel>
