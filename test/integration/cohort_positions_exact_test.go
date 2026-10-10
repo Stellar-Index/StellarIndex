@@ -27,6 +27,16 @@ const (
 func seedCohortPositionEdges(t *testing.T, ctx context.Context) {
 	t.Helper()
 	raw := dialClickHouse(t, ctx, "stellar")
+	// account_sponsor_edges is a plain MergeTree: a second seed would duplicate
+	// the edges and double every membership sum, whichever test runs second.
+	var seeded uint64
+	if err := raw.QueryRow(ctx, `SELECT count() FROM stellar.account_sponsor_edges WHERE sponsor = ?`,
+		cohortPosRoot).Scan(&seeded); err != nil {
+		t.Fatalf("count seeded edges: %v", err)
+	}
+	if seeded > 0 {
+		return
+	}
 	at := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
 	// A lake tip for the cycle to walk to; the cycle refuses a tip of 0.
 	if err := raw.Exec(ctx, `INSERT INTO stellar.ledgers
