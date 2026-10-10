@@ -223,34 +223,21 @@ type RWAFunnel struct {
 	ListingDirectory *RWAListingDirectory `json:"listing_directory,omitempty"`
 }
 
-// RWAMembershipSet dates the SET this response describes: when the
-// rebuild that produced it finished, and whether the copy being served
-// is past its own lifetime.
+// RWAMembershipSet dates the SET this response describes: when the rebuild that
+// produced it finished, and whether the copy served is past its lifetime.
 //
-// It exists because the envelope's `as_of` is the RESPONSE's instant
-// and moves sub-second between requests; read as the set's build time it
-// says the set is refreshing continuously, which can be the opposite of
-// what is happening. Every field here is named to make that substitution
-// impossible: `built_at`, not `as_of`, because a set is BUILT and a
-// response is AS OF — two different events that are easy to read as one.
+// The envelope's `as_of` is the RESPONSE's instant and moves between requests;
+// read as the set's build time it wrongly suggests continuous refresh. Hence
+// `built_at`: a set is BUILT, a response is AS OF.
 //
-// # The state this is loudest about
+// The cache deliberately serves a lapsed set while a detached rebuild runs behind
+// it (inputs move daily; a request must not wait for an eleven-second rescan).
+// This block makes that visible:
 //
-// The cache deliberately serves a lapsed set while a detached rebuild
-// runs behind it, and that is correct: the inputs move on daily
-// cadences, so a set a few minutes past its lifetime is the same set,
-// and making a request wait for an eleven-second rescan is what the
-// detachment exists to prevent. What was missing is that a reader could
-// not tell it was happening.
-//
-//	Stale false                         the set is inside its lifetime
-//	Stale true, RebuildFailedAt nil     lapsed, and a rebuild is running
-//	                                    or about to — expected, transient
-//	Stale true, RebuildFailedAt set     lapsed, and the last attempt to
-//	                                    replace it FAILED. The set being
-//	                                    served is the last good one and
-//	                                    nothing is replacing it. This is
-//	                                    the state to act on.
+//	Stale false                       inside its lifetime
+//	Stale true, RebuildFailedAt nil   lapsed, rebuild running or about to: transient
+//	Stale true, RebuildFailedAt set   lapsed and the last replacement FAILED; the
+//	                                  served set is the last good one. Act on this.
 type RWAMembershipSet struct {
 	// BuiltAt is when the rebuild that produced this set finished —
 	// NOT when the response was rendered, and not when any source was
@@ -277,41 +264,25 @@ type RWAMembershipSet struct {
 	RebuildFailedAt *WireTime `json:"rebuild_failed_at,omitempty"`
 }
 
-// RWAListingDirectory is what the independent listing directory looked
-// like at the moment the served set was built.
+// RWAListingDirectory is what the independent listing directory looked like when
+// the served set was built.
 //
-// It exists because a VERDICT published without the evidence for it
-// cannot be acted on. A `listing`
-// arm reporting nothing corroborated is produced by three different
-// states of the world — a directory nobody has ever synced, a sync that
-// stopped days ago, and a perfectly healthy directory that this set
-// simply predates — and they call for three different responses, from
-// "run the sync" through "go and fix it" to "do nothing at all". Without
-// this block only somebody with a database prompt can tell them apart.
+// A verdict without its evidence cannot be acted on: a `listing` arm reporting
+// nothing corroborated arises from a directory never synced, a sync that stopped
+// days ago, or a healthy directory this set simply predates, which need three
+// different responses.
 //
-// Read it as a decision table. Entries counts the FRESH rows only —
-// `Entries = Contracts + Classic`, with Stale counted beside them and
-// never inside them — so the two zero cases are told apart by Stale,
-// which is the single number that says whether anything was ever there:
+// Entries counts FRESH rows only (`Entries = Contracts + Classic`, Stale counted
+// beside, never inside), so Stale tells the two zero cases apart:
 //
 //	Entries == 0 && Stale == 0     never synced: the table is empty
 //	Entries == 0 && Stale > 0      every row aged out: the sync STOPPED
-//	Entries > 0 && Contracts == 0  healthy, but it names no Stellar
-//	                               CONTRACT address — nothing this arm
-//	                               can consult, and nothing to fix
+//	Entries > 0 && Contracts == 0  healthy, names no Stellar CONTRACT address
 //	Entries > 0 && Contracts > 0   healthy and populated
 //
-// Classic rows are not published separately because they are the
-// remainder: `Classic = Entries - Contracts`, by the invariant above.
-//
-// Then, whatever the counts say, compare ObservedAt against the sync's
-// own clock. A sync that completed AFTER this instant means the set in
-// hand predates the rows it would have used and the next rebuild will
-// carry them — nothing is broken and nobody needs to act. That is the
-// comparison this block exists for, and the one no count can answer:
-// the evidence and the verdict in a response always come from the same
-// read, so they can never contradict each other, and a reader with only
-// the verdict has no way to place it in time.
+// Compare ObservedAt against the sync's own clock: a sync completed AFTER it means
+// the set predates the rows and the next rebuild carries them; nothing is broken.
+// Evidence and verdict come from the same read, so they cannot contradict.
 type RWAListingDirectory struct {
 	// ObservedAt is when this index read the directory — NOT when the
 	// directory was itself synced, and not when the response was
@@ -1388,29 +1359,16 @@ const rwaMembershipBudget = 2 * time.Minute
 
 // cachedRWAMembership returns the membership set for a request.
 //
-// It NEVER blocks on a rebuild once a set has ever been built. A stale
-// set is served as-is and a detached rebuild is kicked behind it,
-// because the inputs move on daily cadences: a set a few minutes past
-// its TTL is the same set, and waiting for the rescan is what cost the
-// request the wall-clock time.
+// Once a set has ever been built it NEVER blocks on a rebuild: a stale set is served
+// as-is and a detached rebuild is kicked behind it (inputs move daily). Measured on
+// r1 with the rebuild inline, the route was bimodal (39 of 43 requests under 1 s,
+// the rest over 10 s) because the rebuild scans every issuer-bound SEP-1 payload
+// (1.18M currency entries) plus the curated directory, ~11.5 s paid by whichever
+// request found the entry expired. [Server.readSep1Images] is served the same way.
 //
-// That wait would be the whole of this surface's latency. Measured on r1
-// with the rebuild inline, the route was perfectly bimodal — 39 of 43 requests
-// under 1 s, the other 4 over 10 s — because the rebuild is an
-// indexed scan over every issuer-bound SEP-1 payload (1.18M currency
-// entries) plus the curated-directory walk, and whichever request
-// happened to find the ten-minute entry expired paid all ~11.5 s of it
-// inline. With no more than one page load per TTL window, that is
-// roughly one visitor in ten meeting a twelve-second page. The SEP-1 logo
-// map in [Server.readSep1Images] is served the same way for the same
-// reason.
-//
-// The ONE case that waits is a cache that has never been filled.
-// An empty set there is not a stale answer, it is the false statement
-// that no real-world asset exists on Stellar — so a cold process waits
-// for its first build rather than publishing that. [Server.PrewarmRWA]
-// is what makes sure the waiter is the prewarm goroutine and not a
-// visitor.
+// The ONE case that waits is a never-filled cache: an empty set there would falsely
+// state that no real-world asset exists on Stellar. [Server.PrewarmRWA] makes the
+// waiter the prewarm goroutine, not a visitor.
 func (s *Server) cachedRWAMembership(ctx context.Context) rwaMembership {
 	served, flight := s.readRWAMembership() //nolint:contextcheck // the rebuild is deliberately detached from this request's context — see this function's doc; ctx is honoured by the cold-cache wait below.
 	if served != nil {
@@ -1540,33 +1498,21 @@ func (s *Server) refreshRWAMembership(done chan struct{}) {
 
 	s.rwaMu.Lock()
 	defer s.rwaMu.Unlock()
-	// Every WIRED arm must have answered. An arm that is not wired is
-	// no obstacle — requiring it would mean a deployment with only one
-	// reader rebuilt on every request and never cached — but an arm
-	// that IS wired and did not answer makes this rebuild a PARTIAL
-	// measurement, and a partial measurement may not be published as
-	// the set.
+	// Every WIRED arm must have answered. An unwired arm is no obstacle, but a wired
+	// arm that did not answer makes this rebuild a PARTIAL measurement, which may not
+	// be published as the set.
 	//
-	// Requiring only EITHER arm to answer sounds like the same rule and
-	// is not: a failed classic scan beside a healthy
-	// contract scan would write a set with no classic members over the
-	// last good one, re-date it to now and clear the failure stamp below,
-	// so the surface would serve a half-empty set reporting `stale: false`
-	// and no `rebuild_failed_at` for the whole ten-minute lifetime.
-	// Membership is what this index CALLS a real-world asset, so that
-	// is published coverage which is wrong AND self-certified fresh —
-	// the one combination a reader cannot defend against.
+	// Requiring only EITHER arm is not the same rule: a failed classic scan beside a
+	// healthy contract scan would overwrite the last good set with one lacking classic
+	// members, re-date it to now and clear the failure stamp, serving a half-empty set
+	// as `stale: false` with no `rebuild_failed_at`. That is wrong coverage that
+	// certifies itself fresh.
 	//
-	// The good half of a partial rebuild is discarded deliberately. The
-	// alternative is merging one arm of a new set into the other arm of
-	// an older one, which would publish a single `built_at` over two
-	// different moments; and the last good set is a FULL measurement
-	// whose inputs move on a daily cadence, so keeping it and saying it
-	// is stale is both more complete and more honest than half of a
-	// fresh one. A cold cache with an arm down therefore stays cold and
-	// the handler states the absence — the posture rwaBasisUnavailable
-	// already describes: no set is published rather than an unverified
-	// one.
+	// The good half of a partial rebuild is discarded on purpose: merging one new arm
+	// into an older other arm would put one `built_at` over two moments, and the last
+	// good set is a full measurement, so keeping it and saying it is stale is more
+	// honest. A cold cache with an arm down stays cold and the handler states the
+	// absence (see rwaBasisUnavailable).
 	if built.readFailed || (!built.available && !built.contractCensus.available) {
 		// Not an error path for the caller: the previous set keeps being
 		// served, and rwaAttemptAt (already advanced) is what stops this
@@ -1602,36 +1548,18 @@ func (s *Server) endRWAMembershipFlight(done chan struct{}) {
 	close(done)
 }
 
-// PrewarmRWA fills the three caches the /rwa page reads out of band, so
-// no request ever meets a cold one: the membership set shared by all
-// three RWA routes, then the value and premium series behind the page's
-// two history panels.
+// PrewarmRWA fills the three caches the /rwa page reads out of band: the membership
+// set shared by all three RWA routes, then the value and premium series behind the
+// page's two history panels (warmed AFTER the membership, which they build on).
+// It keeps entries from going stale and makes the waiter for the very first build
+// the prewarm goroutine rather than the first visitor after a deploy.
 //
-// The detached rebuild above already means a STALE membership entry
-// costs a request nothing. This is what stops the entry being stale in
-// the first place, and — the case that still blocks — what makes the
-// waiter for the very first build the prewarm goroutine rather than the
-// first visitor after a deploy.
+// No cache key, so nothing to drift: the prewarm rule (byte-identical arguments to
+// the handler, else a different slot is warmed) holds structurally, because the
+// membership set is ONE process-wide entry and this calls [Server.readRWAMembership],
+// the same function [Server.cachedRWAMembership] calls.
 //
-// The two series are warmed for the reason the page is measured by its
-// slowest panel rather than by its first: they are their own
-// ten-minute caches over their own scans, and a visitor who found the
-// membership warm could still sit behind one of them. They are warmed
-// AFTER the membership because each builds on it.
-//
-// # No cache key, so nothing to drift
-//
-// The repo's prewarm rule is that a prewarm must call the cached reader
-// with byte-identical arguments to the handler, or it warms a different
-// slot and does nothing (three production bugs: Order, Sources, Limit).
-// It is satisfied here structurally rather than by matching arguments:
-// the membership set is ONE process-wide entry with no key at all, and
-// this calls [Server.readRWAMembership] — the exact function
-// [Server.cachedRWAMembership] calls — so there is no second slot for
-// it to land in. The only thing it adds is the wait.
-//
-// Best-effort, like every other prewarm: no reader wired, or a failed
-// scan, each leave the cache exactly as it was.
+// Best-effort: no reader wired, or a failed scan, leaves the cache as it was.
 func (s *Server) PrewarmRWA(ctx context.Context) {
 	// The membership set is shared by all three RWA routes and depends
 	// on neither history reader, so it warms on its own terms.

@@ -45,86 +45,51 @@ type Envelope struct {
 
 // Flags are the advisory quality markers per HA plan §9.
 //
-// Field semantics:
-//
-//   - Stale: response is below this surface's documented baseline
-//     contract — e.g. on /v1/price the closed-bucket VWAP wasn't
-//     available so we degraded to last-trade. NOT used on
-//     /v1/price/tip's last-good-price fallback (that's in-contract;
-//     see ADR-0018 §"flags.stale semantic").
-//   - ReducedRedundancy: cross-region redundancy is degraded —
-//     R2/R3 set this when R1's last successful completeness run is
-//     stale per ADR-0017.
-//   - Triangulated: rate was computed via chain-pricing through a
-//     pivot (typically USD), not from a directly-traded pair.
-//   - DivergenceWarning: anomaly-detection or cross-reference
-//     observed a meaningful divergence; consumers should treat the
-//     value with caution. Fires per ADR-0019 anomaly.ActionWarn AND
-//     per future internal/divergence/ cross-reference checks.
-//   - Frozen: anomaly detection refused to publish the new bucket;
-//     this response carries the held last-known-good value with its own
-//     observed_at, and Stale set (ADR-0019 freeze policy). Fires on
-//     /v1/price, /v1/price/batch and the SEP-40 lastprice/x_last_price;
-//     the tip + observations surfaces ignore freeze. FrozenChecked
-//     disambiguates "confirmed not frozen" from "the marker read
-//     failed, so this is unknown" — same posture as DivergenceChecked.
-//   - OutsideCoverage: the requested time range ends at or before the
-//     pair's `coverage_from` — every instant asked for predates the
-//     history this deployment holds, so the empty answer is a coverage
-//     statement, not a market one. Only set on the four windowed
-//     surfaces, only when the floor is KNOWN, and never on a range that
-//     straddles the floor (that range contains covered time).
-//   - SingleSource: the bucket had only one contributing source.
-//     Informational; combined with Frozen this is the manipulation
-//     signature.
-//   - Diverged: a TRIANGULATED composite came from routes that
-//     DISAGREED (the router's divergence signal). Only meaningful on
-//     the /v1/price triangulated serve path; omitted when false.
-//   - Rerouted: a TRIANGULATED composite SUBSTITUTED around a dry
-//     configured chain leg — the router walked an alternative path
-//     rather than the documented direct chain (R3). Only meaningful on
-//     the /v1/price triangulated serve path; omitted when false.
-//   - PivotUnverified: a TRIANGULATED composite priced a leg only from
-//     stablecoin prints taken at par with USD, with no own-quote prints
-//     to check a de-peg against. Omitted when false.
+//   - Stale: below this surface's documented baseline contract (e.g. /v1/price
+//     degraded to last-trade). NOT used on /v1/price/tip's last-good fallback
+//     (ADR-0018 §"flags.stale semantic").
+//   - ReducedRedundancy: cross-region redundancy degraded (ADR-0017).
+//   - Triangulated: computed via a pivot (typically USD), not a directly-traded pair.
+//   - DivergenceWarning: cross-reference or anomaly detection saw a meaningful
+//     divergence (ADR-0019, internal/divergence); treat the value with caution.
+//   - Frozen: anomaly detection refused the new bucket; the response carries the held
+//     last-known-good value with its own observed_at, and Stale set (ADR-0019). On
+//     /v1/price, /v1/price/batch and SEP-40 lastprice/x_last_price; tip +
+//     observations ignore freeze. FrozenChecked separates "confirmed not frozen" from
+//     "marker read failed" (as DivergenceChecked).
+//   - OutsideCoverage: the range ends at or before the pair's `coverage_from`, so the
+//     empty answer is a coverage statement. Only on the four windowed surfaces, only
+//     when the floor is KNOWN, never on a range straddling it.
+//   - SingleSource: one contributing source; with Frozen, the manipulation signature.
+//   - Diverged / Rerouted / PivotUnverified: only on the /v1/price triangulated path,
+//     omitted when false. Diverged: routes DISAGREED. Rerouted: SUBSTITUTED around a
+//     dry configured leg. PivotUnverified: a leg priced only from par-valued stablecoin
+//     prints, with no own-quote prints to check a de-peg against.
 type Flags struct {
 	Stale             bool `json:"stale"`
 	ReducedRedundancy bool `json:"reduced_redundancy"`
 	Triangulated      bool `json:"triangulated"`
 	DivergenceWarning bool `json:"divergence_warning"`
 	// DivergenceChecked is true only when a live cross-reference check ran
-	// (≥ `min_sources_for_warning` responding references — the SAME quorum
-	// the worker gates its verdict on; below it the cross-check reaches no
-	// verdict at all). When false the check is blind (references dark, or no
-	// record yet), so a `false` warning must not be read as "prices agree";
-	// a `true` warning is the last evaluated verdict carried
-	// forward through the outage, not a fresh one.
+	// (>= `min_sources_for_warning` responding references, the SAME quorum the
+	// worker gates its verdict on). When false the check is blind (references dark, or
+	// no record yet), so a `false` warning must not be read as "prices agree"; a
+	// `true` warning is then the last verdict carried forward through the outage.
 	//
-	// Set on the surfaces that consult the verdict: /v1/price, its
-	// ?window= variant, /v1/price/tip and /v1/price/tip/stream — each
-	// asking for the exact (base, quote) spelling the value was served
-	// from, never another alias's market (lookupDivergenceFlag). The
-	// ?window= variant carries it only when the requested window is the
-	// one the verdict was computed over (the aggregator's shortest). On
-	// every other envelope that carries Flags the field is false and
-	// means "not consulted on this surface", never "checked and clean":
-	// /v1/price/at, /v1/price/batch, /v1/twap, /v1/vwap, the SEP-40
-	// passthroughs, /v1/observations and its stream all serve values the
-	// looker is never asked about. /v1/price/at is the point-in-time read
-	// and answers about a past bucket, and /v1/vwap computes over a
-	// caller-chosen range from raw trades; the verdict — a claim about
-	// the CURRENT shortest-window VWAP against the references — speaks to
-	// neither. The
-	// observations pair is the deliberate case — raw per-source rows
-	// carry no aggregated value for a base-level verdict to vouch for
-	// (see handleObservations).
+	// Set only on surfaces that consult the verdict: /v1/price, its ?window= variant,
+	// /v1/price/tip and /v1/price/tip/stream, each asking for the exact (base, quote)
+	// spelling served, never another alias's market (lookupDivergenceFlag). The
+	// ?window= variant carries it only when the window is the one the verdict was
+	// computed over (the aggregator's shortest). Elsewhere the field is false and means
+	// "not consulted", never "checked and clean": /v1/price/at (a past bucket),
+	// /v1/vwap (caller-chosen range from raw trades), /v1/price/batch, /v1/twap, the
+	// SEP-40 passthroughs, and /v1/observations (raw per-source rows carry no
+	// aggregated value for a base-level verdict to vouch for; see handleObservations).
 	//
-	// On /v1/price/tip/stream the lookup additionally carries its own
-	// short budget ([tipStreamDivergenceBudget]): a verdict store too
-	// slow to answer inside it leaves the field false on that event
-	// rather than holding the emission back, so a false there can also
-	// mean "the check did not answer in time". The stream degrades the
-	// flag, never the cadence.
+	// On /v1/price/tip/stream the lookup has its own short budget
+	// ([tipStreamDivergenceBudget]); a verdict store too slow leaves the field false on
+	// that event, so a false there can also mean "did not answer in time". The stream
+	// degrades the flag, never the cadence.
 	DivergenceChecked bool `json:"divergence_checked"`
 	// OutsideCoverage marks an empty answer whose requested range ends
 	// at or before the envelope's `coverage_from` — the window predates
@@ -398,40 +363,30 @@ const (
 	retryAfterRequestTimeout = "5"
 )
 
-// requestDeadlineExpired reports whether the blanket
-// middleware.RequestTimeout deadline on r.Context() has already fired.
+// requestDeadlineExpired reports whether the blanket middleware.RequestTimeout
+// deadline on r.Context() has already fired.
 //
-// It exists so writeProblem can upgrade a 500 to a retryable 503 in ONE
-// place. Roughly fifty handler error paths reach writeProblem with
-// StatusInternalServerError and no timeout branch of their own, and the
-// ones that hand r.Context() STRAIGHT to a store — /v1/anomalies, the
-// assets + price families, /v1/auth/sep10 — have no per-call context for
-// handlerTimedOut to inspect, so there is nothing for a per-site fix to
-// key on. A deadline is retryable capacity, not an internal fault: that
-// is the rule the repo already writes down (writeLendingReservesTimeout,
-// explorer writeReadTimeout) and the rule the sla-probe's
-// availability_pct is scored against, where a 500 permanently books a
-// failure a retry would have cleared.
+// It lets writeProblem upgrade a 500 to a retryable 503 in ONE place. About fifty
+// handler error paths reach writeProblem with StatusInternalServerError and no
+// timeout branch, and those that hand r.Context() straight to a store (/v1/anomalies,
+// assets + price families, /v1/auth/sep10) have no per-call context for
+// handlerTimedOut to inspect. A deadline is retryable capacity, not an internal
+// fault (the rule in writeLendingReservesTimeout and explorer writeReadTimeout, and
+// what the sla-probe's availability_pct is scored against: a 500 books a failure a
+// retry would clear).
 //
-// It keys on r.Context() specifically, so a tighter per-handler budget
-// still reaches its own more specific `…-timeout` branch first; only the
-// blanket deadline lands here. And only 500 is rewritten — a 400/404
-// decided on the request's own merits stays the client's answer even if
-// the deadline blew while it was being written.
+// It keys on r.Context(), so a tighter per-handler budget still reaches its own
+// `...-timeout` branch first. Only 500 is rewritten; a 400/404 decided on the
+// request's merits stays the client's answer.
 //
-// LIMIT, and why writeProblemErr exists: a handler that caps its own read
-// with context.WithTimeout(r.Context(), 8s) under a 15s global blows the
-// INNER budget first, and r.Context() is still alive when it does — so
-// this predicate is false and the deadline books a 500. The inner budget
-// is the dominant shape (every request-derived budget in this package is
-// 3-12s), so the blanket-deadline check alone closes the smaller half of
-// the class.
+// LIMIT, and why writeProblemErr exists: a handler capping its read with
+// context.WithTimeout(r.Context(), 8s) under a 15s global blows the INNER budget
+// first while r.Context() is still alive, so this is false and the deadline books a
+// 500. Inner budgets are the dominant shape (3-12s), so this check alone closes the
+// smaller half.
 //
-// The trade-off, stated: a genuine internal fault that happens to be
-// reported after the deadline expired is relabelled a timeout. The
-// handler's own ERROR log line still carries the real error, so
-// diagnosis is unaffected, and once the budget is gone "retry" is the
-// only advice the caller can act on anyway.
+// Trade-off: a genuine internal fault reported after the deadline is relabelled a
+// timeout; the handler's ERROR log still carries the real error.
 func requestDeadlineExpired(r *http.Request) bool {
 	return errors.Is(r.Context().Err(), context.DeadlineExceeded)
 }
@@ -472,54 +427,28 @@ func writeProblemErr(
 	writeProblem(w, r, typeURL, title, status, detail)
 }
 
-// clientAborted reports whether a reader-returned error came from
-// the client cancelling its request. When true, handlers SHOULD
-// return without writing a response — the client has already gone,
-// and the obs.HTTPMetrics middleware will then label the request
-// 499 (NGINX-style "client closed request") rather than the
-// misleading 500 a writeProblem would produce.
+// clientAborted reports whether a reader-returned error came from the client
+// cancelling its request. When true, handlers SHOULD return without writing: the
+// client is gone, and obs.HTTPMetrics labels it 499 rather than the 500 a
+// writeProblem would produce.
 //
-// Decision rule: the request context must be done AND its cause must
-// be CANCELLATION. net/http cancels r.Context() with
-// [context.Canceled] when the peer hangs up, so that is the one state
-// in which nobody is left to read a response.
+// Rule: the request context must be done AND its cause CANCELLATION
+// ([context.Canceled], what net/http sets when the peer hangs up).
 //
-// A done request context whose Err is [context.DeadlineExceeded] is
-// the opposite case — a SERVER-side budget expiring with the client
-// still on the wire. Two of those exist: the cold-path
-// context.WithTimeout guards inside handlers, and
-// the blanket middleware.RequestTimeout deadline, which
-// wraps r.Context() itself. Testing only `Err() != nil` would conflate
-// the second with a client abort: on the global deadline the handler
-// would return silently and net/http would emit a BODYLESS 200, which
-// reads to a client as an authoritative empty result rather than a
-// failure (a Blend pool with real supply would render as "0 reserves /
-// $0 TVL").
-// Both server-side deadlines belong on the 503 problem+json path.
+// A done context with [context.DeadlineExceeded] is a SERVER-side budget expiring
+// with the client still on the wire (a handler's context.WithTimeout, or the blanket
+// middleware.RequestTimeout). Testing only `Err() != nil` would conflate it: the
+// handler would return silently and net/http would emit a BODYLESS 200, an
+// authoritative-looking empty result (a Blend pool with real supply would render
+// "0 reserves / $0 TVL"). Deadlines belong on the 503 problem+json path.
 //
-// The 499 relabel above does NOT cover that case, so a bodyless 200
-// would be invisible: obs.HTTPMetrics is installed OUTSIDE
-// middleware.RequestTimeout (server.go's Handler stack), so the
-// r.Context() it inspects is the UN-deadlined one. On a server-side
-// deadline with the peer still connected that context's Err() is nil,
-// the 499 override never fires, and the recorder's default
-// http.StatusOK stands — so the request would be counted as 200 and, on
-// that status, admitted into http_request_success_duration_seconds, the
-// latency SLO's success numerator.
+// The 499 relabel can't cover it: obs.HTTPMetrics sits OUTSIDE
+// middleware.RequestTimeout, so the context it inspects is un-deadlined and the
+// recorder's default 200 stands, counting into http_request_success_duration_seconds,
+// the latency SLO's success numerator.
 //
-// Handlers should structure error handling as:
-//
-//	if err != nil {
-//	    if clientAborted(r, err) { return }
-//	    if handlerTimedOut(callCtx, err) {
-//	        // 503 timeout response
-//	    }
-//	    // 500 internal
-//	}
-//
-// `err` is unused for the abort decision but kept in the signature
-// because it's the natural call site (handlers always have it) and
-// keeps the call sites stable.
+// Handler order: clientAborted -> handlerTimedOut (503 timeout) -> 500.
+// `err` is unused for the decision but kept so call sites stay stable.
 func clientAborted(r *http.Request, _ error) bool {
 	return errors.Is(r.Context().Err(), context.Canceled)
 }
@@ -557,50 +486,23 @@ func handlerTimedOut(callCtx context.Context, err error) bool {
 	return timedOut
 }
 
-// transientStorageErr reports whether a storage-layer error looks
-// like a transient infrastructure hiccup rather than a real server
-// bug. Handlers SHOULD map true to a 503 problem+json (retryable)
-// rather than the misleading 500 a writeProblem default would
-// produce; the sla-probe's availability_pct counts 5xx as failure,
-// so a single transient driver-level error costs an availability
-// point even when the underlying request was processable on a
-// retry.
+// transientStorageErr reports whether a storage-layer error looks like a transient
+// infrastructure hiccup rather than a server bug. Handlers SHOULD map true to a
+// retryable 503, since the sla-probe's availability_pct counts 5xx as failure.
 //
-// Examples this catches:
+// It catches:
+//   - SQLSTATE 57014 NOT carried by a context cancellation: Postgres
+//     `canceling statement due to user request` on server-side statement_timeout,
+//     lock_timeout or idle_in_transaction_session_timeout, which trip neither
+//     [clientAborted] nor [handlerTimedOut].
+//   - `driver: bad connection`: a backend killed between checkout and execution.
+//   - EOF / broken pipe between the api binary and postgres or redis.
 //
-//   - **SQLSTATE 57014 NOT carried by a context cancellation.**
-//     Postgres can issue `canceling statement due to user request`
-//     from server-side statement_timeout, lock_timeout, or
-//     idle_in_transaction_session_timeout — none of which trip
-//     [clientAborted] (the http request context is alive) or
-//     [handlerTimedOut] (the per-call context hasn't deadlined).
-//     The result reaches the handler as a bare 57014; without this
-//     helper it returns 500.
-//   - **driver-bad-conn errors.** `driver: bad connection`
-//     surfaces when a Postgres backend was killed (admin restart,
-//     OOM killer, idle-connection reaper) between checkout and
-//     query execution. The connection-pool retry would normally
-//     paper over it; surfaces only when retries are exhausted.
-//   - **EOF / broken pipe.** Network-level transient between the
-//     api binary and postgres or redis. Re-running the same
-//     request would typically succeed.
+// The SQLSTATE match is INTENTIONALLY string-based to avoid widening the handler
+// layer's dependency on pgconn's typed error. `57014` is stable wire format (pgx
+// renders `(SQLSTATE 57014)`).
 //
-// The classifier is INTENTIONALLY string-based for the SQLSTATE
-// match — pgconn's typed `*pgconn.PgError.Code` would require importing
-// the driver into the handler layer (already a dep, but a wider
-// surface than strict). The substring `57014` is stable (it's
-// wire-format from postgres itself, and pgx renders it into the
-// error string as `(SQLSTATE 57014)`); the 'canceling statement'
-// fragment is the human-readable companion the driver always includes.
-//
-// Caller pattern (mirrors clientAborted / handlerTimedOut order):
-//
-//	if err != nil {
-//	    if clientAborted(r, err) { return }
-//	    if handlerTimedOut(callCtx, err) { /* 503 timeout */ }
-//	    if transientStorageErr(err) { /* 503 retry-later */ }
-//	    /* 500 internal */
-//	}
+// Caller order: clientAborted, handlerTimedOut, transientStorageErr, then 500.
 func transientStorageErr(err error) bool {
 	if err == nil {
 		return false

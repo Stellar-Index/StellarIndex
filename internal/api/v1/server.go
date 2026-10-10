@@ -33,62 +33,42 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// ReadyChecker is the interface /readyz polls to decide whether
-// the serving-plane dependencies are responsive. Implementations
-// in cmd/stellarindex-api/main.go:
+// ReadyChecker is the interface /readyz polls to decide whether the serving-plane
+// dependencies are responsive. Implementations in cmd/stellarindex-api/main.go:
+// storeChecker (Postgres ping, critical) and redisChecker (non-critical).
 //
-//   - storeChecker (wraps *timescale.Store.DB().PingContext) — critical
-//   - redisChecker (wraps *redis.Client.Ping) — non-critical
+// Ping MUST respect ctx and return promptly on cancellation: the handler runs every
+// checker in parallel under a shared 2 s deadline, and a checker that ignores ctx
+// can turn readyz into a cascade-failure vector for the liveness probe.
 //
-// Ping MUST respect ctx and return promptly on cancellation — the
-// handler runs every checker in parallel under a shared 2 s
-// deadline; a misbehaving checker that ignores ctx can turn readyz
-// into a cascade-failure vector for the liveness probe.
-//
-// Critical() distinguishes "API can't serve requests without
-// this" (Postgres — no fallback for trade/aggregate reads) from
-// "API can degrade-but-serve without this" (Redis — cache miss
-// falls back to Timescale per ADR-0007). The /readyz handler
-// uses this to return 503 ONLY when a critical check fails;
-// a failing non-critical check produces a 200 response with
-// `status="degraded"` so edge load balancers (HAProxy, k8s
-// readiness probes) keep the backend in service while operators
-// see the per-check breakdown in the response body.
-//
-// Treating every check as critical would let a Redis outage 503
-// readyz and make HAProxy drain every healthy API backend even though
-// the Timescale fallback keeps the customer-facing surface serving.
+// Critical() separates "API can't serve without this" (Postgres) from "can
+// degrade-but-serve" (Redis; cache miss falls back to Timescale per ADR-0007).
+// /readyz returns 503 ONLY when a critical check fails; a failing non-critical one
+// gives 200 with `status="degraded"`. Treating every check as critical would let a
+// Redis outage make HAProxy drain every healthy API backend.
 type ReadyChecker interface {
 	Ping(ctx context.Context) error
 	Name() string
 	Critical() bool
 }
 
-// ExpectedSchemaVersion is the migrations/ head this binary was built
-// against — the highest-numbered migration under migrations/. A
-// running binary REQUIRES the applied schema (schema_migrations.version)
-// to be at least this value and not dirty; otherwise its code is
-// serving against a schema older or more partial than it assumes.
+// ExpectedSchemaVersion is the migrations/ head this binary was built against (the
+// highest-numbered migration). A running binary REQUIRES the applied schema
+// (schema_migrations.version) to be at least this and not dirty.
 //
-// The ansible deploy runs `stellarindex-migrate up` before swapping
-// binaries, so schema>=binary on the normal path, but the deploy alone
-// asserts nothing at RUNTIME. A deploy passing migrations_skip, a
-// hot-swapped binary, or a golang-migrate dirty leftover would leave the
-// binary serving against a stale/partial schema while /v1/healthz and
-// /v1/readyz stay 200.
-// [NewSchemaVersionChecker] closes the runtime gap as a CRITICAL readiness
-// check: a schema/binary mismatch drains the backend from the load
-// balancer (503) instead of silently under-serving behind a green probe.
+// The ansible deploy runs `stellarindex-migrate up` before swapping binaries, but
+// that asserts nothing at RUNTIME: migrations_skip, a hot-swapped binary or a dirty
+// golang-migrate leftover would leave the binary serving a stale schema behind green
+// /v1/healthz and /v1/readyz. [NewSchemaVersionChecker] closes that as a CRITICAL
+// readiness check, draining the backend (503) instead.
 //
-// The comparison is `applied >= expected` (not `==`) on purpose: a schema
-// NEWER than the binary is the safe/expected state during a rolling deploy
-// (migrations run ahead of the swap) and after a rollback (old binary,
-// newer schema). Only an applied head BELOW the binary's expectation is a
-// mismatch — a dirty row on its own is not, see [nonAtomicMigrationVersions].
+// The comparison is `applied >= expected`, not `==`: a NEWER schema is the safe state
+// during a rolling deploy (migrations run ahead of the swap) and after a rollback.
+// Only an applied head BELOW the expectation is a mismatch; a dirty row alone is
+// not, see [nonAtomicMigrationVersions].
 //
-// This constant MUST equal the head under migrations/; the parity test
-// TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration
-// is added without bumping it.
+// MUST equal the head under migrations/; TestExpectedSchemaVersionMatchesMigrationsHead
+// fails CI if a migration is added without bumping it.
 const ExpectedSchemaVersion uint = 214
 
 // nonAtomicMigrationVersions lists migration numbers whose up.sql commits
@@ -544,40 +524,29 @@ type Server struct {
 const defaultRequestTimeout = 15 * time.Second
 
 // maxHandlerBudget is the ceiling for a per-handler
-// context.WithTimeout(r.Context(), …) budget — the longest a single
-// handler may ask for while still being the deadline that FIRES.
+// context.WithTimeout(r.Context(), ...) budget: the longest a handler may ask for
+// while still being the deadline that FIRES.
 //
-// A per-handler budget exists to convert an over-budget read into a
-// specific, actionable 503 ("the pool's reserve state didn't decode in
-// time") before the blanket request deadline arrives. A budget >= the
-// global one cannot do that: the middleware's deadline reaches the
-// reader first, so the handler's own timeout branch is unreachable and
-// the number it advertises is fiction. Three handlers had drifted there
-// (lending reserves at 15s, ingestion diagnostics at 30s, protocol
-// detail at 25s).
+// A per-handler budget converts an over-budget read into a specific, actionable 503
+// before the blanket request deadline arrives. A budget >= the global one can't: the
+// middleware's deadline reaches the reader first, the handler's timeout branch is
+// unreachable, and the number it advertises is fiction.
 //
-// The 3s of headroom is response-writing room measured against the
-// DEFAULT deadline — comfortable margin for the handler to serialise its
-// problem document — not a minimum the boot check enforces. The check
-// ([config.APIConfig.validate]) requires only api.request_timeout >
-// [config.APIMaxHandlerBudget], because RequestTimeout cancels the
-// CONTEXT and nothing else: a write already in flight when the blanket
-// deadline lands still reaches the client (the bound on writing is the
-// 30s http.Server WriteTimeout). So a deployment that deliberately runs
-// a tighter global budget keeps every handler's own timeout branch
-// reachable, which is the invariant that matters, and is allowed to.
-// Handlers wanting the longest legal budget name this constant rather
-// than restating an arithmetic result, so re-tuning
-// defaultRequestTimeout moves them with it.
-// TestHandlerBudgets_StayInsideTheRequestTimeout enforces the bound
-// across every request-derived budget in the API packages.
+// The 3s headroom is response-writing room against the DEFAULT deadline, not a
+// minimum the boot check enforces. The check ([config.APIConfig.validate]) requires
+// only api.request_timeout > [config.APIMaxHandlerBudget], because RequestTimeout
+// cancels the CONTEXT and nothing else (a write in flight still reaches the client;
+// the bound on writing is the 30s http.Server WriteTimeout). A deployment with a
+// tighter global budget keeps every handler's timeout branch reachable, which is the
+// invariant that matters. Handlers wanting the longest legal budget name this
+// constant so re-tuning defaultRequestTimeout moves them with it.
+// TestHandlerBudgets_StayInsideTheRequestTimeout enforces the bound across every
+// request-derived budget in the API packages.
 //
-// The compile-time bound is only half the guarantee: the deadline a
-// deployment actually installs is Options.RequestTimeout
-// (api.request_timeout), which an operator sets, so this constant is
-// mirrored as [config.APIMaxHandlerBudget] and api.request_timeout is
-// validated against it at boot. TestMaxHandlerBudgetMatchesConfigBound
-// keeps the two spellings equal.
+// The compile-time bound is half the guarantee: the installed deadline is
+// Options.RequestTimeout (api.request_timeout, operator-set), so this is mirrored as
+// [config.APIMaxHandlerBudget] and validated at boot.
+// TestMaxHandlerBudgetMatchesConfigBound keeps the two equal.
 const maxHandlerBudget = defaultRequestTimeout - 3*time.Second
 
 // DashboardAuthMounter is the interface main.go's
@@ -1846,39 +1815,29 @@ func (s *Server) middlewareStack() []stackEntry {
 	// with no route info and bucket it under "unmatched". This fills
 	// that gap without moving any gate's position.
 	stack = append(stack, stackEntry{"ResolveRoute", middleware.ResolveRoute(s.mux)})
-	// RequestTimeout bounds every non-streaming request's context so
-	// EVERY handler inherits a deadline even when it forgets to wrap its
-	// own DB/ClickHouse read.
+	// RequestTimeout bounds every non-streaming request's context so EVERY handler
+	// inherits a deadline even if it forgets to wrap its own DB/ClickHouse read.
 	//
-	// It sits OUTSIDE the whole credential/quota/limit block rather than
-	// just above CaptureRoute. In the inner position, Auth / KeyPolicy /
-	// RequireEmailVerified / MonthlyQuota / RateLimit / UsageTracker /
-	// SessionAuth would all run OUTSIDE the deadline, their Redis and
-	// Postgres round-trips bounded only by go-redis's 3 s default and the
-	// http.Server WriteTimeout, which does not cancel anything in flight.
-	// A slow store could then hold a request goroutine well past the
-	// timeout this middleware exists to enforce.
+	// It sits OUTSIDE the whole credential/quota/limit block, not just above
+	// CaptureRoute. In the inner position Auth / KeyPolicy / RequireEmailVerified /
+	// MonthlyQuota / RateLimit / UsageTracker / SessionAuth would run OUTSIDE the
+	// deadline, their Redis and Postgres round-trips bounded only by go-redis's 3 s
+	// default and http.Server WriteTimeout (which cancels nothing in flight), so a slow
+	// store could hold a goroutine well past the timeout.
 	//
-	// It stays INSIDE CORS/TrailingSlashRedirect (both allocation-free and
-	// I/O-free) so a preflight still short-circuits without a timer. The
-	// tighter per-handler 8s WithTimeout wrappers layer under it and fire
-	// first. Three PRE-handler seams detach from the request's
-	// CANCELLATION (context.WithoutCancel), each for a stated reason: the
-	// MonthlyQuota read and RateLimit take (and Auth's failed-auth
-	// throttle) detach so a client abort cannot arm their dwell clocks,
-	// but middleware.throttleContext re-applies this deadline to them.
-	// They are bounded by min(5s, time left), so they cannot push a
-	// request past it.
+	// It stays INSIDE CORS/TrailingSlashRedirect (allocation- and I/O-free) so a
+	// preflight short-circuits without a timer. Tighter per-handler 8s WithTimeout
+	// wrappers layer under it and fire first. Three PRE-handler seams detach from
+	// request CANCELLATION (context.WithoutCancel): the MonthlyQuota read, the RateLimit
+	// take and Auth's failed-auth throttle, so a client abort can't arm their dwell
+	// clocks; middleware.throttleContext re-applies this deadline, so they are bounded
+	// by min(5s, time left).
 	//
-	// Post-RESPONSE bookkeeping in UsageTracker/TouchUsage does NOT use
-	// context.WithoutCancel at all: [middleware.AfterResponse]
-	// flushes the response to the client first, then runs the counter/
-	// touch write on the shared after-response worker pool under its own
-	// context.Background()-derived bound, off the request goroutine
-	// entirely — so moving this timeout cannot drop a usage row, and a
-	// wedged store cannot pin a request goroutine either.
-	// SSE endpoints are exempt inside the middleware. Skipped entirely
-	// when requestTimeout <= 0 (the middleware also self-guards on that).
+	// Post-RESPONSE bookkeeping in UsageTracker/TouchUsage doesn't use WithoutCancel:
+	// [middleware.AfterResponse] flushes the response first, then runs the write on the
+	// shared worker pool under its own Background-derived bound, so moving this timeout
+	// can't drop a usage row nor pin a request goroutine. SSE endpoints are exempt
+	// inside the middleware; skipped when requestTimeout <= 0.
 	if s.requestTimeout > 0 {
 		stack = append(stack, stackEntry{"RequestTimeout", middleware.RequestTimeout(s.requestTimeout)})
 	}
@@ -1971,33 +1930,22 @@ var proxyForwardHeaders = []string{
 	"Forwarded",
 }
 
-// loopbackOnly wraps `next` so it returns 404 unless the request looks
-// like a genuinely local, un-proxied scrape. Used for `/metrics` so the
-// binary refuses to answer anything but the local Prometheus.
+// loopbackOnly wraps `next` so it returns 404 unless the request looks like a
+// genuinely local, un-proxied scrape. Used for `/metrics`.
 //
-// Two conditions, both required:
+// Both required: (1) RemoteAddr is loopback (127.0.0.0/8 or ::1); (2) NO
+// proxy-forwarding header. (2) is what makes the guard real: the documented topology
+// is Caddy ON THE SAME HOST proxying to 127.0.0.1:3000, so a misconfigured Caddy
+// forwarding public traffic presents a LOOPBACK RemoteAddr and passes a
+// RemoteAddr-only check. Caddy's reverse_proxy (like every mainstream proxy) sets
+// X-Forwarded-For by default, separating "relayed to us" from "the local scraper".
 //
-//  1. RemoteAddr is a loopback IP (127.0.0.0/8 or ::1).
-//  2. The request carries NO proxy-forwarding header.
+// Defence in depth, not the control: the real control is the Caddyfile 404ing
+// /metrics from public hosts (configs/caddy/Caddyfile.api). A proxy configured to
+// STRIP forwarding headers would still pass, a deliberate limit and why the
+// Caddyfile rule is not optional.
 //
-// (2) is what makes this guard actually defend the case its own name
-// implies. The documented topology is Caddy running ON THE SAME HOST
-// proxying to 127.0.0.1:3000, so a misconfigured Caddy that forwards
-// public traffic presents a LOOPBACK RemoteAddr and sails through a
-// RemoteAddr-only check. Caddy's
-// reverse_proxy sets X-Forwarded-For (and Host/Proto) by default, and so
-// does every other mainstream proxy, so their presence distinguishes
-// "someone's request relayed to us" from "the local scraper called us".
-//
-// This is defence in depth, not the control: the real control is the
-// Caddyfile 404ing /metrics from public hosts
-// (configs/caddy/Caddyfile.api). A proxy configured to STRIP forwarding
-// headers would still pass — that is a deliberate limit, not an
-// oversight, and it is why the Caddyfile rule is not optional.
-//
-// Returns 404 (not 403) deliberately — 403 would confirm the
-// route exists; 404 mirrors what a properly-configured Caddy
-// would emit and gives no signal to a scanner.
+// 404 (not 403) deliberately: 403 confirms the route exists.
 func loopbackOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -2766,34 +2714,26 @@ type lakeHealth struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-// handleLivezLake is the LAKE-critical health probe (multi-region plan
-// §7.3 / ADR-0050). /v1/readyz deliberately treats ClickHouse as
-// NON-critical so a lake outage degrades rather than un-readies the
-// pricing surface — but that same 200 keeps a lake-dead region in a load
-// balancer's pool for the ~21 lake-backed routes it cannot serve.
-// This endpoint is the complement: 200 iff the registered ClickHouse
-// checker pings; 503 when it fails OR when no lake is wired at all — a
-// lake-less deployment must never receive lake-route traffic, so absent
-// fails closed. Point lake-route LB monitors here; leave pricing
-// monitors on /v1/readyz.
+// handleLivezLake is the LAKE-critical health probe (multi-region plan §7.3 /
+// ADR-0050). /v1/readyz treats ClickHouse as NON-critical so a lake outage degrades
+// rather than un-readies the pricing surface, but that 200 keeps a lake-dead region
+// in a load balancer's pool for the ~21 lake-backed routes it can't serve. This is
+// the complement: 200 iff the registered ClickHouse checker pings; 503 when it fails
+// OR when no lake is wired (absent fails closed: a lake-less deployment must never
+// receive lake-route traffic). Point lake-route LB monitors here, pricing monitors
+// on /v1/readyz.
 //
-// Single-flight + 1s result cache. This route shares readyz's infra
-// exemptions (no auth, no anonymous rate limit, correct for LB probes),
-// which are only safe behind a single-flight cache: without one, EVERY
-// anonymous request would run a fresh `LakeTipLedger` query against
-// ClickHouse under a 5s timeout, making unmetered concurrent probes an
-// amplifier pointed at the lake, worst exactly when the lake is already
-// struggling. Concurrent callers share ONE ping round per second,
-// exactly like handleReadyz; a liveness answer up to 1s old is at least
-// as truthful as a point-in-time probe.
+// Single-flight + 1s result cache. The route shares readyz's infra exemptions (no
+// auth, no anonymous rate limit), which are only safe behind a single-flight cache:
+// otherwise EVERY anonymous request would run a fresh `LakeTipLedger` query under a
+// 5s timeout, an amplifier pointed at the lake exactly when it struggles. Concurrent
+// callers share ONE ping round per second, like handleReadyz.
 //
-// livezLakeMu is held only to read/write the cache and flight fields,
-// never across the ping round: under the lock, every queued caller on
-// this unauthenticated, rate-limit-exempt route would block for up to
-// the 5s ping budget against a 1s TTL, during exactly the lake outage
-// the route exists to surface. The round runs detached in
-// fillLivezLake; queued callers wait on its done channel and can
-// abandon it via their own request context.
+// livezLakeMu is held only to read/write the cache and flight fields, never across
+// the ping: under the lock every queued caller on this unauthenticated route would
+// block up to the 5s ping budget against a 1s TTL during the lake outage the route
+// exists to surface. The round runs detached in fillLivezLake; queued callers wait
+// on its done channel and can abandon it via their own request context.
 func (s *Server) handleLivezLake(w http.ResponseWriter, r *http.Request) {
 	s.livezLakeMu.Lock()
 	if time.Since(s.livezLakeAt) < livezLakeTTL && s.livezLakeBody != nil {

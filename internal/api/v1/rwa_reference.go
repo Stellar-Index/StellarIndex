@@ -16,43 +16,26 @@ import (
 
 // Oracle NAV reference and premium/discount for /v1/rwa/assets.
 //
-// The gap between an oracle's NAV for a tokenized treasury and what the
-// Stellar market pays for the token needs both the oracle stream and the
-// gated market price, which this index holds together. Five rules gate
+// The gap between an oracle's NAV for a tokenized treasury and the Stellar market
+// price needs the oracle stream and the gated market price together. Five rules gate
 // it; each blocks a number that means something other than what it says.
 //
-// R-0 — bound to this (code, issuer). Anyone may issue a USTRY; a
-// code-only join would publish an unrelated $0.20 token at an 81%
-// discount to a real security. [rwa.InstrumentFeed] is a curated,
-// fail-closed binding on the pair (ADR-0040).
-//
-// R-A — quoted in dollars. A bare `_FUNDAMENTAL` feed publishes NAV in
-// the token's reserve asset, a ratio; registering two as USD once served
-// a BTC-backed token at $1.00 (internal/sources/redstone/feeds.go). The
-// stored row's quote must be `fiat:USD`; nothing is unit-converted here.
-//
-// R-B — prices one token. `rwa:XAU` is gold per troy ounce and
-// `rwa:SPXU` one ETF share; no binding may target either.
-//
-// R-C — published by an [external.ClassOracle]. Aggregators share the
-// hypertable, and a premium against one would compare the market with
-// itself.
-//
-// R-D — the market price is observed. A `price_basis` price is a peg or
-// a transitive derivation; a premium against it echoes the issuer's claim.
+// R-0 bound to this (code, issuer): anyone may issue a USTRY, and a code-only join
+// would publish an unrelated $0.20 token at an 81% discount to a real security
+// ([rwa.InstrumentFeed], ADR-0040). R-A quoted in dollars: a bare `_FUNDAMENTAL`
+// feed is a ratio in the reserve asset (once served a BTC-backed token at $1.00);
+// the stored quote must be `fiat:USD`. R-B prices one token (`rwa:XAU`, `rwa:SPXU`
+// are not bindable). R-C published by an [external.ClassOracle]; aggregators share
+// the hypertable and a premium against one compares the market with itself. R-D the
+// market price is observed; a `price_basis` price is a peg or derivation.
 //
 // A refused row names its rule and never carries a zero.
 //
-// `reference_valuation` is the reference times the float. Most RWAs are
-// held, not traded, so a market valuation would publish nothing while
-// the oracle prices the backing daily. It rides R-0 through R-C but not
-// R-D (it holds no market price), so it is published under its own name
-// and total, beside `market_cap_usd` and never inside it.
-//
-// `premium.status` and `reference_valuation.status` are assigned from the
-// same constant on the same line, so a shared refusal cannot read as two
-// events. They differ only when the reasons do: no observed market price
-// leaves a valuation without a premium; no supply reading, the reverse.
+// `reference_valuation` is the reference times the float (most RWAs are held, not
+// traded). It rides R-0 through R-C but not R-D, so it is published under its own
+// name and total, beside `market_cap_usd` and never inside it. `premium.status` and
+// `reference_valuation.status` are assigned from the same constant on the same line,
+// so a shared refusal cannot read as two events; they differ only when the reasons do.
 
 // rwaReferenceTTL bounds the reuse of one oracle-stream snapshot.
 //
@@ -230,34 +213,22 @@ const (
 	RWAReferenceFundNAV = "fund_nav"
 )
 
-// RWAReferenceValuation is the token's circulating supply valued at the
-// REFERENCE price — the oracle's published value of the instrument —
-// rather than at anything the market was observed paying.
+// RWAReferenceValuation is the token's circulating supply valued at the REFERENCE
+// price (the oracle's value of the instrument), not at anything the market was
+// observed paying.
 //
-// It is the deliberate opposite of `valuation.market_cap_usd`, and the
-// two are never folded together:
+// It is the deliberate opposite of `valuation.market_cap_usd` and the two are never
+// folded together: that one is adversarially verified (thin-market substance gate,
+// dust-liquidity guard, scam-issuer suppression) and backed by a settled trade.
+// This figure is a CLAIM: the oracle states what the backing is worth, the issuer's
+// domain-bound declaration says one token is one unit of it. Nothing was paid, no
+// liquidity gate can measure it, and a token with no market carries it at full
+// size, which is why it may not be reported as a market capitalisation.
 //
-//   - `valuation.market_cap_usd` is adversarially verified. A price
-//     reaches it only after the thin-market substance gate, the
-//     dust-liquidity guard and the scam-issuer suppression have all
-//     declined to withhold it, and behind that price is a trade
-//     somebody actually settled. It is an observation.
-//   - this figure is a CLAIM. The oracle states what the backing is
-//     worth and the issuer's own domain-bound declaration states that
-//     one token is one unit of that backing; multiplying the second by
-//     the first values the float. Nothing here was paid by anyone, no
-//     liquidity gate can measure it, and a token with no market at all
-//     carries this figure at full size. That is the point of it — a
-//     real-world asset is bought and held, so most of the set never
-//     trades — and it is also exactly why it may not be reported as a
-//     market capitalisation.
-//
-// The distinction has to survive being read carelessly, so it is
-// carried three ways: the field is named for the reference rather than
-// for the market, every published figure names the feed and the vintage
-// that produced it in the sibling `reference` block, and
-// `summary.reference_valuation.basis` states in prose that nobody was
-// observed paying it.
+// The distinction is carried three ways: the field is named for the reference, every
+// figure names its feed and vintage in the sibling `reference` block, and
+// `summary.reference_valuation.basis` says in prose that nobody was observed
+// paying it.
 type RWAReferenceValuation struct {
 	// Status is the single authority on why there is no figure. Where a
 	// rule refuses the reference itself it carries the SAME string as
@@ -320,31 +291,19 @@ const (
 	// including a third party's: an impersonator handed a real
 	// instrument's NAV is exactly the claim the flag exists to deny.
 	RWAPremiumIssuerFlagged = "withheld_issuer_flagged"
-	// RWAPremiumContractNotBound — the member is CONTRACT-issued, and
-	// nothing binds a contract address to an oracle feed.
+	// RWAPremiumContractNotBound: the member is CONTRACT-issued and nothing binds a
+	// contract address to an oracle feed.
 	//
-	// Reported apart from [RWAPremiumNotBound] because that status
-	// names a (code, issuer) pair, which a contract row does not have,
-	// and because the two are refusals of different shapes. A classic
-	// pair is usually unbound because it is a code collision; a
-	// contract is unbound because no contract-to-feed binding set
-	// exists at all.
+	// Reported apart from [RWAPremiumNotBound] because that status names a
+	// (code, issuer) pair, which a contract row lacks.
 	//
-	// The obvious join is available and is REFUSED. A contract admitted
-	// on [rwa.BasisContractOracleFeed] got in because its on-chain
-	// SEP-41 symbol is an ADR-0028 code — but a symbol is metadata the
-	// contract itself authors, so pricing a token by it is the
-	// code-keyed join this file exists to refuse, with a weaker key.
-	// Recognition of the address establishes WHO deployed it; it does
-	// not establish that one of its tokens is one unit of the
-	// instrument an oracle prices under that name, which is the claim a
-	// reference valuation makes. The curated contract set
-	// ([rwa.ContractInstrumentBindings]) records instrument and class,
-	// NOT a feed, so it cannot answer this either however many entries
-	// it holds — a fund's identity is not a price for it. Pricing a
-	// curated contract would need a contract-to-feed binding set that
-	// does not exist, and for the funds currently bound there is no
-	// oracle feed to bind to.
+	// The obvious join is REFUSED. A contract admitted on [rwa.BasisContractOracleFeed]
+	// got in via its on-chain SEP-41 symbol, but the contract authors that symbol
+	// itself, so pricing by it is the code-keyed join this file exists to refuse.
+	// Recognising the address establishes who deployed it, not that one token is one
+	// unit of the instrument an oracle prices under that name. The curated set
+	// ([rwa.ContractInstrumentBindings]) records instrument and class, not a feed, so
+	// it cannot answer either.
 	RWAPremiumContractNotBound = "reference_contract_not_bound"
 	// RWAPremiumNotBound — no curated binding ties this exact
 	// (code, issuer) to an oracle feed. The commonest cause by far is
@@ -887,53 +846,26 @@ func rwaApplyReference(
 	}
 }
 
-// rwaApplyContractReference attaches the LISTING-priced reference to a
-// contract member, or the reason there is none.
+// rwaApplyContractReference attaches the LISTING-priced reference to a contract
+// member, or the reason there is none.
 //
-// # Why a contract row can carry a reference
+// Nothing binds a contract ADDRESS to an oracle feed (symbol and instrument name
+// are code-keyed joins, which R-0 refuses). An independent listing directory row
+// instead NAMES the exact address and publishes a USD price for it, bound in one
+// row by a party that did not read our curated directory. No code is matched, so a
+// token wearing a bound instrument's symbol gets nothing here. It applies to any
+// contract row the listing names, not only ones it ADMITTED: gating on how the row
+// got in would withhold a correct figure for a reason unrelated to the price.
 //
-// Nothing binds a contract ADDRESS to an oracle feed: the contract's
-// SEP-41 symbol and the curated binding's instrument name are both
-// code-keyed joins onto a feed, which R-0 refuses. The curated set
-// records an instrument and a class, not a feed, so it cannot answer a
-// price.
+// It is a listing platform's aggregate of what the TOKEN trades at, not an oracle's
+// valuation of the INSTRUMENT. So the reference carries [RWAReferenceListingPrice],
+// the summary basis prose describes the mixture, and NO PREMIUM is published
+// ([RWAPremiumReferenceNotOracle]): a premium against an aggregate of the same
+// markets our own price samples is the market compared with itself.
 //
-// An independent listing directory row, by contrast, NAMES the exact
-// address and publishes a USD price for it: price bound to address, in
-// one row, by a party that did not read our curated directory. No code
-// is matched on this path, so a token wearing a bound instrument's
-// symbol gets nothing here.
-//
-// It applies to any contract row the listing names, not only rows the
-// listing ADMITTED: the price is as well bound to the address when the
-// curated directory attested the contract on its own. Gating on the
-// recognition source would withhold a correct figure for a reason about
-// how the row got in, not where the price came from.
-//
-// # What it is, stated rather than implied
-//
-// It is a listing platform's aggregate of what the TOKEN trades at, not
-// an oracle's valuation of the INSTRUMENT. So:
-//
-//   - the reference carries [RWAReferenceListingPrice], and the
-//     summary basis prose describes the mixture rather than inheriting
-//     the oracle wording;
-//   - NO PREMIUM is published against it, under
-//     [RWAPremiumReferenceNotOracle] — a premium against an aggregate
-//     of the same markets our own price samples is the market compared
-//     with itself;
-//   - it makes no claim that one token is one unit of anything, which
-//     is the claim the oracle arm rests on and the reason that arm is
-//     the stronger of the two.
-//
-// # One refusal, two fields — and the one place they diverge
-//
-// This is the only path on which the premium is refused while the
-// reference valuation beside it is PUBLISHED. That is a genuine
-// divergence of reasons rather than two accounts of one event: there IS
-// a reference and there IS a supply, so the valuation exists; there is
-// no oracle, so the comparison does not. The file header names exactly
-// this shape as the case where the two fields are allowed to differ.
+// This is the only path where the premium is refused while the reference valuation
+// beside it is PUBLISHED: a reference and a supply exist, an oracle does not. That
+// is the case the file header allows the two fields to differ.
 func rwaApplyContractReference(a *RWAAsset, entry timescale.ListingEntry, now time.Time) {
 	rwaApplyListingReference(a, entry, RWAPremiumContractNotBound, now)
 }
@@ -1020,31 +952,20 @@ func rwaListingReferencesOf(members []rwaContractMember) map[string]timescale.Li
 	return out
 }
 
-// rwaRefuseReference records ONE refusal in BOTH places it has to
-// appear.
+// rwaRefuseReference records ONE refusal in BOTH places it must appear. Every rule
+// here refuses the premium and the reference-priced valuation together; writing
+// both from a single argument at a single call site keeps them from telling two
+// stories (the funnel reads only `reference_valuation.status`).
 //
-// Every rule this file enforces refuses the premium and the
-// reference-priced valuation together — there is no reference, so
-// neither figure exists — and the two fields must never end up telling
-// two stories about one event. Writing them from a single argument at a
-// single call site is what guarantees that: a status added later cannot
-// be wired into one field and forgotten in the other, and the funnel,
-// which reads only `reference_valuation.status`, reports exactly what
-// `premium.status` says.
-// rwaApplyConstantNAVReference prices a share class at the NAV its
-// prospectus fixes (rwa.ConstantNAV). The reference is dated now rather
-// than at the binding's verification date: the value is a standing rule
-// of the fund, not an observation that ages, and the verification date
-// travels in Source for the reader who wants it.
+// rwaApplyConstantNAVReference prices a share class at the NAV its prospectus fixes
+// (rwa.ConstantNAV). The reference is dated now, not at the verification date: the
+// value is a standing rule of the fund, not an observation that ages; the
+// verification date travels in Source.
 //
-// A rule is not an observation, but the READING of it is, and it is
-// bounded the way every other reference on this surface is: past the
-// binding's ReviewBy — VerifiedOn plus [rwa.ConstantNAVReviewInterval]
-// — the row is served `stale: true` with Source saying the binding is
-// due for re-verification. Labelled, not withheld, for the reason the
-// 72-hour bound labels an oracle figure: the prescribed NAV is the
-// fund's current NAV until the fund changes regime, and the label is
-// what tells a reader nobody has checked that lately.
+// Reading it is still bounded: past the binding's ReviewBy (VerifiedOn plus
+// [rwa.ConstantNAVReviewInterval]) the row is served `stale: true` with Source
+// saying re-verification is due. Labelled, not withheld, like the 72-hour oracle
+// bound: the prescribed NAV is the current NAV until the fund changes regime.
 func rwaApplyConstantNAVReference(a *RWAAsset, b rwa.ConstantNAVBinding, now time.Time) {
 	price := ratFromOptionalString(&b.NAVUSD)
 	if price == nil || price.Sign() <= 0 {

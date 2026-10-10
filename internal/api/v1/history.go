@@ -102,53 +102,28 @@ type HistoryReader interface {
 	// Used by /v1/ohlc's multi-bar mode (CG/CMC parity).
 	OHLCSeries(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]OHLCSeriesBar, error)
 
-	// LatestTradePerSource returns the most-recent trade FROM EACH
-	// source that has ever recorded a trade on the market `pair`
-	// names. Empty slice + nil error when the market has no trades at
-	// all.
+	// LatestTradePerSource returns the most-recent trade FROM EACH source that has ever
+	// recorded a trade on the market `pair` names. Empty slice + nil error when none.
 	//
-	// EITHER STORED DIRECTION, returned in the requested orientation.
-	// A market has no stored direction of its own — the SDEX decoder
-	// records XLM/USDC and USDC/XLM as separate rows — so an
-	// implementation that binds (base_asset, quote_asset) literally
-	// answers `base=AQUA&quote=USDC` with nothing at all for a market
-	// recorded only the other way round, while /v1/history serves the
-	// same market from the same rows. Implementations MUST read both
-	// directions and re-express the flipped rows: the two legs and the
-	// two smallest-unit amounts SWAP, so a derived price is the exact
-	// reciprocal and nothing is divided. One row per source either
-	// way: a source that traded the market both ways round is folded
-	// to whichever of its two trades came later.
+	// EITHER STORED DIRECTION, returned in the requested orientation. The SDEX decoder
+	// records XLM/USDC and USDC/XLM as separate rows, so binding (base_asset,
+	// quote_asset) literally would answer `base=AQUA&quote=USDC` with nothing for a market
+	// recorded the other way round while /v1/history serves it. Implementations MUST read
+	// both directions and re-express the flipped rows: the two legs and the two
+	// smallest-unit amounts SWAP, so a derived price is the exact reciprocal and nothing
+	// is divided. A source that traded both ways folds to its later trade.
 	//
-	// Optional sourceFilter ("" = no filter) restricts the result to
-	// a single source — equivalent to "latest trade for the market on
-	// venue X", returning a 0- or 1-element slice. The filter is
-	// applied at the SQL layer so a per-source query is cheap.
+	// sourceFilter ("" = none) restricts to one source, applied at the SQL layer.
+	// Storage primitive for ADR-0018 Surface 3 `/v1/observations`; the production impl is
+	// a `DISTINCT ON (source) ... ORDER BY source, ts DESC` scan per direction, unioned,
+	// with no time bound.
 	//
-	// This is the storage-side primitive for the ADR-0018 Surface 3
-	// `/v1/observations` endpoint. The production impl is a
-	// `DISTINCT ON (source) … ORDER BY source, ts DESC` scan per
-	// stored direction, unioned, with no time bound.
-	//
-	// COST, measured on r1: `trades_pair_source_ts_idx` (migration
-	// 0037) DOES exist, and Timescale plans this as a Merge Append of
-	// per-chunk SkipScans over the compressed index — 49 ms execution
-	// across 249 chunks for native/fiat:USD, 289 ms for the heaviest
-	// pair measured, 47 ms to prove a novel pair empty. An earlier
-	// revision claimed the index was never created and that the scan
-	// "probes every chunk — multiple seconds"; both were false, and
-	// the deferred multi-GB index build recorded here as the "durable
-	// root-cause follow-up" is work that is already deployed. Do not
-	// re-schedule it. Note Postgres PLANNING (40-210 ms over 249
-	// chunks) can exceed execution on a novel key, since the planner
-	// re-plans across the wide chunk set. Those figures are per
-	// DIRECTION: each arm of the union is the scan they were measured
-	// on, so the whole read is twice a number that was already tens of
-	// milliseconds, well inside the surface's 8s ceiling. The two-arm
-	// read is estimated, not measured, on r1.
-	//
-	// [CachedHistoryReader] still SWR-caches this method to
-	// keep the status page's poll off the database entirely.
+	// COST, measured on r1: `trades_pair_source_ts_idx` (migration 0037) exists and
+	// Timescale plans a Merge Append of per-chunk SkipScans: 49 ms across 249 chunks for
+	// native/fiat:USD, 289 ms for the heaviest pair. No index build is pending; do not
+	// re-schedule one. Planning (40-210 ms) can exceed execution on a novel key. The
+	// two-arm read is estimated, not measured, well inside the 8s ceiling.
+	// [CachedHistoryReader] SWR-caches this.
 	LatestTradePerSource(ctx context.Context, pair canonical.Pair, sourceFilter string) ([]canonical.Trade, error)
 }
 
@@ -757,32 +732,22 @@ func nonVWAPSources(srcs []string) []string {
 const (
 	defaultHistoryGranularity = "1d"
 
-	// historyMaxPoints is the safety cap on a single response. The
-	// 1m CAGG can grow to ~32 M rows over 5 years (one per minute);
-	// the 1d CAGG is ~1800 rows over 5 years. Cap at 50k so a
-	// granularity=1m request doesn't try to ship a 32M-row JSON
-	// payload. Operators wanting the full series in 1m grain should
-	// paginate (planned cursor surface).
+	// historyMaxPoints is the safety cap on a single response: the 1m CAGG reaches ~32M
+	// rows over 5 years, so 50k stops a granularity=1m request shipping a 32M-row
+	// payload. Operators wanting the full 1m series should paginate (planned cursor
+	// surface).
 	//
-	// Truncation takes the EARLIEST buckets, so a request whose grid is
-	// wider than this cap is answered with its oldest slice and no
-	// remaining window. On /v1/chart that is decidable from the request
-	// — window width over bucket width — and the grain is coarsened to
-	// one that fits, reported as the response's own `granularity`
-	// ([chartFitGranularity]).
+	// Truncation takes the EARLIEST buckets, so a grid wider than the cap is answered
+	// with its oldest slice and no remaining window. On /v1/chart that is decidable from
+	// the request (window width over bucket width), so the grain is coarsened to fit and
+	// reported as the response's `granularity` ([chartFitGranularity]).
 	//
-	// This surface is NOT the same shape: /v1/history/since-inception
-	// has no window parameter at all, so how many buckets its grid
-	// holds is a property of the DATA, not of the request, and there is
-	// nothing to compare against the cap without reading first — unlike
-	// /v1/chart, it cannot coarsen the grain up front. Instead the
-	// handler checks the read's own row count (`len(points) ==
-	// historyMaxPoints`) and stamps `row_cap_truncated` + `data_ends_at`
-	// on the response, so `?granularity=1m` on the flagship pair still
-	// returns exactly 50,000 points ending in February 2018, and says
-	// so.
-	// Plain /v1/history is not this shape either: it pages raw trades
-	// through `limit`/`cursor` and takes no `granularity`.
+	// /v1/history/since-inception is NOT that shape: it has no window parameter, so its
+	// bucket count is a property of the DATA and it cannot coarsen up front. The handler
+	// checks the read's row count (`len(points) == historyMaxPoints`) and stamps
+	// `row_cap_truncated` + `data_ends_at`, so `?granularity=1m` on the flagship pair
+	// returns exactly 50,000 points ending in February 2018 and says so. Plain
+	// /v1/history pages raw trades via `limit`/`cursor` and takes no `granularity`.
 	historyMaxPoints = 50_000
 
 	// sinceInceptionPricingSpan is the history depth the since-inception
@@ -1366,46 +1331,28 @@ func allStreamsFetchedGroup(streams []tradeStream, last canonical.Trade) bool {
 	return true
 }
 
-// tieGroupCursor is the resume point strictly PAST a tie group whose
-// every row has been served: the group's (ts, ledger, tx_hash) with
-// op_index stepped once, and NO source.
+// tieGroupCursor is the resume point strictly PAST a tie group whose every row has
+// been served: the group's (ts, ledger, tx_hash) with op_index stepped once and NO
+// source.
 //
-// Why it is correct. The database compares
-// (ts, ledger, tx_hash, op_index, source) as a tuple, so against
-// (T, L, H, op+1, EMPTY) every row of the group (op_index = op) loses on
-// the fourth component and is excluded, and every row after it wins on
-// one of the first four and is kept — whatever collation is installed,
-// because the comparison never reaches `source`. The one row class that
-// could tie into the fifth component is (T, L, H, op+1, S), and it is
-// kept for every S: `source` is NOT NULL and [canonical.Trade.Validate]
-// rejects an empty one, so every S sorts above the empty string.
+// Correct because the database compares (ts, ledger, tx_hash, op_index, source) as a
+// tuple: against (T, L, H, op+1, EMPTY) every group row loses on the fourth component
+// and every later row wins on one of the first four, whatever the collation. The one
+// class that could tie into the fifth, (T, L, H, op+1, S), is kept for every S
+// because [canonical.Trade.Validate] rejects an empty source.
 //
-// THAT PREMISE IS THE APPLICATION'S, NOT THE SCHEMA'S. `trades.source`
-// is `text NOT NULL`, which admits the empty string; what excludes it
-// is [canonical.Trade.Validate] on both write paths. A row inserted
-// around the application with an empty source would be skipped by a
-// cursor that steps past its group. Deliberately NOT closed with a
-// non-empty CHECK constraint: that is a migration against the trades
-// hypertable for a hazard reachable only by writing to the table
-// directly, and the premise is already load-bearing elsewhere —
-// [decodeHistoryCursor] refuses an empty source, so such a row could
-// not be a resume point under the row cursor either. Recorded here so
-// that the next person adding a write path knows what holds it up.
+// THAT PREMISE IS THE APPLICATION'S, NOT THE SCHEMA'S: `trades.source` is
+// `text NOT NULL`, which admits the empty string. A row inserted around the
+// application with an empty source would be skipped. Deliberately NOT closed with a
+// CHECK (a migration on the trades hypertable for a hazard reachable only by direct
+// writes); [decodeHistoryCursor] already refuses an empty source. Recorded so the next
+// person adding a write path knows what holds it up.
 //
-// Why it is guarded. op_index is uint32, so op+1 at [math.MaxUint32]
-// wraps to 0 — a cursor pointing at the START of the transaction, which
-// would re-serve it on every page and never terminate. That returns
-// false and the caller keeps the last-row cursor, which on THIS path
-// alone — a complete group spanning both directions, resumed by naming
-// one of its rows — can repeat a row. It cannot skip one or loop, and
-// it is the only place on the endpoint where a repeat is possible at
-// all; everywhere else the resume point steps past the group. The
-// case is doubly unreachable — op_index is stored in an `integer`
-// column, so it cannot exceed MaxInt32, and the value is a FANNED
-// operation index (operation index packed with the in-operation
-// discriminator) that is orders of magnitude below either ceiling — but
-// wrapping arithmetic on a served cursor is not a thing to leave
-// implicit.
+// Guard: op_index is uint32, so op+1 at [math.MaxUint32] wraps to 0 and would re-serve
+// the transaction forever. That returns false and the caller keeps the last-row cursor,
+// which on this path alone can repeat a row, never skip or loop. Doubly unreachable
+// (op_index is stored as `integer`), but wrapping arithmetic on a served cursor should
+// not be left implicit.
 func tieGroupCursor(last canonical.Trade) (historyCursor, bool) {
 	if last.OpIndex == math.MaxUint32 {
 		return historyCursor{}, false
