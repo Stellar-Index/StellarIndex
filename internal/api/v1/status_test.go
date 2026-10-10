@@ -51,38 +51,38 @@ func (f *fakeStatusBackend) SourceEnabled(context.Context) (map[string]bool, err
 	return f.sourceEnabled, f.enabledErr
 }
 
+// getStatus serves GET /v1/status and returns the raw recorder, the envelope
+// and the typed payload.
+func getStatus(t *testing.T, opts Options) (*httptest.ResponseRecorder, Envelope, StatusResponse) {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	New(opts).Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want 200", rr.Code)
+	}
+	var env Envelope
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	data, _ := json.Marshal(env.Data)
+	var st StatusResponse
+	if err := json.Unmarshal(data, &st); err != nil {
+		t.Fatalf("decode StatusResponse: %v", err)
+	}
+	return rr, env, st
+}
+
 func TestStatus_NoBackend_DegradedSurface(t *testing.T) {
-	srv := New(Options{
+	rr, env, st := getStatus(t, Options{
 		RegionName:       "r1",
 		RegionDeployment: "production",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
-	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status code = %d, want 200", rr.Code)
-	}
-
-	var env Envelope
-	if err := json.NewDecoder(rr.Body).Decode(&env); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	body, _ := json.Marshal(env.Data)
-	var st StatusResponse
-	if err := json.Unmarshal(body, &st); err != nil {
-		t.Fatalf("re-decode: %v", err)
-	}
-
 	if st.Region.Name != "r1" {
 		t.Errorf("Region.Name = %q, want r1", st.Region.Name)
 	}
-	// The in-process surface (api=ok + indexer/aggregator
-	// unknown) is partial visibility. The mixed-state branch of
-	// the overall rollup returns "degraded" — silently reporting
-	// "ok" while two of three services are unknown is the exact
-	// bug this regression test pins.
+	// api=ok with indexer/aggregator unknown is partial visibility and must
+	// roll up to "degraded", not "ok".
 	if st.Overall != "degraded" {
 		t.Errorf("Overall = %q, want degraded (partial visibility: api ok, indexer/aggregator unknown)", st.Overall)
 	}
@@ -90,7 +90,6 @@ func TestStatus_NoBackend_DegradedSurface(t *testing.T) {
 		t.Errorf("flags.stale = false; want true when no backend wired")
 	}
 
-	// Indexer + aggregator should be present but unknown.
 	want := map[string]string{"api": "ok", "indexer": "unknown", "aggregator": "unknown"}
 	got := map[string]string{}
 	for _, s := range st.Services {
@@ -101,11 +100,19 @@ func TestStatus_NoBackend_DegradedSurface(t *testing.T) {
 			t.Errorf("services[%q] = %q, want %q", k, got[k], v)
 		}
 	}
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `"freshness_status":"unknown"`) {
+		t.Errorf("no-backend body lacks freshness_status unknown:\n%s", body)
+	}
+	if strings.Contains(body, `"active_sources"`) {
+		t.Errorf("no-backend body carries active_sources:\n%s", body)
+	}
 }
 
 func TestStatus_WithBackend_HappyPath(t *testing.T) {
 	now := time.Now().UTC()
-	srv := New(Options{
+	_, _, st := getStatus(t, Options{
 		RegionName: "r1",
 		StatusBackend: &fakeStatusBackend{
 			heartbeats: map[string]time.Time{
@@ -121,19 +128,6 @@ func TestStatus_WithBackend_HappyPath(t *testing.T) {
 			incidents: StatusIncidents{ActiveCount: 0},
 		},
 	})
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
-	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status code = %d, want 200", rr.Code)
-	}
-	var env Envelope
-	json.NewDecoder(rr.Body).Decode(&env)
-	body, _ := json.Marshal(env.Data)
-	var st StatusResponse
-	json.Unmarshal(body, &st)
 
 	if st.Overall != "ok" {
 		t.Errorf("Overall = %q, want ok", st.Overall)
@@ -169,6 +163,9 @@ func TestStatus_FreshnessCounts_ServedZeroVsFailedQuery(t *testing.T) {
 		wantStatus string
 		wantBody   []string
 		absentBody []string
+		// wantOverall is asserted when set; the failed-query case must
+		// degrade overall like any blind panel.
+		wantOverall string
 	}{
 		{
 			name: "served zero",
@@ -183,9 +180,13 @@ func TestStatus_FreshnessCounts_ServedZeroVsFailedQuery(t *testing.T) {
 			backend: &fakeStatusBackend{
 				freshness: StatusFreshness{ActiveSources: new(0), TotalSources: new(17)},
 				freErr:    errors.New("prometheus: connection refused"),
+				heartbeats: map[string]time.Time{
+					"indexer": time.Now().UTC(), "aggregator": time.Now().UTC(),
+				},
 			},
-			wantStatus: "unknown",
-			absentBody: []string{`"active_sources"`, `"total_sources"`},
+			wantStatus:  "unknown",
+			absentBody:  []string{`"active_sources"`, `"total_sources"`},
+			wantOverall: "degraded",
 		},
 		{
 			name: "all active",
@@ -206,6 +207,7 @@ func TestStatus_FreshnessCounts_ServedZeroVsFailedQuery(t *testing.T) {
 			var env struct {
 				Data struct {
 					FreshnessStatus string `json:"freshness_status"`
+					Overall         string `json:"overall"`
 				} `json:"data"`
 			}
 			if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
@@ -213,6 +215,9 @@ func TestStatus_FreshnessCounts_ServedZeroVsFailedQuery(t *testing.T) {
 			}
 			if env.Data.FreshnessStatus != tc.wantStatus {
 				t.Errorf("freshness_status = %q, want %q", env.Data.FreshnessStatus, tc.wantStatus)
+			}
+			if tc.wantOverall != "" && env.Data.Overall != tc.wantOverall {
+				t.Errorf("overall = %q, want %q", env.Data.Overall, tc.wantOverall)
 			}
 			for _, s := range tc.wantBody {
 				if !strings.Contains(body, s) {
@@ -225,137 +230,6 @@ func TestStatus_FreshnessCounts_ServedZeroVsFailedQuery(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestStatus_NoBackend_FreshnessStatusUnknown(t *testing.T) {
-	srv := New(Options{RegionName: "r1"})
-	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
-	if !strings.Contains(rr.Body.String(), `"freshness_status":"unknown"`) {
-		t.Errorf("no-backend body lacks freshness_status unknown:\n%s", rr.Body.String())
-	}
-	if strings.Contains(rr.Body.String(), `"active_sources"`) {
-		t.Errorf("no-backend body carries active_sources:\n%s", rr.Body.String())
-	}
-}
-
-func TestStatus_WithBackend_StaleHeartbeatDown(t *testing.T) {
-	now := time.Now().UTC()
-	srv := New(Options{
-		RegionName: "r1",
-		StatusBackend: &fakeStatusBackend{
-			heartbeats: map[string]time.Time{
-				// 5 minutes old — well past the 60 s threshold.
-				"indexer":    now.Add(-5 * time.Minute),
-				"aggregator": now.Add(-3 * time.Second),
-			},
-		},
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
-	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
-
-	var env Envelope
-	json.NewDecoder(rr.Body).Decode(&env)
-	body, _ := json.Marshal(env.Data)
-	var st StatusResponse
-	json.Unmarshal(body, &st)
-
-	// Per rollup precedence (worst wins): any service in
-	// "down" makes overall=down. A stale heartbeat is a definite
-	// negative signal, not "degraded" partial visibility.
-	if st.Overall != "down" {
-		t.Errorf("Overall = %q, want down (stale indexer hb)", st.Overall)
-	}
-	if !env.Flags.Stale {
-		t.Errorf("flags.stale = false; want true when overall != ok")
-	}
-	for _, s := range st.Services {
-		if s.Name == "indexer" && s.Status != "down" {
-			t.Errorf("indexer.Status = %q, want down", s.Status)
-		}
-	}
-}
-
-func TestStatus_WithBackend_PageAlertDegrades(t *testing.T) {
-	now := time.Now().UTC()
-	srv := New(Options{
-		RegionName: "r1",
-		StatusBackend: &fakeStatusBackend{
-			heartbeats: map[string]time.Time{
-				"indexer":    now.Add(-3 * time.Second),
-				"aggregator": now.Add(-3 * time.Second),
-			},
-			incidents: StatusIncidents{
-				ActiveCount: 2,
-				PageCount:   1,
-				TicketCount: 1,
-				Active: []ActiveIncident{
-					{Name: "stellarindex_api_down", Severity: "page"},
-					{Name: "stellarindex_aggregator_silent", Severity: "ticket"},
-				},
-			},
-		},
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
-	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
-
-	var env Envelope
-	json.NewDecoder(rr.Body).Decode(&env)
-	body, _ := json.Marshal(env.Data)
-	var st StatusResponse
-	json.Unmarshal(body, &st)
-
-	if len(st.Incidents.Active) != 2 {
-		t.Fatalf("Active len = %d, want 2", len(st.Incidents.Active))
-	}
-	if st.Incidents.Active[0].Name != "stellarindex_api_down" {
-		t.Errorf("Active[0] = %q, want stellarindex_api_down", st.Incidents.Active[0].Name)
-	}
-
-	if st.Overall != "degraded" {
-		t.Errorf("Overall = %q, want degraded (page alert firing)", st.Overall)
-	}
-	if st.Incidents.PageCount != 1 {
-		t.Errorf("PageCount = %d, want 1", st.Incidents.PageCount)
-	}
-}
-
-// TestStatus_BackendErrorDegradesOverall pins the regression
-// from r1: when Prometheus is dead, every backend
-// query (Heartbeats, Latency, Freshness, Incidents) errors out;
-// /v1/status was returning Overall="ok" because the rollup logic
-// only flagged "degraded" inside the success branches. With the
-// metrics pipeline blind, "ok" is a lie — degrade so the
-// status-page poller (and operators reading the API directly)
-// see the real state.
-func TestStatus_BackendErrorDegradesOverall(t *testing.T) {
-	srv := New(Options{
-		RegionName: "r1",
-		StatusBackend: &fakeStatusBackend{
-			hbErr:  errors.New("prometheus: connection refused"),
-			latErr: errors.New("prometheus: connection refused"),
-			freErr: errors.New("prometheus: connection refused"),
-			incErr: errors.New("prometheus: connection refused"),
-		},
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
-	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
-
-	var env Envelope
-	json.NewDecoder(rr.Body).Decode(&env)
-	body, _ := json.Marshal(env.Data)
-	var st StatusResponse
-	json.Unmarshal(body, &st)
-
-	if st.Overall != "degraded" {
-		t.Errorf("Overall = %q, want degraded (metrics backend unreachable)", st.Overall)
 	}
 }
 
@@ -418,40 +292,6 @@ func TestStatus_IncidentsQueryError_ReportsUnknownNotZero(t *testing.T) {
 	}
 }
 
-// A failed freshness probe must publish absent counts, not a measured
-// "0 / 0 active sources", and must degrade overall like any blind panel.
-func TestStatus_FreshnessQueryError_OmitsCounts(t *testing.T) {
-	now := time.Now().UTC()
-	srv := New(Options{
-		RegionName: "r1",
-		StatusBackend: &fakeStatusBackend{
-			heartbeats: map[string]time.Time{"indexer": now, "aggregator": now},
-			freErr:     errors.New("prometheus: connection refused"),
-		},
-	})
-
-	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
-
-	var env struct {
-		Data struct {
-			Overall   string                     `json:"overall"`
-			Freshness map[string]json.RawMessage `json:"freshness"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	for _, k := range []string{"active_sources", "total_sources"} {
-		if v, ok := env.Data.Freshness[k]; ok {
-			t.Errorf("freshness.%s = %s on a failed query, want absent", k, v)
-		}
-	}
-	if env.Data.Overall != "degraded" {
-		t.Errorf("overall = %q, want degraded when the freshness query fails", env.Data.Overall)
-	}
-}
-
 // TestPrometheusStatusBackend_FreshnessReturnsQueryError pins that every
 // freshness query's failure reaches the caller, and that an empty count()
 // vector is a measured zero rather than a failure.
@@ -483,66 +323,6 @@ func TestPrometheusStatusBackend_FreshnessReturnsQueryError(t *testing.T) {
 	}
 	if got.ActiveSources == nil || *got.ActiveSources != 0 || got.TotalSources == nil || *got.TotalSources != 0 {
 		t.Errorf("empty count() = %v / %v, want measured 0 / 0", got.ActiveSources, got.TotalSources)
-	}
-}
-
-// The two success cases the tri-state also has to get right, so the
-// "unknown" case above can't pass by simply hard-coding "unknown".
-func TestStatus_IncidentsStatus_SuccessCases(t *testing.T) {
-	healthyHeartbeats := func() map[string]time.Time {
-		return map[string]time.Time{
-			"indexer":    time.Now().UTC(),
-			"aggregator": time.Now().UTC(),
-		}
-	}
-
-	tests := []struct {
-		name      string
-		incidents StatusIncidents
-		want      string
-	}{
-		{
-			name:      "query ok, no alerts firing",
-			incidents: StatusIncidents{ActiveCount: 0},
-			want:      "ok",
-		},
-		{
-			name: "query ok, alerts firing",
-			incidents: StatusIncidents{
-				ActiveCount: 1,
-				PageCount:   1,
-				Active:      []ActiveIncident{{Name: "stellarindex_api_down", Severity: "page"}},
-			},
-			want: "degraded",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			srv := New(Options{
-				RegionName: "r1",
-				StatusBackend: &fakeStatusBackend{
-					heartbeats: healthyHeartbeats(),
-					incidents:  tc.incidents,
-				},
-			})
-
-			req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
-			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
-
-			var env struct {
-				Data struct {
-					IncidentsStatus string `json:"incidents_status"`
-				} `json:"data"`
-			}
-			if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
-				t.Fatalf("decode body: %v", err)
-			}
-			if env.Data.IncidentsStatus != tc.want {
-				t.Errorf("incidents_status = %q, want %q", env.Data.IncidentsStatus, tc.want)
-			}
-		})
 	}
 }
 
@@ -743,6 +523,7 @@ func TestStatus_OverallRollup_F0055(t *testing.T) {
 	type expect struct {
 		overall string
 		stale   bool
+		indexer string // indexer service status, asserted when set
 	}
 	cases := []struct {
 		name    string
@@ -767,7 +548,7 @@ func TestStatus_OverallRollup_F0055(t *testing.T) {
 					"indexer": stale, "aggregator": recent,
 				},
 			},
-			want: expect{overall: "down", stale: true},
+			want: expect{overall: "down", stale: true, indexer: "down"},
 		},
 		{
 			// Backend errors on every query AND services degrade
@@ -796,6 +577,7 @@ func TestStatus_OverallRollup_F0055(t *testing.T) {
 					ActiveCount: 1, PageCount: 1,
 					Active: []ActiveIncident{
 						{Name: "stellarindex_api_down", Severity: "page"},
+						{Name: "stellarindex_aggregator_silent", Severity: "ticket"},
 					},
 				},
 			},
@@ -817,27 +599,15 @@ func TestStatus_OverallRollup_F0055(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := New(Options{
-				RegionName:    "r1",
-				StatusBackend: tc.backend,
-			})
-
-			req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
-			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
-
-			var env Envelope
-			if err := json.NewDecoder(rr.Body).Decode(&env); err != nil {
-				t.Fatalf("decode envelope: %v", err)
-			}
-			body, _ := json.Marshal(env.Data)
-			var st StatusResponse
-			if err := json.Unmarshal(body, &st); err != nil {
-				t.Fatalf("decode StatusResponse: %v", err)
-			}
+			_, env, st := getStatus(t, Options{RegionName: "r1", StatusBackend: tc.backend})
 
 			if st.Overall != tc.want.overall {
 				t.Errorf("Overall = %q, want %q", st.Overall, tc.want.overall)
+			}
+			for _, svc := range st.Services {
+				if svc.Name == "indexer" && tc.want.indexer != "" && svc.Status != tc.want.indexer {
+					t.Errorf("indexer.Status = %q, want %q", svc.Status, tc.want.indexer)
+				}
 			}
 			if env.Flags.Stale != tc.want.stale {
 				t.Errorf("flags.stale = %v, want %v", env.Flags.Stale, tc.want.stale)
@@ -958,11 +728,16 @@ func TestStatus_TicketIncidentsDoNotMoveOverall(t *testing.T) {
 		name      string
 		incidents StatusIncidents
 		want      string
+		// wantIncidentsStatus is the incidents_status tri-state, asserted when
+		// set: a successful query reads "ok" or "degraded", never a hard-coded
+		// "unknown".
+		wantIncidentsStatus string
 	}{
 		{
-			name:      "no alerts firing",
-			incidents: StatusIncidents{},
-			want:      "ok",
+			name:                "no alerts firing",
+			incidents:           StatusIncidents{},
+			want:                "ok",
+			wantIncidentsStatus: "ok",
 		},
 		{
 			name: "one ticket",
@@ -997,13 +772,14 @@ func TestStatus_TicketIncidentsDoNotMoveOverall(t *testing.T) {
 					{Name: "stellarindex_api_down", Severity: "page"},
 				},
 			},
-			want: "degraded",
+			want:                "degraded",
+			wantIncidentsStatus: "degraded",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := New(Options{
+			_, env, st := getStatus(t, Options{
 				RegionName: "r1",
 				StatusBackend: &fakeStatusBackend{
 					heartbeats: map[string]time.Time{
@@ -1012,19 +788,8 @@ func TestStatus_TicketIncidentsDoNotMoveOverall(t *testing.T) {
 					incidents: tc.incidents,
 				},
 			})
-
-			req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
-			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
-
-			var env Envelope
-			if err := json.NewDecoder(rr.Body).Decode(&env); err != nil {
-				t.Fatalf("decode envelope: %v", err)
-			}
-			body, _ := json.Marshal(env.Data)
-			var st StatusResponse
-			if err := json.Unmarshal(body, &st); err != nil {
-				t.Fatalf("decode StatusResponse: %v", err)
+			if tc.wantIncidentsStatus != "" && st.IncidentsStatus != tc.wantIncidentsStatus {
+				t.Errorf("incidents_status = %q, want %q", st.IncidentsStatus, tc.wantIncidentsStatus)
 			}
 
 			if st.Overall != tc.want {
@@ -1038,6 +803,17 @@ func TestStatus_TicketIncidentsDoNotMoveOverall(t *testing.T) {
 			if st.Incidents.ActiveCount != tc.incidents.ActiveCount {
 				t.Errorf("incidents.active_count = %d, want %d",
 					st.Incidents.ActiveCount, tc.incidents.ActiveCount)
+			}
+			if st.Incidents.PageCount != tc.incidents.PageCount {
+				t.Errorf("incidents.page_count = %d, want %d", st.Incidents.PageCount, tc.incidents.PageCount)
+			}
+			if len(st.Incidents.Active) != len(tc.incidents.Active) {
+				t.Fatalf("incidents.active len = %d, want %d", len(st.Incidents.Active), len(tc.incidents.Active))
+			}
+			for i, a := range tc.incidents.Active {
+				if st.Incidents.Active[i].Name != a.Name {
+					t.Errorf("incidents.active[%d] = %q, want %q", i, st.Incidents.Active[i].Name, a.Name)
+				}
 			}
 		})
 	}
