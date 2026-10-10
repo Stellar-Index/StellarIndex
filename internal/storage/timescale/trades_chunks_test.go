@@ -13,16 +13,9 @@ import (
 	"time"
 )
 
-// ─── the chunk-wise restamp's store primitives, pinned on the scripted driver ──
-//
-// The chunk mode of `usd-volume-restamp -tier xlm-base` exists because an
-// UPDATE into a COMPRESSED `trades` chunk decompresses the chunk
-// (measured: one 2,000-row batch took over 14 minutes, ~1,574
-// rows/min across 28.6M rows). The remedy is mechanical — decompress the
-// chunk, restamp inside it, re-compress it — and the whole of its safety
-// lives in the ORDER of those statements. These tests pin that order and
-// the exact SQL, because a chunk left decompressed on failure is a
-// 160 GB object on a pool with 4.69 TB free, and nothing else would see it.
+// The chunk-wise restamp decompresses a chunk, restamps inside it and
+// re-compresses it; its safety lives in the ORDER of those statements (a chunk
+// left decompressed is a 160 GB object), so these tests pin order and SQL.
 
 // chunkListCols is the column set [tradesChunksInRangeSelect] returns, in
 // its SELECT order.
@@ -38,6 +31,23 @@ func chunkRow(name string, start, end time.Time, compressed bool, uncompressed, 
 // sizeResult scripts one `chunks_detailed_size` lookup.
 func sizeResult(total int64) scriptedResult {
 	return scriptedResult{cols: []string{"total_bytes"}, rows: [][]driver.Value{{total}}}
+}
+
+func chunkAt(n int, compressed bool) TradeChunk {
+	return TradeChunk{Schema: "_timescaledb_internal", Name: fmt.Sprintf("_hyper_1_%d_chunk", n), Compressed: compressed}
+}
+
+func isCompressedResult(v bool) scriptedResult {
+	return scriptedResult{cols: []string{"is_compressed"}, rows: [][]driver.Value{{v}}}
+}
+
+func wantAll(t *testing.T, what, s string, wants ...string) {
+	t.Helper()
+	for _, w := range wants {
+		if !strings.Contains(s, w) {
+			t.Errorf("%s lacks %q:\n%s", what, w, s)
+		}
+	}
 }
 
 func TestTradesChunksInRange_ListsIntersectingChunksInRangeOrder(t *testing.T) {
@@ -59,18 +69,14 @@ func TestTradesChunksInRange_ListsIntersectingChunksInRangeOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	stmt := conn.only(t)
-	for _, want := range []string{
+	wantAll(t, "chunk listing SQL", stmt.sql,
 		"timescaledb_information.chunks",
 		"hypertable_name = 'trades'",
 		"chunk_compression_stats('trades')",
 		"range_start < $2",
 		"range_end > $1",
 		"ORDER BY c.range_start",
-	} {
-		if !strings.Contains(stmt.sql, want) {
-			t.Errorf("chunk listing SQL lacks %q:\n%s", want, stmt.sql)
-		}
-	}
+	)
 	wantTime(t, stmt.arg(t, 1), from)
 	wantTime(t, stmt.arg(t, 2), to)
 
@@ -92,11 +98,8 @@ func TestTradesChunksInRange_ListsIntersectingChunksInRangeOrder(t *testing.T) {
 	}
 }
 
-// TestRestampTradesChunk_BracketsEachChunk: for EVERY chunk, in order —
-// size, decompress_chunk(if_compressed => true), size, the work, then
-// compress_chunk(if_not_compressed => true), size. Two chunks make two
-// complete brackets; the work of the second never runs inside the first's
-// decompressed window.
+// Per chunk, in order: size, decompress_chunk, size, the work, compress_chunk,
+// size. The second chunk's work never runs inside the first's decompressed window.
 func TestRestampTradesChunk_BracketsEachChunk(t *testing.T) {
 	t.Parallel()
 	bracket := func() []scriptedResult {
@@ -110,12 +113,8 @@ func TestRestampTradesChunk_BracketsEachChunk(t *testing.T) {
 	}
 	store, conn := newScriptedStore(t, append(bracket(), bracket()...)...)
 	ctx := context.Background()
-	chunks := []TradeChunk{
-		{Schema: "_timescaledb_internal", Name: "_hyper_1_10_chunk", Compressed: true},
-		{Schema: "_timescaledb_internal", Name: "_hyper_1_11_chunk", Compressed: true},
-	}
-	// The hook fires BEFORE the statement it names is issued: the number
-	// of statements on the wire at that moment is the proof.
+	chunks := []TradeChunk{chunkAt(10, true), chunkAt(11, true)}
+	// The hook fires BEFORE its statement, so the statement count is the proof.
 	var announced []string
 	for _, c := range chunks {
 		res, err := store.RestampTradesChunk(ctx, c, func(ctx context.Context) error {
@@ -131,8 +130,6 @@ func TestRestampTradesChunk_BracketsEachChunk(t *testing.T) {
 			t.Errorf("chunk %s sizes = %d / %d / %d", c, res.BytesBefore, res.BytesDecompressed, res.BytesAfter)
 		}
 	}
-	// Each step is announced before its long-holder check: decompress
-	// before statement 1 of each bracket, compress before statement 8.
 	if want := []string{"1@1", "2@8", "1@15", "2@22"}; strings.Join(announced, ",") != strings.Join(want, ",") {
 		t.Errorf("hook calls (step@statements-issued) = %v, want %v", announced, want)
 	}
@@ -164,19 +161,14 @@ func TestRestampTradesChunk_BracketsEachChunk(t *testing.T) {
 		if comp.arg(t, 1) != chunk.Schema || comp.arg(t, 2) != chunk.Name {
 			t.Errorf("bracket %d compress args = %v, want (%s, %s)", i, comp.args, chunk.Schema, chunk.Name)
 		}
-		// Each of the two exclusive-lock statements opens its transaction
-		// by bounding how long it may leave a lock request PENDING (a
-		// lock convoy). The bound is transaction-LOCAL so it cannot
-		// ride the pooled connection into the next statement.
+		// Transaction-LOCAL lock bound against lock convoys; it must not ride the pooled connection.
 		for _, at := range []int{base + 2, base + 9} {
 			if got[at] != "SET LOCAL lock_timeout = '5000ms'" {
 				t.Errorf("bracket %d stmt %d = %q, want the transaction-local lock bound", i, at-base, got[at])
 			}
 		}
 	}
-	// The regclass is built server-side from the two identifiers; the only
-	// statement that names the chunk in its text is LOCK TABLE, which takes
-	// no parameters and quotes it with pgx.Identifier.
+	// Only LOCK TABLE (no parameters) names the chunk in SQL text, quoted via pgx.Identifier.
 	for _, s := range got {
 		if strings.Contains(s, "_hyper_1_1") && !strings.HasPrefix(s, `LOCK TABLE ONLY "_timescaledb_internal"."_hyper_1_1`) {
 			t.Errorf("a chunk name reached the SQL text: %q", s)
@@ -184,12 +176,8 @@ func TestRestampTradesChunk_BracketsEachChunk(t *testing.T) {
 	}
 }
 
-// TestRestampTradesChunk_RecompressesWhenWorkFails is the one that
-// matters unattended: the work fails (or is cancelled) and the chunk is
-// still re-compressed BEFORE the error propagates. The compress runs on a
-// context that survives the caller's cancellation, because the most
-// likely failure under run-heavy-job.sh is a SIGTERM — and a cancelled
-// context would fail the very statement that puts 160 GB back.
+// A failed or cancelled work still re-compresses the chunk before the error
+// propagates, on a context that survives cancellation (SIGTERM is the likely failure).
 func TestRestampTradesChunk_RecompressesWhenWorkFails(t *testing.T) {
 	t.Parallel()
 	boom := errors.New("update: deadlock detected")
@@ -200,7 +188,7 @@ func TestRestampTradesChunk_RecompressesWhenWorkFails(t *testing.T) {
 			lockGranted()...)..., // compress_chunk; no size lookup follows a failure
 	)
 	ctx, cancel := context.WithCancel(context.Background())
-	c := TradeChunk{Schema: "_timescaledb_internal", Name: "_hyper_1_10_chunk", Compressed: true}
+	c := chunkAt(10, true)
 	var workCtx context.Context
 	_, err := store.RestampTradesChunk(ctx, c, func(ctx context.Context) error {
 		workCtx = ctx
@@ -223,17 +211,14 @@ func TestRestampTradesChunk_RecompressesWhenWorkFails(t *testing.T) {
 	if !strings.Contains(got[11], "compress_chunk(") || strings.Contains(got[11], "decompress_chunk(") {
 		t.Errorf("statement after the failed work = %q, want compress_chunk", got[11])
 	}
-	// The re-compress is bounded the same way the decompress is, on the
-	// cancellation-proof context: a SIGTERM'd run must not park a pending
-	// exclusive request on its way out.
+	// The re-compress carries the same lock bound as the decompress.
 	if got[8] != "SET LOCAL lock_timeout = '5000ms'" {
 		t.Errorf("statement opening the re-compress = %q, want the transaction-local lock bound", got[8])
 	}
 }
 
-// TestRestampTradesChunk_ReportsAChunkLeftDecompressed: when BOTH the
-// work and the re-compress fail, the error names the chunk and says it is
-// still decompressed — the operator's cue to compress it by hand.
+// When both the work and the re-compress fail, the error names the chunk as
+// still decompressed.
 func TestRestampTradesChunk_ReportsAChunkLeftDecompressed(t *testing.T) {
 	t.Parallel()
 	boom := errors.New("update: connection reset")
@@ -243,7 +228,7 @@ func TestRestampTradesChunk_ReportsAChunkLeftDecompressed(t *testing.T) {
 			sizeResult(2), noLongHolder(), scriptedResult{}, scriptedResult{}, scriptedResult{}),
 			scriptedResult{err: errors.New("compress_chunk: out of disk")})...,
 	)
-	c := TradeChunk{Schema: "_timescaledb_internal", Name: "_hyper_1_77_chunk", Compressed: true}
+	c := chunkAt(77, true)
 	_, err := store.RestampTradesChunk(context.Background(), c, func(context.Context) error { return boom }, nil)
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want it to wrap the work's error", err)
@@ -255,8 +240,7 @@ func TestRestampTradesChunk_ReportsAChunkLeftDecompressed(t *testing.T) {
 	}
 }
 
-// TestRestampTradesChunk_DecompressFailureRunsNothing: if the chunk never
-// decompressed, nothing else may run — no work, no compress.
+// A chunk that never decompressed runs neither the work nor a compress.
 func TestRestampTradesChunk_DecompressFailureRunsNothing(t *testing.T) {
 	t.Parallel()
 	store, conn := newScriptedStore(t,
@@ -267,7 +251,7 @@ func TestRestampTradesChunk_DecompressFailureRunsNothing(t *testing.T) {
 		scriptedResult{}, // LOCK the chunk
 		scriptedResult{err: errors.New("decompress_chunk: relation does not exist")},
 	)
-	c := TradeChunk{Schema: "_timescaledb_internal", Name: "_hyper_1_10_chunk", Compressed: true}
+	c := chunkAt(10, true)
 	ran := false
 	_, err := store.RestampTradesChunk(context.Background(), c, func(context.Context) error { ran = true; return nil }, nil)
 	if err == nil || !strings.Contains(err.Error(), "does not exist") {
@@ -281,9 +265,7 @@ func TestRestampTradesChunk_DecompressFailureRunsNothing(t *testing.T) {
 	}
 }
 
-// TestRestampTradesChunk_RangePredicateIsPerChunk: the restamp scan the
-// work issues inside the bracket is bounded by THAT chunk's range, so a
-// decompressed chunk is never asked to answer for its neighbours.
+// The scan inside the bracket is bounded by that chunk's range.
 func TestRestampTradesChunk_RangePredicateIsPerChunk(t *testing.T) {
 	t.Parallel()
 	const usdc = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -333,18 +315,11 @@ func TestTradesDataVolumePath(t *testing.T) {
 		t.Errorf("path = %q", got)
 	}
 	stmt := conn.only(t)
-	for _, want := range []string{"pg_tablespace_location", "data_directory", "'trades'::regclass"} {
-		if !strings.Contains(stmt.sql, want) {
-			t.Errorf("SQL lacks %q:\n%s", want, stmt.sql)
-		}
-	}
+	wantAll(t, "SQL", stmt.sql, "pg_tablespace_location", "data_directory", "'trades'::regclass")
 }
 
-// TestRestampTradesChunk_LeavesAnUncompressedChunkUncompressed: the
-// bracket restores the state the chunk was LISTED in. A chunk that was not
-// compressed at listing — the live-adjacent chunks the ledgerstream
-// cursor-regression replay upserts into, or one a killed run left open —
-// is neither decompressed nor compressed: size, the work, size.
+// The bracket restores the state the chunk was LISTED in: an uncompressed
+// chunk (live-adjacent, or left open by a killed run) is never (de)compressed.
 func TestRestampTradesChunk_LeavesAnUncompressedChunkUncompressed(t *testing.T) {
 	t.Parallel()
 	store, conn := newScriptedStore(t,
@@ -352,7 +327,8 @@ func TestRestampTradesChunk_LeavesAnUncompressedChunkUncompressed(t *testing.T) 
 		scriptedResult{rowsAffected: 3}, // the work
 		sizeResult(910_000_000),
 	)
-	c := TradeChunk{Schema: "_timescaledb_internal", Name: "_hyper_1_12_chunk", Compressed: false, UncompressedBytes: 900_000_000}
+	c := chunkAt(12, false)
+	c.UncompressedBytes = 900_000_000
 	hooked := false
 	res, err := store.RestampTradesChunk(context.Background(), c, func(ctx context.Context) error {
 		_, err := store.db.ExecContext(ctx, "UPDATE trades SET usd_volume = 1")
@@ -389,24 +365,19 @@ func TestTradesCompressionPolicy(t *testing.T) {
 		t.Errorf("policy = %+v", p)
 	}
 	stmt := conn.only(t)
-	for _, want := range []string{
+	wantAll(t, "policy SQL", stmt.sql,
 		"timescaledb_information.jobs",
 		"proc_schema = current_schema()",
 		"proc_name = 'trades_compression_policy'",
 		"config->>'compress_after'",
-	} {
-		if !strings.Contains(stmt.sql, want) {
-			t.Errorf("policy SQL lacks %q:\n%s", want, stmt.sql)
-		}
-	}
+	)
 
 	// No job at all is a named error, never a zero policy.
 	store, _ = newScriptedStore(t, scriptedResult{cols: cols})
 	if _, err := store.TradesCompressionPolicy(context.Background()); !errors.Is(err, ErrNoTradesCompressionPolicy) {
 		t.Errorf("no job: err = %v, want ErrNoTradesCompressionPolicy", err)
 	}
-	// A job without a lag in its config is refused too: the caller sizes
-	// the live-adjacent refusal on it.
+	// A job without a compress_after lag is refused too.
 	store, _ = newScriptedStore(t, scriptedResult{cols: cols, rows: [][]driver.Value{{int64(1000), true, nil}}})
 	if _, err := store.TradesCompressionPolicy(context.Background()); err == nil || !strings.Contains(err.Error(), "compress_after") {
 		t.Errorf("no compress_after: err = %v", err)
@@ -437,10 +408,8 @@ func TestSetJobScheduled(t *testing.T) {
 	}
 }
 
-// TestRestampTradesChunk_RecompressesWhenWorkPanics: the re-compress is a
-// deferred call, not a tail call, so a Go panic inside the work still puts
-// the chunk back before the panic propagates. Without the defer a panic
-// would leave 160 GB decompressed with nothing printed.
+// The re-compress is deferred, so a panic in the work still re-compresses
+// before it propagates.
 func TestRestampTradesChunk_RecompressesWhenWorkPanics(t *testing.T) {
 	t.Parallel()
 	store, conn := newScriptedStore(t,
@@ -449,7 +418,7 @@ func TestRestampTradesChunk_RecompressesWhenWorkPanics(t *testing.T) {
 			sizeResult(4_200_000_000)),
 			append(lockGranted(), sizeResult(275_000_000))...)..., // compress_chunk — issued by the deferred half
 	)
-	c := TradeChunk{Schema: "_timescaledb_internal", Name: "_hyper_1_10_chunk", Compressed: true}
+	c := chunkAt(10, true)
 	var recovered any
 	func() {
 		defer func() { recovered = recover() }()
@@ -466,28 +435,21 @@ func TestRestampTradesChunk_RecompressesWhenWorkPanics(t *testing.T) {
 	}
 }
 
-// TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch: ahead of EVERY
-// batch the chunk's is_compressed is read; the moment it reads true the
-// loop stops with [ErrTradesChunkRecompressed], the rows so far committed,
-// and the next UPDATE — the one that would decompress the chunk wholesale
-// — never issued. Each batch also carries BOTH transaction-local GUCs the
-// write depends on: the lifted decompression cap, and the forced custom
-// plan without which the batch's `ts` bound cannot prune the statement to
-// one chunk.
+// Ahead of every batch is_compressed is read; once true the loop stops with
+// ErrTradesChunkRecompressed, earlier rows committed and the next UPDATE (which
+// would decompress the chunk wholesale) never issued. Each batch also sets the
+// lifted decompression cap and a forced custom plan so its ts bound prunes to one chunk.
 func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 	t.Parallel()
-	isCompressed := func(v bool) scriptedResult {
-		return scriptedResult{cols: []string{"is_compressed"}, rows: [][]driver.Value{{v}}}
-	}
-	c := TradeChunk{Schema: "_timescaledb_internal", Name: "_hyper_1_10_chunk", Compressed: true}
+	isCompressed := isCompressedResult
+	c := chunkAt(10, true)
 	ts := time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC)
 	plan := &XLMBaseRestampPlan{}
 	for i := range 3 {
 		plan.Rows = append(plan.Rows, XLMBaseRestampRow{Source: "sdex", Ledger: uint32(i + 1), TxHash: "ab", TS: ts, Want: "5.00000000"}) //nolint:gosec // tiny loop index
 	}
 
-	// Happy path: two batches, a guard read ahead of each, both carrying the
-	// chunk's own identifiers.
+	// Happy path: two batches, a guard read ahead of each.
 	store, conn := newScriptedStore(t,
 		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 2}, scriptedResult{rowsAffected: 2},
 		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 1}, scriptedResult{rowsAffected: 1},
@@ -534,11 +496,7 @@ func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 	if !errors.Is(err, ErrTradesChunkRecompressed) {
 		t.Fatalf("err = %v, want ErrTradesChunkRecompressed", err)
 	}
-	for _, want := range []string{"_timescaledb_internal._hyper_1_10_chunk", "is_compressed = true", "NOT written"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("err = %v, want containing %q", err, want)
-		}
-	}
+	wantAll(t, "error", err.Error(), "_timescaledb_internal._hyper_1_10_chunk", "is_compressed = true", "NOT written")
 	if n != 2 {
 		t.Errorf("n = %d, want the 2 rows batch 1 committed", n)
 	}
@@ -551,9 +509,8 @@ func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 	}
 }
 
-// TestTryUSDVolumeRestampLock pins the lock's spelling — a session lock
-// keyed on hashtext of the run's name, taken with the non-blocking form —
-// and that a held lock is the named error, never a wait.
+// The lock is a non-blocking session lock keyed on hashtext of the run name;
+// a held lock is the named error, never a wait.
 func TestTryUSDVolumeRestampLock(t *testing.T) {
 	t.Parallel()
 	lockResult := func(v bool) scriptedResult {
@@ -623,20 +580,12 @@ func TestJobRunning(t *testing.T) {
 	}
 }
 
-// TestRestampExactTierUSDVolumeInChunk_GuardsTheUpdate: the exact tier's
-// in-chunk apply reads the chunk's is_compressed BEFORE its UPDATE and
-// refuses to write when it reads true — the same guard the xlm-base
-// batch loop runs, on the statement the exact tier actually issues (one
-// set-based UPDATE per -slice window, not a row batch). The transaction
-// carries both GUCs the write depends on: the lifted decompression cap,
-// and the forced custom plan without which the window's `ts` bounds
-// cannot prune the statement to the chunks it covers.
+// The exact tier's in-chunk apply runs the same is_compressed guard before its
+// one set-based UPDATE per slice window, with the same two transaction-local GUCs.
 func TestRestampExactTierUSDVolumeInChunk_GuardsTheUpdate(t *testing.T) {
 	t.Parallel()
-	isCompressed := func(v bool) scriptedResult {
-		return scriptedResult{cols: []string{"is_compressed"}, rows: [][]driver.Value{{v}}}
-	}
-	c := TradeChunk{Schema: "_timescaledb_internal", Name: "_hyper_1_10_chunk", Compressed: true}
+	isCompressed := isCompressedResult
+	c := chunkAt(10, true)
 	day := time.Date(2026, 3, 2, 0, 0, 0, 0, time.UTC)
 	p := USDVolumeRestampParams{
 		Groups: []USDVolumeRestampGroup{{
@@ -649,8 +598,7 @@ func TestRestampExactTierUSDVolumeInChunk_GuardsTheUpdate(t *testing.T) {
 		From: day, To: day.Add(time.Hour), Generation: 1_756_800_000,
 	}
 
-	// Still decompressed: guard, both SET LOCALs, the before-image, then
-	// the UPDATE.
+	// Still decompressed: guard, both SET LOCALs, before-image, UPDATE.
 	store, conn := newScriptedStore(t,
 		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 9}, scriptedResult{rowsAffected: 9})
 	n, err := store.RestampExactTierUSDVolumeInChunk(context.Background(), c, p)
@@ -692,11 +640,7 @@ func TestRestampExactTierUSDVolumeInChunk_GuardsTheUpdate(t *testing.T) {
 	if n != 0 {
 		t.Errorf("n = %d, want 0", n)
 	}
-	for _, want := range []string{"_timescaledb_internal._hyper_1_10_chunk", "is_compressed = true", "NOT written"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("err = %v, want containing %q", err, want)
-		}
-	}
+	wantAll(t, "error", err.Error(), "_timescaledb_internal._hyper_1_10_chunk", "is_compressed = true", "NOT written")
 	if got := conn.statements(); len(got) != 1 || strings.Contains(strings.Join(got, "\n"), "UPDATE trades") {
 		t.Fatalf("after the guard tripped:\n%s\nwant exactly the guard read", strings.Join(got, "\n"))
 	}

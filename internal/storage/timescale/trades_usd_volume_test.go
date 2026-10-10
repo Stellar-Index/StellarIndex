@@ -11,269 +11,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// TestQuoteIsUSDOrUSDPegged covers the predicate's three branches:
-// fiat:USD literal, USD-pegged stablecoin via FiatProxy, and the
-// fall-through.
-func TestQuoteIsUSDOrUSDPegged(t *testing.T) {
-	usd, _ := canonical.NewFiatAsset("USD")
-	eur, _ := canonical.NewFiatAsset("EUR")
-	usdc, _ := canonical.NewCryptoAsset("USDC")
-	usdt, _ := canonical.NewCryptoAsset("USDT")
-	eurc, _ := canonical.NewCryptoAsset("EURC")
-	xlm, _ := canonical.NewCryptoAsset("XLM")
+const (
+	circleIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	circleKey    = "USDC-" + circleIssuer
+	usdcSACID    = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+	aquaID       = "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+	sep41AID     = "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7"
+	sep41BID     = "CA6GAFOJCW4MGQQBUCQUSA3CLIH25G4SNKB2JHYKZCVWZTNW5VXMSC4O"
+)
 
-	cases := []struct {
-		name string
-		a    canonical.Asset
-		want bool
-	}{
-		{"fiat:USD literal", usd, true},
-		{"crypto:USDC pegged → USD", usdc, true},
-		{"crypto:USDT pegged → USD", usdt, true},
-		{"fiat:EUR not USD-pegged", eur, false},
-		{"crypto:EURC pegs to EUR not USD", eurc, false},
-		{"crypto:XLM no peg", xlm, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := quoteIsUSDOrUSDPegged(tc.a); got != tc.want {
-				t.Errorf("got %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-// TestTradeUSDVolume_PopulatedForExternalUSDPaths exercises the
-// off-chain happy paths: CEX/FX source + USD-or-pegged quote
-// → numeric string at the uniform 10^8 external scale.
-func TestTradeUSDVolume_PopulatedForExternalUSDPaths(t *testing.T) {
-	usd, _ := canonical.NewFiatAsset("USD")
-	usdc, _ := canonical.NewCryptoAsset("USDC")
-	xlm, _ := canonical.NewCryptoAsset("XLM")
-
-	mkTrade := func(source string, quote canonical.Asset, quoteAmt int64) canonical.Trade {
-		pair, err := canonical.NewPair(xlm, quote)
-		if err != nil {
-			t.Fatalf("NewPair: %v", err)
-		}
-		return canonical.Trade{
-			Source:      source,
-			Pair:        pair,
-			BaseAmount:  canonical.NewAmount(big.NewInt(100_000_000)),
-			QuoteAmount: canonical.NewAmount(big.NewInt(quoteAmt)),
-		}
-	}
-
-	cases := []struct {
-		name   string
-		source string
-		quote  canonical.Asset
-		amt    int64
-		want   string // expected NUMERIC string
-	}{
-		{
-			name:   "binance + fiat:USD → 1e8 → $1.00",
-			source: "binance",
-			quote:  usd,
-			amt:    100_000_000,
-			want:   "1.00000000",
-		},
-		{
-			// FX pollers stamp 1e6, NOT the CEX 1e8 (registry
-			// AmountDecimals: 6): 500_000
-			// raw units are $0.50. A hard-coded 8 would value
-			// this 100× low ($0.005).
-			name:   "exchangeratesapi + fiat:USD → 1e6 → $0.50",
-			source: "exchangeratesapi",
-			quote:  usd,
-			amt:    500_000,
-			want:   "0.50000000",
-		},
-		{
-			name:   "exchangeratesapi + fiat:USD → 1e6 → $1.00",
-			source: "exchangeratesapi",
-			quote:  usd,
-			amt:    1_000_000,
-			want:   "1.00000000",
-		},
-		{
-			name:   "kraken + crypto:USDC peg → $42.50",
-			source: "kraken",
-			quote:  usdc,
-			amt:    4_250_000_000,
-			want:   "42.50000000",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Off-chain path doesn't consult the spec — pass nil.
-			got := tradeUSDVolume(context.Background(), mkTrade(tc.source, tc.quote, tc.amt), nil, nil)
-			if got == nil {
-				t.Fatalf("got nil, want %q", tc.want)
-			}
-			if *got != tc.want {
-				t.Errorf("got %q, want %q", *got, tc.want)
-			}
-		})
-	}
-}
-
-// TestTradeUSDVolume_PopulatedForOnChainDEX exercises the phase-1
-// on-chain path: DEX source + operator-declared USD-pegged quote
-// → numeric string at the Stellar classic 10^7 scale.
-func TestTradeUSDVolume_PopulatedForOnChainDEX(t *testing.T) {
-	xlm := canonical.NativeAsset()
-
-	circleUSDC, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatalf("NewClassicAsset USDC: %v", err)
-	}
-	// USDC's SAC contract — an example C-strkey Soroswap would
-	// stamp on a Soroswap XLM/USDC trade.
-	usdcSAC, err := canonical.NewSorobanAsset("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75")
-	if err != nil {
-		t.Fatalf("NewSorobanAsset USDC SAC: %v", err)
-	}
-
-	spec, err := NewUSDVolumeQuoteSpec(
-		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
-		map[string]string{
-			"CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75": "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-		},
-	)
-	if err != nil {
-		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
-	}
-
-	mkTrade := func(source string, base, quote canonical.Asset, quoteAmt int64) canonical.Trade {
-		pair, err := canonical.NewPair(base, quote)
-		if err != nil {
-			t.Fatalf("NewPair: %v", err)
-		}
-		return canonical.Trade{
-			Source:      source,
-			Pair:        pair,
-			BaseAmount:  canonical.NewAmount(big.NewInt(10_000_000)), // 1.0 XLM at 10^7
-			QuoteAmount: canonical.NewAmount(big.NewInt(quoteAmt)),
-		}
-	}
-
-	cases := []struct {
-		name   string
-		source string
-		base   canonical.Asset
-		quote  canonical.Asset
-		amt    int64
-		want   string
-	}{
-		{
-			name:   "sdex XLM/classic-USDC at 10^7 → $1.00",
-			source: "sdex",
-			base:   xlm,
-			quote:  circleUSDC,
-			amt:    10_000_000,
-			want:   "1.00000000",
-		},
-		{
-			name:   "soroswap XLM/USDC-SAC at 10^7 → $0.42",
-			source: "soroswap",
-			base:   xlm,
-			quote:  usdcSAC,
-			amt:    4_200_000,
-			want:   "0.42000000",
-		},
-		{
-			name:   "phoenix XLM/USDC-SAC big number → $1234.56",
-			source: "phoenix",
-			base:   xlm,
-			quote:  usdcSAC,
-			amt:    12_345_600_000,
-			want:   "1234.56000000",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := tradeUSDVolume(context.Background(), mkTrade(tc.source, tc.base, tc.quote, tc.amt), spec, nil)
-			if got == nil {
-				t.Fatalf("got nil, want %q", tc.want)
-			}
-			if *got != tc.want {
-				t.Errorf("got %q, want %q", *got, tc.want)
-			}
-		})
-	}
-}
-
-// TestTradeUSDVolume_NilForOutOfScope nails down what does NOT
-// produce a usd_volume — the column stays NULL for these so callers
-// don't get a misleadingly-precise figure.
-func TestTradeUSDVolume_NilForOutOfScope(t *testing.T) {
-	usd, _ := canonical.NewFiatAsset("USD")
-	eur, _ := canonical.NewFiatAsset("EUR")
-	xlm, _ := canonical.NewCryptoAsset("XLM")
-	xlmNative := canonical.NativeAsset()
-	circleUSDC, _ := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	// A different (operator-untrusted) issuer of USDC. Real
-	// validated G-strkey, just not Circle's.
-	unknownClassicUSDC, err := canonical.NewClassicAsset("USDC", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
-	if err != nil {
-		t.Fatalf("NewClassicAsset unknown USDC: %v", err)
-	}
-	pureSEP41, _ := canonical.NewSorobanAsset("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7")
-
-	specWithCircle, err := NewUSDVolumeQuoteSpec(
-		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
-		map[string]string{},
-	)
-	if err != nil {
-		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
-	}
-
-	mkTrade := func(source string, base, quote canonical.Asset, quoteAmt int64) canonical.Trade {
-		pair, err := canonical.NewPair(base, quote)
-		if err != nil {
-			t.Fatalf("NewPair: %v", err)
-		}
-		return canonical.Trade{
-			Source:      source,
-			Pair:        pair,
-			BaseAmount:  canonical.NewAmount(big.NewInt(100_000_000)),
-			QuoteAmount: canonical.NewAmount(big.NewInt(quoteAmt)),
-		}
-	}
-
-	cases := []struct {
-		name   string
-		source string
-		base   canonical.Asset
-		quote  canonical.Asset
-		amt    int64
-		spec   *USDVolumeQuoteSpec
-	}{
-		{"on-chain DEX with no spec installed (default)", "soroswap", xlmNative, circleUSDC, 1_000_000_000, nil},
-		{"on-chain DEX + classic-USDC NOT in operator allow-list", "soroswap", xlmNative, unknownClassicUSDC, 1_000_000_000, specWithCircle},
-		{"on-chain DEX + pure SEP-41 (no classic counterpart)", "soroswap", xlmNative, pureSEP41, 1_000_000_000, specWithCircle},
-		{"binance + EUR quote — not USD-pegged", "binance", xlm, eur, 1_000_000_000, nil},
-		{"unknown source — fail-closed", "unregistered-venue", xlm, usd, 1_000_000_000, nil},
-		{"oracle-class source (reflector)", "reflector-cex", xlm, usd, 1_000_000_000, nil},
-		{"aggregator-class source (coingecko)", "coingecko", xlm, usd, 1_000_000_000, nil},
-		{"zero quote_amount", "binance", xlm, usd, 0, nil},
-		{"on-chain zero quote_amount even with spec", "soroswap", xlmNative, circleUSDC, 0, specWithCircle},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := tradeUSDVolume(context.Background(), mkTrade(tc.source, tc.base, tc.quote, tc.amt), tc.spec, nil)
-			if got != nil {
-				t.Errorf("got %q, want nil", *got)
-			}
-		})
-	}
-}
-
-// mkClassicDEXTrade is a tiny helper for the Phase 2 tests that
-// don't already have a closure-scoped mkTrade. Returns a XLM/quote
-// trade at the soroswap source with the supplied quote-amount.
-func mkClassicDEXTrade(t *testing.T, source string, base, quote canonical.Asset, quoteAmt int64) canonical.Trade {
+// volTrade builds a trade with the given raw base and quote amounts.
+func volTrade(t *testing.T, source string, base, quote canonical.Asset, baseAmt, quoteAmt int64) canonical.Trade {
 	t.Helper()
 	pair, err := canonical.NewPair(base, quote)
 	if err != nil {
@@ -282,16 +30,28 @@ func mkClassicDEXTrade(t *testing.T, source string, base, quote canonical.Asset,
 	return canonical.Trade{
 		Source:      source,
 		Pair:        pair,
-		BaseAmount:  canonical.NewAmount(big.NewInt(10_000_000)),
+		BaseAmount:  canonical.NewAmount(big.NewInt(baseAmt)),
 		QuoteAmount: canonical.NewAmount(big.NewInt(quoteAmt)),
 	}
 }
 
-// stubFXResolver implements USDVolumeFXResolver for tests. The
-// price map is keyed by canonical asset string and consulted on
-// every USDPriceAt call; stale time-checks are the resolver's
-// concern, not the test's, so we always return ok=true when the
-// asset is present.
+// mkClassicDEXTrade is a trade with a fixed 1.0 (10^7 raw) base leg.
+func mkClassicDEXTrade(t *testing.T, source string, base, quote canonical.Asset, quoteAmt int64) canonical.Trade {
+	t.Helper()
+	return volTrade(t, source, base, quote, 10_000_000, quoteAmt)
+}
+
+// circleSpec is a spec pegging Circle's classic USDC, plus the given SAC wrappers.
+func circleSpec(t *testing.T, sacWrappers map[string]string) *USDVolumeQuoteSpec {
+	t.Helper()
+	spec, err := NewUSDVolumeQuoteSpec([]string{circleKey}, sacWrappers)
+	if err != nil {
+		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
+	}
+	return spec
+}
+
+// stubFXResolver implements USDVolumeFXResolver from a map keyed by asset string.
 type stubFXResolver struct {
 	prices map[string]string
 	err    error
@@ -308,295 +68,199 @@ func (s stubFXResolver) USDPriceAt(_ context.Context, asset canonical.Asset, _ t
 	return p, true, nil
 }
 
-// TestTradeUSDVolume_Phase2FXFallback exercises the L2.2 Phase 2
-// path: on-chain DEX trade quoted in a non-USD-pegged asset, FX
-// resolver returns a price, tradeUSDVolume multiplies through.
-//
-// Pinned at scale 7 (Stellar classic) regardless of the quote
-// asset's actual decimals — the L2.2 design treats every classic +
-// SAC quote as a 7-decimal Stellar invariant; pure SEP-41 with
-// non-7 decimals is L7 future-scope.
-func TestTradeUSDVolume_Phase2FXFallback(t *testing.T) {
-	t.Parallel()
-	xlm := canonical.NativeAsset()
-	aqua, err := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+// panicFXResolver proves an earlier tier short-circuits before the resolver runs.
+type panicFXResolver struct{}
+
+func (panicFXResolver) USDPriceAt(_ context.Context, _ canonical.Asset, _ time.Time) (string, bool, error) {
+	panic("FX resolver should not be consulted when an earlier tier matches")
+}
+
+func mustAsset(t *testing.T, s string) canonical.Asset {
+	t.Helper()
+	a, err := canonical.ParseAsset(s)
 	if err != nil {
-		t.Fatalf("NewClassicAsset AQUA: %v", err)
+		t.Fatalf("ParseAsset(%q): %v", s, err)
 	}
+	return a
+}
 
-	// XLM/AQUA trade: 100 XLM (1_000_000_000 stroops base) for
-	// 5_000 AQUA (50_000_000_000 stroops quote). Operator's FX
-	// resolver knows AQUA = $0.001 → $5.00 USD volume.
-	resolver := stubFXResolver{prices: map[string]string{
-		aqua.String(): "0.001",
-	}}
-
-	got := tradeUSDVolume(
-		context.Background(),
-		mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000),
-		nil, // no Phase 1 spec
-		resolver,
-	)
-	if got == nil {
-		t.Fatal("Phase 2 fallback returned nil; want non-nil")
+func TestQuoteIsUSDOrUSDPegged(t *testing.T) {
+	cases := []struct {
+		asset string
+		want  bool
+	}{
+		{"fiat:USD", true},
+		{"crypto:USDC", true},
+		{"crypto:USDT", true},
+		{"fiat:EUR", false},
+		{"crypto:EURC", false},
+		{"crypto:XLM", false},
 	}
-	// 50_000_000_000 stroops / 10^7 = 5_000 AQUA × $0.001 = $5.00.
-	want := "5.00000000"
-	if *got != want {
-		t.Errorf("got %q, want %q", *got, want)
+	for _, tc := range cases {
+		t.Run(tc.asset, func(t *testing.T) {
+			if got := quoteIsUSDOrUSDPegged(mustAsset(t, tc.asset)); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
-// TestTradeUSDVolume_Phase1WinsBeforePhase2 — when Phase 1 matches
-// (USD-pegged classic in spec), the FX resolver MUST NOT be
-// consulted. Pinned because a regression that calls the resolver
-// every trade would double the trade-insert hot-path cost.
-func TestTradeUSDVolume_Phase1WinsBeforePhase2(t *testing.T) {
+// TestTradeUSDVolume walks the usd_volume waterfall. want "" means the column
+// stays NULL: no tier may fabricate a figure.
+func TestTradeUSDVolume(t *testing.T) {
 	t.Parallel()
-	xlm := canonical.NativeAsset()
-	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatalf("NewClassicAsset USDC: %v", err)
-	}
-	spec, err := NewUSDVolumeQuoteSpec([]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"}, nil)
-	if err != nil {
-		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
-	}
+	var (
+		usd       = mustAsset(t, "fiat:USD")
+		eur       = mustAsset(t, "fiat:EUR")
+		cexXLM    = mustAsset(t, "crypto:XLM")
+		cexUSDC   = mustAsset(t, "crypto:USDC")
+		xlm       = canonical.NativeAsset()
+		xlmSAC    = mustAsset(t, canonical.XLMSacContractID)
+		circle    = mustAsset(t, circleKey)
+		otherUSDC = mustAsset(t, "USDC-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+		usdcSAC   = mustAsset(t, usdcSACID)
+		aqua      = mustAsset(t, aquaID)
+		yxt       = mustAsset(t, "YxT-GDQJXPESRTKBHMTLPHKZNVFGQA77HPCGYW2NPUORVMDMPJBCFGGBYNS2")
+		sixT      = mustAsset(t, "6T-GBGRBCUB6L7LH4JQ6EPDP7REH2DDACMCUQI76M3P6DM52QWU2Z5LIEVW")
+		f8        = mustAsset(t, "F8-GBGRBCUB6L7LH4JQ6EPDP7REH2DDACMCUQI76M3P6DM52QWU2Z5LIEVW")
+		sep41A    = mustAsset(t, sep41AID)
+		sep41B    = mustAsset(t, sep41BID)
 
-	// Resolver is set up to PANIC if called — proves Phase 1
-	// short-circuits before the resolver runs.
-	resolver := panicFXResolver{}
-
-	got := tradeUSDVolume(
-		context.Background(),
-		mkClassicDEXTrade(t, "soroswap", xlm, usdc, 70_000_000),
-		spec,
-		resolver,
+		plain    = circleSpec(t, nil)
+		withSAC  = circleSpec(t, map[string]string{usdcSACID: "USDC:" + circleIssuer})
+		xlmAt12  = stubFXResolver{prices: map[string]string{xlm.String(): "0.12"}}
+		aquaOnly = stubFXResolver{prices: map[string]string{aqua.String(): "0.001"}}
 	)
-	if got == nil {
-		t.Fatal("Phase 1 returned nil; expected USD-pegged classic to populate")
-	}
-	// 70_000_000 stroops / 10^7 = $7.00.
-	if *got != "7.00000000" {
-		t.Errorf("got %q, want 7.00000000", *got)
-	}
-}
-
-// TestTradeUSDVolume_Phase2_NoResolver — when fxResolver is nil
-// (the default for tests + ops binary + every deployment that
-// hasn't enabled Phase 2), the Phase 1 fall-through stays NULL.
-// This is the L2.2 "preserves existing behaviour exactly" guarantee.
-func TestTradeUSDVolume_Phase2_NoResolver(t *testing.T) {
-	t.Parallel()
-	xlm := canonical.NativeAsset()
-	aqua, _ := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
-
-	got := tradeUSDVolume(
-		context.Background(),
-		mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000),
-		nil, // no Phase 1
-		nil, // no Phase 2
-	)
-	if got != nil {
-		t.Errorf("got %q, want nil (no resolver should preserve Phase 1 NULL fall-through)", *got)
-	}
-}
-
-// TestTradeUSDVolume_Phase2_ResolverNoHit — resolver wired but
-// doesn't have a rate for this asset (asset isn't on the
-// operator's covered set, or its cache hasn't warmed up). Stays
-// NULL — never silently fabricates a rate.
-func TestTradeUSDVolume_Phase2_ResolverNoHit(t *testing.T) {
-	t.Parallel()
-	xlm := canonical.NativeAsset()
-	aqua, _ := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
-
-	resolver := stubFXResolver{prices: map[string]string{}} // empty
-
-	got := tradeUSDVolume(
-		context.Background(),
-		mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000),
-		nil, resolver,
-	)
-	if got != nil {
-		t.Errorf("got %q, want nil (resolver miss must not fabricate USD volume)", *got)
-	}
-}
-
-// TestTradeUSDVolume_Phase2_ResolverError — resolver errors fall
-// through to NULL silently. Best-effort posture matches Phase 1's
-// "trade still inserts; just no USD column".
-func TestTradeUSDVolume_Phase2_ResolverError(t *testing.T) {
-	t.Parallel()
-	xlm := canonical.NativeAsset()
-	aqua, _ := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
-
-	resolver := stubFXResolver{err: errors.New("postgres unreachable")}
-
-	got := tradeUSDVolume(
-		context.Background(),
-		mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000),
-		nil, resolver,
-	)
-	if got != nil {
-		t.Errorf("got %q, want nil (resolver error must not fabricate USD volume)", *got)
-	}
-}
-
-// TestTradeUSDVolume_L76XLMBaseAnchor covers
-// a pure-Soroban SEP-41 token traded against XLM where the pool
-// stores base=XLM, quote=TOKEN — the orientation tier 3 (quote-side
-// FX resolution) can't cover, since TOKEN has no direct USD-pegged
-// market. Tier 4 anchors off the XLM base leg instead.
-func TestTradeUSDVolume_L76XLMBaseAnchor(t *testing.T) {
-	t.Parallel()
-	xlm := canonical.NativeAsset()
-	xlmSAC, err := canonical.NewSorobanAsset(canonical.XLMSacContractID)
-	if err != nil {
-		t.Fatalf("NewSorobanAsset(XLM SAC): %v", err)
-	}
-	pureSEP41, err := canonical.NewSorobanAsset("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7")
-	if err != nil {
-		t.Fatalf("NewSorobanAsset pureSEP41: %v", err)
-	}
-
-	// XLM/USD anchor: $0.12 per XLM (matches the resolver's native
-	// asset key — same "native" identifier tier 3 uses when XLM
-	// is the trade's quote).
-	resolver := stubFXResolver{prices: map[string]string{
-		xlm.String(): "0.12",
-	}}
-
-	mkTrade := func(source string, base, quote canonical.Asset, baseAmt int64) canonical.Trade {
-		pair, err := canonical.NewPair(base, quote)
-		if err != nil {
-			t.Fatalf("NewPair: %v", err)
+	tr := func(source string, base, quote canonical.Asset, baseAmt, quoteAmt int64) canonical.Trade {
+		if base == quote { // NewPair rejects a degenerate pair; the probe needs one
+			x := volTrade(t, source, base, aqua, baseAmt, quoteAmt)
+			x.Pair.Quote = quote
+			return x
 		}
-		return canonical.Trade{
-			Source:      source,
-			Pair:        pair,
-			BaseAmount:  canonical.NewAmount(big.NewInt(baseAmt)),
-			QuoteAmount: canonical.NewAmount(big.NewInt(1)), // pure SEP-41 amount; irrelevant to the anchor math
-		}
+		return volTrade(t, source, base, quote, baseAmt, quoteAmt)
 	}
 
-	// 250 XLM (2_500_000_000 stroops) at $0.12/XLM = $30.00.
-	got := tradeUSDVolume(
-		context.Background(),
-		mkTrade("soroswap", xlm, pureSEP41, 2_500_000_000),
-		nil, // no Phase 1 spec
-		resolver,
-	)
-	if got == nil {
-		t.Fatal("L7.6 XLM-base anchor returned nil; want non-nil")
-	}
-	want := "30.00000000"
-	if *got != want {
-		t.Errorf("got %q, want %q", *got, want)
-	}
+	cases := []struct {
+		name string
+		tr   canonical.Trade
+		spec *USDVolumeQuoteSpec
+		fx   USDVolumeFXResolver
+		want string
+	}{
+		// Off-chain: uniform 10^8 scale for CEX, 10^6 for FX pollers.
+		{"binance + fiat:USD at 1e8", tr("binance", cexXLM, usd, 100_000_000, 100_000_000), nil, nil, "1.00000000"},
+		// A hard-coded 8 would value this 100x low.
+		{"exchangeratesapi + fiat:USD at 1e6 is $0.50", tr("exchangeratesapi", cexXLM, usd, 100_000_000, 500_000), nil, nil, "0.50000000"},
+		{"exchangeratesapi + fiat:USD at 1e6 is $1", tr("exchangeratesapi", cexXLM, usd, 100_000_000, 1_000_000), nil, nil, "1.00000000"},
+		{"kraken + crypto:USDC peg", tr("kraken", cexXLM, cexUSDC, 100_000_000, 4_250_000_000), nil, nil, "42.50000000"},
 
-	// Same math when the pool holds XLM via its SAC wrapper instead
-	// of the plain `native` form.
-	gotSAC := tradeUSDVolume(
-		context.Background(),
-		mkTrade("soroswap", xlmSAC, pureSEP41, 2_500_000_000),
-		nil,
-		resolver,
-	)
-	if gotSAC == nil {
-		t.Fatal("L7.6 XLM-base anchor (SAC form) returned nil; want non-nil")
+		// On-chain with a declared USD-pegged quote: 10^7 scale.
+		{"sdex XLM/classic USDC", tr("sdex", xlm, circle, 10_000_000, 10_000_000), withSAC, nil, "1.00000000"},
+		{"soroswap XLM/USDC SAC", tr("soroswap", xlm, usdcSAC, 10_000_000, 4_200_000), withSAC, nil, "0.42000000"},
+		{"phoenix XLM/USDC SAC large", tr("phoenix", xlm, usdcSAC, 10_000_000, 12_345_600_000), withSAC, nil, "1234.56000000"},
+
+		// Out of scope: the column stays NULL rather than misleadingly precise.
+		{"on-chain DEX with no spec", tr("soroswap", xlm, circle, 100_000_000, 1_000_000_000), nil, nil, ""},
+		{"classic USDC not in the allow-list", tr("soroswap", xlm, otherUSDC, 100_000_000, 1_000_000_000), withSAC, nil, ""},
+		{"pure SEP-41 with no classic counterpart", tr("soroswap", xlm, sep41A, 100_000_000, 1_000_000_000), withSAC, nil, ""},
+		{"binance + EUR quote", tr("binance", cexXLM, eur, 100_000_000, 1_000_000_000), nil, nil, ""},
+		{"unknown source fails closed", tr("unregistered-venue", cexXLM, usd, 100_000_000, 1_000_000_000), nil, nil, ""},
+		{"oracle-class source", tr("reflector-cex", cexXLM, usd, 100_000_000, 1_000_000_000), nil, nil, ""},
+		{"aggregator-class source", tr("coingecko", cexXLM, usd, 100_000_000, 1_000_000_000), nil, nil, ""},
+		{"off-chain zero quote_amount", tr("binance", cexXLM, usd, 100_000_000, 0), nil, nil, ""},
+		{"on-chain zero quote_amount with spec", tr("soroswap", xlm, circle, 100_000_000, 0), withSAC, nil, ""},
+
+		// FX fallback for a non-pegged quote. 5,000 AQUA x $0.001.
+		{"FX fallback prices the quote", mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000), nil, aquaOnly, "5.00000000"},
+		// A resolver call on every trade would double the insert hot-path cost.
+		{"pegged quote wins before the resolver", mkClassicDEXTrade(t, "soroswap", xlm, circle, 70_000_000), plain, panicFXResolver{}, "7.00000000"},
+		{"no resolver keeps NULL", mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000), nil, nil, ""},
+		{"resolver miss does not fabricate", mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000), nil, stubFXResolver{prices: map[string]string{}}, ""},
+		{"resolver error does not fabricate", mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000), nil, stubFXResolver{err: errors.New("postgres unreachable")}, ""},
+
+		// XLM base anchor: 250 XLM at $0.12, quote a token with no USD market.
+		{"XLM base anchor", tr("soroswap", xlm, sep41A, 2_500_000_000, 1), nil, xlmAt12, "30.00000000"},
+		{"XLM SAC base anchor", tr("soroswap", xlmSAC, sep41A, 2_500_000_000, 1), nil, xlmAt12, "30.00000000"},
+		// The two legs disagree 42x; a token rate is bridged through a
+		// counterparty-writable continuous aggregate, so the XLM leg wins
+		// ($5.00 would be the quote-side answer).
+		{
+			"XLM base leg beats a bridged quote price",
+			mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000), nil,
+			stubFXResolver{prices: map[string]string{aqua.String(): "0.001", xlm.String(): "0.12"}},
+			"0.12000000",
+		},
+		// Legs are coherent (5M AQUA at $0.001 ~ 5,000 USDC) so the leg
+		// cross-check does not pick the smaller one.
+		{
+			"non-XLM base still uses quote resolution",
+			tr("soroswap", aqua, circle, 50_000_000_000_000, 50_000_000_000), nil,
+			stubFXResolver{prices: map[string]string{circle.String(): "1.00", aqua.String(): "0.001"}},
+			"5000.00000000",
+		},
+		{"neither leg XLM", tr("soroswap", sep41A, sep41B, 2_500_000_000, 1), nil, xlmAt12, ""},
+		{"off-chain XLM base has no orientation to fix", tr("binance", cexXLM, sep41A, 2_500_000_000, 1), nil, xlmAt12, ""},
+
+		// Tier 2b: a USD-pegged base leg carries its value in base_amount.
+		{"USD-pegged base with no resolver", tr("sdex", circle, yxt, 2_505_000_000, 987_654_321), plain, nil, "250.50000000"},
+		// FX would say $5000 off a wrong XLM rate; the exact base says $100.
+		{
+			"exact base beats the FX estimate", tr("sdex", circle, xlm, 1_000_000_000, 10_000_000_000), plain,
+			stubFXResolver{prices: map[string]string{xlm.String(): "5"}},
+			"100.00000000",
+		},
+		// Falling through to the XLM anchor breaks usd_volume = base_amount/10^decimals.
+		{
+			"zero USD-pegged base stays exact", tr("sdex", circle, xlm, 0, 1), plain,
+			stubFXResolver{prices: map[string]string{xlm.String(): "0.16"}},
+			"0.00000000",
+		},
+		// Distinct amounts make the leg used identifiable.
+		{"pegged quote is not displaced by tier 2b", tr("sdex", circle, circle, 1_000_000_000, 2_000_000_000), plain, nil, "200.00000000"},
+
+		// Tier 4b: unpriceable quote, priced base. 1000 x 0.005933704130547542.
+		{
+			"classic base anchor", tr("sdex", sixT, f8, 10_000_000_000, 123_456_789), plain,
+			stubFXResolver{prices: map[string]string{sixT.String(): "0.005933704130547542"}},
+			"5.93370413",
+		},
+		// A SEP-41 contract must never read as a USD peg: its decimals are not
+		// an invariant, and 18 decimals at 1e7 would overstate by 1e11.
+		{"unpriceable SEP-41 pair stays NULL", tr("soroswap", usdcSAC, usdcSAC, 10_000_000_000, 123_456_789), plain, nil, ""},
 	}
-	if *gotSAC != want {
-		t.Errorf("got %q, want %q", *gotSAC, want)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := tradeUSDVolume(context.Background(), tc.tr, tc.spec, tc.fx)
+			switch {
+			case tc.want == "" && got != nil:
+				t.Errorf("got %q, want nil", *got)
+			case tc.want != "" && got == nil:
+				t.Errorf("got nil, want %q", tc.want)
+			case tc.want != "" && *got != tc.want:
+				t.Errorf("got %q, want %q", *got, tc.want)
+			}
+		})
 	}
 }
 
-// TestTradeUSDVolume_L76DoesNotFireWhenQuoteAlreadyResolved proves
-// tier 4 is a fallback, not a double-count: when the quote asset
-// itself resolves (tier 3), the XLM-base anchor is never reached —
-// pinned with a panicking resolver call-count guard would be
-// redundant with TestTradeUSDVolume_Phase1WinsBeforePhase2's style,
-// so instead this asserts the tier-3 numeric result wins even
-// though the trade's base asset would also satisfy tier 4's
-// isXLMAsset check.
-//
-// Tier 3 must NOT win over tier 4 here; the fixture shows why. It trades 1.0 XLM (priced
-// $0.12) for 5,000 AQUA (priced $0.001 = $5.00): the two legs of a SINGLE
-// trade differ by 42x, so at least one rate is wrong, and preferring
-// tier 3 would pick the thin on-chain token over XLM.
-//
-// That choice produced an $8,559,224 row on r1: tier 3's token price is usually tier 3b's bridge,
-// `token/XLM x XLM/USD`, read out of prices_1m — which is a continuous
-// aggregate over `trades`. For a token with no honest market the bridge
-// rate is whatever the last trader wrote, so an attacker self-deals once
-// to set it and every later trade against that token multiplies through
-// it. XLM is the one asset immune to that: it is the bridge's own anchor,
-// so its rate is a direct XLM/USD market.
-func TestTradeUSDVolume_XLMBaseLegBeatsABridgedQuotePrice(t *testing.T) {
-	t.Parallel()
-	xlm := canonical.NativeAsset()
-	aqua, err := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
-	if err != nil {
-		t.Fatalf("NewClassicAsset AQUA: %v", err)
-	}
-
-	// Both legs resolve; they disagree 42x. The XLM leg must win.
-	resolver := stubFXResolver{prices: map[string]string{
-		aqua.String(): "0.001",
-		xlm.String():  "0.12",
-	}}
-
-	got := tradeUSDVolume(
-		context.Background(),
-		mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000),
-		nil,
-		resolver,
-	)
-	if got == nil {
-		t.Fatal("expected the XLM base anchor to populate usd_volume")
-	}
-	// Base=XLM: 10_000_000 stroops (mkClassicDEXTrade's fixed base) / 1e7
-	// = 1.0 XLM x $0.12 = $0.12. The quote-side answer would be $5.00,
-	// derived from a token rate the counterparty can author.
-	want := "0.12000000"
-	if *got != want {
-		t.Errorf("got %q, want %q (the XLM leg must beat a token-side rate)", *got, want)
-	}
-}
-
-// TestTradeUSDVolume_XLMLegIsOrientationSymmetric: one economic swap of
-// 1 XLM for 5,000 AQUA, stored either way round, gets the same usd_volume
-// even when the token leg's rate diverges >10x from the XLM leg — and the
-// insert path agrees with the xlm-quote re-derive for the quote-XLM form.
+// One economic swap of 1 XLM for 5,000 AQUA, stored either way round, gets
+// the same usd_volume even when the token leg's rate diverges 240x, and the
+// insert path agrees with the xlm-quote re-derive.
 func TestTradeUSDVolume_XLMLegIsOrientationSymmetric(t *testing.T) {
 	t.Parallel()
 	xlm := canonical.NativeAsset()
-	xlmSAC, err := canonical.NewSorobanAsset(canonical.XLMSacContractID)
-	if err != nil {
-		t.Fatalf("NewSorobanAsset(XLM SAC): %v", err)
-	}
-	aqua, err := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
-	if err != nil {
-		t.Fatalf("NewClassicAsset AQUA: %v", err)
-	}
-	// XLM leg $0.12; AQUA leg 5,000 x $0.0000001 = $0.0005 (240x lower).
-	resolver := stubFXResolver{prices: map[string]string{
-		xlm.String():  "0.12",
-		aqua.String(): "0.0000001",
-	}}
+	xlmSAC := mustAsset(t, canonical.XLMSacContractID)
+	aqua := mustAsset(t, aquaID)
+	resolver := stubFXResolver{prices: map[string]string{xlm.String(): "0.12", aqua.String(): "0.0000001"}}
 	const xlmStroops, aquaUnits = 10_000_000, 50_000_000_000
 	const want = "0.12000000"
 
-	mk := func(base, quote canonical.Asset, baseAmt, quoteAmt int64) canonical.Trade {
-		tr := mkClassicDEXTrade(t, "sdex", base, quote, quoteAmt)
-		tr.BaseAmount = canonical.NewAmount(big.NewInt(baseAmt))
-		return tr
-	}
 	cases := map[string]canonical.Trade{
-		"XLM base":      mk(xlm, aqua, xlmStroops, aquaUnits),
-		"XLM quote":     mk(aqua, xlm, aquaUnits, xlmStroops),
-		"XLM SAC quote": mk(aqua, xlmSAC, aquaUnits, xlmStroops),
-		"XLM SAC base":  mk(xlmSAC, aqua, xlmStroops, aquaUnits),
+		"XLM base":      volTrade(t, "sdex", xlm, aqua, xlmStroops, aquaUnits),
+		"XLM quote":     volTrade(t, "sdex", aqua, xlm, aquaUnits, xlmStroops),
+		"XLM SAC quote": volTrade(t, "sdex", aqua, xlmSAC, aquaUnits, xlmStroops),
+		"XLM SAC base":  volTrade(t, "sdex", xlmSAC, aqua, xlmStroops, aquaUnits),
 	}
 	for name, tr := range cases {
 		got := tradeUSDVolume(context.Background(), tr, nil, resolver)
@@ -623,129 +287,28 @@ func usdVolumeOrNil(s *string) string {
 	return *s
 }
 
-// TestTradeUSDVolume_NonXLMBaseStillUsesQuoteResolution pins that the
-// reorder is scoped to XLM. A non-XLM base resolves through the same
-// poisonable bridge as the quote, so it earns no precedence — tier 3
-// still runs first for it.
-func TestTradeUSDVolume_NonXLMBaseStillUsesQuoteResolution(t *testing.T) {
-	t.Parallel()
-	aqua, err := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
-	if err != nil {
-		t.Fatalf("NewClassicAsset AQUA: %v", err)
-	}
-	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatalf("NewClassicAsset USDC: %v", err)
-	}
-	resolver := stubFXResolver{prices: map[string]string{
-		usdc.String(): "1.00",
-		aqua.String(): "0.001",
-	}}
-	// The fixture's legs must be economically COHERENT (5M AQUA at
-	// $0.001 ≈ the 5,000 USDC quote side): because of the leg
-	// cross-check, a fixture whose legs disagree by 10^6 — the shape of
-	// a poisoned rate, not of any real trade — is deliberately valued
-	// off its smaller leg, which is not what this test is about.
-	tr := mkClassicDEXTrade(t, "soroswap", aqua, usdc, 50_000_000_000)
-	tr.BaseAmount = canonical.NewAmount(big.NewInt(50_000_000_000_000)) // 5,000,000 AQUA at 7dp
-	got := tradeUSDVolume(context.Background(), tr, nil, resolver)
-	if got == nil {
-		t.Fatal("expected tier 3 to populate usd_volume for a non-XLM base")
-	}
-	// Quote=USDC: 50_000_000_000 / 1e7 = 5_000 x $1.00 = $5,000.
-	if want := "5000.00000000"; *got != want {
-		t.Errorf("got %q, want %q (non-XLM base must not pre-empt tier 3)", *got, want)
-	}
-}
-
-// TestTradeUSDVolume_L76OutOfScope pins the cases tier 4 must NOT
-// cover.
-func TestTradeUSDVolume_L76OutOfScope(t *testing.T) {
-	t.Parallel()
-	xlm := canonical.NativeAsset()
-	pureSEP41A, _ := canonical.NewSorobanAsset("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7")
-	pureSEP41B, _ := canonical.NewSorobanAsset("CA6GAFOJCW4MGQQBUCQUSA3CLIH25G4SNKB2JHYKZCVWZTNW5VXMSC4O")
-	binanceXLM, _ := canonical.NewCryptoAsset("XLM")
-
-	resolver := stubFXResolver{prices: map[string]string{
-		xlm.String(): "0.12",
-	}}
-
-	mkTrade := func(source string, base, quote canonical.Asset, baseAmt int64) canonical.Trade {
-		pair, err := canonical.NewPair(base, quote)
-		if err != nil {
-			t.Fatalf("NewPair: %v", err)
-		}
-		return canonical.Trade{
-			Source:      source,
-			Pair:        pair,
-			BaseAmount:  canonical.NewAmount(big.NewInt(baseAmt)),
-			QuoteAmount: canonical.NewAmount(big.NewInt(1)),
-		}
-	}
-
-	cases := []struct {
-		name   string
-		source string
-		base   canonical.Asset
-		quote  canonical.Asset
-	}{
-		{"pure SEP-41/SEP-41 — neither leg is XLM", "soroswap", pureSEP41A, pureSEP41B},
-		{"off-chain source with XLM base — no orientation problem to fix", "binance", binanceXLM, pureSEP41A},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := tradeUSDVolume(context.Background(), mkTrade(tc.source, tc.base, tc.quote, 2_500_000_000), nil, resolver)
-			if got != nil {
-				t.Errorf("got %q, want nil", *got)
-			}
-		})
-	}
-}
-
-// TestIsXLMAsset pins the two recognised on-chain wire forms of XLM
-// plus a representative negative.
 func TestIsXLMAsset(t *testing.T) {
 	t.Parallel()
-	xlmSAC, err := canonical.NewSorobanAsset(canonical.XLMSacContractID)
-	if err != nil {
-		t.Fatalf("NewSorobanAsset(XLM SAC): %v", err)
-	}
-	otherSAC, err := canonical.NewSorobanAsset("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7")
-	if err != nil {
-		t.Fatalf("NewSorobanAsset otherSAC: %v", err)
-	}
-	classicUSDC, _ := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-
 	cases := []struct {
-		name string
-		a    canonical.Asset
-		want bool
+		name  string
+		asset canonical.Asset
+		want  bool
 	}{
 		{"native", canonical.NativeAsset(), true},
-		{"SAC wrapper of native", xlmSAC, true},
-		{"unrelated Soroban contract", otherSAC, false},
-		{"classic credit", classicUSDC, false},
+		{"SAC wrapper of native", mustAsset(t, canonical.XLMSacContractID), true},
+		{"unrelated Soroban contract", mustAsset(t, sep41AID), false},
+		{"classic credit", mustAsset(t, circleKey), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isXLMAsset(tc.a); got != tc.want {
+			if got := isXLMAsset(tc.asset); got != tc.want {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-// panicFXResolver fails the test loudly if its USDPriceAt is
-// called. Proves Phase 1 short-circuits before Phase 2 runs.
-type panicFXResolver struct{}
-
-func (panicFXResolver) USDPriceAt(_ context.Context, _ canonical.Asset, _ time.Time) (string, bool, error) {
-	panic("Phase 2 resolver should not be consulted when Phase 1 matches")
-}
-
-// TestNewUSDVolumeQuoteSpec_RejectsBadInput — typos in operator
-// config fail at startup rather than silently match no trade.
+// Operator-config typos must fail at startup rather than silently match no trade.
 func TestNewUSDVolumeQuoteSpec_RejectsBadInput(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -753,43 +316,26 @@ func TestNewUSDVolumeQuoteSpec_RejectsBadInput(t *testing.T) {
 		classicUSDPegs []string
 		sacWrappers    map[string]string
 	}{
-		{"non-classic in classic peg list (fiat)", []string{"fiat:USD"}, nil},
-		{"non-classic in classic peg list (native)", []string{"native"}, nil},
-		{"non-classic in classic peg list (soroban)", []string{"CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"}, nil},
+		{"fiat in classic peg list", []string{"fiat:USD"}, nil},
+		{"native in classic peg list", []string{"native"}, nil},
+		{"soroban in classic peg list", []string{usdcSACID}, nil},
 		{"unparseable string", []string{"definitely-not-an-asset"}, nil},
-		{"sac_wrapper points at non-classic", nil, map[string]string{"CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75": "fiat:USD"}},
+		{"sac_wrapper points at non-classic", nil, map[string]string{usdcSACID: "fiat:USD"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := NewUSDVolumeQuoteSpec(tc.classicUSDPegs, tc.sacWrappers)
-			if err == nil {
+			if _, err := NewUSDVolumeQuoteSpec(tc.classicUSDPegs, tc.sacWrappers); err == nil {
 				t.Fatalf("expected error for %s, got nil", tc.name)
 			}
 		})
 	}
 }
 
-// TestUSDVolumeQuoteSpec_QuoteUSDPegInfo — direct unit coverage of
-// the lookup primitive, both happy and not-found paths.
 func TestUSDVolumeQuoteSpec_QuoteUSDPegInfo(t *testing.T) {
 	t.Parallel()
-	circleUSDCKey := "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	circleUSDCSAC := "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
-
-	spec, err := NewUSDVolumeQuoteSpec(
-		[]string{circleUSDCKey},
-		map[string]string{circleUSDCSAC: "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
-	)
-	if err != nil {
-		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
-	}
-
-	circleUSDC, _ := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	sacAsset, _ := canonical.NewSorobanAsset(circleUSDCSAC)
-	otherClassic, _ := canonical.NewClassicAsset("USDC", "GBADOTHERISSUER000000000000000000000000000000000000000000")
-	unwrappedSEP41, _ := canonical.NewSorobanAsset("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7")
-	xlm := canonical.NativeAsset()
+	spec := circleSpec(t, map[string]string{usdcSACID: "USDC:" + circleIssuer})
+	circle := mustAsset(t, circleKey)
 
 	cases := []struct {
 		name        string
@@ -797,11 +343,11 @@ func TestUSDVolumeQuoteSpec_QuoteUSDPegInfo(t *testing.T) {
 		wantOK      bool
 		wantDecimal int
 	}{
-		{"classic Circle USDC → 7 decimals", circleUSDC, true, 7},
-		{"SAC of Circle USDC (transitive) → 7 decimals", sacAsset, true, 7},
-		{"different USDC issuer not in allow-list", otherClassic, false, 0},
-		{"pure SEP-41 contract not in sac_wrappers", unwrappedSEP41, false, 0},
-		{"native XLM is not USD-pegged", xlm, false, 0},
+		{"classic Circle USDC", circle, true, 7},
+		{"SAC of Circle USDC (transitive)", mustAsset(t, usdcSACID), true, 7},
+		{"different USDC issuer not in allow-list", mustAsset(t, "USDC-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"), false, 0},
+		{"pure SEP-41 contract not in sac_wrappers", mustAsset(t, sep41AID), false, 0},
+		{"native XLM is not USD-pegged", canonical.NativeAsset(), false, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -812,270 +358,56 @@ func TestUSDVolumeQuoteSpec_QuoteUSDPegInfo(t *testing.T) {
 		})
 	}
 
-	// nil receiver behaves as "no spec configured".
-	if _, ok := (*USDVolumeQuoteSpec)(nil).QuoteUSDPegInfo(circleUSDC); ok {
+	// Without the wrapper the same contract is no peg: its decimals are not an invariant.
+	if _, ok := circleSpec(t, nil).QuoteUSDPegInfo(mustAsset(t, usdcSACID)); ok {
+		t.Error("a pure SEP-41 contract was accepted as a USD peg")
+	}
+	if _, ok := (*USDVolumeQuoteSpec)(nil).QuoteUSDPegInfo(circle); ok {
 		t.Errorf("nil spec should always return ok=false")
 	}
 }
 
-// TestStore_WouldPopulateUSDVolume — predicate the pipeline sink
-// uses to label the trade-inserts coverage metric. Wraps the same
-// decision as tradeUSDVolume but exposed publicly so the sink
-// doesn't need the unexported helper.
+// WouldPopulateUSDVolume is the predicate the pipeline sink uses to label the
+// trade-inserts coverage metric.
 func TestStore_WouldPopulateUSDVolume(t *testing.T) {
 	t.Parallel()
-	usdc, _ := canonical.NewCryptoAsset("USDC")
-	xlm, _ := canonical.NewCryptoAsset("XLM")
-	circleUSDC, _ := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-
-	mkTrade := func(source string, base, quote canonical.Asset, quoteAmt int64) canonical.Trade {
-		pair, err := canonical.NewPair(base, quote)
-		if err != nil {
-			t.Fatalf("NewPair: %v", err)
-		}
-		return canonical.Trade{
-			Source:      source,
-			Pair:        pair,
-			BaseAmount:  canonical.NewAmount(big.NewInt(100_000_000)),
-			QuoteAmount: canonical.NewAmount(big.NewInt(quoteAmt)),
-		}
-	}
+	xlm := canonical.NativeAsset()
+	circle := mustAsset(t, circleKey)
+	withSpec := &Store{}
+	withSpec.SetUSDVolumeQuoteSpec(circleSpec(t, nil))
 
 	cases := []struct {
-		name     string
-		store    *Store
-		trade    canonical.Trade
-		wantTrue bool
+		name  string
+		store *Store
+		trade canonical.Trade
+		want  bool
 	}{
-		{
-			name:     "off-chain CEX + USD-pegged → populated",
-			store:    &Store{},
-			trade:    mkTrade("kraken", xlm, usdc, 4_250_000_000),
-			wantTrue: true,
-		},
-		{
-			name:     "on-chain DEX with no spec → not populated",
-			store:    &Store{},
-			trade:    mkTrade("soroswap", canonical.NativeAsset(), circleUSDC, 1_000_000_000),
-			wantTrue: false,
-		},
-		{
-			name: "on-chain DEX with spec that recognises the quote → populated",
-			store: func() *Store {
-				s := &Store{}
-				spec, _ := NewUSDVolumeQuoteSpec(
-					[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
-					nil,
-				)
-				s.SetUSDVolumeQuoteSpec(spec)
-				return s
-			}(),
-			trade:    mkTrade("soroswap", canonical.NativeAsset(), circleUSDC, 10_000_000),
-			wantTrue: true,
-		},
+		{"off-chain CEX + USD-pegged", &Store{}, volTrade(t, "kraken", mustAsset(t, "crypto:XLM"), mustAsset(t, "crypto:USDC"), 100_000_000, 4_250_000_000), true},
+		{"on-chain DEX with no spec", &Store{}, volTrade(t, "soroswap", xlm, circle, 100_000_000, 1_000_000_000), false},
+		{"on-chain DEX with spec recognising the quote", withSpec, volTrade(t, "soroswap", xlm, circle, 100_000_000, 10_000_000), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := tc.store.WouldPopulateUSDVolume(context.Background(), tc.trade)
-			if got != tc.wantTrue {
-				t.Errorf("got %v, want %v", got, tc.wantTrue)
+			if got := tc.store.WouldPopulateUSDVolume(context.Background(), tc.trade); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-// ─── tier 2b: USD-pegged BASE leg ───────────────────────
-
-// TestTradeUSDVolume_Tier2bUSDBase — a `USDC/TOKEN`-oriented on-chain
-// market carries its USD value in base_amount. The waterfall must not
-// inspect only the quote leg, or these fall through every tier and
-// insert NULL (43,277 on-chain trades in one day).
-func TestTradeUSDVolume_Tier2bUSDBase(t *testing.T) {
-	t.Parallel()
-	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatalf("NewClassicAsset USDC: %v", err)
-	}
-	yxt, err := canonical.NewClassicAsset("YxT", "GDQJXPESRTKBHMTLPHKZNVFGQA77HPCGYW2NPUORVMDMPJBCFGGBYNS2")
-	if err != nil {
-		t.Fatalf("NewClassicAsset YxT: %v", err)
-	}
-	spec, err := NewUSDVolumeQuoteSpec(
-		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
-	}
-
-	// 250.5 USDC (2_505_000_000 stroops) base for some amount of YxT.
-	tr := canonical.Trade{
-		Source:      "sdex",
-		Ledger:      63514245,
-		TxHash:      "abc",
-		OpIndex:     0,
-		Timestamp:   time.Date(2026, 7, 17, 9, 0, 0, 0, time.UTC),
-		Pair:        canonical.Pair{Base: usdc, Quote: yxt},
-		BaseAmount:  canonical.NewAmount(big.NewInt(2_505_000_000)),
-		QuoteAmount: canonical.NewAmount(big.NewInt(987_654_321)),
-	}
-
-	// No FX resolver at all: tier 2b must stand on its own, since the
-	// quote leg (YxT) has no USD market to resolve through.
-	got := tradeUSDVolume(context.Background(), tr, spec, nil)
-	if got == nil {
-		t.Fatal("tier 2b did not fire — usd_volume would insert NULL")
-	}
-	if *got != "250.50000000" {
-		t.Errorf("usd_volume = %q, want 250.50000000 (base_amount/1e7)", *got)
-	}
-}
-
-// TestTradeUSDVolume_Tier2bPrefersExactBaseOverFXEstimate — when BOTH
-// a USD-pegged base and a quote-side FX rate are available, the exact
-// dollar amount wins. The FX route is an estimate through a VWAP; on
-// one measured day the two agreed to 0.69% on average across 111,617 trades
-// but diverged up to 134.92%, and the error is the VWAP's.
-func TestTradeUSDVolume_Tier2bPrefersExactBaseOverFXEstimate(t *testing.T) {
-	t.Parallel()
-	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatalf("NewClassicAsset USDC: %v", err)
-	}
-	xlm := canonical.NativeAsset()
-	spec, err := NewUSDVolumeQuoteSpec(
-		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
-	}
-
-	// 100 USDC base; quote 1000 XLM. A deliberately wrong XLM rate
-	// ($5) so the two routes cannot be confused: FX would say $5000,
-	// the exact base says $100.
-	tr := canonical.Trade{
-		Source:      "sdex",
-		Ledger:      63514245,
-		TxHash:      "def",
-		OpIndex:     0,
-		Timestamp:   time.Date(2026, 7, 17, 9, 0, 0, 0, time.UTC),
-		Pair:        canonical.Pair{Base: usdc, Quote: xlm},
-		BaseAmount:  canonical.NewAmount(big.NewInt(1_000_000_000)),
-		QuoteAmount: canonical.NewAmount(big.NewInt(10_000_000_000)),
-	}
-	fx := stubFXResolver{prices: map[string]string{xlm.String(): "5"}}
-
-	got := tradeUSDVolume(context.Background(), tr, spec, fx)
-	if got == nil {
-		t.Fatal("expected a usd_volume")
-	}
-	if *got != "100.00000000" {
-		t.Errorf("usd_volume = %q, want 100.00000000 (exact base), not the FX estimate", *got)
-	}
-}
-
-// TestTradeUSDVolume_Tier2bZeroBaseStaysExact: a zero USD-pegged base leg is
-// worth exactly $0. Falling through to the XLM-quote anchor stored a few
-// hundred-millionths per trade and broke the exact-tier identity
-// usd_volume = base_amount / 10^decimals that verify-usd-volume checks.
-func TestTradeUSDVolume_Tier2bZeroBaseStaysExact(t *testing.T) {
-	t.Parallel()
-	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatalf("NewClassicAsset USDC: %v", err)
-	}
-	xlm := canonical.NativeAsset()
-	spec, err := NewUSDVolumeQuoteSpec(
-		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
-	}
-	tr := canonical.Trade{
-		Source:      "sdex",
-		Ledger:      64698369,
-		TxHash:      "zero",
-		OpIndex:     0,
-		Timestamp:   time.Date(2026, 9, 30, 9, 0, 0, 0, time.UTC),
-		Pair:        canonical.Pair{Base: usdc, Quote: xlm},
-		BaseAmount:  canonical.NewAmount(big.NewInt(0)),
-		QuoteAmount: canonical.NewAmount(big.NewInt(1)),
-	}
-	fx := stubFXResolver{prices: map[string]string{xlm.String(): "0.16"}}
-
-	got := tradeUSDVolume(context.Background(), tr, spec, fx)
-	if got == nil {
-		t.Fatal("expected an exact zero usd_volume, got nil")
-	}
-	if *got != "0.00000000" {
-		t.Errorf("usd_volume = %q, want 0.00000000 (exact zero base), not an XLM-anchored estimate", *got)
-	}
-}
-
-// TestTradeUSDVolume_Tier2bDoesNotDisplaceQuoteSidePeg — when the
-// QUOTE leg is pegged, tier 1/2 still owns the answer. Guards the
-// ordering: tier 2b must not intercept trades the quote side handles.
-func TestTradeUSDVolume_Tier2bDoesNotDisplaceQuoteSidePeg(t *testing.T) {
-	t.Parallel()
-	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatalf("NewClassicAsset USDC: %v", err)
-	}
-	spec, err := NewUSDVolumeQuoteSpec(
-		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
-	}
-	// Both legs USDC (degenerate but the clearest ordering probe):
-	// distinct amounts, so whichever leg was used is identifiable.
-	tr := canonical.Trade{
-		Source:      "sdex",
-		Ledger:      63514245,
-		TxHash:      "ghi",
-		OpIndex:     0,
-		Timestamp:   time.Date(2026, 7, 17, 9, 0, 0, 0, time.UTC),
-		Pair:        canonical.Pair{Base: usdc, Quote: usdc},
-		BaseAmount:  canonical.NewAmount(big.NewInt(1_000_000_000)), // 100
-		QuoteAmount: canonical.NewAmount(big.NewInt(2_000_000_000)), // 200
-	}
-	got := tradeUSDVolume(context.Background(), tr, spec, nil)
-	if got == nil {
-		t.Fatal("expected a usd_volume")
-	}
-	if *got != "200.00000000" {
-		t.Errorf("usd_volume = %q, want 200.00000000 (quote leg) — tier 2b displaced tier 2", *got)
-	}
-}
-
-// ─── tier 4b: widened base anchor ─────────────────────────────────────
-
-// TestBaseAnchorEligible pins which asset forms the base anchor admits: every
-// on-chain form, including pure SEP-41, whose scale cancels in the raw-VWAP
-// product (see baseAnchorEligible); off-chain shapes are declined.
+// baseAnchorEligible admits every on-chain form, including pure SEP-41
+// (its decimals cancel in the raw-VWAP product); off-chain shapes are declined.
 func TestBaseAnchorEligible(t *testing.T) {
 	t.Parallel()
-	classic, err := canonical.NewClassicAsset("6T", "GBGRBCUB6L7LH4JQ6EPDP7REH2DDACMCUQI76M3P6DM52QWU2Z5LIEVW")
-	if err != nil {
-		t.Fatalf("NewClassicAsset: %v", err)
-	}
 	cases := map[string]struct {
 		asset canonical.Asset
 		want  bool
 	}{
-		"native XLM": {canonical.NativeAsset(), true},
-		"XLM SAC":    {canonical.Asset{Type: canonical.AssetSoroban, ContractID: canonical.XLMSacContractID}, true},
-		"classic":    {classic, true},
-		// Pure SEP-41 IS eligible: the base anchor values it from a raw
-		// VWAP ratio, in which the token's own decimals cancel — see
-		// baseAnchorEligible's godoc and
-		// TestUSDVolumeIsIndependentOfTokenDecimals.
-		"pure SEP-41": {canonical.Asset{Type: canonical.AssetSoroban, ContractID: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"}, true},
-		// Off-chain asset shapes never reach a SubclassDEX trade.
-		"fiat": {canonical.Asset{Type: canonical.AssetFiat, Code: "EUR"}, false},
+		"native XLM":  {canonical.NativeAsset(), true},
+		"XLM SAC":     {canonical.Asset{Type: canonical.AssetSoroban, ContractID: canonical.XLMSacContractID}, true},
+		"classic":     {mustAsset(t, "6T-GBGRBCUB6L7LH4JQ6EPDP7REH2DDACMCUQI76M3P6DM52QWU2Z5LIEVW"), true},
+		"pure SEP-41": {canonical.Asset{Type: canonical.AssetSoroban, ContractID: usdcSACID}, true},
+		"fiat":        {canonical.Asset{Type: canonical.AssetFiat, Code: "EUR"}, false},
 	}
 	for name, tc := range cases {
 		if got := baseAnchorEligible(tc.asset); got != tc.want {
@@ -1084,181 +416,30 @@ func TestBaseAnchorEligible(t *testing.T) {
 	}
 }
 
-// TestTradeUSDVolume_Tier4bClassicBaseAnchor — a token/token trade
-// whose QUOTE leg has no resolvable price is valued off its BASE leg.
-// This is the path that takes on-chain coverage from 87.5% to 99.2%
-// of the remaining unpriced trades (measured): for a 6T/F8
-// trade where F8 has no usable market, 6T does.
-func TestTradeUSDVolume_Tier4bClassicBaseAnchor(t *testing.T) {
-	t.Parallel()
-	sixT, err := canonical.NewClassicAsset("6T", "GBGRBCUB6L7LH4JQ6EPDP7REH2DDACMCUQI76M3P6DM52QWU2Z5LIEVW")
-	if err != nil {
-		t.Fatalf("NewClassicAsset 6T: %v", err)
-	}
-	f8, err := canonical.NewClassicAsset("F8", "GBGRBCUB6L7LH4JQ6EPDP7REH2DDACMCUQI76M3P6DM52QWU2Z5LIEVW")
-	if err != nil {
-		t.Fatalf("NewClassicAsset F8: %v", err)
-	}
-	spec, err := NewUSDVolumeQuoteSpec(
-		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
-	}
-	// 1000 6T base (1e10 stroops at 1e7). Resolver knows 6T (the real
-	// bridged rate) but NOT F8 — the quote leg must decline and the
-	// base leg must carry it.
-	tr := canonical.Trade{
-		Source:      "sdex",
-		Ledger:      63514245,
-		TxHash:      "jkl",
-		OpIndex:     0,
-		Timestamp:   time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
-		Pair:        canonical.Pair{Base: sixT, Quote: f8},
-		BaseAmount:  canonical.NewAmount(big.NewInt(10_000_000_000)),
-		QuoteAmount: canonical.NewAmount(big.NewInt(123_456_789)),
-	}
-	fx := stubFXResolver{prices: map[string]string{sixT.String(): "0.005933704130547542"}}
-
-	got := tradeUSDVolume(context.Background(), tr, spec, fx)
-	if got == nil {
-		t.Fatal("tier 4b did not fire — token/token trade would insert NULL")
-	}
-	// 1000 x 0.005933704130547542 = 5.933704130547542, to 8dp.
-	if *got != "5.93370413" {
-		t.Errorf("usd_volume = %q, want 5.93370413", *got)
-	}
-}
-
-// TestTradeUSDVolume_PegTiersStillRequireRealDecimals pins the boundary
-// that DOES exist around token decimals.
-//
-// The VWAP-anchored tiers are decimals-independent (the scale cancels),
-// but a declared PEG is a per-WHOLE-UNIT statement — "one of these is
-// worth $1" — and there the token's real decimals are load-bearing. So
-// the peg tiers must keep refusing assets whose 7 decimals are not an
-// invariant, even though the anchor tier now accepts them.
-//
-// Concretely: a pure SEP-41 token must never be read as a USD peg on
-// either leg, because valuing an 18-decimal stablecoin at 1e7 would
-// overstate it by 1e11.
-func TestTradeUSDVolume_PegTiersStillRequireRealDecimals(t *testing.T) {
-	t.Parallel()
-	sep41 := canonical.Asset{Type: canonical.AssetSoroban, ContractID: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"}
-	// Peg list names a CLASSIC asset and no SAC wrappers, so the
-	// contract-id form above resolves to no peg.
-	spec, err := NewUSDVolumeQuoteSpec(
-		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
-	}
-	if _, ok := spec.QuoteUSDPegInfo(sep41); ok {
-		t.Error("a pure SEP-41 contract was accepted as a USD peg — its decimals are not an invariant")
-	}
-	// And with no resolver at all it must stay NULL rather than fall
-	// back to an assumed scale.
-	tr := canonical.Trade{
-		Source:      "soroswap",
-		Ledger:      63514245,
-		TxHash:      "mno",
-		OpIndex:     0,
-		Timestamp:   time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
-		Pair:        canonical.Pair{Base: sep41, Quote: sep41},
-		BaseAmount:  canonical.NewAmount(big.NewInt(10_000_000_000)),
-		QuoteAmount: canonical.NewAmount(big.NewInt(123_456_789)),
-	}
-	if got := tradeUSDVolume(context.Background(), tr, spec, nil); got != nil {
-		t.Errorf("unpriceable SEP-41 pair was valued at %q; want NULL", *got)
-	}
-}
-
-// TestUSDVolumeIsIndependentOfTokenDecimals is the proof behind letting
-// pure SEP-41 tokens through the VWAP-anchored tiers, and the guard
-// against anyone "fixing" the 1e7 divisor into a per-token decimals
-// lookup later.
-//
-// The instinct is that valuing a token whose decimals() is 18 by
-// dividing its raw amount by 1e7 must be wrong by 1e11. It is not,
-// because the divisor does not belong to the token being valued — it
-// belongs to the asset the RATE is denominated against, and every
-// anchor we price through (XLM, and the classic/SAC USD pegs) is
-// genuinely 7-decimal.
-//
-// prices_1m stores vwap as a RAW ratio, quote_amount/base_amount
-// straight off the trades table, with no decimals applied to either
-// side. So for a trade of A raw token units at raw rate R = X/A:
-//
-//	usd = (A / 1e7) x R x usdPerXLM
-//	    = (A / 1e7) x (X / A) x usdPerXLM
-//	    = (X / 1e7) x usdPerXLM
-//
-// A cancels identically. What survives is the XLM leg valued at XLM's
-// own 7-decimal scale — which is exactly right, and carries no
-// dependence on the token's declared decimals at all.
-//
-// The test asserts this the only way that really settles it: price the
-// same economic trade through tokens declaring 6, 7, 9 and 18 decimals
-// and require an IDENTICAL usd_volume every time.
-//
-// NOTE the deliberate boundary: this holds only for rates that are raw
-// VWAP ratios. A per-WHOLE-UNIT price (a declared peg, an oracle quote)
-// does not cancel and DOES need real decimals — which is why the peg
-// tiers stay restricted to assets whose 7 decimals are an invariant,
-// and why the served per-unit price for these tokens is a separate
-// (real) bug handled by internal/decimalsguard.
+// The VWAP-anchored tiers are decimals-independent: prices_1m stores vwap as
+// a RAW ratio X/A for A raw token units, so usd = (A/1e7) x (X/A) x usdPerXLM
+// = (X/1e7) x usdPerXLM and the token's scale cancels. Pricing one economic
+// trade through tokens of 6, 7, 9 and 18 decimals must give an identical
+// usd_volume, which guards against replacing the 1e7 divisor with a
+// per-token decimals lookup.
 func TestUSDVolumeIsIndependentOfTokenDecimals(t *testing.T) {
 	t.Parallel()
-	spec, err := NewUSDVolumeQuoteSpec(
-		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
-	}
-	// One economic trade: 250 XLM changed hands for some quantity of a
-	// token. Raw XLM = 250 * 1e7. At $0.18437992688007971271/XLM that
-	// is a fixed dollar value regardless of how the token is scaled.
+	spec := circleSpec(t, nil)
 	const xlmUSD = "0.18437992688007971271"
 	xlmRaw := big.NewInt(250 * 10_000_000)
+	token := canonical.Asset{Type: canonical.AssetSoroban, ContractID: "CCT4ZYIYZ3TUO2AWQFEOFGBZ6HQP3GW5TA37CK7CRZVFRDXYTHTYX7KP"}
+	other := canonical.Asset{Type: canonical.AssetSoroban, ContractID: "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"}
 
-	// Real declarations observed on R1 in nonstandard_decimals_assets:
-	// 6, 9 and 18 alongside the classic 7.
 	var want string
 	for _, decimals := range []int{6, 7, 9, 18} {
-		// The token side of the same trade, at its own scale: 1000
-		// whole tokens => 1000 * 10^decimals raw units.
 		tokenRaw := new(big.Int).Mul(big.NewInt(1000), scaleDenominator(decimals))
-		// prices_1m's vwap for TOKEN/XLM is the RAW ratio.
-		rawVWAP := new(big.Rat).SetFrac(xlmRaw, tokenRaw)
-		// bridgeRate composes that raw ratio with USD-per-whole-XLM,
-		// exactly as bridgeViaXLM does.
-		rate, ok := bridgeRate(rawVWAP, xlmUSD)
+		rate, ok := bridgeRate(new(big.Rat).SetFrac(xlmRaw, tokenRaw), xlmUSD)
 		if !ok {
 			t.Fatalf("decimals=%d: bridgeRate declined", decimals)
 		}
-
-		token := canonical.Asset{
-			Type:       canonical.AssetSoroban,
-			ContractID: "CCT4ZYIYZ3TUO2AWQFEOFGBZ6HQP3GW5TA37CK7CRZVFRDXYTHTYX7KP",
-		}
-		other := canonical.Asset{
-			Type:       canonical.AssetSoroban,
-			ContractID: "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J",
-		}
-		tr := canonical.Trade{
-			Source:      "aquarius",
-			Ledger:      63514245,
-			TxHash:      "dec",
-			OpIndex:     0,
-			Timestamp:   time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
-			Pair:        canonical.Pair{Base: token, Quote: other},
-			BaseAmount:  canonical.NewAmount(tokenRaw),
-			QuoteAmount: canonical.NewAmount(big.NewInt(123_456_789)),
-		}
-		// Only the BASE token is priceable — forces the base anchor.
+		tr := volTrade(t, "aquarius", token, other, 0, 123_456_789)
+		tr.BaseAmount = canonical.NewAmount(tokenRaw)
+		// Only the base token is priceable, which forces the base anchor.
 		fx := stubFXResolver{prices: map[string]string{token.String(): rate}}
 
 		got := tradeUSDVolume(context.Background(), tr, spec, fx)
@@ -1270,69 +451,39 @@ func TestUSDVolumeIsIndependentOfTokenDecimals(t *testing.T) {
 			continue
 		}
 		if *got != want {
-			t.Errorf("decimals=%d gave usd_volume %s, but decimals=6 gave %s — "+
-				"the token's scale must cancel", decimals, *got, want)
+			t.Errorf("decimals=%d gave usd_volume %s, but decimals=6 gave %s; the token's scale must cancel", decimals, *got, want)
 		}
 	}
-	// And the value must be the XLM leg's true worth: 250 x 0.18437992688007971271.
 	const trueValue = "46.09498172"
 	if want != trueValue {
 		t.Errorf("usd_volume = %s, want %s (250 XLM x %s)", want, trueValue, xlmUSD)
 	}
 }
 
-func mustAsset(t *testing.T, s string) canonical.Asset {
-	t.Helper()
-	a, err := canonical.ParseAsset(s)
-	if err != nil {
-		t.Fatalf("ParseAsset(%q): %v", s, err)
-	}
-	return a
-}
-
-// TestTradeUSDVolumeViaFX_LegCrossCheck is the fake-XMR incident
-// regression: an attacker planted an
-// INDUSX/XLM bridge rate for the cost of the dust floor, and two
-// trades with NO XLM leg were stamped ~$91M each off the poisoned
-// quote-side rate (real value <$0.01). When BOTH legs resolve and
-// disagree beyond usdLegAgreementFactor, the FX tier must store the
-// SMALLER leg's value; within tolerance, the quote-side value stays
-// authoritative.
+// Fake-XMR regression: an attacker planted an INDUSX/XLM bridge rate for the
+// cost of the dust floor, and two trades with no XLM leg were stamped ~$91M
+// each. When both legs resolve and disagree beyond usdLegAgreementFactor the
+// FX tier stores the smaller leg's value; within tolerance the quote-side
+// value stays authoritative.
 func TestTradeUSDVolumeViaFX_LegCrossCheck(t *testing.T) {
 	base := mustAsset(t, "XMR-GDGE5SNCNHIP7HG3EHZWBC6NU3TWYODNXDMGC5CCKNJW555VCEAHPORT")
 	quote := mustAsset(t, "INDUSX-GCBSLNSO4NWX3BUQ2K5HZYW4JV2CWJIBZ3KOY6L3WNNGEX6RE7PINDUS")
-	pair, err := canonical.NewPair(base, quote)
-	if err != nil {
-		t.Fatalf("NewPair: %v", err)
-	}
-	tr := canonical.Trade{
-		Source: "sdex", Ledger: 63_890_020, TxHash: "poison", Timestamp: time.Unix(1_754_800_000, 0).UTC(),
-		Pair:        pair,
-		BaseAmount:  canonical.NewAmount(big.NewInt(13_012_363_332_323)), // 1,301,236.3 units at 7dp
-		QuoteAmount: canonical.NewAmount(big.NewInt(2_922_474_116_360)),  // 292,247.4 units at 7dp
-	}
+	tr := volTrade(t, "sdex", base, quote, 13_012_363_332_323, 2_922_474_116_360) // 1,301,236.3 and 292,247.4 units at 7dp
 	md := external.Lookup("sdex")
 
-	// Poisoned quote rate ($549.43/INDUSX) vs honest dust base rate
-	// ($0.00000001/fake-XMR): divergence ~10^10 → base leg must win.
-	poisoned := stubFXResolver{prices: map[string]string{
-		quote.String(): "549.43",
-		base.String():  "0.00000001",
-	}}
+	// Poisoned quote rate ($549.43) vs honest dust base rate: divergence ~10^10, base leg wins.
+	poisoned := stubFXResolver{prices: map[string]string{quote.String(): "549.43", base.String(): "0.00000001"}}
 	got := tradeUSDVolumeViaFX(context.Background(), tr, md, poisoned)
 	if got == nil {
 		t.Fatal("expected a value (the conservative leg), got nil")
 	}
 	v, _ := new(big.Rat).SetString(*got)
-	if limit := big.NewRat(1, 1); v.Cmp(limit) > 0 { // < $1, not $160M
+	if v.Cmp(big.NewRat(1, 1)) > 0 { // < $1, not $160M
 		t.Fatalf("cross-check failed: stored %s, want the dust base-leg value (<$1)", *got)
 	}
 
-	// Agreeing legs (within 10x): quote-side value stays authoritative.
-	agreeing := stubFXResolver{prices: map[string]string{
-		quote.String(): "0.50",
-		base.String():  "0.12", // 1.30M units x 0.12 = $156k vs quote 292k x 0.5 = $146k — within 10x
-	}}
+	// Agreeing legs ($156k vs $146k, within 10x): quote-side value stays authoritative.
+	agreeing := stubFXResolver{prices: map[string]string{quote.String(): "0.50", base.String(): "0.12"}}
 	got2 := tradeUSDVolumeViaFX(context.Background(), tr, md, agreeing)
 	if got2 == nil {
 		t.Fatal("agreeing legs: expected quote-side value, got nil")
@@ -1343,63 +494,32 @@ func TestTradeUSDVolumeViaFX_LegCrossCheck(t *testing.T) {
 		t.Fatalf("agreeing legs: stored %s, want quote-side %s", *got2, want.FloatString(8))
 	}
 
-	// Base leg unresolvable + an inflated (poisoned) quote rate: the
-	// double-plant cross-check cannot fire, so W1-flow-price-serve-1
-	// requires the uncross-checkable single-leg print to be BOUNDED. Here
-	// 292,247.4 quote units x $549.43 ≈ $160.5M — above
-	// singleLegMaxUSDVolume — so the value is refused (NULL) rather than
-	// served. (Serving it would publish the ~$160M poisoned figure.)
+	// Base unresolvable: the cross-check cannot fire, so the single-leg print
+	// is bounded. 292,247.4 x $549.43 ~ $160.5M is above singleLegMaxUSDVolume.
 	single := stubFXResolver{prices: map[string]string{quote.String(): "549.43"}}
 	if got3 := tradeUSDVolumeViaFX(context.Background(), tr, md, single); got3 != nil {
 		t.Fatalf("single-leg above ceiling: want NULL (refused), got %q", *got3)
 	}
 }
 
-// TestTradeUSDVolumeViaFX_SingleLegBaseUnresolvableBound is the
-// W1-flow-price-serve-1 regression: when the BASE leg is unresolvable the
-// double-plant cross-check (TestTradeUSDVolumeViaFX_LegCrossCheck) cannot
-// fire, so an attacker who plants an inflated tier-3b bridge rate for the
-// QUOTE token and trades it against a fresh never-priced base can stamp an
-// arbitrarily large usd_volume off the single resolvable leg. The fix bounds
-// the single-leg print at singleLegMaxUSDVolume: an above-ceiling,
-// uncross-checkable print is refused (NULL); a plausible below-ceiling print
-// is still valued so the large legitimate unresolvable-base class is
-// preserved (the skeptic's over-NULL warning).
+// With the base leg unresolvable the cross-check cannot fire, so an inflated
+// bridge rate on the quote token could stamp an arbitrary usd_volume. The
+// single-leg print is bounded at singleLegMaxUSDVolume; a plausible print
+// below the ceiling is still valued.
 func TestTradeUSDVolumeViaFX_SingleLegBaseUnresolvableBound(t *testing.T) {
-	// B: a fresh SEP-41 token with no market (resolver never knows it).
-	base := mustAsset(t, "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7")
-	// Q: the poisoned bridge token whose quote-side rate the attacker set.
-	quote := mustAsset(t, "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75")
-	pair, err := canonical.NewPair(base, quote)
-	if err != nil {
-		t.Fatalf("NewPair: %v", err)
-	}
-	md := external.Lookup("soroswap") // SubclassDEX
-	ts := time.Unix(1_754_800_000, 0).UTC()
+	base := mustAsset(t, sep41AID) // fresh token, never priced
+	quote := mustAsset(t, usdcSACID)
+	md := external.Lookup("soroswap")
+	// 20,000 quote units at 1e7.
+	tr := volTrade(t, "soroswap", base, quote, 1_000_000_000, 200_000_000_000)
 
-	mk := func(quoteAmt int64) canonical.Trade {
-		return canonical.Trade{
-			Source: "soroswap", Ledger: 63_890_100, TxHash: "b", OpIndex: 0, Timestamp: ts,
-			Pair:        pair,
-			BaseAmount:  canonical.NewAmount(big.NewInt(1_000_000_000)), // base present but unresolvable
-			QuoteAmount: canonical.NewAmount(big.NewInt(quoteAmt)),
-		}
-	}
-
-	// ATTACK: 20,000 quote units (2e11 stroops at 1e7) x an inflated
-	// $50,000 bridge rate = $1,000,000,000 off one leg — well above the
-	// ceiling. The base leg is unresolvable, so no cross-check exists.
-	// Must be refused (NULL), not served.
-	poisoned := stubFXResolver{prices: map[string]string{quote.String(): "50000"}}
-	if got := tradeUSDVolumeViaFX(context.Background(), mk(200_000_000_000), md, poisoned); got != nil {
+	poisoned := stubFXResolver{prices: map[string]string{quote.String(): "50000"}} // $1,000,000,000
+	if got := tradeUSDVolumeViaFX(context.Background(), tr, md, poisoned); got != nil {
 		t.Fatalf("poisoned single-leg print above ceiling: want NULL (refused), got %q", *got)
 	}
 
-	// LEGITIMATE: the same unresolvable-base shape but an ordinary rate and
-	// size — 20,000 quote units x $2.50 = $50,000, far below the ceiling.
-	// The fix must NOT NULL this common class (skeptic over-NULL guard).
-	honest := stubFXResolver{prices: map[string]string{quote.String(): "2.50"}}
-	got := tradeUSDVolumeViaFX(context.Background(), mk(200_000_000_000), md, honest)
+	honest := stubFXResolver{prices: map[string]string{quote.String(): "2.50"}} // $50,000
+	got := tradeUSDVolumeViaFX(context.Background(), tr, md, honest)
 	if got == nil {
 		t.Fatal("legitimate below-ceiling single-leg print: want a value, got NULL")
 	}
