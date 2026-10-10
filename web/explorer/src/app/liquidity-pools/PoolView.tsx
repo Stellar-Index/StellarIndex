@@ -17,7 +17,7 @@ import { CopyHash } from '../explorer-shared';
 import {
   PoolDepthDetail,
   type LiquidityPoolRow,
-  assetLabel,
+  poolSideLabels,
   displayUnits,
   midPriceLabel,
 } from './PoolDepthDetail';
@@ -79,8 +79,7 @@ export function PoolView({ id }: { id: string }) {
       </Panel>
     );
   } else {
-    const a = assetLabel(row.reserve_a.asset);
-    const b = assetLabel(row.reserve_b.asset);
+    const [a, b] = poolSideLabels(row.reserve_a.asset, row.reserve_b.asset);
     body = (
       <>
         <Panel
