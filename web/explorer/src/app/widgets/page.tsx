@@ -53,14 +53,6 @@ export default function WidgetsPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Widgets' }]}
         title="Widgets"
-        description={
-          <>
-            Drop-in iframe widgets for live Stellar Index prices. Paste one
-            snippet — no script, no API key, no build step. Each widget renders
-            the same data the explorer pulls from the public API; sizes
-            auto-adjust to fit their container.
-          </>
-        }
       />
 
       <section className="space-y-4">

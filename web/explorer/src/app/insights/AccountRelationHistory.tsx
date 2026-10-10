@@ -106,10 +106,7 @@ export function AccountRelationHistory({
         {status === 404 ? (
           <p>
             This deployment&apos;s API does not serve{' '}
-            <code className="font-mono text-xs">{path}</code> yet. The monthly
-            series is newer than the API build behind this explorer, so it is
-            absent rather than empty — retrying will not produce it; the API has
-            to ship first. Every other panel on this page is unaffected.
+            <code className="font-mono text-xs">{path}</code> yet.
           </p>
         ) : status === 503 ? (
           <p>
@@ -228,18 +225,11 @@ export function AccountRelationHistory({
       <p className="text-ink-faint text-[11px]">
         {metric === 'cumulative' ? (
           <>
-            A running total of new accounts. It crosses a month with no activity
-            unbroken, and that is not an interpolation: the monthly counts are
-            exact and sum to the whole-history total, so a month that added
-            nothing leaves the total exactly where it was.
+            Running total of new accounts; it crosses a month with no activity
+            unbroken.
           </>
         ) : (
-          <>
-            A month with no activity emits no point, so the line{' '}
-            <strong>breaks</strong> there rather than being drawn through a zero
-            nobody reported. Inside the coverage span below, a break means
-            nothing happened; outside it, nothing was observed.
-          </>
+          <>A break in the line is a month with no observed activity.</>
         )}
       </p>
 

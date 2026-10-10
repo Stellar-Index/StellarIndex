@@ -13,6 +13,7 @@ describe('staticFrame', () => {
     expect(f).toEqual({
       h1Count: 1,
       text: 'Transactions Newest ledger first.',
+      belowHeader: true,
     });
   });
 
@@ -27,7 +28,22 @@ describe('staticFrame', () => {
           '<script>self.__next_f.push([1,"x"])</script>',
       ),
     );
-    expect(f).toEqual({ h1Count: 0, text: '' });
+    expect(f).toEqual({ h1Count: 0, text: '', belowHeader: false });
+  });
+
+  it('sees a skeleton below the page header, and a baked-null body as nothing', () => {
+    const header =
+      '<div data-page-header="" class="flex"><div class="min-w-0">' +
+      '<nav>Home › Accounts</nav><h1>Accounts</h1>' +
+      '<div class="text-xs">meta</div></div></div>';
+    const pending = '<!--$?--><template id="B:0"></template><!--/$-->';
+    expect(staticFrame(page(header + pending))?.belowHeader).toBe(false);
+    expect(
+      staticFrame(
+        page(header + '<div class="animate-pulse h-96"></div>' + pending),
+      )?.belowHeader,
+    ).toBe(true);
+    expect(staticFrame(page('<h1>Assets</h1>'))?.belowHeader).toBe(false);
   });
 
   it('ignores chrome outside <main>, and reports a page with no <main>', () => {

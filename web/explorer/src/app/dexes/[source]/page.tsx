@@ -73,7 +73,6 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
           { label: info.name },
         ]}
         title={info.name}
-        description={info.blurb}
         actions={
           <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
             {info.type}

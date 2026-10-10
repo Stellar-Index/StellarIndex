@@ -143,7 +143,6 @@ function PriceAlertsBody() {
             { label: 'Price alerts' },
           ]}
           title="Price alerts"
-          description="Get notified when a pair crosses a threshold — delivered to your webhooks as a price.alert event."
           actions={
             !showForm && (
               <Button onClick={() => setShowForm(true)}>

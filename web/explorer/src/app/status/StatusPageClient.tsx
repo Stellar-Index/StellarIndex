@@ -838,7 +838,6 @@ function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
     <PageHeader
       breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Status' }]}
       title="Stellar Index status"
-      description="Live health, latency, ingest freshness and a curated public-endpoint matrix, probed from your browser."
       actions={
         // The pulse is a liveness claim: it only pulses green while the
         // latest poll succeeded. During an outage it goes grey and says how
@@ -2259,8 +2258,7 @@ function BackfillCoverageTable({
   if (!rows || rows.length === 0) {
     return (
       <div className="border-warn-300 bg-warn-50 text-warn-700 rounded-lg border p-3 text-xs">
-        Coverage snapshot pending. Gap scans run every 30 min (6 h for the
-        largest tables); the completeness verdict runs daily at 05:30 UTC.
+        Coverage snapshot pending.
       </div>
     );
   }

@@ -19,14 +19,6 @@ export default function BlogIndexPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Blog' }]}
         title="Engineering notes"
-        description={
-          <>
-            Release notes, architecture decisions, and the why behind each
-            surface. Sourced from{' '}
-            <code className="font-mono text-sm">docs/blog/*.md</code> in the
-            public repo — every post links back to its source on GitHub.
-          </>
-        }
         actions={
           <Link
             href="/blog.atom"

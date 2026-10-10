@@ -57,11 +57,9 @@ interface ProtocolCard {
 export function ProtocolsIndex({
   lockedCategory,
   title = 'Protocols',
-  description = 'Every Stellar protocol we index: DEXes, AMMs, lending, yield, bridges and oracles.',
 }: {
   lockedCategory?: string;
   title?: string;
-  description?: string;
 } = {}) {
   // S-015: several AMM protocols have no factory-seeded contract
   // roster yet (only blend is seeded; the ADR-0035 gates are pending
@@ -178,7 +176,6 @@ export function ProtocolsIndex({
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: title }]}
         title={title}
-        description={description}
       />
 
       <StatGrid cols={3}>
@@ -201,9 +198,7 @@ export function ProtocolsIndex({
 
       {isError && (
         <Callout tone="warn" title="Live stats unavailable">
-          The protocol directory endpoint is unreachable, so the cards below
-          show the static registry without live counts. The per-protocol pages
-          still work.
+          Showing the registry without live counts.
         </Callout>
       )}
 
