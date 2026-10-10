@@ -255,6 +255,45 @@ func decodeMap(t *testing.T, body []byte) map[string]any {
 	return m
 }
 
+// withThin appends the opt-in to a path or URL.
+func withThin(u string) string {
+	if strings.Contains(u, "?") {
+		return u + "&include_thin=true"
+	}
+	return u + "?include_thin=true"
+}
+
+func fetchStatus(t *testing.T, url string, want int) []byte {
+	t.Helper()
+	status, body := fetch(t, url)
+	if status != want {
+		t.Fatalf("GET %s: status %d, want %d: %s", url, status, want, body)
+	}
+	return body
+}
+
+func assertNoThinMarker(t *testing.T, body []byte) {
+	t.Helper()
+	if s := string(body); strings.Contains(s, "thin_market") || strings.Contains(s, `"substance"`) {
+		t.Errorf("cleared response carries a thin marker: %s", body)
+	}
+}
+
+// assertThinReleased requires a 404 with evidence by default and, opted
+// in, a 200 flagged thin that carries the same evidence for base.
+func assertThinReleased(t *testing.T, url, base string) (problem, data map[string]any) {
+	t.Helper()
+	problem = decodeMap(t, fetchStatus(t, url, http.StatusNotFound))
+	assertEvidence(t, problem["substance"], base)
+	env := decodeMap(t, fetchStatus(t, withThin(url), http.StatusOK))
+	if got := thinFlag(env); got != true {
+		t.Errorf("flags.thin_market = %v, want true", got)
+	}
+	data = env["data"].(map[string]any)
+	assertEvidence(t, data["substance"], base)
+	return problem, data
+}
+
 // assertEvidence checks the evidence block's shape: money as strings (I4)
 // and the measurement oriented to the request base.
 func assertEvidence(t *testing.T, ev any, base string) {
@@ -282,35 +321,19 @@ func assertEvidence(t *testing.T, ev any, base string) {
 }
 
 func TestHandlePriceIncludeThin(t *testing.T) {
-	reader := newChokepointReader(nil, thinAssetID)
-	ts := thinServer(t, reader)
+	ts := thinServer(t, newChokepointReader(nil, thinAssetID))
 	url := ts.URL + "/v1/price?asset=" + thinAssetID + "&quote=fiat:USD"
 
-	status, body := fetch(t, url)
-	if status != http.StatusNotFound {
-		t.Fatalf("default: status %d, want 404: %s", status, body)
-	}
-	p := decodeMap(t, body)
+	p, data := assertThinReleased(t, url, thinAssetID)
 	if !strings.HasSuffix(p["type"].(string), "/price-withheld") {
 		t.Errorf("default: type = %v, want price-withheld", p["type"])
 	}
-	assertEvidence(t, p["substance"], thinAssetID)
-
-	if status, other := fetch(t, url+"&include_thin=yes"); status != http.StatusNotFound || !bytes.Equal(stripRequestID(other), stripRequestID(body)) {
+	_, def := fetch(t, url)
+	if status, other := fetch(t, url+"&include_thin=yes"); status != http.StatusNotFound || !bytes.Equal(stripRequestID(other), stripRequestID(def)) {
 		t.Errorf("include_thin=yes: status %d, want the default 404 body; got %s", status, other)
 	}
-
-	status, body = fetch(t, url+"&include_thin=true")
-	if status != http.StatusOK {
-		t.Fatalf("opted in: status %d, want 200: %s", status, body)
-	}
-	env := decodeMap(t, body)
-	data := env["data"].(map[string]any)
 	if data["price"] != "0.01230000000000" {
 		t.Errorf("price = %v, want the reader's string", data["price"])
-	}
-	if got := thinFlag(env); got != true {
-		t.Errorf("flags.thin_market = %v, want true", got)
 	}
 	if data["confidence"] != v1.ThinMarketConfidenceCeiling {
 		t.Errorf("confidence = %v, want the declared ceiling %v", data["confidence"], v1.ThinMarketConfidenceCeiling)
@@ -318,7 +341,6 @@ func TestHandlePriceIncludeThin(t *testing.T) {
 	if _, ok := data["confidence_factors"]; ok {
 		t.Errorf("confidence_factors present with no cached score")
 	}
-	assertEvidence(t, data["substance"], thinAssetID)
 }
 
 func TestHandlePriceIncludeThinClearedIsByteIdentical(t *testing.T) {
@@ -331,9 +353,7 @@ func TestHandlePriceIncludeThinClearedIsByteIdentical(t *testing.T) {
 	if !bytes.Equal(stripRequestID(def), stripRequestID(opted)) {
 		t.Errorf("cleared pair: opted-in body differs from default\ndefault: %s\nopted:   %s", def, opted)
 	}
-	if strings.Contains(string(opted), "thin_market") || strings.Contains(string(opted), "substance") {
-		t.Errorf("cleared pair carries a thin marker: %s", opted)
-	}
+	assertNoThinMarker(t, opted)
 	if n := reader.readCount() - before; n != 1 {
 		t.Errorf("cleared opted-in read cost %d upstream reads, want 1 (no second pass)", n)
 	}
@@ -368,13 +388,7 @@ func TestPriceBatchIncludeThin(t *testing.T) {
 	ids := thinAssetID + "," + clearedAssetID
 	check := func(t *testing.T, body []byte, opted bool) {
 		t.Helper()
-		env := decodeMap(t, body)
-		rows, _ := env["data"].([]any)
-		served := map[string]map[string]any{}
-		for _, r := range rows {
-			row := r.(map[string]any)
-			served[row["asset_id"].(string)] = row
-		}
+		served, env := batchServed(t, body)
 		thin, _ := env["thin"].([]any)
 		withheld, _ := env["withheld"].([]any)
 		flags, _ := env["flags"].(map[string]any)
@@ -484,26 +498,10 @@ func TestPriceAtIncludeThin(t *testing.T) {
 	at := time.Now().Add(-48 * time.Hour).UTC().Truncate(time.Hour)
 	url := ts.URL + "/v1/price/at?asset=" + thinAssetID + "&ts=" + at.Format(time.RFC3339)
 
-	status, body := fetch(t, url)
-	if status != http.StatusNotFound {
-		t.Fatalf("default: status %d, want 404: %s", status, body)
-	}
-	p := decodeMap(t, body)
-	assertEvidence(t, p["substance"], thinAssetID)
+	p, data := assertThinReleased(t, url, thinAssetID)
 	if p["substance"].(map[string]any)["window_end"] == nil {
-		t.Errorf("point-in-time evidence has no window_end: %s", body)
+		t.Errorf("point-in-time evidence has no window_end: %v", p)
 	}
-
-	status, body = fetch(t, url+"&include_thin=true")
-	if status != http.StatusOK {
-		t.Fatalf("opted in: status %d, want 200: %s", status, body)
-	}
-	env := decodeMap(t, body)
-	if got := thinFlag(env); got != true {
-		t.Errorf("flags.thin_market = %v, want true", got)
-	}
-	data := env["data"].(map[string]any)
-	assertEvidence(t, data["substance"], thinAssetID)
 	end, _ := time.Parse(time.RFC3339, data["substance"].(map[string]any)["window_end"].(string))
 	if end.After(at) || at.Sub(end) > time.Hour {
 		t.Errorf("window_end = %v, want the requested instant %v (grain-truncated)", end, at)
@@ -515,35 +513,14 @@ func TestPriceAtIncludeThin(t *testing.T) {
 
 func TestPriceChangesIncludeThin(t *testing.T) {
 	ts := thinServer(t, newChokepointReader(nil, thinAssetID))
-	url := ts.URL + "/v1/price/changes?asset=" + thinAssetID + "&quote=fiat:USD"
-
-	status, body := fetch(t, url)
-	if status != http.StatusNotFound {
-		t.Fatalf("default: status %d, want 404: %s", status, body)
-	}
-	assertEvidence(t, decodeMap(t, body)["substance"], thinAssetID)
-
-	status, body = fetch(t, url+"&include_thin=true")
-	if status != http.StatusOK {
-		t.Fatalf("opted in: status %d, want 200: %s", status, body)
-	}
-	env := decodeMap(t, body)
-	if got := thinFlag(env); got != true {
-		t.Errorf("flags.thin_market = %v, want true", got)
-	}
-	data := env["data"].(map[string]any)
-	assertEvidence(t, data["substance"], thinAssetID)
+	_, data := assertThinReleased(t, ts.URL+"/v1/price/changes?asset="+thinAssetID+"&quote=fiat:USD", thinAssetID)
 	for _, h := range []string{"1h", "24h", "7d", "30d"} {
 		hz := data[h].(map[string]any)
 		if hz["thin_market"] != true || hz["withheld"] != false {
 			t.Errorf("horizon %s = %v, want a thin-served horizon", h, hz)
 		}
 	}
-
-	_, cleared := fetch(t, ts.URL+"/v1/price/changes?asset="+clearedAssetID+"&quote=fiat:USD&include_thin=true")
-	if strings.Contains(string(cleared), "thin_market") || strings.Contains(string(cleared), "substance") {
-		t.Errorf("cleared pair carries a thin marker: %s", cleared)
-	}
+	assertNoThinMarker(t, fetchStatus(t, ts.URL+"/v1/price/changes?asset="+clearedAssetID+"&quote=fiat:USD&include_thin=true", http.StatusOK))
 }
 
 func TestAssetDetailIncludeThin(t *testing.T) {
@@ -588,9 +565,7 @@ func TestAssetDetailIncludeThin(t *testing.T) {
 	}
 
 	_, cleared := fetch(t, ts.URL+"/v1/assets/"+clearedAssetID+"?include_thin=true")
-	if strings.Contains(string(cleared), "thin_market") || strings.Contains(string(cleared), `"substance"`) {
-		t.Errorf("cleared asset carries a thin marker: %s", cleared)
-	}
+	assertNoThinMarker(t, cleared)
 }
 
 func withPegs(t *testing.T, ids ...string) func(*v1.Options) {
@@ -630,21 +605,11 @@ func TestIncludeThinReleasesOwnThinProxyLeg(t *testing.T) {
 	if p["title"] != "Price withheld" || !strings.HasSuffix(p["type"].(string), "/price-withheld") {
 		t.Errorf("default: %v / %v, want the unattributed withholding", p["title"], p["type"])
 	}
-	assertEvidence(t, p["substance"], proxyTokenID)
 
-	status, body = fetch(t, url+"&include_thin=true")
-	if status != http.StatusOK {
-		t.Fatalf("opted in: status %d, want 200: %s", status, body)
-	}
-	env := decodeMap(t, body)
-	data := env["data"].(map[string]any)
+	_, data := assertThinReleased(t, url, proxyTokenID)
 	if data["price"] != "0.98000000000000" {
 		t.Errorf("price = %v, want the peg leg's", data["price"])
 	}
-	if got := thinFlag(env); got != true {
-		t.Errorf("flags.thin_market = %v, want true", got)
-	}
-	assertEvidence(t, data["substance"], proxyTokenID)
 	if q := data["substance"].(map[string]any)["quote"]; q != thinPegID {
 		t.Errorf("substance.quote = %v, want the thin peg %s", q, thinPegID)
 	}
@@ -1016,11 +981,7 @@ func TestIncludeThinCatalogueSurfacesIgnoreIt(t *testing.T) {
 		"/v1/assets?asset_class=crypto&limit=100",
 		"/v1/assets?asset_class=all&limit=100",
 	} {
-		sep := "?"
-		if strings.Contains(path, "?") {
-			sep = "&"
-		}
-		for _, p := range []string{path, path + sep + "include_thin=true"} {
+		for _, p := range []string{path, withThin(path)} {
 			if got := gatedCatalogueRow(t, ts, p).published(); len(got) > 0 {
 				t.Errorf("GET %s published a thin catalogue valuation: %v", p, got)
 			}
@@ -1153,12 +1114,8 @@ func assertOptInIsNoop(t *testing.T, base string, paths ...string) [][]byte {
 	t.Helper()
 	var out [][]byte
 	for _, path := range paths {
-		sep := "?"
-		if strings.Contains(path, "?") {
-			sep = "&"
-		}
 		defStatus, def := fetch(t, base+path)
-		optStatus, opted := fetch(t, base+path+sep+"include_thin=true")
+		optStatus, opted := fetch(t, withThin(base+path))
 		if optStatus != defStatus || !bytes.Equal(stripRequestID(def), stripRequestID(opted)) {
 			t.Errorf("%s: opted-in %d %s, want the default %d %s", path, optStatus, opted, defStatus, def)
 		}
