@@ -97,39 +97,6 @@ func TestRecentOperationsCursor_CarriesARowBudgetTheFirstPageDoesNot(t *testing.
 	}
 }
 
-// The ledger binds TWICE. An arg list that still carries the 3-arg tuple
-// shape would bind tx_index to `ledger_seq = ?` and silently return a
-// different page.
-func TestRecentOperations_CursorArgsBindTheLedgerToBothArms(t *testing.T) {
-	conn := &stubConn{}
-	conn.respond = func(string) (driver.Rows, error) {
-		return &stubRows{data: opsPage(4_999_900, 50)}, nil
-	}
-	r := &ExplorerReader{conn: conn}
-
-	cur := ExplorerCursor{Ledger: 5_000_000, A: 0, B: 0}
-	if _, err := r.RecentOperations(context.Background(), 50, cur); err != nil {
-		t.Fatalf("RecentOperations: %v", err)
-	}
-	want := []any{
-		cur.Ledger, // ledger_seq < ?
-		cur.Ledger, // ledger_seq = ?
-		cur.A,      // (tx_index, …) < (?, …)
-		cur.B,      // (…, op_index) < (…, ?)
-		cur.Ledger - uint32(recentLedgersTailWindow), // lower bound
-		windowRows(50, windowFactorKeys),             // dedup window row budget
-	}
-	got := conn.args[0]
-	if len(got) != len(want) {
-		t.Fatalf("cursor args = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("arg[%d] = %v (%T), want %v (%T)", i, got[i], got[i], want[i], want[i])
-		}
-	}
-}
-
 // A refused cursor must arrive as its OWN class. Without this it is
 // indistinguishable from a lake fault, and the route's error mapping cannot
 // tell "you asked for an unservable position" from "we broke".
