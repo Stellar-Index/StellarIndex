@@ -62,6 +62,7 @@ var subcommandClasses = map[string]subcommandClass{
 	"find-data-gaps":          ro(),
 	"census-backfill":         gate(),
 	"tag-routed-via":          gate(),
+	"tag-signer":              gate(),
 	"tag-tx-index":            gate(),
 	"seed-soroswap-pairs":     gate(),
 	"seed-protocol-contracts": gate(),

@@ -1,7 +1,6 @@
 package ingest
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -170,39 +169,4 @@ func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // lin
 	fmt.Fprintf(os.Stderr, "tag-routed-via: done. %d trades tagged across ledgers %d..%d\n",
 		totalTagged, start, toLedger)
 	return nil
-}
-
-// rangeCursorReader is the slice of the store resumeRangeStart needs.
-type rangeCursorReader interface {
-	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
-}
-
-// resumeRangeStart returns the first ledger a windowed [from, to] pass
-// processes and the checkpoint key it must write. The key carries the range,
-// so a completed later repair can never skip an earlier one.
-func resumeRangeStart(ctx context.Context, store rangeCursorReader, src string, from, to uint32, resume bool) (uint32, string) {
-	sub := opsutil.RangeCursorKey(from, to)
-	if !resume {
-		return from, sub
-	}
-	prior, err := store.GetCursor(ctx, src, sub)
-	switch {
-	case err == nil && prior.LastLedger >= from:
-		fmt.Fprintf(os.Stderr, "%s: resuming at ledger %d (checkpoint last_ledger=%d)\n",
-			src, prior.LastLedger+1, prior.LastLedger)
-		return prior.LastLedger + 1, sub
-	case err != nil && !errors.Is(err, timescale.ErrNotFound):
-		fmt.Fprintf(os.Stderr, "%s: read cursor failed (%v) — starting from -from\n", src, err)
-	}
-	return from, sub
-}
-
-// writeModeVerb renders a count's verb for the run's mode, so a preview's
-// numbers can never be read as applied ones. Shared by the ingest
-// subcommands the fail-closed gate covers.
-func writeModeVerb(write bool, applied, preview string) string {
-	if write {
-		return applied
-	}
-	return preview
 }

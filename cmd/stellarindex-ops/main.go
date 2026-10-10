@@ -146,6 +146,7 @@ var subcommands = map[string]func(args []string) error{
 	"find-data-gaps":          ingest.Run,
 	"census-backfill":         ingest.Run,
 	"tag-routed-via":          ingest.Run,
+	"tag-signer":              ingest.Run,
 	"tag-tx-index":            ingest.Run,
 	"seed-soroswap-pairs":     ingest.Run,
 	"seed-protocol-contracts": ingest.Run,

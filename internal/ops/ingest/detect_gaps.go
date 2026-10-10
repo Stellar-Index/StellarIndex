@@ -200,7 +200,7 @@ func parseRPCCloseTime(raw string) (time.Time, error) {
 // restricted to [timescale.LiveCursorSources] (ledgerstream, projector).
 //
 // ingestion_cursors also holds one-shot job shards (backfill,
-// projected-rebuild, census-backfill, backfill-router, …)
+// projected-rebuild, census-backfill, tag-signer, backfill-router, …)
 // whose last_ledger is a historical range end by design — a FINISHED
 // shard's row never advances again. Without this filter those namespaces
 // would report LAGGING by millions of ledgers on a perfectly healthy

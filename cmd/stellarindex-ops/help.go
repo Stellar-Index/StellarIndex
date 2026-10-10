@@ -625,6 +625,17 @@ Subcommands:
                           (default true) resumes only a run of the same
                           range. The live indexer keeps the trailing 30
                           min tagged going forward.
+  tag-signer -config PATH -from N -to N [-window N] [-ch-addr H:P] [-resume] [-write]
+                          Back-tag trades.signer (the AMM/Soroban swap tx
+                          source account) over a ledger range, reading the
+                          signer from the lake's stellar.transactions
+                          (migration 0150). The recovery half of the live
+                          pipeline.RunSignerTagger sweeper — run it when an
+                          indexer/ClickHouse outage or projector lag exceeded
+                          the sweeper's 30-min lookback. First-wins;
+                          checkpointed per -from/-to pair, and -resume
+                          (default true) resumes only a run of the same
+                          range.
   tag-tx-index -config PATH -from RFC3339 -to RFC3339 [-window DUR] [-ch-addr H:P] [-write]
                           Back-tag trades.tx_index (intra-ledger apply
                           order, migration 0196) for every on-chain trade
