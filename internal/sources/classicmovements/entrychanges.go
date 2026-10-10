@@ -16,29 +16,23 @@ import (
 
 // ─── Entry-changes half: LiquidityPoolDeposit/Withdraw + ────────────
 // ─── the CAP-0038 trustline-revocation auto-liquidation edge case ───
-//
-// ADR-0047 D3: LiquidityPoolDepositResult and LiquidityPoolWithdrawResult
-// are bare result codes, so the amounts exchanged exist only as the pool's
+// ADR-0047 D3: LiquidityPoolDepositResult and LiquidityPoolWithdrawResult are
+// bare result codes, so the amounts exchanged exist only as the pool's
 // ReserveA/ReserveB before vs. after the op in ledger_entry_changes. The
 // CAP-0038 case (a trustline revocation auto-redeeming LP shares into two
-// ClaimableBalanceEntry rows, same op_index) is the same: neither
-// AllowTrust nor SetTrustLineFlags carries the liquidated amounts.
+// ClaimableBalanceEntry rows, same op_index) is the same: neither AllowTrust
+// nor SetTrustLineFlags carries the liquidated amounts.
 //
-// This is a SEPARATE surface from decode.go: dispatcher.OpContext has no
-// room for a correlated change group, and dispatcher.LedgerEntryChangeDecoder
-// delivers one change at a time, not a before/after pair per op. The
-// functions below are plain calls made by classic-movements-backfill after
-// it correlates clickhouse.StreamEntryChanges by (ledger, tx_hash, op_index).
+// This is a SEPARATE surface from decode.go: dispatcher.OpContext has no room
+// for a correlated change group. classic-movements-backfill calls the functions
+// below after correlating clickhouse.StreamEntryChanges by
+// (ledger, tx_hash, op_index).
 //
 // # Ledger_entry_changes fidelity: BOTH available and unavailable eras
 //
-// Per-op fidelity starts at ~ledger 61,996,000, past the P23 boundary
-// (58,762,517) the backfill clamps to; ch-backfill over [38115806, 61999000]
-// filled the gap. The functions stay correct for both eras: absent fidelity
-// yields ErrEntryChangesUnavailable (or "no CAP-0038 liquidation"), counted
-// by the caller — NEVER a guessed amount.
-//
-// An empty change set cannot tell "fidelity absent" from "no changes".
+// Per-op fidelity starts at ~ledger 61,996,000, past the P23 boundary the
+// backfill clamps to. Absent fidelity yields ErrEntryChangesUnavailable (or
+// "no CAP-0038 liquidation"), counted by the caller, NEVER a guessed amount. An empty change set cannot tell "fidelity absent" from "no changes".
 // Deposit/Withdraw always mutate the pool, so empty means unavailable.
 // AllowTrust/SetTrustLineFlags usually liquidate nothing, so the caller MUST
 // run clickhouse.CountOpScopedEntryChanges for the window before trusting an
@@ -344,35 +338,27 @@ func liquidityPoolConstantProduct(e *xdr.LedgerEntry) (xdr.LiquidityPoolEntryCon
 }
 
 // DecodeCAP0038Revocation checks whether a successful AllowTrust /
-// SetTrustLineFlags op triggered CAP-0038's automatic
-// liquidity-pool-share liquidation side effect, detected PURELY from
-// correlated entry changes (created claimable_balance rows at this
-// op's index — the op body alone can't tell us whether the targeted
-// account actually held a matching LP-share trustline at the time).
-// Returns ZERO movements for the overwhelmingly common case (no
-// liquidation) — this is NOT an error and NOT
-// ErrEntryChangesUnavailable, unlike LiquidityPoolDeposit/Withdraw:
-// an empty changes group here is the EXPECTED steady state, so
-// callers must run their own window-level fidelity probe
-// (clickhouse.CountOpScopedEntryChanges) before trusting "zero
-// movements" as "definitely no liquidation happened" rather than
-// "can't tell, fidelity is absent" — see this file's package-level
-// doc comment.
+// SetTrustLineFlags op triggered CAP-0038's automatic liquidity-pool-share
+// liquidation, detected PURELY from correlated entry changes (created
+// claimable_balance rows at this op's index; the op body can't tell whether the
+// account held a matching LP-share trustline). Returns ZERO movements in the
+// common no-liquidation case: not an error and NOT ErrEntryChangesUnavailable,
+// unlike LiquidityPoolDeposit/Withdraw. An empty group is the EXPECTED steady
+// state, so callers must run the window-level fidelity probe
+// (clickhouse.CountOpScopedEntryChanges) before reading "zero movements" as
+// "no liquidation" (see this file's package-level comment).
 //
-// Emits TWO rows per created ClaimableBalanceEntry (one per pool asset,
-// so four for a real two-asset CAP-0038 event): a
-// movement_kind='liquidity_pool_withdraw' row (functionally a forced LP
-// withdrawal, routed through escrow) at leg_index 0..n-1, and a
-// 'claimable_balance_create' row for the same balance at leg_index
-// n..2n-1 so a later claim/clawback resolves. Both carry
-// revocation=true, trigger_op_type and balance_id so a reader can
-// distinguish them from voluntary withdrawals and explicit creates.
+// Emits TWO rows per created ClaimableBalanceEntry (one per pool asset, four
+// for a real two-asset event): a movement_kind='liquidity_pool_withdraw' row (a
+// forced LP withdrawal routed through escrow) at leg_index 0..n-1, and a
+// 'claimable_balance_create' row for the same balance at leg_index n..2n-1 so a
+// later claim/clawback resolves. Both carry revocation=true, trigger_op_type
+// and balance_id to distinguish them from voluntary withdrawals and creates.
 //
-// FromAddress is the Trustor (the account whose position was
-// liquidated) — NOT ctx.TxSource (typically the issuer submitting
-// the revocation, a different account). ToAddress is left empty:
-// funds land in a claimable balance, not directly deliverable, same
-// convention as claimable_balance_create's escrow leg.
+// FromAddress is the Trustor (the liquidated account), NOT ctx.TxSource
+// (typically the issuer submitting the revocation). ToAddress is left empty:
+// funds land in a claimable balance, same convention as
+// claimable_balance_create's escrow leg.
 func DecodeCAP0038Revocation(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, op xdr.Operation, result xdr.OperationResult, changes []EntryChangeXDR) ([]Movement, error) {
 	if !opSucceeded(result) {
 		return nil, nil
@@ -390,34 +376,27 @@ func DecodeCAP0038Revocation(ledger uint32, closedAt time.Time, txHash string, o
 		return nil, nil // the common case: no CAP-0038 liquidation triggered here
 	}
 
-	// TWO movements per liquidated asset, because two things genuinely
-	// happened on-chain: the trustor exited the pool, AND a claimable
-	// balance was created to hold the proceeds.
+	// TWO movements per liquidated asset, because two things happened on-chain:
+	// the trustor exited the pool, AND a claimable balance was created to hold the
+	// proceeds.
 	//
-	// Emitting only the pool-exit leg (the original shape) made the
-	// created balance UNRESOLVABLE, and not for one reason but three:
-	// the movement was tagged KindLiquidityPoolWithdraw
-	// so the resolver's `Kind == KindClaimableBalanceCreate` index gate
-	// skipped it; the id lived under `claimable_balance_id` while every
-	// other site — and the ClickHouse lookup's external table — keys on
-	// `balance_id`; and cbLookupCreatesQuery filters
-	// `movement_kind = 'claimable_balance_create'`, structurally
-	// excluding it. A later legitimate claim or clawback against that
-	// balance therefore resolved to nothing and was dropped, silently and
-	// permanently, even though the asset/amount/id were all known here.
+	// A pool-exit leg alone leaves the created balance UNRESOLVABLE: it is tagged
+	// KindLiquidityPoolWithdraw, so the resolver's
+	// `Kind == KindClaimableBalanceCreate` index gate skips it; the id would live
+	// under `claimable_balance_id` while every other site and the ClickHouse
+	// lookup's external table key on `balance_id`; and cbLookupCreatesQuery filters
+	// `movement_kind = 'claimable_balance_create'`. A later claim or clawback
+	// would then resolve to nothing and be dropped silently and permanently.
 	//
-	// Fixing it by broadening the ClickHouse predicate was the obvious
-	// route and is the wrong one: that `movement_kind` filter is a
-	// LowCardinality PREWHERE doing real work — it scopes the semijoin to
-	// the cb-create rows (~2.5 min over 695M rows at 4 threads, per its
-	// own measurement). Widening it to include every liquidity-pool
-	// withdraw would regress the hot path to fix a rare case. Emitting the
-	// row that actually describes reality costs nothing on the read side
-	// and needs no query change at all.
+	// Broadening the ClickHouse predicate is the wrong fix: that `movement_kind`
+	// filter is a LowCardinality PREWHERE scoping the semijoin to cb-create rows
+	// (~2.5 min over 695M rows at 4 threads); including every LP withdraw would
+	// regress the hot path. Emitting the row that describes reality needs no query
+	// change.
 	//
-	// LegIndex: the pool-exit legs take [0, len(created)) and the create
-	// legs follow above that range rather than interleaved. Both are numbered
-	// in balance-id order (createdClaimableBalances), never change order.
+	// LegIndex: pool-exit legs take [0, len(created)) and the create legs follow
+	// above that range. Both are numbered in balance-id order
+	// (createdClaimableBalances), never change order.
 	movements := make([]Movement, 0, 2*len(created))
 	for i, cb := range created {
 		movements = append(movements, Movement{

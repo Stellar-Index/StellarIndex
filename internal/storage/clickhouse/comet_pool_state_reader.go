@@ -16,29 +16,26 @@ import (
 // from the protocol's public Rust source (CometDEX/comet-contracts-v1,
 // c_pool/storage_types.rs + metadata.rs).
 //
-// DataKey is a #[contracttype] enum of unit variants, so each variant
-// encodes as ScvVec[ScvSymbol("<Variant>")].
-// DataKey::AllRecordData → Map<Address, Record>, PERSISTENT, the per-token
-// balance records this reader consumes:
+// DataKey is a #[contracttype] enum of unit variants, so each variant encodes
+// as ScvVec[ScvSymbol("<Variant>")]. DataKey::AllRecordData is
+// Map<Address, Record>, PERSISTENT, the per-token balance records this reader
+// consumes:
 //
 //	Record { balance: i128, weight: i128, scalar: i128, index: u32 }
 //
-// Earlier WASM generations carried a different Record field set; decode is
-// by field name, so only the `balance` i128 is required.
-//
-// The reader probes BOTH plausible key encodings (Vec[Symbol] per the spec,
-// bare Symbol defensively) because upgrades may change it, and decodes
-// whichever the lake holds. Operator check (HTTP port 8123):
+// Earlier WASM generations carried a different Record field set; decode is by
+// field name, so only the `balance` i128 is required. The reader probes BOTH plausible key encodings (Vec[Symbol] per the spec, bare
+// Symbol defensively) because upgrades may change it. Operator check (HTTP
+// port 8123):
 //
 //	SELECT key_xdr, ledger_seq, entry_xdr != '' AS present
 //	FROM stellar.ledger_entries_current FINAL
 //	WHERE entry_type = 'contract_data'
 //	  AND key_xdr IN (<output of cometPoolKeys for
-//	                   comet.MainnetBackstopPool — both candidate
-//	                   encodings>)
+//	                   comet.MainnetBackstopPool, both encodings>)
 //
-// Exactly one row is expected. A mismatch shows up as the pool landing in
-// the undecodable list — fail-to-absent, never a misread number.
+// Exactly one row is expected. A mismatch shows up as the pool landing in the
+// undecodable list: fail-to-absent, never a misread number.
 const (
 	cometRecordDataKeySymbol = "AllRecordData"
 	cometFieldBalance        = "balance"

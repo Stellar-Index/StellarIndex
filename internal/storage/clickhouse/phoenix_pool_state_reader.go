@@ -13,8 +13,8 @@ import (
 )
 
 // Phoenix pool PERSISTENT-storage layout, from the protocol's Rust source
-// (phoenix-contracts, contracts/pool/src/storage.rs). DataKey is a #[repr(u32)] enum, so
-// storage keys are plain ScvU32 values (as in Soroswap pairs):
+// (phoenix-contracts, contracts/pool/src/storage.rs). DataKey is a #[repr(u32)]
+// enum, so storage keys are plain ScvU32 values (as in Soroswap pairs):
 //
 //	U32(0) = TotalShares (i128)
 //	U32(1) = ReserveA    (i128)   <- read
@@ -22,21 +22,20 @@ import (
 //	U32(3) = Admin
 //	U32(4) = Initialized
 //
-// plus `CONFIG` -> a Config struct (ScvMap keyed by field-name Symbols) whose `token_a` /
-// `token_b` Address fields carry the token identities (read). All are PERSISTENT standalone
-// contract_data entries under the pool contract, not the instance entry.
+// plus `CONFIG` -> a Config struct (ScvMap keyed by field-name Symbols) whose
+// `token_a` / `token_b` Address fields carry the token identities (read). All
+// are PERSISTENT contract_data entries, not the instance entry.
 //
-// Pools upgrade in place (phoenix.MainnetPools vs phoenix.MainnetMapPools are two WASM
-// generations), so re-check after any upgrade (HTTP port 8123):
+// Pools upgrade in place (phoenix.MainnetPools vs phoenix.MainnetMapPools are
+// two WASM generations), so re-check after any upgrade (HTTP port 8123):
 //
 //	SELECT key_xdr, ledger_seq, base64Decode(entry_xdr) IS NOT NULL
 //	FROM stellar.ledger_entries_current FINAL
 //	WHERE entry_type = 'contract_data'
 //	  AND key_xdr IN (<output of phoenixPoolKeys for one curated pool>)
 //
-// Expect three rows (two ScvU32-keyed i128s + the CONFIG map), then cross-check the reserves
-// against the latest phoenix_trades post-state. A mismatch surfaces as undecodable pools:
-// fail-to-absent, never a misread number.
+// Expect three rows, then cross-check reserves against the latest phoenix_trades
+// post-state. A mismatch surfaces as undecodable pools: fail-to-absent.
 const (
 	phoenixKeyReserveA = 1 // DataKey::ReserveA
 	phoenixKeyReserveB = 2 // DataKey::ReserveB

@@ -21,40 +21,29 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── `usd-volume-restamp -chunks` — the chunk-by-chunk walk ─────────────
-//
-// The TIER-AGNOSTIC driver: it owns the chunks, the compression policy, the
-// run lock and the free-space guard; rows are the tier's business, reached
-// through [chunkRestampTier]. Every tier writes into COMPRESSED chunks, so all
-// share this walk.
+// ─── `usd-volume-restamp -chunks`: the chunk-by-chunk walk ─────────────
+// The TIER-AGNOSTIC driver: it owns the chunks, compression policy, run lock
+// and free-space guard; rows are the tier's business ([chunkRestampTier]).
 //
 // A DML into a compressed chunk decompresses it wholesale (one 2,000-row
 // UPDATE took over 14 minutes and committed nothing), so per chunk, oldest
-// first, the walk decompresses, runs the SAME restamp restricted to that
-// chunk in -chunk-batch transactions, re-compresses to the listed state, and
-// heartbeats for run-heavy-job.sh. The statement's own `ts` bound keeps the
-// other compressed chunks out of the result relations.
-//
-// Guards:
-//   - ONE RUN AT A TIME: a -write run holds a session advisory lock on a
-//     dedicated connection, beyond run-heavy-job.sh's per-name lock.
+// first, the walk decompresses, runs the SAME restamp restricted to that chunk
+// in -chunk-batch transactions, re-compresses, and heartbeats. Guards:
+//   - ONE RUN AT A TIME: a -write run holds a session advisory lock.
 //   - THE COMPRESSION POLICY IS PAUSED for a -write run, or it re-compresses
 //     the open chunk between batches and the walk crawls silently. It is
-//     re-enabled on every exit path, its SQL printed first for a SIGKILL; an
-//     already-paused policy needs -resume-paused-policy.
-//   - A POLICY RUN IN FLIGHT IS WAITED OUT, then the chunks are re-listed.
-//   - THE CHUNK IS CHECKED BEFORE EVERY BATCH: a by-hand compress_chunk STOPS
-//     the walk with the RESUME line instead of crawling.
-//   - DRY RUN is the default and decompresses or pauses nothing.
-//   - PRE-FLIGHT: free space must exceed 2 x the largest chunk's
-//     uncompressed size (up to 160 GB), rechecked before every decompress;
-//     a non-loopback DSN needs -min-free-bytes, since statfs is local.
-//   - LIVE-ADJACENT chunks are refused without -allow-live-adjacent: they are
-//     uncompressed on purpose and the in-place walk is the tool there.
-//   - A FAILED CHUNK IS RE-COMPRESSED before a non-zero exit, and the by-hand
-//     repair is printed first, since either statement can outlive SIGKILL.
-//   - RESUMABLE: a read-only probe skips a chunk with nothing to change;
-//     -generation keeps the whole span at ONE generation.
+//     re-enabled on every exit path, its SQL printed first for a SIGKILL;
+//     an already-paused policy needs -resume-paused-policy.
+//   - A by-hand compress_chunk STOPS the walk with the RESUME line (the chunk
+//     is checked before every batch) instead of crawling.
+//   - PRE-FLIGHT: free space must exceed 2 x the largest chunk's uncompressed
+//     size (up to 160 GB), rechecked before every decompress; a remote DSN
+//     needs -min-free-bytes (statfs is local).
+//   - LIVE-ADJACENT chunks are refused without -allow-live-adjacent (they are
+//     uncompressed on purpose; use the in-place walk).
+//   - A FAILED CHUNK IS RE-COMPRESSED before a non-zero exit, repair printed
+//     first (either can outlive SIGKILL). Resumable via a read-only probe;
+//     -generation keeps the span at ONE generation.
 
 // chunkRestampStore is the DRIVER's seam: the chunk, policy and lock
 // primitives, and nothing that knows a tier. *timescale.Store satisfies

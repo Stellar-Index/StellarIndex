@@ -399,30 +399,27 @@ func ResolveStreamBucket(cfg config.Config, override string, from, to uint32) (s
 
 // NewBoundedLedgerStreamConfig returns the ledgerstream.Config that ops
 // subcommands should ALWAYS use when their `-to` may equal the live
-// galexie-archive tip. Always opts into TolerateTrailingMissing; never
-// override that downstream: without it a walk reaching the tip fails on
-// the trailing-edge missing file.
+// galexie-archive tip. It always opts into TolerateTrailingMissing; never
+// override that downstream, or a walk reaching the tip fails on the
+// trailing-edge missing file.
 //
-// parallel is the number of concurrent ledgerstream.Stream walkers the
-// CALLER will run against copies of the returned Config; single-walker
-// callers pass 1.
+// parallel is the number of concurrent ledgerstream.Stream walkers the CALLER
+// will run against copies of the Config; single-walker callers pass 1.
 //
 // # Why this sets an explicit Buffered override
 //
 // Left nil, each Stream builds its own SDK buffered backend with a
-// 10000-ledger queue, so N parallel walkers multiply that memory by N: on
-// r1 `ch-backfill -parallel 2` and `-parallel 4` OOM-killed the 20G ops cap
-// within ~1000 ledgers. Walkers are IO-latency-bound, so parallelism is the
-// right lever once per-walker memory is bounded.
+// 10000-ledger queue, so N parallel walkers multiply that memory by N: on r1
+// `ch-backfill -parallel 2` and `-parallel 4` OOM-killed the 20G ops cap within
+// ~1000 ledgers. Walkers are IO-latency-bound, so parallelism is the right
+// lever once per-walker memory is bounded.
 //
 // boundedWalkerBufferBudget is a TOTAL ledger budget split across the N
-// walkers, floored at boundedWalkerBufferMin so each keeps enough
-// read-ahead to hide MinIO latency. NumWorkers stays under that floor to
-// satisfy the SDK's NumWorkers <= BufferSize invariant; retry settings
-// match the SDK defaults.
-//
-// The indexer's live-tail path (internal/pipeline.LedgerstreamConfig) runs
-// one walker and keeps the SDK's larger default.
+// walkers, floored at boundedWalkerBufferMin so each keeps enough read-ahead to
+// hide MinIO latency. NumWorkers stays under that floor to satisfy the SDK's
+// NumWorkers <= BufferSize invariant. The indexer's live-tail path
+// (internal/pipeline.LedgerstreamConfig) runs one walker and keeps the SDK's
+// larger default.
 func NewBoundedLedgerStreamConfig(cfg config.Config, bucket string, parallel int) ledgerstream.Config {
 	return ledgerstream.Config{
 		DataStore: datastore.DataStoreConfig{

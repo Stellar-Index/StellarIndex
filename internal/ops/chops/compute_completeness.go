@@ -96,31 +96,27 @@ func substrateForGenesis(ctx context.Context, scan substrateScanner, cache map[u
 }
 
 // computeCompleteness is the ADR-0033 Phase 6 computor: it derives the
-// per-source completeness WATERMARK (substrate ∧ recognition ∧
-// projection) and writes it to completeness_snapshots for the API +
-// status page. Operator / cron-driven; compute-once / read-cheap, like
-// the gap detector's source_coverage_snapshots.
+// per-source completeness WATERMARK (substrate ∧ recognition ∧ projection) and
+// writes it to completeness_snapshots for the API and status page.
+// Operator/cron-driven; compute-once, read-cheap.
 //
 // Per-source watermark = substrate continuity + hash chain (Claim 1) ∧
 // projection reconciliation across ALL the source's tables (Claim 2b) ∧
-// recognition for the source's own contracts (Claim 2a). Recognition
-// gaps on a CONTRACT-PINNED source (oracles) cap that source; gaps on
-// contracts no source owns go to a system-wide `recognition` snapshot
-// (topic-based sources can't attribute an unhandled topic to themselves).
+// recognition for the source's own contracts (Claim 2a). Recognition gaps on a
+// CONTRACT-PINNED source (oracles) cap that source; gaps on contracts no source
+// owns go to a system-wide `recognition` snapshot (topic-based sources cannot
+// attribute an unhandled topic to themselves).
 //
-// Projection is bounded to the substrate∧recognition-verified region:
-// no point re-deriving where an earlier claim already failed. Its LOWER
-// bound is derived from the served tier's own data, per target
-// (projectionScopes) — never a hardcoded retention guess — and the range
-// it actually covered is stated in the verdict detail, so `complete=true`
-// is a claim about exactly what was reconciled and nothing more
-// (see targetScope and projectionClaim).
+// Projection is bounded to the substrate∧recognition-verified region. Its
+// LOWER bound is derived from the served tier's own data per target
+// (projectionScopes), never a hardcoded retention guess, and the covered range
+// is stated in the verdict detail so `complete=true` claims exactly what was
+// reconciled (see targetScope and projectionClaim).
 //
 // Exit status reports whether the pass ran, not the verdict: an incomplete
 // verdict alerts via stellarindex_completeness_incomplete. A per-source error
-// does not stop the pass: that source keeps its prior verdict, every other
-// source is still evaluated, and the run exits non-zero naming each failure
-// (evaluateEachSource).
+// keeps that source's prior verdict, still evaluates the rest, and exits
+// non-zero naming each failure (evaluateEachSource).
 func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo // linear computor; one block per claim.
 	fs, gate := opsutil.NewMutatingFlagSet("compute-completeness")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -1486,35 +1482,30 @@ func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, prio
 	return priorProj, priorSub, priorRec, priorWatermark
 }
 
-// projectionClaim gates what a run is ALLOWED to publish on the served
-// (`complete`) axis, given the range it ACTUALLY reconciled — so a verdict
-// cannot silently regress from complete=false to complete=true.
+// projectionClaim gates what a run may publish on the served (`complete`)
+// axis, given the range it ACTUALLY reconciled, so a verdict cannot silently
+// regress from complete=false to complete=true.
 //
-// The risk is in the hot path: completeness-incremental.sh
-// passes `-from = min(watermark)`, but watermark_ledger is the LAKE
-// (substrate∧recognition) axis, which sits AT tip whenever the lake is clean.
-// So an incremental run reconciles only the newest ledgers, never re-sees
-// the projection mismatch that pinned `complete=false`, and without this gate
-// writes complete=true — a verdict improving with no evidence, which ADR-0033 forbids
-// (complete through W requires every claim to hold contiguously to W).
+// The risk: completeness-incremental.sh passes `-from = min(watermark)`, but
+// watermark_ledger is the lake axis, AT tip when the lake is clean. An
+// incremental run then never re-sees the mismatch that pinned `complete=false`
+// and would write complete=true with no evidence (ADR-0033 forbids it).
 //
 // Rules, fail-closed, in order:
-//  1. A mismatch found by THIS run always fails — nothing can launder it.
-//  2. A run whose reconcile started at or below servedFrom covered the WHOLE
+//  1. A mismatch found by THIS run always fails.
+//  2. A run whose reconcile started at or below servedFrom covered the whole
 //     served range: self-evidencing, may publish true. This is the only way a
-//     failing verdict is ever cleared — deliberately, by a full re-verify.
-//  3. A partial (incremental) run may CARRY FORWARD a prior clean verdict for
-//     the prefix it skipped, but only if that prior verdict is contiguous with
-//     this run's window (prior.tip+1 >= runFrom) and reached down to this
-//     run's servedFrom (prior.verifiedFrom <= servedFrom), and every present
-//     target has a proven floor (unprovenCarryTargets). Confirm, never upgrade.
-//  4. Anything else — no prior verdict, a FAILING prior verdict, or a stale
-//     prior that leaves an unverified band — publishes false.
+//     failing verdict is cleared.
+//  3. A partial run may CARRY FORWARD a prior clean verdict for the prefix it
+//     skipped, only if the prior is contiguous with this window
+//     (prior.tip+1 >= runFrom), reached down to servedFrom
+//     (prior.verifiedFrom <= servedFrom), and every present target has a
+//     proven floor (unprovenCarryTargets). Confirm, never upgrade.
+//  4. Anything else (no prior, a failing prior, a stale prior leaving an
+//     unverified band) publishes false.
 //
-// The returned detail always states the range actually verified, so
-// `complete=true` is never read as a genesis-to-tip claim: the served tier's
-// floor differs per source, and the genesis claim is the separate
-// lake_complete axis.
+// The detail states the range actually verified: `complete=true` is not
+// genesis-to-tip (that is the lake_complete axis).
 func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail string, prior priorProjection, scope claimScope) (bool, string) {
 	if !runClean {
 		return false, "projection: " + runDetail

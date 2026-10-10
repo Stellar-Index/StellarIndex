@@ -112,24 +112,20 @@ const sponsorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // The walk joins the transaction because stellar.operations has no success gate: it keeps
 // operations of FAILED transactions (extractOps, by design), and an arrangement in a failed
 // transaction never took effect (~10.8% of the archive's sponsorship ops; ungated,
-// revocations_issued was over twice its real value and most ranks were wrong). The sibling cycle
-// gates on an applied effect, but none exists here: under CAP-33 the sponsoring relationship lives
-// only within the transaction and writes no ledger entry, so transactions.successful is the only
-// evidence of application for Begin and End.
+// revocations_issued was over twice its real value). Under CAP-33 the sponsoring relationship
+// writes no ledger entry, so transactions.successful is the only evidence of application for
+// Begin and End.
 // The join is on the full (ledger_seq, tx_index) identity, the transactions table's whole ORDER BY
 // key. Both sides are collapsed explicitly: stellar.transactions is a ReplacingMergeTree whose rows
 // are duplicated in bulk, so an uncollapsed join would multiply each operation by its transaction's
 // row count. The GROUP BY over operation identity absorbs that and HAVING resolves `successful` by
 // argMax over ingested_at, like the projection.
-// Walked because unwalked it is one statement over a 2 TiB archive joined to a larger one: wall
-// time, the dedupe table (one state per sponsorship op in history) and the join build side all grow
-// with the chain. Per window the widest measured peak is 1.68 GiB (gate adds ~67% over ungated)
-// against the 8 GiB budget; the board join (4.09 GiB) is the cycle's ceiling, not this arm. Windows
-// below sponsorship's genesis build nothing and are free.
+// Walked because unwalked it is one statement over a 2 TiB archive joined to a larger one; wall
+// time, the dedupe table and the join build side all grow with the chain. Widest measured peak per
+// window is 1.68 GiB against the 8 GiB budget; the board join (4.09 GiB) is the cycle's ceiling.
 // Per-window grouping is exact: both tables are PARTITION BY intDiv(ledger_seq, 1000000) with
-// ledger_seq leading ORDER BY, so no duplicate group or transaction straddles a window, and the
-// window predicate is a primary-key range on both. It is carried TWICE because a join condition
-// prunes neither side, hence two window binds.
+// ledger_seq leading ORDER BY, so no duplicate group or transaction straddles a window. The window
+// predicate is carried TWICE because a join condition prunes neither side, hence two window binds.
 var sponsorsRollupStatements = []rollupStep{
 	{sql: `TRUNCATE TABLE stellar.account_sponsors_ops`},
 	{walk: true, windowBinds: 2, sql: `INSERT INTO stellar.account_sponsors_ops (lseq, tidx, oidx, otype, src, ctime)

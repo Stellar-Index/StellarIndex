@@ -13,9 +13,9 @@ import (
 )
 
 // operationParticipantRows derives the stellar.operation_participants rows for a
-// single operation — the ONE participant-derivation shared by the live lake
-// extractor (extract.go's extractOps) and the ch-participant-backfill, so the
-// two can never drift (ADR-0038 Phase B account history).
+// single operation: the ONE participant derivation shared by the live lake
+// extractor (extract.go's extractOps) and ch-participant-backfill, so the two
+// cannot drift (ADR-0038 Phase B).
 //
 // It returns one row per NON-source G-account the op body touches, as decoded
 // by xdrjson.ParticipantAccounts (payment / path-payment / account-merge
@@ -27,16 +27,15 @@ import (
 // The op's own source_account is EXCLUDED: it is already the full-history
 // operations.source_account column, and the account-history reader UNIONs the
 // two arms on the invariant that an op is sourced XOR has the account as a
-// non-source participant (explorer_reader.AccountOperations); writing a
-// source row would double-count it.
+// non-source participant (explorer_reader.AccountOperations); a source row
+// would double-count it.
 //
-// Not captured, so live and historical stay consistent: asset ISSUERS and
-// counterparties of op types xdrjson doesn't field-decode yet. Extending
-// either is a live-path change; a re-derive must reproduce live output.
+// Asset ISSUERS and counterparties of op types xdrjson doesn't field-decode yet
+// are not captured, so live and historical stay consistent. Extending either is
+// a live-path change; a re-derive must reproduce live output.
 //
-// A malformed body_xdr returns the decode error; callers soft-skip + count it.
-// Deterministic, deduplicated, sorted output makes a re-derive idempotent
-// against the ReplacingMergeTree.
+// A malformed body_xdr returns the decode error; callers soft-skip and count it.
+// Sorted, deduplicated output makes a re-derive idempotent under the RMT.
 func operationParticipantRows(bodyB64, opSource string, ledger uint32, closeTime time.Time, txHash string, txIndex, opIndex uint32) ([]OperationParticipantRow, error) {
 	accts, err := xdrjson.ParticipantAccounts(bodyB64)
 	if err != nil {

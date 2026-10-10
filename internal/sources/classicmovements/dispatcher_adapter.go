@@ -8,50 +8,30 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Decoder is the OpDecoder for pre-P23 classic-movement
-// reconstruction (ADR-0047 D2). It mirrors sdex.Decoder's shape
-// (SDEX is the established precedent for a classic-op decoder that
-// lives OUTSIDE the projector) but, unlike SDEX, is NEVER registered
-// with the live dispatcher — see the package doc for why. It is
-// wired only into `stellarindex-ops classic-movements-backfill`,
-// which streams clickhouse.ClassicOp values (via StreamClassicOps)
-// and feeds them through Decode as a dispatcher.OpContext, exactly
-// as ch-rebuild's SDEX pass does with clickhouse.SDEXOp.
+// Decoder is the OpDecoder for pre-P23 classic-movement reconstruction
+// (ADR-0047 D2). It mirrors sdex.Decoder's shape but is NEVER registered with
+// the live dispatcher (see the package doc). It is wired only into
+// `stellarindex-ops classic-movements-backfill`, which feeds clickhouse.ClassicOp
+// values through Decode as a dispatcher.OpContext, as ch-rebuild's SDEX pass does.
 //
-// Stateful since Phase 3: claiming or clawing back a
-// CreateClaimableBalance needs that create's Asset/Amount, which
-// neither op carries directly (only the BalanceId — the inventory's
-// "b+own-index" path). balances is an in-RUN index (populated as
-// this Decoder's own Decode calls observe 'claimable_balance_create'
-// movements — see decodeOp's caller in Decode below) that resolves
-// same-run claims/clawbacks for free; pending collects the ones this
-// index can't resolve (create out of this run's range, or landed in
-// a not-yet-visited window — see doc.go's ordering caveat) for the
-// caller to resolve via a second-pass ClickHouse lookup (ADR-0048 D2) — see
+// Stateful since Phase 3: claiming or clawing back a CreateClaimableBalance
+// needs that create's Asset/Amount, which neither op carries (only the
+// BalanceId). balances is an in-RUN index, populated as Decode observes
+// 'claimable_balance_create' movements, that resolves same-run claims for free;
+// pending collects those it can't resolve (create outside this run's range or
+// in a not-yet-visited window; see doc.go's ordering caveat) for the caller's
+// second-pass ClickHouse lookup (ADR-0048 D2), via
 // TakePendingClaimableBalances / ResolvePendingClaimableBalance.
 //
-// The in-memory index is BOUNDED at maxCBIndexEntries (FIFO eviction,
-// oldest create evicted first) — a genesis-to-P23 run in a single
-// invocation would otherwise accumulate on the order of the full
-// CreateClaimableBalance row count (~1.5B, sampled) before ever
-// being claimed, which is what drove an earlier OOM. Eviction is safe
-// because a miss here is not data loss: ResolveBalance failing just
-// means the pending entry falls through to
-// clickhouse.FindClaimableBalanceCreates, classic-movements-backfill's
-// ClickHouse-backed second pass (batched across a whole window's
-// misses, not one query per ref), which resolves any create this run
-// has itself already written — the same fallback path used for
-// creates outside this run's range entirely. Operators backfilling
-// Phase 3 should still chunk `-from`/`-to` into multi-million-ledger
-// invocations (same heavy-job discipline as every other backfill in
-// this repo): the bound protects against OOM, but a smaller working
-// set keeps more claims resolving from the free in-memory path
-// instead of paying a ClickHouse round trip.
+// The index is BOUNDED at maxCBIndexEntries (FIFO, oldest create evicted
+// first): a genesis-to-P23 run in one invocation would otherwise accumulate
+// about the full CreateClaimableBalance row count (~1.5B, sampled) before any
+// claim, which drove an earlier OOM. Eviction is safe: a miss falls through to
+// clickhouse.FindClaimableBalanceCreates, the backfill's batched second pass.
+// Still chunk `-from`/`-to`: a smaller working set keeps more claims on the
+// free in-memory path.
 //
-// Not safe for concurrent Decode calls — sequential caller only,
-// matching dispatcher.Dispatcher's own "not safe for concurrent
-// ProcessLedger" contract. classic-movements-backfill's loop is
-// single-threaded, so this is never an issue in practice.
+// Not safe for concurrent Decode calls (as dispatcher.Dispatcher).
 type Decoder struct {
 	balances map[string]claimableBalanceInfo
 	// balanceOrder is a fixed-size ring buffer (len ==
