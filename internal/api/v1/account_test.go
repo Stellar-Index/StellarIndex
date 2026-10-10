@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -123,26 +125,122 @@ func newAccountTestServer(t *testing.T, subject auth.Subject, store v1.AccountSt
 }
 
 // TestAccountMe_Unauthenticated covers the 401 path. /me is
-// meaningless without a credential; an anonymous request must not
-// receive a default echo back.
-func TestAccountMe_Unauthenticated(t *testing.T) {
-	ts := newAccountTestServer(t, auth.Subject{}, nil)
-	resp, err := http.Get(ts.URL + "/v1/account/me")
+
+// accountDo sends one request to ts; an empty body sends none.
+func accountDo(t *testing.T, ts *httptest.Server, method, path, body string) *http.Response {
+	t.Helper()
+	var rd io.Reader
+	if body != "" {
+		rd = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, ts.URL+path, rd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", resp.StatusCode)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
 	}
-	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/problem+json") {
-		t.Errorf("content-type = %q, want problem+json", ct)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}
+
+// decodeData decodes the {"data": ...} wrapper of a response into T.
+func decodeData[T any](t *testing.T, resp *http.Response, wantStatus int) T {
+	t.Helper()
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, wantStatus)
+	}
+	var wrapper struct {
+		Data T `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return wrapper.Data
+}
+
+// An anonymous request is refused before any handler or store work, with a
+// problem+json body rather than a default echo.
+func TestAccount_Unauthenticated(t *testing.T) {
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodGet, "/v1/account/me", ""},
+		{http.MethodGet, "/v1/account/usage", ""},
+		{http.MethodGet, "/v1/account/keys", ""},
+		{http.MethodPost, "/v1/account/keys", `{"label":"x"}`},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			store := &fakeAccountStore{}
+			ts := newAccountTestServer(t, auth.Subject{}, store)
+			resp := accountDo(t, ts, tc.method, tc.path, tc.body)
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("status = %d, want 401", resp.StatusCode)
+			}
+			if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/problem+json") {
+				t.Errorf("content-type = %q, want problem+json", ct)
+			}
+			if store.calls != 0 || store.listCalls != 0 {
+				t.Errorf("store touched on 401: %d creates, %d lists", store.calls, store.listCalls)
+			}
+		})
 	}
 }
 
-// TestAccountMe_Authenticated returns the caller's Account info.
-// Field-level assertions guard the wire shape against a future
-// rename that would silently break clients.
+// Authenticated key routes that must fail with a specific status. A nil
+// store models the binary starting without Redis; validation failures must
+// not reach the store, and no failure may surface a plaintext-shaped string.
+func TestAccountKeys_ErrorStatuses(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		store     *fakeAccountStore // nil: no store wired
+		method    string
+		body      string
+		want      int
+		wantCalls int
+	}{
+		{"create without a store", nil, http.MethodPost, `{"label":"x"}`, http.StatusServiceUnavailable, 0},
+		{"create with an empty body", &fakeAccountStore{}, http.MethodPost, "", http.StatusBadRequest, 0},
+		{"create with an empty object", &fakeAccountStore{}, http.MethodPost, "{}", http.StatusBadRequest, 0},
+		{"create with an empty label", &fakeAccountStore{}, http.MethodPost, `{"label":""}`, http.StatusBadRequest, 0},
+		{
+			"create with a 129-char label", &fakeAccountStore{}, http.MethodPost,
+			`{"label":"` + strings.Repeat("a", 129) + `"}`, http.StatusBadRequest, 0,
+		},
+		{"create with malformed JSON", &fakeAccountStore{}, http.MethodPost, "{not-json", http.StatusBadRequest, 0},
+		{
+			"create when the store fails", &fakeAccountStore{err: errors.New("redis down")},
+			http.MethodPost, `{"label":"x"}`, http.StatusInternalServerError, 1,
+		},
+		{"list without a store", nil, http.MethodGet, "", http.StatusServiceUnavailable, 0},
+		{
+			"list when the store fails", &fakeAccountStore{listErr: errors.New("redis blip")},
+			http.MethodGet, "", http.StatusInternalServerError, 0,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var store v1.AccountStore
+			if tc.store != nil {
+				store = tc.store
+			}
+			ts := newAccountTestServer(t, auth.Subject{Identifier: "owner-42", Tier: auth.TierAPIKey}, store)
+			resp := accountDo(t, ts, tc.method, "/v1/account/keys", tc.body)
+			if resp.StatusCode != tc.want {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+			raw, _ := io.ReadAll(resp.Body)
+			if strings.Contains(string(raw), "sip_") {
+				t.Error("response body contains a plaintext-shaped string")
+			}
+			if tc.store != nil && tc.store.calls != tc.wantCalls {
+				t.Errorf("Create called %d times, want %d", tc.store.calls, tc.wantCalls)
+			}
+		})
+	}
+}
+
+// Field-level assertions guard the /me wire shape against a rename that would
+// silently break clients.
 func TestAccountMe_Authenticated(t *testing.T) {
 	now := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	ts := newAccountTestServer(t, auth.Subject{
@@ -154,43 +252,18 @@ func TestAccountMe_Authenticated(t *testing.T) {
 		CreatedAt:       now,
 	}, nil)
 
-	resp, err := http.Get(ts.URL + "/v1/account/me")
-	if err != nil {
-		t.Fatal(err)
+	got := decodeData[v1.Account](t, accountDo(t, ts, http.MethodGet, "/v1/account/me", ""), http.StatusOK)
+	if got.KeyID != "kid_abc123" || got.Label != "ci-bot" || got.Tier != "apikey" || got.RateLimitPerMin != 600 {
+		t.Errorf("account = %+v, want kid_abc123 / ci-bot / apikey / 600", got)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.Account `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatal(err)
-	}
-	if env.Data.KeyID != "kid_abc123" {
-		t.Errorf("KeyID = %q", env.Data.KeyID)
-	}
-	if env.Data.Label != "ci-bot" {
-		t.Errorf("Label = %q, want ci-bot", env.Data.Label)
-	}
-	if env.Data.Tier != "apikey" {
-		t.Errorf("Tier = %q", env.Data.Tier)
-	}
-	if env.Data.RateLimitPerMin != 600 {
-		t.Errorf("RateLimitPerMin = %d", env.Data.RateLimitPerMin)
-	}
-	if !env.Data.CreatedAt.Time().Equal(now) {
-		t.Errorf("CreatedAt = %v", env.Data.CreatedAt)
+	if !got.CreatedAt.Time().Equal(now) {
+		t.Errorf("CreatedAt = %v", got.CreatedAt)
 	}
 }
 
-// TestAccountMe_SessionEffectiveLimits — a session caller's
-// /v1/account/me serves what auth enforces on a default-minted key,
-// derived from the account through platform's cascade — for a partner
+// A session caller's /v1/account/me serves what auth enforces on a
+// default-minted key, derived through platform's cascade: for a partner
 // comped to 5,000/min that is 5,000, never the 100,000 tier ceiling.
-// cmd/stellarindex-api's sessionPeekerAdapter test pins the same
-// derivation on the production adapter.
 func TestAccountMe_SessionEffectiveLimits(t *testing.T) {
 	acct := platform.Account{
 		Tier:                        platform.TierPartner,
@@ -211,76 +284,29 @@ func TestAccountMe_SessionEffectiveLimits(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
-	resp, err := http.Get(ts.URL + "/v1/account/me")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.Account `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatal(err)
-	}
-	if env.Data.AccountInfo == nil {
+	got := decodeData[v1.Account](t, accountDo(t, ts, http.MethodGet, "/v1/account/me", ""), http.StatusOK)
+	if got.AccountInfo == nil {
 		t.Fatal("AccountInfo is nil")
 	}
-	if got := env.Data.AccountInfo.RateLimitPerMin; got != 5000 {
-		t.Errorf("AccountInfo.RateLimitPerMin = %d, want 5000 (the comped override auth enforces; 100000 is the partner tier ceiling)", got)
+	if got.AccountInfo.RateLimitPerMin != 5000 {
+		t.Errorf("AccountInfo.RateLimitPerMin = %d, want 5000 (the comped override; 100000 is the tier ceiling)", got.AccountInfo.RateLimitPerMin)
 	}
-	if got := env.Data.AccountInfo.MonthlyRequestQuota; got != 200_000 {
-		t.Errorf("AccountInfo.MonthlyRequestQuota = %d, want 200000 (the quota override a default key inherits)", got)
+	if got.AccountInfo.MonthlyRequestQuota != 200_000 {
+		t.Errorf("AccountInfo.MonthlyRequestQuota = %d, want 200000", got.AccountInfo.MonthlyRequestQuota)
 	}
 }
 
-// TestAccountUsage_EmptyList — the counter store is not yet wired,
-// so the handler returns an empty UsageRow array. The wire shape
-// is locked: clients can integrate today and continue working when
-// real counters land.
+// The counter store is not wired, so usage is an empty array: the wire shape
+// is locked ahead of real counters.
 func TestAccountUsage_EmptyList(t *testing.T) {
-	ts := newAccountTestServer(t, auth.Subject{
-		Identifier: "owner-9",
-		Tier:       auth.TierAPIKey,
-	}, nil)
-	resp, err := http.Get(ts.URL + "/v1/account/usage")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var env struct {
-		Data []v1.UsageRow `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatal(err)
-	}
-	if len(env.Data) != 0 {
-		t.Errorf("data should be empty array, got %d entries", len(env.Data))
+	ts := newAccountTestServer(t, auth.Subject{Identifier: "owner-9", Tier: auth.TierAPIKey}, nil)
+	if rows := getUsageRows(t, ts); len(rows) != 0 {
+		t.Errorf("data should be empty array, got %d entries", len(rows))
 	}
 }
 
-// TestAccountUsage_Unauthenticated — same 401 contract as /me.
-func TestAccountUsage_Unauthenticated(t *testing.T) {
-	ts := newAccountTestServer(t, auth.Subject{}, nil)
-	resp, err := http.Get(ts.URL + "/v1/account/usage")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", resp.StatusCode)
-	}
-}
-
-// TestAccountKeysCreate_Happy returns 201 + the plaintext + key_id.
-// The fake store records the inbound CreateAPIKeyRequest so the
-// handler's identifier-inheritance + tier-inheritance contract is
-// exercised end-to-end.
+// A mint inherits the caller's identifier, tier and rate limit, and returns
+// the plaintext once.
 func TestAccountKeysCreate_Happy(t *testing.T) {
 	store := &fakeAccountStore{
 		rec: auth.APIKeyRecord{
@@ -296,86 +322,56 @@ func TestAccountKeysCreate_Happy(t *testing.T) {
 		RateLimitPerMin: 600,
 	}, store)
 
-	body := strings.NewReader(`{"label":"ci-bot-2"}`)
-	resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json", body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.KeyCreated `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatal(err)
-	}
-	if env.Data.Plaintext != "sip_freshly_minted" {
-		t.Errorf("plaintext not echoed: %q", env.Data.Plaintext)
-	}
-	if env.Data.KeyID != "kid_new" {
-		t.Errorf("KeyID = %q", env.Data.KeyID)
+	got := decodeData[v1.KeyCreated](t, accountDo(t, ts, http.MethodPost, "/v1/account/keys", `{"label":"ci-bot-2"}`), http.StatusCreated)
+	if got.Plaintext != "sip_freshly_minted" || got.KeyID != "kid_new" {
+		t.Errorf("created = %+v, want plaintext echoed and kid_new", got)
 	}
 	if store.calls != 1 {
 		t.Errorf("Create called %d times, want 1", store.calls)
 	}
-	if store.gotReq.Identifier != "owner-42" {
-		t.Errorf("Create.Identifier = %q, want owner-42 (inherited from caller)", store.gotReq.Identifier)
-	}
-	if store.gotReq.Tier != auth.TierAPIKey {
-		t.Errorf("Create.Tier = %q, want apikey (inherited from caller)", store.gotReq.Tier)
-	}
-	if store.gotReq.RateLimitPerMin != 600 {
-		t.Errorf("Create.RateLimitPerMin = %d, want 600 (inherited from caller)", store.gotReq.RateLimitPerMin)
-	}
-	if store.gotReq.Label != "ci-bot-2" {
-		t.Errorf("Create.Label = %q", store.gotReq.Label)
+	req := store.gotReq
+	if req.Identifier != "owner-42" || req.Tier != auth.TierAPIKey || req.RateLimitPerMin != 600 || req.Label != "ci-bot-2" {
+		t.Errorf("Create request = %+v, want identifier/tier/rate limit inherited from the caller", req)
 	}
 }
 
-// TestAccountKeysCreate_ScopedCallerEmptyRequestInherits proves the
-// delegation clamp: a caller narrowed to ["account"]
-// that omits the scopes field must NOT mint a full-access (empty
-// scope) key — the child inherits the caller's own scopes instead, so
-// the narrowed key cannot mint an unrestricted sibling and escape its
-// confinement. Without inheritance the handler would pass empty scopes straight to
-// Create, minting a full-access key.
-func TestAccountKeysCreate_ScopedCallerEmptyRequestInherits(t *testing.T) {
-	store := &fakeAccountStore{
-		rec:   auth.APIKeyRecord{KeyID: "kid_child", Label: "child"},
-		plain: "sip_child",
-	}
-	ts := newAccountTestServer(t, auth.Subject{
-		Identifier: "owner-scoped",
-		Tier:       auth.TierAPIKey,
-		Scopes:     []string{"account"},
-	}, store)
+// Delegation clamp: a caller narrowed to ["account"] that omits scopes must
+// mint a child with the same scopes, never a full-access (empty) key; a
+// full-access caller still mints full access.
+func TestAccountKeysCreate_OmittedScopesInheritTheCallers(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		scopes []string
+		want   []string
+	}{
+		{"scoped caller", []string{"account"}, []string{"account"}},
+		{"full-access caller", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_child"}, plain: "sip_child"}
+			ts := newAccountTestServer(t, auth.Subject{
+				Identifier: "owner-scoped",
+				Tier:       auth.TierAPIKey,
+				Scopes:     tc.scopes,
+			}, store)
 
-	body := strings.NewReader(`{"label":"child"}`)
-	resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json", body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("status = %d, want 201", resp.StatusCode)
-	}
-	if store.calls != 1 {
-		t.Fatalf("Create called %d times, want 1", store.calls)
-	}
-	// The minted key must carry the caller's scopes verbatim, not an
-	// empty (full-access) set.
-	if len(store.gotReq.Scopes) != 1 || store.gotReq.Scopes[0] != "account" {
-		t.Errorf("minted scopes = %v, want [account] (inherited from scoped caller, NOT full access)",
-			store.gotReq.Scopes)
+			resp := accountDo(t, ts, http.MethodPost, "/v1/account/keys", `{"label":"child"}`)
+			if resp.StatusCode != http.StatusCreated {
+				t.Fatalf("status = %d, want 201", resp.StatusCode)
+			}
+			if store.calls != 1 {
+				t.Fatalf("Create called %d times, want 1", store.calls)
+			}
+			if !slices.Equal(store.gotReq.Scopes, tc.want) {
+				t.Errorf("minted scopes = %v, want %v", store.gotReq.Scopes, tc.want)
+			}
+		})
 	}
 }
 
-// TestAccountKeysCreate_ScopedCallerCannotExceed proves a scoped
-// caller cannot mint a child with a scope it does not itself hold: an
-// ["account"] key requesting ["admin"] is rejected 403 and the store
-// is never touched.
+// A scoped caller cannot mint a child with a scope it does not hold: an
+// ["account"] key requesting ["admin"] is rejected 403 before the store, and
+// the refusal is counted.
 func TestAccountKeysCreate_ScopedCallerCannotExceed(t *testing.T) {
 	before := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/account/keys"))
 
@@ -389,9 +385,7 @@ func TestAccountKeysCreate_ScopedCallerCannotExceed(t *testing.T) {
 		Scopes:     []string{"account"},
 	}, store)
 
-	// The subject is operator-tier, so the admin-write X-Reason contract
-	// applies; supply it so this test keeps exercising
-	// the scope clamp rather than the reason gate.
+	// Operator tier needs X-Reason; supply it so the scope clamp is what's tested.
 	resp := doWithReason(t, http.MethodPost, ts.URL+"/v1/account/keys", "scope clamp test", `{"label":"x","scopes":["admin"]}`)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
@@ -399,215 +393,12 @@ func TestAccountKeysCreate_ScopedCallerCannotExceed(t *testing.T) {
 	if store.calls != 0 {
 		t.Errorf("Create called %d times, want 0 (escalation must be rejected before mint)", store.calls)
 	}
-	// The self-service mint funnels through the same
-	// clampMintToCaller chokepoint as the operator path, and must be
-	// countable there too.
 	if got, want := testutil.ToFloat64(obs.MintScopeClampRefusedTotal.WithLabelValues("/v1/account/keys")), before+1; got != want {
 		t.Errorf("mint_scope_clamp_refused_total{route=\"/v1/account/keys\"} = %v, want %v", got, want)
 	}
 }
 
-// TestAccountKeysCreate_FullAccessCallerUnchanged pins the
-// back-compat path the clamp must NOT disturb: a full-access caller
-// (empty scope list) omitting scopes still mints a full-access key.
-func TestAccountKeysCreate_FullAccessCallerUnchanged(t *testing.T) {
-	store := &fakeAccountStore{
-		rec:   auth.APIKeyRecord{KeyID: "kid_full", Label: "full"},
-		plain: "sip_full",
-	}
-	ts := newAccountTestServer(t, auth.Subject{
-		Identifier: "owner-full",
-		Tier:       auth.TierAPIKey,
-	}, store)
-
-	body := strings.NewReader(`{"label":"full"}`)
-	resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json", body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("status = %d, want 201", resp.StatusCode)
-	}
-	if len(store.gotReq.Scopes) != 0 {
-		t.Errorf("minted scopes = %v, want empty (full-access caller mints full-access key)",
-			store.gotReq.Scopes)
-	}
-}
-
-// TestAccountKeysCreate_Unauthenticated — anonymous callers can't
-// mint keys. The handler short-circuits before touching the store.
-func TestAccountKeysCreate_Unauthenticated(t *testing.T) {
-	store := &fakeAccountStore{}
-	ts := newAccountTestServer(t, auth.Subject{}, store)
-
-	resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json",
-		strings.NewReader(`{"label":"x"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", resp.StatusCode)
-	}
-	if store.calls != 0 {
-		t.Errorf("store should not be touched on 401; got %d calls", store.calls)
-	}
-}
-
-// TestAccountKeysCreate_StoreUnavailable — when the binary didn't
-// wire a store (Redis unreachable at startup), POST /keys returns
-// 503 rather than misleading the customer with a 401 or 500.
-func TestAccountKeysCreate_StoreUnavailable(t *testing.T) {
-	ts := newAccountTestServer(t, auth.Subject{
-		Identifier: "owner-42",
-		Tier:       auth.TierAPIKey,
-	}, nil) // store deliberately nil
-
-	resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json",
-		strings.NewReader(`{"label":"x"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", resp.StatusCode)
-	}
-}
-
-// TestAccountKeysCreate_MissingLabel — the body must include a
-// non-empty label. Empty body, missing label field, and explicit
-// empty string all 400.
-func TestAccountKeysCreate_MissingLabel(t *testing.T) {
-	store := &fakeAccountStore{}
-	ts := newAccountTestServer(t, auth.Subject{
-		Identifier: "owner-42",
-		Tier:       auth.TierAPIKey,
-	}, store)
-
-	cases := []struct {
-		name string
-		body string
-	}{
-		{"empty body", ""},
-		{"empty object", "{}"},
-		{"empty label", `{"label":""}`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json", strings.NewReader(tc.body))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusBadRequest {
-				t.Errorf("status = %d, want 400", resp.StatusCode)
-			}
-		})
-	}
-	if store.calls != 0 {
-		t.Errorf("store should not be touched on validation failure; got %d calls", store.calls)
-	}
-}
-
-// TestAccountKeysCreate_LabelTooLong — labels over 128 chars 400.
-// Surface for sanity (no Redis bytes-budget reason, just a UI cap).
-func TestAccountKeysCreate_LabelTooLong(t *testing.T) {
-	store := &fakeAccountStore{}
-	ts := newAccountTestServer(t, auth.Subject{
-		Identifier: "owner-42",
-		Tier:       auth.TierAPIKey,
-	}, store)
-
-	long := strings.Repeat("a", 129)
-	body := `{"label":"` + long + `"}`
-	resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json", strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-// TestAccountKeysCreate_MalformedJSON — non-JSON body 400s rather
-// than 500ing.
-func TestAccountKeysCreate_MalformedJSON(t *testing.T) {
-	store := &fakeAccountStore{}
-	ts := newAccountTestServer(t, auth.Subject{
-		Identifier: "owner-42",
-		Tier:       auth.TierAPIKey,
-	}, store)
-
-	resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json",
-		strings.NewReader("{not-json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-// TestAccountKeysCreate_StoreFailure — when the store errors, the
-// handler returns 500 with a problem+json body. Plaintext is never
-// surfaced (the store contract guarantees an empty plaintext on
-// failure; the handler obeys).
-func TestAccountKeysCreate_StoreFailure(t *testing.T) {
-	store := &fakeAccountStore{err: errors.New("redis down")}
-	ts := newAccountTestServer(t, auth.Subject{
-		Identifier: "owner-42",
-		Tier:       auth.TierAPIKey,
-	}, store)
-
-	resp, err := http.Post(ts.URL+"/v1/account/keys", "application/json",
-		strings.NewReader(`{"label":"x"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500", resp.StatusCode)
-	}
-	body := make([]byte, 1024)
-	n, _ := resp.Body.Read(body)
-	if strings.Contains(string(body[:n]), "sip_") {
-		t.Error("response body should not contain plaintext-shaped strings on failure")
-	}
-}
-
-// TestAccountKeysList_Unauthenticated covers the 401 path.
-func TestAccountKeysList_Unauthenticated(t *testing.T) {
-	ts := newAccountTestServer(t, auth.Subject{}, nil)
-	resp, err := http.Get(ts.URL + "/v1/account/keys")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", resp.StatusCode)
-	}
-}
-
-// TestAccountKeysList_NoStore — endpoint returns 503 if Accounts
-// wasn't wired (typical Redis-down scenario).
-func TestAccountKeysList_NoStore(t *testing.T) {
-	subj := auth.Subject{Identifier: "signup-acme", Tier: auth.TierAPIKey}
-	ts := newAccountTestServer(t, subj, nil)
-	resp, err := http.Get(ts.URL + "/v1/account/keys")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", resp.StatusCode)
-	}
-}
-
-// TestAccountKeysList_HappyPath — authenticated caller gets back
-// every key whose Identifier matches their Subject.
+// An authenticated caller lists every key under their Identifier, oldest first.
 func TestAccountKeysList_HappyPath(t *testing.T) {
 	subj := auth.Subject{Identifier: "signup-acme", Tier: auth.TierAPIKey}
 	store := &fakeAccountStore{
@@ -620,77 +411,27 @@ func TestAccountKeysList_HappyPath(t *testing.T) {
 	}
 	ts := newAccountTestServer(t, subj, store)
 
-	resp, err := http.Get(ts.URL + "/v1/account/keys")
-	if err != nil {
-		t.Fatal(err)
+	keys := decodeData[[]v1.Account](t, accountDo(t, ts, http.MethodGet, "/v1/account/keys", ""), http.StatusOK)
+	if len(keys) != 2 {
+		t.Fatalf("data len = %d, want 2", len(keys))
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	if keys[0].KeyID != "kid_first" || keys[1].KeyID != "kid_second" {
+		t.Errorf("keys = [%q %q], want oldest first (kid_first, kid_second)", keys[0].KeyID, keys[1].KeyID)
 	}
-	var body struct {
-		Data []v1.Account `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(body.Data) != 2 {
-		t.Fatalf("data len = %d, want 2", len(body.Data))
-	}
-	// Sorted oldest-first.
-	if body.Data[0].KeyID != "kid_first" {
-		t.Errorf("keys[0] = %q, want kid_first (oldest)", body.Data[0].KeyID)
-	}
-	if body.Data[1].KeyID != "kid_second" {
-		t.Errorf("keys[1] = %q, want kid_second (newest)", body.Data[1].KeyID)
-	}
-	if body.Data[1].RateLimitPerMin != 10000 {
-		t.Errorf("rotated key RateLimitPerMin = %d, want 10000", body.Data[1].RateLimitPerMin)
+	if keys[1].RateLimitPerMin != 10000 {
+		t.Errorf("rotated key RateLimitPerMin = %d, want 10000", keys[1].RateLimitPerMin)
 	}
 	if store.listCalls != 1 {
 		t.Errorf("store called %d times, want 1", store.listCalls)
 	}
 }
 
-// TestAccountKeysList_StoreError — list-side Redis blip surfaces
-// as 500.
-func TestAccountKeysList_StoreError(t *testing.T) {
-	subj := auth.Subject{Identifier: "signup-x", Tier: auth.TierAPIKey}
-	store := &fakeAccountStore{listErr: errors.New("redis blip")}
-	ts := newAccountTestServer(t, subj, store)
-	resp, err := http.Get(ts.URL + "/v1/account/keys")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500", resp.StatusCode)
-	}
-}
-
-// TestAccountKeysList_Empty — authenticated caller with no keys
-// (somehow — typically can't happen since they have to authenticate
-// to reach the endpoint) gets an empty list.
+// A caller with no keys gets an empty list.
 func TestAccountKeysList_Empty(t *testing.T) {
-	subj := auth.Subject{Identifier: "signup-empty", Tier: auth.TierAPIKey}
-	store := &fakeAccountStore{listed: map[string][]auth.APIKeyRecord{}}
-	ts := newAccountTestServer(t, subj, store)
-	resp, err := http.Get(ts.URL + "/v1/account/keys")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	var body struct {
-		Data []v1.Account `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(body.Data) != 0 {
-		t.Errorf("data len = %d, want 0", len(body.Data))
+	ts := newAccountTestServer(t, auth.Subject{Identifier: "signup-empty", Tier: auth.TierAPIKey},
+		&fakeAccountStore{listed: map[string][]auth.APIKeyRecord{}})
+	if keys := decodeData[[]v1.Account](t, accountDo(t, ts, http.MethodGet, "/v1/account/keys", ""), http.StatusOK); len(keys) != 0 {
+		t.Errorf("data len = %d, want 0", len(keys))
 	}
 }
 
@@ -800,34 +541,25 @@ func TestAccountUsage_RollupRows(t *testing.T) {
 	}
 }
 
-// TestAccountUsage_RollupFallsBackOnError — a rollup read failure
-// degrades to the legacy per-day totals, not a 5xx.
-func TestAccountUsage_RollupFallsBackOnError(t *testing.T) {
-	ts := newUsageTestServer(t, auth.Subject{
-		Identifier: "owner-9",
-		KeyID:      "kid_9",
-		Tier:       auth.TierAPIKey,
-	}, &fakeUsageRollupReader{err: errors.New("pg down")},
-		&fakeUsageReader{days: []v1.UsageDay{{Date: "2026-07-03", Requests: 55}}})
-
-	rows := getUsageRows(t, ts)
-	if len(rows) != 1 || rows[0].Requests != 55 || rows[0].Endpoint != "" {
-		t.Errorf("rows = %+v, want the single legacy day (55 requests, no endpoint)", rows)
-	}
-}
-
-// TestAccountUsage_RollupEmptyFallsBack — zero rollup rows (fresh
-// deployment, worker not yet swept) also degrade to legacy.
-func TestAccountUsage_RollupEmptyFallsBack(t *testing.T) {
-	ts := newUsageTestServer(t, auth.Subject{
-		Identifier: "owner-9",
-		Tier:       auth.TierAPIKey,
-	}, &fakeUsageRollupReader{},
-		&fakeUsageReader{days: []v1.UsageDay{{Date: "2026-07-01", Requests: 7}}})
-
-	rows := getUsageRows(t, ts)
-	if len(rows) != 1 || rows[0].Requests != 7 {
-		t.Errorf("rows = %+v, want the single legacy day", rows)
+// A rollup read failure or zero rollup rows (fresh deployment, worker not yet
+// swept) degrades to the legacy per-day totals, not a 5xx.
+func TestAccountUsage_RollupFallsBackToLegacy(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rollup *fakeUsageRollupReader
+		legacy v1.UsageDay
+	}{
+		{"rollup error", &fakeUsageRollupReader{err: errors.New("pg down")}, v1.UsageDay{Date: "2026-07-03", Requests: 55}},
+		{"rollup empty", &fakeUsageRollupReader{}, v1.UsageDay{Date: "2026-07-01", Requests: 7}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := newUsageTestServer(t, auth.Subject{Identifier: "owner-9", KeyID: "kid_9", Tier: auth.TierAPIKey},
+				tc.rollup, &fakeUsageReader{days: []v1.UsageDay{tc.legacy}})
+			rows := getUsageRows(t, ts)
+			if len(rows) != 1 || int64(rows[0].Requests) != tc.legacy.Requests || rows[0].Endpoint != "" {
+				t.Errorf("rows = %+v, want the single legacy day (%d requests, no endpoint)", rows, tc.legacy.Requests)
+			}
+		})
 	}
 }
 
