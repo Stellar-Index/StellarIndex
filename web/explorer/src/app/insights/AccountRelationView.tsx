@@ -98,9 +98,7 @@ export function AccountRelationView({
             ) : (
               <>No account id was given in the URL.</>
             )}{' '}
-            An account id is 56 characters: a leading <code>G</code> followed by
-            55 uppercase base32 characters. They are case-sensitive and are
-            never lowercased.
+            An account id is 56 characters starting with <code>G</code>.
           </p>
           <p>
             <Link

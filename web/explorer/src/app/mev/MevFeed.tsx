@@ -164,8 +164,7 @@ export function MevFeed() {
       )}
       {!q.isLoading && !q.isError && rows.length === 0 && (
         <p className="text-ink-muted text-sm">
-          No MEV events detected in the recent window yet. The detectors scan
-          the trade / auction / oracle streams every few minutes.
+          No MEV events in the recent window.
         </p>
       )}
       {rows.length > 0 && <MevKindCharts events={rows} />}

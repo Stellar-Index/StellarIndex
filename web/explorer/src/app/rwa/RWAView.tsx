@@ -848,9 +848,7 @@ function UnreachedPanel({
   return (
     <Panel title="Recognised issuers we hold no token for" headingLevel={2}>
       <p className="text-ink-muted text-xs leading-relaxed">
-        Named as issuers or custodians by an independent directory, unflagged.
-        We hold no Stellar asset for them, so they are absent above, not
-        refused.
+        Named by an independent directory; no Stellar asset held.
       </p>
       <ul className="border-line mt-3 space-y-1.5 border-t pt-3 text-xs">
         {entities.map((e) => (
@@ -1372,13 +1370,9 @@ function SectorTotals({
                   This total mixes two bases.
                 </strong>
               </summary>{' '}
-              {stable.listingPriced} of the {stable.valued} tokens trade too
-              thinly on Stellar for this index to publish a market cap from what
-              it observed, so the figure used for them is their supply valued at
-              an independent listing platform&rsquo;s own price for that exact
-              address — <code>provenance: listing_platform_price</code> on the
-              asset. Nobody was observed paying it here. The rest are observed
-              market caps, and the per-asset pages say which is which.
+              {stable.listingPriced} of the {stable.valued} tokens are valued at
+              a listing platform&rsquo;s price, not an observed trade (
+              <code>provenance: listing_platform_price</code>).
             </details>
           )}
         </StatCell>
