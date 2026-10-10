@@ -216,3 +216,68 @@ func TestBackfillTrades_RESTPairIsAltname(t *testing.T) {
 		t.Errorf("REST pair param = %q, want XLMUSD (no WS slash)", got)
 	}
 }
+
+// A fill without a trade_id has no identity that can match the live
+// row, so the page is refused rather than stored under a made-up one.
+func TestBackfillTrades_RefusesFillWithoutTradeID(t *testing.T) {
+	pair, err := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"error":[],"result":{"XXLMZUSD":[["0.19329800","159.80957483",1530403225.1,"b","l",""]],"last":"1530403225100000000"}}`))
+	}))
+	defer srv.Close()
+	s := &Streamer{Endpoint: srv.URL, PairMap: map[string]canonical.Pair{"XLM/USD": pair}}
+	from := time.Date(2018, 7, 1, 0, 0, 0, 0, time.UTC)
+	trades, err := s.BackfillTrades(context.Background(), pair, from, from.Add(24*time.Hour))
+	if err == nil {
+		t.Fatalf("fill without trade_id accepted as %d trade(s)", len(trades))
+	}
+}
+
+// A venue fault after the first page must not discard that page: the
+// fills are returned with the error, as the ctx-expiry arm already does.
+func TestBackfillTrades_VenueErrorKeepsFetchedPages(t *testing.T) {
+	faults := map[string]http.HandlerFunc{
+		"http_502": func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+		},
+		"venue_error": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"error":["EAPI:Rate limit exceeded"]}`))
+		},
+	}
+	for name, fault := range faults {
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if calls == 1 {
+					_, _ = w.Write([]byte(krakenTradesPage1))
+					return
+				}
+				fault(w, r)
+			}))
+			defer srv.Close()
+
+			pair, _ := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
+			s := &Streamer{Endpoint: srv.URL, PairMap: map[string]canonical.Pair{"XXLMZUSD": pair}}
+			from := time.Date(2018, 7, 1, 0, 0, 0, 0, time.UTC)
+			to := time.Date(2018, 7, 2, 0, 0, 0, 0, time.UTC)
+
+			trades, err := s.BackfillTrades(context.Background(), pair, from, to)
+			if err == nil {
+				t.Fatal("BackfillTrades returned nil error after a venue fault on page 2")
+			}
+			if calls != 2 {
+				t.Fatalf("venue calls = %d, want 2", calls)
+			}
+			if len(trades) != 3 {
+				t.Fatalf("trades = %d, want the 3 fills of page 1 returned with the error", len(trades))
+			}
+			if got := trades[0].BaseAmount.String(); got != "15980957483" {
+				t.Errorf("first fill base = %s, want 15980957483", got)
+			}
+		})
+	}
+}

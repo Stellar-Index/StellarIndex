@@ -3,6 +3,7 @@ package forex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -320,4 +321,322 @@ func TestRefreshOnce_HeldRateExpires(t *testing.T) {
 		t.Fatalf("held EGP = %+v, want rate 30 with its ORIGINAL UpdateAt %v — a hold "+
 			"must never be re-stamped as fresh", *egp, recent)
 	}
+}
+
+// TestRefreshOnce_ECBFallbackJoinsAgainstPrimaryNames is the finding's
+// scenario: massive's grouped-aggregates product is quota-limited (429)
+// while its reference endpoint still answers, so the refresh pairs ECB's
+// UPPER-case rates with massive's lower-case names.
+func TestRefreshOnce_ECBFallbackJoinsAgainstPrimaryNames(t *testing.T) {
+	up := &fakeMassive{
+		groupedStatus: http.StatusTooManyRequests,
+		names: map[string]string{
+			"GBP": "British Pound", "JPY": "Japanese Yen", "EUR": "Euro",
+		},
+	}
+	w := newGuardedWorker(t, up, &recordingFXWriter{})
+	w.fallbacks = []RateProvider{ECBProvider{Endpoint: ecbServer(t, ecbDailyXML, http.StatusOK).URL}}
+
+	w.refreshOnce(context.Background())
+
+	snap := w.cache.Latest()
+	if snap == nil {
+		t.Fatalf("no snapshot installed from the ECB standby")
+	}
+	if len(snap.Currencies) == 1 {
+		t.Fatalf("snapshot collapsed to the synthetic USD row: ECB served GBP/JPY/EUR "+
+			"but the case-sensitive join matched none of them. Got %+v", snap.Currencies)
+	}
+	// ecbDailyXML: 1 EUR = 1.25 USD = 0.85 GBP = 160 JPY.
+	for ticker, want := range map[string]float64{
+		"USD": 1, "EUR": 0.8, "GBP": 0.68, "JPY": 128,
+	} {
+		got, ok := servedRate(t, w.cache, ticker)
+		if !ok || !closeTo(got, want) {
+			t.Errorf("served %s = %v (present=%v), want %v", ticker, got, ok, want)
+		}
+	}
+	if got := w.sourceLabel(); got != "ecb" {
+		t.Errorf("source label = %q, want ecb", got)
+	}
+}
+
+// TestRefreshOnce_ReusedNamesJoinAgainstPrimaryRates is the second
+// trigger: rates are healthy, the NAMES endpoint fails, and the worker
+// reuses the last snapshot's names — which it re-keys by the UPPER-case
+// Ticker — against the primary's lower-case rates.
+//
+// The assertion is on the NEW rate, not on presence: since the served
+// snapshot holds a ticker's last guarded rate, a collapsed join no longer
+// makes EUR vanish — it silently pins it at the previous refresh's value.
+func TestRefreshOnce_ReusedNamesJoinAgainstPrimaryRates(t *testing.T) {
+	up := &fakeMassive{
+		current: map[string]float64{"EUR": 0.92, "UZS": 11800},
+		history: map[string]float64{"EUR": 0.92, "UZS": 11790},
+		names:   guardedNames,
+	}
+	w := newGuardedWorker(t, up, &recordingFXWriter{})
+	ctx := context.Background()
+	w.refreshOnce(ctx)
+
+	up.mu.Lock()
+	up.names = nil // writeTickers emits an empty list -> CurrencyNames errors
+	up.current = map[string]float64{"EUR": 0.93, "UZS": 11850}
+	up.mu.Unlock()
+	w.refreshOnce(ctx)
+
+	for ticker, want := range map[string]float64{"EUR": 0.93, "UZS": 11850} {
+		got, ok := servedRate(t, w.cache, ticker)
+		if !ok || got != want {
+			t.Errorf("served %s = %v (present=%v), want this refresh's %v — the reused "+
+				"(UPPER-keyed) names must still join the primary's lower-case rates",
+				ticker, got, ok, want)
+		}
+	}
+	snap := w.cache.Latest()
+	for _, c := range snap.Currencies {
+		if c.Ticker == "EUR" && c.Name != "Euro" {
+			t.Errorf("EUR name = %q, want the reused %q", c.Name, "Euro")
+		}
+	}
+}
+
+// TestRefreshOnce_ColdStartWithoutNamesStillInstallsSnapshot is the
+// cold-start arm of a primary outage: the process has never installed a
+// snapshot, the rates fetch succeeds (here directly; in production via
+// the ECB fallback) and the primary's names endpoint errors. Names are
+// static display labels, so the refresh must still install the rates —
+// labelled by ticker — rather than leave the feed empty until the
+// primary returns. The warm path already reuses cached names; this
+// pins the one-time cold path, which must not return before cache.Set.
+func TestRefreshOnce_ColdStartWithoutNamesStillInstallsSnapshot(t *testing.T) {
+	up := &fakeMassive{
+		current: map[string]float64{"EUR": 0.92, "UZS": 11800},
+		history: map[string]float64{"EUR": 0.92, "UZS": 11790},
+		names:   nil, // writeTickers emits an empty list -> CurrencyNames errors
+	}
+	writer := &recordingFXWriter{}
+	w := newGuardedWorker(t, up, writer)
+	w.refreshOnce(context.Background())
+
+	if w.cache.Latest() == nil {
+		t.Fatal("no snapshot installed: a cold start with the names endpoint down left the feed empty")
+	}
+	for ticker, want := range map[string]float64{"EUR": 0.92, "UZS": 11800} {
+		got, ok := servedRate(t, w.cache, ticker)
+		if !ok || got != want {
+			t.Errorf("served %s = %v (present=%v), want %v — rates in hand must be served even without names",
+				ticker, got, ok, want)
+		}
+	}
+	if len(writer.batches) == 0 {
+		t.Error("nothing persisted to fx_quotes on the cold-start path")
+	}
+}
+
+// A restart must keep serving a ticker the upstream has not republished
+// yet today, from its last guarded fx_quotes row.
+func TestRefreshOnce_ColdStartSeedsHeldRatesFromFXQuotes(t *testing.T) {
+	yesterday := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -1)
+	stale := time.Now().UTC().Add(-maxHeldRateAge - 24*time.Hour)
+	reader := &fakeFXReader{rows: []FXQuote{
+		{Bucket: yesterday, Ticker: "AED", RateUSD: 3.6725, Source: "massive"},
+		{Bucket: stale, Ticker: "CNY", RateUSD: 7.1, Source: "massive"},
+		{Bucket: yesterday, Ticker: "EUR", RateUSD: 0.5, Source: "massive"},
+	}}
+	up := &fakeMassive{
+		current: map[string]float64{"EUR": 0.92},
+		history: map[string]float64{"EUR": 0.92},
+		names:   seedNames,
+	}
+	w := newGuardedWorker(t, up, &recordingFXWriter{}).WithReader(reader)
+
+	w.refreshOnce(context.Background())
+
+	aed, ok := servedCurrency(t, w.cache, "AED")
+	if !ok {
+		t.Fatalf("AED absent from today's payload was dropped; want the seeded fx_quotes row held")
+	}
+	if aed.RateUSD != 3.6725 || aed.Source != "massive" || !aed.UpdateAt.Equal(yesterday) {
+		t.Fatalf("seeded AED = %+v, want rate 3.6725, source massive, UpdateAt %v", aed, yesterday)
+	}
+	if aed.Name != "United Arab Emirates Dirham" {
+		t.Fatalf("seeded AED name = %q, want the upstream display name", aed.Name)
+	}
+	if cny, ok := servedCurrency(t, w.cache, "CNY"); ok {
+		t.Fatalf("served CNY %+v from a row older than maxHeldRateAge; want it refused", cny)
+	}
+	if eur, _ := servedCurrency(t, w.cache, "EUR"); eur.RateUSD != 0.92 {
+		t.Fatalf("served EUR = %v, want today's accepted 0.92 over the seeded 0.5", eur.RateUSD)
+	}
+	if want := w.cache.Latest().FetchedAt.Add(-maxHeldRateAge); !reader.since.Equal(want) {
+		t.Fatalf("reader since = %v, want %v", reader.since, want)
+	}
+
+	w.refreshOnce(context.Background())
+	if reader.calls != 1 {
+		t.Fatalf("reader called %d times, want once: only a cold start seeds", reader.calls)
+	}
+	if _, ok := servedCurrency(t, w.cache, "AED"); !ok {
+		t.Fatalf("seeded AED not carried by the next refresh's hold")
+	}
+}
+
+// A seed must not resurrect the sample the history-majority heal refuted.
+func TestRefreshOnce_ColdStartSeedSkipsRefutedTicker(t *testing.T) {
+	yesterday := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -1)
+	up := &fakeMassive{
+		current: map[string]float64{"UZS": 1820, "EUR": 0.92},
+		history: map[string]float64{"UZS": 11790, "EUR": 0.92},
+		names:   seedNames,
+	}
+	w := newGuardedWorker(t, up, &recordingFXWriter{}).WithReader(&fakeFXReader{rows: []FXQuote{
+		{Bucket: yesterday, Ticker: "UZS", RateUSD: 1820, Source: "massive"},
+	}})
+
+	w.refreshOnce(context.Background())
+
+	if uzs, ok := servedCurrency(t, w.cache, "UZS"); ok {
+		t.Fatalf("served UZS %+v after the heal refuted it; want absent", uzs)
+	}
+}
+
+func TestRefreshOnce_ColdStartWithoutUsableReaderHoldsNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		reader FXQuoteReader
+	}{
+		{name: "nil reader"},
+		{name: "reader error", reader: &fakeFXReader{err: errors.New("db down")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			up := &fakeMassive{
+				current: map[string]float64{"EUR": 0.92},
+				history: map[string]float64{"EUR": 0.92},
+				names:   seedNames,
+			}
+			w := newGuardedWorker(t, up, nil).WithReader(tc.reader)
+
+			w.refreshOnce(context.Background())
+
+			if _, ok := servedCurrency(t, w.cache, "AED"); ok {
+				t.Fatalf("served AED with no seed source")
+			}
+			if eur, _ := servedCurrency(t, w.cache, "EUR"); eur.RateUSD != 0.92 {
+				t.Fatalf("served EUR = %v, want 0.92", eur.RateUSD)
+			}
+		})
+	}
+}
+
+// TestRefreshOnce_ECBStandbyAttributesEachRowToItsFetcher drives a full
+// refresh on a cold worker whose primary serves dated history but not
+// current rates or names. The ECB standby answers the current rates, so
+// the current-day rows are ECB's; the dated bars still come from the
+// primary client and must say so.
+func TestRefreshOnce_ECBStandbyAttributesEachRowToItsFetcher(t *testing.T) {
+	const groupedPrefix = "/v2/aggs/grouped/locale/global/market/fx/"
+	recent := time.Now().UTC().AddDate(0, 0, -5).Format("2006-01-02")
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		date := strings.TrimPrefix(r.URL.Path, groupedPrefix)
+		if !strings.HasPrefix(r.URL.Path, groupedPrefix) || date >= recent {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		writeGrouped(w, map[string]float64{"EUR": 0.8, "GBP": 0.68, "JPY": 128})
+	}))
+	t.Cleanup(primary.Close)
+
+	writer := &recordingFXWriter{}
+	w := (&Worker{
+		client:       NewClient("test-key").WithBase(primary.URL),
+		cache:        NewCache(),
+		writer:       writer,
+		logger:       discardLogger(),
+		guards:       map[string]*rateGuard{},
+		activeSource: fxSource,
+	}).WithFallbacks(ECBProvider{Endpoint: ecbServer(t, ecbDailyXML, http.StatusOK).URL})
+	w.refreshOnce(context.Background())
+
+	for _, ticker := range []string{"EUR", "GBP", "JPY"} {
+		if _, ok := servedRate(t, w.cache, ticker); !ok {
+			t.Errorf("%s not served from the ECB standby", ticker)
+		}
+	}
+	if len(writer.batches) != 1 {
+		t.Fatalf("persisted %d batches, want 1", len(writer.batches))
+	}
+	published := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	var current, dated int
+	for _, q := range writer.batches[0] {
+		want := fxSource
+		if q.Bucket.Equal(published) {
+			want = "ecb"
+			current++
+		} else {
+			dated++
+		}
+		if q.Source != want {
+			t.Errorf("%s %s row source = %q, want %q", q.Ticker, q.Bucket.Format("2006-01-02"), q.Source, want)
+		}
+	}
+	if current == 0 || dated == 0 {
+		t.Fatalf("batch has %d current and %d dated rows; the scenario needs both", current, dated)
+	}
+}
+
+// The served snapshot names the feed behind each rate: what the standby
+// answered says ecb, and a ticker it does not carry is held with the
+// primary's name, so /v1/price can credit the feed that actually priced it.
+func TestRefreshOnce_ServedCurrenciesCarryTheirPublishingFeed(t *testing.T) {
+	w := newTestWorker(t).WithFallbacks(ECBProvider{Endpoint: ecbServer(t, ecbDailyXML, http.StatusOK).URL})
+	held := time.Now().UTC().Add(-time.Hour)
+	w.cache.Set(&Snapshot{Currencies: []Currency{
+		{Ticker: "EUR", Name: "Euro", RateUSD: 0.8, UpdateAt: held, Source: fxSource},
+		{Ticker: "NGN", Name: "Nigerian Naira", RateUSD: 1500, UpdateAt: held, Source: fxSource},
+	}})
+	w.refreshOnce(context.Background())
+
+	want := map[string]string{"EUR": "ecb", "NGN": fxSource}
+	got := map[string]string{}
+	for _, c := range w.cache.Latest().Currencies {
+		got[c.Ticker] = c.Source
+	}
+	for ticker, source := range want {
+		if got[ticker] != source {
+			t.Errorf("%s source = %q, want %q (served: %v)", ticker, got[ticker], source, got)
+		}
+	}
+}
+
+// fakeFXReader returns rows regardless of since, so the worker's own
+// maxHeldRateAge check is what a too-old row has to get past.
+type fakeFXReader struct {
+	rows  []FXQuote
+	err   error
+	calls int
+	since time.Time
+}
+
+func (f *fakeFXReader) LatestFXQuotes(_ context.Context, since time.Time) ([]FXQuote, error) {
+	f.calls++
+	f.since = since
+	return f.rows, f.err
+}
+
+var seedNames = map[string]string{
+	"UZS": "Uzbekistan Som",
+	"EUR": "Euro",
+	"AED": "United Arab Emirates Dirham",
+	"CNY": "Chinese Yuan",
+}
+
+func servedCurrency(t *testing.T, c *Cache, ticker string) (Currency, bool) {
+	t.Helper()
+	for _, cur := range c.Latest().Currencies {
+		if cur.Ticker == ticker {
+			return cur, true
+		}
+	}
+	return Currency{}, false
 }

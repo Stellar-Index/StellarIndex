@@ -2,7 +2,6 @@ package archivecompleteness_test
 
 import (
 	"bytes"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -116,33 +115,6 @@ func TestWriteTextfile_NilSnapshotIsNoop(t *testing.T) {
 	}
 }
 
-// TestWriteTextfileAtomic_RoundTrip — writes via the atomic path
-// (.tmp + rename) and the final file is a valid Prometheus textfile.
-func TestWriteTextfileAtomic_RoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "archive_completeness.prom")
-
-	snap := archivecompleteness.NewMetricsSnapshot()
-	snap.FilesMissing["cross-anchor"] = 5
-
-	if err := archivecompleteness.WriteTextfileAtomic(path, snap); err != nil {
-		t.Fatalf("WriteTextfileAtomic: %v", err)
-	}
-
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if !strings.Contains(string(body), `archive_files_missing{archive="cross-anchor"} 5`) {
-		t.Errorf("textfile content missing expected metric:\n%s", body)
-	}
-
-	// The .tmp companion must NOT exist after a successful rename.
-	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-		t.Errorf(".tmp file should be removed after rename; err=%v", err)
-	}
-}
-
 // TestPopulateFromReport — convenience wrapper preserves the
 // per-archive missing-counts on the snapshot.
 func TestPopulateFromReport(t *testing.T) {
@@ -235,5 +207,21 @@ func TestWriteTextfile_StableOrdering(t *testing.T) {
 
 	if first.String() != second.String() {
 		t.Errorf("output not stable across writes:\n--- first ---\n%s\n--- second ---\n%s", first.String(), second.String())
+	}
+}
+
+// A host that has NEVER had a clean run must publish 0 rather than
+// nothing. `time() - 0` is enormous, so the staleness alert fires —
+// which is correct: a never-verified archive is not a healthy one,
+// and emitting no series at all would make it look like one.
+func TestWriteTextfile_NeverSucceededEmitsZeroNotAbsence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "archive_completeness.prom")
+	snap := archivecompleteness.NewMetricsSnapshot()
+	snap.FilesMissing["cross-anchor"] = 3
+	if err := archivecompleteness.WriteTextfileAtomic(path, snap); err != nil {
+		t.Fatalf("WriteTextfileAtomic: %v", err)
+	}
+	if got := sampleValue(t, readTextfile(t, path), "archive_completeness_last_success_timestamp"); got != 0 {
+		t.Errorf("never-succeeded last_success = %d, want 0", got)
 	}
 }

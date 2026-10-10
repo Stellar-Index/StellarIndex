@@ -3,10 +3,13 @@ package forex
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"math"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -274,5 +277,29 @@ func TestSourceLabel_ZeroValueWorkerFallsBackToPrimary(t *testing.T) {
 	}
 	if got := (&Worker{activeSource: "ecb"}).sourceLabel(); got != "ecb" {
 		t.Fatalf("sourceLabel() = %q, want ecb", got)
+	}
+}
+
+func TestWorker_CorroboratorIsHeldNotConsulted(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	t.Cleanup(srv.Close)
+	oxr := OpenExchangeRatesProvider{AppID: testAppID, Endpoint: srv.URL}
+
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(failing.Close)
+	w := NewWorker(NewClient("k").WithBase(failing.URL), NewCache(), slog.New(slog.NewTextHandler(io.Discard, nil)), 0).
+		WithCorroborator(oxr)
+
+	if got := w.Corroborator(); got != RateProvider(oxr) {
+		t.Errorf("Corroborator() = %v, want the registered provider", got)
+	}
+	if _, _, _, err := w.fetchRates(context.Background()); err == nil {
+		t.Error("fetchRates served with only a corroborator behind a failing primary")
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("corroborator fetched %d time(s); it must stay out of the serving chain", n)
 	}
 }
