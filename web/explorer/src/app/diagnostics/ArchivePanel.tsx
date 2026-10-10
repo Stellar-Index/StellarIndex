@@ -60,7 +60,7 @@ export function ArchivePanel() {
     <section className="border-line bg-surface rounded-lg border p-4">
       <header className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-3">
-          <h3 className="text-ink-body text-sm font-semibold tracking-wider uppercase">
+          <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
             Cross-anchor archive
           </h3>
           <span
