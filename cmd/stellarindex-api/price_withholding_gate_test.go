@@ -46,14 +46,7 @@ import (
 // weakness that produced the leak.
 //
 // The subject set is derived by finding every method that CALLS a closed-VWAP
-// store read, not by listing seam names. The first version of this test did
-// list them — two literal entries — which meant a brand-new ungated reader
-// passed silently, and the property it advertised ("a new read seam cannot
-// forget it") was not true. Matching on the store call is what makes it true:
-// a reader has to call one of those methods to serve a price at all.
-//
-// Proven red: deleting the wiring.PriceWithheld() call from storePriceAtReader.PriceAt
-// fails this test naming that method.
+// store read, not by listing seam names, so a brand-new ungated reader fails.
 //
 // SCOPE — stated because it was read as wider than it is. This scan parses
 // main.go and the binary's internal/wiring package and nothing else, so its
@@ -197,10 +190,7 @@ func callsPriceWithheld(fn *ast.FuncDecl, dir string) bool {
 // gates are nil-receiver safe and this test keeps that contract explicit, so a
 // future refactor cannot turn a disabled gate into a deny-everything outage.
 func TestPriceWithheldChokepointHonoursBothGates(t *testing.T) {
-	usd, err := canonical.NewFiatAsset("USD")
-	if err != nil {
-		t.Fatalf("build fiat:USD: %v", err)
-	}
+	usd := mustUSD(t)
 	// Nil gates: allow (disabled guard keeps prior behaviour).
 	if wiring.PriceWithheld(context.Background(), nil, nil, canonical.NativeAsset(), usd, "price_read") != pricingguard.NotWithheld {
 		t.Error("nil gates must allow — a disabled [pricing_guard] must not withhold every price")
@@ -327,6 +317,24 @@ func TestStoreReadScansCatchMethodValues(t *testing.T) {
 	if sc.earliestRead(&v1Func{decl: plantedFunc(t, `func (s *Server) h() { dns.Lookup(a, b) }`)}) != token.NoPos {
 		t.Error("earliestRead counted a package-qualified call as a cache read")
 	}
+}
+
+func mustUSD(t *testing.T) canonical.Asset {
+	t.Helper()
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("build fiat:USD: %v", err)
+	}
+	return usd
+}
+
+func mustClassic(t *testing.T, code, issuer string) canonical.Asset {
+	t.Helper()
+	a, err := canonical.NewClassicAsset(code, issuer)
+	if err != nil {
+		t.Fatalf("classic asset: %v", err)
+	}
+	return a
 }
 
 func plantedFunc(t *testing.T, src string) *ast.FuncDecl {
@@ -531,10 +539,7 @@ func TestPriceWithheldChokepointResolvesSACSpelling(t *testing.T) {
 		code   = "RIO"
 		issuer = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 	)
-	classic, err := canonical.NewClassicAsset(code, issuer)
-	if err != nil {
-		t.Fatalf("classic asset: %v", err)
-	}
+	classic := mustClassic(t, code, issuer)
 	sacID, err := classic.SacContractID()
 	if err != nil {
 		t.Fatalf("derive SAC: %v", err)
@@ -550,10 +555,7 @@ func TestPriceWithheldChokepointResolvesSACSpelling(t *testing.T) {
 	canonical.InstallAliasRegistry(reg)
 	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })
 
-	usd, err := canonical.NewFiatAsset("USD")
-	if err != nil {
-		t.Fatalf("build fiat:USD: %v", err)
-	}
+	usd := mustUSD(t)
 	ctx := context.Background()
 
 	dir := &flaggingScamDirectory{flagged: map[string]bool{issuer: true}}
@@ -606,11 +608,6 @@ const v1LookerInterface = "TriangulatedPriceLooker"
 // cache is the one price source with no gate underneath it, and the
 // handler has to ask for itself.
 //
-// Which is precisely what `?window=300|3600|86400` did not do: it read
-// vwap:<base>:<quote>:<window> and published a directory-flagged
-// issuer's aggregated price at 200, unauthenticated, while the default
-// route on the same pair 404'd.
-//
 // The rule enforced here:
 //
 //   - every function reading the cache must consult the withholding
@@ -637,13 +634,6 @@ const v1LookerInterface = "TriangulatedPriceLooker"
 // TestCachedVWAPSurfacesWithholdScamFlaggedMarket in the handler
 // package. What this guard owns is the class those cannot: the seam
 // nobody remembered to write a case for.
-//
-// Proven red three ways, each by reconstructing the state and running
-// this test alone: deleting the scamWithheld() call from
-// Server.handlePriceWindowed names that handler;
-// MOVING that call below the cache read names it too; and making
-// Server.observationsHaveTriangulatedPrice keep the price it currently
-// discards names the shared helper with the whole caller chain.
 func TestV1VWAPCacheSeamsAreGated(t *testing.T) {
 	sc := loadV1Scan(t)
 	seams := sc.cacheSeams()
@@ -999,14 +989,8 @@ func (r errPriceReader) RecentClosedSnapshots(context.Context, canonical.Asset, 
 // raw trades — the price the gate exists to refuse.
 func TestReaderChokepointNamesTheScamGate(t *testing.T) {
 	const issuer = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
-	flagged, err := canonical.NewClassicAsset("RIO", issuer)
-	if err != nil {
-		t.Fatalf("classic asset: %v", err)
-	}
-	usd, err := canonical.NewFiatAsset("USD")
-	if err != nil {
-		t.Fatalf("build fiat:USD: %v", err)
-	}
+	flagged := mustClassic(t, "RIO", issuer)
+	usd := mustUSD(t)
 	pair, err := canonical.NewPair(flagged, usd)
 	if err != nil {
 		t.Fatalf("pair: %v", err)
