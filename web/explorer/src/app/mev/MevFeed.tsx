@@ -61,7 +61,7 @@ interface MevDetail {
   window_ledgers?: number;
 }
 
-interface MevEvent {
+export interface MevEvent {
   event_id: string;
   detected_at: string;
   detected_at_ledger: number;
@@ -86,6 +86,35 @@ function eventAssets(e: MevEvent): string[] {
   if (e.detail.pair) return e.detail.pair.split('|');
   if (e.detail.asset) return [e.detail.asset];
   return [];
+}
+
+const MEV_CSV_COLUMNS = [
+  'event_id',
+  'detected_at',
+  'detected_at_ledger',
+  'kind',
+  'assets',
+  'sources',
+  'notional_usd',
+  'profit_usd',
+  'accounts',
+  'tx_hashes',
+] as const;
+
+/** One CSV row per event; amounts stay decimal strings, lists join with spaces. */
+export function mevCsvRow(e: MevEvent): Record<string, string | number> {
+  return {
+    event_id: e.event_id,
+    detected_at: e.detected_at,
+    detected_at_ledger: e.detected_at_ledger,
+    kind: e.kind,
+    assets: eventAssets(e).join(' '),
+    sources: (e.detail.sources ?? []).join(' '),
+    notional_usd: e.detail.notional_usd ?? '',
+    profit_usd: e.profit_usd ?? '',
+    accounts: e.accounts.join(' '),
+    tx_hashes: e.tx_hashes.join(' '),
+  };
 }
 
 function evidenceCount(e: MevEvent): string {
@@ -116,6 +145,15 @@ export function MevFeed() {
       title={`Detected MEV events${rows.length > 0 ? ` (${rows.length})` : ''}`}
       hint="All kinds, newest first. Positional/structural evidence — direction and profit are never inferred; each event's detail.note states exactly what is claimed."
       source={asExample('/v1/mev', { limit: 50 })}
+      download={
+        rows.length > 0
+          ? {
+              name: 'mev-events',
+              columns: MEV_CSV_COLUMNS,
+              rows: rows.map(mevCsvRow),
+            }
+          : undefined
+      }
       bodyClassName="space-y-3"
     >
       {q.isLoading && <p className="text-ink-muted text-sm">Loading…</p>}

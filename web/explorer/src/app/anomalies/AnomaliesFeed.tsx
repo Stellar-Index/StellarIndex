@@ -22,6 +22,18 @@ type FreezeEvent = NonNullable<AnomaliesResp['events']>[number];
 // The window the reason tally + daily heatmap cover (the API default).
 const TALLY_WINDOW_DAYS = 30;
 
+const FREEZE_CSV_COLUMNS = [
+  'asset_id',
+  'quote_id',
+  'reason',
+  'frozen_at',
+  'frozen_at_ledger',
+  'frozen_value',
+  'recovered_at',
+  'recovered_at_ledger',
+  'firing',
+] as const;
+
 function fmtTs(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
@@ -87,6 +99,25 @@ export function AnomaliesFeed() {
         title="Freeze timeline"
         hint="Every clear→firing transition from the durable freeze_events mirror, newest first."
         source={asExample('/v1/anomalies', { limit: 100, include: 'daily' })}
+        download={
+          events.length > 0
+            ? {
+                name: 'price-freezes',
+                columns: FREEZE_CSV_COLUMNS,
+                rows: events.map((e) => ({
+                  asset_id: e.asset_id,
+                  quote_id: e.quote_id,
+                  reason: e.reason,
+                  frozen_at: e.frozen_at,
+                  frozen_at_ledger: e.frozen_at_ledger,
+                  frozen_value: e.frozen_value,
+                  recovered_at: e.recovered_at,
+                  recovered_at_ledger: e.recovered_at_ledger,
+                  firing: e.firing,
+                })),
+              }
+            : undefined
+        }
         bodyClassName="space-y-3"
       >
         {data && (
