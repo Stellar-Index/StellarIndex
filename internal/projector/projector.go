@@ -1401,31 +1401,20 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	}
 	p.emitDecoderLossDeltas(src)
 	// A partially-failed cycle made forward progress (commitTo >= fromLedger)
-	// but still has a pending retry above commitTo — surface it as a distinct
-	// run outcome so a genuinely-stuck source alerts rather than silently
-	// stalling under an "ok" label.
+	// but has a pending retry above commitTo; surface it as a distinct run
+	// outcome so a stuck source alerts rather than stalling under "ok".
 	//
-	// A decode soft-fail (a returned decode
-	// error or a recovered decoder panic) skips the row and advances the cursor
-	// past it. That is correct for genuine poison DATA — and holding instead
-	// would wedge a sole-writer source on a deterministic failure —
-	// but a shipped decoder REGRESSION breaks a whole CLASS of valid events the
-	// same way (the projector runs the SAME decoders as ingest; the phoenix
-	// 5,161-orphaned-swap class), silently draining them from the served tier
-	// while the cursor sails to tip. Reported "ok", such a cycle would make
-	// runs_total show a clean run over dropped rows, and no run-level signal would
-	// distinguish the loss. Mark a decode-dropping cycle "decode_degraded" so
-	// it is NOT counted clean; the per-source decode_error RATE alert
-	// (stellarindex_projector_decode_error_rate_high in projector.yml) is what
-	// separates a sustained spike (a regression) from scattered poison rows and
-	// pages. sink_retry keeps precedence: it means the cursor HELD (an
-	// auto-recovering visible stall) and already alerts on its own.
+	// A decode soft-fail (returned error or recovered panic) skips the row and
+	// advances the cursor, correct for poison DATA. But a decoder REGRESSION
+	// breaks a whole class of valid events the same way, draining them from the
+	// served tier while the cursor sails to tip, and "ok" would hide it. So a
+	// decode-dropping cycle is "decode_degraded"; the per-source decode_error
+	// RATE alert (stellarindex_projector_decode_error_rate_high in projector.yml)
+	// separates a sustained spike from scattered poison rows. sink_retry keeps
+	// precedence: the cursor HELD and it alerts on its own.
 	//
-	// A poison row the shed cap held back counts the same way: the cursor was
-	// capped below it and the next cycle re-reads it, which is exactly what
-	// "sink_retry" already means at the run level — an auto-recovering visible
-	// stall. Reporting that cycle "ok" would hide the one signal a global
-	// class-22/23 fault produces before its rows start bleeding off.
+	// A poison row the shed cap held back counts as sink_retry too: the cursor
+	// was capped below it and the next cycle re-reads it.
 	runOutcome := "ok"
 	switch {
 	case sinkTransientFails > 0 || sinkPoisonHeld > 0:
@@ -1612,33 +1601,26 @@ func (p *Projector) holdForWidenedGate(source string, from, to uint32, added []s
 		"source", source, "from", from, "to", to, "added", len(added), "first_added", added[0])
 }
 
-// resolveTip returns the upper scan bound for one cycle. The base
-// bound is the live ledgerstream cursor's last_ledger — the same
-// approach as the gap detector (gap_detector.go::resolveGapDetectorTip)
-// — so the projector never gets ahead of durably-ingested ledgers.
+// resolveTip returns the upper scan bound for one cycle. The base bound is
+// the live ledgerstream cursor's last_ledger (as gap_detector.go::
+// resolveGapDetectorTip), so the projector never gets ahead of
+// durably-ingested ledgers.
 //
-// In CH feed-switch mode (lakeEvents set) the bound is additionally
-// clamped to the lake's contiguous-completeness watermark for
-// [from, …]: the live dual-sink can drop or partially write ledgers,
-// so reading past the first hole would silently lose that ledger's
-// events (the cursor advances to the bound unconditionally). Clamping
-// to the watermark stalls the source AT a hole until the catch-up
-// timer heals it, instead of skipping over it (ADR-0041 feed-switch).
+// In CH feed-switch mode (lakeEvents set) the bound is also clamped to the
+// lake's contiguous-completeness watermark for [from, …]: the live dual-sink
+// can drop ledgers, and the cursor advances to the bound unconditionally, so
+// reading past a hole would lose events. Clamping stalls the source AT the
+// hole until catch-up heals it (ADR-0041).
 //
-// In soroban_events mode the same hazard has a different shape: the raw
-// sink commits asynchronously after the cursor advances, so the tip's own
-// rows may still be buffered. The bound is only returned once the raw-event
-// barrier ([Projector.SetRawEventBarrier]) has seen every row pushed before
-// the cursor read commit; a barrier that cannot settle fails the cycle.
+// In soroban_events mode the raw sink commits asynchronously after the
+// cursor advances, so the bound is only returned once the raw-event barrier
+// ([Projector.SetRawEventBarrier]) has seen every earlier row commit; a
+// barrier that cannot settle fails the cycle.
 //
-// scanLimit bounds the CH watermark query: a cycle reads at most one batch
-// window past from, so scanning the lake to its tip every cycle is wasted work
-// for a lagging source.
-//
-// It also returns the unclamped ledgerstream tip: lag is always measured
-// against that, so a stalled watermark shows as rising lag rather than as
-// a caught-up source. A watermark error still returns durableTip, so the
-// failed cycle can publish lag.
+// scanLimit bounds the CH watermark query to one batch window past from.
+// durableTip is the unclamped ledgerstream tip: lag is measured against it so
+// a stalled watermark shows as rising lag, and a watermark error still
+// returns it so the failed cycle can publish lag.
 func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from, scanLimit uint32) (scanTip, durableTip uint32, err error) {
 	c, err := p.store.GetCursor(ctx, "ledgerstream", "")
 	if err != nil {

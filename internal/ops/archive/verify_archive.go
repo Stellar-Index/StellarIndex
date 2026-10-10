@@ -27,31 +27,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// verifyArchive runs one or more verification tiers against a galexie
-// bucket. Per `docs/operations/galexie-backfill.md` and ADR-0017, each tier
-// addresses a distinct trust failure mode:
+// verifyArchive runs one or more verification tiers against a galexie bucket
+// (docs/operations/galexie-backfill.md, ADR-0017); each tier addresses a
+// distinct trust failure:
 //
 //   - Tier A (chain): ledger[N].Header.PreviousLedgerHash == ledger[N-1].Hash.
 //     Catches internal corruption and dropped ledgers.
-//   - Tier B (checkpoint): cross-check our LCM's hash at every 64-ledger
-//     checkpoint against the local history-archive (`ledger-XXXXXXXX.xdr.gz`).
-//     Catches single-source corruption that is still chain-link-consistent.
-//   - Tier D (peers): sample checkpoints and cross-compare
-//     history-XXXXXXXX.json across N tier-1 validator archives.
-//   - Tier E (archivist): `stellar-archivist scan --verify`: re-hashes every
+//   - Tier B (checkpoint): our LCM's hash at every 64-ledger checkpoint vs the
+//     local history-archive. Catches chain-link-consistent corruption.
+//   - Tier D (peers): sampled history-XXXXXXXX.json across N tier-1 archives.
+//   - Tier E (archivist): `stellar-archivist scan --verify` re-hashes every
 //     referenced bucket and checkpoint file.
-//   - Tier C (sdf-sample): ETag+size compare of N random ledgers with SDF's
-//     public dataset (verify_archive_sdf_sample.go).
+//   - Tier C (sdf-sample): ETag+size of N random ledgers vs SDF's public
+//     dataset (verify_archive_sdf_sample.go).
 //
-// `-tier all` (A, B, D, E) runs every tier sequentially. Any mismatch is a
-// hard stop with the diverging ledger numbers and hashes printed.
-//
-// Defaults:
-//   - bucket: cfg.Storage.S3BucketArchive, falling back to S3BucketLive when
-//     both it and -bucket are unset. Set -bucket explicitly for the
-//     historical half.
-//   - from: 2 (ledger 1 has no predecessor).
-//   - to: 0 = unbounded. Set both -from and -to for a bounded verify.
+// `-tier all` (A, B, D, E) runs them sequentially; any mismatch is a hard stop.
+// Defaults: bucket is cfg.Storage.S3BucketArchive, else S3BucketLive (set
+// -bucket for the historical half); from is 2 (ledger 1 has no predecessor);
+// to is 0 = unbounded.
 func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocyclo // linear diagnostic; splitting reduces readability
 	fs := flag.NewFlagSet("verify-archive", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

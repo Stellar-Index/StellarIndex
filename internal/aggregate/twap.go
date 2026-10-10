@@ -21,43 +21,25 @@ var twapScale = new(big.Int).Exp(big.NewInt(10), big.NewInt(40), nil)
 // the oldest trade the whole window and publish its price as the average.
 var ErrUnsortedTrades = errors.New("aggregate: trades not sorted by timestamp ascending")
 
-// TWAP returns the time-weighted average price over the given
-// trades, with each INSTANT's price active until the next PRICED
-// instant (or windowEnd for the final one). An instant is a run of
-// trades sharing one Timestamp, and its price is that run's
-// volume-weighted Σquote/Σbase.
+// TWAP returns the time-weighted average price over the given trades, with
+// each INSTANT's price active until the next PRICED instant (or windowEnd for
+// the final one). An instant is a run of trades sharing one Timestamp; its
+// price is that run's volume-weighted Σquote/Σbase.
 //
-// Grouping by instant is what makes the result independent of the
-// order of same-timestamp trades. On-chain sources stamp every fill
-// with its ledger close time, so a ledger's fills share one timestamp;
-// weighting per trade would hand the whole interval to whichever fill
-// sorts last within the ledger (a tx_hash tie-break) and zero weight to
-// the rest — a dust print could carry the interval alone. Within an
-// instant a fill counts by its size, like VWAP.
+// Grouping by instant makes the result independent of the order of
+// same-timestamp trades: on-chain fills share their ledger close time, so
+// per-trade weighting would hand the whole interval to whichever fill sorts
+// last and let a dust print carry it alone.
 //
-// Requirements:
+// Trades must be sorted ascending by Timestamp; the function returns
+// [ErrUnsortedTrades] rather than sorting, which would hide caller bugs. A
+// windowEnd before the last trade clamps that slot to zero. Returns
+// [ErrNoTrades] for an empty slice or a zero total duration.
 //
-//   - trades must be sorted by Timestamp, ascending (ties allowed).
-//     The function does NOT sort internally — doing so silently would
-//     hide caller bugs — and returns [ErrUnsortedTrades] instead.
-//   - windowEnd must be ≥ the last trade's timestamp. A windowEnd
-//     earlier than the last trade's timestamp means the final
-//     instant's slot is negative; we clamp to zero for that slot
-//     rather than return an error, but ordering upstream is still
-//     a bug.
-//
-// Returns [ErrNoTrades] for an empty slice or when the total
-// duration is zero (every trade at the exact same timestamp as
-// windowEnd and each other).
-//
-// Formula: TWAP = Σ(price_k × Δt_k) / Σ(Δt_k) over instants k, where
-// Δt_k is the duration instant k's price was "current."
-//
-// An instant [priceable] skips entirely (both legs non-positive on
-// every trade in it) has no defined price and abstains: it neither
-// sets a price nor ends the prevailing instant's slot, so the
-// window's time stays fully covered by the surrounding priced
-// instants rather than vanishing from the denominator.
+// An instant [priceable] skips entirely (both legs non-positive on every
+// trade) abstains: it neither sets a price nor ends the prevailing instant's
+// slot, so the window's time stays covered rather than vanishing from the
+// denominator.
 func TWAP(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, error) {
 	price, _, err := TWAPWithCount(trades, windowEnd)
 	return price, err
@@ -71,34 +53,15 @@ func TWAPWithCount(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, int
 	}
 
 	// weightedSum accumulates Σ(price_i × Δt_i) in FIXED POINT (scaled by
-	// twapScale), NOT as a big.Rat.
+	// twapScale), NOT as a big.Rat: Rat.Add accretes the LCM of the operands'
+	// denominators, so the loop goes super-linear (n=10000, the handler's
+	// maxTrades cap, took ~60s) and aggregate.TWAP takes no ctx, so nothing can
+	// cancel it. The exactness Rat buys is discarded anyway at ~10 served
+	// places; truncation error is bounded by 1/twapScale = 10^-40 relative.
 	//
-	// big.Rat.Add puts both operands over a common denominator and
-	// renormalises: adding N prices with distinct base amounts accretes
-	// their LCM, so the running denominator grows without bound and the
-	// loop goes super-linear (roughly n^2.6; n=10000, the handler's
-	// maxTrades cap, takes ~60s with a 20 KB denominator). One anonymous
-	// GET would cost multiple CPU-seconds, and nothing can reclaim it:
-	// aggregate.TWAP takes no ctx, and RequestTimeout only injects a
-	// deadline, it does not abort the handler goroutine.
-	//
-	// Fixed point is the right tool because the exactness big.Rat buys is
-	// discarded anyway: the result is serialised to a decimal string at
-	// ~10 places. Each term truncates by <1 unit in the last place, and
-	// every Δt is ≥1ns so Σ Δt ≥ n, bounding the RELATIVE error of the
-	// quotient by n/(twapScale·ΣΔt) ≤ 1/twapScale = 10^-40 — thirty
-	// orders of magnitude below the served precision. Every intermediate
-	// stays ~320 bits wide, so the loop is linear.
-	//
-	// totalNanos accumulates Σ(Δt_i) as a *big.Int, NOT an int64:
-	// time.Time.Sub SATURATES at MaxInt64 (~292.47 years), so a windowEnd
-	// far enough in the future produces a saturated Δt, and adding any
-	// further positive interval WRAPS THE SUM NEGATIVE, flipping the sign
-	// of the published price on the final division (the zero-only guard
-	// below would not catch it). The API places no upper bound on an
-	// explicit `to`, so a far-future "no end bound" sentinel would
-	// otherwise return a negative price. A big.Int accumulator removes
-	// the overflow class rather than papering over one entry point.
+	// totalNanos is a *big.Int, NOT an int64: time.Time.Sub saturates at
+	// MaxInt64, so a far-future windowEnd (the API places no bound on `to`)
+	// would wrap the sum negative and flip the published price's sign.
 	weightedSum := new(big.Int)
 	totalNanos := new(big.Int)
 	scratch := new(big.Int)

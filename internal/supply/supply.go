@@ -89,33 +89,22 @@ const (
 	BasisSEP41LakeFlows Basis = "sep41_lake_flows"
 
 	// BasisClassicLakeFlows — a CLASSIC asset's raw on-chain total
-	// (Σmint−Σburn−Σclawback) summed live over the lake's
-	// stellar.supply_flows for the asset's deterministically derived
-	// Stellar Asset Contract. The classic sibling of
-	// [BasisSEP41LakeFlows], and the only listing-path reading that is
-	// not keyed on WHERE the tokens are held: a flow does not know
-	// whether the tokens came to rest in a trustline, a claimable
-	// balance, a liquidity-pool reserve or a SAC-held contract balance,
-	// so one sum covers all four domains.
+	// (Σmint−Σburn−Σclawback) summed live over stellar.supply_flows for the
+	// asset's derived Stellar Asset Contract. The classic sibling of
+	// [BasisSEP41LakeFlows]; a flow does not know where the tokens came to rest,
+	// so one sum covers trustlines, claimable balances, LP reserves and SAC-held
+	// balances.
 	//
-	// It is an UPPER reading, not a certified one. The sum is only as
-	// complete as the flow history behind it, and the completeness check
-	// it carries (clickhouse.TokenSupply.Incomplete) fires only when the
-	// net goes NEGATIVE — i.e. only when the MINT side is under-seeded.
-	// The opposite asymmetry, a replayed historical mint with no matching
-	// burn, produces a too-LARGE total that nothing in the reading itself
-	// can detect. Measured against Horizon's all-domain totals on r1:
-	// BLND +11.53% and PHO +156.79% (a single replayed
-	// 200,000,000-token issuance at ledger 51571763 against 77,882,787
-	// actually outstanding), while USDC, EURC, AQUA, yXLM and VELO all
-	// landed within 0.03%. That is why this basis ranks BELOW a direct
-	// supply observation and above only the trustline sum.
+	// It is an UPPER reading, not a certified one: the completeness check
+	// (clickhouse.TokenSupply.Incomplete) fires only when the net goes NEGATIVE
+	// (under-seeded mints). A replayed historical mint with no matching burn
+	// yields a too-LARGE total nothing detects (measured against Horizon: PHO
+	// +156.79% from one replayed issuance). So it ranks BELOW a direct supply
+	// observation and above only the trustline sum.
 	//
-	// NOT exclusion-netted: the flow sum carries no issuer or locked-set
-	// balances to subtract, so total == circulating here, as for
-	// [BasisSEP41LakeFlows]. The listing publishes it as
-	// circulating_supply; an observation for the same asset
-	// ([BasisIssuerExclusion], [BasisOverride]) subtracts those sets.
+	// NOT exclusion-netted: total == circulating here, as for
+	// [BasisSEP41LakeFlows]; an observation basis ([BasisIssuerExclusion],
+	// [BasisOverride]) subtracts the excluded sets.
 	BasisClassicLakeFlows Basis = "classic_lake_flows"
 
 	// BasisClassicTrustlineSum — a CLASSIC asset's supply summed from
@@ -135,36 +124,24 @@ const (
 
 	// BasisContractStorageBalances — a Soroban token's supply summed from the
 	// per-holder BALANCE LEDGER ENTRIES in its contract storage
-	// (`Balance(Address) → i128`), rather than from its event log. Produced by
+	// (`Balance(Address) → i128`), not its event log. Produced by
 	// internal/storage/clickhouse.ContractStorageSupply.
 	//
-	// It is a DIFFERENT BASIS, not a better reading of the same one. Every
-	// other supply basis in this vocabulary accumulates ISSUANCE — what was
-	// minted, less what was destroyed. This one measures DISTRIBUTION — the
-	// balances that exist right now. For a token whose event log is complete
-	// the two agree exactly, and that was measured rather than assumed: on
-	// pubnet, three event-emitting Wasm tokens (EUTBL, USTBL,
-	// deJTRSY) reproduced their [BasisSEP41LakeFlows] totals to the unit.
+	// A DIFFERENT BASIS, not a better reading of the same one: every other basis
+	// accumulates ISSUANCE, this one measures DISTRIBUTION. Where the event log
+	// is complete they agree exactly (measured on pubnet for EUTBL, USTBL,
+	// deJTRSY vs [BasisSEP41LakeFlows]). It exists for tokens that emit NO
+	// SEP-41 events: they are ABSENT from stellar.supply_flows, which sums to a
+	// confident zero rather than a visible gap.
 	//
-	// It exists for the case where they cannot agree, because one of them is
-	// not there. A token that emits NO SEP-41 events is not undercounted in
-	// stellar.supply_flows, it is ABSENT from it, and an absent contract sums
-	// to a confident zero rather than to a gap anything would notice. Twenty-
-	// four private-credit deal tokens on pubnet held 548,113,042.88 tokens in
-	// storage while every event-derived reading of them returned 0.
-	//
-	// The two readings are NEVER SUMMED — the same tokens are in both, so
-	// adding them double-counts. Where a token has both, this basis supersedes
-	// the event reading outright: a level cannot be made wrong by missing
-	// history, while an accumulation is only as complete as its log.
+	// The two readings are NEVER SUMMED (double-count); where a token has both,
+	// this basis supersedes the event reading, since a level cannot be made wrong
+	// by missing history.
 	//
 	// A figure on this basis is a LOWER BOUND and carries the
-	// circulating_supply_lower_bound flag. It is blind to balance entries the
-	// lake's current-state projection never captured. Archived (TTL-lapsed)
-	// persistent balances are NOT missing: the lake never records an eviction,
-	// so they are summed, and they are still owned and restorable. That is a
-	// different blindness from the classic trustline sum's, which misses whole
-	// holding DOMAINS: this one misses entries outside the projection.
+	// circulating_supply_lower_bound flag: it misses entries outside the lake's
+	// current-state projection. Archived (TTL-lapsed) balances are still summed,
+	// since the lake never records an eviction.
 	BasisContractStorageBalances Basis = "contract_storage_balances"
 
 	// BasisNoMetadata — we don't have a defensible value for
