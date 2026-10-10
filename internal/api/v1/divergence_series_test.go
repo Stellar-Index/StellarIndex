@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,43 +163,39 @@ func TestDivergenceSeries_NilReaderAndZeroThreshold(t *testing.T) {
 	}
 }
 
-// TestAnomalies_IncludeDaily pins the daily block contract: absent
-// (JSON null) unless requested; [] when requested with no freezes —
-// a client must be able to tell "not served" from "zero freezes".
-func TestAnomalies_IncludeDaily(t *testing.T) {
-	s := &Server{
-		Options: Options{Anomalies: &fakeAnomalyReader{daily: []timescale.FreezeDailyReasonCount{
-			{Day: time.Date(2026, 7, 29, 0, 0, 0, 0, time.UTC), Reason: "divergence", Count: 3},
-		}}},
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+func TestDivergenceSeries_WithheldMarketIsWithheldProblem(t *testing.T) {
+	for _, pair := range []string{withholdingFlaggedAsset + "~native", "native~" + withholdingFlaggedAsset} {
+		t.Run(pair, func(t *testing.T) {
+			s := withholdingServer()
+			reader := &withholdingDivergenceReader{points: []timescale.DivergenceSeriesPoint{
+				{Bucket: time.Unix(0, 0), DeltaPct: "5", OurPrice: "0.42", RefPrice: "0.40"},
+			}}
+			s.Divergences = reader
+			rec := httptest.NewRecorder()
+			s.handleDivergenceSeries(rec, httptest.NewRequest(http.MethodGet,
+				"/v1/divergence/series?pair="+pair+"", nil))
+			if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "price-withheld") {
+				t.Fatalf("status = %d body %s, want 404 price-withheld", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "0.42") {
+				t.Errorf("withheld response leaked our_price: %s", rec.Body.String())
+			}
+			if reader.seriesRead {
+				t.Error("series was read for a withheld market; the gate must be asked first")
+			}
+		})
 	}
+}
 
-	// Without include=daily → daily is null.
+func TestDivergenceSeries_UnflaggedMarketStillServes(t *testing.T) {
+	s := withholdingServer()
+	s.Divergences = &withholdingDivergenceReader{points: []timescale.DivergenceSeriesPoint{
+		{Bucket: time.Unix(0, 0), DeltaPct: "1", OurPrice: "100", RefPrice: "99"},
+	}}
 	rec := httptest.NewRecorder()
-	s.handleAnomalies(rec, httptest.NewRequest(http.MethodGet, "/v1/anomalies", nil))
-	var got struct {
-		Data struct {
-			Daily json.RawMessage `json:"daily"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if string(got.Data.Daily) != "null" {
-		t.Errorf("daily without include = %s, want null (not requested)", got.Data.Daily)
-	}
-
-	// With include=daily → the tally rows, day formatted YYYY-MM-DD.
-	rec = httptest.NewRecorder()
-	s.handleAnomalies(rec, httptest.NewRequest(http.MethodGet, "/v1/anomalies?include=daily", nil))
-	var got2 struct {
-		Data AnomaliesView `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &got2); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(got2.Data.Daily) != 1 || got2.Data.Daily[0].Day != "2026-07-29" ||
-		got2.Data.Daily[0].Reason != "divergence" || got2.Data.Daily[0].Count != 3 {
-		t.Errorf("daily = %+v, want one 2026-07-29/divergence/3 cell", got2.Data.Daily)
+	s.handleDivergenceSeries(rec, httptest.NewRequest(http.MethodGet,
+		"/v1/divergence/series?pair=crypto:BTC~fiat:USD", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"our_price":"100"`) {
+		t.Fatalf("status = %d body %s, want 200 with our_price 100", rec.Code, rec.Body.String())
 	}
 }

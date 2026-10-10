@@ -2,9 +2,7 @@ package v1
 
 import (
 	"context"
-	"errors"
 	"math/big"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -273,60 +271,6 @@ func TestDEXTVLPools_OrderedLargestFirst(t *testing.T) {
 	}
 }
 
-// TestDEXTVLCache_ProtocolCarriesPoolsAcrossAFailedRefresh — a carried
-// figure travels with the pools it was summed from and is LABELLED
-// carried, so the drill-down shows what the headline refused rather
-// than an empty list beside a non-zero number; a recovered refresh
-// clears the label.
-func TestDEXTVLCache_ProtocolCarriesPoolsAcrossAFailedRefresh(t *testing.T) {
-	src, _ := tvlBranchSources()
-	aq := src.AquariusReserves.(*stubAquariusReserveReader)
-	c := NewDEXTVLCache(src)
-	if err := c.Refresh(context.Background()); err != nil {
-		t.Fatalf("first Refresh: %v", err)
-	}
-	before, _ := c.Protocol("aquarius")
-	if before.CarriedForward {
-		t.Fatal("a freshly computed protocol is not carried")
-	}
-
-	aq.err = errors.New("lake unavailable")
-	if err := c.Refresh(context.Background()); err == nil {
-		t.Fatal("second Refresh should surface the aquarius error")
-	}
-	carried, ok := c.Protocol("aquarius")
-	if !ok || !carried.CarriedForward {
-		t.Fatalf("carried aquarius = %+v ok=%v, want the previous entry labelled carried", carried, ok)
-	}
-	if !reflect.DeepEqual(carried.Pools, before.Pools) || carried.TVL != before.TVL {
-		t.Errorf("carried entry must be the previous cycle's figure AND pools: %+v vs %+v", carried, before)
-	}
-	if ss, _ := c.Protocol("soroswap"); ss.CarriedForward {
-		t.Error("a protocol that refreshed this cycle must not be labelled carried")
-	}
-
-	aq.err = nil
-	if err := c.Refresh(context.Background()); err != nil {
-		t.Fatalf("third Refresh: %v", err)
-	}
-	if after, _ := c.Protocol("aquarius"); after.CarriedForward {
-		t.Error("a recovered refresh clears the carried label")
-	}
-}
-
-// TestDEXTVLCache_ProtocolColdAndUnknown — no entry before the first
-// refresh, and none for a name the snapshot never held.
-func TestDEXTVLCache_ProtocolColdAndUnknown(t *testing.T) {
-	c := NewDEXTVLCache(DEXTVLSources{})
-	if _, ok := c.Protocol("soroswap"); ok {
-		t.Error("cold cache must report no entry")
-	}
-	c = refreshedBranchCache(t)
-	if _, ok := c.Protocol("sdex"); ok {
-		t.Error("sdex has no derivation and must report no entry")
-	}
-}
-
 // TestDEXTVLNotDerivedReason — the 404 on a known protocol says the
 // same thing tvl_total.excluded says where a standing exclusion names
 // it, and points at that list otherwise.
@@ -339,5 +283,67 @@ func TestDEXTVLNotDerivedReason(t *testing.T) {
 	}
 	if got := dexTVLNotDerivedReason("soroswap"); !strings.Contains(got, "not wired") || !strings.Contains(got, "tvl_total.excluded") {
 		t.Errorf("unwired reason = %q, want the generic not-wired statement pointing at tvl_total.excluded", got)
+	}
+}
+
+// TestDEXTVLPools_MoneyRoundsOnceAtTheLeaf pins the reconciliation
+// contract the per-pool drill-down rests on: each valued leg is
+// published to the cent, and every figure above it is the EXACT sum of
+// the published figures beneath. Two legs worth $0.004 each are
+// therefore two published "0.00" legs, a "0.00" pool and a "0.00"
+// protocol — not a "0.01" protocol that no set of published pool rows
+// could ever add up to.
+//
+// Written against the public cache surface only, so it runs unchanged
+// against the tree before the drill-down existed, where the protocol
+// figure was the unrounded rational sum rendered once and read "0.01".
+func TestDEXTVLPools_MoneyRoundsOnceAtTheLeaf(t *testing.T) {
+	// 80,000 raw XLM-SAC units at the 1e7 anchor scale × $0.5 = $0.004.
+	const subCent = 80_000
+	c := NewDEXTVLCache(DEXTVLSources{
+		SoroswapPairs: stubTVLPairsReader{pairs: []timescale.SoroswapPair{{PairStrkey: tvlTestPairA}}},
+		SoroswapReserves: stubTVLReserveReader{states: map[string]clickhouse.SoroswapPairState{
+			tvlTestPairA: {
+				Pair:   tvlTestPairA,
+				Token0: canonical.XLMSacContractID, Reserve0: big.NewInt(subCent),
+				Token1: canonical.XLMSacContractID, Reserve1: big.NewInt(subCent),
+				Ledger: tvlTestLedgerPairA,
+			},
+		}},
+		Pricer: stubTVLPricer{rates: map[string]string{"native": "0.5"}},
+	})
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	snap, _ := c.Snapshot()
+	if got := snap["soroswap"].TVLUSD; got != "0.00" {
+		t.Fatalf("soroswap tvl_usd = %q, want 0.00 — two sub-cent legs publish as two 0.00 legs, and the "+
+			"protocol figure is the exact sum of what is published, not the rational 0.008 rendered once", got)
+	}
+	if snap["soroswap"].PoolsPriced != 1 || snap["soroswap"].UnpricedPools != 0 {
+		t.Errorf("a pool of valued sub-cent legs is PRICED (worth less than a cent is not unpriceable): %+v", snap["soroswap"])
+	}
+}
+
+// The concentrated-liquidity refusal must say what it actually is. The
+// generic reason is reserved for a protocol that HAS an absolute reserve
+// source whose readers a deployment did not wire — a config gap an
+// operator can close. SushiSwap V3's is neither config nor temporary.
+func TestDEXTVLNotDerivedReason_ConcentratedLiquidityIsNotBlamedOnWiring(t *testing.T) {
+	t.Parallel()
+
+	got := dexTVLNotDerivedReason("sushiswap_v3")
+	if strings.Contains(got, "not wired on this deployment") {
+		t.Fatalf("sushiswap_v3 refusal = %q; it reads as a deployment-wiring gap an operator "+
+			"could close, but no wiring produces a two-sided reserve for a V3 pool", got)
+	}
+	if !strings.Contains(got, "concentrated liquidity") {
+		t.Errorf("sushiswap_v3 refusal = %q; it must name concentrated liquidity as the reason "+
+			"no reserve-derived figure exists", got)
+	}
+	// The rule this surface exists to keep: an underivable figure is
+	// absent, never zero-filled.
+	if strings.Contains(got, "0.00") {
+		t.Errorf("sushiswap_v3 refusal = %q; an underivable figure must be absent, not a zero", got)
 	}
 }

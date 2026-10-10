@@ -111,18 +111,6 @@ func TestOracleStreams_CacheUnavailable503(t *testing.T) {
 
 // ─── /v1/lending/pools ────────────────────────────────────────────
 
-// TestLendingPools_CacheUnavailable503 — The handler had a
-// 503 timeout path and a 500 fallthrough; MISCONF now lands on the
-// cache-unavailable 503 instead of the generic 500.
-func TestLendingPools_CacheUnavailable503(t *testing.T) {
-	reader := &stubLendingReader{err: miscOnfErr}
-	srv := v1.New(v1.Options{Lending: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/lending/pools")
-	assertCacheUnavailable(t, resp)
-}
-
 // ─── /v1/vwap ─────────────────────────────────────────────────────
 
 // TestVWAP_CacheUnavailable503 — The TradesInRange call

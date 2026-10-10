@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -369,5 +370,24 @@ func TestAssetSupply_NativeAliasIsCaseInsensitive(t *testing.T) {
 				t.Errorf("total_supply = %q, want the ledger header's total_coins", env.Data.TotalSupply)
 			}
 		})
+	}
+}
+
+// TestAssetSupply_UnmeasuredWatermarkServesStale drives the same property
+// through a route: the lake is wired but its watermark read fails, so the
+// supply response must carry flags.stale=true and no as_of_ledger.
+func TestAssetSupply_UnmeasuredWatermarkServesStale(t *testing.T) {
+	f := &fakeTokenSupply{supply: clickhouse.TokenSupply{
+		ContractID: supplyContractID,
+		Total:      big.NewInt(9), Mint: big.NewInt(9), Burn: big.NewInt(0), Clawback: big.NewInt(0),
+		FlowCount: 1,
+	}}
+	rec := serveSupplyWM(t, f, nil, &stubWatermark{err: errors.New("lake down")}, supplyContractID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	got, flags := decodeSupplyEnvelope(t, rec.Body.Bytes())
+	if got.AsOfLedger != 0 || !flags.Stale {
+		t.Errorf("as_of_ledger = %d stale = %v, want 0/true when the wired lake watermark is unmeasured", got.AsOfLedger, flags.Stale)
 	}
 }

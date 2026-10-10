@@ -425,3 +425,16 @@ func BenchmarkHandleProtocolTVL_LargeSnapshot(b *testing.B) {
 		}
 	}
 }
+
+func TestHandleProtocolTVL_CarriedForwardIsNoStore(t *testing.T) {
+	reader := &countingAquariusReader{pools: []timescale.AquariusPoolReserve{aquariusPool(
+		"CBQDHNBFBZYE4MECPHNQCLM7F5FRZ4R7HZWQZXAK7NZYYUR3ILWSKDMV", 7, 400_000_000)}}
+	cache := v1.NewDEXTVLCache(v1.DEXTVLSources{AquariusReserves: reader, Pricer: stubTVLPricerT{}})
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	reader.err = errors.New("lake unavailable")
+	_ = cache.Refresh(context.Background())
+	ts := httpTestServer(t, v1.New(v1.Options{DEXTVL: cache}))
+	assertNoStore(t, mustGet(t, ts.URL+"/v1/protocols/aquarius/tvl"))
+}

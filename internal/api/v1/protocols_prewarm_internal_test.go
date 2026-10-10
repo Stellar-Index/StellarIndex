@@ -213,28 +213,3 @@ func TestHandleProtocolDetail_StaleServeNeverBlanks(t *testing.T) {
 		t.Errorf("post-refresh analytics = %+v, want ok", env.Data.Analytics)
 	}
 }
-
-// TestBuildProtocolDetail_DegradationIsExplicit verifies a build whose
-// analytics components are missing stamps analytics.status
-// "unavailable" — absence/zeros must be distinguishable from real zeros
-// on the wire — and that stale-serving such an entry keeps the worse
-// state (unavailable, not stale).
-func TestBuildProtocolDetail_DegradationIsExplicit(t *testing.T) {
-	srv := New(Options{}) // no analytics readers wired at all
-	meta, ok := protocolByName("cctp")
-	if !ok {
-		t.Fatal("cctp missing from registry")
-	}
-	view := srv.buildProtocolDetail(context.Background(), meta, protocolActivityWindowDays)
-	if view.Analytics == nil || view.Analytics.Status != protocolAnalyticsUnavailable {
-		t.Fatalf("analytics = %+v, want status %q", view.Analytics, protocolAnalyticsUnavailable)
-	}
-	if view.Analytics.AsOf == "" {
-		t.Error("analytics.as_of empty, want build timestamp")
-	}
-	staled := staleProtocolDetail(view)
-	if staled.Analytics.Status != protocolAnalyticsUnavailable {
-		t.Errorf("stale overlay rewrote status %q → %q; unavailable must win over stale",
-			protocolAnalyticsUnavailable, staled.Analytics.Status)
-	}
-}

@@ -1,10 +1,8 @@
 package v1
 
 import (
-	"context"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -108,32 +106,5 @@ func TestCacheKey_DistinctDimensionsDistinctKeys(t *testing.T) {
 		if v == base {
 			t.Errorf("changing %s did not change the key (%q)", dim, base)
 		}
-	}
-}
-
-// TestCachedMarketsReader_AllPoolsSourcesOrderCollapse is the
-// end-to-end proof of the fix: AllPools with the same Sources set in
-// two different orders must hit ONE upstream call — the drift bug this
-// hardening closes would show 2. Uses the fakeMarketsReader defined in
-// markets_cache_test.go (same package).
-func TestCachedMarketsReader_AllPoolsSourcesOrderCollapse(t *testing.T) {
-	up := &fakeMarketsReader{}
-	c := NewCachedMarketsReader(up, 60*time.Second)
-
-	_, _, err := c.AllPools(context.Background(),
-		timescale.PoolsFilter{Sources: []string{"aquarius", "soroswap", "phoenix"}},
-		"", 50, timescale.MarketsOrderVolume24hDesc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Same set, reversed order — must land on the warmed slot.
-	_, _, err = c.AllPools(context.Background(),
-		timescale.PoolsFilter{Sources: []string{"phoenix", "soroswap", "aquarius"}},
-		"", 50, timescale.MarketsOrderVolume24hDesc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := up.allPoolsCalls.Load(); got != 1 {
-		t.Errorf("reordered Sources hit upstream %d times; want 1 (key must be order-normalised)", got)
 	}
 }

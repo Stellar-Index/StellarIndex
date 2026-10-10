@@ -114,3 +114,26 @@ func TestDivergence_GroupsReferencesPerPair(t *testing.T) {
 		t.Errorf("chainlink = %+v", btc.References[1])
 	}
 }
+
+func TestDivergence_OmitsWithheldMarketsOurPrice(t *testing.T) {
+	s := withholdingServer()
+	s.Divergences = &withholdingDivergenceReader{latest: []timescale.DivergenceRow{
+		{AssetID: withholdingFlaggedAsset, QuoteID: "native", Reference: "coingecko", OurPrice: "0.42", RefPrice: "0.40", DeltaPct: "5"},
+		{AssetID: "native", QuoteID: withholdingFlaggedAsset, Reference: "coingecko", OurPrice: "2.38", RefPrice: "2.5", DeltaPct: "-4.8"},
+		{AssetID: "crypto:BTC", QuoteID: "fiat:USD", Reference: "coingecko", OurPrice: "100", RefPrice: "99", DeltaPct: "1"},
+	}}
+	rec := httptest.NewRecorder()
+	s.handleDivergence(rec, httptest.NewRequest(http.MethodGet, "/v1/divergence", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Data DivergenceView `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Data.Pairs) != 1 || got.Data.Pairs[0].OurPrice != "100" {
+		t.Fatalf("pairs = %+v, want only crypto:BTC/fiat:USD @ 100 — a flagged issuer's our_price (either leg) was served", got.Data.Pairs)
+	}
+}

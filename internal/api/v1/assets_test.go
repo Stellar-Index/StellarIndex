@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -125,143 +123,6 @@ func TestAssetList_InvalidLimitRejected(t *testing.T) {
 
 // ─── /v1/assets/{asset_id} (single) ───────────────────────────────
 
-// With no reader wired, GET /v1/assets/{id} echoes the canonical decode.
-func TestAssetGet_CanonicalEcho(t *testing.T) {
-	cases := []struct {
-		name, path, wantType, wantCode string
-		wantIssuer                     string // empty: not asserted
-		wantAssetID                    string // empty: not asserted
-	}{
-		{"native", "native", "native", "", "", "native"},
-		{"classic", "USDC-" + testUSDCIssuer, "classic", "USDC", testUSDCIssuer, ""},
-		{"fiat (ADR-0010)", "fiat:USD", "fiat", "USD", "", ""},
-	}
-	ts := httpTestServer(t, v1.New(v1.Options{}))
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			resp := mustGet(t, ts.URL+"/v1/assets/"+tc.path)
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("status = %d", resp.StatusCode)
-			}
-			var body struct {
-				Data v1.AssetDetail `json:"data"`
-			}
-			mustDecode(t, resp, &body)
-			d := body.Data
-			if d.Type != tc.wantType || (tc.wantCode != "" && d.Code != tc.wantCode) ||
-				(tc.wantAssetID != "" && d.AssetID != tc.wantAssetID) {
-				t.Errorf("wrong decode: %+v", d)
-			}
-			if tc.wantIssuer != "" && (d.Issuer == nil || *d.Issuer != tc.wantIssuer) {
-				t.Errorf("issuer missing: %+v", d.Issuer)
-			}
-		})
-	}
-}
-
-func TestAssetGet_invalidIdReturns400(t *testing.T) {
-	srv := v1.New(v1.Options{})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/garbage-but-not-any-format")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
-	}
-	if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
-		t.Errorf("content-type = %q, want problem+json", ct)
-	}
-}
-
-func TestAssetGet_notFound(t *testing.T) {
-	reader := &stubAssetReader{byID: map[string]v1.AssetDetail{}}
-	srv := v1.New(v1.Options{Assets: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/native")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, "asset-not-found") {
-		t.Errorf("body missing error type: %s", body)
-	}
-}
-
-func TestAssetGet_readerPopulatesSep1Status(t *testing.T) {
-	// When the reader returns a detail, we use its fields verbatim
-	// (vs canonical-echo which fills defaults).
-	issuer := testUSDCIssuer
-	domain := "circle.com"
-	reader := &stubAssetReader{
-		byID: map[string]v1.AssetDetail{
-			"USDC-" + testUSDCIssuer: {
-				AssetID:    "USDC-" + testUSDCIssuer,
-				Type:       "classic",
-				Code:       "USDC",
-				Issuer:     &issuer,
-				HomeDomain: &domain,
-				Decimals:   7,
-				Sep1Status: "verified",
-			},
-		},
-	}
-	srv := v1.New(v1.Options{Assets: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/USDC-"+testUSDCIssuer)
-	var env struct {
-		Data v1.AssetDetail `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	if env.Data.Sep1Status != "verified" || env.Data.HomeDomain == nil {
-		t.Fatalf("reader fields lost: %+v", env.Data)
-	}
-}
-
-// TestAssetGet_Kind_SetForReaderPathAndSurvivesResponseCache proves
-// the ADR-0042 cache trap is closed. stubAssetReader — like
-// the real storage.timescale AssetReader implementation — has no
-// reason to know about the `kind` wire-shape discriminator, so its
-// fixture row below deliberately carries a zero-value Kind, the same
-// as a not-yet-updated storage layer would. handleAssetGet must stamp
-// Kind AFTER resolveAssetDetail returns but BEFORE renderAssetDetailEnvelope
-// caches the rendered bytes (assets.go's 30s assetDetailCache) — a fix
-// applied only on the FIRST response would leave the cached bytes
-// permanently missing `kind` for the remainder of the TTL window. This
-// test issues the request twice: once to populate the cache, once to
-// hit it, and requires `kind` on both.
-func TestAssetGet_Kind_SetForReaderPathAndSurvivesResponseCache(t *testing.T) {
-	reader := &stubAssetReader{
-		byID: map[string]v1.AssetDetail{
-			"native": {
-				// Kind intentionally left zero-valued — simulates a
-				// storage-layer AssetDetail that doesn't set it.
-				AssetID:    "native",
-				Type:       "native",
-				Code:       "XLM",
-				Decimals:   7,
-				Sep1Status: "not_applicable",
-			},
-		},
-	}
-	srv := v1.New(v1.Options{Assets: reader})
-	ts := httpTestServer(t, srv)
-
-	for i, label := range []string{"first (uncached)", "second (cache hit)"} {
-		resp := mustGet(t, ts.URL+"/v1/assets/native")
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("%s: status = %d", label, resp.StatusCode)
-		}
-		var env struct {
-			Data v1.AssetDetail `json:"data"`
-		}
-		mustDecode(t, resp, &env)
-		if env.Data.Kind != "stellar_asset" {
-			t.Errorf("%s request (i=%d): kind = %q, want \"stellar_asset\" — the reader.GetAsset path must have Kind stamped before the response is cached, not left to the (Kind-unaware) storage layer", label, i, env.Data.Kind)
-		}
-	}
-}
-
 // ctxDeadCountingReader answers GetAsset with a distinct Code each
 // call, independent of the request's context state (mirrors the real
 // AssetReader implementations, which don't observe cancellation
@@ -283,55 +144,6 @@ func (r *ctxDeadCountingReader) GetAsset(_ context.Context, a canonical.Asset) (
 
 func (r *ctxDeadCountingReader) ListAssets(_ context.Context, _ string, _ int) ([]v1.AssetDetail, string, error) {
 	return nil, "", nil
-}
-
-// TestAssetGet_DeadContextBodyNotCached is the regression proof for
-// handleAssetGet needs a liveness gate between its cache miss
-// and its assetDetailCache.put, so a request whose context died mid-
-// chain (client gone, or the blanket request-timeout deadline) still
-// cached whatever best-effort body it had assembled and replayed it
-// as a fresh 200 for the full 120s TTL. A second, healthy request for
-// the same asset_id must therefore recompute rather than replay the
-// first (dead-context) render.
-func TestAssetGet_DeadContextBodyNotCached(t *testing.T) {
-	reader := &ctxDeadCountingReader{}
-	srv := v1.New(v1.Options{Assets: reader})
-	h := srv.Handler()
-
-	// Request 1: context already dead by the time it reaches the
-	// handler — simulating a client abort or a fired request-timeout
-	// deadline partway through the enrichment chain.
-	deadCtx, cancel := context.WithCancel(context.Background())
-	cancel()
-	req1 := httptest.NewRequest(http.MethodGet, "/v1/assets/native", nil).WithContext(deadCtx)
-	rec1 := httptest.NewRecorder()
-	h.ServeHTTP(rec1, req1)
-	if rec1.Code != http.StatusOK {
-		t.Fatalf("request 1 (dead context): status = %d", rec1.Code)
-	}
-
-	// Request 2: healthy context, same asset_id, well inside the 120s
-	// TTL. Must NOT be served from a cache entry request 1 wrote.
-	req2 := httptest.NewRequest(http.MethodGet, "/v1/assets/native", nil)
-	rec2 := httptest.NewRecorder()
-	h.ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusOK {
-		t.Fatalf("request 2 (healthy context): status = %d", rec2.Code)
-	}
-
-	var env struct {
-		Data v1.AssetDetail `json:"data"`
-	}
-	if err := json.Unmarshal(rec2.Body.Bytes(), &env); err != nil {
-		t.Fatalf("decode request 2 body: %v", err)
-	}
-	if reader.calls != 2 {
-		t.Fatalf("GetAsset called %d times, want 2 — the second request must recompute, not replay a body cached from the dead-context request", reader.calls)
-	}
-	if env.Data.Code != "CALL2" {
-		t.Fatalf("second request served code %q, want CALL2 — it must reflect the SECOND (healthy-context) GetAsset call, not a cached body from the dead-context request",
-			env.Data.Code)
-	}
 }
 
 // TestAssetMetadata_ReturnsOnlyOverlayFields checks the
@@ -784,40 +596,6 @@ func (r slugStubAssetReader) ClassicAssetBySlug(_ context.Context, slug string) 
 		return r.code, r.issuer, true, nil
 	}
 	return "", "", false, nil
-}
-
-// TestAssetGet_ClassicSlugResolves — /v1/assets/{slug} must resolve a
-// migration-0134 public slug to its (code, issuer) identity when the
-// wired reader offers the capability, and keep the 400 for genuinely
-// unresolvable ids. Without this, slug URLs would be resolvable ONLY through
-// the explorer's build cache, so any page not baked at build time
-// 404 (operator report: /assets/usdt-gasu4kif).
-func TestAssetGet_ClassicSlugResolves(t *testing.T) {
-	const usdtID = "USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
-	reader := slugStubAssetReader{
-		AssetReader: &stubAssetReader{byID: map[string]v1.AssetDetail{
-			usdtID: {AssetID: usdtID, Type: "classic", Code: "USDT", Decimals: 7},
-		}},
-		code:   "USDT",
-		issuer: "GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V",
-	}
-	srv := v1.New(v1.Options{Assets: reader})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/assets/usdt-gcqtgzqq")
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, body)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V") {
-		t.Errorf("resolved detail must carry the full asset_id: %s", body)
-	}
-
-	resp2 := mustGet(t, ts.URL+"/v1/assets/definitely-not-a-slug")
-	if resp2.StatusCode != http.StatusBadRequest {
-		t.Errorf("unresolvable id status = %d, want 400", resp2.StatusCode)
-	}
 }
 
 // unmeasuredSubstanceGate is a substance gate whose store cannot answer

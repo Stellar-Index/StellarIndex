@@ -442,3 +442,182 @@ func TestChangeSummary_MoneyFieldsAreJSONStrings(t *testing.T) {
 		t.Errorf("h24_delta_pct was serialized as a string — percentages are not money\nbody=%s", body)
 	}
 }
+
+// /v1/changes published the rollup's RAW ratios as absolute money values.
+// For a confirmed 9-decimals base every one of them was 100x low, beside a
+// /v1/price that normalises the very same bucket. The percentages are
+// scale-free (both legs of each come from one raw series) and must NOT
+// move.
+//
+// The inputs are chosen so a naive float multiply would be caught too:
+// 1.15×100, 0.07×100 and 4.35×100 are all inexact in binary floating
+// point (114.99999999999999, 7.000000000000001, 434.99999999999994).
+func TestHandleChangeSummary_NormalisesNonstandardDecimals(t *testing.T) {
+	pairID := flaggedAsset + "/native"
+	for _, tc := range []struct{ entityType, entityID string }{
+		{"pair", pairID},
+		{"coin", flaggedAsset},
+	} {
+		t.Run(tc.entityType, func(t *testing.T) {
+			row := rawChangeSummaryRow(tc.entityType, tc.entityID)
+			srv := v1.New(v1.Options{
+				ChangeSummary:       &stubChangeSummaryReader{row: row},
+				NonstandardDecimals: nonstandardDecimalsCacheWith(t, flaggedAsset, 9),
+			})
+			got := getChangeSummary(t, srv, tc.entityType, tc.entityID)
+
+			if got.CurrentValue != "115" {
+				t.Errorf("current_value = %q, want \"115\"", got.CurrentValue)
+			}
+			wantMoney(t, "h1_value", got.H1Value, "114")
+			wantMoney(t, "h24_value", got.H24Value, "4132")
+			wantMoney(t, "d7_value", got.D7Value, "7")
+			wantMoney(t, "ath_value", got.ATHValue, "435")
+			wantMoney(t, "atl_value", got.ATLValue, "7")
+			if got.D30Value != nil {
+				t.Errorf("d30_value = %q, want it to stay absent", *got.D30Value)
+			}
+
+			// Scale-free fields pass through untouched.
+			if got.H1DeltaPct == nil || *got.H1DeltaPct != *row.H1DeltaPct {
+				t.Errorf("h1_delta_pct = %v, want %v unchanged", got.H1DeltaPct, *row.H1DeltaPct)
+			}
+			if got.H24DeltaPct == nil || *got.H24DeltaPct != *row.H24DeltaPct {
+				t.Errorf("h24_delta_pct = %v, want %v unchanged", got.H24DeltaPct, *row.H24DeltaPct)
+			}
+			if got.D7DeltaPct == nil || *got.D7DeltaPct != *row.D7DeltaPct {
+				t.Errorf("d7_delta_pct = %v, want %v unchanged", got.D7DeltaPct, *row.D7DeltaPct)
+			}
+			if got.ATHAt != "2026-09-01T12:00:00Z" || got.ATLAt != "2026-08-25T03:00:00Z" {
+				t.Errorf("ath_at/atl_at = %q/%q, want them carried through", got.ATHAt, got.ATLAt)
+			}
+			if got.StreakDirection != "up" || got.Acceleration != "accelerating" {
+				t.Errorf("streak/acceleration = %q/%q, want them carried through", got.StreakDirection, got.Acceleration)
+			}
+		})
+	}
+}
+
+// A flagged QUOTE leg scales the other way, and the factor must come from
+// the pair the row was computed on.
+func TestHandleChangeSummary_NormalisesFlaggedQuoteLeg(t *testing.T) {
+	pairID := "native/" + flaggedAsset
+	srv := v1.New(v1.Options{
+		ChangeSummary:       &stubChangeSummaryReader{row: rawChangeSummaryRow("pair", pairID)},
+		NonstandardDecimals: nonstandardDecimalsCacheWith(t, flaggedAsset, 9),
+	})
+	got := getChangeSummary(t, srv, "pair", pairID)
+	if got.CurrentValue != "0.0115" {
+		t.Errorf("current_value = %q, want \"0.0115\"", got.CurrentValue)
+	}
+	wantMoney(t, "h24_value", got.H24Value, "0.4132")
+	wantMoney(t, "ath_value", got.ATHValue, "0.0435")
+}
+
+// With the table populated for a DIFFERENT asset, an ordinary row is
+// byte-identical to what it has always been.
+func TestHandleChangeSummary_SevenDecimalsByteIdentical(t *testing.T) {
+	const pairID = "crypto:XLM/fiat:USD"
+	for _, tc := range []struct{ entityType, entityID string }{
+		{"pair", pairID},
+		{"coin", "crypto:XLM"},
+	} {
+		t.Run(tc.entityType, func(t *testing.T) {
+			srv := v1.New(v1.Options{
+				ChangeSummary:       &stubChangeSummaryReader{row: rawChangeSummaryRow(tc.entityType, tc.entityID)},
+				NonstandardDecimals: nonstandardDecimalsCacheWith(t, flaggedAsset, 9),
+			})
+			got := getChangeSummary(t, srv, tc.entityType, tc.entityID)
+			if got.CurrentValue != "1.15" {
+				t.Errorf("current_value = %q, want \"1.15\"", got.CurrentValue)
+			}
+			wantMoney(t, "h1_value", got.H1Value, "1.14")
+			wantMoney(t, "h24_value", got.H24Value, "41.32")
+			wantMoney(t, "d7_value", got.D7Value, "0.07")
+			wantMoney(t, "ath_value", got.ATHValue, "4.35")
+			wantMoney(t, "atl_value", got.ATLValue, "0.07")
+		})
+	}
+}
+
+// /v1/changes published current_value, the window values and the 30-day
+// ATH/ATL for a market /v1/price withholds: no scam gate and no substance
+// gate stood between change_summary_5m and the wire. Every value
+// on the row is an aggregated price claim for that market.
+func TestHandleChangeSummary_WithholdsWhatPriceWithholds(t *testing.T) {
+	flagged := chartFlaggedBase(t).String()
+	cases := []struct {
+		name, entityType, entityID string
+		opts                       func() v1.Options
+		wantSurface                string
+		wantTitle                  string
+	}{
+		{
+			name: "scam-flagged base, pair row", entityType: "pair", entityID: flagged + "/native",
+			opts: func() v1.Options {
+				return v1.Options{Scam: &chartScamGate{withheld: map[string]bool{flagged: true}}}
+			},
+			wantTitle: "issuer flagged",
+		},
+		{
+			name: "scam-flagged base, coin row", entityType: "coin", entityID: flagged,
+			opts: func() v1.Options {
+				return v1.Options{Scam: &chartScamGate{withheld: map[string]bool{flagged: true}}}
+			},
+			wantTitle: "issuer flagged",
+		},
+		{
+			name: "thin market, pair row", entityType: "pair", entityID: flagged + "/native",
+			opts:        func() v1.Options { return v1.Options{Substance: &stubSubstanceGate{allow: false}} },
+			wantSurface: "change_summary",
+			wantTitle:   "market too thin",
+		},
+		{
+			name: "thin market on every backing pair, coin row", entityType: "coin", entityID: flagged,
+			opts:      func() v1.Options { return v1.Options{Substance: &stubSubstanceGate{allow: false}} },
+			wantTitle: "market too thin",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := tc.opts()
+			opts.ChangeSummary = &stubChangeSummaryReader{row: rawChangeSummaryRow(tc.entityType, tc.entityID)}
+			status, body := getChangeSummaryStatus(t, v1.New(opts), tc.entityType, tc.entityID)
+			if status != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404 withheld (body=%s)", status, body)
+			}
+			if !strings.Contains(body, "errors/price-withheld") || !strings.Contains(body, tc.wantTitle) {
+				t.Errorf("body = %s, want the price-withheld problem naming %q", body, tc.wantTitle)
+			}
+			if strings.Contains(body, "current_value") {
+				t.Errorf("withheld body still carries the row: %s", body)
+			}
+			if tc.wantSurface != "" {
+				gate := opts.Substance.(*stubSubstanceGate)
+				if len(gate.surfaces) == 0 || gate.surfaces[0] != tc.wantSurface {
+					t.Errorf("substance gate asked with surfaces %v, want %q", gate.surfaces, tc.wantSurface)
+				}
+			}
+		})
+	}
+}
+
+// Gates that clear the market leave the response exactly as before.
+func TestHandleChangeSummary_ServesWhenGatesAllow(t *testing.T) {
+	flagged := chartFlaggedBase(t).String()
+	for _, entityType := range []string{"pair", "coin"} {
+		id := flagged
+		if entityType == "pair" {
+			id += "/native"
+		}
+		srv := v1.New(v1.Options{
+			ChangeSummary: &stubChangeSummaryReader{row: rawChangeSummaryRow(entityType, id)},
+			Substance:     &stubSubstanceGate{allow: true},
+			Scam:          &chartScamGate{withheld: map[string]bool{}},
+		})
+		got := getChangeSummary(t, srv, entityType, id)
+		if got.CurrentValue != "1.15" {
+			t.Errorf("%s: current_value = %q, want \"1.15\"", entityType, got.CurrentValue)
+		}
+	}
+}

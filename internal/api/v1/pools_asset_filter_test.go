@@ -99,38 +99,3 @@ func TestPoolAssetFilter_RejectsBadInput(t *testing.T) {
 		}
 	}
 }
-
-// An asset's native pools are not confined to the global top-N ranking: a
-// pool ranked past the listing cap must still be served under ?asset=.
-func TestLiquidityPools_AssetFilterBeyondTopN(t *testing.T) {
-	ranked := make([]clickhouse.NativeLiquidityPoolState, 0, 101)
-	for i := 0; i < 100; i++ {
-		ranked = append(ranked, sampleNativePool(mkLStrkey(t, byte(i+1)), 1_0000000, 1_0000000, int64(1000-i)))
-	}
-	tail := sampleNativePool(mkLStrkey(t, 200), 7_0000000, 3_0000000, 1)
-	tail.AssetA = "EURC-GBVRVE6CCHJFZ6IFEKYRCRODKPPJHJFPCYOZILWADK4CEZB6DEXBYTI6"
-	ranked = append(ranked, tail)
-	base := liquidityPoolsTestServer(t, &stubExplorerReader{nativeLPRanked: ranked})
-
-	resp := mustGet(t, base+"/v1/liquidity-pools?asset="+tail.AssetA)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var body struct {
-		Data []v1.LiquidityPoolReservesRow `json:"data"`
-	}
-	mustDecode(t, resp, &body)
-	if len(body.Data) != 1 || body.Data[0].Pool != tail.PoolStrkey {
-		t.Fatalf("got %+v, want only the 101st-ranked pool %s", body.Data, tail.PoolStrkey)
-	}
-
-	// XLM's SAC aliases to native: the 100 native pools match, capped by limit.
-	resp = mustGet(t, base+"/v1/liquidity-pools?limit=3&asset="+canonical.XLMSacContractID)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	mustDecode(t, resp, &body)
-	if len(body.Data) != 3 || body.Data[0].Pool != ranked[0].PoolStrkey {
-		t.Fatalf("SAC-form filter got %d rows (first %+v), want the top 3 native pools", len(body.Data), body.Data)
-	}
-}

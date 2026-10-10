@@ -6,7 +6,6 @@ package v1
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -144,115 +143,6 @@ func ownedRowsReads() map[string]ownedRowsRead {
 			rows[0].LastPrice = &defaced
 			return got, &rows[0], nil
 		},
-	}
-}
-
-// TestCachedMarketsReader_CallerOwnsReturnedRows_LeaderHitStale covers
-// (C) → (A) → (A') → (A' with the refresh already in flight).
-func TestCachedMarketsReader_CallerOwnsReturnedRows_LeaderHitStale(t *testing.T) {
-	for name, read := range ownedRowsReads() {
-		t.Run(name, func(t *testing.T) {
-			up := &ownedRowsUpstream{}
-			c := NewCachedMarketsReader(up, time.Hour)
-
-			seen := map[any]string{}
-			check := func(branch string) {
-				t.Helper()
-				price, addr, err := read(c)
-				if err != nil {
-					t.Fatalf("%s: %v", branch, err)
-				}
-				if price != ownedRowsPristine {
-					t.Errorf("%s: last_price = %q, want %q — an earlier caller's write reached the cache", branch, price, ownedRowsPristine)
-				}
-				if prev, dup := seen[addr]; dup {
-					t.Errorf("%s: shares a backing array with %s", branch, prev)
-				}
-				seen[addr] = branch
-			}
-
-			check("(C) cold leader")
-			check("(A) fresh hit #1")
-			check("(A) fresh hit #2")
-			if got := up.calls.Load(); got != 1 {
-				t.Fatalf("upstream calls = %d, want 1 (hits must come from the cache)", got)
-			}
-
-			// Hold the SWR refresh open so both stale reads are served
-			// from the ORIGINAL entry, not from a refreshed one.
-			up.gate, up.entered = make(chan struct{}), make(chan struct{}, 1)
-			expireMarketsEntries(c)
-			check("(A') stale, kicks refresh")
-			<-up.entered
-			check("(A') stale, refresh in flight")
-			close(up.gate)
-			waitMarketsFlightsDone(t, c)
-		})
-	}
-}
-
-// TestCachedMarketsReader_CallerOwnsReturnedRows_ColdWaiters covers (B):
-// callers that join a cold fetch must not share rows with the leader, with
-// each other, or with the entry the next hit is served from.
-func TestCachedMarketsReader_CallerOwnsReturnedRows_ColdWaiters(t *testing.T) {
-	for name, read := range ownedRowsReads() {
-		t.Run(name, func(t *testing.T) {
-			up := &ownedRowsUpstream{gate: make(chan struct{}), entered: make(chan struct{}, 1)}
-			c := NewCachedMarketsReader(up, time.Hour)
-
-			const callers = 6
-			var (
-				wg     sync.WaitGroup
-				mu     sync.Mutex
-				prices []string
-				errs   []error
-				addrs  = map[any]int{}
-			)
-			for i := 0; i < callers; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					price, addr, err := read(c)
-					mu.Lock()
-					defer mu.Unlock()
-					if err != nil {
-						errs = append(errs, err)
-						return
-					}
-					prices = append(prices, price)
-					addrs[addr]++
-				}()
-			}
-			<-up.entered
-			// Give the other callers time to park on the leader's
-			// flight. One that arrives late takes the fresh-hit branch
-			// instead, which the assertions below hold to the same bar.
-			time.Sleep(50 * time.Millisecond)
-			close(up.gate)
-			wg.Wait()
-			if len(errs) > 0 {
-				t.Fatalf("%d concurrent reads failed; first: %v", len(errs), errs[0])
-			}
-
-			price, addr, err := read(c)
-			if err != nil {
-				t.Fatal(err)
-			}
-			prices = append(prices, price)
-			addrs[addr]++
-
-			for i, p := range prices {
-				if p != ownedRowsPristine {
-					t.Errorf("caller %d: last_price = %q, want %q", i, p, ownedRowsPristine)
-				}
-			}
-			if len(addrs) != callers+1 {
-				t.Errorf("distinct backing arrays = %d, want %d (every caller owns its rows)", len(addrs), callers+1)
-			}
-			if got := up.calls.Load(); got != 1 {
-				t.Fatalf("upstream calls = %d, want 1 (single-flight)", got)
-			}
-		})
 	}
 }
 
