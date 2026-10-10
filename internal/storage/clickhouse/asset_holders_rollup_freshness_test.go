@@ -108,3 +108,61 @@ func TestHoldersRollupBoard_ServesAFreshCycle(t *testing.T) {
 		t.Errorf("board=%+v total=%d, want empty board, total=0", out, total)
 	}
 }
+
+// TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead pins: a
+// group EXCHANGE landing between the board-rows read and the count read must
+// not serve a board from one cycle paired with a count from another. The
+// stub reports the rows query as still on cycle1 the first time (as if read
+// before the swap) and the count query as already on cycle2 (as if read
+// after) — the exact shape one EXCHANGE landing between the two queries
+// produces — so holdersRollupBoard must retry, and the retried (self-
+// consistent, both cycle2) pair is what must be served.
+//
+// Red against a holdersRollupBoard that has no
+// computed_at comparison at all: it returns the FIRST (torn) pair —
+// balance=100 paired with total=999 — instead of retrying to the
+// self-consistent balance=200/total=500.
+func TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead(t *testing.T) {
+	cycle1 := time.Now().UTC().Truncate(time.Second).Add(-50 * time.Minute)
+	cycle2 := cycle1.Add(30 * time.Minute)
+
+	rowsCalls := 0
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case isHoldersProbe(q):
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		case isHoldersRows(q):
+			rowsCalls++
+			if rowsCalls == 1 {
+				return &stubRows{data: [][]any{{"GHOLDER1", int64(100), cycle1}}}, nil
+			}
+			return &stubRows{data: [][]any{{"GHOLDER1", int64(200), cycle2}}}, nil
+		case isHoldersCount(q):
+			// The count side always reports the CURRENT live cycle
+			// (cycle2), so read #1's rows (cycle1) mismatch and read #2's
+			// rows (cycle2) match.
+			return &stubRows{data: [][]any{{int64(500), cycle2}}}, nil
+		}
+		t.Fatalf("unexpected query: %s", q)
+		return nil, nil
+	}
+	r := &ExplorerReader{conn: conn}
+
+	out, total, ok, err := r.holdersRollupBoard(t.Context(), "USDC-"+testIssuer, 100)
+	if err != nil {
+		t.Fatalf("holdersRollupBoard: %v", err)
+	}
+	if !ok {
+		t.Fatal("ok = false on a read that resolved consistent after one retry")
+	}
+	if len(out) != 1 || out[0].Balance != 200 {
+		t.Errorf("board = %+v, want balance=200 (the retried, self-consistent read) — 100 paired with total=500 means a torn read reached the caller", out)
+	}
+	if total != 500 {
+		t.Errorf("total = %d, want 500", total)
+	}
+	if rowsCalls != 2 {
+		t.Errorf("board-rows read ran %d time(s), want exactly 2 (one retry after the cycle-stamp mismatch)", rowsCalls)
+	}
+}

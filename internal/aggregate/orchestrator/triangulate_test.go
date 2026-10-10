@@ -143,110 +143,6 @@ func TestValidateTriangulationChain_BadStructure(t *testing.T) {
 	}
 }
 
-// TestTick_Triangulation_HappyPath — all legs cached → orchestrator
-// computes the implied target VWAP and writes it to cache.
-func TestTick_Triangulation_HappyPath(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
-	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
-	window := 5 * time.Minute
-
-	cache, mr := newTestRedis(t)
-	// Pre-populate leg VWAPs as if the per-pair refresh just ran.
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
-	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String(), "0.900000000000")
-
-	o := New(nil, cache, Config{
-		Pairs:   []canonical.Pair{}, // no per-pair refresh; just exercise the triangulation pass
-		Windows: []time.Duration{window},
-		Triangulations: []TriangulationChain{
-			{Target: xlmEUR, Legs: []canonical.Pair{xlmUSD, usdEUR}},
-		},
-	})
-
-	before := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("ok"))
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-	after := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("ok"))
-	if after-before != 1 {
-		t.Errorf("ok counter delta = %v, want 1", after-before)
-	}
-
-	// 0.08 × 0.90 = 0.072.
-	got, err := mr.Get(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window).String())
-	if err != nil {
-		t.Fatalf("get target: %v", err)
-	}
-	if got != "0.072000000000" {
-		t.Errorf("target VWAP = %q, want 0.072000000000", got)
-	}
-}
-
-// TestTick_Triangulation_MissingLeg — a leg's window was empty so
-// the cache key is absent. Outcome counter increments
-// missing_leg, target key is NOT written.
-func TestTick_Triangulation_MissingLeg(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
-	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
-	window := 5 * time.Minute
-
-	cache, mr := newTestRedis(t)
-	// Only first leg cached; second leg absent.
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
-
-	o := New(nil, cache, Config{
-		Windows: []time.Duration{window},
-		Triangulations: []TriangulationChain{
-			{Target: xlmEUR, Legs: []canonical.Pair{xlmUSD, usdEUR}},
-		},
-	})
-
-	before := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("missing_leg"))
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-	after := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("missing_leg"))
-	if after-before != 1 {
-		t.Errorf("missing_leg counter delta = %v, want 1", after-before)
-	}
-
-	if mr.Exists(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window).String()) {
-		t.Error("target VWAP should not exist when a leg is missing")
-	}
-}
-
-// TestTick_Triangulation_ParseError — a malformed cached value
-// (Postgres / upstream regression) surfaces as parse_error rather
-// than panicking the tick.
-func TestTick_Triangulation_ParseError(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
-	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
-	window := 5 * time.Minute
-
-	cache, mr := newTestRedis(t)
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
-	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String(), "not-a-number")
-
-	o := New(nil, cache, Config{
-		Windows: []time.Duration{window},
-		Triangulations: []TriangulationChain{
-			{Target: xlmEUR, Legs: []canonical.Pair{xlmUSD, usdEUR}},
-		},
-	})
-
-	before := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("parse_error"))
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-	after := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("parse_error"))
-	if after-before != 1 {
-		t.Errorf("parse_error counter delta = %v, want 1", after-before)
-	}
-}
-
 // TestIsFXLeg_StructuralPredicate exercises the snap-rule's per-leg
 // classification: only fiat-vs-fiat legs (e.g. USD/EUR) qualify.
 // Crypto-vs-fiat (XLM/USD) and crypto-vs-crypto (XLM/USDT) stay on
@@ -264,236 +160,6 @@ func TestIsFXLeg_StructuralPredicate(t *testing.T) {
 	}
 	if isFXLeg(xlmUSDT) {
 		t.Error("isFXLeg(XLM/USDT) = true; want false (no fiat side)")
-	}
-}
-
-// TestTick_Triangulation_FXSnap_HappyPath — when FXStore is wired and
-// returns a quote for the FX leg, the orchestrator uses the snap
-// price (not the leg's cached VWAP) and bypasses the fallback counter.
-// Asserts the bucket-end timestamp passed to FXStore is the most-
-// recent UTC-aligned boundary of the window.
-func TestTick_Triangulation_FXSnap_HappyPath(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
-	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
-	window := 5 * time.Minute
-
-	cache, mr := newTestRedis(t)
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
-	// Note: NO cached VWAP for usdEUR — proves the snap path is what
-	// supplies the FX leg's price.
-
-	fx := &fakeFXStore{
-		quote:      new(big.Rat).SetFrac(big.NewInt(90), big.NewInt(100)),
-		observedAt: time.Now().UTC().Add(-1 * time.Minute),
-		source:     "exchangeratesapi",
-	}
-
-	o := New(nil, cache, Config{
-		Windows: []time.Duration{window},
-		Triangulations: []TriangulationChain{
-			{Target: xlmEUR, Legs: []canonical.Pair{xlmUSD, usdEUR}},
-		},
-		FXStore: fx,
-	})
-
-	beforeOK := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("ok"))
-	beforeFB := testutil.ToFloat64(obs.AggregatorFXSnapFallbackTotal.WithLabelValues(usdEUR.String()))
-
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-	afterOK := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("ok"))
-	afterFB := testutil.ToFloat64(obs.AggregatorFXSnapFallbackTotal.WithLabelValues(usdEUR.String()))
-
-	if afterOK-beforeOK != 1 {
-		t.Errorf("ok counter delta = %v, want 1", afterOK-beforeOK)
-	}
-	if afterFB != beforeFB {
-		t.Errorf("fx-snap fallback counter incremented on happy path: %v→%v", beforeFB, afterFB)
-	}
-
-	// 0.08 (cached) × 0.90 (snap) = 0.072.
-	got, err := mr.Get(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window).String())
-	if err != nil {
-		t.Fatalf("get target: %v", err)
-	}
-	if got != "0.072000000000" {
-		t.Errorf("target VWAP = %q, want 0.072000000000", got)
-	}
-
-	if len(fx.calls) != 1 {
-		t.Fatalf("FXStore called %d times, want 1", len(fx.calls))
-	}
-	call := fx.calls[0]
-	if !call.pair.Equal(usdEUR) {
-		t.Errorf("FXStore queried with pair %s, want %s", call.pair, usdEUR)
-	}
-	// bucketEnd must be window-aligned (Truncate to 5m boundary).
-	if !call.cutoff.Equal(call.cutoff.Truncate(window)) {
-		t.Errorf("cutoff %v not aligned to %v boundary", call.cutoff, window)
-	}
-	// fxSources must be the deterministic ordered set.
-	if len(call.fxSources) < 2 {
-		t.Errorf("FXStore called with %d FX sources, want at least 2", len(call.fxSources))
-	}
-}
-
-// TestTick_Triangulation_FXSnap_FallbackOnNoQuote — when the snap
-// path has no row at-or-before bucketEnd, the orchestrator falls back
-// to the cached-VWAP path AND increments the fallback counter. The
-// chain still publishes (degraded but functional).
-func TestTick_Triangulation_FXSnap_FallbackOnNoQuote(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
-	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
-	window := 5 * time.Minute
-
-	cache, mr := newTestRedis(t)
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
-	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String(), "0.900000000000")
-
-	fx := &fakeFXStore{} // quote==nil → returns ErrNoFXQuote
-
-	o := New(nil, cache, Config{
-		Windows: []time.Duration{window},
-		Triangulations: []TriangulationChain{
-			{Target: xlmEUR, Legs: []canonical.Pair{xlmUSD, usdEUR}},
-		},
-		FXStore: fx,
-	})
-
-	beforeOK := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("ok"))
-	beforeFB := testutil.ToFloat64(obs.AggregatorFXSnapFallbackTotal.WithLabelValues(usdEUR.String()))
-
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-	afterOK := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("ok"))
-	afterFB := testutil.ToFloat64(obs.AggregatorFXSnapFallbackTotal.WithLabelValues(usdEUR.String()))
-
-	if afterOK-beforeOK != 1 {
-		t.Errorf("ok counter delta = %v, want 1 (chain still publishes via cached-VWAP fallback)", afterOK-beforeOK)
-	}
-	if afterFB-beforeFB != 1 {
-		t.Errorf("fallback counter delta = %v, want 1", afterFB-beforeFB)
-	}
-	got, err := mr.Get(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window).String())
-	if err != nil {
-		t.Fatalf("get target: %v", err)
-	}
-	if got != "0.072000000000" {
-		t.Errorf("target VWAP = %q, want 0.072000000000 (computed from cached-VWAP fallback)", got)
-	}
-}
-
-// TestTick_Triangulation_FXSnap_DBErrorAborts — non-ErrNoFXQuote
-// errors from the FX store mean we can't trust ANY chained-fiat
-// output this tick. The chain skips publish and surfaces redis_error;
-// the fallback counter does NOT increment (this isn't a planned
-// fallback, it's an outage signal).
-func TestTick_Triangulation_FXSnap_DBErrorAborts(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
-	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
-	window := 5 * time.Minute
-
-	cache, mr := newTestRedis(t)
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
-	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String(), "0.900000000000")
-
-	fx := &fakeFXStore{err: errors.New("connection refused")}
-
-	o := New(nil, cache, Config{
-		Windows: []time.Duration{window},
-		Triangulations: []TriangulationChain{
-			{Target: xlmEUR, Legs: []canonical.Pair{xlmUSD, usdEUR}},
-		},
-		FXStore: fx,
-	})
-
-	beforeErr := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("redis_error"))
-	beforeFB := testutil.ToFloat64(obs.AggregatorFXSnapFallbackTotal.WithLabelValues(usdEUR.String()))
-
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-	afterErr := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("redis_error"))
-	afterFB := testutil.ToFloat64(obs.AggregatorFXSnapFallbackTotal.WithLabelValues(usdEUR.String()))
-
-	if afterErr-beforeErr != 1 {
-		t.Errorf("redis_error counter delta = %v, want 1", afterErr-beforeErr)
-	}
-	if afterFB != beforeFB {
-		t.Errorf("fallback counter incremented on hard DB error: %v→%v", beforeFB, afterFB)
-	}
-	if mr.Exists(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window).String()) {
-		t.Error("target VWAP should not exist when FX-store errors")
-	}
-}
-
-// TestTick_Triangulation_FXStoreNil_LegsUseCachedVWAP — when no
-// FXStore is wired, FX legs read from the cached-VWAP path same as
-// non-FX legs. Pre-X2.5 behaviour is preserved as the safe default.
-func TestTick_Triangulation_FXStoreNil_LegsUseCachedVWAP(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
-	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
-	window := 5 * time.Minute
-
-	cache, mr := newTestRedis(t)
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
-	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String(), "0.900000000000")
-
-	o := New(nil, cache, Config{
-		Windows: []time.Duration{window},
-		Triangulations: []TriangulationChain{
-			{Target: xlmEUR, Legs: []canonical.Pair{xlmUSD, usdEUR}},
-		},
-		// FXStore omitted
-	})
-
-	beforeFB := testutil.ToFloat64(obs.AggregatorFXSnapFallbackTotal.WithLabelValues(usdEUR.String()))
-
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-	afterFB := testutil.ToFloat64(obs.AggregatorFXSnapFallbackTotal.WithLabelValues(usdEUR.String()))
-
-	if afterFB != beforeFB {
-		t.Errorf("fallback counter incremented when FXStore is nil: %v→%v", beforeFB, afterFB)
-	}
-	got, err := mr.Get(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window).String())
-	if err != nil {
-		t.Fatalf("get target: %v", err)
-	}
-	if got != "0.072000000000" {
-		t.Errorf("target VWAP = %q, want 0.072000000000", got)
-	}
-}
-
-// TestTick_Triangulation_NoChainsConfigured — the Tick proceeds
-// normally and never touches the triangulation path. No counter
-// increments.
-func TestTick_Triangulation_NoChainsConfigured(t *testing.T) {
-	cache, _ := newTestRedis(t)
-	o := New(nil, cache, Config{
-		Windows: []time.Duration{5 * time.Minute},
-		// Triangulations omitted
-	})
-
-	beforeOK := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("ok"))
-	beforeMiss := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("missing_leg"))
-
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-	afterOK := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("ok"))
-	afterMiss := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues("missing_leg"))
-
-	if afterOK != beforeOK || afterMiss != beforeMiss {
-		t.Errorf("triangulation counters changed without configured chains: ok %v→%v, missing %v→%v",
-			beforeOK, afterOK, beforeMiss, afterMiss)
 	}
 }
 
@@ -629,25 +295,6 @@ func TestTriangulate_HealthyLegStillPublishes(t *testing.T) {
 	}
 	if got != "0.900000000000" {
 		t.Errorf("target = %q, want 0.900000000000 (1.00 × 0.90)", got)
-	}
-}
-
-// TestRecordComposite_PublishesRouteCorroborationGauge: the
-// router corroboration count behind the last published composite is
-// exported per (pair, window), not only held in the in-process
-// lastComposites map, so the audit trail has a series distinguishing it
-// from path_count or the venue source count.
-func TestRecordComposite_PublishesRouteCorroborationGauge(t *testing.T) {
-	cache, _ := newTestRedis(t)
-	o := New(nil, cache, Config{})
-	pair := mkPair(t, "crypto", "XLM", "fiat", "EUR")
-	window := 5 * time.Minute
-
-	o.recordComposite(pair, window, big.NewRat(72, 1000), 3, 0.8, false)
-
-	got := testutil.ToFloat64(obs.AggregatorRouteCorroborationCount.WithLabelValues(pair.String(), windowLabel(window)))
-	if got != 3 {
-		t.Errorf("AggregatorRouteCorroborationCount(%s, %s) = %v, want 3", pair.String(), windowLabel(window), got)
 	}
 }
 
@@ -827,5 +474,210 @@ func TestEdgeConfidence_UnscoredFallbackCannotOutrankAScoredEdge(t *testing.T) {
 	}, true, sixSourceTrades)
 	if scored != 0.42 {
 		t.Errorf("scored edge confidence = %v, want the score verbatim (0.42)", scored)
+	}
+}
+
+// TestTriangulate_InheritedFreeze_StreamCarriesAMarker: a triangulated
+// target that inherits its leg's freeze serves flags.frozen on /v1/price,
+// so its stream must carry the same marker once per bucket, never a price.
+func TestTriangulate_InheritedFreeze_StreamCarriesAMarker(t *testing.T) {
+	leg1 := xlmUsdtPair(t)
+	leg2 := mkPair(t, "crypto", "USDT", "fiat", "EUR")
+	target := mkPair(t, "crypto", "XLM", "fiat", "EUR")
+	window := 5 * time.Minute
+	cache, _ := newTestRedis(t)
+	stream := &recordingStreamPublisher{}
+	o := New(nil, cache, Config{
+		Pairs:           []canonical.Pair{leg1},
+		Windows:         []time.Duration{window},
+		Anomaly:         newAnomalyChecker(t, leg1),
+		FreezeWriter:    &recordingFreezeMarker{},
+		StreamPublisher: stream,
+		Triangulations:  []TriangulationChain{{Target: target, Legs: []canonical.Pair{leg1, leg2}}},
+	})
+	ctx := context.Background()
+	t0 := time.Now().UTC().Truncate(closedBucket).Add(10 * time.Second)
+	firstBucket := t0.Truncate(closedBucket)
+	cache.Set(ctx, cachekeys.VWAP(leg1.Base, leg1.Quote, window).String(), "1.000000000000", time.Hour)
+	cache.Set(ctx, cachekeys.VWAP(leg2.Base, leg2.Quote, window).String(), "0.900000000000", time.Hour)
+	o.prevVWAPs[leg1.String()+":"+window.String()] = big.NewRat(1, 1)
+	o.store = &mockStore{trades: []canonical.Trade{
+		buildTrade(t, big.NewInt(100_000_000), big.NewInt(210_000_000), t0.Add(-30*time.Second)),
+	}}
+
+	for _, at := range []time.Time{t0, t0.Add(20 * time.Second), t0.Add(closedBucket)} {
+		o.clock = func() time.Time { return at }
+		if err := o.Tick(ctx); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+	}
+
+	for _, c := range stream.calls {
+		if c.pair.String() == target.String() {
+			t.Errorf("the inherited-frozen target was published as a price: %+v", c)
+		}
+	}
+	var got []recordedFrozen
+	for _, f := range stream.frozen {
+		if f.pair.String() == target.String() {
+			got = append(got, f)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("target frozen markers = %d, want one per refused bucket (2): %+v", len(got), stream.frozen)
+	}
+	for i, want := range []time.Time{firstBucket, firstBucket.Add(closedBucket)} {
+		if got[i].window != window || !got[i].observedAt.Equal(want) {
+			t.Errorf("marker %d = %+v, want %s at %s", i, got[i], window, want)
+		}
+		if !got[i].frozenSince.IsZero() {
+			t.Errorf("marker %d frozenSince = %s, want absent (the leg's freeze bucket is not the target's)",
+				i, got[i].frozenSince)
+		}
+	}
+}
+
+// TestTriangulate_FrozenLegStaysRefusedOnATickItsWindowIsEmpty is the
+// second half of the frozen-leg guard: a freeze must not be launderable through
+// triangulation on the ticks AFTER the one that fired it either.
+//
+// The laundering guard read a set rebuilt at the top of every tick, and
+// the only thing that ever wrote to it was engageFreeze. But
+// refreshPairWindow returns BEFORE the freeze step when the window is
+// empty, when it is under the USD-volume floor, and when the VWAP has no
+// trades — and a pair whose market has just been manipulated on one thin
+// venue is exactly the pair whose next bucket is empty. On that tick the
+// pair is still frozen (its ADR-0019 hold runs for tens of minutes, its
+// marker and its last-known-good value are both deliberately still in
+// Redis) yet nothing re-entered it into the set, so the chain read the
+// LKG as a fresh leg and published the product to a target that carries
+// no frozen flag.
+//
+// Tick 1 here is the same-tick frozen-leg scenario. Tick 2 is the hole.
+func TestTriangulate_FrozenLegStaysRefusedOnATickItsWindowIsEmpty(t *testing.T) {
+	ctx := context.Background()
+	leg1 := xlmUsdtPair(t) // the pair that freezes
+	leg2 := mkPair(t, "crypto", "USDT", "fiat", "EUR")
+	target := mkPair(t, "crypto", "XLM", "fiat", "EUR")
+	window := 5 * time.Minute
+
+	cache, mr := newTestRedis(t)
+	o := New(nil, cache, Config{
+		Pairs:        []canonical.Pair{leg1},
+		Windows:      []time.Duration{window},
+		Anomaly:      newAnomalyChecker(t, leg1),
+		FreezeWriter: &recordingFreezeMarker{},
+		Triangulations: []TriangulationChain{{
+			Target: target,
+			Legs:   []canonical.Pair{leg1, leg2},
+		}},
+	})
+
+	leg1Key := cachekeys.VWAP(leg1.Base, leg1.Quote, window).String()
+	leg2Key := cachekeys.VWAP(leg2.Base, leg2.Quote, window).String()
+	targetKey := cachekeys.VWAP(target.Base, target.Quote, window).String()
+	cache.Set(ctx, leg1Key, "1.000000000000", time.Minute)
+	cache.Set(ctx, leg2Key, "0.900000000000", time.Hour)
+
+	// Tick 1: prev = $1.00, this bucket prices XLM at ~$2.10 on one
+	// source. The pair freezes and the chain is refused.
+	stateKey := leg1.String() + ":" + window.String()
+	o.prevVWAPs[stateKey] = big.NewRat(1, 1)
+	o.store = &mockStore{trades: []canonical.Trade{
+		buildTrade(t, big.NewInt(100_000_000), big.NewInt(210_000_000), time.Now()),
+	}}
+	if err := o.Tick(ctx); err != nil {
+		t.Fatalf("Tick 1: %v", err)
+	}
+	if !o.freezeStates[stateKey].Active() {
+		t.Fatal("setup: the manipulated bucket did not freeze the leg")
+	}
+	if mr.Exists(targetKey) {
+		t.Fatal("setup: tick 1 already published the derived price")
+	}
+
+	// Tick 2: the leg's window is EMPTY, so refreshPairWindow returns
+	// before the freeze step. The freeze is 30 seconds old and its hold
+	// has most of ten minutes left.
+	o.store = &mockStore{}
+	before := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues(outcomeFrozenLeg))
+	nextBucket(o)
+	if err := o.Tick(ctx); err != nil {
+		t.Fatalf("Tick 2: %v", err)
+	}
+
+	if !o.freezeStates[stateKey].Active() {
+		t.Fatal("the leg's freeze ended on a tick that never evaluated it")
+	}
+	if got, err := mr.Get(leg1Key); err != nil || got != "1.000000000000" {
+		t.Fatalf("leg LKG = (%q, %v); the scenario needs it still in cache", got, err)
+	}
+	if mr.Exists(targetKey) {
+		got, _ := mr.Get(targetKey)
+		t.Errorf("target key %q written with %q on a tick the frozen leg's window was empty — "+
+			"the leg's last-known-good was laundered into a derived price with no frozen flag",
+			targetKey, got)
+	}
+	after := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues(outcomeFrozenLeg))
+	if after-before != 1 {
+		t.Errorf("triangulation outcome %q delta on tick 2 = %v, want 1", outcomeFrozenLeg, after-before)
+	}
+}
+
+// TestTriangulate_RefusedLegIsNotReadBackFromCache covers the non-freeze
+// half of the laundering route: refreshPairWindow refuses a configured
+// pair's window (empty, under the USD-volume floor, or unfetchable) and
+// returns before writing anything, but the pair's previous value is still
+// in Redis. Read
+// back as a chain leg, that value entered the cross-rate graph as if this
+// tick had priced it, and the target published a fresh-looking composite
+// on a leg nobody priced.
+func TestTriangulate_RefusedLegIsNotReadBackFromCache(t *testing.T) {
+	window := 5 * time.Minute
+	for _, tc := range []struct {
+		name     string
+		trades   []canonical.Trade
+		minUSD   float64
+		storeErr error
+	}{
+		{name: "empty_window"},
+		{name: "fetch_error", storeErr: errors.New("injected fetch failure")},
+		{
+			name: "below_min_usd_volume",
+			trades: []canonical.Trade{
+				buildTrade(t, big.NewInt(100_000_000), big.NewInt(100_000_000), time.Now()),
+			},
+			minUSD: 1e12,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			leg1 := xlmUsdtPair(t)
+			leg2 := mkPair(t, "crypto", "USDT", "fiat", "EUR")
+			target := mkPair(t, "crypto", "XLM", "fiat", "EUR")
+			chain := TriangulationChain{Target: target, Legs: []canonical.Pair{leg1, leg2}}
+
+			cache, mr := newTestRedis(t)
+			o := New(&mockStore{trades: tc.trades, returnErr: tc.storeErr}, cache, Config{
+				Pairs:          []canonical.Pair{leg1},
+				Windows:        []time.Duration{window},
+				MinUSDVolume:   tc.minUSD,
+				Triangulations: []TriangulationChain{chain},
+			})
+			cache.Set(ctx, cachekeys.VWAP(leg1.Base, leg1.Quote, window).String(), "1.000000000000", time.Hour)
+			cache.Set(ctx, cachekeys.VWAP(leg2.Base, leg2.Quote, window).String(), "0.900000000000", time.Hour)
+
+			if err := o.Tick(ctx); err != nil {
+				t.Fatalf("Tick: %v", err)
+			}
+			if _, outcome := o.legPriceFromCache(ctx, chain, leg1, window); outcome == "" {
+				t.Error("legPriceFromCache served the leg's cached value on a tick its refresh refused it")
+			}
+			targetKey := cachekeys.VWAP(target.Base, target.Quote, window).String()
+			if mr.Exists(targetKey) {
+				got, _ := mr.Get(targetKey)
+				t.Errorf("target %s published %q from a leg this tick refused to price", targetKey, got)
+			}
+		})
 	}
 }

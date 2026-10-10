@@ -85,14 +85,24 @@ func TestAccountListings_ArmsPageAccountKeyedTables(t *testing.T) {
 	}
 }
 
-// TestAccountOperations_BoundArgsBindInsideKeyArms guards the exact sourced
-// arm's bind order with a cursor and no watermark: no bound placeholder, and
-// the args line up with the emitted SQL.
-func TestAccountOperations_BoundArgsBindInsideKeyArms(t *testing.T) {
-	cur := ExplorerCursor{Ledger: 63_000_000, A: 4, B: 2}
-	q, args := exactOpsArm(t, withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil }), 9, cur)
-	if strings.Count(q, "ledger_seq <= ?") != strings.Count(q, "ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)") {
-		t.Fatalf("unbounded path must not carry a bound placeholder: %s", q)
+// The exact sourced arms must ORDER BY the full sort key and
+// dedupe on it BEFORE their own LIMIT, else an un-merged duplicate part eats a
+// slot or the account's whole history materialises.
+func TestAccountListings_ExactSourcedArmIsBounded(t *testing.T) {
+	for name, tc := range map[string]struct{ q, order, dedupe string }{
+		"transactions": {sourcedTxKeysExactQuery(true), "ORDER BY ledger_seq DESC, tx_index DESC", "LIMIT 1 BY ledger_seq, tx_index LIMIT ?"},
+		"operations": {
+			sourcedOpKeysExactQuery(true, true), "ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC",
+			"LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?",
+		},
+	} {
+		if !strings.Contains(tc.q, tc.order) || !strings.Contains(tc.q, tc.dedupe) {
+			t.Errorf("%s exact arm lost its ORDER BY / LIMIT 1 BY … LIMIT:\n%s", name, tc.q)
+		}
 	}
-	assertArgs(t, q, args, []any{"GTEST", cur.Ledger, cur.Ledger, cur.A, cur.B, 9})
+	const limit = 37
+	_, args := exactOpsArm(t, withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil }), limit, ExplorerCursor{})
+	if got := args[len(args)-1]; got != limit {
+		t.Errorf("exact arm page size = %v, want %d — a smaller per-arm limit drops rows at the merge seam", got, limit)
+	}
 }

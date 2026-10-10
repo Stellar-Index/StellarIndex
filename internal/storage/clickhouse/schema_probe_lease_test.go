@@ -10,6 +10,9 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // fakeClock is a hand-advanced clock for schemaProbe.now, so a lease can be
@@ -256,4 +259,224 @@ func TestProbeSchema_RenewalInDropRecreateGapDoesNotLatchAbsent(t *testing.T) {
 		t.Fatal("probe = false after the index was recreated — the mid-recreate UNKNOWN_TABLE latched " +
 			"absent for the process lifetime")
 	}
+}
+
+// TestProbeSchema_LatchedAbsenceIsExported pins: an API that starts
+// before the lake DDL latches the probe false for its whole lifetime and
+// serves the slow fallback — the gauge is the only place that shows.
+func TestProbeSchema_LatchedAbsenceIsExported(t *testing.T) {
+	conn := &probeConn{results: []error{
+		&clickhouse.Exception{Code: 60, Name: "UNKNOWN_TABLE", Message: "Table stellar.tx_hash_index does not exist"},
+	}}
+	gauge := obs.CHSchemaProbePresent.WithLabelValues("tx_hash_index")
+	gauge.Set(-1) // a fresh gauge reads 0 already; -1 proves the probe wrote it
+	r := newExplorerReader(conn)
+	ctx := context.Background()
+
+	if r.txHashIndexAvailable(ctx) || r.txHashIndexAvailable(ctx) {
+		t.Fatal("tx_hash_index reported available after UNKNOWN_TABLE")
+	}
+	if conn.calls != 1 {
+		t.Fatalf("conn.Query called %d times, want 1 (absence latches)", conn.calls)
+	}
+	if got := testutil.ToFloat64(gauge); got != 0 {
+		t.Errorf("stellarindex_ch_schema_probe_present{probe=tx_hash_index} = %v, want 0", got)
+	}
+}
+
+// TestProbeSchema_PresentAndEmptyAreExported — the gauge follows every
+// ANSWER, including a row-requiring probe revoked by an emptied table.
+func TestProbeSchema_PresentAndEmptyAreExported(t *testing.T) {
+	gauge := obs.CHSchemaProbePresent.WithLabelValues("contracts_census_daily")
+	gauge.Set(-1)
+	r := newExplorerReader(&probeConn{})
+	if !r.censusAvailable(context.Background()) {
+		t.Fatal("census probe = false on a table with rows")
+	}
+	if got := testutil.ToFloat64(gauge); got != 1 {
+		t.Fatalf("present gauge after a row = %v, want 1", got)
+	}
+
+	r = newExplorerReader(emptyProbeConn{})
+	if r.censusAvailable(context.Background()) {
+		t.Fatal("census probe = true on an empty table")
+	}
+	if got := testutil.ToFloat64(gauge); got != 0 {
+		t.Errorf("present gauge after an empty answer = %v, want 0", got)
+	}
+}
+
+// TestProbeSchema_NonAnswerIsCountedNotExported — a transport failure says
+// nothing about the object: it must not move the gauge, and must count.
+func TestProbeSchema_NonAnswerIsCountedNotExported(t *testing.T) {
+	const probe = "ledger_entries_current_version"
+	gauge := obs.CHSchemaProbePresent.WithLabelValues(probe)
+	gauge.Set(1)
+	unanswered := obs.CHSchemaProbeUnansweredTotal.WithLabelValues(probe)
+	before := testutil.ToFloat64(unanswered)
+
+	r := newExplorerReader(&probeConn{results: []error{
+		&net.OpError{Op: "read", Err: errors.New("connection reset by peer")},
+	}})
+	if r.ledgerEntriesVersioned(context.Background()) {
+		t.Fatal("probe = true with no answer and no prior verdict")
+	}
+	if got := testutil.ToFloat64(unanswered) - before; got != 1 {
+		t.Errorf("unanswered counter delta = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(gauge); got != 1 {
+		t.Errorf("present gauge moved on a non-answer: %v, want 1", got)
+	}
+}
+
+// TestProbeSchema_DefinitiveAnswersAreCached — the caching half must
+// survive: once the SERVER has answered, the probe stops querying. A
+// re-probe on every read would put an extra round-trip on the hot path.
+func TestProbeSchema_DefinitiveAnswersAreCached(t *testing.T) {
+	t.Run("absent", func(t *testing.T) {
+		// A ClickHouse server exception IS an answer: the server parsed
+		// the query and rejected it (unknown identifier `version`).
+		conn := &probeConn{results: []error{
+			&clickhouse.Exception{Code: 47, Name: "UNKNOWN_IDENTIFIER", Message: "Unknown identifier `version`"},
+		}}
+		r := &ExplorerReader{conn: conn}
+		for i := 0; i < 3; i++ {
+			if r.ledgerEntriesVersioned(context.Background()) {
+				t.Fatalf("probe %d = true, want false", i)
+			}
+		}
+		if conn.calls != 1 {
+			t.Errorf("conn.Query called %d times, want 1 (a server rejection is definitive)", conn.calls)
+		}
+	})
+
+	t.Run("present", func(t *testing.T) {
+		conn := &probeConn{}
+		r := &ExplorerReader{conn: conn}
+		for i := 0; i < 3; i++ {
+			if !r.txHashIndexAvailable(context.Background()) {
+				t.Fatalf("probe %d = false, want true", i)
+			}
+		}
+		if conn.calls != 1 {
+			t.Errorf("conn.Query called %d times, want 1 (success is definitive)", conn.calls)
+		}
+	})
+}
+
+// TestProbeSchema_NonAnswerDoesNotLatch pins that a probe error which is not
+// a schema verdict is retried. With a plain sync.Once the FIRST call's outcome
+// is final for the process lifetime: a transport reset, an expired request
+// deadline on a fresh process, or a RESOURCE exception (ClickHouse raises
+// *clickhouse.Exception for overload too, not just schema verdicts) would latch
+// the probe false. For lecVersionProbe that means falling back to ledger_seq as
+// the RMT version key forever, serving non-final intra-ledger balances until
+// someone restarts the API. No error, no metric, no self-heal.
+func TestProbeSchema_NonAnswerDoesNotLatch(t *testing.T) {
+	lecVersioned := func(r *ExplorerReader) bool { return r.ledgerEntriesVersioned(context.Background()) }
+	txIndex := func(r *ExplorerReader) bool { return r.txHashIndexAvailable(context.Background()) }
+	resource := func(code int32, name string) error {
+		return &clickhouse.Exception{Code: code, Name: name, Message: name}
+	}
+	cases := []struct {
+		name  string
+		err   error
+		txIdx bool
+		why   string
+	}{
+		{
+			"transport", &net.OpError{Op: "read", Err: errors.New("connection reset by peer")}, false,
+			"a transient failure must not latch the fallback for the process lifetime",
+		},
+		{
+			"deadline", context.DeadlineExceeded, true,
+			"one expired request deadline must not disable the tx-hash index for the life of the process",
+		},
+		{"TOO_MANY_SIMULTANEOUS_QUERIES", resource(202, "TOO_MANY_SIMULTANEOUS_QUERIES"), false, ""},
+		{"TIMEOUT_EXCEEDED", resource(159, "TIMEOUT_EXCEEDED"), false, ""},
+		{"MEMORY_LIMIT_EXCEEDED", resource(241, "MEMORY_LIMIT_EXCEEDED"), false, ""},
+		{"SOCKET_TIMEOUT", resource(209, "SOCKET_TIMEOUT"), false, ""},
+		{"UNKNOWN_EXCEPTION", resource(1002, "UNKNOWN_EXCEPTION"), false, ""}, // catch-all: not an answer either
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := &probeConn{results: []error{tc.err, nil}}
+			r := &ExplorerReader{conn: conn}
+			probe := lecVersioned
+			if tc.txIdx {
+				r.txIndexProbe = schemaProbe{retryAfter: -1}
+				probe = txIndex
+			} else {
+				r.lecVersionProbe = schemaProbe{retryAfter: -1}
+			}
+			why := tc.why
+			if why == "" {
+				why = "a RESOURCE condition, not a schema verdict, must not latch the fallback for the process lifetime"
+			}
+
+			if probe(r) {
+				t.Fatalf("first probe = true, want false while the store is returning %v — no answer yet", tc.err)
+			}
+			if !probe(r) {
+				t.Errorf("second probe = false after the store recovered — %s (conn saw %d queries)", why, conn.calls)
+			}
+			if conn.calls != 2 {
+				t.Errorf("conn.Query called %d times, want 2 (re-probe after a non-answer)", conn.calls)
+			}
+		})
+	}
+}
+
+// TestProbeSchema_NegativeCacheRateLimitsProbes — an unanswered probe must
+// not turn every subsequent read into an extra query while ClickHouse is
+// down. The probe backs off for schemaProbeRetryAfter, then retries.
+func TestProbeSchema_NegativeCacheRateLimitsProbes(t *testing.T) {
+	conn := &probeConn{results: []error{
+		&clickhouse.Exception{Code: 202, Name: "TOO_MANY_SIMULTANEOUS_QUERIES"},
+	}}
+	// Default (positive) retry window: the second call is inside it.
+	r := &ExplorerReader{conn: conn}
+
+	if r.ledgerEntriesVersioned(context.Background()) {
+		t.Fatal("first probe = true, want false")
+	}
+	for i := 0; i < 5; i++ {
+		if r.ledgerEntriesVersioned(context.Background()) {
+			t.Fatalf("probe %d = true, want false", i)
+		}
+	}
+	if conn.calls != 1 {
+		t.Errorf("conn.Query called %d times, want 1 — an unanswered probe must back off, "+
+			"not add a query to every read during an outage", conn.calls)
+	}
+}
+
+// TestProbeSchema_QueryRunsOutsideTheLock — sync.Mutex is not context-aware,
+// so holding it across the probe's network round-trip queues every
+// concurrent reader behind one slow probe and serialises the explorer read
+// path. A second caller must be able to proceed while the first is still in
+// flight.
+func TestProbeSchema_QueryRunsOutsideTheLock(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	conn := &blockingProbeConn{release: release, entered: entered}
+	r := &ExplorerReader{conn: conn, lecVersionProbe: schemaProbe{retryAfter: -1}}
+
+	go func() { _ = r.ledgerEntriesVersioned(context.Background()) }()
+	<-entered // the first probe is inside conn.Query
+
+	done := make(chan struct{})
+	go func() {
+		_ = r.ledgerEntriesVersioned(context.Background())
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Good: the second caller was not blocked by the first.
+	case <-time.After(2 * time.Second):
+		t.Fatal("a second caller blocked behind an in-flight probe — the mutex is held " +
+			"across the network round-trip, serialising the explorer read path")
+	}
+	close(release)
 }

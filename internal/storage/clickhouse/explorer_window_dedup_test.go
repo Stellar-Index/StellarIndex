@@ -111,77 +111,6 @@ func (a *opsArmRouter) respond(q string) (driver.Rows, error) {
 
 func keyRow(ledger, tx, op uint32) []any { return []any{ledger, tx, op} }
 
-func TestAccountOperations_WindowedReadHasNoLimit1By(t *testing.T) {
-	const limit = 3
-	router := &opsArmRouter{
-		sourced:     [][]any{keyRow(100, 0, 0), keyRow(100, 0, 0), keyRow(98, 0, 0)},
-		participant: [][]any{keyRow(99, 0, 0), keyRow(97, 0, 0)},
-		hydrated:    [][]any{opRowFor(100, 0, 0), opRowFor(99, 0, 0), opRowFor(98, 0, 0)},
-	}
-	conn := &stubConn{respond: withOpsBySourceRows(router.respond)}
-	r := &ExplorerReader{conn: conn}
-
-	rows, _, err := r.AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{Ledger: 200, A: 1, B: 2})
-	if err != nil {
-		t.Fatalf("AccountOperations: %v", err)
-	}
-	if len(rows) != 3 {
-		t.Fatalf("rows = %d, want 3", len(rows))
-	}
-	var arms, hydrations int
-	for i, q := range conn.queries {
-		if isOpsBySourceProbe(q) || strings.Contains(q, "account_activity") || isVisibilityLookup(q) {
-			continue
-		}
-		if strings.Contains(q, "LIMIT 1 BY") {
-			t.Fatalf("a windowed read carries LIMIT 1 BY (defeats read-in-order): %s", q)
-		}
-		switch {
-		case strings.Contains(q, "FROM stellar.operations FINAL"):
-			hydrations++
-			if !strings.Contains(q, "IN ((100,0,0),(99,0,0),(98,0,0))") {
-				t.Errorf("hydration is not keyed on the merged, deduped page: %s", q)
-			}
-		default:
-			arms++
-			want := []any{"GTEST", uint32(200), uint32(200), uint32(1), uint32(2), windowRows(limit, windowFactorKeys)}
-			got := conn.args[i]
-			if len(got) != len(want) {
-				t.Fatalf("arm args = %v, want %v", got, want)
-			}
-			for j := range want {
-				if got[j] != want[j] {
-					t.Fatalf("arm arg %d = %v, want %v", j, got[j], want[j])
-				}
-			}
-		}
-	}
-	if arms != 2 || hydrations != 1 {
-		t.Fatalf("arms=%d hydrations=%d, want 2 and 1: %v", arms, hydrations, conn.queries)
-	}
-}
-
-// A filled window that holds fewer than `limit` complete keys cannot prove the
-// page; the reader must run the exact query rather than serve a short page.
-func TestAccountOperations_UnprovenWindowFallsBackToExactQuery(t *testing.T) {
-	const limit = 3
-	window := windowRows(limit, windowFactorKeys)
-	filled := make([][]any, window)
-	for i := range filled {
-		filled[i] = keyRow(100, 0, 0)
-	}
-	router := &opsArmRouter{sourced: filled, hydrated: [][]any{opRowFor(100, 0, 0)}}
-	conn := &stubConn{respond: withOpsBySourceRows(router.respond)}
-	r := &ExplorerReader{conn: conn}
-
-	if _, _, err := r.AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
-		t.Fatalf("AccountOperations: %v", err)
-	}
-	if exactQueries(conn, sourcedOpKeysExactQuery(false, false)) != 1 {
-		t.Fatalf("the sourced arm did not fall back to its exact LIMIT 1 BY query: %v", conn.queries)
-	}
-}
-
 // exactQueries counts the emitted queries equal to the exact form q.
 func exactQueries(conn *stubConn, q string) int {
 	n := 0
@@ -312,5 +241,77 @@ func TestAccountMovements_UnprovenWindowFallsBackToExactQuery(t *testing.T) {
 	}
 	if len(conn.queries) != 2 || !strings.Contains(conn.queries[1], "LIMIT 1 BY ledger, tx_hash, op_index, leg_index") {
 		t.Fatalf("want windowed read then the exact query, got %v", conn.queries)
+	}
+}
+
+// TestAccountTransactions_PageIsShortOnlyAtEndOfHistory: with cross-arm
+// overlap present, a page must still carry `limit` rows whenever `limit`
+// distinct txs remain — the premise of the handler's "emit next_cursor iff
+// len(rows) == limit" rule.
+func TestAccountTransactions_PageIsShortOnlyAtEndOfHistory(t *testing.T) {
+	const limit = 5
+	k := txKeyRow
+	cases := []struct {
+		name                 string
+		sourced, participant [][]any
+		want                 string // the hydrated key set
+	}{
+		{
+			name:        "total overlap between the arms",
+			sourced:     [][]any{k(100, 0), k(99, 0), k(98, 0), k(97, 0), k(96, 0), k(95, 0)},
+			participant: [][]any{k(100, 0), k(99, 0), k(98, 0), k(97, 0), k(96, 0), k(95, 0)},
+			want:        "IN ((100,0),(99,0),(98,0),(97,0),(96,0))",
+		},
+		{
+			name:        "one overlapping tx at the head of the page",
+			sourced:     [][]any{k(100, 0), k(98, 0), k(96, 0), k(94, 0)},
+			participant: [][]any{k(100, 0), k(99, 0), k(97, 0), k(95, 0)},
+			want:        "IN ((100,0),(99,0),(98,0),(97,0),(96,0))",
+		},
+		{
+			name:        "same ledger, several txs, overlap tie-broken by tx_index",
+			sourced:     [][]any{k(100, 9), k(100, 7), k(100, 5), k(100, 3)},
+			participant: [][]any{k(100, 9), k(100, 8), k(100, 6), k(100, 4)},
+			want:        "IN ((100,9),(100,8),(100,7),(100,6),(100,5))",
+		},
+		{
+			// End of history: the page IS legitimately short.
+			name:        "no overlap, fewer distinct txs than the page",
+			sourced:     [][]any{k(100, 0), k(98, 0)},
+			participant: [][]any{k(99, 0)},
+			want:        "IN ((100,0),(99,0),(98,0))",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router := &txArmRouter{sourced: tc.sourced, participant: tc.participant}
+			conn := &stubConn{respond: withOpsBySourceRows(router.respond)}
+			if _, _, err := (&ExplorerReader{conn: conn}).AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
+				t.Fatalf("AccountTransactions: %v", err)
+			}
+			if last := conn.queries[len(conn.queries)-1]; !strings.Contains(last, tc.want) {
+				t.Fatalf("hydrated keys are not the distinct top %d (%s) — a page shorter than the limit while older "+
+					"history remains makes the handler withhold next_cursor (#290): %s", limit, tc.want, last)
+			}
+		})
+	}
+}
+
+// The reader-level arm: a failed participant tx is skipped and the next
+// visible one fills its slot; the account's sourced keys are unaffected.
+func TestAccountTransactions_SkipsFailedParticipantTxs(t *testing.T) {
+	const limit = 3
+	router := &txArmRouter{
+		sourced:     [][]any{txKeyRow(98, 0)},
+		participant: [][]any{txKeyRow(100, 0), txKeyRow(99, 0), txKeyRow(97, 0)},
+		failed:      map[[2]uint32]bool{{100, 0}: true},
+	}
+	conn := &stubConn{respond: withOpsBySourceRows(router.respond)}
+	if _, _, err := (&ExplorerReader{conn: conn}).AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
+		t.Fatalf("AccountTransactions: %v", err)
+	}
+	last := conn.queries[len(conn.queries)-1]
+	if !strings.Contains(last, "IN ((99,0),(98,0),(97,0))") {
+		t.Fatalf("hydration must skip the failed participant tx and still fill the page: %s", last)
 	}
 }

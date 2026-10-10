@@ -9,6 +9,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
@@ -204,5 +205,106 @@ func TestRecordVenueVWAPs_DeletesAbsentSources(t *testing.T) {
 	}
 	if got := windowLabel(90 * time.Second); got != "90s" {
 		t.Errorf("windowLabel(90s) = %q", got)
+	}
+}
+
+// The outlier centre is a per-print median, so the trade-count trim share
+// cannot tell a trimmed honest block from trimmed dust. window_base_volume
+// publishes each stage's base volume in whole units on every window, so the
+// volume trim share is readable wherever the filter runs.
+func TestRefreshPairWindow_RecordsWindowBaseVolumePerStage(t *testing.T) {
+	t0 := time.Now().Add(-4 * time.Minute)
+	at := func(s int) time.Time { return t0.Add(time.Duration(s) * time.Second) }
+	cases := []struct {
+		name                string
+		trades              []canonical.Trade
+		wantClass, wantKept float64
+	}{
+		{
+			// 3 × 1,000,000 XLM at 0.100 against 4 × 30,000 XLM of wash at
+			// 0.114: the count majority would drop the honest block, so the
+			// window is withheld and the whole class volume reads as removed.
+			name: "dust count majority over an honest block",
+			trades: []canonical.Trade{
+				wholeXLMTrade(t, "kraken", 1_000_000, 100, 1000, at(0)),
+				wholeXLMTrade(t, "kraken", 30_000, 114, 1000, at(5)),
+				wholeXLMTrade(t, "kraken", 1_000_000, 100, 1000, at(10)),
+				wholeXLMTrade(t, "kraken", 30_000, 114, 1000, at(15)),
+				wholeXLMTrade(t, "kraken", 1_000_000, 100, 1000, at(20)),
+				wholeXLMTrade(t, "kraken", 30_000, 114, 1000, at(25)),
+				wholeXLMTrade(t, "kraken", 30_000, 114, 1000, at(35)),
+			},
+			wantClass: 3_120_000,
+			wantKept:  0,
+		},
+		{
+			// A lone 8dp fat finger among 7dp honest prints is trimmed. Both
+			// stages are in whole units, so the all-7dp survivors compare to
+			// the 8dp-bearing class set without a 10x scale error.
+			name: "fat finger trimmed across mixed scales",
+			trades: []canonical.Trade{
+				wholeXLMTrade(t, "sdex", 1_000_000, 100, 1000, at(0)),
+				wholeXLMTrade(t, "sdex", 1_000_000, 100, 1000, at(1)),
+				wholeXLMTrade(t, "sdex", 1_000_000, 100, 1000, at(2)),
+				wholeXLMTrade(t, "sdex", 1_000_000, 100, 1000, at(3)),
+				wholeXLMTrade(t, "sdex", 1_000_000, 100, 1000, at(4)),
+				wholeXLMTrade(t, "kraken", 10_000, 200, 1000, at(6)),
+			},
+			wantClass: 5_010_000,
+			wantKept:  5_000_000,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pair := xlmUsdtPair(t)
+			orch, _ := newOrch5m(t, &mockStore{trades: tc.trades}, pair, Config{OutlierSigmaThreshold: 4.0})
+			tickOnce(t, orch)
+			class := testutil.ToFloat64(obs.AggregatorWindowBaseVolume.WithLabelValues(pair.String(), "5m", "class"))
+			kept := testutil.ToFloat64(obs.AggregatorWindowBaseVolume.WithLabelValues(pair.String(), "5m", "outlier"))
+			if class != tc.wantClass || kept != tc.wantKept {
+				t.Fatalf("window_base_volume class=%v outlier=%v, want class=%v outlier=%v", class, kept, tc.wantClass, tc.wantKept)
+			}
+		})
+	}
+}
+
+// TestRefreshPairWindow_DirectWriteClearsStaleProvenance is
+// W1-flow-price-serve-2: when the direct per-pair refresh overwrites the
+// shared VWAP key with a DIRECT value, it must clear any stale
+// "triangulated" provenance a prior tick's composite left, so
+// LookupTriangulatedVWAP cannot serve the thin direct price mislabeled as
+// a robust composite.
+func TestRefreshPairWindow_DirectWriteClearsStaleProvenance(t *testing.T) {
+	store := &mockStore{
+		trades: []canonical.Trade{
+			buildTrade(t, big.NewInt(10_000_000_000), big.NewInt(1_758_200_000), time.Now().Add(-2*time.Minute)),
+			buildTrade(t, big.NewInt(20_000_000_000), big.NewInt(3_518_000_000), time.Now().Add(-1*time.Minute)),
+		},
+	}
+	rdb, mr := newTestRedis(t)
+	window := 5 * time.Minute
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usdt, _ := canonical.NewCryptoAsset("USDT")
+
+	// A PRIOR tick's composite left a stale triangulated provenance marker.
+	provKey := cachekeys.VWAPProvenance(xlm, usdt, window).String()
+	if err := rdb.Set(context.Background(), provKey, cachekeys.VWAPProvenanceTriangulated, window).Err(); err != nil {
+		t.Fatalf("seed provenance: %v", err)
+	}
+
+	o := New(store, rdb, Config{Pairs: []canonical.Pair{xlmUsdtPair(t)}, Windows: []time.Duration{window}})
+	if err := o.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	// The direct value was published...
+	if !mr.Exists("vwap:" + xlm.String() + ":" + usdt.String() + ":300") {
+		t.Fatal("direct VWAP not published — test precondition broken")
+	}
+	// ...so the stale triangulated marker must be gone.
+	if mr.Exists(provKey) {
+		v, _ := mr.Get(provKey)
+		t.Errorf("stale provenance marker survived a direct refresh (=%q) — a thin direct price "+
+			"would be served flagged triangulated (W1-flow-price-serve-2)", v)
 	}
 }

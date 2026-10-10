@@ -63,16 +63,6 @@ func TestExplorerScanQueries_CarryBoundedSettings(t *testing.T) {
 	}
 }
 
-// TestAccountsByWealthQuery_Bounds — the wealth refresh additionally carries
-// the 150s execution ceiling (its Go-side budget is 3 min; the connection
-// default of 30s killed it silently — see accountsByWealthQuery's doc).
-func TestAccountsByWealthQuery_Bounds(t *testing.T) {
-	requireScanSettings(t, "accountsByWealthQuery", accountsByWealthQuery)
-	if !strings.Contains(accountsByWealthQuery, "max_execution_time = 150") {
-		t.Errorf("accountsByWealthQuery missing its 150s execution ceiling:\n%s", accountsByWealthQuery)
-	}
-}
-
 // TestClassicCirculatingSupplyQuery_Bounds — this one additionally
 // carries an explicit execution ceiling, and the reason is the same as
 // accountsByWealthQuery's: the Go client pins the connection default to

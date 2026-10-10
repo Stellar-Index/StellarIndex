@@ -1,9 +1,6 @@
 package clickhouse
 
 import (
-	"context"
-	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,70 +31,6 @@ import (
 // It also pins the panic as VISIBLE: stellarindex_worker_panics_total is the
 // only signal that a background worker died, so a recover that does not move
 // it is a silent dead worker wearing the costume of a fix.
-
-func TestTTLLivenessCache_PanickingRefreshReleasesFlightAndSurvives(t *testing.T) {
-	const workerName = "explorer-ttl-liveness-refresh"
-	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))
-
-	var calls atomic.Int32
-	c := newTTLLivenessCache(func(_ context.Context, keys []string) (map[string]TTLLiveness, error) {
-		if calls.Add(1) == 1 {
-			panic("ttl prefix scan blew up")
-		}
-		out := make(map[string]TTLLiveness, len(keys))
-		for _, k := range keys {
-			out[k] = TTLArchived
-		}
-		return out, nil
-	})
-
-	// Cold resolve: kicks the detached recompute and waits on its flight.
-	// A bare recover (contain, never release) leaves this blocked on a done
-	// channel nobody will close, so it would come back DeadlineExceeded.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	got, err := c.resolve(ctx, []string{"k-one"})
-	if err == nil {
-		t.Fatalf("panicking refresh reported success with verdicts %v — a panicked "+
-			"scan must not be served as an authoritative empty verdict set", got)
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("waiter was never released (%v): the refresh goroutine contained the "+
-			"panic without ending the flight, which wedges coldFill forever — release "+
-			"from a defer", err)
-	}
-	if !errors.Is(err, errTTLRefreshPanicked) {
-		t.Fatalf("cold resolve after a panicking refresh = %v, want errTTLRefreshPanicked", err)
-	}
-
-	// The single-flight marker must be clear, or kickRefresh keeps handing
-	// out the same dead flight for the life of the process.
-	c.mu.Lock()
-	stuck := c.flight
-	c.mu.Unlock()
-	if stuck != nil {
-		t.Fatalf("c.flight still points at the panicked flight — every later caller "+
-			"joins a flight that will never run again (%p)", stuck)
-	}
-
-	// A fresh flight must be startable and must serve real verdicts.
-	got, err = c.resolve(ctx, []string{"k-one"})
-	if err != nil {
-		t.Fatalf("resolve after the panicked refresh: %v", err)
-	}
-	if got["k-one"] != TTLArchived {
-		t.Fatalf("verdict after recovery = %v, want TTLArchived", got["k-one"])
-	}
-	if n := calls.Load(); n != 2 {
-		t.Errorf("compute ran %d times, want 2 (the panicking one and its replacement)", n)
-	}
-
-	if after := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName)); after != before+1 {
-		t.Errorf("stellarindex_worker_panics_total{worker=%q} = %v, want %v — a recover "+
-			"that does not move the counter turns a loud crash into a silent dead worker",
-			workerName, after, before+1)
-	}
-}
 
 // The account-state and wealth refreshers already release their flight from
 // a defer, so what these two pin is the guard itself — plus the fact that

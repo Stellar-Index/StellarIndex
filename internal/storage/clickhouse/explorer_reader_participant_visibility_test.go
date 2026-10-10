@@ -194,42 +194,6 @@ func TestParticipantKeys_BudgetEndsPageAtFrontier(t *testing.T) {
 	}
 }
 
-// The reader-level arm: a failed participant tx is skipped and the next
-// visible one fills its slot; the account's sourced keys are unaffected.
-func TestAccountTransactions_SkipsFailedParticipantTxs(t *testing.T) {
-	const limit = 3
-	router := &txArmRouter{
-		sourced:     [][]any{txKeyRow(98, 0)},
-		participant: [][]any{txKeyRow(100, 0), txKeyRow(99, 0), txKeyRow(97, 0)},
-		failed:      map[[2]uint32]bool{{100, 0}: true},
-	}
-	conn := &stubConn{respond: withOpsBySourceRows(router.respond)}
-	if _, _, err := (&ExplorerReader{conn: conn}).AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
-		t.Fatalf("AccountTransactions: %v", err)
-	}
-	last := conn.queries[len(conn.queries)-1]
-	if !strings.Contains(last, "IN ((99,0),(98,0),(97,0))") {
-		t.Fatalf("hydration must skip the failed participant tx and still fill the page: %s", last)
-	}
-}
-
-func TestAccountOperations_SkipsFailedParticipantTxs(t *testing.T) {
-	const limit = 3
-	router := &opsArmRouter{
-		sourced:     [][]any{keyRow(98, 0, 0)},
-		participant: [][]any{keyRow(100, 0, 1), keyRow(100, 0, 0), keyRow(99, 0, 0), keyRow(97, 0, 0)},
-		failed:      map[[2]uint32]bool{{100, 0}: true},
-	}
-	conn := &stubConn{respond: withOpsBySourceRows(router.respond)}
-	if _, _, err := (&ExplorerReader{conn: conn}).AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
-		t.Fatalf("AccountOperations: %v", err)
-	}
-	last := conn.queries[len(conn.queries)-1]
-	if !strings.Contains(last, "IN ((99,0,0),(98,0,0),(97,0,0))") {
-		t.Fatalf("hydration must skip both ops of the failed participant tx and still fill the page: %s", last)
-	}
-}
-
 // historyLake serves AccountOperations end to end: the sourced arm and the
 // participant arm honour cursor and LIMIT, and hydration returns the rows
 // for exactly the keys it was sent.
@@ -265,70 +229,4 @@ func (l *historyLake) Query(ctx context.Context, q string, args ...any) (driver.
 		return l.participantLake.Query(ctx, q, args...)
 	}
 	return &stubRows{}, nil
-}
-
-// When the participant arm stops at its frontier, the reader serves a short
-// page with resume at that frontier, drops sourced keys past it, and the
-// next page carries on with no row skipped or repeated.
-func TestAccountOperations_BudgetResumeIsExact(t *testing.T) {
-	const (
-		limit  = 50
-		failed = 10000
-	)
-	lake := &historyLake{participantLake: participantLake{failed: map[accountTxKey]bool{}}}
-	var want []accountOpKey
-	ledger := uint32(failed + 2*limit)
-	for i := 0; i < limit/2; i++ {
-		k := accountOpKey{ledger, 1, 0}
-		lake.rows = append(lake.rows, k)
-		want = append(want, k)
-		ledger--
-	}
-	for i := 0; i < failed; i++ {
-		lake.rows = append(lake.rows, accountOpKey{ledger, 1, 0})
-		lake.failed[accountTxKey{ledger, 1}] = true
-		if i%200 == 0 { // the account's own ops, inside and past the run
-			k := accountOpKey{ledger, 0, 0}
-			lake.sourced = append(lake.sourced, k)
-			want = append(want, k)
-		}
-		ledger--
-	}
-	tail := accountOpKey{ledger, 1, 0}
-	lake.rows = append(lake.rows, tail)
-	want = append(want, tail)
-
-	r := &ExplorerReader{conn: lake}
-	var got []accountOpKey
-	var cur ExplorerCursor
-	resumes := 0
-	for page := 0; page < 1000; page++ {
-		rows, resume, err := r.AccountOperations(context.Background(), "GTEST", limit, cur)
-		if err != nil {
-			t.Fatalf("page %d: %v", page, err)
-		}
-		for _, o := range rows {
-			got = append(got, accountOpKey{o.Seq, o.TxIndex, o.OpIndex})
-		}
-		switch {
-		case resume.IsSet():
-			if len(rows) >= limit {
-				t.Fatalf("page %d: resume on a full page", page)
-			}
-			resumes++
-			cur = resume
-		case len(rows) == limit:
-			last := rows[len(rows)-1]
-			cur = ExplorerCursor{Ledger: last.Seq, A: last.TxIndex, B: last.OpIndex}
-		default:
-			if resumes == 0 {
-				t.Fatal("the walk never stopped at a frontier")
-			}
-			if fmt.Sprint(got) != fmt.Sprint(want) {
-				t.Fatalf("walk returned %d rows, want %d in order\n got: %v\nwant: %v", len(got), len(want), got, want)
-			}
-			return
-		}
-	}
-	t.Fatal("walk did not end")
 }

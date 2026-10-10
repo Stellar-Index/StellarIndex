@@ -1,105 +1,11 @@
 package orchestrator
 
 import (
-	"context"
-	"errors"
-	"math/big"
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/testutil"
-
-	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
-
-// TestTriangulate_FrozenLegStaysRefusedOnATickItsWindowIsEmpty is the
-// second half of the frozen-leg guard: a freeze must not be launderable through
-// triangulation on the ticks AFTER the one that fired it either.
-//
-// The laundering guard read a set rebuilt at the top of every tick, and
-// the only thing that ever wrote to it was engageFreeze. But
-// refreshPairWindow returns BEFORE the freeze step when the window is
-// empty, when it is under the USD-volume floor, and when the VWAP has no
-// trades — and a pair whose market has just been manipulated on one thin
-// venue is exactly the pair whose next bucket is empty. On that tick the
-// pair is still frozen (its ADR-0019 hold runs for tens of minutes, its
-// marker and its last-known-good value are both deliberately still in
-// Redis) yet nothing re-entered it into the set, so the chain read the
-// LKG as a fresh leg and published the product to a target that carries
-// no frozen flag.
-//
-// Tick 1 here is the same-tick frozen-leg scenario. Tick 2 is the hole.
-func TestTriangulate_FrozenLegStaysRefusedOnATickItsWindowIsEmpty(t *testing.T) {
-	ctx := context.Background()
-	leg1 := xlmUsdtPair(t) // the pair that freezes
-	leg2 := mkPair(t, "crypto", "USDT", "fiat", "EUR")
-	target := mkPair(t, "crypto", "XLM", "fiat", "EUR")
-	window := 5 * time.Minute
-
-	cache, mr := newTestRedis(t)
-	o := New(nil, cache, Config{
-		Pairs:        []canonical.Pair{leg1},
-		Windows:      []time.Duration{window},
-		Anomaly:      newAnomalyChecker(t, leg1),
-		FreezeWriter: &recordingFreezeMarker{},
-		Triangulations: []TriangulationChain{{
-			Target: target,
-			Legs:   []canonical.Pair{leg1, leg2},
-		}},
-	})
-
-	leg1Key := cachekeys.VWAP(leg1.Base, leg1.Quote, window).String()
-	leg2Key := cachekeys.VWAP(leg2.Base, leg2.Quote, window).String()
-	targetKey := cachekeys.VWAP(target.Base, target.Quote, window).String()
-	cache.Set(ctx, leg1Key, "1.000000000000", time.Minute)
-	cache.Set(ctx, leg2Key, "0.900000000000", time.Hour)
-
-	// Tick 1: prev = $1.00, this bucket prices XLM at ~$2.10 on one
-	// source. The pair freezes and the chain is refused.
-	stateKey := leg1.String() + ":" + window.String()
-	o.prevVWAPs[stateKey] = big.NewRat(1, 1)
-	o.store = &mockStore{trades: []canonical.Trade{
-		buildTrade(t, big.NewInt(100_000_000), big.NewInt(210_000_000), time.Now()),
-	}}
-	if err := o.Tick(ctx); err != nil {
-		t.Fatalf("Tick 1: %v", err)
-	}
-	if !o.freezeStates[stateKey].Active() {
-		t.Fatal("setup: the manipulated bucket did not freeze the leg")
-	}
-	if mr.Exists(targetKey) {
-		t.Fatal("setup: tick 1 already published the derived price")
-	}
-
-	// Tick 2: the leg's window is EMPTY, so refreshPairWindow returns
-	// before the freeze step. The freeze is 30 seconds old and its hold
-	// has most of ten minutes left.
-	o.store = &mockStore{}
-	before := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues(outcomeFrozenLeg))
-	nextBucket(o)
-	if err := o.Tick(ctx); err != nil {
-		t.Fatalf("Tick 2: %v", err)
-	}
-
-	if !o.freezeStates[stateKey].Active() {
-		t.Fatal("the leg's freeze ended on a tick that never evaluated it")
-	}
-	if got, err := mr.Get(leg1Key); err != nil || got != "1.000000000000" {
-		t.Fatalf("leg LKG = (%q, %v); the scenario needs it still in cache", got, err)
-	}
-	if mr.Exists(targetKey) {
-		got, _ := mr.Get(targetKey)
-		t.Errorf("target key %q written with %q on a tick the frozen leg's window was empty — "+
-			"the leg's last-known-good was laundered into a derived price with no frozen flag",
-			targetKey, got)
-	}
-	after := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues(outcomeFrozenLeg))
-	if after-before != 1 {
-		t.Errorf("triangulation outcome %q delta on tick 2 = %v, want 1", outcomeFrozenLeg, after-before)
-	}
-}
 
 // TestFrozenLeg_DoesNotOutliveTheHold bounds the carry-over. The
 // in-memory ladder of a window that stops being evaluated is never
@@ -139,63 +45,5 @@ func TestFrozenLeg_DoesNotOutliveTheHold(t *testing.T) {
 	now = st.HoldUntil.Add(-time.Minute)
 	if o.frozenLeg(leg, time.Hour) {
 		t.Error("the 1h window read as frozen on the 5m window's ladder")
-	}
-}
-
-// TestTriangulate_RefusedLegIsNotReadBackFromCache covers the non-freeze
-// half of the laundering route: refreshPairWindow refuses a configured
-// pair's window (empty, under the USD-volume floor, or unfetchable) and
-// returns before writing anything, but the pair's previous value is still
-// in Redis. Read
-// back as a chain leg, that value entered the cross-rate graph as if this
-// tick had priced it, and the target published a fresh-looking composite
-// on a leg nobody priced.
-func TestTriangulate_RefusedLegIsNotReadBackFromCache(t *testing.T) {
-	window := 5 * time.Minute
-	for _, tc := range []struct {
-		name     string
-		trades   []canonical.Trade
-		minUSD   float64
-		storeErr error
-	}{
-		{name: "empty_window"},
-		{name: "fetch_error", storeErr: errors.New("injected fetch failure")},
-		{
-			name: "below_min_usd_volume",
-			trades: []canonical.Trade{
-				buildTrade(t, big.NewInt(100_000_000), big.NewInt(100_000_000), time.Now()),
-			},
-			minUSD: 1e12,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
-			leg1 := xlmUsdtPair(t)
-			leg2 := mkPair(t, "crypto", "USDT", "fiat", "EUR")
-			target := mkPair(t, "crypto", "XLM", "fiat", "EUR")
-			chain := TriangulationChain{Target: target, Legs: []canonical.Pair{leg1, leg2}}
-
-			cache, mr := newTestRedis(t)
-			o := New(&mockStore{trades: tc.trades, returnErr: tc.storeErr}, cache, Config{
-				Pairs:          []canonical.Pair{leg1},
-				Windows:        []time.Duration{window},
-				MinUSDVolume:   tc.minUSD,
-				Triangulations: []TriangulationChain{chain},
-			})
-			cache.Set(ctx, cachekeys.VWAP(leg1.Base, leg1.Quote, window).String(), "1.000000000000", time.Hour)
-			cache.Set(ctx, cachekeys.VWAP(leg2.Base, leg2.Quote, window).String(), "0.900000000000", time.Hour)
-
-			if err := o.Tick(ctx); err != nil {
-				t.Fatalf("Tick: %v", err)
-			}
-			if _, outcome := o.legPriceFromCache(ctx, chain, leg1, window); outcome == "" {
-				t.Error("legPriceFromCache served the leg's cached value on a tick its refresh refused it")
-			}
-			targetKey := cachekeys.VWAP(target.Base, target.Quote, window).String()
-			if mr.Exists(targetKey) {
-				got, _ := mr.Get(targetKey)
-				t.Errorf("target %s published %q from a leg this tick refused to price", targetKey, got)
-			}
-		})
 	}
 }

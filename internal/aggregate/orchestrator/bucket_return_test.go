@@ -2,8 +2,8 @@ package orchestrator
 
 import (
 	"context"
-	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -192,36 +192,24 @@ func backlogCase(t *testing.T, window time.Duration, cfg Config, unpriceableNewe
 	return got != lkg, o.freezeStates[pair.String()+":"+window.String()].Active()
 }
 
-// A move that lands in one batch is scored against the level before the
-// batch, not only between the batch's two newest (agreeing) minutes; and a
-// newest minute with no VWAP hands scoring to the newest priceable minute
-// instead of skipping it.
-func TestFreeze_BacklogBatchScoredAgainstLevelBeforeIt(t *testing.T) {
-	for _, unpriceable := range []bool{false, true} {
-		for _, window := range DefaultWindows {
-			name := fmt.Sprintf("%s/unpriceableNewest=%v", window, unpriceable)
-			t.Run("phase1/"+name, func(t *testing.T) {
-				checker, err := anomaly.NewChecker(anomaly.DefaultThresholds(), anomaly.NewClassifier(map[string]anomaly.AssetClass{
-					xlmUSDPair(t).Base.String(): anomaly.ClassCrypto,
-				}))
-				if err != nil {
-					t.Fatalf("NewChecker: %v", err)
-				}
-				published, frozen := backlogCase(t, window, Config{Anomaly: checker}, unpriceable)
-				if published || !frozen {
-					t.Errorf("a +100%% backlog batch published=%v frozen=%v, want held and frozen", published, frozen)
-				}
-			})
-			t.Run("phase2/"+name, func(t *testing.T) {
-				bsrc := stubBaselineSource{
-					multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: 1000}},
-					computedAt: time.Date(2026, 7, 25, 11, 0, 0, 0, time.UTC),
-				}
-				published, frozen := backlogCase(t, window, Config{Baselines: bsrc}, unpriceable)
-				if published || !frozen {
-					t.Errorf("a +100%% backlog batch published=%v frozen=%v, want held and frozen", published, frozen)
-				}
-			})
-		}
+// The freeze record names the window whose z fired: here the 30d window's
+// tighter MAD scores the +100% minute above the 1d window's.
+func TestPhase2_FreezeReasonNamesTheAttributingWindow(t *testing.T) {
+	marker := &recordingFreezeMarker{}
+	bsrc := stubBaselineSource{
+		multi: baseline.MultiBaseline{
+			Day1:  &baseline.Baseline{Median: 0, MAD: 0.05, N: 1439},
+			Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: 40000},
+		},
+		computedAt: time.Date(2026, 7, 25, 11, 0, 0, 0, time.UTC),
+	}
+	if _, frozen := bucketReturnCase(t, time.Minute, Config{Baselines: bsrc, FreezeWriter: marker}); !frozen {
+		t.Fatal("a +100% single-source minute did not freeze")
+	}
+	if len(marker.marks) == 0 {
+		t.Fatal("no freeze recorded")
+	}
+	if reason := marker.marks[0].decision.Reason; !strings.Contains(reason, " z_window=30d ") {
+		t.Errorf("freeze reason %q does not name the attributing window z_window=30d", reason)
 	}
 }

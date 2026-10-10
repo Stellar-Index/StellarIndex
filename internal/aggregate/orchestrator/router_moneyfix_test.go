@@ -236,43 +236,41 @@ func TestPublishComposite_DivergedNeverOverwritesDirectWithoutMeta(t *testing.T)
 	}
 }
 
-// TestRefreshPairWindow_DirectWriteClearsStaleProvenance is
-// W1-flow-price-serve-2: when the direct per-pair refresh overwrites the
-// shared VWAP key with a DIRECT value, it must clear any stale
-// "triangulated" provenance a prior tick's composite left, so
-// LookupTriangulatedVWAP cannot serve the thin direct price mislabeled as
-// a robust composite.
-func TestRefreshPairWindow_DirectWriteClearsStaleProvenance(t *testing.T) {
-	store := &mockStore{
-		trades: []canonical.Trade{
-			buildTrade(t, big.NewInt(10_000_000_000), big.NewInt(1_758_200_000), time.Now().Add(-2*time.Minute)),
-			buildTrade(t, big.NewInt(20_000_000_000), big.NewInt(3_518_000_000), time.Now().Add(-1*time.Minute)),
-		},
+func TestFormatRatFixed(t *testing.T) {
+	for _, tc := range []struct {
+		r    *big.Rat
+		dp   int
+		want string
+	}{
+		{big.NewRat(1, 3), 4, "0.3333"}, // truncated, not rounded
+		{big.NewRat(5, 1), 2, "5.00"},
+		{big.NewRat(1, 100), 6, "0.010000"},
+	} {
+		if got := formatRatFixed(tc.r, tc.dp); got != tc.want {
+			t.Errorf("formatRatFixed(%s, %d) = %q want %q", tc.r, tc.dp, got, tc.want)
+		}
 	}
-	rdb, mr := newTestRedis(t)
-	window := 5 * time.Minute
-	xlm, _ := canonical.NewCryptoAsset("XLM")
-	usdt, _ := canonical.NewCryptoAsset("USDT")
+}
 
-	// A PRIOR tick's composite left a stale triangulated provenance marker.
-	provKey := cachekeys.VWAPProvenance(xlm, usdt, window).String()
-	if err := rdb.Set(context.Background(), provKey, cachekeys.VWAPProvenanceTriangulated, window).Err(); err != nil {
-		t.Fatalf("seed provenance: %v", err)
-	}
+// TestPublishComposite_DropsHeldDirectCoverage: once a composite serves the
+// target, the direct comparator's coverage no longer describes the served
+// value and must not survive for a later reseed to restore.
+func TestPublishComposite_DropsHeldDirectCoverage(t *testing.T) {
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
+	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
+	window := time.Minute
+	rdb, _ := newTestRedis(t)
+	o := New(&mockStore{}, rdb, Config{Windows: []time.Duration{window}})
+	stateKey := xlmEUR.String() + ":" + window.String()
+	o.prevVWAPCoverage[stateKey] = cachekeys.WindowCoverage{Truncated: true}
 
-	o := New(store, rdb, Config{Pairs: []canonical.Pair{xlmUsdtPair(t)}, Windows: []time.Duration{window}})
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
+	chain := TriangulationChain{Target: xlmEUR, Legs: []canonical.Pair{xlmUSD, usdEUR}}
+	if outcome := o.publishComposite(context.Background(), chain, window,
+		big.NewRat(72, 1000), 2, 2, 2, 0.9, false, false); outcome != "ok" {
+		t.Fatalf("publishComposite = %q, want ok", outcome)
 	}
-
-	// The direct value was published...
-	if !mr.Exists("vwap:" + xlm.String() + ":" + usdt.String() + ":300") {
-		t.Fatal("direct VWAP not published — test precondition broken")
-	}
-	// ...so the stale triangulated marker must be gone.
-	if mr.Exists(provKey) {
-		v, _ := mr.Get(provKey)
-		t.Errorf("stale provenance marker survived a direct refresh (=%q) — a thin direct price "+
-			"would be served flagged triangulated (W1-flow-price-serve-2)", v)
+	if _, held := o.prevVWAPCoverage[stateKey]; held {
+		t.Error("direct coverage still held after a composite was published for the target")
 	}
 }

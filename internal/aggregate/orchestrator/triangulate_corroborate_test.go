@@ -1,16 +1,11 @@
 package orchestrator
 
 import (
-	"context"
-	"encoding/json"
 	"math"
 	"math/big"
 	"testing"
 	"time"
 
-	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
-	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
-	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -111,145 +106,5 @@ func TestTriangulationDivergencePct_StaleCompositeIsUnchecked(t *testing.T) {
 	}
 	if pct, ok := o.triangulationDivergencePct(xlmEUR, window, ratOf(t, "0.0756")); ok {
 		t.Errorf("a stale composite was still trusted (pct=%v) — staleness must read as unchecked", pct)
-	}
-}
-
-// TestTick_CompositeRecordedOnlyOnPublish — the sample that feeds the
-// confidence factor is written by the chain pass and ONLY on a
-// successful publish. A chain that could not publish (missing leg here;
-// a frozen leg takes the same path via outcomeFrozenLeg) must leave no
-// sample behind for the confidence step to read as evidence.
-func TestTick_CompositeRecordedOnlyOnPublish(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
-	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
-	window := 5 * time.Minute
-
-	cache, mr := newTestRedis(t)
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
-	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String(), "0.900000000000")
-
-	o := New(nil, cache, Config{
-		Windows: []time.Duration{window},
-		Triangulations: []TriangulationChain{
-			{Target: xlmEUR, Legs: []canonical.Pair{xlmUSD, usdEUR}},
-		},
-	})
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-
-	sample, ok := o.lastComposites[compositeKey(xlmEUR, window)]
-	if !ok {
-		t.Fatal("no composite recorded after a successful chain publish")
-	}
-	// 0.08 × 0.90 = 0.072 — the same value the chain wrote to cache.
-	if sample.price.Cmp(ratOf(t, "0.072")) != 0 {
-		t.Errorf("recorded composite = %v, want 0.072", sample.price.FloatString(6))
-	}
-
-	// Now break a leg: the next tick must not refresh the sample.
-	mr.Del(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String())
-	before := o.lastComposites[compositeKey(xlmEUR, window)].at
-	nextBucket(o)
-	if err := o.Tick(context.Background()); err != nil {
-		t.Fatalf("second Tick: %v", err)
-	}
-	if got := o.lastComposites[compositeKey(xlmEUR, window)].at; !got.Equal(before) {
-		t.Error("a missing-leg chain refreshed the composite sample — an unpublished " +
-			"chain must not present itself as this tick's corroboration")
-	}
-}
-
-// TestTick_CompositeCorroborationReachesTheCachedConfidence is the
-// end-to-end wiring proof: a configured chain publishes a composite,
-// and the NEXT tick's confidence score for that pair carries the
-// composite comparison — checked, and lower when the two disagree.
-//
-// It also pins the invariant that makes this safe to ship: the
-// source-count factor is identical in both runs. A composite is
-// corroboration, never a second source, so it must not move the leg
-// ADR-0019's 3-signal freeze AND reads (`source_count <= 1`).
-func TestTick_CompositeCorroborationReachesTheCachedConfidence(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
-	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
-	window := time.Minute
-	now := time.Now().UTC()
-
-	// Direct VWAP for XLM/EUR from the trade fixture below: two sources,
-	// quote/base = 1.242 and 1.245 → volume-weighted ≈ 1.2435.
-	run := func(t *testing.T, legUSDEUR string) confidence.Score {
-		t.Helper()
-		store := &mockStore{
-			trades: []canonical.Trade{
-				makeTradeOn(t, xlmEUR, "soroswap", 1_000_000, 1_242_000, now.Add(-30*time.Second)),
-				makeTradeOn(t, xlmEUR, "phoenix", 1_000_000, 1_245_000, now.Add(-20*time.Second)),
-			},
-		}
-		cache, mr := newTestRedis(t)
-		mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "1.000000000000")
-		mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String(), legUSDEUR)
-
-		o := New(store, cache, Config{
-			Pairs:    []canonical.Pair{xlmEUR},
-			Windows:  []time.Duration{window},
-			Interval: time.Hour, // long enough that no sample ages out mid-test
-			Triangulations: []TriangulationChain{
-				{Target: xlmEUR, Legs: []canonical.Pair{xlmUSD, usdEUR}},
-			},
-			Baselines: stubBaselineSource{
-				multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0.0001, MAD: 0.001, N: maxDay30Returns}},
-				computedAt: now,
-			},
-		})
-		// Tick 1 warms prevVWAP and publishes the first composite;
-		// tick 2 scores the direct price against it.
-		for i := 0; i < 2; i++ {
-			if i > 0 {
-				nextBucket(o)
-			}
-			if err := o.Tick(context.Background()); err != nil {
-				t.Fatalf("tick %d: %v", i+1, err)
-			}
-		}
-		body, err := cache.Get(context.Background(),
-			cachekeys.Confidence(xlmEUR.Base, xlmEUR.Quote, window).String()).Bytes()
-		if err != nil {
-			t.Fatalf("confidence key missing: %v", err)
-		}
-		var score confidence.Score
-		if err := json.Unmarshal(body, &score); err != nil {
-			t.Fatalf("confidence not valid JSON: %v", err)
-		}
-		return score
-	}
-
-	// Composite = 1.0 × 1.2435 = the direct price → agreement.
-	agree := run(t, "1.243500000000")
-	// Composite = 1.0 × 1.75 → ~29% below the direct price.
-	disagree := run(t, "1.750000000000")
-
-	if !agree.Factors.TriangulationChecked || !disagree.Factors.TriangulationChecked {
-		t.Fatalf("TriangulationChecked = (%v, %v), want both true — the chain published "+
-			"a composite for this pair on the previous tick",
-			agree.Factors.TriangulationChecked, disagree.Factors.TriangulationChecked)
-	}
-	if agree.Factors.TriangulationAgreement != 1.0 {
-		t.Errorf("agreeing composite gave factor %v, want 1.0", agree.Factors.TriangulationAgreement)
-	}
-	if disagree.Factors.TriangulationAgreement >= 0.2 {
-		t.Errorf("~29%% disagreement gave factor %v, want well under 0.2 — divergence "+
-			"between a direct print and its composite is a manipulation signal",
-			disagree.Factors.TriangulationAgreement)
-	}
-	if disagree.Confidence >= agree.Confidence {
-		t.Errorf("disagreement did not lower confidence: %v (disagree) vs %v (agree)",
-			disagree.Confidence, agree.Confidence)
-	}
-	if agree.Factors.SourceCount != disagree.Factors.SourceCount {
-		t.Errorf("the composite moved the source-count factor (%v vs %v) — a derived "+
-			"path must never count as a source for the freeze's 3-signal AND",
-			agree.Factors.SourceCount, disagree.Factors.SourceCount)
 	}
 }

@@ -936,3 +936,242 @@ func TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel(t *testing.T) {
 		t.Errorf("AnomalyFreezeReleasedTotal{auto} delta = %v, want 1", after-before)
 	}
 }
+
+// TestFreezeLifecycle_RefireAfterOverrideReturnsEscalated — the operator
+// force-unfreezes an escalated pair and the anomaly is still live. The
+// override must not zero the state: the re-fire would be a fresh 10-minute hold
+// with extensions_used=0 that would not page again for two hours.
+func TestFreezeLifecycle_RefireAfterOverrideReturnsEscalated(t *testing.T) {
+	f := newFreezeFixture(t)
+	escalated := freeze.State{
+		FiredAt:        f.now.Add(-3 * time.Hour),
+		HoldUntil:      f.now.Add(20 * time.Minute),
+		ExtensionsUsed: freeze.DefaultMaxExtensions,
+		Escalated:      true,
+	}
+	f.orch.freezeStates[f.stateKey()] = escalated
+	f.marker.present, f.marker.state = true, escalated
+	beforeEsc := testutil.ToFloat64(obs.AnomalyFreezeEscalatedTotal)
+	beforeRefire := testutil.ToFloat64(obs.AnomalyFreezeRefiredAfterOverrideTotal)
+
+	// Override: the marker goes; the next bucket publishes, as asked.
+	f.marker.present = false
+	f.feed(t, manipQuoteAmount, "soroswap")
+	f.tick(t, closedBucket)
+	if f.state().Active() {
+		t.Fatalf("setup: the override did not release: %+v", f.state())
+	}
+
+	// Still anomalous one bucket later.
+	f.feed(t, manipQuoteAmount*3/2, "soroswap")
+	f.tick(t, closedBucket)
+	st := f.state()
+	if !st.Active() || !st.Escalated || st.ExtensionsUsed != freeze.DefaultMaxExtensions {
+		t.Fatalf("re-fire after override = %+v, want the escalated ladder resumed", st)
+	}
+	if got := testutil.ToFloat64(obs.AnomalyFreezeEscalatedTotal) - beforeEsc; got != 1 {
+		t.Errorf("escalation counter delta = %v, want 1: the P1 must page again", got)
+	}
+	if got := testutil.ToFloat64(obs.AnomalyFreezeRefiredAfterOverrideTotal) - beforeRefire; got != 1 {
+		t.Errorf("refired-after-override counter delta = %v, want 1", got)
+	}
+}
+
+// TestFreezeLifecycle_ReleaseModeTellsOperatorFromLapse — a live freeze
+// whose marker and ladder are gone was always counted as mode="operator",
+// so a lapse nobody performed polluted the series the on-call reads as the
+// manual-unfreeze rate. freeze-unfreeze's tombstone is what separates them.
+func TestFreezeLifecycle_ReleaseModeTellsOperatorFromLapse(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		tombstone bool
+		want      string
+	}{
+		{name: "freeze_unfreeze", tombstone: true, want: "operator"},
+		{name: "lapse", tombstone: false, want: "lapsed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWiredFreezeFixture(t)
+			w, ok := f.orch.cfg.FreezeWriter.(*freeze.Writer)
+			if !ok {
+				t.Fatal("setup: the wired fixture must use freeze.Writer")
+			}
+			f.feed(t, manipQuoteAmount, "soroswap")
+			f.advance(t, closedBucket)
+			if !f.state().Active() {
+				t.Fatal("setup: freeze did not fire")
+			}
+
+			ctx := context.Background()
+			if tc.tombstone {
+				if err := w.RecordOverride(ctx, f.pair.Base, f.pair.Quote, "oncall", "verified by hand"); err != nil {
+					t.Fatalf("RecordOverride: %v", err)
+				}
+			}
+			if err := w.Clear(ctx, f.pair.Base, f.pair.Quote); err != nil {
+				t.Fatalf("Clear: %v", err)
+			}
+			before := map[string]float64{}
+			for _, m := range []string{"operator", "lapsed"} {
+				before[m] = testutil.ToFloat64(obs.AnomalyFreezeReleasedTotal.WithLabelValues(m))
+			}
+
+			f.advance(t, closedBucket)
+			if f.state().Active() {
+				t.Fatalf("setup: the missing marker did not release: %+v", f.state())
+			}
+			for _, m := range []string{"operator", "lapsed"} {
+				want := 0.0
+				if m == tc.want {
+					want = 1
+				}
+				if got := testutil.ToFloat64(obs.AnomalyFreezeReleasedTotal.WithLabelValues(m)) - before[m]; got != want {
+					t.Errorf("AnomalyFreezeReleasedTotal{%s} delta = %v, want %v", m, got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestFreezeLifecycle_ReleaseDuringRedisLossKeepsEscalatedSibling drives
+// the real entry point. After a deploy the 5m window is live in memory and
+// the 1h window — under the volume floor — has not reached the freeze step.
+// Redis loses the marker, and the 5m window earns its release.
+func TestFreezeLifecycle_ReleaseDuringRedisLossKeepsEscalatedSibling(t *testing.T) {
+	f := newProductionWiredFixture(t)
+	ctx := context.Background()
+	_, recovering := f.freezeBoth(f.newOrch())
+
+	o := f.newOrch() // the deploy: every key cold
+	o.freezeStates[f.key(f.short)] = recovering
+	f.flushRedis()
+
+	refused := o.stepFreezeLifecycle(ctx, f.pair, f.short, f.key(f.short), healthySignal(),
+		coldSiblingDecision())
+	if refused {
+		t.Fatal("setup: the 5m window was expected to earn its release on this tick")
+	}
+	if f.store.retired {
+		t.Error("the 5m window's release retired the WHOLE durable record during a Redis loss")
+	}
+	if got := f.store.windows[f.long]; !got.Escalated || got.ExtensionsUsed != freeze.DefaultMaxExtensions {
+		t.Errorf("1h durable ladder after the 5m release = %+v, want the escalated ladder intact", got)
+	}
+	if f.store.windows[f.short].Active() {
+		t.Error("the released 5m window's durable ladder survived its release")
+	}
+
+	// The 1h window's next qualifying bucket: its first evaluation in this
+	// process, against the only record left.
+	st, overridden, err := o.loadFreezeState(ctx, f.pair, f.long, f.key(f.long))
+	if err != nil {
+		t.Fatalf("loadFreezeState: %v", err)
+	}
+	if overridden {
+		t.Error("a Redis loss read as the operator override for the 1h window")
+	}
+	out := o.cfg.Phase2Thresholds.Lifecycle.Evaluate(st, healthySignal())
+	if !st.Escalated || !out.Frozen {
+		t.Errorf("1h window after its sibling's release: state=%+v Frozen=%v, want it escalated and "+
+			"FROZEN — ADR-0019 holds an escalated freeze until manual unfreeze, and it published",
+			st, out.Frozen)
+	}
+}
+
+// TestFreezeLifecycle_OperatorOverrideStillSticksWithADurableRecord: asking
+// the durable record before a clear must not make the override fail to
+// take. `freeze-unfreeze` clears through the writer, which retires the
+// durable record; every window then observes the absent marker, releases,
+// and nothing re-freezes the pair.
+func TestFreezeLifecycle_OperatorOverrideStillSticksWithADurableRecord(t *testing.T) {
+	f := newProductionWiredFixture(t)
+	ctx := context.Background()
+	o := f.newOrch()
+	escalated, recovering := f.freezeBoth(o)
+	o.freezeStates[f.key(f.long)] = escalated
+	o.freezeStates[f.key(f.short)] = recovering
+
+	if err := o.cfg.FreezeWriter.Clear(ctx, f.pair.Base, f.pair.Quote); err != nil {
+		t.Fatalf("operator Clear: %v", err)
+	}
+
+	for _, w := range []time.Duration{f.short, f.long} {
+		if _, overridden, err := o.loadFreezeState(ctx, f.pair, w, f.key(w)); err != nil || !overridden {
+			t.Fatalf("window %s did not observe the operator override", w)
+		}
+		o.releaseFreeze(ctx, f.pair, w, f.key(w), o.freezeStates[f.key(w)], freeze.TransitionOverridden)
+		if o.freezeStates[f.key(w)].Active() {
+			t.Errorf("window %s is still frozen in memory after the override", w)
+		}
+	}
+	if len(f.store.windows) != 0 {
+		t.Errorf("durable ladders after the override = %+v, want none", f.store.windows)
+	}
+	if st, present, _ := o.cfg.FreezeWriter.LoadState(ctx, f.pair.Base, f.pair.Quote); present {
+		t.Errorf("the pair still reads as frozen after the override: %+v", st)
+	}
+}
+
+// TestFreezeLifecycle_UnpricedBucketsKeepTheFreezeAlive — a frozen window
+// whose buckets go empty or fall under MinUSDVolume must keep advancing its
+// lifecycle. If those buckets returned before the lifecycle step,
+// nothing would refresh the marker or the durable ladder; once hold + grace
+// lapsed, the next priced bucket would read the absence as the operator
+// override, release with mode="operator" and publish the manipulated
+// print the freeze was withholding.
+func TestFreezeLifecycle_UnpricedBucketsKeepTheFreezeAlive(t *testing.T) {
+	cases := []struct {
+		name         string
+		thin, priced func(t *testing.T, f *freezeFixture)
+	}{
+		{
+			name:   "empty",
+			thin:   func(_ *testing.T, f *freezeFixture) { f.store.trades = nil },
+			priced: func(t *testing.T, f *freezeFixture) { f.feed(t, manipQuoteAmount, "soroswap") },
+		},
+		{
+			name:   "below_min_usd_volume",
+			thin:   func(_ *testing.T, f *freezeFixture) { f.orch.cfg.MinUSDVolume = 1e9 },
+			priced: func(_ *testing.T, f *freezeFixture) { f.orch.cfg.MinUSDVolume = 0 },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWiredFreezeFixture(t)
+			operator := obs.AnomalyFreezeReleasedTotal.WithLabelValues("operator")
+			before := testutil.ToFloat64(operator)
+
+			f.feed(t, manipQuoteAmount, "soroswap")
+			f.advance(t, closedBucket)
+			if !f.state().Active() {
+				t.Fatal("setup: freeze did not fire")
+			}
+
+			// Twenty unpriced buckets: well past the 10-minute hold plus the
+			// 5-minute marker and ladder grace.
+			tc.thin(t, f)
+			for range 20 {
+				f.advance(t, closedBucket)
+			}
+			if !f.mr.Exists(cachekeys.Freeze(f.pair.Base, f.pair.Quote).String()) {
+				t.Error("freeze marker lapsed during unpriced buckets: flags.frozen is off for a live freeze")
+			}
+
+			tc.priced(t, f)
+			f.advance(t, closedBucket)
+			st := f.state()
+			if !st.Active() {
+				t.Fatalf("freeze ended after unpriced buckets: %+v", st)
+			}
+			if st.ExtensionsUsed != 0 {
+				t.Errorf("ExtensionsUsed = %d; unscored buckets must slide the hold, not climb the ladder", st.ExtensionsUsed)
+			}
+			if got := f.served(t); got != lkgFormatted {
+				t.Errorf("served %q, want the held LKG %q", got, lkgFormatted)
+			}
+			if d := testutil.ToFloat64(operator) - before; d != 0 {
+				t.Errorf("AnomalyFreezeReleasedTotal{operator} delta = %v with no operator action", d)
+			}
+		})
+	}
+}
