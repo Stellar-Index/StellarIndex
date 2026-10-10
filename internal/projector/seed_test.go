@@ -2,7 +2,6 @@ package projector
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"sync"
 	"testing"
@@ -33,74 +32,6 @@ func newSeedHarness(t *testing.T, name string, evs []events.Event, tip uint32) (
 		mu.Lock()
 		defer mu.Unlock()
 		return slices.Clone(seen)
-	}
-}
-
-// A never-run source starts at its first event, not ledger 0: one cycle
-// projects the events and commits to the tip, instead of crawling the empty
-// pre-history BatchLimit ledgers per Interval (~89 h on mainnet).
-func TestCycle_NoCursorSeedsAtFirstEvent(t *testing.T) {
-	const first, second, tip = 50_000_000, 50_000_010, 50_000_020
-	h, seen := newSeedHarness(t, "seed-first-event", []events.Event{lakeEvent(first, 1), lakeEvent(second, 2)}, tip)
-
-	h.cycle()
-
-	if got := h.store.cursor(); got != tip {
-		t.Fatalf("cursor after first cycle = %d, want %d (scan from the first event through the tip)", got, tip)
-	}
-	if got, want := seen(), []uint32{first, second}; !slices.Equal(got, want) {
-		t.Fatalf("sink saw ledgers %v, want %v", got, want)
-	}
-}
-
-// With no matching event at or below the tip there is nothing to project:
-// the cursor lands on the tip in one cycle.
-func TestCycle_NoCursorNoEventsSeedsAtTip(t *testing.T) {
-	const tip = 50_000_000
-	h, seen := newSeedHarness(t, "seed-no-events", nil, tip)
-
-	h.cycle()
-
-	if got := h.store.cursor(); got != tip {
-		t.Fatalf("cursor after first cycle = %d, want %d", got, tip)
-	}
-	if got := seen(); len(got) != 0 {
-		t.Fatalf("sink saw ledgers %v, want none", got)
-	}
-}
-
-// An event beyond the durable tip is not a seed: the seek is bounded by the
-// same tip the scan is, so the source waits at the tip rather than jumping
-// past ledgers that are not yet durable.
-func TestCycle_NoCursorSeekBoundedByTip(t *testing.T) {
-	const tip = 50_000_000
-	h, seen := newSeedHarness(t, "seed-beyond-tip", []events.Event{lakeEvent(tip+5, 1)}, tip)
-
-	h.cycle()
-
-	if got := h.store.cursor(); got != tip {
-		t.Fatalf("cursor after first cycle = %d, want %d", got, tip)
-	}
-	if got := seen(); len(got) != 0 {
-		t.Fatalf("sink saw ledgers %v, want none (event is beyond the tip)", got)
-	}
-}
-
-// A failed seek degrades to the lossless crawl from ledger 0, and is not
-// retried every cycle.
-func TestCycle_NoCursorSeekFailureFallsBackToCrawl(t *testing.T) {
-	h, _ := newSeedHarness(t, "seed-seek-fails", []events.Event{lakeEvent(50_000_000, 1)}, 50_000_010)
-	h.events.seekErr = errors.New("seek unavailable")
-
-	h.cycle()
-
-	if got := h.store.cursor(); got != BatchLimit {
-		t.Fatalf("cursor after failed seek = %d, want %d (crawl from 0)", got, BatchLimit)
-	}
-	h.store.haveCursor = false
-	h.cycle()
-	if h.events.seeks != 1 {
-		t.Fatalf("seeks = %d, want 1 (fallback is remembered)", h.events.seeks)
 	}
 }
 

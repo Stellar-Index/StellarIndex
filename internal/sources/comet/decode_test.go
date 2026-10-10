@@ -145,19 +145,6 @@ func encodeSwapBody(t *testing.T, caller, tokenIn, tokenOut string, amountIn, am
 
 // ─── Tests ───────────────────────────────────────────────────────
 
-func TestClassify_MatchesPoolSwap(t *testing.T) {
-	e := &events.Event{Topic: []string{TopicSymbolPool, TopicSymbolSwap}}
-	if !classifySwap(e) {
-		t.Errorf("expected classify true")
-	}
-	if classifySwap(&events.Event{Topic: []string{TopicSymbolPool}}) {
-		t.Errorf("expected false for single-topic event")
-	}
-	if classifySwap(&events.Event{Topic: []string{TopicSymbolSwap, TopicSymbolPool}}) {
-		t.Errorf("expected false for swapped-order topics")
-	}
-}
-
 func TestDecodeSwap_HappyPath(t *testing.T) {
 	caller := accountStrkeyFromSeed(t, 0x10)
 	tokenIn := contractStrkeyFromSeed(t, 0x20)

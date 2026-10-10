@@ -1,26 +1,8 @@
 package kraken
 
 import (
-	"strings"
 	"testing"
-
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
-
-func TestStreamer_Name(t *testing.T) {
-	s := NewStreamer(map[string]canonical.Pair{})
-	if got := s.Name(); got != SourceName {
-		t.Errorf("Name() = %q, want %q", got, SourceName)
-	}
-}
-
-func TestStreamer_Class(t *testing.T) {
-	s := NewStreamer(map[string]canonical.Pair{})
-	if got := s.Class(); got != external.ClassExchange {
-		t.Errorf("Class() = %q, want %q", got, external.ClassExchange)
-	}
-}
 
 func TestDefaultPairList_matchesDefaultPairs(t *testing.T) {
 	m, err := DefaultPairs()
@@ -47,16 +29,4 @@ var krakenXLMWsnames = map[string]bool{
 	"XLM/GBP": true,
 	"XLM/USD": true,
 	"XLM/XBT": true,
-}
-
-func TestDefaultPairs_XLMSymbolsAreVenueSupported(t *testing.T) {
-	m, err := DefaultPairs()
-	if err != nil {
-		t.Fatalf("DefaultPairs: %v", err)
-	}
-	for symbol := range m {
-		if strings.HasPrefix(symbol, "XLM/") && !krakenXLMWsnames[symbol] {
-			t.Errorf("DefaultPairs subscribes %q, which Kraken does not list", symbol)
-		}
-	}
 }

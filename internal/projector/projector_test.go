@@ -1,6 +1,7 @@
 package projector
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -18,6 +19,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 )
 
 // fakeDecoder is a configurable dispatcher.Decoder for the X9
@@ -369,5 +373,122 @@ func TestProjectorGoroutinesRecover(t *testing.T) {
 	if checked < 2 {
 		t.Errorf("discovered %d goroutine(s) in internal/projector, want at least 2 (Run's watcher "+
 			"and per-source fan-out) — the scan has drifted from the code", checked)
+	}
+}
+
+// TestBuildRegistry_FoldsWhitespaceAndCaseInSourceNames pins that the
+// registry's own name lookup must normalise ingestion.enabled_sources
+// entries the SAME way internal/config/validate.go's KnownSources check
+// (which trims + lowercases) and internal/pipeline.BuildDispatcher already
+// do. Lowercasing without TrimSpace would let a name with
+// leading/trailing whitespace — accepted by config.Validate —
+// silently miss its projector entry (buildSource's default case returns
+// ok=false with no error) instead of registering comet.
+func TestBuildRegistry_FoldsWhitespaceAndCaseInSourceNames(t *testing.T) {
+	reg, err := BuildRegistry([]string{"  Comet  "}, config.OracleConfig{}, nil, nil)
+	if err != nil {
+		t.Fatalf("BuildRegistry(%q): %v", "  Comet  ", err)
+	}
+	for _, s := range reg.Sources {
+		if s.Name == comet.SourceName {
+			return
+		}
+	}
+	t.Fatalf("BuildRegistry(%q) did not register the comet source; got %d sources", "  Comet  ", len(reg.Sources))
+}
+
+// The projector skips a failed row and advances the cursor past it,
+// so the failure itself must reach the operator — the decode error text in the
+// log, and a panic in the stellarindex_decoder_panicked page counter.
+func TestProcessEventSafely_DecodeErrorIsLoggedWithRowCoordinate(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	src := Source{Name: "rlt133_err", Decoder: &fakeDecoder{matches: true, err: errors.New("unknown map field amount_v9")}}
+	_, decodeFail, _ := processEventSafely(src, events.Event{Ledger: 61234567, TxHash: "abc"},
+		func(consumer.Event) error { return nil }, log)
+	if !decodeFail {
+		t.Fatal("decode error must still be a soft-fail")
+	}
+	out := buf.String()
+	for _, want := range []string{"unknown map field amount_v9", "source=rlt133_err", "ledger=61234567", "tx=abc"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log %q missing %q", out, want)
+		}
+	}
+}
+
+func TestProcessEventSafely_PanicCountsDecoderPanicsTotal(t *testing.T) {
+	const name = "rlt133_panic"
+	before := testutil.ToFloat64(obs.DecoderPanicsTotal.WithLabelValues(name))
+	src := Source{Name: name, Decoder: &fakeDecoder{matches: true, panics: true}}
+	_, decodeFail, _ := processEventSafely(src, events.Event{Ledger: 42},
+		func(consumer.Event) error { return nil }, discardLog())
+	if !decodeFail {
+		t.Fatal("decode panic must still be a soft-fail")
+	}
+	if got := testutil.ToFloat64(obs.DecoderPanicsTotal.WithLabelValues(name)) - before; got != 1 {
+		t.Errorf("DecoderPanicsTotal{source=%q} delta = %v, want 1", name, got)
+	}
+}
+
+// A carried output from an earlier ledger that fails to sink must hold the
+// cursor below ITS ledger, not the scanned row's, or the retry never re-reads
+// the buffer state that produced it.
+func TestProcessEventSafely_HeldLedgerIsOutputLedger(t *testing.T) {
+	d := &fakeDecoder{matches: true, outs: []consumer.Event{carriedEvent{ledger: 90}, fakeEvent{}}}
+	_, _, sinkErr := processEventSafely(Source{Name: "x", Decoder: d}, events.Event{Ledger: 100},
+		func(consumer.Event) error { return errors.New("deadlock detected") }, discardLog())
+	f := rowFaultsOf(sinkErr)
+	if f.held == nil || f.heldLedger != 90 {
+		t.Fatalf("held=%v heldLedger=%d, want a held fault at ledger 90", f.held, f.heldLedger)
+	}
+}
+
+// TestProcessEventSafely_ContinuesPastPermanentStopsAtRetryable pins the loop
+// contract at the unit: permanent drops are collected and skipped over, the
+// first retryable/unclassified fault stops the row, and both are reachable
+// from the returned error.
+func TestProcessEventSafely_ContinuesPastPermanentStopsAtRetryable(t *testing.T) {
+	deadlock := errors.New("deadlock detected") // unclassified → holds
+	outs := []consumer.Event{fakeEvent{}, fakeEvent{}, fakeEvent{}, fakeEvent{}, fakeEvent{}}
+	d := &fakeDecoder{matches: true, outs: outs}
+	calls := 0
+	emitted, decodeFail, sinkErr := processEventSafely(Source{Name: "x", Decoder: d}, events.Event{Ledger: 9},
+		func(consumer.Event) error {
+			calls++
+			switch calls {
+			case 1:
+				return canonical.ErrInvalidTrade // permanent → skip, continue
+			case 2:
+				return nil
+			case 3:
+				return canonical.ErrInvalidAmount // permanent → skip, continue
+			case 4:
+				return deadlock // stops the row
+			default:
+				return nil // never reached
+			}
+		}, discardLog())
+	if decodeFail {
+		t.Error("a sink fault is not a decode failure")
+	}
+	if calls != 4 {
+		t.Errorf("sink called %d times, want 4 (continue past 2 drops, stop at the unclassified fault)", calls)
+	}
+	if emitted != 1 {
+		t.Errorf("emitted = %d, want 1 — only the output that landed", emitted)
+	}
+	// Asserted through the standard multi-error shape rather than the concrete
+	// type, so this test compiles — and fails on the VALUES — against a loop
+	// that still stops at the first error.
+	multi, ok := sinkErr.(interface{ Unwrap() []error })
+	if !ok {
+		t.Fatalf("sinkErr = %v (%T), want an error carrying every fault of the row (Unwrap() []error)", sinkErr, sinkErr)
+	}
+	if got := len(multi.Unwrap()); got != 3 {
+		t.Errorf("sinkErr carries %d faults, want 3 (two permanent drops + the fault that stopped the row)", got)
+	}
+	if !errors.Is(sinkErr, deadlock) || !errors.Is(sinkErr, canonical.ErrInvalidTrade) {
+		t.Errorf("sinkErr must unwrap to every fault it carries; got %v", sinkErr)
 	}
 }
