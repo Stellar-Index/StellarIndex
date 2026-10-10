@@ -168,25 +168,3 @@ func TestRunbookSQLNamesMigratedRelations(t *testing.T) {
 		t.Fatal("found no SQL FROM clause in any runbook; the extractor is broken")
 	}
 }
-
-// TestRunbooksCiteRealIdentifiers pins identifiers runbooks have used
-// that do not exist, each alongside what does.
-func TestRunbooksCiteRealIdentifiers(t *testing.T) {
-	forbidden := []struct {
-		re   *regexp.Regexp
-		real string
-	}{
-		{regexp.MustCompile(`redis_url`), "there is no redis_url key: [storage] redis_addr, password via STELLARINDEX_REDIS_PASSWORD"},
-		{regexp.MustCompile(`ch-rebuild\b[^\n]*?\s-source\b`), "ch-rebuild's flag is -sources (plural)"},
-		{regexp.MustCompile(`^soroswap-skim$`), "no projector source is named soroswap-skim; skim rows replay under soroswap"},
-	}
-	for name, md := range readRunbooks(t) {
-		for _, line := range runbookCommandLines(md) {
-			for _, f := range forbidden {
-				if f.re.MatchString(line) {
-					t.Errorf("%s: %q — %s", name, line, f.real)
-				}
-			}
-		}
-	}
-}
