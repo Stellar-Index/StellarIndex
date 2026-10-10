@@ -5,6 +5,7 @@ import { asExample } from '@/api/client';
 import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
 import { Badge, Container, PageHeader } from '@/components/ui';
 import { type GlobalAssetView } from '../../../assets/catalogue';
+import { ChartPanel } from '../../../assets/[slug]/ChartPanel';
 
 /**
  * ExternalAssetDetailView — the rendered detail for one resolved
@@ -20,6 +21,8 @@ export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
   const authorityLabel = view.price_authority
     ? (PRICE_AUTHORITY_LABELS[view.price_authority] ?? view.price_authority)
     : null;
+
+  const chartAssetID = externalChartAssetID(view);
 
   return (
     <Container className="space-y-8 py-8 sm:py-10">
@@ -90,6 +93,8 @@ export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
         )}
       </Panel>
 
+      {chartAssetID && <ChartPanel assetID={chartAssetID} />}
+
       <Panel
         headingLevel={2}
         title="About"
@@ -126,6 +131,17 @@ export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
       </p>
     </Container>
   );
+}
+
+// USD is the chart's quote, so its own chart would be a flat line at 1.
+export function externalChartAssetID(view: GlobalAssetView): string | null {
+  if (view.class === 'fiat') {
+    return view.ticker === 'USD' ? null : `fiat:${view.ticker}`;
+  }
+  if (view.class === 'crypto' || view.class === 'stablecoin') {
+    return `crypto:${view.ticker}`;
+  }
+  return null;
 }
 
 // Human-readable labels for GlobalAssetView.price_authority — the tier

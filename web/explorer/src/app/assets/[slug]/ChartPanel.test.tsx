@@ -27,6 +27,10 @@ describe('chartQuoteFor', () => {
     expect(chartQuoteFor('fiat:EUR').quote).toBe('fiat:USD');
   });
 
+  it('quotes off-chain crypto in fiat USD', () => {
+    expect(chartQuoteFor('crypto:BTC').quote).toBe('fiat:USD');
+  });
+
   it('never quotes anything in XLM', () => {
     for (const id of [
       'native',
