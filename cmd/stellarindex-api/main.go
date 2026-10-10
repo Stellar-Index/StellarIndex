@@ -570,9 +570,6 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			Cache:                rdb,
 			Threshold:            cfg.Divergence.Threshold,
 			MinSourcesForWarning: cfg.Divergence.MinSourcesForWarning,
-			PerReferenceTimeout: time.Duration(
-				cfg.Divergence.PerReferenceTimeoutSeconds,
-			) * time.Second,
 		})
 		if err != nil {
 			return fmt.Errorf("divergence service: %w", err)

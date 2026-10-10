@@ -113,6 +113,10 @@ type CompareOptions struct {
 	OverallTimeout time.Duration
 }
 
+// DefaultPerReferenceTimeout bounds each price-reference call when
+// the caller sets none.
+const DefaultPerReferenceTimeout = 5 * time.Second
+
 // overallTimeoutFactor multiplies PerReferenceTimeout to get the
 // default overall budget. References run CONCURRENTLY, so a healthy
 // run finishes in about one per-reference timeout; 2× leaves generous
@@ -168,7 +172,7 @@ func Compare(
 	opts CompareOptions,
 ) Result {
 	if opts.PerReferenceTimeout <= 0 {
-		opts.PerReferenceTimeout = 5 * time.Second
+		opts.PerReferenceTimeout = DefaultPerReferenceTimeout
 	}
 	if opts.MinSuccessForMedian <= 0 {
 		opts.MinSuccessForMedian = 1

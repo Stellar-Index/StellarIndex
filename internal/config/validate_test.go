@@ -374,23 +374,6 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"anomaly.phase2.unfreeze_confidence_min",
 		},
 
-		// divergence.supply.refresh_interval_seconds<=0
-		// while enabled would reach time.NewTicker(0) and panic the
-		// aggregator at startup.
-		"divergence supply zero refresh interval while enabled": {
-			func(c *config.Config) {
-				c.Divergence.Supply.Enabled = true
-				c.Divergence.Supply.RefreshIntervalSeconds = 0
-			},
-			"divergence.supply.refresh_interval_seconds",
-		},
-		"divergence supply negative refresh interval while enabled": {
-			func(c *config.Config) {
-				c.Divergence.Supply.Enabled = true
-				c.Divergence.Supply.RefreshIntervalSeconds = -1
-			},
-			"divergence.supply.refresh_interval_seconds",
-		},
 		// A negative ceiling is non-zero, so it escapes the default and
 		// rejects every round as stale — the feed reads dead forever.
 		"divergence chainlink negative max age": {

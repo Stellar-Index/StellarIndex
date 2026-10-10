@@ -84,9 +84,6 @@ func (c Config) Validate() error {
 	if err := c.Anomaly.validate(); err != nil {
 		return err
 	}
-	// Unvalidated, the [divergence] section's refresh_interval_seconds<=0
-	// would reach time.NewTicker(0) at aggregator startup and panic —
-	// the same failure mode the c.Supply check below guards.
 	if err := c.Divergence.validate(); err != nil {
 		return err
 	}
@@ -792,15 +789,9 @@ func (p Phase2FreezeConfig) validateLifecycle() error {
 }
 
 // validate checks the [divergence] section for boot-time crashers.
-// Threshold / MinSourcesForWarning / PerReferenceTimeoutSeconds (both
-// here and in Supply) are all clamped to sane defaults by
+// Threshold / MinSourcesForWarning are clamped to sane defaults by
 // divergence.NewService / SupplyService when <=0, so they're left
-// unchecked here. Supply.RefreshIntervalSeconds is the exception: it
-// feeds time.NewTicker(interval) directly in
-// runSupplyDivergenceRefresh (cmd/stellarindex-aggregator/main.go)
-// with no downstream clamp, so <=0 panics the aggregator at startup
-// — the identical NewTicker(0) failure mode SupplyConfig.Validate
-// guards for AggregatorRefreshCadence.
+// unchecked here.
 func (d DivergenceConfig) validate() error {
 	for _, u := range []struct{ field, value string }{
 		{"divergence.coingecko.base_url", d.CoinGecko.BaseURL},
@@ -811,10 +802,6 @@ func (d DivergenceConfig) validate() error {
 		if err := validateOptionalHTTPURL(u.field, u.value); err != nil {
 			return err
 		}
-	}
-	if d.Supply.Enabled && d.Supply.RefreshIntervalSeconds <= 0 {
-		return fmt.Errorf("%w: divergence.supply.refresh_interval_seconds must be > 0 when "+
-			"divergence.supply.enabled is true (got %d)", ErrInvalidConfig, d.Supply.RefreshIntervalSeconds)
 	}
 	// Negative is non-zero, so it escapes the per-feed default and marks
 	// every round stale; 0 is the "use the default budget" sentinel.

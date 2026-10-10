@@ -494,8 +494,8 @@ S3, a second host; existing chunks need no migration.
 
 Built in `test/load/`: scenarios `00`–`09` and `99-spike` under
 `test/load/scenarios/`, shared thresholds and the production-target guard
-in `scenarios/lib/`. Run with `make test-load` / `test-load-mixed` /
-`test-load-<name>` against `$K6_TARGET`; `make test-load-check`
+in `scenarios/lib/`. Run with `make test-load` /
+`make test-load SCENARIO=<name>` against `$K6_TARGET`; `make test-load-check`
 compile-checks every scenario without a target.
 
 - **Canonical proof:** `06-mixed-realistic.js`. Its weighted endpoint

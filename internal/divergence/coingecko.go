@@ -151,8 +151,7 @@ type CoinGeckoOptions struct {
 // second-guess normal update jitter.
 //
 // VALUE DECISION: 30m is a defensible engineering default, not a
-// business rule. Operators tune it via
-// `[divergence.coingecko].max_age_minutes`.
+// business rule.
 const defaultCoinGeckoMaxAge = 30 * time.Minute
 
 // coinGeckoLastUpdatedKey is the sentinel key CoinGecko folds into

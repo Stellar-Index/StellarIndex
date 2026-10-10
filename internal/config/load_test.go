@@ -840,6 +840,39 @@ twap_window_seconds = 0
 	}
 }
 
+// Deployments copied from an older configs/example.toml still carry these.
+func TestLoadReader_RetiredDivergenceKeysBoot(t *testing.T) {
+	body := `
+[region]
+id = "r1"
+
+[stellar]
+network = "pubnet"
+
+[divergence]
+per_reference_timeout_seconds = 5
+
+[divergence.coingecko]
+max_age_minutes = 0
+
+[divergence.reflector]
+max_age_minutes = 0
+
+[divergence.redstone]
+max_age_minutes = 0
+
+[divergence.band]
+max_age_minutes = 0
+
+[divergence.supply]
+refresh_interval_seconds = 900
+per_reference_timeout_seconds = 10
+`
+	if _, err := config.LoadReader(strings.NewReader(body), "test.toml"); err != nil {
+		t.Fatalf("retired [divergence] keys should boot with a warning, not fail: %v", err)
+	}
+}
+
 // TestLoadReader_RemovedWorkerKeysBootWithWarning: old configs still carrying
 // the removed worker-tuning keys must load.
 func TestLoadReader_RemovedWorkerKeysBootWithWarning(t *testing.T) {

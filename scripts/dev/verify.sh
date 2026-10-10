@@ -331,6 +331,8 @@ echo "=== systemd flag-hatch word-split ===" && ./scripts/ci/lint-systemd-flag-h
 echo "=== systemd flag-hatch word-split self-test ===" && ./scripts/ci/lint-systemd-flag-hatch-test.sh
 echo "=== systemd unit hardening ===" && ./scripts/ci/lint-systemd-hardening.sh
 echo "=== systemd unit hardening self-test ===" && ./scripts/ci/lint-systemd-hardening-test.sh
+echo "=== systemd EnvironmentFile= order ===" && ./scripts/ci/lint-systemd-envfile-order.sh
+echo "=== systemd EnvironmentFile= order self-test ===" && ./scripts/ci/lint-systemd-envfile-order-test.sh
 echo "=== Textfile-collector exposition ===" && ./scripts/ci/lint-textfile-exposition.sh
 echo "=== Textfile-collector exposition self-test ===" && ./scripts/ci/lint-textfile-exposition-test.sh
 # Registered in scripts/ci/textfile-producers.manifest but nothing

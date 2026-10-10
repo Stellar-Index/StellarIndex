@@ -1452,6 +1452,12 @@ jobs:
         run: ./scripts/ci/lint-systemd-hardening.sh
       - name: systemd unit hardening self-test
         run: ./scripts/ci/lint-systemd-hardening-test.sh
+      - name: systemd EnvironmentFile= order
+        # A later Environment= overrides the EnvironmentFile= value, so a
+        # default placed after the file silently masks the operator's setting.
+        run: ./scripts/ci/lint-systemd-envfile-order.sh
+      - name: systemd EnvironmentFile= order self-test
+        run: ./scripts/ci/lint-systemd-envfile-order-test.sh
       - name: memory-mappings self-test
         # The mapping-headroom probe's own fixture tests: CI has no host and
         # macOS has no /proc, so this is the only place the probe's

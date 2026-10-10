@@ -332,10 +332,6 @@ type DivergenceConfig struct {
 	// Default 2 — a single dissenting source isn't enough.
 	MinSourcesForWarning int `toml:"min_sources_for_warning" doc:"Minimum successful references before warning_fired can be true." default:"2"`
 
-	// PerReferenceTimeoutSeconds bounds each reference call.
-	// Default 5s.
-	PerReferenceTimeoutSeconds int `toml:"per_reference_timeout_seconds" doc:"Bound for each reference call. Default 5." default:"5"`
-
 	// CoinGecko config. Always-on by default (free tier, no
 	// auth). Set Enabled=false to skip.
 	CoinGecko DivergenceCoinGeckoConfig `toml:"coingecko" doc:"CoinGecko reference (free tier, no auth required)."`
@@ -353,9 +349,9 @@ type DivergenceConfig struct {
 	// hold data. Reflector toggles all three variant references
 	// (reflector-dex / reflector-cex / reflector-fx) together —
 	// they're one protocol across three contracts.
-	Reflector DivergenceOracleConfig `toml:"reflector" doc:"Reflector on-chain oracle references (reflector-dex/cex/fx) read from ingested oracle_updates rows. Default max_age is 30 minutes (Reflector publishes ~5-minutely)."`
-	Redstone  DivergenceOracleConfig `toml:"redstone" doc:"Redstone on-chain oracle reference read from ingested oracle_updates rows. Default max_age is 26 hours (batch pushes with a daily-ish heartbeat floor)."`
-	Band      DivergenceOracleConfig `toml:"band" doc:"Band on-chain oracle reference read from ingested oracle_updates rows (relay/force_relay op-args ingest). Default max_age is 26 hours (relayer-driven, sparse)."`
+	Reflector DivergenceOracleConfig `toml:"reflector" doc:"Reflector on-chain oracle references (reflector-dex/cex/fx) read from ingested oracle_updates rows."`
+	Redstone  DivergenceOracleConfig `toml:"redstone" doc:"Redstone on-chain oracle reference read from ingested oracle_updates rows."`
+	Band      DivergenceOracleConfig `toml:"band" doc:"Band on-chain oracle reference read from ingested oracle_updates rows (relay/force_relay op-args ingest)."`
 
 	// Supply cross-check — compares OUR served circulating_supply
 	// against an external authoritative reference (Stellar Network
@@ -373,18 +369,11 @@ type DivergenceConfig struct {
 // least one enabled reference below or the worker refuses to start.
 type DivergenceSupplyConfig struct {
 	Enabled bool `toml:"enabled" doc:"Whether the supply cross-check worker runs. Off by default (makes outbound HTTP calls). The archival-node ansible role renders it from the stellarindex_divergence_supply_enabled inventory variable, itself default false." default:"false"`
-	// RefreshIntervalSeconds is the per-cycle interval. Supply moves
-	// glacially, so a slow cadence is fine and keeps external-quota
-	// pressure minimal. Default 900 (15 min).
-	RefreshIntervalSeconds int `toml:"refresh_interval_seconds" doc:"Per-cycle interval for the supply cross-check worker. Supply moves slowly, so a slow cadence is fine. Default 900 (15 min)." default:"900"`
 	// ThresholdPct is the relative-divergence percentage above which
 	// the ratio gauge reads `divergent` and the supply-divergence alert
 	// fires. Default 1.0 — two-plus orders of magnitude above the
 	// ~0.03% XLM Fee-Pool noise floor, so it fires only on a REAL drift.
 	ThresholdPct float64 `toml:"threshold_pct" doc:"Relative-divergence percentage above which a supply cross-check reads 'divergent' and the alert fires. Default 1.0 (well above the ~0.03% XLM noise floor)." default:"1.0"`
-	// PerReferenceTimeoutSeconds bounds each reference HTTP call.
-	// Default 10 (supply endpoints are slower + rarer than price ones).
-	PerReferenceTimeoutSeconds int `toml:"per_reference_timeout_seconds" doc:"Bound for each supply-reference HTTP call. Default 10." default:"10"`
 	// Dashboard is the Stellar Network Dashboard reference (XLM only).
 	// On by default WITHIN this block (free, no auth, authoritative) —
 	// but the block itself is Enabled=false, so it only runs once the
@@ -424,12 +413,6 @@ type DivergenceSupplyCoinGeckoConfig struct {
 // lookup records asset_unsupported for the pair until rows exist.
 type DivergenceOracleConfig struct {
 	Enabled bool `toml:"enabled" doc:"Whether this on-chain oracle reference is wired into the divergence service." default:"true"`
-	// MaxAgeMinutes is the staleness ceiling: an oracle_updates
-	// observation older than this (relative to the comparison time)
-	// is rejected as reference-unavailable rather than served as a
-	// fresh reference (a frozen feed must not pass as fresh). 0 = the
-	// per-oracle built-in default (Reflector 30m; Redstone/Band 26h).
-	MaxAgeMinutes int `toml:"max_age_minutes" doc:"Staleness ceiling in minutes for the oracle's latest observation; older observations are rejected as reference-unavailable. 0 = per-oracle default (Reflector 30m, Redstone/Band 26h)." default:"0"`
 }
 
 // DivergenceCoinGeckoConfig configures the CoinGecko reference.
@@ -439,13 +422,6 @@ type DivergenceCoinGeckoConfig struct {
 	Enabled bool              `toml:"enabled" doc:"Whether the CoinGecko reference is wired into the divergence service." default:"true"`
 	BaseURL string            `toml:"base_url" doc:"CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3, or https://pro-api.coingecko.com/api/v3 when external.coingecko.api_key is set. The reference authenticates with the external.coingecko keys." default:""`
 	IDMap   map[string]string `toml:"id_map" doc:"Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM + major stables." default:"{}"`
-	// MaxAgeMinutes is the staleness ceiling: a /simple/price
-	// quote whose upstream last_updated_at is older than this (relative
-	// to the comparison time) is rejected as reference-unavailable
-	// rather than served as a fresh reference (a frozen upstream must
-	// not drive the divergence signal). 0 = the 30-minute built-in
-	// default (CoinGecko refreshes /simple/price every ~1–5m).
-	MaxAgeMinutes int `toml:"max_age_minutes" doc:"Staleness ceiling in minutes for the CoinGecko quote's upstream last_updated_at; older quotes are rejected as reference-unavailable (CS-089). 0 = 30-minute default." default:"0"`
 }
 
 // DivergenceChainlinkConfig configures the Chainlink reference.
@@ -479,9 +455,8 @@ type ChainlinkFeedConfig struct {
 // default (operator opts in via FeedMap).
 func defaultDivergenceConfig() DivergenceConfig {
 	return DivergenceConfig{
-		Threshold:                  5.0,
-		MinSourcesForWarning:       2,
-		PerReferenceTimeoutSeconds: 5,
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
 		CoinGecko: DivergenceCoinGeckoConfig{
 			Enabled: true,
 			IDMap:   map[string]string{},
@@ -501,12 +476,10 @@ func defaultDivergenceConfig() DivergenceConfig {
 		// enabling the parent gate gives XLM-vs-Dashboard out of the
 		// box — while CoinGecko stays off (free tier 429-throttled).
 		Supply: DivergenceSupplyConfig{
-			Enabled:                    false,
-			RefreshIntervalSeconds:     900,
-			ThresholdPct:               1.0,
-			PerReferenceTimeoutSeconds: 10,
-			Dashboard:                  DivergenceSupplyDashboardConfig{Enabled: true},
-			CoinGecko:                  DivergenceSupplyCoinGeckoConfig{Enabled: false, IDMap: map[string]string{}},
+			Enabled:      false,
+			ThresholdPct: 1.0,
+			Dashboard:    DivergenceSupplyDashboardConfig{Enabled: true},
+			CoinGecko:    DivergenceSupplyCoinGeckoConfig{Enabled: false, IDMap: map[string]string{}},
 		},
 	}
 }
@@ -1892,23 +1865,30 @@ func defaultAPIConfig() APIConfig {
 // here in the same commit that removes the field; the value is a short note
 // on what replaced it, surfaced in the boot-time warning.
 var RetiredKeys = map[string]string{
-	"aggregate.vwap_window_seconds":       "GH-1129: unread — windows come from aggregate.windows via AggregatorWindows()",
-	"aggregate.twap_window_seconds":       "GH-1129: unread — windows come from aggregate.windows via AggregatorWindows()",
-	"ingestion.cursor_store_scheme":       "GH-1129: unread — cursors are unconditionally Postgres",
-	"ingestion.backfill_batch_size":       "GH-1129: unread",
-	"region.name":                         "GH-1129: unread — region label is region.id",
-	"region.home_domain":                  "GH-1129: unread — SEP-10 reads api.sep10.home_domain",
-	"stellar.core_http_endpoint":          "GH-1129: unread — no liveness probe consumes it",
-	"obs.trace_exporter":                  "unread — no tracer is wired",
-	"obs.trace_sample":                    "unread — no tracer is wired",
-	"decimals_guard":                      "never set — backfill window fixed at 90d in decimalsguard",
-	"decimals_guard.backfill_window_days": "never set — fixed 90d in decimalsguard",
-	"price_alerts.interval_seconds":       "never set — fixed 30s in pricealerts",
-	"signup_reaper.interval_minutes":      "never set — fixed 60m in signupreaper",
-	"signup_reaper.min_age_minutes":       "never set — fixed 24h in signupreaper",
-	"hashdb.verify_interval_minutes":      "never set — fixed 60m in the indexer",
-	"hashdb.verify_window_ledgers":        "never set — fixed 20000 ledgers in the indexer",
-	"api.holds_reload_interval":           "never set — fixed 15s in the API",
+	"aggregate.vwap_window_seconds":                   "GH-1129: unread — windows come from aggregate.windows via AggregatorWindows()",
+	"aggregate.twap_window_seconds":                   "GH-1129: unread — windows come from aggregate.windows via AggregatorWindows()",
+	"ingestion.cursor_store_scheme":                   "GH-1129: unread — cursors are unconditionally Postgres",
+	"ingestion.backfill_batch_size":                   "GH-1129: unread",
+	"region.name":                                     "GH-1129: unread — region label is region.id",
+	"region.home_domain":                              "GH-1129: unread — SEP-10 reads api.sep10.home_domain",
+	"stellar.core_http_endpoint":                      "GH-1129: unread — no liveness probe consumes it",
+	"obs.trace_exporter":                              "unread — no tracer is wired",
+	"obs.trace_sample":                                "unread — no tracer is wired",
+	"divergence.per_reference_timeout_seconds":        "never set — divergence.DefaultPerReferenceTimeout",
+	"divergence.supply.per_reference_timeout_seconds": "never set — divergence.DefaultSupplyPerReferenceTimeout",
+	"divergence.supply.refresh_interval_seconds":      "never set — fixed 15-minute cadence in the aggregator",
+	"divergence.reflector.max_age_minutes":            "never set — per-oracle default staleness ceiling",
+	"divergence.redstone.max_age_minutes":             "never set — per-oracle default staleness ceiling",
+	"divergence.band.max_age_minutes":                 "never set — per-oracle default staleness ceiling",
+	"divergence.coingecko.max_age_minutes":            "never set — 30-minute default staleness ceiling",
+	"decimals_guard":                                  "never set — backfill window fixed at 90d in decimalsguard",
+	"decimals_guard.backfill_window_days":             "never set — fixed 90d in decimalsguard",
+	"price_alerts.interval_seconds":                   "never set — fixed 30s in pricealerts",
+	"signup_reaper.interval_minutes":                  "never set — fixed 60m in signupreaper",
+	"signup_reaper.min_age_minutes":                   "never set — fixed 24h in signupreaper",
+	"hashdb.verify_interval_minutes":                  "never set — fixed 60m in the indexer",
+	"hashdb.verify_window_ledgers":                    "never set — fixed 20000 ledgers in the indexer",
+	"api.holds_reload_interval":                       "never set — fixed 15s in the API",
 }
 
 func Default() Config {

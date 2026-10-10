@@ -40,7 +40,6 @@ lint-migrations-test.sh
 lint-orphans-truth-test.sh
 lint-patroni-basic-auth-quoting-test.sh
 lint-runbook-annotations-test.sh
-lint-systemd-envfile-order-test.sh
 lint-tripwire-window-test.sh
 node-healthcheck-galexie-mc-test.sh
 node-healthcheck-header-test.sh

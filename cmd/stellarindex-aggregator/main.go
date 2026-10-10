@@ -440,8 +440,6 @@ func run(cfgPath string, dryRun bool) error {
 			References:           divRefs,
 			Threshold:            cfg.Divergence.Threshold,
 			MinSourcesForWarning: cfg.Divergence.MinSourcesForWarning,
-			PerReferenceTimeout: time.Duration(
-				cfg.Divergence.PerReferenceTimeoutSeconds) * time.Second,
 			ObservationSink: timescale.NewDivergenceSink(store,
 				timescale.WithDivergenceLedgerProvider(divergenceLedgerAdapter{cursors: store}),
 			),
@@ -819,7 +817,7 @@ func run(cfgPath string, dryRun bool) error {
 		return fmt.Errorf("supply-divergence service init: %w", err)
 	}
 	if supplyDivSvc != nil {
-		interval := time.Duration(cfg.Divergence.Supply.RefreshIntervalSeconds) * time.Second
+		interval := supplyDivergenceRefreshInterval
 		refresherWG.Add(1)
 		go func() {
 			defer worker.Recover(logger, "supply-divergence")
@@ -2355,12 +2353,11 @@ func buildSupplyDivergenceService(cfg config.DivergenceSupplyConfig, store *time
 		return nil, nil
 	}
 	svc, err := divergence.NewSupplyService(divergence.SupplyServiceOptions{
-		References:          refs,
-		Reader:              divergenceServedSupplyReader{s: store},
-		Emitter:             obsSupplyDivergenceEmitter{},
-		Threshold:           cfg.ThresholdPct / 100.0, // percent → ratio
-		PerReferenceTimeout: time.Duration(cfg.PerReferenceTimeoutSeconds) * time.Second,
-		Logger:              logger,
+		References: refs,
+		Reader:     divergenceServedSupplyReader{s: store},
+		Emitter:    obsSupplyDivergenceEmitter{},
+		Threshold:  cfg.ThresholdPct / 100.0, // percent → ratio
+		Logger:     logger,
 	})
 	if err != nil {
 		return nil, err
@@ -2372,7 +2369,7 @@ func buildSupplyDivergenceService(cfg config.DivergenceSupplyConfig, store *time
 	logger.Info("supply-divergence worker wired",
 		"references", names,
 		"threshold_pct", cfg.ThresholdPct,
-		"refresh_interval_seconds", cfg.RefreshIntervalSeconds)
+		"refresh_interval_seconds", int(supplyDivergenceRefreshInterval/time.Second))
 	return svc, nil
 }
 
@@ -2396,6 +2393,10 @@ func buildSupplyDivergenceReferences(cfg config.DivergenceSupplyConfig) []diverg
 	}
 	return refs
 }
+
+// supplyDivergenceRefreshInterval is the supply cross-check cycle; supply
+// moves slowly, so a slow cadence keeps external-quota pressure minimal.
+const supplyDivergenceRefreshInterval = 15 * time.Minute
 
 // runSupplyDivergenceRefresh ticks the supply cross-check on interval,
 // returning on ctx cancellation. The first cycle runs immediately so a
@@ -2474,7 +2475,6 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, cgKeys config.CoinGe
 			DemoAPIKey: cgKeys.DemoAPIKey,
 			Logger:     logger,
 			IDMap:      cfg.CoinGecko.IDMap,
-			MaxAge:     time.Duration(cfg.CoinGecko.MaxAgeMinutes) * time.Minute,
 		}))
 	}
 
@@ -2584,7 +2584,6 @@ func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles diverg
 		ref, err := divergence.NewOracleReference(divergence.OracleReferenceOptions{
 			Source: source,
 			Reader: oracles,
-			MaxAge: time.Duration(gate.MaxAgeMinutes) * time.Minute,
 		})
 		if err != nil {
 			// Unreachable with non-empty Source + non-nil Reader;
