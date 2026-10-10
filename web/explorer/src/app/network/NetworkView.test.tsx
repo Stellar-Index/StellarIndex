@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
@@ -175,6 +175,36 @@ describe('dailyFeeBurn', () => {
       { day: '2025-10-22', xlm: 500 },
       { day: '2025-10-23', xlm: 500 },
     ]);
+  });
+});
+
+describe('NetworkView latest-ledger tile', () => {
+  beforeEach(() => {
+    net.id = 'mainnet';
+    vi.mocked(apiGet).mockReset();
+  });
+
+  it('draws the seconds between the served ledger closes', async () => {
+    routeApi(NATIVE);
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    const t = Date.parse(TIP.close_time);
+    const at = (back: number, ms: number) => ({
+      ...TIP,
+      sequence: TIP.sequence - back,
+      close_time: new Date(t - ms).toISOString(),
+    });
+    vi.mocked(apiGet).mockImplementation(async (path: string, ...rest) => {
+      if (path === '/v1/ledgers')
+        return { data: { ledgers: [at(0, 0), at(1, 6000), at(2, 11000)] } };
+      return base(path, ...rest);
+    });
+    await renderView();
+    const cell = (await heroCell('Latest ledger')).parentElement!;
+    expect(
+      await within(cell).findByLabelText(
+        /Seconds between ledger closes: 2 closes, min 5, max 6/,
+      ),
+    ).toBeTruthy();
   });
 });
 
