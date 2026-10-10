@@ -76,11 +76,13 @@ export function AssetPathView() {
   // loads — the same HTML serves every long-tail asset URL. Effect,
   // not render-body mutation (react-compiler rule).
   const loadedCode = detail.data?.data?.code;
+  const kindNoun =
+    detail.data?.data?.type === 'soroban' ? 'Soroban token' : 'Stellar asset';
   useEffect(() => {
     if (loadedCode) {
-      document.title = `${loadedCode} — Stellar asset · Stellar Index`;
+      document.title = `${loadedCode} — ${kindNoun} · Stellar Index`;
     }
-  }, [loadedCode]);
+  }, [loadedCode, kindNoun]);
 
   if (!slug || detail.isLoading) {
     return (

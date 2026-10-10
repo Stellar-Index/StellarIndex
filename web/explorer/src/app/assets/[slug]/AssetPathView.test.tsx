@@ -54,4 +54,13 @@ describe('AssetPathView', () => {
       expect(screen.getByText('$1,000,000T')).toBeInTheDocument(),
     );
   });
+  it('titles a SEP-41 contract token as a Soroban token', async () => {
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      data: { asset_id: 'CAS3J7GY', type: 'soroban', code: 'BLND' },
+    });
+    renderAtPath('/assets/blnd');
+    await waitFor(() =>
+      expect(document.title).toBe('BLND — Soroban token · Stellar Index'),
+    );
+  });
 });
