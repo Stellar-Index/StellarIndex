@@ -20,7 +20,7 @@
 #      unset AND the argv clickhouse-client sees is exactly the argv it
 #      saw before this contract existed (pinned per script below).
 #
-# clickhouse-client, ssh and psql are stubbed on PATH, so this runs
+# clickhouse-client and psql are stubbed on PATH, so this runs
 # anywhere in about a second and never reaches a real lake.
 #
 # Run: bash scripts/ops/ch-ops-user-test.sh
@@ -46,12 +46,6 @@ cat > "$TMP/bin/clickhouse-client" <<'STUB'
 printf '%s|%s|%s\n' "${CLICKHOUSE_USER-<unset>}" "${CLICKHOUSE_PASSWORD-<unset>}" "$*" >> "$STUB_OUT"
 exit 1
 STUB
-# ch-backfill-monitor runs its clickhouse-client on the far side of
-# ssh: execute the remote command string locally instead.
-cat > "$TMP/bin/ssh" <<'STUB'
-#!/usr/bin/env bash
-exec bash -c "${*: -1}"
-STUB
 cat > "$TMP/bin/psql" <<'STUB'
 #!/usr/bin/env bash
 exit 1
@@ -59,12 +53,10 @@ STUB
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
 
-# The monitor's remote side sources the ops env file on the HOST; point
-# it at a fixture so the "set" case is exercised end-to-end.
+# Ops env fixtures so the "set" case is exercised end-to-end.
 printf 'STELLARINDEX_CLICKHOUSE_OPS_USER=%s\nSTELLARINDEX_CLICKHOUSE_OPS_PASSWORD=%s\n' \
   ops_rw 's3cr3t-pw' > "$TMP/ops-env.set"
 : > "$TMP/ops-env.unset"
-printf 'ALL WINDOWS COMPLETE\n' > "$TMP/backfill.log"   # terminal marker ⇒ monitor exits its loop
 
 # run <name> <mode set|unset> <script> [args…] — runs the script with the
 # stubs, credentials per mode, and leaves the stub record in $REC.
@@ -75,17 +67,13 @@ run() {
     STUB_OUT="$REC"
     STELLARINDEX_POSTGRES_DSN=postgres://stub
     D2_STATE="$TMP/state/d2.$mode" D3_STATE="$TMP/state/d3.$mode"
-    STATE="$TMP/state/st.$mode" LOG="$TMP/backfill.log"
-    HOST=stub-host INTERVAL=0 DRIVER_PAT=no-such-driver-$$
+    STATE="$TMP/state/st.$mode"
     # The destructive-DDL acknowledgement the retired D2 script took:
     # supplied so its refusal is proven unconditional.
     # CH_FLAGS_DIR is redirected so no code path can touch the real
     # /var/lib/clickhouse/flags.
     D2_FORCE_DROP=yes CH_FLAGS_DIR="$TMP/flags"
   )
-  # TO is the monitor's required range end; the seed script resolves its
-  # own TO from the lake, so only the monitor may see it pre-set.
-  [ "$name" = backfill-monitor ] && envs+=(TO=1)
   [ "$name" = rederive ] && envs+=(REDERIVE_LOG="$TMP/rederive.log")
   # LIVE_ERA_FROM is ch-live-catchup's required live-era floor;
   # ansible templates it into /etc/default/stellarindex-ops per host. The
@@ -156,8 +144,6 @@ check d3 d3-lecur-v2-rebuild.sh \
 check rederive rederive-from.sh \
   "--port 9300 -q SELECT max(ledger_seq) FROM stellar.ledgers" \
   -from 100 -state-dir "$TMP/state/rederive"
-check backfill-monitor ch-backfill-monitor.sh \
-  "--port 9300 --query SELECT formatReadableSize(sum(bytes_on_disk)) FROM system.parts WHERE database='stellar' AND active"
 
 
 # ─── ch-live-catchup's live-era floor contract ───────────
