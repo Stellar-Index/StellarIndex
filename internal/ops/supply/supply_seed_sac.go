@@ -16,53 +16,34 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// supplySeedSACBalances seeds sac_balance_observations from the ClickHouse
-// lake for every current `Balance(Address)` contract_data entry of each
+// supplySeedSACBalances seeds sac_balance_observations from the ClickHouse lake
+// for every current `Balance(Address)` contract_data entry of each
 // `[supply.sac_wrappers]` contract (ADR-0022 / migration 0014). It is the SAC
 // analogue of `supply seed-observations`.
 //
-// The live observer writes a row only when a Balance entry changes, so a
-// balance dormant since before it started is invisible to Algorithm-2
-// classic supply and to circulating_supply/market_cap.
+// The live observer writes a row only when a Balance entry changes, so a dormant
+// balance is invisible to Algorithm-2 classic supply and to
+// circulating_supply/market_cap.
 //
-// The seed reads authoritative current state and is idempotent. Rows land at
-// each entry's true last-modified ledger; readers pick the newest row per
-// (contract_id, holder), so an old seed never clobbers a newer live
-// observation. A removed or archived entry is written as an is_removal
-// tombstone at its removal ledger, tallied as a retraction, never a holder.
+// Idempotent: rows land at each entry's true last-modified ledger and readers
+// pick the newest row per (contract_id, holder), so an old seed never clobbers a
+// newer live observation. A removed or archived entry is written as an
+// is_removal tombstone, tallied as a retraction, never a holder.
 //
-// The scan touches every contract_data entry network-wide (the contract id
-// lives inside key_xdr, so filtering runs in Go): run it under
-// run-heavy-job.sh on r1.
+// The scan touches every contract_data entry network-wide (the contract id lives
+// inside key_xdr, so filtering runs in Go): run it under run-heavy-job.sh on r1.
+// All writes happen after the scan, so a -timeout expiring mid-scan loses the
+// pass. Without -write it is a dry run.
 //
 // -full-history: stellar.ledger_entries_current is fed by an MV created near
 // ledger 62,000,000 and misses entries dormant since before it (the largest
-// PHO/BLND/EURC/KALE holders). -full-history reads
-// stellar.ledger_entry_changes (complete to genesis) instead. It runs about
-// an hour on r1 and prints nothing until the last ledger window is reduced;
-// silence is not a hang. It first proves stellar.ledgers contiguous and
-// hash-linked over its range, because a hole hides the change that
-// superseded an entry, and stamps provenance with the ledger the lake was
-// verified through.
-//
-// Flags:
-//
-//	-config PATH     Required. Operator TOML config (provides
-//	                 [supply.sac_wrappers] + the Postgres DSN).
-//	-ch-addr ADDR    ClickHouse native address (default 127.0.0.1:9300).
-//	-full-history    Read stellar.ledger_entry_changes instead of the
-//	                 floor-limited stellar.ledger_entries_current.
-//	-timeout DUR     Whole-run deadline (default 12h). All writes happen
-//	                 after the scan, so a deadline expiring mid-scan loses
-//	                 the pass.
-//	-contracts LIST  Comma-separated [supply.sac_wrappers] contract ids to
-//	                 scope the pass to (default: all). Only the scoped
-//	                 wrappers' provenance rows are touched.
-//	-heartbeat PATH  node_exporter textfile for the ops-job heartbeat
-//	                 (default: the textfile-collector dir when present).
-//	-write           Apply. Without it the pass is a dry run: read + print
-//	                 per-contract holder count + summed balance, nothing
-//	                 written (-dry-run is a no-op alias).
+// PHO/BLND/EURC/KALE holders), so -full-history reads
+// stellar.ledger_entry_changes (complete to genesis). It takes about an hour on
+// r1 and prints nothing until the last window is reduced (silence is not a
+// hang). It first proves stellar.ledgers contiguous and hash-linked over its
+// range, because a hole hides the change that superseded an entry, and stamps
+// provenance with the ledger the lake was verified through. -contracts scopes
+// the pass and touches only those wrappers' provenance rows.
 func supplySeedSACBalances(args []string) error {
 	fs := flag.NewFlagSet("supply seed-sac-balances", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

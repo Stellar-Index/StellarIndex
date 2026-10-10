@@ -1,44 +1,17 @@
 // Binary stellarindex-api is the public REST + SSE API server.
 //
-// Surface (registered in `internal/api/v1/server.go`'s
-// `RegisterRoutes`):
+// The route surface is the `s.mux.HandleFunc(...)` block in
+// internal/api/v1/server.go and openapi/stellar-index.v1.yaml; CI (`lint-docs.sh
+// §2`) keeps the two in lock-step.
 //
-//   - Pricing: /v1/price, /v1/price/batch (GET + POST),
-//     /v1/price/tip, /v1/vwap, /v1/twap, /v1/observations.
-//   - Historical: /v1/history, /v1/history/since-inception,
-//     /v1/ohlc, /v1/chart.
-//   - Catalogue: /v1/assets, /v1/assets/{id}, /v1/assets/{id}/metadata,
-//     /v1/markets, /v1/pairs, /v1/sources.
-//   - Oracle (SEP-40 passthrough): /v1/oracle/latest,
-//     /v1/oracle/lastprice, /v1/oracle/prices,
-//     /v1/oracle/x_last_price.
-//   - Account self-service: /v1/account/me, /v1/account/usage,
-//     /v1/account/keys (POST).
-//   - SEP-10 web auth: /v1/auth/sep10/challenge,
-//     /v1/auth/sep10/token.
-//   - SSE streams: /v1/price/stream, /v1/price/tip/stream,
-//     /v1/observations/stream.
-//   - Operator-facing: /v1/healthz, /v1/readyz, /v1/version,
-//     /metrics.
+// Flags: -config PATH (required) and -dry-run (load config, open connections,
+// validate, exit). Environment overrides for secrets apply on top of the file
+// (internal/config/load.go LoadWithEnv).
 //
-// The canonical list is the `s.mux.HandleFunc(...)` block in
-// `internal/api/v1/server.go` and the OpenAPI spec at
-// `openapi/stellar-index.v1.yaml`. CI (`lint-docs.sh §2`) keeps
-// the two in lock-step.
-//
-// Flags:
-//
-//	-config PATH    TOML config file (required)
-//	-dry-run        Load config, open connections, validate, exit.
-//
-// Environment overrides for secrets apply on top of the file. See
-// internal/config/load.go LoadWithEnv.
-//
-// Graceful shutdown: SIGINT / SIGTERM cancel the root context; the
-// HTTP server drains for up to 30 s before hard-exiting. Open SSE
-// connections are signalled separately (see the RegisterOnShutdown call
-// in run()) because they never go idle and would otherwise hold that
-// drain open for its full budget.
+// Graceful shutdown: SIGINT / SIGTERM cancel the root context; the HTTP server
+// drains for up to 30 s before hard-exiting. Open SSE connections are signalled
+// separately (see the RegisterOnShutdown call in run()) because they never go
+// idle and would otherwise hold that drain open for its full budget.
 package main
 
 import (
@@ -113,28 +86,23 @@ import (
 // recoverBackgroundWorker turns a panic in a DETACHED background worker into a
 // logged error instead of a process exit.
 //
-// An unrecovered panic in any goroutine terminates the whole Go process — it is
-// not confined to that goroutine. So a panic in any of the nine
-// background workers below (forex poller, TLS-cert probe, two cache refreshers,
-// the supply/wealth prewarm, stream publisher, customer-webhook sender, usage
-// rollup, signup reaper) would take the entire API down, including every healthy
-// request in flight. None of those workers is on the serving path; none of them
-// is worth an outage.
+// An unrecovered panic in any goroutine terminates the whole Go process, so a
+// panic in one of these off-the-serving-path workers (forex poller, TLS-cert
+// probe, cache refreshers, prewarm, stream publisher, webhook sender, usage
+// rollup, signup reaper) would take down every healthy in-flight request.
 //
-// The trade-off is stated rather than hidden: the panicking worker STOPS (its
-// goroutine unwinds and is not restarted), so a crash-looping refresher becomes
-// a silently stale cache instead of a crash-looping process. That is the better
-// failure for a read API, but it is a real degradation — hence Error level and
-// the full stack, so it cannot pass unnoticed.
+// The trade-off: the panicking worker STOPS and is not restarted, so a
+// crash-looping refresher becomes a silently stale cache rather than a
+// crash-looping process. That is the better failure for a read API, hence Error
+// level and the full stack.
 //
-// Deliberately NOT applied to the http.Server goroutine. If the listener dies
-// the process has no reason to live, and recovering there would leave a running
-// process serving nothing — strictly worse than crashing. Same reasoning as
-// the SSE producers, which recover per-connection for exactly this reason.
+// Deliberately NOT applied to the http.Server goroutine: if the listener dies
+// the process should die, since recovering would leave a running process serving
+// nothing.
 //
-// It reports through [worker.Report] rather than logging directly, which
-// increments stellarindex_worker_panics_total{worker} BEFORE logging, so a
-// dead worker is visible to alerting even if the log write fails.
+// It reports through [worker.Report], which increments
+// stellarindex_worker_panics_total{worker} BEFORE logging, so a dead worker is
+// visible to alerting even if the log write fails.
 func recoverBackgroundWorker(logger *slog.Logger, worker string) {
 	// Note: recover() only works one frame deep, so this cannot simply
 	// call worker.Recover — the deferred function IS this one.
@@ -1537,54 +1505,31 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	apiSrv.SetMaxTipProducers(cfg.API.Streaming.MaxTipProducers)
 	apiSrv.SetMaxTipProducersPerCaller(cfg.API.Streaming.MaxTipProducersPerCaller)
 
-	// Prewarm the classic circulating-supply cache OUT OF BAND. It backs
-	// market-cap enrichment on /v1/assets, and its backing full-table GROUP BY
-	// outlives the request timeout — so a cold fill on the request path costs
-	// the first visitor after every deploy a slow, degraded page. Filling it
-	// here means no user request ever pays for it. This runs separately from
-	// prewarmCaches (started earlier, before this server exists) but on the
-	// same 5-minute cadence as prewarmHeavy; the cache's TTL is 10 minutes, so
-	// that keeps it permanently warm. Each call reuses the request path's
-	// single-flight + retry-gap, so a still-warm cache is a cheap no-op.
+	// Prewarm the classic circulating-supply cache OUT OF BAND: it backs
+	// market-cap enrichment on /v1/assets, and its full-table GROUP BY outlives
+	// the request timeout, so a cold fill on the request path would cost the
+	// first visitor after every deploy a slow, degraded page. It runs on
+	// prewarmHeavy's 5-minute cadence against a 10-minute TTL, so it stays
+	// permanently warm; each call reuses the request path's single-flight +
+	// retry-gap and is a cheap no-op when the entry is live.
 	//
-	// PrewarmAccountsWealth rides the same loop. Its cache
-	// has a 15-minute TTL, so a 5-minute cadence keeps it permanently warm
-	// with two cycles of slack. PrewarmContractsDirectory joins it:
-	// the /v1/contracts default rung is a
-	// multi-day GROUP BY that must never run on a request deadline, and its
-	// 5-minute TTL exactly matches this cadence. All calls are cheap
-	// no-ops when already warm — each returns as soon as it sees a live
-	// entry, and only kicks off its detached refresh on a miss.
-	// PrewarmOpTypeStats also rides this loop: the
-	// /v1/operations op-type panel had SWR + detached refresh but nothing
-	// warmed it at boot, so the first directory hit after every deploy
-	// rendered without it. Its 5-minute TTL matches this cadence exactly.
-	// PrewarmNetworkThroughput joins them: the
-	// /v1/network/throughput series is a FINAL scan over up to a year of
-	// ledgers that would run inline on the 8s request budget, so a cold
-	// or loaded /network first load lost the panel entirely. Its cache
-	// also has a 5-minute TTL — this cadence keeps it permanently fresh.
-	// PrewarmNativeLiquidityPools joins them: the
-	// /v1/liquidity-pools ranked listing had NO prewarm anywhere, so the
-	// first visitor after every boot paid the whole-prefix lake scan
-	// inline. Its ENTRY only needs to EXIST for the request path to stop
-	// blocking — freshness is maintained by the request-kicked detached
-	// refresh at its own 60s TTL — so this cadence is a
-	// never-cold/repair guarantee, not the freshness mechanism, and the
-	// call is a no-op whenever the entry is already warm.
-	// PrewarmSep1Images joins them: the /v1/assets logo map
-	// is a scan over every issuer's cached stellar.toml — 448 MB of JSON
-	// across 35,829 issuers on r1, and growing — rebuilt INLINE would cost
-	// whichever request found it expired 10-13 s. The rebuild is detached,
-	// so a cold map costs a request nothing but its logos; this is what
-	// stops it being cold in the first place. Its 10-minute TTL gives this cadence two cycles of
-	// slack, exactly like PrewarmClassicSupply above.
-	// PrewarmContractProtocolIndex joins them: the cohort
-	// view's contract → protocol map is seventeen registry reads that
-	// would run inline on whichever request found it expired — and a
-	// request that had already spent its budget would cache a statics-only
-	// map for everyone. Its 10-minute TTL gives this cadence the same two
-	// cycles of slack; an incomplete build retries within 30 s.
+	// Other prewarms ride this loop, each because its build would otherwise run
+	// inline on a request deadline:
+	//  - PrewarmAccountsWealth (15-minute TTL, two cycles of slack).
+	//  - PrewarmContractsDirectory (the /v1/contracts default rung is a
+	//    multi-day GROUP BY; 5-minute TTL).
+	//  - PrewarmOpTypeStats (5-minute TTL).
+	//  - PrewarmNetworkThroughput (a FINAL scan over up to a year of ledgers;
+	//    5-minute TTL).
+	//  - PrewarmNativeLiquidityPools: only the ENTRY must exist for the request
+	//    path to stop blocking; freshness comes from the request-kicked refresh
+	//    at its 60s TTL, so this is a never-cold/repair guarantee.
+	//  - PrewarmSep1Images (logo map over every issuer's cached stellar.toml,
+	//    448 MB of JSON across 35,829 issuers on r1; rebuilt inline it costs a
+	//    request 10-13 s; 10-minute TTL).
+	//  - PrewarmContractProtocolIndex (cohort view's contract-to-protocol map;
+	//    a request that had spent its budget would cache a statics-only map for
+	//    everyone; 10-minute TTL, an incomplete build retries within 30 s).
 	bgWG.Add(1)
 	go func() {
 		defer bgWG.Done()
@@ -2417,36 +2362,27 @@ func (t *inProcessSignupIPThrottle) CheckIP(ctx context.Context, ip string) erro
 	return nil
 }
 
-// wireDashboardAuthThrottles sets authCfg's EmailLocker + LoginThrottle
-// based on Redis availability. Split out of buildDashboardBundle to
-// keep that function under the funlen ceiling.
+// wireDashboardAuthThrottles sets authCfg's EmailLocker + LoginThrottle based on
+// Redis availability. Split out of buildDashboardBundle to keep that function
+// under the funlen ceiling.
 //
-// Per-email signup lock. Redis-
-// backed SETNX serialises first-login provisioning so two callback
-// callers for the same just-verified email can't both create
-// speculative Account rows. Redis-less deployments leave the locker
-// nil and fall back to the Suspend-on-conflict recovery path (still
-// safe; the orphan row gets reaped).
+// Per-email signup lock: Redis SETNX serialises first-login provisioning so two
+// callbacks for the same just-verified email can't both create speculative
+// Account rows. Without Redis the locker stays nil and the Suspend-on-conflict
+// recovery path applies (safe; the orphan row is reaped).
 //
-// Magic-link send throttle: per-IP +
-// per-target-email caps so /v1/auth/login can't be used to
-// email-bomb an inbox or burn the email-send quota. Defaults: 10/h
-// per IP, 5/h per email.
+// Magic-link send throttle: per-IP and per-target-email caps (defaults 10/h per
+// IP, 5/h per email) so /v1/auth/login can't email-bomb an inbox or burn the
+// send quota. Without Redis it falls back to an in-process two-bucket throttle
+// (same shape and defaults as auth.RedisLoginThrottle), because the global
+// anonymous per-IP limit does not bound the per-target-email dimension.
+// Single-instance accounting, never an off switch, like the rate-limit tiers'
+// fallback in run().
 //
-// Redis-less deployments fall back to an in-process two-bucket
-// throttle (same shape + defaults as auth.RedisLoginThrottle). Without it
-// only the global anonymous per-IP rate limit (60/min) bounds /v1/auth/login,
-// which caps REQUEST volume but not the per-target-EMAIL dimension, so a
-// single IP under that ceiling could still bomb one victim's inbox and
-// burn the Resend send quota. The cap is downgraded to single-instance
-// accounting, never fully disabled — the same posture as the rate-limit
-// tiers' in-process fallback in run().
-// Passkey ceremony replay guard: each WebAuthn
-// challenge is single-use, and the spent-set has to be SHARED or a
-// replay routed to another instance is simply not seen. Redis-less
-// deployments fall back to dashboardauth's in-process guard (installed
-// by its validate()) — same single-instance downgrade the throttle
-// takes, never an off switch.
+// Passkey ceremony replay guard: each WebAuthn challenge is single-use, so the
+// spent-set must be SHARED or a replay routed to another instance is not seen.
+// Without Redis dashboardauth's in-process guard (installed by its validate())
+// applies, the same downgrade.
 func wireDashboardAuthThrottles(authCfg *dashboardauth.Config, rdb redis.UniversalClient, logger *slog.Logger) {
 	if rdb != nil {
 		authCfg.EmailLocker = auth.NewRedisSignupEmailLocker(rdb)
@@ -3252,34 +3188,26 @@ func warnCollapsedStreamCap(logger *slog.Logger, listenAddr string, maxStreamsPe
 		"docs", "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/pre-launch-hardening.md")
 }
 
-// warnCollapsedAnonThrottle logs a warning at startup when the
-// anonymous HTTP request throttle can't discriminate clients behind a
-// reverse proxy. The anonymous
-// per-IP bucket keys on the resolved client IP (remoteIPPrefixFor —
-// the forge-resistant XFF resolver), which only trusts X-Forwarded-For
-// from TrustedProxyCIDRs. With trusted_proxy_cidrs EMPTY behind a
-// reverse proxy, every anonymous request resolves to the proxy's own
-// single socket address, so anon_rate_limit_per_min collapses into ONE
-// shared bucket for the WHOLE anonymous tier — the first N/min anon
-// requests through the proxy exhaust it for every other anonymous
-// caller: an availability self-DoS on a fresh deploy (the default
-// config ships trusted_proxy_cidrs=[]).
+// warnCollapsedAnonThrottle logs a startup warning when the anonymous HTTP
+// request throttle can't discriminate clients behind a reverse proxy.
 //
-// Fires only when the anonymous tier is actually reachable AND capped:
-// an active anon bucket (anon_rate_limit_per_min > 0) under an auth
-// mode that admits anonymous callers (none / apikey_optional). Auth
-// modes that require a credential (apikey / sep10) reject anonymous
-// requests with 401 before the limiter, so the anon bucket is never
-// exercised and no collapse can bite.
+// The anonymous per-IP bucket keys on the client IP from remoteIPPrefixFor,
+// which trusts X-Forwarded-For only from TrustedProxyCIDRs. With
+// trusted_proxy_cidrs empty behind a proxy, every anonymous request resolves to
+// the proxy's own address, so anon_rate_limit_per_min collapses into ONE bucket
+// for the whole anonymous tier (an availability self-DoS; the default config
+// ships trusted_proxy_cidrs=[]).
 //
-// Unlike warnCollapsedStreamCap this DOES fire for a loopback bind —
-// bind is not consulted at all. The canonical R1 shape is
-// 127.0.0.1:3000 behind Caddy, which is EXACTLY where the collapse
-// bites; only a non-empty trusted_proxy_cidrs (as R1 correctly sets)
-// silences it, never the bind address. We can't cheaply tell a
-// direct-bind (no proxy) deploy apart from a behind-a-proxy one, so
-// the message is worded conditionally ("if this API is behind a
-// reverse proxy") rather than asserting a misconfiguration outright.
+// Fires only when the anonymous tier is reachable AND capped:
+// anon_rate_limit_per_min > 0 under an auth mode that admits anonymous callers
+// (none / apikey_optional). apikey / sep10 reject anonymous requests with 401
+// before the limiter.
+//
+// Unlike warnCollapsedStreamCap this fires for a loopback bind too: the
+// canonical R1 shape is 127.0.0.1:3000 behind Caddy, exactly where the collapse
+// bites. Only a non-empty trusted_proxy_cidrs silences it. A direct-bind deploy
+// can't be told apart from a proxied one, so the message is worded
+// conditionally.
 func warnCollapsedAnonThrottle(logger *slog.Logger, authMode string, anonRateLimitPerMin int, trustedProxyCIDRs []string) {
 	if anonRateLimitPerMin <= 0 || len(trustedProxyCIDRs) > 0 {
 		return
@@ -3453,41 +3381,27 @@ func (sessionPeekerAdapter) SessionFromContext(ctx context.Context) (v1.SessionI
 	}, true
 }
 
-// prewarmCaches keeps the heaviest read caches hot. The
-// /v1/sources?include=stats and /v1/markets / /v1/pools queries
-// run aggregations over the trades hypertable that take 5–10s on
-// a cold path; cache TTLs of 30s–10min mean a single user-pageload
-// with no recent neighbours always pays the full cost. This
-// goroutine keeps each entry alive on a cadence sized to each
-// query's cost.
+// prewarmCaches keeps the heaviest read caches hot: the
+// /v1/sources?include=stats and /v1/markets / /v1/pools aggregations over the
+// trades hypertable take 5-10s cold, and TTLs of 30s-10min mean a pageload with
+// no recent neighbours would always pay the full cost. Stops on ctx cancel;
+// errors log at debug since the next cycle retries.
 //
-// Two cadences (one 25s cycle running the 8s source-stats query AND 12
-// market/pool variants AND an assetsReader refresh held one Postgres backend at
-// 76% CPU continuously as trades grew, with knock-on memory pressure from
-// ZFS-ARC-vs-shared_buffers double-caching the working set):
+// Two cadences, because one 25s cycle running the 8s source-stats query, 12
+// market/pool variants and an assetsReader refresh held a Postgres backend at
+// 76% CPU as trades grew:
 //
-//   - **Heavy** (sources_stats + source_volume_history_24h):
-//     5 min cadence, query takes ~8s on a 3-month dataset and
-//     scales linearly with data depth. The 24h-window data has
-//     >5min freshness tolerance, so refresh-every-5min is well
-//     within product semantics.
-//   - **Light** (markets/pools/assetsReader): 60s cadence, queries
-//     individually sub-second under normal load.
+//   - Heavy (sources_stats + source_volume_history_24h): 5 min. The query scales
+//     linearly with data depth and the 24h window tolerates >5min staleness.
+//   - Light (markets/pools/assetsReader): 60s; each query is sub-second.
 //
-// Errors get logged at debug level — a transient warmup failure
-// is rare and the next cycle retries. Stops on ctx cancel.
+// The panic guard is registered inside prewarmCaches, not at the `go
+// prewarmCaches(…)` call site, so it stays correct if started from a second
+// place; it is a named function so the panic-guard test resolves this
+// declaration.
 //
-// The guard is registered HERE rather than at the `go prewarmCaches(…)`
-// call site because it is the callee that runs on the detached
-// goroutine's stack, and a guard that travels with the function stays
-// correct if it is ever started from a second place. Started as a named
-// function, so the panic-guard test resolves this declaration.
-//
-// lightCadence and issuersCacheTTL are package-level (rather than
-// local to this function or to the cachedIssuersReader construction
-// site) so the TTL-headroom invariant between them has one source of
-// truth to reference instead of two copies that can silently drift
-// apart.
+// lightCadence and issuersCacheTTL are package-level so the TTL-headroom
+// invariant between them has one source of truth.
 const (
 	lightCadence    = 60 * time.Second
 	issuersCacheTTL = 5 * time.Minute
@@ -3657,36 +3571,22 @@ func prewarmLight(
 	// OPPOSITE arithmetic to /v1/coins above. See prewarmAssetListings.
 	prewarmAssetListings(assetsReaderCtx, logger, assetsReader, snaps, catalogueLen)
 
-	// /v1/assets/native is the most-trafficked single-asset
-	// page (XLM is the explorer's default landing) and its
+	// /v1/assets/native is the most-trafficked single-asset page and its
 	// GetNativeAssetRow hits the heavy `listAssetsBaseSelect`
-	// whole-asset-universe CTE — sub-200ms when cached, ~3s cold.
-	// prewarmLight alone runs only ListAssetsExt; without this, native's
-	// GetNativeAssetRow cache key is never touched and every native
-	// page-load cold-fills it (1-3s on rapid retries as each per-asset
-	// SWR entry fills incrementally). Drift-safe: this is the EXACT method
-	// the /v1/assets/native handler calls
+	// whole-asset-universe CTE (~3s cold). prewarmLight runs only ListAssetsExt,
+	// so without this the native cache key is never touched. Drift-safe: this is
+	// the EXACT method the /v1/assets/native handler calls
 	// (asset_catalogue_extension.go GetNativeAssetRow path).
 	//
-	// Runs here, immediately after the other assetsReaderCtx calls
-	// above, rather than after the markets/pools/per-DEX/per-CEX
-	// loops below: those loops run against the separate
-	// 5-minute mkCtx and can take most or all of assetsReaderCtx's
-	// 20s budget just by elapsed wall-clock time, so deferring the
-	// native/verified-asset warms until after them left this block
-	// racing an exhausted or near-exhausted timeout on a cold cache.
+	// It runs right after the other assetsReaderCtx calls, not after the
+	// markets/pools/per-DEX/per-CEX loops below, which run on the separate
+	// 5-minute mkCtx and can use up assetsReaderCtx's 20s budget by wall-clock
+	// alone.
 	//
-	// It gets its OWN fresh deadline rather than reusing
-	// assetsReaderCtx: that context's budget started ticking
-	// back at the /v1/coins warm above, and the listing warm's own
-	// calls (ListAssetsExt plus every entry in
-	// assetListingPrewarmOptions via prewarmAssetListings) can burn a
-	// meaningful chunk of it on a cold cache before this line even
-	// runs. Sharing one deadline across both batches means a slow
-	// listing warm silently no-ops this whole batch on context
-	// deadline exceeded (swallowed at Debug) — the cache reports
-	// healthy and the next /v1/assets/native or verified-asset request
-	// still pays the cold read.
+	// It gets its OWN fresh deadline rather than sharing assetsReaderCtx: a slow
+	// listing warm (ListAssetsExt plus assetListingPrewarmOptions via
+	// prewarmAssetListings) would otherwise silently no-op this batch on context
+	// deadline exceeded (swallowed at Debug) while the cache reports healthy.
 	assetDetailCtx, assetDetailCancel := context.WithTimeout(ctx, assetsPrewarmBatchTimeout)
 	defer assetDetailCancel()
 	if _, err := assetsReader.GetNativeAssetRow(assetDetailCtx); err != nil {
@@ -3714,34 +3614,22 @@ func prewarmLight(
 	// covers the SIX OTHER readers /v1/assets/native fans out to.
 	prewarmAssetDetail(assetDetailCtx, logger, assetsReader, "native")
 
-	// Mirrors the most-trafficked /v1/markets, /v1/pools requests
-	// the explorer fires (default order, no source filter). Each limit
-	// is its own cache key under [v1.CachedMarketsReader.AllPools];
-	// without per-limit prewarm, anything off the warmed key 503s
-	// under the pools-server-timeout. The two routes get
-	// SEPARATE limit sets — see marketsPrewarmLimits and
-	// poolsPrewarmLimits for which callers each one is drawn from.
+	// Mirrors the most-trafficked /v1/markets, /v1/pools requests the explorer
+	// fires (default order, no source filter). Each limit is its own cache key
+	// under [v1.CachedMarketsReader.AllPools]; anything off the warmed key 503s
+	// under the pools-server-timeout. The two routes get SEPARATE limit sets
+	// (marketsPrewarmLimits, poolsPrewarmLimits).
 	//
-	// Per-handler order semantics MUST match the cache key the
-	// handler will look up:
-	// - /v1/markets defaults to MarketsOrderVolume24hDesc ("" → 1); "pair"
-	//   → 0 is explicit-only. The cache key includes the order, so both are warmed.
-	// - /v1/pools defaults to MarketsOrderVolume24hDesc (handler
-	//   accepts ""|"volume_24h_usd_desc" → 1). Prewarming with 0 would be a
-	//   phantom slot — every cold-
-	//   cache user request would still run a 10-30s SQL scan because the
-	//   warmed key never matched (/v1/pools?source=sdex took 27s, soroswap 16s,
-	//   phoenix 12s, aquarius 9s, comet 11s cold). Match the handler's default
-	//   explicitly so the warmed key is the one users hit.
-	// Important: the unfiltered /v1/pools handler builds
-	// `PoolsFilter{Sources: v1.DexSourceNames()}` (the registry's
-	// DEX list) — NOT `Sources: nil`. Cache key includes the
-	// stringified Sources slice; passing `PoolsFilter{}` here
-	// (`Sources: nil` → key fragment `[]`) warms a different key
-	// than the user request lands on (`[aquarius comet phoenix
-	// sdex soroswap]`). Mirror the handler's behaviour explicitly —
-	// prewarmPools does exactly that, and is where the /v1/pools half
-	// of this block now lives.
+	// The prewarm args MUST match the key the handler looks up:
+	//  - Order: both routes default to MarketsOrderVolume24hDesc ("" -> 1);
+	//    /v1/markets "pair" -> 0 is explicit-only and also warmed. Warming
+	//    /v1/pools with 0 would be a phantom slot, and every cold request would
+	//    still run a 10-30s SQL scan.
+	//  - The unfiltered /v1/pools handler builds `PoolsFilter{Sources:
+	//    v1.DexSourceNames()}`, NOT `Sources: nil`. The key includes the
+	//    stringified Sources slice, so `PoolsFilter{}` warms a different key.
+	//    prewarmPools mirrors the handler and is where the /v1/pools half of
+	//    this block lives.
 	for _, lim := range marketsPrewarmLimits {
 		// Alphabetical (MarketsOrderPair). NOT the /v1/markets default —
 		// that is volume-desc. Still worth prewarming:
@@ -3832,38 +3720,20 @@ func prewarmLight(
 // 0.8 ms because real traffic keeps it warm.
 var marketsPrewarmLimits = []int{5, 25, 100, 200}
 
-// poolsPrewarmLimits are the `?limit=` values the /v1/pools prewarm warms.
+// poolsPrewarmLimits are the `?limit=` values the /v1/pools prewarm warms,
+// separate from marketsPrewarmLimits because `AllPools` keys on the limit and
+// the explorer's pool tables ask for different ones.
 //
-// Separate from marketsPrewarmLimits. Sharing one set
-// meant the pools warm-up inherited limits chosen for /v1/markets, and the
-// explorer's own pool tables ask for something else — `AllPools` keys on
-// the limit, so the warmed slots were beside the point:
+// 8 is the one that was missing: the explorer's /network page sends it for its
+// "Top Stellar markets" panel (NetworkView.tsx's TopMarkets calls usePools(8,
+// 'volume_24h_usd_desc'), web/explorer/src/api/hooks.ts); unwarmed it took 2.2 s
+// against ~1 ms warmed. 100 serves /dexes (PAGE_LIMIT) and the OpenAPI default;
+// 5/25/200 serve the audit script, the Scalar default and the currencies
+// listing.
 //
-//	/v1/pools?limit=8&order_by=volume_24h_usd_desc     2.197 s   (unwarmed)
-//	/v1/pools?limit=5   / 25 / 100 / 200               0.0008-0.0026 s (warmed)
-//
-// 8 is the missing one, and it is not an invented probe value — it is what
-// the shipped explorer's /network page sends for its "Top Stellar markets"
-// panel: NetworkView.tsx's TopMarkets calls usePools(8,
-// 'volume_24h_usd_desc') (web/explorer/src/api/hooks.ts). The origin's own
-// slow-request log recorded the shape verbatim:
-//
-//	{"path":"/v1/pools","latency_ms":2197.052,
-//	 "query_shape":"limit=8&order_by=volume_24h_usd_desc","slow":true}
-//
-// It did not show up in production request logs because the site is still
-// pre-launch: 24 h of non-curl /v1/pools traffic is the Next.js static
-// export build plus small ?base=&quote= fetches. An external live probe
-// is the right instrument for a site with no organic traffic yet.
-//
-// This is the THIRD instance of the same bug class in this file — see the
-// MarketsOrderPair phantom slot recorded in prewarmLight and
-// assetListingPrewarmLimits' missing `?limit=50`. The lesson each
-// time: derive the set from what callers SEND, and keep the prewarm
-// argument byte-identical to the handler's.
-//
-// 100 stays for /dexes (PAGE_LIMIT) and the OpenAPI default; 5/25/200 stay
-// for the audit script, the Scalar default and the currencies listing.
+// Derive the set from what callers SEND and keep the prewarm argument
+// byte-identical to the handler's (the same bug class as the MarketsOrderPair
+// phantom slot in prewarmLight and assetListingPrewarmLimits).
 var poolsPrewarmLimits = []int{5, 8, 25, 100, 200}
 
 // prewarmPools warms the unfiltered /v1/pools listing slots.
@@ -3888,70 +3758,42 @@ func prewarmPools(ctx context.Context, logger *slog.Logger, markets *v1.CachedMa
 	}
 }
 
-// assetListingPrewarmLimits are the `?limit=` values /v1/assets callers
-// actually send, taken from OBSERVED traffic rather than assumption.
+// assetListingPrewarmLimits are the `?limit=` values /v1/assets callers actually
+// send, taken from observed traffic, not inferred from explorer source (an
+// inferred 1/10/100/500 missed `?limit=50`, the most expensive shape in
+// production).
 //
-// An earlier revision of this list was inferred from the explorer's
-// source and would have been wrong: it warmed 1/10/100/500 and missed
-// `?limit=50` entirely, which turned out to be the single most
-// expensive shape in production. The query-shape logging
-// is what made the real distribution visible.
+// Measured on r1 over 100 minutes, the two real slow shapes were ?limit=50 (18x,
+// avg 4.1 s) and ?include=sparkline&limit=10&order_by=volume_24h_usd_desc (16x,
+// avg 4.5 s): 84% of all slow time on the API.
 //
-// Measured on r1 over 100 minutes, slow
-// requests (>=500 ms) grouped by shape, excluding SSE streams:
-//
-//	18x  avg 4053 ms   72.9 s total   real   ?limit=50
-//	16x  avg 4485 ms   71.8 s total   real   ?include=sparkline&limit=10&order_by=volume_24h_usd_desc
-//	12x  avg 1192 ms   14.3 s total   probe  (/v1/pairs, not this route)
-//	 6x  avg  960 ms    5.8 s total   probe  (/v1/issuers, not this route)
-//	 1x  avg 2008 ms                  probe  ?limit=500
-//	 1x  avg 1790 ms                  real   ?limit=100
-//	 1x  avg 1607 ms                  probe  ?limit=5
-//
-// The two real shapes are 84% of all slow time on the API.
-//
-// `include=sparkline` is deliberately NOT a dimension here: measured at
-// the origin it costs nothing (7.8 ms with it, 8.8 ms without, on the
-// same warm listing), because the sparkline attach reads its own
-// already-warm per-asset slots rather than changing this cache key.
+// `include=sparkline` is deliberately NOT a dimension: the sparkline attach
+// reads its own already-warm per-asset slots, so it does not change this cache
+// key (7.8 ms with it, 8.8 ms without).
 var assetListingPrewarmLimits = []int{1, 5, 10, 50, 100, 500}
 
 // prewarmAssetListings warms the /v1/assets listing keys.
 //
-// The handler overfetches by one — `ListAssetsOptions{Limit: limit + 1}`
-// — so a `?limit=50` request looks up the key for 51. That +1 arrived
-// with cursor pagination (before it, `len(rows) >
-// limit` was never true and only the first page of ~199K assets was
-// reachable). The prewarm was never updated to match, so /v1/assets has
-// had NO warm key of its own since.
+// The handler overfetches by one (`ListAssetsOptions{Limit: limit + 1}`, for
+// cursor pagination), so a `?limit=50` request looks up the key for 51. This
+// helper takes USER-facing limits and applies the +1 itself so the arithmetic
+// lives in one place; measured at the r1 origin, a warm ?limit=50 took 0.007 s
+// and ?limit=51 (cold) 1.359 s.
 //
-// The overfetch is easy to disbelieve, so it is measured. At the r1
-// origin, with `?limit=50` kept warm by live traffic:
-//
-//	?limit=50  → internal Limit 51   0.007 s
-//	?limit=51  → internal Limit 52   1.359 s
-//
-// Two adjacent user-facing limits, 180x apart, differing only in which
-// internal key live traffic happens to keep warm. That is also why this
-// helper takes USER-facing limits and applies the +1 itself: doing the
-// arithmetic in one place is the difference between warming the slot
-// callers hit and warming a phantom one.
-//
-// Both orders are warmed. `order_by` is absent on most requests, which
-// parseAssetsOrder maps to AssetsOrderObservationCountDesc, but the
+// Both orders are warmed: `order_by` is absent on most requests
+// (parseAssetsOrder maps that to AssetsOrderObservationCountDesc), but the
 // explorer's home table asks for volume_24h_usd_desc.
 //
-// Every other option stays at its zero value on purpose: those are the
-// no-filter, no-cursor requests a first page-load makes. A filtered or
-// paginated request is a deliberate narrowing by a caller already past
-// the landing page.
-// Each successfully warmed variant is also persisted to Redis
-// (`snaps`, nil-safe) so the NEXT process can seed this cache before it
-// starts listening — see assets_listing_snapshot.go. The read goes
-// through ListAssetsExtAt rather than ListAssetsExt so the snapshot
-// carries the rows' REAL observation time: when this cycle is itself
-// served a stale entry, re-persisting must not reset the age of data
-// nothing has re-observed.
+// Every other option stays at its zero value: those are the no-filter, no-cursor
+// first-page requests; a filtered or paginated request is a deliberate narrowing
+// past the landing page.
+//
+// Each successfully warmed variant is also persisted to Redis (`snaps`,
+// nil-safe) so the NEXT process can seed this cache before it starts listening
+// (assets_listing_snapshot.go). The read goes through ListAssetsExtAt rather
+// than ListAssetsExt so the snapshot carries the rows' REAL observation time:
+// re-persisting a stale entry must not reset the age of data nothing has
+// re-observed.
 func prewarmAssetListings(
 	ctx context.Context, logger *slog.Logger, assetsReader *v1.CachedAssetsReader,
 	snaps *assetsListingSnapshots, catalogueLen int,
@@ -4058,31 +3900,26 @@ func assetListingPrewarmOptions() []timescale.ListAssetsOptions {
 // 5 minutes out of every 30, which is most of the defect back again.
 const classicLakeSupplySweepGap = time.Minute
 
-// prewarmClassicLakeSupply keeps the per-asset lake-flows supply cache
-// warm for the assets the /v1/assets listing actually serves.
+// prewarmClassicLakeSupply keeps the per-asset lake-flows supply cache warm for
+// the assets the /v1/assets listing serves.
 //
-// Without it, that cache warms only from the request path — 32 assets per
-// request — so on a service with no consumer traffic it is cold by
-// default: entries expire unread and both /v1/assets and /v1/rwa/assets
-// fall back to the trustline-only sum, which cannot see supply held in
-// claimable balances, LP reserves or SAC contract_data. Measured on r1
-// ~19 h after the last request, PYUSD served 3,149,454 against
-// a lake reading of 11,778,001 and XRF 21,895,149 against 118,333,629.
+// Without it that cache warms only from the request path (32 assets per
+// request), so with no consumer traffic it is cold by default and /v1/assets and
+// /v1/rwa/assets fall back to the trustline-only sum, which cannot see supply
+// held in claimable balances, LP reserves or SAC contract_data (r1 after 19 h
+// idle: PYUSD served 3,149,454 against a lake reading of 11,778,001).
 //
-// [assetListingPrewarmOptions] is passed rather than an asset list so the
-// warmed population IS the population prewarmAssetListings keeps warm.
-// Recomputed per sweep, not hoisted, so the two stay identical if the
-// shape set ever changes.
+// [assetListingPrewarmOptions] is passed rather than an asset list so the warmed
+// population IS the one prewarmAssetListings keeps warm; it is recomputed per
+// sweep so the two stay identical.
 //
-// Sweep-then-sleep rather than a ticker, like the protocol sweep: a cold
-// pass takes minutes and overlapping passes would double the ClickHouse
-// load exactly when it is already highest.
+// Sweep-then-sleep rather than a ticker, like the protocol sweep: a cold pass
+// takes minutes and overlapping passes would double ClickHouse load when it is
+// already highest.
 //
-// Named rather than inlined at the call site so the startup property — the
-// first sweep runs immediately, not one sweep gap after boot — can be
-// asserted without standing up run(). It takes no logger because it decides
-// nothing worth reporting: the listing read and the lake read each log their
-// own failures inside the Server, where the detail lives.
+// Named, not inlined, so the first-sweep-runs-immediately property can be
+// asserted without standing up run(). It takes no logger: the listing read and
+// the lake read each log their own failures inside the Server.
 func prewarmClassicLakeSupply(ctx context.Context, srv *v1.Server) {
 	if srv == nil {
 		return
@@ -4143,39 +3980,21 @@ func prewarmNetworkStats(ctx context.Context, logger *slog.Logger, networkStats 
 	}
 }
 
-// prewarmAssetDetail warms every SWR cache key the
-// /v1/assets/{id} handler fans out to for a single asset.
+// prewarmAssetDetail warms every SWR cache key the /v1/assets/{id} handler fans
+// out to for one asset (internal/api/v1/asset_catalogue_extension.go):
 //
-// /v1/assets/{id} fires SEVEN SWR-cached reader calls per request
-// (full fan-out at internal/api/v1/asset_catalogue_extension.go):
+//	GetAssetByAssetID, GetAssetTopMarkets(id, 5), GetAssetPriceHistory24h,
+//	GetAssetPriceHistory7d, GetAssetMarketsCount, GetAssetTradeCount24h, GetAssetATH
 //
-//	GetAssetByAssetID         — the asset-catalogue row itself
-//	GetAssetTopMarkets(id, 5) — top 5 markets per asset
-//	GetAssetPriceHistory24h   — 24h sparkline
-//	GetAssetPriceHistory7d    — 7d sparkline
-//	GetAssetMarketsCount      — total markets count
-//	GetAssetTradeCount24h     — 24h trade count
-//	GetAssetATH               — all-time high
+// Warming only GetAssetByAssetID leaves the other six to cold-fill on first hit
+// (~2s on a post-restart request).
 //
-// Warming only GetAssetByAssetID leaves the other SIX readers to cold-fill
-// on first hit, costing ~2s on
-// /v1/assets/USDC-GA5Z…'s first request post-restart even though
-// subsequent hits serve sub-ms warm.
+// Each call uses the EXACT method the handler calls, so the cache-key shapes
+// match byte-for-byte. The limit 5 for GetAssetTopMarkets matches the handler's
+// literal; if the handler varies it, this prewarm must mirror it or it warms a
+// different SWR key.
 //
-// Drift-safe: each call uses the EXACT method the handler calls
-// (per asset_catalogue_extension.go), so the cache-key shapes match
-// byte-for-byte. This is the lock-in that keeps the warm slot landing on the
-// same key the user request hits.
-//
-// Errors logged at Debug — transient misses are fine because the
-// user request still fronts the cache (cold-fill happens on the
-// user's request path if prewarm missed).
-//
-// Limit `5` for GetAssetTopMarkets matches the handler's literal
-// (asset_catalogue_extension.go:77 → `GetAssetTopMarkets(ctx, assetID, 5)`).
-// If the handler later varies the limit (e.g. higher for verified
-// currencies), this prewarm must mirror the new value — drift in
-// limit means a different SWR cache key, same bug class.
+// Errors log at Debug: a missed warm is cold-filled on the user's request path.
 func prewarmAssetDetail(ctx context.Context, logger *slog.Logger, assetsReader *v1.CachedAssetsReader, assetID string) {
 	// Per-reader prewarm. We don't bail on the first failure — each
 	// reader has its own cache slot and a partial prewarm still

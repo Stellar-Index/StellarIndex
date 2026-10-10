@@ -56,31 +56,16 @@ func SetMaxConcurrentStreams(n int64) { atomic.StoreInt64(&maxConcurrentStreams,
 // stellarindex_api_sse_streams_rejected_total.
 func StreamsRejected() int64 { return atomic.LoadInt64(&rejectedStreams) }
 
-// TryAcquireStreamSlot reserves one connection slot against the
-// global and per-IP concurrency caps, writing the 503 itself when
-// either refuses. It is [admitStream] exported for callers OUTSIDE
-// this package whose own pre-flight work (before switching into SSE
-// mode) is itself expensive.
+// TryAcquireStreamSlot reserves one connection slot against the global and
+// per-IP concurrency caps, writing the 503 itself when either refuses. It is
+// [admitStream] exported for callers outside this package whose pre-flight work
+// (before switching into SSE mode) is itself expensive, so admission happens
+// before that compute.
 //
-// Pre-flight-compute ordering: [StreamFromChannel] already
-// admits before doing anything else, but a caller like
-// handleObservationsStream runs its OWN synchronous compute (the
-// initial event) BEFORE ever calling StreamFromChannel — so a client
-// already at its concurrency cap would still pay for that full compute
-// before being rejected. Calling TryAcquireStreamSlot at the very top
-// of the handler, before that compute, closes the gap: admission is
-// the very first thing that happens, full stop.
-//
-// The returned release MUST be called exactly once (typically via
-// `defer release()` immediately after a successful acquire, covering
-// every return path — validation errors, a failed pre-flight compute,
-// and the eventual stream teardown alike); it is idempotent, so it is
-// safe to also flow it into [StreamFromChannelPreAdmitted] or let a
-// deferred call and an explicit one both fire. Callers that pre-admit
-// this way MUST switch their eventual stream call from
-// [StreamFromChannel] to [StreamFromChannelPreAdmitted] — the plain
-// [StreamFromChannel] would acquire a SECOND slot for the same
-// connection.
+// release MUST be called exactly once (typically `defer release()` right after a
+// successful acquire); it is idempotent. Callers that pre-admit MUST switch
+// their stream call from [StreamFromChannel] to [StreamFromChannelPreAdmitted],
+// or a SECOND slot is acquired for the same connection.
 func TryAcquireStreamSlot(w http.ResponseWriter, r *http.Request) (release func(), ok bool) {
 	return admitStream(w, r)
 }
@@ -406,39 +391,21 @@ func streamLifetime(maxLifetime time.Duration) time.Duration {
 	return maxLifetime
 }
 
-// endStreamByServer closes a stream the SERVER is ending — at shutdown
-// drain or at the end of its lifetime — as cleanly as SSE allows one to
-// be ended, after writing the given comment frame.
+// endStreamByServer closes a stream the SERVER is ending (shutdown drain or
+// lifetime expiry) after writing the given comment frame, so net/http terminates
+// the chunked body and EventSource clients reconnect normally instead of the
+// reverse proxy logging a truncated response.
 //
-// SSE has no end-of-stream frame, so "clean" here means the HTTP
-// response body is terminated properly: writeStream returns, the
-// handler returns, and net/http finishes the chunked body. The client
-// then sees a complete response and an EventSource reconnects on its
-// normal schedule. That is the difference this makes — without the
-// drain the process would exit on top of the open connection and the
-// reverse proxy would log `reading: unexpected EOF` against a
-// truncated response, as r1's proxy did.
+// The final frame is an SSE comment, not a named event: spec-legal, ignored by
+// every conforming client, and it leaves the event vocabulary in
+// openapi/stellar-index.v1.yaml unchanged.
 //
-// The final frame is an SSE COMMENT rather than a named event on
-// purpose. A comment is spec-legal, ignored by every conforming client,
-// and adds nothing to the endpoints' documented event vocabulary — so
-// the wire contract in openapi/stellar-index.v1.yaml is unchanged and
-// no client needs to learn a new event type to be shut down politely.
-// It earns its place in the proxy/tcpdump record, where it marks a
-// server-initiated close and distinguishes it from a client hang-up.
+// The write gets [drainWriteDeadline], not the rolling [streamWriteDeadline]: a
+// stalled client with a full socket buffer must not hold the drain for the full
+// stream deadline. Each connection blocks only its own goroutine, so the cost
+// across stalled streams is the maximum, not the sum.
 //
-// The write gets [drainWriteDeadline] rather than the stream's rolling
-// [streamWriteDeadline]. A courtesy frame must never become the new
-// reason the drain is slow: a stalled or zero-window client whose
-// socket buffer is full would otherwise block this write for the full
-// 25s stream deadline, which is most of the shutdown budget this
-// function exists to protect; a lifetime expiry aimed at a non-reading
-// client must not hold its slot 25s longer either. Each connection
-// blocks only its own goroutine, so the cost across many stalled
-// streams is the maximum, not the sum.
-//
-// A failed write here is deliberately ignored: the connection is going
-// away either way, and the caller returns next regardless.
+// A failed write is ignored: the connection is going away either way.
 func endStreamByServer(w http.ResponseWriter, flusher http.Flusher, rc *http.ResponseController, frame string) {
 	_ = rc.SetWriteDeadline(time.Now().Add(drainWriteDeadline))
 	if _, err := fmt.Fprint(w, frame); err != nil {
