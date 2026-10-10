@@ -222,6 +222,10 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
   // read the asset list", not "this issuer issued nothing" — every tile
   // below renders '—' rather than a fabricated 0.
   const assets = detail.assets ?? null;
+  // home_domain is attacker-controlled; link it only as a strict hostname.
+  const homeUrl = isSafeHomeDomain(detail.home_domain)
+    ? `https://${detail.home_domain}`
+    : null;
   const totalObs =
     assets?.reduce((sum, a) => sum + a.observation_count, 0) ?? null;
   // Sum per-asset 24h USD volume from the parallel /v1/coins?issuer= fetch.
@@ -309,13 +313,10 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           )}
           {detail.home_domain && (
             <p className="text-ink-body text-sm">
-              {/* home_domain is attacker-controlled on-chain data — only
-          link it when it parses as a strict hostname, else render
-          as plain text (phishing guard, WA-02). */}
-              {isSafeHomeDomain(detail.home_domain) ? (
+              {homeUrl ? (
                 <>
                   <a
-                    href={`https://${detail.home_domain}`}
+                    href={homeUrl}
                     target="_blank"
                     rel="noreferrer noopener nofollow"
                     className="hover:text-brand-600 font-mono hover:underline"
@@ -324,7 +325,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                   </a>
                   {' · '}
                   <a
-                    href={`https://${detail.home_domain}/.well-known/stellar.toml`}
+                    href={`${homeUrl}/.well-known/stellar.toml`}
                     target="_blank"
                     rel="noreferrer noopener nofollow"
                     className="hover:text-brand-600 hover:underline"
