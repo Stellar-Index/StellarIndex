@@ -29,7 +29,11 @@ import type { paths } from '@/api/types';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { FreshnessMarker } from '@/components/primitives';
 import { OperationMixPanel } from '@/components/NetworkInsight';
-import { CountSparkline, UpgradeBadges } from '@/components/ChainCharts';
+import {
+  CountSparkline,
+  UpgradeBadges,
+  closeIntervals,
+} from '@/components/ChainCharts';
 import {
   compareDecimalDesc,
   formatCompact,
@@ -383,9 +387,17 @@ function ChainEconomics({
         headingLevel={2}
         title="Ledger total_coins"
         hint={
-          IS_MAINNET
-            ? "The ledger header's total_coins at each day's last ledger (~105B). This on-chain field was never lowered by the October 2019 burn, so it still counts the ~55B lumens SDF destroyed — the market's 50.0B total supply is on the strip above. Flat is the expected shape — XLM has no ongoing issuance."
-            : "The ledger header's total_coins at each day's last ledger. Flat is the expected shape — XLM has no ongoing issuance."
+          <span
+            title={
+              IS_MAINNET
+                ? "The ledger header's total_coins at each day's last ledger. The field was never lowered by the October 2019 burn, so it still counts the ~55B lumens SDF destroyed; the 50.0B total supply is on the strip above. XLM has no ongoing issuance, so the line is flat."
+                : "The ledger header's total_coins at each day's last ledger. XLM has no ongoing issuance, so the line is flat."
+            }
+          >
+            {IS_MAINNET
+              ? "Each day's last ledger · includes the 2019 burn"
+              : "Each day's last ledger"}
+          </span>
         }
         source={asExample('/v1/network/throughput', {
           window_days: windowDays,
@@ -482,6 +494,11 @@ function HeroStats({
               ? `${relativeAge(tip.close_time)} · protocol v${tip.protocol_version}`
               : undefined
           }
+        />
+        <CountSparkline
+          values={closeIntervals(recent ?? [])}
+          label="Seconds between ledger closes"
+          noun="closes"
         />
       </StatCell>
       <StatCell>

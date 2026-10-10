@@ -43,20 +43,42 @@ export function OpsPerTxBars({ opCounts }: { opCounts: number[] }) {
 export function CountSparkline({
   values,
   label,
+  noun = 'ledgers',
 }: {
   values: number[];
   label: string;
+  noun?: string;
 }) {
   if (values.length < 2) return null;
   return (
     <div
       role="img"
-      aria-label={`${label}: ${values.length} ledgers, min ${Math.min(...values).toLocaleString('en-US')}, max ${Math.max(...values).toLocaleString('en-US')}`}
+      aria-label={`${label}: ${values.length} ${noun}, min ${Math.min(...values).toLocaleString('en-US')}, max ${Math.max(...values).toLocaleString('en-US')}`}
       title={label}
     >
       <Sparkline values={values} width={160} height={28} tone="neutral" />
     </div>
   );
+}
+
+/** Whole seconds between adjacent ledger closes, oldest first; skips gaps in sequence. */
+export function closeIntervals(
+  ledgers: { sequence?: number; close_time?: string }[],
+): number[] {
+  const asc = [...ledgers].sort(
+    (a, b) => (a.sequence ?? 0) - (b.sequence ?? 0),
+  );
+  const out: number[] = [];
+  for (let i = 1; i < asc.length; i++) {
+    const a = asc[i - 1];
+    const b = asc[i];
+    if (a.sequence == null || b.sequence !== a.sequence + 1) continue;
+    const t0 = Date.parse(a.close_time ?? '');
+    const t1 = Date.parse(b.close_time ?? '');
+    if (Number.isNaN(t0) || Number.isNaN(t1) || t1 < t0) continue;
+    out.push(Math.round((t1 - t0) / 1000));
+  }
+  return out;
 }
 
 const isInt = (s: string | undefined): s is string => !!s && /^\d+$/.test(s);

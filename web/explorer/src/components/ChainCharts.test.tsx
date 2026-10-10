@@ -8,6 +8,7 @@ import {
   OpTypeStrip,
   ResultDonut,
   UpgradeBadges,
+  closeIntervals,
   feeUsage,
 } from './ChainCharts';
 
@@ -30,6 +31,27 @@ describe('ChainCharts', () => {
     render(<CountSparkline values={[3, 9, 5]} label="Txs per ledger" />);
     expect(
       screen.getByLabelText(/Txs per ledger: 3 ledgers, min 3, max 9/),
+    ).toBeTruthy();
+  });
+
+  it('close intervals run oldest first and skip sequence gaps', () => {
+    const at = (sequence: number, sec: number) => ({
+      sequence,
+      close_time: new Date(Date.UTC(2026, 0, 1, 0, 0, sec)).toISOString(),
+    });
+    // Newest first, as /v1/ledgers serves them; 8 → 10 is not adjacent.
+    expect(
+      closeIntervals([at(11, 22), at(10, 17), at(8, 5), at(7, 0)]),
+    ).toEqual([5, 5]);
+    expect(
+      closeIntervals([at(2, 6), { sequence: 1, close_time: 'x' }]),
+    ).toEqual([]);
+  });
+
+  it('sparkline names its unit', () => {
+    render(<CountSparkline values={[5, 6]} label="Close gaps" noun="closes" />);
+    expect(
+      screen.getByLabelText(/Close gaps: 2 closes, min 5, max 6/),
     ).toBeTruthy();
   });
 
