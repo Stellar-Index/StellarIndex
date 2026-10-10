@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Stellar Index contributors.
+// SPDX-License-Identifier: Apache-2.0
+
 package timescale
 
 import (
@@ -12,7 +15,30 @@ import (
 	"testing"
 )
 
-// TestPairBoundPrices1mReadsAreClosed is the ADR-0015 companion to
+// TestSourceShapeRules pins source shapes that no behavioural test can reach.
+// Each rule parses the package's sources with go/ast and fails on the same
+// defect it did as a standalone test.
+func TestSourceShapeRules(t *testing.T) {
+	rules := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{"pair-bound prices_1m reads admit only closed buckets", rulePairBoundPrices1mReadsAreClosed},
+		{"every issuers.home_domain writer unbinds SEP-1", ruleIssuersHomeDomainWriterUnbindsSep1},
+	}
+	for _, r := range rules {
+		t.Run(r.name, r.run)
+	}
+}
+
+var (
+	// An assignment opens a SET list or follows a comma inside one; a WHERE
+	// comparison follows WHERE/AND/OR and is not a write.
+	homeDomainAssignRE = regexp.MustCompile(`(?i)(\bSET|,)\s*home_domain\s*=[^=]`)
+	issuersWriteRE     = regexp.MustCompile(`(?i)\b(UPDATE|INTO)\s+issuers\b`)
+)
+
+// rulePairBoundPrices1mReadsAreClosed is the ADR-0015 companion to
 // TestCAGGPairReadsFoldBothDirections: a pair-bound read of prices_1m must
 // admit only CLOSED buckets. The in-progress minute is still filling, so a
 // read that admits it serves a value no other region (and no later read)
@@ -24,7 +50,7 @@ import (
 // prices_1m with a `base_asset = $n AND quote_asset = $m` filter), so a new
 // reader is covered the day it lands. Each subject is named by its
 // enclosing func or const.
-func TestPairBoundPrices1mReadsAreClosed(t *testing.T) {
+func rulePairBoundPrices1mReadsAreClosed(t *testing.T) {
 	t.Parallel()
 
 	// Reads that deliberately admit the in-progress bucket, each with why.
@@ -62,6 +88,59 @@ func TestPairBoundPrices1mReadsAreClosed(t *testing.T) {
 	if subjects == 0 {
 		t.Fatal("no pair-bound prices_1m reads found — the scan has gone vacuous; fix it, do not delete it")
 	}
+}
+
+// ruleIssuersHomeDomainWriterUnbindsSep1 fails when a statement that
+// writes issuers.home_domain does not route through
+// sep1ResetOnHomeDomainChange. The executing proof is
+// test/integration/pg_assets_sep1_test.go; this catches the
+// next writer, which that test cannot know about.
+func ruleIssuersHomeDomainWriterUnbindsSep1(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	writers := 0
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		for _, decl := range f.Decls {
+			assigns, touchesIssuers, resets := scanHomeDomainDecl(decl)
+			if !assigns || !touchesIssuers {
+				continue
+			}
+			writers++
+			if !resets {
+				t.Errorf("%s: a statement writes issuers.home_domain without sep1ResetOnHomeDomainChange — "+
+					"the old domain's SEP-1 payload would be served under the new one", fset.Position(decl.Pos()))
+			}
+		}
+	}
+	if writers == 0 {
+		t.Fatal("found no issuers.home_domain writer at all; the scan is not seeing the package")
+	}
+}
+
+func scanHomeDomainDecl(decl ast.Decl) (assigns, touchesIssuers, resets bool) {
+	ast.Inspect(decl, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.BasicLit:
+			if x.Kind == token.STRING {
+				assigns = assigns || homeDomainAssignRE.MatchString(x.Value)
+				touchesIssuers = touchesIssuers || issuersWriteRE.MatchString(x.Value)
+			}
+		case *ast.Ident:
+			resets = resets || x.Name == "sep1ResetOnHomeDomainChange"
+		}
+		return true
+	})
+	return assigns, touchesIssuers, resets
 }
 
 type pairBoundLiteral struct {

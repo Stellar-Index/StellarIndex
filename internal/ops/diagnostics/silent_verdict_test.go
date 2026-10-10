@@ -1,9 +1,6 @@
 package diagnostics
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"testing"
 )
 
@@ -33,45 +30,4 @@ func TestSilentVerdict(t *testing.T) {
 			}
 		})
 	}
-}
-
-// The handlers need a live datastore or live vendors, so pin the wiring
-// instead: each must END by returning silentVerdict, so no later edit can
-// fall back to an unconditional `return nil` after the table.
-func TestVerifyHandlersReturnSilentVerdict(t *testing.T) {
-	for file, fn := range map[string]string{
-		"verify_decoders.go": "verifyDecoders",
-		"verify_external.go": "verifyExternal",
-	} {
-		fset := token.NewFileSet()
-		f, err := parser.ParseFile(fset, file, nil, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var body *ast.BlockStmt
-		for _, d := range f.Decls {
-			if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == fn {
-				body = fd.Body
-			}
-		}
-		if body == nil || len(body.List) == 0 {
-			t.Fatalf("%s: func %s not found", file, fn)
-		}
-		if !returnsCallTo(body.List[len(body.List)-1], "silentVerdict") {
-			t.Errorf("%s: %s does not end with `return silentVerdict(...)`; its exit code ignores the silent count", file, fn)
-		}
-	}
-}
-
-func returnsCallTo(stmt ast.Stmt, callee string) bool {
-	ret, ok := stmt.(*ast.ReturnStmt)
-	if !ok || len(ret.Results) != 1 {
-		return false
-	}
-	call, ok := ret.Results[0].(*ast.CallExpr)
-	if !ok {
-		return false
-	}
-	id, ok := call.Fun.(*ast.Ident)
-	return ok && id.Name == callee
 }

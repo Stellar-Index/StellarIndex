@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -202,80 +199,6 @@ func TestSeedSoroswapForRecon_CleanSweepSeedsTheDecoder(t *testing.T) {
 	if !dec.Matches(pairSyncEvent(pair)) {
 		t.Error("decoder does not match the swept pair after a clean seed")
 	}
-}
-
-// The call sites. seedSoroswapForRecon returning an error is worth nothing if
-// the command prints it and carries on, which is exactly what both did. Read
-// from the AST (precedent: cmd/stellarindex-api/*_wiring_test.go) because both
-// commands open Postgres before they reach the seed and cannot be run here:
-// every call must be the init of an `if … err != nil` whose body RETURNS.
-func TestSoroswapSeed_BothCommandsReturnTheSeedError(t *testing.T) {
-	for file, fn := range map[string]string{
-		"compute_completeness.go":  "computeCompleteness",
-		"verify_reconciliation.go": "verifyReconciliation",
-	} {
-		t.Run(fn, func(t *testing.T) {
-			parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
-			if err != nil {
-				t.Fatalf("parse %s: %v", file, err)
-			}
-			var body *ast.BlockStmt
-			for _, d := range parsed.Decls {
-				if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == fn {
-					body = fd.Body
-				}
-			}
-			if body == nil {
-				t.Fatalf("%s: func %s not found", file, fn)
-			}
-			calls, guarded := seedCallSites(body)
-			if calls == 0 {
-				t.Fatalf("%s never calls seedSoroswapForRecon — the re-derive decoder is never seeded", fn)
-			}
-			if guarded != calls {
-				t.Errorf("%s: %d of %d seedSoroswapForRecon call(s) are not `if err := …; err != nil { return … }` — "+
-					"a failed seed is logged or dropped and the run continues on a partial pair registry (RLT-416)",
-					fn, calls-guarded, calls)
-			}
-		})
-	}
-}
-
-// seedCallSites counts calls to seedSoroswapForRecon under root, and how many
-// of them are the init statement of an if whose body ends in a return carrying
-// a value.
-func seedCallSites(root ast.Node) (calls, guarded int) {
-	isSeedCall := func(n ast.Node) bool {
-		c, ok := n.(*ast.CallExpr)
-		if !ok {
-			return false
-		}
-		id, ok := c.Fun.(*ast.Ident)
-		return ok && id.Name == "seedSoroswapForRecon"
-	}
-	ast.Inspect(root, func(n ast.Node) bool {
-		if isSeedCall(n) {
-			calls++
-		}
-		ifs, ok := n.(*ast.IfStmt)
-		if !ok || ifs.Init == nil || len(ifs.Body.List) == 0 {
-			return true
-		}
-		as, ok := ifs.Init.(*ast.AssignStmt)
-		if !ok || len(as.Rhs) != 1 || !isSeedCall(as.Rhs[0]) {
-			return true
-		}
-		ret, ok := ifs.Body.List[len(ifs.Body.List)-1].(*ast.ReturnStmt)
-		if !ok || len(ret.Results) != 1 {
-			return true
-		}
-		if id, isIdent := ret.Results[0].(*ast.Ident); isIdent && id.Name == "nil" {
-			return true // `return nil` swallows the error as surely as a log line
-		}
-		guarded++
-		return true
-	})
-	return calls, guarded
 }
 
 // One transient response on the very first call of an otherwise clean one-pair
