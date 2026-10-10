@@ -14870,6 +14870,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

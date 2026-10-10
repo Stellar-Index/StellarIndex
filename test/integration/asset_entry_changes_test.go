@@ -75,8 +75,13 @@ func TestClickHouseAssetEntryChanges(t *testing.T) {
 		row(base+3, 1, "selling", "offer", big.NewInt(9), `{}`, old),
 		row(base+20, 0, "holder", "trustline", big.NewInt(1), `{}`, old),
 	)
-	// A second derive of the claimable row, in its own part so it is not yet merged.
-	insert(row(base+2, 0, "claimable", "claimable_balance", big.NewInt(8), `{"v":"new"}`, newer))
+	// Later derives of the claimable row, in their own part so they are not yet merged.
+	// Enough stale copies that no window proves its page, forcing the floored exact read.
+	rederives := [][]any{row(base+2, 0, "claimable", "claimable_balance", big.NewInt(8), `{"v":"new"}`, newer)}
+	for i := 0; i < 12; i++ {
+		rederives = append(rederives, row(base+2, 0, "claimable", "claimable_balance", big.NewInt(7), `{"v":"old"}`, old.Add(time.Duration(i)*time.Second)))
+	}
+	insert(rederives...)
 
 	er, err := chstore.NewExplorerReader(ctx, clickhouseAddr(t))
 	if err != nil {

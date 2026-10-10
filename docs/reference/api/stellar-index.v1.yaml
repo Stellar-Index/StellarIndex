@@ -1462,6 +1462,7 @@ paths:
                           lower_bound: { type: boolean, description: "True while the derive is unverified from the lake's first ledger: older history may be missing." }
                           coverage_note: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /price:
