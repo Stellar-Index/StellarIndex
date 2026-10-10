@@ -94,7 +94,6 @@ go-ast pkg/client/godoc_links_test.go
 go-ast test/controlwiring/replay_backfillsafe_test.go
 md-read internal/aggregate/confidence/adr_parity_test.go
 md-read internal/aggregate/vwap_methodology_doc_test.go
-md-read internal/api/v1/markets_cache_test.go
 md-read internal/api/v1/methodology_pages_doc_lockstep_test.go
 md-read internal/api/v1/methodology_rwa_doc_lockstep_test.go
 md-read internal/api/v1/protocols_verification_pages_test.go

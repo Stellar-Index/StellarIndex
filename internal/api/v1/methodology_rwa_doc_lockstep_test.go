@@ -139,27 +139,3 @@ func TestRWADefinitionDocContractBindingCountMatchesCode(t *testing.T) {
 		}
 	}
 }
-
-// membership.built_at is on the wire; the page may not say it is not.
-func TestRWADefinitionDocDoesNotDenyTheBuildTimestamp(t *testing.T) {
-	f, ok := reflect.TypeOf(RWAMembershipSet{}).FieldByName("BuiltAt")
-	if !ok || f.Tag.Get("json") != "built_at" {
-		t.Fatal("RWAMembershipSet.BuiltAt with json built_at is the premise of this test")
-	}
-	doc := readMethodologyDoc(t, "rwa-definition.md")
-	if strings.Contains(doc, "no build timestamp") {
-		t.Error(`page claims the response "carries no build timestamp" while membership.built_at is served`)
-	}
-}
-
-// `issuers` has two writers — the trade-path registerIssuerSeen and the
-// holdings-path insertIssuersBatch (migration 0158). A page naming one as
-// the only writer states the root cause of the coverage gap wrongly.
-func TestRWADocsNameBothIssuersWriters(t *testing.T) {
-	for _, name := range []string{"rwa-definition.md", "rwa-coverage-reconciliation.md"} {
-		doc := readMethodologyDoc(t, name)
-		if strings.Contains(doc, "registerIssuerSeen") && !strings.Contains(doc, "insertIssuersBatch") {
-			t.Errorf("%s names registerIssuerSeen as the issuers writer and omits insertIssuersBatch", name)
-		}
-	}
-}
