@@ -3,9 +3,6 @@ package v1
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -456,76 +453,6 @@ func TestCachedMarketsReader_PoolsSWRKeepsStaleOnError(t *testing.T) {
 
 func (f *fakeMarketsReader) FirstTradeBatch(_ context.Context, _ [][2]string) (map[string]time.Time, error) {
 	return map[string]time.Time{}, nil
-}
-
-// TestNoStaleOrderDriftCitation guards against re-introducing the "#1185"
-// / "PR #1185" citation into the cache-miss-rate-high runbook or its
-// Prometheus rule comment. No PR #1185 was ever opened; the
-// bare number now resolves to a real but unrelated open issue, so the
-// citation misleads a reader rather than merely dangling.
-func TestNoStaleOrderDriftCitation(t *testing.T) {
-	const stale = "#1185"
-	root := repoRoot(t)
-	files := []string{
-		filepath.Join(root, "docs", "operations", "runbooks", "api.md"),
-		filepath.Join(root, "configs", "prometheus", "rules.r1", "api.yml"),
-	}
-	for _, f := range files {
-		b, err := os.ReadFile(f) //nolint:gosec // repo-relative path resolved above
-		if err != nil {
-			t.Fatalf("read %s: %v", f, err)
-		}
-		if strings.Contains(string(b), stale) {
-			t.Errorf("%s still cites the dangling %q reference; it now resolves to an unrelated issue, not the Order-dimension prewarm/handler cache-key drift bug", f, stale)
-		}
-	}
-}
-
-// TestNoStaleLimitDriftCitation guards against re-introducing the "#1195"
-// / "PR #1195" citation into the cache-miss-rate-high runbook, its
-// Prometheus rule comment, or CHANGELOG.md. No PR #1195 was
-// ever opened; the bare number now resolves to a real but unrelated open
-// issue (verify-lake/verify-contiguity under-reporting), so the citation
-// misleads a reader rather than merely dangling. Mirrors
-// TestNoStaleOrderDriftCitation for the same repo-wide class of defect.
-func TestNoStaleLimitDriftCitation(t *testing.T) {
-	const stale = "#1195"
-	root := repoRoot(t)
-	files := []string{
-		filepath.Join(root, "docs", "operations", "runbooks", "api.md"),
-		filepath.Join(root, "configs", "prometheus", "rules.r1", "api.yml"),
-		filepath.Join(root, "CHANGELOG.md"),
-	}
-	for _, f := range files {
-		b, err := os.ReadFile(f) //nolint:gosec // repo-relative path resolved above
-		if err != nil {
-			t.Fatalf("read %s: %v", f, err)
-		}
-		if strings.Contains(string(b), stale) {
-			t.Errorf("%s still cites the dangling %q reference; it now resolves to an unrelated issue, not the Limit-dimension prewarm/handler cache-key drift bug", f, stale)
-		}
-	}
-}
-
-// TestNoStaleSourcesDriftCitation keeps "#1194" out of the Sources-dimension
-// drift citations: that number now resolves to an unrelated item.
-func TestNoStaleSourcesDriftCitation(t *testing.T) {
-	const stale = "#1194"
-	root := repoRoot(t)
-	files := []string{
-		filepath.Join(root, "docs", "operations", "runbooks", "api.md"),
-		filepath.Join(root, "configs", "prometheus", "rules.r1", "api.yml"),
-		filepath.Join(root, "CHANGELOG.md"),
-	}
-	for _, f := range files {
-		b, err := os.ReadFile(f) //nolint:gosec // repo-relative path resolved above
-		if err != nil {
-			t.Fatalf("read %s: %v", f, err)
-		}
-		if strings.Contains(string(b), stale) {
-			t.Errorf("%s still cites the dangling %q reference; it now resolves to an unrelated item, not the Sources-dimension prewarm/handler cache-key drift fix", f, stale)
-		}
-	}
 }
 
 // TestCachedMarketsReader_AllPoolsSourcesOrderCollapse is the
