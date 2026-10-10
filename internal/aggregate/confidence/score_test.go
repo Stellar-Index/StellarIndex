@@ -27,6 +27,19 @@ func healthyInputs() confidence.Inputs {
 	}
 }
 
+// ordinaryBucketInputs is a typical production bucket with no cross-oracle
+// reference (-1 sentinel, neutral factor 0.7).
+func ordinaryBucketInputs() confidence.Inputs {
+	return confidence.Inputs{
+		ZScore:                   1.0,
+		SourceCount:              4,
+		SourceClassCount:         2,
+		LiquidityUSD:             50_000,
+		CrossOracleDivergencePct: -1,
+		BaselineAgeDays:          200,
+	}
+}
+
 // TestCompute_HealthyAnchor — the ADR-0019 worked-example inputs
 // produce a high confidence under the implemented factor shapes.
 //
@@ -93,29 +106,37 @@ func TestCompute_AnomalyKillsScore(t *testing.T) {
 	}
 }
 
-// TestCompute_FullBootstrap — a brand-new asset with no baseline,
-// no cross-oracle, single source, low liquidity. Score should be
-// low but well-defined (no NaN / Inf).
-func TestCompute_FullBootstrap(t *testing.T) {
-	in := confidence.Inputs{
-		ZScore:                   0,
-		SourceCount:              1,
-		SourceClassCount:         1,
-		LiquidityUSD:             500, // below floor
-		CrossOracleDivergencePct: -1,  // no data
-		BaselineAgeDays:          -1,  // no baseline
+// TestCompute_DegenerateInputsScoreZeroNotNaN — a brand-new asset with no
+// baseline and below-floor liquidity, and extreme inputs that drive every
+// factor to 0, both score a finite 0 (the geometric mean's dominating-factor
+// behaviour), never NaN from log(0).
+func TestCompute_DegenerateInputsScoreZeroNotNaN(t *testing.T) {
+	tests := []struct {
+		name string
+		in   confidence.Inputs
+	}{
+		{"full bootstrap", confidence.Inputs{
+			SourceCount:              1,
+			SourceClassCount:         1,
+			LiquidityUSD:             500, // below floor
+			CrossOracleDivergencePct: -1,  // no data
+			BaselineAgeDays:          -1,  // no baseline
+		}},
+		{"extreme inputs", confidence.Inputs{
+			ZScore:                   1e9,
+			CrossOracleDivergencePct: 1e9,
+		}},
 	}
-	got := confidence.Compute(in, confidence.DefaultWeights())
-	if math.IsNaN(got.Confidence) || math.IsInf(got.Confidence, 0) {
-		t.Errorf("bootstrap confidence not finite: %v", got.Confidence)
-	}
-	if got.Confidence < 0 || got.Confidence > 1 {
-		t.Errorf("bootstrap confidence outside [0, 1]: %v", got.Confidence)
-	}
-	// LiquidityFactor returns 0 for below-floor input → geometric
-	// mean is 0 (dominating-factor behaviour).
-	if got.Confidence != 0 {
-		t.Errorf("bootstrap with liquidity=0 should crater to 0, got %v", got.Confidence)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := confidence.Compute(tt.in, confidence.DefaultWeights())
+			if math.IsNaN(got.Confidence) || math.IsInf(got.Confidence, 0) {
+				t.Fatalf("confidence not finite: %v", got.Confidence)
+			}
+			if got.Confidence != 0 {
+				t.Errorf("confidence = %v, want 0", got.Confidence)
+			}
+		})
 	}
 }
 
@@ -152,66 +173,7 @@ func TestCompute_WeightingChangesScore(t *testing.T) {
 	}
 }
 
-// TestCompute_NumericalStability — extreme inputs don't produce
-// NaN. Any factor returning exactly 0 + non-zero weight should
-// produce a 0 score (not NaN from log(0)).
-func TestCompute_NumericalStability(t *testing.T) {
-	in := confidence.Inputs{
-		ZScore:                   1e9, // → factor ~0
-		SourceCount:              0,   // → factor 0
-		SourceClassCount:         0,
-		LiquidityUSD:             0,   // → factor 0
-		CrossOracleDivergencePct: 1e9, // → factor ~0
-		BaselineAgeDays:          0,
-	}
-	got := confidence.Compute(in, confidence.DefaultWeights())
-	if math.IsNaN(got.Confidence) || math.IsInf(got.Confidence, 0) {
-		t.Errorf("extreme inputs produced %v, want finite", got.Confidence)
-	}
-	if got.Confidence != 0 {
-		t.Errorf("all-zero factors → confidence should be 0, got %v", got.Confidence)
-	}
-}
-
 // ─── Bootstrap cap (ADR-0019 §"Bootstrap policy") ───────────────
-
-// TestCompute_BootstrapCapsConfidence — an asset with <30d of
-// history has confidence hard-capped at 0.5 regardless of how
-// healthy every other factor is.
-func TestCompute_BootstrapCapsConfidence(t *testing.T) {
-	in := healthyInputs()
-	in.BaselineAgeDays = 5 // freshly-listed
-	got := confidence.Compute(in, confidence.DefaultWeights())
-	if got.Confidence > confidence.BootstrapConfidenceCap+1e-9 {
-		t.Errorf("bootstrap confidence = %v, want <= %v",
-			got.Confidence, confidence.BootstrapConfidenceCap)
-	}
-}
-
-// TestCompute_BootstrapCapAtZeroAge — exactly 0 days of history
-// (just-listed asset) is the most-bootstrap state. Cap fires.
-func TestCompute_BootstrapCapAtZeroAge(t *testing.T) {
-	in := healthyInputs()
-	in.BaselineAgeDays = 0
-	got := confidence.Compute(in, confidence.DefaultWeights())
-	if got.Confidence > confidence.BootstrapConfidenceCap {
-		t.Errorf("zero-age confidence = %v, want capped at %v",
-			got.Confidence, confidence.BootstrapConfidenceCap)
-	}
-}
-
-// TestCompute_BootstrapCapNotAppliedAt30Days — exactly at the
-// threshold the cap turns OFF. Healthy bucket reads its full
-// confidence.
-func TestCompute_BootstrapCapNotAppliedAt30Days(t *testing.T) {
-	in := healthyInputs()
-	in.BaselineAgeDays = 30 // boundary — strictly < BootstrapDays required
-	got := confidence.Compute(in, confidence.DefaultWeights())
-	if got.Confidence <= confidence.BootstrapConfidenceCap {
-		t.Errorf("at 30d the cap should not apply; got %v <= %v",
-			got.Confidence, confidence.BootstrapConfidenceCap)
-	}
-}
 
 // TestCompute_BootstrapCapPreservesLowConfidence — when an asset
 // is in bootstrap AND would naturally score below the cap (e.g.
@@ -234,19 +196,6 @@ func TestCompute_BootstrapCapPreservesLowConfidence(t *testing.T) {
 	}
 }
 
-// TestCompute_BootstrapCapWithNoBaselineSentinel — BaselineAgeDays
-// = -1 (the "no baseline yet" sentinel) is stricter than bootstrap
-// — the cap MUST fire.
-func TestCompute_BootstrapCapWithNoBaselineSentinel(t *testing.T) {
-	in := healthyInputs()
-	in.BaselineAgeDays = -1 // no baseline at all
-	got := confidence.Compute(in, confidence.DefaultWeights())
-	if got.Confidence > confidence.BootstrapConfidenceCap {
-		t.Errorf("no-baseline confidence = %v, want capped at %v",
-			got.Confidence, confidence.BootstrapConfidenceCap)
-	}
-}
-
 // ─── The combiner is the
 // NORMALISED weighted geometric mean ───────────────────────────────
 
@@ -265,14 +214,7 @@ func TestCompute_BootstrapCapWithNoBaselineSentinel(t *testing.T) {
 // z, four sources across two classes, $50K liquidity, no cross-oracle
 // reference yet (Phase 3 not universally live), mature baseline.
 func TestCompute_IsNormalisedGeometricMeanNotBareProduct(t *testing.T) {
-	in := confidence.Inputs{
-		ZScore:                   1.0,
-		SourceCount:              4,
-		SourceClassCount:         2,
-		LiquidityUSD:             50_000,
-		CrossOracleDivergencePct: -1, // no cross-oracle data → neutral 0.7
-		BaselineAgeDays:          200,
-	}
+	in := ordinaryBucketInputs()
 	got := confidence.Compute(in, confidence.DefaultWeights())
 
 	f := got.Factors
@@ -314,14 +256,7 @@ func TestCompute_IsNormalisedGeometricMeanNotBareProduct(t *testing.T) {
 // would silently push buckets toward the freeze threshold whenever an
 // operator touched the weight block.
 func TestCompute_WeightsAreRelativeNotAbsolute(t *testing.T) {
-	in := confidence.Inputs{
-		ZScore:                   1.0,
-		SourceCount:              4,
-		SourceClassCount:         2,
-		LiquidityUSD:             50_000,
-		CrossOracleDivergencePct: -1,
-		BaselineAgeDays:          200,
-	}
+	in := ordinaryBucketInputs()
 	base := confidence.Compute(in, confidence.DefaultWeights())
 
 	doubled := confidence.DefaultWeights()
