@@ -587,10 +587,10 @@ function AccountStatePanel({
                       <AssetLink canonical={t.asset} />
                     </td>
                     <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
-                      {stroopsToXlm(t.balance)}
+                      {xlmReadable(t.balance)}
                     </td>
                     <td className="text-ink-muted py-1.5 pr-4 text-right font-mono tabular-nums">
-                      {stroopsToXlm(t.limit)}
+                      {xlmReadable(t.limit)}
                     </td>
                     <td className="py-1.5 text-right">
                       <TrustlineUse balance={t.balance} limit={t.limit} />
@@ -611,7 +611,7 @@ function AccountStatePanel({
           <ul className="text-ink-body space-y-1 font-mono text-xs">
             {state.offers.map((o) => (
               <li key={o.offer_id}>
-                #{o.offer_id}: {stroopsToXlm(o.amount)} {o.selling} → {o.buying}{' '}
+                #{o.offer_id}: {xlmReadable(o.amount)} {o.selling} → {o.buying}{' '}
                 @ {o.price_n}/{o.price_d}
               </li>
             ))}

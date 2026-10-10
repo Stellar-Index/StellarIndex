@@ -10,11 +10,11 @@ import {
   CATEGORICAL_PALETTE,
 } from '@/components/charts/DonutChart';
 import {
-  formatBaseUnits,
   formatCompact,
   ratioPct,
   scaleBaseUnits,
   sumDecimalStrings,
+  formatUnitsReadable,
 } from '@/lib/format';
 import type { paths } from '@/api/types';
 
@@ -138,7 +138,7 @@ export function HoldersTabPanel({
                     {/* Balances are smallest-unit integer strings that can
                         exceed 2^53 (ADR-0003) — BigInt-divide first, never
                         Number(); an absent balance renders "—", not NaN. */}
-                    {formatBaseUnits(h.balance, decimals)}
+                    {formatUnitsReadable(h.balance, decimals)}
                   </td>
                   <td className="px-4 py-3">
                     <ShareBar pct={shares[i]} max={maxShare} />

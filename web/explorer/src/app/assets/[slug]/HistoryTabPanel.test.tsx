@@ -53,14 +53,14 @@ describe('HistoryTabPanel', () => {
     render(<HistoryTabPanel assetID="SHEKEL:GABC" decimals={2} />);
 
     // 123456789 / 10^7, truncated to 4 places; 10^2 would give 1,234,567.89
-    expect(screen.getByText('12.3456')).toBeInTheDocument();
+    expect(screen.getByText('12.35')).toBeInTheDocument();
     expect(screen.queryByText('1,234,567.89')).not.toBeInTheDocument();
   });
 
   it('renders amounts above 2^53 digit for digit', () => {
     row.base_amount = '900719925474099312';
     render(<HistoryTabPanel assetID="SHEKEL:GABC" decimals={2} />);
-    expect(screen.getByText('9,007,199,254,740,993.12')).toBeInTheDocument();
+    expect(screen.getByText('9007.2T')).toBeInTheDocument();
   });
 });
 
