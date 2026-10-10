@@ -165,7 +165,6 @@ user`, stop and apply the profile before a multi-hour scan.
 
 Heavy shell scripts that call `clickhouse-client` directly
 (`scripts/ops/ch-supply-flows-seed.sh`, `ch-live-catchup.sh`,
-`d3-lecur-v2-rebuild.sh`, and `ch-backfill-monitor.sh` on the far side of its
-ssh) export `STELLARINDEX_CLICKHOUSE_OPS_USER` and its password as
+and `d3-lecur-v2-rebuild.sh`) export `STELLARINDEX_CLICKHOUSE_OPS_USER` and its password as
 `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD` when set, never on argv.
 `scripts/ops/ch-ops-user-test.sh` (CI) holds them to that contract.
