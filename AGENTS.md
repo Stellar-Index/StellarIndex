@@ -98,7 +98,7 @@ error string cite "AGENTS.md invariant N" — do not renumber these.
 Evidence for each: [docs/architecture/domain-traps.md](docs/architecture/domain-traps.md).
 
 - **ALWAYS key an asset on `(code, issuer)`, a SAC address, or `native` — NEVER on code alone.**
-  A scam token can claim `USDC` (example test, `internal/api/v1/oracle_identity_gate_test.go`; no repo-wide guard).
+  A scam token can claim `USDC` (example test, `internal/api/v1/oracle_test.go`; no repo-wide guard).
 - **ALWAYS loop `canonical.AssetAliases` on every asset-id read path.** XLM has three disjoint
   identities (`native`, `crypto:XLM`, its SAC); handling one silently under-reports
   (example test, `internal/canonical/alias_registry_test.go`; no repo-wide guard).

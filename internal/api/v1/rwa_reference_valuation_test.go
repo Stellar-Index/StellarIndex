@@ -23,15 +23,29 @@ package v1_test
 // figure cannot move the first one.
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"math/big"
+	"net/http"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // newRat, addDecimal and containsFold keep the assertions below on
@@ -983,4 +997,1805 @@ func TestRWAAssets_FunnelDistinguishesACoverageGapFromARefusal(t *testing.T) {
 	if !v.Funnel.Balanced {
 		t.Errorf("funnel unbalanced: %+v", v.Funnel.Stages)
 	}
+}
+
+// TestRWAAssets_FunnelAccountsForTheWholePopulation is the headline
+// regression. A response that serves one asset must state the size of
+// the population it narrowed from and where the rest went — every
+// stage, every drop, with the arithmetic closing.
+func TestRWAAssets_FunnelAccountsForTheWholePopulation(t *testing.T) {
+	// The shape of the production deployment in miniature: most issuer
+	// accounts have never had their toml fetched, a few payloads will
+	// not decode, a few declare nothing, and of the declarations that
+	// exist the overwhelming majority name somebody else's account.
+	// The fixture materialises only the three survivors, so the
+	// pre-filter drop absorbs the rest of the bound population.
+	upstream := timescale.Sep1BoundCensus{
+		IssuersWithHomeDomain:      44376,
+		IssuersWithPayload:         14635,
+		IssuersPayloadUnreadable:   41,
+		IssuersDeclaringNothing:    2109,
+		IssuersDeclaring:           12485,
+		Entries:                    1182000,
+		EntriesMissingCode:         3140,
+		EntriesMissingIssuer:       9612,
+		EntriesNamingAnotherIssuer: 1145346,
+		EntriesBound:               23902,
+		EntriesFiltered:            23902,
+	}
+	bound := []timescale.Sep1BoundCurrency{
+		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+		rwaBound("BENJI", rwaUnknownIssuer, "franklintempleton.reallumens.com", "bond"),
+		rwaBound("USTRY", rwaScamIssuer, "stellar.us.org", "bond"),
+	}
+	dir := map[string]timescale.DirectoryEntry{
+		rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse"),
+		rwaScamIssuer: {
+			Address: rwaScamIssuer, Tags: []string{"issuer", "malicious"}, Source: "stellar-expert",
+		},
+	}
+	rows := map[string][]timescale.AssetRow{
+		rwaGoodIssuer:    {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)},
+		rwaScamIssuer:    {rwaRow("USTRY", rwaScamIssuer, sptr("1.0412"), 13705)},
+		rwaUnknownIssuer: {rwaRow("BENJI", rwaUnknownIssuer, sptr("1.1408"), 8299)},
+	}
+
+	v := getRWA(t, rwaServerWithUpstream(t, upstream, bound, dir, rows))
+	if len(v.Funnel.Stages) == 0 {
+		t.Fatal("no funnel served: the response narrows a population and must account for it")
+	}
+	checkFunnelArithmetic(t, v)
+
+	st := rwaFunnelStages(t, v)
+	// The population the surface narrows from, which the
+	// response must state.
+	if got := st["issuers_with_home_domain"].Count; got != 44376 {
+		t.Errorf("issuers_with_home_domain = %d, want 44376", got)
+	}
+	if got := st["issuers_with_sep1_attestation"].Count; got != 14635 {
+		t.Errorf("issuers_with_sep1_attestation = %d, want 14635", got)
+	}
+	// 44,376 - 14,635 = 29,741 issuer accounts whose toml has never
+	// been fetched. This is the largest single coverage lever on the
+	// surface and it belongs to an operator, not to the definition.
+	if got := rwaDropCount(st, "issuers_with_home_domain", "sep1_attestation_never_fetched"); got != 29741 {
+		t.Errorf("sep1_attestation_never_fetched = %d, want 29741", got)
+	}
+	for _, d := range st["issuers_with_home_domain"].Dropped {
+		if d.Reason == "sep1_attestation_never_fetched" && d.Actor != "operator" {
+			t.Errorf("never-fetched drop actor = %q, want operator — it is a fetch nobody ran, not a refusal", d.Actor)
+		}
+	}
+	// The two silent stages.
+	if got := rwaDropCount(st, "issuers_with_sep1_attestation", "sep1_payload_unreadable"); got != 41 {
+		t.Errorf("sep1_payload_unreadable = %d, want 41 — the swallowed-parse-error bucket", got)
+	}
+	if got := rwaDropCount(st, "issuers_with_sep1_attestation", "sep1_declares_no_currencies"); got != 2109 {
+		t.Errorf("sep1_declares_no_currencies = %d, want 2109", got)
+	}
+	// The provenance rule, which is the definition working and not a gap.
+	if got := rwaDropCount(st, "sep1_currency_entries", "entry_declares_another_issuer"); got != 1145346 {
+		t.Errorf("entry_declares_another_issuer = %d, want 1145346", got)
+	}
+	// Requirement 4's pre-filter, its own stage because it runs before
+	// requirement 3 is evaluated for those entries.
+	if got := rwaDropCount(st, "issuer_bound_entries", "no_real_world_instrument_basis"); got != 23902 {
+		t.Errorf("pre-filter drop = %d, want 23902", got)
+	}
+	// Three candidates reached the ordered evaluation: one admitted,
+	// one scam-flagged, one unrecognised.
+	if got := st["candidate_assets_evaluated"].Count; got != 3 {
+		t.Errorf("candidate_assets_evaluated = %d, want 3", got)
+	}
+	if got := rwaDropCount(st, "candidate_assets_evaluated", "issuer_scam_flagged"); got != 1 {
+		t.Errorf("issuer_scam_flagged = %d, want 1", got)
+	}
+	if got := rwaDropCount(st, "candidate_assets_evaluated", "issuer_not_independently_recognised"); got != 1 {
+		t.Errorf("issuer_not_independently_recognised = %d, want 1", got)
+	}
+	if got := st["assets_served"].Count; got != 1 || len(v.Assets) != 1 {
+		t.Errorf("assets_served = %d with %d rows, want 1/1", got, len(v.Assets))
+	}
+}
+
+// A payload past the attestation age bound is walked but not read. The
+// funnel must name it, or the issuer stage stops closing and the stale
+// population vanishes the way unreadable payloads once did.
+func TestRWAAssets_FunnelCountsStaleAttestations(t *testing.T) {
+	upstream := timescale.Sep1BoundCensus{
+		IssuersWithHomeDomain:      44376,
+		IssuersWithPayload:         14635,
+		IssuersPayloadStale:        500,
+		IssuersPayloadUnreadable:   41,
+		IssuersDeclaringNothing:    2109,
+		IssuersDeclaring:           11985,
+		Entries:                    1182000,
+		EntriesMissingCode:         3140,
+		EntriesMissingIssuer:       9612,
+		EntriesNamingAnotherIssuer: 1145346,
+		EntriesBound:               23902,
+		EntriesFiltered:            23902,
+	}
+	bound := []timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")}
+	dir := map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")}
+	rows := map[string][]timescale.AssetRow{
+		rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)},
+	}
+
+	v := getRWA(t, rwaServerWithUpstream(t, upstream, bound, dir, rows))
+	checkFunnelArithmetic(t, v)
+	st := rwaFunnelStages(t, v)
+	if got := rwaDropCount(st, "issuers_with_sep1_attestation", "sep1_attestation_stale"); got != 500 {
+		t.Errorf("sep1_attestation_stale = %d, want 500", got)
+	}
+	for _, d := range st["issuers_with_sep1_attestation"].Dropped {
+		if d.Reason == "sep1_attestation_stale" && d.Actor != "issuer" {
+			t.Errorf("stale drop actor = %q, want issuer — its domain has served nothing since", d.Actor)
+		}
+	}
+}
+
+// TestRWAAssets_FunnelSeparatesNeverFetchedFromDeclaresNothing pins the
+// distinction the surface most needs and least had. An issuer whose
+// stellar.toml nobody has fetched, one whose payload will not decode,
+// and one that decoded and declares nothing are three different
+// findings with three different owners. Collapsed into one silent
+// `continue`, they are indistinguishable — and the first of the three
+// is the one an operator can fix today.
+func TestRWAAssets_FunnelSeparatesNeverFetchedFromDeclaresNothing(t *testing.T) {
+	// IssuersFetchedWithoutPayload is zero here on purpose: this census
+	// says no domain has been reached and come back empty, so all six
+	// issuers holding no payload really are a fetch nobody has run.
+	upstream := timescale.Sep1BoundCensus{
+		IssuersWithHomeDomain:    10,
+		IssuersWithPayload:       4,
+		IssuersPayloadUnreadable: 1,
+		IssuersDeclaringNothing:  2,
+		IssuersDeclaring:         1,
+	}
+	v := getRWA(t, rwaServerWithUpstream(t, upstream,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 3)}},
+	))
+	checkFunnelArithmetic(t, v)
+
+	st := rwaFunnelStages(t, v)
+	byOwner := map[string]int{
+		"never_fetched":    rwaDropCount(st, "issuers_with_home_domain", "sep1_attestation_never_fetched"),
+		"unreadable":       rwaDropCount(st, "issuers_with_sep1_attestation", "sep1_payload_unreadable"),
+		"declares_nothing": rwaDropCount(st, "issuers_with_sep1_attestation", "sep1_declares_no_currencies"),
+	}
+	want := map[string]int{"never_fetched": 6, "unreadable": 1, "declares_nothing": 2}
+	for k, w := range want {
+		if byOwner[k] != w {
+			t.Errorf("%s = %d, want %d — the three fates must stay apart (%+v)", k, byOwner[k], w, byOwner)
+		}
+	}
+	if got := st["issuers_declaring_currencies"].Count; got != 1 {
+		t.Errorf("issuers_declaring_currencies = %d, want 1", got)
+	}
+}
+
+// TestRWAAssets_FunnelDoesNotCallAReachedDomainUnfetched is the
+// regression for a label that was false on both halves.
+//
+// The gap between the issuers publishing a domain and the issuers
+// holding a payload was published entirely as
+// `sep1_attestation_never_fetched`, actor `operator` — a backlog
+// somebody here could clear. Measured on production the gap
+// was 40,838 issuers and exactly ONE of them had never been attempted:
+// an overnight drain had already reached the other 40,837, and their
+// domains served nothing storable (quantumstellar.vercel.app,
+// 5138.8888skulls.com, rivalcoins.io — dead, parked, or publishing no
+// SEP-1 document). The surface named all of them an operator's unfetched
+// backlog, overstating both the coverage within reach and this side's
+// share of the gap, on a page whose whole purpose is saying who can
+// move a number.
+//
+// The fixture is that production shape. A fetch that ran and came back
+// empty belongs to the issuer; only the genuinely untried one belongs
+// to the operator.
+func TestRWAAssets_FunnelDoesNotCallAReachedDomainUnfetched(t *testing.T) {
+	upstream := timescale.Sep1BoundCensus{
+		IssuersWithHomeDomain: 76658,
+		IssuersWithPayload:    35820,
+		// Reached, and holding no payload all the same.
+		IssuersFetchedWithoutPayload: 40837,
+		IssuersPayloadUnreadable:     41,
+		IssuersDeclaringNothing:      2109,
+		IssuersDeclaring:             33670,
+	}
+	v := getRWA(t, rwaServerWithUpstream(t, upstream,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 3)}},
+	))
+	// The split must not buy its honesty by breaking the accounting:
+	// the two drops still have to account exactly for the difference to
+	// the next stage, and `balanced` still has to be true.
+	checkFunnelArithmetic(t, v)
+
+	st := rwaFunnelStages(t, v)
+	actors := map[string]string{}
+	counts := map[string]int{}
+	for _, d := range st["issuers_with_home_domain"].Dropped {
+		actors[d.Reason] = d.Actor
+		counts[d.Reason] = d.Count
+	}
+	if got := counts["domain_served_no_sep1_attestation"]; got != 40837 {
+		t.Errorf("domain_served_no_sep1_attestation = %d, want 40837 — every one of these domains was "+
+			"reached and served no usable SEP-1 (drops: %+v)", got, st["issuers_with_home_domain"].Dropped)
+	}
+	if got := actors["domain_served_no_sep1_attestation"]; got != "issuer" {
+		t.Errorf("reached-domain drop actor = %q, want issuer — nobody here can fetch a file that is not "+
+			"published, and attributing it to the operator advertises coverage that does not exist", got)
+	}
+	if got := counts["sep1_attestation_never_fetched"]; got != 1 {
+		t.Errorf("sep1_attestation_never_fetched = %d, want 1 — only the genuinely untried issuer is a "+
+			"backlog an operator can clear", got)
+	}
+	if got := actors["sep1_attestation_never_fetched"]; got != "operator" {
+		t.Errorf("never-fetched drop actor = %q, want operator", got)
+	}
+	if got := st["issuers_with_sep1_attestation"].Count; got != 35820 {
+		t.Errorf("issuers_with_sep1_attestation = %d, want 35820", got)
+	}
+}
+
+// TestRWAAssets_FunnelSaysUnbalancedWhenTheFetchSplitCannotHold — the
+// two halves of the domain-bearing population are read by different
+// queries, so they can contradict each other. The wire numbers are
+// clamped (a drop larger than the gap it explains is nonsense to
+// publish), and the clamp must not be able to make an impossible census
+// read as sound: `balanced` comes from the census check as well as the
+// stage arithmetic, and the census check bounds the two counts against
+// the population independently.
+func TestRWAAssets_FunnelSaysUnbalancedWhenTheFetchSplitCannotHold(t *testing.T) {
+	upstream := timescale.Sep1BoundCensus{
+		// 4 payloads plus 8 reached-and-empty is 12 issuers, out of a
+		// domain-bearing population of 10. No deployment looks like this.
+		IssuersWithHomeDomain:        10,
+		IssuersWithPayload:           4,
+		IssuersFetchedWithoutPayload: 8,
+		IssuersPayloadUnreadable:     1,
+		IssuersDeclaringNothing:      2,
+		IssuersDeclaring:             1,
+	}
+	v := getRWA(t, rwaServerWithUpstream(t, upstream,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 3)}},
+	))
+	if v.Funnel.Balanced {
+		t.Errorf("funnel.balanced = true over a census whose fetch split exceeds its own population: %+v",
+			v.Funnel.Stages)
+	}
+}
+
+// TestRWAAssets_DuplicateDeclarationIsServedOnceAndCounted — SEP-1 does
+// not forbid a toml declaring the same asset twice, and identity here is
+// (code, issuer), so the second declaration is the SAME asset. Serving
+// it twice would put its market cap into the summary, the class total
+// and the issuer total twice each.
+func TestRWAAssets_DuplicateDeclarationIsServedOnceAndCounted(t *testing.T) {
+	bound := []timescale.Sep1BoundCurrency{
+		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+	}
+	v := getRWA(t, rwaServer(t, bound,
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)}},
+	))
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v, want ONE row — (code, issuer) is the identity, so the second declaration "+
+			"is the same asset and serving it twice doubles its market cap in every total", rwaAssetIDs(v))
+	}
+	if v.Summary.Assets != 1 {
+		t.Errorf("summary.assets = %d, want 1", v.Summary.Assets)
+	}
+	// The exact total, not an approximation: 12336218000000 stroops of
+	// supply at 1.0412 is 1284507193.16 dollars, once.
+	if v.Summary.MarketCapUSD == nil {
+		t.Fatal("summary.market_cap_usd absent, want the single asset's cap")
+	}
+	single := *v.Summary.MarketCapUSD
+	for _, g := range v.ByClass {
+		if g.Assets != 1 {
+			t.Errorf("by_class[%s].assets = %d, want 1", g.Class, g.Assets)
+		}
+		if g.MarketCapUSD == nil || *g.MarketCapUSD != single {
+			t.Errorf("by_class[%s].market_cap_usd = %v, want the same %q the summary carries",
+				g.Class, g.MarketCapUSD, single)
+		}
+	}
+	for _, i := range v.ByIssuer {
+		if i.Assets != 1 {
+			t.Errorf("by_issuer[%s].assets = %d, want 1", i.Issuer, i.Assets)
+		}
+	}
+	st := rwaFunnelStages(t, v)
+	if got := rwaDropCount(st, "candidate_assets_evaluated", "duplicate_declaration_of_the_same_asset"); got != 1 {
+		t.Errorf("duplicate drop = %d, want 1 — a deduplicated candidate is still a candidate that entered", got)
+	}
+	checkFunnelArithmetic(t, v)
+}
+
+// TestRWAAssets_AdmittedButNeverObservedIsCounted — an asset can meet
+// every requirement and still have no row in the catalogue, because the
+// index has never seen it on chain. It is correctly absent from the set;
+// it was NOT correct for it to vanish without a count, which made
+// "admitted" and "served" silently different numbers.
+func TestRWAAssets_AdmittedButNeverObservedIsCounted(t *testing.T) {
+	bound := []timescale.Sep1BoundCurrency{
+		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+		rwaBound("NEVERSEEN", rwaGoodIssuer, "etherfuse.com", "bond"),
+	}
+	v := getRWA(t, rwaServer(t, bound,
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		// The catalogue holds USTRY only.
+		map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)}},
+	))
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v, want only the observed one", rwaAssetIDs(v))
+	}
+	st := rwaFunnelStages(t, v)
+	if got := st["assets_admitted"].Count; got != 2 {
+		t.Errorf("assets_admitted = %d, want 2 — both met the definition", got)
+	}
+	if got := rwaDropCount(st, "assets_admitted", "admitted_but_never_observed_on_chain"); got != 1 {
+		t.Errorf("never-observed drop = %d, want 1 — admitted and served were silently different numbers", got)
+	}
+	checkFunnelArithmetic(t, v)
+}
+
+// TestRWAAssets_IssuerAssetPageTruncationIsReported — the per-issuer
+// listing read is capped, and the cap has always been DOCUMENTED as
+// reported ("the cap is reported the same way the issuer cap is") while
+// nothing reported it. An issuer with more classic assets than one page
+// has its tail unread, so a member in that tail disappears from the set
+// with nothing to show for it.
+//
+// The count is issuers-with-an-unread-tail, not assets, so it is served
+// as its own signal and kept out of the asset arithmetic. Counting it
+// as assets would make the funnel close by inventing a number.
+func TestRWAAssets_IssuerAssetPageTruncationIsReported(t *testing.T) {
+	const page = 500
+	rows := make([]timescale.AssetRow, 0, page)
+	rows = append(rows, rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312))
+	for i := 1; i < page; i++ {
+		rows = append(rows, rwaRow("FILLER"+string(rune('A'+i%26))+itoaRWA(i), rwaGoodIssuer, sptr("0.01"), int64(i)))
+	}
+	v := getRWA(t, rwaServer(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{rwaGoodIssuer: rows},
+	))
+	st := rwaFunnelStages(t, v)
+	if got := rwaDropCount(st, "assets_admitted", "issuer_asset_page_truncated"); got != 1 {
+		t.Errorf("issuer_asset_page_truncated = %d, want 1 — a full page means an unread tail, and a member "+
+			"in it would vanish from the set unreported", got)
+	}
+	// The signal must not be allowed into the asset subtraction.
+	checkFunnelArithmetic(t, v)
+}
+
+// TestRWAAssets_FunnelIsNotServedAsZerosWhenUnmeasured — when the
+// attestation read fails there is no population to report. Publishing a
+// funnel of zeros would read as a measured network with nothing in it,
+// which is the same lie as a market cap of "0.00".
+func TestRWAAssets_FunnelIsNotServedAsZerosWhenUnmeasured(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Sep1Cache:    &stubSep1BoundReader{err: errRWAScan},
+		Directory:    &stubDirectoryReader{},
+		AssetsReader: &rwaListStub{stubAssetsReaderExt: &stubAssetsReaderExt{}},
+	})
+	v := getRWA(t, srv)
+	if len(v.Funnel.Stages) != 0 {
+		t.Errorf("funnel served %d stages for an unmeasured population: %+v", len(v.Funnel.Stages), v.Funnel.Stages)
+	}
+	if v.Funnel.Balanced {
+		t.Error("funnel.balanced = true for a population that was never walked")
+	}
+	if v.Funnel.Basis == "" {
+		t.Error("funnel.basis is empty — the absence has to be stated, not implied by empty stages")
+	}
+}
+
+// TestRWAAssets_FunnelSaysUnbalancedWhenTheCensusDoesNot — an
+// accounting that cannot be reconciled must SAY so on the wire. A
+// reader silently failing to make the numbers meet is the outcome the
+// whole structure exists to prevent, and it is worse than publishing no
+// numbers at all.
+//
+// The fixture is a census that cannot describe any deployment: more
+// issuers carrying a fetched payload than carrying a home_domain, when
+// the payload is fetched FROM the home_domain.
+func TestRWAAssets_FunnelSaysUnbalancedWhenTheCensusDoesNot(t *testing.T) {
+	upstream := timescale.Sep1BoundCensus{
+		// Fewer issuers with a home_domain than with a payload, which
+		// cannot happen: a payload is fetched FROM a home_domain.
+		IssuersWithHomeDomain:   1,
+		IssuersWithPayload:      9,
+		IssuersDeclaringNothing: 8,
+		IssuersDeclaring:        1,
+	}
+	v := getRWA(t, rwaServerWithUpstream(t, upstream,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 3)}},
+	))
+	if v.Funnel.Balanced {
+		t.Errorf("funnel.balanced = true over a census that cannot be reconciled: %+v", v.Funnel.Stages)
+	}
+}
+
+// TestRWAAssets_RefusalTallyStaysConsistentWithTheFunnel — the two views
+// answer different questions (an ordered requirement tally versus the
+// whole narrowing) and must never disagree about the requirement
+// refusals they both report.
+func TestRWAAssets_RefusalTallyStaysConsistentWithTheFunnel(t *testing.T) {
+	bound := []timescale.Sep1BoundCurrency{
+		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+		rwaBound("USTRY", rwaScamIssuer, "stellar.us.org", "bond"),
+		rwaBound("BENJI", rwaUnknownIssuer, "franklintempleton.reallumens.com", "bond"),
+		rwaBound("MEME", rwaGoodIssuer, "etherfuse.com", "crypto"),
+	}
+	dir := map[string]timescale.DirectoryEntry{
+		rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse"),
+		rwaScamIssuer: {Address: rwaScamIssuer, Tags: []string{"issuer", "malicious"}, Source: "stellar-expert"},
+	}
+	rows := map[string][]timescale.AssetRow{
+		rwaGoodIssuer: {
+			rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312),
+			rwaRow("MEME", rwaGoodIssuer, sptr("0.02"), 12),
+		},
+		rwaScamIssuer:    {rwaRow("USTRY", rwaScamIssuer, sptr("1.0412"), 13705)},
+		rwaUnknownIssuer: {rwaRow("BENJI", rwaUnknownIssuer, sptr("1.1408"), 8299)},
+	}
+	v := getRWA(t, rwaServer(t, bound, dir, rows))
+	checkFunnelArithmetic(t, v)
+
+	refused := map[string]int{}
+	for _, r := range v.Refused {
+		refused[r.Reason] = r.Assets
+	}
+	st := rwaFunnelStages(t, v)
+	for _, reason := range []string{"issuer_scam_flagged", "issuer_not_independently_recognised"} {
+		if got, want := rwaDropCount(st, "candidate_assets_evaluated", reason), refused[reason]; got != want {
+			t.Errorf("%s: funnel says %d, refused[] says %d — the two views must never disagree",
+				reason, got, want)
+		}
+	}
+	// The requirement-4 pre-filter appears in BOTH views on purpose: as
+	// its own funnel stage (where it happened) and in refused[] under
+	// requirement 4 (which requirement it is). The funnel must not
+	// double-count it into the evaluated stage.
+	if got := rwaDropCount(st, "issuer_bound_entries", "no_real_world_instrument_basis"); got != 1 {
+		t.Errorf("pre-filter stage = %d, want 1 (the crypto-anchored token)", got)
+	}
+	if got := rwaDropCount(st, "candidate_assets_evaluated", "no_real_world_instrument_basis"); got != 0 {
+		t.Errorf("evaluated stage also counts %d under requirement 4 — the pre-filter drop is counted twice "+
+			"and the funnel cannot close", got)
+	}
+	if refused["no_real_world_instrument_basis"] != 1 {
+		t.Errorf("refused[no_real_world_instrument_basis] = %d, want 1",
+			refused["no_real_world_instrument_basis"])
+	}
+}
+
+// TestRWAAssets_ChargesOneTokenPerListingRead: /v1/rwa/assets runs one
+// uncached /v1/assets listing read (and its pipeline) per member issuer
+// on every request, so two member issuers cost two tokens, not the one
+// the pre-dispatch charge takes.
+func TestRWAAssets_ChargesOneTokenPerListingRead(t *testing.T) {
+	ts, reader := newRWALimitedServer(t, 100)
+	resp := mustGet(t, ts.URL+"/v1/rwa/assets")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := reader.lists.Load(); got != 2 {
+		t.Fatalf("listing reads = %d, want 2 (one per member issuer)", got)
+	}
+	if got := rwaRemaining(t, ts, resp); got != 98 {
+		t.Fatalf("X-RateLimit-Remaining = %d, want 98", got)
+	}
+}
+
+// TestRWAAssets_ExhaustsTheBucketInLimitOverCostRequests: a 4-token
+// budget buys two 2-token requests, and the third is refused with a
+// truthful 429 before any listing read.
+func TestRWAAssets_ExhaustsTheBucketInLimitOverCostRequests(t *testing.T) {
+	ts, reader := newRWALimitedServer(t, 4)
+	for i := 1; i <= 2; i++ {
+		if resp := mustGet(t, ts.URL+"/v1/rwa/assets"); resp.StatusCode != http.StatusOK {
+			t.Fatalf("request %d: status = %d, want 200", i, resp.StatusCode)
+		}
+	}
+	readsBefore := reader.lists.Load()
+
+	resp := mustGet(t, ts.URL+"/v1/rwa/assets")
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("request 3: status = %d, want 429", resp.StatusCode)
+	}
+	if got := resp.Header.Get("X-RateLimit-Limit"); got != "4" {
+		t.Fatalf("X-RateLimit-Limit = %q, want 4", got)
+	}
+	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "0" {
+		t.Fatalf("X-RateLimit-Remaining = %q, want 0", got)
+	}
+	if resp.Header.Get("Retry-After") == "" {
+		t.Fatal("429 without Retry-After")
+	}
+	if got := reader.lists.Load(); got != readsBefore {
+		t.Fatalf("a refused request made %d listing reads, want 0", got-readsBefore)
+	}
+}
+
+// TestRWAAssets_ServesTheDiscountToTheInstrumentValuation is the
+// end-to-end positive path: an admitted tokenized treasury, an
+// independent oracle's valuation of the instrument, and the gap between
+// that and what the Stellar market pays.
+func TestRWAAssets_ServesTheDiscountToTheInstrumentValuation(t *testing.T) {
+	srv := rwaServerWithOracle(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{
+			// 1.02033610 against a 1.07403800 valuation — a 5% discount.
+			rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.02033610"), 346312)},
+		},
+		rwaOracle(t, rwaOracleRow(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8)),
+	)
+	v := getRWA(t, srv)
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v", rwaAssetIDs(v))
+	}
+	a := v.Assets[0]
+	if a.Reference == nil {
+		t.Fatal("no independent valuation served for an instrument an oracle prices")
+	}
+	if a.Reference.PriceUSD != "1.07403800" || a.Reference.Source != "redstone" {
+		t.Errorf("reference = %+v, want the oracle figure verbatim from its publisher", a.Reference)
+	}
+	if a.Reference.Feed != "rwa:USTRY" || a.Reference.Quote != "fiat:USD" {
+		t.Errorf("reference provenance = %s/%s — the instrument and its denominator travel with the figure",
+			a.Reference.Feed, a.Reference.Quote)
+	}
+	if a.Premium.Status != v1.RWAPremiumPublished {
+		t.Fatalf("premium status = %q, want published", a.Premium.Status)
+	}
+	if a.Premium.Pct == nil || *a.Premium.Pct != "-5.0000" {
+		t.Errorf("premium pct = %v, want -5.0000", a.Premium.Pct)
+	}
+	if v.Summary.AssetsWithReference != 1 || v.Summary.AssetsCompared != 1 {
+		t.Errorf("summary reference/compared = %d/%d, want 1/1",
+			v.Summary.AssetsWithReference, v.Summary.AssetsCompared)
+	}
+	if !strings.Contains(v.Summary.Basis, "issuer declares") {
+		t.Errorf("the basis does not state what the comparison rests on: %q", v.Summary.Basis)
+	}
+	// The curated bindings travel with the rows so a consumer can audit
+	// every pair this surface is willing to compare.
+	var bound bool
+	for _, b := range v.Definition.BoundInstruments {
+		if b.Code == "USTRY" && b.Issuer == rwaGoodIssuer && b.Feed == "rwa:USTRY" {
+			bound = true
+		}
+	}
+	if !bound {
+		t.Errorf("the binding behind the served figure is not in definition.bound_instruments: %+v",
+			v.Definition.BoundInstruments)
+	}
+}
+
+// TestRWAAssets_ImpersonatorGetsNoInstrumentValuation is the
+// impersonation case in its sharpest form. An issuer flagged AFTER
+// admission keeps its row — this surface hides nothing it admitted — but
+// gets no valuation of any kind, INCLUDING a third party's. Handing an
+// impersonator the real instrument's oracle NAV would publish a bigger
+// claim than the one the flag suppressed.
+func TestRWAAssets_ImpersonatorGetsNoInstrumentValuation(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
+			rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+		}},
+		Directory: &rwaSkewedDirectory{
+			membership: timescale.DirectoryEntry{
+				Address: rwaGoodIssuer, Name: "Etherfuse",
+				Tags: []string{"issuer"}, Source: "stellar-expert",
+			},
+			rowFill: timescale.DirectoryEntry{
+				Address: rwaGoodIssuer, Name: "Etherfuse",
+				Tags: []string{"issuer", "malicious"}, Source: "stellar-expert",
+			},
+		},
+		Oracle: rwaOracle(t, rwaOracleRow(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8)),
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer: map[string][]timescale.AssetRow{
+				rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.02033610"), 346312)},
+			},
+			supply: map[string]string{"USTRY-" + rwaGoodIssuer: "12336218000000"},
+		},
+	})
+	v := getRWA(t, srv)
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v — an admitted row is not removed when the flag lands", rwaAssetIDs(v))
+	}
+	a := v.Assets[0]
+	if a.Valuation.Status != "withheld_issuer_flagged" {
+		t.Fatalf("valuation status = %q, want withheld_issuer_flagged", a.Valuation.Status)
+	}
+	if a.Reference != nil {
+		t.Errorf("a flagged issuer's token was handed an independent instrument valuation: %+v", a.Reference)
+	}
+	if a.Premium.Status != v1.RWAPremiumIssuerFlagged {
+		t.Errorf("premium status = %q, want %q", a.Premium.Status, v1.RWAPremiumIssuerFlagged)
+	}
+	if a.Premium.Pct != nil {
+		t.Errorf("premium pct = %q on a flagged issuer", *a.Premium.Pct)
+	}
+	if v.Summary.AssetsWithReference != 0 || v.Summary.AssetsCompared != 0 {
+		t.Errorf("summary counted a flagged row as valued: reference/compared = %d/%d",
+			v.Summary.AssetsWithReference, v.Summary.AssetsCompared)
+	}
+}
+
+// TestRWAAssets_UnpricedAssetIsNotComparedToZero. An instrument no
+// Stellar market prices keeps its independent valuation and reports the
+// comparison as unmade. A premium of "0" there would read as "trades at
+// par", which is the one reading that is certainly wrong.
+func TestRWAAssets_UnpricedAssetIsNotComparedToZero(t *testing.T) {
+	srv := rwaServerWithOracle(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("TESOURO", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{
+			rwaGoodIssuer: {rwaRow("TESOURO", rwaGoodIssuer, nil, 13804)},
+		},
+		rwaOracle(t, rwaOracleRow(t, "redstone", "rwa:TESOURO", "fiat:USD", "24538100", 8)),
+	)
+	v := getRWA(t, srv)
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v", rwaAssetIDs(v))
+	}
+	a := v.Assets[0]
+	if a.Valuation.Status != "unpriced" || a.Valuation.PriceUSD != nil {
+		t.Fatalf("valuation = %+v, want unpriced with no figure", a.Valuation)
+	}
+	if a.Reference == nil || a.Reference.PriceUSD != "0.24538100" {
+		t.Fatalf("reference = %+v — an unpriced token still has an independent valuation", a.Reference)
+	}
+	if a.Premium.Status != v1.RWAPremiumNoMarketPrice {
+		t.Errorf("premium status = %q, want %q", a.Premium.Status, v1.RWAPremiumNoMarketPrice)
+	}
+	if a.Premium.Pct != nil {
+		t.Errorf("premium pct = %q, want absent — an unmade comparison is not par", *a.Premium.Pct)
+	}
+	if v.Summary.AssetsWithReference != 1 || v.Summary.AssetsCompared != 0 {
+		t.Errorf("summary reference/compared = %d/%d, want 1/0",
+			v.Summary.AssetsWithReference, v.Summary.AssetsCompared)
+	}
+}
+
+// TestRWAAssets_SpotFeedIsNotServedAsATokenValuation carries the
+// unit-scope refusal through the handler. `rwa:XAU` is spot gold per
+// troy ounce; a token coded XAU is a token of unstated size, and their
+// ratio published as a percentage would read as a 99.99% discount on an
+// ordinary token.
+func TestRWAAssets_SpotFeedIsNotServedAsATokenValuation(t *testing.T) {
+	srv := rwaServerWithOracle(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("XAU", rwaGoodIssuer, "etherfuse.com", "commodity")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{
+			rwaGoodIssuer: {rwaRow("XAU", rwaGoodIssuer, sptr("0.50000000"), 1438878)},
+		},
+		rwaOracle(t, rwaOracleRow(t, "reflector-fx", "rwa:XAU", "fiat:USD", "440086022830869146", 14)),
+	)
+	v := getRWA(t, srv)
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v", rwaAssetIDs(v))
+	}
+	a := v.Assets[0]
+	if a.Reference != nil {
+		t.Errorf("a per-troy-ounce spot price was served as a token's valuation: %+v", a.Reference)
+	}
+	if a.Premium.Status != v1.RWAPremiumNotInstrumentScoped {
+		t.Errorf("premium status = %q, want %q", a.Premium.Status, v1.RWAPremiumNotInstrumentScoped)
+	}
+	if a.Premium.Pct != nil {
+		t.Errorf("premium pct = %q — a unit conversion must never be served as a discount", *a.Premium.Pct)
+	}
+}
+
+// TestRWAAssets_ReferenceSnapshotIsCachedNotRefetchedPerRequest — the
+// stream read is a hypertable scan over every active oracle feed, so one
+// snapshot must serve the whole set rather than one read per request.
+func TestRWAAssets_ReferenceSnapshotIsCachedNotRefetchedPerRequest(t *testing.T) {
+	oracle := rwaOracle(t, rwaOracleRow(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8))
+	srv := rwaServerWithOracle(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{
+			rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.02033610"), 1)},
+		},
+		oracle,
+	)
+	ts := httpTestServer(t, srv)
+	for range 3 {
+		resp := mustGet(t, ts.URL+"/v1/rwa/assets")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d", resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+	}
+	if oracle.calls != 1 {
+		t.Errorf("LatestOracleStreams called %d times; the TTL cache should scan once", oracle.calls)
+	}
+}
+
+// TestRWAAssets_NoOracleReaderStillServesTheSet. The reference is an
+// addition to the surface, not a precondition for it: a deployment
+// without an oracle reader serves the set with the comparison reported
+// as unavailable — never as a zero, never as an error.
+func TestRWAAssets_NoOracleReaderStillServesTheSet(t *testing.T) {
+	srv := rwaServer(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{
+			rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)},
+		},
+	)
+	v := getRWA(t, srv)
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v", rwaAssetIDs(v))
+	}
+	a := v.Assets[0]
+	if a.Reference != nil {
+		t.Errorf("reference served with no oracle wired: %+v", a.Reference)
+	}
+	if a.Premium.Status != v1.RWAPremiumReferenceUnavailable {
+		t.Errorf("premium status = %q, want %q — a deployment that cannot read the oracles "+
+			"has not learned that no oracle publishes this instrument",
+			a.Premium.Status, v1.RWAPremiumReferenceUnavailable)
+	}
+	if a.Premium.Pct != nil {
+		t.Errorf("premium pct = %q with no oracle wired", *a.Premium.Pct)
+	}
+	if a.Valuation.Status != "published" {
+		t.Errorf("valuation status = %q — the set does not depend on the oracle", a.Valuation.Status)
+	}
+}
+
+// TestRWAAssets_FailedOracleReadIsNotServedAsAnAbsence is D2 through the
+// real handler. A reader wired but erroring is the ordinary production
+// failure — a refused connection, a timed-out scan — and it must not
+// publish "no oracle publishes a valuation for this instrument" on every
+// row. From process start until the first successful read there is
+// nothing to carry forward, so this is exactly the window in which the
+// wrong status would be served.
+func TestRWAAssets_FailedOracleReadIsNotServedAsAnAbsence(t *testing.T) {
+	failing := &rwaOracleStub{
+		stubOracleReader: &stubOracleReader{},
+		err:              errors.New("dial tcp 127.0.0.1:5432: connection refused"),
+	}
+	srv := rwaServerWithOracle(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{
+			rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)},
+		},
+		failing,
+	)
+	v := getRWA(t, srv)
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v — the set is served whatever the oracles do", rwaAssetIDs(v))
+	}
+	a := v.Assets[0]
+	if a.Premium.Status != v1.RWAPremiumReferenceUnavailable {
+		t.Errorf("premium status = %q, want %q", a.Premium.Status, v1.RWAPremiumReferenceUnavailable)
+	}
+	if a.Premium.Status == v1.RWAPremiumNoReference {
+		t.Error("a failed read was published as a finding about what the oracles carry")
+	}
+	if a.Reference != nil || a.Premium.Pct != nil {
+		t.Errorf("a figure was served from a failed read: ref=%+v pct=%v", a.Reference, a.Premium.Pct)
+	}
+	if v.Summary.AssetsWithReference != 0 || v.Summary.AssetsCompared != 0 {
+		t.Errorf("summary reference/compared = %d/%d on a failed read",
+			v.Summary.AssetsWithReference, v.Summary.AssetsCompared)
+	}
+}
+
+// TestRWAAssets_ReferenceIsBoundToTheIssuerNotTheCode is the identity
+// rule this whole surface is built on, applied to the figure the last
+// change added.
+//
+// Two recognised issuers each publish a domain-bound SEP-1 entry for
+// USTRY. One is the issuer whose instrument the oracle feed tracks; the
+// other is an unrelated token that happens to share the ticker. A join
+// on the code alone answers BOTH with the same treasury valuation, and
+// the unrelated token — trading at $0.20 — is published at an 81%
+// discount to a security it has nothing to do with.
+//
+// That is the attacker-authored-pricing class in a new coordinate:
+// identity is (code, issuer), never the code alone.
+func TestRWAAssets_ReferenceIsBoundToTheIssuerNotTheCode(t *testing.T) {
+	srv := rwaServerWithOracle(t,
+		[]timescale.Sep1BoundCurrency{
+			rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+			rwaBound("USTRY", rwaOtherRecognisedIssuer, "example.test", "bond"),
+		},
+		map[string]timescale.DirectoryEntry{
+			rwaGoodIssuer:            recognisedIssuer(rwaGoodIssuer, "Etherfuse"),
+			rwaOtherRecognisedIssuer: recognisedIssuer(rwaOtherRecognisedIssuer, "Someone Else"),
+		},
+		map[string][]timescale.AssetRow{
+			rwaGoodIssuer:            {rwaRow("USTRY", rwaGoodIssuer, sptr("1.02033610"), 346312)},
+			rwaOtherRecognisedIssuer: {rwaRow("USTRY", rwaOtherRecognisedIssuer, sptr("0.20000000"), 91)},
+		},
+		rwaOracle(t, rwaOracleRow(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8)),
+	)
+	v := getRWA(t, srv)
+	if len(v.Assets) != 2 {
+		t.Fatalf("assets = %v, want both issuers' tokens", rwaAssetIDs(v))
+	}
+	var other *v1.RWAAsset
+	for i := range v.Assets {
+		if v.Assets[i].Issuer == rwaOtherRecognisedIssuer {
+			other = &v.Assets[i]
+		}
+	}
+	if other == nil {
+		t.Fatalf("the second issuer's token is missing: %v", rwaAssetIDs(v))
+	}
+	if other.Reference != nil {
+		t.Errorf("an unrelated issuer's token was given the instrument's valuation on a code match: %+v",
+			other.Reference)
+	}
+	if other.Premium.Pct != nil {
+		t.Errorf("premium pct = %q — a false claim about a security this token has nothing to do with",
+			*other.Premium.Pct)
+	}
+	if other.Premium.Status != v1.RWAPremiumNotBound {
+		t.Errorf("premium status = %q, want %q", other.Premium.Status, v1.RWAPremiumNotBound)
+	}
+}
+
+// TestRWAAssets_ReferenceRefusesAnUnboundIssuerForABoundCode — the code-keyed join
+// folded case, so XAUM matched the XAUm feed. A binding names the exact
+// (code, issuer) the chain carries; a case variant under an unbound
+// issuer is a different token.
+func TestRWAAssets_ReferenceRefusesAnUnboundIssuerForABoundCode(t *testing.T) {
+	srv := rwaServerWithOracle(t,
+		[]timescale.Sep1BoundCurrency{
+			rwaBound("CETES", rwaOtherRecognisedIssuer, "example.test", "bond"),
+		},
+		map[string]timescale.DirectoryEntry{
+			rwaOtherRecognisedIssuer: recognisedIssuer(rwaOtherRecognisedIssuer, "Someone Else"),
+		},
+		map[string][]timescale.AssetRow{
+			rwaOtherRecognisedIssuer: {rwaRow("CETES", rwaOtherRecognisedIssuer, sptr("0.20000000"), 91)},
+		},
+		rwaOracle(t, rwaOracleRow(t, "redstone", "rwa:CETES", "fiat:USD", "6988900", 8)),
+	)
+	v := getRWA(t, srv)
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v", rwaAssetIDs(v))
+	}
+	if v.Assets[0].Reference != nil {
+		t.Errorf("an unbound issuer received a bound instrument's valuation: %+v", v.Assets[0].Reference)
+	}
+	if v.Assets[0].Premium.Status != v1.RWAPremiumNotBound {
+		t.Errorf("premium status = %q, want %q", v.Assets[0].Premium.Status, v1.RWAPremiumNotBound)
+	}
+}
+
+// TestRWAAssets_AdmitsADeclaredAndRecognisedAsset is the positive path:
+// a classic asset whose issuer-bound SEP-1 entry declares `bond` and
+// whose issuer the curated directory recognises is served with its
+// valuation and the evidence that admitted it.
+func TestRWAAssets_AdmitsADeclaredAndRecognisedAsset(t *testing.T) {
+	srv := rwaServer(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{
+			rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)},
+		},
+	)
+	v := getRWA(t, srv)
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v, want exactly USTRY", rwaAssetIDs(v))
+	}
+	a := v.Assets[0]
+	if a.AssetID != "USTRY-"+rwaGoodIssuer {
+		t.Errorf("asset_id = %q", a.AssetID)
+	}
+	if a.Issuer != rwaGoodIssuer {
+		t.Errorf("issuer = %q — identity must carry the G-address, never the code alone", a.Issuer)
+	}
+	if a.Basis != "sep1_anchor_declaration" || a.AnchorClass != "bond" {
+		t.Errorf("basis/class = %q/%q, want sep1_anchor_declaration/bond", a.Basis, a.AnchorClass)
+	}
+	if a.IssuerDirectoryName != "Etherfuse" {
+		t.Errorf("issuer_directory_name = %q — the independent recognition must be shown", a.IssuerDirectoryName)
+	}
+	if a.HomeDomain != "etherfuse.com" {
+		t.Errorf("home_domain = %q", a.HomeDomain)
+	}
+	if a.FirstSeenLedger != 55008233 {
+		t.Errorf("first_seen_ledger = %d — the coverage claim needs the genesis-complete first sighting", a.FirstSeenLedger)
+	}
+	if v.Summary.Assets != 1 || v.Summary.Issuers != 1 {
+		t.Errorf("summary assets/issuers = %d/%d, want 1/1", v.Summary.Assets, v.Summary.Issuers)
+	}
+	if v.Definition.DocumentationURL == "" || len(v.Definition.Requirements) != 4 {
+		t.Errorf("definition not served with the rows: %+v", v.Definition)
+	}
+}
+
+// TestRWAAssets_FullIssuerPageMakesTheTotalALowerBound pins
+// The scan-cap rule on the classic arm: an issuer whose listing page fills
+// may hold a member in the unread tail, so a total over the served rows is
+// partial even when every one of them is valued.
+func TestRWAAssets_FullIssuerPageMakesTheTotalALowerBound(t *testing.T) {
+	page := []timescale.AssetRow{rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)}
+	for i := len(page); i < 500; i++ {
+		page = append(page, rwaRow(fmt.Sprintf("FILL%03d", i), rwaGoodIssuer, nil, 1))
+	}
+	v := getRWA(t, rwaServer(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{rwaGoodIssuer: page},
+	))
+	if len(v.Assets) != 1 || v.Summary.AssetsUnvalued != 0 || v.Summary.MarketCapUSD == nil {
+		t.Fatalf("assets = %v unvalued = %d cap = %v, want one valued row",
+			rwaAssetIDs(v), v.Summary.AssetsUnvalued, v.Summary.MarketCapUSD)
+	}
+	if !v.Summary.LowerBound || !v.Summary.Truncated {
+		t.Errorf("lower_bound/truncated = %v/%v, want true/true with a full issuer page",
+			v.Summary.LowerBound, v.Summary.Truncated)
+	}
+	if !strings.Contains(v.Summary.Basis, "1 member issuer(s) have more classic assets than one listing page reads") {
+		t.Errorf("basis does not name the page cap: %q", v.Summary.Basis)
+	}
+}
+
+// TestRWAAssets_RefusesAssetsFailingTheDefinition is the regression that
+// matters most. Four assets are attested; three fail a requirement and
+// MUST be absent, not merely downranked:
+//
+//   - the same instrument code from a scam-flagged lookalike issuer,
+//   - a real-world declaration from an issuer nobody recognises,
+//   - a recognised issuer's token that declares `crypto` — outside the
+//     closed real-world vocabulary — and whose code no oracle prices.
+//
+// Each was checked to fail on its own, so a single over-broad rule
+// cannot make the whole assertion pass.
+func TestRWAAssets_RefusesAssetsFailingTheDefinition(t *testing.T) {
+	bound := []timescale.Sep1BoundCurrency{
+		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+		rwaBound("USTRY", rwaScamIssuer, "stellar.us.org", "bond"),
+		rwaBound("BENJI", rwaUnknownIssuer, "franklintempleton.reallumens.com", "bond"),
+		rwaBound("MEME", rwaGoodIssuer, "etherfuse.com", "crypto"),
+	}
+	dir := map[string]timescale.DirectoryEntry{
+		rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse"),
+		rwaScamIssuer: {
+			Address: rwaScamIssuer, Name: "Fake", Domain: "stellar.us.org",
+			Tags: []string{"issuer", "malicious", "unsafe"}, Source: "stellar-expert",
+		},
+		// rwaUnknownIssuer is absent from the directory entirely.
+	}
+	rows := map[string][]timescale.AssetRow{
+		rwaGoodIssuer: {
+			rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312),
+			rwaRow("MEME", rwaGoodIssuer, sptr("0.02"), 12),
+		},
+		rwaScamIssuer:    {rwaRow("USTRY", rwaScamIssuer, sptr("1.0412"), 13705)},
+		rwaUnknownIssuer: {rwaRow("BENJI", rwaUnknownIssuer, sptr("1.1408"), 8299)},
+	}
+	v := getRWA(t, rwaServer(t, bound, dir, rows))
+
+	got := rwaAssetIDs(v)
+	if len(got) != 1 || got[0] != "USTRY-"+rwaGoodIssuer {
+		t.Fatalf("assets = %v, want only USTRY-%s", got, rwaGoodIssuer)
+	}
+	for _, a := range v.Assets {
+		if a.Issuer == rwaScamIssuer {
+			t.Error("a scam-flagged issuer reached the RWA set — the surface is a phishing amplifier")
+		}
+		if a.Issuer == rwaUnknownIssuer {
+			t.Error("an unrecognised issuer reached the set on its own say-so")
+		}
+		if a.Code == "MEME" {
+			t.Error("a crypto-anchored token reached the real-world set")
+		}
+	}
+
+	refused := map[string]int{}
+	for _, r := range v.Refused {
+		refused[r.Reason] = r.Assets
+	}
+	if refused["issuer_scam_flagged"] != 1 {
+		t.Errorf("refused[issuer_scam_flagged] = %d, want 1 (%v)", refused["issuer_scam_flagged"], v.Refused)
+	}
+	if refused["issuer_not_independently_recognised"] != 1 {
+		t.Errorf("refused[issuer_not_independently_recognised] = %d, want 1 (%v)",
+			refused["issuer_not_independently_recognised"], v.Refused)
+	}
+	if refused["no_real_world_instrument_basis"] != 1 {
+		t.Errorf("refused[no_real_world_instrument_basis] = %d, want 1 (%v)",
+			refused["no_real_world_instrument_basis"], v.Refused)
+	}
+}
+
+// TestRWAAssets_OracleBasisNeedsARecognisedIssuer pins the one arm that
+// matches on a CODE. An RWA oracle prices an instrument called XAU;
+// dozens of Stellar accounts issue a token called XAU. The oracle basis
+// admits one only when an independent party has already recognised the
+// issuing account, and it never invents an anchor class.
+func TestRWAAssets_OracleBasisNeedsARecognisedIssuer(t *testing.T) {
+	bound := []timescale.Sep1BoundCurrency{
+		{Code: "XAU", Issuer: rwaGoodIssuer, HomeDomain: "xau.cl", Name: "XAU"},
+		{Code: "XAU", Issuer: rwaScamIssuer, HomeDomain: "swisscustody.net", Name: "XAU"},
+	}
+	dir := map[string]timescale.DirectoryEntry{
+		rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "XAU CL"),
+		rwaScamIssuer: {
+			Address: rwaScamIssuer, Tags: []string{"malicious", "unsafe"}, Source: "stellar-expert",
+		},
+	}
+	rows := map[string][]timescale.AssetRow{
+		rwaGoodIssuer: {rwaRow("XAU", rwaGoodIssuer, sptr("4115.67"), 1436959)},
+		rwaScamIssuer: {rwaRow("XAU", rwaScamIssuer, sptr("4115.67"), 57775)},
+	}
+	v := getRWA(t, rwaServer(t, bound, dir, rows))
+
+	if got := rwaAssetIDs(v); len(got) != 1 || got[0] != "XAU-"+rwaGoodIssuer {
+		t.Fatalf("assets = %v, want only XAU-%s", got, rwaGoodIssuer)
+	}
+	a := v.Assets[0]
+	if a.Basis != "oracle_rwa_feed" {
+		t.Errorf("basis = %q, want oracle_rwa_feed", a.Basis)
+	}
+	if a.AnchorClass != "" {
+		t.Errorf("anchor_class = %q — an oracle feed names an instrument, not a class", a.AnchorClass)
+	}
+	for _, g := range v.ByClass {
+		if g.Class == "unclassified" && g.Assets == 1 {
+			return
+		}
+	}
+	t.Errorf("by_class = %+v, want the oracle-basis asset grouped as unclassified", v.ByClass)
+}
+
+// TestRWAAssets_UnpricedAssetRendersWithheldNotZero — an asset with no
+// served USD price publishes NO market cap and says why. The summary
+// total counts it as unvalued and marks itself a lower bound rather
+// than absorbing a zero.
+func TestRWAAssets_UnpricedAssetRendersWithheldNotZero(t *testing.T) {
+	bound := []timescale.Sep1BoundCurrency{
+		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+		rwaBound("TESOURO", rwaGoodIssuer, "etherfuse.com", "bond"),
+	}
+	rows := map[string][]timescale.AssetRow{rwaGoodIssuer: {
+		rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312),
+		// No price: the aggregator produced none, or the substance
+		// gate withheld it as too thin to aggregate.
+		rwaRow("TESOURO", rwaGoodIssuer, nil, 13318),
+	}}
+	v := getRWA(t, rwaServer(t, bound,
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		rows))
+
+	if len(v.Assets) != 2 {
+		t.Fatalf("assets = %v, want both members", rwaAssetIDs(v))
+	}
+	var unpriced *v1.RWAAsset
+	for i := range v.Assets {
+		if v.Assets[i].Code == "TESOURO" {
+			unpriced = &v.Assets[i]
+		}
+	}
+	if unpriced == nil {
+		t.Fatal("the unpriced member was dropped; it must be served as unavailable, not hidden")
+	}
+	if unpriced.Valuation.Status != "unpriced" {
+		t.Errorf("valuation.status = %q, want unpriced", unpriced.Valuation.Status)
+	}
+	if unpriced.Valuation.MarketCapUSD != nil {
+		t.Errorf("market_cap_usd = %q — an unavailable valuation must be ABSENT, never a number",
+			*unpriced.Valuation.MarketCapUSD)
+	}
+	if unpriced.Valuation.PriceUSD != nil {
+		t.Errorf("price_usd = %q, want absent", *unpriced.Valuation.PriceUSD)
+	}
+	if v.Assets[0].Code != "USTRY" {
+		t.Errorf("assets[0] = %q — an unvalued row must never rank above a valued one", v.Assets[0].Code)
+	}
+	if v.Summary.AssetsUnvalued != 1 || !v.Summary.LowerBound {
+		t.Errorf("summary unvalued/lower_bound = %d/%v, want 1/true",
+			v.Summary.AssetsUnvalued, v.Summary.LowerBound)
+	}
+}
+
+// TestRWAAssets_NoPublishedValuationOmitsTheTotal — when nothing in the
+// set publishes a market cap, the summary carries NO total. Serving
+// "0.00" would read as a real total of zero dollars, which is the one
+// reading that is certainly wrong.
+func TestRWAAssets_NoPublishedValuationOmitsTheTotal(t *testing.T) {
+	v := getRWA(t, rwaServer(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, nil, 1)}},
+	))
+	if v.Summary.MarketCapUSD != nil {
+		t.Errorf("summary.market_cap_usd = %q, want absent", *v.Summary.MarketCapUSD)
+	}
+	if v.Summary.AssetsValued != 0 || !v.Summary.LowerBound {
+		t.Errorf("summary valued/lower_bound = %d/%v, want 0/true", v.Summary.AssetsValued, v.Summary.LowerBound)
+	}
+	for _, g := range v.ByClass {
+		if g.MarketCapUSD != nil {
+			t.Errorf("by_class[%s].market_cap_usd = %q, want absent", g.Class, *g.MarketCapUSD)
+		}
+	}
+}
+
+// TestRWAAssets_IssuerFlaggedAfterAdmissionRendersWithheld — the
+// membership set is cached for ten minutes, so an issuer can acquire a
+// scam-class tag while a member row is still in it. The row is then
+// served with the same suppression /v1/assets applies: the price and
+// market cap are withheld and the status says why. Membership hides
+// nothing it admitted; it withholds the number.
+//
+// The stub directory answers the BATCH lookup used by the row-fill
+// overlay with the flag, and the single lookup the membership build
+// consumed with a clean entry — reproducing the staleness window
+// directly.
+func TestRWAAssets_IssuerFlaggedAfterAdmissionRendersWithheld(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
+			rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+		}},
+		Directory: &rwaSkewedDirectory{
+			membership: timescale.DirectoryEntry{
+				Address: rwaGoodIssuer, Name: "Etherfuse",
+				Tags: []string{"issuer"}, Source: "stellar-expert",
+			},
+			rowFill: timescale.DirectoryEntry{
+				Address: rwaGoodIssuer, Name: "Etherfuse",
+				Tags: []string{"issuer", "malicious"}, Source: "stellar-expert",
+			},
+		},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer: map[string][]timescale.AssetRow{
+				rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)},
+			},
+			supply: map[string]string{"USTRY-" + rwaGoodIssuer: "12336218000000"},
+		},
+	})
+	v := getRWA(t, srv)
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v, want the admitted row still served", rwaAssetIDs(v))
+	}
+	a := v.Assets[0]
+	if a.Valuation.Status != "withheld_issuer_flagged" {
+		t.Errorf("valuation.status = %q, want withheld_issuer_flagged", a.Valuation.Status)
+	}
+	if a.Valuation.PriceUSD != nil || a.Valuation.MarketCapUSD != nil {
+		t.Error("a flagged issuer published a price or a market cap on the RWA surface")
+	}
+	if v.Summary.MarketCapUSD != nil {
+		t.Errorf("summary.market_cap_usd = %q — a withheld row must not reach the total", *v.Summary.MarketCapUSD)
+	}
+}
+
+// TestRWAAssets_UnavailableWhenTheDirectoryCannotAnswer — requirement 3
+// is what keeps impersonators out, so it fails CLOSED. With no
+// directory wired the surface publishes an empty set and says why,
+// rather than serving every self-declared candidate.
+func TestRWAAssets_UnavailableWhenTheDirectoryCannotAnswer(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
+			rwaBound("USTRY", rwaScamIssuer, "stellar.us.org", "bond"),
+			rwaBound("BENJI", rwaUnknownIssuer, "franklintempleton.reallumens.com", "bond"),
+		}},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer: map[string][]timescale.AssetRow{
+				rwaScamIssuer:    {rwaRow("USTRY", rwaScamIssuer, sptr("1.04"), 1)},
+				rwaUnknownIssuer: {rwaRow("BENJI", rwaUnknownIssuer, sptr("1.14"), 1)},
+			},
+		},
+	})
+	v := getRWA(t, srv)
+	if len(v.Assets) != 0 {
+		t.Fatalf("assets = %v, want an empty set when recognition cannot be evaluated", rwaAssetIDs(v))
+	}
+	if v.Summary.MarketCapUSD != nil {
+		t.Error("a total was published for a set that could not be established")
+	}
+	if v.Summary.Basis == "" {
+		t.Error("an empty set was served with no statement of why")
+	}
+}
+
+// TestRWAAssets_MembershipIsCachedNotRebuiltPerRequest — the scan behind
+// membership walks every issuer carrying a SEP-1 payload, so it must
+// stay off the request path.
+func TestRWAAssets_MembershipIsCachedNotRebuiltPerRequest(t *testing.T) {
+	sep1 := &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
+		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+	}}
+	srv := v1.New(v1.Options{
+		Sep1Cache: sep1,
+		Directory: &stubDirectoryReader{entries: map[string]timescale.DirectoryEntry{
+			rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse"),
+		}},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer: map[string][]timescale.AssetRow{
+				rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 1)},
+			},
+		},
+	})
+	ts := httpTestServer(t, srv)
+	for range 3 {
+		resp := mustGet(t, ts.URL+"/v1/rwa/assets")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d", resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+	}
+	if sep1.calls != 1 {
+		t.Errorf("BoundSep1Currencies called %d times; the TTL cache should scan once", sep1.calls)
+	}
+}
+
+// TestRWAAssets_CodesDifferingOnlyInCaseAreDistinctAssets: Stellar asset
+// codes are case-sensitive, so one issuer's USTRY and ustry are two
+// assets. The membership join must attach the declaration to the asset
+// it names and never to its case twin.
+func TestRWAAssets_CodesDifferingOnlyInCaseAreDistinctAssets(t *testing.T) {
+	dir := map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")}
+	twins := map[string][]timescale.AssetRow{
+		rwaGoodIssuer: {
+			rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312),
+			rwaRow("ustry", rwaGoodIssuer, sptr("0.02"), 12),
+		},
+	}
+
+	// Only USTRY is declared: its twin must not be served in its place.
+	v := getRWA(t, rwaServer(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")}, dir, twins))
+	if got := rwaAssetIDs(v); len(got) != 1 || got[0] != "USTRY-"+rwaGoodIssuer {
+		t.Errorf("USTRY declared: assets = %v, want exactly [USTRY-%s]", got, rwaGoodIssuer)
+	}
+
+	// Both declared: both are members, each joined to its own row.
+	v = getRWA(t, rwaServer(t, []timescale.Sep1BoundCurrency{
+		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+		rwaBound("ustry", rwaGoodIssuer, "etherfuse.com", "bond"),
+	}, dir, twins))
+	got := rwaAssetIDs(v)
+	sort.Strings(got)
+	if want := []string{"USTRY-" + rwaGoodIssuer, "ustry-" + rwaGoodIssuer}; !slices.Equal(got, want) {
+		t.Errorf("both declared: assets = %v, want %v", got, want)
+	}
+
+	// A mis-cased declaration still reaches the one asset it can mean.
+	v = getRWA(t, rwaServer(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("Ustry", rwaGoodIssuer, "etherfuse.com", "bond")}, dir,
+		map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)}}))
+	if got := rwaAssetIDs(v); len(got) != 1 || got[0] != "USTRY-"+rwaGoodIssuer {
+		t.Errorf("mis-cased declaration: assets = %v, want [USTRY-%s]", got, rwaGoodIssuer)
+	}
+
+	// A mis-cased declaration that fits both twins names neither.
+	v = getRWA(t, rwaServer(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("Ustry", rwaGoodIssuer, "etherfuse.com", "bond")}, dir, twins))
+	if got := rwaAssetIDs(v); len(got) != 0 {
+		t.Errorf("ambiguous mis-cased declaration: assets = %v, want none", got)
+	}
+}
+
+const (
+	// A recognised, non-flagged issuer that declares a real-world
+	// anchor type on a bound SEP-1 entry.
+	rwaGoodIssuer = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
+	// An issuer that declares the SAME instrument codes from a
+	// lookalike domain and carries scam-class directory tags.
+	rwaScamIssuer = "GCUG7ARUFEEUMSL56K7245YCPXPZPOXAY6TSRXZB2JZFBI4DOBVOTUSA"
+	// An issuer that declares a real-world anchor type but that no
+	// independent party has recognised.
+	rwaUnknownIssuer = "GAXSPCTVGFIVYGHT7JLJZV57HCN5KUYDJ6DMPLNWUKL7A5A3HKCNW7JW"
+)
+
+// stubSep1BoundReader serves canned issuer-bound SEP-1 entries. It also
+// satisfies v1.Sep1CachedReader so it can be wired as Options.Sep1Cache.
+//
+// It censuses what it serves the way the real scan does, so a test that
+// asserts on the funnel is asserting against an accounting that closes
+// rather than against numbers a stub invented. `upstream` lets a test
+// state the population BEFORE the bound entries — the issuer rows and
+// declarations a real deployment holds — which is the part of the
+// funnel no fixture of bound entries can express on its own.
+type stubSep1BoundReader struct {
+	bound    []timescale.Sep1BoundCurrency
+	upstream timescale.Sep1BoundCensus
+	err      error
+	calls    int
+}
+
+func (s *stubSep1BoundReader) GetIssuerSep1Cached(context.Context, string) (*timescale.IssuerSep1Cached, error) {
+	return nil, nil
+}
+
+func (s *stubSep1BoundReader) BoundSep1Currencies(
+	_ context.Context, keep timescale.Sep1CurrencyFilter,
+) ([]timescale.Sep1BoundCurrency, timescale.Sep1BoundCensus, error) {
+	s.calls++
+	if s.err != nil {
+		return nil, timescale.Sep1BoundCensus{}, s.err
+	}
+	census := s.upstream
+	out := make([]timescale.Sep1BoundCurrency, 0, len(s.bound))
+	issuers := map[string]struct{}{}
+	for _, c := range s.bound {
+		issuers[c.Issuer] = struct{}{}
+		census.Entries++
+		census.EntriesBound++
+		if keep == nil || keep(c) {
+			census.EntriesKept++
+			out = append(out, c)
+			continue
+		}
+		census.EntriesFiltered++
+	}
+	if census.IssuersDeclaring == 0 {
+		census.IssuersDeclaring = len(issuers)
+	}
+	if census.IssuersWithPayload == 0 {
+		census.IssuersWithPayload = census.IssuersDeclaring +
+			census.IssuersPayloadUnreadable + census.IssuersDeclaringNothing
+	}
+	if census.IssuersWithHomeDomain == 0 {
+		census.IssuersWithHomeDomain = census.IssuersWithPayload
+	}
+	return out, census, nil
+}
+
+// rwaListStub answers ListAssetsExt from a per-issuer row map, the way
+// the real store answers the Issuer-filtered listing query.
+type rwaListStub struct {
+	*stubAssetsReaderExt
+	byIssuer map[string][]timescale.AssetRow
+	supply   map[string]string
+}
+
+func (l *rwaListStub) ListAssetsExt(
+	_ context.Context, opts timescale.ListAssetsOptions,
+) ([]timescale.AssetRow, error) {
+	return l.byIssuer[opts.Issuer], nil
+}
+
+// LatestSupplyObservations satisfies the optional supply seam
+// fillMarketCapsFromSupply type-asserts for, so these tests exercise
+// the real market-cap fill rather than a path where every row is
+// unvalued for want of a supply reader. The stub ignores the freshness
+// bound — [TestLatestPreciseSupply_AsksForABoundedRead] is what pins that
+// the serving path asks for one.
+func (l *rwaListStub) LatestSupplyObservations(
+	context.Context, time.Duration,
+) (map[string]timescale.SupplyObservation, error) {
+	out := make(map[string]timescale.SupplyObservation, len(l.supply))
+	for assetID, circ := range l.supply {
+		out[assetID] = timescale.SupplyObservation{
+			CirculatingSupply: circ,
+			Basis:             string(supply.BasisIssuerExclusion),
+			ObservedAt:        time.Now(),
+		}
+	}
+	return out, nil
+}
+
+func rwaRow(code, issuer string, price *string, obs int64) timescale.AssetRow {
+	return timescale.AssetRow{
+		Slug:             code + "-" + issuer,
+		AssetID:          code + "-" + issuer,
+		Code:             code,
+		IssuerGStrkey:    issuer,
+		FirstSeenLedger:  55008233,
+		LastSeenLedger:   63410221,
+		ObservationCount: obs,
+		PriceUSD:         price,
+		// Comfortably above the dust-liquidity floor, so a suppressed
+		// market cap in these tests is always the condition under test
+		// and never an incidental dust verdict.
+		Volume24hUSD: sptr("8214.55"),
+	}
+}
+
+// rwaSupplyFor gives every row a circulating supply so the market-cap
+// fill has both of its inputs. Membership never reads it — it is
+// valuation, and valuation is decided after membership.
+func rwaSupplyFor(rows map[string][]timescale.AssetRow) map[string]string {
+	out := map[string]string{}
+	for _, list := range rows {
+		for _, r := range list {
+			out[r.AssetID] = "12336218000000"
+		}
+	}
+	return out
+}
+
+func rwaBound(code, issuer, domain, anchorType string) timescale.Sep1BoundCurrency {
+	return timescale.Sep1BoundCurrency{
+		Code:            code,
+		Issuer:          issuer,
+		HomeDomain:      domain,
+		OrgName:         domain,
+		Name:            code + " token",
+		AnchorAsset:     "US Treasury Notes",
+		AnchorAssetType: anchorType,
+	}
+}
+
+// rwaServer builds a Server with the three seams the surface reads.
+func rwaServer(
+	t *testing.T,
+	bound []timescale.Sep1BoundCurrency,
+	dir map[string]timescale.DirectoryEntry,
+	rows map[string][]timescale.AssetRow,
+) *v1.Server {
+	t.Helper()
+	return v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: bound},
+		Directory: &stubDirectoryReader{entries: dir},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer:            rows,
+			supply:              rwaSupplyFor(rows),
+		},
+	})
+}
+
+func getRWA(t *testing.T, srv *v1.Server) v1.RWAAssetsView {
+	t.Helper()
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/rwa/assets")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.RWAAssetsView `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return env.Data
+}
+
+func rwaAssetIDs(v v1.RWAAssetsView) []string {
+	out := make([]string, 0, len(v.Assets))
+	for _, a := range v.Assets {
+		out = append(out, a.AssetID)
+	}
+	return out
+}
+
+func recognisedIssuer(addr, name string) timescale.DirectoryEntry {
+	return timescale.DirectoryEntry{
+		Address: addr, Name: name, Domain: "etherfuse.com",
+		Tags: []string{"issuer"}, Source: "stellar-expert",
+	}
+}
+
+// rwaSkewedDirectory answers the membership build (single lookups are
+// unused by it; the batch it makes is the FIRST batch) and the
+// per-row overlay (every later batch) from different entries, so a test
+// can reproduce a tag landing between the two.
+type rwaSkewedDirectory struct {
+	membership timescale.DirectoryEntry
+	rowFill    timescale.DirectoryEntry
+	batches    int
+}
+
+func (d *rwaSkewedDirectory) DirectoryEntryByAddress(
+	_ context.Context, address string,
+) (timescale.DirectoryEntry, bool, error) {
+	if address != rwaGoodIssuer {
+		return timescale.DirectoryEntry{}, false, nil
+	}
+	return d.rowFill, true, nil
+}
+
+func (d *rwaSkewedDirectory) DirectoryEntriesByAddresses(
+	_ context.Context, addresses []string,
+) (map[string]timescale.DirectoryEntry, error) {
+	d.batches++
+	e := d.rowFill
+	if d.batches == 1 {
+		e = d.membership
+	}
+	out := map[string]timescale.DirectoryEntry{}
+	for _, a := range addresses {
+		if a == rwaGoodIssuer {
+			out[a] = e
+		}
+	}
+	return out, nil
+}
+
+// errRWAScan stands in for the attestation read failing.
+var errRWAScan = errors.New("issuers scan unavailable")
+
+// rwaFunnelStages indexes a served funnel by stage name.
+func rwaFunnelStages(t *testing.T, v v1.RWAAssetsView) map[string]v1.RWAFunnelStage {
+	t.Helper()
+	out := map[string]v1.RWAFunnelStage{}
+	for _, s := range v.Funnel.Stages {
+		if _, dup := out[s.Stage]; dup {
+			t.Fatalf("stage %q served twice — a funnel with a repeated stage cannot be reconciled", s.Stage)
+		}
+		out[s.Stage] = s
+	}
+	return out
+}
+
+// rwaDropCount reads one drop off one stage.
+func rwaDropCount(stages map[string]v1.RWAFunnelStage, stage, reason string) int {
+	for _, d := range stages[stage].Dropped {
+		if d.Reason == reason {
+			return d.Count
+		}
+	}
+	return 0
+}
+
+// checkFunnelArithmetic re-derives the narrowing INDEPENDENTLY of the
+// production balance check, so `balanced: true` is never self-certifying.
+// Adjacent stages counted in the same unit must satisfy
+// count - sum(dropped) == next.count.
+func checkFunnelArithmetic(t *testing.T, v v1.RWAAssetsView) {
+	t.Helper()
+	st := v.Funnel.Stages
+	// Stages that COUNT a population an earlier stage already dropped
+	// and that nothing follows from. They take no part in the
+	// narrowing, so no subtraction relates them to their neighbours on
+	// either side. Re-derived here from the wire rather than read out
+	// of production, so this check stays independent of the code it is
+	// checking.
+	terminal := map[string]bool{
+		"directory_recognised_issuing_accounts":     true,
+		"listing_contracts_without_curated_binding": true,
+	}
+	for i := 0; i+1 < len(st); i++ {
+		cur, next := st[i], st[i+1]
+		// An ARM BOUNDARY. The arms narrow different populations from
+		// different roots and meet only at the served set, so the last
+		// stage of one arm has no arithmetic relation to the first
+		// stage of the next — and must carry no drops, since a drop
+		// across it could not be accounted for anywhere.
+		if cur.Arm != next.Arm {
+			if len(cur.Dropped) > 0 {
+				t.Errorf("stage %q is the last of the %q arm and drops %d reasons — "+
+					"a drop across an arm boundary cannot be reconciled", cur.Stage, cur.Arm, len(cur.Dropped))
+			}
+			continue
+		}
+		if terminal[cur.Stage] || terminal[next.Stage] {
+			if terminal[cur.Stage] && len(cur.Dropped) > 0 {
+				t.Errorf("terminal census stage %q carries drops — it takes no part in the narrowing", cur.Stage)
+			}
+			continue
+		}
+		// The one place a subtraction means nothing: issuer accounts to
+		// the declarations they publish. That pair must carry no drops.
+		// Every other unit change is a relabelling of a population that
+		// maps one-to-one, so it still has to reconcile.
+		if cur.Unit == "issuer_accounts" && next.Unit != "issuer_accounts" {
+			if len(cur.Dropped) > 0 {
+				t.Errorf("stage %q is the last counted in issuer accounts and drops %d reasons — "+
+					"a drop across that change of unit cannot be reconciled", cur.Stage, len(cur.Dropped))
+			}
+			continue
+		}
+		sum := 0
+		for _, d := range cur.Dropped {
+			// issuer_asset_page_truncated counts ISSUERS whose asset
+			// tail went unread, not assets; it is a signal, not a term
+			// in the asset arithmetic.
+			if d.Reason == "issuer_asset_page_truncated" {
+				continue
+			}
+			if d.Actor == "" {
+				t.Errorf("stage %q drop %q carries no actor — a reader cannot tell a coverage gap from a refusal",
+					cur.Stage, d.Reason)
+			}
+			sum += d.Count
+		}
+		if cur.Count-sum != next.Count {
+			t.Errorf("funnel does not close: %s %d less %d dropped is %d, but %s is %d",
+				cur.Stage, cur.Count, sum, cur.Count-sum, next.Stage, next.Count)
+		}
+	}
+	if !v.Funnel.Balanced {
+		t.Errorf("funnel.balanced = false for an accounting that adds up: %+v", v.Funnel.Stages)
+	}
+	if v.Funnel.Basis == "" {
+		t.Error("funnel.basis is empty — the units change down the funnel and nothing else says so")
+	}
+}
+
+// rwaServerWithUpstream is rwaServer with the population UPSTREAM of the
+// bound entries stated: the issuer rows and declarations a real
+// deployment holds, which no fixture of bound entries can express.
+func rwaServerWithUpstream(
+	t *testing.T,
+	upstream timescale.Sep1BoundCensus,
+	bound []timescale.Sep1BoundCurrency,
+	dir map[string]timescale.DirectoryEntry,
+	rows map[string][]timescale.AssetRow,
+) *v1.Server {
+	t.Helper()
+	return v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: bound, upstream: upstream},
+		Directory: &stubDirectoryReader{entries: dir},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer:            rows,
+			supply:              rwaSupplyFor(rows),
+		},
+	})
+}
+
+// itoaRWA is a tiny int-to-string so the filler codes above stay
+// distinct without pulling strconv into the fixture's reading.
+func itoaRWA(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	return string(b)
+}
+
+// rwaOracleStub answers the oracle-stream read and counts the calls, so
+// a test can prove the scan stays off the per-request path.
+type rwaOracleStub struct {
+	*stubOracleReader
+	streams []canonical.OracleUpdate
+	err     error
+	calls   int
+}
+
+func (r *rwaOracleStub) LatestOracleStreams(context.Context) ([]canonical.OracleUpdate, error) {
+	r.calls++
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.streams, nil
+}
+
+// rwaOracleRow builds one oracle observation of an instrument.
+func rwaOracleRow(t *testing.T, source, assetID, quoteID, raw string, decimals uint8) canonical.OracleUpdate {
+	t.Helper()
+	a, err := canonical.ParseAsset(assetID)
+	if err != nil {
+		t.Fatalf("ParseAsset(%q): %v", assetID, err)
+	}
+	q, err := canonical.ParseAsset(quoteID)
+	if err != nil {
+		t.Fatalf("ParseAsset(%q): %v", quoteID, err)
+	}
+	n, ok := new(big.Int).SetString(raw, 10)
+	if !ok {
+		t.Fatalf("bad raw price %q", raw)
+	}
+	return canonical.OracleUpdate{
+		Source: source, Timestamp: time.Now().Add(-time.Minute),
+		Asset: a, Quote: q, Price: canonical.NewAmount(n), Decimals: decimals,
+	}
+}
+
+func rwaOracle(t *testing.T, rows ...canonical.OracleUpdate) *rwaOracleStub {
+	t.Helper()
+	return &rwaOracleStub{stubOracleReader: &stubOracleReader{}, streams: rows}
+}
+
+// rwaServerWithOracle is [rwaServer] plus the oracle seam the reference
+// is read through.
+func rwaServerWithOracle(
+	t *testing.T,
+	bound []timescale.Sep1BoundCurrency,
+	dir map[string]timescale.DirectoryEntry,
+	rows map[string][]timescale.AssetRow,
+	oracle *rwaOracleStub,
+) *v1.Server {
+	t.Helper()
+	return v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: bound},
+		Directory: &stubDirectoryReader{entries: dir},
+		Oracle:    oracle,
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer:            rows,
+			supply:              rwaSupplyFor(rows),
+		},
+	})
+}
+
+// rwaOtherRecognisedIssuer is a SECOND directory-recognised issuer that
+// also publishes a domain-bound SEP-1 entry for a code an oracle prices.
+// Nothing about it is exotic: asset codes are not unique on Stellar, and
+// the network holds many accounts issuing tokens called USTRY, BENJI or
+// XAU. It exists here because a code-keyed join cannot tell it apart
+// from the issuer whose instrument the feed actually tracks.
+const rwaOtherRecognisedIssuer = "GAXSPCTVGFIVYGHT7JLJZV57HCN5KUYDJ6DMPLNWUKL7A5A3HKCNW7JW"
+
+// rwaCountingListStub counts the per-issuer listing reads /v1/rwa/assets
+// makes, so a test can tie the charge to the work and prove a denial
+// stopped the reads.
+type rwaCountingListStub struct {
+	*rwaListStub
+	lists atomic.Int64
+}
+
+func (l *rwaCountingListStub) ListAssetsExt(ctx context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
+	l.lists.Add(1)
+	return l.rwaListStub.ListAssetsExt(ctx, opts)
+}
+
+// newRWALimitedServer wires /v1/rwa/assets with two admitted classic
+// member issuers behind the production limiter over a Redis-backed
+// anonymous bucket of anonLimit tokens.
+func newRWALimitedServer(t *testing.T, anonLimit int) (*testServerImpl, *rwaCountingListStub) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	rows := map[string][]timescale.AssetRow{
+		rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)},
+		rwaOndoIssuer: {rwaRow("USDY", rwaOndoIssuer, sptr("1.0923"), 90211)},
+	}
+	reader := &rwaCountingListStub{rwaListStub: &rwaListStub{
+		stubAssetsReaderExt: &stubAssetsReaderExt{},
+		byIssuer:            rows,
+		supply:              rwaSupplyFor(rows),
+	}}
+	srv := v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
+			rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+			rwaBound("USDY", rwaOndoIssuer, "etherfuse.com", "bond"),
+		}},
+		Directory: &stubDirectoryReader{entries: map[string]timescale.DirectoryEntry{
+			rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse"),
+			rwaOndoIssuer: recognisedIssuer(rwaOndoIssuer, "Ondo"),
+		}},
+		AssetsReader: reader,
+		RateLimit: middleware.RateLimitBySubject(
+			ratelimit.New(rdb, anonLimit, time.Minute, pinnedWindow), nil, middleware.SkipHealthAndMetrics, nil),
+	})
+	return startHTTPTest(t, srv.Handler()), reader
+}
+
+// rwaRemaining reads the post-request remainder, through the no-store
+// probe when the response is shared-cacheable and so carries none.
+func rwaRemaining(t *testing.T, ts *testServerImpl, resp *http.Response) int {
+	t.Helper()
+	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "" {
+		n, err := strconv.Atoi(got)
+		if err != nil {
+			t.Fatalf("X-RateLimit-Remaining %q: %v", got, err)
+		}
+		return n
+	}
+	return remainingBeforeProbe(t, resp, ts.URL+assetsProbe)
 }

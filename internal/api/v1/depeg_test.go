@@ -4,7 +4,6 @@
 package v1_test
 
 import (
-	"math/big"
 	"net/http"
 	"strings"
 	"testing"
@@ -33,34 +32,6 @@ func depegServer(t *testing.T, usdcUSD string) string {
 	return startHTTPTest(t, srv.Handler()).URL
 }
 
-// TestPriceAt_ProxyDeviationBand: a triangulated fiat:USD answer served
-// through a declared peg flags proxy_deviation only when the peg's own
-// observed dollar price is more than 2% from $1.
-func TestPriceAt_ProxyDeviationBand(t *testing.T) {
-	at := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
-	for _, tc := range []struct {
-		name, usdcUSD string
-		want          bool
-	}{
-		{"depegged below", "0.95", true},
-		{"depegged above", "1.03", true},
-		{"inside band", "1.019", false},
-		{"exactly at band", "0.98", false},
-		{"no observation", "", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			base := depegServer(t, tc.usdcUSD)
-			env := getPegEnvelope(t, base+"/v1/price/at?asset=native&quote=fiat:USD&ts="+at)
-			if !env.Flags.Triangulated {
-				t.Fatal("flags.triangulated = false, want true (served through the peg)")
-			}
-			if env.Flags.ProxyDeviation != tc.want {
-				t.Errorf("flags.proxy_deviation = %v, want %v", env.Flags.ProxyDeviation, tc.want)
-			}
-		})
-	}
-}
-
 func TestPriceChanges_ProxyDeviationBand(t *testing.T) {
 	for _, tc := range []struct {
 		usdcUSD string
@@ -75,62 +46,52 @@ func TestPriceChanges_ProxyDeviationBand(t *testing.T) {
 	}
 }
 
-// A declared peg that did not serve the answer still trips the flag: the
-// proxy cannot say which peg a triangulated figure leans on, so any
-// off-band declared peg is reported.
-func TestPriceAt_ProxyDeviationAnyDeclaredPeg(t *testing.T) {
-	usdc := installPegAliasRegistry(t)
-	pyusd := mustClassicAsset(t, "PYUSD", pegAliasPYUSDIssuer)
+func TestPriceChanges_NonstandardDecimals_NormalizesAbsolutesNotPct(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
 	srv := v1.New(v1.Options{
-		PriceAt: &recordingPriceAtReader{byPair: map[string]string{
-			depegXLMUSDCPair:        "0.10",
-			depegUSDCUSDPair:        "1.00",
-			"crypto:PYUSD/fiat:USD": "0.90",
-		}},
-		USDPeggedClassics: []canonical.Asset{usdc, pyusd},
+		PriceAt: m2PriceAtStub{
+			histPair:   flaggedAsset + "/fiat:USD",
+			current:    "41.32", // now
+			historical: "40.00", // every horizon
+			bucketAt:   time.Now().UTC().Add(-time.Minute),
+		},
+		NonstandardDecimals: cache,
 	})
-	base := startHTTPTest(t, srv.Handler()).URL
-	at := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
-	env := getPegEnvelope(t, base+"/v1/price/at?asset=native&quote=fiat:USD&ts="+at)
-	if !env.Flags.ProxyDeviation {
-		t.Error("flags.proxy_deviation = false, want true (PYUSD observed at 0.90)")
+	tsrv := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, tsrv.URL+"/v1/price/changes?asset="+flaggedAsset+"&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	// Absolute prices scaled by K=100 …
+	if !strings.Contains(body, `"current_price":"4132.0000000000"`) {
+		t.Errorf("current_price not normalized (want 4132.0000000000): %s", body)
+	}
+	if !strings.Contains(body, `"reference_price":"4000.0000000000"`) {
+		t.Errorf("reference_price not normalized (want 4000.0000000000): %s", body)
+	}
+	// … but change_pct is scale-invariant: (41.32−40)/40 = +3.30%, IDENTICAL
+	// to the raw computation. This is the double-application-free invariant.
+	if !strings.Contains(body, `"change_pct":"+3.30"`) {
+		t.Errorf("change_pct must be scale-invariant (+3.30): %s", body)
 	}
 }
 
-func TestVWAP_ProxyDeviationBand(t *testing.T) {
-	usdc := installPegAliasRegistry(t)
-	xlm, _ := canonical.ParseAsset("native")
-	classicPair, _ := canonical.NewPair(xlm, usdc)
-	trade := canonical.Trade{
-		Source: "sdex", Ledger: 1,
-		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
-		Timestamp:   time.Now().UTC().Add(-time.Minute),
-		Pair:        classicPair,
-		BaseAmount:  canonical.NewAmount(big.NewInt(100)),
-		QuoteAmount: canonical.NewAmount(big.NewInt(16)),
+// TestPriceChanges_DeclaredPegSACTwinSkipsItsOwnFormAndWalksOn is the same
+// guard on /v1/price/changes.
+func TestPriceChanges_DeclaredPegSACTwinSkipsItsOwnFormAndWalksOn(t *testing.T) {
+	base, reader := pegPriceAtServer(t)
+
+	resp := mustGet(t, base+"/v1/price/changes?asset="+pegAliasUSDCSAC+"&quote=fiat:USD")
+	body, _ := readAll(resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200. Body: %s", resp.StatusCode, body)
 	}
-	for _, tc := range []struct {
-		usdcUSD string
-		want    bool
-	}{{"0.95", true}, {"1.001", false}, {"", false}} {
-		byPair := map[string]string{}
-		if tc.usdcUSD != "" {
-			byPair[depegUSDCUSDPair] = tc.usdcUSD
-		}
-		srv := v1.New(v1.Options{
-			History: &pairAwareHistoryReader{tradesByPair: map[string][]canonical.Trade{
-				depegXLMUSDCPair: {trade},
-			}},
-			PriceAt:           &recordingPriceAtReader{byPair: byPair},
-			USDPeggedClassics: []canonical.Asset{usdc},
-		})
-		resp := mustGet(t, startHTTPTest(t, srv.Handler()).URL+"/v1/vwap?base=native&quote=fiat:USD")
-		body, _ := readAll(resp)
-		if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"triangulated":true`) {
-			t.Fatalf("usdc/usd=%q: status %d, body %s", tc.usdcUSD, resp.StatusCode, body)
-		}
-		if got := strings.Contains(string(body), `"proxy_deviation":true`); got != tc.want {
-			t.Errorf("usdc/usd=%q: proxy_deviation present = %v, want %v\n%s", tc.usdcUSD, got, tc.want, body)
+	for _, want := range []string{`"current_price":"1.0004"`, `"quote":"fiat:USD"`, `"triangulated":true`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %s\n%s", want, body)
 		}
 	}
+	assertSecondPegWalked(t, reader)
 }

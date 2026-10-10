@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -857,5 +858,81 @@ func TestMarkets_AssetFilterIsCanonicalised(t *testing.T) {
 					reader.lastAsset, tc.want)
 			}
 		})
+	}
+}
+
+// TestMarkets_CachedRows_IncludeEnrichmentDoesNotLeakAcrossRequests —
+// the enrichment leg (the decimals leg is in
+// markets_cache_shared_rows_test.go, whose production-shaped server this
+// reuses). ?include=sparkline,inception wrote volume_history_24h /
+// first_trade_at onto the rows the cache had handed out — which were the
+// cache entry's own — so every later request for the same page was served
+// enrichment it never opted into (`include` is not part of the cache key).
+func TestMarkets_CachedRows_IncludeEnrichmentDoesNotLeakAcrossRequests(t *testing.T) {
+	ts, up := sharedRowsServer(t)
+
+	plainBefore, _ := sharedRowsGet(t, ts.URL+"/v1/markets")
+	enriched, _ := sharedRowsGet(t, ts.URL+"/v1/markets?include=sparkline,inception")
+	if !strings.Contains(enriched, `"volume_history_24h"`) || !strings.Contains(enriched, `"first_trade_at"`) {
+		t.Fatalf("opt-in request did not carry the enrichment (test is vacuous): %s", enriched)
+	}
+	plainAfter, _ := sharedRowsGet(t, ts.URL+"/v1/markets")
+
+	if strings.Contains(plainAfter, `"volume_history_24h"`) || strings.Contains(plainAfter, `"first_trade_at"`) {
+		t.Errorf("enrichment leaked into a request that did not opt in: %s", plainAfter)
+	}
+	if plainAfter != plainBefore {
+		t.Errorf("plain page changed after an ?include= request\nbefore: %s\n after: %s", plainBefore, plainAfter)
+	}
+	if got := up.calls.Load(); got != 1 {
+		t.Fatalf("upstream calls = %d, want 1 (all three requests must share one cache entry)", got)
+	}
+}
+
+// TestMarkets_NonstandardDecimals_NormalizesLastPrice — /v1/markets'
+// last_price (prices_1d/prices_1m raw ratio) was never guarded; now
+// corrected per row. The unflagged sibling row must stay byte-identical.
+func TestMarkets_NonstandardDecimals_NormalizesLastPrice(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	flaggedPrice := "41.32"
+	cleanPrice := "0.1242"
+	reader := &stubMarketsReader{pairs: []v1.Market{
+		{Base: flaggedAsset, Quote: classicUSDC, LastPrice: &flaggedPrice},
+		{Base: "native", Quote: classicUSDC, LastPrice: &cleanPrice},
+	}}
+	srv := v1.New(v1.Options{Markets: reader, NonstandardDecimals: cache})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/markets")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"last_price":"4132.0000000000"`) {
+		t.Errorf("flagged market row not normalized: %s", body)
+	}
+	if !strings.Contains(body, `"last_price":"0.1242"`) {
+		t.Errorf("7dp market row must be byte-identical: %s", body)
+	}
+}
+
+// TestPools_NonstandardDecimals_NormalizesLastPrice — same fix on
+// /v1/pools (pools_per_source_1h bucket_last_price).
+func TestPools_NonstandardDecimals_NormalizesLastPrice(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	flaggedPrice := "41.32"
+	reader := &stubMarketsReader{pairs: []v1.Market{
+		{Base: flaggedAsset, Quote: classicUSDC, LastPrice: &flaggedPrice},
+	}}
+	srv := v1.New(v1.Options{Markets: reader, NonstandardDecimals: cache})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/pools")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"last_price":"4132.0000000000"`) {
+		t.Errorf("flagged pool row not normalized: %s", body)
 	}
 }

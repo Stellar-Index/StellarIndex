@@ -247,3 +247,41 @@ func TestTWAP_InvalidSigma400(t *testing.T) {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}
 }
+
+// TestTWAP_NonstandardDecimals_Normalizes proves /v1/twap
+// does not decline — same rationale as /v1/vwap.
+func TestTWAP_NonstandardDecimals_Normalizes(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	xlmUSD, err := canonical.ParseAsset(flaggedAsset)
+	if err != nil {
+		t.Fatalf("ParseAsset: %v", err)
+	}
+	usd, _ := canonical.ParseAsset("fiat:USD")
+	pair, err := canonical.NewPair(xlmUSD, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	trade := canonical.Trade{
+		Source:      "aquarius",
+		Ledger:      1,
+		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
+		Timestamp:   time.Now().Add(-time.Minute),
+		Pair:        pair,
+		BaseAmount:  canonical.NewAmount(big.NewInt(100_000_000_000)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(2_500_000_000)),
+	}
+	srv := v1.New(v1.Options{
+		History:             &stubHistoryReader{trades: []canonical.Trade{trade}},
+		NonstandardDecimals: cache,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/twap?base="+flaggedAsset+"&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (query-time compute is normalized, not declined)", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"2.5000000000"`) {
+		t.Errorf("body missing normalized price 2.5000000000: %s", body)
+	}
+}

@@ -40,16 +40,3 @@ func TestWritePriceWithheldProblem_CarriesReasonMember(t *testing.T) {
 		}
 	}
 }
-
-func TestWriteProblem_OmitsReasonMember(t *testing.T) {
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
-	writeProblem(rec, req, "https://api.stellarindex.io/errors/price-not-found", "x", http.StatusNotFound, "")
-	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := body["reason"]; ok {
-		t.Errorf("non-withheld problem carries reason: %v", body["reason"])
-	}
-}

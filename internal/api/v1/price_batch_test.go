@@ -3,16 +3,24 @@ package v1_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
 
 // TestPriceBatch_RejectsBadRequests covers the GET and POST refusals:
@@ -318,7 +326,7 @@ func TestPriceBatch_ReaderError500(t *testing.T) {
 // the blanket deadline fires while the client is still connected (not
 // cancelled), then releases it — mirroring the CanceledRequestWritesNothing
 // / ExpiredRequestDeadlineUpgrades500To503 split in
-// request_deadline_problem_test.go, at the batch endpoint.
+// envelope_test.go, at the batch endpoint.
 func TestPriceBatch_ExpiredRequestDeadlineReturns503NotBlank200(t *testing.T) {
 	// No startedCh: `native` walks multiple aliases (assetAliases), each
 	// alias a SEPARATE sequential LatestPrice call once released — a
@@ -533,4 +541,413 @@ func TestPriceBatch_EchoesRequestedAssetNotStoreAlias(t *testing.T) {
 			t.Errorf("no row echoes requested asset_id %q; got %v", want, ids)
 		}
 	}
+}
+
+// TestPriceBatch_NonstandardDecimals_Normalizes — the batch endpoint's
+// direct closed-bucket read goes through the same normalization as the
+// single-asset handler.
+func TestPriceBatch_NonstandardDecimals_Normalizes(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	key := flaggedAsset + "/fiat:USD"
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{key: {
+			AssetID: flaggedAsset, Quote: "fiat:USD", Price: "41.32",
+			PriceType: "vwap", ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
+		}},
+		sources: map[string][]string{key: {"aquarius"}},
+	}
+	srv := v1.New(v1.Options{Prices: reader, NonstandardDecimals: cache})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids="+flaggedAsset)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"4132.0000000000"`) {
+		t.Errorf("batch row not normalized: %s", body)
+	}
+}
+
+// TestPriceBatch_ChargesOneTokenPerID is the rate-limit regression.
+// One rate-limit token must not buy a whole batch: a 40-id GET left 99
+// of 100 tokens, so the per-minute ceiling bounded HTTP requests while
+// the work behind them was the caller's to choose. A batch must cost
+// its id count.
+func TestPriceBatch_ChargesOneTokenPerID(t *testing.T) {
+	ts, reader := newBatchLimitedServer(t, 100)
+	url := ts.URL + "/v1/price/batch?asset_ids=" + strings.Join(batchIDs(40), ",")
+
+	// Each probe that reads the remainder spends one token of its own.
+	for i, wantRemaining := range []int{60, 19} {
+		resp := mustGet(t, url)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("batch %d: status = %d, want 200", i+1, resp.StatusCode)
+		}
+		if got := remainingBeforeProbe(t, resp, ts.URL+batchProbe); got != wantRemaining {
+			t.Fatalf("batch %d: X-RateLimit-Remaining = %d, want %d (40 ids must cost 40 tokens)",
+				i+1, got, wantRemaining)
+		}
+	}
+
+	// 80 spent on batches, 2 on probes; a third 40-id batch does not fit
+	// in the remaining 18.
+	served := reader.calls.Load()
+	resp := mustGet(t, url)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("third batch: status = %d, want 429", resp.StatusCode)
+	}
+	if resp.Header.Get("Retry-After") == "" {
+		t.Error("429 must carry Retry-After")
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
+		t.Errorf("429 Content-Type = %q, want application/problem+json", ct)
+	}
+	if got := reader.calls.Load(); got != served {
+		t.Fatalf("a denied batch still resolved %d price(s); the charge must land BEFORE the fan-out", got-served)
+	}
+}
+
+// TestPriceBatch_POSTChargesPerID pins the variant the findings name:
+// the JSON-body route whose 1000-id ceiling is what made one token
+// worth a thousand resolutions. Against the deployed 6000/min anonymous
+// budget a full batch must leave 5000, not 5999.
+func TestPriceBatch_POSTChargesPerID(t *testing.T) {
+	ts, _ := newBatchLimitedServer(t, 6000)
+
+	resp := postBatch(t, ts.URL, batchIDs(1000))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "5000" {
+		t.Fatalf("X-RateLimit-Remaining after a 1000-id POST = %q, want 5000", got)
+	}
+}
+
+// TestPriceBatch_OverCeilingBatchSpendsTheWindow pins the decision for
+// a batch priced above the caller's whole budget (1000 ids against the
+// 60/min default). It is served into an untouched window — refusing it
+// in every window would make the documented 1000-id ceiling unusable
+// behind a Retry-After that never comes true — and it takes the entire
+// window with it, so the next request of any size is denied.
+func TestPriceBatch_OverCeilingBatchSpendsTheWindow(t *testing.T) {
+	ts, _ := newBatchLimitedServer(t, 60)
+
+	resp := postBatch(t, ts.URL, batchIDs(1000))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("first batch in a fresh window: status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "0" {
+		t.Fatalf("X-RateLimit-Remaining = %q, want 0 (the batch must spend the whole window)", got)
+	}
+
+	resp = mustGet(t, ts.URL+"/v1/price/batch?asset_ids=fiat:EUR")
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("request after an over-ceiling batch: status = %d, want 429", resp.StatusCode)
+	}
+}
+
+// TestPriceBatch_ChargeFollowsTheWorkDone pins what the cost is a count
+// OF: the de-duplicated ids the handler will resolve. Forty copies of
+// one id are one resolution and cost one token; a request rejected as
+// malformed does no resolution and costs only the base token every
+// request pays.
+func TestPriceBatch_ChargeFollowsTheWorkDone(t *testing.T) {
+	ts, reader := newBatchLimitedServer(t, 100)
+
+	dupes := strings.TrimSuffix(strings.Repeat("fiat:EUR,", 40), ",")
+	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids="+dupes)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := remainingBeforeProbe(t, resp, ts.URL+batchProbe); got != 99 {
+		t.Fatalf("40 duplicates of one id: X-RateLimit-Remaining = %d, want 99", got)
+	}
+
+	// 101 ids on the GET route is a 400 (ceiling 100): base token only,
+	// on top of the probe's.
+	before := reader.calls.Load()
+	resp = mustGet(t, ts.URL+"/v1/price/batch?asset_ids="+strings.Join(batchIDs(101), ","))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "97" {
+		t.Fatalf("a rejected batch: X-RateLimit-Remaining = %q, want 97 (base token only)", got)
+	}
+	if got := reader.calls.Load(); got != before {
+		t.Fatalf("a 400 resolved %d price(s)", got-before)
+	}
+}
+
+// TestPriceBatch_UnlimitedDeploymentIsUncharged: with no limiter wired
+// there is no account to charge, and the batch is served as before.
+func TestPriceBatch_UnlimitedDeploymentIsUncharged(t *testing.T) {
+	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := postBatch(t, ts.URL, batchIDs(1000))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "" {
+		t.Fatalf("X-RateLimit-Remaining = %q on a deployment with no limiter", got)
+	}
+}
+
+// TestPriceBatch_MetersOneUsageUnitPerID pins that the monthly meter
+// must not count HTTP requests, or a 1000-id POST /v1/price/batch cost one unit
+// of a quota sold in price lookups. Each batch must advance BOTH the
+// billable total MonthlyQuota reads and the per-endpoint detail counter
+// by its de-duplicated id count, and a single-price call stays at one.
+func TestPriceBatch_MetersOneUsageUnitPerID(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	counter := usage.New(rdb, usage.WithClock(func() time.Time { return now }))
+
+	subject := auth.Subject{
+		Identifier: auth.AccountIdentifier("acme"),
+		KeyID:      "kid_units",
+		Tier:       auth.TierAPIKey,
+	}
+	attach := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(auth.WithSubject(r.Context(), subject)))
+		})
+	}
+	srv := v1.New(v1.Options{
+		Prices:       &countingPriceReader{},
+		Auth:         attach,
+		UsageTracker: middleware.UsageTracker(counter, nil),
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	post := postBatch(t, ts.URL, batchIDs(250))
+	_ = post.Body.Close()
+	if post.StatusCode != http.StatusOK {
+		t.Fatalf("POST batch status = %d, want 200", post.StatusCode)
+	}
+	// 40 distinct ids plus a duplicate: the unit count is the work done.
+	ids := batchIDs(40)
+	ids = append(ids, batchIDs(1)...)
+	get := mustGet(t, ts.URL+"/v1/price/batch?asset_ids="+strings.Join(ids, ","))
+	_ = get.Body.Close()
+	if get.StatusCode != http.StatusOK {
+		t.Fatalf("GET batch status = %d, want 200", get.StatusCode)
+	}
+	// UsageTracker's counter writes run on the shared after-response pool,
+	// not inline, so a read right after the requests return must
+	// wait for them to land first.
+	if !middleware.AfterResponseDrainForTest(2 * time.Second) {
+		t.Fatal("after-response pool did not drain in time")
+	}
+
+	key := middleware.UsageKeyForSubject(subject)
+	got, err := counter.MonthToDate(context.Background(), key)
+	if err != nil {
+		t.Fatalf("MonthToDate: %v", err)
+	}
+	if got != 290 {
+		t.Fatalf("billable month-to-date = %d, want 290 (250 + 40 price lookups)", got)
+	}
+
+	rows, err := counter.ScanDetail(context.Background(), []string{"2026-09-15"})
+	if err != nil {
+		t.Fatalf("ScanDetail: %v", err)
+	}
+	var detail int64
+	for _, r := range rows {
+		if r.Subject == key && r.Endpoint == "/v1/price/batch" && r.Class == usage.ClassOK {
+			detail += r.Count
+		}
+	}
+	if detail != 290 {
+		t.Fatalf("detail ok units for /v1/price/batch = %d, want 290 — the rollup's billable sum must equal the quota counter", detail)
+	}
+}
+
+// TestPriceBatch_WithheldIDsNamedOnEnvelope: a withheld row is omitted
+// from data (unchanged) AND named on `withheld`, so a batch caller can
+// tell "we decline to publish" from "we have nothing" — before, both
+// were a silent omission.
+func TestPriceBatch_WithheldIDsNamedOnEnvelope(t *testing.T) {
+	srv := v1.New(v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceWithheld}})
+	n, withheld, _ := batchWithheld(t, srv, "native")
+	if n != 0 {
+		t.Errorf("withheld row served in data (%d rows)", n)
+	}
+	if !reflect.DeepEqual(withheld, []string{"native"}) {
+		t.Errorf("withheld = %v, want [native]", withheld)
+	}
+}
+
+// TestPriceBatch_FallbackWithheldIDsNamed: a verdict reached inside the
+// fallback chain (flagged issuer answering from the VWAP cache) is
+// reported the same way, not folded into "no data".
+func TestPriceBatch_FallbackWithheldIDsNamed(t *testing.T) {
+	base := fallbackFlaggedBase(t)
+	srv := v1.New(v1.Options{
+		Prices:       &stubPriceReader{err: v1.ErrPriceNotFound},
+		Triangulated: &cachedVWAPLooker{value: "0.00723"},
+		Scam:         &fallbackScamGate{withheld: map[string]bool{base.String(): true}},
+	})
+	n, withheld, _ := batchWithheld(t, srv, base.String())
+	if n != 0 || !reflect.DeepEqual(withheld, []string{base.String()}) {
+		t.Errorf("rows = %d withheld = %v, want 0 rows and [%s]", n, withheld, base)
+	}
+}
+
+// TestPriceBatch_PlainMissNotWithheld: the discriminator must not fire
+// on a genuine miss — no data means no `withheld` member at all.
+func TestPriceBatch_PlainMissNotWithheld(t *testing.T) {
+	srv := v1.New(v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceNotFound}})
+	n, withheld, present := batchWithheld(t, srv, "native")
+	if n != 0 || present {
+		t.Errorf("rows = %d withheld present = %v (%v), want 0 rows and no withheld member", n, present, withheld)
+	}
+}
+
+// /v1/price/batch stamps the same flag over the same read, so it owes
+// the same value: the frozen row carries the held value, and a frozen
+// row with nothing held is omitted (the batch contract's "no price")
+// rather than shipped as the refused bucket.
+func TestPriceBatch_FrozenRowCarriesLastKnownGood(t *testing.T) {
+	reader := movedBucketReader()
+	reader.snapshots["crypto:BTC/fiat:GBP"] = v1.PriceSnapshot{Price: "51234.5", PriceType: "vwap", WindowSeconds: 60}
+	reader.sources["crypto:BTC/fiat:GBP"] = []string{"kraken", "coinbase"}
+
+	t.Run("held value served", func(t *testing.T) {
+		srv := v1.New(v1.Options{
+			Prices:       reader,
+			Freeze:       frozenPairs{xlmGBP: true},
+			Triangulated: lkgPairs{xlmGBP + "/300": heldLKG},
+		})
+		ts := startHTTPTest(t, srv.Handler())
+		status, body := getBody(t, ts.URL+"/v1/price/batch?asset_ids=crypto:XLM,crypto:BTC&quote=fiat:GBP")
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", status, body)
+		}
+		if strings.Contains(body, movedBucket) {
+			t.Fatalf("batch served the refused bucket: %s", body)
+		}
+		for _, want := range []string{`"price":"` + heldLKG + `"`, `"price":"51234.5"`, `"frozen":true`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("body missing %s: %s", want, body)
+			}
+		}
+	})
+
+	t.Run("nothing held omits the row", func(t *testing.T) {
+		srv := v1.New(v1.Options{
+			Prices:       reader,
+			Freeze:       frozenPairs{xlmGBP: true},
+			Triangulated: lkgPairs{},
+		})
+		ts := startHTTPTest(t, srv.Handler())
+		status, body := getBody(t, ts.URL+"/v1/price/batch?asset_ids=crypto:XLM,crypto:BTC&quote=fiat:GBP")
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", status, body)
+		}
+		if strings.Contains(body, movedBucket) || strings.Contains(body, `"asset_id":"crypto:XLM"`) {
+			t.Fatalf("frozen row with nothing held must be omitted: %s", body)
+		}
+		if !strings.Contains(body, `"price":"51234.5"`) {
+			t.Errorf("the healthy row must still serve: %s", body)
+		}
+	})
+}
+
+func TestPriceBatch_FreezeOnRequestedLiteralOnlyKeepsTheHealthyAliasRow(t *testing.T) {
+	for name, cache := range literalOnlyFreezeShapes() {
+		t.Run(name, func(t *testing.T) {
+			srv := v1.New(v1.Options{
+				Prices:       healthyAliasReader(),
+				Freeze:       frozenPairs{nativeGBP: true},
+				Triangulated: cache,
+			})
+			ts := startHTTPTest(t, srv.Handler())
+
+			status, body := getBody(t, ts.URL+"/v1/price/batch?asset_ids=native&quote=fiat:GBP")
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", status, body)
+			}
+			if strings.Contains(body, literalHeld24h) {
+				t.Fatalf("the literal's held value replaced the healthy alias bucket: %s", body)
+			}
+			for _, want := range []string{
+				`"asset_id":"native"`, // the row must not be omitted
+				`"price":"` + healthyAliasBucket + `"`,
+				`"window_seconds":60`,
+				`"stale":false`,
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("body missing %s: %s", want, body)
+				}
+			}
+			if strings.Contains(body, `"frozen":true`) {
+				t.Errorf("an unfrozen served row must not flag the batch frozen: %s", body)
+			}
+		})
+	}
+}
+
+// Envelope flags are OR over per-row signals, like Stale: one frozen row
+// sets frozen and single_source on the batch.
+func TestPriceBatch_FrozenORedAcrossRows(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD":   {Price: "0.07", PriceType: "vwap"},
+			"fiat:EUR/fiat:USD": {Price: "1.10", PriceType: "vwap"},
+		},
+		sources: map[string][]string{
+			"native/fiat:USD":   {"sdex", "soroswap"},
+			"fiat:EUR/fiat:USD": {"sdex", "soroswap"},
+		},
+	}
+	// Only the EUR row freezes; it serves its held last-known-good (see
+	// TestPrice_FrozenSetsBothFlags) while the other keeps its closed bucket.
+	held := &stubTriangulatedPriceLooker{value: "1.08", found: true}
+	_, body := priceGet(t, v1.Options{Prices: reader, Freeze: &batchFreezeLooker{frozenForBase: "EUR"}, Triangulated: held},
+		"/v1/price/batch?asset_ids=native,fiat:EUR&quote=fiat:USD")
+	checkBody(t, body, []string{`"price":"1.08"`, `"price":"0.07"`, `"frozen":true`, `"single_source":true`}, []string{`"1.10"`})
+}
+
+// TestPriceBatch_Withheld_RowOmitted — the batch wire contract omits a
+// withheld row exactly like a miss (no 500, no fallback serve).
+func TestPriceBatch_Withheld_RowOmitted(t *testing.T) {
+	srv := v1.New(v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceWithheld}})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (batch omits, never fails, on withheld rows)", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), `"data":[]`) {
+		t.Errorf("withheld row must be omitted from the batch: %s", body)
+	}
+}
+
+// batchWithheld GETs one batch and returns its data length and withheld list.
+func batchWithheld(t *testing.T, srv *v1.Server, ids string) (int, []string, bool) {
+	t.Helper()
+	ts := startHTTPTest(t, srv.Handler())
+	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids="+ids+"&quote=fiat:USD")
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var data []json.RawMessage
+	_ = json.Unmarshal(env["data"], &data)
+	raw, present := env["withheld"]
+	var withheld []string
+	if present {
+		_ = json.Unmarshal(raw, &withheld)
+	}
+	return len(data), withheld, present
 }

@@ -1,6 +1,9 @@
 package v1
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // A catalogue row that inherits its classic twin's circulating supply
 // must inherit the twin's SCALE with it.
@@ -113,5 +116,125 @@ func TestMergeTwinStats_CarriesARefusalToo(t *testing.T) {
 	}
 	if dst.ListingReference != nil {
 		t.Error("a refusal must not carry a reference")
+	}
+}
+
+// A catalogue row that takes its twin's volume takes the twin's flag with it;
+// one with its own volume keeps its own.
+func TestMergeTwinStats_CarriesLowerBoundWithVolume(t *testing.T) {
+	t.Parallel()
+	dst := AssetDetail{}
+	mergeTwinStats(&dst, AssetDetail{VolumeUSD24h: strp("7"), VolumeLowerBound: true})
+	if !dst.VolumeLowerBound {
+		t.Error("borrowed twin volume lost its lower-bound flag")
+	}
+	own := AssetDetail{VolumeUSD24h: strp("9")}
+	mergeTwinStats(&own, AssetDetail{VolumeUSD24h: strp("7"), VolumeLowerBound: true})
+	if own.VolumeLowerBound {
+		t.Error("row kept its own volume but took the twin's flag")
+	}
+}
+
+// The catalogue row is priced on its own, so the twin's
+// scam suppression has to be CARRIED, not merely performed.
+//
+// A catalogue row carries no issuer (projectCatalogueRow sets none, and
+// `type: "global"` rows are documented as issuer-less), so
+// fillIssuerDirectoryTags skips it and the suppression that call
+// performs never reaches it. That would be harmless if the row's only
+// money came from its twin — but fillCataloguePricesForPage runs BEFORE
+// fillCatalogueStatsForPage and fills price_usd / market_cap_usd from
+// buildGlobalAssetView's global tier, and mergeTwinStats fills only what
+// is nil. So a flagged issuer's verified currency served a price and a
+// market cap on the catalogue phase of /v1/assets, on
+// /v1/assets?asset_class=…, and on /v1/external/assets, while the
+// classic row that suppressCatalogueTwins throws away in its favour —
+// and its own detail page — served null.
+func TestMergeTwinStats_CarriesTheScamSuppressionOntoTheCatalogueRow(t *testing.T) {
+	t.Parallel()
+
+	ownPrice, ownCap, ownFDV := "1.07", "109504500.00", "200000000.00"
+	change := "4.2"
+	// The catalogue row as fillCataloguePricesForPage leaves it: priced
+	// from the global tier, with no issuer and no directory verdict.
+	dst := AssetDetail{
+		Type:         assetTypeGlobal,
+		AssetID:      "some-currency",
+		Slug:         "some-currency",
+		PriceUSD:     &ownPrice,
+		MarketCapUSD: &ownCap,
+		FDVUSD:       &ownFDV,
+		Change24hPct: &change,
+	}
+	// The twin, after fillIssuerDirectoryTags stamped it and
+	// suppressScamIssuerPricing emptied it.
+	twin := AssetDetail{
+		IssuerDirectoryTags:   []string{"malicious", "unsafe"},
+		IssuerDirectoryDomain: "audrev-stellar.com",
+		IssuerDirectoryName:   "AUD Revolution",
+		IssuerScamReason:      "wash-inflated volume; issuer impersonates a regulated anchor",
+	}
+
+	mergeTwinStats(&dst, twin)
+
+	if dst.PriceUSD != nil {
+		t.Errorf("price_usd = %q, want withheld — the issuer carries a scam-class directory tag",
+			*dst.PriceUSD)
+	}
+	if dst.MarketCapUSD != nil {
+		t.Errorf("market_cap_usd = %q, want withheld — the same tag nulled it on the classic row "+
+			"this catalogue row replaces", *dst.MarketCapUSD)
+	}
+	if dst.FDVUSD != nil {
+		t.Errorf("fdv_usd = %q, want withheld", *dst.FDVUSD)
+	}
+	if dst.Change24hPct != nil {
+		t.Errorf("change_24h_pct = %q, want withheld — it is the price over time", *dst.Change24hPct)
+	}
+	// The row goes silent WITH its reason, never without it: a null price
+	// and no warning reads as "no data" rather than "refused".
+	if !slices.Contains(dst.IssuerDirectoryTags, "malicious") {
+		t.Errorf("issuer_directory_tags = %v, want the twin's verdict carried across",
+			dst.IssuerDirectoryTags)
+	}
+	if dst.IssuerDirectoryDomain != twin.IssuerDirectoryDomain {
+		t.Errorf("issuer_directory_domain = %q, want %q",
+			dst.IssuerDirectoryDomain, twin.IssuerDirectoryDomain)
+	}
+	if dst.IssuerScamReason != twin.IssuerScamReason {
+		t.Errorf("issuer_scam_reason = %q, want %q", dst.IssuerScamReason, twin.IssuerScamReason)
+	}
+}
+
+// The other half of the same rule: an issuer the directory merely
+// LABELS keeps every figure. The suppression is scoped to the
+// scam-class tags, and a fix that quietly nulled an anchor's price
+// would be a worse defect than the one it replaced.
+func TestMergeTwinStats_AnUnflaggedIssuerKeepsItsFigures(t *testing.T) {
+	t.Parallel()
+
+	ownPrice, ownCap := "1.00", "5000000.00"
+	dst := AssetDetail{
+		Type:         assetTypeGlobal,
+		Slug:         "some-currency",
+		PriceUSD:     &ownPrice,
+		MarketCapUSD: &ownCap,
+	}
+	twin := AssetDetail{
+		IssuerDirectoryTags:   []string{"anchor", "issuer"},
+		IssuerDirectoryDomain: "circle.com",
+		IssuerDirectoryName:   "Circle",
+	}
+
+	mergeTwinStats(&dst, twin)
+
+	if dst.PriceUSD == nil || *dst.PriceUSD != ownPrice {
+		t.Errorf("price_usd = %v, want %q kept", dst.PriceUSD, ownPrice)
+	}
+	if dst.MarketCapUSD == nil || *dst.MarketCapUSD != ownCap {
+		t.Errorf("market_cap_usd = %v, want %q kept", dst.MarketCapUSD, ownCap)
+	}
+	if !slices.Contains(dst.IssuerDirectoryTags, "anchor") {
+		t.Errorf("issuer_directory_tags = %v, want the twin's labels", dst.IssuerDirectoryTags)
 	}
 }

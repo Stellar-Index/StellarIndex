@@ -858,3 +858,510 @@ func TestOHLCSeries_ServesPerBarSources(t *testing.T) {
 		}
 	}
 }
+
+// The annotation is one-way: it fires only for a window entirely below a
+// KNOWN floor. A straddling or in-coverage window is a genuine market
+// answer, and a failed or empty probe leaves the response unannotated
+// rather than guessing from a database hiccup or a pair too new to have a
+// closed daily bucket.
+func TestOHLCSeries_CoverageFloorAnnotation(t *testing.T) {
+	const below1, below2 = "2016-01-01T00:00:00Z", "2016-03-01T00:00:00Z"
+	for _, tc := range []struct {
+		name        string
+		probe       *coverageFloorProbe
+		from, to    string
+		wantOutside bool
+		wantFloor   bool // coverage_from echoed, even when the flag is off
+	}{
+		{"below the floor is flagged", &coverageFloorProbe{floor: xlmCoverageFloor, found: true}, below1, below2, true, true},
+		{"straddling window is not flagged", &coverageFloorProbe{floor: xlmCoverageFloor, found: true}, "2018-01-01T00:00:00Z", "2019-01-01T00:00:00Z", false, true},
+		{"quiet window inside coverage is not flagged", &coverageFloorProbe{floor: xlmCoverageFloor, found: true}, "2023-01-01T00:00:00Z", "2023-02-01T00:00:00Z", false, true},
+		{"probe error yields no signal", &coverageFloorProbe{err: errors.New("prices_1d unavailable")}, below1, below2, false, false},
+		{"unknown floor yields no signal", &coverageFloorProbe{found: false}, below1, below2, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := ohlcCoverageGet(t, ohlcCoverageServer(t, tc.probe), tc.from, tc.to)
+			if env.Flags.OutsideCoverage != tc.wantOutside {
+				t.Errorf("flags.outside_coverage = %v, want %v", env.Flags.OutsideCoverage, tc.wantOutside)
+			}
+			if !tc.wantFloor {
+				if env.CoverageFrom != nil {
+					t.Errorf("coverage_from = %v, want absent", env.CoverageFrom)
+				}
+				return
+			}
+			if env.CoverageFrom == nil || !env.CoverageFrom.Equal(xlmCoverageFloor) {
+				t.Errorf("coverage_from = %v, want %s", env.CoverageFrom, xlmCoverageFloor)
+			}
+		})
+	}
+}
+
+// TestOHLCSeries_FiatQuoteFloorIsTheConstituentSet pins the fold on
+// /v1/ohlc for AQUA/fiat:USD, whose combined series draws on AQUA/USDC
+// among others. Each case names the window under test and what the
+// literal-pair probe would have said instead.
+func TestOHLCSeries_FiatQuoteFloorIsTheConstituentSet(t *testing.T) {
+	t.Parallel()
+	usdc := mustParseAsset(t, usdcClassicID)
+	aqua := mustParseAsset(t, aquaClassicID)
+	usd := mustParseAsset(t, "fiat:USD")
+	const pairQS = "base=" + aquaClassicID + "&quote=fiat:USD"
+
+	cases := []struct {
+		name        string
+		byPair      map[string]time.Time
+		failPairs   map[string]bool
+		from, to    string
+		wantFrom    *time.Time
+		wantOutside bool
+	}{
+		{
+			// The direct pair's buckets begin 2024 (a late CEX feed); the
+			// USDC constituent's begin 2021. A 2022 window is inside the
+			// served history — the literal-pair probe called it uncovered.
+			name: "earlier constituent lifts the floor",
+			byPair: map[string]time.Time{
+				probeKey(aqua, usd):  directFloor2024,
+				probeKey(aqua, usdc): pegFloor2021,
+			},
+			from: "2022-01-01T00:00:00Z", to: "2022-02-01T00:00:00Z",
+			wantFrom: &pegFloor2021, wantOutside: false,
+		},
+		{
+			// The direct pair's buckets begin 2018, a constituent's 2021.
+			// The set's floor is the EARLIEST — a later constituent never
+			// drags it — so a 2019 window is quiet, not uncovered.
+			name: "later constituent does not drag the floor",
+			byPair: map[string]time.Time{
+				probeKey(aqua, usd):  xlmCoverageFloor,
+				probeKey(aqua, usdc): pegFloor2021,
+			},
+			from: "2019-01-01T00:00:00Z", to: "2019-02-01T00:00:00Z",
+			wantFrom: &xlmCoverageFloor, wantOutside: false,
+		},
+		{
+			// No direct bucket at all; only the USDC constituent, from
+			// 2021. The literal-pair probe found nothing and stayed
+			// silent; the set says the 2019 window is below the floor.
+			name: "constituent-only floor flags a window below it",
+			byPair: map[string]time.Time{
+				probeKey(aqua, usdc): pegFloor2021,
+			},
+			from: "2019-01-01T00:00:00Z", to: "2019-02-01T00:00:00Z",
+			wantFrom: &pegFloor2021, wantOutside: true,
+		},
+		{
+			name: "constituent-only floor reads a later window as quiet",
+			byPair: map[string]time.Time{
+				probeKey(aqua, usdc): pegFloor2021,
+			},
+			from: "2022-01-01T00:00:00Z", to: "2022-02-01T00:00:00Z",
+			wantFrom: &pegFloor2021, wantOutside: false,
+		},
+		{
+			name:   "no constituent holds a bucket",
+			byPair: map[string]time.Time{},
+			from:   "2019-01-01T00:00:00Z", to: "2019-02-01T00:00:00Z",
+			wantFrom: nil, wantOutside: false,
+		},
+		{
+			// The direct pair answered 2024 but the USDC constituent's
+			// probe FAILED. The constituent might hold the earliest
+			// bucket, so a floor computed without it could be too late —
+			// the set is unknown, and the response carries no claim.
+			name: "a failed constituent silences the set",
+			byPair: map[string]time.Time{
+				probeKey(aqua, usd): directFloor2024,
+			},
+			failPairs: map[string]bool{probeKey(aqua, usdc): true},
+			from:      "2022-01-01T00:00:00Z", to: "2022-02-01T00:00:00Z",
+			wantFrom: nil, wantOutside: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			probe := &coverageFloorProbe{byPair: tc.byPair, failPairs: tc.failPairs}
+			ts := fiatCoverageServer(t, probe)
+			env := ohlcCoverageGetPair(t, ts, pairQS, tc.from, tc.to)
+			assertCoverage(t, env.coverageMeta, tc.wantFrom, tc.wantOutside)
+		})
+	}
+}
+
+// TestOHLCSeries_NativeUSDIsNotQuietSinceAFloorItIsNotServedFrom is the
+// shape that motivated the constituent-set fold: `native/fiat:USD`
+// holds no daily bucket under any of XLM's spellings, and its combined
+// series is served from the USDC constituent, whose buckets begin 2021.
+// A 2019 window on it is BELOW the served floor. It must not come back
+// as a quiet window with a floor the served set does not hold — the
+// only floor that can appear is the constituent's, and the window must
+// be flagged against it.
+func TestOHLCSeries_NativeUSDIsNotQuietSinceAFloorItIsNotServedFrom(t *testing.T) {
+	t.Parallel()
+	usdc := mustParseAsset(t, usdcClassicID)
+	native := canonical.NativeAsset()
+	pegFloor := time.Date(2021, 2, 1, 0, 0, 0, 0, time.UTC)
+	probe := &coverageFloorProbe{byPair: map[string]time.Time{
+		// Only the peg constituent holds buckets; native/fiat:USD and
+		// crypto:XLM/fiat:USD (one probe key) hold none.
+		probeKey(native, usdc): pegFloor,
+	}}
+	ts := fiatCoverageServer(t, probe)
+
+	env := ohlcCoverageGetPair(t, ts, "base=native&quote=fiat:USD", "2019-01-01T00:00:00Z", "2019-02-01T00:00:00Z")
+	if env.CoverageFrom != nil && env.CoverageFrom.Equal(xlmCoverageFloor) {
+		t.Fatalf("coverage_from = %s — a floor the served constituent set does not hold", xlmCoverageFloor.Format(time.RFC3339))
+	}
+	assertCoverage(t, env.coverageMeta, &pegFloor, true)
+	if calls, _, _, _ := probe.snapshot(); calls < 2 {
+		t.Errorf("probe calls = %d, want the constituents probed, not the literal pair alone", calls)
+	}
+}
+
+// TestOHLCSeries_FiatQuoteBookOutranksSACQuotedPool — AQUA under r1's
+// registry (the USDC and AQUA wrappers both declared): the book
+// `AQUA/USDC-GA5Z…` holds one bar on day 1 (n=1, 100 base); the pool
+// `<AQUA SAC>/<USDC SAC>` holds bars on day 1 (n=50, high 0.50, low
+// 0.01) and on day 2.
+//
+// Served: TWO bars. Day 1 is the book's
+// alone — the pool is dropped from that bucket entirely, so its two
+// prints at 0.50 and 0.01 cannot become the bar's high and low, which is
+// what "outranks" means here — and day 2 is the pool's, because the
+// book cannot answer it and the alternative is reporting a day the
+// market traded as quiet.
+//
+// The per-bucket guarantee is the day-1 assertions.
+func TestOHLCSeries_FiatQuoteBookOutranksSACQuotedPool(t *testing.T) {
+	usdc := installPegAliasRegistry(t)
+	day1 := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	day2 := day1.AddDate(0, 0, 1)
+	book := mkSeriesBar(day1, "0.0041", "0.0042", "0.0040", "0.0041", "100000", "410", 1)
+	poolDay2 := mkSeriesBar(day2, "0.0035", "0.0036", "0.0034", "0.0035", "10000", "35", 3)
+	reader := &stubHistoryReader{ohlcByPair: map[string][]v1.OHLCSeriesBar{
+		pegAliasAquaClassic + "/" + usdcClassicID: {book},
+		pegAliasAquaSAC + "/" + pegAliasUSDCSAC: {
+			mkSeriesBar(day1, "0.0030", "0.5000", "0.0100", "0.0035", "20", "0.07", 50),
+			poolDay2,
+		},
+	}}
+	ts := httpTestServer(t, v1.New(v1.Options{
+		History:           reader,
+		USDPeggedClassics: []canonical.Asset{usdc},
+	}))
+
+	env := fiatSeriesGet(t, ts, pegAliasAquaClassic)
+	if len(env.Data.Intervals) != 2 {
+		t.Fatalf("intervals = %d, want the book's day-1 bar and the pool's day-2 bar: %+v (reads=%v)",
+			len(env.Data.Intervals), env.Data.Intervals, reader.ohlcPairs)
+	}
+	// Day 1: the book's own bar, print for print. The pool's 50 prints
+	// and its 0.50/0.01 extremes are not blended in and not weighted
+	// down — they are not in this bucket at all.
+	assertBookBar(t, env.Data.Intervals[0], book)
+	// Day 2: the pool's, where the book has nothing to say.
+	assertBookBar(t, env.Data.Intervals[1], poolDay2)
+	if !env.Flags.Triangulated {
+		t.Error("flags.triangulated = false; the series was served through the peg")
+	}
+	assertSACQuotedSeriesReadLast(t, reader.ohlcPairs)
+	// The population is the classic peg under every base spelling.
+	for _, spelling := range []string{
+		pegAliasAquaClassic + "/" + usdcClassicID,
+		pegAliasAquaSAC + "/" + usdcClassicID,
+	} {
+		if callIndex(reader.ohlcPairs, spelling) < 0 {
+			t.Errorf("%s never read (reads=%v)", spelling, reader.ohlcPairs)
+		}
+	}
+}
+
+// TestOHLCSeries_XLMBookOutranksSACQuotedPool — XLM under r1's
+// registry: `native/USDC-GA5Z…` holds a bar of 100 trades over
+// 6,000,000 units; `<XLM SAC>/<USDC SAC>` holds a two-trade bar with
+// high 0.50 and low 0.01 in the same bucket.
+//
+// The served bucket carries n=100 and the book's own high 0.20 and low
+// 0.18 under every XLM spelling of the request — the fiat combine folds
+// the base spellings, so which one was named does not change the answer.
+// The measured shape this pins out is n=102 with high 0.50 and low 0.01:
+// two prints setting a bar's extremes beside six million units of book
+// volume.
+//
+// The SAC-quoted spelling IS read — that is
+// how a bucket the book cannot answer gets served at all — so what holds
+// the answer still is the per-bucket gate, not an absent read. The read
+// order is asserted instead: every established spelling first.
+func TestOHLCSeries_XLMBookOutranksSACQuotedPool(t *testing.T) {
+	usdc := installPegAliasRegistry(t)
+	day := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	book := mkSeriesBar(day, "0.19", "0.20", "0.18", "0.195", "6000000", "1140000", 100)
+	pool := mkSeriesBar(day, "0.19", "0.50", "0.01", "0.19", "20", "4", 2)
+	for _, base := range []string{"native", "crypto:XLM", canonical.XLMSacContractID} {
+		t.Run(base, func(t *testing.T) {
+			reader := &stubHistoryReader{ohlcByPair: map[string][]v1.OHLCSeriesBar{
+				"native/" + usdcClassicID:                          {book},
+				canonical.XLMSacContractID + "/" + pegAliasUSDCSAC: {pool},
+			}}
+			ts := httpTestServer(t, v1.New(v1.Options{
+				History:           reader,
+				USDPeggedClassics: []canonical.Asset{usdc},
+			}))
+			env := fiatSeriesGet(t, ts, base)
+			if len(env.Data.Intervals) != 1 {
+				t.Fatalf("intervals = %d, want 1: %+v (reads=%v)", len(env.Data.Intervals), env.Data.Intervals, reader.ohlcPairs)
+			}
+			assertBookBar(t, env.Data.Intervals[0], book)
+			assertSACQuotedSeriesReadLast(t, reader.ohlcPairs)
+			if callIndex(reader.ohlcPairs, canonical.XLMSacContractID+"/"+pegAliasUSDCSAC) < 0 {
+				t.Errorf("the pool was never read (reads=%v) — the held-back set must be read, "+
+					"or a bucket only it can answer is served as quiet", reader.ohlcPairs)
+			}
+		})
+	}
+}
+
+// TestOHLCSeries_SACQuotedOnlyDepthIsServed — SAC-quoted-only depth is served,
+// pinned from the other side.
+//
+// One market, AQUA quoted in the USDC SAC, with a daily bar inside the
+// window; the declared peg is classic USDC. No established spelling
+// holds a bucket, so every bucket is unanswered and the held-back
+// spelling fills them: the series serves the pool's bar.
+//
+// A populated answer carries no coverage annotation at all — the floor
+// exists to explain an empty one — so the probe must not run here. The
+// annotation that would otherwise sit SILENT on an empty answer is the
+// thing this replaces: the surface need not describe a market it
+// cannot serve, because it serves it.
+func TestOHLCSeries_SACQuotedOnlyDepthIsServed(t *testing.T) {
+	usdc := installUSDCSACRegistry(t)
+	poolFloor := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	pool := mkSeriesBar(poolFloor, "0.0041", "0.0042", "0.0040", "0.0041", "1000000", "4100", 3)
+	reader := &stubHistoryReader{ohlcByPair: map[string][]v1.OHLCSeriesBar{
+		aquaClassicID + "/" + pegAliasUSDCSAC: {pool},
+	}}
+	probe := &coverageFloorProbe{byPair: map[string]time.Time{}}
+	ts := httpTestServer(t, v1.New(v1.Options{
+		History:           reader,
+		CoverageFloor:     probe,
+		USDPeggedClassics: []canonical.Asset{usdc},
+	}))
+
+	env := fiatSeriesGet(t, ts, aquaClassicID)
+	if len(env.Data.Intervals) != 1 {
+		t.Fatalf("intervals = %d, want the pool's bar (reads=%v)", len(env.Data.Intervals), reader.ohlcPairs)
+	}
+	assertBookBar(t, env.Data.Intervals[0], pool)
+	assertSACQuotedSeriesReadLast(t, reader.ohlcPairs)
+	if env.CoverageFrom != nil || env.Flags.OutsideCoverage {
+		t.Errorf("populated answer carries coverage_from=%v outside_coverage=%v; the floor annotates empties only",
+			env.CoverageFrom, env.Flags.OutsideCoverage)
+	}
+	if n := len(probe.probed()); n != 0 {
+		t.Errorf("%d coverage probes issued for a populated series", n)
+	}
+}
+
+// TestOHLCSeries_SACQuotedDepthOutsideTheWindowStillCarriesItsFloor —
+// the annotation half of the same change. The pool's only bucket sits
+// BEFORE the requested window, so the series is genuinely empty, and the
+// floor must now name the pool's first bucket: the combine reads that
+// market, so a floor measured over it is a claim this surface can keep.
+func TestOHLCSeries_SACQuotedDepthOutsideTheWindowStillCarriesItsFloor(t *testing.T) {
+	usdc := installUSDCSACRegistry(t)
+	aqua := mustParseAsset(t, aquaClassicID)
+	usdcSAC := mustParseAsset(t, pegAliasUSDCSAC)
+	poolFloor := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	reader := &stubHistoryReader{ohlcByPair: map[string][]v1.OHLCSeriesBar{
+		aquaClassicID + "/" + pegAliasUSDCSAC: {
+			mkSeriesBar(poolFloor, "0.0041", "0.0042", "0.0040", "0.0041", "1000000", "4100", 3),
+		},
+	}}
+	probe := &coverageFloorProbe{byPair: map[string]time.Time{
+		probeKey(aqua, usdcSAC): poolFloor,
+	}}
+	ts := httpTestServer(t, v1.New(v1.Options{
+		History:           reader,
+		CoverageFloor:     probe,
+		USDPeggedClassics: []canonical.Asset{usdc},
+	}))
+	const pairQS = "base=" + aquaClassicID + "&quote=fiat:USD"
+
+	env := ohlcCoverageGetPair(t, ts, pairQS, "2024-01-01T00:00:00Z", "2024-02-01T00:00:00Z")
+	assertCoverage(t, env.coverageMeta, &poolFloor, true)
+	if probe.literal() == 0 {
+		t.Error("no quote-literal probe was issued; the fiat series must not be measured with the quote leg alias-folded")
+	}
+}
+
+// TestOHLCSeries_FiatProbeSpansWhatTheCombineReads pins the equality
+// the annotation rests on, so the two sides cannot come apart by
+// editing one: on an empty answer the set of literal pairs the combine
+// REQUESTED must equal the set of markets the floor probes SPAN.
+//
+// A quote-literal probe spans its base leg's alias family crossed with
+// the one quote spelling it was given, in both stored directions — so
+// its span is computed here the way the SQL computes it, and the memo's
+// collapse of repeated quote spellings is why the probe list is the
+// shorter of the two. Pinned for a SAC-declared base and for XLM's
+// three-form base, under the registry shape r1 runs.
+//
+// The SAC-quoted market is on BOTH sides of
+// the equality: the combine reads a declared peg's SAC wrapper, so the
+// floor measures it. The equality is what keeps the two honest — a probe
+// wider than the read reports a served-and-empty window as quiet, and a
+// probe narrower than the read leaves a market it can serve unmeasured.
+// An empty answer is the only one a floor annotates, and an empty answer
+// is one where the held-back set was read too, so the set the probe must
+// span is the whole constituent list.
+func TestOHLCSeries_FiatProbeSpansWhatTheCombineReads(t *testing.T) {
+	cases := []struct {
+		name     string
+		registry func(*testing.T) canonical.Asset
+		base     string
+	}{
+		{"AQUA under the USDC wrapper alone", installUSDCSACRegistry, aquaClassicID},
+		{"AQUA under r1's registry", installPegAliasRegistry, aquaClassicID},
+		{"native under r1's registry", installPegAliasRegistry, "native"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			usdc := tc.registry(t)
+			if forms := canonical.AssetAliases(usdc); len(forms) < 2 {
+				t.Fatalf("fixture puts no second quote spelling in play: %v", forms)
+			}
+			reader := &stubHistoryReader{ohlcByPair: map[string][]v1.OHLCSeriesBar{}}
+			probe := &coverageFloorProbe{byPair: map[string]time.Time{}}
+			ts := httpTestServer(t, v1.New(v1.Options{
+				History:           reader,
+				CoverageFloor:     probe,
+				USDPeggedClassics: []canonical.Asset{usdc},
+			}))
+			ohlcCoverageGetPair(t, ts, "base="+tc.base+"&quote=fiat:USD", "2024-01-01T00:00:00Z", "2024-02-01T00:00:00Z")
+
+			requested := map[string]bool{}
+			for _, raw := range reader.ohlcPairs {
+				p, err := canonical.ParsePair(raw)
+				if err != nil {
+					t.Fatalf("ParsePair(%q): %v", raw, err)
+				}
+				requested[coverageMarketKey(p.Base, p.Quote)] = true
+			}
+			span := map[string]bool{}
+			for _, rd := range probe.probedReads() {
+				for _, k := range probeSpanKeys(rd.pair, rd.span) {
+					sp, err := canonical.ParsePair(k)
+					if err != nil {
+						continue // one asset against itself: NewPair rejects it, so the combine never requests it
+					}
+					span[coverageMarketKey(sp.Base, sp.Quote)] = true
+				}
+			}
+			if len(span) == 0 {
+				t.Fatalf("no probe spanned anything; reads=%v", reader.ohlcPairs)
+			}
+			if missing := coverageSetDiff(span, requested); len(missing) > 0 {
+				t.Errorf("the floor spans markets the combine never requested: %v (span=%v)", missing, coverageKeys(span))
+			}
+			if extra := coverageSetDiff(requested, span); len(extra) > 0 {
+				t.Errorf("the combine requested pairs the floor does not measure: %v", extra)
+			}
+			sacQuoted := coverageMarketKey(mustParseAsset(t, tc.base), mustParseAsset(t, pegAliasUSDCSAC))
+			if !requested[sacQuoted] {
+				t.Errorf("%s was not requested — a declared peg's SAC wrapper is where a Soroban pool's "+
+					"USD leg lives, and an empty answer means every established spelling missed", sacQuoted)
+			}
+			if !span[sacQuoted] {
+				t.Errorf("%s is not in the probed span — the combine reads it, so the floor must measure it "+
+					"or an empty window it could serve carries no explanation", sacQuoted)
+			}
+		})
+	}
+}
+
+// TestOHLCSeries_NonstandardDecimals_NormalizesBarsNotVolumes pins the
+// series-mode contract:
+//
+//   - o/h/l/c: the raw prices_<n> CAGG ratio × K (K = 10^(9−7) = 100
+//     for a 9dp base vs a 7dp classic quote) — the same factor the
+//     single-bar path applies, since every bar shares the pair.
+//   - v_base/v_quote: UNCHANGED. The CAGG's volume columns are raw
+//     smallest-unit sums in each asset's OWN declared decimals
+//     (migration 0002: volume = Σ(base_amount)), and the wire contract
+//     (OHLCBar/VWAPResult doc: "in the asset's smallest unit") promises
+//     exactly that — same precedent as /v1/history, which serves raw
+//     base_amount/quote_amount plus base_decimals/quote_decimals
+//     metadata and never rescales amounts. Scaling volumes by 10^(7−dec)
+//     would silently break the smallest-unit contract.
+func TestOHLCSeries_NonstandardDecimals_NormalizesBarsNotVolumes(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{{
+		T: v1.WireTime(t0),
+		// Raw CAGG ratios (quote_amount/base_amount on smallest units):
+		// true price is 100x these for a 9dp base vs 7dp quote.
+		O: "2.5", H: "3", L: "2", C: "2.5",
+		// Raw smallest-unit sums: 10^11 base units at 9dp = 100 tokens;
+		// 2.5*10^9 quote units at 7dp = 250 USDC.
+		VBase: "100000000000", VQuote: "2500000000",
+		N: 4,
+	}}}
+	srv := v1.New(v1.Options{
+		History:             reader,
+		NonstandardDecimals: cache,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base="+flaggedAsset+"&quote="+classicUSDC+"&interval=1h")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("series mode: status = %d, want 200 (CAGG read is normalized, not declined)", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	for _, want := range []string{
+		`"o":"250.0000000000"`,
+		`"h":"300.0000000000"`,
+		`"l":"200.0000000000"`,
+		`"c":"250.0000000000"`,
+		// Volumes byte-identical to the raw CAGG values.
+		`"v_base":"100000000000"`,
+		`"v_quote":"2500000000"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("series body missing %q: %s", want, body)
+		}
+	}
+}
+
+// TestOHLCSeries_NonstandardDecimals_7dpByteIdentical proves wiring the
+// cache does NOT reformat an unflagged (7dp/7dp) pair's bars — the CAGG's
+// NUMERIC::text strings must pass through byte-identical (AdjustPrice's
+// no-op contract), not get re-rendered at 10 fixed digits.
+func TestOHLCSeries_NonstandardDecimals_7dpByteIdentical(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9) // flagged asset NOT in this pair
+	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{{
+		T: v1.WireTime(t0), O: "0.16", H: "0.17", L: "0.15", C: "0.165",
+		VBase: "1000", VQuote: "165", N: 4,
+	}}}
+	srv := v1.New(v1.Options{
+		History:             reader,
+		NonstandardDecimals: cache,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote="+classicUSDC+"&interval=1h")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	for _, want := range []string{
+		`"o":"0.16"`, `"h":"0.17"`, `"l":"0.15"`, `"c":"0.165"`,
+		`"v_base":"1000"`, `"v_quote":"165"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("7dp bars must be byte-identical; body missing %q: %s", want, body)
+		}
+	}
+}

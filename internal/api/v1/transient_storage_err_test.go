@@ -4,12 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"net"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"syscall"
 	"testing"
 
@@ -83,31 +78,4 @@ func (r *unreachableTransfersReader) ListSEP41Transfers(
 	_ context.Context, _, _, _ string, _ int,
 ) ([]timescale.SEP41TransferRow, error) {
 	return nil, r.err
-}
-
-// TestSEP41Transfers_UnreachableStorageMapsTo503 is the wire-level half of
-// With Postgres refusing connections, GET
-// /v1/contracts/{id}/transfers must answer the retryable 503 its handler
-// already reserves for transient storage failures — not 500.
-//
-// Red without the fix: transientStorageErr(pgxDialRefused()) was false, so
-// the handler fell to its `sep41-transfers-error` 500 branch and this test
-// fails on `status = 500, want 503`.
-func TestSEP41Transfers_UnreachableStorageMapsTo503(t *testing.T) {
-	srv := serverWithSEP41Reader(&unreachableTransfersReader{err: pgxDialRefused()})
-	srv.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/contracts/{contract_id}/transfers", srv.handleSEP41Transfers)
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/contracts/"+validContractID+"/transfers", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want %d (body: %s)", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "sep41-transfers-transient") {
-		t.Fatalf("problem type is not the transient-storage one; body: %s", rec.Body.String())
-	}
 }

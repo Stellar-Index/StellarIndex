@@ -630,3 +630,67 @@ func TestObservations_ExcludesExchangeRows(t *testing.T) {
 		t.Errorf("on-chain row missing: %s", body)
 	}
 }
+
+// TestObservations_CacheUnavailable503 — The fiat:USD short-
+// circuit skips storage, so this test uses a CONCRETE classic quote
+// (USDC-G…) to force the LatestTradePerSource path that actually
+// hits the cache layer.
+func TestObservations_CacheUnavailable503(t *testing.T) {
+	hist := &stubHistoryReader{err: miscOnfErr}
+	srv := v1.New(v1.Options{History: hist})
+	tsv := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	assertCacheUnavailable(t, resp)
+}
+
+func TestObservations_NonstandardDecimals_NormalizesPrice(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	// base 100 tokens @9dp = 100×10^9; quote 250 @7dp = 250×10^7 → raw ratio
+	// 0.025, ×K(100) = true price 2.5. (fiat:USD short-circuits observations,
+	// so quote is the 7dp classic USDC.)
+	tr := m2Trade(t, flaggedAsset, classicUSDC,
+		"0000000000000000000000000000000000000000000000000000000000000001",
+		big.NewInt(100_000_000_000), big.NewInt(2_500_000_000))
+	srv := v1.New(v1.Options{
+		History:             &stubHistoryReader{observations: []canonical.Trade{tr}},
+		NonstandardDecimals: cache,
+	})
+	tsrv := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, tsrv.URL+"/v1/observations?asset="+flaggedAsset+"&quote="+classicUSDC)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	// Guards against serving the raw ratio "0.0250000000".
+	if !strings.Contains(body, `"price":"2.5000000000"`) {
+		t.Errorf("/v1/observations price not normalized (want 2.5000000000): %s", body)
+	}
+	// Raw on-chain amounts stay smallest-unit (the ADR-0018 contract).
+	if !strings.Contains(body, `"base_amount":"100000000000"`) {
+		t.Errorf("/v1/observations base_amount must stay raw stroops: %s", body)
+	}
+}
+
+func TestObservations_NonstandardDecimals_7dpByteIdentical(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9) // flagged asset NOT in this pair
+	// native/USDC both 7dp: raw ratio 0.01626 passes through unchanged.
+	tr := m2Trade(t, "native", classicUSDC,
+		"0000000000000000000000000000000000000000000000000000000000000002",
+		big.NewInt(1_000_000_000), big.NewInt(16_260_000))
+	srv := v1.New(v1.Options{
+		History:             &stubHistoryReader{observations: []canonical.Trade{tr}},
+		NonstandardDecimals: cache,
+	})
+	tsrv := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, tsrv.URL+"/v1/observations?asset=native&quote="+classicUSDC)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"0.0162600000"`) {
+		t.Errorf("7dp /v1/observations must be byte-identical (0.0162600000): %s", body)
+	}
+}
