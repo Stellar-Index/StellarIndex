@@ -91,3 +91,28 @@ func TestMatches_protocolFeePoolGated(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodeFee_setProtocolFee_mapPathUnchanged proves the two-shape
+// branch left the Map path intact AND that the Map form is tagged
+// HasOldFee=true (so its per-token old values are persisted, not
+// NULLed). realSetFeeBody / realSetFeeTopic0 are defined in
+// protocol_fee_test.go (same package).
+func TestDecodeFee_setProtocolFee_mapPathUnchanged(t *testing.T) {
+	e := &events.Event{
+		ContractID: "CCNXGPE4AQCSNEBZO3XJDKKDI3CRLYMVS6UWBBTVDLALLWMJEXBORQ2A",
+		Ledger:     63_000_000,
+		TxHash:     "aa",
+		Topic:      []string{realSetFeeTopic0},
+		Value:      realSetFeeBody,
+	}
+	fe, err := decodeFee(e, closedAtTest, EventSetProtocolFee)
+	if err != nil {
+		t.Fatalf("decodeFee (Map): %v", err)
+	}
+	if fe.Fee0New != 4 || fe.Fee0Old != 0 || fe.Fee1New != 4 || fe.Fee1Old != 0 {
+		t.Errorf("fees = (%d,%d,%d,%d), want (4,0,4,0)", fe.Fee0New, fe.Fee0Old, fe.Fee1New, fe.Fee1Old)
+	}
+	if !fe.HasOldFee {
+		t.Errorf("HasOldFee = false, want true (Map body carries the old values)")
+	}
+}

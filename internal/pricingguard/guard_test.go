@@ -404,16 +404,6 @@ func TestGuardServedVWAP1mConfidence_TrailingFetchErrorIncrementsMetric(t *testi
 	}
 }
 
-func TestGuardServedVWAP1mAt_TrailingFetchErrorIncrementsMetric(t *testing.T) {
-	before := testutil.ToFloat64(obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("at"))
-	store := fakeTrailing{err: errors.New("boom")}
-	GuardServedVWAP1mAt(context.Background(), store, nil, testPair(t), mkRow(0, "100.0"), time.Now(), time.Hour)
-	after := testutil.ToFloat64(obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("at"))
-	if after != before+1 {
-		t.Fatalf("PricingGuardTrailingFetchFailedTotal{path=at} = %v, want %v (before %v + one fail-open fetch error)", after, before+1, before)
-	}
-}
-
 // dormantRows returns n newest-first trailing buckets at vwap, the newest
 // of them ageDays days before the candidate (minutesAgo=0).
 func dormantRows(n, ageDays int, vwap string) []timescale.Vwap1mRow {
@@ -515,5 +505,16 @@ func TestGuardDegradedDecisionsIncrementMetric(t *testing.T) {
 	GuardServedVWAP1mSeries(nil, pair, append([]timescale.Vwap1mRow{healthy}, steadyRows(12)...), 1)
 	if got := total() - before; got != 0 {
 		t.Errorf("healthy buckets moved PricingGuardDegradedTotal by %v, want 0", got)
+	}
+}
+
+// TestSelectGuardedVWAP1m_UnparseableCandidateIsNotRejected: a candidate
+// the guard cannot parse is served as-is — never reported as a rejection
+// (which would make GuardServedVWAP1mConfidence flag it substituted).
+func TestSelectGuardedVWAP1m_UnparseableCandidateIsNotRejected(t *testing.T) {
+	candidate := mkRow(0, "not-a-number")
+	served, rejected := SelectGuardedVWAP1m(candidate, steadyRows(12))
+	if rejected || served.VWAP != candidate.VWAP || !served.Bucket.Equal(candidate.Bucket) {
+		t.Fatalf("unparseable candidate: served %+v rejected=%v, want the candidate unchanged, not rejected", served, rejected)
 	}
 }

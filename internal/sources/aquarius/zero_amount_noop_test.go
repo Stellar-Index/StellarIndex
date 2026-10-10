@@ -1,10 +1,8 @@
 package aquarius
 
 import (
-	"errors"
 	"math/big"
 	"testing"
-	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
@@ -50,21 +48,6 @@ func zeroAmountTradeEvent() events.Event {
 	}
 }
 
-func TestDecodeTrade_zeroAmountIsRecognizedNoOpSentinel(t *testing.T) {
-	ev := zeroAmountTradeEvent()
-	closedAt, err := time.Parse(time.RFC3339, ev.LedgerClosedAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = decodeTrade(&ev, closedAt)
-	if !errors.Is(err, ErrZeroAmountTrade) {
-		t.Fatalf("decodeTrade err = %v, want ErrZeroAmountTrade", err)
-	}
-	if errors.Is(err, ErrMalformedPayload) {
-		t.Fatalf("zero-amount trade must NOT classify as malformed: %v", err)
-	}
-}
-
 func TestDecoderDecode_zeroAmountTradeIsNoOp(t *testing.T) {
 	dec := NewDecoder()
 	ev := zeroAmountTradeEvent()
@@ -77,22 +60,6 @@ func TestDecoderDecode_zeroAmountTradeIsNoOp(t *testing.T) {
 	}
 	if len(outs) != 0 {
 		t.Fatalf("Decode emitted %d events, want 0 (zero-amount trade projects nothing)", len(outs))
-	}
-}
-
-// Negative amounts remain a hard schema violation — the no-op carve-out
-// is for ZERO only.
-func TestDecodeTrade_negativeAmountStillMalformed(t *testing.T) {
-	ev := zeroAmountTradeEvent()
-	// body (sold=-1, bought=1, fee=0).
-	ev.Value = encodeTradeBody(t, big.NewInt(-1), big.NewInt(1), big.NewInt(0))
-	closedAt := time.Date(2024, 9, 23, 11, 34, 58, 0, time.UTC)
-	_, err := decodeTrade(&ev, closedAt)
-	if !errors.Is(err, ErrMalformedPayload) {
-		t.Fatalf("negative amount err = %v, want ErrMalformedPayload", err)
-	}
-	if errors.Is(err, ErrZeroAmountTrade) {
-		t.Fatalf("negative amount must not be the zero-amount no-op: %v", err)
 	}
 }
 

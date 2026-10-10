@@ -2,10 +2,14 @@ package pricingguard
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -231,13 +235,12 @@ func TestSelectGuardedVWAP1mAt_StalenessBoundaryIsTheBucketClose(t *testing.T) {
 	}
 }
 
-// TestSelectGuardedVWAP1m_UnparseableCandidateIsNotRejected: a candidate
-// the guard cannot parse is served as-is — never reported as a rejection
-// (which would make GuardServedVWAP1mConfidence flag it substituted).
-func TestSelectGuardedVWAP1m_UnparseableCandidateIsNotRejected(t *testing.T) {
-	candidate := mkRow(0, "not-a-number")
-	served, rejected := SelectGuardedVWAP1m(candidate, steadyRows(12))
-	if rejected || served.VWAP != candidate.VWAP || !served.Bucket.Equal(candidate.Bucket) {
-		t.Fatalf("unparseable candidate: served %+v rejected=%v, want the candidate unchanged, not rejected", served, rejected)
+func TestGuardServedVWAP1mAt_TrailingFetchErrorIncrementsMetric(t *testing.T) {
+	before := testutil.ToFloat64(obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("at"))
+	store := fakeTrailing{err: errors.New("boom")}
+	GuardServedVWAP1mAt(context.Background(), store, nil, testPair(t), mkRow(0, "100.0"), time.Now(), time.Hour)
+	after := testutil.ToFloat64(obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("at"))
+	if after != before+1 {
+		t.Fatalf("PricingGuardTrailingFetchFailedTotal{path=at} = %v, want %v (before %v + one fail-open fetch error)", after, before+1, before)
 	}
 }

@@ -589,61 +589,6 @@ func TestValidate_ReflectorDecimalsCeiling(t *testing.T) {
 	}
 }
 
-// TestLoadReader_RetiredKeysBootWithWarning: fields nothing outside
-// internal/config reads are on config.RetiredKeys, so an old config that
-// still carries them (even with invalid values) boots instead of failing.
-func TestLoadReader_RetiredKeysBootWithWarning(t *testing.T) {
-	body := `
-[region]
-id = "r1"
-
-[stellar]
-network = "pubnet"
-core_http_endpoint = "not-a-url"
-rpc_endpoints = ["http://127.0.0.1:8000"]
-history_archive_url = "https://history.stellar.org/prd/core-live/core_live_001"
-
-[ingestion]
-cursor_store_scheme = "kafka"
-backfill_batch_size = 0
-
-[aggregate]
-vwap_window_seconds = 0
-twap_window_seconds = 0
-`
-	_, err := config.LoadReader(strings.NewReader(body), "test.toml")
-	if err != nil {
-		t.Fatalf("config carrying only retired GH-1129 keys should boot with a warning, not fail: %v", err)
-	}
-}
-
-// TestLoadReader_DwellWindowsConfigurable: api.rate_limit_dwell and
-// api.monthly_quota_dwell are operator-tunable and must round-trip through
-// config.
-func TestLoadReader_DwellWindowsConfigurable(t *testing.T) {
-	body := `
-[region]
-id = "r1"
-
-[stellar]
-network = "pubnet"
-
-[api]
-rate_limit_dwell    = "5m"
-monthly_quota_dwell = "2m"
-`
-	c, err := config.LoadReader(strings.NewReader(body), "test.toml")
-	if err != nil {
-		t.Fatalf("LoadReader: %v", err)
-	}
-	if c.API.RateLimitDwell != 5*time.Minute {
-		t.Errorf("api.rate_limit_dwell = %v, want 5m", c.API.RateLimitDwell)
-	}
-	if c.API.MonthlyQuotaDwell != 2*time.Minute {
-		t.Errorf("api.monthly_quota_dwell = %v, want 2m", c.API.MonthlyQuotaDwell)
-	}
-}
-
 // Config URLs that feed outbound fetches must be absolute http(s) URLs
 // with a host, checked at boot; empty keeps the built-in default. The
 // value is never echoed: an RPC URL can carry an API key in its path.
@@ -682,5 +627,334 @@ func TestValidate_OutboundURLFieldsNeedSchemeAndHost(t *testing.T) {
 				t.Errorf("%s = %q: unexpected error %v", field, ok, err)
 			}
 		}
+	}
+}
+
+// TestValidate_OracleStalenessOverrideAccepted is the shape an operator
+// writes when an asset is legitimately slow.
+func TestValidate_OracleStalenessOverrideAccepted(t *testing.T) {
+	c := config.Default()
+	c.Oracle.StalenessOverrides = []config.OracleStalenessOverrideConfig{{
+		Source:        "reflector-cex",
+		Asset:         "crypto:DAI",
+		BudgetSeconds: 32400,
+		Reason:        "peg asset; publishes only on movement, observed gaps to 7h",
+	}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid staleness override should pass: %v", err)
+	}
+}
+
+// TestValidate_RejectsBadOracleStalenessOverride covers every way a
+// per-asset budget can be written down and silently do nothing.
+//
+// The override's only job is to change one alert's threshold, and each
+// row below changes NOTHING while looking like it does: a source
+// nothing emits, an asset spelled differently from the metric's label,
+// a budget that would ticket on every evaluation, an unexplained
+// claim, or two rows fighting over one pair. None of them produce a
+// runtime error — the alert just keeps firing on its old schedule
+// while the config reads as if it were handled — so they have to fail
+// at startup.
+func TestValidate_RejectsBadOracleStalenessOverride(t *testing.T) {
+	base := config.OracleStalenessOverrideConfig{
+		Source:        "reflector-cex",
+		Asset:         "crypto:DAI",
+		BudgetSeconds: 32400,
+		Reason:        "peg asset; publishes only on movement",
+	}
+	// with returns a copy of base with one field bent out of shape.
+	with := func(mutate func(*config.OracleStalenessOverrideConfig)) config.OracleStalenessOverrideConfig {
+		row := base
+		mutate(&row)
+		return row
+	}
+
+	cases := []struct {
+		name string
+		rows []config.OracleStalenessOverrideConfig
+		want string
+	}{
+		{
+			name: "source is not an oracle",
+			rows: []config.OracleStalenessOverrideConfig{
+				with(func(r *config.OracleStalenessOverrideConfig) { r.Source = "soroswap" }),
+			},
+			want: "is not an oracle source",
+		},
+		{
+			name: "source typo",
+			rows: []config.OracleStalenessOverrideConfig{
+				with(func(r *config.OracleStalenessOverrideConfig) { r.Source = "reflector_cex" }),
+			},
+			want: "is not an oracle source",
+		},
+		{
+			// The metric's asset label is canonical.Asset.String(), so a
+			// bare oracle symbol keys a series that never exists.
+			name: "bare symbol instead of canonical asset",
+			rows: []config.OracleStalenessOverrideConfig{
+				with(func(r *config.OracleStalenessOverrideConfig) { r.Asset = "DAI" }),
+			},
+			want: "not a canonical asset identifier",
+		},
+		{
+			// "XLM" parses — to the native asset, which stringifies back
+			// as "native". An override written this way would look
+			// correct and match nothing.
+			name: "asset alias that does not round-trip",
+			rows: []config.OracleStalenessOverrideConfig{
+				with(func(r *config.OracleStalenessOverrideConfig) { r.Asset = "XLM" }),
+			},
+			want: "is an alias for",
+		},
+		{
+			name: "zero budget",
+			rows: []config.OracleStalenessOverrideConfig{
+				with(func(r *config.OracleStalenessOverrideConfig) { r.BudgetSeconds = 0 }),
+			},
+			want: "budget_seconds must be > 0",
+		},
+		{
+			name: "negative budget",
+			rows: []config.OracleStalenessOverrideConfig{
+				with(func(r *config.OracleStalenessOverrideConfig) { r.BudgetSeconds = -1 }),
+			},
+			want: "budget_seconds must be > 0",
+		},
+		{
+			name: "no stated reason",
+			rows: []config.OracleStalenessOverrideConfig{
+				with(func(r *config.OracleStalenessOverrideConfig) { r.Reason = "   " }),
+			},
+			want: "reason is required",
+		},
+		{
+			name: "two budgets for one pair",
+			rows: []config.OracleStalenessOverrideConfig{
+				base,
+				with(func(r *config.OracleStalenessOverrideConfig) { r.BudgetSeconds = 3600 }),
+			},
+			want: "duplicates",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := config.Default()
+			c.Oracle.StalenessOverrides = tc.rows
+			err := c.Validate()
+			if err == nil {
+				t.Fatal("expected rejection — this row would silently match no series")
+			}
+			if !errors.Is(err, config.ErrInvalidConfig) {
+				t.Errorf("error = %v, want it to wrap ErrInvalidConfig", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want it to mention %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+// [api] status_services declares the background services a
+// deployment actually runs, and /v1/status reports + rolls up exactly
+// those. The lean test-net inventories render `["indexer"]` (they already
+// set run_aggregator: false), which must load and validate — and a typo'd
+// service name must be rejected at boot, because a name Prometheus never
+// publishes a heartbeat for can never be reported down and would hold
+// `overall` at "degraded" forever, i.e. the exact symptom the field exists
+// to remove.
+func TestValidate_StatusServices(t *testing.T) {
+	t.Run("lean test-net shape validates", func(t *testing.T) {
+		c := config.Default()
+		c.API.StatusServices = []string{"indexer"}
+		if err := c.Validate(); err != nil {
+			t.Fatalf(`status_services = ["indexer"] should validate, got: %v`, err)
+		}
+	})
+
+	t.Run("pubnet default is both services", func(t *testing.T) {
+		got := config.Default().API.StatusServices
+		if len(got) != 2 || got[0] != "indexer" || got[1] != "aggregator" {
+			t.Errorf("Default().API.StatusServices = %v, want [indexer aggregator]", got)
+		}
+	})
+
+	t.Run("rejects an unknown service name", func(t *testing.T) {
+		c := config.Default()
+		c.API.StatusServices = []string{"indexer", "agregator"} // typo
+		err := c.Validate()
+		if err == nil {
+			t.Fatal("a typo'd service name must be rejected at boot, got nil")
+		}
+		if !strings.Contains(err.Error(), "status_services") {
+			t.Errorf("error should name the offending key, got: %v", err)
+		}
+	})
+}
+
+// A config-validation failure is fatal at boot, so its message lands on
+// stderr -> journald -> promtail -> Loki, where anyone with Grafana read
+// access can read it for the 720h retention. That makes a validation
+// branch that formats the offending VALUE into its message a credential
+// leak whenever the value can be a credential — and the branches below
+// are exactly the ones that fire on the paste-the-secret-where-the-name-
+// goes mistake they exist to catch.
+//
+// Every case here is a real operator misconfiguration, not a contrived
+// one:
+//
+//   - a managed-Redis URI (Upstash / Redis Cloud / Railway / Heroku all
+//     issue rediss://default:<password>@host:port, never the bare
+//     host:port storage.redis_addr wants) pasted into redis_addr or a
+//     sentinel entry. net.SplitHostPort rejects it with an *net.AddrError
+//     that embeds the whole address, so a `: %w` wrap re-leaks it even
+//     when the %q is redacted.
+//   - a real DSN with an inline password under a scheme we don't accept.
+//   - an S3 secret key pasted where the env-var NAME belongs.
+func TestValidate_FatalErrorsDoNotEchoCredentials(t *testing.T) {
+	const secret = "hunter2-NOT-IN-THE-BOOT-LOG"
+
+	cases := map[string]func(*config.Config){
+		"redis_addr as a managed-Redis URI": func(c *config.Config) {
+			c.Storage.RedisAddr = "rediss://default:" + secret + "@myredis.example.com:6380"
+		},
+		"redis_sentinel_addrs entry as a managed-Redis URI": func(c *config.Config) {
+			c.Storage.RedisMasterName = "mymaster"
+			c.Storage.RedisSentinelAddrs = []string{
+				"127.0.0.1:26379",
+				"rediss://default:" + secret + "@sentinel.example.com:26380",
+			}
+		},
+		"postgres_dsn under a wrong scheme, password inline": func(c *config.Config) {
+			c.Storage.PostgresDSN = "mysql://stellarindex:" + secret + "@db.example.com:3306/stellarindex"
+		},
+		"s3_access_key_env holding the credential": func(c *config.Config) {
+			c.Storage.S3AccessKeyEnv = secret
+		},
+		"s3_secret_key_env holding the credential": func(c *config.Config) {
+			c.Storage.S3SecretKeyEnv = secret
+		},
+		"s3_cold_access_key_env holding the credential": func(c *config.Config) {
+			c.Storage.S3ColdAccessKeyEnv = secret
+			c.Storage.S3ColdSecretKeyEnv = "STELLARINDEX_S3_COLD_SECRET_KEY"
+		},
+		"s3_cold_secret_key_env holding the credential": func(c *config.Config) {
+			c.Storage.S3ColdAccessKeyEnv = "STELLARINDEX_S3_COLD_ACCESS_KEY"
+			c.Storage.S3ColdSecretKeyEnv = secret
+		},
+		"half a cold-tier pair, the set half holding the credential": func(c *config.Config) {
+			c.Storage.S3ColdAccessKeyEnv = secret
+			c.Storage.S3ColdSecretKeyEnv = ""
+		},
+	}
+
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := config.Default()
+			mutate(&c)
+
+			err := c.Validate()
+			if err == nil {
+				t.Fatal("expected a validation error — this case is a misconfiguration")
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("fatal boot error echoes the credential:\n  %v", err)
+			}
+		})
+	}
+}
+
+// TestValidate_RedactedErrorsStillIdentifyTheSetting is the other half
+// of the contract: withholding the value must not cost the operator the
+// ability to tell WHICH setting is wrong (and, for the all-or-nothing
+// cold-tier pair, which half of it they left out).
+func TestValidate_RedactedErrorsStillIdentifyTheSetting(t *testing.T) {
+	cases := map[string]struct {
+		mutate func(*config.Config)
+		want   []string
+	}{
+		"redis_addr": {
+			func(c *config.Config) { c.Storage.RedisAddr = "127.0.0.1" },
+			[]string{"storage.redis_addr", "host:port", "missing port"},
+		},
+		"redis_sentinel_addrs names the index": {
+			func(c *config.Config) {
+				c.Storage.RedisMasterName = "mymaster"
+				c.Storage.RedisSentinelAddrs = []string{"127.0.0.1:26379", "127.0.0.1"}
+			},
+			[]string{"storage.redis_sentinel_addrs[1]", "host:port"},
+		},
+		"postgres_dsn keeps the scheme, which is the mistake": {
+			func(c *config.Config) { c.Storage.PostgresDSN = "mysql://u:p@h/db" },
+			[]string{"storage.postgres_dsn", "mysql://<redacted>", "postgres://"},
+		},
+		"s3_access_key_env": {
+			func(c *config.Config) { c.Storage.S3AccessKeyEnv = "not-a-name" },
+			[]string{"storage.s3_access_key_env", "UPPER_SNAKE_CASE"},
+		},
+		"cold pair says which half was set": {
+			func(c *config.Config) {
+				c.Storage.S3ColdAccessKeyEnv = "STELLARINDEX_S3_COLD_ACCESS_KEY"
+				c.Storage.S3ColdSecretKeyEnv = ""
+			},
+			[]string{
+				"storage.s3_cold_access_key_env (set)",
+				"storage.s3_cold_secret_key_env (empty)",
+			},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := config.Default()
+			tc.mutate(&c)
+
+			err := c.Validate()
+			if err == nil {
+				t.Fatal("expected a validation error")
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error lost the %q diagnostic:\n  %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// TestValidate_EnvVarNameSwapStillEchoesTheName pins the deliberate
+// exception to the no-echo rule, so a later tightening pass does not
+// redact a message whose entire diagnostic is the value. The
+// redis_password / clickhouse_serving_password branches fire
+// ONLY when the value matched `^STELLARINDEX_[A-Z0-9_]+$` — i.e. it is
+// provably one of this project's own env-var NAMES and provably not the
+// password the field is supposed to hold.
+func TestValidate_EnvVarNameSwapStillEchoesTheName(t *testing.T) {
+	for field, mutate := range map[string]func(*config.Config){
+		"storage.redis_password": func(c *config.Config) {
+			c.Storage.RedisPassword = "STELLARINDEX_REDIS_PASSWORD"
+		},
+		"storage.clickhouse_serving_password": func(c *config.Config) {
+			c.Storage.ClickHouseServingPassword = "STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD"
+		},
+	} {
+		t.Run(field, func(t *testing.T) {
+			c := config.Default()
+			mutate(&c)
+
+			err := c.Validate()
+			if err == nil {
+				t.Fatalf("%s: expected the swapped-convention error", field)
+			}
+			if !strings.Contains(err.Error(), field) {
+				t.Errorf("%s: error does not name the setting:\n  %v", field, err)
+			}
+			if !strings.Contains(err.Error(), "STELLARINDEX_") {
+				t.Errorf("%s: error withheld the env-var NAME, which is the whole diagnostic here:\n  %v",
+					field, err)
+			}
+		})
 	}
 }

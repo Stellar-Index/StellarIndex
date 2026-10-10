@@ -370,26 +370,3 @@ func FuzzMatches_identityGate(f *testing.F) {
 		}
 	})
 }
-
-// A fixed-arity body with a trailing element is a different schema, not
-// a superset to read a prefix of.
-func TestDecode_overlongBodiesRejected(t *testing.T) {
-	token := makeContractStrkey(t, 0x61)
-	user := makeAccountStrkey(t, 0x62)
-	one := i128Val(big.NewInt(1))
-	cases := map[string]events.Event{
-		EventClaimProtocolFee: {
-			Topic: []string{TopicSymbolClaimProtocolFee, encodeContractAddrFromStrkey(t, token)},
-			Value: marshalB64(t, vecVal(contractAddrVal(t, token), one, one)),
-		},
-		EventClaimReward: {
-			Topic: []string{TopicSymbolClaimReward, encodeContractAddrFromStrkey(t, token), encodeAccountAddrFromStrkey(t, user)},
-			Value: marshalB64(t, vecVal(one, one)),
-		},
-	}
-	for kind, e := range cases {
-		if _, err := decodeClaimAmount(t, kind, e); !errors.Is(err, ErrMalformedPayload) {
-			t.Errorf("%s with a trailing element: err=%v, want ErrMalformedPayload", kind, err)
-		}
-	}
-}

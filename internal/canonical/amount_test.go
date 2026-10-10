@@ -326,3 +326,31 @@ func TestAmount_ScanRejectsUnsupportedTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestAmount_zeroValueBigIntReturnsNonNil(t *testing.T) {
+	// BigInt() on a zero-value Amount (no constructor called) must
+	// return a non-nil *big.Int — callers' fmt.Sprintf("%s", x.BigInt())
+	// would panic otherwise.
+	var a Amount
+	bi := a.BigInt()
+	if bi == nil {
+		t.Fatal("BigInt() returned nil on zero-value Amount")
+	}
+	if bi.Sign() != 0 {
+		t.Errorf("BigInt().Sign() = %d, want 0", bi.Sign())
+	}
+}
+
+func TestAmount_zeroValueSignIsZero(t *testing.T) {
+	var a Amount
+	if a.Sign() != 0 {
+		t.Errorf("Sign() = %d on zero-value Amount, want 0", a.Sign())
+	}
+}
+
+func TestAmount_zeroValueStringIsZero(t *testing.T) {
+	var a Amount
+	if got := a.String(); got != "0" {
+		t.Errorf("String() = %q on zero-value Amount, want \"0\"", got)
+	}
+}

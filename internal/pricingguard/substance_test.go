@@ -1,7 +1,9 @@
 package pricingguard
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"math"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -469,5 +472,404 @@ func TestSubstanceGate_HourGrainFloorAgreesWithMinuteFloorForAnyPolicy(t *testin
 		if admitted == 0 {
 			t.Fatalf("policy %d buckets / %v: no layout clears the live floor — the property was not exercised", tc.minBuckets, tc.minSpan)
 		}
+	}
+}
+
+// TestNewSubstanceGate_LogsTheEffectivePolicy: r1 sets no
+// substance keys, so it runs at library defaults no config file shows.
+// The gate states the floors it resolved at construction, so a boot log
+// answers "what floor is this deployment enforcing" without a code read.
+func TestNewSubstanceGate_LogsTheEffectivePolicy(t *testing.T) {
+	var buf bytes.Buffer
+	NewSubstanceGate(nil, SubstanceGateOptions{
+		Policy: SubstancePolicyFromValues(0, 0, 0, 0),
+		Logger: slog.New(slog.NewJSONHandler(&buf, nil)),
+	})
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatalf("want one JSON log record, got %q: %v", buf.String(), err)
+	}
+	want := map[string]any{
+		"msg":            "substance gate armed",
+		"min_volume_usd": "1000",
+		"min_buckets":    float64(DefaultSubstanceMinBuckets),
+		"min_span":       DefaultSubstanceMinSpan.String(),
+		"window":         DefaultSubstanceWindow.String(),
+	}
+	for k, v := range want {
+		if rec[k] != v {
+			t.Errorf("boot log %s = %v, want %v (record %s)", k, rec[k], v, buf.String())
+		}
+	}
+}
+
+// The dangerous direction: thick TODAY, attacker-seeded dust at the
+// requested instant. The old gate asked about today, passed, and the
+// point-in-time read served the manipulated historical price.
+func TestSubstanceGate_AllowedAt_WithholdsInstantThatWasDustThoughMarketIsThickToday(t *testing.T) {
+	base, quote := scamPair(t)
+	seeded := time.Date(2021, 3, 1, 9, 0, 0, 0, time.UTC)
+	r := &timedSubstanceReader{
+		live: thickSubstance,
+		at:   func(time.Time) timescale.MarketSubstance { return dustSubstance },
+	}
+	gate := newTimedGate(r)
+
+	if !gate.Allowed(context.Background(), base, quote, "test") {
+		t.Fatal("fixture: the live market must clear the floor, or this test proves nothing about time")
+	}
+	if gate.AllowedAt(context.Background(), base, quote, seeded, "test") {
+		t.Fatal("AllowedAt served an instant whose own market was one $8.57 bucket, because " +
+			"the market is thick TODAY — the historical read would publish the seeded price")
+	}
+}
+
+// The harmful direction: deep and honest at the requested instant,
+// dormant today. The old gate withheld every historical price we hold.
+func TestSubstanceGate_AllowedAt_ServesInstantThatWasDeepThoughMarketIsDormantToday(t *testing.T) {
+	base, quote := scamPair(t)
+	r := &timedSubstanceReader{
+		live: timescale.MarketSubstance{VolumeUSD: "0"},
+		at:   func(time.Time) timescale.MarketSubstance { return thickSubstance },
+	}
+	gate := newTimedGate(r)
+
+	if gate.Allowed(context.Background(), base, quote, "test") {
+		t.Fatal("fixture: the live market must be below the floor")
+	}
+	if !gate.AllowedAt(context.Background(), base, quote, time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC), "test") {
+		t.Fatal("AllowedAt withheld an instant whose own market was deep, because the market " +
+			"is dormant TODAY — a cost-basis read 404s for data we hold and trust")
+	}
+}
+
+// The measurement must END at the requested instant, at the grain the
+// point-in-time reader can serve that instant from.
+func TestSubstanceGate_AllowedAt_MeasuresTheWindowEndingAtTheInstant(t *testing.T) {
+	base, quote := scamPair(t)
+	cases := []struct {
+		name      string
+		at        time.Time
+		wantAsOf  time.Time
+		wantGrain timescale.HistoryGranularity
+	}{
+		{
+			name:      "inside the minute rung: minute grain, truncated to the minute",
+			at:        gateNow.Add(-time.Hour),
+			wantAsOf:  time.Date(2026, 9, 18, 11, 30, 0, 0, time.UTC),
+			wantGrain: timescale.Granularity1m,
+		},
+		{
+			name:      "exactly at the minute-rung boundary: still minute grain",
+			at:        gateNow.Add(-timescale.PriceAtMinuteRungMaxAge),
+			wantAsOf:  time.Date(2026, 9, 16, 12, 30, 0, 0, time.UTC),
+			wantGrain: timescale.Granularity1m,
+		},
+		{
+			name:      "past the minute rung: hour grain, truncated to the hour",
+			at:        time.Date(2024, 6, 1, 15, 42, 10, 0, time.UTC),
+			wantAsOf:  time.Date(2024, 6, 1, 15, 0, 0, 0, time.UTC),
+			wantGrain: timescale.Granularity1h,
+		},
+		{
+			name:      "a future instant is measured as of now, never past it",
+			at:        gateNow.Add(72 * time.Hour),
+			wantAsOf:  time.Date(2026, 9, 18, 12, 30, 0, 0, time.UTC),
+			wantGrain: timescale.Granularity1m,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &timedSubstanceReader{at: func(time.Time) timescale.MarketSubstance { return thickSubstance }}
+			gate := newTimedGate(r)
+			gate.AllowedAt(context.Background(), base, quote, tc.at, "test")
+
+			if r.liveCalls != 0 {
+				t.Errorf("made %d trailing-from-now measurement(s) for a point-in-time verdict", r.liveCalls)
+			}
+			if len(r.atCalls) == 0 {
+				t.Fatal("no point-in-time measurement was made")
+			}
+			for _, c := range r.atCalls {
+				if !c.asOf.Equal(tc.wantAsOf) {
+					t.Errorf("measured as of %s, want %s", c.asOf, tc.wantAsOf)
+				}
+				if c.grain != tc.wantGrain {
+					t.Errorf("measured at grain %q, want %q", c.grain, tc.wantGrain)
+				}
+				if c.window != testPolicy().withDefaults().Window {
+					t.Errorf("measured a %s window, want the policy's %s", c.window, testPolicy().withDefaults().Window)
+				}
+			}
+		})
+	}
+}
+
+// The hour floor must admit exactly the weakest market the minute floor
+// admits — 20 minutes across a 6h span can be as few as two hour
+// buckets — and must still refuse a single burst.
+func TestSubstanceGate_AllowedAt_HourGrainFloor(t *testing.T) {
+	base, quote := scamPair(t)
+	old := time.Date(2024, 6, 1, 15, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		sub  timescale.MarketSubstance
+		want bool
+	}{
+		{"two hour buckets six hours apart, over the volume floor", timescale.MarketSubstance{VolumeUSD: "5000", Buckets: 2, SpanSeconds: 6 * 3600}, true},
+		{"one hour bucket — a single burst, whatever its size", timescale.MarketSubstance{VolumeUSD: "9000000", Buckets: 1, SpanSeconds: 0}, false},
+		{"two adjacent hours — span leg unchanged at hour grain", timescale.MarketSubstance{VolumeUSD: "5000", Buckets: 2, SpanSeconds: 3600}, false},
+		{"spread out but under the volume floor — volume leg unchanged", timescale.MarketSubstance{VolumeUSD: "8.57", Buckets: 12, SpanSeconds: 20 * 3600}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &timedSubstanceReader{at: func(time.Time) timescale.MarketSubstance { return tc.sub }}
+			if got := newTimedGate(r).AllowedAt(context.Background(), base, quote, old, "test"); got != tc.want {
+				t.Errorf("AllowedAt = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Inside the minute rung the floor is the LIVE floor, unweakened: two
+// buckets that would clear the hour floor must not clear this one, or
+// /v1/price/at?ts=<a minute ago> republishes what /v1/price refuses.
+func TestSubstanceGate_AllowedAt_RecentInstantKeepsTheMinuteFloor(t *testing.T) {
+	base, quote := scamPair(t)
+	r := &timedSubstanceReader{at: func(time.Time) timescale.MarketSubstance {
+		return timescale.MarketSubstance{VolumeUSD: "5000", Buckets: 2, SpanSeconds: 6 * 3600}
+	}}
+	if newTimedGate(r).AllowedAt(context.Background(), base, quote, gateNow.Add(-5*time.Minute), "test") {
+		t.Fatal("a recent instant was held to the hour-grain bucket floor — the minute rung " +
+			"serves the raw 1m bucket and must keep the live gate's floor")
+	}
+}
+
+// Verdicts for different instants must not share a cache slot, and must
+// not share one with the live verdict.
+func TestSubstanceGate_AllowedAt_CachesPerInstant(t *testing.T) {
+	base, quote := scamPair(t)
+	dustDay := time.Date(2021, 3, 1, 9, 0, 0, 0, time.UTC)
+	deepDay := time.Date(2024, 6, 1, 9, 0, 0, 0, time.UTC)
+	r := &timedSubstanceReader{
+		live: thickSubstance,
+		at: func(asOf time.Time) timescale.MarketSubstance {
+			if asOf.Equal(dustDay) {
+				return dustSubstance
+			}
+			return thickSubstance
+		},
+	}
+	gate := newTimedGate(r)
+	ctx := context.Background()
+
+	gate.Allowed(ctx, base, quote, "test")
+	if gate.AllowedAt(ctx, base, quote, dustDay, "test") {
+		t.Error("dust instant inherited the live verdict")
+	}
+	if !gate.AllowedAt(ctx, base, quote, deepDay, "test") {
+		t.Error("deep instant inherited the dust instant's verdict")
+	}
+	before := len(r.atCalls)
+	gate.AllowedAt(ctx, base, quote, dustDay.Add(20*time.Minute), "test") // same hour → same verdict
+	if len(r.atCalls) != before {
+		t.Errorf("an instant in an already-measured hour re-queried the store (%d → %d calls)", before, len(r.atCalls))
+	}
+	if !gate.Allowed(ctx, base, quote, "test") {
+		t.Error("a withheld point-in-time verdict leaked into the live verdict")
+	}
+}
+
+// Same asymmetric posture as the live gate: a store error serves, and
+// is not cached.
+func TestSubstanceGate_AllowedAt_FailsOpenOnStoreErrorAndDoesNotCache(t *testing.T) {
+	base, quote := scamPair(t)
+	r := &timedSubstanceReader{atErr: errors.New("connection reset")}
+	gate := newTimedGate(r)
+	at := time.Date(2024, 6, 1, 9, 0, 0, 0, time.UTC)
+
+	if !gate.AllowedAt(context.Background(), base, quote, at, "test") {
+		t.Fatal("a store error must fail open — a DB blip must not 404 the price surface")
+	}
+	r.atErr = nil
+	r.at = func(time.Time) timescale.MarketSubstance { return dustSubstance }
+	if gate.AllowedAt(context.Background(), base, quote, at, "test") {
+		t.Fatal("the fail-open answer was cached: a dust instant stayed served after the store recovered")
+	}
+}
+
+func TestSubstanceGate_AllowedAt_NilGateAndUngatedPairAllow(t *testing.T) {
+	var gate *SubstanceGate
+	base, quote := scamPair(t)
+	if !gate.AllowedAt(context.Background(), base, quote, gateNow, "test") {
+		t.Error("nil gate must allow — a disabled [pricing_guard] must not withhold")
+	}
+	r := &timedSubstanceReader{at: func(time.Time) timescale.MarketSubstance { return dustSubstance }}
+	if !newTimedGate(r).AllowedAt(context.Background(), mustAsset(t, "fiat:EUR"), mustAsset(t, "fiat:USD"), gateNow, "test") {
+		t.Error("an off-chain pair is out of the gate's scope at any instant")
+	}
+	if len(r.atCalls) != 0 {
+		t.Error("an ungated pair was measured")
+	}
+}
+
+// TestSubstanceGate_WithheldCountCarriesTheFloor: the counter says which
+// floor refused the pair, from a fresh measurement and from the cache.
+func TestSubstanceGate_WithheldCountCarriesTheFloor(t *testing.T) {
+	const surface = "floor_label_test"
+	asset := mustAsset(t, "SHRT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")
+	pair, err := canonical.NewPair(asset, canonical.NativeAsset())
+	if err != nil {
+		t.Fatal(err)
+	}
+	short := timescale.MarketSubstance{VolumeUSD: "5000", Buckets: 40, SpanSeconds: 3600, ValuedBuckets: 40}
+	gate := NewSubstanceGate(&fakeSubstanceReader{byPair: map[string]timescale.MarketSubstance{pair.String(): short}},
+		SubstanceGateOptions{Policy: testPolicy()})
+	counter := obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface, string(FloorSpan))
+	for range 2 {
+		if gate.Allowed(context.Background(), asset, canonical.NativeAsset(), surface) {
+			t.Fatal("a one-hour market cleared the six-hour span floor")
+		}
+	}
+	var pb dto.Metric
+	if err := counter.Write(&pb); err != nil {
+		t.Fatal(err)
+	}
+	if got := pb.GetCounter().GetValue(); got != 2 {
+		t.Errorf("floor=%q series = %v, want 2", FloorSpan, got)
+	}
+	if got := withheldFor(t, surface); got != 2 {
+		t.Errorf("withheld counted %v across all floors, want 2", got)
+	}
+}
+
+// TestSubstanceGate_UnvaluedMarketIsWithheldAndNamed: a market
+// with real persistence but no USD valuation — the SEP-41/SEP-41 shape,
+// 800 buckets over 22h — stays withheld (an unvaluable volume cannot be
+// verified, and waiving the floor would admit the self-minted pair the
+// gate exists for), but under its own floor, not as a thin market.
+func TestSubstanceGate_UnvaluedMarketIsWithheldAndNamed(t *testing.T) {
+	a := mustAsset(t, "TOKA-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")
+	b := mustAsset(t, "TOKB-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+	pair, err := canonical.NewPair(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unvalued := timescale.MarketSubstance{VolumeUSD: "0", Buckets: 800, SpanSeconds: 22 * 3600}
+	gate := NewSubstanceGate(&fakeSubstanceReader{byPair: map[string]timescale.MarketSubstance{pair.String(): unvalued}},
+		SubstanceGateOptions{Policy: testPolicy()})
+	allowed, measured, floor := gate.Probe(context.Background(), a, b)
+	if allowed || !measured || floor != FloorVolumeUnvalued {
+		t.Errorf("Probe = (allowed %v, measured %v, floor %q), want (false, true, %q)",
+			allowed, measured, floor, FloorVolumeUnvalued)
+	}
+}
+
+// minuteRow is one prices_1m row: a closed minute of one stored spelling.
+type minuteRow struct {
+	base, quote string
+	bucket      time.Time
+	usd         int64
+}
+
+// minuteStore models prices_1m as rows and answers the substance question
+// the way the SQL does: distinct buckets, summed volume and span over
+// every row the request selects, in both stored orientations. It is a
+// model of the table, not a canned answer, so it can only agree with a
+// gate that asks for the union in one read.
+type minuteStore struct{ rows []minuteRow }
+
+func (m *minuteStore) measure(match func(base, quote string) bool) timescale.MarketSubstance {
+	vol := new(big.Rat)
+	seen := map[time.Time]bool{}
+	var lo, hi time.Time
+	for _, r := range m.rows {
+		if !match(r.base, r.quote) && !match(r.quote, r.base) {
+			continue
+		}
+		vol.Add(vol, new(big.Rat).SetInt64(r.usd))
+		seen[r.bucket] = true
+		if lo.IsZero() || r.bucket.Before(lo) {
+			lo = r.bucket
+		}
+		if r.bucket.After(hi) {
+			hi = r.bucket
+		}
+	}
+	return timescale.MarketSubstance{
+		VolumeUSD:   vol.FloatString(0),
+		Buckets:     int64(len(seen)),
+		SpanSeconds: int64(hi.Sub(lo) / time.Second),
+	}
+}
+
+func (m *minuteStore) PairMarketSubstance(
+	_ context.Context, bases, quotes []canonical.Asset, _ time.Duration,
+) (timescale.MarketSubstance, error) {
+	in := func(set []canonical.Asset, s string) bool {
+		for _, a := range set {
+			if a.String() == s {
+				return true
+			}
+		}
+		return false
+	}
+	return m.measure(func(b, q string) bool { return in(bases, b) && in(quotes, q) }), nil
+}
+
+// PairMarketSubstanceAt satisfies [SubstanceStore]; these fixtures only
+// exercise the live path ([SubstanceGate.Verdict]), so it ignores the
+// point-in-time parameters and answers the same union as the live read.
+func (m *minuteStore) PairMarketSubstanceAt(
+	ctx context.Context, bases, quotes []canonical.Asset, _ time.Time, window time.Duration, _ timescale.HistoryGranularity,
+) (timescale.MarketSubstance, error) {
+	return m.PairMarketSubstance(ctx, bases, quotes, window)
+}
+
+// XLM's SDEX leg (native) and CEX leg (crypto:XLM) trading in the SAME ten
+// minutes are ten minutes of market, not twenty. Counting each spelling's
+// distinct minutes and adding them let a market clear the 20-minute floor
+// on half the persistence it demands.
+func TestSubstanceGate_AliasUnionCountsSharedMinutesOnce(t *testing.T) {
+	usdc := mustAsset(t, "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	store := &minuteStore{}
+	for i := 0; i < 10; i++ {
+		minute := start.Add(time.Duration(i) * 47 * time.Minute) // spans 7h03m
+		for _, spelling := range []string{"native", "crypto:XLM"} {
+			store.rows = append(store.rows, minuteRow{spelling, usdc.String(), minute, 5000})
+		}
+	}
+	gate := NewSubstanceGate(store, SubstanceGateOptions{Policy: testPolicy()})
+
+	allowed, measured := gate.Verdict(context.Background(), canonical.NativeAsset(), usdc, "test")
+	if !measured {
+		t.Fatal("verdict unmeasured")
+	}
+	if allowed {
+		t.Fatal("10 distinct minutes quoted under two XLM spellings cleared a 20-distinct-minute floor")
+	}
+}
+
+// The span leg is the union's wall-clock reach too: one spelling trading
+// early in the window and another late is one market active across the
+// whole stretch, not two short-lived ones.
+func TestSubstanceGate_AliasUnionSpanCoversEverySpelling(t *testing.T) {
+	usdc := mustAsset(t, "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	store := &minuteStore{}
+	for i := 0; i < 15; i++ {
+		early := start.Add(time.Duration(i) * 12 * time.Minute)          // 0h00 – 2h48
+		late := start.Add(4*time.Hour + time.Duration(i)*12*time.Minute) // 4h00 – 6h48
+		store.rows = append(store.rows,
+			minuteRow{"native", usdc.String(), early, 5000},
+			minuteRow{"crypto:XLM", usdc.String(), late, 5000})
+	}
+	gate := NewSubstanceGate(store, SubstanceGateOptions{Policy: testPolicy()})
+
+	allowed, measured := gate.Verdict(context.Background(), canonical.NativeAsset(), usdc, "test")
+	if !measured || !allowed {
+		t.Fatalf("30 distinct minutes spanning 6h48m across two spellings: allowed=%v measured=%v, want served",
+			allowed, measured)
 	}
 }

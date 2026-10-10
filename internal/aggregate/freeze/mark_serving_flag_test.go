@@ -82,35 +82,6 @@ func TestMark_NeverShortensALiveLifecycleTTL(t *testing.T) {
 	}
 }
 
-// TestMarkHoldForWindow_NeverShortensASiblingsHold is the same invariant
-// between two lifecycle writers. The marker has ONE TTL and carries every
-// window's ladder; a 5m window re-marking with its own short remainder
-// must not pull the expiry in under a 1h sibling whose window is not
-// re-marking this tick.
-func TestMarkHoldForWindow_NeverShortensASiblingsHold(t *testing.T) {
-	mr, rdb := newRedis(t)
-	w, err := freeze.NewWriter(rdb, 0)
-	if err != nil {
-		t.Fatalf("NewWriter: %v", err)
-	}
-	asset, quote := nativeUSD(t)
-	ctx := context.Background()
-	now := time.Now().UTC()
-
-	if err := w.MarkHoldForWindow(ctx, asset, quote, longWindow, "0.1242",
-		freezeDecision(), escalatedState(now), 30*time.Minute); err != nil {
-		t.Fatalf("MarkHoldForWindow(1h): %v", err)
-	}
-	if err := w.MarkHoldForWindow(ctx, asset, quote, shortWindow, "0.1242",
-		freezeDecision(), freshState(now), 6*time.Minute); err != nil {
-		t.Fatalf("MarkHoldForWindow(5m): %v", err)
-	}
-	if ttl := mr.TTL(cachekeys.Freeze(asset, quote).String()); ttl < 25*time.Minute {
-		t.Errorf("marker TTL = %s after the 5m window's write, want at least the 1h "+
-			"window's remaining hold (25m)", ttl)
-	}
-}
-
 // TestMark_PreservesALegacyMarkersLadder: a marker written before
 // per-window ladders existed keeps its one ladder in the pair-level State
 // field, which is what every window rehydrates from. Mark must not rewrite

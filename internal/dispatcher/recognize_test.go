@@ -4,7 +4,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // validatingFakeDecoder matches on topic like fakeDecoder, but also
@@ -85,5 +88,41 @@ func TestRecognize_OverlappingMatchDoesNotFallThrough(t *testing.T) {
 	if name, ok := disp.Recognize(events.Event{Topic: []string{"overlap"}}); ok {
 		t.Errorf("Recognize(overlap) = (%q,%v), want ok=false: first decoder's Validate failed, "+
 			"so this is a recognition gap, not a match on %q", name, ok, "second")
+	}
+}
+
+// TestRecognize_PanicResolvesToUnrecognised covers the Recognize seam:
+// Recognize walks every decoder's Matches, and it
+// is called from the completeness recogniser and two ops subcommands,
+// none of which recovered — so one malformed row took the whole
+// verification run down with it.
+//
+// The DIRECTION of the answer is the load-bearing part. A panic must
+// resolve to "not recognised", which pushes the shape into the
+// unrecognised-on-unowned-contract bucket and turns the recognition axis
+// RED. Naming the panicking decoder as the owner would certify a shape
+// that nothing can actually decode — a false green on the one axis whose
+// whole job is to catch shapes we do not understand.
+func TestRecognize_PanicResolvesToUnrecognised(t *testing.T) {
+	dec := &panickyDecoder{name: "panic-recognise-src", contract: "CPOISON", panicInMatch: true}
+	disp := New(dec)
+	before := testutil.ToFloat64(obs.DecoderPanicsTotal.WithLabelValues(dec.name))
+
+	name, ok := disp.Recognize(events.Event{ContractID: "CPOISON", Ledger: 9, TxHash: "def", OperationIndex: 1})
+
+	if ok {
+		t.Errorf("Recognize reported ok=true for a decoder that panicked — a shape nothing can decode must never be certified as owned")
+	}
+	if name != "" {
+		t.Errorf("Recognize returned owner %q after a panic, want empty", name)
+	}
+	if got := testutil.ToFloat64(obs.DecoderPanicsTotal.WithLabelValues(dec.name)) - before; got != 1 {
+		t.Errorf("panic counter rose by %v, want 1 — an ops-path panic must be as visible as an ingest one", got)
+	}
+
+	// A healthy decoder still recognises normally after the guard.
+	good := &panickyDecoder{name: "healthy-src", contract: "CGOOD"}
+	if n, ok := New(good).Recognize(events.Event{ContractID: "CGOOD"}); !ok || n != "healthy-src" {
+		t.Errorf("healthy decoder: got (%q, %v), want (healthy-src, true)", n, ok)
 	}
 }
