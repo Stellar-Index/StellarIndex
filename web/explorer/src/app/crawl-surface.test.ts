@@ -124,7 +124,7 @@ describe('sitemap', () => {
       orphaned,
       `sitemapped but unreachable from the nav/footer: ${orphaned.join(', ')}`,
     ).toEqual([]);
-  }, 15_000); // walks the whole route graph and builds the sitemap; 5 s flakes under verify's parallel lanes
+  });
 
   // routeFor returning null means no page.tsx claims the path.
   it('names a real page for every entry', async () => {
