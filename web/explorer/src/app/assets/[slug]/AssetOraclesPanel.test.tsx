@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
@@ -15,65 +15,41 @@ const USDC = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 const FAKE_USDC =
   'USDC-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA';
 
-// The oracle-class registry as /v1/sources?class=oracle serves it (r1).
-// coingecko is class=aggregator and is therefore ABSENT —
-// which is the whole point of the filter under test.
-const ORACLE_SOURCES = [
-  { name: 'band', class: 'oracle' },
-  { name: 'chainlink', class: 'oracle' },
-  { name: 'redstone', class: 'oracle' },
-  { name: 'reflector-cex', class: 'oracle' },
-];
+// /v1/sources?class=oracle: coingecko is class=aggregator, so absent.
+const ORACLE_SOURCES = ['band', 'chainlink', 'redstone', 'reflector-cex'].map(
+  (name) => ({ name, class: 'oracle' }),
+);
 
-// Verbatim shapes from GET /v1/oracle/latest?asset=USDC-GA5Z… on r1
-// including the `coingecko` row the endpoint really does
-// return: /v1/oracle/latest does NOT apply the class=oracle filter that
-// /v1/oracle/streams applies.
-const BAND = {
-  source: 'band',
-  contract_id: 'CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M',
+// Shapes from /v1/oracle/latest, which does NOT apply the class filter.
+const reading = (
+  source: string,
+  price: string,
+  decimals: number,
+  over: Record<string, unknown> = {},
+) => ({
+  source,
   asset: 'crypto:USDC',
   quote: 'fiat:USD',
   ts: '2026-09-03T02:14:14Z',
-  price: '0.999822000',
-  price_raw: '999822000',
-  decimals: 9,
-  observer: 'GB4KMSLYVTWEEWC4QHSIXJXGKS7X6QQ5NO6NKDV5BS34OZRA4X2HKZCU',
+  price,
+  price_raw: price.replace('.', '').replace(/^0+/, ''),
+  decimals,
   mapped: true,
-};
-const REFLECTOR = {
-  source: 'reflector-cex',
+  ...over,
+});
+const BAND = reading('band', '0.999822000', 9, {
+  contract_id: 'CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M',
+});
+const REFLECTOR = reading('reflector-cex', '1.00003382630191', 14, {
   contract_id: 'CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN',
-  asset: 'crypto:USDC',
-  quote: 'fiat:USD',
   ts: '2026-09-03T02:55:00Z',
-  price: '1.00003382630191',
-  price_raw: '100003382630191',
-  decimals: 14,
-  mapped: true,
-};
-const COINGECKO = {
-  source: 'coingecko',
-  asset: 'crypto:USDC',
-  quote: 'fiat:EUR',
-  ts: '2026-09-03T02:57:37Z',
-  price: '0.86243500',
-  price_raw: '86243500',
-  decimals: 8,
-  mapped: true,
-};
-// An unmapped oracle symbol — reference-only, maps to no canonical asset.
-const RAW_USDC = {
-  source: 'redstone',
-  contract_id: 'CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG',
+});
+const COINGECKO = reading('coingecko', '0.86243500', 8, { quote: 'fiat:EUR' });
+// An unmapped oracle symbol: reference-only, no canonical asset.
+const RAW_USDC = reading('redstone', '0.99971949', 8, {
   asset: 'raw:USDC',
-  quote: 'fiat:USD',
-  ts: '2026-09-03T02:30:08Z',
-  price: '0.99971949',
-  price_raw: '99971949',
-  decimals: 8,
   mapped: false,
-};
+});
 
 const COLLISION = {
   verified_slug: 'usdc',
@@ -83,27 +59,30 @@ const COLLISION = {
   note: 'Exercise caution — this asset uses the ticker "USDC" but is not the verified USDC on Stellar.',
 };
 
-type Routes = {
-  latest?: unknown[] | Error;
-  streams?: unknown[] | Error;
-  sources?: unknown[] | Error;
-};
+const ABSENT = 'No oracle publishes a price for this asset';
+const UNAVAILABLE = /Oracle feeds unavailable right now/;
+
+type Route = unknown[] | Error;
 
 function mockApi({
   latest = [],
   streams = [],
   sources = ORACLE_SOURCES,
-}: Routes) {
+}: {
+  latest?: Route;
+  streams?: Route;
+  sources?: Route;
+}) {
   vi.mocked(apiGet).mockImplementation(async (path: string) => {
-    const pick = (v: unknown[] | Error) => {
-      if (v instanceof Error) throw v;
-      return { data: v };
+    const routes: Record<string, Route> = {
+      '/v1/oracle/latest': latest,
+      '/v1/oracle/streams': streams,
+      '/v1/sources': sources,
     };
-    if (path === '/v1/oracle/latest') return pick(latest);
-    if (path === '/v1/oracle/streams') return pick(streams);
-    if (path === '/v1/sources') return pick(sources);
-    // AssetLink's SAC wrapper map.
-    return { data: {} };
+    const v = routes[path];
+    if (v instanceof Error) throw v;
+    // Anything else is AssetLink's SAC wrapper map.
+    return { data: v ?? {} };
   });
 }
 
@@ -120,274 +99,141 @@ function renderPanel(
   );
 }
 
-function pathsCalled(): string[] {
-  return vi.mocked(apiGet).mock.calls.map((c) => c[0] as string);
-}
+type Text = string | RegExp;
+const shows = (...t: Text[]) =>
+  t.forEach((x) => expect(screen.getByText(x)).toBeInTheDocument());
+const hides = (...t: Text[]) =>
+  t.forEach((x) => expect(screen.queryByText(x)).not.toBeInTheDocument());
 
-describe('AssetOraclesPanel', () => {
-  beforeEach(() => {
-    vi.mocked(apiGet).mockReset();
+const pathsCalled = () =>
+  vi.mocked(apiGet).mock.calls.map((c) => c[0] as string);
+
+beforeEach(() => {
+  vi.mocked(apiGet).mockReset();
+});
+
+describe('AssetOraclesPanel — verified asset', () => {
+  it('lists each oracle with its reading, contract, scale and age', async () => {
+    mockApi({ latest: [REFLECTOR, BAND] });
+    renderPanel();
+    await screen.findByText('Oracle feeds (2)');
+    // Sorted by source. 6 decimals below 1, 4 at/above, so a depeg shows.
+    const [band, refl] = screen.getAllByRole('row').slice(1);
+    for (const t of ['band', '0.999822', '9', 'CCQX…GG5M'])
+      within(band).getByText(t);
+    for (const t of ['reflector-cex', '1.0000', '14'])
+      within(refl).getByText(t);
+    within(refl).getByRole('time', { hidden: true });
   });
 
-  describe('a verified asset', () => {
-    it('lists each oracle with its reading, contract, scale and age', async () => {
-      mockApi({ latest: [REFLECTOR, BAND] });
-      renderPanel();
-
-      await waitFor(() =>
-        expect(screen.getByText('Oracle feeds (2)')).toBeInTheDocument(),
-      );
-      // Alphabetical by source, as the table sorts.
-      const rows = screen.getAllByRole('row').slice(1);
-      expect(within(rows[0]).getByText('band')).toBeInTheDocument();
-      expect(within(rows[1]).getByText('reflector-cex')).toBeInTheDocument();
-
-      // The corrected VALUES, not merely "something rendered": the
-      // formatter keeps 4 decimals at/above 1 and 6 below it, so a
-      // stablecoin's departure from the peg stays visible.
-      expect(within(rows[0]).getByText('0.999822')).toBeInTheDocument();
-      expect(within(rows[1]).getByText('1.0000')).toBeInTheDocument();
-      // Declared scale (ADR-0003 — price_raw is meaningless without it).
-      expect(within(rows[0]).getByText('9')).toBeInTheDocument();
-      expect(within(rows[1]).getByText('14')).toBeInTheDocument();
-      // Publishing contract identity, truncated but copyable.
-      expect(within(rows[0]).getByText('CCQX…GG5M')).toBeInTheDocument();
-      // Age of the reading.
-      expect(
-        within(rows[1]).getByRole('time', { hidden: true }) ??
-          within(rows[1]).getByText(/ago|now/),
-      ).toBeTruthy();
-    });
-
-    // /v1/oracle/latest really does return a coingecko row; coingecko is
-    // class=aggregator. A panel headed "oracle feeds" that lists it says
-    // something false about what CoinGecko is.
-    it('excludes an aggregator row that /v1/oracle/latest returned', async () => {
-      mockApi({ latest: [BAND, COINGECKO] });
-      renderPanel();
-
-      await waitFor(() =>
-        expect(screen.getByText('Oracle feeds (1)')).toBeInTheDocument(),
-      );
-      expect(screen.getByText('band')).toBeInTheDocument();
-      expect(screen.queryByText('coingecko')).not.toBeInTheDocument();
-      // …and the aggregator's EUR reading is not smuggled in unlabelled.
-      expect(screen.queryByText('0.862435')).not.toBeInTheDocument();
-    });
-
-    it('never lets an unmapped raw: row join the attributed table', async () => {
-      mockApi({ latest: [BAND, RAW_USDC] });
-      renderPanel();
-
-      await waitFor(() =>
-        expect(screen.getByText('Oracle feeds (1)')).toBeInTheDocument(),
-      );
-      expect(screen.getByText('band')).toBeInTheDocument();
-      expect(screen.queryByText('0.999719')).not.toBeInTheDocument();
-    });
-
-    it('states the genuine absence when no oracle publishes the asset', async () => {
-      mockApi({ latest: [] });
-      renderPanel({ symbol: 'SHX' });
-
-      await waitFor(() =>
-        expect(
-          screen.getByText('No oracle publishes a price for this asset'),
-        ).toBeInTheDocument(),
-      );
-      expect(
-        screen.getByText(/publishes a reading for SHX/),
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByText(/unavailable right now/),
-      ).not.toBeInTheDocument();
-    });
-
-    // Absent (the request never answered) is not empty (it answered with
-    // nothing) — only the second is ours to state as a fact.
-    it('says unavailable, not absent, when /v1/oracle/latest fails', async () => {
-      mockApi({ latest: new Error('HTTP 503') });
-      renderPanel();
-
-      await waitFor(() =>
-        expect(
-          screen.getByText(/Oracle feeds unavailable right now/),
-        ).toBeInTheDocument(),
-      );
-      expect(
-        screen.queryByText('No oracle publishes a price for this asset'),
-      ).not.toBeInTheDocument();
-    });
-
-    // Without the registry we cannot tell an oracle from an aggregator,
-    // so the honest render is "unavailable", not an unclassified list.
-    it('says unavailable when the oracle-class registry fails', async () => {
-      mockApi({ latest: [BAND, COINGECKO], sources: new Error('HTTP 503') });
-      renderPanel();
-
-      await waitFor(() =>
-        expect(
-          screen.getByText(/Oracle feeds unavailable right now/),
-        ).toBeInTheDocument(),
-      );
-      expect(screen.queryByText('coingecko')).not.toBeInTheDocument();
-      expect(screen.queryByText('band')).not.toBeInTheDocument();
-    });
-
-    // A 200 with zero oracle-class sources is the registry
-    // itself failing to answer, not a fact about this asset — the
-    // registry is this panel's own coverage list, so it is never
-    // legitimately empty. Must read the same as registry.isError, NOT
-    // fall through to the per-asset "nobody publishes it" copy.
-    it('says unavailable, not absent, when the oracle-class registry answers empty', async () => {
-      mockApi({ latest: [BAND, REFLECTOR], sources: [] });
-      renderPanel();
-
-      await waitFor(() =>
-        expect(
-          screen.getByText(/Oracle feeds unavailable right now/),
-        ).toBeInTheDocument(),
-      );
-      expect(
-        screen.queryByText('No oracle publishes a price for this asset'),
-      ).not.toBeInTheDocument();
-      expect(screen.queryByText('band')).not.toBeInTheDocument();
-    });
+  it.each([
+    ['an aggregator row', COINGECKO, ['coingecko', '0.862435']],
+    ['an unmapped raw: row', RAW_USDC, ['0.999719']],
+  ])('keeps %s out of the attributed table', async (_, extra, absent) => {
+    mockApi({ latest: [BAND, extra] });
+    renderPanel();
+    await screen.findByText('Oracle feeds (1)');
+    shows('band');
+    hides(...absent);
   });
 
-  // The gate: an asset that merely BORROWS a verified currency's
-  // ticker is served no oracle rows, and the reason must not read as a
-  // coverage gap.
-  describe('an unverified asset sharing a verified ticker', () => {
-    it('says the readings are not attributed, not that coverage is missing', async () => {
-      mockApi({ latest: [] });
-      renderPanel({ assetID: FAKE_USDC, tickerCollision: COLLISION });
-
-      await waitFor(() =>
-        expect(screen.getByText(/is not a coverage gap/i)).toBeInTheDocument(),
-      );
-      expect(
-        screen.getByText(
-          /declining to attribute another issuer's oracle prices/,
-        ),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText(/a shared ticker is not a shared asset/),
-      ).toBeInTheDocument();
-      // The sentence this state exists to avoid.
-      expect(
-        screen.queryByText('No oracle publishes a price for this asset'),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.queryByText(/publishes a reading for USDC/),
-      ).not.toBeInTheDocument();
-      // And the reader is pointed at the asset that DOES own the ticker.
-      expect(
-        screen.getByRole('link', { name: '/assets/usdc' }),
-      ).toHaveAttribute('href', '/assets/usdc');
-    });
-
-    // Belt-and-braces on the server gate: the request is not made at all,
-    // so a regressed API cannot put Circle's prices under this asset.
-    it('does not request oracle readings for it, and renders none if served', async () => {
-      mockApi({ latest: [BAND, REFLECTOR] });
-      renderPanel({ assetID: FAKE_USDC, tickerCollision: COLLISION });
-
-      await waitFor(() =>
-        expect(screen.getByText(/is not a coverage gap/i)).toBeInTheDocument(),
-      );
-      expect(pathsCalled()).not.toContain('/v1/oracle/latest');
-      expect(screen.queryByText('band')).not.toBeInTheDocument();
-      expect(screen.queryByText('reflector-cex')).not.toBeInTheDocument();
-      expect(screen.queryByText('0.999822')).not.toBeInTheDocument();
-    });
-
-    // A ticker whose verified currency has NO Stellar issuance (USDT,
-    // XRP, BTC): there is nothing to link to, so do not fabricate a link.
-    it('does not offer a link when the ticker has no verified Stellar issuance', async () => {
-      mockApi({ latest: [] });
-      renderPanel({
-        assetID: 'XRP-GBXRPL45NPHCVMFFAYZVUVFFVKSIZ362ZXFP7I2ETNQ3QKZMFLPRDTD5',
-        symbol: 'XRP',
-        tickerCollision: {
-          verified_slug: 'xrp',
-          verified_asset_id: '',
-          verified_name: 'XRP',
-          note: 'Exercise caution …',
-        },
-      });
-
-      await waitFor(() =>
-        expect(
-          screen.getByText(/No verified/, { exact: false }),
-        ).toBeInTheDocument(),
-      );
-      expect(
-        screen.getByText(/no Stellar asset may claim that ticker's readings/),
-      ).toBeInTheDocument();
-      expect(screen.queryByRole('link', { name: /\/assets\/xrp/ })).toBeNull();
-    });
+  it('states the genuine absence when no oracle publishes the asset', async () => {
+    mockApi({ latest: [] });
+    renderPanel({ symbol: 'SHX' });
+    expect(await screen.findByText(ABSENT)).toBeInTheDocument();
+    shows(/publishes a reading for SHX/);
+    hides(UNAVAILABLE);
   });
 
-  // the maintainer's call (see SHOW_SYMBOL_MATCHED_RAW_FEEDS): symbol-matched raw
-  // feeds are OFF by default, and turning them on is one prop.
-  describe('symbol-matched raw: feeds', () => {
-    it('are not fetched or shown by default', async () => {
-      mockApi({ latest: [BAND], streams: [RAW_USDC] });
-      renderPanel();
+  // Only an answered-empty is ours to state as absence. The registry is
+  // the panel's own coverage list, so an empty one is a failure too.
+  it.each([
+    ['/v1/oracle/latest fails', { latest: new Error('HTTP 503') }],
+    [
+      'the oracle-class registry fails',
+      { latest: [BAND, COINGECKO], sources: new Error('HTTP 503') },
+    ],
+    [
+      'the oracle-class registry answers empty',
+      { latest: [BAND, REFLECTOR], sources: [] },
+    ],
+  ])('says unavailable, not absent, when %s', async (_, routes) => {
+    mockApi(routes);
+    renderPanel();
+    expect(await screen.findByText(UNAVAILABLE)).toBeInTheDocument();
+    hides(ABSENT, 'band', 'coingecko');
+  });
+});
 
-      await waitFor(() =>
-        expect(screen.getByText('Oracle feeds (1)')).toBeInTheDocument(),
-      );
-      expect(pathsCalled()).not.toContain('/v1/oracle/streams');
-      expect(
-        screen.queryByText(/Unmapped feeds matching/),
-      ).not.toBeInTheDocument();
+describe('AssetOraclesPanel — unverified asset sharing a verified ticker', () => {
+  it('requests no readings, says they are not attributed, and links the verified asset', async () => {
+    mockApi({ latest: [BAND, REFLECTOR] });
+    renderPanel({ assetID: FAKE_USDC, tickerCollision: COLLISION });
+    await screen.findByText(/is not a coverage gap/i);
+    shows(/declining to attribute another issuer's oracle prices/);
+    shows(/a shared ticker is not a shared asset/);
+    hides(ABSENT, /publishes a reading for USDC/, 'band', '0.999822');
+    expect(pathsCalled()).not.toContain('/v1/oracle/latest');
+    expect(screen.getByRole('link', { name: '/assets/usdc' })).toHaveAttribute(
+      'href',
+      '/assets/usdc',
+    );
+  });
+
+  it('offers no link when the ticker has no verified Stellar issuance', async () => {
+    mockApi({ latest: [] });
+    renderPanel({
+      assetID: 'XRP-GBXRPL45NPHCVMFFAYZVUVFFVKSIZ362ZXFP7I2ETNQ3QKZMFLPRDTD5',
+      symbol: 'XRP',
+      tickerCollision: {
+        verified_slug: 'xrp',
+        verified_asset_id: '',
+        verified_name: 'XRP',
+        note: 'Exercise caution …',
+      },
     });
+    await screen.findByText(
+      /no Stellar asset may claim that ticker's readings/,
+    );
+    expect(screen.queryByRole('link', { name: /\/assets\/xrp/ })).toBeNull();
+  });
+});
 
-    it('render in their own group, unattributed, when enabled', async () => {
-      mockApi({ latest: [BAND], streams: [RAW_USDC, COINGECKO] });
-      renderPanel({ showSymbolMatchedRawFeeds: true });
+describe('AssetOraclesPanel — symbol-matched raw: feeds', () => {
+  it('are not fetched or shown by default', async () => {
+    mockApi({ latest: [BAND], streams: [RAW_USDC] });
+    renderPanel();
+    await screen.findByText('Oracle feeds (1)');
+    expect(pathsCalled()).not.toContain('/v1/oracle/streams');
+    hides(/Unmapped feeds matching/);
+  });
 
-      await waitFor(() =>
-        expect(
-          screen.getByText('Unmapped feeds matching “USDC” (1)'),
-        ).toBeInTheDocument(),
-      );
-      const group = screen
-        .getByText('Unmapped feeds matching “USDC” (1)')
-        .closest('section') as HTMLElement;
-      expect(within(group).getByText('redstone')).toBeInTheDocument();
-      expect(within(group).getByText('0.999719')).toBeInTheDocument();
-      expect(
-        within(group).getByText(/that is a resemblance, not an identity/),
-      ).toBeInTheDocument();
-      // Still absent from the attributed table above.
-      const attributed = screen
-        .getByText('Oracle feeds (1)')
-        .closest('section') as HTMLElement;
-      expect(
-        within(attributed).queryByText('redstone'),
-      ).not.toBeInTheDocument();
-    });
+  it('render in their own group, unattributed, when enabled', async () => {
+    mockApi({ latest: [BAND], streams: [RAW_USDC, COINGECKO] });
+    renderPanel({ showSymbolMatchedRawFeeds: true });
+    const group = (
+      await screen.findByText('Unmapped feeds matching “USDC” (1)')
+    ).closest('section') as HTMLElement;
+    for (const t of [
+      'redstone',
+      '0.999719',
+      /a resemblance, not an identity/,
+    ]) {
+      within(group).getByText(t);
+    }
+    const attributed = screen
+      .getByText('Oracle feeds (1)')
+      .closest('section') as HTMLElement;
+    expect(within(attributed).queryByText('redstone')).not.toBeInTheDocument();
   });
 });
 
 describe('spreadQuote', () => {
-  it('picks the quote two or more oracles share', () => {
+  it('picks the quote two or more oracles share, else null', () => {
     const got = spreadQuote([BAND, REFLECTOR, COINGECKO]);
     expect(got?.quote).toBe('fiat:USD');
     expect(got?.rows.map((r) => r.source)).toEqual(['band', 'reflector-cex']);
-  });
-
-  it('returns null when no quote has two readings', () => {
     expect(spreadQuote([BAND, COINGECKO])).toBeNull();
-  });
-});
-
-describe('AssetOraclesPanel spread strip', () => {
-  beforeEach(() => {
-    vi.mocked(apiGet).mockReset();
   });
 
   it('plots each oracle on the USD band with its exact price', async () => {

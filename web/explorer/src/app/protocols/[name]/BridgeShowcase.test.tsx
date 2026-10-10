@@ -9,7 +9,11 @@ import {
   chainColor,
 } from './BridgeShowcase';
 import { BespokeSection } from './BespokeSection';
-import type { Bespoke, BespokeBreakdown } from './BespokeSection';
+import type {
+  Bespoke,
+  BespokeBreakdown,
+  BespokeSeries,
+} from './BespokeSection';
 
 vi.mock('@/api/client', async () => {
   const actual =
@@ -17,17 +21,11 @@ vi.mock('@/api/client', async () => {
   return { ...actual, apiGet: vi.fn() };
 });
 
-// Stub the canvas-rendered chart: record single-series point counts OR the
-// named multi-series composition (labels, point counts, colors) so the tests
-// assert semantics without lightweight-charts needing a real canvas.
+// The canvas chart can't run under jsdom; record its series composition.
 vi.mock('@/components/charts/LineChart', () => ({
   LineChart: (props: {
-    data: { time: number; value: number }[];
-    series?: {
-      label: string;
-      data: { time: number; value: number }[];
-      color?: string;
-    }[];
+    data: unknown[];
+    series?: { label: string; data: unknown[] }[];
     timeVisible?: boolean;
     ariaLabel?: string;
   }) => (
@@ -39,7 +37,6 @@ vi.mock('@/components/charts/LineChart', () => ({
       data-series={(props.series ?? [])
         .map((s) => `${s.label}:${s.data.length}`)
         .join('|')}
-      data-colors={(props.series ?? []).map((s) => s.color ?? '').join('|')}
       data-timevisible={String(props.timeVisible ?? false)}
     />
   ),
@@ -47,103 +44,71 @@ vi.mock('@/components/charts/LineChart', () => ({
 
 import { apiGet, asExample } from '@/api/client';
 
+const TX = '71689b2f79215976f6099f0c705b3ffb4ff8f2f40d1ee2b43636c699e71fbffe';
+type Text = string | RegExp;
+const shows = (...t: Text[]) =>
+  t.forEach((x) => expect(screen.getByText(x)).toBeInTheDocument());
+const hides = (...t: Text[]) =>
+  t.forEach((x) => expect(screen.queryByText(x)).not.toBeInTheDocument());
+
+const s = (name: string, ...pts: [string, string][]): BespokeSeries => ({
+  name,
+  unit: 'USDC',
+  points: pts.map(([date, value]) => ({ date, value })),
+});
+
+const breakdown = (
+  rows: [string, string][],
+  title = 'Inflows by source chain',
+): BespokeBreakdown => ({
+  title,
+  unit: 'USDC',
+  rows: rows.map(([label, value]) => ({ label, value, count: 1 })),
+});
+
 const cctpBespoke: Bespoke = {
   category: 'bridge',
   series: [
-    {
-      name: 'Inbound (USDC)',
-      unit: 'USDC',
-      points: [
-        { date: '2026-07-27', value: '1000.50' },
-        { date: '2026-07-28', value: '2000.25' },
-      ],
-    },
-    {
-      name: 'Outbound (USDC)',
-      unit: 'USDC',
-      points: [
-        { date: '2026-07-27', value: '500.10' },
-        { date: '2026-07-28', value: '750.00' },
-      ],
-    },
-    {
-      name: 'Inbound · Base',
-      unit: 'USDC',
-      points: [
-        { date: '2026-07-27', value: '600.00' },
-        { date: '2026-07-28', value: '900.00' },
-      ],
-    },
-    {
-      name: 'Inbound · Solana',
-      unit: 'USDC',
-      points: [{ date: '2026-07-28', value: '400.00' }],
-    },
-    {
-      name: 'Outbound · Ethereum',
-      unit: 'USDC',
-      points: [{ date: '2026-07-28', value: '750.00' }],
-    },
-    {
-      name: 'Cumulative net inflow (all-time)',
-      unit: 'USDC',
-      points: [
-        { date: '2026-01-01', value: '100.00' },
-        { date: '2026-07-28', value: '8003390.36' },
-      ],
-    },
+    s('Inbound (USDC)', ['2026-07-27', '1000.50'], ['2026-07-28', '2000.25']),
+    s('Outbound (USDC)', ['2026-07-27', '500.10'], ['2026-07-28', '750.00']),
+    s('Inbound · Base', ['2026-07-27', '600.00'], ['2026-07-28', '900.00']),
+    s('Inbound · Solana', ['2026-07-28', '400.00']),
+    s('Outbound · Ethereum', ['2026-07-28', '750.00']),
+    s(
+      'Cumulative net inflow (all-time)',
+      ['2026-01-01', '100.00'],
+      ['2026-07-28', '8003390.36'],
+    ),
   ],
   breakdowns: [
-    {
-      title: 'Inflows by source chain',
-      unit: 'USDC',
-      rows: [
-        { label: 'Base', value: '6432257.50', count: 6063 },
-        { label: 'Ethereum', value: '2742082.73', count: 146 },
-        { label: 'Solana', value: '2001146.57', count: 1893 },
-        { label: 'Unverified (0x3600…0000)', value: '0.01', count: 1 },
+    breakdown([
+      ['Base', '6432257.50'],
+      ['Ethereum', '2742082.73'],
+      ['Solana', '2001146.57'],
+      ['Unverified (0x3600…0000)', '0.01'],
+    ]),
+    breakdown(
+      [
+        ['Solana', '1802090.41'],
+        ['Ethereum', '1107891.94'],
       ],
-    },
-    {
-      title: 'Outflows by destination chain',
-      unit: 'USDC',
-      rows: [
-        { label: 'Solana', value: '1802090.41', count: 2395 },
-        { label: 'Ethereum', value: '1107891.94', count: 96 },
-      ],
-    },
+      'Outflows by destination chain',
+    ),
   ],
   tables: [
     {
       title: 'Largest transfers',
       columns: ['Direction', 'Chain', 'Amount (USDC)', 'Tx', 'Date'],
-      rows: [
-        [
-          'Inbound',
-          'Ethereum',
-          '901413.243537',
-          '71689b2f79215976f6099f0c705b3ffb4ff8f2f40d1ee2b43636c699e71fbffe',
-          '2026-06-11',
-        ],
-      ],
+      rows: [['Inbound', 'Ethereum', '901413.243537', TX, '2026-06-11']],
     },
   ],
 };
 
 const rozoBespoke: Bespoke = {
   category: 'bridge',
-  series: [
-    {
-      name: 'Settled volume (USDC)',
-      unit: 'USDC',
-      points: [{ date: '2026-07-28', value: '42.5' }],
-    },
-  ],
+  series: [s('Settled volume (USDC)', ['2026-07-28', '42.5'])],
 };
 
-// The bridge suite renders through BespokeSection: the 24h/7d/30d/90d
-// pills + the ?days= refetch live at section level and
-// BridgeShowcase consumes the section's window as props.
 function renderIt(name: string, initial: Bespoke) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -159,249 +124,166 @@ function renderIt(name: string, initial: Bespoke) {
   );
 }
 
+const charts = () => screen.queryAllByTestId('line-chart');
+const chartWith = (series: string) =>
+  charts().find((c) => c.getAttribute('data-series') === series);
+
 describe('flowLines', () => {
-  it('pairs the exact-name inbound + outbound totals, ignoring per-chain and cumulative series', () => {
-    const lines = flowLines(cctpBespoke.series!);
-    expect(lines.map((l) => l.label)).toEqual([
-      'Inbound (USDC)',
-      'Outbound (USDC)',
-    ]);
-    expect(lines[0].tone).not.toBe(lines[1].tone);
-    expect(lines[0].data).toHaveLength(2);
+  it.each([
+    [
+      'pairs the exact-name totals, ignoring per-chain and cumulative series',
+      cctpBespoke.series!,
+      ['Inbound (USDC)', 'Outbound (USDC)'],
+    ],
+    [
+      'renders a lone series as one line',
+      rozoBespoke.series!,
+      ['Settled volume (USDC)'],
+    ],
+    [
+      'never falls back to an auxiliary series',
+      [
+        s('Inbound · Base', ['2026-07-28', '1']),
+        s('Cumulative net inflow (all-time)', ['2026-07-28', '2']),
+      ],
+      [],
+    ],
+  ])('%s', (_, series, labels) => {
+    expect(flowLines(series).map((l) => l.label)).toEqual(labels);
   });
 
-  it('renders a lone series (rozo settled volume) as a single line', () => {
-    const lines = flowLines(rozoBespoke.series!);
-    expect(lines).toHaveLength(1);
-    expect(lines[0].label).toBe('Settled volume (USDC)');
+  it('gives the two directions distinct tones', () => {
+    const [inb, out] = flowLines(cctpBespoke.series!);
+    expect(inb.tone).not.toBe(out.tone);
   });
 
-  it('never falls back to an auxiliary series when the totals are absent', () => {
-    const lines = flowLines([
-      { name: 'Inbound · Base', points: [{ date: '2026-07-28', value: '1' }] },
-      {
-        name: 'Cumulative net inflow (all-time)',
-        points: [{ date: '2026-07-28', value: '2' }],
-      },
+  it('parses hourly timestamps 3600s apart', () => {
+    const [inb] = flowLines([
+      s('Inbound (USDC)', ['2026-07-29T13:00', '1'], ['2026-07-29T14:00', '2']),
+      s('Outbound (USDC)', ['2026-07-29T13:00', '3']),
     ]);
-    expect(lines).toHaveLength(0);
-  });
-
-  it('parses hourly point timestamps (the 24h window shape)', () => {
-    const lines = flowLines([
-      {
-        name: 'Inbound (USDC)',
-        points: [
-          { date: '2026-07-29T13:00', value: '1' },
-          { date: '2026-07-29T14:00', value: '2' },
-        ],
-      },
-      {
-        name: 'Outbound (USDC)',
-        points: [{ date: '2026-07-29T13:00', value: '3' }],
-      },
-    ]);
-    // Consecutive hourly buckets are exactly 3600s apart.
-    expect(lines[0].data[1].time - lines[0].data[0].time).toBe(3600);
+    expect(inb.data[1].time - inb.data[0].time).toBe(3600);
   });
 });
 
 describe('perChainLines', () => {
-  it('extracts the prefixed series as chain-labelled lines with stable entity colors', () => {
-    const lines = perChainLines(cctpBespoke.series!, 'Inbound · ');
-    expect(lines.map((l) => l.label)).toEqual(['Base', 'Solana']);
-    // Color follows the entity: the same chain gets the same hue wherever
-    // it appears, and two chains never share one.
-    expect(lines[0].color).toBe(chainColor('Base'));
-    expect(lines[1].color).toBe(chainColor('Solana'));
-    expect(lines[0].color).not.toBe(lines[1].color);
+  it.each([
+    ['Inbound · ', ['Base', 'Solana']],
+    ['Outbound · ', ['Ethereum']],
+  ])('extracts %j series as chain-labelled lines', (prefix, labels) => {
+    const lines = perChainLines(cctpBespoke.series!, prefix);
+    expect(lines.map((l) => l.label)).toEqual(labels);
+    for (const l of lines) expect(l.color).toBe(chainColor(l.label));
   });
 
-  it('keeps directions separate', () => {
-    const lines = perChainLines(cctpBespoke.series!, 'Outbound · ');
-    expect(lines.map((l) => l.label)).toEqual(['Ethereum']);
+  it('never gives two chains one colour', () => {
+    expect(chainColor('Base')).not.toBe(chainColor('Solana'));
   });
 });
 
 describe('donutSlices', () => {
   it('keeps honest unknown labels as their own slice', () => {
-    const slices = donutSlices(cctpBespoke.breakdowns![0]);
-    expect(slices.map((s) => s.label)).toEqual([
-      'Base',
-      'Ethereum',
-      'Solana',
-      'Unverified (0x3600…0000)',
-    ]);
+    expect(donutSlices(cctpBespoke.breakdowns![0]).map((x) => x.label)).toEqual(
+      ['Base', 'Ethereum', 'Solana', 'Unverified (0x3600…0000)'],
+    );
   });
 
-  it('folds slices beyond the top 6 into an Others bucket', () => {
-    const b: BespokeBreakdown = {
-      title: 'Inflows by source chain',
-      unit: 'USDC',
-      rows: Array.from({ length: 9 }, (_, i) => ({
-        label: `Chain${i}`,
-        value: String(900 - i * 100),
-        count: 1,
-      })),
-    };
-    const slices = donutSlices(b);
+  const fold = (top: (i: number) => number, rest: string[]) =>
+    donutSlices(
+      breakdown([
+        ...Array.from({ length: 6 }, (_, i): [string, string] => [
+          `Chain${i}`,
+          String(top(i)),
+        ]),
+        ...rest.map((v, i): [string, string] => [`Rest${i}`, v]),
+      ]),
+    );
+
+  it.each([
+    [
+      'folds slices beyond the top 6 into an Others bucket',
+      (i: number) => 900 - i * 100,
+      ['300', '200', '100'],
+      { label: 'Others (3)', value: 600 },
+    ],
+    // A float reduce would give 27021597764222984.
+    [
+      'sums the Others fold exactly above 2^53',
+      (i: number) => 9e18 - i * 1e18,
+      ['9007199254740993', '9007199254740995', '9007199254740997'],
+      { label: 'Others (3)', decimal: '27021597764222985' },
+    ],
+    // "50." parses via Number() but not as a plain decimal: void, never drop.
+    [
+      'voids the exact Others total when a row fails the decimal parser',
+      (i: number) => 700 - i * 100,
+      ['100', '50.'],
+      { label: 'Others (2)', value: 150, decimal: null },
+    ],
+  ])('%s', (_, top, rest, others) => {
+    const slices = fold(top, rest);
     expect(slices).toHaveLength(7);
-    expect(slices[6].label).toBe('Others (3)');
-    // 300 + 200 + 100 folded together.
-    expect(slices[6].value).toBe(600);
-  });
-
-  it('sums the Others fold exactly, above 2^53 where float addition drifts', () => {
-    const big = ['9007199254740993', '9007199254740995', '9007199254740997'];
-    const b: BespokeBreakdown = {
-      title: 'Inflows by source chain',
-      unit: 'USDC',
-      rows: [
-        ...Array.from({ length: 6 }, (_, i) => ({
-          label: `Chain${i}`,
-          value: String(
-            9_000_000_000_000_000_000 - i * 1_000_000_000_000_000_000,
-          ),
-          count: 1,
-        })),
-        ...big.map((value, i) => ({ label: `Rest${i}`, value, count: 1 })),
-      ],
-    };
-    const slices = donutSlices(b);
-    expect(slices[6].label).toBe('Others (3)');
-    // Exact BigInt sum, matching sumDecimalStrings/ratioPct's table math —
-    // not the float reduce over already-rounded `value`s (27021597764222984).
-    expect(slices[6].decimal).toBe('27021597764222985');
-  });
-
-  it('voids the Others exact total rather than silently dropping a row the plain-decimal parser rejects', () => {
-    const b: BespokeBreakdown = {
-      title: 'Inflows by source chain',
-      unit: 'USDC',
-      rows: [
-        ...Array.from({ length: 6 }, (_, i) => ({
-          label: `Chain${i}`,
-          value: String(700 - i * 100),
-          count: 1,
-        })),
-        // "50." parses as 50 via Number() but toDecimalString rejects it
-        // (no digits after the point) — it must not be treated as
-        // "absent" and quietly excluded from the exact sum.
-        { label: 'RestA', value: '100', count: 1 },
-        { label: 'RestB', value: '50.', count: 1 },
-      ],
-    };
-    const slices = donutSlices(b);
-    expect(slices[6].label).toBe('Others (2)');
-    expect(slices[6].value).toBe(150);
-    expect(slices[6].decimal).toBeNull();
+    expect(slices[6]).toMatchObject(others);
   });
 });
 
 describe('BridgeShowcase', () => {
-  it('renders the full cctp suite: cumulative headline, dual flow chart, donuts, per-chain charts and the transfers table', async () => {
+  it('renders the full cctp suite from the initial data', async () => {
     renderIt('cctp', cctpBespoke);
 
-    // Window pills.
     for (const label of ['24h', '7d', '30d', '90d']) {
-      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: label })).toHaveAttribute(
+        'aria-pressed',
+        String(label === '90d'),
+      );
     }
-    expect(screen.getByRole('button', { name: '90d' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    await waitFor(() => expect(charts().length).toBeGreaterThan(0));
 
-    await waitFor(() =>
-      expect(screen.getAllByTestId('line-chart').length).toBeGreaterThan(0),
-    );
-    const charts = screen.getAllByTestId('line-chart');
-
-    // The all-time cumulative headline renders as a single-series chart.
-    expect(screen.getByText('Cumulative net inflow')).toBeInTheDocument();
-    const cumulativeChart = charts.find(
+    const cumulative = charts().find(
       (c) => c.getAttribute('data-points') === '2',
     );
-    expect(cumulativeChart).toBeDefined();
-    expect(cumulativeChart!.getAttribute('aria-label')).toMatch(
-      /Cumulative net USDC inflow/,
+    expect(cumulative).toHaveAttribute(
+      'aria-label',
+      expect.stringMatching(/Cumulative net USDC inflow/),
     );
-
-    // The combined flow chart carries BOTH totals lines (per-chain and
-    // cumulative series stay off it).
-    expect(
-      charts.some(
-        (c) =>
-          c.getAttribute('data-series') ===
-          'Inbound (USDC):2|Outbound (USDC):2',
-      ),
-    ).toBe(true);
-
-    // Per-chain multi-line charts render with bare chain labels.
-    expect(
-      charts.some((c) => c.getAttribute('data-series') === 'Base:2|Solana:1'),
-    ).toBe(true);
-    expect(
-      charts.some((c) => c.getAttribute('data-series') === 'Ethereum:1'),
-    ).toBe(true);
-    expect(screen.getByText('Inflows by source chain')).toBeInTheDocument();
-    expect(
-      screen.getByText('Outflows by destination chain'),
-    ).toBeInTheDocument();
-
-    // Donuts: friendly headings + shares + honest unverified label.
-    expect(screen.getByText('Where funds come from')).toBeInTheDocument();
-    expect(screen.getByText('Where funds go')).toBeInTheDocument();
-    // Base share of 6432257.50 / 11175486.81 ≈ 57.6%.
-    expect(screen.getByText('57.6%')).toBeInTheDocument();
-    expect(screen.getByText('Unverified (0x3600…0000)')).toBeInTheDocument();
-
-    // Largest transfers table renders with the tx hash linked to the
-    // canonical transaction route.
-    expect(screen.getByText('Largest transfers')).toBeInTheDocument();
-    const txLink = screen
+    for (const series of [
+      'Inbound (USDC):2|Outbound (USDC):2',
+      'Base:2|Solana:1',
+      'Ethereum:1',
+    ]) {
+      expect(chartWith(series)).toBeDefined();
+    }
+    // 57.6% is Base's share of 6432257.50 / 11175486.81.
+    shows('Cumulative net inflow', 'Inflows by source chain', 'Where funds go');
+    shows('Outflows by destination chain', 'Where funds come from', '57.6%');
+    shows('Unverified (0x3600…0000)', 'Largest transfers');
+    const hrefs = screen
       .getAllByRole('link')
-      .find((a) =>
-        a
-          .getAttribute('href')
-          ?.startsWith(
-            '/transactions/71689b2f79215976f6099f0c705b3ffb4ff8f2f40d1ee2b43636c699e71fbffe',
-          ),
-      );
-    expect(txLink).toBeDefined();
-
-    // The 90d default reuses the page's initial data — no duplicate fetch.
+      .map((a) => a.getAttribute('href'));
+    expect(hrefs.some((h) => h?.startsWith(`/transactions/${TX}`))).toBe(true);
+    // The 90d default reuses the page's data.
     expect(vi.mocked(apiGet)).not.toHaveBeenCalled();
   });
 
-  it('refetches the whole block on pill click, switches to hourly axis, and keeps the cumulative headline from the initial fetch', async () => {
+  it('refetches on pill click, goes hourly, and keeps the all-time cumulative headline', async () => {
     vi.mocked(apiGet).mockResolvedValue({
       data: {
         bespoke: {
           category: 'bridge',
           series: [
-            {
-              name: 'Inbound (USDC)',
-              unit: 'USDC',
-              points: [
-                { date: '2026-07-29T13:00', value: '10' },
-                { date: '2026-07-29T14:00', value: '20' },
-                { date: '2026-07-29T15:00', value: '30' },
-              ],
-            },
-            {
-              name: 'Outbound (USDC)',
-              unit: 'USDC',
-              points: [{ date: '2026-07-29T13:00', value: '5' }],
-            },
-            {
-              name: 'Cumulative net inflow (all-time)',
-              unit: 'USDC',
-              points: [
-                { date: '2026-01-01', value: '100.00' },
-                { date: '2026-07-28', value: '8003390.36' },
-                { date: '2026-07-29', value: '8003400.00' },
-              ],
-            },
+            s(
+              'Inbound (USDC)',
+              ['2026-07-29T13:00', '10'],
+              ['2026-07-29T14:00', '20'],
+              ['2026-07-29T15:00', '30'],
+            ),
+            s('Outbound (USDC)', ['2026-07-29T13:00', '5']),
+            s(
+              'Cumulative net inflow (all-time)',
+              ['2026-01-01', '100.00'],
+              ['2026-07-28', '8003390.36'],
+              ['2026-07-29', '8003400.00'],
+            ),
           ],
         },
       },
@@ -415,36 +297,18 @@ describe('BridgeShowcase', () => {
       ),
     );
     await waitFor(() =>
-      expect(
-        screen
-          .getAllByTestId('line-chart')
-          .some(
-            (c) =>
-              c.getAttribute('data-series') ===
-              'Inbound (USDC):3|Outbound (USDC):1',
-          ),
-      ).toBe(true),
+      expect(chartWith('Inbound (USDC):3|Outbound (USDC):1')).toHaveAttribute(
+        'data-timevisible',
+        'true',
+      ),
     );
-    const flow = screen
-      .getAllByTestId('line-chart')
-      .find(
-        (c) =>
-          c.getAttribute('data-series') ===
-          'Inbound (USDC):3|Outbound (USDC):1',
-      );
-    expect(flow!.getAttribute('data-timevisible')).toBe('true');
     expect(screen.getByRole('button', { name: '24h' })).toHaveAttribute(
       'aria-pressed',
       'true',
     );
-
-    // Cumulative headline still shows the INITIAL all-time series (2 points),
-    // not the refetched window's copy.
-    expect(
-      screen
-        .getAllByTestId('line-chart')
-        .some((c) => c.getAttribute('data-points') === '2'),
-    ).toBe(true);
+    expect(charts().some((c) => c.getAttribute('data-points') === '2')).toBe(
+      true,
+    );
   });
 
   it('shows an honest empty state when the window has no transfers', async () => {
@@ -454,29 +318,20 @@ describe('BridgeShowcase', () => {
     renderIt('rozo', rozoBespoke);
 
     fireEvent.click(screen.getByRole('button', { name: '7d' }));
-    await waitFor(() =>
-      expect(vi.mocked(apiGet)).toHaveBeenCalledWith(
-        '/v1/protocols/rozo?days=7',
-      ),
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByText('No transfers in this window.'),
-      ).toBeInTheDocument(),
-    );
-    expect(screen.queryByTestId('line-chart')).not.toBeInTheDocument();
+    expect(
+      await screen.findByText('No transfers in this window.'),
+    ).toBeInTheDocument();
+    expect(vi.mocked(apiGet)).toHaveBeenCalledWith('/v1/protocols/rozo?days=7');
+    expect(charts()).toHaveLength(0);
   });
 
-  it('renders the single settled-volume line for rozo without donuts or extra panels', async () => {
+  it('renders rozo as one settled-volume line without donuts or cumulative', async () => {
     renderIt('rozo', rozoBespoke);
-    await waitFor(() =>
-      expect(screen.getAllByTestId('line-chart')).toHaveLength(1),
-    );
-    expect(screen.getAllByTestId('line-chart')[0]).toHaveAttribute(
+    await waitFor(() => expect(charts()).toHaveLength(1));
+    expect(charts()[0]).toHaveAttribute(
       'data-series',
       'Settled volume (USDC):1',
     );
-    expect(screen.queryByText('Where funds come from')).not.toBeInTheDocument();
-    expect(screen.queryByText('Cumulative net inflow')).not.toBeInTheDocument();
+    hides('Where funds come from', 'Cumulative net inflow');
   });
 });
