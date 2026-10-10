@@ -62,7 +62,7 @@ const apiGoroutineFloor = 40
 // lacks recovery — find every call site of the thing being guarded, not a
 // sample. Same discipline as cmd/stellarindex-api's
 // TestBackgroundWorkersRecover and this package's
-// TestSSEProducerGoroutinesRecover, which it subsumes but does not replace
+// TestSourceShapeRules/sse_producer_goroutines_recover, which it subsumes but does not replace
 // (that one additionally pins the producers by NAME).
 //
 // There is no exemption list. main.go's guard exempts the HTTP listener

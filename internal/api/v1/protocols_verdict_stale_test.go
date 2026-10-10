@@ -2,12 +2,7 @@ package v1_test
 
 import (
 	"encoding/json"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -67,49 +62,6 @@ func TestProtocols_StaleWhenRepublishedVerdictIsOld(t *testing.T) {
 	for _, path := range []string{"/v1/protocols", "/v1/protocols/blend"} {
 		if envelopeStale(t, fresh.URL+path) {
 			t.Errorf("GET %s: flags.stale = true for a 5-minute-old verdict", path)
-		}
-	}
-}
-
-// TestCompletenessVerdictReadsGoThroughGate is the class guard for that rule:
-// outside diagnostics (which republishes computed_at per row, so each
-// claim carries its own age), the only production read of the verdict
-// rows is completenessVerdicts, which returns them with their stale gate.
-func TestCompletenessVerdictReadsGoThroughGate(t *testing.T) {
-	allowed := map[string]bool{
-		"coverage_verdicts.go:completenessVerdicts":    true,
-		"diagnostics_ingestion.go:overlayCompleteness": true,
-	}
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fset := token.NewFileSet()
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
-		src, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		file, err := parser.ParseFile(fset, f, src, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				sel, ok := n.(*ast.SelectorExpr)
-				if ok && sel.Sel.Name == "ListCompletenessSnapshots" && !allowed[f+":"+fn.Name.Name] {
-					t.Errorf("%s: %s reads completeness verdicts directly; use completenessVerdicts so "+
-						"the rows travel with their stale gate", fset.Position(sel.Pos()), fn.Name.Name)
-				}
-				return true
-			})
 		}
 	}
 }

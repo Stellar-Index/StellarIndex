@@ -1,13 +1,8 @@
 package v1_test
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -91,69 +86,4 @@ func TestSubstanceWithheldKeepsRawMarketGuidance(t *testing.T) {
 		!strings.Contains(string(body), "/v1/observations") {
 		t.Errorf("substance-withheld body must keep the thin-market title and raw-market guidance: %s", body)
 	}
-}
-
-// TestScamVerdictIsWrittenWithTheScamReason guards the defect's shape: a
-// function that asks scamWithheld and then writes the withheld problem
-// must pass PriceWithheldScamIssuer — the reason-free call is exactly
-// how /v1/vwap, /v1/twap and /v1/chart came to call a flagged issuer's
-// market thin.
-func TestScamVerdictIsWrittenWithTheScamReason(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read package dir: %v", err)
-	}
-	fset := token.NewFileSet()
-	askers := 0
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		f, err := parser.ParseFile(fset, filepath.Join(".", name), nil, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", name, err)
-		}
-		for _, d := range f.Decls {
-			fn, ok := d.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || !callsIdent(fn.Body, "scamWithheld") {
-				continue
-			}
-			askers++
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				id, ok := call.Fun.(*ast.Ident)
-				if !ok || id.Name != "writePriceWithheldProblem" {
-					return true
-				}
-				reason, ok := call.Args[len(call.Args)-1].(*ast.Ident)
-				if !ok || reason.Name != "PriceWithheldScamIssuer" {
-					t.Errorf("%s: %s asks scamWithheld but writes the withheld problem with "+
-						"a reason other than PriceWithheldScamIssuer — use writeIfScamWithheld",
-						fset.Position(call.Pos()), fn.Name.Name)
-				}
-				return true
-			})
-		}
-	}
-	// A guard whose subject set is empty passes forever.
-	if askers == 0 {
-		t.Fatal("found no function calling scamWithheld — the guard is broken, not the code clean")
-	}
-}
-
-func callsIdent(body *ast.BlockStmt, name string) bool {
-	found := false
-	ast.Inspect(body, func(n ast.Node) bool {
-		if call, ok := n.(*ast.CallExpr); ok {
-			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == name {
-				found = true
-			}
-		}
-		return !found
-	})
-	return found
 }
