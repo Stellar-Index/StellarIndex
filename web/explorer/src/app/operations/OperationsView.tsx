@@ -20,12 +20,7 @@ import {
   useLedgerStream,
   useLiveClock,
 } from '@/lib/live/hooks';
-import {
-  type Envelope,
-  type TxOperation,
-  formatTimestamp,
-  renderOpFieldValue,
-} from '../explorer-shared';
+import { type Envelope, formatTimestamp } from '../explorer-shared';
 import type { paths } from '@/api/types';
 
 // GET /v1/operations response body + row shapes from the generated
@@ -35,38 +30,10 @@ type OperationsResp = NonNullable<
   paths['/operations']['get']['responses'][200]['content']['application/json']['data']
 >;
 
-type OpView = TxOperation;
-
 const PAGE_SIZE = 50;
 
 /** Minimum gap between live-follow refetches (RT-2). */
 const LIVE_REFETCH_MIN_MS = 10_000;
-
-// A one-line summary of the decoded op body — the fields that matter
-// most per type, best-effort. Falls back to nothing (the type badge
-// already conveys the gist).
-function summarize(op: OpView): string {
-  const f = op.fields;
-  if (!f) return '';
-  const pick = (k: string) => (f[k] != null ? String(f[k]) : '');
-  // Amount keys are raw stroop integers (ADR-0003) — scale them to XLM
-  // via the shared keyed renderer (exact BigInt divide), never String().
-  const pickAmount = (k: string) =>
-    f[k] != null ? renderOpFieldValue(k, f[k]) : '';
-  const amount =
-    pickAmount('amount') ||
-    pickAmount('starting_balance') ||
-    pickAmount('limit');
-  const asset = pick('asset') || pick('selling') || pick('send_asset');
-  const dest = pick('destination') || pick('to') || pick('trustor');
-  const parts: string[] = [];
-  if (amount) parts.push(asset ? `${amount} ${asset}` : amount);
-  if (dest)
-    parts.push(
-      `→ ${dest.length > 12 ? `${dest.slice(0, 4)}…${dest.slice(-4)}` : dest}`,
-    );
-  return parts.join(' ');
-}
 
 export function OperationsView() {
   const params = useSearchParams();
@@ -188,9 +155,6 @@ export function OperationsView() {
                     Status
                   </th>
                   <th scope="col" className="px-4 py-2">
-                    Detail
-                  </th>
-                  <th scope="col" className="px-4 py-2">
                     Source
                   </th>
                   <th scope="col" className="px-4 py-2 text-right">
@@ -231,11 +195,6 @@ export function OperationsView() {
                         result={op.transaction_result}
                         code={op.result_code}
                       />
-                    </td>
-                    <td className="text-ink-muted px-4 py-3 font-mono text-[11px]">
-                      {summarize(op) || (
-                        <span className="text-ink-faint">—</span>
-                      )}
                     </td>
                     <td className="px-4 py-3">
                       {op.source_account ? (

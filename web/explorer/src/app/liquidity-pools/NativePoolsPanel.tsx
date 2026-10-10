@@ -13,6 +13,7 @@ import {
   displayUnits,
 } from './PoolDepthDetail';
 import { Button, Mono } from '@/components/ui';
+import { AssetText } from '@/components/AssetLink';
 
 interface LiquidityPoolRow extends PoolDepthRow {
   pool_hex: string;
@@ -147,8 +148,15 @@ export function NativePoolsPanel() {
                       onClick={() => setExpanded(open ? null : row.pool)}
                     >
                       <td className="py-2 pr-3">
-                        <span className="font-medium">
-                          {a} / {b}
+                        {/* Linked, with the full (code, issuer) id on hover:
+                            two pools can pair same-code assets from
+                            different issuers. */}
+                        <span
+                          className="font-medium"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <AssetText canonical={row.reserve_a.asset} /> /{' '}
+                          <AssetText canonical={row.reserve_b.asset} />
                         </span>{' '}
                         {/* The full pool id was hover-only (`title=`),
                             unreachable by touch/keyboard. Mono keeps the
