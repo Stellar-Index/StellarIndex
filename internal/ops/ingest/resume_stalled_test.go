@@ -139,7 +139,7 @@ func TestParseStalledCursor(t *testing.T) {
 				t.Errorf("skip = %v, want %v (reason=%q)", got.skip, tc.wantSkip, got.skipReason)
 			}
 			if tc.wantSkip {
-				if tc.wantContains != "" && !contains(got.skipReason, tc.wantContains) {
+				if tc.wantContains != "" && !strings.Contains(got.skipReason, tc.wantContains) {
 					t.Errorf("skipReason = %q, want substring %q", got.skipReason, tc.wantContains)
 				}
 				return
@@ -180,54 +180,6 @@ func TestParseStalledCursor_RoundTripsBackfillCursorSub(t *testing.T) {
 	want := []string{"aquarius", "blend", "sdex"} // both sides sort
 	if !reflect.DeepEqual(p.sources, want) {
 		t.Errorf("sources = %v, want %v", p.sources, want)
-	}
-}
-
-// TestResumeChunkFrom_SequentialReproducesOriginalCursorSub is the
-// sequential-resume regression: at parallel<=1 (the default),
-// runOneCursorPlan must key the resumed chunk on the ORIGINAL declared
-// `from` so backfillCursorSub reproduces the exact sub_source of the
-// stalled cursor row — advancing that row in place — rather than a
-// sibling row keyed on [last_ledger+1, to] that the stalled row's
-// -resume path will never touch again.
-func TestResumeChunkFrom_SequentialReproducesOriginalCursorSub(t *testing.T) {
-	orig := timescale.Cursor{
-		Sub:        "62200000-62210000:aquarius,band,sdex",
-		LastLedger: 62205555,
-	}
-	p := parseStalledCursor(orig)
-	if p.skip {
-		t.Fatalf("unexpected skip: %s", p.skipReason)
-	}
-
-	chunkFrom := resumeChunkFrom(p, 1) // parallel=1, the resume-stalled default
-	gotSub := backfillCursorSub(backfillOpts{from: chunkFrom, to: p.rangeTo, sources: p.sources})
-	if gotSub != orig.Sub {
-		t.Fatalf("resumed cursor sub_source = %q, want the ORIGINAL %q (a mismatch forks a sibling cursor row and the stalled row is never advanced/cleared)",
-			gotSub, orig.Sub)
-	}
-
-	// And the chunk base must be the DECLARED from, not last_ledger+1.
-	if chunkFrom != 62200000 {
-		t.Fatalf("chunkFrom = %d, want the original declared from 62200000", chunkFrom)
-	}
-}
-
-// TestResumeChunkFrom_ParallelUsesRemainingRange: at parallel>1 the
-// resumed range is split into independent sub-chunks that each need
-// their own cursor row, so the chunk base stays the REMAINING range
-// (last_ledger+1), not the original declared from.
-func TestResumeChunkFrom_ParallelUsesRemainingRange(t *testing.T) {
-	orig := timescale.Cursor{
-		Sub:        "62200000-62210000:aquarius,band,sdex",
-		LastLedger: 62205555,
-	}
-	p := parseStalledCursor(orig)
-	if p.skip {
-		t.Fatalf("unexpected skip: %s", p.skipReason)
-	}
-	if got := resumeChunkFrom(p, 4); got != p.rangeFrom {
-		t.Fatalf("resumeChunkFrom(parallel=4) = %d, want rangeFrom %d", got, p.rangeFrom)
 	}
 }
 
@@ -422,83 +374,6 @@ func TestGateAgainstDataGaps_HappyPath(t *testing.T) {
 	}
 	if !out[3].skip || out[3].skipReason != "doesn't match shape" {
 		t.Errorf("plan[3] pre-existing skip should be untouched by the gate; got skip=%v reason=%q", out[3].skip, out[3].skipReason)
-	}
-}
-
-// TestGateAgainstDataGaps_PerDecoderGateIgnoresSorobanEvents is the
-// regression test: a Soroban DECODER plan (as opposed to a raw
-// [SorobanEventsPseudoSource] backfill) must be gated on its OWN
-// registered table(s), never on soroban_events. soroban_events is
-// written by live ingest for every Soroban event regardless of which
-// decoders are enabled, so a clean soroban_events scan says nothing
-// about whether "blend"'s own tables have the rows a stalled blend
-// backfill was supposed to write. Fixture: soroban_events reads clean
-// (as it would after live ingest already saw the raw events) while
-// blend's own registered target shows a real, overlapping gap — the
-// plan MUST stay actionable.
-func TestGateAgainstDataGaps_PerDecoderGateIgnoresSorobanEvents(t *testing.T) {
-	plans := []stalledCursorPlan{
-		{
-			cursor:    timescale.Cursor{Sub: "51500000-51600000:blend"},
-			rangeFrom: 51_500_100,
-			rangeTo:   51_500_900,
-			sources:   []string{"blend"},
-		},
-	}
-	decoderGaps := decoderGapIndex{
-		SorobanEventsPseudoSource: {resolved: true, gaps: nil}, // soroban_events: clean
-		"blend":                   {resolved: true, gaps: []timescale.LedgerGap{{Start: 51_500_200, End: 51_500_800, Size: 601}}},
-	}
-	out := gateAgainstDataGaps(plans, decoderGaps, classicGapGate{}, false)
-	if out[0].skip {
-		t.Fatalf("blend's own gap must keep the plan actionable regardless of a clean soroban_events scan; got skip=%v reason=%q",
-			out[0].skip, out[0].skipReason)
-	}
-}
-
-// TestGateAgainstDataGaps_PerDecoderUnresolvedFailsClosed is the
-// second half: a decoder with NO registered [timescale.GapDetectorTarget]
-// at all must NOT be treated as clean just because it has no evidence —
-// that would re-open the same false-skip class with an even weaker
-// excuse ("we never checked" instead of "we checked the wrong table").
-func TestGateAgainstDataGaps_PerDecoderUnresolvedFailsClosed(t *testing.T) {
-	plans := []stalledCursorPlan{
-		{
-			cursor:    timescale.Cursor{Sub: "51500000-51600000:blend"},
-			rangeFrom: 51_500_100,
-			rangeTo:   51_500_900,
-			sources:   []string{"blend"},
-		},
-	}
-	decoderGaps := decoderGapIndex{
-		SorobanEventsPseudoSource: {resolved: true, gaps: nil},
-		// "blend" deliberately absent — simulates no registered target.
-	}
-	out := gateAgainstDataGaps(plans, decoderGaps, classicGapGate{}, false)
-	if out[0].skip {
-		t.Fatalf("an unresolved decoder must fail closed (stay actionable), not be treated as clean; got skip=%v reason=%q",
-			out[0].skip, out[0].skipReason)
-	}
-}
-
-// TestGateAgainstDataGaps_ForceClassic verifies the --force-classic-cursors
-// opt-in: an SDEX-only plan that the default gate would skip MUST
-// remain actionable when the flag is set. The flag is the operator's
-// escape hatch for "I know the cursor inventory is right; act on it"
-// — used sparingly, since the default safer behaviour is don't act
-// without data-derived evidence.
-func TestGateAgainstDataGaps_ForceClassic(t *testing.T) {
-	plans := []stalledCursorPlan{
-		{
-			cursor:    timescale.Cursor{Sub: "2-15300000:sdex"},
-			rangeFrom: 98334,
-			rangeTo:   15300000,
-			sources:   []string{"sdex"},
-		},
-	}
-	out := gateAgainstDataGaps(plans, decoderGapIndex{}, classicGapGate{}, true) // forceClassic=true
-	if out[0].skip {
-		t.Errorf("with --force-classic-cursors the SDEX plan must stay actionable; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
 	}
 }
 
@@ -831,19 +706,6 @@ func TestApplyMaxResumesCap_ZeroMeansNoCap(t *testing.T) {
 	}
 }
 
-// contains is a substring check for test assertions. Duplicated from
-// internal/ops/diagnostics' hubble_check_test.go (same package-local
-// test-helper pattern) rather than shared — both are trivial
-// and test-only.
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
-
 // TestNewDataGapGateContext_HasDeadline is the bounded-gate regression: the
 // data-gap gate queries (the per-decoder and classic gap scans) must
 // run under a bounded context, not the raw SIGINT/SIGTERM rootCtx,
@@ -860,7 +722,7 @@ func TestNewDataGapGateContext_HasDeadline(t *testing.T) {
 
 	deadline, ok := gateCtx.Deadline()
 	if !ok {
-		t.Fatal("newDataGapGateContext must return a context with a deadline; the data-gap gate query would otherwise be unbounded (RLT-409)")
+		t.Fatal("newDataGapGateContext must return a context with a deadline; the data-gap gate query would otherwise be unbounded")
 	}
 	remaining := time.Until(deadline)
 	if remaining <= 0 || remaining > dataGapGateTimeout {
@@ -971,7 +833,7 @@ func TestGateSourcePolicyRawSorobanEvents(t *testing.T) {
 	}
 }
 
-// TestRunResumeForCursorContainsChunkPanic pins NS27 on the resume path:
+// TestRunResumeForCursorContainsChunkPanic pins panic containment on the resume path:
 // a panic in one chunk (here a nil store dereferenced by the resume
 // cursor lookup) becomes that cursor's error instead of killing the
 // process and every cursor still queued behind it.
@@ -1024,5 +886,81 @@ func TestBackfillChunkGate_OncePerRun(t *testing.T) {
 	}
 	if runs != 1 {
 		t.Fatalf("gate ran %d times, want 1", runs)
+	}
+}
+
+// Sequential resume (parallel<=1) must key the chunk on the ORIGINAL
+// declared from, so backfillCursorSub reproduces the stalled row's
+// sub_source and advances it in place instead of forking a sibling row.
+// Parallel resume splits the remaining range into sub-chunks that each
+// need their own cursor row, so the base is last_ledger+1.
+func TestResumeChunkFrom(t *testing.T) {
+	orig := timescale.Cursor{
+		Sub:        "62200000-62210000:aquarius,band,sdex",
+		LastLedger: 62205555,
+	}
+	p := parseStalledCursor(orig)
+	if p.skip {
+		t.Fatalf("unexpected skip: %s", p.skipReason)
+	}
+
+	chunkFrom := resumeChunkFrom(p, 1)
+	if chunkFrom != 62200000 {
+		t.Fatalf("sequential chunkFrom = %d, want the original declared from 62200000", chunkFrom)
+	}
+	gotSub := backfillCursorSub(backfillOpts{from: chunkFrom, to: p.rangeTo, sources: p.sources})
+	if gotSub != orig.Sub {
+		t.Fatalf("resumed cursor sub_source = %q, want the original %q", gotSub, orig.Sub)
+	}
+
+	if got := resumeChunkFrom(p, 4); got != p.rangeFrom {
+		t.Fatalf("resumeChunkFrom(parallel=4) = %d, want rangeFrom %d", got, p.rangeFrom)
+	}
+}
+
+// A decoder plan is gated on its own registered table(s) only. Neither a
+// clean soroban_events scan nor a missing gap target may skip it, and
+// -force-classic-cursors keeps an SDEX-only plan the default gate skips.
+func TestGateAgainstDataGaps_StaysActionable(t *testing.T) {
+	blendPlan := stalledCursorPlan{
+		cursor:    timescale.Cursor{Sub: "51500000-51600000:blend"},
+		rangeFrom: 51_500_100,
+		rangeTo:   51_500_900,
+		sources:   []string{"blend"},
+	}
+	sdexPlan := stalledCursorPlan{
+		cursor:    timescale.Cursor{Sub: "2-15300000:sdex"},
+		rangeFrom: 98334,
+		rangeTo:   15300000,
+		sources:   []string{"sdex"},
+	}
+	cases := []struct {
+		name  string
+		plan  stalledCursorPlan
+		gaps  decoderGapIndex
+		force bool
+	}{
+		{
+			name: "own gap beats a clean soroban_events scan",
+			plan: blendPlan,
+			gaps: decoderGapIndex{
+				SorobanEventsPseudoSource: {resolved: true, gaps: nil},
+				"blend":                   {resolved: true, gaps: []timescale.LedgerGap{{Start: 51_500_200, End: 51_500_800, Size: 601}}},
+			},
+		},
+		{
+			name: "unresolved decoder fails closed",
+			plan: blendPlan,
+			gaps: decoderGapIndex{SorobanEventsPseudoSource: {resolved: true, gaps: nil}},
+		},
+		{name: "force-classic keeps an sdex-only plan", plan: sdexPlan, gaps: decoderGapIndex{}, force: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := gateAgainstDataGaps([]stalledCursorPlan{tc.plan}, tc.gaps, classicGapGate{}, tc.force)
+			if out[0].skip {
+				t.Fatalf("plan must stay actionable; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
+			}
+		})
 	}
 }
