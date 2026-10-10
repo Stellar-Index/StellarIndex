@@ -36,7 +36,9 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -677,5 +679,189 @@ func TestPasskeyFinishLogin_ClearsCodeLockoutsForStoredCase(t *testing.T) {
 		if got := rig.tokens.lockouts[k].FailedCount; got != 0 {
 			t.Errorf("lockout %q survived a passkey sign-in: %d failures", k, got)
 		}
+	}
+}
+
+func TestPasskeyBeginLogin_OptionsAndCeremonyCookie(t *testing.T) {
+	rig := newPasskeyRig(t)
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-login", nil)
+	w := httptest.NewRecorder()
+	rig.h.HandlePasskeyBeginLogin(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", w.Code, w.Body.String())
+	}
+	var opts struct {
+		PublicKey struct {
+			Challenge string `json:"challenge"`
+			RPID      string `json:"rpId"`
+		} `json:"publicKey"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &opts); err != nil {
+		t.Fatalf("unmarshal options: %v", err)
+	}
+	if opts.PublicKey.Challenge == "" {
+		t.Fatal("options carry no challenge")
+	}
+	// RP ID must be the DashboardBaseURL host — the origin the browser
+	// performs the ceremony on (testRig uses https://app.stellarindex.io).
+	if opts.PublicKey.RPID != "app.stellarindex.io" {
+		t.Fatalf("rpId = %q, want app.stellarindex.io", opts.PublicKey.RPID)
+	}
+
+	c := ceremonyCookie(t, w)
+	if c == nil {
+		t.Fatal("no ceremony cookie set")
+	}
+	if !c.HttpOnly {
+		t.Fatal("ceremony cookie must be HttpOnly")
+	}
+	if c.MaxAge != int(passkeyCeremonyTTL/time.Second) {
+		t.Fatalf("ceremony cookie MaxAge = %d, want %d", c.MaxAge, int(passkeyCeremonyTTL/time.Second))
+	}
+}
+
+// TestPasskeyBeginLogin_CappedPerIP — begin-login is anonymous and each
+// call reserves a ceremony in the shared allkeys-lru Redis, so one IP
+// must not be able to mint reservations at the anonymous request
+// ceiling. Past the cap the call is refused with 429 and, crucially,
+// writes no reservation; another IP keeps its own budget.
+func TestPasskeyBeginLogin_CappedPerIP(t *testing.T) {
+	rig := newPasskeyRig(t)
+	guard := newEvictableCeremonyGuard()
+	rig.h.cfg.PasskeyCeremonyGuard = guard
+
+	begin := func(remoteAddr string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-login", nil)
+		req.RemoteAddr = remoteAddr
+		w := httptest.NewRecorder()
+		rig.h.HandlePasskeyBeginLogin(w, req)
+		return w
+	}
+
+	for i := range passkeyBeginLoginMaxPerIP {
+		if w := begin("203.0.113.7:40000"); w.Code != http.StatusOK {
+			t.Fatalf("begin %d: status = %d, want 200 (%s)", i+1, w.Code, w.Body.String())
+		}
+	}
+	w := begin("203.0.113.7:40001")
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("begin past cap: status = %d, want 429", w.Code)
+	}
+	if got, want := w.Header().Get("Retry-After"), "60"; got != want {
+		t.Fatalf("Retry-After = %q, want %q", got, want)
+	}
+	if c := ceremonyCookie(t, w); c != nil {
+		t.Fatal("a throttled begin still issued a ceremony cookie")
+	}
+	guard.mu.Lock()
+	reserved := len(guard.live)
+	guard.mu.Unlock()
+	if reserved != passkeyBeginLoginMaxPerIP {
+		t.Fatalf("reservations = %d, want %d — a throttled begin wrote to the guard's store",
+			reserved, passkeyBeginLoginMaxPerIP)
+	}
+	if w := begin("198.51.100.9:40000"); w.Code != http.StatusOK {
+		t.Fatalf("other IP: status = %d, want 200", w.Code)
+	}
+}
+
+// TestPasskeyFinishLogin_CloneWarningRefusedAuditedAndCounted — a
+// sign-counter regression is WebAuthn's one signal that the private key
+// exists twice. The login must be refused, and the refusal must leave a
+// durable row and move the counter the clone-warning alert reads.
+func TestPasskeyFinishLogin_CloneWarningRefusedAuditedAndCounted(t *testing.T) {
+	rig, auth, _ := newLiveClockPasskeyRig(t)
+	sink := withAuditSink(rig)
+	stored := storedCredential(t, rig)
+	// The genuine authenticator has already signed at counter 5.
+	if err := rig.passkeys.UpdateWebAuthnCredentialSignCount(context.Background(), stored.ID, 5, rig.now()); err != nil {
+		t.Fatalf("advance stored sign count: %v", err)
+	}
+	refusals := obs.PasskeyLoginRefusalsTotal.WithLabelValues(obs.PasskeyRefusalCloneWarning)
+	before := testutil.ToFloat64(refusals)
+
+	cookie, challenge := beginLogin(t, rig)
+	// A copy of the key signs at counter 3 — behind the stored 5.
+	w := finishLogin(t, rig, cookie, auth.assertionBody(t, challenge, flagUserPresent|flagUserVerified, 3))
+	if w.Code != http.StatusBadRequest || sessionCookieSet(w) {
+		t.Fatalf("clone-warning login: status %d, session minted %v — want 400 and no session", w.Code, sessionCookieSet(w))
+	}
+	if got := testutil.ToFloat64(refusals) - before; got != 1 {
+		t.Fatalf("clone_warning refusals rose by %v, want 1", got)
+	}
+	e := onlyAuditEntry(t, sink)
+	if e.Action != AuditActionPasskeyCloneWarning || e.ActorKind != platform.ActorSystem ||
+		e.ActorUserID != uuid.Nil || e.AccountID != rig.user.AccountID || e.TargetID != stored.ID.String() {
+		t.Fatalf("audit row = %+v, want a system passkey.clone_warning on %s with no actor user", e, stored.ID)
+	}
+	meta := auditMeta(t, e)
+	if meta["credential_owner_user_id"] != rig.user.ID.String() ||
+		meta["stored_sign_count"] != float64(5) || meta["presented_sign_count"] != float64(3) {
+		t.Fatalf("audit metadata = %v, want owner and both sign counts", meta)
+	}
+}
+
+// TestPasskeyFinishLogin_ReplayIsAuditedAndCounted — a captured
+// finish-login request presented twice is refused; the refusal is
+// recorded against the credential it tried to use.
+func TestPasskeyFinishLogin_ReplayIsAuditedAndCounted(t *testing.T) {
+	rig, auth, _ := newLiveClockPasskeyRig(t)
+	sink := withAuditSink(rig)
+	stored := storedCredential(t, rig)
+	refusals := obs.PasskeyLoginRefusalsTotal.WithLabelValues(obs.PasskeyRefusalCeremonyReplay)
+
+	cookie, challenge := beginLogin(t, rig)
+	body := auth.assertionBody(t, challenge, flagUserPresent|flagUserVerified, 0)
+	if first := finishLogin(t, rig, cookie, body); first.Code != http.StatusOK {
+		t.Fatalf("first finish-login status = %d, want 200", first.Code)
+	}
+	if n := len(sink.all()); n != 0 {
+		t.Fatalf("a successful sign-in wrote %d refusal rows, want 0", n)
+	}
+	before := testutil.ToFloat64(refusals)
+	if second := finishLogin(t, rig, cookie, body); second.Code != http.StatusBadRequest {
+		t.Fatalf("replay status = %d, want 400", second.Code)
+	}
+	if got := testutil.ToFloat64(refusals) - before; got != 1 {
+		t.Fatalf("ceremony_replay refusals rose by %v, want 1", got)
+	}
+	e := onlyAuditEntry(t, sink)
+	if e.Action != AuditActionPasskeyLoginReplay || e.ActorKind != platform.ActorSystem ||
+		e.AccountID != rig.user.AccountID || e.TargetID != stored.ID.String() {
+		t.Fatalf("audit row = %+v, want a system passkey.login_replay on %s", e, stored.ID)
+	}
+}
+
+func TestPasskeyFinishLogin_RejectsWithoutCeremony(t *testing.T) {
+	rig := newPasskeyRig(t)
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/finish-login", strings.NewReader(`{}`))
+	w := httptest.NewRecorder()
+	rig.h.HandlePasskeyFinishLogin(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if sessionCookieSet(w) {
+		t.Fatal("a session cookie was set on a failed login")
+	}
+}
+
+func TestPasskeyFinishLogin_RejectsGarbageAssertion(t *testing.T) {
+	rig := newPasskeyRig(t)
+
+	// Real begin → valid ceremony cookie, then a garbage body.
+	begin := httptest.NewRecorder()
+	rig.h.HandlePasskeyBeginLogin(begin, httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-login", nil))
+	c := ceremonyCookie(t, begin)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/finish-login", strings.NewReader(`{"not":"an assertion"}`))
+	req.AddCookie(&http.Cookie{Name: PasskeyCeremonyCookieName, Value: c.Value})
+	w := httptest.NewRecorder()
+	rig.h.HandlePasskeyFinishLogin(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if sessionCookieSet(w) {
+		t.Fatal("a session cookie was set on a failed login")
 	}
 }

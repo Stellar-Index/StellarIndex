@@ -6,14 +6,9 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"io"
-	"log/slog"
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/Stellar-Index/StellarIndex/internal/notify"
-	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // rootKeyed is what each MAC would be if it were keyed by the root secret
@@ -69,47 +64,5 @@ func TestServerSecretConsumersUseDerivedKeys(t *testing.T) {
 			t.Errorf("%q and %q derive the same key", prev, label)
 		}
 		seen[string(k)] = label
-	}
-}
-
-// A per-process fallback secret breaks every passkey ceremony that crosses
-// instances or a restart with a 400 indistinguishable from tampering, so
-// wiring passkeys without a configured secret must fail at construction.
-func TestNewHandlers_PasskeysRequireConfiguredSecret(t *testing.T) {
-	base := func() Config {
-		return Config{
-			Accounts:         newFakeAccountStore(),
-			Users:            newFakeUserStore(),
-			Tokens:           struct{ platform.TokenStore }{},
-			Sender:           &notify.NoopSender{},
-			Logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
-			DashboardBaseURL: "https://app.stellarindex.io",
-			EmailFrom:        "Stellar Index <hello@stellarindex.io>",
-		}
-	}
-
-	cfg := base()
-	cfg.Passkeys = struct {
-		platform.WebAuthnCredentialStore
-	}{}
-	if _, err := NewHandlers(&cfg); err == nil {
-		t.Fatal("NewHandlers accepted passkeys with no server secret")
-	}
-
-	cfg = base()
-	cfg.Passkeys = struct {
-		platform.WebAuthnCredentialStore
-	}{}
-	cfg.Generator = &Generator{Read: NewGenerator().Read, Secret: []byte("configured-secret")}
-	if _, err := NewHandlers(&cfg); err != nil {
-		t.Fatalf("NewHandlers with passkeys and a secret: %v", err)
-	}
-
-	cfg = base()
-	if _, err := NewHandlers(&cfg); err != nil {
-		t.Fatalf("NewHandlers without passkeys must keep the per-process fallback: %v", err)
-	}
-	if len(cfg.Generator.Secret) == 0 {
-		t.Fatal("fallback secret was not installed")
 	}
 }

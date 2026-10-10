@@ -229,3 +229,38 @@ func TestTouchUsage_PanickingHandlerStillTouched(t *testing.T) {
 		t.Errorf("TouchUsage calls = %d, want 1 — a panicking request must still be touched", got)
 	}
 }
+
+// TestTouchUsage_TouchesAfterClientAbort is the sibling assertion for the
+// other post-response writer: `last_used` bookkeeping must survive an
+// aborted request for the same reason.
+func TestTouchUsage_TouchesAfterClientAbort(t *testing.T) {
+	toucher := &recordingToucher{}
+	debouncer := alwaysTouch{}
+	subject := auth.Subject{Tier: auth.TierAPIKey, KeyID: "kid_touch"}
+
+	var cancel context.CancelFunc
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/ohlc", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		cancel()
+	})
+	stamp := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(auth.WithSubject(r.Context(), subject)))
+		})
+	}
+	h := middleware.Chain(mux, stamp, middleware.TouchUsage(toucher, debouncer, nil))
+
+	ctx, c := context.WithCancel(context.Background())
+	cancel = c
+	h.ServeHTTP(httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodGet, "/v1/ohlc", nil).WithContext(ctx))
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain in time")
+	}
+
+	if toucher.calls != 1 {
+		t.Errorf("TouchUsage called %d times, want 1 — post-response bookkeeping must not "+
+			"inherit the request's cancellation", toucher.calls)
+	}
+}

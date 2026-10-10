@@ -1,82 +1,16 @@
 package dashboardauth
 
 import (
-	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"net/http"
-	"net/http/httptest"
+	"io"
+	"log/slog"
 	"testing"
-	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
-
-// TestMiddleware_NilNowDoesNotPanic is a regression for the live
-// production bug where main.go built the auth Config without a Now
-// func and passed it raw to Middleware. NewHandlers defaulted Now on
-// its own copy, but the resolver Middleware kept the nil — so
-// resolveSession's cfg.Now() nil-derefed on every authenticated
-// request. The magic-link cookie resolved fine; /v1/account/me then
-// 500'd, making login look broken. Middleware must default Now (and
-// Logger) so a valid session resolves without panicking.
-func TestMiddleware_NilNowDoesNotPanic(t *testing.T) {
-	accounts := newFakeAccountStore()
-	users := newFakeUserStore()
-
-	acct, err := accounts.Create(context.Background(), platform.Account{
-		Name:   "tester",
-		Slug:   "tester",
-		Status: platform.AccountActive,
-	})
-	if err != nil {
-		t.Fatalf("create account: %v", err)
-	}
-	user, err := users.CreateUser(context.Background(), platform.User{
-		AccountID: acct.ID,
-		Email:     "tester@example.com",
-		Role:      platform.RoleOwner,
-	})
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	_, token := mintTestSession(t, users, platform.Session{
-		UserID:    user.ID,
-		ExpiresAt: time.Now().Add(24 * time.Hour),
-	})
-
-	// Config with Now AND Logger left nil — the exact shape that
-	// panicked in production.
-	cfg := &Config{
-		Accounts: accounts,
-		Users:    users,
-		Tokens:   newFakeTokenStore(nil),
-	}
-
-	var resolved bool
-	h := Middleware(cfg)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		_, resolved = SessionFromContext(r.Context())
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/account/me", nil)
-	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
-	rec := httptest.NewRecorder()
-
-	// The bug manifested as a panic recovered upstream into a 500;
-	// here an unrecovered panic fails the test directly.
-	h.ServeHTTP(rec, req)
-
-	if !resolved {
-		t.Fatal("expected the valid session cookie to resolve, got anonymous")
-	}
-	if cfg.Now == nil {
-		t.Fatal("Middleware should have defaulted a nil cfg.Now")
-	}
-}
 
 // TestNewHandlers_ValidatesCallerConfigInPlace is the login-config
 // regression for the by-value-Config/validate-on-a-copy pattern:
@@ -211,98 +145,44 @@ func bodyRegistersRecover(body ast.Node) bool {
 	return found
 }
 
-// TestTouchTracker_EvictsAgedEntries guards that
-// touchTracker.last must not grow without bound. Without an
-// eviction sweep, every distinct session ID ever seen stays in the
-// map for the process lifetime — one permanent entry per session.
-// Here 50 sessions are each touched once, then time is advanced past
-// the debounce interval and a single FRESH session is touched (which
-// triggers the opportunistic sweep): all 50 aged-out entries must be
-// gone, leaving only the fresh one.
-func TestTouchTracker_EvictsAgedEntries(t *testing.T) {
-	tr := newTouchTracker(time.Minute)
-	base := time.Unix(1_750_000_000, 0)
-
-	const n = 50
-	for i := 0; i < n; i++ {
-		id := uuid.New()
-		if !tr.shouldTouch(id, base) {
-			t.Fatalf("session %d: first touch should always be due", i)
+// A per-process fallback secret breaks every passkey ceremony that crosses
+// instances or a restart with a 400 indistinguishable from tampering, so
+// wiring passkeys without a configured secret must fail at construction.
+func TestNewHandlers_PasskeysRequireConfiguredSecret(t *testing.T) {
+	base := func() Config {
+		return Config{
+			Accounts:         newFakeAccountStore(),
+			Users:            newFakeUserStore(),
+			Tokens:           struct{ platform.TokenStore }{},
+			Sender:           &notify.NoopSender{},
+			Logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+			DashboardBaseURL: "https://app.stellarindex.io",
+			EmailFrom:        "Stellar Index <hello@stellarindex.io>",
 		}
 	}
-	if got := len(tr.last); got != n {
-		t.Fatalf("after seeding: touchTracker.last size = %d, want %d", got, n)
+
+	cfg := base()
+	cfg.Passkeys = struct {
+		platform.WebAuthnCredentialStore
+	}{}
+	if _, err := NewHandlers(&cfg); err == nil {
+		t.Fatal("NewHandlers accepted passkeys with no server secret")
 	}
 
-	later := base.Add(2 * time.Minute)
-	fresh := uuid.New()
-	if !tr.shouldTouch(fresh, later) {
-		t.Fatal("fresh session's first touch should be due")
+	cfg = base()
+	cfg.Passkeys = struct {
+		platform.WebAuthnCredentialStore
+	}{}
+	cfg.Generator = &Generator{Read: NewGenerator().Read, Secret: []byte("configured-secret")}
+	if _, err := NewHandlers(&cfg); err != nil {
+		t.Fatalf("NewHandlers with passkeys and a secret: %v", err)
 	}
 
-	if got := len(tr.last); got != 1 {
-		t.Errorf("after sweep: touchTracker.last size = %d, want 1 — "+
-			"aged-out entries were not evicted (REL-05: unbounded growth)", got)
+	cfg = base()
+	if _, err := NewHandlers(&cfg); err != nil {
+		t.Fatalf("NewHandlers without passkeys must keep the per-process fallback: %v", err)
 	}
-}
-
-func TestMiddleware_IdleSessionRejectedAndRevoked(t *testing.T) {
-	now := time.Now().UTC()
-	cases := []struct {
-		name        string
-		lastSeen    time.Time
-		created     time.Time
-		wantResolve bool
-	}{
-		{"idle 8 days", now.Add(-8 * 24 * time.Hour), now.Add(-10 * 24 * time.Hour), false},
-		{"active 1 hour ago", now.Add(-time.Hour), now.Add(-10 * 24 * time.Hour), true},
-		{"zero last-seen, fresh create", time.Time{}, now.Add(-time.Minute), true},
-		{"zero last-seen, stale create", time.Time{}, now.Add(-8 * 24 * time.Hour), false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			accounts := newFakeAccountStore()
-			users := newFakeUserStore()
-			acct, err := accounts.Create(context.Background(), platform.Account{
-				Name: "tester", Slug: "tester", Status: platform.AccountActive,
-			})
-			if err != nil {
-				t.Fatalf("create account: %v", err)
-			}
-			user, err := users.CreateUser(context.Background(), platform.User{
-				AccountID: acct.ID, Email: "tester@example.com", Role: platform.RoleOwner,
-			})
-			if err != nil {
-				t.Fatalf("create user: %v", err)
-			}
-			sess, token := mintTestSession(t, users, platform.Session{
-				UserID:    user.ID,
-				ExpiresAt: now.Add(20 * 24 * time.Hour),
-			})
-			users.mu.Lock()
-			s := users.sessions[sess.ID]
-			s.LastSeenAt, s.CreatedAt = tc.lastSeen, tc.created
-			users.sessions[sess.ID] = s
-			users.mu.Unlock()
-
-			cfg := &Config{Accounts: accounts, Users: users, Now: func() time.Time { return now }}
-			var resolved bool
-			h := Middleware(cfg)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-				_, resolved = SessionFromContext(r.Context())
-			}))
-			req := httptest.NewRequest(http.MethodGet, "/v1/account/me", nil)
-			req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
-			h.ServeHTTP(httptest.NewRecorder(), req)
-
-			if resolved != tc.wantResolve {
-				t.Fatalf("resolved = %v, want %v", resolved, tc.wantResolve)
-			}
-			users.mu.Lock()
-			revoked := !users.sessions[sess.ID].RevokedAt.IsZero()
-			users.mu.Unlock()
-			if revoked == tc.wantResolve {
-				t.Fatalf("revoked = %v, want %v", revoked, !tc.wantResolve)
-			}
-		})
+	if len(cfg.Generator.Secret) == 0 {
+		t.Fatal("fallback secret was not installed")
 	}
 }

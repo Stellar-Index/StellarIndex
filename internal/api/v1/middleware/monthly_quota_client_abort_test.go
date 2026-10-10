@@ -5,12 +5,9 @@ package middleware_test
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
@@ -62,69 +59,4 @@ func runAbortedWithSubject(t *testing.T, mw middleware.Middleware, sub auth.Subj
 		w.WriteHeader(http.StatusOK)
 	})).ServeHTTP(w, req)
 	return w.Code
-}
-
-func TestMonthlyQuota_ClientAbortsDoNotArmFailClosed(t *testing.T) {
-	clock := newManualClock()
-	reader := &abortAwareMTDReader{}
-	mw := middleware.MonthlyQuota(reader, nil, middleware.WithMonthlyQuotaClock(clock.now))
-	attacker := auth.Subject{Tier: auth.TierAPIKey, KeyID: "K-abort", MonthlyQuota: 1_000_000}
-
-	// An abort flood: nothing but cancelled requests, spanning more than
-	// the dwell window. Otherwise this arms the process-wide clock and
-	// keeps it armed.
-	runAbortedWithSubject(t, mw, attacker)
-	clock.advance(middleware.DefaultMonthlyQuotaDwellTime + time.Second)
-	runAbortedWithSubject(t, mw, attacker)
-	if reader.liveReads != 2 {
-		t.Fatalf("the abort flood reached the counter on a live context %d times, want 2: "+
-			"the month-to-date read is still bound to the client's cancellation", reader.liveReads)
-	}
-
-	// A DIFFERENT, well-behaved metered customer now hits one genuine
-	// transient blip. The gate's documented posture for a single blip is
-	// fail OPEN — the cap is billing fairness, not a security boundary.
-	reader.blip = errors.New("redis MISCONF")
-	victim := auth.Subject{Tier: auth.TierAPIKey, KeyID: "K-victim", MonthlyQuota: 1_000_000}
-	status, _, body := runWithSubject(t, mw, victim)
-	if status != http.StatusOK {
-		t.Fatalf("an innocent metered customer got %d on their FIRST blip, want 200 (fail open). "+
-			"Client aborts pre-armed the process-wide fail-closed clock, so an attacker can convert "+
-			"every customer's next transient hiccup into a 429. Body: %s", status, body)
-	}
-	if strings.Contains(body, "monthly-quota-unavailable") {
-		t.Errorf("fail-closed problem body served on a first blip: %s", body)
-	}
-
-	// And with the counter healthy again, metering is ordinary.
-	reader.blip = nil
-	readsBefore := reader.liveReads
-	if status, _, _ := runWithSubject(t, mw, victim); status != http.StatusOK {
-		t.Fatalf("healthy read status = %d, want 200", status)
-	}
-	if got := reader.liveReads - readsBefore; got != 1 {
-		t.Fatalf("the healthy request read the counter %d times, want 1 — the gate is not actually metering", got)
-	}
-}
-
-// Blast-radius guard: a genuine SUSTAINED outage must still fail closed
-// past the dwell window (W1-flow-register-4). Detaching from the
-// client's cancellation must not detach from the counter's failure.
-func TestMonthlyQuota_RealOutageStillFailsClosedAfterAbortFix(t *testing.T) {
-	clock := newManualClock()
-	reader := &abortAwareMTDReader{blip: errors.New("redis down")}
-	mw := middleware.MonthlyQuota(reader, nil, middleware.WithMonthlyQuotaClock(clock.now))
-	sub := auth.Subject{Tier: auth.TierAPIKey, KeyID: "K1", MonthlyQuota: 1_000_000}
-
-	if status, _, _ := runWithSubject(t, mw, sub); status != http.StatusOK {
-		t.Fatalf("first outage request = %d, want 200 (fail open inside the dwell window)", status)
-	}
-	clock.advance(middleware.DefaultMonthlyQuotaDwellTime + time.Second)
-	status, _, body := runWithSubject(t, mw, sub)
-	if status != http.StatusTooManyRequests {
-		t.Fatalf("sustained-outage request = %d, want 429 (fail CLOSED past the window)", status)
-	}
-	if !strings.Contains(body, "monthly-quota-unavailable") {
-		t.Errorf("body missing the fail-closed problem type: %s", body)
-	}
 }

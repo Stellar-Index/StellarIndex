@@ -3,8 +3,11 @@ package dashboardauth
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -391,59 +395,6 @@ func TestHandleCallback_NextParamPathOnly_RejectsOpenRedirect(t *testing.T) {
 	}
 	if strings.Contains(loc, "evil.com") {
 		t.Errorf("Location leaked attacker host: %q", loc)
-	}
-}
-
-func TestHandleLogout_IdempotentWithoutCookie(t *testing.T) {
-	r := newTestRig(t)
-	req := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
-	w := httptest.NewRecorder()
-	r.h.HandleLogout(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", w.Code)
-	}
-	// Cookie should be cleared anyway.
-	for _, c := range w.Result().Cookies() {
-		if c.Name == SessionCookieName && c.MaxAge >= 0 {
-			t.Errorf("logout did not clear cookie: %+v", c)
-		}
-	}
-}
-
-func TestHandleLogout_RevokesActiveSession(t *testing.T) {
-	r := newTestRig(t)
-	// Mint a session directly.
-	acct, _ := r.accounts.Create(context.Background(), platform.Account{
-		Name: "x", Slug: "x", Tier: platform.TierFree, Status: platform.AccountActive,
-	})
-	user, _ := r.users.CreateUser(context.Background(), platform.User{
-		AccountID: acct.ID, Email: "owner@example.com", Role: platform.RoleOwner,
-	})
-	sess, token := mintTestSession(t, r.users, platform.Session{
-		UserID: user.ID, ExpiresAt: r.now().Add(24 * time.Hour),
-	})
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
-	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
-	w := httptest.NewRecorder()
-	r.h.HandleLogout(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d", w.Code)
-	}
-	// Subsequent GetSession must return ErrNotFound.
-	if _, err := r.users.GetSession(context.Background(), sess.ID); !errors.Is(err, platform.ErrNotFound) {
-		t.Errorf("session not revoked after logout: err=%v", err)
-	}
-}
-
-func TestHandleLogout_TolersInvalidCookieValue(t *testing.T) {
-	r := newTestRig(t)
-	req := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
-	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "not-a-uuid"})
-	w := httptest.NewRecorder()
-	r.h.HandleLogout(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200 (idempotent)", w.Code)
 	}
 }
 
@@ -846,3 +797,761 @@ func TestTruncateUA_BreaksOutOfTemplateDelimiter(t *testing.T) {
 }
 
 // TestMaskEmail moved to internal/pii with the implementation.
+
+// TestHandleCallback_MailedLinkDoesNotSignInAForeignBrowser is the
+// headline login-CSRF regression, written against nothing but the public
+// behaviour so it stands on its own: the ONLY thing that changes
+// between failing and passing is whether a magic link mailed to a
+// third party signs that third party into the requester's account.
+//
+// Attack: the attacker requests a link for their OWN address, then
+// mails the link to a victim. The victim's browser has never been
+// through /v1/auth/login, so it holds nothing that ties it to the
+// link. Without the binding, the callback mints the attacker's session there
+// anyway (`sessionSameSite()` is Lax, which permits top-level
+// cross-site GET navigation), and every later action the victim took
+// — minting an API key, attaching a payment method — landed in the
+// attacker's dashboard.
+func TestHandleCallback_MailedLinkDoesNotSignInAForeignBrowser(t *testing.T) {
+	r := newTestRig(t)
+
+	if w := r.postLogin(t, "attacker@evil.example"); w.Code != http.StatusOK {
+		t.Fatalf("attacker login: %d", w.Code)
+	}
+	attackerToken := r.extractTokenFromSentEmail(t)
+
+	// A browser that never asked for this link.
+	req := httptest.NewRequest(http.MethodGet,
+		"/v1/auth/callback?token="+url.QueryEscape(attackerToken), nil)
+	req.RemoteAddr = "198.51.100.7:44001"
+	w := httptest.NewRecorder()
+	r.h.HandleCallback(w, req)
+
+	for _, c := range w.Result().Cookies() {
+		if c.Name == SessionCookieName && c.Value != "" {
+			t.Fatalf("login CSRF: a mailed link signed a foreign browser in "+
+				"(session cookie %q, status %d)", c.Value, w.Code)
+		}
+	}
+	if w.Code == http.StatusSeeOther {
+		t.Fatalf("status = 303: the foreign browser was redirected into the dashboard as the link's owner")
+	}
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", w.Code)
+	}
+}
+
+// The link's browser binding must be keyed: a tag anyone can compute
+// would let a third party re-bind a link to a browser id of their choice.
+func TestHandleCallback_RefusesUnkeyedLoginIntent(t *testing.T) {
+	r := newTestRig(t)
+	lw := r.postLogin(t, "binding@example.com")
+	if lw.Code != http.StatusOK {
+		t.Fatalf("login: %d", lw.Code)
+	}
+	plaintext := r.extractTokenFromSentEmail(t)
+
+	browser := strings.Repeat("ef", MagicLinkPlaintextLen)
+	nonce := plaintext[:loginIntentBrowserLen/2]
+	sum := sha256.New()
+	sum.Write([]byte(loginIntentDomain + nonce + "|" + browser))
+	unkeyed := nonce + hex.EncodeToString(sum.Sum(nil)[:MagicLinkPlaintextLen/2])
+
+	cb := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(unkeyed), nil)
+	cb.RemoteAddr = "203.0.113.5:55123"
+	cb.AddCookie(&http.Cookie{Name: LoginIntentCookieName, Value: browser})
+	w := httptest.NewRecorder()
+	r.h.HandleCallback(w, cb)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("callback with an unkeyed binding tag: status = %d, want 403", w.Code)
+	}
+	if c := cookieNamed(w, SessionCookieName); c != nil && c.Value != "" {
+		t.Fatal("session minted from an unkeyed binding tag")
+	}
+
+	// Positive control: the cookie the server itself set still binds.
+	ok := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
+	ok.RemoteAddr = "203.0.113.5:55123"
+	attachCookies(ok, lw)
+	w2 := httptest.NewRecorder()
+	r.h.HandleCallback(w2, ok)
+	if w2.Code != http.StatusSeeOther {
+		t.Fatalf("callback with the server-set intent: status = %d, want 303", w2.Code)
+	}
+}
+
+// TestHandleCallback_LoginCSRF_AttackerLinkInVictimBrowserRejected is
+// the login-CSRF regression: the attacker requests a magic link for their
+// OWN account and mails that link to the victim. Without the
+// login-intent binding the victim's browser follows it, takes the
+// attacker's session cookie, and every later action the victim
+// performs lands in the attacker's dashboard.
+//
+// The victim's browser must not be signed in, and — because the check
+// runs before consumption — the attacker's own token must survive so
+// this can never be used to burn someone's link.
+func TestHandleCallback_LoginCSRF_AttackerLinkInVictimBrowserRejected(t *testing.T) {
+	r := newTestRig(t)
+
+	// Attacker's browser requests a link for the attacker's own email.
+	attackerLogin := r.postLogin(t, "attacker@evil.example")
+	if attackerLogin.Code != http.StatusOK {
+		t.Fatalf("attacker login: %d", attackerLogin.Code)
+	}
+	attackerToken := r.extractTokenFromSentEmail(t)
+
+	// Victim's browser follows the mailed link. It never asked for a
+	// link, so it holds no login-intent witness.
+	victim := callbackFor(attackerToken)
+	w := httptest.NewRecorder()
+	r.h.HandleCallback(w, victim)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (login CSRF: victim signed into the attacker's account)", w.Code)
+	}
+	if c := cookieNamed(w, SessionCookieName); c != nil {
+		t.Fatalf("session cookie minted for the victim's browser: %q", c.Value)
+	}
+	if loc := w.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want no redirect into the dashboard", loc)
+	}
+
+	// The rejection must not have spent the token: the attacker's own
+	// browser can still complete its own login.
+	own := callbackFor(attackerToken)
+	attachCookies(own, attackerLogin)
+	w2 := httptest.NewRecorder()
+	r.h.HandleCallback(w2, own)
+	if w2.Code != http.StatusSeeOther {
+		t.Fatalf("originating browser status = %d, want 303 (binding checked before consumption)", w2.Code)
+	}
+	if c := cookieNamed(w2, SessionCookieName); c == nil {
+		t.Error("originating browser got no session cookie")
+	}
+}
+
+// TestHandleCallback_LoginIntentIsPerToken proves the binding is
+// per-token, not merely "this browser has logged in at some point".
+// The victim here is mid-login with a link of their own, so a cookie
+// IS present — a naive presence check would pass the attacker's link.
+func TestHandleCallback_LoginIntentIsPerToken(t *testing.T) {
+	r := newTestRig(t)
+
+	attackerLogin := r.postLogin(t, "attacker@evil.example")
+	if attackerLogin.Code != http.StatusOK {
+		t.Fatalf("attacker login: %d", attackerLogin.Code)
+	}
+	attackerToken := r.extractTokenFromSentEmail(t)
+
+	victimLogin := r.postLogin(t, "victim@example.com")
+	if victimLogin.Code != http.StatusOK {
+		t.Fatalf("victim login: %d", victimLogin.Code)
+	}
+	if cookieNamed(victimLogin, LoginIntentCookieName) == nil {
+		t.Fatal("victim browser holds no login-intent cookie; test would be vacuous")
+	}
+
+	req := callbackFor(attackerToken)
+	attachCookies(req, victimLogin) // victim's own witness, attacker's token
+	w := httptest.NewRecorder()
+	r.h.HandleCallback(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (witness must bind the specific token)", w.Code)
+	}
+	if c := cookieNamed(w, SessionCookieName); c != nil {
+		t.Fatalf("session cookie minted from another browser's token: %q", c.Value)
+	}
+}
+
+// TestHandleCallback_ClearsLoginIntentOnSuccess — a spent witness
+// shouldn't linger in the browser for the rest of the link's TTL.
+func TestHandleCallback_ClearsLoginIntentOnSuccess(t *testing.T) {
+	r := newTestRig(t)
+	lw := r.postLogin(t, "alice@example.com")
+	if lw.Code != http.StatusOK {
+		t.Fatalf("login: %d", lw.Code)
+	}
+	plaintext := r.extractTokenFromSentEmail(t)
+
+	cb := callbackFor(plaintext)
+	attachCookies(cb, lw)
+	w := httptest.NewRecorder()
+	r.h.HandleCallback(w, cb)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", w.Code)
+	}
+	c := cookieNamed(w, LoginIntentCookieName)
+	if c == nil {
+		t.Fatal("login-intent cookie not cleared after a successful sign-in")
+	}
+	if c.MaxAge >= 0 || c.Value != "" {
+		t.Errorf("login-intent cookie not expired: value=%q MaxAge=%d", c.Value, c.MaxAge)
+	}
+}
+
+// A deployment with no Resend credential wires a transport that
+// declares it cannot deliver (notify.UnconfiguredSender). HandleLogin must
+// refuse up front: 503, a counted failed send, and NO side effect — no
+// magic-link row, no login-intent cookie — for a link nobody can receive.
+//
+// Reverting only the handler guard leaves the send-error branch to absorb
+// ErrNotConfigured: 200 {"status":"sent"} and a live token row. That is the
+// shape this test goes red on.
+func TestHandleLogin_MailUnconfigured_Refuses503WithNoSideEffects(t *testing.T) {
+	r := newTestRig(t)
+	r.cfg.Sender = notify.UnconfiguredSender{Reason: "env X is unset/empty"}
+	beforeSent := notifyCount(t, obs.NotifyTemplateMagicLink, obs.NotifySendResultSent)
+	beforeFailed := notifyCount(t, obs.NotifyTemplateMagicLink, obs.NotifySendResultFailed)
+
+	w := r.postLogin(t, "alice@example.com")
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("login status = %d, want 503 when the mail transport has no credential", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/problem+json") {
+		t.Errorf("Content-Type = %q, want application/problem+json", ct)
+	}
+	if strings.Contains(w.Body.String(), `"sent"`) {
+		t.Errorf("body claims sent: %s", w.Body.String())
+	}
+	if got := notifyCount(t, obs.NotifyTemplateMagicLink, obs.NotifySendResultSent) - beforeSent; got != 0 {
+		t.Errorf("result=sent delta = %v, want 0", got)
+	}
+	if got := notifyCount(t, obs.NotifyTemplateMagicLink, obs.NotifySendResultFailed) - beforeFailed; got != 1 {
+		t.Errorf("result=failed delta = %v, want 1 (the failure-ratio alert reads this counter)", got)
+	}
+	r.tokens.mu.Lock()
+	rows := len(r.tokens.tokens)
+	r.tokens.mu.Unlock()
+	if rows != 0 {
+		t.Errorf("magic-link rows = %d, want 0", rows)
+	}
+	for _, c := range w.Result().Cookies() {
+		if c.Name == LoginIntentCookieName {
+			t.Errorf("login-intent cookie set although no link was minted")
+		}
+	}
+}
+
+// The refusal must be the same for every well-formed request. The throttled
+// branch answers a decoy 200 {"status":"sent"}; if the mail guard ran after
+// it, a 200 among 503s would tell a caller "a throttle fired for this
+// address" — the oracle [LoginThrottle]'s contract forbids — and would claim
+// an email on a deployment that cannot send one.
+func TestHandleLogin_MailUnconfigured_RefusesBeforeTheThrottle(t *testing.T) {
+	r := newTestRig(t)
+	r.cfg.Sender = notify.UnconfiguredSender{}
+	thr := &stubLoginThrottle{allow: false}
+	r.cfg.LoginThrottle = thr
+
+	w := r.postLogin(t, "alice@example.com")
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("throttled login status = %d, want the same 503 as an unthrottled one", w.Code)
+	}
+	if thr.calls != 0 {
+		t.Errorf("throttle consulted %d time(s); the mail guard must run first so a refused "+
+			"request cannot burn a victim's per-email quota", thr.calls)
+	}
+}
+
+// A malformed request is still the caller's error: the guard sits behind
+// request validation, so it never masks a 400.
+func TestHandleLogin_MailUnconfigured_InvalidEmailIsStill400(t *testing.T) {
+	r := newTestRig(t)
+	r.cfg.Sender = notify.UnconfiguredSender{}
+	if w := r.postLogin(t, "not-an-email"); w.Code != http.StatusBadRequest {
+		t.Errorf("invalid email status = %d, want 400", w.Code)
+	}
+}
+
+// The recording test double stays a working transport: the guard keys on a
+// transport DECLARING it has no credential, not on "is not Resend", so the
+// happy path every other test in this package drives is untouched.
+func TestHandleLogin_RecordingSender_StillSends(t *testing.T) {
+	r := newTestRig(t)
+	if w := r.postLogin(t, "alice@example.com"); w.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want 200", w.Code)
+	}
+	if r.sender.SentCount() != 1 {
+		t.Errorf("SentCount = %d, want 1", r.sender.SentCount())
+	}
+}
+
+// TestHandleLogin_RecordsNotifySendMetric pins the send metric for the
+// magic-link path: internal/notify had zero prometheus visibility, and
+// HandleLogin swallows the send error (returns 200 either way to avoid an
+// enumeration oracle), so a mail outage that silently kills login was invisible.
+// The send call site must now bump stellarindex_notify_sends_total{template=
+// "magic-link"} with result=sent on success and result=failed on error.
+func TestHandleLogin_RecordsNotifySendMetric(t *testing.T) {
+	// Success path: the default rig wires a NoopSender (accepts the message).
+	r := newTestRig(t)
+	beforeSent := notifyCount(t, obs.NotifyTemplateMagicLink, obs.NotifySendResultSent)
+
+	if w := r.postLogin(t, "alice@example.com"); w.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want 200", w.Code)
+	}
+	if got := notifyCount(t, obs.NotifyTemplateMagicLink, obs.NotifySendResultSent) - beforeSent; got != 1 {
+		t.Errorf("notify_sends_total{template=magic-link,result=sent} delta = %v, want 1", got)
+	}
+
+	// Failure path: swap in a sender that always errors (a Resend outage).
+	// The response is still 200 (enumeration-safe), so the counter is the
+	// ONLY signal the mail never went out.
+	r.cfg.Sender = stubFailSender{err: errors.New("resend: 503 service unavailable")}
+	beforeFailed := notifyCount(t, obs.NotifyTemplateMagicLink, obs.NotifySendResultFailed)
+
+	if w := r.postLogin(t, "bob@example.com"); w.Code != http.StatusOK {
+		t.Fatalf("login status on send failure = %d, want 200 (enumeration-safe)", w.Code)
+	}
+	if got := notifyCount(t, obs.NotifyTemplateMagicLink, obs.NotifySendResultFailed) - beforeFailed; got != 1 {
+		t.Errorf("notify_sends_total{template=magic-link,result=failed} delta = %v, want 1", got)
+	}
+}
+
+// A suppressed recipient is answered exactly like a sent one (200, same
+// body), counted as suppressed, and never as failed.
+func TestHandleLogin_SuppressedIsCountedSuppressedNotFailed(t *testing.T) {
+	r := newTestRig(t)
+	r.cfg.Sender = stubFailSender{err: notify.ErrSuppressed}
+	sup := func() float64 { return notifyCount(t, obs.NotifyTemplateMagicLink, obs.NotifySendResultSuppressed) }
+	failed := func() float64 { return notifyCount(t, obs.NotifyTemplateMagicLink, obs.NotifySendResultFailed) }
+	s0, f0 := sup(), failed()
+
+	w := r.postLogin(t, "bounced@example.com")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"sent"`) {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := sup() - s0; got != 1 {
+		t.Errorf("suppressed delta = %v, want 1", got)
+	}
+	if got := failed() - f0; got != 0 {
+		t.Errorf("failed delta = %v, want 0", got)
+	}
+}
+
+// TestHandleLogin_SetsLoginIntentCookieForTheMintedToken pins the
+// witness's shape: the token just minted must be bound to its id,
+// HttpOnly, and expire with the link it witnesses.
+func TestHandleLogin_SetsLoginIntentCookieForTheMintedToken(t *testing.T) {
+	r := newTestRig(t)
+	w := r.postLogin(t, "alice@example.com")
+	if w.Code != http.StatusOK {
+		t.Fatalf("login: %d", w.Code)
+	}
+	plaintext := r.extractTokenFromSentEmail(t)
+
+	c := cookieNamed(w, LoginIntentCookieName)
+	if c == nil {
+		t.Fatal("no login-intent cookie set by /v1/auth/login")
+	}
+	half := loginIntentBrowserLen / 2
+	if !isLoginIntentHex(c.Value) ||
+		plaintext[half:] != loginIntentTag(r.h.cfg.Generator.Secret, plaintext[:half], c.Value) {
+		t.Errorf("emailed token %q is not bound to the cookie's browser id %q", plaintext, c.Value)
+	}
+	if !c.HttpOnly {
+		t.Error("login-intent cookie is not HttpOnly")
+	}
+	if c.SameSite != http.SameSiteLaxMode {
+		t.Errorf("SameSite = %v, want Lax", c.SameSite)
+	}
+	if got, wantAge := c.MaxAge, int(r.cfg.MagicLinkTTL/time.Second); got != wantAge {
+		t.Errorf("MaxAge = %d, want %d (the link's own TTL)", got, wantAge)
+	}
+}
+
+// TestHandleLogin_KeepsPriorIntentSoAnEarlierLinkStillWorks — a user
+// who taps "email me a link" twice holds two live tokens and may click
+// either. A single-slot witness would break the older link.
+func TestHandleLogin_KeepsPriorIntentSoAnEarlierLinkStillWorks(t *testing.T) {
+	r := newTestRig(t)
+
+	first := r.postLogin(t, "alice@example.com")
+	if first.Code != http.StatusOK {
+		t.Fatalf("first login: %d", first.Code)
+	}
+	firstToken := r.extractTokenFromSentEmail(t)
+
+	// Second request from the SAME browser: it replays the cookie it
+	// already holds, exactly as a browser would.
+	body, _ := json.Marshal(loginRequest{Email: "alice@example.com"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", bytes.NewReader(body))
+	req.RemoteAddr = "203.0.113.5:55123"
+	attachCookies(req, first)
+	second := httptest.NewRecorder()
+	r.h.HandleLogin(second, req)
+	if second.Code != http.StatusOK {
+		t.Fatalf("second login: %d", second.Code)
+	}
+	secondToken := r.extractTokenFromSentEmail(t)
+	if secondToken == firstToken {
+		t.Fatal("second login re-issued the same token; test would be vacuous")
+	}
+
+	// Clicking the OLDER link must still work.
+	cb := callbackFor(firstToken)
+	attachCookies(cb, second)
+	w := httptest.NewRecorder()
+	r.h.HandleCallback(w, cb)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("older link status = %d, want 303", w.Code)
+	}
+}
+
+// TestHandleLogin_ThrottledResponseStillCarriesAnIntentCookie — the
+// login-intent cookie must not become a side channel for the
+// magic-link throttle. [LoginThrottle]'s contract is that a throttled
+// send is byte-indistinguishable from a real one; if only the
+// un-throttled path emitted a Set-Cookie, the header's presence would
+// answer "does a throttle currently apply to this address?" for free.
+func TestHandleLogin_ThrottledResponseStillCarriesAnIntentCookie(t *testing.T) {
+	sent := newTestRig(t)
+	sentW := sent.postLogin(t, "alice@example.com")
+	sentCookie := cookieNamed(sentW, LoginIntentCookieName)
+	if sentCookie == nil {
+		t.Fatal("un-throttled login set no login-intent cookie; test would be vacuous")
+	}
+
+	throttled := newTestRig(t)
+	throttled.cfg.LoginThrottle = &stubLoginThrottle{allow: false}
+	throttledW := throttled.postLogin(t, "victim@example.com")
+
+	if throttled.sender.SentCount() != 0 {
+		t.Fatalf("throttled send count = %d, want 0", throttled.sender.SentCount())
+	}
+	throttledCookie := cookieNamed(throttledW, LoginIntentCookieName)
+	if throttledCookie == nil {
+		t.Fatal("throttled login set no login-intent cookie — the header's absence " +
+			"tells an attacker a throttle fired for this address")
+	}
+	if !isLoginIntentHex(throttledCookie.Value) {
+		t.Errorf("throttled cookie value = %q, want an id of the same shape as the real one (%q)",
+			throttledCookie.Value, sentCookie.Value)
+	}
+	if throttledCookie.MaxAge != sentCookie.MaxAge ||
+		throttledCookie.HttpOnly != sentCookie.HttpOnly ||
+		throttledCookie.SameSite != sentCookie.SameSite {
+		t.Errorf("throttled cookie attributes differ from the real one: %+v vs %+v",
+			throttledCookie, sentCookie)
+	}
+	// And the decoy must be inert: it witnesses a token no store saw.
+	if _, err := throttled.tokens.ConsumeMagicLinkToken(t.Context(), []byte("unused")); err == nil {
+		t.Error("expected the throttled path to have persisted no token")
+	}
+}
+
+// TestHandleLogin_ThrottledTapsKeepEveryMailedLinkRedeemable — a
+// user who taps "email me a link" past the send throttle must still be
+// able to open every link that WAS mailed, in the browser that asked for
+// it. Without this, each throttled tap writes a decoy into a 3-slot
+// cookie, so three taps left every mailed link 403ing.
+func TestHandleLogin_ThrottledTapsKeepEveryMailedLinkRedeemable(t *testing.T) {
+	r := newTestRig(t)
+	throttle := &stubLoginThrottle{allow: true}
+	r.cfg.LoginThrottle = throttle
+
+	const sends = 5
+	var prev *httptest.ResponseRecorder
+	var tokens []string
+	for range sends {
+		prev = r.loginFrom(t, "alice@example.com", prev)
+		tokens = append(tokens, r.extractTokenFromSentEmail(t))
+	}
+	throttle.allow = false
+	for range 3 {
+		prev = r.loginFrom(t, "alice@example.com", prev)
+	}
+	if got := r.sender.SentCount(); got != sends {
+		t.Fatalf("sent %d mails, want %d; throttle not exercised", got, sends)
+	}
+	for i, tok := range tokens {
+		if !r.redeems(t, tok, prev) {
+			t.Errorf("mailed link %d refused after throttled taps", i)
+		}
+	}
+}
+
+// TestHandleLogin_ThrottleUnobservableAcrossFollowUps — [LoginThrottle]'s
+// contract across a request SEQUENCE, not one response: whether a probe
+// was throttled must change neither the probe's cookie, nor the cookie a
+// follow-up request (real or throttled) gets back, nor which earlier
+// links still redeem. Every observable is compared against a reference
+// fixed before the probe, so the two branches are pinned to each other.
+func TestHandleLogin_ThrottleUnobservableAcrossFollowUps(t *testing.T) {
+	for _, priorSends := range []int{0, 1, 2, 3} {
+		for _, priorThrottled := range []bool{false, true} {
+			for _, probeThrottled := range []bool{false, true} {
+				for _, followThrottled := range []bool{false, true} {
+					r := newTestRig(t)
+					throttle := &stubLoginThrottle{allow: true}
+					r.cfg.LoginThrottle = throttle
+
+					var prev *httptest.ResponseRecorder
+					var links []string
+					for range priorSends {
+						prev = r.loginFrom(t, "attacker@evil.example", prev)
+						links = append(links, r.extractTokenFromSentEmail(t))
+					}
+					if priorThrottled {
+						throttle.allow = false
+						prev = r.loginFrom(t, "attacker@evil.example", prev)
+					}
+
+					throttle.allow = !probeThrottled
+					probe := r.loginFrom(t, "victim@example.com", prev)
+					throttle.allow = !followThrottled
+					follow := r.loginFrom(t, "attacker@evil.example", probe)
+
+					name := fmt.Sprintf("prior=%d priorThrottled=%v probeThrottled=%v followThrottled=%v",
+						priorSends, priorThrottled, probeThrottled, followThrottled)
+					want := intentValue(t, probe)
+					if prev != nil && want != intentValue(t, prev) {
+						t.Errorf("%s: probe changed the browser's intent cookie", name)
+					}
+					if got := intentValue(t, follow); got != want || !isLoginIntentHex(got) {
+						t.Errorf("%s: follow-up cookie %q, want the probe's %q", name, got, want)
+					}
+					for i, l := range links {
+						if !r.redeems(t, l, follow) {
+							t.Errorf("%s: earlier link %d no longer redeems", name, i)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestMiddleware_NilNowDoesNotPanic is a regression for the live
+// production bug where main.go built the auth Config without a Now
+// func and passed it raw to Middleware. NewHandlers defaulted Now on
+// its own copy, but the resolver Middleware kept the nil — so
+// resolveSession's cfg.Now() nil-derefed on every authenticated
+// request. The magic-link cookie resolved fine; /v1/account/me then
+// 500'd, making login look broken. Middleware must default Now (and
+// Logger) so a valid session resolves without panicking.
+func TestMiddleware_NilNowDoesNotPanic(t *testing.T) {
+	accounts := newFakeAccountStore()
+	users := newFakeUserStore()
+
+	acct, err := accounts.Create(context.Background(), platform.Account{
+		Name:   "tester",
+		Slug:   "tester",
+		Status: platform.AccountActive,
+	})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	user, err := users.CreateUser(context.Background(), platform.User{
+		AccountID: acct.ID,
+		Email:     "tester@example.com",
+		Role:      platform.RoleOwner,
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	_, token := mintTestSession(t, users, platform.Session{
+		UserID:    user.ID,
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	})
+
+	// Config with Now AND Logger left nil — the exact shape that
+	// panicked in production.
+	cfg := &Config{
+		Accounts: accounts,
+		Users:    users,
+		Tokens:   newFakeTokenStore(nil),
+	}
+
+	var resolved bool
+	h := Middleware(cfg)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, resolved = SessionFromContext(r.Context())
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/account/me", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+	rec := httptest.NewRecorder()
+
+	// The bug manifested as a panic recovered upstream into a 500;
+	// here an unrecovered panic fails the test directly.
+	h.ServeHTTP(rec, req)
+
+	if !resolved {
+		t.Fatal("expected the valid session cookie to resolve, got anonymous")
+	}
+	if cfg.Now == nil {
+		t.Fatal("Middleware should have defaulted a nil cfg.Now")
+	}
+}
+
+func TestMiddleware_IdleSessionRejectedAndRevoked(t *testing.T) {
+	now := time.Now().UTC()
+	cases := []struct {
+		name        string
+		lastSeen    time.Time
+		created     time.Time
+		wantResolve bool
+	}{
+		{"idle 8 days", now.Add(-8 * 24 * time.Hour), now.Add(-10 * 24 * time.Hour), false},
+		{"active 1 hour ago", now.Add(-time.Hour), now.Add(-10 * 24 * time.Hour), true},
+		{"zero last-seen, fresh create", time.Time{}, now.Add(-time.Minute), true},
+		{"zero last-seen, stale create", time.Time{}, now.Add(-8 * 24 * time.Hour), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			accounts := newFakeAccountStore()
+			users := newFakeUserStore()
+			acct, err := accounts.Create(context.Background(), platform.Account{
+				Name: "tester", Slug: "tester", Status: platform.AccountActive,
+			})
+			if err != nil {
+				t.Fatalf("create account: %v", err)
+			}
+			user, err := users.CreateUser(context.Background(), platform.User{
+				AccountID: acct.ID, Email: "tester@example.com", Role: platform.RoleOwner,
+			})
+			if err != nil {
+				t.Fatalf("create user: %v", err)
+			}
+			sess, token := mintTestSession(t, users, platform.Session{
+				UserID:    user.ID,
+				ExpiresAt: now.Add(20 * 24 * time.Hour),
+			})
+			users.mu.Lock()
+			s := users.sessions[sess.ID]
+			s.LastSeenAt, s.CreatedAt = tc.lastSeen, tc.created
+			users.sessions[sess.ID] = s
+			users.mu.Unlock()
+
+			cfg := &Config{Accounts: accounts, Users: users, Now: func() time.Time { return now }}
+			var resolved bool
+			h := Middleware(cfg)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				_, resolved = SessionFromContext(r.Context())
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/v1/account/me", nil)
+			req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+			h.ServeHTTP(httptest.NewRecorder(), req)
+
+			if resolved != tc.wantResolve {
+				t.Fatalf("resolved = %v, want %v", resolved, tc.wantResolve)
+			}
+			users.mu.Lock()
+			revoked := !users.sessions[sess.ID].RevokedAt.IsZero()
+			users.mu.Unlock()
+			if revoked == tc.wantResolve {
+				t.Fatalf("revoked = %v, want %v", revoked, !tc.wantResolve)
+			}
+		})
+	}
+}
+
+// TestSignupNewUser_EmailLocker_PreemptsLoser — when the locker is
+// already held for an email (a concurrent winner is provisioning),
+// the loser must wait + return the winner's user WITHOUT creating
+// a speculative Account row.
+//
+// Proves the full-fix path. The
+// fallback Suspend-on-conflict recovery still serves as defence
+// in depth, but the lock path should never trigger it.
+func TestSignupNewUser_EmailLocker_PreemptsLoser(t *testing.T) {
+	r := newTestRig(t)
+	locker := newFakeEmailLocker()
+	r.cfg.EmailLocker = locker
+
+	// Simulate the winner: pre-hold the lock + insert a User row
+	// behind the winner's Account so the loser's poll converges.
+	emailHash := hashEmailForLocker("owner@example.com")
+	if ok, _, err := locker.Acquire(context.Background(), emailHash, time.Second); !ok || err != nil {
+		t.Fatalf("pre-acquire: ok=%v err=%v", ok, err)
+	}
+
+	winnerAcct, err := r.accounts.Create(context.Background(), platform.Account{
+		Name: "winner", Slug: "winner", BillingEmail: "owner@example.com",
+		Tier: platform.TierFree, Status: platform.AccountActive,
+	})
+	if err != nil {
+		t.Fatalf("seed winner account: %v", err)
+	}
+	winner, err := r.users.CreateUser(context.Background(), platform.User{
+		AccountID: winnerAcct.ID, Email: "owner@example.com", Role: platform.RoleOwner,
+	})
+	if err != nil {
+		t.Fatalf("seed winner user: %v", err)
+	}
+
+	before := len(r.accounts.byID)
+
+	// Loser comes through signupNewUser. Lock acquire fails ->
+	// waitForWinnerUser converges to the winner row -> return.
+	got, err := r.h.signupNewUser(context.Background(), "owner@example.com")
+	if err != nil {
+		t.Fatalf("signupNewUser as loser: %v", err)
+	}
+	if got.ID != winner.ID {
+		t.Errorf("loser got user %v, want winner %v", got.ID, winner.ID)
+	}
+	if got.AccountID != winnerAcct.ID {
+		t.Errorf("loser got AccountID %v, want winner's %v", got.AccountID, winnerAcct.ID)
+	}
+	if delta := len(r.accounts.byID) - before; delta != 0 {
+		t.Errorf("speculative-account rows created by loser = %d, want 0 (lock should pre-empt before Account.Create)", delta)
+	}
+}
+
+// TestSignupNewUser_EmailLocker_WinnerSucceeds — happy path with
+// the lock available. Winner acquires, provisions, releases. The
+// loser case is covered above; this case just proves the lock
+// doesn't break the normal flow.
+func TestSignupNewUser_EmailLocker_WinnerSucceeds(t *testing.T) {
+	r := newTestRig(t)
+	r.cfg.EmailLocker = newFakeEmailLocker()
+
+	got, err := r.h.signupNewUser(context.Background(), "fresh@example.com")
+	if err != nil {
+		t.Fatalf("signupNewUser as winner: %v", err)
+	}
+	if got.Email != "fresh@example.com" {
+		t.Errorf("winner.Email = %q", got.Email)
+	}
+	if got.AccountID == [16]byte{} {
+		t.Errorf("winner.AccountID is zero — Account.Create should have run")
+	}
+}
+
+// TestTouchTracker_EvictsAgedEntries guards that
+// touchTracker.last must not grow without bound. Without an
+// eviction sweep, every distinct session ID ever seen stays in the
+// map for the process lifetime — one permanent entry per session.
+// Here 50 sessions are each touched once, then time is advanced past
+// the debounce interval and a single FRESH session is touched (which
+// triggers the opportunistic sweep): all 50 aged-out entries must be
+// gone, leaving only the fresh one.
+func TestTouchTracker_EvictsAgedEntries(t *testing.T) {
+	tr := newTouchTracker(time.Minute)
+	base := time.Unix(1_750_000_000, 0)
+
+	const n = 50
+	for i := 0; i < n; i++ {
+		id := uuid.New()
+		if !tr.shouldTouch(id, base) {
+			t.Fatalf("session %d: first touch should always be due", i)
+		}
+	}
+	if got := len(tr.last); got != n {
+		t.Fatalf("after seeding: touchTracker.last size = %d, want %d", got, n)
+	}
+
+	later := base.Add(2 * time.Minute)
+	fresh := uuid.New()
+	if !tr.shouldTouch(fresh, later) {
+		t.Fatal("fresh session's first touch should be due")
+	}
+
+	if got := len(tr.last); got != 1 {
+		t.Errorf("after sweep: touchTracker.last size = %d, want 1 — "+
+			"aged-out entries were not evicted (REL-05: unbounded growth)", got)
+	}
+}

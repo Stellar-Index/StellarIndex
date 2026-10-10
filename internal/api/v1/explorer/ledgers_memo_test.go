@@ -55,3 +55,12 @@ func TestTxSummaryView_MemoBase64_AbsentForNonText(t *testing.T) {
 		t.Fatalf("memo_base64 = %q, want empty for memo_type %q", v.MemoBase64, v.MemoType)
 	}
 }
+
+// TestTxSummaryView_NotFeeBump: an ordinary transaction keeps its own max_fee
+// and carries no fee_bump object.
+func TestTxSummaryView_NotFeeBump(t *testing.T) {
+	v := txSummaryView(clickhouse.TxSummary{TxHash: feeBumpOuterHash, MaxFee: 300, FeeCharged: 100})
+	if v.MaxFee != "300" || v.FeeBump != nil {
+		t.Fatalf("plain tx view = max_fee %s fee_bump %+v, want 300 / nil", v.MaxFee, v.FeeBump)
+	}
+}

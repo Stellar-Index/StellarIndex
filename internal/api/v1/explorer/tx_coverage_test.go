@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/xdr"
+
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -181,6 +183,161 @@ func TestTxDetail_FailedSubReadSurfacesCoverageNote(t *testing.T) {
 			}
 			if !strings.Contains(strings.ToLower(note), strings.ToLower(tc.wantSubstr)) {
 				t.Fatalf("coverage_note %q does not mention the degraded field %q", note, tc.wantSubstr)
+			}
+		})
+	}
+}
+
+func TestTxDetail_NotFoundDetailNamesLakeLag(t *testing.T) {
+	cases := []struct {
+		name       string
+		tip        uint32
+		stale, ok  bool
+		wantSubstr string
+	}{
+		{"fresh", 100, false, true, "in the indexed range"},
+		{"stale with tip", 64000000, true, true, "ends at ledger 64000000 and is behind the network"},
+		{"stale without tip", 0, true, false, "freshness is unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newProbeHandler(&capReader{probe: &deadlineProbe{}}, nil)
+			h.LakeWatermark = func(context.Context) (uint32, bool, bool) { return tc.tip, tc.stale, tc.ok }
+			var detail string
+			h.WriteProblem = func(w http.ResponseWriter, _ *http.Request, _, _ string, status int, d string) {
+				detail = d
+				w.WriteHeader(status)
+			}
+			r := httptest.NewRequest(http.MethodGet, "/v1/tx/x", nil)
+			r.SetPathValue("hash", strings.Repeat("c", 64))
+			rec := httptest.NewRecorder()
+			h.TxDetail(rec, r)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404", rec.Code)
+			}
+			if !strings.Contains(detail, tc.wantSubstr) {
+				t.Fatalf("detail = %q, want it to contain %q", detail, tc.wantSubstr)
+			}
+			if !tc.stale && strings.Contains(detail, "behind") {
+				t.Fatalf("fresh-lake detail claims lag: %q", detail)
+			}
+		})
+	}
+}
+
+// TestTxDetail_FeeBumpByInnerHash pins the fee-bump contract of GET
+// /v1/tx/{hash}: the inner hash (what the submitter's SDK returned) resolves
+// to the transaction with its operations, max_fee is the payer's bid that
+// fee_charged is bounded by, the payer and the inner failure reason are
+// served, and a failed op says why rather than only "op_inner".
+func TestTxDetail_FeeBumpByInnerHash(t *testing.T) {
+	underfunded, err := xdr.MarshalBase64(xdr.OperationResult{
+		Code: xdr.OperationResultCodeOpInner,
+		Tr: &xdr.OperationResultTr{
+			Type:          xdr.OperationTypePayment,
+			PaymentResult: &xdr.PaymentResult{Code: xdr.PaymentResultCodePaymentUnderfunded},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal op result: %v", err)
+	}
+	var captured []byte
+	h := &Handler{
+		Reader:        &feeBumpReader{capReader: &capReader{probe: &deadlineProbe{}}, opResultXDR: underfunded},
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ClientAborted: func(*http.Request, error) bool { return false },
+		WriteProblem: func(w http.ResponseWriter, _ *http.Request, _, _ string, status int, _ string) {
+			w.WriteHeader(status)
+		},
+		WriteJSON: func(w http.ResponseWriter, data any, _ bool) {
+			b, err := json.Marshal(data)
+			if err != nil {
+				t.Fatalf("marshal TxDetail: %v", err)
+			}
+			captured = b
+			_, _ = w.Write(b)
+		},
+	}
+	r := httptest.NewRequest(http.MethodGet, "/v1/tx/"+feeBumpInnerHash, nil)
+	r.SetPathValue("hash", feeBumpInnerHash)
+	rec := httptest.NewRecorder()
+	h.TxDetail(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	var got TxDetailView
+	if err := json.Unmarshal(captured, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if got.Hash != feeBumpOuterHash || got.MaxFee != "20000" || got.FeeCharged != "2000" {
+		t.Fatalf("hash/max_fee/fee_charged = %s/%s/%s, want outer hash / 20000 / 2000", got.Hash, got.MaxFee, got.FeeCharged)
+	}
+	fb := got.FeeBump
+	if fb == nil {
+		t.Fatal("fee_bump absent on a fee-bump transaction")
+	}
+	if fb.FeeAccount != feeBumpPayer || fb.InnerHash != feeBumpInnerHash || fb.InnerMaxFee != "100" {
+		t.Fatalf("fee_bump = %+v, want payer / inner hash / inner max fee 100", *fb)
+	}
+	if fb.InnerResultCode == nil || *fb.InnerResultCode != int32(xdr.TransactionResultCodeTxFailed) || fb.InnerResult != "tx_failed" {
+		t.Fatalf("fee_bump inner result = %v/%q, want -1/tx_failed", fb.InnerResultCode, fb.InnerResult)
+	}
+	if len(got.Operations) != 1 {
+		t.Fatalf("operations = %d, want 1 (sub-reads must use the outer hash)", len(got.Operations))
+	}
+	if op := got.Operations[0]; op.Result != "op_inner" || op.InnerResult != "payment_underfunded" {
+		t.Fatalf("op result = %q / inner %q, want op_inner / payment_underfunded", op.Result, op.InnerResult)
+	}
+}
+
+// TestTxDetail_SubReadDeadlineIs503NotAPartial202OK pins the boundary
+// between the two things a failed sub-read can mean on /v1/tx/{hash}.
+//
+// A plain read failure is the non-fatal class: serve the transaction
+// without per-op result codes or contract events, and say so in
+// coverage_note. A blown DEADLINE is not that class. The budget
+// belongs to the whole request, so every remaining sub-read is already
+// doomed, and the "partial" 200 assembled out of nothing but failures
+// tells the caller the transaction emitted no events — a wrong answer
+// served with full confidence, where the truthful answer is "retry".
+//
+// The two fatal reads above these already take that branch; this pins
+// that the non-fatal pair now agrees with them.
+func TestTxDetail_SubReadDeadlineIs503NotAPartial200OK(t *testing.T) {
+	cases := map[string]struct{ resultsErr, eventsErr error }{
+		"result-code read hits the deadline": {context.DeadlineExceeded, nil},
+		"event read hits the deadline":       {nil, context.DeadlineExceeded},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := &Handler{
+				Reader: &txCoverageReader{
+					capReader:  &capReader{probe: &deadlineProbe{}},
+					resultsErr: tc.resultsErr,
+					eventsErr:  tc.eventsErr,
+				},
+				Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+				ClientAborted: func(*http.Request, error) bool { return false },
+				WriteProblem: func(w http.ResponseWriter, _ *http.Request, _, _ string, status int, _ string) {
+					w.WriteHeader(status)
+				},
+				WriteJSON: func(w http.ResponseWriter, _ any, _ bool) {
+					w.WriteHeader(http.StatusOK)
+				},
+			}
+			r := httptest.NewRequest(http.MethodGet, "/v1/tx/"+validTestTxHash, nil)
+			r.SetPathValue("hash", validTestTxHash)
+			rec := httptest.NewRecorder()
+			h.TxDetail(rec, r)
+
+			if rec.Code == http.StatusOK {
+				t.Fatalf("status = 200 — a sub-read that blew the request deadline must not be " +
+					"served as a partial transaction; the caller cannot tell it from a tx that " +
+					"genuinely emitted nothing")
+			}
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503 (retryable, same branch the fatal reads take)", rec.Code)
 			}
 		})
 	}

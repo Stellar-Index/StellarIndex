@@ -1,8 +1,6 @@
 package dashboardauth
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -98,44 +96,5 @@ func TestCredentialCookies_HostOnlyEvenWithHintDomain(t *testing.T) {
 		if !seen[name] {
 			t.Errorf("flows never emitted %q — the scope check above did not cover it", name)
 		}
-	}
-}
-
-// The link's browser binding must be keyed: a tag anyone can compute
-// would let a third party re-bind a link to a browser id of their choice.
-func TestHandleCallback_RefusesUnkeyedLoginIntent(t *testing.T) {
-	r := newTestRig(t)
-	lw := r.postLogin(t, "binding@example.com")
-	if lw.Code != http.StatusOK {
-		t.Fatalf("login: %d", lw.Code)
-	}
-	plaintext := r.extractTokenFromSentEmail(t)
-
-	browser := strings.Repeat("ef", MagicLinkPlaintextLen)
-	nonce := plaintext[:loginIntentBrowserLen/2]
-	sum := sha256.New()
-	sum.Write([]byte(loginIntentDomain + nonce + "|" + browser))
-	unkeyed := nonce + hex.EncodeToString(sum.Sum(nil)[:MagicLinkPlaintextLen/2])
-
-	cb := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(unkeyed), nil)
-	cb.RemoteAddr = "203.0.113.5:55123"
-	cb.AddCookie(&http.Cookie{Name: LoginIntentCookieName, Value: browser})
-	w := httptest.NewRecorder()
-	r.h.HandleCallback(w, cb)
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("callback with an unkeyed binding tag: status = %d, want 403", w.Code)
-	}
-	if c := cookieNamed(w, SessionCookieName); c != nil && c.Value != "" {
-		t.Fatal("session minted from an unkeyed binding tag")
-	}
-
-	// Positive control: the cookie the server itself set still binds.
-	ok := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
-	ok.RemoteAddr = "203.0.113.5:55123"
-	attachCookies(ok, lw)
-	w2 := httptest.NewRecorder()
-	r.h.HandleCallback(w2, ok)
-	if w2.Code != http.StatusSeeOther {
-		t.Fatalf("callback with the server-set intent: status = %d, want 303", w2.Code)
 	}
 }
