@@ -1,7 +1,6 @@
 package v1_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -49,42 +48,29 @@ func (r *stubAssetReader) ListAssets(_ context.Context, cursor string, limit int
 
 // ─── /v1/assets (list) ────────────────────────────────────────────
 
-func TestAssetList_EmptyWhenReaderNil(t *testing.T) {
-	// Prove the default "reader not wired yet" path is 200 + empty.
-	srv := v1.New(v1.Options{})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
+// A nil reader (not wired) and a reader returning a nil slice must both put
+// "data":[] on the wire; OpenAPI's AssetListEnvelope.data is `type: array`
+// and rejects null. Asserted on raw bytes because decoding hides null.
+func TestAssetList_EmptyDataMarshalsAsEmptyArray(t *testing.T) {
+	cases := []struct {
+		name string
+		opts v1.Options
+	}{
+		{"reader nil", v1.Options{}},
+		{"reader returns nil slice", v1.Options{Assets: &stubAssetReader{page: nil, nextCur: ""}}},
 	}
-	var env struct {
-		Data []v1.AssetDetail `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	if len(env.Data) != 0 {
-		t.Errorf("expected empty list, got %d rows", len(env.Data))
-	}
-}
-
-func TestAssetList_NilSliceFromReaderMarshalsAsEmptyArray(t *testing.T) {
-	// Regression: a reader returning (nil, "", nil) must not leak
-	// "data": null onto the wire — OpenAPI's AssetListEnvelope.data
-	// is `type: array`, which rejects null. The handler's nil guard
-	// converts nil → [].
-	reader := &stubAssetReader{page: nil, nextCur: ""}
-	srv := v1.New(v1.Options{Assets: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	// Don't decode through []T — that hides null. Assert on the raw
-	// bytes that the field is an empty array.
-	if !bytes.Contains([]byte(body), []byte(`"data":[]`)) {
-		t.Errorf("expected \"data\":[] in body, got: %s", body)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httpTestServer(t, v1.New(tc.opts))
+			resp := mustGet(t, ts.URL+"/v1/assets")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d", resp.StatusCode)
+			}
+			body, _ := readAll(resp)
+			if !strings.Contains(body, `"data":[]`) {
+				t.Errorf("expected \"data\":[] in body, got: %s", body)
+			}
+		})
 	}
 }
 
@@ -139,59 +125,37 @@ func TestAssetList_InvalidLimitRejected(t *testing.T) {
 
 // ─── /v1/assets/{asset_id} (single) ───────────────────────────────
 
-func TestAssetGet_native(t *testing.T) {
-	srv := v1.New(v1.Options{})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/native")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
+// With no reader wired, GET /v1/assets/{id} echoes the canonical decode.
+func TestAssetGet_CanonicalEcho(t *testing.T) {
+	cases := []struct {
+		name, path, wantType, wantCode string
+		wantIssuer                     string // empty: not asserted
+		wantAssetID                    string // empty: not asserted
+	}{
+		{"native", "native", "native", "", "", "native"},
+		{"classic", "USDC-" + testUSDCIssuer, "classic", "USDC", testUSDCIssuer, ""},
+		{"fiat (ADR-0010)", "fiat:USD", "fiat", "USD", "", ""},
 	}
-	var env struct {
-		Data v1.AssetDetail `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	if env.Data.AssetID != "native" || env.Data.Type != "native" {
-		t.Errorf("wrong asset: %+v", env.Data)
-	}
-}
-
-func TestAssetGet_classicEcho(t *testing.T) {
-	srv := v1.New(v1.Options{}) // nil reader → canonical-echo path
-	ts := httpTestServer(t, srv)
-
-	url := ts.URL + "/v1/assets/USDC-" + testUSDCIssuer
-	resp := mustGet(t, url)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.AssetDetail `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	if env.Data.Type != "classic" || env.Data.Code != "USDC" {
-		t.Errorf("wrong decode: %+v", env.Data)
-	}
-	if env.Data.Issuer == nil || *env.Data.Issuer != testUSDCIssuer {
-		t.Errorf("issuer missing: %+v", env.Data.Issuer)
-	}
-}
-
-func TestAssetGet_fiatVariant(t *testing.T) {
-	// ADR-0010: fiat:USD is a first-class asset.
-	srv := v1.New(v1.Options{})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.AssetDetail `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	if env.Data.Type != "fiat" || env.Data.Code != "USD" {
-		t.Errorf("fiat decode wrong: %+v", env.Data)
+	ts := httpTestServer(t, v1.New(v1.Options{}))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := mustGet(t, ts.URL+"/v1/assets/"+tc.path)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d", resp.StatusCode)
+			}
+			var body struct {
+				Data v1.AssetDetail `json:"data"`
+			}
+			mustDecode(t, resp, &body)
+			d := body.Data
+			if d.Type != tc.wantType || (tc.wantCode != "" && d.Code != tc.wantCode) ||
+				(tc.wantAssetID != "" && d.AssetID != tc.wantAssetID) {
+				t.Errorf("wrong decode: %+v", d)
+			}
+			if tc.wantIssuer != "" && (d.Issuer == nil || *d.Issuer != tc.wantIssuer) {
+				t.Errorf("issuer missing: %+v", d.Issuer)
+			}
+		})
 	}
 }
 
@@ -420,85 +384,40 @@ func TestAssetMetadata_ReturnsOnlyOverlayFields(t *testing.T) {
 	}
 }
 
-// TestAssetGet_BackfillsHomeDomainFromKnownIssuersMap exercises the home_domain backfill.
-// Prod live snapshot:
-//
-//	GET /v1/assets/USDC-G… → home_domain=null, sep1_status=not_applicable
-//	GET /v1/issuers/G…     → home_domain="centre.io"
-//
-// Two surfaces disagreed on whether SEP-1 metadata existed for the
-// same issuer. Root cause: the storage row for the asset doesn't
-// carry a home_domain (the watched-set sep1-refresh worker
-// populates it asynchronously and may not have run yet on a fresh
-// deployment), so the SEP-1 overlay step short-circuited to
-// "not_applicable". /v1/issuers, by contrast, runs every row
-// through `enrichIssuer` which has a hand-curated fallback. The
-// fix mirrors that policy on /v1/assets.
-func TestAssetGet_BackfillsHomeDomainFromKnownIssuersMap(t *testing.T) {
-	issuer := testUSDCIssuer
-	reader := &stubAssetReader{
-		byID: map[string]v1.AssetDetail{
-			"USDC-" + testUSDCIssuer: {
-				AssetID:    "USDC-" + testUSDCIssuer,
-				Type:       "classic",
-				Code:       "USDC",
-				Issuer:     &issuer,
-				HomeDomain: nil, // storage row didn't carry one
-				Decimals:   7,
-				// Sep1Status intentionally empty — we want the handler
-				// path to compute it AFTER the known-issuers backfill.
-			},
-		},
-	}
-	srv := v1.New(v1.Options{Assets: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/USDC-"+testUSDCIssuer)
-	var env struct {
-		Data v1.AssetDetail `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-
-	if env.Data.HomeDomain == nil || *env.Data.HomeDomain != "circle.com" {
-		t.Errorf("HomeDomain = %v, want circle.com (from known_issuers map)", env.Data.HomeDomain)
-	}
-	// With no metadata resolver wired the status should advance from
-	// the empty default to "not_fetched" — distinct from the
-	// "not_applicable", which would incorrectly claim the issuer
-	// has no home-domain at all.
-	if env.Data.Sep1Status != "not_fetched" {
-		t.Errorf("Sep1Status = %q, want not_fetched (resolver not wired but home_domain known)", env.Data.Sep1Status)
-	}
-}
-
-// TestAssetMetadata_BackfillsHomeDomainFromKnownIssuersMap is the
-// /v1/assets/{id}/metadata variant of the same fix — the two
-// surfaces share the same backfill so consumers see identical
-// SEP-1 status across them.
-func TestAssetMetadata_BackfillsHomeDomainFromKnownIssuersMap(t *testing.T) {
+// A storage row without a home_domain is backfilled from the known-issuers
+// map on both /v1/assets/{id} and its /metadata variant, so the two surfaces
+// agree with /v1/issuers. With no metadata resolver wired the status advances
+// to "not_fetched", not "not_applicable" (which would claim no home domain).
+func TestAsset_BackfillsHomeDomainFromKnownIssuersMap(t *testing.T) {
 	issuer := testUSDCIssuer
 	reader := &stubAssetReader{
 		byID: map[string]v1.AssetDetail{
 			"USDC-" + testUSDCIssuer: {
 				AssetID: "USDC-" + testUSDCIssuer, Type: "classic", Code: "USDC",
 				Issuer: &issuer, HomeDomain: nil, Decimals: 7,
+				// Sep1Status left empty: the handler computes it after the backfill.
 			},
 		},
 	}
-	srv := v1.New(v1.Options{Assets: reader})
-	ts := httpTestServer(t, srv)
+	ts := httpTestServer(t, v1.New(v1.Options{Assets: reader}))
 
-	resp := mustGet(t, ts.URL+"/v1/assets/USDC-"+testUSDCIssuer+"/metadata")
-	var env struct {
-		Data v1.AssetMetadata `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-
-	if env.Data.HomeDomain == nil || *env.Data.HomeDomain != "circle.com" {
-		t.Errorf("HomeDomain = %v, want circle.com", env.Data.HomeDomain)
-	}
-	if env.Data.Sep1Status != "not_fetched" {
-		t.Errorf("Sep1Status = %q, want not_fetched", env.Data.Sep1Status)
+	for _, suffix := range []string{"", "/metadata"} {
+		t.Run("asset"+suffix, func(t *testing.T) {
+			resp := mustGet(t, ts.URL+"/v1/assets/USDC-"+testUSDCIssuer+suffix)
+			var body struct {
+				Data struct {
+					HomeDomain *string `json:"home_domain"`
+					Sep1Status string  `json:"sep1_status"`
+				} `json:"data"`
+			}
+			mustDecode(t, resp, &body)
+			if body.Data.HomeDomain == nil || *body.Data.HomeDomain != "circle.com" {
+				t.Errorf("HomeDomain = %v, want circle.com (from known_issuers map)", body.Data.HomeDomain)
+			}
+			if body.Data.Sep1Status != "not_fetched" {
+				t.Errorf("Sep1Status = %q, want not_fetched", body.Data.Sep1Status)
+			}
+		})
 	}
 }
 
@@ -605,28 +524,18 @@ func mustDecode(t *testing.T, resp *http.Response, v any) {
 
 // ─── 500 error paths ─────────────────────────────────────────
 
-func TestAssetList_ReaderError500(t *testing.T) {
+// A reader error that is not ErrAssetNotFound surfaces as 500.
+func TestAsset_ReaderError500(t *testing.T) {
 	reader := &stubAssetReader{err: errors.New("storage broke")}
-	srv := v1.New(v1.Options{Assets: reader})
-	ts := httpTestServer(t, srv)
+	ts := httpTestServer(t, v1.New(v1.Options{Assets: reader}))
 
-	resp := mustGet(t, ts.URL+"/v1/assets")
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500", resp.StatusCode)
-	}
-}
-
-func TestAssetGet_ReaderError500(t *testing.T) {
-	// Reader returning a non-NotFound error → 500 with the
-	// internal error-type URL. Unlike the reader-returning
-	// test path that returns ErrAssetNotFound.
-	reader := &stubAssetReader{err: errors.New("storage broke")}
-	srv := v1.New(v1.Options{Assets: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/native")
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500", resp.StatusCode)
+	for _, path := range []string{"/v1/assets", "/v1/assets/native"} {
+		t.Run(path, func(t *testing.T) {
+			resp := mustGet(t, ts.URL+path)
+			if resp.StatusCode != http.StatusInternalServerError {
+				t.Errorf("status = %d, want 500", resp.StatusCode)
+			}
+		})
 	}
 }
 
@@ -674,12 +583,8 @@ func TestAssetList_FromAssetsReader_IncludesPrice(t *testing.T) {
 		PriceUSD:         &price,
 		Volume24hUSD:     &vol,
 	}
-	assetsReader := &stubAssetsReaderExt{}
-	// stubAssetsReaderExt.ListAssetsExt returns nil — override by
-	// constructing a custom struct inline.
 	listReader := &listingStub{rows: []timescale.AssetRow{assetRow}}
 	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
-	_ = assetsReader
 	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/assets?limit=10")
 	if resp.StatusCode != http.StatusOK {
@@ -709,123 +614,73 @@ func TestAssetList_FromAssetsReader_IncludesPrice(t *testing.T) {
 	}
 }
 
-func TestAssetList_FromAssetsReader_IssuerFilter(t *testing.T) {
-	// ?issuer=G should pass through to the AssetsReader's Issuer
-	// option. Stub records what was passed.
-	listReader := &listingStub{}
-	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
-	ts := httpTestServer(t, srv)
-	mustGet(t, ts.URL+"/v1/assets?issuer="+testUSDCIssuer)
-	if listReader.lastOpts.Issuer != testUSDCIssuer {
-		t.Errorf("ListAssetsExt called with Issuer=%q, want %q", listReader.lastOpts.Issuer, testUSDCIssuer)
+// Filters pass through to the AssetsReader's ListAssetsExt options.
+func TestAssetList_FromAssetsReader_FilterPassThrough(t *testing.T) {
+	cases := []struct {
+		name, query, wantIssuer, wantCode string
+	}{
+		{"issuer", "issuer=" + testUSDCIssuer, testUSDCIssuer, ""},
+		{"code", "code=USDC", "", "USDC"},
+		{"issuer and code combine", "issuer=" + testUSDCIssuer + "&code=USDC", testUSDCIssuer, "USDC"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			listReader := &listingStub{}
+			srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
+			mustGet(t, httpTestServer(t, srv).URL+"/v1/assets?"+tc.query)
+			if listReader.lastOpts.Issuer != tc.wantIssuer || listReader.lastOpts.Code != tc.wantCode {
+				t.Errorf("ListAssetsExt opts = {Issuer:%q Code:%q}, want {%q %q}",
+					listReader.lastOpts.Issuer, listReader.lastOpts.Code, tc.wantIssuer, tc.wantCode)
+			}
+		})
 	}
 }
 
-func TestAssetList_FromAssetsReader_CodeFilter(t *testing.T) {
-	// ?code=USDC pushes down to the AssetsReader's Code option
-	// Stub records what was passed. records what was passed.
-	listReader := &listingStub{}
-	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
-	ts := httpTestServer(t, srv)
-	mustGet(t, ts.URL+"/v1/assets?code=USDC")
-	if listReader.lastOpts.Code != "USDC" {
-		t.Errorf("ListAssetsExt called with Code=%q, want %q", listReader.lastOpts.Code, "USDC")
-	}
-	if listReader.lastOpts.Issuer != "" {
-		t.Errorf("Issuer must be empty when only code is set; got %q", listReader.lastOpts.Issuer)
-	}
-}
-
-func TestAssetList_FromAssetsReader_IssuerAndCodeCombine(t *testing.T) {
-	// ?issuer=G&code=USDC — both filters combine (the "pin one
-	// classic asset" case).
-	listReader := &listingStub{}
-	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
-	ts := httpTestServer(t, srv)
-	mustGet(t, ts.URL+"/v1/assets?issuer="+testUSDCIssuer+"&code=USDC")
-	if listReader.lastOpts.Issuer != testUSDCIssuer || listReader.lastOpts.Code != "USDC" {
-		t.Errorf("ListAssetsExt opts = {Issuer:%q Code:%q}, want {%q USDC}",
-			listReader.lastOpts.Issuer, listReader.lastOpts.Code, testUSDCIssuer)
-	}
-}
-
-func TestAssetList_TypeClassic_PassesThrough(t *testing.T) {
-	// type=classic is a no-op on the classic-only assetsReader listing:
-	// the reader is still called and its rows are returned.
-	listReader := &listingStub{rows: []timescale.AssetRow{{
-		AssetID: "USDC-" + testUSDCIssuer, Code: "USDC", Slug: "usdc",
-	}}}
-	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/assets?type=classic")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", resp.StatusCode)
-	}
-	var env struct {
-		Data []v1.AssetDetail `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	if len(env.Data) != 1 {
-		t.Fatalf("type=classic must pass through; got %d rows want 1", len(env.Data))
-	}
-}
-
-func TestAssetList_TypeNative_ShortCircuitsEmpty(t *testing.T) {
-	// type=native (or fiat) matches nothing on the listing spine →
-	// empty page WITHOUT hitting the reader.
-	// The stub is seeded with a row that must NOT surface.
-	//
-	// soroban is NOT in that set: the spine gained the traded
-	// Soroban-native contracts, so that filter reaches the store and is
-	// answered there (TestAssetList_TypeSoroban_ReachesTheReader).
-	listReader := &listingStub{rows: []timescale.AssetRow{{
-		AssetID: "USDC-" + testUSDCIssuer, Code: "USDC", Slug: "usdc",
-	}}}
-	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/assets?type=native")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", resp.StatusCode)
-	}
-	var env struct {
-		Data []v1.AssetDetail `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	if len(env.Data) != 0 {
-		t.Fatalf("type=native must short-circuit empty; got %d rows", len(env.Data))
-	}
-	// Reader must not have been called at all (lastOpts stays zero).
-	if listReader.lastOpts.Limit != 0 {
-		t.Errorf("type=native must NOT call ListAssetsExt; lastOpts.Limit=%d", listReader.lastOpts.Limit)
-	}
-}
-
-func TestAssetList_TypeSoroban_ReachesTheReader(t *testing.T) {
-	// The listing spine is classic_assets UNION the traded
-	// Soroban-native contracts, so `type=soroban` is answerable and must
-	// be pushed down. It spent the interval between that spine change
-	// and this one being folded to an empty page alongside native/fiat —
-	// a filter for rows the store was holding all along.
-	listReader := &listingStub{rows: []timescale.AssetRow{{
+// type=classic and type=any are no-ops on the classic-only listing spine.
+// type=native and type=fiat match nothing there, so they return an empty page
+// without calling the reader. type=soroban is answerable by the spine (traded
+// Soroban contracts) and must reach the store.
+func TestAssetList_TypeFilter(t *testing.T) {
+	usdc := timescale.AssetRow{AssetID: "USDC-" + testUSDCIssuer, Code: "USDC", Slug: "usdc"}
+	soroban := timescale.AssetRow{
 		AssetID: "CAUP7QFDIVYY4HYPHEUCVIVAUKY7CBHFVBQ2WWDGFME7RGVQ5SUKAAAA",
 		Slug:    "caup7qfd",
-	}}}
-	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/assets?type=soroban")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", resp.StatusCode)
 	}
-	var env struct {
-		Data []v1.AssetDetail `json:"data"`
+	cases := []struct {
+		name, query string
+		row         timescale.AssetRow
+		wantRows    int
+		wantCalled  bool
+		wantType    string
+	}{
+		{"classic", "type=classic", usdc, 1, true, "classic"},
+		{"any", "type=any", usdc, 1, true, ""},
+		{"native", "type=native", usdc, 0, false, ""},
+		{"fiat", "type=fiat", usdc, 0, false, ""},
+		{"soroban", "type=soroban", soroban, 1, true, "soroban"},
 	}
-	mustDecode(t, resp, &env)
-	if listReader.lastOpts.Type != "soroban" {
-		t.Fatalf("ListAssetsExt saw Type=%q, want %q — the filter never reached the spine",
-			listReader.lastOpts.Type, "soroban")
-	}
-	if len(env.Data) != 1 {
-		t.Fatalf("type=soroban must serve the contract row; got %d rows want 1", len(env.Data))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			listReader := &listingStub{rows: []timescale.AssetRow{tc.row}}
+			srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
+			resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/assets?"+tc.query)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status=%d", resp.StatusCode)
+			}
+			var body struct {
+				Data []v1.AssetDetail `json:"data"`
+			}
+			mustDecode(t, resp, &body)
+			if len(body.Data) != tc.wantRows {
+				t.Fatalf("%s: got %d rows want %d", tc.query, len(body.Data), tc.wantRows)
+			}
+			if called := listReader.lastOpts.Limit != 0; called != tc.wantCalled {
+				t.Errorf("%s: ListAssetsExt called = %v, want %v", tc.query, called, tc.wantCalled)
+			}
+			if tc.wantCalled && listReader.lastOpts.Type != tc.wantType {
+				t.Errorf("%s: ListAssetsExt saw Type=%q, want %q", tc.query, listReader.lastOpts.Type, tc.wantType)
+			}
+		})
 	}
 }
 
@@ -852,27 +707,6 @@ func TestAssetList_InvalidFilters_400(t *testing.T) {
 				t.Errorf("query %q: status=%d want 400", tc.query, resp.StatusCode)
 			}
 		})
-	}
-}
-
-func TestAssetList_TypeAny_NoFilter(t *testing.T) {
-	// type=any is the documented "disable the filter" value — it must
-	// pass through identically to omitting type.
-	listReader := &listingStub{rows: []timescale.AssetRow{{
-		AssetID: "USDC-" + testUSDCIssuer, Code: "USDC", Slug: "usdc",
-	}}}
-	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
-	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/assets?type=any")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", resp.StatusCode)
-	}
-	var env struct {
-		Data []v1.AssetDetail `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	if len(env.Data) != 1 {
-		t.Fatalf("type=any must be a no-op; got %d rows want 1", len(env.Data))
 	}
 }
 
