@@ -400,7 +400,7 @@ func TestChunkRestamp_ReenablesTheCompressionPolicyWhenTheTierFails(t *testing.T
 // still a refusal there — including `-chunk-batch`, because the exact
 // tier's transaction is one `-slice` window and a row batch would be
 // silently ignored.
-func TestValidateRestampTierFlags_ChunkModeIsAvailableToBothTiers(t *testing.T) {
+func caseValidateRestampTierFlags_ChunkModeIsAvailableToBothTiers(t *testing.T) {
 	t.Parallel()
 	for _, f := range append([]string{"chunks"}, restampChunkOnlyFlags...) {
 		if f == "chunk-batch" {

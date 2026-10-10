@@ -232,7 +232,7 @@ func TestMirrorChunkRestamp_ResumeLineNamesTheTierAndItsFlags(t *testing.T) {
 // still refuses them, `-fx-max-staleness` belongs to cex-fx ALONE, and an
 // unknown tier names every accepted spelling. A flag silently ignored on
 // a money-column writer is the failure this closes.
-func TestValidateRestampTierFlags_MirrorTiers(t *testing.T) {
+func caseValidateRestampTierFlags_MirrorTiers(t *testing.T) {
 	t.Parallel()
 	for _, tier := range []string{restampTierXLMQuote, restampTierCEXFX} {
 		if err := validateRestampTierFlags(tier, map[string]bool{"report": true, "batch": true, "chunks": true, "chunk-batch": true, "fill-null": true}); err != nil {

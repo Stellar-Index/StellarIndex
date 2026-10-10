@@ -8,13 +8,13 @@ import (
 	"testing"
 )
 
-// TestParseTxIndexBackfillFlags_RefusesBareFullHistory pins the safe
+// caseParseTxIndexBackfillFlags_RefusesBareFullHistory pins the safe
 // default: a BARE `ch-txindex-backfill` (no bounds, no -full) must NOT resolve
 // into the implicit ledger-2..tip (~10.2B row) backfill. Before the guard the
 // defaults (-from 2, -to 0=tip) meant an argument-less invocation silently
 // kicked off the entire history — a heavy job the runbook says must be
 // babysat. The full run is still available, but only with an explicit word.
-func TestParseTxIndexBackfillFlags_RefusesBareFullHistory(t *testing.T) {
+func caseParseTxIndexBackfillFlags_RefusesBareFullHistory(t *testing.T) {
 	_, err := parseTxIndexBackfillFlags([]string{"-write"})
 	if err == nil {
 		t.Fatal("bare invocation (no -from/-to/-full) was accepted — it must refuse the " +
@@ -25,9 +25,9 @@ func TestParseTxIndexBackfillFlags_RefusesBareFullHistory(t *testing.T) {
 	}
 }
 
-// TestParseTxIndexBackfillFlags_ExplicitOptInsAreAccepted pins that each
+// caseParseTxIndexBackfillFlags_ExplicitOptInsAreAccepted pins that each
 // intentional path still works and resolves to the expected plan.
-func TestParseTxIndexBackfillFlags_ExplicitOptInsAreAccepted(t *testing.T) {
+func caseParseTxIndexBackfillFlags_ExplicitOptInsAreAccepted(t *testing.T) {
 	cases := []struct {
 		name     string
 		args     []string
@@ -55,13 +55,20 @@ func TestParseTxIndexBackfillFlags_ExplicitOptInsAreAccepted(t *testing.T) {
 	}
 }
 
-// TestParseTxIndexBackfillFlags_ZeroFromStillRejected keeps the pre-existing
+// caseParseTxIndexBackfillFlags_ZeroFromStillRejected keeps the pre-existing
 // invariant: -from 0 and -window 0 are invalid regardless of the new guard.
-func TestParseTxIndexBackfillFlags_ZeroFromStillRejected(t *testing.T) {
+func caseParseTxIndexBackfillFlags_ZeroFromStillRejected(t *testing.T) {
 	if _, err := parseTxIndexBackfillFlags([]string{"-from", "0", "-write"}); err == nil {
 		t.Error("-from 0 must be rejected")
 	}
 	if _, err := parseTxIndexBackfillFlags([]string{"-full", "-window", "0", "-write"}); err == nil {
 		t.Error("-window 0 must be rejected")
 	}
+}
+
+// TestParseTxIndexBackfillFlags groups the ch-txindex-backfill flag contracts as named subtests.
+func TestParseTxIndexBackfillFlags(t *testing.T) {
+	t.Run("ParseTxIndexBackfillFlags_RefusesBareFullHistory", caseParseTxIndexBackfillFlags_RefusesBareFullHistory)
+	t.Run("ParseTxIndexBackfillFlags_ExplicitOptInsAreAccepted", caseParseTxIndexBackfillFlags_ExplicitOptInsAreAccepted)
+	t.Run("ParseTxIndexBackfillFlags_ZeroFromStillRejected", caseParseTxIndexBackfillFlags_ZeroFromStillRejected)
 }
