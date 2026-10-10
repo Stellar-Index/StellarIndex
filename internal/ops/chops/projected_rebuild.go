@@ -61,7 +61,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	to := fs.Uint("to", 0, "last ledger sequence (inclusive); 0 = default to the live projector cursor's CURRENT position, i.e. fill exactly the history behind the live tail (ADR-0048 D3)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	window := fs.Uint("window", projectedRebuildDefaultWindow, "ledger-window size per checkpoint/scheduling unit — smaller gives finer resume granularity and better load balance across workers on uneven-density ranges (e.g. aquarius rewards); does NOT bound memory (this tool streams, never buffers a window)")
-	workers := fs.Int("workers", projectedRebuildDefaultWorkers, "concurrent ledger-window workers; soft-capped at 8 (see RunProjectedRebuild's PG pool-sizing note)")
+	workers := fs.Int("workers", projectedRebuildDefaultWorkers, "concurrent ledger-window workers; capped at 3 so workers x 2 ClickHouse queries stay inside the ops_batch limit of 8")
 	resume := fs.Bool("resume", true, "skip windows already checkpointed by a prior -write run for this source")
 	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the liveness/last-exit gauges. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_projected_rebuild_<source>.prom when that directory exists (r1), otherwise no heartbeat at all")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and run even though the live projector's cursor is inside [-from,-to]. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract in this command's doc comment.")
@@ -87,10 +87,6 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	numWorkers := *workers
 	if numWorkers < 1 {
 		numWorkers = 1
-	}
-	if numWorkers > projectedRebuildMaxWorkers {
-		fmt.Fprintf(os.Stderr, "projected-rebuild: -workers=%d exceeds the soft cap of %d — clamping\n", numWorkers, projectedRebuildMaxWorkers)
-		numWorkers = projectedRebuildMaxWorkers
 	}
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
@@ -335,8 +331,15 @@ const (
 
 	// projectedRebuildDefaultWorkers / Max: see RunProjectedRebuild's
 	// PG-pool-sizing doc note.
-	projectedRebuildDefaultWorkers = 4
-	projectedRebuildMaxWorkers     = 8
+	projectedRebuildDefaultWorkers = 3
+
+	// Each worker holds two ClickHouse queries at once (the event stream and
+	// the nested tx_index lookup); the ops_batch profile admits 8 per user
+	// (clickhouse_ops_batch_max_concurrent_queries), and one slot stays free
+	// so a stray read cannot trip code 202.
+	projectedRebuildQueriesPerWorker = 2
+	projectedRebuildQueryBudget      = 8
+	projectedRebuildMaxWorkers       = (projectedRebuildQueryBudget - 1) / projectedRebuildQueriesPerWorker
 
 	// projectedRebuildProgressInterval is the default periodic
 	// progress-log cadence.
@@ -444,8 +447,8 @@ type ProjectedRebuildOptions struct {
 	// per-worker pool needed. PersistEvents' own live-tail drain already
 	// runs 8 such workers against this identical pool ceiling (see
 	// internal/pipeline/sink.go's PersistWorkers doc), so the
-	// projectedRebuildMaxWorkers=8 soft cap here is comfortably inside
-	// the same budget it has always operated in — no pool bump required
+	// projectedRebuildMaxWorkers cap here is comfortably inside
+	// the same budget — no pool bump required
 	// for a single stellarindex-ops process, even run alongside a live
 	// indexer/aggregator/api on the same host.
 	Workers int
@@ -617,9 +620,10 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 	if windowSize == 0 {
 		windowSize = projectedRebuildDefaultWindow
 	}
-	numWorkers := opts.Workers
-	if numWorkers < 1 {
-		numWorkers = 1
+	numWorkers := capProjectedRebuildWorkers(opts.Workers)
+	if opts.Workers > numWorkers {
+		logger.Warn("projected-rebuild: workers lowered to stay inside the ClickHouse ops_batch query budget",
+			"requested_workers", opts.Workers, "workers", numWorkers, "max_concurrent_queries", projectedRebuildQueryBudget)
 	}
 	// A correlation-buffer decoder (detected via the same EvictedOrphans
 	// optional interface the dispatcher uses) correlates events ACROSS
@@ -702,6 +706,11 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 	result.KindCounts = counters.kindCounts
 	result.Elapsed = time.Since(start)
 	return result, runErr
+}
+
+// capProjectedRebuildWorkers clamps n to [1, projectedRebuildMaxWorkers].
+func capProjectedRebuildWorkers(n int) int {
+	return max(1, min(n, projectedRebuildMaxWorkers))
 }
 
 // selectProjectedSource returns the registry entry named by -source.

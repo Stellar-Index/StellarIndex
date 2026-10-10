@@ -495,3 +495,18 @@ func TestSelectProjectedSource_WatchedSEP41DoesNotCaptureOtherNames(t *testing.T
 		}
 	}
 }
+
+func TestCapProjectedRebuildWorkers_StaysInsideQueryBudget(t *testing.T) {
+	for _, n := range []int{-1, 0, 1, 3, 4, 8, 64} {
+		got := capProjectedRebuildWorkers(n)
+		if got < 1 {
+			t.Fatalf("n=%d: got %d workers, want >= 1", n, got)
+		}
+		if q := got * projectedRebuildQueriesPerWorker; q >= projectedRebuildQueryBudget {
+			t.Errorf("n=%d: %d workers hold %d queries, ops_batch admits %d and one slot must stay free", n, got, q, projectedRebuildQueryBudget)
+		}
+	}
+	if got := capProjectedRebuildWorkers(2); got != 2 {
+		t.Errorf("a request inside the budget must pass through, got %d", got)
+	}
+}
