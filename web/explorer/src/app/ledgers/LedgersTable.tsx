@@ -9,7 +9,7 @@ import {
 } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { CountSparkline } from '@/components/ChainCharts';
+import { closeIntervals, CountSparkline } from '@/components/ChainCharts';
 import { InlineBar } from '@/components/ContractCharts';
 import { apiGet, asExample } from '@/api/client';
 import { cn } from '@/lib/cn';
@@ -31,6 +31,24 @@ const PAGE_SIZE = 50;
 
 /** Minimum gap between live-follow refetches (RT-2). */
 const LIVE_REFETCH_MIN_MS = 10_000;
+
+const SERIES = [
+  { key: 'tx_count', label: 'Transactions per ledger', short: 'txs' },
+  { key: 'op_count', label: 'Operations per ledger', short: 'ops' },
+  {
+    key: 'soroban_event_count',
+    label: 'Soroban events per ledger',
+    short: 'events',
+  },
+] as const;
+
+const LEDGER_CSV_COLUMNS = [
+  'sequence',
+  'close_time',
+  'tx_count',
+  'op_count',
+  'soroban_event_count',
+] as const;
 
 /**
  * Live ledgers table backed by /v1/ledgers?limit=50.
@@ -147,6 +165,7 @@ export function LedgersTable() {
     );
   }
 
+  const oldestFirst = [...ledgers].reverse();
   const newest = ledgers[0]?.sequence;
   const oldest = ledgers[ledgers.length - 1]?.sequence;
 
@@ -160,14 +179,40 @@ export function LedgersTable() {
           : undefined
       }
       source={source}
+      download={{
+        name: 'ledgers',
+        columns: LEDGER_CSV_COLUMNS,
+        rows: ledgers.map((l) => ({
+          sequence: l.sequence,
+          close_time: l.close_time,
+          tx_count: l.tx_count,
+          op_count: l.op_count,
+          soroban_event_count: l.soroban_event_count,
+        })),
+      }}
       bodyClassName="-mx-4"
     >
-      <div className="flex items-center gap-3 px-4 pb-3">
-        <CountSparkline
-          values={[...ledgers].reverse().map((l) => l.tx_count ?? 0)}
-          label="Transactions per ledger"
-        />
-        <span className="text-ink-muted text-xs">txs per ledger</span>
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-4 pb-3">
+        {SERIES.map(({ key, label, short }) => (
+          <div key={key} className="flex items-center gap-2">
+            <CountSparkline
+              values={oldestFirst.map((l) => l[key] ?? 0)}
+              label={label}
+            />
+            <span className="text-ink-muted text-xs">{short}</span>
+          </div>
+        ))}
+        <div
+          className="flex items-center gap-2"
+          title="Seconds between consecutive closes; about 5 s on a healthy network"
+        >
+          <CountSparkline
+            values={closeIntervals(ledgers)}
+            label="Seconds between ledger closes"
+            noun="intervals"
+          />
+          <span className="text-ink-muted text-xs">close interval, s</span>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="divide-line min-w-full divide-y text-sm">
