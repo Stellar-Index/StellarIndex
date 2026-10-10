@@ -96,21 +96,10 @@ export default function AggregatorsPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Aggregators' }]}
         title="Aggregators"
-        description={
-          <>
-            Routers and yield wrappers over{' '}
-            <Link href="/dexes" className="underline decoration-dotted">
-              DEXes
-            </Link>{' '}
-            and{' '}
-            <Link href="/lending" className="underline decoration-dotted">
-              lending pools
-            </Link>
-            .{' '}
-            <Badge title="Excluded from VWAP to avoid double-counting. A routed swap still emits the underlying pair's swap event, which is the one we VWAP; a vault deposit moves shares but sets no price, and Blend supplies the collateral revaluation.">
-              VWAP weight 0
-            </Badge>
-          </>
+        meta={
+          <Badge title="Excluded from VWAP to avoid double-counting. A routed swap still emits the underlying pair's swap event, which is the one we VWAP; a vault deposit moves shares but sets no price, and Blend supplies the collateral revaluation.">
+            VWAP weight 0
+          </Badge>
         }
       />
 

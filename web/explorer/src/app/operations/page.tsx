@@ -28,7 +28,6 @@ export default function OperationsPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Operations' }]}
         title="Operations"
-        description="Every operation on the network, newest first, decoded straight from the certified lake. Click a hash for the full transaction."
       />
 
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>

@@ -126,15 +126,6 @@ export default function DivergencesPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Divergences' }]}
         title="Divergences"
-        description={
-          <>
-            Our VWAP against external references. A persistent gap flags the{' '}
-            <Link href="/assets" className="underline decoration-dotted">
-              asset page
-            </Link>
-            .
-          </>
-        }
       />
 
       <DivergenceFeed />

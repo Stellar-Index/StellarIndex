@@ -1,19 +1,12 @@
-// The /accounts header states the directory's ranking basis, and that
-// basis is the SERVED `ranked_by` — the build's network flag is only the
-// pre-load fallback (and what the static export bakes).
-//
-// The API ranks by native XLM whenever its price catalogue degrades to
-// the lone native entry, a state mainnet can reach, and in it the Panel
-// under the header is titled "Ranked by XLM balance" with every number
-// formatted in XLM. A header pinned to CURRENT_NETWORK.pricing would say
-// "ranked by the total USD value" directly above that table. Header and
-// table subscribe to the same query, so they flip in the same render.
+// The /accounts ranking basis is the SERVED `ranked_by`, stated once on
+// the table's Panel title; the page header states no basis, so it can
+// never claim USD above a table ranked in XLM (the API falls back to
+// native XLM whenever its price catalogue degrades, mainnet included).
 //
 // The test env carries no NEXT_PUBLIC_NETWORK, so this is a MAINNET
-// build (pricing: true) — the case where the fallback and the served
-// basis disagree.
+// build (pricing: true).
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
@@ -59,22 +52,14 @@ function renderDirectory() {
   return header;
 }
 
-describe('AccountsDirectoryHeader — ranking basis follows the served ranked_by', () => {
-  it('bakes the network fallback, then flips to the served basis with the table', async () => {
+describe('AccountsDirectory — ranking basis follows the served ranked_by', () => {
+  it('titles the table for XLM when the API ranked in XLM', async () => {
     mockDirectory('native_xlm');
     const header = renderDirectory();
 
-    // Before the response: the mainnet fallback, which is what the static
-    // export ships.
     expect(header.querySelector('h1')).toHaveTextContent('Accounts');
-    expect(header).toHaveTextContent(/ranked by total USD value/);
-
-    // After it: the API ranked in XLM, so the header says so — above a
-    // Panel that says the same, over XLM-formatted numbers.
-    await waitFor(() =>
-      expect(header).toHaveTextContent(/ranked by native XLM balance/),
-    );
-    expect(header).not.toHaveTextContent(/USD/);
+    await screen.findByText('123,456 XLM');
+    expect(header).not.toHaveTextContent(/USD|ranked by/i);
     expect(
       screen.getByRole('heading', { name: 'Ranked by XLM balance' }),
     ).toBeInTheDocument();
@@ -88,7 +73,7 @@ describe('AccountsDirectoryHeader — ranking basis follows the served ranked_by
     // The Panel is titled for USD before the response too, so wait on
     // the row the response brings rather than on the title.
     await screen.findByText('$123,456');
-    expect(header).toHaveTextContent(/ranked by total USD value/);
+    expect(header).not.toHaveTextContent(/ranked by/i);
     expect(
       screen.getByRole('heading', { name: 'Ranked by USD wealth' }),
     ).toBeInTheDocument();

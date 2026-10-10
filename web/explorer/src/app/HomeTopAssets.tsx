@@ -83,7 +83,7 @@ export function HomeTopAssets() {
           <p className="text-ink-body text-sm">
             {pricing
               ? 'By 24h volume across every pair and venue, XLM included.'
-              : 'Ranked by observed on-chain trade count — native XLM included. This network runs no price aggregator, so the USD columns are omitted rather than served empty.'}
+              : 'Ranked by observed on-chain trade count, XLM included. This network runs no price aggregator, so the USD columns are omitted rather than served empty.'}
           </p>
         </div>
         <Link href="/assets" className="text-brand-600 text-sm hover:underline">

@@ -128,14 +128,10 @@ export function AccountTradesPanel({ id }: { id: string }) {
   });
 
   const source = asExample(`/v1/accounts/${id}/trades`, { limit: PAGE_SIZE });
-  const panelHint =
-    'historic trades where this address is the recorded taker or maker';
-
   if (isError) {
     return (
       <Panel
         title="Trades"
-        hint={panelHint}
         source={source}
         bodyClassName="text-sm text-ink-body"
       >
@@ -149,7 +145,6 @@ export function AccountTradesPanel({ id }: { id: string }) {
     return (
       <Panel
         title="Trades"
-        hint={panelHint}
         source={source}
         bodyClassName="text-sm text-ink-muted"
       >
@@ -164,7 +159,6 @@ export function AccountTradesPanel({ id }: { id: string }) {
   return (
     <Panel
       title={`Trades (${trades.length}${data.next_cursor ? '+' : ''})`}
-      hint={panelHint}
       source={source}
       bodyClassName="space-y-3"
     >

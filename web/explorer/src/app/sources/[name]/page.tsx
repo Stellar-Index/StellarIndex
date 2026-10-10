@@ -328,9 +328,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
       >
         {cursors.length === 0 ? (
           <p className="text-ink-muted px-4 py-3 text-sm">
-            No cursor recorded for this source. Likely either the source has
-            never been started in this deployment, or it doesn&apos;t persist
-            cursors (e.g. WebSocket-only venues that backfill via REST).
+            No cursor recorded for this source.
           </p>
         ) : (
           // WCAG 1.4.10 Reflow: wide mono columns scroll inside the panel
@@ -381,16 +379,11 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
         >
           {!topMarkets ? (
             <p className="text-ink-muted px-4 py-3 text-sm">
-              Market list unavailable for this build — the pair query
-              didn&apos;t answer, so this is unknown rather than empty. It
-              refreshes on the next build.
+              Market list unavailable for this build.
             </p>
           ) : topMarkets.length === 0 ? (
             <p className="text-ink-muted px-4 py-3 text-sm">
               No markets observed for this source in the trailing 14 days.
-              Either the venue isn&apos;t actively producing trades the indexer
-              can decode, or the cursor hasn&apos;t advanced past the recency
-              window yet.
             </p>
           ) : (
             // WCAG 1.4.10 Reflow: wide mono columns scroll inside the panel

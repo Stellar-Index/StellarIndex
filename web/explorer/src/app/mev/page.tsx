@@ -88,7 +88,6 @@ export default function MevPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'MEV' }]}
         title="MEV"
-        description="Five live MEV patterns, each recorded with evidence and a note on what is and is not claimed."
       />
 
       <MevFeed />

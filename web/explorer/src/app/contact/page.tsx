@@ -98,7 +98,6 @@ export default function ContactPage() {
         className="mb-10"
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Contact' }]}
         title="Contact"
-        description="We don't run a support inbox for the public tier — issues land on GitHub, sales go to email, and security goes to a separate inbox with a real disclosure SLA. Pick the channel that fits your message."
       />
 
       <section className="space-y-3">
