@@ -18,27 +18,6 @@ const EXEMPT: Record<string, string> = {
     'transient spinner while the OAuth callback completes',
 };
 
-/**
- * PENDING: pages converted by open PRs #3033-#3036 (found via their View components). Delete this block once
- * those merge; the test then enforces them.
- */
-const PENDING: string[] = [
-  'accounts/page.tsx',
-  'status/page.tsx',
-  'sdex/page.tsx',
-  'ledger/page.tsx',
-  'tx/page.tsx',
-  'mev/page.tsx',
-  'pricing/page.tsx',
-  'signup/page.tsx',
-  'ledgers/page.tsx',
-  'liquidity-pools/page.tsx',
-  'operations/page.tsx',
-  'sdk/page.tsx',
-  'status/incident/[slug]/page.tsx',
-  'transactions/page.tsx',
-];
-
 function pages(dir: string): string[] {
   const out: string[] = [];
   for (const name of readdirSync(dir)) {
@@ -80,7 +59,7 @@ function onlyRedirects(src: string): boolean {
 
 describe('page shell', () => {
   it('every page renders PageHeader', () => {
-    const skip = new Set([...Object.keys(EXEMPT), ...PENDING]);
+    const skip = new Set(Object.keys(EXEMPT));
     const bad = pages(APP)
       .map((f) => relative(APP, f))
       .filter((rel) => !rel.startsWith('embed/') && !skip.has(rel))
@@ -97,7 +76,7 @@ describe('page shell', () => {
   });
 
   it('allowlist entries still exist', () => {
-    for (const rel of [...Object.keys(EXEMPT), ...PENDING]) {
+    for (const rel of Object.keys(EXEMPT)) {
       expect(existsSync(join(APP, rel)), rel).toBe(true);
     }
   });
