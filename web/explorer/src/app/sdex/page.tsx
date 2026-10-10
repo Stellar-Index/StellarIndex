@@ -3,7 +3,6 @@ import type { Metadata } from 'next';
 import { Container } from '@/components/ui';
 import { ProtocolView } from '../protocols/[name]/ProtocolView';
 import { SdexOrderBookSection } from './SdexOrderBookSection';
-import { SdexVolumeSection } from './SdexVolumeSection';
 import { PoolsTable } from '../dexes/[source]/PoolsTable';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -21,18 +20,14 @@ export const metadata: Metadata = {
   },
 };
 
-// /sdex is the ONE canonical SDEX
-// surface. It renders the protocol data view (the same component the
-// /protocols/[name] route uses — verification, TVL/activity, freshness)
-// plus the SDEX-only live sections (order-book depth + daily volume).
-// /protocols/sdex permanently redirects here so the two never diverge.
+// /protocols/sdex redirects here; the protocol view already charts volume and
+// trades, so this page adds only the order book and the pool table.
 export default function SdexPage() {
   return (
     <>
       <ProtocolView name="sdex" label="SDEX" />
       <Container className="space-y-8 pb-10">
         <SdexOrderBookSection />
-        <SdexVolumeSection />
         <PoolsTable source="sdex" sourceName="SDEX" />
       </Container>
     </>
