@@ -1,5 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/api/hooks', async () => {
@@ -25,58 +24,54 @@ vi.mock('@/api/account', async (importOriginal) => ({
   createKey,
 }));
 
-import { useMe } from '@/api/hooks';
 import KeysPage from './page';
+
+import { renderSignedInPage } from '../../../../test/dashboard-page';
 
 afterEach(() => {
   listKeysWithLimit.mockReset();
   createKey.mockReset();
 });
 
-function renderKeysPage() {
-  vi.mocked(useMe).mockReturnValue({
-    isLoading: false,
-    isError: false,
-    data: { user: { email: 'a@b.com' } },
-    refetch: vi.fn(),
-  } as unknown as ReturnType<typeof useMe>);
+const renderKeysPage = () => renderSignedInPage(<KeysPage />);
 
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <KeysPage />
-    </QueryClientProvider>,
-  );
+function keyRow(id: string, name: string, overrides: object = {}) {
+  return {
+    id,
+    name,
+    key_prefix: `sip_${id.slice(-1).repeat(8)}`,
+    tier: 'apikey',
+    rate_limit_per_min: 1000,
+    created_at: '2026-01-01T00:00:00Z',
+    ...overrides,
+  };
 }
 
-// A key confined to a scope subset must render as such — otherwise it is
-// indistinguishable from a full-access key at the render level, and a
-// customer auditing their own keys has no way to tell a `read`-only key
-// from one that can mint webhooks or revoke other keys.
+const serveKeys = (keys: object[] = []) =>
+  listKeysWithLimit.mockResolvedValue({ keys, maxActiveKeys: 10 });
+
+// Opens the form, names the key, optionally sets an expiry, and submits.
+async function createNamedKey(name: string, expires?: string) {
+  await waitFor(() => {
+    expect(screen.getByText('New key')).toBeInTheDocument();
+  });
+  fireEvent.click(screen.getByText('New key'));
+  fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: name } });
+  if (expires) {
+    fireEvent.change(screen.getByLabelText(/^Expires/), {
+      target: { value: expires },
+    });
+  }
+  fireEvent.click(screen.getByText('Create key'));
+}
+
+// A scoped key must be distinguishable from a full-access one.
 describe('/dashboard/keys scope display', () => {
   it('shows the confining scopes on a scoped key, and "Full access" on an unscoped one', async () => {
-    listKeysWithLimit.mockResolvedValue({
-      keys: [
-        {
-          id: 'key_1',
-          name: 'Read-only bot',
-          key_prefix: 'sip_aaaaaaaa',
-          tier: 'apikey',
-          rate_limit_per_min: 1000,
-          scopes: ['read'],
-          created_at: '2026-01-01T00:00:00Z',
-        },
-        {
-          id: 'key_2',
-          name: 'Full-access key',
-          key_prefix: 'sip_bbbbbbbb',
-          tier: 'apikey',
-          rate_limit_per_min: 1000,
-          created_at: '2026-01-01T00:00:00Z',
-        },
-      ],
-      maxActiveKeys: 10,
-    });
+    serveKeys([
+      keyRow('key_1', 'Read-only bot', { scopes: ['read'] }),
+      keyRow('key_2', 'Full-access key'),
+    ]);
 
     renderKeysPage();
 
@@ -89,27 +84,16 @@ describe('/dashboard/keys scope display', () => {
   });
 });
 
-// A mint that times out client-side may still have committed
-// server-side, so the bare "Create failed" fallback is misleading — it
-// must name the timeout and point the customer at the key list.
+// A timed-out mint may still have committed, so "Create failed" would mislead.
 describe('/dashboard/keys create-key timeout', () => {
   it('shows a timeout-specific message, not the generic "Create failed"', async () => {
-    listKeysWithLimit.mockResolvedValue({ keys: [], maxActiveKeys: 10 });
+    serveKeys();
     createKey.mockRejectedValue(
       new DOMException('Request timed out', 'TimeoutError'),
     );
 
     renderKeysPage();
-
-    await waitFor(() => {
-      expect(screen.getByText('New key')).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByText('New key'));
-
-    fireEvent.change(screen.getByLabelText(/^Name/), {
-      target: { value: 'prod' },
-    });
-    fireEvent.click(screen.getByText('Create key'));
+    await createNamedKey('prod');
 
     await waitFor(() => {
       expect(
@@ -122,26 +106,13 @@ describe('/dashboard/keys create-key timeout', () => {
   });
 });
 
-// The server accepts and enforces expires_at, but the dashboard
-// offered no way to set it and no way to see it.
 describe('/dashboard/keys expiry', () => {
   it('sends the chosen expiry as an RFC 3339 expires_at', async () => {
-    listKeysWithLimit.mockResolvedValue({ keys: [], maxActiveKeys: 10 });
+    serveKeys();
     createKey.mockReturnValue(new Promise(() => {}));
 
     renderKeysPage();
-
-    await waitFor(() => {
-      expect(screen.getByText('New key')).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByText('New key'));
-    fireEvent.change(screen.getByLabelText(/^Name/), {
-      target: { value: 'ci' },
-    });
-    fireEvent.change(screen.getByLabelText(/^Expires/), {
-      target: { value: '2099-06-15T09:30' },
-    });
-    fireEvent.click(screen.getByText('Create key'));
+    await createNamedKey('ci', '2099-06-15T09:30');
 
     await waitFor(() => expect(createKey).toHaveBeenCalledTimes(1));
     const sent = createKey.mock.calls[0][0].expires_at;
@@ -152,47 +123,21 @@ describe('/dashboard/keys expiry', () => {
   });
 
   it('omits expires_at when no expiry is chosen', async () => {
-    listKeysWithLimit.mockResolvedValue({ keys: [], maxActiveKeys: 10 });
+    serveKeys();
     createKey.mockReturnValue(new Promise(() => {}));
 
     renderKeysPage();
-
-    await waitFor(() => {
-      expect(screen.getByText('New key')).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByText('New key'));
-    fireEvent.change(screen.getByLabelText(/^Name/), {
-      target: { value: 'forever' },
-    });
-    fireEvent.click(screen.getByText('Create key'));
+    await createNamedKey('forever');
 
     await waitFor(() => expect(createKey).toHaveBeenCalledTimes(1));
     expect(createKey.mock.calls[0][0].expires_at).toBeUndefined();
   });
 
   it('renders an Expires column: the expiry when set, "Never" when not', async () => {
-    listKeysWithLimit.mockResolvedValue({
-      keys: [
-        {
-          id: 'key_1',
-          name: 'Expiring key',
-          key_prefix: 'sip_aaaaaaaa',
-          tier: 'apikey',
-          rate_limit_per_min: 1000,
-          created_at: '2026-01-01T00:00:00Z',
-          expires_at: '2099-06-15T09:30:00Z',
-        },
-        {
-          id: 'key_2',
-          name: 'Forever key',
-          key_prefix: 'sip_bbbbbbbb',
-          tier: 'apikey',
-          rate_limit_per_min: 1000,
-          created_at: '2026-01-01T00:00:00Z',
-        },
-      ],
-      maxActiveKeys: 10,
-    });
+    serveKeys([
+      keyRow('key_1', 'Expiring key', { expires_at: '2099-06-15T09:30:00Z' }),
+      keyRow('key_2', 'Forever key'),
+    ]);
 
     renderKeysPage();
 

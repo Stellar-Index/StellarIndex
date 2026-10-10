@@ -13,26 +13,38 @@ import { AccountView } from './AccountView';
 
 const G = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 
-// The account operations page fans out to many sibling panels (state, movements,
-// trades, defi, issuers, …), each of which fetches via apiGet. We resolve ONLY
-// the operations endpoint and leave the rest pending, so those panels sit in
-// their harmless loading state — this test is about the operations history.
-function mockOps(operations: unknown[], coverage_note?: string) {
+// The view fans out to many sibling panels, each fetching via apiGet. Only the
+// routed endpoints resolve; the rest stay pending in their loading state.
+function mockApi(routes: Record<string, unknown>) {
   vi.mocked(apiGet).mockImplementation((path: string) => {
-    if (path.endsWith('/operations')) {
-      return Promise.resolve({
-        data: {
-          account: G,
-          operations,
-          scope: 'all',
-          ...(coverage_note ? { coverage_note } : {}),
-        },
-      });
+    for (const [suffix, data] of Object.entries(routes)) {
+      if (path === suffix || path.endsWith(suffix)) {
+        return Promise.resolve({ data });
+      }
     }
-    // Never resolves — the sibling panels stay in "Loading…", never crash.
     return new Promise(() => {});
   });
 }
+
+function mockOps(operations: unknown[], coverage_note?: string) {
+  mockApi({
+    '/operations': {
+      account: G,
+      operations,
+      scope: 'all',
+      ...(coverage_note ? { coverage_note } : {}),
+    },
+  });
+}
+
+const op = (hash: string, type: string, extra: object = {}) => ({
+  tx_hash: hash.repeat(64),
+  op_index: 0,
+  type,
+  fields: {},
+  ...extra,
+});
+const ok = { transaction_successful: true, transaction_result: 'tx_success' };
 
 function renderWithClient(ui: React.ReactElement) {
   const client = new QueryClient({
@@ -43,84 +55,51 @@ function renderWithClient(ui: React.ReactElement) {
   );
 }
 
-describe('AccountView operations history — failed-tx transparency (D-PART-FAILEDTX)', () => {
+describe('AccountView operations history — failed-tx transparency', () => {
   it('marks a failed op with its reason slug in red, an unknown op as muted, and renders the coverage_note banner — hiding nothing', async () => {
     mockOps(
       [
-        {
-          tx_hash: 'a'.repeat(64),
-          op_index: 0,
-          type: 'payment',
+        op('a', 'payment', {
           transaction_successful: false,
           transaction_result: 'tx_failed',
           fields: { amount: '10000000', destination: G },
-        },
-        {
-          // transaction_successful OMITTED → UNKNOWN, never "success".
-          tx_hash: 'b'.repeat(64),
-          op_index: 0,
-          type: 'change_trust',
-          fields: {},
-        },
-        {
-          tx_hash: 'c'.repeat(64),
-          op_index: 0,
-          type: 'manage_sell_offer',
-          transaction_successful: true,
-          transaction_result: 'tx_success',
-          fields: {},
-        },
+        }),
+        // transaction_successful omitted -> unknown, never "success".
+        op('b', 'change_trust'),
+        op('c', 'manage_sell_offer', ok),
       ],
       'DEGRADED: parent-transaction outcome read failed for some operations.',
     );
 
     renderWithClient(<AccountView id={G} />);
 
-    // (a) A failed op reads as its reason slug, in the red/down treatment.
     const failed = await screen.findByText('tx_failed');
     expect(failed).toHaveClass('bg-down-subtle');
     expect(failed).toHaveClass('text-down-strong');
 
-    // (b) An op with no transaction_successful renders MUTED "unknown", NOT
-    // success — the honest degraded state.
     const unknown = screen.getByText('unknown');
     expect(unknown).toHaveClass('text-ink-muted');
     expect(unknown).toHaveAttribute('title', 'transaction outcome unavailable');
     expect(unknown).not.toHaveClass('bg-up-subtle');
 
-    // The genuine success renders green.
-    const ok = screen.getByText('success');
-    expect(ok).toHaveClass('bg-up-subtle');
+    expect(screen.getByText('success')).toHaveClass('bg-up-subtle');
 
-    // (c) The coverage_note honest-degrade banner renders as an alert.
-    const banner = screen.getByRole('alert');
-    expect(banner).toHaveTextContent(
+    expect(screen.getByRole('alert')).toHaveTextContent(
       'DEGRADED: parent-transaction outcome read failed',
     );
 
-    // Transparency invariant: EVERY op stays listed — the failed and the
-    // unknown ones are visible, just marked. None is filtered out.
+    // Every op stays listed, just marked.
     expect(screen.getByText('payment')).toBeInTheDocument();
     expect(screen.getByText('change_trust')).toBeInTheDocument();
     expect(screen.getByText('manage_sell_offer')).toBeInTheDocument();
   });
 
   it('does not render a coverage_note banner when every outcome is known', async () => {
-    mockOps([
-      {
-        tx_hash: 'd'.repeat(64),
-        op_index: 0,
-        type: 'payment',
-        transaction_successful: true,
-        transaction_result: 'tx_success',
-        fields: {},
-      },
-    ]);
+    mockOps([op('d', 'payment', ok)]);
 
     renderWithClient(<AccountView id={G} />);
 
     await screen.findByText('payment');
-    // No degraded read → no banner.
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.queryByText('unknown')).not.toBeInTheDocument();
   });
@@ -128,27 +107,10 @@ describe('AccountView operations history — failed-tx transparency (D-PART-FAIL
 
 describe('AccountView history paging — empty page with next_cursor', () => {
   function mockEmptyPage(next_cursor?: string) {
-    vi.mocked(apiGet).mockImplementation((path: string) => {
-      if (path.endsWith('/operations')) {
-        return Promise.resolve({
-          data: {
-            account: G,
-            operations: [],
-            scope: 'all',
-            ...(next_cursor ? { next_cursor } : {}),
-          },
-        });
-      }
-      if (path.endsWith('/transactions')) {
-        return Promise.resolve({
-          data: {
-            account: G,
-            transactions: [],
-            ...(next_cursor ? { next_cursor } : {}),
-          },
-        });
-      }
-      return new Promise(() => {});
+    const cursor = next_cursor ? { next_cursor } : {};
+    mockApi({
+      '/operations': { account: G, operations: [], scope: 'all', ...cursor },
+      '/transactions': { account: G, transactions: [], ...cursor },
     });
   }
 
@@ -186,35 +148,28 @@ describe('AccountView history paging — empty page with next_cursor', () => {
 
 describe('AccountView state charts', () => {
   it('bars each trustline’s limit used and each signer’s weight', async () => {
-    vi.mocked(apiGet).mockImplementation((path: string) => {
-      if (path === `/v1/accounts/${G}`) {
-        return Promise.resolve({
-          data: {
-            account_id: G,
-            exists: true,
-            balance: '100000000',
-            signers: [{ key: G, weight: 10 }],
-            trustlines: [
-              {
-                asset:
-                  'USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-                balance: '2500000000',
-                limit: '10000000000',
-                flags: 1,
-              },
-              {
-                // An i64-max limit: the share is divided in BigInt, not as doubles.
-                asset:
-                  'EURC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-                balance: '4611686018427387904',
-                limit: '9223372036854775807',
-                flags: 1,
-              },
-            ],
+    mockApi({
+      [`/v1/accounts/${G}`]: {
+        account_id: G,
+        exists: true,
+        balance: '100000000',
+        signers: [{ key: G, weight: 10 }],
+        trustlines: [
+          {
+            asset: `USDC:${G}`,
+            balance: '2500000000',
+            limit: '10000000000',
+            flags: 1,
           },
-        });
-      }
-      return new Promise(() => {});
+          {
+            // An i64-max limit: the share is divided in BigInt, not as doubles.
+            asset: `EURC:${G}`,
+            balance: '4611686018427387904',
+            limit: '9223372036854775807',
+            flags: 1,
+          },
+        ],
+      },
     });
 
     renderWithClient(<AccountView id={G} />);
