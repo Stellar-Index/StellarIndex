@@ -125,15 +125,18 @@ type PositionLastActivity struct {
 // PositionEntry is one row in the wire response for GET
 // /v1/accounts/{g_strkey}/positions.
 type PositionEntry struct {
-	Protocol        string               `json:"protocol"`
-	PositionKind    string               `json:"position_kind"`
-	Venue           string               `json:"venue"`
-	VenueLabel      string               `json:"venue_label,omitempty"`
-	Assets          []string             `json:"assets,omitempty"`
-	Amount          string               `json:"amount"`
-	AmountSemantics string               `json:"amount_semantics"`
-	LastActivity    PositionLastActivity `json:"last_activity"`
-	Basis           string               `json:"basis"`
+	Protocol        string   `json:"protocol"`
+	PositionKind    string   `json:"position_kind"`
+	Venue           string   `json:"venue"`
+	VenueLabel      string   `json:"venue_label,omitempty"`
+	Assets          []string `json:"assets,omitempty"`
+	Amount          string   `json:"amount"`
+	AmountSemantics string   `json:"amount_semantics"`
+	// Decimals scales Amount to whole units; set only where the unit is a
+	// known token (net_underlying_at_event_time) and its scale was read.
+	Decimals     *int                 `json:"decimals,omitempty"`
+	LastActivity PositionLastActivity `json:"last_activity"`
+	Basis        string               `json:"basis"`
 
 	// closed is this fold's own net-zero/closed verdict — never
 	// marshaled. Default include_closed=false drops these rows.
@@ -525,6 +528,15 @@ func (h *Handler) buildBlendPositions(ctx context.Context, address string, resol
 		return nil
 	}
 	poolTokens := h.poolTokensFor(ctx, "blend", cov)
+	dctx, cancel := context.WithTimeout(ctx, movementDecimalsBudget)
+	defer cancel()
+	scale := h.assetScales(dctx)
+	withScale := func(e PositionEntry, asset string) PositionEntry {
+		if e.AmountSemantics == AmountSemanticsNetUnderlying {
+			e.Decimals = scale(asset)
+		}
+		return e
+	}
 
 	out := make([]PositionEntry, 0, len(rows)*2)
 	for _, row := range rows {
@@ -535,7 +547,7 @@ func (h *Handler) buildBlendPositions(ctx context.Context, address string, resol
 			assets = []string{assetLabel}
 		}
 		if row.HasSupplyLeg {
-			out = append(out, blendLegEntry(PositionEntry{
+			out = append(out, withScale(blendLegEntry(PositionEntry{
 				Protocol:     "blend",
 				PositionKind: PositionKindLendingSupply,
 				Venue:        row.Pool,
@@ -543,10 +555,10 @@ func (h *Handler) buildBlendPositions(ctx context.Context, address string, resol
 				Assets:       assets,
 				LastActivity: fmtActivity(row.SupplyLastLedger, row.SupplyLastActivity),
 				Basis:        BasisEventDerived,
-			}, row.SupplyNet, row.SupplySuperseded, row.SupplyTokens))
+			}, row.SupplyNet, row.SupplySuperseded, row.SupplyTokens), row.Asset))
 		}
 		if row.HasBorrowLeg {
-			out = append(out, blendLegEntry(PositionEntry{
+			out = append(out, withScale(blendLegEntry(PositionEntry{
 				Protocol:     "blend",
 				PositionKind: PositionKindLendingBorrow,
 				Venue:        row.Pool,
@@ -554,7 +566,7 @@ func (h *Handler) buildBlendPositions(ctx context.Context, address string, resol
 				Assets:       assets,
 				LastActivity: fmtActivity(row.BorrowLastLedger, row.BorrowLastActivity),
 				Basis:        BasisEventDerived,
-			}, row.BorrowNet, row.BorrowSuperseded, row.BorrowTokens))
+			}, row.BorrowNet, row.BorrowSuperseded, row.BorrowTokens), row.Asset))
 		}
 	}
 	return out

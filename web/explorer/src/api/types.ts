@@ -6622,6 +6622,12 @@ export interface components {
              * @enum {string}
              */
             amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current_unconfirmed_unit" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
+            /**
+             * @description Scale of `amount` to whole token units. Set only for
+             *     net_underlying_at_event_time legs whose token scale was read;
+             *     absent otherwise, never a guessed 7.
+             */
+            decimals?: number;
             /** @description The most recent contributing event's ledger + close time. */
             last_activity: {
                 ledger: number;
