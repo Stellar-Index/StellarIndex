@@ -1,30 +1,20 @@
 // Package coinbase streams live trade matches from Coinbase
-// Exchange's public WebSocket feed. Adds US price discovery for
-// XLM/USD — a venue missing from our reference implementation
-// (a private predecessor system), so this is the net-new connector in the Phase-2
-// CEX fleet.
+// Exchange's public WebSocket feed, adding US price discovery for XLM/USD.
 //
-// Venue-naming note: Coinbase has two distinct API families —
-// Coinbase Exchange (the ex-Pro API; public, public-key auth for
-// private data, no auth for matches/ticker) and Coinbase Advanced
-// Trade (the retail-facing new surface; OAuth, rate-limited for
-// non-authenticated use). We target **Exchange** — it's the stable
-// institutional-grade feed used by most market-data consumers and
-// matches the capability profile of Binance/Kraken/Bitstamp.
+// We target Coinbase Exchange (the ex-Pro API: no auth for matches/ticker),
+// not Advanced Trade (OAuth, rate-limited when unauthenticated): Exchange is
+// the stable institutional feed and matches the Binance/Kraken/Bitstamp
+// capability profile.
 //
-// Architectural contrast with prior CEXes:
+// Wire details:
 //
-//   - Symbol format: "XLM-USD" (dash), between Kraken's "XLM/USD"
-//     and Binance's "XLMUSD".
-//   - Subscribe shape: `{"type":"subscribe","channels":[{"name":
-//     "matches","product_ids":[...]}]}` — one message covers all
-//     product IDs.
-//   - The `matches` channel publishes executed trades (not quote
-//     updates). On subscribe Coinbase also sends one `last_match`
-//     per product to prime consumer state — treated as a real
-//     historical trade, identical shape to live matches.
-//   - Numbers arrive as strings natively — no json.Number dance.
-//   - Time is RFC 3339 with nanosecond precision.
+//   - Symbol format is "XLM-USD" (dash).
+//   - One subscribe message covers all product IDs:
+//     `{"type":"subscribe","channels":[{"name":"matches","product_ids":[...]}]}`.
+//   - The `matches` channel publishes executed trades. On subscribe
+//     Coinbase also sends one `last_match` per product, which is a real
+//     historical trade in the same shape as live matches.
+//   - Numbers arrive as strings; time is RFC 3339 with nanoseconds.
 //
 // Wire format reference:
 // https://docs.cloud.coinbase.com/exchange/docs/websocket-channels

@@ -131,19 +131,15 @@ func SciDecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error)
 // inverting).
 //
 // The rounding is the point. A plain Div truncates toward zero, so
-// every inverted rate would land at or below the true value and never
-// above it. Unlike ordinary rounding error that averages out, a
-// truncation bias is systematic and one-signed:
-// it accumulates in the same direction across every poll of every
-// inverted pair, on every venue that calls this (ECB,
-// exchangeratesapi and Chainlink). At DefaultDecimals the per-rate
-// error is at most 1 ulp, so this is a small bias rather than a
-// visible mispricing — but it is a free correction and a biased
-// estimator has no business in the money path (ADR-0003: exact
-// big.Int arithmetic, never float, never silent truncation).
+// every inverted rate lands at or below the true value: a systematic,
+// one-signed bias that accumulates across every poll of every inverted
+// pair (ECB, exchangeratesapi, Chainlink). At DefaultDecimals the
+// per-rate error is at most 1 ulp, but a biased estimator has no
+// business in the money path (ADR-0003: exact big.Int arithmetic, never
+// float, never silent truncation).
 //
-// The formula mirrors [redstone.reciprocalAtScale] for its Invert feeds:
-// the same operation, so the two implementations must not disagree.
+// The formula mirrors [redstone.reciprocalAtScale] for its Invert feeds;
+// the two implementations must not disagree.
 //
 // InvertScaled is the srcDecimals == dstDecimals case of
 // [InvertScaledToDecimals]; see that doc for why a caller inverting a

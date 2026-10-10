@@ -1,22 +1,17 @@
 // Package coingecko polls CoinGecko's public /simple/price endpoint
 // for cross-check reference prices. First `ClassAggregator` connector
-// in the fleet — excluded from VWAP by registry policy (mixing
+// in the fleet: excluded from VWAP by registry policy (mixing
 // aggregated prices with raw trades double-counts upstream markets),
-// but consumed by the future divergence-detection layer to flag
-// when our computed VWAP drifts from the aggregator consensus.
+// but consumed by the divergence-detection layer to flag when our
+// computed VWAP drifts from the aggregator consensus.
 //
-// Free-tier friendly: CoinGecko's /simple/price has no auth requirement
-// on public data and a generous ~10-30 req/min limit. One batched call
-// per poll covers every (asset, quote) combo we care about.
+// One batched call per poll covers every (asset, quote) combo.
 //
 // Wire shape (verified):
 //
 //	GET https://api.coingecko.com/api/v3/simple/price?ids=stellar,bitcoin&vs_currencies=usd,eur&include_last_updated_at=true
 //
-//	{
-//	  "stellar":  {"usd": 0.17582, "eur": 0.16230, "last_updated_at": 1710000000},
-//	  "bitcoin":  {"usd": 50000.0, "eur": 46250.0, "last_updated_at": 1710000000}
-//	}
+//	{"stellar": {"usd": 0.17582, "eur": 0.16230, "last_updated_at": 1710000000}, ...}
 //
 // Each row is stamped with the id's upstream last_updated_at, never
 // our poll time: the aggregator price tier, price_as_of and the
@@ -24,10 +19,9 @@
 // price was true", so a poll-time stamp presents a frozen upstream
 // cache as fresh.
 //
-// Symbol mapping: CoinGecko uses **slug IDs** ("stellar", "bitcoin")
-// not tickers ("XLM", "BTC"). We maintain a small allow-listed
-// ticker→id table covering the assets in our pair set. Unknown
-// tickers skip per-entry.
+// CoinGecko uses slug IDs ("stellar", "bitcoin"), not tickers. A small
+// allow-listed ticker→id table covers our pair set; unknown tickers skip
+// per-entry.
 package coingecko
 
 import (

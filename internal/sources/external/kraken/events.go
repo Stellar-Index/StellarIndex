@@ -2,38 +2,22 @@
 // v2 trade channel. XLM/USD, XLM/EUR and XLM/GBP are all natively
 // quoted (no stablecoin proxy).
 //
-// Architectural contrast with Binance:
+// Differences from Binance that shape the code:
+//   - Symbol format is "XLM/USD" (slash-separated, uppercase); pairs.go
+//     normalises both sides of the mapping.
+//   - Subscription is an explicit JSON method call after connect.
+//   - Numbers arrive as JSON floats. We decode via [encoding/json.Number]
+//     to keep the original decimal string and bypass float entirely
+//     (ADR-0003).
 //
-//   - Symbol format is "XLM/USD" (slash-separated, uppercase), not
-//     "XLMUSD". The slash is wire-format; we normalise both sides of
-//     the mapping in pairs.go.
-//   - Subscription is an explicit JSON method call after connect, not
-//     a URL query string. Connect, then send a subscribe payload;
-//     server acks with a success frame.
-//   - Numbers arrive as JSON floats (not Binance's strings). We
-//     decode via [encoding/json.Number] to preserve the original
-//     decimal string representation — float64 for a $0.17582 price
-//     at 10^8 scale is safe, but we bypass float entirely on principle
-//     (i128 invariant, ADR-0003).
-//   - BTC → XBT legacy aliasing does NOT apply on v2 — Kraken renamed
-//     back to "BTC/USD" when they launched v2. v1 "XXBTZUSD" style is
-//     not something we encounter.
-//
-// Wire format reference:
-// https://docs.kraken.com/api/docs/websocket-v2/trade
-//
+// Wire format reference: https://docs.kraken.com/api/docs/websocket-v2/trade
 // Typical session:
 //
-//	→ Dial wss://ws.kraken.com/v2
-//	← {"channel":"status","data":[{"system":"online", ...}]}
 //	→ {"method":"subscribe","params":{"channel":"trade","symbol":["XLM/USD","XLM/EUR"]}}
-//	← {"method":"subscribe","success":true,...}
-//	← {"channel":"trade","type":"snapshot","data":[...]}
-//	← {"channel":"trade","type":"update","data":[{"symbol":"XLM/USD","side":"buy","qty":100.0,"price":0.17582,"ord_type":"market","trade_id":1234567,"timestamp":"YYYY-MM-DDT..."}]}
-//	← {"channel":"heartbeat"}       # ignored
+//	← {"channel":"trade","type":"snapshot"|"update","data":[{"symbol":"XLM/USD","qty":100.0,"price":0.17582,"trade_id":1234567,...}]}
 //
 // The snapshot (last ~50 trades) carries real historical timestamps
-// — we emit it like any other trade data. A re-delivered snapshot
+// and is emitted like any other trade. A re-delivered snapshot
 // dedupes against earlier live rows on the synthesised tx_hash
 // (symbol + trade_id). Raw-fill backfill (BackfillTrades) derives the
 // same tx_hash; candles key on close time and never match a live row,

@@ -1,33 +1,26 @@
 // Package forex provides a fiat-currency rates feed for the
 // /v1/currencies surface. Source: massive.com REST API
-// (REST aggregates + bearer auth) — daily grain, ~200 currencies,
+// (REST aggregates + bearer auth), daily grain, ~200 currencies,
 // requires an API key (env MASSIVE_API_KEY).
 //
-// The earlier currency-api/jsDelivr shim has been retired. What
-// fx_quotes holds is Massive's grouped-daily aggregate: one row per
+// fx_quotes holds Massive's grouped-daily aggregate: one row per
 // ticker per UTC day. The worker polls hourly, but every write buckets
 // to the day, so per-window figures on /v1/currencies are derived from
 // daily rows (see internal/sources/external/registry.go).
 //
-// Wire shape on /v1/currencies stays source-agnostic: this package
-// exposes the same Snapshot / History7d / Currency / HistoryPoint
-// types, so swapping providers later is a one-package change with
-// no API or schema migrations.
+// The package exposes provider-agnostic Snapshot / History7d / Currency /
+// HistoryPoint types, so swapping providers is a one-package change.
 //
 // Relationship to the other FX packages under internal/sources/external/:
 // this package and its sibling [frankfurter] sit outside the
 // [external.Connector] framework and keep their own bespoke worker /
-// FXQuoteWriter seam rather than implementing Streamer/Poller/Backfiller.
-// forex ("massive" in [external.Registry]) is the ACTIVE feed, run as a
-// goroutine in the API binary (not the indexer) — see
-// docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_feed_stale. [ecb] and
-// [exchangeratesapi] ARE Connector-framework poller implementations,
-// wired into the indexer, and currently disabled by default. ecb is
-// ALSO ECB-backed like [frankfurter], so both packages read the same
-// upstream data through two independent code paths — a known, accepted
-// duplication (not yet unified into one framework; that would be a
-// behavior change). Both live under internal/sources/external/ so every
-// off-chain FX/CEX source sits under one directory.
+// FXQuoteWriter seam. forex ("massive" in [external.Registry]) is the
+// ACTIVE feed, run as a goroutine in the API binary (not the indexer); see
+// docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_feed_stale.
+// [ecb] and [exchangeratesapi] ARE Connector-framework pollers, wired into
+// the indexer and disabled by default. ecb is ECB-backed like [frankfurter],
+// so both read the same upstream through two independent code paths: a
+// known, accepted duplication (unifying them would be a behavior change).
 package forex
 
 import (

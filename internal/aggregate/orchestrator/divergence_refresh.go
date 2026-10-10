@@ -15,32 +15,25 @@ import (
 // refreshDivergenceAll iterates over every configured pair and asks
 // the [DivergenceRefresher] to update its `div:<base>/<quote>` cache entry
 // for the asset, using the shortest-window VWAP this Tick just
-// wrote as the "our price" input — or, for a pair frozen at that
-// window, the pinned last-known-good, refreshed as such
-// ([Orchestrator.refreshPairDivergence]).
+// wrote as the "our price" input, or, for a pair frozen at that
+// window, the pinned last-known-good ([Orchestrator.refreshPairDivergence]).
 //
 // Best-effort: per-pair errors are counted via
 // `obs.DivergenceRefreshTotal{outcome=…}` and logged at WARN; the
-// Tick's overall outcome label is unaffected. The cache TTL
-// (the refresh cadence plus a worst-case pass) is the safety net — even if a
-// few ticks fail, the API hot-path still serves stale-but-valid
-// data while the worker recovers.
+// Tick's outcome label is unaffected. The cache TTL is the safety net:
+// if a few ticks fail, the API still serves stale-but-valid data.
 //
 // Outcome labels:
-//   - `ok`            — refresh succeeded; cache entry written
-//     (pinned or not).
-//   - `no_vwap`       — VWAP cache miss for this pair (frozen,
-//     empty window, transient cache error). Skip.
-//   - `parse_error`   — cached value couldn't be parsed as float.
-//     Indicates a writer regression.
-//   - `refresh_error` — the refresher returned an error (network
-//     failure to all references, marshal failure,
-//     cache write failure). The cache entry is
-//     NOT updated; the previous entry's TTL keeps
-//     counting down.
+//   - `ok`            — cache entry written (pinned or not).
+//   - `no_vwap`       — VWAP cache miss for this pair (frozen, empty
+//     window, transient cache error). Skip.
+//   - `parse_error`   — cached value not parseable as float; a writer
+//     regression.
+//   - `refresh_error` — the refresher failed (all references down,
+//     marshal or cache write failure). The entry is NOT updated; the
+//     previous entry's TTL keeps counting down.
 //
-// Skipped silently when DivergenceRefresher or Windows is nil/empty
-// (operator config / launch order).
+// Skipped silently when DivergenceRefresher or Windows is nil/empty.
 func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) {
 	// The divergence cross-check is a SECONDARY, best-effort guard; a
 	// panic in it (or the references it fans out to) must never crash the
