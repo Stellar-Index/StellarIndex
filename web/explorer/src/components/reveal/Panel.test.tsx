@@ -1,5 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+
+vi.mock('@/lib/export', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/lib/export')>('@/lib/export');
+  return { ...actual, downloadText: vi.fn() };
+});
+
+import { downloadText } from '@/lib/export';
 
 import { Panel } from './Panel';
 
@@ -40,5 +48,37 @@ describe('reveal/Panel heading rank', () => {
     );
     expect(screen.getByText('context line').tagName).toBe('P');
     expect(screen.getAllByRole('heading')).toHaveLength(1);
+  });
+});
+
+describe('reveal/Panel download', () => {
+  it('exports the held rows as CSV with amounts untouched', () => {
+    render(
+      <Panel
+        title="Pools"
+        download={{
+          name: 'pools',
+          columns: ['pool', 'reserve'],
+          rows: [{ pool: 'P1', reserve: '92233720368547758070.0000001' }],
+        }}
+      >
+        body
+      </Panel>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'CSV' }));
+    expect(downloadText).toHaveBeenCalledWith(
+      'pools.csv',
+      'text/csv;charset=utf-8',
+      'pool,reserve\r\nP1,92233720368547758070.0000001\r\n',
+    );
+  });
+
+  it('renders no download group when there are no rows', () => {
+    render(
+      <Panel title="Pools" download={{ name: 'p', columns: ['a'], rows: [] }}>
+        body
+      </Panel>,
+    );
+    expect(screen.queryByRole('group')).toBeNull();
   });
 });

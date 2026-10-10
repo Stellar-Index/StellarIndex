@@ -26,6 +26,13 @@ import { CountBar, LagDot } from './SourceListMarks';
  * (`include_in_vwap`, `paid`, `backfill_available`, `backfill_safe`)
  * surface as small pills next to the source name.
  */
+const SOURCE_CSV_COLUMNS = [
+  'name',
+  'subclass',
+  'default_weight',
+  'trade_count_24h',
+] as const;
+
 export function SourcesTable() {
   // includeStats=true joins per-source 24h trade counts so the
   // table can show the most-active venues at the top of each
@@ -197,6 +204,16 @@ export function SourcesTable() {
           title={titleCase(klass)}
           hint={classHint(klass)}
           source={asExample('/v1/sources', { class: klass })}
+          download={{
+            name: `sources-${klass}`,
+            columns: SOURCE_CSV_COLUMNS,
+            rows: rows.map((s) => ({
+              name: s.name,
+              subclass: s.subclass,
+              default_weight: s.default_weight,
+              trade_count_24h: s.trade_count_24h,
+            })),
+          }}
           bodyClassName="-mx-4"
         >
           <div className="overflow-x-auto">
