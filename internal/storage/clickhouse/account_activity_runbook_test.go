@@ -30,7 +30,7 @@ import (
 // Every way the runbook can end WITHOUT covering (Step 2) or checking
 // (Step 3) every window must end non-zero and without its success line.
 // Whether the Step-3 SQL itself can see a gap in a later window needs a real
-// ClickHouse: test/integration/account_activity_backfill_verify_test.go.
+// ClickHouse: test/integration/clickhouse_accounts_test.go.
 
 // runbookCodeLineRE matches a runbook code line: `--` followed by at least
 // three spaces (the file's indent convention for embedded bash/SQL; prose
