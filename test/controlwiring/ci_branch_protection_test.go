@@ -18,7 +18,7 @@ import (
 // so it could not fail even without the key. This leg GRADUATED out of
 // the k023evidence build tag (it lived in deployed_controls_test.go)
 // once main carried an active ruleset and the probe became a gate.
-func TestK023_NoContinueOnErrorJobsInCI(t *testing.T) {
+func TestNoContinueOnErrorJobsInCI(t *testing.T) {
 	t.Parallel()
 	var wf struct {
 		Jobs map[string]struct {
@@ -39,10 +39,10 @@ func TestK023_NoContinueOnErrorJobsInCI(t *testing.T) {
 	}
 }
 
-// TestK023_BranchProtectionStatusFailsOnZeroRules runs the shipped probe
+// TestBranchProtectionStatusFailsOnZeroRules runs the shipped probe
 // step against a stubbed curl: dropping continue-on-error gates nothing
 // if the script itself still exits 0 on an unprotected or unreadable main.
-func TestK023_BranchProtectionStatusFailsOnZeroRules(t *testing.T) {
+func TestBranchProtectionStatusFailsOnZeroRules(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skipf("jq not on PATH: %v (the continue-on-error leg runs unconditionally)", err)

@@ -516,13 +516,13 @@ func TestHTTPMetrics_StreamRouteSkipsDurationHistogram(t *testing.T) {
 	}
 }
 
-// TestZeroSeed_F0033 verifies that the bounded counters whose alert
+// TestZeroSeed_BoundedCountersPreRegistered verifies that the bounded counters whose alert
 // rules reference rate()/increase() have all their label combos
 // pre-registered at zero, so PromQL queries return 0 rather than
 // "no data" before the first event fires. Without it, operators see the alert reference but no series
 // in /metrics output and cannot tell whether the metric was
 // "intentionally zero" or "alert references a dead metric."
-func TestZeroSeed_F0033(t *testing.T) {
+func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 	ts := httptest.NewServer(obs.Handler())
 	defer ts.Close()
 

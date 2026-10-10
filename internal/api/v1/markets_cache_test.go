@@ -458,12 +458,12 @@ func (f *fakeMarketsReader) FirstTradeBatch(_ context.Context, _ [][2]string) (m
 	return map[string]time.Time{}, nil
 }
 
-// TestNoDanglingPR1185Citation guards against re-introducing the "#1185"
+// TestNoStaleOrderDriftCitation guards against re-introducing the "#1185"
 // / "PR #1185" citation into the cache-miss-rate-high runbook or its
 // Prometheus rule comment. No PR #1185 was ever opened; the
 // bare number now resolves to a real but unrelated open issue, so the
 // citation misleads a reader rather than merely dangling.
-func TestNoDanglingPR1185Citation(t *testing.T) {
+func TestNoStaleOrderDriftCitation(t *testing.T) {
 	const stale = "#1185"
 	root := repoRoot(t)
 	files := []string{
@@ -481,14 +481,14 @@ func TestNoDanglingPR1185Citation(t *testing.T) {
 	}
 }
 
-// TestNoDanglingPR1195Citation guards against re-introducing the "#1195"
+// TestNoStaleLimitDriftCitation guards against re-introducing the "#1195"
 // / "PR #1195" citation into the cache-miss-rate-high runbook, its
 // Prometheus rule comment, or CHANGELOG.md. No PR #1195 was
 // ever opened; the bare number now resolves to a real but unrelated open
 // issue (verify-lake/verify-contiguity under-reporting), so the citation
 // misleads a reader rather than merely dangling. Mirrors
-// TestNoDanglingPR1185Citation for the same repo-wide class of defect.
-func TestNoDanglingPR1195Citation(t *testing.T) {
+// TestNoStaleOrderDriftCitation for the same repo-wide class of defect.
+func TestNoStaleLimitDriftCitation(t *testing.T) {
 	const stale = "#1195"
 	root := repoRoot(t)
 	files := []string{
@@ -507,9 +507,9 @@ func TestNoDanglingPR1195Citation(t *testing.T) {
 	}
 }
 
-// TestNoDanglingPR1194Citation keeps "#1194" out of the Sources-dimension
+// TestNoStaleSourcesDriftCitation keeps "#1194" out of the Sources-dimension
 // drift citations: that number now resolves to an unrelated item.
-func TestNoDanglingPR1194Citation(t *testing.T) {
+func TestNoStaleSourcesDriftCitation(t *testing.T) {
 	const stale = "#1194"
 	root := repoRoot(t)
 	files := []string{

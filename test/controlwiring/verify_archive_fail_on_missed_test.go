@@ -39,7 +39,7 @@ var verifyArchiveUnits = []string{
 	"deploy/systemd/verify-archive-tier-b.service",
 }
 
-func TestK023_VerifyArchiveCheckpointUnitsFailOnMissed(t *testing.T) {
+func TestVerifyArchiveCheckpointUnitsFailOnMissed(t *testing.T) {
 	t.Parallel()
 	checkpointUnits := 0
 	for _, rel := range verifyArchiveUnits {

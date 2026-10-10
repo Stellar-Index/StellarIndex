@@ -51,5 +51,5 @@ caller-supplied argument. `defindex` lost its self-registration on
 far: `docs/operations/wasm-audits/phoenix.md`, "Factory create event".
 
 The red test waiting on that is
-`TestK023_PhoenixFactoryCreateEventIsAdmissible`
-(`go test -tags k023evidence ./test/controlwiring/ -run TestK023_Phoenix -v`).
+`TestPhoenixFactoryCreateEventIsAdmissible`
+(`go test -tags k023evidence ./test/controlwiring/ -run TestPhoenixFactory -v`).

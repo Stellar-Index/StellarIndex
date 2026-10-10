@@ -400,7 +400,7 @@ Shipped (2026-09-19):
   encodings, so the lake walk keyed on `"create"` returns rows. Phoenix's
   reconcile-catalogue entry now sets `factories` + `creationSym` so
   `gatedPrefilter` runs.
-- Tests: `TestK023_PhoenixFactoryCreateEventIsAdmissible` and
+- Tests: `TestPhoenixFactoryCreateEventIsAdmissible` and
   `…FromForeignEmitterIsNotAdmitted` GRADUATED out of `-tags k023evidence`
   into the default suite (`test/controlwiring/phoenix_factory_admission_test.go`);
   `test/integration/contract_events_string_topic_prefilter_test.go` proves

@@ -40,7 +40,7 @@ import (
 //
 // A NEW command that runs a current decoder over historical events must
 // be added to this map in the same change that adds it.
-func TestK023_ReplayPathsConsultBackfillSafe(t *testing.T) {
+func TestReplayPathsConsultBackfillSafe(t *testing.T) {
 	t.Parallel()
 	paths := map[string][]string{
 		"projector-replay":  {"internal/ops/ingest/projector*.go", "internal/projector/*.go"},
