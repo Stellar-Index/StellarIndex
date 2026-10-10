@@ -398,6 +398,15 @@ export function RWAView() {
         headingLevel={2}
         hint={`${assets.length} asset${assets.length === 1 ? '' : 's'} from ${summary.issuers} issuer${summary.issuers === 1 ? '' : 's'}`}
         source={asExample(ENDPOINT)}
+        download={
+          assets.length > 0
+            ? {
+                name: 'rwa-assets',
+                columns: RWA_CSV_COLUMNS,
+                rows: assets.map(rwaCsvRow),
+              }
+            : undefined
+        }
         bodyClassName="-mx-4"
       >
         {assets.length === 0 ? (
@@ -1552,6 +1561,51 @@ function HeadlineStats({
       </details>
     </div>
   );
+}
+
+const RWA_CSV_COLUMNS = [
+  'asset_id',
+  'code',
+  'issuer',
+  'anchor_class',
+  'anchor_asset',
+  'basis',
+  'circulating_supply',
+  'market_cap_usd',
+  'market_cap_status',
+  'price_usd',
+  'reference_value_usd',
+  'reference_value_status',
+  'reference_price_usd',
+  'reference_source',
+  'reference_as_of',
+  'premium_pct',
+  'premium_status',
+  'volume_24h_usd',
+] as const;
+
+/** One CSV row per asset, statuses beside each value so a withheld figure stays explained. */
+export function rwaCsvRow(a: RWAAsset): Record<string, string> {
+  return {
+    asset_id: a.asset_id,
+    code: a.code,
+    issuer: a.issuer,
+    anchor_class: a.anchor_class ?? '',
+    anchor_asset: a.anchor_asset ?? '',
+    basis: a.basis,
+    circulating_supply: a.circulating_supply ?? '',
+    market_cap_usd: a.valuation.market_cap_usd ?? '',
+    market_cap_status: a.valuation.status,
+    price_usd: a.valuation.price_usd ?? '',
+    reference_value_usd: a.reference_valuation.value_usd ?? '',
+    reference_value_status: a.reference_valuation.status,
+    reference_price_usd: a.reference?.price_usd ?? '',
+    reference_source: a.reference?.source ?? '',
+    reference_as_of: a.reference?.as_of ?? '',
+    premium_pct: a.premium.pct ?? '',
+    premium_status: a.premium.status,
+    volume_24h_usd: a.volume_24h_usd ?? '',
+  };
 }
 
 function AssetTable({ assets }: { assets: RWAAsset[] }) {
