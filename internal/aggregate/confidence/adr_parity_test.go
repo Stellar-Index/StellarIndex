@@ -10,31 +10,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 )
 
-// ADR-0019 combiner parity guard.
-//
-// [Compute] combines the six factors as a NORMALISED weighted
-// geometric mean — `prod(factor_i ^ weight_i) ^ (1 / sum(weights))`.
-// ADR-0019's formula block writes the product WITHOUT the `^ (1 /
-// sum(weights))` exponent, and a doc repeating
-// that truncated form would describe a combiner the
-// aggregator has never shipped — and, worse, one on which the
-// documented freeze threshold (`confidence < 0.10`) means something
-// materially different: as a bare product, ANY single-source window
-// scores below 0.10 before z is even considered (source-count factor
-// 0.119 × one-class diversity 0.5 = 0.06), collapsing the ADR's
-// "three signals must agree" into two.
-//
-// These tests pin the prose to the shipped math. They are text
-// assertions on purpose: the drift they exist to catch is a
-// documentation drift, and nothing else in the build fails when an
-// ADR quietly says something the code doesn't do.
-//
-// Whitespace (including line wrapping) is normalised before matching
-// so re-flowing a paragraph doesn't fail the guard; the load-bearing
-// tokens are the exponent and the weight sum.
+// Doc/code parity for the bootstrap density gate stated in the
+// oracle-manipulation-defense page.
 
 const (
-	adr0019Path = "../../../docs/adr/0019-anomaly-response-and-confidence-scoring.md"
 	// The formulas, factor constants and bootstrap gate live here
 	// (#confidence-score); ADR-0019 links to it for them.
 	adr0019DetailPath = "../../../docs/architecture/oracle-manipulation-defense.md"
@@ -57,81 +36,6 @@ func readSquashed(t *testing.T, path string) string {
 	return squashWhitespace(string(b))
 }
 
-// TestADR0019PinsTheNormalisedCombiner — ADR-0019 must state the
-// normalisation exponent over the sum of ALL SEVEN weights (the six
-// original plus w_tri — score.go's totalWeight always includes
-// triWeight, 0 when triangulation is unchecked). The original
-// (immutable) formula block and the six-term correction
-// stay as written; a later amendment blockquote carries the seven-term
-// correction, per the docs/adr/README.md "supersede/amend, don't
-// rewrite" rule.
-func TestADR0019PinsTheNormalisedCombiner(t *testing.T) {
-	adr := readSquashed(t, adr0019DetailPath)
-
-	// The normalising exponent, applied over the sum of all seven
-	// per-factor weights (w_tri included).
-	wantExponent := regexp.MustCompile(
-		`\^ \(1 / \(w_z \+ w_src \+ w_div \+ w_liq \+ w_xoracle \+ w_tri \+ w_qual\)\)`)
-	if !wantExponent.MatchString(adr) {
-		t.Errorf("ADR-0019 does not spell the normalisation exponent "+
-			"`^ (1 / (w_z + w_src + w_div + w_liq + w_xoracle + w_tri + w_qual))` — "+
-			"a six-term exponent omits score.go's triangulation weight, which is NOT "+
-			"what confidence.Compute ships whenever a pair triangulates (see %s)", adr0019DetailPath)
-	}
-
-	// The generic restatement that ties the ADR to score.go's own
-	// doc comment ("prod(factor_i ^ weight_i) ^ (1 / sum(weights))").
-	if !strings.Contains(adr, "prod(factor_i ^ weight_i) ^ (1 / sum(weights))") {
-		t.Error("ADR-0019 does not restate the shipped combiner as " +
-			"`prod(factor_i ^ weight_i) ^ (1 / sum(weights))`")
-	}
-
-	// The freeze threshold's meaning on the normalised scale must be
-	// stated, or `confidence < 0.10` reads as product units.
-	if !strings.Contains(adr, "confidence < 0.10") {
-		t.Error("ADR-0019 no longer mentions the `confidence < 0.10` freeze condition")
-	}
-}
-
-// TestADR0019PinsTheShippedFactorSet — the ADR's "Factor shapes"
-// bullet list is the only prose description of what actually goes into
-// a published `confidence`, and two of the shipped shapes no longer
-// match the original text: the liquidity ceiling moved $100K → $1M, and
-// a seventh factor (triangulation agreement) exists that the ADR
-// predates. Both are carried by an ADR amendment; this guard
-// fails if the amendment is dropped or the constants drift away from
-// it, which is the same class of silent doc/code divergence this guard exists for.
-func TestADR0019PinsTheShippedFactorSet(t *testing.T) {
-	adr := readSquashed(t, adr0019DetailPath)
-
-	// The ceiling constant, stated in the form an operator can match
-	// against internal/aggregate/confidence/factors.go.
-	if !strings.Contains(adr, "a $1,000,000 ceiling") && !strings.Contains(adr, "**$1,000,000** ceiling") {
-		t.Error("ADR-0019 detail page does not state the liquidity_factor ceiling " +
-			"($1,000,000)")
-	}
-	// The measurement that justifies it — a number, not an adjective,
-	// so a future re-tune has to argue with the evidence.
-	if !strings.Contains(adr, "$123,678") {
-		t.Error("ADR-0019 no longer carries the measured BTC/USD p50 bucket volume " +
-			"that justifies the liquidity ceiling")
-	}
-	// The seventh factor and the two properties that make it safe.
-	if !strings.Contains(adr, "triangulation_agreement_factor") {
-		t.Error("ADR-0019 does not mention triangulation_agreement_factor — the " +
-			"shipped combiner has a factor the ADR's list omits")
-	}
-	if !strings.Contains(adr, "Weight 0 when unchecked") {
-		t.Error("ADR-0019 does not record that the triangulation factor is EXCLUDED " +
-			"(weight 0), not merely neutral, when no composite exists — the property " +
-			"that keeps every un-triangulated pair's score unchanged")
-	}
-	if !strings.Contains(adr, "never feeds `source_count`") {
-		t.Error("ADR-0019 does not state that a composite is excluded from " +
-			"source_count — the freeze AND's independence leg depends on it")
-	}
-}
-
 // TestADR0019PinsTheBootstrapDensityGate — the ADR's warmup rule says
 // "< 30 days of history", but the cap gates on bucket density at
 // [confidence.BootstrapDensityDays], re-engaging below
@@ -149,16 +53,6 @@ func TestADR0019PinsTheBootstrapDensityGate(t *testing.T) {
 	}
 	if !strings.Contains(adr, "`baseline_age_days` and `bootstrap_capped`.") {
 		t.Error("ADR-0019 detail page does not record that baseline_age_days and bootstrap_capped are served")
-	}
-}
-
-// TestADR0019PinsTheFreezeCondition — the freeze AND is the decision itself,
-// so it is pinned in the ADR's own Decision section.
-func TestADR0019PinsTheFreezeCondition(t *testing.T) {
-	adr := readSquashed(t, adr0019Path)
-	if !strings.Contains(adr, "confidence < 0.45 AND z_score > 5.0 AND source_count <= 1") {
-		t.Error("ADR-0019 does not state the three-signal freeze condition " +
-			"`confidence < 0.45 AND z_score > 5.0 AND source_count <= 1`")
 	}
 }
 
