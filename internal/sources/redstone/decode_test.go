@@ -416,7 +416,7 @@ func TestFeedRegistry_UniquePairs(t *testing.T) {
 }
 
 // The relayer expansion (ledger 63624934) published 11 feed_ids outside the
-// original registry; an all-new batch used to fail whole with ErrEmptyUpdates.
+// original registry; an all-new batch must decode, not fail whole with ErrEmptyUpdates.
 // Mapping verified live (see feeds.go).
 func TestDecode_ExpansionFeeds(t *testing.T) {
 	feedIDs := []string{

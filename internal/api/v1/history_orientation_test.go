@@ -237,8 +237,8 @@ func orientationQuery(base, quote canonical.Asset, limit int) string {
 // TestHistory_OrientationRendering pins, to the value, how a stored row is
 // re-expressed in the requested orientation (AQUA/USDC).
 //
-//   - reverse-stored: the market exists only as USDC/AQUA and used to serve an
-//     empty page. The legs and amounts swap, `price` is the exact reciprocal,
+//   - reverse-stored: the market exists only as USDC/AQUA. The
+//     legs and amounts swap, `price` is the exact reciprocal,
 //     and both directions are read, requested first. The 7:1 row would expose
 //     a float round-trip: 1/(1/7) is not 7 in binary floating point.
 //   - stored-orientation: a row already held as asked is served untouched.

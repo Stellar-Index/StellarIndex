@@ -16,13 +16,11 @@ import (
 // issuer while /v1/price, /v1/price/tip, /v1/price/batch, /v1/vwap,
 // /v1/twap, the SEP-40 oracle and the asset headline all withheld it.
 //
-// This is the third time this exact class has appeared. An audit found
-// /v1/vwap and /v1/twap ungated after pricingguard/scam.go's own package
-// doc claimed the gate sat "at the price-reader seam so every
-// reader-backed surface is covered by ONE gate" — a claim that was never
-// true, because those endpoints compute from raw trades via their own
-// fetch and never touch the reader. /v1/chart is the same shape: it
-// reads history directly.
+// pricingguard/scam.go's package doc says the gate sits "at the
+// price-reader seam so every reader-backed surface is covered by ONE
+// gate", which is not true of endpoints that compute from raw trades via
+// their own fetch and never touch the reader (/v1/vwap, /v1/twap).
+// /v1/chart is the same shape: it reads history directly.
 //
 // A series is arguably worse than a point. A single withheld price
 // denies one number; an ungated chart hands over the whole trajectory,
