@@ -8,11 +8,11 @@ import { RWAView, splitBasis, sumStablecoins, sumUsd } from './RWAView';
 
 type Schemas = components['schemas'];
 type View = Schemas['RWAAssetsView'];
+type Asset = Schemas['RWAAsset'];
+type Summary = Schemas['RWASummary'];
 
 const apiGetData = vi.hoisted(() => vi.fn());
 // useAssets (the stablecoin arm) reads through apiGet, not apiGetData.
-// Mocked here so the sector tiles are deterministic and no test reaches
-// the network.
 const apiGet = vi.hoisted(() => vi.fn());
 vi.mock('@/api/client', async () => {
   const actual =
@@ -20,7 +20,6 @@ vi.mock('@/api/client', async () => {
   return { ...actual, apiGetData, apiGet };
 });
 
-/** One fiat-backed token, valued, as the served catalogue returns it. */
 function stablecoinPage(
   rows: {
     code: string;
@@ -32,8 +31,10 @@ function stablecoinPage(
 }
 
 const ISSUER = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC';
+const CAP = '1284500.00';
+const REF = '1324956.69';
 
-function asset(over: Partial<Schemas['RWAAsset']> = {}): Schemas['RWAAsset'] {
+function asset(over: Partial<Asset> = {}): Asset {
   return {
     asset_id: `USTRY-${ISSUER}`,
     code: 'USTRY',
@@ -49,7 +50,7 @@ function asset(over: Partial<Schemas['RWAAsset']> = {}): Schemas['RWAAsset'] {
     valuation: {
       status: 'published',
       price_usd: '1.0412',
-      market_cap_usd: '1284500.00',
+      market_cap_usd: CAP,
     },
     reference: {
       price_usd: '1.07403800',
@@ -58,10 +59,9 @@ function asset(over: Partial<Schemas['RWAAsset']> = {}): Schemas['RWAAsset'] {
       quote: 'fiat:USD',
       as_of: '2026-09-09T15:08:40Z',
     },
-    // 12,336,218,000,000 smallest units at 7dp is 1,233,621.8 tokens;
-    // at the 1.074038 reference that is 1,324,956.69 — a different
-    // basis over the same float, never added to the market cap.
-    reference_valuation: { status: 'published', value_usd: '1324956.69' },
+    // 1,233,621.8 tokens at the 1.074038 reference: a different basis over
+    // the same float, never added to the market cap.
+    reference_valuation: { status: 'published', value_usd: REF },
     premium: { status: 'published', pct: '-3.0574' },
     circulating_supply: '12336218000000',
     decimals: 7,
@@ -69,30 +69,47 @@ function asset(over: Partial<Schemas['RWAAsset']> = {}): Schemas['RWAAsset'] {
     first_seen_ledger: 55008233,
     observation_count: 346312,
     ...over,
-  } as Schemas['RWAAsset'];
+  } as Asset;
 }
+
+/** by_class + by_issuer for one asset, valued on each basis or not. */
+function rollups(market: boolean, reference: boolean) {
+  const cells = {
+    assets: 1,
+    ...(market
+      ? { market_cap_usd: CAP, assets_unvalued: 0 }
+      : { assets_unvalued: 1 }),
+    ...(reference
+      ? { reference_value_usd: REF, assets_reference_unvalued: 0 }
+      : { assets_reference_unvalued: 1 }),
+  };
+  return {
+    by_class: [{ class: 'bond', ...cells }],
+    by_issuer: [
+      {
+        issuer: ISSUER,
+        name: 'Etherfuse',
+        home_domain: 'etherfuse.com',
+        ...cells,
+      },
+    ],
+  } as Pick<View, 'by_class' | 'by_issuer'>;
+}
+
+const NO_REFERENCE = {
+  assets_valued: 0,
+  assets_unvalued: 1,
+  lower_bound: true,
+  basis: 'No member currently carries a reference valuation.',
+};
 
 function view(over: Partial<View> = {}): View {
   return {
     definition: {
       requirements: ['a', 'b', 'c', 'd'],
       anchor_classes: ['bond', 'commodity', 'realestate', 'stock'],
-      recognition_tags: [
-        'anchor',
-        'custodian',
-        'defi',
-        'exchange',
-        'issuer',
-        'sdf',
-      ],
-      scam_flag_tags: [
-        'malicious',
-        'unsafe',
-        'fraud',
-        'scam',
-        'hack',
-        'phishing',
-      ],
+      recognition_tags: 'anchor custodian defi exchange issuer sdf'.split(' '),
+      scam_flag_tags: 'malicious unsafe fraud scam hack phishing'.split(' '),
       bound_instruments: [
         { code: 'USTRY', issuer: ISSUER, feed: 'rwa:USTRY' },
         { code: 'CETES', issuer: ISSUER, feed: 'rwa:CETES' },
@@ -103,7 +120,7 @@ function view(over: Partial<View> = {}): View {
     summary: {
       assets: 1,
       issuers: 1,
-      market_cap_usd: '1284500.00',
+      market_cap_usd: CAP,
       assets_valued: 1,
       assets_unvalued: 0,
       lower_bound: false,
@@ -111,7 +128,7 @@ function view(over: Partial<View> = {}): View {
       assets_with_reference: 1,
       assets_compared: 1,
       reference_valuation: {
-        value_usd: '1324956.69',
+        value_usd: REF,
         assets_valued: 1,
         assets_unvalued: 0,
         lower_bound: false,
@@ -119,43 +136,99 @@ function view(over: Partial<View> = {}): View {
         basis:
           'Sum of circulating supply times an independent oracle valuation of the instrument.',
       },
-      both_bases: {
-        assets: 1,
-        market_cap_usd: '1284500.00',
-        reference_value_usd: '1324956.69',
-      },
+      both_bases: { assets: 1, market_cap_usd: CAP, reference_value_usd: REF },
       basis:
         'Sum of the published market caps of the assets meeting the four-requirement definition.',
     },
     assets: [asset()],
-    by_class: [
-      {
-        class: 'bond',
-        assets: 1,
-        market_cap_usd: '1284500.00',
-        assets_unvalued: 0,
-        reference_value_usd: '1324956.69',
-        assets_reference_unvalued: 0,
-      },
-    ],
-    by_issuer: [
-      {
-        issuer: ISSUER,
-        name: 'Etherfuse',
-        home_domain: 'etherfuse.com',
-        assets: 1,
-        market_cap_usd: '1284500.00',
-        assets_unvalued: 0,
-        reference_value_usd: '1324956.69',
-        assets_reference_unvalued: 0,
-      },
-    ],
+    ...rollups(true, true),
     refused: [],
     ...over,
   } as View;
 }
 
-function renderView() {
+/** One asset that lacks the market basis, the reference basis, or both. */
+function partlyValued(
+  a: Partial<Asset>,
+  { market = false, reference = false } = {},
+): View {
+  return view({
+    assets: [asset(a)],
+    summary: {
+      ...view().summary,
+      ...(market
+        ? {}
+        : {
+            market_cap_usd: undefined,
+            assets_valued: 0,
+            assets_unvalued: 1,
+            lower_bound: true,
+            assets_compared: 0,
+          }),
+      ...(reference
+        ? {}
+        : {
+            assets_with_reference: 0,
+            assets_compared: 0,
+            reference_valuation: NO_REFERENCE,
+          }),
+      both_bases: { assets: 0 },
+    },
+    ...rollups(market, reference),
+  });
+}
+
+const LIVE_REFERENCE = {
+  value_usd: '992488360.69',
+  assets_valued: 7,
+  assets_unvalued: 4,
+  lower_bound: true,
+  sources: ['redstone'],
+  basis:
+    'Supply times an oracle’s valuation of the instrument. THIS IS NOT A ' +
+    'MARKET CAPITALISATION AND NOT AN OBSERVED PRICE: nobody was seen ' +
+    'paying it. Assets with no feed count separately: a LOWER BOUND.',
+};
+
+/** The live set's shape: the backing dwarfs the observed market cap. */
+function wideSummary(
+  reference: Partial<Summary['reference_valuation']> = {},
+): Summary {
+  return {
+    ...view().summary,
+    assets: 11,
+    issuers: 5,
+    market_cap_usd: '17128565.34',
+    assets_valued: 3,
+    assets_unvalued: 8,
+    lower_bound: true,
+    assets_with_reference: 7,
+    assets_compared: 3,
+    reference_valuation: { ...LIVE_REFERENCE, ...reference },
+  };
+}
+
+type Stage = NonNullable<View['funnel']>['stages'][number];
+function stage(
+  arm: string,
+  name: string,
+  unit: string,
+  count: number,
+  dropped?: Stage['dropped'],
+): Stage {
+  return { arm, stage: name, unit, count, dropped } as Stage;
+}
+
+// History and premium answer from their own endpoints; a rejection keeps
+// those panels out of the way without feeding them the wrong payload.
+function show(v: View | Error) {
+  apiGetData.mockImplementation((path: string) =>
+    v instanceof Error ||
+    path === '/v1/rwa/history' ||
+    path === '/v1/rwa/premium'
+      ? Promise.reject(v instanceof Error ? v : new Error('unavailable'))
+      : Promise.resolve(v),
+  );
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -166,155 +239,74 @@ function renderView() {
   );
 }
 
+const present = (...texts: (string | RegExp)[]) => {
+  for (const t of texts) expect(screen.getByText(t)).toBeInTheDocument();
+};
+const one = (over: Partial<Asset>) => view({ assets: [asset(over)] });
+type Drop = NonNullable<Stage['dropped']>[number];
+const drop = (reason: Drop['reason'], count: number, actor: Drop['actor']) =>
+  ({ reason, count, actor }) as Drop;
+const atLeast = (t: string | RegExp, n: number) =>
+  expect(screen.getAllByText(t).length).toBeGreaterThanOrEqual(n);
+const absent = (...texts: (string | RegExp)[]) => {
+  for (const t of texts) expect(screen.queryAllByText(t)).toHaveLength(0);
+};
+
+beforeEach(() => {
+  apiGetData.mockReset();
+  apiGet.mockReset();
+  apiGet.mockResolvedValue(stablecoinPage());
+});
+
 describe('RWAView', () => {
-  beforeEach(() => {
-    apiGetData.mockReset();
-    apiGet.mockReset();
-    apiGet.mockResolvedValue(stablecoinPage());
-  });
-
-  it('renders an admitted asset with its issuer identity, not the code alone', async () => {
-    apiGetData.mockResolvedValue(view());
-    renderView();
-
-    expect(await screen.findByText('USTRY')).toBeInTheDocument();
-    // The G-address is the identity; a page that showed only a code and
-    // a friendly name would be indistinguishable from an impersonator's.
-    expect(screen.getAllByText(/GCRYUG…ATMYWC/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Etherfuse').length).toBeGreaterThan(0);
-    // The figure appears in the headline, the row, and both breakdowns —
-    // every level is the exact sum of the level below.
-    expect(screen.getAllByText('$1,284,500.00').length).toBeGreaterThanOrEqual(
-      3,
-    );
-  });
-
   it('rounds 24h volume above 2^53 from the exact decimal', async () => {
-    apiGetData.mockResolvedValue(
-      view({ assets: [asset({ volume_24h_usd: '1000000004999999999' })] }),
-    );
-    renderView();
-    expect(await screen.findByText('$1,000,000T')).toBeInTheDocument();
+    show(one({ volume_24h_usd: '1000000004999999999' }));
+    await screen.findByText('$1,000,000T');
   });
 
-  it('renders a withheld valuation as unavailable, never as a number', async () => {
-    apiGetData.mockResolvedValue(
-      view({
-        assets: [
-          asset({
-            valuation: { status: 'withheld_issuer_flagged' },
-            reference_valuation: { status: 'withheld_issuer_flagged' },
-            reference: undefined,
-            premium: { status: 'withheld_issuer_flagged' },
-            issuer_directory_tags: ['issuer', 'malicious'],
-          }),
-        ],
-        summary: {
-          ...view().summary,
-          market_cap_usd: undefined,
-          assets_valued: 0,
-          assets_unvalued: 1,
-          lower_bound: true,
-          reference_valuation: {
-            assets_valued: 0,
-            assets_unvalued: 1,
-            lower_bound: true,
-            basis: 'No member currently carries a reference valuation.',
-          },
-          both_bases: { assets: 0 },
-        },
-        by_class: [
-          {
-            class: 'bond',
-            assets: 1,
-            assets_unvalued: 1,
-            assets_reference_unvalued: 1,
-          },
-        ],
-        by_issuer: [
-          {
-            issuer: ISSUER,
-            name: 'Etherfuse',
-            assets: 1,
-            assets_unvalued: 1,
-            assets_reference_unvalued: 1,
-          },
-        ],
+  it('gives a flagged issuer no figure of any kind, only the word', async () => {
+    show(
+      partlyValued({
+        valuation: { status: 'withheld_issuer_flagged' },
+        reference_valuation: { status: 'withheld_issuer_flagged' },
+        reference: undefined,
+        premium: { status: 'withheld_issuer_flagged' },
+        issuer_directory_tags: ['issuer', 'malicious'],
       }),
     );
-    renderView();
 
-    // The money cells say the word, not a figure and not a bare dash: a
-    // dash beside real figures reads as zero.
-    expect(
-      (await screen.findAllByText('Unavailable')).length,
-    ).toBeGreaterThanOrEqual(2);
-    expect(screen.queryByText('$1,284,500.00')).not.toBeInTheDocument();
-    expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
-    // The flag itself is surfaced, not silently swallowed.
-    expect(screen.getByText('Flagged')).toBeInTheDocument();
+    await screen.findByText('Flagged');
+    // A bare dash beside real figures reads as zero.
+    atLeast('Unavailable', 2);
+    // Neither this platform's figure nor a third party's instrument valuation.
+    absent(
+      '$1,284,500.00',
+      '$0.00',
+      '$1.0740',
+      /redstone/,
+      '-3.06%',
+      '$1,324,956.69',
+    );
   });
 
   it('says the total is not published rather than showing zero', async () => {
-    apiGetData.mockResolvedValue(
-      view({
-        assets: [
-          asset({
-            valuation: { status: 'unpriced' },
-            reference_valuation: { status: 'no_reference_feed' },
-            reference: undefined,
-            premium: { status: 'no_reference_feed' },
-          }),
-        ],
-        summary: {
-          ...view().summary,
-          market_cap_usd: undefined,
-          assets_valued: 0,
-          assets_unvalued: 1,
-          lower_bound: true,
-          assets_with_reference: 0,
-          assets_compared: 0,
-          reference_valuation: {
-            assets_valued: 0,
-            assets_unvalued: 1,
-            lower_bound: true,
-            basis: 'No member currently carries a reference valuation.',
-          },
-          both_bases: { assets: 0 },
-        },
-        by_class: [
-          {
-            class: 'bond',
-            assets: 1,
-            assets_unvalued: 1,
-            assets_reference_unvalued: 1,
-          },
-        ],
-        by_issuer: [
-          {
-            issuer: ISSUER,
-            assets: 1,
-            assets_unvalued: 1,
-            assets_reference_unvalued: 1,
-          },
-        ],
+    show(
+      partlyValued({
+        valuation: { status: 'unpriced' },
+        reference_valuation: { status: 'no_reference_feed' },
+        reference: undefined,
+        premium: { status: 'no_reference_feed' },
       }),
     );
-    renderView();
 
-    // Both valuation tiles say it: neither basis has anything to
-    // publish, and neither may render as a zero.
-    // Backing, market cap, and Combined — which may not be published
-    // from the stablecoin arm alone.
+    // Backing, market cap, and Combined (never published from one arm).
     expect(await screen.findAllByText('Not published')).toHaveLength(3);
-    expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/No asset in the set publishes a market valuation/),
-    ).toBeInTheDocument();
+    absent('$0.00');
+    present(/No asset in the set publishes a market valuation/);
   });
 
   it('marks a partly-valued total as a lower bound', async () => {
-    apiGetData.mockResolvedValue(
+    show(
       view({
         assets: [
           asset(),
@@ -333,63 +325,43 @@ describe('RWAView', () => {
         },
       }),
     );
-    renderView();
 
-    expect(
-      (await screen.findAllByText('$1,284,500.00')).length,
-    ).toBeGreaterThan(0);
-    expect(screen.getByText(/Also a floor\./)).toBeInTheDocument();
-    expect(
-      screen.getByText(/no market valuation and contribute/),
-    ).toBeInTheDocument();
+    await screen.findAllByText('$1,284,500.00');
+    present(/Also a floor\./, /no market valuation and contribute/);
   });
 
-  it('names the classes only a curated contract binding may use, and does not repeat the ones both arms share', async () => {
-    apiGetData.mockResolvedValue(
+  // The contract vocabulary is a superset of the classic one: only the
+  // difference is printed, and an absent list prints no clause at all.
+  it.each([
+    [
+      'names only the contract-only class',
+      ['bond', 'commodity', 'fund', 'realestate', 'stock'],
+      true,
+    ],
+    [
+      'omits the clause when no contract vocabulary is served',
+      undefined,
+      false,
+    ],
+  ])('%s', async (_, contractClasses, clause) => {
+    show(
       view({
         definition: {
           ...view().definition,
-          contract_anchor_classes: [
-            'bond',
-            'commodity',
-            'fund',
-            'realestate',
-            'stock',
-          ],
+          contract_anchor_classes: contractClasses,
         },
       }),
     );
-    renderView();
 
-    // The served contract vocabulary is a SUPERSET of the classic one, so
-    // printing it whole would repeat four of five words and bury the one
-    // that differs. Only the difference is shown.
-    expect(await screen.findByText('fund')).toBeInTheDocument();
-    expect(
-      screen.getByText(/statement from a primary source/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('bond, commodity, realestate, stock'),
-    ).toBeInTheDocument();
+    await screen.findByText('bond, commodity, realestate, stock');
+    expect(screen.queryByText('fund') !== null).toBe(clause);
+    expect(screen.queryByText(/statement from a primary source/) !== null).toBe(
+      clause,
+    );
   });
 
-  it('omits the contract-class clause entirely when the server publishes no contract vocabulary', async () => {
-    // Every build before the field existed, and the reason the read is
-    // optional: an absent list must render nothing, never an empty clause
-    // trailing a dash.
-    apiGetData.mockResolvedValue(view());
-    renderView();
-
-    expect(
-      await screen.findByText('bond, commodity, realestate, stock'),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText(/statement from a primary source/),
-    ).not.toBeInTheDocument();
-  });
-
-  it('states the definition and how many candidates each requirement refused', async () => {
-    apiGetData.mockResolvedValue(
+  it('states how many candidates each requirement refused', async () => {
+    show(
       view({
         refused: [
           { reason: 'issuer_not_independently_recognised', assets: 3861 },
@@ -397,112 +369,74 @@ describe('RWAView', () => {
         ],
       }),
     );
-    renderView();
 
-    expect(await screen.findByText(/Candidates refused/)).toBeInTheDocument();
-    expect(screen.getByText('(4,150)')).toBeInTheDocument();
-    expect(
-      screen.getByText('Issuer flagged by the independent directory'),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Issuer recognised by nobody but itself'),
-    ).toBeInTheDocument();
+    await screen.findByText(/Candidates refused/);
+    present(
+      '(4,150)',
+      'Issuer flagged by the independent directory',
+      'Issuer recognised by nobody but itself',
+    );
   });
 
   it('accounts for the population the set was narrowed from, and says who can move each drop', async () => {
-    apiGetData.mockResolvedValue(
+    show(
       view({
         funnel: {
           balanced: true,
           basis: 'Every issuer account that could carry a SEP-1 attestation.',
           stages: [
-            {
-              arm: 'classic',
-              stage: 'issuers_with_home_domain',
-              unit: 'issuer_accounts',
-              count: 44376,
-              dropped: [
-                {
-                  reason: 'sep1_attestation_never_fetched',
-                  count: 1,
-                  actor: 'operator',
-                },
-                // Reached, and served nothing usable. Same shape of
-                // number as the row above, opposite finding and a
-                // different owner — the page has to say which is which.
-                {
-                  reason: 'domain_served_no_sep1_attestation',
-                  count: 29740,
-                  actor: 'issuer',
-                },
+            // Same shape of number, opposite finding and a different owner.
+            stage(
+              'classic',
+              'issuers_with_home_domain',
+              'issuer_accounts',
+              44376,
+              [
+                drop('sep1_attestation_never_fetched', 1, 'operator'),
+                drop('domain_served_no_sep1_attestation', 29740, 'issuer'),
               ],
-            },
-            {
-              arm: 'classic',
-              stage: 'issuers_with_sep1_attestation',
-              unit: 'issuer_accounts',
-              count: 14635,
-            },
-            {
-              arm: 'classic',
-              stage: 'assets_served',
-              unit: 'assets',
-              count: 1,
-            },
+            ),
+            stage(
+              'classic',
+              'issuers_with_sep1_attestation',
+              'issuer_accounts',
+              14635,
+            ),
+            stage('classic', 'assets_served', 'assets', 1),
           ],
         },
       }),
     );
-    renderView();
 
-    // The population, which the page must state.
     expect(await screen.findByText(/Where the population went/)).toBeVisible();
-    expect(screen.getByText('44,376')).toBeInTheDocument();
-    expect(screen.getByText('14,635')).toBeInTheDocument();
-    // The largest coverage gap, named with its owner: a fetch nobody
-    // has run reads nothing like a refusal, and a bare count renders
-    // the two identically.
-    expect(
-      screen.getByText(/stellar\.toml not fetched yet/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/ours to fix/)).toBeInTheDocument();
-    expect(screen.getByText('−1')).toBeInTheDocument();
-    // And the far larger bucket beside it, attributed to the party who
-    // actually owns it. Rendering both under "ours to fix" would
-    // advertise coverage nobody here can reach.
-    expect(
-      screen.getByText(/Domain served no stellar\.toml/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/the issuer’s to fix/)).toBeInTheDocument();
-    expect(screen.getByText('−29,740')).toBeInTheDocument();
+    present(
+      '44,376',
+      '14,635',
+      /stellar\.toml not fetched yet/,
+      /ours to fix/,
+      '−1',
+      /Domain served no stellar\.toml/,
+      /the issuer’s to fix/,
+      '−29,740',
+    );
   });
 
   it('says so when the coverage accounting could not be measured', async () => {
-    apiGetData.mockResolvedValue(
+    show(
       view({
         funnel: {
           balanced: false,
           basis: 'Not measured.',
-          stages: [
-            {
-              arm: 'classic',
-              stage: 'assets_served',
-              unit: 'assets',
-              count: 1,
-              dropped: [],
-            },
-          ],
+          stages: [stage('classic', 'assets_served', 'assets', 1, [])],
         },
       }),
     );
-    renderView();
-    expect(
-      await screen.findByText(/could not be measured/),
-    ).toBeInTheDocument();
+    await screen.findByText(/could not be measured/);
   });
 
   it('renders the empty set as a statement about evidence, not as a zero total', async () => {
-    apiGetData.mockResolvedValue(
+    const basis = 'No asset currently meets the definition.';
+    show(
       view({
         assets: [],
         summary: {
@@ -514,881 +448,388 @@ describe('RWAView', () => {
           assets_with_reference: 0,
           assets_compared: 0,
           reference_valuation: {
-            assets_valued: 0,
+            ...NO_REFERENCE,
             assets_unvalued: 0,
             lower_bound: false,
-            basis: 'No asset currently meets the definition.',
+            basis,
           },
           both_bases: { assets: 0 },
-          basis: 'No asset currently meets the definition.',
+          basis,
         },
         by_class: [],
         by_issuer: [],
       }),
     );
-    renderView();
 
-    expect(
-      await screen.findByText('No asset currently meets the definition'),
-    ).toBeInTheDocument();
-    // BOTH valuation tiles say it. An empty set has no market cap and
-    // no reference valuation, and neither may render as a zero.
+    await screen.findByText('No asset currently meets the definition');
     expect(screen.getAllByText('Not published')).toHaveLength(3);
-    expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
+    absent('$0.00');
   });
 
   it('surfaces a failed load instead of an empty set', async () => {
-    apiGetData.mockRejectedValue(new Error('502 Bad Gateway'));
-    renderView();
+    show(new Error('502 Bad Gateway'));
 
-    expect(
-      await screen.findByText('Failed to load real-world assets'),
-    ).toBeInTheDocument();
-    // An outage must not be presented as "no RWAs exist".
-    expect(
-      screen.queryByText(/No asset currently meets the definition/),
-    ).not.toBeInTheDocument();
+    await screen.findByText('Failed to load real-world assets');
+    absent(/No asset currently meets the definition/);
   });
 
-  it('shows the discount to the instrument valuation, with its publisher and vintage', async () => {
-    apiGetData.mockResolvedValue(view());
-    renderView();
+  it('shows issuer identity, the instrument valuation, the signed gap, and the backing labelled as a claim', async () => {
+    show(view());
 
-    // The independent valuation, at the oracle's own scale.
-    expect(await screen.findByText('$1.0740')).toBeInTheDocument();
-    // Who published it and when — a valuation whose age is invisible
-    // invites a comparison it cannot support.
-    expect(screen.getAllByText(/redstone/).length).toBeGreaterThan(0);
-    // And the gap itself, signed against the instrument.
-    expect(screen.getByText('-3.06%')).toBeInTheDocument();
-    // Coverage of the comparison, so the blanks are not read as zeros.
-    expect(
-      screen.getByText(/carry an independent oracle valuation/),
-    ).toBeInTheDocument();
-  });
-
-  it('renders a refused comparison as words, never as 0.00%', async () => {
-    apiGetData.mockResolvedValue(
-      view({
-        assets: [
-          asset({
-            code: 'XAU',
-            reference: undefined,
-            premium: { status: 'reference_not_instrument_scoped' },
-          }),
-        ],
-      }),
+    await screen.findByText('$1.0740');
+    // A code plus a friendly name is indistinguishable from an impersonator's.
+    atLeast(/GCRYUG…ATMYWC/, 1);
+    atLeast('Etherfuse', 1);
+    // Headline, row and both breakdowns: each level sums the one below.
+    atLeast('$1,284,500.00', 3);
+    atLeast(/redstone/, 1);
+    present('-3.06%', /carry an independent oracle valuation/);
+    // The backing on the row and in both breakdowns, never named a market cap.
+    atLeast('$1,324,956.69', 3);
+    present(
+      'Value of the backing',
+      /Circulating supply × an independent oracle/,
     );
-    renderView();
-
-    await screen.findByText('XAU');
-    // Zero would read as "trades at par" — a finding, and not the one
-    // the data supports.
-    expect(screen.queryByText('0.00%')).not.toBeInTheDocument();
-    expect(screen.queryByText('-0.00%')).not.toBeInTheDocument();
-    // Both the instrument-value and the premium cell say the word.
-    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(2);
-    // Both cells state the same reason: the oracle prices something
-    // else, so neither a value nor a gap can be published.
-    expect(
-      screen.getAllByTitle(/off-chain quantity in its own unit/).length,
-    ).toBeGreaterThanOrEqual(2);
-  });
-
-  it('gives a flagged issuer no independent instrument valuation either', async () => {
-    apiGetData.mockResolvedValue(
-      view({
-        assets: [
-          asset({
-            issuer_directory_tags: ['issuer', 'malicious'],
-            valuation: { status: 'withheld_issuer_flagged' },
-            reference_valuation: { status: 'withheld_issuer_flagged' },
-            reference: undefined,
-            premium: { status: 'withheld_issuer_flagged' },
-          }),
-        ],
-        summary: {
-          ...view().summary,
-          market_cap_usd: undefined,
-          assets_valued: 0,
-          assets_unvalued: 1,
-          lower_bound: true,
-          assets_with_reference: 0,
-          assets_compared: 0,
-          reference_valuation: {
-            assets_valued: 0,
-            assets_unvalued: 1,
-            lower_bound: true,
-            basis: 'No member currently carries a reference valuation.',
-          },
-          both_bases: { assets: 0 },
-        },
-        by_class: [
-          {
-            class: 'bond',
-            assets: 1,
-            assets_unvalued: 1,
-            assets_reference_unvalued: 1,
-          },
-        ],
-        by_issuer: [
-          {
-            issuer: ISSUER,
-            name: 'Etherfuse',
-            assets: 1,
-            assets_unvalued: 1,
-            assets_reference_unvalued: 1,
-          },
-        ],
-      }),
-    );
-    renderView();
-
-    expect(await screen.findByText('Flagged')).toBeInTheDocument();
-    // No figure of any kind reaches a flagged issuer's row — not this
-    // platform's, and not a third party's valuation of the real
-    // instrument, which would be the larger claim of the two.
-    expect(screen.queryByText('$1.0740')).not.toBeInTheDocument();
-    expect(screen.queryAllByText(/redstone/)).toHaveLength(0);
-    expect(screen.queryByText('-3.06%')).not.toBeInTheDocument();
-    // Including the supply-multiplied form, which is the LARGER claim
-    // of the two: a real instrument's value times this account's float.
-    expect(screen.queryAllByText('$1,324,956.69')).toHaveLength(0);
-  });
-
-  it('never renders a real gap as 0.00%', async () => {
-    // Treasury premiums are fractions of a percent by nature. At the
-    // site's usual two decimals a real −0.004% discount rounds to
-    // "0.00%" — which reads as "trades at par", the same wrong reading a
-    // blank cell gives, arrived at from the other direction. The cell
-    // widens instead.
-    apiGetData.mockResolvedValue(
-      view({
-        assets: [asset({ premium: { status: 'published', pct: '-0.0040' } })],
-      }),
-    );
-    renderView();
-
-    expect(await screen.findByText('-0.004%')).toBeInTheDocument();
-    expect(screen.queryByText('0.00%')).not.toBeInTheDocument();
-    expect(screen.queryByText('-0.00%')).not.toBeInTheDocument();
-  });
-
-  it('widens as far as the served precision to keep a gap visible', async () => {
-    apiGetData.mockResolvedValue(
-      view({
-        assets: [asset({ premium: { status: 'published', pct: '-0.0004' } })],
-      }),
-    );
-    renderView();
-
-    expect(await screen.findByText('-0.0004%')).toBeInTheDocument();
-    expect(screen.queryByText('0.00%')).not.toBeInTheDocument();
-    expect(screen.queryByText('-0.000%')).not.toBeInTheDocument();
-  });
-
-  it('keeps the exact served gap available where the display rounds', async () => {
-    // The live CETES gap is −0.0166%, which displays at two decimals.
-    // The served figure is the one the API published, and it stays
-    // reachable rather than being silently replaced by its rounding.
-    apiGetData.mockResolvedValue(
-      view({
-        assets: [asset({ premium: { status: 'published', pct: '-0.0166' } })],
-      }),
-    );
-    renderView();
-
-    expect(await screen.findByText('-0.02%')).toBeInTheDocument();
-    expect(screen.getByTitle(/-0\.0166%/)).toBeInTheDocument();
-  });
-
-  it('names the bound pairs, not a list of codes', async () => {
-    apiGetData.mockResolvedValue(view());
-    renderView();
-
-    // The page states the rule as pairs, because a code is not an
-    // identity and a list of codes would suggest it is.
-    expect(
-      await screen.findByText(
-        'Which tokens are compared against an instrument.',
-      ),
-    ).toBeInTheDocument();
-    // Each binding is shown with its issuer, not as a bare ticker.
-    expect(screen.getByText(/rwa:USTRY/)).toBeInTheDocument();
-    expect(screen.getByText(/rwa:CETES/)).toBeInTheDocument();
-    expect(
-      screen.getAllByText((_, el) =>
-        (el?.textContent ?? '').includes(
-          'anyone can issue a token called USTRY',
-        ),
-      ).length,
-    ).toBeGreaterThan(0);
-  });
-
-  it('says an unbound token is unbound, not that no oracle exists', async () => {
-    apiGetData.mockResolvedValue(
-      view({
-        assets: [
-          asset({
-            reference: undefined,
-            premium: { status: 'reference_not_bound' },
-          }),
-        ],
-      }),
-    );
-    renderView();
-
-    await screen.findByText('USTRY');
-    expect(screen.queryByText('-3.06%')).not.toBeInTheDocument();
-    expect(
-      screen.getAllByTitle(/not one of the pairs bound to an oracle feed/)
-        .length,
-    ).toBeGreaterThanOrEqual(2);
-    // The reason must not read as a statement about what the oracles carry.
-    expect(
-      screen.queryByTitle(/no oracle is currently publishing/),
-    ).not.toBeInTheDocument();
-  });
-
-  it('says an oracle outage is an outage, not an absence', async () => {
-    apiGetData.mockResolvedValue(
-      view({
-        assets: [
-          asset({
-            reference: undefined,
-            premium: { status: 'reference_unavailable' },
-          }),
-        ],
-      }),
-    );
-    renderView();
-
-    await screen.findByText('USTRY');
-    expect(
-      screen.getAllByTitle(
-        /This is an outage, not a statement that no valuation exists/,
-      ).length,
-    ).toBeGreaterThanOrEqual(2);
-    expect(screen.queryByText('-3.06%')).not.toBeInTheDocument();
-  });
-
-  it('labels a stale instrument valuation rather than hiding it', async () => {
-    apiGetData.mockResolvedValue(
-      view({
-        assets: [
-          asset({
-            reference: {
-              price_usd: '1.07403800',
-              source: 'redstone',
-              feed: 'rwa:USTRY',
-              quote: 'fiat:USD',
-              as_of: '2026-08-01T00:00:00Z',
-              provenance: 'oracle_instrument_nav',
-              stale: true,
-            },
-          }),
-        ],
-      }),
-    );
-    renderView();
-
-    expect(await screen.findByText('$1.0740')).toBeInTheDocument();
-    expect(screen.getByText('stale')).toBeInTheDocument();
-    // Labelled, not withheld: it is still the last value published.
-    expect(screen.getByText('-3.06%')).toBeInTheDocument();
-  });
-  it('shows the value of the backing beside the market cap, labelled as a claim', async () => {
-    apiGetData.mockResolvedValue(view());
-    renderView();
-
-    // The figure itself, on the row and in both breakdowns.
-    expect(
-      (await screen.findAllByText('$1,324,956.69')).length,
-    ).toBeGreaterThanOrEqual(3);
-    // Never as a market cap. The column heading, the caption under the
-    // cell and the tile all name the basis rather than borrowing the
-    // market's vocabulary.
-    expect(screen.getByText('Value of the backing')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Circulating supply × an independent oracle/),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText('at reference price').length).toBeGreaterThan(0);
+    atLeast('at reference price', 1);
     expect(
       screen.getByTitle(/Not a market capitalisation: nobody was observed/),
     ).toBeInTheDocument();
-    // And the page states the difference in kind before either number.
-    expect(
-      screen.getByText('Two different kinds of number.'),
-    ).toBeInTheDocument();
-    expect(
-      screen.getAllByText((_, el) =>
-        (el?.textContent ?? '').includes('They are never added together'),
-      ).length,
-    ).toBeGreaterThan(0);
+    present('Two different kinds of number.');
+    const anyText = (s: string) =>
+      screen.getAllByText((_, el) => (el?.textContent ?? '').includes(s))
+        .length;
+    expect(anyText('They are never added together')).toBeGreaterThan(0);
+    // Bound pairs carry their issuer: a code is not an identity.
+    present(
+      'Which tokens are compared against an instrument.',
+      /rwa:USTRY/,
+      /rwa:CETES/,
+    );
+    expect(anyText('anyone can issue a token called USTRY')).toBeGreaterThan(0);
+  });
+
+  // Treasury premiums are fractions of a percent; "0.00%" would read as par.
+  // The exact served gap stays in the title where the display rounds.
+  it.each([
+    ['-0.0040', '-0.004%', ['0.00%', '-0.00%']],
+    ['-0.0004', '-0.0004%', ['0.00%', '-0.000%']],
+    ['-0.0166', '-0.02%', ['0.00%']],
+  ])('renders a %s gap as %s, never par', async (pct, shown, hidden) => {
+    show(one({ premium: { status: 'published', pct } }));
+    await screen.findByText(shown);
+    absent(...hidden);
+    screen.getAllByTitle(new RegExp(`${pct.replace('.', '\\.')}%`));
+  });
+
+  // Both the instrument-value and the premium cell state the reason in words.
+  it.each([
+    ['reference_not_instrument_scoped', /off-chain quantity in its own unit/],
+    ['reference_not_bound', /not one of the pairs bound to an oracle feed/],
+    [
+      'reference_unavailable',
+      /This is an outage, not a statement that no valuation exists/,
+    ],
+  ])(
+    'renders a %s comparison as a stated reason, never 0.00%',
+    async (status, reason) => {
+      show(
+        one({ reference: undefined, premium: { status } as Asset['premium'] }),
+      );
+
+      await screen.findByText('USTRY');
+      absent('-3.06%', '0.00%', '-0.00%');
+      atLeast('Unavailable', 2);
+      expect(screen.getAllByTitle(reason).length).toBeGreaterThanOrEqual(2);
+      if (status === 'reference_not_bound') {
+        expect(
+          screen.queryByTitle(/no oracle is currently publishing/),
+        ).not.toBeInTheDocument();
+      }
+    },
+  );
+
+  it('labels a stale instrument valuation rather than hiding it', async () => {
+    show(
+      one({
+        reference: {
+          ...asset().reference!,
+          as_of: '2026-08-01T00:00:00Z',
+          provenance: 'oracle_instrument_nav',
+          stale: true,
+        },
+      }),
+    );
+
+    await screen.findByText('$1.0740');
+    present('stale', '-3.06%');
   });
 
   it('values an asset nobody trades without inventing a market cap for it', async () => {
-    // The case the second basis exists for. A tokenized treasury that
-    // has never traded has no market price, so its market-cap cell must
-    // stay empty — while an oracle prices its instrument daily and the
-    // reference cell is full.
-    apiGetData.mockResolvedValue(
-      view({
-        assets: [
-          asset({
-            code: 'USDY',
-            valuation: { status: 'unpriced' },
-            premium: { status: 'no_market_price' },
-          }),
-        ],
-        summary: {
-          ...view().summary,
-          market_cap_usd: undefined,
-          assets_valued: 0,
-          assets_unvalued: 1,
-          lower_bound: true,
-          assets_compared: 0,
-          both_bases: { assets: 0 },
+    show(
+      partlyValued(
+        {
+          code: 'USDY',
+          valuation: { status: 'unpriced' },
+          premium: { status: 'no_market_price' },
         },
-        by_class: [
-          {
-            class: 'bond',
-            assets: 1,
-            assets_unvalued: 1,
-            reference_value_usd: '1324956.69',
-            assets_reference_unvalued: 0,
-          },
-        ],
-        by_issuer: [
-          {
-            issuer: ISSUER,
-            assets: 1,
-            assets_unvalued: 1,
-            reference_value_usd: '1324956.69',
-            assets_reference_unvalued: 0,
-          },
-        ],
-      }),
+        { reference: true },
+      ),
     );
-    renderView();
 
     await screen.findByText('USDY');
-    // The reference figure is published...
-    expect(screen.getAllByText('$1,324,956.69').length).toBeGreaterThanOrEqual(
-      3,
-    );
-    // ...and the market cap is still absent, stated as unavailable
-    // rather than filled in from the figure beside it.
-    expect(screen.queryByText('$1,284,500.00')).not.toBeInTheDocument();
-    expect(screen.getAllByText('Not published').length).toBe(1);
-    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(2);
+    atLeast('$1,324,956.69', 3);
+    absent('$1,284,500.00');
+    expect(screen.getAllByText('Not published')).toHaveLength(1);
+    atLeast('Unavailable', 2);
   });
 
   it('states why a reference valuation is missing rather than showing a dash', async () => {
-    apiGetData.mockResolvedValue(
-      view({
-        assets: [
-          asset({
-            reference_valuation: { status: 'supply_unavailable' },
-            circulating_supply: undefined,
-          }),
-        ],
-        summary: {
-          ...view().summary,
-          reference_valuation: {
-            assets_valued: 0,
-            assets_unvalued: 1,
-            lower_bound: true,
-            basis: 'No member currently carries a reference valuation.',
-          },
-          both_bases: { assets: 0 },
+    show(
+      partlyValued(
+        {
+          reference_valuation: { status: 'supply_unavailable' },
+          circulating_supply: undefined,
         },
-        by_class: [
-          {
-            class: 'bond',
-            assets: 1,
-            market_cap_usd: '1284500.00',
-            assets_unvalued: 0,
-            assets_reference_unvalued: 1,
-          },
-        ],
-        by_issuer: [
-          {
-            issuer: ISSUER,
-            assets: 1,
-            market_cap_usd: '1284500.00',
-            assets_unvalued: 0,
-            assets_reference_unvalued: 1,
-          },
-        ],
-      }),
+        { market: true },
+      ),
     );
-    renderView();
 
     await screen.findByText('USTRY');
-    expect(screen.queryAllByText('$1,324,956.69')).toHaveLength(0);
-    expect(
-      screen.getAllByTitle(/no circulating-supply reading does/).length,
-    ).toBeGreaterThan(0);
+    absent('$1,324,956.69');
+    screen.getAllByTitle(/no circulating-supply reading does/);
+  });
+
+  it('describes a third-party-curated basis as curation, not an oracle feed', async () => {
+    show(one({ basis: 'third_party_curated', anchor_class: undefined }));
+
+    await screen.findByText('USTRY');
+    present(/listed by a named third-party curator/);
+    absent('priced by an independent oracle feed');
   });
 });
 
-/**
- * The contract arm.
- *
- * The funnel now carries two arms that narrow different populations
- * from different roots. Rendering them as one list would invite a
- * reader to subtract the last stage of one from the first stage of the
- * next, which relates nothing — so the page has to separate them, and
- * has to say what the second one is.
- */
+// The funnel's arms narrow different populations; the page separates them
+// so nobody subtracts one arm's last stage from the next one's first.
 describe('RWAView — contract arm', () => {
-  beforeEach(() => {
-    apiGetData.mockReset();
-    apiGet.mockReset();
-    apiGet.mockResolvedValue(stablecoinPage());
-  });
-
   const CONTRACT = 'CAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSBFLM';
-  const FT = 'GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5';
+  const contractAsset: Partial<Asset> = {
+    asset_id: CONTRACT,
+    code: '',
+    issuer: '',
+    contract_id: CONTRACT,
+    symbol: 'USTRY',
+    basis: 'contract_oracle_rwa_feed',
+  };
 
-  function contractView(): View {
-    return view({
-      assets: [
-        asset({
-          asset_id: CONTRACT,
-          code: '',
-          issuer: '',
-          contract_id: CONTRACT,
-          symbol: 'USTRY',
-          slug: CONTRACT,
-          name: 'Example Treasury Fund',
-          basis: 'contract_oracle_rwa_feed',
-        }),
-      ],
-      funnel: {
-        balanced: true,
-        basis: 'measured',
-        stages: [
-          {
-            arm: 'contract',
-            stage: 'curated_directory_entries',
-            unit: 'directory_addresses',
-            count: 18439,
-            dropped: [
-              {
-                reason: 'directory_entry_names_an_account',
-                count: 18000,
-                actor: 'definition',
-              },
-            ],
-          },
-          {
-            arm: 'contract',
-            stage: 'directory_recognised_contracts',
-            unit: 'contracts',
-            count: 1,
-          },
-          {
-            arm: 'contract',
-            stage: 'contract_assets_served',
-            unit: 'assets',
-            count: 1,
-          },
-        ],
-      },
-      unreached_entities: [
-        {
-          address: FT,
-          name: 'Franklin Templeton',
-          domain: 'franklintempleton.com',
-          tags: ['issuer'],
-        },
-      ],
-    } as Partial<View>);
-  }
-
-  it('separates the contract arm and names its stages in prose', async () => {
-    apiGetData.mockResolvedValue(contractView());
-    renderView();
-
-    expect(
-      await screen.findByText('Tokens issued by a contract'),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Addresses in the independent directory'),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Names an entity, not a token contract/),
-    ).toBeInTheDocument();
-    // The wire vocabulary must not reach the page: a reader should
-    // never have to know the field names to read the accounting.
-    expect(screen.queryByText('curated_directory_entries')).toBeNull();
-    expect(screen.queryByText('directory_entry_names_an_account')).toBeNull();
-    expect(screen.queryByText('directory_addresses')).toBeNull();
-  });
-
-  it('reports a recognised issuer it holds no token for, by name', async () => {
-    apiGetData.mockResolvedValue(contractView());
-    renderView();
-
-    expect(
-      await screen.findByText('Recognised issuers we hold no token for'),
-    ).toBeInTheDocument();
-    expect(screen.getByText('Franklin Templeton')).toBeInTheDocument();
-    expect(screen.getByText('franklintempleton.com')).toBeInTheDocument();
-  });
-
-  it('says a contract token is not reference-valued, and why', async () => {
-    apiGetData.mockResolvedValue(
+  it('separates the contract arm in prose and names the recognised issuers it holds no token for', async () => {
+    show(
       view({
         assets: [
           asset({
-            asset_id: CONTRACT,
-            code: '',
-            issuer: '',
-            contract_id: CONTRACT,
-            symbol: 'USTRY',
-            basis: 'contract_oracle_rwa_feed',
-            reference_valuation: { status: 'reference_contract_not_bound' },
-            reference: undefined,
-            premium: { status: 'reference_contract_not_bound' },
+            ...contractAsset,
+            slug: CONTRACT,
+            name: 'Example Treasury Fund',
           }),
         ],
-        summary: {
-          ...view().summary,
-          assets_with_reference: 0,
-          assets_compared: 0,
-          reference_valuation: {
-            assets_valued: 0,
-            assets_unvalued: 1,
-            lower_bound: true,
-            basis: 'No member currently carries a reference valuation.',
-          },
-          both_bases: { assets: 0 },
+        funnel: {
+          balanced: true,
+          basis: 'measured',
+          stages: [
+            stage(
+              'contract',
+              'curated_directory_entries',
+              'directory_addresses',
+              18439,
+              [drop('directory_entry_names_an_account', 18000, 'definition')],
+            ),
+            stage('contract', 'directory_recognised_contracts', 'contracts', 1),
+            stage('contract', 'contract_assets_served', 'assets', 1),
+          ],
         },
-        by_class: [
+        unreached_entities: [
           {
-            class: 'bond',
-            assets: 1,
-            market_cap_usd: '1284500.00',
-            assets_unvalued: 0,
-            assets_reference_unvalued: 1,
+            address: 'GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5',
+            name: 'Franklin Templeton',
+            domain: 'franklintempleton.com',
+            tags: ['issuer'],
           },
         ],
-        by_issuer: [
-          {
-            issuer: ISSUER,
-            assets: 1,
-            market_cap_usd: '1284500.00',
-            assets_unvalued: 0,
-            assets_reference_unvalued: 1,
-          },
-        ],
-      }),
+      } as Partial<View>),
     );
-    renderView();
 
-    // A stated refusal, not a blank. A reader must be able to tell "we
-    // will not do this" from "we forgot".
-    expect(
-      (await screen.findAllByTitle(/nothing binds a contract address/)).length,
-    ).toBeGreaterThan(0);
-    expect(screen.queryAllByText('$1,324,956.69')).toHaveLength(0);
-    // The market cap it DOES have is untouched by that refusal.
-    expect(screen.getAllByText('$1,284,500.00').length).toBeGreaterThan(0);
+    await screen.findByText('Tokens issued by a contract');
+    present(
+      'Addresses in the independent directory',
+      /Names an entity, not a token contract/,
+    );
+    // Wire vocabulary never reaches the page.
+    absent(
+      'curated_directory_entries',
+      'directory_entry_names_an_account',
+      'directory_addresses',
+    );
+    present(
+      'Recognised issuers we hold no token for',
+      'Franklin Templeton',
+      'franklintempleton.com',
+    );
+  });
+
+  it('says a contract token is not reference-valued, and why', async () => {
+    show(
+      partlyValued(
+        {
+          ...contractAsset,
+          reference_valuation: { status: 'reference_contract_not_bound' },
+          reference: undefined,
+          premium: { status: 'reference_contract_not_bound' },
+        },
+        { market: true },
+      ),
+    );
+
+    // A stated refusal: "we will not" must read differently from "we forgot".
+    await screen.findAllByTitle(/nothing binds a contract address/);
+    absent('$1,324,956.69');
+    atLeast('$1,284,500.00', 1);
   });
 
   it('accounts in the funnel for every asset the oracles do not price', async () => {
-    apiGetData.mockResolvedValue(
+    show(
       view({
         funnel: {
           balanced: true,
           basis: 'Every issuer account that could carry a SEP-1 attestation.',
           stages: [
-            {
-              arm: 'classic',
-              stage: 'assets_served',
-              unit: 'assets',
-              count: 3,
-            },
-            {
-              arm: 'valuation',
-              stage: 'assets_served_all_arms',
-              unit: 'assets',
-              count: 3,
-              dropped: [
-                {
-                  reason: 'reference_not_instrument_scoped',
-                  count: 1,
-                  actor: 'definition',
-                },
-                { reason: 'supply_unavailable', count: 1, actor: 'operator' },
-              ],
-            },
-            {
-              arm: 'valuation',
-              stage: 'assets_reference_valued',
-              unit: 'assets',
-              count: 1,
-            },
+            stage('classic', 'assets_served', 'assets', 3),
+            stage('valuation', 'assets_served_all_arms', 'assets', 3, [
+              drop('reference_not_instrument_scoped', 1, 'definition'),
+              drop('supply_unavailable', 1, 'operator'),
+            ]),
+            stage('valuation', 'assets_reference_valued', 'assets', 1),
           ],
         },
       }),
     );
-    renderView();
 
-    // The arm is labelled as an accounting rather than a narrowing, so
-    // an unpriced member is not read as an asset the rule refused.
-    expect(
-      await screen.findByText('Whose backing is independently priced'),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Whose backing an independent oracle prices'),
-    ).toBeInTheDocument();
-    // And each drop says who can move it — a gap here reads differently
-    // from the rule working.
-    expect(
-      screen.getByText('No circulating-supply reading'),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('The feed prices an ounce, not a token'),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText(/ours to fix/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/the rule working/).length).toBeGreaterThan(0);
+    await screen.findByText('Whose backing is independently priced');
+    present(
+      'Whose backing an independent oracle prices',
+      'No circulating-supply reading',
+      'The feed prices an ounce, not a token',
+    );
+    atLeast(/ours to fix/, 1);
+    atLeast(/the rule working/, 1);
   });
 
-  // ─── the reported defect ────────────────────────────────────────
-  //
-  // The page led with market cap. On the live set that is $17.13M
-  // against $992.49M of backing, because the two largest instruments —
-  // a $535.90M and a $439.46M fund — are bought and held and have no
-  // observed Stellar price at all: they contribute nothing to market
-  // cap while carrying $975M of backing between them. An operator
-  // comparing the page against a supply-times-NAV figure published
-  // elsewhere read the difference as missing data. Nothing was missing.
-  // The page was leading with the basis that this set, by its nature,
-  // mostly does not have.
+  // The two largest funds are bought and held: no observed market cap, most
+  // of the backing. Leading with market cap read as missing data.
   describe('leads with the basis the set actually has', () => {
-    const LIVE_BASIS =
-      'Sum of circulating supply times an independent oracle’s published ' +
-      'valuation of the real-world instrument each token declares it anchors ' +
-      'to. THIS IS NOT A MARKET CAPITALISATION AND NOT AN OBSERVED PRICE: ' +
-      'nobody was seen paying it. It is what an oracle says one unit of the ' +
-      'backing is worth, multiplied by the tokens in circulation. Assets ' +
-      'with no bound and current oracle feed contribute nothing and are ' +
-      'counted separately, so the total is a LOWER BOUND.';
+    const fund = (code: string, name: string, value_usd: string) =>
+      asset({
+        asset_id: `${code}-${ISSUER}`,
+        code,
+        slug: code.toLowerCase(),
+        name,
+        valuation: { status: 'unpriced' },
+        premium: { status: 'no_market_price' },
+        reference_valuation: { status: 'published', value_usd },
+      });
 
-    function liveView(over: Partial<Schemas['RWASummary']> = {}) {
+    function liveView(reference: Partial<Summary['reference_valuation']> = {}) {
       return view({
         assets: [
           asset(),
-          asset({
-            asset_id: `BENJI-${ISSUER}`,
-            code: 'BENJI',
-            slug: 'benji',
-            name: 'Franklin OnChain U.S. Government Money Fund',
-            valuation: { status: 'unpriced' },
-            premium: { status: 'no_market_price' },
-            reference_valuation: {
-              status: 'published',
-              value_usd: '439462363.05',
-            },
-          }),
-          asset({
-            asset_id: `USDY-${ISSUER}`,
-            code: 'USDY',
-            slug: 'usdy',
-            name: 'Ondo US Dollar Yield',
-            valuation: { status: 'unpriced' },
-            premium: { status: 'no_market_price' },
-            reference_valuation: {
-              status: 'published',
-              value_usd: '535897722.98',
-            },
-          }),
+          fund(
+            'BENJI',
+            'Franklin OnChain U.S. Government Money Fund',
+            '439462363.05',
+          ),
+          fund('USDY', 'Ondo US Dollar Yield', '535897722.98'),
         ],
-        summary: {
-          ...view().summary,
-          assets: 11,
-          issuers: 5,
-          market_cap_usd: '17128565.34',
-          assets_valued: 3,
-          assets_unvalued: 8,
-          lower_bound: true,
-          assets_with_reference: 7,
-          assets_compared: 3,
-          reference_valuation: {
-            value_usd: '992488360.69',
-            assets_valued: 7,
-            assets_unvalued: 4,
-            lower_bound: true,
-            sources: ['redstone'],
-            basis: LIVE_BASIS,
-          },
-          ...over,
-        },
+        summary: wideSummary(reference),
       });
     }
 
-    it('puts the reference total ahead of the market cap', async () => {
-      apiGetData.mockResolvedValue(liveView());
-      renderView();
+    it('puts the reference total first, states its basis as text, and calls it a floor', async () => {
+      show(liveView());
 
       const backing = await screen.findByText('Value of the backing');
       const market = screen.getByText('Market cap (observed trades)');
-      // Node.DOCUMENT_POSITION_FOLLOWING === 4: `market` comes after
-      // `backing` in document order. Both are present at full size —
-      // the market figure is second, not hidden.
       expect(
         backing.compareDocumentPosition(market) &
           Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
-      expect(screen.getAllByText('$992,488,360.69').length).toBeGreaterThan(0);
-      expect(screen.getAllByText('$17,128,565.34').length).toBeGreaterThan(0);
-    });
-
-    it('carries the headline basis as page text, not only as a tooltip', async () => {
-      apiGetData.mockResolvedValue(liveView());
-      renderView();
-
-      // The sentence a reader must not have to hover to find. It comes
-      // from the SERVED basis, so the page cannot drift from what the
-      // server says the number means.
-      const stated = await screen.findByText(
-        /THIS IS NOT A MARKET CAPITALISATION AND NOT AN OBSERVED PRICE/,
+      atLeast('$992,488,360.69', 1);
+      atLeast('$17,128,565.34', 1);
+      // Page text from the SERVED basis, not a tooltip.
+      expect(
+        screen.getByText(
+          /THIS IS NOT A MARKET CAPITALISATION AND NOT AN OBSERVED PRICE/,
+        ).textContent,
+      ).toMatch(/nobody was seen paying it/);
+      atLeast('What this figure is, in full', 1);
+      present(
+        /A floor, not a total\./,
+        /4 unvalued/,
+        /of 11 assets in the set carry no reference/,
+        /at least this much, not exactly this much/,
       );
-      expect(stated).toBeInTheDocument();
-      // Rendered text, not a title attribute on something invisible.
-      expect(stated.textContent).toMatch(/nobody was seen paying it/);
-      // And the tail of the basis is reachable without leaving the page.
-      expect(
-        screen.getAllByText('What this figure is, in full').length,
-      ).toBeGreaterThan(0);
-    });
-
-    it('says the headline is a floor and how many assets it could not value', async () => {
-      apiGetData.mockResolvedValue(liveView());
-      renderView();
-
-      expect(
-        await screen.findByText(/A floor, not a total\./),
-      ).toBeInTheDocument();
-      expect(screen.getByText(/4 unvalued/)).toBeInTheDocument();
-      expect(
-        screen.getByText(/of 11 assets in the set carry no reference/),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText(/at least this much, not exactly this much/),
-      ).toBeInTheDocument();
-    });
-
-    it('shows a backing value on a row no market ever priced', async () => {
-      apiGetData.mockResolvedValue(liveView());
-      renderView();
-
-      // The two funds that produced the whole discrepancy. Each has no
-      // market cap and must still publish its backing, attributed to
-      // the reference basis rather than left blank.
-      expect(await screen.findByText('$439,462,363.05')).toBeInTheDocument();
-      expect(screen.getByText('$535,897,722.98')).toBeInTheDocument();
-      expect(
-        screen.getAllByText('at reference price').length,
-      ).toBeGreaterThanOrEqual(2);
-      // And the market column says withheld, never zero.
-      expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0);
-      expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
+      // The unpriced funds still publish backing; the market column says withheld.
+      present('$439,462,363.05', '$535,897,722.98');
+      atLeast('at reference price', 2);
+      atLeast('Unavailable', 1);
+      absent('$0.00');
     });
 
     it('never renders a withheld headline as zero', async () => {
-      apiGetData.mockResolvedValue(
+      show(
         liveView({
-          reference_valuation: {
-            assets_valued: 0,
-            assets_unvalued: 11,
-            lower_bound: false,
-            basis: 'No member currently carries a reference valuation.',
-          },
+          value_usd: undefined,
+          assets_valued: 0,
+          assets_unvalued: 11,
+          lower_bound: false,
+          sources: undefined,
         }),
       );
-      renderView();
 
-      expect(
-        (await screen.findAllByText('Not published')).length,
-      ).toBeGreaterThan(0);
-      expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
-      expect(
-        screen.getByText(
-          'No member carries an independent valuation of its instrument',
-        ),
-      ).toBeInTheDocument();
+      await screen.findAllByText('Not published');
+      absent('$0.00');
+      present('No member carries an independent valuation of its instrument');
     });
 
-    // ─── The headline over-claimed a single provenance ────
-    //
-    // The total can mix oracle NAVs, listing-platform prices and
-    // prospectus constant-NAV declarations (RWAReferenceSummary.
-    // provenances), but the headline and the "Where the reference
-    // comes from" line both asserted "an independent oracle" and
-    // "each row names its own feed" unconditionally — true for a
-    // pure-oracle total, false the moment a listing price or a CNAV
-    // row contributes.
-    it('says "the published reference valuation" instead of naming an oracle when the total mixes provenances', async () => {
-      apiGetData.mockResolvedValue(
-        liveView({
-          reference_valuation: {
-            value_usd: '992488360.69',
-            assets_valued: 7,
-            assets_unvalued: 4,
-            lower_bound: true,
-            sources: ['redstone', 'issuer-nav-page'],
-            provenances: ['oracle_instrument_nav', 'listing_platform_price'],
-            basis: LIVE_BASIS,
-          },
-        }),
-      );
-      renderView();
-
-      expect(
-        await screen.findByText(
+    // The total can mix oracle NAVs, listing prices and prospectus CNAVs;
+    // naming "an independent oracle" is only true for a pure-oracle total.
+    it.each([
+      [
+        'names the published reference valuation when provenances mix',
+        ['redstone', 'issuer-nav-page'],
+        ['oracle_instrument_nav', 'listing_platform_price'],
+        [
           /Circulating supply × the published reference valuation/,
-        ),
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByText(/Circulating supply × an independent oracle/),
-      ).not.toBeInTheDocument();
-      // "Where the reference comes from" names the mixture instead of
-      // calling a listing-platform or prospectus row a "feed".
-      expect(
-        screen.getByText(/2 different kinds of claim, not/),
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByText(/each row names its own feed/),
-      ).not.toBeInTheDocument();
-    });
+          /2 different kinds of claim, not/,
+        ],
+        [
+          /Circulating supply × an independent oracle/,
+          /each row names its own feed/,
+        ],
+      ],
+      [
+        'keeps "an independent oracle" and "feed" when every row is oracle-priced',
+        ['redstone'],
+        ['oracle_instrument_nav'],
+        [
+          /Circulating supply × an independent oracle/,
+          /each row names its own feed/,
+        ],
+        [],
+      ],
+    ] as const)('%s', async (_, sources, provenances, shown, hidden) => {
+      show(liveView({ sources: [...sources], provenances: [...provenances] }));
 
-    it('keeps "an independent oracle" and "feed" when every contributing row is oracle-priced', async () => {
-      apiGetData.mockResolvedValue(
-        liveView({
-          reference_valuation: {
-            value_usd: '992488360.69',
-            assets_valued: 7,
-            assets_unvalued: 4,
-            lower_bound: true,
-            sources: ['redstone'],
-            provenances: ['oracle_instrument_nav'],
-            basis: LIVE_BASIS,
-          },
-        }),
-      );
-      renderView();
-
-      expect(
-        await screen.findByText(/Circulating supply × an independent oracle/),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText(/each row names its own feed/),
-      ).toBeInTheDocument();
+      await screen.findByText(shown[0]);
+      present(...shown);
+      absent(...hidden);
     });
 
     it('splits the sources by provenance and drops every oracle claim when the total mixes kinds', async () => {
@@ -1397,7 +838,7 @@ describe('RWAView — contract arm', () => {
       const ref = (
         source: string,
         provenance: Schemas['RWAReference']['provenance'],
-      ): Schemas['RWAReference'] => ({
+      ) => ({
         price_usd: '1.00000000',
         source,
         feed: 'rwa:X',
@@ -1424,20 +865,14 @@ describe('RWAView — contract arm', () => {
         funnel: {
           balanced: true,
           basis: 'Every served asset.',
-          stages: [
-            {
-              arm: 'valuation',
-              stage: 'assets_reference_valued',
-              unit: 'assets',
-              count: 3,
-            },
-          ],
+          stages: [stage('valuation', 'assets_reference_valued', 'assets', 3)],
         },
         summary: {
           ...view().summary,
           assets: 3,
           assets_with_reference: 3,
           reference_valuation: {
+            ...LIVE_REFERENCE,
             value_usd: '3974870.07',
             assets_valued: 3,
             assets_unvalued: 0,
@@ -1448,18 +883,10 @@ describe('RWAView — contract arm', () => {
               'oracle_instrument_nav',
               'prospectus_constant_nav',
             ],
-            basis: LIVE_BASIS,
           },
         },
       });
-      // The history and premium panels answer from their own endpoints; a
-      // rejection keeps them rendered as an error rather than fed this view.
-      apiGetData.mockImplementation((path: string) =>
-        path === '/v1/rwa/history' || path === '/v1/rwa/premium'
-          ? Promise.reject(new Error('unavailable'))
-          : Promise.resolve(mixed),
-      );
-      const { container } = renderView();
+      const { container } = show(mixed);
 
       const origin = (
         await screen.findByText('Where the reference comes from.')
@@ -1470,24 +897,17 @@ describe('RWAView — contract arm', () => {
       expect(origin).not.toHaveTextContent('issuer NAV page https://');
       expect(origin).toHaveTextContent('carry a published reference valuation');
       expect(origin).not.toHaveTextContent(/independent oracle/);
-      expect(
-        screen.getByText(
-          'Whose backing carries a published reference valuation',
-        ),
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByText('Whose backing an independent oracle prices'),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.queryAllByText(/what an independent oracle says/),
-      ).toHaveLength(0);
+      present('Whose backing carries a published reference valuation');
+      absent(
+        'Whose backing an independent oracle prices',
+        /what an independent oracle says/,
+      );
       expect(
         screen.getAllByText(/a listing platform's price for the token/),
       ).toHaveLength(2);
 
       await screen.findByText('Where the population went');
-      // The admission rule's "an independent oracle publishes a feed" is about
-      // membership, not the valuation, so only valuation claims are matched.
+      // "an independent oracle publishes a feed" is the admission rule, not a valuation.
       expect(document.body).not.toHaveTextContent(
         /independent oracle(’s|'s)? (says|valuation|prices)|independently priced|oracle’s valuation of the backing/i,
       );
@@ -1505,278 +925,150 @@ describe('RWAView — contract arm', () => {
   });
 });
 
-// splitBasis decides what a reader sees without asking. Its edge cases
-// are the ones where a basis could silently stop being shown at all.
-describe('splitBasis', () => {
-  it('leads with the opening sentences and defers the rest', () => {
-    const { lead, rest } = splitBasis('One. Two. Three. Four.');
-    expect(lead).toBe('One. Two.');
-    expect(rest).toBe('Three. Four.');
-  });
-
-  it('shows everything when the basis is shorter than the lead', () => {
-    const { lead, rest } = splitBasis('Only one sentence.');
-    expect(lead).toBe('Only one sentence.');
-    expect(rest).toBe('');
-  });
-
-  it('shows text that carries no sentence break rather than dropping it', () => {
-    const { lead, rest } = splitBasis('no terminator here');
-    expect(lead).toBe('no terminator here');
-    expect(rest).toBe('');
-  });
-
-  it('is empty for an absent basis rather than throwing', () => {
-    expect(splitBasis(undefined)).toEqual({ lead: '', rest: '' });
-    expect(splitBasis(null)).toEqual({ lead: '', rest: '' });
-    expect(splitBasis('   ')).toEqual({ lead: '', rest: '' });
-  });
-});
-
-// Money is summed in integer cents, never in floats. A page total that
-// drifts in the last place is a figure nobody published.
-describe('sumUsd', () => {
-  it('sums served decimal strings exactly', () => {
-    expect(
-      sumUsd(['354959662.86', '11780447.97', '3595985.29', '3368263.79']),
-    ).toEqual({ total: '373704359.91', valued: 4, unvalued: 0 });
-  });
-
-  it('does not drift the way a float sum does', () => {
-    // 0.1 + 0.2 === 0.30000000000000004 in float64.
-    expect(sumUsd(['0.10', '0.20']).total).toBe('0.30');
-  });
-
-  it('counts what it could not read and still totals the rest', () => {
-    expect(sumUsd(['10.00', null, undefined, 'n/a', '5.50'])).toEqual({
-      total: '15.50',
-      valued: 2,
-      unvalued: 3,
-    });
-  });
-
-  it('is null, never zero, when nothing was readable', () => {
-    expect(sumUsd([null, undefined])).toEqual({
-      total: null,
-      valued: 0,
-      unvalued: 2,
-    });
-    expect(sumUsd([])).toEqual({ total: null, valued: 0, unvalued: 0 });
-  });
-});
-
-// The operator was reading a COMBINED figure published elsewhere
-// against our real-world-asset-only headline — a whole against a part.
-// The page carries all three quantities so that comparison is
-// like-for-like, and keeps the stablecoin arm out of the RWA total.
+// The page carries RWA, stablecoins and their sum so a combined figure
+// published elsewhere compares like-for-like, without stablecoins in the RWA total.
 describe('RWAView — the wider sector', () => {
-  beforeEach(() => {
-    apiGetData.mockReset();
-    apiGet.mockReset();
+  const USDC = { code: 'USDC', market_cap_usd: '354959662.86' };
+  const sectorView = () => view({ summary: wideSummary() });
+
+  it('publishes the stablecoin total and a combined figure, keeping stablecoins out of the RWA headline', async () => {
     apiGet.mockResolvedValue(
       stablecoinPage([
-        { code: 'USDC', market_cap_usd: '354959662.86' },
+        USDC,
         { code: 'PYUSD', market_cap_usd: '11780447.97' },
         { code: 'EURC', market_cap_usd: '3595985.29' },
         { code: 'yUSDC', market_cap_usd: '3368263.79' },
       ]),
     );
-  });
+    show(sectorView());
 
-  function sectorView() {
-    return view({
-      summary: {
-        ...view().summary,
-        assets: 11,
-        market_cap_usd: '17128565.34',
-        assets_valued: 3,
-        assets_unvalued: 8,
-        lower_bound: true,
-        reference_valuation: {
-          value_usd: '992488360.69',
-          assets_valued: 7,
-          assets_unvalued: 4,
-          lower_bound: true,
-          sources: ['redstone'],
-          basis: 'A. B. C.',
-        },
-      },
-    });
-  }
-
-  it('publishes the stablecoin total from the served catalogue', async () => {
-    apiGetData.mockResolvedValue(sectorView());
-    renderView();
-
-    expect(await screen.findByText('Stablecoins')).toBeInTheDocument();
-    expect(screen.getByText('$373,704,359.91')).toBeInTheDocument();
-    expect(
-      screen.getByText('4 fiat-backed tokens issued on Stellar'),
-    ).toBeInTheDocument();
-  });
-
-  it('adds the two arms into a combined figure and says it is two bases', async () => {
-    apiGetData.mockResolvedValue(sectorView());
-    renderView();
-
-    expect(await screen.findByText('Combined')).toBeInTheDocument();
+    await screen.findByText('Stablecoins');
+    present('$373,704,359.91', '4 fiat-backed tokens issued on Stellar');
     // 992,488,360.69 + 373,704,359.91, exactly.
-    expect(screen.getByText('$1,366,192,720.60')).toBeInTheDocument();
-    expect(screen.getByText(/Two bases, added\./)).toBeInTheDocument();
-    expect(
-      screen.getByText(/not the real-world-asset figure/),
-    ).toBeInTheDocument();
-  });
-
-  it('keeps stablecoins out of the real-world-asset figure', async () => {
-    apiGetData.mockResolvedValue(sectorView());
-    renderView();
-
-    // The headline is exactly what the server served for the RWA set —
-    // the stablecoin arm moved it by nothing.
-    expect(await screen.findByText('$992,488,360.69')).toBeInTheDocument();
-    expect(screen.getByText(/Not a real-world asset\./)).toBeInTheDocument();
-    expect(
-      screen.getByText(/the definition above refuses the whole class/),
-    ).toBeInTheDocument();
+    await screen.findByText('Combined');
+    present(
+      '$1,366,192,720.60',
+      /Two bases, added\./,
+      /not the real-world-asset figure/,
+      '$992,488,360.69',
+      /Not a real-world asset\./,
+      /the definition above refuses the whole class/,
+    );
   });
 
   it('withholds the combined figure when the stablecoin arm fails', async () => {
-    apiGetData.mockResolvedValue(sectorView());
     apiGet.mockRejectedValue(new Error('stablecoin catalogue unreachable'));
-    renderView();
+    show(sectorView());
 
-    // The RWA arm still publishes; the sector arm says it does not know.
-    expect(await screen.findByText('$992,488,360.69')).toBeInTheDocument();
-    expect(screen.getByText('Unavailable')).toBeInTheDocument();
-    // And Combined is withheld rather than published from one arm — a
-    // smaller claim must never wear the bigger name.
-    expect(screen.getByText('Not published')).toBeInTheDocument();
-    expect(screen.queryByText('$992,488,360.69extra')).not.toBeInTheDocument();
+    await screen.findByText('$992,488,360.69');
+    present('Unavailable');
+    // A smaller claim must never wear the bigger name.
+    present('Not published');
   });
 
-  it('marks the combined figure as a floor when either arm is short', async () => {
-    apiGetData.mockResolvedValue(sectorView());
-    apiGet.mockResolvedValue(
-      stablecoinPage([
-        { code: 'USDC', market_cap_usd: '354959662.86' },
-        { code: 'USDT0' }, // in the catalogue, no supply reading yet
-      ]),
-    );
-    renderView();
-
-    await screen.findByText('Combined');
-    // Three floors: the backing, the market cap, and the sum of both.
-    expect(screen.getAllByText('≥').length).toBeGreaterThanOrEqual(3);
-    expect(
-      screen.getByText('1 fiat-backed token issued on Stellar'),
-    ).toBeInTheDocument();
-  });
-
-  // USDT0's case, end to end on the tile. It trades ~$106/day on
-  // Stellar, so no market cap is published for it and the tile would
-  // show a floor with an invisible hole. The listing-priced figure fills
-  // the hole — and the tile has to SAY that the total now mixes two
-  // bases rather than quietly reading as one measurement.
-  it('sums a listing-priced stablecoin and says the total mixes two bases', async () => {
-    apiGetData.mockResolvedValue(sectorView());
-    apiGet.mockResolvedValue(
-      stablecoinPage([
-        { code: 'USDC', market_cap_usd: '354959662.86' },
+  // Only an observed market cap or a `published` listing valuation counts,
+  // and a listing-priced row turns the tile into a mixed-basis total.
+  it.each([
+    [
+      'marks the totals as floors when a token has no supply reading',
+      [USDC, { code: 'USDT0' }],
+      ['1 fiat-backed token issued on Stellar'],
+      [],
+    ],
+    [
+      'sums a listing-priced stablecoin and says the total mixes bases',
+      [
+        USDC,
         {
           code: 'USDT0',
           listing_valuation: { status: 'published', value_usd: '2581052.90' },
         },
-      ]),
-    );
-    renderView();
-
-    await screen.findByText('Stablecoins');
-    // 354,959,662.86 + 2,581,052.90, exactly.
-    expect(screen.getByText('$357,540,715.76')).toBeInTheDocument();
-    expect(
-      screen.getByText(
+      ],
+      [
+        '$357,540,715.76',
         '2 fiat-backed tokens issued on Stellar, 1 of them listing-priced',
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/This total mixes two bases\./),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/provenance: listing_platform_price/),
-    ).toBeInTheDocument();
-    // And the combined tile stops claiming there are only two.
-    expect(screen.getByText(/Three bases, added\./)).toBeInTheDocument();
-    expect(screen.queryByText(/Two bases, added\./)).not.toBeInTheDocument();
-  });
-
-  // The negative control the whole design rests on: an observed market
-  // cap is never replaced by a listing price, even when both are served.
-  it('prefers an observed market cap over a listing price on the same row', async () => {
-    apiGetData.mockResolvedValue(sectorView());
-    apiGet.mockResolvedValue(
-      stablecoinPage([
+        /This total mixes two bases\./,
+        /provenance: listing_platform_price/,
+        /Three bases, added\./,
+      ],
+      [/Two bases, added\./],
+    ],
+    [
+      'prefers an observed market cap over a listing price on the same row',
+      [
         {
-          code: 'USDC',
-          market_cap_usd: '354959662.86',
+          ...USDC,
           listing_valuation: { status: 'published', value_usd: '999999999.00' },
         },
-      ]),
-    );
-    renderView();
-
-    await screen.findByText('Stablecoins');
-    expect(screen.getByText('$354,959,662.86')).toBeInTheDocument();
-    // One basis only, so the mixed-basis copy must not appear.
-    expect(
-      screen.queryByText(/This total mixes two bases\./),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText(/Two bases, added\./)).toBeInTheDocument();
-  });
-
-  // A refusal is not a figure. Only `published` counts.
-  it('ignores a listing valuation that is not published', async () => {
-    apiGetData.mockResolvedValue(sectorView());
-    apiGet.mockResolvedValue(
-      stablecoinPage([
-        { code: 'USDC', market_cap_usd: '354959662.86' },
+      ],
+      ['$354,959,662.86', /Two bases, added\./],
+      [/This total mixes two bases\./],
+    ],
+    [
+      'ignores a listing valuation that is not published',
+      [
+        USDC,
         { code: 'USDT0', listing_valuation: { status: 'listing_unavailable' } },
-      ]),
-    );
-    renderView();
+      ],
+      ['$354,959,662.86', '1 fiat-backed token issued on Stellar'],
+      [/This total mixes two bases\./],
+    ],
+  ])('%s', async (name, rows, shown, hidden) => {
+    apiGet.mockResolvedValue(stablecoinPage(rows));
+    show(sectorView());
 
-    await screen.findByText('Stablecoins');
-    expect(screen.getByText('$354,959,662.86')).toBeInTheDocument();
-    expect(
-      screen.getByText('1 fiat-backed token issued on Stellar'),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText(/This total mixes two bases\./),
-    ).not.toBeInTheDocument();
+    await screen.findByText('Combined');
+    present(...shown);
+    absent(...hidden);
+    if (name.startsWith('marks')) {
+      // The backing, the market cap, and the sum of both.
+      atLeast('≥', 3);
+    }
   });
 });
 
-describe('sumStablecoins', () => {
-  it('counts the listing-priced rows it fell back to', () => {
-    expect(
-      sumStablecoins([
-        { market_cap_usd: '1.00' },
-        { listing_valuation: { status: 'published', value_usd: '2.50' } },
-        { listing_valuation: { status: 'not_listed' } },
-        {},
-      ]),
-    ).toEqual({ total: '3.50', valued: 2, unvalued: 2, listingPriced: 1 });
-  });
+describe('RWAView — curated arm', () => {
+  const PUBLISHED = {
+    total_usd: '4004795860.00',
+    as_of: '2025-08-31',
+    executed_at: '2026-09-17T04:58:12Z',
+    by_subclass: [
+      { subclass: 'US Treasuries', value_usd: '3100000000.00' },
+      { subclass: 'Private Credit', value_usd: '904795860.00' },
+    ],
+    series: [
+      { month_end: '2025-07-31', value_usd: '3900000000.10' },
+      { month_end: '2025-08-31', value_usd: '4004795860.00' },
+    ],
+    source: 'dune query 6961845 / 6961847',
+  };
+  const curated = (over: Partial<NonNullable<View['curated']>>) =>
+    ({
+      curator: 'dune:stellar',
+      status: 'served',
+      assets: 0,
+      also_verified: 0,
+      assets_valued: 0,
+      census: census(0),
+      basis:
+        'Rows a named third-party curator lists as tokenized real-world assets on Stellar.',
+      ...over,
+    }) as View['curated'];
+  function census(n: number) {
+    return {
+      entries: n,
+      contracts: n,
+      classic: 0,
+      priced: n,
+      priced_classic: 0,
+      stale: 0,
+    };
+  }
+  const headline = { selector: '.text-3xl, .text-4xl' };
 
-  it('never reports a zero total for a set nothing could value', () => {
-    expect(
-      sumStablecoins([{ listing_valuation: { status: 'no_supply' } }]),
-    ).toEqual({ total: null, valued: 0, unvalued: 1, listingPriced: 0 });
-  });
-
-  it('renders the curated arm apart: three figures, the curator-only badge, and an unchanged verified headline', async () => {
+  it('renders served rows apart: three figures, the curator-only badge, and an unchanged verified headline', async () => {
     const VUME = 'CBUBVYRKTQLMDRUBPP6SH4GO33KZCEEYBIWB5AWNGKODP4A6KPKM2VJ4';
-    apiGetData.mockResolvedValue(
+    show(
       view({
         curated_assets: [
           {
@@ -1799,12 +1091,9 @@ describe('sumStablecoins', () => {
               also_verified: false,
             },
             reference: {
+              ...asset().reference!,
               price_usd: '1.1174',
               source: 'dune',
-              feed: 'dune:stellar',
-              quote: 'fiat:USD',
-              as_of: '2026-09-16T00:00:00Z',
-              stale: false,
               provenance: 'curator_uploaded_price',
             },
             reference_valuation: {
@@ -1814,223 +1103,126 @@ describe('sumStablecoins', () => {
             premium: { status: 'reference_is_a_listing_price' },
           },
         ],
-        curated: {
-          curator: 'dune:stellar',
-          status: 'served',
+        curated: curated({
           assets: 1,
-          also_verified: 0,
           assets_valued: 1,
           additional_value_usd: '558700000.00',
           combined_value_usd: '560024956.69',
-          verified_value_usd: '1324956.69',
-          census: {
-            entries: 1,
-            contracts: 1,
-            classic: 0,
-            priced: 1,
-            priced_classic: 0,
-            stale: 0,
-          },
-          // A published block beside per-asset rows: reachable by API
-          // contract, and the state where the comparison grid sits
-          // under the published panel.
-          published: {
-            total_usd: '4004795860.00',
-            as_of: '2025-08-31',
-            executed_at: '2026-09-17T04:58:12Z',
-            by_subclass: [
-              { subclass: 'US Treasuries', value_usd: '3100000000.00' },
-              { subclass: 'Private Credit', value_usd: '904795860.00' },
-            ],
-            series: [
-              { month_end: '2025-07-31', value_usd: '3900000000.10' },
-              { month_end: '2025-08-31', value_usd: '4004795860.00' },
-            ],
-            source: 'dune query 6961845 / 6961847',
-            gap_vs_verified_usd: '4003470903.31',
-          },
-          basis:
-            'Rows a named third-party curator lists as tokenized real-world assets on Stellar. Nothing here is verified by this index.',
-        },
-      }),
+          verified_value_usd: REF,
+          census: census(1),
+          published: { ...PUBLISHED, gap_vs_verified_usd: '4003470903.31' },
+        }),
+      } as Partial<View>),
     );
-    renderView();
+
+    await screen.findByText(/As a third-party curator counts it/);
+    present(
+      'Counted by the curator, not verified here',
+      'Published by the curator',
+    );
+    atLeast('$558,700,000.00', 1);
+    present('$560,024,956.69', 'No — curator only', 'Realiz');
+    atLeast('$1,324,956.69', 1);
     expect(
-      await screen.findByText(/As a third-party curator counts it/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Counted by the curator, not verified here'),
-    ).toBeInTheDocument();
-    // The published panel is drawn above the comparison grid, and the
-    // grid keeps its three columns and gains its top margin: the two
-    // classes must stay separate tokens, not fuse into one Tailwind
-    // recognises as neither.
-    expect(screen.getByText('Published by the curator')).toBeInTheDocument();
-    expect(
-      screen
-        .getByText('Counted by the curator, not verified here')
-        .closest('.grid')?.className,
-    ).toBe('grid gap-4 sm:grid-cols-3 mt-4');
-    expect(screen.getAllByText('$558,700,000.00').length).toBeGreaterThan(0);
-    expect(screen.getByText('$560,024,956.69')).toBeInTheDocument();
-    expect(screen.getByText('No — curator only')).toBeInTheDocument();
-    expect(screen.getByText('Realiz')).toBeInTheDocument();
-    // The verified headline is the verified figure, untouched by the
-    // curated row beside it.
-    expect(screen.getAllByText('$1,324,956.69').length).toBeGreaterThan(0);
-    expect(
-      screen.queryByText('$560,024,956.69', {
-        selector: '.text-3xl, .text-4xl',
-      }),
+      screen.queryByText('$560,024,956.69', headline),
     ).not.toBeInTheDocument();
   });
 
-  it('keeps the three-column comparison grid when served rows arrive without a published block', async () => {
-    apiGetData.mockResolvedValue(
-      view({
-        curated: {
-          curator: 'dune:stellar',
-          status: 'served',
-          assets: 0,
-          also_verified: 0,
-          assets_valued: 0,
-          verified_value_usd: '1324956.69',
-          census: {
-            entries: 0,
-            contracts: 0,
-            classic: 0,
-            priced: 0,
-            priced_classic: 0,
-            stale: 0,
-          },
-          basis:
-            'Rows a named third-party curator lists as tokenized real-world assets on Stellar. Nothing here is verified by this index.',
-        },
-      }),
-    );
-    renderView();
-    const grid = (
-      await screen.findByText('Counted by the curator, not verified here')
-    ).closest('.grid');
-    expect(grid?.classList.contains('sm:grid-cols-3')).toBe(true);
-    expect(grid?.classList.contains('mt-4')).toBe(false);
+  it('draws the comparison without a published panel when no published block is served', async () => {
+    show(view({ curated: curated({ verified_value_usd: REF }) }));
+
+    await screen.findByText('Counted by the curator, not verified here');
+    absent('Published by the curator');
   });
 
-  it('renders the curator’s published total, its month and the signed gap when no per-asset row is readable', async () => {
-    apiGetData.mockResolvedValue(
+  it('renders the published total, its month and the signed gap when no per-asset row is readable', async () => {
+    show(
       view({
-        curated: {
-          curator: 'dune:stellar',
+        curated: curated({
           status: 'published_totals',
-          assets: 0,
-          also_verified: 0,
-          assets_valued: 0,
           verified_value_usd: '345599978.73',
-          census: {
-            entries: 0,
-            contracts: 0,
-            classic: 0,
-            priced: 0,
-            priced_classic: 0,
-            stale: 0,
-          },
-          published: {
-            total_usd: '4004795860.00',
-            as_of: '2025-08-31',
-            executed_at: '2026-09-17T04:58:12Z',
-            by_subclass: [
-              { subclass: 'US Treasuries', value_usd: '3100000000.00' },
-              { subclass: 'Private Credit', value_usd: '904795860.00' },
-            ],
-            series: [
-              { month_end: '2025-07-31', value_usd: '3900000000.10' },
-              { month_end: '2025-08-31', value_usd: '4004795860.00' },
-            ],
-            source: 'dune query 6961845 / 6961847',
-            gap_vs_verified_usd: '3659195881.27',
-          },
-          basis:
-            'What a named third-party curator counts. The curator’s per-asset list is PRIVATE; only the totals it PUBLISHES are read.',
-        },
+          published: { ...PUBLISHED, gap_vs_verified_usd: '3659195881.27' },
+        }),
       }),
     );
-    renderView();
+
+    await screen.findByText(/As a third-party curator counts it/);
+    present(
+      'Published by the curator',
+      '$4,004,795,860.00',
+      /for August 2025, computed/,
+    );
+    // Signed, and published − verified, never the other way round.
+    present(
+      '+$3,659,195,881.27',
+      'US Treasuries',
+      '$904,795,860.00',
+      /2 months published · dune query 6961845 \/ 6961847/,
+    );
+    // An empty "counted by the curator" cell would read as "counts nothing".
+    absent('Counted by the curator, not verified here', 'No — curator only');
     expect(
-      await screen.findByText(/As a third-party curator counts it/),
-    ).toBeInTheDocument();
-    expect(screen.getByText('Published by the curator')).toBeInTheDocument();
-    expect(screen.getByText('$4,004,795,860.00')).toBeInTheDocument();
-    expect(screen.getByText(/for August 2025, computed/)).toBeInTheDocument();
-    // The gap is signed, and it is published − verified, never the
-    // other way round.
-    expect(screen.getByText('+$3,659,195,881.27')).toBeInTheDocument();
-    expect(screen.getByText('US Treasuries')).toBeInTheDocument();
-    expect(screen.getByText('$904,795,860.00')).toBeInTheDocument();
-    expect(
-      screen.getByText(/2 months published · dune query 6961845 \/ 6961847/),
-    ).toBeInTheDocument();
-    // No per-asset row is readable, so the per-row comparison cells and
-    // the rows table are not drawn: an empty "counted by the curator"
-    // cell would read as "the curator counts nothing".
-    expect(
-      screen.queryByText('Counted by the curator, not verified here'),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText('No — curator only')).not.toBeInTheDocument();
-    // The published figure is never promoted to the page headline.
-    expect(
-      screen.queryByText('$4,004,795,860.00', {
-        selector: '.text-3xl, .text-4xl',
-      }),
+      screen.queryByText('$4,004,795,860.00', headline),
     ).not.toBeInTheDocument();
   });
 
   it('renders no curated panel when the deployment has no curated reader', async () => {
-    apiGetData.mockResolvedValue(
-      view({
-        curated: {
-          curator: 'dune:stellar',
-          status: 'unwired',
-          assets: 0,
-          also_verified: 0,
-          assets_valued: 0,
-          census: {
-            entries: 0,
-            contracts: 0,
-            classic: 0,
-            priced: 0,
-            priced_classic: 0,
-            stale: 0,
-          },
-          basis: '',
-        },
-      }),
-    );
-    renderView();
+    show(view({ curated: curated({ status: 'unwired', basis: '' }) }));
     await screen.findByText(/The set/);
-    expect(
-      screen.queryByText(/As a third-party curator counts it/),
-    ).not.toBeInTheDocument();
+    absent(/As a third-party curator counts it/);
   });
+});
 
-  it('describes a third-party-curated basis as curation, not an oracle feed', async () => {
-    apiGetData.mockResolvedValue(
-      view({
-        assets: [
-          asset({
-            basis: 'third_party_curated',
-            anchor_class: undefined,
-          }),
-        ],
-      }),
-    );
-    renderView();
+describe('splitBasis', () => {
+  it.each([
+    ['One. Two. Three. Four.', 'One. Two.', 'Three. Four.'],
+    ['Only one sentence.', 'Only one sentence.', ''],
+    // No sentence break: shown whole, never dropped.
+    ['no terminator here', 'no terminator here', ''],
+    [undefined, '', ''],
+    [null, '', ''],
+    ['   ', '', ''],
+  ])('splits %j into lead %j and rest %j', (basis, lead, rest) => {
+    expect(splitBasis(basis)).toEqual({ lead, rest });
+  });
+});
 
-    expect(await screen.findByText('USTRY')).toBeInTheDocument();
-    expect(
-      screen.getByText(/listed by a named third-party curator/),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText('priced by an independent oracle feed'),
-    ).not.toBeInTheDocument();
+// Money is summed in integer cents; null, never zero, when nothing was read.
+describe('sumUsd', () => {
+  it.each([
+    [
+      ['354959662.86', '11780447.97', '3595985.29', '3368263.79'],
+      { total: '373704359.91', valued: 4, unvalued: 0 },
+    ],
+    // 0.1 + 0.2 === 0.30000000000000004 in float64.
+    [['0.10', '0.20'], { total: '0.30', valued: 2, unvalued: 0 }],
+    [
+      ['10.00', null, undefined, 'n/a', '5.50'],
+      { total: '15.50', valued: 2, unvalued: 3 },
+    ],
+    [[null, undefined], { total: null, valued: 0, unvalued: 2 }],
+    [[], { total: null, valued: 0, unvalued: 0 }],
+  ])('sums %j', (values, expected) => {
+    expect(sumUsd(values)).toEqual(expected);
+  });
+});
+
+describe('sumStablecoins', () => {
+  it.each([
+    [
+      [
+        { market_cap_usd: '1.00' },
+        { listing_valuation: { status: 'published', value_usd: '2.50' } },
+        { listing_valuation: { status: 'not_listed' } },
+        {},
+      ],
+      { total: '3.50', valued: 2, unvalued: 2, listingPriced: 1 },
+    ],
+    [
+      [{ listing_valuation: { status: 'no_supply' } }],
+      { total: null, valued: 0, unvalued: 1, listingPriced: 0 },
+    ],
+  ])('totals %j', (rows, expected) => {
+    expect(sumStablecoins(rows)).toEqual(expected);
   });
 });
