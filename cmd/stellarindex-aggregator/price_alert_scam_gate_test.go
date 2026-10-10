@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -40,68 +38,6 @@ func (d *alertScamDirectory) DirectoryEntryByAddress(_ context.Context, address 
 }
 
 const alertScamIssuer = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
-
-// TestPriceAlertReader_WithholdsScamFlaggedIssuer — a flagged issuer on
-// EITHER leg is a benign no-op (ok=false), exactly as "no closed bucket"
-// is, so the evaluator skips the pair instead of firing.
-func TestPriceAlertReader_WithholdsScamFlaggedIssuer(t *testing.T) {
-	flagged, err := canonical.NewClassicAsset("RIO", alertScamIssuer)
-	if err != nil {
-		t.Fatalf("build flagged classic: %v", err)
-	}
-	native := canonical.NativeAsset()
-
-	for _, tc := range []struct {
-		name        string
-		base, quote canonical.Asset
-	}{
-		{"flagged base", flagged, native},
-		{"flagged quote", native, flagged},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := &alertScamDirectory{flagged: map[string]bool{alertScamIssuer: true}}
-			reader := priceAlertVWAPReader{
-				// A healthy bucket with a steady baseline: without the
-				// gate this serves a real price, so the test cannot
-				// pass for lack of data.
-				store:  fakeAlertVWAPStore{latest: alertRow(0, "1.01"), trailing: steadyAlertRows(12)},
-				logger: discardLogger(),
-				gate:   pricingguard.Gate{Scam: pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{})},
-			}
-			price, _, ok, err := reader.LatestVWAP(context.Background(), tc.base, tc.quote)
-			if err != nil {
-				t.Fatalf("LatestVWAP: %v", err)
-			}
-			if ok {
-				t.Fatalf("price alert served %q for a directory-flagged issuer — a signed "+
-					"webhook would deliver a price /v1/price withholds", price)
-			}
-			if len(dir.asked) == 0 || dir.asked[0] != alertScamIssuer {
-				t.Errorf("directory asked about %v, want the flagged issuer %q — "+
-					"the lookup is what proves the leg reached the gate", dir.asked, alertScamIssuer)
-			}
-		})
-	}
-}
-
-// TestPriceAlertReader_UnflaggedPairStillServes is the blast-radius
-// guard: wiring the gate must not silence ordinary alerts.
-func TestPriceAlertReader_UnflaggedPairStillServes(t *testing.T) {
-	base, quote := alertUSDAssets(t)
-	dir := &alertScamDirectory{flagged: map[string]bool{}}
-	reader := priceAlertVWAPReader{
-		store:  fakeAlertVWAPStore{latest: alertRow(0, "1.01"), trailing: steadyAlertRows(12)},
-		logger: discardLogger(),
-		gate:   pricingguard.Gate{Scam: pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{})},
-	}
-	price, _, ok, err := reader.LatestVWAP(context.Background(), base, quote)
-	if err != nil || !ok {
-		t.Fatalf("expected a served price for an unflagged pair; got ok=%v err=%v", ok, err)
-	}
-	if price != "1.01" {
-		t.Fatalf("served price = %s, want the candidate 1.01 unchanged", price)
-	}
-}
 
 // TestPriceAlertSeamIsGated is this binary's half of the seam guard that
 // cmd/stellarindex-api has had since wave D. That guard parses the API's

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/httpx/httpxtest"
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
 )
 
@@ -393,5 +394,43 @@ func TestResendSender_CallerCancelDoesNotAbortSend(t *testing.T) {
 func TestResendSender_RequiresAPIKey(t *testing.T) {
 	if _, err := notify.NewResendSender(""); err == nil {
 		t.Error("expected error for empty API key")
+	}
+}
+
+// net/http keeps Authorization across a redirect that changes only the
+// port or scheme of the same hostname.
+func TestResendSender_KeyDoesNotFollowAnOffOriginRedirect(t *testing.T) {
+	trap := httpxtest.NewRedirectTrap(t, "Authorization")
+	s, err := notify.NewResendSender("probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.BaseURL = trap.URL
+	err = s.Send(context.Background(), notify.Message{
+		From: "x@y.com", To: []string{"a@b.com"}, Subject: "s", Text: "t",
+	})
+	if err == nil {
+		t.Error("Send succeeded through a refused redirect")
+	}
+	trap.AssertKeyStayedOnOrigin(t)
+}
+
+// A ResendSender built around the constructor must not put a blank bearer on
+// the wire and must not report success whatever the far end answers.
+func TestResendSender_NoKey_FailsBeforeTheWire(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK) // a permissive far end must not turn this into "sent"
+	}))
+	defer srv.Close()
+
+	s := &notify.ResendSender{Client: srv.Client(), BaseURL: srv.URL}
+	err := s.Send(context.Background(), wellFormedMessage())
+	if !errors.Is(err, notify.ErrNotConfigured) {
+		t.Errorf("Send error = %v, want ErrNotConfigured", err)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("provider was called %d time(s) with no key", n)
 	}
 }

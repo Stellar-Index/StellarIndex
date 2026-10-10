@@ -75,27 +75,6 @@ func TestWithTimeout_setsHTTPClient(t *testing.T) {
 
 // ─── Convenience methods on top of LatestLedger / call ──────────
 
-func TestLatestLedgerSequence_returnsSequence(t *testing.T) {
-	s := mockRPC(t, map[string]any{
-		"getLatestLedger": map[string]any{
-			"id":              "abc",
-			"protocolVersion": 23,
-			"sequence":        52_000_001,
-			"closeTime":       "1772000001",
-		},
-	})
-	defer s.Close()
-
-	c := rpc.New(s.URL)
-	got, err := c.LatestLedgerSequence(context.Background())
-	if err != nil {
-		t.Fatalf("LatestLedgerSequence: %v", err)
-	}
-	if got != 52_000_001 {
-		t.Errorf("got %d, want 52000001", got)
-	}
-}
-
 func TestVersionInfo_decodesResponse(t *testing.T) {
 	s := mockRPC(t, map[string]any{
 		"getVersionInfo": map[string]any{

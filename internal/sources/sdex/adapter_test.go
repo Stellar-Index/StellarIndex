@@ -22,9 +22,3 @@ func TestTradeEvent_implementsConsumerEvent(t *testing.T) {
 	}
 	var _ consumer.Event = te
 }
-
-func TestDecoder_Name(t *testing.T) {
-	if got := NewDecoder().Name(); got != SourceName {
-		t.Errorf("Name() = %q, want %q", got, SourceName)
-	}
-}

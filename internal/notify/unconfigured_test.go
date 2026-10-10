@@ -3,10 +3,7 @@ package notify_test
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
@@ -62,26 +59,6 @@ func TestIsUnconfigured(t *testing.T) {
 		if got := notify.IsUnconfigured(tc.sender); got != tc.want {
 			t.Errorf("IsUnconfigured(%s) = %v, want %v", tc.name, got, tc.want)
 		}
-	}
-}
-
-// A ResendSender built around the constructor must not put a blank bearer on
-// the wire and must not report success whatever the far end answers.
-func TestResendSender_NoKey_FailsBeforeTheWire(t *testing.T) {
-	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits.Add(1)
-		w.WriteHeader(http.StatusOK) // a permissive far end must not turn this into "sent"
-	}))
-	defer srv.Close()
-
-	s := &notify.ResendSender{Client: srv.Client(), BaseURL: srv.URL}
-	err := s.Send(context.Background(), wellFormedMessage())
-	if !errors.Is(err, notify.ErrNotConfigured) {
-		t.Errorf("Send error = %v, want ErrNotConfigured", err)
-	}
-	if n := hits.Load(); n != 0 {
-		t.Errorf("provider was called %d time(s) with no key", n)
 	}
 }
 

@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // blockableWriter holds a release channel — InsertSorobanEventsBatch
@@ -859,5 +861,111 @@ func TestAsyncSink_LowestUnlandedLedger_NoneOnCleanStop(t *testing.T) {
 	sink.Stop()
 	if got, ok := sink.LowestUnlandedLedger(); ok {
 		t.Fatalf("LowestUnlandedLedger() = %d after every row landed; want none", got)
+	}
+}
+
+// This sink deliberately breaks the "contain and keep running" contract for
+// worker.Recover. That contract treats the drain worker as an ordinary detached
+// background worker whose halt only stops its own work — right for most
+// callers of worker.Recover, wrong here: the dispatcher calls PushEvent
+// SYNCHRONOUSLY on its hot path (internal/dispatcher/dispatcher.go), so a
+// contained-and-dead drain leaves every source's PushEvent blocked forever
+// on the full channel, with no restart and no operator recourse beyond a
+// manual unit restart per the runbook. run() must instead let the panic
+// propagate so the process crashes and its systemd unit (Restart=always)
+// restarts it from the durable ledger cursor.
+//
+// This still can't call sink.Start()+Stop(): that would crash the whole
+// test binary, taking every other test down with it. Calling run()
+// directly, inside a goroutine that recovers it itself, observes the same
+// unwind a real supervisor would see without losing the test process.
+func TestAsyncSink_PanickingWriterCrashesRatherThanWedges(t *testing.T) {
+	const workerName = "soroban-events-sink-drain"
+	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))
+
+	sink := NewAsyncSink(panickingWriter{}, AsyncSinkOptions{
+		BufferSize:    4,
+		BatchSize:     1,
+		FlushInterval: 10 * time.Millisecond,
+	})
+	sink.PushEvent(captureableEvent(t, 1)) // buffered; BatchSize=1 flushes it as soon as run() reads it
+
+	recovered := make(chan any, 1)
+	go func() {
+		defer func() { recovered <- recover() }()
+		sink.run()
+	}()
+
+	select {
+	case r := <-recovered:
+		if r == nil {
+			t.Fatal("run() returned without panicking: the drain panic was contained instead of " +
+				"propagating, so PushEvent's channel is left undrained and every producer wedges forever")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("run() neither panicked nor returned: the drain deadlocked")
+	}
+
+	select {
+	case <-sink.done:
+	default:
+		t.Fatal("s.done was not closed even though run() unwound via panic — Stop() would block forever on it")
+	}
+
+	if after := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName)); after != before+1 {
+		t.Errorf("stellarindex_worker_panics_total{worker=%q} = %v, want %v — the panic must still "+
+			"be reported before it propagates, so the existing page fires either way",
+			workerName, after, before+1)
+	}
+}
+
+// panickingWriter is a BatchWriter that has gone wrong in a way no error
+// return describes — a nil pool, a driver bug, a bad type assertion.
+type panickingWriter struct{}
+
+func (panickingWriter) InsertSorobanEventsBatch(context.Context, []Row) error {
+	panic("batch writer blew up")
+}
+
+// Sync is the projector's soroban_events completeness barrier: it must not
+// return while a row PushEvent already accepted is still unwritten, and must
+// return once it lands.
+func TestAsyncSink_SyncWaitsForAcceptedRowsToCommit(t *testing.T) {
+	w := newBlockableWriter()
+	s := NewAsyncSink(w, AsyncSinkOptions{BatchSize: 1, FlushInterval: 10 * time.Millisecond})
+	s.Start()
+	defer s.Stop()
+
+	for l := uint32(1); l <= 3; l++ {
+		s.PushEvent(captureableEvent(t, l))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	err := s.Sync(ctx)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Sync with 3 unwritten rows = %v, want context.DeadlineExceeded", err)
+	}
+
+	close(w.release)
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.Sync(ctx); err != nil {
+		t.Fatalf("Sync after the writer released = %v, want nil", err)
+	}
+	if got := w.WrittenRows(); got != 3 {
+		t.Errorf("rows written when Sync returned = %d, want 3", got)
+	}
+}
+
+// An idle sink has nothing to wait for.
+func TestAsyncSink_SyncIdleReturnsImmediately(t *testing.T) {
+	s := NewAsyncSink(newBlockableWriter(), AsyncSinkOptions{})
+	s.Start()
+	defer s.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := s.Sync(ctx); err != nil {
+		t.Fatalf("Sync on an idle sink = %v, want nil", err)
 	}
 }
