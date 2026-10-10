@@ -21,20 +21,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// ─── ADR-0019 freeze-lifecycle fixtures ───────────────────────────
+// ADR-0019 freeze-lifecycle fixtures: one pair (native/fiat:USD), one 1m
+// window, baseline MAD 0.001 so a return r scores z = r / 0.001.
 //
-// One pair (native/fiat:USD, so USD volume is measurable), one 1m
-// window, one source, and a baseline with MAD = 0.001 so a return of
-// r maps to z = r / 0.001. Two bucket shapes:
+//	lkgPrice      0.1242 -> return 0, z 0,   confidence 0.4972 (clears auto-unfreeze: > 0.30, z < 3.0)
+//	manipPrice    0.2000 -> return 0.610, z 610, confidence 0.0000 (clears freeze: < 0.45, z > 5.0, sources <= 1)
 //
-//	lkgPrice      0.1242 → return 0, z 0,   confidence 0.4972
-//	manipPrice    0.2000 → return 0.610, z 610, confidence 0.0000
-//
-// The healthy bucket clears BOTH legs of ADR-0019's auto-unfreeze
-// condition (confidence > 0.30 AND z < 3.0) and the manipulated one
-// clears all three legs of the freeze condition (confidence < 0.45
-// AND z > 5.0 AND sources <= 1). Values measured against the real
-// confidence combiner, not asserted from a table.
+// Measured against the real confidence combiner.
 const (
 	lkgBaseAmount    = 1_000_000_000_000 // 100,000 XLM at 1e7
 	lkgQuoteAmount   = 124_200_000_000   // $12,420 at 1e7 → price 0.1242
@@ -46,10 +39,8 @@ const (
 	freezeTestWindow = time.Minute
 )
 
-// freezeFixture is the shared harness for the lifecycle tests: an
-// orchestrator with a controllable clock, a swappable trade fixture,
-// and direct access to the Redis + marker state the freeze path
-// writes.
+// freezeFixture: an orchestrator with a controllable clock, swappable trades
+// and direct access to the Redis and marker state the freeze path writes.
 type freezeFixture struct {
 	orch   *Orchestrator
 	store  *mockStore
@@ -60,29 +51,37 @@ type freezeFixture struct {
 	now    time.Time
 }
 
-// newFreezeFixture wires the harness with the LKG already in cache
-// and in the prev-VWAP comparator slot, i.e. the state right after a
-// healthy publish. Tests then feed it buckets.
+// newFreezeFixture seeds the LKG in cache and in the prev-VWAP comparator
+// slot: the state right after a healthy publish.
 func newFreezeFixture(t *testing.T) *freezeFixture {
+	t.Helper()
+	return newFreezeFixtureWith(t, 0.001, nil)
+}
+
+// newFreezeFixtureWith sets the baseline MAD and lets mod adjust the Config.
+func newFreezeFixtureWith(t *testing.T, mad float64, mod func(*Config)) *freezeFixture {
 	t.Helper()
 	pair := xlmUSDPair(t)
 	rdb, mr := newTestRedis(t)
 	marker := &recordingFreezeMarker{}
 	store := &mockStore{}
 
-	orch := New(store, rdb, Config{
+	cfg := Config{
 		Pairs:        []canonical.Pair{pair},
 		Windows:      []time.Duration{freezeTestWindow},
 		Interval:     time.Hour,
 		FreezeWriter: marker,
 		Baselines: stubBaselineSource{
 			multi: baseline.MultiBaseline{
-				// A fully-observed 30d window: BaselineQualityFactor is
-				// 1.0, so the bootstrap cap doesn't muddy the arithmetic.
-				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: maxDay30Returns},
+				// Fully observed 30d window: quality factor 1.0, no bootstrap cap.
+				Day30: &baseline.Baseline{Median: 0, MAD: mad, N: maxDay30Returns},
 			},
 		},
-	})
+	}
+	if mod != nil {
+		mod(&cfg)
+	}
+	orch := New(store, rdb, cfg)
 
 	f := &freezeFixture{
 		orch:   orch,
@@ -95,8 +94,6 @@ func newFreezeFixture(t *testing.T) *freezeFixture {
 	}
 	orch.clock = func() time.Time { return f.now }
 
-	// Seed the LKG: prev-VWAP comparator slot + the cached value the
-	// API would be serving.
 	orch.prevVWAPs[f.stateKey()] = big.NewRat(lkgQuoteAmount, lkgBaseAmount)
 	if err := rdb.Set(context.Background(), f.vwapKey(), lkgFormatted, time.Minute).Err(); err != nil {
 		t.Fatalf("seed LKG: %v", err)
@@ -112,8 +109,7 @@ func (f *freezeFixture) vwapKey() string {
 	return cachekeys.VWAP(f.pair.Base, f.pair.Quote, freezeTestWindow).String()
 }
 
-// feed sets the window's trades: one trade per source, all at
-// quote/base = the requested price.
+// feed sets the window's trades: one per source, all at quote/base = the price.
 func (f *freezeFixture) feed(t *testing.T, quoteAmount int64, sources ...string) {
 	t.Helper()
 	trades := make([]canonical.Trade, 0, len(sources))
@@ -150,35 +146,32 @@ func (f *freezeFixture) state() freeze.State {
 	return f.orch.freezeStates[f.stateKey()]
 }
 
-// TestFreezeLifecycle_SingleCleanBucketDoesNotRelease is the
-// regression that motivated the whole lifecycle (N-F6).
-//
-// The attack: freeze the pair on a manipulated single-source bucket,
-// then produce ONE bucket carrying a second source at the SAME
-// manipulated price. Pre-lifecycle, the freeze's release condition
-// was the negation of its fire condition evaluated on that single
-// bucket — `source_count <= 1` stops holding the moment any second
-// venue prints, whatever the price is doing — so the marker stopped
-// being refreshed and the orchestrator published the manipulated VWAP
-// it had refused one bucket earlier. An attacker needed one trade on
-// one other venue (or a lull that let z drift from 5.1 to 4.9) to
-// clear a freeze while the manipulation was still in force.
-//
-// ADR-0019 §"Freeze duration" says a freeze holds for a MINIMUM of
-// its initial hold and is released only by the auto-unfreeze
-// condition — confidence > 0.30 AND z < 3.0 for two CONSECUTIVE
-// buckets, once that minimum has been served. A price still 61% away
-// from the last-known-good satisfies neither leg.
-// seedDivergence installs a cross-oracle divergence result in the
-// fixture's redis at the key lookupCrossOracle reads, mirroring what the
-// divergence worker publishes in production.
+// restart swaps in a brand-new Orchestrator on the same Redis, as a deploy would.
+func (f *freezeFixture) restart(fm FreezeMarker) *Orchestrator {
+	o := New(f.store, f.rdb, Config{
+		Pairs:        []canonical.Pair{f.pair},
+		Windows:      []time.Duration{freezeTestWindow},
+		Interval:     time.Hour,
+		FreezeWriter: fm,
+		Baselines: stubBaselineSource{
+			multi: baseline.MultiBaseline{
+				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: maxDay30Returns},
+			},
+		},
+	})
+	o.clock = func() time.Time { return f.now }
+	f.orch = o
+	return o
+}
+
+// seedDivergence installs a cross-oracle divergence result at the key
+// lookupCrossOracle reads, as the divergence worker does in production.
 func seedDivergence(t *testing.T, f *freezeFixture, res divergence.CachedResult) {
 	t.Helper()
 	seedDivergenceCache(t, f.rdb, f.pair, res)
 }
 
-// seedDivergenceCache is seedDivergence for harnesses that don't use
-// freezeFixture (the two-window and Phase-1 tests build their own).
+// seedDivergenceCache is seedDivergence for harnesses without a freezeFixture.
 func seedDivergenceCache(t *testing.T, cache Cache, pair canonical.Pair, res divergence.CachedResult) {
 	t.Helper()
 	raw, err := json.Marshal(res)
@@ -190,26 +183,17 @@ func seedDivergenceCache(t *testing.T, cache Cache, pair canonical.Pair, res div
 	}
 }
 
-// agreeingLens is the divergence cache entry production writes when the
-// corroborating references sit AT the given level and we are serving a
-// price at servedPrice: OurPrice is the SERVED price (the divergence
-// worker reads what the API serves — mid-freeze that is the pinned
-// LKG, never the refused candidate), Median is where the references
-// are, and DivergencePct relates the two. The release gate
-// (releaseCorroborated) reads only Median and compares it against the
-// FRESH candidate itself — that asymmetry is the
-// corroborated-release repair.
+// agreeingLens is the divergence entry production writes when the references
+// sit AT level while we serve servedPrice. OurPrice is the SERVED price
+// (mid-freeze that is the pinned LKG, never the refused candidate); the
+// release gate reads only Median and compares it to the FRESH candidate.
 func agreeingLens(pair canonical.Pair, servedPrice, level float64) divergence.CachedResult {
 	pct := 0.0
 	if level > 0 {
 		pct = math.Abs(servedPrice-level) / level * 100
 	}
-	// AgreementCount counts references within tolerance of OURPRICE
-	// (compare.go CountAgreeing), so when the references sit away from
-	// the served price none of them "agree" in that sense. Producible
-	// values only — the field is transparency-only (never a decision
-	// input), but seeding an impossible state is how the prior panel's
-	// unreachable-fixture complaint starts.
+	// AgreementCount counts references within tolerance of OurPrice
+	// (compare.go CountAgreeing); seed only producible values.
 	agreeing := 3
 	if pct > 5.0 {
 		agreeing = 0
@@ -224,6 +208,11 @@ func agreeingLens(pair canonical.Pair, servedPrice, level float64) divergence.Ca
 	}
 }
 
+// Regression N-F6: freeze on a manipulated single-source bucket, then one
+// bucket with a second source at the SAME manipulated price. The old release
+// (negated fire condition) let `source_count <= 1` failing clear the freeze.
+// ADR-0019 releases only on confidence > 0.30 AND z < 3.0 for two consecutive
+// buckets past the minimum hold; a price still 61% off the LKG meets neither.
 func TestFreezeLifecycle_SingleCleanBucketDoesNotRelease(t *testing.T) {
 	f := newFreezeFixture(t)
 
@@ -237,44 +226,28 @@ func TestFreezeLifecycle_SingleCleanBucketDoesNotRelease(t *testing.T) {
 		t.Fatalf("setup: freeze published %q, want the LKG %q", got, lkgFormatted)
 	}
 
-	// Bucket 2: same manipulated price, now printed on TWO venues.
-	// source_count = 2 breaks the 3-signal AND, so the pre-lifecycle
-	// code published this bucket.
+	// Bucket 2: same price on TWO venues; source_count = 2 breaks the 3-signal AND.
 	f.feed(t, manipQuoteAmount, "soroswap", "phoenix")
 	f.tick(t, closedBucket)
 
 	if got := f.served(t); got != lkgFormatted {
-		t.Errorf("a single second-source bucket released the freeze and published %q; "+
-			"want the last-known-good %q held — ADR-0019 releases only on "+
-			"confidence > 0.30 AND z < 3.0 for two consecutive buckets past its "+
-			"minimum hold, "+
-			"and this bucket is still 61%% away from the LKG", got, lkgFormatted)
+		t.Errorf("a second-source bucket released the freeze and published %q; want the held LKG %q (still 61%% off)",
+			got, lkgFormatted)
 	}
 	if !f.state().Active() {
 		t.Error("freeze state cleared on a bucket that met no auto-unfreeze condition")
 	}
 	if f.orch.prevVWAPs[f.stateKey()].Cmp(big.NewRat(lkgQuoteAmount, lkgBaseAmount)) != 0 {
-		t.Error("prev-VWAP comparator moved to the manipulated price — the next " +
-			"bucket would score the manipulation as the new normal")
+		t.Error("prev-VWAP comparator moved to the manipulated price")
 	}
 }
 
-// TestFreezeLifecycle_HoldSurvivesAHealthyBucket — the same shape as
-// the test above but with the price fully back at the last-known-good
-// value, which is the case pre-lifecycle code released on FASTEST
-// (all three legs of the AND clear at once).
-//
-// ADR-0019 still holds: the initial hold is a minimum, and one
-// healthy bucket is half of the two the auto-unfreeze condition
-// requires. Releasing here is how a held manipulation walks free —
-// the attacker parks the price, returns are flat, and every
-// per-bucket signal reads healthy.
+// One healthy bucket back at the LKG is half of the two auto-unfreeze needs,
+// and the initial hold is a minimum; releasing here lets a parked
+// manipulation walk free.
 func TestFreezeLifecycle_HoldSurvivesAHealthyBucket(t *testing.T) {
 	f := newFreezeFixture(t)
-	// References agree with the LKG throughout, so the return TO the LKG
-	// is corroborated and may earn the streak (an
-	// uncorroboratable calm bucket does not count — see
-	// Signal.ReleaseCorroborated).
+	// References agree with the LKG, so the return TO it is corroborated and may earn the streak.
 	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
@@ -283,10 +256,8 @@ func TestFreezeLifecycle_HoldSurvivesAHealthyBucket(t *testing.T) {
 		t.Fatal("setup: freeze did not fire")
 	}
 
-	// The first bucket back at LKG is itself a JUMP tick-over-tick
-	// (manip -> LKG against the shadow comparator), so it cannot start
-	// the calm streak; the second settled bucket does. Both must stay
-	// refused (the hold is active either way).
+	// The first bucket back at LKG is a jump against the shadow comparator
+	// and cannot start the streak; the second settled bucket does.
 	f.feed(t, lkgQuoteAmount, "soroswap")
 	f.tick(t, closedBucket)
 	if got := f.state().UnfreezeStreak; got != 0 {
@@ -299,28 +270,21 @@ func TestFreezeLifecycle_HoldSurvivesAHealthyBucket(t *testing.T) {
 		t.Errorf("served %q during the hold", got)
 	}
 	if !f.state().Active() {
-		t.Error("freeze released inside the initial hold; ADR-0019 requires the hold " +
-			"to elapse regardless of the streak")
+		t.Error("freeze released inside the initial hold")
 	}
 	if got := f.state().UnfreezeStreak; got != 1 {
 		t.Errorf("UnfreezeStreak = %d after one settled bucket, want 1", got)
 	}
 }
 
-// TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold —
-// the release path. Past the initial hold, with the auto-unfreeze
-// condition met on the two most recent buckets, the freeze ends: the
-// fresh value publishes, the marker is DELETED (not left to lapse on
-// its remaining-hold TTL, which would keep flags.frozen true long
-// after the price was republished), and the release is counted.
+// Release path: past the initial hold with two healthy buckets the fresh value
+// publishes, the marker is DELETED (not left to lapse, which would keep
+// flags.frozen true) and the release is counted.
 func TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold(t *testing.T) {
 	f := newFreezeFixture(t)
 	before := testutil.ToFloat64(obs.AnomalyFreezeReleasedTotal.WithLabelValues("auto"))
 
-	// References agree with the LKG: the release candidate (back at the
-	// LKG) is corroborated, which the streak requires.
-	// The lens also makes the freeze itself corroborated → the full
-	// 30-minute ADR hold.
+	// Corroborated release candidate, and the full 30-minute hold.
 	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
@@ -328,13 +292,14 @@ func TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold(t *testin
 	if !f.state().Active() {
 		t.Fatal("setup: freeze did not fire")
 	}
+	if got := testutil.ToFloat64(obs.AnomalyFreezeActive); got != 1 {
+		t.Errorf("AnomalyFreezeActive = %v while one pair is frozen, want 1", got)
+	}
 
-	// Settling bucket first: the return TO the healthy level is itself a
-	// jump tick-over-tick and must not count toward the streak.
+	// The settling bucket is a jump and must not count toward the streak.
 	f.feed(t, lkgQuoteAmount, "soroswap")
 	f.tick(t, closedBucket)
-	// Two settled healthy buckets, the second landing after the initial
-	// hold (corroborated → 30 minutes) has expired.
+	// Two settled healthy buckets, the second after the 30-minute hold.
 	f.tick(t, freeze.DefaultInitialHold+time.Minute)
 	if !f.state().Active() {
 		t.Fatal("released at expiry on a streak of one — the ADR wants two consecutive")
@@ -348,8 +313,7 @@ func TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold(t *testin
 		t.Errorf("served %q after release; want the freshly published %q", got, lkgFormatted)
 	}
 	if f.marker.present {
-		t.Error("freeze marker still present after release — flags.frozen would stay " +
-			"true for the marker's remaining-hold TTL")
+		t.Error("freeze marker still present after release")
 	}
 	if f.marker.clears == 0 {
 		t.Error("release did not Clear the marker")
@@ -358,17 +322,16 @@ func TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold(t *testin
 	if after-before != 1 {
 		t.Errorf("AnomalyFreezeReleasedTotal{auto} delta = %v, want 1", after-before)
 	}
+	// The gauge must fall back to zero, not stay latched.
+	if got := testutil.ToFloat64(obs.AnomalyFreezeActive); got != 0 {
+		t.Errorf("AnomalyFreezeActive = %v after release, want 0", got)
+	}
 }
 
-// TestFreezeLifecycle_NoLensMeansNoAutoRelease — the uncorroboratable
-// half of the corroborated-release repair. A pair with NO
-// corroborating lens (no cross-oracle divergence entry, no
-// triangulation chain) cannot prove that a calm, healthy-looking level
-// is the market rather than a parked manipulation — the shadow
-// comparator makes ANY held level read calm. So the calm streak must
-// not accumulate and the freeze must walk the ladder to an operator
-// instead of auto-releasing, matching the ADR's escalation posture for
-// pairs the automatic layer cannot judge.
+// A pair with no corroborating lens (no divergence entry, no triangulation)
+// cannot prove a calm level is the market rather than a parked manipulation
+// (the shadow comparator reads any held level as calm), so the streak must not
+// accumulate and the ladder walks to an operator.
 func TestFreezeLifecycle_NoLensMeansNoAutoRelease(t *testing.T) {
 	f := newFreezeFixture(t)
 
@@ -378,19 +341,14 @@ func TestFreezeLifecycle_NoLensMeansNoAutoRelease(t *testing.T) {
 		t.Fatal("setup: freeze did not fire")
 	}
 
-	// The same shape that releases in the corroborated sibling test:
-	// settle at the LKG, then two calm buckets past the (uncorroborated →
-	// 10-minute) hold. Without a lens the streak must stay at zero and
-	// the freeze must hold.
+	// As the release test, but past the uncorroborated 10-minute hold.
 	f.feed(t, lkgQuoteAmount, "soroswap")
 	f.tick(t, closedBucket)
 	f.tick(t, freeze.DefaultUncorroboratedInitialHold+time.Minute)
 	f.tick(t, closedBucket)
 
 	if !f.state().Active() {
-		t.Fatal("a pair with no corroborating lens auto-released — an uncorroboratable " +
-			"calm bucket is not evidence of recovery (the shadow comparator reads any " +
-			"held level as calm), so release requires a lens that agrees with the candidate")
+		t.Fatal("a pair with no corroborating lens auto-released")
 	}
 	if got := f.state().UnfreezeStreak; got != 0 {
 		t.Errorf("UnfreezeStreak = %d with no lens, want 0", got)
@@ -400,50 +358,27 @@ func TestFreezeLifecycle_NoLensMeansNoAutoRelease(t *testing.T) {
 	}
 }
 
-// TestFreezeLifecycle_ExtendsThenEscalates — the ladder. A
-// manipulation the attacker simply HOLDS produces a pair that never
-// earns its release, so each hold expiry grants one 30-minute
-// extension until the four are spent, at which point the freeze
+// The ladder: a manipulation the attacker HOLDS never earns release, so each
+// hold expiry grants one 30-minute extension until the four are spent, then it
 // escalates to operator review and stops auto-unfreezing.
 //
-// This is the case the pre-lifecycle code had no answer for at all:
-// it neither bounded the freeze nor ever told an operator that one
-// had been running for two hours.
-//
-// With frozenPrevVWAPs + corroborated release, a HELD level is
-// per-tick CALM (z=0), so the z leg alone does not distinguish
-// "attacker holds the manip" from "market settled at a new level". The
-// discrimination is the release gate: the streak counts only buckets
-// whose FRESH candidate a corroborating lens agrees with
-// (Signal.ReleaseCorroborated). This test seeds the divergence state
-// production actually reaches mid-freeze — the worker compares the
-// references against the SERVED price, which is the pinned LKG, so
-// OurPrice = Median = LKG and DivergencePct ≈ 0 even while the attacker
-// holds a 61%-off level. Under that state both legacy release legs pass
-// (calm z, healthy confidence): pre-repair the held manipulation walked
-// free at hold expiry; post-repair the candidate-vs-median check (0.2000
-// vs 0.1242 → 61% ≫ 5%) refuses the streak and the ladder escalates to
-// an operator. (A held manip that ALSO drags every reference with it is
-// out of scope for the automatic layer, per the ADR's escalation
-// rationale.)
+// A held level is per-tick calm (z=0), so the release gate is what separates
+// it from a real settle: the streak counts only buckets whose FRESH candidate a
+// lens agrees with. Mid-freeze the worker compares references to the SERVED
+// (pinned LKG) price, so OurPrice = Median = LKG; the candidate-vs-median check
+// (0.2000 vs 0.1242, 61% >> 5%) is what refuses the streak.
 func TestFreezeLifecycle_ExtendsThenEscalates(t *testing.T) {
 	f := newFreezeFixture(t)
 	beforeExt := testutil.ToFloat64(obs.AnomalyFreezeExtensionsTotal)
 	beforeEsc := testutil.ToFloat64(obs.AnomalyFreezeEscalatedTotal)
 
-	// The REACHABLE mid-freeze lens state: references at the LKG,
-	// compared against the served LKG → agreement. (Seeding the
-	// candidate-vs-references divergence here would be the inverted-
-	// evidence mistake: mid-freeze the
-	// worker never sees the refused candidate.)
+	// The reachable mid-freeze lens state: references at the served LKG.
 	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
 	f.tick(t, closedBucket)
 
-	// Walk the ladder: each step lands just past the current hold. The
-	// seeded divergence result means a lens WAS consulted, so the freeze
-	// is CORROBORATED and serves the full 30-minute initial hold.
+	// Each step lands just past the current hold; a lens was consulted, so the hold is 30 minutes.
 	f.tick(t, freeze.DefaultInitialHold+time.Minute)
 	for i := 2; i <= freeze.DefaultMaxExtensions; i++ {
 		f.tick(t, freeze.DefaultExtension+time.Minute)
@@ -472,47 +407,33 @@ func TestFreezeLifecycle_ExtendsThenEscalates(t *testing.T) {
 		t.Errorf("served %q while escalated; want the LKG %q", got, lkgFormatted)
 	}
 
-	// An escalated freeze does NOT auto-unfreeze: ADR-0019 holds it
-	// "until manual unfreeze", however healthy the pair now looks.
+	// An escalated freeze holds "until manual unfreeze" (ADR-0019), however healthy the pair looks.
 	f.feed(t, lkgQuoteAmount, "soroswap")
 	f.tick(t, closedBucket)
 	f.tick(t, closedBucket)
 	f.tick(t, freeze.DefaultExtension+time.Minute)
 	if !f.state().Active() {
-		t.Error("escalated freeze auto-unfroze; ADR-0019 requires operator action")
+		t.Error("escalated freeze auto-unfroze")
 	}
 	if got := f.served(t); got != lkgFormatted {
 		t.Errorf("escalated freeze published %q", got)
 	}
 }
 
-// TestFreezeLifecycle_CorroborationScalesInitialHold pins the
-// deliberate deviation from ADR-0019's flat 30-minute initial hold.
-//
-// A freeze taken with a corroborating lens available (here: a cached
-// cross-oracle result above the trust floor) serves the ADR's full 30
-// minutes. A freeze on a pair with no lens at all — one venue, its
-// own history, nothing else — serves 10, because that population is
-// where false freezes concentrate and a false freeze bills the
-// customer 100% of its duration in stale last-known-good price.
+// A freeze with a corroborating lens (trusted cross-oracle result) serves the
+// ADR's 30 minutes; with no lens at all it serves 10, since false freezes
+// concentrate there and bill the customer in stale LKG price.
 func TestFreezeLifecycle_CorroborationScalesInitialHold(t *testing.T) {
 	holdFor := func(t *testing.T, seedCrossOracle bool) (freeze.State, time.Duration) {
 		t.Helper()
 		f := newFreezeFixture(t)
 		if seedCrossOracle {
-			body, err := json.Marshal(divergence.CachedResult{
+			seedDivergence(t, f, divergence.CachedResult{
 				PairID:         f.pair.String(),
 				DivergencePct:  0.3, // inside tolerance
 				SuccessCount:   3,   // above divergenceMinSources
 				AgreementCount: 2,
 			})
-			if err != nil {
-				t.Fatalf("seed marshal: %v", err)
-			}
-			if err := f.rdb.Set(context.Background(),
-				cachekeys.Divergence(f.pair).String(), body, time.Hour).Err(); err != nil {
-				t.Fatalf("seed divergence: %v", err)
-			}
 		}
 		f.feed(t, manipQuoteAmount, "soroswap")
 		f.tick(t, closedBucket)
@@ -540,17 +461,13 @@ func TestFreezeLifecycle_CorroborationScalesInitialHold(t *testing.T) {
 			corrHold, freeze.DefaultInitialHold)
 	}
 	if uncorrHold >= corrHold {
-		t.Errorf("uncorroborated hold %v is not shorter than corroborated %v — the "+
-			"thin-pair false-freeze cost is not being scaled at all", uncorrHold, corrHold)
+		t.Errorf("uncorroborated hold %v is not shorter than corroborated %v", uncorrHold, corrHold)
 	}
 }
 
-// TestFreezeLifecycle_MarkerTTLCoversTheHold — the marker's expiry
-// must cover the remaining hold plus the silence grace, and the
-// last-known-good value must survive at least as long. A 5-minute
-// marker on a 30-minute hold is how a freeze silently ends early
-// under a stalled aggregator; a 5-minute LKG under a 30-minute freeze
-// is frozen=true with nothing to serve).
+// The marker's expiry must cover the remaining hold plus the silence grace,
+// and the LKG value must outlive it: a short marker ends a freeze early under
+// a stalled aggregator.
 func TestFreezeLifecycle_MarkerTTLCoversTheHold(t *testing.T) {
 	f := newFreezeFixture(t)
 	f.feed(t, manipQuoteAmount, "soroswap")
@@ -568,19 +485,15 @@ func TestFreezeLifecycle_MarkerTTLCoversTheHold(t *testing.T) {
 		t.Errorf("frozen value = %q, want the LKG %q", m.frozenValue, lkgFormatted)
 	}
 	if m.state.HoldUntil.IsZero() || m.state.FiredAt.IsZero() {
-		t.Errorf("marker carries no lifecycle state: %+v — an operator dumping "+
-			"freeze:* keys cannot see where on the ladder the pair is", m.state)
+		t.Errorf("marker carries no lifecycle state: %+v", m.state)
 	}
 	if ttl := f.mr.TTL(f.vwapKey()); ttl != want {
 		t.Errorf("LKG VWAP TTL = %v, want %v (it must outlive the marker)", ttl, want)
 	}
 }
 
-// TestFreezeLifecycle_OperatorOverrideReleases — ADR-0019: "Operator
-// override always available: force unfreeze". Deleting the marker is
-// that override. Without the orchestrator noticing, its in-memory
-// ladder would simply re-write the marker on the next tick and the
-// operator's action would silently not stick.
+// ADR-0019 operator override: deleting the marker force-unfreezes. The
+// orchestrator must notice, or its in-memory ladder re-writes the marker.
 func TestFreezeLifecycle_OperatorOverrideReleases(t *testing.T) {
 	f := newFreezeFixture(t)
 	before := testutil.ToFloat64(obs.AnomalyFreezeReleasedTotal.WithLabelValues("operator"))
@@ -599,8 +512,7 @@ func TestFreezeLifecycle_OperatorOverrideReleases(t *testing.T) {
 		t.Fatalf("in-memory ladder survived the operator override: %+v", f.state())
 	}
 	if got := f.served(t); got != manipFormatted {
-		t.Errorf("served %q after the override; the operator asked for the fresh "+
-			"bucket %q to publish", got, manipFormatted)
+		t.Errorf("served %q after the override; want the fresh bucket %q", got, manipFormatted)
 	}
 	after := testutil.ToFloat64(obs.AnomalyFreezeReleasedTotal.WithLabelValues("operator"))
 	if after-before != 1 {
@@ -608,14 +520,10 @@ func TestFreezeLifecycle_OperatorOverrideReleases(t *testing.T) {
 	}
 }
 
-// TestFreezeLifecycle_RehydratesLadderAcrossRestart — a deploy or
-// crash mid-freeze must not restart the 2-hour escalation clock, and
-// must not publish the bucket the previous process was refusing.
-//
-// The restarted process has no prev-VWAP comparator, so its first
-// bucket cannot be scored at all: it must hold on the marker's state
-// alone. An unscored bucket is the absence of evidence, not evidence
-// of recovery.
+// A restart mid-freeze must not restart the 2-hour escalation clock nor
+// publish the refused bucket. The new process has no prev-VWAP comparator, so
+// it holds on the marker state alone: an unscored bucket is no evidence of
+// recovery.
 func TestFreezeLifecycle_RehydratesLadderAcrossRestart(t *testing.T) {
 	f := newFreezeFixture(t)
 	f.feed(t, manipQuoteAmount, "soroswap")
@@ -625,21 +533,7 @@ func TestFreezeLifecycle_RehydratesLadderAcrossRestart(t *testing.T) {
 		t.Fatalf("setup: ExtensionsUsed = %d, want 1", got)
 	}
 
-	// Restart: brand-new Orchestrator, same Redis + same marker.
-	restarted := New(f.store, f.rdb, Config{
-		Pairs:        []canonical.Pair{f.pair},
-		Windows:      []time.Duration{freezeTestWindow},
-		Interval:     time.Hour,
-		FreezeWriter: f.marker,
-		Baselines: stubBaselineSource{
-			multi: baseline.MultiBaseline{
-				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: maxDay30Returns},
-			},
-		},
-	})
-	restarted.clock = func() time.Time { return f.now }
-	f.orch = restarted
-
+	restarted := f.restart(f.marker)
 	f.tick(t, closedBucket)
 
 	st := restarted.freezeStates[f.stateKey()]
@@ -647,18 +541,15 @@ func TestFreezeLifecycle_RehydratesLadderAcrossRestart(t *testing.T) {
 		t.Fatal("restarted aggregator lost the freeze and would publish the manipulated bucket")
 	}
 	if st.ExtensionsUsed != 1 {
-		t.Errorf("ExtensionsUsed = %d after restart, want 1 — the escalation clock "+
-			"restarted, so a restart cadence under 2h would never page anyone",
-			st.ExtensionsUsed)
+		t.Errorf("ExtensionsUsed = %d after restart, want 1 (the escalation clock restarted)", st.ExtensionsUsed)
 	}
 	if got := f.served(t); got != lkgFormatted {
 		t.Errorf("restarted aggregator published %q, want the held LKG %q", got, lkgFormatted)
 	}
 }
 
-// flakyLoadFreezeMarker fails the next `loadErrs` marker reads, the
-// shape of a Redis that is still loading its dataset (or failing over)
-// on the aggregator's first tick after a restart.
+// flakyLoadFreezeMarker fails the next loadErrs marker reads, like a Redis
+// still loading its dataset on the first tick after a restart.
 type flakyLoadFreezeMarker struct {
 	*recordingFreezeMarker
 	loadErrs int
@@ -672,12 +563,10 @@ func (m *flakyLoadFreezeMarker) LoadState(ctx context.Context, asset, quote cano
 	return m.recordingFreezeMarker.LoadState(ctx, asset, quote)
 }
 
-// TestFreezeLifecycle_ColdMarkerReadErrorWithholdsAndRetries — a marker
-// read that ERRORS on a restarted process's first evaluation is not
-// evidence the pair is unfrozen. That bucket is unscored (no prev-VWAP
-// comparator yet), so it cannot re-fire the freeze on its own signal:
-// caching "never frozen" there published the withheld manipulated
-// bucket and never re-read the marker for the life of the process.
+// A marker read that ERRORS on a restarted process's first evaluation is not
+// evidence the pair is unfrozen. That bucket is unscored, so it cannot re-fire
+// the freeze itself; caching "never frozen" published the withheld bucket and
+// never re-read the marker.
 func TestFreezeLifecycle_ColdMarkerReadErrorWithholdsAndRetries(t *testing.T) {
 	f := newFreezeFixture(t)
 	f.feed(t, manipQuoteAmount, "soroswap")
@@ -687,24 +576,11 @@ func TestFreezeLifecycle_ColdMarkerReadErrorWithholdsAndRetries(t *testing.T) {
 	}
 
 	flaky := &flakyLoadFreezeMarker{recordingFreezeMarker: f.marker, loadErrs: 1}
-	restarted := New(f.store, f.rdb, Config{
-		Pairs:        []canonical.Pair{f.pair},
-		Windows:      []time.Duration{freezeTestWindow},
-		Interval:     time.Hour,
-		FreezeWriter: flaky,
-		Baselines: stubBaselineSource{
-			multi: baseline.MultiBaseline{
-				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: maxDay30Returns},
-			},
-		},
-	})
-	restarted.clock = func() time.Time { return f.now }
-	f.orch = restarted
+	f.restart(flaky)
 
 	f.tick(t, closedBucket)
 	if got := f.served(t); got != lkgFormatted {
-		t.Fatalf("marker read failed on a cold key and the aggregator published %q; "+
-			"want the held LKG %q", got, lkgFormatted)
+		t.Fatalf("marker read failed on a cold key and the aggregator published %q; want the held LKG %q", got, lkgFormatted)
 	}
 	if !f.marker.present {
 		t.Error("a failed marker read cleared the freeze marker")
@@ -719,16 +595,10 @@ func TestFreezeLifecycle_ColdMarkerReadErrorWithholdsAndRetries(t *testing.T) {
 	}
 }
 
-// TestFreezeLifecycle_Phase1SharesTheLadder — Phase 1 (the per-class
-// deviation stop-gap) and Phase 2 (the per-asset baseline) share ONE
-// lifecycle per `freeze:<asset>:<quote>` key.
-//
-// Two owners of one marker would be a correctness bug, not untidiness:
-// a Phase 1 fire writing the flat-TTL marker would truncate a Phase 2
-// hold to the silence grace, and a Phase 1 freeze that never advanced
-// the ladder would hold a pair indefinitely without ever escalating it
-// to an operator. This test pins the visible half: a Phase 1 freeze
-// keeps holding after Phase 1 itself stops flagging the pair.
+// Phase 1 (per-class deviation) and Phase 2 (per-asset baseline) share ONE
+// lifecycle per freeze:<asset>:<quote> key. Two owners would let a Phase 1 fire
+// truncate a Phase 2 hold to the silence grace, or hold a pair forever without
+// escalating. A Phase 1 freeze must keep holding after Phase 1 stops flagging.
 func TestFreezeLifecycle_Phase1SharesTheLadder(t *testing.T) {
 	pair := xlmUsdtPair(t)
 	cache, mr := newTestRedis(t)
@@ -763,13 +633,11 @@ func TestFreezeLifecycle_Phase1SharesTheLadder(t *testing.T) {
 		t.Fatal("Phase 1 freeze did not enter the lifecycle")
 	}
 	if got := st.HoldUntil.Sub(now); got != freeze.DefaultUncorroboratedInitialHold {
-		t.Errorf("Phase 1 hold = %v, want the uncorroborated %v (Phase 1 runs before "+
-			"the confidence step, so it has no corroboration signal)",
+		t.Errorf("Phase 1 hold = %v, want the uncorroborated %v (no corroboration signal before the confidence step)",
 			got, freeze.DefaultUncorroboratedInitialHold)
 	}
 
-	// Next bucket is back at the LKG: Phase 1 now says Allow, and
-	// pre-lifecycle that was the end of the freeze.
+	// Back at the LKG: Phase 1 now says Allow.
 	store.trades = []canonical.Trade{
 		buildTrade(t, big.NewInt(100_000_000), big.NewInt(100_000_000), now),
 	}
@@ -778,20 +646,16 @@ func TestFreezeLifecycle_Phase1SharesTheLadder(t *testing.T) {
 		t.Fatalf("Tick: %v", err)
 	}
 	if !o.freezeStates[stateKey].Active() {
-		t.Error("Phase 1 freeze ended the moment Phase 1 stopped flagging the pair — " +
-			"the ADR-0019 hold must outlive the per-bucket decision")
+		t.Error("Phase 1 freeze ended the moment Phase 1 stopped flagging the pair")
 	}
 	if got, err := mr.Get(cacheKey); err != nil || got != "1.000000000000" {
 		t.Errorf("cached VWAP = %q (err %v); the held LKG must not be overwritten", got, err)
 	}
 }
 
-// windowRoutedStore returns a different trade fixture per WINDOW,
-// keyed by the query range width (to - from, which refreshPairWindow
-// sets to exactly the window). The package's mockStore is per-PAIR
-// only, so it can't drive two windows of the same pair down divergent
-// freeze paths in one tick — which is precisely the
-// sibling-window scenario.
+// windowRoutedStore returns a different trade fixture per WINDOW, keyed by the
+// query range width, so one tick can drive two windows of a pair down divergent
+// freeze paths (mockStore is per-pair only).
 type windowRoutedStore struct {
 	byWindow map[time.Duration][]canonical.Trade
 }
@@ -802,9 +666,8 @@ func (s *windowRoutedStore) TradesInRange(
 	return s.byWindow[to.Sub(from)], nil
 }
 
-// newTwoWindowFreeze wires an orchestrator with two windows (5m, 1h)
-// for one pair, both seeded at the last-known-good, plus a per-window
-// store. Returned closures drive the shared clock and read state.
+// newTwoWindowFreeze wires two windows (5m, 1h) for one pair, both seeded at
+// the LKG, with a per-window store; the closures drive the shared clock.
 func newTwoWindowFreeze(t *testing.T) (
 	orch *Orchestrator,
 	marker *recordingFreezeMarker,
@@ -869,30 +732,19 @@ func newTwoWindowFreeze(t *testing.T) (
 	return orch, marker, feed, tick, served, shortWindow, longWindow, pair
 }
 
-// TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen is the
-// regression guard: the freeze marker + durable ladder + serving
-// Looker are keyed by (asset, quote) but the freeze lifecycle runs per
-// WINDOW. When a short window auto-releases, it must NOT clear the
-// shared marker out from under a longer window that is still frozen —
-// otherwise the next tick reads the absent marker as an operator
-// override and republishes the still-manipulated long-window VWAP with
-// flags.frozen=false, defeating the freeze in exactly the
-// thin/single-source case it exists for.
-//
-// The attack shape: manipulate a pair so BOTH the 5m and 1h windows
-// freeze; recover the 5m print (short window earns its auto-unfreeze)
-// while parking the 1h price high. A pair-global Clear on the 5m release
-// would delete the pair-global marker and the still-frozen 1h window would then
-// publish the manipulated price unflagged.
+// Regression: the marker, ladder and serving lookup are keyed by (asset,
+// quote) but the lifecycle runs per WINDOW. A short-window auto-release must
+// not clear the shared marker under a still-frozen longer window, or the next
+// tick reads the absent marker as an operator override and publishes the
+// manipulated long-window VWAP unflagged.
 func TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen(t *testing.T) {
 	orch, marker, feed, tick, served, shortWindow, longWindow, pair := newTwoWindowFreeze(t)
 	shortKey := pair.String() + ":" + shortWindow.String()
 	longKey := pair.String() + ":" + longWindow.String()
 	lkg := big.NewRat(lkgQuoteAmount, lkgBaseAmount)
 
-	// References agree with the LKG: the short window's return there is
-	// release-corroborated; the long window's swinging manipulation never
-	// is (candidate ≫ 5% from the median).
+	// References agree with the LKG: the short window's return is release-corroborated;
+	// the long window's swinging manipulation never is.
 	seedDivergenceCache(t, orch.cache, pair, agreeingLens(pair, 0.1242, 0.1242))
 
 	// Tick 1: manipulated print on BOTH windows → both freeze.
@@ -906,18 +758,11 @@ func TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen(t *testing.T)
 		t.Fatal("setup: freeze marker should be present after both windows froze")
 	}
 
-	// The short window recovers; the long window stays ACTIVELY
-	// manipulated — its price keeps swinging (per-tick semantics: a
-	// HELD level reads calm, so a long-window freeze that must persist
-	// here needs the manipulation to stay visible tick-over-tick; the
-	// held-level case is the escalation test's job, discriminated by
-	// the confidence leg). The short window's FIRST healthy bucket is
-	// a jump vs the shadow comparator and settles the level.
+	// Short recovers (its first healthy bucket settles the level); the long
+	// window keeps swinging, since a HELD level reads calm per tick.
 	feed(lkgQuoteAmount, manipQuoteAmount)
 	tick(closedBucket)
-	// Tick past the 30-minute corroborated hold: short earns
-	// streak=1 (held), long keeps firing on a fresh swing — both
-	// still frozen.
+	// Past the 30-minute hold: short has streak=1, long fires on a fresh swing.
 	feed(lkgQuoteAmount, manipQuoteAmount*3/2)
 	tick(freeze.DefaultInitialHold + time.Minute)
 	if !orch.freezeStates[shortKey].Active() {
@@ -927,47 +772,32 @@ func TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen(t *testing.T)
 		t.Fatal("long window released while still manipulated")
 	}
 
-	// Tick 3: the short window's SECOND consecutive healthy bucket →
-	// it auto-releases. The long window swings again and stays frozen.
+	// Short window's SECOND consecutive healthy bucket releases; long swings again.
 	feed(lkgQuoteAmount, manipQuoteAmount*2)
 	tick(closedBucket)
 
-	// The short window releases in both the buggy and fixed code — that
-	// is not the defect.
 	if orch.freezeStates[shortKey].Active() {
 		t.Fatal("short window did not auto-release after two healthy buckets past the hold")
 	}
 
-	// The long window is still frozen, so the shared marker
-	// the API reads for flags.frozen MUST still be present, the long
-	// window's lifecycle MUST still be Active, and the long window MUST
-	// NOT publish its manipulated VWAP.
+	// The shared marker, the long window's lifecycle and its LKG must survive.
 	if !marker.present {
-		t.Error("W3-freeze-1: short-window auto-release cleared the shared (asset,quote) freeze " +
-			"marker while the long window is still frozen — the API's FrozenForPair now serves " +
-			"flags.frozen=false for the still-frozen long window")
+		t.Error("W3-freeze-1: short-window release cleared the shared freeze marker while the long window is frozen")
 	}
 	if !orch.freezeStates[longKey].Active() {
-		t.Error("W3-freeze-1: long window read the cleared marker as an operator override and " +
-			"dropped its still-live freeze")
+		t.Error("W3-freeze-1: long window read the cleared marker as an operator override")
 	}
 	if got := served(longWindow); got != lkgFormatted {
-		t.Errorf("W3-freeze-1: long window published %q; want the held last-known-good %q — the "+
-			"manipulated price was served with flags.frozen=false", got, lkgFormatted)
+		t.Errorf("W3-freeze-1: long window published %q; want the held LKG %q", got, lkgFormatted)
 	}
 	if orch.prevVWAPs[longKey].Cmp(lkg) != 0 {
-		t.Error("W3-freeze-1: long window's prev-VWAP comparator advanced off the LKG — the " +
-			"manipulation became the new baseline and the freeze cannot self-heal")
+		t.Error("W3-freeze-1: long window's prev-VWAP comparator advanced off the LKG")
 	}
 }
 
-// TestFreezeLifecycle_OperatorOverrideReleasesAllWindows guards the
-// sibling-window fix's edge case: the sibling-active check on the shared
-// marker Clear must NOT block a genuine operator force-unfreeze.
-// Deleting the marker out of band is the ADR-0019 override, and it
-// releases EVERY window for the pair — each observes the missing marker
-// independently in loadFreezeState — not just whichever window's
-// releaseFreeze happens to reach the Clear.
+// The sibling-active check on the shared marker Clear must not block an
+// operator force-unfreeze: deleting the marker releases EVERY window, each
+// observing the missing marker in loadFreezeState.
 func TestFreezeLifecycle_OperatorOverrideReleasesAllWindows(t *testing.T) {
 	orch, marker, feed, tick, _, shortWindow, longWindow, pair := newTwoWindowFreeze(t)
 	shortKey := pair.String() + ":" + shortWindow.String()
@@ -979,8 +809,7 @@ func TestFreezeLifecycle_OperatorOverrideReleasesAllWindows(t *testing.T) {
 		t.Fatal("setup: both windows should be frozen")
 	}
 
-	// Operator force-unfreezes the pair mid-hold: the marker is deleted
-	// out of band (recordingFreezeMarker models that as present=false).
+	// Operator deletes the marker out of band.
 	marker.present = false
 
 	feed(manipQuoteAmount, manipQuoteAmount)
@@ -990,214 +819,88 @@ func TestFreezeLifecycle_OperatorOverrideReleasesAllWindows(t *testing.T) {
 		t.Error("operator override left the short window frozen")
 	}
 	if orch.freezeStates[longKey].Active() {
-		t.Error("operator override left the LONG window frozen — the sibling-active guard on the " +
-			"marker Clear must not block a genuine force-unfreeze")
+		t.Error("operator override left the LONG window frozen")
 	}
 }
 
-// TestFreezeLifecycle_ActiveGaugeTracksHeldFreezes — the gauge the
-// freeze-active rule reads. It must fall back to zero on release,
-// not stay latched: an operator reading a stuck "1 frozen" would
-// treat every later freeze as pre-existing.
-func TestFreezeLifecycle_ActiveGaugeTracksHeldFreezes(t *testing.T) {
-	f := newFreezeFixture(t)
-	// Agreeing references at the LKG so the release path is reachable
-	// (corroborated lens → 30-minute hold + streak eligibility).
-	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
-
-	f.feed(t, manipQuoteAmount, "soroswap")
-	f.tick(t, closedBucket)
-	if got := testutil.ToFloat64(obs.AnomalyFreezeActive); got != 1 {
-		t.Errorf("AnomalyFreezeActive = %v while one pair is frozen, want 1", got)
-	}
-
-	// Settle the level (the first healthy bucket is a jump vs the shadow
-	// comparator), then two calm buckets past the hold release.
-	f.feed(t, lkgQuoteAmount, "soroswap")
-	f.tick(t, closedBucket)
-	f.tick(t, freeze.DefaultInitialHold+time.Minute)
-	f.tick(t, closedBucket)
-	if f.state().Active() {
-		t.Fatal("setup: expected release")
-	}
-	if got := testutil.ToFloat64(obs.AnomalyFreezeActive); got != 0 {
-		t.Errorf("AnomalyFreezeActive = %v after release, want 0", got)
-	}
-}
-
-// bandQuoteAmount is a price 2.5% above the last-known-good (LKG):
-// $12,730.50 over 100,000 XLM → 0.127305. Its role in the Phase 1
-// release regression is to sit in the band where the two freeze phases DISAGREE:
-//
-//   - Phase 1 (per-class deviation, FreezePct 2% via newAnomalyChecker):
-//     2.5% > 2% → FIRES on a single source.
-//   - Phase 2 (per-asset baseline, MAD 0.02): z = 0.025 / 0.02 = 1.25 <
-//     the auto-unfreeze bound 3.0, confidence ~0.49 > 0.30 → HEALTHY.
-//
-// i.e. a residual wobble that is statistically normal for a 2%-MAD asset
-// but still trips Phase 1's cruder class threshold.
+// bandQuoteAmount is +2.5% over the LKG (0.127305), where the phases DISAGREE:
+// Phase 1 (FreezePct 2%) fires on it, but Phase 2 (MAD 0.02) scores z = 1.25 < 3
+// with confidence ~0.49 > 0.30, i.e. healthy.
 const bandQuoteAmount = 127_305_000_000 // 0.127305, +2.5% vs the 0.1242 LKG
 
-// TestFreezeLifecycle_Phase1FreezeReleasesWhenAnomalyClears is the
-// regression guard: a Phase 1 freeze must still RELEASE once the
-// pair returns to statistical health, and must not stay frozen forever.
-//
-// The stuck condition (without frozenPrevVWAPs): Phase 1's class-deviation is measured
-// against prevVWAPs, the last-known-good comparator, which is held FIXED
-// for the whole hold (frozen buckets skip the prevVWAPs update). So once
-// the manipulation ends and the price settles at a residual level still
-// past the class FreezePct — here 2.5% over the LKG, which is normal
-// noise for a 2%-MAD asset — Phase 1 re-fires on EVERY bucket. A Phase 1
-// fire short-circuits refreshPairWindow before the Phase 2 confidence
-// step, and ADR-0019's auto-unfreeze streak is produced ONLY by that step
-// (Scored=true, healthy). So the streak can never leave 0, the ladder
-// extends to escalation, and the pair serves the LKG indefinitely — even
-// though it meets the auto-unfreeze condition (z < 3 AND confidence >
-// 0.30) on every one of those buckets.
-//
-// The fix lets Phase 2 drive the lifecycle once a freeze is active, so
-// the streak accumulates and the freeze releases within a bounded number
-// of ticks. Protection is preserved: a genuinely-anomalous bucket fires
-// Phase 2's own 3-signal AND, which resets the streak.
+// Regression: a Phase 1 freeze must release once the pair is statistically
+// healthy. Phase 1 measures against the pinned LKG comparator, so a residual
+// level past FreezePct re-fires every bucket, short-circuiting the Phase 2
+// confidence step that alone produces the auto-unfreeze streak; the pair would
+// serve the LKG until escalation. Phase 2 now drives the lifecycle once a
+// freeze is active.
 func TestFreezeLifecycle_Phase1FreezeReleasesWhenAnomalyClears(t *testing.T) {
 	pair := xlmUSDPair(t)
-	rdb, mr := newTestRedis(t)
-	marker := &recordingFreezeMarker{}
-	store := &mockStore{}
-
-	o := New(store, rdb, Config{
-		Pairs:        []canonical.Pair{pair},
-		Windows:      []time.Duration{freezeTestWindow},
-		Interval:     time.Hour,
-		Anomaly:      newAnomalyChecker(t, pair), // native forced to stablecoin: FreezePct 2%
-		FreezeWriter: marker,
-		Baselines: stubBaselineSource{
-			multi: baseline.MultiBaseline{
-				// MAD 0.02 (2%): a 2.5% return scores z = 1.25, comfortably
-				// below the auto-unfreeze bound, so the band bucket is
-				// statistically healthy while Phase 1 still flags it.
-				Day30: &baseline.Baseline{Median: 0, MAD: 0.02, N: maxDay30Returns},
-			},
-		},
+	// MAD 0.02: the 2.5% band bucket scores z = 1.25, below the auto-unfreeze bound.
+	f := newFreezeFixtureWith(t, 0.02, func(c *Config) {
+		c.Anomaly = newAnomalyChecker(t, pair) // native forced to stablecoin: FreezePct 2%
 	})
+	// References sit at the residual band level, so the release candidate is corroborated.
+	seedDivergence(t, f, agreeingLens(pair, 0.1242, 0.127305))
 
-	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
-	o.clock = func() time.Time { return now }
-	stateKey := pair.String() + ":" + freezeTestWindow.String()
-	vwapKey := cachekeys.VWAP(pair.Base, pair.Quote, freezeTestWindow).String()
-
-	// Seed the LKG comparator + the cached value the API serves.
-	o.prevVWAPs[stateKey] = big.NewRat(lkgQuoteAmount, lkgBaseAmount)
-	if err := rdb.Set(context.Background(), vwapKey, lkgFormatted, time.Minute).Err(); err != nil {
-		t.Fatalf("seed LKG: %v", err)
-	}
-	// References sit at the residual band level the market settles at, so
-	// the release candidate is corroborated (required for the streak) — a 2.5% residual is well inside every real
-	// reference's agreement band.
-	seedDivergenceCache(t, rdb, pair, agreeingLens(pair, 0.1242, 0.127305))
-
-	feed := func(quote int64) {
-		store.trades = []canonical.Trade{
-			makeXLMUSDTrade(t, "soroswap", lkgBaseAmount, quote, now.Add(-10*time.Second)),
-		}
-	}
-	tick := func(d time.Duration) {
-		now = now.Add(d)
-		if err := o.Tick(context.Background()); err != nil {
-			t.Fatalf("Tick: %v", err)
-		}
-	}
-	served := func() string {
-		got, err := mr.Get(vwapKey)
-		if err != nil {
-			t.Fatalf("cached VWAP missing: %v", err)
-		}
-		return got
-	}
-
-	// Bucket 1: a manipulated single-source spike → Phase 1 freezes.
-	feed(manipQuoteAmount)
-	tick(closedBucket)
-	if !o.freezeStates[stateKey].Active() {
+	// A manipulated single-source spike: Phase 1 freezes.
+	f.feed(t, manipQuoteAmount, "soroswap")
+	f.tick(t, closedBucket)
+	if !f.state().Active() {
 		t.Fatal("setup: manipulated single-source bucket did not enter a Phase 1 freeze")
 	}
-	if got := served(); got != lkgFormatted {
+	if got := f.served(t); got != lkgFormatted {
 		t.Fatalf("setup: freeze published %q, want the LKG %q held", got, lkgFormatted)
 	}
 
-	// The anomaly clears to a residual 2.5% above the LKG — healthy by the
-	// per-asset baseline (z = 1.25 < 3, confidence > 0.30) but still past
-	// Phase 1's 2% class threshold, so Phase 1 keeps firing every bucket.
-	// Feed healthy-band buckets and require a RELEASE within a bounded
-	// number of ticks. Each tick advances well into the hold/extension
-	// ladder so two consecutive healthy buckets straddle the initial hold.
+	// The anomaly clears to the band: healthy by Phase 2 but past Phase 1's 2%
+	// threshold. Require a release within a bounded number of ticks; each tick
+	// advances far enough that two healthy buckets straddle the initial hold.
 	const maxTicks = 8
 	released := false
 	for i := 0; i < maxTicks; i++ {
-		feed(bandQuoteAmount)
-		tick(6 * time.Minute)
-		if !o.freezeStates[stateKey].Active() {
+		f.feed(t, bandQuoteAmount, "soroswap")
+		f.tick(t, 6*time.Minute)
+		if !f.state().Active() {
 			released = true
 			break
 		}
 	}
 	if !released {
-		t.Fatalf("W3-freeze-3: Phase 1 freeze never released after the anomaly cleared to a "+
-			"statistically-healthy residual — stuck frozen after %d ticks (state=%+v). Pre-fix, "+
-			"Phase 1's stale-comparator fire short-circuits the confidence step every bucket, so "+
-			"the ADR-0019 auto-unfreeze streak can never accumulate and the freeze extends to "+
-			"escalation instead of releasing.", maxTicks, o.freezeStates[stateKey])
+		t.Fatalf("W3-freeze-3: Phase 1 freeze never released after the anomaly cleared; stuck after %d ticks (state=%+v)",
+			maxTicks, f.state())
 	}
 
-	// Released: the live band price is served again (NOT the frozen LKG),
-	// the marker is cleared, and the comparator advances off the LKG so the
-	// freeze self-heals (Phase 1 no longer fires against a stale baseline).
+	// Released: the live band price is served (not the LKG), the marker is
+	// cleared, and the comparator advances off the LKG so the freeze self-heals.
 	wantBand := formatRatFixed(big.NewRat(bandQuoteAmount, lkgBaseAmount), 12)
-	if got := served(); got != wantBand {
-		t.Errorf("after release served %q, want the freshly published live price %q "+
-			"(still serving %q would mean the freeze released but kept pinning the LKG)",
+	if got := f.served(t); got != wantBand {
+		t.Errorf("after release served %q, want the freshly published live price %q (LKG was %q)",
 			got, wantBand, lkgFormatted)
 	}
-	if got := served(); got == lkgFormatted {
-		t.Error("after release the pair is still serving the frozen last-known-good price")
+	if f.marker.present {
+		t.Error("freeze marker still present after release")
 	}
-	if marker.present {
-		t.Error("freeze marker still present after release — flags.frozen would stay true")
-	}
-	if o.prevVWAPs[stateKey].Cmp(big.NewRat(lkgQuoteAmount, lkgBaseAmount)) == 0 {
-		t.Error("prev-VWAP comparator still pinned to the LKG after release — Phase 1 would " +
-			"immediately re-fire against the stale baseline and the freeze could not self-heal")
+	if f.orch.prevVWAPs[f.stateKey()].Cmp(big.NewRat(lkgQuoteAmount, lkgBaseAmount)) == 0 {
+		t.Error("prev-VWAP comparator still pinned to the LKG after release; Phase 1 would re-fire")
 	}
 }
 
-// TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel is the
-// XLM/GBP ratchet regression. The sibling auto-unfreeze test releases by
-// feeding the price BACK to its pre-freeze value — which cannot catch the
-// ratchet: mid-freeze buckets scored against the PINNED pre-freeze
-// prevVWAP make z measure total-drift-since-freeze, and the ADR's
-// "two calm buckets" release is then only reachable if the market
-// round-tripped. Here the market settles at a NEW level (~6% above LKG,
-// far outside 3×MAD of the freeze-time price) and simply stays there:
-// per ADR-0019's intent ("is the market calm NOW") that MUST release.
-// Without frozenPrevVWAPs this test spins through the extension ladder
-// instead (frozenPrevVWAPs: refused buckets score per-tick returns
-// against the previous refused bucket's fresh VWAP).
+// XLM/GBP ratchet regression: scoring mid-freeze buckets against the PINNED
+// pre-freeze prev makes z measure drift-since-freeze, so release is reachable
+// only if the market round-trips. When it settles at a NEW level (~6% above LKG)
+// and stays, ADR-0019's "is the market calm NOW" must release; frozenPrevVWAPs
+// scores refused buckets per tick against the previous refused bucket.
 func TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel(t *testing.T) {
-	// $13,170 at 1e7 → price 0.1317: +6.04% from LKG's 0.1242 — z ≈ 60 on
-	// the fixture's MAD if compared against the pinned pre-freeze prev,
-	// z = 0 tick-over-tick once the level holds.
+	// 0.1317: +6.04% from the LKG. z ~ 60 against the pinned prev, 0 tick-over-tick.
 	const driftedQuoteAmount = 131_700_000_000
 	const driftedFormatted = "0.131700000000"
 
 	f := newFreezeFixture(t)
 	before := testutil.ToFloat64(obs.AnomalyFreezeReleasedTotal.WithLabelValues("auto"))
-	// A GENUINE repricing carries the corroborating references with it:
-	// the lens median sits at the new level while OurPrice (what the
-	// worker compares — the SERVED price) is still the pinned LKG. This
-	// is exactly what production sees mid-freeze after a real market
-	// move, and it is what separates this release from the held-
-	// manipulation case in ExtendsThenEscalates (whose references stay
-	// at the LKG).
+	// A genuine repricing carries the references with it: Median at the new level
+	// while OurPrice is still the pinned LKG. That separates this release from the
+	// held manipulation in ExtendsThenEscalates, whose references stay at the LKG.
 	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1317))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
@@ -1206,26 +909,21 @@ func TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel(t *testing.T) {
 		t.Fatal("setup: freeze did not fire")
 	}
 
-	// The market moves to the new level. The FIRST bucket there is a real
-	// jump tick-over-tick (manip → drifted), so it may not start the calm
-	// streak — that is correct. It must still be refused (hold active).
+	// The first bucket at the new level is a real jump: no streak, still refused.
 	f.feed(t, driftedQuoteAmount, "soroswap")
 	f.tick(t, closedBucket)
 	if !f.state().Active() {
-		t.Fatal("released inside the initial hold — the hold must be served first")
+		t.Fatal("released inside the initial hold")
 	}
 
-	// Two consecutive buckets AT the new level, the second landing after
-	// the initial (corroborated → 30 minute) hold has expired.
+	// Two buckets AT the new level, the second after the 30-minute hold expires.
 	f.feed(t, driftedQuoteAmount, "soroswap")
 	f.tick(t, freeze.DefaultInitialHold+time.Minute)
 	f.feed(t, driftedQuoteAmount, "soroswap")
 	f.tick(t, closedBucket)
 
 	if f.state().Active() {
-		t.Fatalf("still frozen after the market held a NEW stable level for two "+
-			"consecutive buckets past the hold — the drift-since-freeze ratchet is back: %+v",
-			f.state())
+		t.Fatalf("still frozen after a NEW stable level held two buckets past the hold (drift ratchet): %+v", f.state())
 	}
 	if got := f.served(t); got != driftedFormatted {
 		t.Errorf("served %q after release; want the freshly published new-level %q", got, driftedFormatted)
