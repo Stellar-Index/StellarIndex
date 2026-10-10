@@ -1,5 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/api/hooks', async () => {
@@ -24,7 +23,7 @@ vi.mock('@/api/account', async (importOriginal) => ({
   listPasskeys,
 }));
 
-import { useMe } from '@/api/hooks';
+import { renderSignedInPage } from '../../../../test/dashboard-page';
 import SettingsPage from './page';
 
 afterEach(() => {
@@ -33,24 +32,12 @@ afterEach(() => {
   listPasskeys.mockReset();
 });
 
-function renderSettingsPage() {
-  vi.mocked(useMe).mockReturnValue({
-    isLoading: false,
-    isError: false,
-    data: {
-      user: { email: 'a@b.com', display_name: 'Ash', role: 'owner' },
-      account: { name: 'Brimstone Labs', slug: 'brimstone-labs', tier: 'pro' },
-    },
-    refetch: vi.fn(),
-  } as unknown as ReturnType<typeof useMe>);
+const ME = {
+  user: { email: 'a@b.com', display_name: 'Ash', role: 'owner' },
+  account: { name: 'Brimstone Labs', slug: 'brimstone-labs', tier: 'pro' },
+};
 
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <SettingsPage />
-    </QueryClientProvider>,
-  );
-}
+const renderSettingsPage = () => renderSignedInPage(<SettingsPage />, ME);
 
 describe('/dashboard/settings', () => {
   it('renders the profile, plan and danger zone sections', async () => {
