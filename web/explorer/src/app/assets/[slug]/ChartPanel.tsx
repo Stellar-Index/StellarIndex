@@ -37,7 +37,11 @@ export function chartQuoteFor(assetID: string): {
   if (assetID === USDC_ASSET_ID) {
     return { quote: 'fiat:USD', label: 'USD' };
   }
-  if (assetID === 'native' || assetID.startsWith('fiat:')) {
+  if (
+    assetID === 'native' ||
+    assetID.startsWith('fiat:') ||
+    assetID.startsWith('crypto:')
+  ) {
     return { quote: 'fiat:USD', label: 'USD' };
   }
   return { quote: USDC_ASSET_ID, label: 'USDC' };
