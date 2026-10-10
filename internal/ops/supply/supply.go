@@ -125,29 +125,18 @@ func supplyCmd(args []string) error {
 
 // supplySnapshot computes a fresh supply snapshot and writes it to
 // asset_supply_history. The CLI is native-XLM-only: Algorithm 2 (classic) and
-// Algorithm 3 (SEP-41) run on the aggregator-resident goroutine path
-// (`[supply] aggregator_refresh_enabled`). Per
-// `docs/operations/supply-snapshot.md` §"Asset-class scope" the two refresh
-// paths are mutually exclusive and the goroutine path is canonical for
-// non-XLM assets.
+// Algorithm 3 (SEP-41) run on the aggregator-resident goroutine path (`[supply]
+// aggregator_refresh_enabled`); per `docs/operations/supply-snapshot.md`
+// §"Asset-class scope" the two refresh paths are mutually exclusive and the
+// goroutine path is canonical for non-XLM assets.
 //
-// Reserve balances come from the chained-fallback reader (live LCM
-// AccountEntry observer when populated; operator-static
-// `[supply] reserve_balances_stroops` as bring-up fallback).
+// Reserve balances come from the chained-fallback reader (live LCM AccountEntry
+// observer when populated; operator-static `[supply] reserve_balances_stroops`
+// as bring-up fallback).
 //
-// Flags:
-//
-//	-config PATH     Required. Operator TOML config.
-//	-asset <id>      Asset to snapshot; `native` only. A non-native asset
-//	                 returns an error pointing at the goroutine path.
-//	-ledger N        Ledger to attribute the snapshot to (default: see
-//	                 autoSnapshotLedger).
-//	-ch-addr ADDR    ClickHouse native address (default 127.0.0.1:9300).
-//	                 ObservedAt is stamped with the chosen ledger's REAL close
-//	                 time from stellar.ledgers, not the wall-clock, so a
-//	                 re-derived historical snapshot stays point-in-time
-//	                 correct.
-//	-dry-run         Compute + print but do not write.
+// ObservedAt is stamped with the chosen ledger's REAL close time from
+// stellar.ledgers (via -ch-addr), not the wall-clock, so a re-derived historical
+// snapshot stays point-in-time correct.
 func supplySnapshot(args []string) error {
 	fs := flag.NewFlagSet("supply snapshot", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

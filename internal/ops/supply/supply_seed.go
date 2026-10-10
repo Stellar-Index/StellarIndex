@@ -67,17 +67,16 @@ func openSeedStore(ctx context.Context, dryRun bool, dsn string) (*timescale.Sto
 	return timescale.Open(ctx, dsn)
 }
 
-// supplySeedObservations seeds account_observations from the ClickHouse lake
-// for every `[supply] sdf_reserve_accounts` entry (ADR-0021).
+// supplySeedObservations seeds account_observations from the ClickHouse lake for
+// every `[supply] sdf_reserve_accounts` entry (ADR-0021).
 //
-// The live AccountEntry observer only writes a row when an account CHANGES
-// after it started, so a dormant reserve account never gets an observation
-// and the chained reserve-balance reader stays on the static map. One pass
-// reads each account's latest AccountEntry from stellar.ledger_entries_current
-// (cheap point lookup via the account_id skip-index) and inserts it at the
-// account's true last-modified ledger; the live observer supersedes it on the
-// next change, and the insert is idempotent (`ON CONFLICT DO NOTHING` on
-// (account_id, ledger)).
+// The live AccountEntry observer only writes when an account CHANGES, so a
+// dormant reserve account never gets an observation and the chained
+// reserve-balance reader stays on the static map. One pass reads each account's
+// latest AccountEntry from stellar.ledger_entries_current and inserts it at the
+// account's true last-modified ledger; the insert is idempotent (`ON CONFLICT DO
+// NOTHING` on (account_id, ledger)) and the live observer supersedes it on the
+// next change.
 //
 // Accounts with no lake row (dormant since before the entry-change capture
 // window) are reported, not fabricated: run `stellarindex-ops state-snapshot`
@@ -85,20 +84,11 @@ func openSeedStore(ctx context.Context, dryRun bool, dsn string) (*timescale.Sto
 // checkpoint.
 //
 // A pass that reaches the end of its watchlist upserts
-// account_observation_seed_provenance (migration 0189): which accounts were
-// watched and missing (so a `missing` count traces to a specific G-strkey
-// even after the watchlist changes), seeded/missing/removed counts, and the
-// seeded accounts' ledger range. With no -assets-style scope the table holds
-// a single row, overwritten by each complete pass. -dry-run never writes it,
-// and an error mid-pass returns before it.
-//
-// Flags:
-//
-//	-config PATH   Required. Operator TOML config (provides
-//	               sdf_reserve_accounts + the Postgres DSN).
-//	-ch-addr ADDR  ClickHouse native address (default 127.0.0.1:9300).
-//	-write         Apply. Without it the pass is a dry run: read + print,
-//	               nothing written (-dry-run is a no-op alias).
+// account_observation_seed_provenance (migration 0189): watched-and-missing
+// accounts (so a `missing` count traces to a specific G-strkey even after the
+// watchlist changes), seeded/missing/removed counts, and the seeded ledger
+// range. -dry-run never writes it and an error mid-pass returns before it.
+// Without -write it is a dry run.
 func supplySeedObservations(args []string) error {
 	flags, err := parseSeedFlags(args)
 	if err != nil {

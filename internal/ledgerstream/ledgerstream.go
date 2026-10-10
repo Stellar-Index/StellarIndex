@@ -1,28 +1,16 @@
-// Package ledgerstream reads Galexie-exported ledger-meta from an
-// S3-compatible datastore (MinIO in production, Filesystem in
-// tests) and yields one xdr.LedgerCloseMeta per ledger to a caller-
-// supplied callback.
+// Package ledgerstream reads Galexie-exported ledger-meta from an S3-compatible
+// datastore (MinIO in production, Filesystem in tests) and yields one
+// xdr.LedgerCloseMeta per ledger to a caller-supplied callback.
 //
-// This package is the **only** production path into the ingest
-// pipeline. Per docs/architecture/ingest-pipeline.md, every source
-// decoder receives its events via this package's output, never
-// via stellar-rpc. The scripts/ci/lint-imports.sh rule
-// A/no-rpc-in-ingest blocks stellarrpc imports from the ingest
-// codepath as a structural guardrail.
+// It is the only production path into the ingest pipeline: every source decoder
+// receives its events via this package, never via stellar-rpc
+// (scripts/ci/lint-imports.sh rule A/no-rpc-in-ingest enforces it).
 //
-// Design: this is a **thin wrapper** around the SDK's
-// ingest.ApplyLedgerMetadata. The SDK already implements the
-// buffered, parallel-fetch, retry-on-error reader; we don't
-// reimplement it. This package exists to:
-//
-//  1. Give us a stable seam for testing (inject a Filesystem
-//     datastore in tests, MinIO in integration, S3 in prod).
-//  2. Centralize logger + Prometheus registry wiring.
-//  3. Provide a single place for any future customization
-//     (bounded-vs-unbounded, cursor persistence, etc.).
-//
-// If the wrapper turns out to be pure delegation, that's still
-// the correct value — one import boundary, one test seam.
+// It is a thin wrapper around the SDK's ingest.ApplyLedgerMetadata, which
+// already implements the buffered, parallel-fetch, retry-on-error reader. The
+// package exists as one import boundary and test seam (Filesystem datastore in
+// tests, MinIO in integration, S3 in prod) and to centralize logger + Prometheus
+// wiring.
 package ledgerstream
 
 import (
@@ -130,67 +118,47 @@ type Config struct {
 	// missing object there is a hard error, not a wait-for-tip).
 	LiveRetryWait time.Duration
 
-	// LiveRetryBudget is how long a live-tail fetch worker keeps
-	// retrying a datastore FAULT before giving up, for an **unbounded
-	// (live-tail)** stream only. Zero leaves the SDK/derived
-	// RetryLimit untouched.
+	// LiveRetryBudget is how long a live-tail fetch worker keeps retrying a
+	// datastore FAULT before giving up, for an unbounded (live-tail) stream
+	// only; ignored for bounded ranges, like LiveRetryWait. Zero leaves the
+	// SDK/derived RetryLimit untouched.
 	//
-	// The SDK's ledger buffer treats the two failure modes very
-	// differently, and that asymmetry is what this knob exists to
-	// exploit (go-stellar-sdk ingest/ledgerbackend/ledger_buffer.go
-	// `worker`):
+	// The SDK's ledger buffer (go-stellar-sdk
+	// ingest/ledgerbackend/ledger_buffer.go `worker`) treats failures
+	// asymmetrically: `os.ErrNotExist` on an unbounded range ("the tip hasn't
+	// been written yet") sleeps RetryWait and retries forever without consuming
+	// an attempt, while anything else (connection refused, 5xx, TLS reset)
+	// consumes an attempt and after RetryLimit the backend cancels and Stream
+	// returns, which exits the indexer.
 	//
-	//   - `os.ErrNotExist` on an unbounded range — "the tip hasn't been
-	//     written yet". Sleeps RetryWait and retries WITHOUT consuming
-	//     an attempt, forever. This is the hot path on a caught-up
-	//     indexer and LiveRetryWait keeps it fast (see above).
-	//   - anything else (connection refused, 5xx, TLS reset) — consumes
-	//     an attempt; after RetryLimit of them the backend cancels and
-	//     Stream returns, which in the indexer means process exit.
-	//
-	// Because the two share RetryWait, shortening it for tip-latency
-	// also shortened the FAULT tolerance: at LiveRetryWait=500ms and
-	// the SDK's RetryLimit=5, a MinIO blip was survivable for 2.5
-	// SECONDS. A MinIO restart of a couple of minutes therefore exited
-	// the indexer repeatedly until systemd's StartLimit parked the unit
-	// in `failed`. Expressing the tolerance as a TIME budget instead of
-	// an attempt count keeps the two concerns independent: RetryLimit
-	// is derived as ceil(budget / RetryWait), so tuning tip latency can
-	// never silently shrink fault tolerance.
-	//
-	// Ignored for bounded ranges, like LiveRetryWait: a bounded walk's
-	// missing object is a hard error and its caller decides.
+	// Both share RetryWait, so shortening it for tip latency also shortened
+	// fault tolerance (500ms x 5 attempts = a 2.5 s MinIO blip budget; a restart
+	// of a couple of minutes crash-looped the unit into systemd's StartLimit).
+	// Expressing tolerance as a TIME budget makes RetryLimit = ceil(budget /
+	// RetryWait), so tuning tip latency can never silently shrink it.
 	LiveRetryBudget time.Duration
 
-	// TolerateTrailingMissing — when true, a bounded Stream that
-	// fails with the SDK's "ledger object containing sequence X is
-	// missing" error is converted to a clean walk-complete (returns
-	// nil with a WARN log) provided X is within TrailingMissingWindow
-	// of the bounded To. Use for backfills that may race the live
-	// tip (Galexie writes partition files lazily) or for archive-
-	// integrity walks where a trailing-edge gap is "the tip isn't
-	// here yet" rather than corruption. False (default) preserves
-	// strict bounded semantics: any missing file is an error.
+	// TolerateTrailingMissing, when true, converts a bounded Stream failing with
+	// the SDK's "ledger object containing sequence X is missing" error into a
+	// clean walk-complete (nil, WARN log) provided X is within
+	// TrailingMissingWindow of the bounded To. For backfills that may race the
+	// live tip (Galexie writes partition files lazily) or archive-integrity
+	// walks. False preserves strict semantics: any missing file is an error.
 	//
 	// A gap farther than TrailingMissingWindow below To, or below the
 	// DataStore's own latest ledger (resolved when a miss is seen), still
-	// errors regardless of this flag. The tip check is what refuses a
-	// mid-history hole when To is only a chunk boundary. A caller that
-	// sets this flag on a bounded range still owns the coverage check —
-	// count the delivered ledgers and fail a short walk, as
+	// errors; the tip check is what refuses a mid-history hole when To is only a
+	// chunk boundary. A caller setting this on a bounded range still owns the
+	// coverage check: count delivered ledgers and fail a short walk, as
 	// chops.backfillCoverage, ingest.censusCoverage and
 	// ingest.backfillChunkCoverage do.
 	//
-	// Delivery caveat: when the SDK's BufferedStorageBackend hits a
-	// missing file it cancels its internal context, dropping any
-	// pre-fetched ledgers in the buffer that hadn't been delivered
-	// to the callback yet. This is SDK-level behaviour. Result: the
-	// last delivered ledger can be up to BufferSize ledgers behind
-	// the missing-file's seq. Operators relying on full coverage
-	// (e.g. 100%-density backfills) must clamp -to below the live
-	// tip in advance; the tolerate flag's role is graceful exit on
-	// trailing-edge races (chain-check, defence in depth), not a
-	// substitute for tip-aware -to selection.
+	// Delivery caveat (SDK-level): on a missing file BufferedStorageBackend
+	// cancels its context and drops pre-fetched ledgers not yet delivered, so
+	// the last delivered ledger can be up to BufferSize behind the missing seq.
+	// Full-coverage backfills must clamp -to below the live tip in advance; this
+	// flag is a graceful exit for trailing-edge races, not a substitute for
+	// tip-aware -to.
 	TolerateTrailingMissing bool
 
 	// TrailingMissingWindow — how close to the bounded range's To, and
@@ -325,46 +293,35 @@ func latestLedger(ctx context.Context, dsCfg datastore.DataStoreConfig) (uint32,
 	return datastore.FindLatestLedgerSequence(ctx, ds)
 }
 
-// retryLiveStart re-runs a live tail that failed WITHOUT EVER DELIVERING
-// A LEDGER, until Config.LiveRetryBudget is exhausted.
-// It returns the last error, or nil if a re-attempt eventually ran clean.
+// retryLiveStart re-runs a live tail that failed WITHOUT EVER DELIVERING A
+// LEDGER, until Config.LiveRetryBudget is exhausted. It returns the last error,
+// or nil if a re-attempt eventually ran clean.
 //
-// [applyLiveRetryPolicy] spends the budget inside the SDK's fetch worker,
-// which only exists after the datastore is opened and its schema loaded —
-// both done ONCE with no retry (go-stellar-sdk ingest/producer.go; our
-// streamTiered/walkDataStore share the shape, and LoadSchema LISTS the
-// bucket). Without this, a lake outage present at START bypasses the
-// budget (Stream returned in 85µs against a 3s budget). The supervisor
-// counts starts, not seconds: restarts collapse to RestartSec, sixty fit
-// in StartLimitIntervalSec, and the unit parks in `failed` until a human
-// runs `systemctl reset-failed` even after MinIO returns.
-//
-// Three properties make the retry safe:
-//
-//   - It CANNOT skip a ledger. It re-attempts only while delivered == 0,
-//     re-issuing the identical range, so the caller's callback (which
-//     writes the cursor) has not run. Once any ledger lands, a later
-//     failure is returned untouched; mid-stream resume is the caller's.
-//   - It is BOUNDED by a wall-clock deadline fixed before the first
-//     re-attempt, so the total stays ~one budget. An unbounded reconnect
-//     would turn a visible outage into a silent freeze.
-//   - It is VISIBLE while running, via
-//     stellarindex_ledgerstream_live_start_retries_total. Exhaustion is
-//     not a counter (the process exits before any scrape); the exit pages
-//     via stellarindex_ingestion_ledger_stalled (and, for MinIO,
+// [applyLiveRetryPolicy] spends the budget inside the SDK's fetch worker, which
+// exists only after the datastore is opened and its schema loaded (LoadSchema
+// LISTS the bucket), both done ONCE with no retry. Without this, a lake outage
+// present at START bypasses the budget; the supervisor counts starts not
+// seconds, so the unit parks in `failed` until `systemctl reset-failed` even
+// after MinIO returns.
+//   - It CANNOT skip a ledger: it re-attempts only while delivered == 0,
+//     re-issuing the identical range before the caller's cursor-writing callback
+//     has run. After any ledger lands, a later failure is returned untouched.
+//   - It is BOUNDED by a wall-clock deadline fixed before the first re-attempt;
+//     an unbounded reconnect would turn a visible outage into a silent freeze.
+//   - It is VISIBLE via stellarindex_ledgerstream_live_start_retries_total.
+//     Exhaustion exits the process before any scrape, so it pages via
+//     stellarindex_ingestion_ledger_stalled (for MinIO,
 //     stellarindex_minio_exporter_down within ~2 min).
 //
-// Errors are NOT classified transient vs permanent: on an unbounded tail
-// "could not start" always means "try again shortly", and the SDK wraps
-// with pkg/errors and exposes no sentinel (a 403 is as likely a
-// half-restarted MinIO as a revoked key). A permanent fault therefore
+// Errors are NOT classified transient vs permanent: on an unbounded tail "could
+// not start" always means "try again shortly", the SDK exposes no sentinel, and
+// a 403 is as likely a half-restarted MinIO as a revoked key. A permanent fault
 // surfaces one budget later, as [Config.LiveRetryBudget] documents.
 //
-// Backoff is exponential from LiveRetryWait, capped at
-// [maxLiveStartRetryWait]. No jitter: there is one indexer per host
-// reading a MinIO on 127.0.0.1, and jitter would make timing untestable.
-//
-// Callers must gate on the range being unbounded; see [Stream].
+// Backoff is exponential from LiveRetryWait, capped at [maxLiveStartRetryWait],
+// with no jitter (one indexer per host reading a MinIO on 127.0.0.1; jitter
+// would make timing untestable). Callers must gate on the range being unbounded;
+// see [Stream].
 func retryLiveStart(
 	ctx context.Context,
 	cfg Config,
@@ -500,31 +457,23 @@ func validateRange(r ledgerbackend.Range) error {
 	return nil
 }
 
-// maybeTolerateTrailingMissing converts a bounded-stream missing-
-// file error into a clean walk-complete (nil) when the operator
-// opted in via Config.TolerateTrailingMissing AND the missing
-// sequence is within the trailing window of the bounded To. All
-// other error shapes pass through unchanged. Always returns nil
-// for nil err.
+// maybeTolerateTrailingMissing converts a bounded-stream missing-file error into
+// a clean walk-complete (nil) when the operator opted in via
+// Config.TolerateTrailingMissing AND the missing sequence is within the trailing
+// window of To. All other errors pass through; a nil err returns nil.
 //
-// A single-ledger bounded range (from == to) whose one ledger IS the
-// missing one requires delivered > 0 to tolerate: tolerating it
-// unconditionally would let Stream return nil having invoked the callback
-// ZERO times — a silent no-op indistinguishable from a genuinely empty,
-// successfully-walked range. A wider bounded range is NOT held to this: the SDK's
-// BufferedStorageBackend can legitimately race-cancel its prefetch
-// buffer on a trailing-edge miss and deliver anywhere from zero to
-// all of the ledgers that were actually present on disk before the
-// gap (see TestStream_TolerateTrailingMissing_HappyPath) — treating
-// THAT delivered==0 as "never tolerate" would make an already-
-// materialised, otherwise-successful backfill range flaky depending
-// on prefetch-worker scheduling. Single-ledger is unambiguous: there
-// is only one possible outcome (delivered) and "0" always means
-// "nothing exists here at all", never a race artifact.
+// A single-ledger bounded range (from == to) whose one ledger IS the missing one
+// requires delivered > 0 to tolerate, else Stream would return nil having
+// invoked the callback ZERO times, indistinguishable from a successfully walked
+// empty range. A wider range is not held to this: BufferedStorageBackend can
+// legitimately race-cancel its prefetch buffer on a trailing-edge miss and
+// deliver anywhere from zero to all present ledgers
+// (TestStream_TolerateTrailingMissing_HappyPath), so requiring delivered > 0
+// would make a materialised backfill range flaky on prefetch scheduling.
 //
-// resolveTip is consulted only for a miss that passes every cheaper check.
-// To is often a chunk boundary, so only the store's own latest ledger tells
-// an object Galexie has not written yet from a hole with later ledgers on disk.
+// resolveTip is consulted only for a miss that passes every cheaper check. To is
+// often a chunk boundary, so only the store's own latest ledger tells an object
+// Galexie has not written yet from a hole with later ledgers on disk.
 func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err error, resolveTip func() (uint32, error)) error {
 	if err == nil {
 		return nil

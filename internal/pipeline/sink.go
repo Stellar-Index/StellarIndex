@@ -164,43 +164,35 @@ func countReceived(source string) {
 	obs.SourceLastEventUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
 }
 
-// PersistEvents drains `in` and writes each event to its hypertable
-// via the supplied store. Returns when ctx is canceled and the
-// channel has been drained, or when the channel is closed.
+// PersistEvents drains `in` and writes each event to its hypertable via the
+// supplied store. Returns when ctx is canceled and the channel has been drained,
+// or when the channel is closed.
 //
-// Cursor-vs-channel safety: callers (the indexer's pipeline + the
-// backfill subcommand) advance their per-source cursor AFTER
-// ProcessLedger enqueues events to `in`, but BEFORE this sink
-// writes them to postgres. If we returned on ctx cancellation
-// without draining, up to cap(in) buffered events would be silently
-// dropped while the cursor's "I processed up to ledger N" claim
-// stayed advanced — the trades for those ledgers would be missing
-// even though `-resume` would skip them on restart. The drain
-// below uses a fresh context (parent ctx is already canceled, so
-// postgres calls would fail) bounded by [drainTimeout] — itself
-// derived from [ShutdownDeadline] — so a stuck shutdown can't hang
-// the binary forever; if the deadline trips, the remaining buffered
+// Cursor-vs-channel safety: callers advance their per-source cursor AFTER
+// ProcessLedger enqueues events to `in` but BEFORE this sink writes them.
+// Returning on ctx cancellation without draining would drop up to cap(in)
+// buffered events while the cursor's claim stayed advanced, and `-resume` would
+// skip them. The drain uses a fresh context (the parent is canceled) bounded by
+// [drainTimeout], derived from [ShutdownDeadline]; if it trips, the remaining
 // events are surfaced at ERROR with their ledger range.
 //
-// The `mode` parameter implements ADR-0032 Phase 4: see the
-// [SinkMode] godoc for why the dispatcher's events-goroutine
-// skips Soroban-derived events once the projector is sole writer.
+// The `mode` parameter implements ADR-0032 Phase 4: see [SinkMode] for why the
+// dispatcher's events-goroutine skips Soroban-derived events once the projector
+// is sole writer.
 //
-// PersistEvents launches [PersistWorkers] concurrent drain goroutines,
-// each with its own trade-batch buffer, sharing `in`. One goroutine keeps a
-// single PG round trip in flight and backs ProcessLedger up on `events <-
-// ev` far below the network's ledger rate. Each worker claims a pool
-// connection per flush, so [PersistWorkers] must stay well under
-// PoolMaxOpenConns alongside the other binaries on the host.
+// PersistEvents launches [PersistWorkers] concurrent drain goroutines, each with
+// its own trade-batch buffer, sharing `in`: one goroutine keeps a single PG
+// round trip in flight and backs ProcessLedger up far below the network's ledger
+// rate. Each worker claims a pool connection per flush, so [PersistWorkers] must
+// stay well under PoolMaxOpenConns alongside the other binaries on the host.
 //
-// Per-event ordering within a source is NOT preserved across workers
-// (a later event can flush before an earlier one). The trades
-// hypertable's PK includes the full identity (source, ledger,
-// tx_hash, op_index, ts) so identical writes race-but-resolve via
-// ON CONFLICT DO NOTHING. There is no ordering constraint at the
-// storage layer that a parallel drain breaks.
+// Per-event ordering within a source is NOT preserved across workers. That is
+// safe because the trades PK includes the full identity (source, ledger,
+// tx_hash, op_index, ts), so identical writes race-but-resolve via ON CONFLICT
+// DO NOTHING.
 //
-// late (nil in the backfill, which refreshes its own chunks) observes committed trade writes.
+// late (nil in the backfill, which refreshes its own chunks) observes committed
+// trade writes.
 func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode, late *LateTradeRefresher) ShutdownLoss {
 	lt := &lossTracker{}
 	// Bounded async retry buffer for external (CEX/FX) trades that hit
@@ -822,35 +814,27 @@ const drainReportMargin = 5 * time.Second
 // main's deadline.
 const drainTimeout = ShutdownDeadline - drainFinalPassBudget - drainReportMargin
 
-// HandleEvent dispatches one event to its hypertable insert and RETURNS
-// the underlying Insert error (nil on success). Panic-recovers so a
-// single malformed Amount can't take the whole sink down — a recovered
-// panic is surfaced as the returned error too.
+// HandleEvent dispatches one event to its hypertable insert and RETURNS the
+// underlying Insert error (nil on success). A panic is recovered and returned as
+// a generic (non-classified) error, which the projector treats as transient;
+// that is acceptable because the sole-writer sep41 insert path returns errors
+// rather than panicking, and decoder panics are caught upstream in the
+// projector's processEventSafely.
 //
-// The error return is load-bearing for the ADR-0032 projector: the
-// projector invokes HandleEvent as its
-// per-event sink and gates its cursor on the result — a write that fails
-// transiently must NOT let the cursor advance past that ledger, or a
-// sole-writer (sep41) row is permanently lost. The dispatcher's
-// events-goroutine drain reaches it through persistEventResilient, and
-// the ops re-derive tools act on the error as well.
+// The error return is load-bearing for the ADR-0032 projector, which gates its
+// cursor on it: a transiently failed write must NOT let the cursor advance past
+// that ledger, or a sole-writer (sep41) row is permanently lost. The
+// dispatcher's drain reaches it through persistEventResilient.
 //
-// A trade the store permanently rejects is returned as a
-// *[TradeDroppedError], not nil: nil means the row landed, and
-// nothing else. Both callers that act on the return recognise it: the
-// projector skips that OUTPUT, counts it outcome="sink_permanent" and keeps
-// sinking the row's other outputs; `stellarindex-ops projected-rebuild`
-// counts it as a permanent drop and still checkpoints the window, because no
-// re-run can land it (every OTHER insert failure holds the window).
+// A trade the store permanently rejects is returned as a *[TradeDroppedError],
+// never nil: nil means the row landed. The projector skips that output, counts
+// it outcome="sink_permanent" and keeps sinking the row's other outputs;
+// `stellarindex-ops projected-rebuild` counts it as a permanent drop and still
+// checkpoints the window, because no re-run can land it (every OTHER insert
+// failure holds the window).
 //
-// A recovered panic is returned as a generic (non-classified) error: the
-// projector treats it as transient (retry-and-alert) per its safe-side
-// default. This is acceptable because the sole-writer sep41 insert path
-// validates + returns errors rather than panicking, and decoder panics
-// are caught upstream in the projector's own processEventSafely recover.
-//
-// Exported for use by the projector (`internal/projector`) and the ops
-// re-derive tools (`stellarindex-ops projected-rebuild` / `ch-rebuild`).
+// Exported for the projector (`internal/projector`) and the ops re-derive tools
+// (`stellarindex-ops projected-rebuild` / `ch-rebuild`).
 func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, ev consumer.Event) error {
 	return handleEvent(ctx, logger, store, ev, true)
 }
@@ -1167,44 +1151,35 @@ func eventSource(ev consumer.Event) string {
 	return "_unknown"
 }
 
-// persistEventResilient writes ONE non-trade served-tier event with the
-// same ADR-0041 failure policy as the trade path: an infrastructure
-// fault BLOCKS the drain goroutine and retries with capped backoff
-// (backpressure that gates the enqueue-advanced cursor), while a
-// permanent data fault is counted and skipped so one poison row can't
-// wedge the pipeline.
+// persistEventResilient writes ONE non-trade served-tier event with the same
+// ADR-0041 failure policy as the trade path: an infrastructure fault BLOCKS the
+// drain goroutine and retries with capped backoff (backpressure that gates the
+// enqueue-advanced cursor), while a permanent data fault is counted and skipped
+// so one poison row can't wedge the pipeline.
 //
-// The dispatcher-drain call sites must not `_ = HandleEvent(...)` —
-// log-and-continue on EVERY error. That would be justified only if the
-// events on this path either double-wrote (the projector owns the
-// sole-writer domains) or were trade-shaped, but the path also carries
-// writes NOBODY else makes: band oracle_updates, external.UpdateEvent,
-// the supply observers' LedgerEntry observations, soroswap_router
-// swaps. On a Postgres infra fault those would be
-// dropped outright while the cursor advanced — a silent served-tier
-// gap with no lake-recoverable trade range to re-derive from.
+// The dispatcher-drain call sites must not `_ = HandleEvent(...)`: this path
+// also carries writes NOBODY else makes (band oracle_updates,
+// external.UpdateEvent, the supply observers' LedgerEntry observations,
+// soroswap_router swaps), which would be silently dropped on a Postgres fault
+// while the cursor advanced, with no lake-recoverable trade range to re-derive
+// from.
 //
-// Retries deliberately reuse TradeInsertRetriesTotal: it is the sink's
-// backpressure counter and the `trade_insert_backpressure` alert on it
-// means exactly the right thing here — the served-tier write path is
-// blocked and the cursor is not advancing. Genuine drops stay
+// Retries deliberately reuse TradeInsertRetriesTotal: the
+// `trade_insert_backpressure` alert on it means exactly the right thing here
+// (served-tier write blocked, cursor not advancing). Genuine drops stay
 // distinguishable on SourceInsertErrorsTotal{kind="dropped"}.
 //
-// Return contract. The ctx-error half mirrors [persistTrade]; the
-// permanent-fault half deliberately does NOT — persistTrade
-// reports a drop as a *[TradeDroppedError] because the projector labels
-// outcomes off its return, whereas this function's only callers are the
-// dispatcher drain's carry-or-report arms, which read ANY non-nil return as a
-// shutdown abandon (a drop returned here would be double-reported as one):
-//   - nil           — the write landed, OR it hit a permanent data fault
-//     (deterministically bad row: counted + logged HERE and dropped,
-//     because holding a poison row would wedge the pipeline).
-//   - the ctx error — the retry was abandoned because ctx was cancelled
-//     or its drain deadline expired. Deliberately NOT counted or logged
-//     here: only the caller knows whether the event still has a bounded
-//     drain pass ahead of it (persistWorker's `<-in` arm carries it) or
-//     is a genuine loss ([reportAbandonedEvent]). Counting it here would
-//     make every carry look like a drop.
+// Return contract. Unlike [persistTrade], a permanent-fault drop is NOT reported
+// as a *[TradeDroppedError]: the only callers are the dispatcher drain's
+// carry-or-report arms, which read ANY non-nil return as a shutdown abandon, so
+// a drop would be double-reported.
+//   - nil: the write landed, OR it hit a permanent data fault (counted + logged
+//     HERE and dropped).
+//   - the ctx error: the retry was abandoned because ctx was cancelled or its
+//     drain deadline expired. NOT counted or logged here: only the caller knows
+//     whether the event still has a bounded drain pass ahead of it
+//     (persistWorker's `<-in` arm) or is a genuine loss
+//     ([reportAbandonedEvent]).
 func persistEventResilient(ctx context.Context, logger *slog.Logger, ep eventPersister, ev consumer.Event) error {
 	attempt := 0
 	err := retryInfra(ctx, logger, "handle_event", func(c context.Context) error {
@@ -1355,55 +1330,38 @@ func newTradeDroppedError(t canonical.Trade, cause error) *TradeDroppedError {
 	return &TradeDroppedError{Source: t.Source, Ledger: t.Ledger, TxHash: t.TxHash, OpIndex: t.OpIndex, Cause: cause}
 }
 
-// persistTrade writes one trade with infrastructure-resilience
-// (ADR-0041). An infra fault
-// (connection refused/reset, PG restarting) is RETRIED with
-// backpressure — blocking the caller so an on-chain cursor can't
-// advance past an un-landed trade — rather than dropped. A data fault
-// (constraint / numeric / validation) is error-and-skipped:
-// permanent for that row, so retrying would just wedge the
-// pipeline. Also used by the projector's per-event sink (HandleEvent),
-// which gains the same cursor-gating retry.
+// persistTrade writes one trade with ADR-0041 infrastructure resilience: an
+// infra fault (connection refused/reset, PG restarting) is RETRIED with
+// backpressure, blocking the caller so an on-chain cursor can't advance past an
+// un-landed trade, while a data fault (constraint / numeric / validation) is
+// permanent for that row and is dropped + counted so retrying can't wedge the
+// pipeline. It also serves the projector's per-event sink (HandleEvent), which
+// gains the same cursor-gating retry.
 //
-// Takes the narrow [tradeWriter] interface (satisfied by
-// *timescale.Store) so the retry path is unit-testable with a fake.
+// Takes the narrow [tradeWriter] interface (satisfied by *timescale.Store) so
+// the retry path is unit-testable with a fake.
 //
-// NOT the instrumentation point for the unit-ratio sentinel
-// (stellarindex_dex_trade_unit_ratio_total): the dispatcher's primary
-// live path routes trades through [flushTradeBatch] →
-// w.BatchInsertTrades, bypassing this function entirely on the success
-// case, so a check here would silently miss the majority of on-chain
-// trades. See timescale.isDexUnitRatioTrade's godoc for the actual
-// choke point.
-//
-// persistTrade writes one trade via the ADR-0041 block-and-retry policy
-// (infra faults block, data faults drop) and RETURNS its abandon error so
-// a BOUNDED-ctx caller can cursor-gate on it.
-//
-// Return contract:
+// Return contract (a BOUNDED-ctx caller cursor-gates on it):
 //   - nil ONLY when the trade landed.
-//   - a *[TradeDroppedError] on a permanent data fault: the row is
-//     deterministically bad, so it is dropped + counted HERE and never
-//     retried — but the drop is REPORTED, not folded into nil: the
-//     projector counts every nil sink return as a durable commit, so a nil
-//     here would publish a dropped trade as outcome="ok". The wrapper
-//     unwraps to the store's error, which the projector classifies as a
-//     permanent fault and SKIPS — the cursor still advances, so a poison row
-//     cannot loop it, and the row is labelled sink_permanent, not ok. Callers
-//     that key on [isCtxErr] (the batch path below) are unaffected: a drop is
-//     never a ctx error.
+//   - a *[TradeDroppedError] on a permanent data fault. The drop is REPORTED,
+//     not folded into nil: the projector counts every nil sink return as a
+//     durable commit, so nil would publish a dropped trade as outcome="ok". The
+//     wrapper unwraps to the store's error, which the projector classifies
+//     permanent and SKIPS (the cursor still advances, so a poison row can't loop
+//     it), labelled sink_permanent. Callers that key on [isCtxErr] (the batch
+//     path) are unaffected: a drop is never a ctx error.
 //   - the ctx error when the retry is abandoned because ctx was cancelled
-//     (shutdown, or the projector's per-source 60s cycle timeout). Returning
-//     it lets the projector HOLD the cursor and re-derive next cycle instead
-//     of advancing past an un-written row, as it does for every other
-//     projected class's persist error. The dispatcher's INDEFINITE-
-//     ctx batch path never abandons except on real shutdown, where its own
+//     (shutdown, or the projector's per-source 60s cycle timeout), so the
+//     projector HOLDS the cursor and re-derives next cycle. The dispatcher's
+//     INDEFINITE-ctx batch path abandons only on real shutdown, where its own
 //     drain owns the re-derive; persistTradeRouted / retryOnChainBatchBlocking
 //     deliberately ignore this return.
 //
-// usd_volume coverage is counted inside InsertTrade / BatchInsertTrades (see
-// timescale.usdPopulatedLabel), NOT here — this is only one of the paths
-// trades take (the dispatcher's primary batch path bypasses it).
+// NOT the instrumentation point for the unit-ratio sentinel
+// (stellarindex_dex_trade_unit_ratio_total) or usd_volume coverage: the
+// dispatcher's primary live path routes trades through [flushTradeBatch] ->
+// w.BatchInsertTrades and bypasses this function on success. See
+// timescale.isDexUnitRatioTrade's godoc and timescale.usdPopulatedLabel.
 func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t canonical.Trade) error {
 	if err := retryInfra(ctx, logger, "insert_trade", func(c context.Context) error {
 		return w.InsertTrade(c, t)

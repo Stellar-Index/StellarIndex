@@ -20,36 +20,22 @@ import (
 // The Algorithm-3 refresher derives total as Σmint−Σburn−Σclawback from
 // `sep41_supply_events`, which the observer fills ONLY over the Soroban era
 // [50457424, tip]. A classic asset's SAC wrapper (VELO, AQUA, yXLM, ...) was
-// largely issued before Soroban, so over that window Σburn > Σmint, the total
-// goes negative, the negative-total guard rejects it and the refresh and
-// cross-check alerts fire. The certified lake (stellar.supply_flows, ADR-0034)
-// carries the pre-Soroban flows (the post-P23 CAP-67 replay synthesized asset
-// events for classic history). This seed sums them below the Soroban genesis
-// ledger and writes the per-kind baseline the reader adds to the Soroban-era
-// totals.
+// largely issued before Soroban, so over that window Σburn > Σmint and the
+// negative-total guard rejects the total. This seed sums the lake's pre-Soroban
+// stellar.supply_flows (ADR-0034) below the Soroban genesis ledger and writes
+// the per-kind baseline the reader adds to the Soroban-era totals.
 //
-// PROVENANCE (ADR-0033): the pre-Soroban supply_flows rows are replay-derived
-// and core-version-dependent; genesis_baseline_ledger + genesis_seeded_at
-// record the boundary and capture time so a re-seed is auditable. If that
-// history is re-derived, re-run this seed.
+// Provenance (ADR-0033): those supply_flows rows are replay-derived and
+// core-version-dependent; genesis_baseline_ledger + genesis_seeded_at record the
+// boundary and capture time so a re-seed is auditable. If that history is
+// re-derived, re-run this seed.
 //
-// Idempotent: the baseline is SET (not added), and the rollup fold beneath it
-// is rebuilt under the new floor in the same transaction
-// ([timescale.Store.UpsertSEP41GenesisBaseline]), which also repairs a fold
-// that swept the pre-boundary band in before the first seed. The rebuild is
-// one floored aggregate per contract, holds that contract's rollup row, and a
-// contending aggregator pass yields rather than waits. A Soroban-only
-// contract is seeded with a zero baseline, leaving its total unchanged.
-//
-// Flags:
-//
-//	-config PATH        Required. Operator TOML (watched_sep41_contracts + PG DSN).
-//	-ch-addr ADDR       ClickHouse native address (default 127.0.0.1:9300).
-//	-genesis-ledger N   Exclusive upper ledger bound of the baseline sum
-//	                    (default clickhouse.SorobanGenesisLedger = 50457424).
-//	-write              Apply. Without it the pass is a dry run: read + print
-//	                    the per-contract baselines, nothing written (-dry-run
-//	                    is a no-op alias).
+// Idempotent: the baseline is SET (not added), and the rollup fold beneath it is
+// rebuilt under the new floor in the same transaction
+// ([timescale.Store.UpsertSEP41GenesisBaseline]), which also repairs a fold that
+// swept the pre-boundary band in before the first seed. A Soroban-only contract
+// is seeded with a zero baseline, leaving its total unchanged. -genesis-ledger
+// defaults to clickhouse.SorobanGenesisLedger. Without -write it is a dry run.
 func supplySeedSEP41Genesis(args []string) error {
 	fs := flag.NewFlagSet("supply seed-sep41-genesis", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

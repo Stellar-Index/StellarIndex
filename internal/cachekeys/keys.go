@@ -10,38 +10,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ─── Typed-key mechanism (guard-debt: ROADMAP #48) ─────────────────
+// ─── Typed-key mechanism ───
 //
-// Every key family below has its own named string type
-// (`PriceKey`, `VWAPKey`, `ConfidenceKey`, …) instead of a bare
-// `string`. This closes the gap the string-typed builders left
-// open: a bare `string` return type means a caller can hand a
-// hand-rolled `fmt.Sprintf("price:%s", ...)` — or another family's
-// key — to anything that "just wants a string", and the compiler
-// has no way to object. Distinct named types make that a type
-// error: `redisClient.Get(ctx, someVWAPKey)` requires a `string`
-// argument, and Go does NOT implicitly convert between two named
-// string types (or between a named type and a plain `string`) even
-// though their underlying type is identical — see
-// https://go.dev/ref/spec#Assignability. Passing the wrong family,
-// or a raw ad-hoc string, now needs an explicit, grep-able
-// conversion instead of silently type-checking.
+// Every key family below has its own named string type (`PriceKey`, `VWAPKey`,
+// `ConfidenceKey`, ...) instead of a bare `string`, so handing a hand-rolled
+// `fmt.Sprintf("price:%s", ...)` or another family's key to a Redis call is a
+// compile error: Go does not implicitly convert between named string types. Call
+// sites crossing into the untyped Redis wire protocol call `.String()`
+// explicitly, which makes that crossing visible in the diff.
 //
-// Call sites that need the raw wire bytes (to hand to
-// `redis.Cmdable`, which only knows `string`) call `.String()`
-// explicitly — that's the one place per call where "this typed key
-// crosses into the untyped Redis wire protocol" is visible in the
-// diff.
+// This is the Redis-key analogue of the in-process `internal/api/v1.cacheKey`
+// builder (same drift class: prewarm vs handler key construction diverging).
 //
-// This is the Redis-key analogue of the in-process
-// `internal/api/v1.cacheKey` builder (same drift class: prewarm vs.
-// handler key construction diverging). See that package's doc
-// comment for the sibling design.
-//
-// Wire bytes are UNCHANGED by this: every `.String()` value is
-// byte-identical to what the pre-typed `string`-returning functions
-// produced (see keys_test.go's golden-string tests) — this is a
-// compile-time-only hardening, not a cache-invalidating migration.
+// Every `.String()` value is pinned byte-for-byte by keys_test.go's
+// golden-string tests, so this is compile-time hardening, not a
+// cache-invalidating migration.
 
 // ─── Price — latest aggregated price per asset ────────────────────
 //
@@ -84,46 +67,38 @@ func VWAP(base, quote canonical.Asset, window time.Duration) VWAPKey {
 		base.String(), quote.String(), int(window.Seconds())))
 }
 
-// VWAPMaxAge is the SILENCE GRACE on a published VWAP: how long a
-// cached rolling VWAP may keep serving after the aggregator stops
-// refreshing it (crash, deploy, OOM, Redis writes failing, or simply
-// a window with no trades left in it).
+// VWAPMaxAge is the SILENCE GRACE on a published VWAP: how long a cached rolling
+// VWAP may keep serving after the aggregator stops refreshing it (crash, deploy,
+// OOM, Redis write failures, or a window with no trades left).
 //
-// It is NOT the aggregation window, and the distinction is the whole
-// point. Every configured (pair, window) is recomputed and re-written
-// on EVERY tick (orchestrator.Tick walks Pairs × Windows; default
-// cadence [orchestrator.DefaultInterval] = 30 s), so a value older
-// than a handful of ticks does not mean "a long window", it means
-// "nobody is publishing". Keying the TTL to the window instead made
-// `vwap:<pair>:86400` outlive its own writer by up to 24 hours, and
-// the windowed /v1/price surface stamps `observed_at` at request time
-// — so a stopped aggregator was served as a current price for a day,
-// with no age field on the wire able to reveal it.
+// It is NOT the aggregation window. Every configured (pair, window) is rewritten
+// on EVERY tick (orchestrator.Tick; default cadence
+// [orchestrator.DefaultInterval] = 30 s), so an old value means "nobody is
+// publishing", not "a long window". Keying the TTL to the window let
+// `vwap:<pair>:86400` outlive its writer by up to 24 hours, and the windowed
+// /v1/price surface stamps `observed_at` at request time, so a stopped
+// aggregator was served as a current price with no age field to reveal it.
 //
-// 5 minutes = 10 missed ticks at the default cadence. Deliberately the
-// same number, and the same reasoning, as [FreezeTTL]: long enough to
-// ride out a deploy or a slow tick, short enough that a dead publisher
-// stops serving.
+// 5 minutes = 10 missed ticks, the same number and reasoning as [FreezeTTL]:
+// long enough to ride out a deploy or slow tick, short enough that a dead
+// publisher stops serving.
 //
-// No page precedes the expiry: customers see 404s first. The page that
-// covers a dead publisher is `stellarindex_aggregator_silent`
-// (deploy/monitoring/rules/aggregator.yml), which fires about 10 minutes
-// after the last write while the process is still scraped and about
-// 15 minutes after it when the process is gone — so the 404 window
-// opens 5 to 10 minutes before anyone is paged. The freshness alert,
-// `stellarindex_api_price_stale`, is a ticket, and its `> 120` leg reads
-// a gauge this same aggregator emits, so it is silent in this scenario.
-// Raising this constant to meet the page would serve a dead publisher's
-// value as current for that long; if the gap must close, tighten the
-// alert, not this grace.
+// No page precedes the expiry: customers see 404s first. The page that covers a
+// dead publisher is `stellarindex_aggregator_silent`
+// (deploy/monitoring/rules/aggregator.yml), which fires about 10 minutes after
+// the last write while the process is still scraped and about 15 minutes after
+// it when the process is gone, so the 404 window opens 5 to 10 minutes before
+// anyone is paged. The freshness alert, `stellarindex_api_price_stale`, is a
+// ticket, and its `> 120` leg reads a gauge this same aggregator emits, so it is
+// silent in this scenario. Raising this constant to meet the page would serve a
+// dead publisher's value as current for that long; if the gap must close,
+// tighten the alert, not this grace.
 //
-// Expiry is the fail-closed answer for a rolling window: `/v1/price
-// ?window=…` documents a missing key as an honest 404 and refuses to
-// substitute a different window, so refusing to substitute a different
-// TIME is the same contract. A freeze is the one deliberate exception —
-// the orchestrator extends the last-known-good value's TTL to cover the
-// ADR-0019 hold (keepFrozenVWAPAlive), and that response carries
-// `flags.frozen`.
+// Expiry is the fail-closed answer for a rolling window: `/v1/price?window=…`
+// documents a missing key as an honest 404 and refuses to substitute a different
+// window, so refusing a different TIME is the same contract. A freeze is the one
+// exception: the orchestrator extends the last-known-good TTL to cover the
+// ADR-0019 hold (keepFrozenVWAPAlive), and that response carries `flags.frozen`.
 const VWAPMaxAge = 5 * time.Minute
 
 // VWAPTTL is the TTL for a VWAP key — its window, bounded by
@@ -692,37 +667,32 @@ func APIKeyCacheEvicted(keyHash string) APIKeyCacheKey {
 	return APIKeyCacheKey("apikey-cache:" + keyHash + ":evicted")
 }
 
-// ─── API-key lookup index ─────────────────────────────────────────
+// ─── API-key lookup index ───
 //
-// Wire shape: `apikey-index:v1` — ONE Redis HASH, fields:
+// Wire shape: `apikey-index:v1`, ONE Redis HASH with fields:
 //
 //	ready            → "1", written only by a COMPLETE index build
 //	k:<key_id>       → <sha256-hex> of the record that KeyID names
-//	o:<identifier>   → space-separated <sha256-hex> list of the
-//	                   records that owner holds
+//	o:<identifier>   → space-separated <sha256-hex> list of the records that owner holds
 //
-// Writer: `internal/auth.RedisAPIKeyStore` — atomically with the
-// record at issuance (Create / CreateWithSecret), and by the one
-// sanctioned keyspace walk that builds it for records that predate it.
-// Reader: the same store's by-owner / by-KeyID lookups.
+// Writer: `internal/auth.RedisAPIKeyStore`, atomically with the record at
+// issuance (Create / CreateWithSecret) and by the one sanctioned keyspace walk
+// that indexes older records. Reader: the same store's by-owner / by-KeyID
+// lookups. No TTL: the index lives as long as the records.
 //
-// Why ONE hash and not a SET per owner plus a pointer per KeyID: under
-// an allkeys-* policy (any operator's override) every Redis key is independently evictable. A per-owner set evicted while
-// its records survive would make live credentials invisible to list,
-// revoke and the tier clamp — a revocation that silently no-ops. With
-// the entries and the `ready` marker in one key they share one fate:
-// eviction takes the marker too, readers see "not ready" and fall
-// back to the walk, which is always correct. (Same reasoning as the
-// eviction-safe passkey ceremony protocol.)
+// Why ONE hash: under an allkeys-* policy every Redis key is independently
+// evictable, and a per-owner set evicted while its records survive would make
+// live credentials invisible to list, revoke and the tier clamp (a revocation
+// that silently no-ops). With entries and the `ready` marker in one key they
+// share one fate: eviction takes the marker too, readers see "not ready" and
+// fall back to the walk, which is always correct.
 //
-// The family is deliberately NOT under `apikey:` — a HASH there would
-// be matched by the `apikey:*` walk, whose GET would fail WRONGTYPE.
-// That makes it a NEW pattern for the Redis ACL allow-list
+// The family is deliberately NOT under `apikey:`: a HASH there would be matched
+// by the `apikey:*` walk, whose GET would fail WRONGTYPE. It is therefore a NEW
+// pattern for the Redis ACL allow-list
 // (configs/ansible/roles/redis-sentinel/templates/users.acl.j2,
-// `~apikey-index:*`); until a lockdown deployment applies it, every
-// access is NOPERM and the store keeps using the walk.
-//
-// No TTL: the index lives as long as the records it describes.
+// `~apikey-index:*`); until a lockdown deployment applies it, every access is
+// NOPERM and the store keeps using the walk.
 
 // APIKeyIndexKey is the typed Redis key for the `apikey-index:*`
 // family.
@@ -811,33 +781,22 @@ func OracleLatest(assetKeys []string, sourceFilter string) OracleLatestKey {
 // OracleLatestTTL is the TTL for `oracle:latest:*` cache entries.
 const OracleLatestTTL = 30 * time.Second
 
-// ─── Assets list / Markets list — read-through cache ──────────────
+// ─── Assets list / Markets list: read-through cache ───
 //
 // Wire shape:
-//   `assets:list:<cursor>:<limit>`
-//   `markets:list:<cursor>:<limit>[:order=<order>[:source=<source>|:asset=<asset>|:pools=1:src=<sources>:base=<base>:quote=<quote>:asset=<asset>]]`
 //
-// Writer: api (read-through; populated on cache miss)
-// Reader: api
-// TTL: 60 s — both endpoints derive from a 14-day rolling
-// window over the trades hypertable; new assets/pairs appear on
-// the human timescale of new listings (minutes-to-hours), so a
-// 60 s entry stays well inside the human freshness expectation.
+//	`assets:list:<cursor>:<limit>`
+//	`markets:list:<cursor>:<limit>[:order=<order>[:source=<source>|:asset=<asset>|:pools=1:src=<sources>:base=<base>:quote=<quote>:asset=<asset>]]`
 //
-// Invalidation: TTL only — no explicit invalidation on insert.
-// 60 s of staleness on a "new asset just got its first trade"
-// is acceptable; a fresh listing isn't expected to surface
-// instantly.
+// Writer and reader: api (read-through; populated on cache miss). TTL: 60 s,
+// TTL-only invalidation: both derive from a 14-day rolling window over the
+// trades hypertable, and new listings surface on a minutes-to-hours timescale.
 //
-// The `markets:list:` family has more than one shape because
-// /v1/markets and /v1/pools layer additional filter dimensions
-// (sort order, source, asset, the /v1/pools filter bundle) on top
-// of the base cursor+limit key. Each dimension gets its own
-// canonical builder below rather than call sites hand-appending
-// `":order=" + foo` onto [MarketsList]'s result — string
-// concatenation onto a canonical builder's output is exactly the
-// ad-hoc-key-construction bug class this package exists to close;
-// against the typed [MarketsListKey] it's a compile error (ADR-0007).
+// `markets:list:` has several shapes because /v1/markets and /v1/pools layer
+// filter dimensions on the base cursor+limit key. Each gets its own canonical
+// builder below; concatenating onto [MarketsList]'s result at call sites is the
+// ad-hoc-key-construction bug class this package exists to close, and against
+// the typed [MarketsListKey] it is a compile error (ADR-0007).
 
 // AssetsListKey is the typed Redis key for the
 // `assets:list:<cursor>:<limit>` family.
