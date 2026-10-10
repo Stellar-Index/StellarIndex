@@ -229,33 +229,24 @@ func opSucceeded(result xdr.OperationResult) bool {
 }
 
 // baseAccountAddress resolves one of the three MUXED-typed classic
-// counterparties — PaymentOp.Destination, ClawbackOp.From and
-// AccountMergeOp.Destination — to the G-strkey of the account that
-// actually holds the balance.
+// counterparties (PaymentOp.Destination, ClawbackOp.From,
+// AccountMergeOp.Destination) to the G-strkey of the account that holds the
+// balance.
 //
-// MuxedAccount.GetAddress() renders a CryptoKeyTypeKeyTypeMuxedEd25519
-// account as its M-strkey (SEP-23), and an M-strkey is a routing label
-// for a custodian's sub-account, not an on-chain account: no ledger
-// entry, no balance, and nothing any reader can ask for. These rows
-// land in stellar.account_movements' `address` / `counterparty`
-// columns, which are queried by G-strkey equality
-// (/v1/accounts/{g}/movements), so a movement recorded under an
-// M-address is a movement no reader can ever reach, and the underlying
-// account's own feed is missing it. Resolving to the base account is
-// the same rule the shared participant derivation applies
-// (xdrjson.ParticipantAccounts: "an M-strkey is resolved to its
-// underlying ed25519 account — that's the account whose RECEIVED
-// activity we index") and the same one the lake's op extractor applies
-// to a muxed op source.
+// MuxedAccount.GetAddress() renders a muxed-ed25519 account as its M-strkey
+// (SEP-23), a routing label for a custodian's sub-account: no ledger entry, no
+// balance. These rows land in stellar.account_movements' `address` /
+// `counterparty` columns, queried by G-strkey equality
+// (/v1/accounts/{g}/movements), so a movement recorded under an M-address is
+// unreachable and the real account's feed misses it. Resolving to the base
+// account matches xdrjson.ParticipantAccounts and the lake's op extractor.
 //
-// The memo id is deliberately not carried into the movement: it is a
-// destination-side routing detail with no on-chain balance effect, the
-// same call internal/sources/upshift makes for CAP-67's to_muxed_id.
+// The memo id is deliberately not carried: it is a destination-side routing
+// detail with no balance effect (same call as internal/sources/upshift for
+// CAP-67's to_muxed_id).
 //
-// The remaining counterparties this package decodes are AccountId-typed
-// (create-account destination, claimable-balance claimants,
-// path-payment's SimplePaymentResult.Destination) and are structurally
-// incapable of being muxed, so they need no resolution.
+// The other counterparties this package decodes are AccountId-typed and
+// structurally cannot be muxed, so they need no resolution.
 func baseAccountAddress(m xdr.MuxedAccount) (string, error) {
 	switch m.Type {
 	case xdr.CryptoKeyTypeKeyTypeEd25519, xdr.CryptoKeyTypeKeyTypeMuxedEd25519:
@@ -271,39 +262,28 @@ func baseAccountAddress(m xdr.MuxedAccount) (string, error) {
 
 // ─── Phase 2: PathPaymentStrictReceive / PathPaymentStrictSend ────
 //
-// ADR-0047 D3 Phase 2 / inventory path (b): a path payment moves
-// TWO assets, so both op types emit two 'path_payment' legs per op —
-// the same shape as the two-asset LP ops (entrychanges.go):
-//   - leg_index 0: the SOURCE leg, FromAddress only — what actually
-//     left the sender (send asset / source amount);
-//   - leg_index 1: the DESTINATION leg, ToAddress only — what
-//     actually reached the destination (result.Success.Last).
-// One row per op would have to put one asset on both participants'
-// rows, booking the sender an outflow in an asset it never held. Neither
-// leg names the other side as its counterparty: the send asset went
-// to the offers/pools on the path, not to the destination. Both legs'
-// Attributes carry the whole op (send_*/dest_* and both accounts) so
-// either row still describes the payment. Never a row per hop: the
-// per-hop ClaimAtoms already live in `trades` via internal/sources/
-// sdex, and duplicating them here would double-count the same event.
+// ADR-0047 D3 Phase 2: a path payment moves TWO assets, so both op types emit
+// two 'path_payment' legs per op, like the two-asset LP ops (entrychanges.go):
+//   - leg_index 0: the SOURCE leg, FromAddress only: what left the sender
+//     (send asset / source amount);
+//   - leg_index 1: the DESTINATION leg, ToAddress only: what reached the
+//     destination (result.Success.Last).
+// One row per op would put one asset on both participants' rows, booking the
+// sender an outflow in an asset it never held. Neither leg names the other side
+// as counterparty: the send asset went to the offers/pools on the path. Both
+// legs' Attributes carry the whole op so either row describes the payment.
+// Never a row per hop: per-hop ClaimAtoms already live in `trades` (sdex).
 //
-// The destination amount is always result.Success.Last.Amount, never
-// a body field: PathPaymentStrictReceiveOp.DestAmount and
-// PathPaymentStrictSendOp.DestMin are exact/floor respectively in the
-// body, but the result's SimplePaymentResult is what actually landed
-// and needs no per-type branching.
+// The destination amount is always result.Success.Last.Amount, never a body
+// field: DestAmount/DestMin are exact/floor in the body, while the result's
+// SimplePaymentResult is what actually landed and needs no per-type branching.
 //
-// Source-leg amount derivation is the one place the two op types
-// genuinely differ:
-//   - StrictSend: body.SendAmount is exact by protocol definition
-//     ("sends an exact amount") — no result inspection needed.
-//   - StrictReceive: body.SendMax is only a ceiling; the amount
-//     actually consumed is derived from the result's Offers —
-//     pathPaymentStrictReceiveSourceAmount below, verified against
-//     real pre-P23 mainnet multi-hop data (see real_bytes_test.go's
-//     TestRealBytes_pathPaymentStrictReceive_twoHop, ledger 40000003
-//     tx 49203432…, which round-trips a genuine 2-hop
-//     native→SHIB→native path exactly).
+// Source-leg amount is the one place the op types differ:
+//   - StrictSend: body.SendAmount is exact by definition.
+//   - StrictReceive: body.SendMax is only a ceiling; the amount consumed is
+//     derived from the result's Offers (pathPaymentStrictReceiveSourceAmount),
+//     verified against real_bytes_test.go's
+//     TestRealBytes_pathPaymentStrictReceive_twoHop.
 
 // decodePathPaymentStrictReceive reconstructs a 'path_payment'
 // movement for a successful PathPaymentStrictReceive op.
@@ -422,31 +402,22 @@ func buildPathPaymentMovement(ledger uint32, closedAt time.Time, txHash string, 
 	}, nil
 }
 
-// pathPaymentStrictReceiveSourceAmount derives the exact amount of
-// sendAsset the taker actually paid for a successful
-// PathPaymentStrictReceive — NOT available directly in the body
-// (SendMax is only a ceiling) or as a single result field the way
-// StrictSend's SendAmount is.
+// pathPaymentStrictReceiveSourceAmount derives the exact amount of sendAsset
+// the taker paid for a successful PathPaymentStrictReceive. The body only has
+// SendMax (a ceiling), and unlike StrictSend there is no single result field.
 //
 // Verified against real multi-hop mainnet data (real_bytes_test.go):
-// stellar-core appends offers to Success.Offers in STRICT hop order,
-// first hop first — a real 2-hop native→SHIB→native path payment
-// showed Offers[0] = {AssetSold: SHIB, AssetBought: native} (hop 0:
-// pay native, receive SHIB) followed by Offers[1] =
-// {AssetSold: native, AssetBought: SHIB} (hop 1: pay SHIB, receive
-// native) — i.e. Offers[0].AmountBought is exactly the taker's
-// SendAsset spend, and later offers' AssetBought no longer matches
-// SendAsset once the path has moved past the first hop. A single hop
-// filled across multiple offers (order-book depth) keeps ALL of its
-// claims at the front of Offers with AssetBought == SendAsset — this
-// sums the full contiguous prefix, not just Offers[0], to cover that
-// case too.
+// stellar-core appends offers to Success.Offers in STRICT hop order, first hop
+// first. So Offers[0].AmountBought is exactly the taker's SendAsset spend, and
+// later offers' AssetBought no longer matches SendAsset once the path moves
+// past hop 0. A single hop filled across several offers (order-book depth)
+// keeps ALL its claims at the front with AssetBought == SendAsset, so this sums
+// the full contiguous prefix, not just Offers[0].
 //
-// Empty Offers means the op crossed no order book / pool at all —
-// only possible when SendAsset == DestAsset (a path payment used as
-// a plain, same-asset transfer with slippage-protection semantics).
-// In that case nothing was converted, so the amount consumed equals
-// exactly what was delivered: lastAmount.
+// Empty Offers means no order book / pool was crossed, possible only when
+// SendAsset == DestAsset (a same-asset transfer with slippage protection).
+// Nothing was converted, so the amount consumed is exactly what was delivered:
+// lastAmount.
 func pathPaymentStrictReceiveSourceAmount(sendAsset xdr.Asset, offers []xdr.ClaimAtom, lastAmount xdr.Int64) (xdr.Int64, error) {
 	if len(offers) == 0 {
 		return lastAmount, nil

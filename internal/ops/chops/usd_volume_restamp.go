@@ -28,25 +28,22 @@ import (
 //	  repairable as a SQL identity (e.g. USDC-base sdex rows valued by VWAP
 //	  instead of the $1 peg).
 //	xlm-base: the tier-4 XLM anchor, re-derived in Go through the store's
-//	  resolver because it depends on prices_1m at the row's ts; repairs rows
-//	  valued through a thin counterparty book or left NULL
+//	  resolver because it depends on prices_1m at the row's ts
 //	  (usd_volume_restamp_xlmbase.go).
 //	xlm-quote: its mirror, XLM in the quote leg.
 //	cex-fx: CEX trades quoted in non-USD fiat, valued from fx_quotes;
 //	  prices_1m holds no fiat pair, which is why these rows are NULL.
 //
-// Every tier: DRY RUN by default; bounded and walked one -slice at a time;
+// Every tier: DRY RUN by default; bounded, walked one -slice at a time;
 // refused over the live ledgerstream cursor (one writer) unless
 // -allow-live-overlap; idempotent and resumable; reversible through
-// usd_volume_restamp_log, written in the UPDATE's own transaction; a
-// heartbeat for the ops_job stall alerts. Tier and value come from the SAME
-// functions the insert path uses. An unpriceable row is reported and left
-// as is, never blanked or given a second-choice estimate. Token/token pairs
-// are excluded: their only rate is the tier-3b bridge a counterparty authors.
+// usd_volume_restamp_log, written in the UPDATE's own transaction. Tier and
+// value come from the SAME functions the insert path uses. An unpriceable row
+// is reported and left as is, never blanked or given a second-choice estimate.
+// Token/token pairs are excluded: their only rate is the tier-3b bridge a
+// counterparty authors.
 //
 // Acceptance: `verify-usd-volume -day <last> -days <N>` over the span.
-// -chunks (usd_volume_restamp_chunks.go) works for every tier, since an
-// in-place walk over compressed chunks is far slower.
 func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, validate the tier's flag set, open+wire the store, run the live-overlap guard, dispatch — splitting scatters each guard away from the flag it guards.
 	fs := flag.NewFlagSet("usd-volume-restamp", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml (Postgres DSN + the operator's USD peg list)")

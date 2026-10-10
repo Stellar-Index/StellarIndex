@@ -10,30 +10,23 @@ import (
 )
 
 // preseedFactoryChildren seeds a factory-anchored reconcile source's
-// contractid.Registry (ADR-0035) by walking the factory's creation events
-// from the source genesis up to `to` and running each through the
-// decoder — dec.Decode registers the announced child as a side effect.
+// contractid.Registry (ADR-0035) by walking the factory's creation events from
+// source genesis up to `to` through the decoder (dec.Decode registers the
+// announced child as a side effect). No-op for non-gated sources
+// (factory == ""). Idempotent.
 //
-// No-op for non-gated sources (factory == ""). Idempotent.
+// Needed because the re-derive gates Matches() on the registry. A re-derive
+// from genesis self-seeds in-stream, but one over a custom sub-range
+// (verify-reconciliation -from N, past some pool deploys) would silently drop
+// every pre-N child's events and report a false "missing rows" delta.
 //
-// Why it's needed: the projection re-derive gates Matches() on the
-// registry, so a child's business events are only counted once its
-// creation event has been seen. A re-derive that starts at the source
-// genesis self-seeds in-stream (the factory's creation events precede
-// every child's events). But a re-derive over a CUSTOM sub-range
-// (verify-reconciliation -from N, with N after some pool deploys) starts
-// past those creation events, so without this pre-walk it would silently
-// drop every pre-N child's events and report a false "missing rows"
-// delta — the exact false-coverage signal the gate must not introduce.
-//
-// The walk reads the certified ClickHouse lake (callers pass a
-// clickhouse.ReconcileEventStreamer), never the Postgres landing zone, and
-// is cheap: factory creation events are rare and contract-prefiltered.
+// It reads the certified ClickHouse lake (callers pass a
+// clickhouse.ReconcileEventStreamer), never the Postgres landing zone; factory
+// creation events are rare and contract-prefiltered, so it is cheap.
 //
 // The decoder runs under completeness.Guard: a creation event whose decoder
-// panics leaves that child unseeded, so it is returned as a blind spot (the
-// child's rows are missing from the expected side) instead of crashing the
-// caller. Each caller decides what a blind preseed means for it.
+// panics leaves that child unseeded, so it is returned as a blind spot rather
+// than crashing the caller, which decides what a blind preseed means for it.
 func preseedFactoryChildren(ctx context.Context, es completeness.EventStreamer, src reconSource, to uint32) (completeness.BlindSpots, error) {
 	if len(src.factories) == 0 || src.dec == nil {
 		return completeness.BlindSpots{}, nil

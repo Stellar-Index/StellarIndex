@@ -20,7 +20,7 @@ import (
 //
 //  1. Ledger substrate contiguity (verify-contiguity's Check 1).
 //  2. stellar.ledger_entry_changes coverage, floor-gated at -ec-floor (0 =
-//     derived from the lake); below the floor is backfill-pending and only
+//     derived from the lake); below the floor is backfill-pending, only
 //     reported.
 //  3. Hash-chain integrity, in-window and boundary links.
 //  4. Raw-table census: transactions, operations and contract_events against
@@ -34,12 +34,10 @@ import (
 //
 // -textfile PATH writes lake_verify.prom only once every requested check has
 // completed; an erroring run writes nothing, so the stale alert covers it.
-//
 // Read-only; ClickHouse only.
 //
 // reconcile-balances is not composed in: it is network-bound and
-// account-sampled, not range-scoped. Run `stellarindex-ops reconcile-balances
-// -sample N` separately.
+// account-sampled, not range-scoped. Run it separately with -sample N.
 func verifyLake(args []string) error {
 	fs := flag.NewFlagSet("verify-lake", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr (this tool reads ClickHouse only, never Postgres); a missing/unreadable file is tolerated when -ch-addr is passed explicitly")

@@ -12,14 +12,10 @@ import (
 )
 
 // extractLedgerEntryChanges populates ext.Changes with one row per LedgerEntryChange in the
-// whole ledger: the substrate the account-state explorer (ADR-0038) and the ADR-0034 promise
-// to re-derive LedgerEntry supply observers from the lake rely on.
+// whole ledger (substrate for ADR-0038's account-state explorer and ADR-0034's supply-observer
+// re-derive). Mirrors dispatcher.walkLedgerEntryChanges so lake rows match the live hook:
 //
-// Mirrors dispatcher.walkLedgerEntryChanges (meta-version handling, unsupported-version
-// counter) so lake rows match the live decoder hook:
-//
-//   - Every tx is walked, failed txs included: a failed tx's fee debit is committed, only its
-//     operation changes roll back.
+//   - Every tx is walked, failed ones too: a failed tx's fee debit is committed.
 //   - The walk is ledger-wide and three-phase, as the SDK's ingest.LedgerChangeReader: every
 //     tx's fee changes, then every tx's apply-phase changes, then every tx's
 //     PostTxApplyFeeChanges (P23 Soroban fee refunds; LCM V2 only). intra_ledger_seq thus ranks
@@ -31,18 +27,14 @@ import (
 //     so they stay live. Skipped keys still take their walk position, aligned with
 //     dispatcher.walkEvictedKeys.
 //
-// Within each LedgerEntryChanges block changes are walked in entrywalk.Canonical order, since
-// core's block order is hash-map order and differs between exports; only a canonical order makes
-// re-extract reproducible.
+// Within each block changes are walked in entrywalk.Canonical order: core's block order is
+// hash-map order and differs between exports, so only a canonical order is reproducible.
 //
 // Fee-meta + TxChangesBefore/After sit at op_index -1, per-operation changes at their op_index.
 // change_index is a per-TRANSACTION counter (stable across re-ingest, so idempotent under the
-// ReplacingMergeTree) continuing across phases, so a tx's fee change keeps 0. A change that
-// won't marshal is skipped and counted, never fatal, and still takes its intra_ledger_seq.
-//
-// intra_ledger_seq is the per-LEDGER position, monotonic over the canonical walk. It is
-// folded into ledger_entries_current's RMT version so the last intra-ledger change to a key
-// wins FINAL dedup deterministically.
+// ReplacingMergeTree). A change that won't marshal is skipped and counted, never fatal, and still
+// takes its intra_ledger_seq, the per-LEDGER position folded into ledger_entries_current's RMT
+// version so the last intra-ledger change to a key wins FINAL dedup deterministically.
 func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransaction, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time) {
 	var entryChangeSeq uint32
 	// change_index is per-transaction, so it must survive the gap between the two

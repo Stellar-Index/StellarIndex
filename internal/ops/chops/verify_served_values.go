@@ -19,8 +19,7 @@ import (
 
 // verify-served-values reconciles values we SERVE against independent ground
 // truth, because sound code does not prove a served value right. It emits
-// node_exporter textfile gauges so a drifting value alerts within a day:
-//
+// node_exporter textfile gauges so drift alerts within a day:
 //   - XLM circulating + total supply vs the SDF lumen API
 //     (dashboard.stellar.org/api/v3/lumens).
 //   - USDC-on-Stellar total supply vs Stellar Expert's asset API.
@@ -28,9 +27,9 @@ import (
 //     (sdf_reserve_list.go); the 2% value tolerance cannot see one added or
 //     retired account.
 //
-// Price cross-checks belong to the divergence worker and served-vs-lake counts
-// to compute-completeness. Every ground truth here is point-in-time state,
-// never a windowed counter, so both sides measure the same thing.
+// Price cross-checks belong to the divergence worker, served-vs-lake counts to
+// compute-completeness. Every ground truth here is point-in-time state, never
+// a windowed counter, so both sides measure the same thing.
 //
 // Usage:
 //
@@ -39,9 +38,9 @@ import (
 //	    -config /etc/stellarindex.toml \
 //	    -textfile /var/lib/node_exporter/textfile_collector/served_values.prom
 //
-// Empty -textfile prints to stdout; empty -config skips the reserve-list
-// check. Exits 1 when any check failed or every VALUE check was skipped (see
-// servedValuesExitError), 0 otherwise.
+// Empty -textfile prints to stdout; empty -config skips the reserve-list check.
+// Exits 1 when any check failed or every VALUE check was skipped
+// (servedValuesExitError).
 func verifyServedValues(args []string) error {
 	fs := flag.NewFlagSet("verify-served-values", flag.ContinueOnError)
 	apiBase := fs.String("api", "http://127.0.0.1:3000", "Base URL of our API (loopback on r1)")

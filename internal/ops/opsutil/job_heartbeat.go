@@ -62,35 +62,29 @@ const jobHeartbeatInterval = 60 * time.Second
 const jobHeartbeatLabel = "ops_job"
 
 // JobHeartbeat publishes liveness + progress for one long-running
-// stellarindex-ops job as node_exporter textfile gauges, so a wedged
-// backfill is distinguishable from a working one:
+// stellarindex-ops job as node_exporter textfile gauges, so a wedged backfill
+// is distinguishable from a working one:
 //
 //   - stellarindex_ops_job_running       1 while the process is alive
 //   - stellarindex_ops_job_heartbeat_unix rewritten every minute by a
 //     background ticker, INDEPENDENT of whether work is happening
 //   - stellarindex_ops_job_progress_total units completed so far
 //   - stellarindex_ops_job_progress_cursor highest ledger reached
-//   - stellarindex_ops_job_progress_bytes_total bytes of storage OBSERVED
-//     to move during a phase that completes no units — see [JobHeartbeat.ProgressBytes]
+//   - stellarindex_ops_job_progress_bytes_total storage bytes OBSERVED to move
+//     in a phase that completes no units ([JobHeartbeat.ProgressBytes])
 //
-// all labelled `ops_job=` — see [jobHeartbeatLabel] for why NOT `job=`.
-// `running==1 ∧ stale heartbeat` means the process died hard (SIGKILL, OOM,
-// reboot); `running==1 ∧ fresh heartbeat ∧ flat progress` means it is alive
-// and hung. They need different responses, so they are different alerts.
+// all labelled `ops_job=` (see [jobHeartbeatLabel] for why NOT `job=`).
+// `running==1 ∧ stale heartbeat` means it died hard; `running==1 ∧ fresh
+// heartbeat ∧ flat progress` means alive and hung: two different alerts.
 //
-// ONE RUN PER TEXTFILE. Whichever of two runs sharing a path exits first
-// would write running=0 and silence the other's alerts, so [NewJobHeartbeat]
-// flocks the path and, when it is held, falls back to a per-invocation
-// `.pid<N>` path. That file carries a `pid` label and the alerts join
-// `on (ops_job, instance, pid)`, so a finished primary is never "rescued"
-// by a running sibling. Dead siblings are reaped by [sweepStalePIDFiles]
-// and [JobHeartbeat.sweepIfPrimary].
+// ONE RUN PER TEXTFILE. Of two runs sharing a path, whichever exits first would
+// write running=0 and silence the other's alerts, so [NewJobHeartbeat] flocks
+// the path and, when held, falls back to a `.pid<N>` path (see [claimPath]).
+// Dead siblings are reaped by [sweepStalePIDFiles].
 //
-// Deliberately FAIL-SOFT: every write error is swallowed. Aborting a
-// multi-day backfill over a metrics file is worse than losing the metric,
-// and a write that never succeeds surfaces as a stale heartbeat anyway.
-//
-// Zero value is not usable — construct with [NewJobHeartbeat].
+// FAIL-SOFT: every write error is swallowed; aborting a multi-day backfill over
+// a metrics file is worse than losing the metric, and a write that never
+// succeeds surfaces as a stale heartbeat. Construct with [NewJobHeartbeat].
 type JobHeartbeat struct {
 	job  string
 	path string
@@ -145,38 +139,26 @@ func NewJobHeartbeat(job, path string, now func() time.Time) *JobHeartbeat {
 // claimPath takes an exclusive, non-blocking flock on `<path>.lock` and
 // returns the path to use plus the held lock file.
 //
-// A second concurrent run of the same subcommand resolves to the SAME
-// default path. Sharing it is not a benign race: the two processes
-// interleave whole-file rewrites, and whichever finishes first writes
-// running=0 — silencing both stall alerts for the survivor, which may then
-// wedge for hours completely unobserved. That is a monitoring hole
-// disguised as a monitoring feature, and overlapping backfills are an
-// ordinary operator action here (`ch-full-backfill.sh` next to a
-// hand-driven catch-up window).
+// A second concurrent run of the same subcommand resolves to the SAME default
+// path. Sharing it is not benign: the two processes interleave whole-file
+// rewrites, and whichever finishes first writes running=0, silencing the
+// survivor's stall alerts. Overlapping backfills are an ordinary operator action.
 //
-// The loser of the race does NOT go silent and does NOT fail: it falls
-// back to `<path>.pid<N>.prom`, which node_exporter picks up from the same
-// directory and which carries the same `ops_job` label, so both runs
-// remain observable and both are covered by the same alerts. Emitting two
-// series with identical labels would be worse than either — Prometheus
-// would report a duplicate-sample scrape error and drop the WHOLE
-// node_exporter scrape — so the fallback file additionally carries a
-// distinguishing `pid` label (see render). The alert exprs in both rule
-// trees join `on (ops_job, instance, pid)` for the same reason: without
-// pid in the key the primary and a .pid sibling cross-match, and a
-// cleanly-finished primary gets "rescued" by a still-running loser.
+// The loser falls back to `<path>.pid<N>.prom`, which node_exporter picks up
+// from the same directory, so both runs stay observable under the same alerts.
+// Two series with identical labels would make Prometheus report a
+// duplicate-sample error and drop the WHOLE scrape, so the fallback file also
+// carries a `pid` label (see render). The alert exprs join
+// `on (ops_job, instance, pid)`; without pid in the key the primary and a .pid
+// sibling cross-match and a finished primary gets "rescued" by a running loser.
 //
-// pid is emitted ONLY on the fallback file, never unconditionally: the
-// primary is the steady-state series and giving it a value that changes
-// every single run would churn its identity for nothing (and PromQL
+// pid is emitted ONLY on the fallback file: giving the primary a value that
+// changes every run would churn its series identity for nothing (PromQL
 // matches the absent label as "", so the join works either way).
 //
-// Before falling back, sweep dead siblings — see [sweepStalePIDFiles].
-//
-// Fail-soft, like every other write on this path: if the lock cannot be
-// created at all (read-only dir, permissions), the original path is used
-// unlocked. That restores exactly the pre-guard behaviour rather than
-// disabling the heartbeat.
+// Dead siblings are swept before falling back ([sweepStalePIDFiles]).
+// Fail-soft: if the lock cannot be created (read-only dir), the original path
+// is used unlocked rather than disabling the heartbeat.
 func claimPath(path string) (string, *os.File) {
 	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o644) //nolint:gosec // operator-supplied metrics path, same trust as the .prom itself
 	if err != nil {
@@ -197,38 +179,27 @@ func pidPath(path string, pid int) string {
 	return strings.TrimSuffix(path, ".prom") + fmt.Sprintf(".pid%d.prom", pid)
 }
 
-// sweepStalePIDFiles deletes `<path>.pid<N>.prom` siblings whose process N
-// is no longer alive.
+// sweepStalePIDFiles deletes `<path>.pid<N>.prom` siblings whose process N is
+// no longer alive.
 //
-// Without it the fallback files accumulate forever — every contention over
-// the lifetime of the host leaves one, each pinning a distinct `pid` label
-// value in Prometheus. That is unbounded label cardinality on a metric
-// whose whole purpose is to be cheap, growing monotonically over months.
+// Without it the fallback files accumulate forever, each pinning a distinct
+// `pid` label value in Prometheus: unbounded label cardinality on a metric
+// meant to be cheap.
 //
-// Liveness is `kill(pid, 0)`: it signals nothing and reports whether the
-// pid is addressable. EPERM counts as ALIVE (the process exists, it just
-// belongs to another user) — only a definitively-absent process has its
-// file removed, so a shared-host misidentification errs toward keeping a
-// file rather than blinding a live run's monitoring.
+// Liveness is `kill(pid, 0)`. EPERM counts as ALIVE (the process exists, it
+// belongs to another user); only a definitively-absent process has its file
+// removed, so a misidentification errs toward keeping a file rather than
+// blinding a live run's monitoring. A reused pid keeps the file one cycle
+// longer.
 //
-// Called from three places, deliberately NOT from every startup: [claimPath]
-// on contention (exactly when a new sibling is about to be created, so the
-// set stays bounded by the number of concurrent runs), and
-// [JobHeartbeat.sweepIfPrimary] on the primary's own heartbeat tick and at
-// Stop. A single no-contention run — the overwhelmingly common case — never
-// pays for a directory scan at NewJobHeartbeat time; it only sweeps once it
-// is already enabled and already touching disk on its own schedule.
+// Called from [claimPath] on contention (when a new sibling is about to be
+// created, so the set stays bounded by the number of concurrent runs) and from
+// [JobHeartbeat.sweepIfPrimary] on the primary's tick and at Stop. Not from
+// every startup: a single no-contention run never pays for a directory scan at
+// NewJobHeartbeat time. The tick/Stop callers cover a hard-killed loser with no
+// successor: it is reaped within one tick, and by the time the primary exits.
 //
-// Contention-only sweeping would leave a loser's file behind forever
-// when no further contention follows (a hard-killed run with no
-// successor). The tick/Stop callers close that gap: as long as the
-// primary for a given path is alive and progressing through its own
-// lifecycle, a dead sibling is reaped within one tick, and unconditionally
-// by the time the primary exits — not only on the next contention. A pid
-// reused by an unrelated process keeps the file one cycle longer either way.
-//
-// Fail-soft throughout: a directory that cannot be read, or a file that
-// cannot be removed, is skipped.
+// Fail-soft: an unreadable directory or unremovable file is skipped.
 func sweepStalePIDFiles(path string) {
 	dir := filepath.Dir(path)
 	prefix := filepath.Base(strings.TrimSuffix(path, ".prom")) + ".pid"
@@ -357,40 +328,30 @@ func (h *JobHeartbeat) Progress(total, cursor uint64) {
 	h.mu.Unlock()
 }
 
-// ProgressBytes records that `moved` bytes of storage have been OBSERVED
-// to move so far in this run, cumulatively. It is the SECOND progress
-// dimension, and it exists because [JobHeartbeat.Progress]'s unit —
-// completed rows/ledgers — is structurally zero for the whole of some
-// phases of a job that is perfectly healthy.
+// ProgressBytes records that `moved` bytes of storage have been OBSERVED to
+// move so far in this run, cumulatively. It is the SECOND progress dimension:
+// [JobHeartbeat.Progress]'s unit (completed rows/ledgers) is structurally zero
+// for the whole of some phases of a healthy job.
 //
-// The case that forced it, on r1: `usd-volume-restamp -chunks`
-// must decompress a Timescale chunk before it can restamp a single row
-// in it, and `trades` has an outlier chunk at 159.7 GB uncompressed whose
-// decompress runs about 1.5 hours. Progress counts restamped rows, so it
-// was flat for that entire window and `stellarindex_ops_job_no_progress`
-// (30 min flat + 15 min `for`) ticketed on EVERY healthy run — measured
-// 49+ minutes flat on a 17.3 GB chunk. An alert that fires on every
-// healthy run is an alert the operator learns to ignore, which is the
-// same blindness the alert exists to prevent, reached by a different
-// route.
+// The case: `usd-volume-restamp -chunks` must decompress a Timescale chunk
+// before restamping a row in it, and `trades` has an outlier chunk at 159.7 GB
+// uncompressed whose decompress runs about 1.5 hours. Row progress was flat
+// throughout, so `stellarindex_ops_job_no_progress` (30 min flat + 15 min
+// `for`) ticketed on EVERY healthy run (49+ minutes flat on a 17.3 GB chunk).
+// An alert firing on every healthy run gets ignored.
 //
-// The answer is NOT to mute the alert for that phase: the phase is the
-// longest and most dangerous part of the run, and `running==1 ∧ fresh
-// heartbeat ∧ flat progress` is a state that genuinely happens there
-// (decompress_chunk needs a lock the ledgerstream replay can hold; a
-// stalled read never returns). The fix is to report the work that IS
-// happening. During a decompress the chunk's own heap and indexes are
-// extended on disk, and `pg_relation_size` stats those files rather than
-// reading them through the writer's snapshot — so an observer session
-// sees the figure climb continuously (measured on TimescaleDB 2.26.4 /
-// PG 15.17, the deployed pair: every single sample moved, 98.9 MB →
-// 522 MB across one decompress). A decompress that is WEDGED extends no
-// files, so both counters stay flat and the alert still fires.
+// The alert is NOT muted for that phase: it is the longest and most dangerous
+// part of the run, and `running==1 ∧ fresh heartbeat ∧ flat progress` genuinely
+// happens there (decompress_chunk needs a lock the ledgerstream replay can
+// hold; a stalled read never returns). Instead the work that IS happening is
+// reported: a decompress extends the chunk's heap and indexes on disk, and
+// `pg_relation_size` stats those files rather than reading them through the
+// writer's snapshot, so an observer sees the figure climb continuously
+// (measured on TimescaleDB 2.26.4 / PG 15.17). A WEDGED decompress extends no
+// files, both counters stay flat, and the alert still fires.
 //
-// The caller owns the accumulator (as it does for Progress's `total`) and
-// passes the running sum, so a job with several phases reports ONE
-// monotone series. Cheap enough to call per poll: a mutex and one
-// integer.
+// The caller owns the accumulator and passes the running sum, so a
+// multi-phase job reports ONE monotone series. Cheap to call per poll.
 func (h *JobHeartbeat) ProgressBytes(moved uint64) {
 	if !h.Enabled() {
 		return
