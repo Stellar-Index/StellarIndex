@@ -28,8 +28,6 @@ func Run(args []string) error { //nolint:gocyclo // flat command-dispatch switch
 		return backfill(args[1:])
 	case "backfill-external":
 		return backfillExternal(args[1:])
-	case "backfill-index":
-		return BackfillIndex(args[1:])
 	case "backfill-chainlink":
 		return backfillChainlink(args[1:])
 	case "backfill-router":
@@ -48,8 +46,6 @@ func Run(args []string) error { //nolint:gocyclo // flat command-dispatch switch
 		return censusBackfill(args[1:])
 	case "tag-routed-via":
 		return tagRoutedVia(args[1:])
-	case "tag-signer":
-		return tagSigner(args[1:])
 	case "tag-tx-index":
 		return tagTxIndex(args[1:])
 	case "seed-soroswap-pairs":

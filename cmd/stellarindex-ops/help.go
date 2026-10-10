@@ -522,33 +522,6 @@ Subcommands:
                               -config /etc/stellarindex.toml \
                               -from-block 15537393  # post-Merge marker
                               -sleep-ms 50          # ~20 req/s polite cap
-  backfill-index -config PATH -from RFC3339 -to RFC3339 [-pair P] [-chunk-days N] [-sleep-ms N] [-write]
-                          Index-source (CoinGecko) history as ORACLE
-                          UPDATES — never trades — for the windows no
-                          venue we ingest reaches. The earliest CEX
-                          candle we hold is kraken 2017-01-17, so the
-                          475 days back to the 2015-09-30 genesis have
-                          no venue price at all; this is the only
-                          source that covers them.
-                          Emits canonical.OracleUpdate with the same
-                          synthesised tx_hash the poller uses, so a
-                          backfilled and a polled observation for one
-                          timestamp collapse rather than double-count.
-                          Idempotent; a zero-row run exits non-zero.
-                          Key from COINGECKO_API_KEY (Pro, auto-selects
-                          the pro-api host) or COINGECKO_DEMO_API_KEY.
-                          BUDGET: /market_chart/range returns a whole
-                          span per call, so a full historical pass is
-                          tens of calls, not thousands. Keep -chunk-days
-                          wide and -sleep-ms non-zero; the Analyst plan
-                          allows 500 req/min against a 500k monthly
-                          credit, and there is no reason for this
-                          command to approach either. Example:
-                            stellarindex-ops backfill-index \
-                              -config /etc/stellarindex.toml \
-                              -from 2015-09-30T00:00:00Z \
-                              -to   2017-01-17T00:00:00Z \
-                              -chunk-days 90 -sleep-ms 250
   hubble-check -config PATH -from N -to N -bigquery-project PROJ [-max-mismatches N] [-dry-run-bytes]
                           Cross-check our SDEX trades against SDF's
                           published hubble-public.crypto_stellar.history_trades
@@ -652,17 +625,6 @@ Subcommands:
                           (default true) resumes only a run of the same
                           range. The live indexer keeps the trailing 30
                           min tagged going forward.
-  tag-signer -config PATH -from N -to N [-window N] [-ch-addr H:P] [-resume] [-write]
-                          Back-tag trades.signer (the AMM/Soroban swap tx
-                          source account) over a ledger range, reading the
-                          signer from the lake's stellar.transactions
-                          (migration 0150). The recovery half of the live
-                          pipeline.RunSignerTagger sweeper — run it when an
-                          indexer/ClickHouse outage or projector lag exceeded
-                          the sweeper's 30-min lookback. First-wins;
-                          checkpointed per -from/-to pair, and -resume
-                          (default true) resumes only a run of the same
-                          range.
   tag-tx-index -config PATH -from RFC3339 -to RFC3339 [-window DUR] [-ch-addr H:P] [-write]
                           Back-tag trades.tx_index (intra-ledger apply
                           order, migration 0196) for every on-chain trade
@@ -1130,12 +1092,6 @@ Subcommands:
                           day. Also diffs -config's supply.sdf_reserve_accounts
                           (default /etc/stellarindex.toml; empty skips it)
                           against the reserve list SDF publishes. Read-only.
-  sdex-claim-audit -config PATH -from N -to N [-bucket NAME] [-examples N] [-dump-ops]
-                          Walk a ledger range and run every classic-DEX claim
-                          atom through the real SDEX decode path, tallying
-                          which claims the decoder DROPS and why — the exact
-                          diagnosis of SDEX trade-count gaps against Hubble
-                          (which counts one trade per claim atom). Read-only.
   verify-recognition -config PATH -from N -to N [-ch-addr ADDR]
                           ADR-0033 Claim 2a: pull every distinct
                           (contract, topic[0]) shape from the ClickHouse

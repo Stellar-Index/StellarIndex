@@ -12,7 +12,7 @@
 // and change-summary-reset in internal/ops/usage).
 //
 //   - Ingest / backfill (internal/ops/ingest): `backfill`,
-//     `backfill-external`, `backfill-chainlink`, `backfill-index`,
+//     `backfill-external`, `backfill-chainlink`,
 //     `backfill-router`,
 //     `detect-gaps`, `list-cursors`, `reap-cursors`, `resume-stalled`,
 //     `find-data-gaps`, `census-backfill`, `tag-routed-via`,
@@ -35,7 +35,7 @@
 //     `ch-txindex-backfill`, `ch-participant-backfill`,
 //     `ch-recognition`, `verify-recognition`, `verify-reconciliation`,
 //     `compute-completeness`, `verify-served-values`, `verify-usd-volume`,
-//     `usd-volume-restamp`, `sdex-claim-audit`, `classic-movements-backfill`,
+//     `usd-volume-restamp`, `classic-movements-backfill`,
 //     `projected-rebuild`, `reconcile-balances`, `verify-contiguity`,
 //     `verify-hashchain`, `verify-lake`, `verify-network-state`,
 //     `wasm-drift`.
@@ -138,7 +138,6 @@ var subcommands = map[string]func(args []string) error{
 	"backfill":                ingest.Run,
 	"backfill-external":       ingest.Run,
 	"backfill-chainlink":      ingest.Run,
-	"backfill-index":          ingest.Run,
 	"backfill-router":         ingest.Run,
 	"detect-gaps":             ingest.Run,
 	"list-cursors":            ingest.Run,
@@ -147,7 +146,6 @@ var subcommands = map[string]func(args []string) error{
 	"find-data-gaps":          ingest.Run,
 	"census-backfill":         ingest.Run,
 	"tag-routed-via":          ingest.Run,
-	"tag-signer":              ingest.Run,
 	"tag-tx-index":            ingest.Run,
 	"seed-soroswap-pairs":     ingest.Run,
 	"seed-protocol-contracts": ingest.Run,
@@ -204,7 +202,6 @@ var subcommands = map[string]func(args []string) error{
 	"verify-served-values":         chops.Run,
 	"verify-usd-volume":            chops.Run,
 	"usd-volume-restamp":           chops.Run,
-	"sdex-claim-audit":             chops.Run,
 
 	"classic-movements-backfill": chops.Run,
 	"projected-rebuild":          chops.Run,
