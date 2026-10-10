@@ -8,7 +8,7 @@ import { MarketsTable } from './MarketsTable';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/markets' },
-  // UXP-10/UXP-16: thousands of pairs trade on Stellar in any 14-day
+  // Thousands of pairs trade on Stellar in any 14-day
   // window (see the Panel's own "top N by volume" label below) — this
   // page only ever renders the top 100 by 24h USD volume, so the title
   // and description must say that, not "every".

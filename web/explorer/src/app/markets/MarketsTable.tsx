@@ -239,7 +239,7 @@ export function MarketsTable() {
           <Input
             type="search"
             aria-label={`Filter the ${data.markets.length} markets shown by base or quote asset (does not search beyond the top ${data.markets.length} by volume)`}
-            // UXP-10/UXP-16: this only filters the fetched top-N page, not
+            // This only filters the fetched top-N page, not
             // every active pair on Stellar — say so, rather than reading
             // like a full-network search that silently comes up empty for
             // a real pair outside the top N.

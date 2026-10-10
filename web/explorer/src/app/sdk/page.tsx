@@ -244,7 +244,7 @@ export default function SDKPage() {
         <section className="border-line bg-surface rounded-xl border p-5 text-sm">
           <h2 className="text-h3 text-ink font-semibold">Reference</h2>
           <ul className="text-ink-body mt-3 space-y-2">
-            {/* site-audit S5: the pkg.go.dev link 404'd. The module IS
+            {/* pkg.go.dev 404s for this module. It IS
               published (v0.20.x is on proxy.golang.org and `go get` works),
               but pkg.go.dev does not render this large monorepo — repeated
               requests still 404. Point the reference at the GitHub source,

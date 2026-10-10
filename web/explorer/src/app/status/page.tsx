@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 // Server wrapper. The interactive status surface is a client
 // component (live polling, SSE, endpoint probes), but the incident
 // history is seeded from the build-time corpus so past incidents
-// render even when the live API is fully down (WB-02). We load the
+// render even when the live API is fully down. We load the
 // corpus here at build time — `loadIncidents()` reads the repo's
 // `internal/incidents/data/*.md`, the same source /incident/[slug]
 // and the sitemap use — and project it into the UI-flat shape the

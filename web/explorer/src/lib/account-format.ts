@@ -57,7 +57,7 @@ export function fmtDateTime(iso: string | null | undefined): string {
 }
 
 /** Coarse relative time — delegates to the canonical long-form in
- * lib/format (FEC audit A3-F1: one word-form implementation). */
+ * lib/format. */
 export { formatRelativeLong as fmtRelative } from '@/lib/format';
 
 /** Capitalise the first letter — for tier / status / role labels. */

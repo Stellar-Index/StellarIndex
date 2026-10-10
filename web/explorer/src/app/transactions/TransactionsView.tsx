@@ -93,9 +93,8 @@ export function TransactionsView() {
         </div>
       )}
 
-      {/* S-004: the page was a bare list — the daily-throughput series
-          the API already serves answers "how busy is the network" before
-          the visitor scrolls a single row. */}
+      {/* The daily-throughput series answers "how busy is the network" before
+          the row list. */}
       <ThroughputPanel headingLevel={2} defaultMetric="txs" />
 
       <TxTable

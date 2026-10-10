@@ -109,7 +109,7 @@ export function stellarExpertDirectoryUrl(
 export type ScamReasonLabel = 'DEPRECATED' | 'SCAM' | 'UNSAFE';
 
 /**
- * classifyScamReasonLabel — S-010: a deprecated legacy issuer of a real
+ * classifyScamReasonLabel — a deprecated legacy issuer of a real
  * org is not a scam, so the badge text is derived from the reason text
  * rather than always reading "SCAM".
  */

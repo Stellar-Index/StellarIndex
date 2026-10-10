@@ -28,9 +28,8 @@ export default function SLAPage() {
         subtitle="Measured on the API host, continuously"
       >
         <div className="overflow-x-auto">
-          {/* table-wave:allowlist prose — SLA targets table (operator
-              decision D5 2026-08-24): prose-page table, stays hand-rolled;
-              the A2-01 data-table wave must not sweep it. */}
+          {/* table-wave:allowlist prose — SLA targets table; prose-page table,
+              stays hand-rolled. */}
           <table className="w-full text-sm">
             <thead>
               <tr className="border-line text-ink-muted border-b text-left text-xs tracking-wider uppercase">

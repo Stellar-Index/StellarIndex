@@ -64,8 +64,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
 
   return (
     <Container className="space-y-6 py-8">
-      {/* FEC A1-6: BreadcrumbList JSON-LD derives from this Crumb[] inside
-          Breadcrumbs — no hand-rolled LD. */}
+      {/* BreadcrumbList JSON-LD derives from this Crumb[] inside Breadcrumbs. */}
       <PageHeader
         breadcrumbs={[
           { label: 'Home', href: '/' },

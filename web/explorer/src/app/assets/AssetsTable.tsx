@@ -177,8 +177,6 @@ export function AssetsTable({
   // Local input state, debounced into the URL so the server-side
   // ?q= filter doesn't refire on every keystroke.
   const [q, setQ] = useState(queryParam);
-  // FEC audit A3-F5: debounce via the shared hook — the hand-rolled timer
-  // needed an exhaustive-deps escape hatch to stay stable.
   const debouncedQ = useDebouncedValue(q.trim(), 250);
   useEffect(() => {
     if (debouncedQ === queryParam) return;
@@ -188,7 +186,7 @@ export function AssetsTable({
 
   const assets = data?.assets ?? [];
 
-  // Sortable columns (site-audit S36). Value accessors mirror the row's
+  // Sortable columns. Value accessors mirror the row's
   // rendered numbers so the visible order matches the header the user
   // clicked. Nulls sort last (useTableSort), so unpriced/newer assets don't
   // jump to the top of an ascending sort.
@@ -409,7 +407,7 @@ export function AssetsTable({
                     // cursor pagination keeps no depth — so on page 2
                     // it restarted at 1 and re-labelled the 101st asset
                     // "#1" under a header that reads as a global rank
-                    // (wave-D EXR-06). Deriving it as depth*limit+i is
+                    //. Deriving it as depth*limit+i is
                     // NOT the fix: suppressCatalogueTwins and
                     // foldAliasTwins drop rows post-query, so pages
                     // under-fill (measured 81/96/99/96 at limit=100)

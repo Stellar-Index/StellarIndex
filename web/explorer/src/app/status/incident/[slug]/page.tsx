@@ -23,7 +23,7 @@ import { formatDurationLong } from '@/lib/format';
 // https://github.com/<org>/<repo>), set at build time once the
 // repo is published at the v1.0 public flip. While unset the
 // "View source on GitHub" link is omitted entirely — linking the
-// private repo would 404 for every customer (WB-07). Trailing
+// private repo would 404 for every customer. Trailing
 // slash trimmed so `${PUBLIC_REPO_URL}/blob/main/...` is clean.
 const PUBLIC_REPO_URL = (process.env.NEXT_PUBLIC_PUBLIC_REPO_URL ?? '').replace(
   /\/+$/,
@@ -116,7 +116,7 @@ export default async function IncidentPage({
                 "View source" link would 404 for every customer. Gate it
                 behind a build-time env flag that holds the PUBLIC repo's
                 base URL (e.g. https://github.com/<org>/<repo>); when
-                unset, drop the link entirely (WB-07). */}
+                unset, drop the link entirely. */}
         {PUBLIC_REPO_URL && (
           <a
             href={`${PUBLIC_REPO_URL}/blob/main/${inc.source_path}`}

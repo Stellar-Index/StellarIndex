@@ -287,10 +287,7 @@ export function AccountPositions({ id }: { id: string }) {
   const slices = holdings
     .filter((h) => h.valueUSD != null && h.valueUSD > 0)
     .map((h) => {
-      // FEC audit A5-05: the local assetSlug fork lacked the canonical's
-      // colon-form/C-id/length guards and could emit 404 links — the exact
-      // failure its own comment said it prevented. Canonical returns null
-      // for unlinkable ids; the slice then renders unlinked.
+      // assetSlug returns null for unlinkable ids; the slice then renders unlinked.
       const slug = assetSlug(h.asset);
       return {
         id: h.asset,

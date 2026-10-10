@@ -8,9 +8,8 @@ import { describe, expect, it } from 'vitest';
  *
  * A sibling of `network-hardcodes.test.ts` and
  * `fec-consolidation-guards.test.ts`, deliberately NOT folded into the
- * latter: that pack's header scopes it to the FEC
- * consolidation classes, and widening it silently would make its stated
- * scope false.
+ * latter: that pack is scoped to consolidation
+ * classes, and widening it would make its stated scope false.
  *
  * What these guards share is a failure mode, not a subject. Each covers a
  * rendering obligation that is trust-critical, enforced by convention at
@@ -19,7 +18,7 @@ import { describe, expect, it } from 'vitest';
  * is how all of the following shipped:
  *
  *   - the scam callout existed on 1 of 2 asset-detail render paths, and
- *     the path missing it was the LONG-TAIL one (wave-D EXR-01);
+ *     the path missing it was the LONG-TAIL one;
  *   - the image-host gate existed at 2 of 3 `<img>` sites.
  *
  * Enumerating from `src/` at test time is the point: a fourth site fails
@@ -420,7 +419,7 @@ describe('trust-surface guards', () => {
     // dataflow analysis, not text matching. Widening the file filter
     // instead just flags co-occurrence — it reports
     // markets/[pair]/page.tsx, which is CORRECT code (it truncates for
-    // the label and hrefs the full canonical id, the AM-09 decision).
+    // the label and hrefs the full canonical id).
     //
     // A guard that flags correct code gets disabled, so this stays
     // narrow and truthful. The seven other truncation sites were

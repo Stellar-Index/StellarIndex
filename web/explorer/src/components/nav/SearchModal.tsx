@@ -198,8 +198,6 @@ const STATIC_PAGES: Result[] = [
     hint: 'create your account',
     href: '/signup',
   },
-  // S-019: /account never existed as a route (only a CF redirect
-  // rescued it in production; it 404'd everywhere else).
   {
     type: 'page',
     label: 'Account',
@@ -298,11 +296,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
   // debounced value would otherwise serve the PREVIOUS session's query
   // for up to 200ms — flashing its direct-jump row above the defaults.
   const debouncedQ = q.trim() === '' ? '' : debouncedRaw;
-  // a11y: the full dialog contract (Escape / focus move-in / Tab trap /
-  // focus restore) comes from the canonical useDialog hook — FEC audit
-  // A6-2 replaced the hand-rolled versions, which diverged in three
-  // user-visible ways (ungated global Escape closed the nav drawer too;
-  // the Tab trap was escapable via body focus; focusable-selector drift).
+  // a11y: useDialog supplies Escape / focus move-in / Tab trap / focus restore.
   const close = useCallback(() => setOpen(false), []);
   const dialogRef = useDialog<HTMLDivElement>(open, close);
 
@@ -350,7 +344,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
   });
 
   // Cmd-K / Ctrl-K toggles — the one dialog behavior useDialog deliberately
-  // does not cover (an OPEN shortcut). Escape lives in useDialog (A6-2).
+  // does not cover (an OPEN shortcut). Escape lives in useDialog.
   // Only one mounted instance owns the toggle; the others just close their own
   // modal, so Cmd-K never leaves two search dialogs stacked.
   useEffect(() => {

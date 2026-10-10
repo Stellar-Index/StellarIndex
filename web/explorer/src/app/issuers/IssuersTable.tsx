@@ -39,7 +39,7 @@ export function IssuersTable() {
     ...filtered.map((r) => r.total_observation_count),
   );
 
-  // Sortable columns (site-audit S36). Default keeps the API's
+  // Sortable columns. Default keeps the API's
   // observation-count ranking until a header is clicked.
   const issuerSortColumns: SortColumn<(typeof filtered)[number], string>[] = [
     { key: 'org', value: (r) => r.org_name ?? '', initialDir: 'asc' },

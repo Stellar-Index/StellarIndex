@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MarketsTable } from './MarketsTable';
 import type { Market } from '@/api/hooks';
 
-// UXP-10/UXP-16: /markets fetches (and the search box only filters) the
+// /markets fetches (and the search box only filters) the
 // top 100 pairs by 24h volume — thousands more trade on Stellar in any
 // 14-day window. The search UI must say so instead of reading like a
 // full-network search.

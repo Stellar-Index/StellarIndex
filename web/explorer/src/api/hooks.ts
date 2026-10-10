@@ -183,7 +183,7 @@ export const STATUS_POLL_MS = 30_000;
  * failures are part of the data so every consumer sees the SAME truth —
  * the last-known snapshot (never silently dropped during an outage), the
  * latest poll error, and how many consecutive polls have failed (the
- * DegradedBanner flips to "status feed unreachable" at 2 — WB-04 honesty:
+ * DegradedBanner flips to "status feed unreachable" at 2 —
  * a fetch we could not complete is absence-of-signal, not an all-clear).
  */
 export interface StatusFeed {

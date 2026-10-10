@@ -359,7 +359,7 @@ export function OraclesView() {
                             any feed whose symbol carries no recognisable fiat
                             suffix — so a hypothetical wstETH/ETH or a bare
                             wBTC_FUNDAMENTAL would display "USD" beside a number
-                            that is not dollars (wave-D SI-OC-01). mapped=false
+                            that is not dollars. mapped=false
                             already means the denomination is unknown by design;
                             rendering the default as though it were a fact is the
                             one place that contradiction reaches a reader. */}

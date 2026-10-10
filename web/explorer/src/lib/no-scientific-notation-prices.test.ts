@@ -5,16 +5,11 @@ import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// UXP-26: ~15 price render sites called `n.toExponential(...)` for
-// sub-milli values, printing e.g. "$7.407e-4" for a low-value asset/pair
-// while the canonical @/lib/format formatters (formatPriceSmall /
-// formatSubunitPrice / formatPairPrice) render the SAME magnitude as a
-// plain decimal ("0.0007407"). The operator deliberately removed
-// scientific-notation price rendering (see format.ts:28-34)
-// because it "is not user-friendly"; these sites bypassed that single
-// source. This guard fails if any of them re-introduces toExponential in
-// a price context — the canonical formatters (whose behaviour is asserted
-// directly in format.test.ts) are the only sanctioned path.
+// Price render sites must not call `n.toExponential(...)` (prints "$7.407e-4");
+// the canonical @/lib/format formatters (formatPriceSmall / formatSubunitPrice /
+// formatPairPrice) render plain decimals ("0.0007407"). This guard fails if a
+// price context re-introduces toExponential; the formatters (asserted in
+// format.test.ts) are the only sanctioned path.
 //
 // Chart AXIS tick formatting is intentionally out of scope (a chart axis
 // legitimately uses exponent labels): DepthChart.formatDepthPrice is the

@@ -133,9 +133,8 @@ export function windowLabelFor(days: WindowDays): string {
   return WINDOWS.find((w) => w.days === days)?.key ?? `${days}d`;
 }
 
-/** The shared 24h/7d/30d/90d pill row — ui/Segmented (FEC A3-F6.2 fold;
- *  this file's WindowPills donated its role/aria-label/focus-ring a11y
- *  semantics to Segmented, and Segmented's quiet active style won). */
+/** The shared 24h/7d/30d/90d pill row — ui/Segmented (role, aria-label and
+ *  focus ring come from Segmented). */
 function WindowPills({
   days,
   onChange,

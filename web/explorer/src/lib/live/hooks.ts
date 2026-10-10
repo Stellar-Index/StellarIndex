@@ -20,7 +20,7 @@ type SubstanceEvidence = components['schemas']['SubstanceEvidence'];
 export interface StreamFrame<T> {
   data: T;
   /** Wall-clock arrival time — callers use this to drop a "live" badge
-   * when the stream has gone silently quiet (WB-04). */
+   * when the stream has gone silently quiet. */
   receivedAt: number;
 }
 
@@ -75,7 +75,7 @@ function useStreamJSON<T>(
  * impure under the react compiler). Starts at 0, meaning "no reading
  * yet": treat `clock === 0` as fresh — a frame's own arrival already
  * triggered a render, so the clock only needs to catch streams that
- * went QUIET (WB-04).
+ * went QUIET.
  */
 export function useLiveClock(intervalMs = 10_000): number {
   const [now, setNow] = useState(0);
@@ -393,11 +393,10 @@ export function useObservationsFollow(
 
 /**
  * usePricePoll — the 60s /v1/price polling fallback that runs under the
- * tip stream (FEC audit A6-5: LiveAssetPrice, LivePairPrice, and the
- * embed LivePrice each hand-rolled this loop; the two page components now
- * share it — the embed stays standalone by design, bundle-light).
+ * tip stream (shared by LiveAssetPrice and LivePairPrice; the embed
+ * LivePrice stays standalone, bundle-light).
  *
- * Superset semantics (LiveAssetPrice's, the winning behavior): a 404
+ * A 404
  * whose problem type ends in /price-withheld REPLACES the baked price
  * with the withheld verdict (the server deliberately refused to
  * aggregate; a lower-trust snapshot must not stand in). A plain 404 /

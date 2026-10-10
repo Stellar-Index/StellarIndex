@@ -36,7 +36,7 @@ interface AssetShellDetail {
    * carried these — the shell simply ignored them, so a scam-flagged
    * asset outside the pre-rendered top-500 rendered with no warning
    * while the pre-rendered page showed a full "do not trust this asset"
-   * banner (wave-D EXR-01).
+   * banner.
    */
   issuer_directory_tags?: string[] | null;
   issuer_directory_domain?: string | null;

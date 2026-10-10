@@ -87,8 +87,7 @@ export function LiveAssetPrice({
    */
   initialChangePct?: number | null;
 }) {
-  // FEC audit A6-5: the 60s poll loop lives in the canonical usePricePoll;
-  // this component keeps only the provenance/caption mapping.
+  // The 60s poll loop is usePricePoll; this component only maps provenance/captions.
   const poll = usePricePoll({
     asset: assetID,
     initialPrice,
@@ -157,7 +156,7 @@ export function LiveAssetPrice({
     withheld || poll.thin ? false : poll.polled ? true : freshDirectMarket;
   const tip = useTipStream(tipEnabled ? assetID : null);
   // Slow clock so a wedged stream loses its "live" claim without
-  // waiting for the next poll render (WB-04).
+  // waiting for the next poll render.
   const clock = useLiveClock();
   const tipFresh =
     tip != null && !isFrameStale(clock, tip.receivedAt, TIP_LIVE_STALE_MS);

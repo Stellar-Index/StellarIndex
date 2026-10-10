@@ -20,7 +20,7 @@ describe('fiatSlugFor', () => {
 });
 
 describe('assetHrefFor', () => {
-  // UXP-12/AM-16: in-app fiat nav must target the DECLARED canonical
+  // In-app fiat nav must target the DECLARED canonical
   // /external/assets/{slug}, not the non-canonical /assets/{slug}
   // VerifiedCurrencyView that generateMetadata tells crawlers to ignore.
   it('routes to the canonical /external/assets/{slug}, not /assets/{slug}', () => {

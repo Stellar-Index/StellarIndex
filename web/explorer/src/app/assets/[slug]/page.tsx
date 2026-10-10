@@ -805,8 +805,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   // typecheck without further narrowing pain.
   const globalView = globalViewEarly as GlobalAssetView | null;
 
-  // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
-  // inside Breadcrumbs below — no hand-rolled LD.
+  // BreadcrumbList JSON-LD derives from the visible Crumb[] inside Breadcrumbs below.
   // Schema.org FAQPage (JSON-LD only, no visible panel) so Google can pick up
   // currency-pair queries like "what is XLM" / "how is USDC priced".
   const faqLD = {

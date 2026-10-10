@@ -35,8 +35,8 @@ type GetJSON<P extends keyof paths> = paths[P] extends {
   ? B
   : never;
 
-// FEC audit A3-F4: Envelope's canonical home is src/api/client (so api
-// code can use it); re-exported here for the existing page importers.
+// Envelope lives in src/api/client so api code can use it; re-exported here
+// for page importers.
 export type { Envelope } from '@/api/client';
 
 export type Ledger = Schemas['Ledger'];
@@ -231,9 +231,7 @@ export function formatTimestamp(iso: string | undefined | null): string {
   return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 }
 
-// FEC audit A3-F1: this was a behavior-identical clone of lib/format's
-// formatRelative — delegate so the family has exactly one implementation.
-// (Kept as a named re-export: 10 explorer files import it from here.)
+// Named re-export of lib/format's formatRelative; explorer files import it here.
 export { formatRelative as relativeAge } from '@/lib/format';
 
 // ---------------------------------------------------------------------------
@@ -268,10 +266,6 @@ export function CopyHash({
 // text. Use when the value is already shown next to it (e.g. an
 // account link) and you just want a copy affordance.
 export function CopyValue({ value }: { value: string }) {
-  // FEC audit A3-F7 absorbed the BEHAVIOR into the canonical ui hook; the
-  // local look was kept, and with it a 12×12px hit area — half the WCAG
-  // 2.5.8 Target Size (Minimum) floor of 24px. Rather than re-grow the
-  // fork, delegate to the canonical CopyButton (24×24, plus the "Copied"
-  // live region), so every call site inherits one fix.
+  // Canonical CopyButton: 24×24 hit area (WCAG 2.5.8) plus a "Copied" live region.
   return <CopyButton value={value} title="Copy to clipboard" />;
 }

@@ -6,10 +6,7 @@ export type DirectionPillProps = {
   // the render code below (no *100 conversion — deltaPct.toFixed(2) is used
   // directly) and with the app-wide convention (every real percentage
   // field, e.g. change_24h_pct, already arrives as a percentage-point
-  // number — see the AGT-06 removal of the fraction-based formatPctChange
-  // footgun in lib/format.ts). Fixed the doc to match the code, not the
-  // other way around: doing the reverse would have broken every existing
-  // caller (MultiWindowDelta).
+  // number).
   /** Already a percentage-point number — 5 = +5%. Pass null for "no data". */
   deltaPct: number | null;
   /** Tightens to a smaller chip when used in dense tables. */

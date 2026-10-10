@@ -9,7 +9,7 @@
 // short linger after the last subscriber unmounts (absorbing
 // route transitions where the next page re-subscribes immediately).
 //
-// Reconnect policy (WB-04, proven on the status page): the browser
+// Reconnect policy (proven on the status page): the browser
 // auto-retries transient blips itself (readyState CONNECTING). A HARD
 // failure (readyState CLOSED — e.g. a 404 from an older API binary, or
 // a proxy strip) is NOT retried by the browser, so we schedule a slow

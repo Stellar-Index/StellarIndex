@@ -129,9 +129,8 @@ export function OperationsView() {
 
   return (
     <div className="space-y-6">
-      {/* S-005: the chips row becomes the shared ranked-bars mix +
-          the daily ops series — same components /network uses. Only on
-          page 1; deep-paging visitors came for the rows. */}
+      {/* Ranked-bars mix + daily ops series, same components /network uses.
+          Only on page 1; deep-paging visitors came for the rows. */}
       {!cursor && (
         <div className="grid gap-6 lg:grid-cols-2">
           <OperationMixPanel headingLevel={2} linkRows={false} />

@@ -69,17 +69,9 @@ describe('no hand-rolled price-ladder forks exist outside lib/format.ts', () => 
   });
 });
 
-// COR-14/AGT-05: DexesView.tsx, PoolsTable.tsx, and MarketsTable.tsx each
-// hand-copied the exact same quote-per-base price ladder instead of
-// importing the shared `formatPairPrice` (@/lib/format) — three
-// independent forks of one formatter, free to visibly drift. The first
-// remediation made each file import formatPairPrice but left four local
-// LastPriceCell components wrapping it — and those forked AGAIN
-// (DexesView's copy silently lost the flash-on-change). The
-// cell itself lives in @/components/LastPriceCell, which is now
-// the ONLY place formatPairPrice appears in a last-price cell. This
-// guard asserts the end state: every price table renders the shared
-// cell, defines no local one, and nobody re-copies the raw ladder.
+// Price tables must render the shared LastPriceCell
+// (@/components/LastPriceCell), the ONLY place formatPairPrice appears in a
+// last-price cell: no local cell, and no re-copied raw price ladder.
 // See SourceStatsPanel.test.tsx for a sibling case (the local
 // `formatCompact` fork) where the duplication *had* already drifted.
 

@@ -4,7 +4,7 @@ import { render, screen } from '@testing-library/react';
 import { HistoryTabPanel, tradeVenueRows } from './HistoryTabPanel';
 import type { TradeRow } from '@/api/hooks';
 
-// COR-04/COR-12/AGT-02: quote_amount is always the native-XLM leg
+// quote_amount is always the native-XLM leg
 // (DEFAULT_QUOTE = 'native', fixed 7 decimals) regardless of the base
 // asset's own decimals. A row for a 2-decimal Soroban base asset must
 // still scale its 7-decimal-native quote_amount by 10^7, not by the

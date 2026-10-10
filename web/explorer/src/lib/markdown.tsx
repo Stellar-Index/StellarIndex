@@ -299,10 +299,8 @@ function renderBlock(b: Block, i: number): React.ReactElement {
     case 'table':
       return (
         <div key={i} className="overflow-x-auto">
-          {/* table-wave:allowlist prose — the markdown renderer's table
-              (operator decision D5 2026-08-24): renders arbitrary doc/blog
-              markdown, not API data; the A2-01 data-table wave (Table
-              primitives) must not sweep it. */}
+          {/* table-wave:allowlist prose — the markdown renderer's table renders
+              arbitrary doc/blog markdown, not API data. */}
           <table className="text-ink-body w-full border-collapse text-sm leading-6">
             <thead>
               <tr className="border-line-strong border-b text-left">
@@ -369,10 +367,8 @@ export function isSafeHref(href: string): boolean {
 }
 
 // Inline tokenizer — THE canonical for the **bold** / `code` / [link](url)
-// inline subset (FEC audit A3-F9: this was triplicated in changelog
-// MarkdownLite and HomeRecentChanges, and the copies had drifted on the
-// code-chip size; lib/ is the correct home — pages depend on lib, not on
-// each other). `plainLinks` renders link tokens as non-anchor spans (the
+// inline subset (lives in lib/ because pages depend on lib, not on each
+// other). `plainLinks` renders link tokens as non-anchor spans (the
 // home changelog strip is a preview, not a link surface).
 export function Inline({
   text,

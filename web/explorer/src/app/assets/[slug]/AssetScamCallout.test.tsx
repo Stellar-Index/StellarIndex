@@ -31,8 +31,7 @@ describe('AssetScamCallout', () => {
   it('renders nothing for benign tags, so callers can mount it unconditionally', () => {
     // 'anchor' and 'issuer' are ordinary directory labels. Treating any
     // tag as a scam flag would put a "do not trust this asset" banner on
-    // legitimate anchors — the failure mode opposite to EXR-01, and the
-    // more damaging one.
+    // legitimate anchors — the more damaging failure mode.
     const { container } = render(
       <AssetScamCallout directoryTags={['anchor', 'issuer']} />,
     );

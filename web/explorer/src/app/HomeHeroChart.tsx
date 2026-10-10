@@ -33,7 +33,7 @@ export function HomeHeroChart() {
   // Make the "live USD price" label honest (RT-2): overlay the tip-price
   // stream on the build-time-baked initial and flash on each tick. A
   // frame older than TIP_LIVE_STALE_MS (stream wedged/quiet) must not
-  // keep claiming "live" — same WB-04 rule the sibling widgets apply.
+  // keep claiming "live".
   const clock = useLiveClock();
   const tip = useTipStream('native');
   const tipFresh =

@@ -78,7 +78,7 @@ export function SourcesTable() {
   // would mean every venue's "Last
   // ingest" rendered "—". Surface the most-recent row's tip per venue.
   //
-  // ONE-SHOT CURSORS ARE EXCLUDED (site-audit S24). Picking the highest
+  // ONE-SHOT CURSORS ARE EXCLUDED. Picking the highest
   // last_ledger across all cursor types made SDEX — the busiest venue we
   // index, ingesting ~24k trades per 20 minutes — render "19d ago" in red
   // as if it were dead, because its highest-ledger row was a COMPLETED
@@ -399,7 +399,7 @@ function Td({
 // rather than live ingest. `source` on a cursor row is the cursor TYPE,
 // not the venue. These rows legitimately sit months behind the tip — they
 // recorded where a one-off job stopped — so they must never be read as a
-// venue's ingest freshness (site-audit S24).
+// venue's ingest freshness.
 const ONE_SHOT_CURSOR_TYPES = new Set([
   'backfill',
   'backfill-router',

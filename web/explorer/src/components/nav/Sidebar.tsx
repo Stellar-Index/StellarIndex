@@ -51,7 +51,7 @@ type NavItem = {
   icon: LucideIcon;
   external?: boolean;
   exact?: boolean;
-  /** Render the live status tone dot (the Status row — A5-03 revival). */
+  /** Render the live status tone dot (the Status row). */
   statusDot?: boolean;
 };
 type NavGroup = { title?: string; items: NavItem[] };
@@ -215,12 +215,9 @@ function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
 }
 
 /**
- * StatusDot — the Status row's live tone dot (green/amber/red), revived
- * per FEC A5-03/D2: the navbar pill was lost in the console-shell redesign
- * (36e0a3c7, Navbar deleted without re-homing it) and its data hook
- * orphaned. Reads the SAME shared useStatus query as DegradedBanner and
- * the /status page — one poll loop, one truth per viewport. WB-04
- * honesty: when the latest poll failed (or none has succeeded yet) we
+ * StatusDot — the Status row's live tone dot (green/amber/red). Reads the
+ * SAME shared useStatus query as DegradedBanner and the /status page — one
+ * poll loop, one truth per viewport. When the latest poll failed (or none has succeeded yet) we
  * make NO claim — a muted "unknown" dot, never a stale green.
  */
 function StatusDot() {

@@ -192,7 +192,7 @@ function Row({
         </span>
       </Td>
       <Td>
-        {/* AM-12: rows link their pair page instead of dead-ending. */}
+        {/* Rows link their pair page. */}
         <Link
           href={`/markets/${encodeURIComponent(pairSlug)}/`}
           className="hover:text-brand-600"

@@ -23,7 +23,7 @@ export default function LiquidityPoolsPage() {
   return (
     <Container className="space-y-8 py-8 sm:py-10">
       {/* Prose stays reading-width; the live pools data below gets the full frame
-          (FEC A1-5: frame wide, copy narrow — the /pricing pattern). */}
+          (frame wide, copy narrow — the /pricing pattern). */}
       <div className="max-w-3xl space-y-8">
         <PageHeader
           breadcrumbs={[

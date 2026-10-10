@@ -517,9 +517,7 @@ type CodeHistoryResp = NonNullable<
 >;
 
 function CodeHistoryPanel({ id }: { id: string }) {
-  // S-016: for a SAC there is no code and never will be — the old
-  // empty-state copy ("fills in with the Phase-C backfill") directly
-  // contradicted the SAC banner two panels up. Skip the panel.
+  // A SAC has no code and never will; skip the panel.
   const { isSac } = useContractWasm(id);
   const { data, isLoading, isError } = useQuery<CodeHistoryResp>({
     queryKey: ['/v1/contracts/{id}/code-history', id],
@@ -673,9 +671,7 @@ function transferAmount(amount: string, decimals: number): string {
 }
 
 /**
- * TransfersPanel — decoded token flows (S-016: the visitor question
- * "where is the money going" was answered by a raw-JSON external link
- * while /v1/contracts/{id}/transfers served from/to/amount all along).
+ * TransfersPanel — decoded token flows from /v1/contracts/{id}/transfers.
  * Renders only when the endpoint returns rows — non-token contracts
  * simply don't show the panel.
  */
@@ -1025,9 +1021,8 @@ function EventsPanel({
                   </span>
                 </Td>
                 <Td>
-                  {/* S-016 tail: decoded topics + payload — accounts
-                      as links, amounts as numbers, instead of fifty
-                      bare 'transfer' rows. */}
+                  {/* Decoded topics + payload: accounts as links, amounts as
+                      numbers. */}
                   <span
                     className="text-ink-muted block max-w-md truncate font-mono text-[11px]"
                     title={[...(ev.topics ?? []), ev.data ?? '']

@@ -61,9 +61,8 @@ export default async function ExchangeDetailPage({
 
   return (
     <Container className="space-y-6 py-8">
-      {/* FEC A1-6: the visible trail + its BreadcrumbList JSON-LD render
-          from the SAME Crumb[] (via PageHeader → Breadcrumbs). This page
-          used to emit hand-rolled LD with no visible crumbs. */}
+      {/* The visible trail and its BreadcrumbList JSON-LD render from the SAME
+          Crumb[] (via PageHeader → Breadcrumbs). */}
       <header className="border-line space-y-2 border-b pb-4">
         <PageHeader
           breadcrumbs={[

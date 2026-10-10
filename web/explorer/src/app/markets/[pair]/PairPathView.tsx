@@ -34,7 +34,7 @@ interface PairPrice {
 
 /**
  * PairPathView — the runtime fallback for market pairs outside the
- * build-time pre-render (site-audit S1/S1b/S7).
+ * build-time pre-render.
  *
  * /markets/[pair] pre-renders the top 500 pairs by 24h USD volume at BUILD
  * time. Markets churn between deploys, so any pair that enters the ranking
@@ -53,7 +53,7 @@ interface PairPrice {
  */
 export function PairPathView() {
   const raw = useLastPathSegment() ?? '';
-  // COR-09: useLastPathSegment() already decodes the segment once (or
+  // useLastPathSegment() already decodes the segment once (or
   // safely falls back to the raw value if decoding failed) — decoding it
   // again here threw an uncaught URIError for any malformed percent-escape
   // instead of degrading to the "Unrecognised pair" EmptyState below.

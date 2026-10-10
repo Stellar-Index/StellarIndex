@@ -3,12 +3,10 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// FEC guard pack. Meta-finding:
-// only guarded consolidation classes hold — every unguarded class kept
-// forking. These are repo-WALK guards (lesson: fixed file lists
-// only bite on an exact replay of the last regression; a 5th price table
-// or a renamed fork walks straight past them). Each block names its
-// finding; extend the allowlist ONLY with a reviewed reason.
+// Consolidation guard pack: only guarded classes stay consolidated. These
+// are repo-WALK guards (fixed file lists only catch an exact replay; a new
+// price table or a renamed fork walks past them). Extend an allowlist ONLY
+// with a reviewed reason.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, '..');
@@ -39,16 +37,9 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // A5-11: importer-allowlist inversion of the LastPriceCell guard. Any
-  // NEW file importing formatPairPrice (e.g. a 5th venue price table)
-  // must either use the shared LastPriceCell or be reviewed onto this
-  // list. lib/format.ts defines it; the four non-cell importers use it
-  // for stat lines, reviewed. The
-  // /convert/[from]/[to] headline, interactive widget and meta
-  // description were three independent formatRate forks that could
-  // (and did) disagree; folded onto formatPairPrice. The home
-  // Top Markets table's own `formatLastPrice` ternary was the same
-  // formatPairPrice shape, hand-copied; folded onto the import.
+  // Importer allowlist: any NEW file importing formatPairPrice (e.g. another
+  // venue price table) must use the shared LastPriceCell or be reviewed onto
+  // this list. lib/format.ts defines it.
   it('formatPairPrice importers are exactly the reviewed set', () => {
     const allowed = new Set([
       'lib/format.ts',
@@ -71,9 +62,8 @@ describe('FEC guards (repo-walk)', () => {
     expect(unexpected).toEqual([]);
   });
 
-  // A5-04: the CI-stub predicate must have ONE home. Seven verbatim forks
-  // existed; if the placeholder-URL sentinel ever changes, forks silently
-  // keep the old sentinel and CI static export breaks.
+  // The CI-stub predicate must have ONE home: if the placeholder-URL sentinel
+  // changes, a fork would keep the old one and break CI static export.
   it('isCIStub is declared only in lib/buildFetch.ts', () => {
     const offenders = sources
       .filter((f) => /(const|function)\s+isCIStub/.test(f.text))
@@ -82,7 +72,7 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // A2-04: loading placeholders use the Skeleton primitive, not literal
+  // Loading placeholders use the Skeleton primitive, not literal
   // animate-pulse divs. Allowlist: the primitive itself and the /status
   // LIVE-indicator dot (a status signal, not a loading skeleton).
   it('no hand-rolled animate-pulse skeletons outside the primitive', () => {
@@ -117,9 +107,8 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // A6-1: one SSE layer. A private useLedgerStream fork in the status page
-  // held a second unshared connection to the same URL the sidebar badge
-  // already streams (2 of the 20-per-IP cap) with a doubled stale window.
+  // One SSE layer: a private fork would hold a second unshared connection
+  // to a URL already streamed (the per-IP cap is 20).
   it('EventSource is constructed only in the stream multiplexer', () => {
     const offenders = sources
       .filter((f) => f.text.includes('new EventSource('))
@@ -229,13 +218,10 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // A1-6 (decision D3): breadcrumbs one-rule. The visible trail and its
-  // schema.org BreadcrumbList render from the SAME Crumb[] — ui/Page's
-  // Breadcrumbs derives the LD via lib/seo breadcrumbJsonLd, so any
-  // PageHeader/Breadcrumbs usage co-occurs with the derived LD BY
-  // CONSTRUCTION. What can still regress is a hand-rolled fork of either
-  // half, which is exactly how UI and LD diverged in both directions
-  // (9 pages hand-rolled LD, 2 of them with no visible trail at all).
+  // Breadcrumbs one-rule: the visible trail and its schema.org BreadcrumbList
+  // render from the SAME Crumb[] (ui/Page's Breadcrumbs derives the LD via
+  // lib/seo breadcrumbJsonLd). What can still regress is a hand-rolled fork
+  // of either half.
   it('BreadcrumbList JSON-LD is built only by lib/seo breadcrumbJsonLd', () => {
     // Quoted-string form: hand-rolled LD must spell '@type': 'BreadcrumbList'
     // as a string literal; bare prose mentions in comments are fine.
@@ -277,11 +263,10 @@ describe('FEC guards (repo-walk)', () => {
   });
 
   it('no ToggleGroup/WindowPills-style segmented forks are re-declared', () => {
-    // (const|function)\s+Name\b form per the A5-11 lesson — matches the
-    // declaration however it returns, not one historical body shape.
-    // BespokeSection's WindowPills survives as a thin Segmented wrapper
-    // (it maps WindowDays↔keys); it must contain no button row of its own
-    // — that is covered by the aria-pressed walk above.
+    // The (const|function)\s+Name\b form matches the declaration however it
+    // returns. BespokeSection's WindowPills is a thin Segmented wrapper
+    // (maps WindowDays↔keys) with no button row of its own, covered by the
+    // aria-pressed walk above.
     const offenders = sources
       .filter((f) =>
         /(const|function)\s+(ToggleGroup|WindowPills)\b/.test(f.text),
@@ -291,7 +276,7 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // A2-06/A1-1 adjunct: truncateMiddle's canonical home is server-safe
+  // truncateMiddle's canonical home is server-safe
   // lib/format.ts; ui/Mono re-exports for client back-compat. No third
   // definition may appear.
   it('truncateMiddle is defined only in lib/format.ts', () => {

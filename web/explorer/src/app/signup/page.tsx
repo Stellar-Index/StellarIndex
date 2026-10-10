@@ -83,9 +83,8 @@ export default function SignupPage() {
             tier headers were CLIPPED at 320px with no way to reach them.
             The radius still clips. */}
         <div className="border-line overflow-x-auto rounded-xl border">
-          {/* table-wave:allowlist prose — marketing tier table (operator
-              decision D5 2026-08-24): stays a hand-rolled <table>; the
-              A2-01 data-table wave (Table primitives) must not sweep it. */}
+          {/* table-wave:allowlist prose — marketing tier table; stays a
+              hand-rolled <table>, not the Table primitives. */}
           <table className="divide-line min-w-full divide-y">
             <thead className="bg-surface-muted">
               <tr>

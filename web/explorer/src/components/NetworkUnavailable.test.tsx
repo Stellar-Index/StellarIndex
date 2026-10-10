@@ -1,4 +1,4 @@
-// Regression suite for wave-D RD-06: NetworkUnavailable's JSDoc
+// Regression suite: NetworkUnavailable's JSDoc
 // promised it "renders nothing when the route IS available here" — and
 // pointed at an `available` helper "below" that was never written —
 // while the component unconditionally rendered the EmptyState.
