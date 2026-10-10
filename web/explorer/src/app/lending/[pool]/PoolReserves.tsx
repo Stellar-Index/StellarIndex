@@ -150,7 +150,7 @@ export function PoolReserves({ pool }: { pool: string }) {
       {priced.length > 0 && (
         <div className="border-line/60 space-y-4 border-y py-4">
           <div className="space-y-1.5">
-            <h3 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+            <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
               Supplied vs borrowed — USD, priced reserves
             </h3>
             <PairedBars
@@ -180,7 +180,7 @@ export function PoolReserves({ pool }: { pool: string }) {
           </div>
 
           <div className="space-y-1.5">
-            <h3 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+            <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
               Utilization — borrowed / supplied, fixed 0–100% scale
             </h3>
             <HBarList
@@ -210,7 +210,7 @@ export function PoolReserves({ pool }: { pool: string }) {
             (rv) => rv.supply_apr != null || rv.borrow_apr != null,
           ) && (
             <div className="space-y-1.5">
-              <h3 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+              <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
                 Interest rates — supply vs borrow APR
               </h3>
               <PairedBars

@@ -223,7 +223,7 @@ function MarketCapChart({ assetID }: { assetID: string }) {
 
   return (
     <div className="border-line bg-surface rounded-lg border p-4">
-      <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wider uppercase">
+      <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
         Market-cap timeline
       </h3>
       {q.isLoading && <div className="h-[260px]" />}
@@ -297,7 +297,7 @@ function OnChainSupply({
   const total = formatSupply(data.total_supply, decimals);
   return (
     <div className="border-up/30 bg-up-subtle/50 rounded-lg border p-3">
-      <h3 className="text-up mb-2 flex flex-wrap items-center gap-2 text-xs font-semibold tracking-wider uppercase">
+      <h3 className="text-up mb-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold tracking-wider uppercase">
         On-chain supply (live)
         <FreshnessMarker flags={env.flags} />
       </h3>

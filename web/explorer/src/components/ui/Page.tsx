@@ -124,6 +124,10 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
 /** The one section-heading style; page-shell.test.ts holds every app <h2> to it. */
 export const SECTION_HEADING_CLASS = 'text-h3 text-ink font-semibold';
 
+/** The one in-panel label style (small caps); page-shell.test.ts holds every uppercase app <h3> to it. */
+export const PANEL_LABEL_CLASS =
+  'text-ink-muted text-[11px] font-semibold tracking-wider uppercase';
+
 /** A lightweight section heading used inside pages (between cards). */
 export function SectionHeader({
   title,
