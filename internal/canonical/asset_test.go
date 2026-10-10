@@ -420,3 +420,37 @@ func mustFiat(code string) c.Asset {
 	}
 	return a
 }
+
+// Asset.Value with a zero-value Asset must fail the inner Validate
+// — the validation error propagates out through driver.Valuer.
+func TestAsset_Value_zeroValueRejected(t *testing.T) {
+	var a c.Asset
+	_, err := a.Value()
+	if err == nil {
+		t.Error("expected error from Value() on zero-value Asset, got nil")
+	}
+}
+
+// Asset.Scan against a NULL source must ERROR and leave the receiver
+// untouched.
+//
+// Returning nil and zeroing the receiver is the wrong contract: a NULL
+// asset column would produce an Asset with Type=="" that reads as valid
+// everywhere except Validate. Value() will not write such an Asset, so a
+// NULL can only come from a schema/query defect (a LEFT JOIN that
+// missed, a column that should be NOT NULL); failing closed surfaces it
+// at the read instead of laundering it into the domain. A genuinely
+// nullable column must be scanned through sql.NullString + ParseAsset.
+func TestAsset_Scan_nullIsAnError(t *testing.T) {
+	a := c.NativeAsset()
+	err := a.Scan(nil)
+	if err == nil {
+		t.Fatal("Scan(nil) returned nil — a SQL NULL must not silently become a zero Asset")
+	}
+	if !errors.Is(err, c.ErrInvalidAsset) {
+		t.Errorf("Scan(nil) error = %v, want it to wrap ErrInvalidAsset", err)
+	}
+	if !a.Equal(c.NativeAsset()) {
+		t.Errorf("after a failed Scan(nil), Asset = %+v, want the receiver untouched", a)
+	}
+}

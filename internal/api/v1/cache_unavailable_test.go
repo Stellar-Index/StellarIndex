@@ -85,74 +85,15 @@ func assertCacheUnavailable(t *testing.T, resp *http.Response) {
 
 // ─── /v1/oracle/latest ────────────────────────────────────────────
 
-// TestOracleLatest_CacheUnavailable503 — Redis MISCONF surfaces as
-// 503 + Retry-After.
-func TestOracleLatest_CacheUnavailable503(t *testing.T) {
-	reader := &stubOracleReader{err: miscOnfErr}
-	srv := v1.New(v1.Options{Oracle: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/oracle/latest?asset=native")
-	assertCacheUnavailable(t, resp)
-}
-
 // ─── /v1/oracle/streams ───────────────────────────────────────────
-
-// TestOracleStreams_CacheUnavailable503 — same MISCONF cascade as
-// /v1/oracle/latest, on the streams variant.
-func TestOracleStreams_CacheUnavailable503(t *testing.T) {
-	reader := &stubOracleReader{err: miscOnfErr}
-	srv := v1.New(v1.Options{Oracle: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/oracle/streams")
-	assertCacheUnavailable(t, resp)
-}
 
 // ─── /v1/lending/pools ────────────────────────────────────────────
 
 // ─── /v1/vwap ─────────────────────────────────────────────────────
 
-// TestVWAP_CacheUnavailable503 — The TradesInRange call
-// returning MISCONF lands on the cache-unavailable 503 branch.
-func TestVWAP_CacheUnavailable503(t *testing.T) {
-	reader := &stubHistoryReader{err: miscOnfErr}
-	srv := v1.New(v1.Options{History: reader})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/vwap?base=native&quote=fiat:USD")
-	assertCacheUnavailable(t, resp)
-}
-
 // ─── /v1/observations ─────────────────────────────────────────────
 
-// TestObservations_CacheUnavailable503 — The fiat:USD short-
-// circuit skips storage, so this test uses a CONCRETE classic quote
-// (USDC-G…) to force the LatestTradePerSource path that actually
-// hits the cache layer.
-func TestObservations_CacheUnavailable503(t *testing.T) {
-	hist := &stubHistoryReader{err: miscOnfErr}
-	srv := v1.New(v1.Options{History: hist})
-	tsv := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	assertCacheUnavailable(t, resp)
-}
-
 // ─── /v1/observations/stream ──────────────────────────────────────
-
-// TestObservationsStream_CacheUnavailable503 — The pre-flight
-// computeObservations call (run synchronously before switching to SSE
-// mode, so the handler can still set a non-200 status) lands on the
-// cache-unavailable 503 branch on MISCONF.
-func TestObservationsStream_CacheUnavailable503(t *testing.T) {
-	hist := &stubHistoryReader{err: miscOnfErr}
-	srv := v1.New(v1.Options{History: hist})
-	tsv := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, tsv.URL+"/v1/observations/stream?asset=native&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	assertCacheUnavailable(t, resp)
-}
 
 // ─── /v1/price/tip ────────────────────────────────────────────────
 
@@ -169,26 +110,4 @@ func (tipCacheUnavailablePriceReader) LatestPrice(_ context.Context, _, _ canoni
 
 func (tipCacheUnavailablePriceReader) RecentClosedSnapshots(_ context.Context, _, _ canonical.Asset, _ int) ([]v1.PriceSnapshot, error) {
 	return nil, miscOnfErr
-}
-
-// TestPriceTip_CacheUnavailable503 — handlePriceTip's
-// computeTip helper now distinguishes a MISCONF surfacing from
-// PriceReader.LatestPrice from a generic internal error.
-func TestPriceTip_CacheUnavailable503(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: tipCacheUnavailablePriceReader{}})
-	tsv := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, tsv.URL+"/v1/price/tip?asset=native&quote=fiat:USD")
-	assertCacheUnavailable(t, resp)
-}
-
-// TestPriceTipStream_CacheUnavailable503 — stream variant.
-// The pre-stream synchronous computeTip call lands on cache-
-// unavailable 503 instead of generic 500.
-func TestPriceTipStream_CacheUnavailable503(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: tipCacheUnavailablePriceReader{}})
-	tsv := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, tsv.URL+"/v1/price/tip/stream?asset=native&quote=fiat:USD")
-	assertCacheUnavailable(t, resp)
 }

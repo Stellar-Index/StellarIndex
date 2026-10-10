@@ -119,17 +119,3 @@ func TestPrimarySurfaces_ProxyDeviation(t *testing.T) {
 		}
 	}
 }
-
-// A direct (non-triangulated) answer never carries the flag, even with a
-// depegged peg elsewhere.
-func TestPrice_ProxyDeviation_NotTriangulated(t *testing.T) {
-	ts := devDeviationServer(t, "0.95")
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if strings.Contains(body, `"proxy_deviation":true`) {
-		t.Errorf("direct price must not flag proxy_deviation: %s", body)
-	}
-}

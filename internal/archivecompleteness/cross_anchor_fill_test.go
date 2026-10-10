@@ -471,3 +471,63 @@ func TestFiller_ParentDirsAreTraversable(t *testing.T) {
 		}
 	}
 }
+
+// At the Fill layer: a source that fails EVERY try must still
+// appear in the attempt denominator, otherwise its failure ratio has
+// nothing to divide by. Two sources, the first always 500, the second
+// always healthy — the failing one must show attempts == failures.
+func TestFill_PerSourceFailuresUseRealSourceNames(t *testing.T) {
+	root := t.TempDir()
+
+	// A checkpoint body that validateCheckpointContent accepts is
+	// non-trivial to synthesise, so BOTH sources here fail — the
+	// assertion under test is the label attribution, which is
+	// identical either way. The healthy-source case is covered by
+	// the existing cross_anchor_fill tests.
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer bad.Close()
+	notFound := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer notFound.Close()
+
+	filler, err := archivecompleteness.NewCrossAnchorFiller(archivecompleteness.FillerOptions{
+		ArchiveRoot: root,
+		Workers:     1,
+		Sources: []archivecompleteness.Source{
+			{Name: "always-500", URL: bad.URL},
+			{Name: "always-404", URL: notFound.URL},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewCrossAnchorFiller: %v", err)
+	}
+
+	res := filler.Fill(context.Background(), []uint32{63, 127})
+
+	for _, source := range []string{"always-500", "always-404"} {
+		if got := res.PerSourceAttempt[source]; got != 2 {
+			t.Errorf("PerSourceAttempt[%q] = %d, want 2 (one try per missing checkpoint)", source, got)
+		}
+		if got := res.PerSourceFailure[source]; got != 2 {
+			t.Errorf("PerSourceFailure[%q] = %d, want 2", source, got)
+		}
+	}
+	if len(res.Failed) != 2 {
+		t.Errorf("Failed = %d entries, want 2", len(res.Failed))
+	}
+
+	// And the metrics layer must carry those real names through.
+	snap := archivecompleteness.NewMetricsSnapshot()
+	snap.PopulateFromFillResult(res)
+	for source := range snap.RepairFailures {
+		if snap.RepairAttempts[source] == 0 {
+			t.Errorf("failure label %q has no attempts denominator", source)
+		}
+	}
+	if _, present := snap.RepairFailures["multi-source-exhausted"]; present {
+		t.Errorf("synthetic label leaked into the snapshot: %v", snap.RepairFailures)
+	}
+}

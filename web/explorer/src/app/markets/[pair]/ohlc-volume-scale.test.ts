@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 // Source-text guard rather than a render test because the regression is a
 // literal: a constant divisor reintroduced anywhere on this panel is the
 // defect, whatever the surrounding JSX looks like. The served value is
-// asserted directly in internal/api/v1/ohlc_volume_scale_test.go.
+// asserted directly in internal/api/v1/ohlc_test.go.
 // node:path, not `new URL(rel, import.meta.url)`: the jsdom environment
 // overrides the global URL and rejects relative resolution against a
 // file: base ("The URL must be of scheme file").

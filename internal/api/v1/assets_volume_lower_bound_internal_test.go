@@ -44,22 +44,6 @@ func TestMergeAliasVolume_ORsLowerBound(t *testing.T) {
 	}
 }
 
-// A catalogue row that takes its twin's volume takes the twin's flag with it;
-// one with its own volume keeps its own.
-func TestMergeTwinStats_CarriesLowerBoundWithVolume(t *testing.T) {
-	t.Parallel()
-	dst := AssetDetail{}
-	mergeTwinStats(&dst, AssetDetail{VolumeUSD24h: strp("7"), VolumeLowerBound: true})
-	if !dst.VolumeLowerBound {
-		t.Error("borrowed twin volume lost its lower-bound flag")
-	}
-	own := AssetDetail{VolumeUSD24h: strp("9")}
-	mergeTwinStats(&own, AssetDetail{VolumeUSD24h: strp("7"), VolumeLowerBound: true})
-	if own.VolumeLowerBound {
-		t.Error("row kept its own volume but took the twin's flag")
-	}
-}
-
 type lowerBoundVolumeReader struct{ lowerBound bool }
 
 func (r lowerBoundVolumeReader) Volume24hUSDForAsset(context.Context, string) (string, bool, error) {

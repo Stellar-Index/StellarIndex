@@ -2,6 +2,7 @@ package freeze_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -440,5 +441,550 @@ func TestWriter_LadderWriteFailureIsCounted(t *testing.T) {
 	}
 	if got, want := testutil.ToFloat64(obs.AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues("clear")), clearBefore+1; got != want {
 		t.Errorf("ladder_write_failures{op=\"clear\"} = %v, want %v", got, want)
+	}
+}
+
+// TestWriter_MarkRoundTrip — Mark writes a JSON Marker to the
+// expected key with the expected TTL.
+func TestWriter_MarkRoundTrip(t *testing.T) {
+	mr, rdb := newRedis(t)
+	w, err := freeze.NewWriter(rdb, 0)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+
+	decision := anomaly.Decision{
+		Action:       anomaly.ActionFreeze,
+		Class:        anomaly.ClassStablecoin,
+		DeviationPct: 12.5,
+		Reason:       "deviation 12.5% exceeds 10% threshold for stablecoin",
+	}
+	if err := w.Mark(context.Background(), asset, quote, "1.000000000000", decision); err != nil {
+		t.Fatalf("Mark: %v", err)
+	}
+
+	key := cachekeys.Freeze(asset, quote)
+	raw, err := rdb.Get(context.Background(), key.String()).Bytes()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	var got freeze.Marker
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.AssetID != asset.String() || got.QuoteID != quote.String() {
+		t.Errorf("AssetID/QuoteID mismatch: %s/%s", got.AssetID, got.QuoteID)
+	}
+	if got.Action != anomaly.ActionFreeze {
+		t.Errorf("Action = %q, want %q", got.Action, anomaly.ActionFreeze)
+	}
+	if got.Class != anomaly.ClassStablecoin {
+		t.Errorf("Class = %q", got.Class)
+	}
+	if got.DeviationPct != 12.5 {
+		t.Errorf("DeviationPct = %v, want 12.5", got.DeviationPct)
+	}
+	if got.FrozenAt.IsZero() {
+		t.Error("FrozenAt is zero")
+	}
+
+	ttl := mr.TTL(key.String())
+	if ttl == 0 || ttl > cachekeys.FreezeTTL {
+		t.Errorf("TTL = %v, want ≤ %v and > 0", ttl, cachekeys.FreezeTTL)
+	}
+}
+
+// TestWriter_MarkRefreshesTTL — calling Mark twice for the same
+// pair refreshes the TTL (anomaly persists ⇒ freeze stays in
+// effect). Mirrors the Redis SET ... EX semantics.
+func TestWriter_MarkRefreshesTTL(t *testing.T) {
+	mr, rdb := newRedis(t)
+	w, _ := freeze.NewWriter(rdb, 30*time.Second)
+	asset, quote := nativeUSD(t)
+	dec := anomaly.Decision{Action: anomaly.ActionFreeze, Class: anomaly.ClassDefault}
+
+	if err := w.Mark(context.Background(), asset, quote, "", dec); err != nil {
+		t.Fatalf("Mark (first): %v", err)
+	}
+	mr.FastForward(20 * time.Second)
+	if err := w.Mark(context.Background(), asset, quote, "", dec); err != nil {
+		t.Fatalf("Mark (refresh): %v", err)
+	}
+
+	key := cachekeys.Freeze(asset, quote)
+	if ttl := mr.TTL(key.String()); ttl <= 10*time.Second {
+		t.Errorf("TTL after refresh = %v, want > 10s (refresh extended it)", ttl)
+	}
+}
+
+// TestWriter_MarkHoldRoundTrip — the lifecycle write path. The
+// marker must carry the freeze [freeze.State] verbatim and expire on
+// the caller's TTL (remaining hold + grace), NOT on the writer's flat
+// default. A marker that outlived its hold would keep flags.frozen
+// set after a release; one that expired inside its hold would let the
+// serving path forget a live freeze.
+func TestWriter_MarkHoldRoundTrip(t *testing.T) {
+	mr, rdb := newRedis(t)
+	w, err := freeze.NewWriter(rdb, 0) // default TTL = 5m
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+
+	firedAt := time.Now().UTC().Truncate(time.Second)
+	state := freeze.State{
+		FiredAt:        firedAt,
+		HoldUntil:      firedAt.Add(30 * time.Minute),
+		ExtensionsUsed: 3,
+		Escalated:      true,
+		UnfreezeStreak: 1,
+		Corroborated:   true,
+	}
+	const holdTTL = 35 * time.Minute
+	if err := w.MarkHold(context.Background(), asset, quote, "1.000000000000",
+		anomaly.Decision{Action: anomaly.ActionFreeze}, state, holdTTL); err != nil {
+		t.Fatalf("MarkHold: %v", err)
+	}
+
+	key := cachekeys.Freeze(asset, quote)
+	if ttl := mr.TTL(key.String()); ttl != holdTTL {
+		t.Errorf("marker TTL = %v, want the caller's %v (not the writer default %v)",
+			ttl, holdTTL, cachekeys.FreezeTTL)
+	}
+
+	raw, err := rdb.Get(context.Background(), key.String()).Bytes()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	var m freeze.Marker
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !m.State.FiredAt.Equal(state.FiredAt) || !m.State.HoldUntil.Equal(state.HoldUntil) {
+		t.Errorf("marker state times = %+v, want %+v", m.State, state)
+	}
+	if m.State.ExtensionsUsed != 3 || m.State.UnfreezeStreak != 1 || !m.State.Corroborated || !m.State.Escalated {
+		t.Errorf("marker state = %+v, want %+v", m.State, state)
+	}
+
+	// LoadState must read back exactly what MarkHold wrote — this is
+	// how the aggregator recovers the extension ladder after a
+	// restart instead of silently restarting the escalation clock.
+	got, ok, err := w.LoadState(context.Background(), asset, quote)
+	if err != nil || !ok {
+		t.Fatalf("LoadState: ok=%v err=%v", ok, err)
+	}
+	if got.ExtensionsUsed != state.ExtensionsUsed || !got.HoldUntil.Equal(state.HoldUntil) {
+		t.Errorf("LoadState = %+v, want %+v", got, state)
+	}
+	// An escalated freeze holds until manual unfreeze (ADR-0019); losing
+	// the flag on rehydrate would let two healthy buckets auto-release it.
+	if !got.Escalated {
+		t.Errorf("LoadState Escalated = false, want true (escalation lost across the marker round-trip)")
+	}
+}
+
+// TestWriter_ClearRemovesTheMarker — the auto-unfreeze / operator-
+// override path. Letting the TTL lapse instead would keep
+// flags.frozen true for the whole remaining hold after the price was
+// republished as healthy.
+func TestWriter_ClearRemovesTheMarker(t *testing.T) {
+	_, rdb := newRedis(t)
+	w, _ := freeze.NewWriter(rdb, 0)
+	l, _ := freeze.NewLooker(rdb)
+	asset, quote := nativeUSD(t)
+
+	if err := w.MarkHold(context.Background(), asset, quote, "",
+		anomaly.Decision{Action: anomaly.ActionFreeze},
+		freeze.State{FiredAt: time.Now().UTC()}, time.Hour); err != nil {
+		t.Fatalf("MarkHold: %v", err)
+	}
+	if frozen, _ := l.FrozenForPair(context.Background(), asset, quote); !frozen {
+		t.Fatal("setup: marker not present")
+	}
+
+	if err := w.Clear(context.Background(), asset, quote); err != nil {
+		t.Fatalf("Clear: %v", err)
+	}
+	if frozen, _ := l.FrozenForPair(context.Background(), asset, quote); frozen {
+		t.Error("marker still present after Clear — flags.frozen would stay set " +
+			"for the marker's full remaining-hold TTL")
+	}
+	// Idempotent.
+	if err := w.Clear(context.Background(), asset, quote); err != nil {
+		t.Errorf("Clear on an absent marker returned %v, want nil", err)
+	}
+	// And LoadState reports absence, which the orchestrator reads as
+	// the ADR-0019 operator force-unfreeze.
+	if _, ok, err := w.LoadState(context.Background(), asset, quote); ok || err != nil {
+		t.Errorf("LoadState after Clear: ok=%v err=%v, want (false, nil)", ok, err)
+	}
+}
+
+// TestWriter_LoadState_PreLifecycleMarker — a marker written by the
+// flat-TTL Mark path (or by an older build) decodes to a zero State
+// rather than erroring, so a rolling deploy doesn't fail ticks.
+func TestWriter_LoadState_PreLifecycleMarker(t *testing.T) {
+	_, rdb := newRedis(t)
+	w, _ := freeze.NewWriter(rdb, 0)
+	asset, quote := nativeUSD(t)
+
+	if err := w.Mark(context.Background(), asset, quote, "",
+		anomaly.Decision{Action: anomaly.ActionFreeze}); err != nil {
+		t.Fatalf("Mark: %v", err)
+	}
+	st, ok, err := w.LoadState(context.Background(), asset, quote)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if !ok {
+		t.Fatal("LoadState reported no marker for a Mark-written key")
+	}
+	if st.Active() {
+		t.Errorf("pre-lifecycle marker decoded to an ACTIVE state %+v — the "+
+			"aggregator would inherit a hold nobody set", st)
+	}
+}
+
+// TestWriter_Mark_FiresEventSink — Mark must call the wired sink
+// in addition to the Redis write. Production wires the timescale-
+// backed sink so the freeze_events hypertable mirrors the Redis
+// state; this test pins that the Writer respects the WithEventSink
+// option.
+func TestWriter_Mark_FiresEventSink(t *testing.T) {
+	_, rdb := newRedis(t)
+	sink := &recordingSink{}
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithEventSink(sink))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	decision := anomaly.Decision{
+		Action:       anomaly.ActionFreeze,
+		Class:        anomaly.ClassStablecoin,
+		DeviationPct: 8.5,
+		Reason:       "test",
+	}
+	if err := w.Mark(context.Background(), asset, quote, "0.999500000000", decision); err != nil {
+		t.Fatalf("Mark: %v", err)
+	}
+	if len(sink.calls) != 1 {
+		t.Fatalf("sink fired %d times, want 1", len(sink.calls))
+	}
+	got := sink.calls[0]
+	if got.Asset.String() != asset.String() {
+		t.Errorf("asset = %s, want %s", got.Asset.String(), asset.String())
+	}
+	if got.Quote.String() != quote.String() {
+		t.Errorf("quote = %s, want %s", got.Quote.String(), quote.String())
+	}
+	if got.Decision.DeviationPct != decision.DeviationPct {
+		t.Errorf("deviation = %v, want %v", got.Decision.DeviationPct, decision.DeviationPct)
+	}
+	if got.FrozenValue != "0.999500000000" {
+		t.Errorf("frozenValue = %q, want %q", got.FrozenValue, "0.999500000000")
+	}
+}
+
+// TestWriter_Mark_SinkErrorIsSwallowed — a sink failure must not
+// fail the Mark call. The Redis write is the load-bearing operation
+// for flags.frozen on the API; the durable mirror is best-effort.
+func TestWriter_Mark_SinkErrorIsSwallowed(t *testing.T) {
+	_, rdb := newRedis(t)
+	sink := &recordingSink{err: errExploded}
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithEventSink(sink))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	if err := w.Mark(context.Background(), asset, quote, "",
+		anomaly.Decision{Action: anomaly.ActionFreeze}); err != nil {
+		t.Fatalf("Mark: sink error must not propagate, got: %v", err)
+	}
+}
+
+// ─── the durable ladder is per WINDOW (migration 0163) ───────────
+//
+// Migration 0119 gave the ADR-0019 ladder a durable home, but on the
+// pair's single open `freeze_events` row: four columns, no window. The
+// lifecycle runs one state machine per (pair, window), every frozen
+// window mirrors its ladder on every tick, and so the durable record was
+// whichever window wrote LAST. These tests pin the consequences that
+// matter once Redis has lost the marker, which is the only time the
+// durable ladder is read at all.
+
+// windowedFakeLadderStore is fakeLadderStore plus the window-aware half.
+//
+// The pair-level SaveLadder / LoadLadder keep last-writer-wins semantics
+// on purpose — that IS the pre-0163 store — so a Writer that still
+// mirrors through them reproduces the defect, and one that uses the
+// window-aware calls does not. The window-aware half maintains the same
+// fail-closed pair-level summary the SQL does, because the recovery
+// worker and `stellarindex-ops freeze-unfreeze -list` still read it.
+type windowedFakeLadderStore struct {
+	*fakeLadderStore
+	windows map[string]map[time.Duration]freeze.State
+	unowned map[string]freeze.State
+}
+
+func newWindowedFakeLadderStore() *windowedFakeLadderStore {
+	return &windowedFakeLadderStore{
+		fakeLadderStore: newFakeLadderStore(),
+		windows:         map[string]map[time.Duration]freeze.State{},
+		unowned:         map[string]freeze.State{},
+	}
+}
+
+// SaveLadder is the pair-level write. An inactive state retires the whole
+// durable record (what [freeze.Writer.Clear] relies on).
+func (f *windowedFakeLadderStore) SaveLadder(ctx context.Context, asset, quote canonical.Asset, st freeze.State) error {
+	if !st.Active() {
+		delete(f.windows, f.key(asset, quote))
+		delete(f.unowned, f.key(asset, quote))
+	}
+	return f.fakeLadderStore.SaveLadder(ctx, asset, quote, st)
+}
+
+func (f *windowedFakeLadderStore) SaveWindowLadder(
+	_ context.Context, asset, quote canonical.Asset, window time.Duration, st freeze.State,
+) error {
+	k := f.key(asset, quote)
+	if f.closed[k] {
+		return nil
+	}
+	entries, ok := f.windows[k]
+	if !ok {
+		entries = map[time.Duration]freeze.State{}
+		f.windows[k] = entries
+		// First window-aware write onto a pre-0163 row: the pair-level
+		// ladder has no owner, so it is kept as the unowned one.
+		if legacy, had := f.states[k]; had && legacy.Active() {
+			f.unowned[k] = legacy
+		}
+	}
+	if st.Active() {
+		entries[window] = st
+	} else {
+		delete(entries, window)
+	}
+	f.states[k] = f.summary(k)
+	return nil
+}
+
+// summary is the fail-closed pair-level view: the furthest hold, the
+// highest rung, escalated if ANY window is.
+func (f *windowedFakeLadderStore) summary(k string) freeze.State {
+	var out freeze.State
+	fold := func(st freeze.State) {
+		if !st.Active() {
+			return
+		}
+		if out.FiredAt.IsZero() || st.FiredAt.Before(out.FiredAt) {
+			out.FiredAt = st.FiredAt
+		}
+		if st.HoldUntil.After(out.HoldUntil) {
+			out.HoldUntil = st.HoldUntil
+		}
+		if st.ExtensionsUsed > out.ExtensionsUsed {
+			out.ExtensionsUsed = st.ExtensionsUsed
+		}
+		out.Escalated = out.Escalated || st.Escalated
+		out.Corroborated = out.Corroborated || st.Corroborated
+	}
+	for _, st := range f.windows[k] {
+		fold(st)
+	}
+	fold(f.unowned[k])
+	return out
+}
+
+func (f *windowedFakeLadderStore) LoadWindowLadders(
+	_ context.Context, asset, quote canonical.Asset,
+) (map[time.Duration]freeze.State, freeze.State, bool, error) {
+	if f.err != nil {
+		return nil, freeze.State{}, false, f.err
+	}
+	k := f.key(asset, quote)
+	if f.closed[k] {
+		return nil, freeze.State{}, false, nil
+	}
+	pair, ok := f.states[k]
+	if !ok || pair.HoldUntil.IsZero() {
+		return nil, freeze.State{}, false, nil
+	}
+	entries, windowed := f.windows[k]
+	if !windowed {
+		// A pre-0163 row: one pair-level ladder, owner unknown.
+		return map[time.Duration]freeze.State{}, pair, true, nil
+	}
+	out := make(map[time.Duration]freeze.State, len(entries))
+	for w, st := range entries {
+		out[w] = st
+	}
+	return out, f.unowned[k], true, nil
+}
+
+func freshState(now time.Time) freeze.State {
+	return freeze.State{
+		FiredAt:   now.Add(-time.Minute),
+		HoldUntil: now.Add(9 * time.Minute),
+	}
+}
+
+// TestWriter_DurableLadderIsPerWindow is the regression for the durable
+// half of the pair-keyed ladder.
+//
+// The 1h window has climbed the whole ladder and ESCALATED — ADR-0019
+// holds it "until manual unfreeze". The 5m window of the same pair then
+// fires a fresh freeze of its own. Both mirror their ladder durably on
+// every tick. Redis is then lost and the aggregator restarts.
+//
+// A last-writer-wins durable record would be the 5m window's: the
+// ten-minute, zero-extension, un-escalated ladder. Every window
+// would rehydrate that — the escalated 1h freeze would come back as an
+// ordinary one that auto-unfreezes (the dangerous direction), and the 24h
+// window, never frozen, would come back frozen.
+func TestWriter_DurableLadderIsPerWindow(t *testing.T) {
+	mr, rdb := newRedis(t)
+	store := newWindowedFakeLadderStore()
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithLadderStore(store, 0))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	escalated := escalatedState(now)
+	fresh := freshState(now)
+	if err := w.MarkHoldForWindow(ctx, asset, quote, longWindow, "0.1242",
+		freezeDecision(), escalated, 30*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow(1h): %v", err)
+	}
+	if err := w.MarkHoldForWindow(ctx, asset, quote, shortWindow, "0.1242",
+		freezeDecision(), fresh, 14*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow(5m): %v", err)
+	}
+
+	mr.FlushAll() // Redis is lost…
+	restarted, err := freeze.NewWriter(rdb, 0, freeze.WithLadderStore(store, 0))
+	if err != nil { // …and the aggregator restarts.
+		t.Fatalf("NewWriter (restart): %v", err)
+	}
+
+	gotLong, ok, err := restarted.LoadStateForWindow(ctx, asset, quote, longWindow)
+	if err != nil || !ok {
+		t.Fatalf("LoadStateForWindow(1h) = ok=%v err=%v, want present", ok, err)
+	}
+	if !gotLong.Escalated || gotLong.ExtensionsUsed != freeze.DefaultMaxExtensions {
+		t.Errorf("1h window rehydrated %+v, want its own ESCALATED ladder (extensions=%d): "+
+			"the 5m window's later durable write replaced it, so an escalated freeze "+
+			"resumes auto-unfreezing", gotLong, freeze.DefaultMaxExtensions)
+	}
+
+	gotShort, _, err := restarted.LoadStateForWindow(ctx, asset, quote, shortWindow)
+	if err != nil {
+		t.Fatalf("LoadStateForWindow(5m): %v", err)
+	}
+	if !gotShort.Active() || gotShort.Escalated || gotShort.ExtensionsUsed != 0 ||
+		!gotShort.HoldUntil.Equal(fresh.HoldUntil) {
+		t.Errorf("5m window rehydrated %+v, want its own fresh ladder %+v", gotShort, fresh)
+	}
+
+	gotDay, present, err := restarted.LoadStateForWindow(ctx, asset, quote, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("LoadStateForWindow(24h): %v", err)
+	}
+	if gotDay.Active() {
+		t.Errorf("24h window rehydrated %+v — it was never frozen; the pair-keyed durable "+
+			"ladder copied a sibling's freeze onto it", gotDay)
+	}
+	if !present {
+		t.Error("presence must stay pair-wide on the durable side too: the pair IS frozen, " +
+			"so a window with no ladder of its own still reads present (a live freeze " +
+			"must not read this as the operator override)")
+	}
+}
+
+// TestWriter_FirstRemarkAfterRedisLossRestoresEveryWindow pins the write
+// side of the same recovery. After a flush the first window to re-mark
+// rebuilds the marker, and from then on the marker — not the durable
+// store — answers every cold sibling. It must therefore be rebuilt with
+// EVERY window's durable ladder, or the 1h window's escalation is lost
+// one tick later than in the test above instead of not at all.
+func TestWriter_FirstRemarkAfterRedisLossRestoresEveryWindow(t *testing.T) {
+	mr, rdb := newRedis(t)
+	store := newWindowedFakeLadderStore()
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithLadderStore(store, 0))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	escalated := escalatedState(now)
+	fresh := freshState(now)
+	for _, m := range []struct {
+		window time.Duration
+		state  freeze.State
+	}{{longWindow, escalated}, {shortWindow, fresh}} {
+		if err := w.MarkHoldForWindow(ctx, asset, quote, m.window, "0.1242",
+			freezeDecision(), m.state, 30*time.Minute); err != nil {
+			t.Fatalf("MarkHoldForWindow(%s): %v", m.window, err)
+		}
+	}
+	mr.FlushAll()
+
+	// The 5m window ticks first after the flush and re-marks.
+	if err := w.MarkHoldForWindow(ctx, asset, quote, shortWindow, "0.1242",
+		freezeDecision(), fresh, 14*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow(5m) after flush: %v", err)
+	}
+
+	gotLong, ok, err := w.LoadStateForWindow(ctx, asset, quote, longWindow)
+	if err != nil || !ok {
+		t.Fatalf("LoadStateForWindow(1h) = ok=%v err=%v, want present", ok, err)
+	}
+	if !gotLong.Escalated || !gotLong.FiredAt.Equal(escalated.FiredAt) {
+		t.Errorf("1h window read %+v from the rebuilt marker, want its own escalated ladder %+v",
+			gotLong, escalated)
+	}
+	gotDay, _, err := w.LoadStateForWindow(ctx, asset, quote, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("LoadStateForWindow(24h): %v", err)
+	}
+	if gotDay.Active() {
+		t.Errorf("24h window read %+v from the rebuilt marker — it was never frozen", gotDay)
+	}
+}
+
+// TestWriter_PreWindowDurableRowStillRehydratesEveryWindow is the
+// fail-closed guard for a row written before migration 0163: it carries
+// one pair-level ladder and nothing that says whose. Narrowing it to "no
+// window owns this" would DROP a freeze that is still running, so it
+// keeps answering for every window until window-aware writes replace it.
+func TestWriter_PreWindowDurableRowStillRehydratesEveryWindow(t *testing.T) {
+	_, rdb := newRedis(t)
+	store := newWindowedFakeLadderStore()
+	asset, quote := nativeUSD(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	// Written by the previous binary: pair-level only.
+	if err := store.fakeLadderStore.SaveLadder(ctx, asset, quote, escalatedState(now)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithLadderStore(store, 0))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	for _, window := range []time.Duration{shortWindow, longWindow, 24 * time.Hour} {
+		got, ok, err := w.LoadStateForWindow(ctx, asset, quote, window)
+		if err != nil || !ok || !got.Escalated {
+			t.Errorf("window %s = (%+v, ok=%v, err=%v), want the pair-level escalated ladder: "+
+				"a pre-0163 row has no owner, and dropping it releases a live freeze",
+				window, got, ok, err)
+		}
 	}
 }

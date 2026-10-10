@@ -337,3 +337,16 @@ func TestObservationsStream_DivergenceCheckedStructurallyFalse(t *testing.T) {
 		t.Errorf("stream consulted the divergence looker for %v; the raw surface carries no verdict by design", div.askedSpellings())
 	}
 }
+
+// TestObservationsStream_CacheUnavailable503 — The pre-flight
+// computeObservations call (run synchronously before switching to SSE
+// mode, so the handler can still set a non-200 status) lands on the
+// cache-unavailable 503 branch on MISCONF.
+func TestObservationsStream_CacheUnavailable503(t *testing.T) {
+	hist := &stubHistoryReader{err: miscOnfErr}
+	srv := v1.New(v1.Options{History: hist})
+	tsv := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, tsv.URL+"/v1/observations/stream?asset=native&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	assertCacheUnavailable(t, resp)
+}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	explorerpkg "github.com/Stellar-Index/StellarIndex/internal/api/v1/explorer"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -61,50 +60,4 @@ type fixedTokenDecimals uint32
 
 func (d fixedTokenDecimals) TokenDecimals(context.Context, string) (uint32, bool, error) {
 	return uint32(d), true, nil
-}
-
-// The contract fill again, through the RWA contract arm's whole pipeline:
-// its own cap fill runs after the shared directory fill, so the refusal
-// must hold on the figures that arm produces too.
-func TestRWAContractListingRows_DirectoryReadFailureWithholds(t *testing.T) {
-	const sorobanContract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
-	price, volume := "2.5000000000", "250000.00"
-	sources := 3
-	row := timescale.AssetRow{AssetID: sorobanContract, PriceUSD: &price, Volume24hUSD: &volume, SourceCount: &sources}
-
-	listed := func(dir explorerpkg.DirectoryReader) AssetDetail {
-		t.Helper()
-		srv := New(Options{Directory: dir})
-		srv.AssetsReader = &preciseSupplyStub{obs: map[string]timescale.SupplyObservation{
-			sorobanContract: {CirculatingSupply: "10000000000", Basis: "sep41_lake_flows"},
-		}}
-		srv.ContractCatalogue = capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}}
-		srv.TokenSupply = capDecimalsTokenSupply{byID: map[string]string{sorobanContract: "10000000000"}}
-		srv.TokenDecimals = fixedTokenDecimals(7)
-		out, _, _, err := srv.rwaContractListingRows(t.Context(), []rwaContractMember{{contractID: sorobanContract}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, ok := out[sorobanContract]
-		if !ok {
-			t.Fatal("contract row missing from the listing")
-		}
-		return got
-	}
-
-	// Instrument check: an answered "not listed" read prices the row.
-	control := listed(fixedDirectory{})
-	if control.PriceUSD == nil || control.MarketCapUSD == nil || *control.MarketCapUSD != "2500.00" {
-		t.Fatalf("precondition: an answered, unlisted read must price the row (price=%v mcap=%v)",
-			control.PriceUSD, control.MarketCapUSD)
-	}
-
-	got := listed(failingDirectory{})
-	if got.PriceUSD != nil || got.MarketCapUSD != nil {
-		t.Errorf("contract row price=%v mcap=%v, want both withheld — the directory never answered",
-			got.PriceUSD, got.MarketCapUSD)
-	}
-	if got.CirculatingSupply == nil {
-		t.Error("circulating_supply = nil, want the raw chain reading kept")
-	}
 }

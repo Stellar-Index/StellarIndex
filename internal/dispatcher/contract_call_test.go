@@ -5,8 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical/discovery"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // fakeContractCallDecoder is the parallel of fakeOpDecoder /
@@ -282,5 +285,31 @@ func TestContractCallPathActive(t *testing.T) {
 				t.Errorf("contractCallPathActive() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDispatchContractCall_PanicBecomesDecodeError(t *testing.T) {
+	dec := &panickyCCDecoder{name: "panic-cc-src"}
+	disp := New()
+	disp.AddContractCallDecoder(dec)
+	before := testutil.ToFloat64(obs.DecoderPanicsTotal.WithLabelValues(dec.name))
+
+	_, err := disp.RouteContractCall(ContractCallContext{
+		Ledger:       13,
+		ClosedAt:     time.Unix(1_770_000_000, 0).UTC(),
+		TxHash:       "t",
+		OpIndex:      0,
+		ContractID:   "CBAND",
+		FunctionName: "relay",
+	})
+
+	if !errors.Is(err, ErrDecoderPanic) {
+		t.Fatalf("err = %v, want ErrDecoderPanic", err)
+	}
+	if got := testutil.ToFloat64(obs.DecoderPanicsTotal.WithLabelValues(dec.name)) - before; got != 1 {
+		t.Errorf("panic counter rose by %v, want 1", got)
+	}
+	if n := disp.Stats().DecodeErrors[dec.name]; n != 1 {
+		t.Errorf("Stats().DecodeErrors[%s] = %d, want 1", dec.name, n)
 	}
 }

@@ -44,7 +44,7 @@ go-ast internal/api/v1/movements_provenance_enum_test.go
 go-ast internal/api/v1/price_withheld_reason_test.go
 go-ast internal/api/v1/protocols_verdict_stale_test.go
 go-ast internal/api/v1/request_maxlength_test.go
-go-ast internal/api/v1/request_timeout_forgery_test.go
+go-ast internal/api/v1/request_timeout_disable_internal_test.go
 go-ast internal/api/v1/rwa_pipeline_guard_test.go
 go-ast internal/api/v1/scam_gate_pair_seam_test.go
 go-ast internal/api/v1/slo_guard_lake_wiring_test.go
@@ -104,7 +104,7 @@ md-read internal/config/selfhosting_doc_test.go
 md-read internal/customerwebhook/retry_window_internal_test.go
 md-read internal/incidents/incidents_test.go
 md-read internal/ops/archive/verify_archive_tier_e_test.go
-md-read internal/ops/chops/ch_rebuild_backfillsafe_callsite_test.go
+md-read internal/ops/chops/ch_rebuild_backfillsafe_test.go
 md-read internal/ops/ingest/backfill_procedure_docs_test.go
 md-read internal/ops/ingest/directory_sync_test.go
 md-read internal/pricingguard/surface_labels_test.go

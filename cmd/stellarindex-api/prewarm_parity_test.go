@@ -415,3 +415,178 @@ func listAssetsSigs(l *callLog) []string {
 	}
 	return out
 }
+
+// slowListingAssetsReader wraps stubAssetsReader, sleeping on every
+// ListAssetsExt call — the call prewarmLight's /v1/coins warm and
+// prewarmAssetListings (via assetListingPrewarmOptions, 12 variants)
+// both make under assetsReaderCtx — and recording ctx.Err() at the
+// moment GetNativeAssetRow runs.
+type slowListingAssetsReader struct {
+	stubAssetsReader
+	delay        time.Duration
+	nativeCtxErr error
+}
+
+func (r *slowListingAssetsReader) ListAssetsExt(ctx context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
+	time.Sleep(r.delay)
+	return nil, ctx.Err()
+}
+
+func (r *slowListingAssetsReader) GetNativeAssetRow(ctx context.Context) (timescale.AssetRow, error) {
+	r.nativeCtxErr = ctx.Err()
+	return timescale.AssetRow{}, nil
+}
+
+// TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm pins the following.
+//
+// prewarmLight's native/verified-asset prewarm batch must run under its
+// OWN fresh deadline, not the assetsReaderCtx whose 20s budget started
+// ticking at the /v1/coins warm and keeps ticking through the 13
+// ListAssetsExt calls prewarmAssetListings makes (assetListingPrewarmOptions:
+// 2 orders x 6 limits, plus the initial /v1/coins call). On a cold
+// cache those calls are exactly the kind of work that can burn a
+// meaningful chunk of a shared 20s deadline; if GetNativeAssetRow and
+// the verified-asset fan-out reuse that same context, a sufficiently
+// slow listing warm leaves them with an already-expired one, so every
+// call silently no-ops on context deadline exceeded (swallowed at
+// Debug) — the cache reports healthy and the next /v1/assets/native or
+// verified-asset request still pays the cold read.
+func TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm(t *testing.T) {
+	orig := assetsPrewarmBatchTimeout
+	assetsPrewarmBatchTimeout = 30 * time.Millisecond
+	t.Cleanup(func() { assetsPrewarmBatchTimeout = orig })
+
+	// 13 calls (1 /v1/coins + 12 assetListingPrewarmOptions variants) at
+	// 5ms each comfortably exceeds the 30ms budget above, mirroring a
+	// slow cold-cache listing warm without a real 20s wait.
+	probe := &slowListingAssetsReader{delay: 5 * time.Millisecond}
+	assets := v1.NewCachedAssetsReader(probe, 0)
+	markets := v1.NewCachedMarketsReader(&recordingMarketsReader{log: newCallLog()}, 0)
+	issuers := v1.NewCachedIssuersReader(&stubIssuersReader{}, 0)
+
+	// catalogueLen large enough that catalogueFillPrewarmOptions adds
+	// nothing here — this test is about the context budget, not catalogue fill.
+	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil, nil, noCatalogueFillTestLen)
+
+	if probe.nativeCtxErr != nil {
+		t.Fatalf("GetNativeAssetRow saw ctx.Err() = %v — the native asset-catalogue "+
+			"prewarm reused a context whose deadline had already lapsed during the "+
+			"/v1/coins + /v1/assets listing warm instead of getting a fresh one",
+			probe.nativeCtxErr)
+	}
+}
+
+// orderLog records call names in the order they happen across both the
+// assets and markets fakes below. callLog (prewarm_parity_test.go) only
+// counts occurrences per signature, which cannot express "before/after";
+// this can.
+type orderLog struct {
+	mu    sync.Mutex
+	names []string
+}
+
+func (o *orderLog) add(name string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.names = append(o.names, name)
+}
+
+func (o *orderLog) snapshot() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.names...)
+}
+
+// orderedAssetsReader wraps stubAssetsReader, additionally recording the
+// native/verified-asset calls into a shared, cross-reader
+// order log.
+type orderedAssetsReader struct {
+	stubAssetsReader
+	order *orderLog
+}
+
+func (r *orderedAssetsReader) GetNativeAssetRow(ctx context.Context) (timescale.AssetRow, error) {
+	r.order.add("GetNativeAssetRow")
+	return r.stubAssetsReader.GetNativeAssetRow(ctx)
+}
+
+func (r *orderedAssetsReader) GetAssetByAssetID(ctx context.Context, assetID string) (timescale.AssetRow, error) {
+	r.order.add("GetAssetByAssetID:" + assetID)
+	return r.stubAssetsReader.GetAssetByAssetID(ctx, assetID)
+}
+
+// orderedMarketsReader wraps recordingMarketsReader, recording the
+// markets/pools calls prewarmLight makes against the SEPARATE 5-minute
+// mkCtx budget (as opposed to assetsReaderCtx's 20s one).
+type orderedMarketsReader struct {
+	recordingMarketsReader
+	order *orderLog
+}
+
+func (r *orderedMarketsReader) DistinctPairsExt(ctx context.Context, cursor string, limit int, ord timescale.MarketsOrder) ([]v1.Market, string, error) {
+	r.order.add("DistinctPairsExt")
+	return r.recordingMarketsReader.DistinctPairsExt(ctx, cursor, limit, ord)
+}
+
+func (r *orderedMarketsReader) AllPools(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, ord timescale.MarketsOrder) ([]v1.Pool, string, error) {
+	r.order.add("AllPools")
+	return r.recordingMarketsReader.AllPools(ctx, filter, cursor, limit, ord)
+}
+
+func (r *orderedMarketsReader) SourceMarkets(ctx context.Context, source, cursor string, limit int, ord timescale.MarketsOrder) ([]v1.Market, string, error) {
+	r.order.add("SourceMarkets")
+	return r.recordingMarketsReader.SourceMarkets(ctx, source, cursor, limit, ord)
+}
+
+// TestPrewarmLight_NativeAndVerifiedAssetWarmsRunBeforeMarketsLoops is
+// the regression guard for that ordering.
+//
+// assetsReaderCtx carries a 20s budget, wholly separate from the
+// markets/pools/per-DEX/per-CEX work's 5-minute mkCtx. If the
+// native-asset and verified-asset-detail prewarm calls run AFTER that
+// ~95-line block of markets-reader calls (the wrong order), most or
+// all of the 20s budget is gone by the time they run on a cold cache —
+// so on a real cold start they lose the race against assetsReaderCtx's
+// deadline. This asserts they instead run before any markets-reader
+// call fires, alongside the other assetsReaderCtx-scoped work.
+func TestPrewarmLight_NativeAndVerifiedAssetWarmsRunBeforeMarketsLoops(t *testing.T) {
+	order := &orderLog{}
+
+	assets := v1.NewCachedAssetsReader(&orderedAssetsReader{order: order}, 0)
+	markets := v1.NewCachedMarketsReader(&orderedMarketsReader{
+		recordingMarketsReader: recordingMarketsReader{log: newCallLog()},
+		order:                  order,
+	}, 0)
+	issuers := v1.NewCachedIssuersReader(&stubIssuersReader{}, 0)
+
+	// catalogueLen large enough that catalogueFillPrewarmOptions adds
+	// nothing here — this test is about call ordering, not catalogue fill.
+	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers,
+		[]string{"USDC-GDHUXCJQVGYUYVYEPCTAZ7WMHNMTZJWKUANE2LFXTYUZ3YPDN2PDM26"}, nil, nil, noCatalogueFillTestLen)
+
+	names := order.snapshot()
+
+	nativeIdx := -1
+	firstMarketsIdx := -1
+	for i, n := range names {
+		if n == "GetNativeAssetRow" && nativeIdx == -1 {
+			nativeIdx = i
+		}
+		if firstMarketsIdx == -1 && (n == "DistinctPairsExt" || n == "AllPools" || n == "SourceMarkets") {
+			firstMarketsIdx = i
+		}
+	}
+	if nativeIdx == -1 {
+		t.Fatal("prewarmLight never called GetNativeAssetRow — test premise broken")
+	}
+	if firstMarketsIdx == -1 {
+		t.Fatal("prewarmLight never called a markets-reader method — test premise broken")
+	}
+	if nativeIdx > firstMarketsIdx {
+		t.Errorf("GetNativeAssetRow ran at position %d, after the first markets-reader call "+
+			"(%s) at position %d. On a cold cache the markets/pools loops run against a "+
+			"separate 5-minute mkCtx and can consume assetsReaderCtx's whole 20s budget by "+
+			"elapsed wall-clock time alone, so native/verified-asset prewarm must run BEFORE "+
+			"them, not after.\nfull call order: %v", nativeIdx, names[firstMarketsIdx], firstMarketsIdx, names)
+	}
+}

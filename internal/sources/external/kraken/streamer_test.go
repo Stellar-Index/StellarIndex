@@ -17,6 +17,8 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // newTestKrakenServer plays back a scripted Kraken v2 session:
@@ -254,4 +256,54 @@ func mustPairMap(t *testing.T) map[string]canonical.Pair {
 		t.Fatalf("DefaultPairs: %v", err)
 	}
 	return m
+}
+
+func TestStreamer_Name(t *testing.T) {
+	s := NewStreamer(map[string]canonical.Pair{})
+	if got := s.Name(); got != SourceName {
+		t.Errorf("Name() = %q, want %q", got, SourceName)
+	}
+}
+
+func TestStreamer_Class(t *testing.T) {
+	s := NewStreamer(map[string]canonical.Pair{})
+	if got := s.Class(); got != external.ClassExchange {
+		t.Errorf("Class() = %q, want %q", got, external.ClassExchange)
+	}
+}
+
+func TestStreamer_Start_emptyPairsRejected(t *testing.T) {
+	pm, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	s := NewStreamer(pm)
+
+	if _, err := s.Start(context.Background(), nil); err == nil {
+		t.Error("expected error on empty pairs, got nil")
+	}
+}
+
+func TestStreamer_Start_unknownPairRejected(t *testing.T) {
+	pm, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	s := NewStreamer(pm)
+
+	// MATIC: in allow-list, intentionally not in DefaultPairs.
+	matic, _ := canonical.NewCryptoAsset("MATIC")
+	usd, _ := canonical.NewFiatAsset("USD")
+	missing, err := canonical.NewPair(matic, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+
+	_, err = s.Start(context.Background(), []canonical.Pair{missing})
+	if err == nil {
+		t.Fatal("expected error for unknown MATIC/USD pair, got nil")
+	}
+	if !strings.Contains(err.Error(), "MATIC") {
+		t.Errorf("error %q should cite the offending asset", err.Error())
+	}
 }

@@ -2,7 +2,6 @@ package coingecko
 
 import (
 	"testing"
-	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
@@ -44,17 +43,5 @@ func TestDecimalStringToScaledInt_edges(t *testing.T) {
 				t.Errorf("got %s, want %s", got.String(), c.want)
 			}
 		})
-	}
-}
-
-func TestPoller_PollInterval_defaultAndOverride(t *testing.T) {
-	p := NewPoller()
-	p.Interval = 0
-	if got := p.PollInterval(); got != DefaultPollInterval {
-		t.Errorf("PollInterval(zero) = %v, want %v", got, DefaultPollInterval)
-	}
-	p.Interval = 7 * time.Second
-	if got := p.PollInterval(); got != 7*time.Second {
-		t.Errorf("PollInterval(7s) = %v, want 7s", got)
 	}
 }

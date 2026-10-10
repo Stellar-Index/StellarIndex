@@ -1067,7 +1067,7 @@ func TestFeedRegistry_EarnUSDCIsItsOwnInstrument(t *testing.T) {
 // body↔args updater cross-check, and the equal-arity state-write
 // corroboration. The dispatcher/lake OpArgs provenance gate (args only
 // from a direct call into the emitting contract) is pinned in
-// internal/dispatcher/oparg_provenance_test.go and
+// internal/dispatcher/entry_change_ledger_walk_test.go and
 // internal/storage/clickhouse/extract_events_gate_test.go.
 
 // otherG is a second deterministic G-address, distinct from relayerG.

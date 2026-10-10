@@ -536,3 +536,104 @@ func TestDecode_MalformedInputs(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeDepositForBurn_RealMainnetFixture(t *testing.T) {
+	t.Parallel()
+	ev := realDepositForBurn
+	requireRealEvent(t, &ev, MainnetTokenMessengerMinter, EventDepositForBurn)
+	got, err := DecodeDepositForBurn(&ev)
+	if err != nil {
+		t.Fatalf("DecodeDepositForBurn: %v", err)
+	}
+	want := DepositForBurn{
+		Ledger:                    64_775_357,
+		TxHash:                    "8c67510be8336b6d4e982d33fe1061d774f006c756288c256e4a3296fbe7f375",
+		OpIndex:                   0,
+		ClosedAt:                  "2026-10-05T01:09:27Z",
+		ContractID:                MainnetTokenMessengerMinter,
+		BurnToken:                 "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+		Depositor:                 "GCJ67NUV54XJYSU2AY7IEQG3QOKDP2P56ZF2VDDHSQ47NXKBBLAV65AO",
+		MinFinalityThreshold:      2000,
+		Amount:                    "2000000",
+		MintRecipient:             "000000000000000000000000a0cc561a5280cb7817abf0408e8a23cfda9ac91f",
+		DestinationDomain:         6,
+		DestinationTokenMessenger: "00000000000000000000000028b5a0e9c621a5badaa536219b3a228c8168cf5d",
+		DestinationCaller:         "0000000000000000000000000000000000000000000000000000000000000000",
+		MaxFee:                    "0",
+		HookData:                  "",
+	}
+	if got != want {
+		t.Errorf("DepositForBurn mismatch\n got: %+v\nwant: %+v", got, want)
+	}
+}
+
+func TestDecodeMessageReceived_RealMainnetFixture(t *testing.T) {
+	t.Parallel()
+	ev := realMessageReceived
+	requireRealEvent(t, &ev, MainnetMessageTransmitter, EventMessageReceived)
+	got, err := DecodeMessageReceived(&ev)
+	if err != nil {
+		t.Fatalf("DecodeMessageReceived: %v", err)
+	}
+	want := MessageReceived{
+		Ledger:                    64_775_825,
+		TxHash:                    "c78a8fd73af540dfd334405240598bf6073b1629f22b91accb5e72e9b3b4df1f",
+		OpIndex:                   0,
+		ClosedAt:                  "2026-10-05T01:48:27Z",
+		ContractID:                MainnetMessageTransmitter,
+		Caller:                    MainnetCctpForwarder,
+		Nonce:                     "9bc992164ad70774d625e8a831b95b3a4af54603f78735449bf8b36af8dce33d",
+		FinalityThresholdExecuted: 1000,
+		SourceDomain:              6,
+		Sender:                    "00000000000000000000000028b5a0e9c621a5badaa536219b3a228c8168cf5d",
+		MessageBody:               "00000001000000000000000000000000833589fcd6edb6e08f4c7c32d4f71b54bda0291372bd20ff2f8281801bb05b7c29179026933256fabafeb13e94efd8ddbcfcf2910000000000000000000000000000000000000000000000000000000001aaa516000000000000000000000000ea258496a9311ffe29cdf920ca0e8bb4b41c9f0400000000000000000000000000000000000000000000000000000000000011080000000000000000000000000000000000000000000000000000000000000e320000000000000000000000000000000000000000000000000000000003dcaa0d000000000000000000000000000000000000000000000000000000000000003847414d4e413251364e545a5355424c4d45584c544958594f5245374f584a4a424d454749583754324f5844414b49413743434b4e34524a56",
+	}
+	if got != want {
+		t.Errorf("MessageReceived mismatch\n got: %+v\nwant: %+v", got, want)
+	}
+}
+
+func TestDecodeMessageSent_RealMainnetFixture(t *testing.T) {
+	t.Parallel()
+	ev := realMessageSent
+	requireRealEvent(t, &ev, MainnetMessageTransmitter, EventMessageSent)
+	got, err := DecodeMessageSent(&ev)
+	if err != nil {
+		t.Fatalf("DecodeMessageSent: %v", err)
+	}
+	want := MessageSent{
+		Ledger:     64_775_357,
+		TxHash:     "8c67510be8336b6d4e982d33fe1061d774f006c756288c256e4a3296fbe7f375",
+		OpIndex:    0,
+		ClosedAt:   "2026-10-05T01:09:27Z",
+		ContractID: MainnetMessageTransmitter,
+		Message:    "000000010000001b00000006000000000000000000000000000000000000000000000000000000000000000009a3773ffd1ff361f8315d629adf17d3e4730fd00a6900715431ed4b142aded200000000000000000000000028b5a0e9c621a5badaa536219b3a228c8168cf5d0000000000000000000000000000000000000000000000000000000000000000000007d00000000000000001adefce59aee52968f76061d494c2525b75659fa4296a65f499ef29e56477e496000000000000000000000000a0cc561a5280cb7817abf0408e8a23cfda9ac91f00000000000000000000000000000000000000000000000000000000001e848093efb695ef2e9c4a9a063e8240db839437e9fdf64baa8c679439f6dd410ac15f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+	}
+	if got != want {
+		t.Errorf("MessageSent mismatch\n got: %+v\nwant: %+v", got, want)
+	}
+}
+
+func TestDecodeMintAndWithdraw_RealMainnetFixture(t *testing.T) {
+	t.Parallel()
+	ev := realMintAndWithdraw
+	requireRealEvent(t, &ev, MainnetTokenMessengerMinter, EventMintAndWithdraw)
+	got, err := DecodeMintAndWithdraw(&ev)
+	if err != nil {
+		t.Fatalf("DecodeMintAndWithdraw: %v", err)
+	}
+	want := MintAndWithdraw{
+		Ledger:        64_775_825,
+		TxHash:        "c78a8fd73af540dfd334405240598bf6073b1629f22b91accb5e72e9b3b4df1f",
+		OpIndex:       0,
+		ClosedAt:      "2026-10-05T01:48:27Z",
+		ContractID:    MainnetTokenMessengerMinter,
+		MintRecipient: MainnetCctpForwarder,
+		MintToken:     "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+		Amount:        "27956964",
+		FeeCollected:  "3634",
+	}
+	if got != want {
+		t.Errorf("MintAndWithdraw mismatch\n got: %+v\nwant: %+v", got, want)
+	}
+}

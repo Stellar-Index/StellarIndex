@@ -6,11 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -18,31 +16,6 @@ import (
 // A carried-forward or partial 200 must leave as no-store so a shared cache
 // cannot keep serving it for its route's full band after the origin
 // recovers; the healthy answer on the same route keeps the band.
-
-func TestWriteEnvelope_DegradedIsNoStoreAndNeverOnTheWire(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		degraded bool
-		want     string
-	}{
-		{"healthy keeps the route band", false, "public, max-age=60, s-maxage=300"},
-		{"degraded overrides the band", true, "no-store"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h := middleware.CacheControl(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				writeJSON(w, []string{}, Flags{Degraded: tc.degraded})
-			}))
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/pools", nil))
-			if got := rec.Header().Get("Cache-Control"); got != tc.want {
-				t.Errorf("Cache-Control = %q, want %q", got, tc.want)
-			}
-			if strings.Contains(rec.Body.String(), "degraded") {
-				t.Errorf("internal marker leaked onto the wire: %s", rec.Body.String())
-			}
-		})
-	}
-}
 
 // serveCacheControl runs one request against h and returns the
 // Cache-Control the handler itself set (no middleware: "" means the

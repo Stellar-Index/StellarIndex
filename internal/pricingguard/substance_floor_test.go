@@ -1,15 +1,8 @@
 package pricingguard
 
 import (
-	"context"
 	"math/big"
 	"testing"
-
-	dto "github.com/prometheus/client_model/go"
-
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/obs"
-	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestFailedFloor_NamesTheFloor pins the `floor` label: persistence
@@ -39,57 +32,5 @@ func TestFailedFloor_NamesTheFloor(t *testing.T) {
 		if ok := SubstanceOK(tc.vol, tc.buckets, tc.spanS, pol); ok != (tc.want == FloorNone) {
 			t.Errorf("%s: SubstanceOK = %v disagrees with FailedFloor %q", tc.name, ok, tc.want)
 		}
-	}
-}
-
-// TestSubstanceGate_WithheldCountCarriesTheFloor: the counter says which
-// floor refused the pair, from a fresh measurement and from the cache.
-func TestSubstanceGate_WithheldCountCarriesTheFloor(t *testing.T) {
-	const surface = "floor_label_test"
-	asset := mustAsset(t, "SHRT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")
-	pair, err := canonical.NewPair(asset, canonical.NativeAsset())
-	if err != nil {
-		t.Fatal(err)
-	}
-	short := timescale.MarketSubstance{VolumeUSD: "5000", Buckets: 40, SpanSeconds: 3600, ValuedBuckets: 40}
-	gate := NewSubstanceGate(&fakeSubstanceReader{byPair: map[string]timescale.MarketSubstance{pair.String(): short}},
-		SubstanceGateOptions{Policy: testPolicy()})
-	counter := obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface, string(FloorSpan))
-	for range 2 {
-		if gate.Allowed(context.Background(), asset, canonical.NativeAsset(), surface) {
-			t.Fatal("a one-hour market cleared the six-hour span floor")
-		}
-	}
-	var pb dto.Metric
-	if err := counter.Write(&pb); err != nil {
-		t.Fatal(err)
-	}
-	if got := pb.GetCounter().GetValue(); got != 2 {
-		t.Errorf("floor=%q series = %v, want 2", FloorSpan, got)
-	}
-	if got := withheldFor(t, surface); got != 2 {
-		t.Errorf("withheld counted %v across all floors, want 2", got)
-	}
-}
-
-// TestSubstanceGate_UnvaluedMarketIsWithheldAndNamed: a market
-// with real persistence but no USD valuation — the SEP-41/SEP-41 shape,
-// 800 buckets over 22h — stays withheld (an unvaluable volume cannot be
-// verified, and waiving the floor would admit the self-minted pair the
-// gate exists for), but under its own floor, not as a thin market.
-func TestSubstanceGate_UnvaluedMarketIsWithheldAndNamed(t *testing.T) {
-	a := mustAsset(t, "TOKA-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")
-	b := mustAsset(t, "TOKB-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
-	pair, err := canonical.NewPair(a, b)
-	if err != nil {
-		t.Fatal(err)
-	}
-	unvalued := timescale.MarketSubstance{VolumeUSD: "0", Buckets: 800, SpanSeconds: 22 * 3600}
-	gate := NewSubstanceGate(&fakeSubstanceReader{byPair: map[string]timescale.MarketSubstance{pair.String(): unvalued}},
-		SubstanceGateOptions{Policy: testPolicy()})
-	allowed, measured, floor := gate.Probe(context.Background(), a, b)
-	if allowed || !measured || floor != FloorVolumeUnvalued {
-		t.Errorf("Probe = (allowed %v, measured %v, floor %q), want (false, true, %q)",
-			allowed, measured, floor, FloorVolumeUnvalued)
 	}
 }

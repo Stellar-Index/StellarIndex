@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
@@ -387,5 +389,169 @@ func TestLoadStateForWindow_ColdWindowDoesNotAdoptEscalatedUpgradeLadder(t *test
 	}
 	if !owner.Escalated {
 		t.Errorf("the 5m window's own ladder read back %+v, want it still escalated", owner)
+	}
+}
+
+func TestLoadStateForWindow_AbandonedOwnedLadderIsNotRehydrated(t *testing.T) {
+	_, w, _ := seedShortLadderBeside(t, escalatedState(time.Now().UTC()))
+	asset, quote := nativeUSD(t)
+	st, present, err := w.LoadStateForWindow(context.Background(), asset, quote, shortWindow)
+	if err != nil {
+		t.Fatalf("LoadStateForWindow: %v", err)
+	}
+	if !present {
+		t.Fatal("present = false; the pair's marker is still there")
+	}
+	if st.Active() || st.Escalated {
+		t.Fatalf("5m window rehydrated an abandoned ladder: %+v; want the zero State", st)
+	}
+	long, _, err := w.LoadStateForWindow(context.Background(), asset, quote, longWindow)
+	if err != nil {
+		t.Fatalf("LoadStateForWindow(1h): %v", err)
+	}
+	if !long.Escalated {
+		t.Fatalf("1h window lost its live escalated ladder: %+v", long)
+	}
+}
+
+func TestMarkHoldForWindow_PrunesAnAbandonedSiblingLadder(t *testing.T) {
+	now := time.Now().UTC()
+	mr, w, key := seedShortLadderBeside(t, escalatedState(now))
+	asset, quote := nativeUSD(t)
+	if err := w.MarkHoldForWindow(context.Background(), asset, quote, longWindow, "0.1242",
+		freezeDecision(), escalatedState(now), 30*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow(1h): %v", err)
+	}
+	raw, err := mr.Get(key)
+	if err != nil {
+		t.Fatalf("marker gone after re-mark: %v", err)
+	}
+	var got freeze.Marker
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("decode marker: %v", err)
+	}
+	if st, kept := got.Ladders[shortWindow.String()]; kept {
+		t.Fatalf("sibling re-mark carried the abandoned 5m ladder forward: %+v", st)
+	}
+	if !got.Ladders[longWindow.String()].Escalated {
+		t.Fatalf("1h ladder missing from the re-marked marker: %+v", got.Ladders)
+	}
+}
+
+// TestMarkHoldForWindow_NeverShortensASiblingsHold is the same invariant
+// between two lifecycle writers. The marker has ONE TTL and carries every
+// window's ladder; a 5m window re-marking with its own short remainder
+// must not pull the expiry in under a 1h sibling whose window is not
+// re-marking this tick.
+func TestMarkHoldForWindow_NeverShortensASiblingsHold(t *testing.T) {
+	mr, rdb := newRedis(t)
+	w, err := freeze.NewWriter(rdb, 0)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	if err := w.MarkHoldForWindow(ctx, asset, quote, longWindow, "0.1242",
+		freezeDecision(), escalatedState(now), 30*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow(1h): %v", err)
+	}
+	if err := w.MarkHoldForWindow(ctx, asset, quote, shortWindow, "0.1242",
+		freezeDecision(), freshState(now), 6*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow(5m): %v", err)
+	}
+	if ttl := mr.TTL(cachekeys.Freeze(asset, quote).String()); ttl < 25*time.Minute {
+		t.Errorf("marker TTL = %s after the 5m window's write, want at least the 1h "+
+			"window's remaining hold (25m)", ttl)
+	}
+}
+
+// clearAfterReadCache lands an operator's freeze-unfreeze DEL between the
+// retire's marker read and its write back.
+type clearAfterReadCache struct {
+	freeze.RedisCache
+}
+
+func (c clearAfterReadCache) Get(ctx context.Context, key string) *redis.StringCmd {
+	cmd := c.RedisCache.Get(ctx, key)
+	c.RedisCache.Del(ctx, key)
+	return cmd
+}
+
+// TestRetireWindowLadder_DoesNotResurrectAClearedMarker: a marker cleared
+// between the retire's read and its write must stay cleared. SET KEEPTTL
+// on a key that no longer exists creates it with NO expiry, so the write
+// back would bring the freeze back permanently, past the operator's clear.
+func TestRetireWindowLadder_DoesNotResurrectAClearedMarker(t *testing.T) {
+	mr, rdb := newRedis(t)
+	w, err := freeze.NewWriter(rdb, time.Minute)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	ctx := context.Background()
+	fired := time.Now().UTC()
+	for _, window := range []time.Duration{shortWindow, longWindow} {
+		if err := w.MarkHoldForWindow(ctx, asset, quote, window, "0.124200000000",
+			ladderDecision(), ladderState(fired, 0), time.Hour); err != nil {
+			t.Fatalf("MarkHoldForWindow(%v): %v", window, err)
+		}
+	}
+
+	racing, err := freeze.NewWriter(clearAfterReadCache{RedisCache: rdb}, time.Minute)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := racing.RetireWindowLadder(ctx, asset, quote, shortWindow); err != nil {
+		t.Fatalf("RetireWindowLadder after a concurrent clear = %v, want nil (already cleared)", err)
+	}
+	key := cachekeys.Freeze(asset, quote).String()
+	if mr.Exists(key) {
+		t.Fatalf("the cleared marker was written back (TTL %v) — the operator's "+
+			"unfreeze was undone", mr.TTL(key))
+	}
+}
+
+// TestRetireWindowLadder_RetiresTheDurableEntryToo: a window that
+// auto-releases while a sibling stays frozen has its ladder dropped from
+// the marker. The durable copy has to go with it, or a Redis loss before
+// the sibling releases resurrects a freeze that already ended.
+func TestRetireWindowLadder_RetiresTheDurableEntryToo(t *testing.T) {
+	mr, rdb := newRedis(t)
+	store := newWindowedFakeLadderStore()
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithLadderStore(store, 0))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	if err := w.MarkHoldForWindow(ctx, asset, quote, longWindow, "0.1242",
+		freezeDecision(), escalatedState(now), 30*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow(1h): %v", err)
+	}
+	if err := w.MarkHoldForWindow(ctx, asset, quote, shortWindow, "0.1242",
+		freezeDecision(), freshState(now), 14*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow(5m): %v", err)
+	}
+	if err := w.RetireWindowLadder(ctx, asset, quote, shortWindow); err != nil {
+		t.Fatalf("RetireWindowLadder(5m): %v", err)
+	}
+	mr.FlushAll()
+
+	gotShort, _, err := w.LoadStateForWindow(ctx, asset, quote, shortWindow)
+	if err != nil {
+		t.Fatalf("LoadStateForWindow(5m): %v", err)
+	}
+	if gotShort.Active() {
+		t.Errorf("5m window rehydrated %+v after it had released — the durable record "+
+			"kept a freeze the marker had already retired", gotShort)
+	}
+	gotLong, ok, err := w.LoadStateForWindow(ctx, asset, quote, longWindow)
+	if err != nil || !ok || !gotLong.Escalated {
+		t.Errorf("1h window = (%+v, ok=%v, err=%v), want its escalated ladder intact — "+
+			"retiring a sibling must not touch it", gotLong, ok, err)
 	}
 }

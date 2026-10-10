@@ -667,3 +667,34 @@ func TestSecurityTxt(t *testing.T) {
 		}
 	}
 }
+
+// TestReadyz_SchemaMismatchDrainsBackend is the end-to-end gate
+// demonstration: with the schema critical checker wired into the
+// readiness round reporting an applied head one below the binary's
+// expectation, /v1/readyz returns 503 (unready) and names the schema
+// failure; without the check the same node answered 200. Postgres
+// itself is up (its stub passes), so the 503 is attributable solely to
+// the schema/binary mismatch.
+func TestReadyz_SchemaMismatchDrainsBackend(t *testing.T) {
+	stale := fakeSchemaReader{version: v1.ExpectedSchemaVersion - 1}
+	ts := newTestServer(t,
+		&stubCheck{name: "postgres", critical: true},
+		v1.NewSchemaVersionChecker(stale),
+	)
+	resp, err := http.Get(ts.URL + "/v1/readyz")
+	if err != nil {
+		t.Fatalf("GET /v1/readyz: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 (schema mismatch must drain the backend)", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"status":"unready"`) {
+		t.Errorf("body should report unready on schema mismatch: %s", body)
+	}
+	if !strings.Contains(body, "schema/binary mismatch") {
+		t.Errorf("body should name the schema/binary mismatch: %s", body)
+	}
+}

@@ -7,55 +7,10 @@ import (
 	"math/big"
 	"testing"
 	"time"
-
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 func tinyRat(num int64, places int64) *big.Rat {
 	return new(big.Rat).SetFrac(big.NewInt(num), new(big.Int).Exp(big.NewInt(10), big.NewInt(places), nil))
-}
-
-// The wire price renderers floor at ohlcPriceDigits. A strictly positive
-// price whose first significant digit lies beyond that place must NOT
-// render as an all-zero string (which reparses as price 0); the scale is
-// extended magnitude-relatively, exactly as the aggregator's own
-// formatRatFixed does. Normal-magnitude prices stay byte-identical.
-func TestRatToDecimal_extendsScaleForSubDigitPrices(t *testing.T) {
-	cases := []struct {
-		name string
-		r    *big.Rat
-		want string
-	}{
-		{"normal magnitude unchanged", big.NewRat(1, 3), "0.3333333333"},
-		{"last rendered place unchanged", tinyRat(1, 10), "0.0000000001"},
-		{"zero unchanged", new(big.Rat), "0.0000000000"},
-		{"3e-12 keeps its digits", tinyRat(3, 12), "0.000000000003000000000000"},
-		{"negative tiny keeps sign and digits", tinyRat(-3, 12), "-0.000000000003000000000000"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := ratToDecimal(tc.r, ohlcPriceDigits)
-			if got != tc.want {
-				t.Fatalf("ratToDecimal(%s, %d) = %q, want %q", tc.r.RatString(), ohlcPriceDigits, got, tc.want)
-			}
-			back, ok := new(big.Rat).SetString(got)
-			if !ok || back.Sign() != tc.r.Sign() {
-				t.Fatalf("%q reparses with sign %d, want %d", got, back.Sign(), tc.r.Sign())
-			}
-		})
-	}
-}
-
-// /v1/history renders price via priceRatioDecimal: same floor, same fix.
-func TestPriceRatioDecimal_extendsScaleForSubDigitPrices(t *testing.T) {
-	tr := canonical.Trade{
-		BaseAmount:  canonical.NewAmount(new(big.Int).Exp(big.NewInt(10), big.NewInt(15), nil)),
-		QuoteAmount: canonical.NewAmount(big.NewInt(3)), // 3e-15 quote per base
-	}
-	const want = "0.000000000000003000000000000"
-	if got, _ := priceRatioDecimal(tr, ohlcPriceDigits); got != want {
-		t.Fatalf("priceRatioDecimal = %q, want %q", got, want)
-	}
 }
 
 // The derived fiat-cross chart leg: a tiny cross rate must survive.

@@ -197,8 +197,7 @@ Phase 5) and must not be reintroduced.
 | [`decode_liquidity_test.go`](decode_liquidity_test.go) | Decoder unit tests for join_pool / exit_pool / deposit / withdraw |
 | [`consumer.go`](consumer.go) | Dispatcher-side adapter glue + LiquidityEvent type |
 | [`dispatcher_adapter.go`](dispatcher_adapter.go) | Topic-match registration; routes swap → TradeEvent, liquidity events → LiquidityEvent |
-| [`adapter_test.go`](adapter_test.go) | Adapter routing tests (swap path) |
-| [`adapter_liquidity_test.go`](adapter_liquidity_test.go) | Adapter routing tests (liquidity path) |
+| [`adapter_test.go`](adapter_test.go) | Adapter routing tests (swap and liquidity paths) |
 
 ## Storage
 

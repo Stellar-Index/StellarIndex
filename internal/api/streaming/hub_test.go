@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -806,5 +807,303 @@ func TestHub_OwnCursorEmitsNoStreamGap(t *testing.T) {
 
 	if got := drainNonblocking(t, sub, 1, 100*time.Millisecond); len(got) != 0 {
 		t.Fatalf("own-space cursor produced events: %+v", got)
+	}
+}
+
+// Replay rings are allocated on first PUBLISH, not on subscribe.
+//
+// The reaper evicts only SUBSCRIBER-LESS topics, so the map can hold up
+// to maxTopics subscribed-but-silent topics. With the ring allocated
+// eagerly, that made resident memory scale with
+// concurrent streams × alias fan-out — /v1/price/stream subscribes one
+// connection to assetAliases(base) × assetAliases(quote), up to 9
+// topics, of which the aggregator publishes to at most a few — so the
+// never-published remainder alone reserved ~20 KiB apiece for rings that
+// could never hold an event.
+//
+// Proven red against the unfixed Hub (getOrCreateTopic allocating
+// `buffer: newRing(h.bufferSize)`): BufferedTopicCount reached the full
+// subscribed count and the per-topic cost measured ~20.7 KiB against the
+// 2 KiB budget below.
+
+// subscriberOnlyTopics is large enough that a 20 KiB-per-topic ring is
+// unmistakable against measurement noise (~400 MiB eager vs ~7 MiB
+// lazy), and small enough to stay cheap once fixed.
+const subscriberOnlyTopics = 20000
+
+// lazyRingBudgetBytes is the per-subscribed-topic memory budget. A
+// topicState plus its map entry and key is a few hundred bytes; an
+// eagerly-allocated 256-event ring is ~20 KiB. 2 KiB sits an order of
+// magnitude clear of both, so this fails on the defect without being
+// sensitive to allocator noise.
+const lazyRingBudgetBytes = 2048
+
+func TestHub_SubscribedButUnpublishedTopicsAllocateNoRing(t *testing.T) {
+	hub := streaming.NewHub(0)
+	// Admit the whole measured set; the ceiling itself is pinned elsewhere.
+	hub.SetMaxTopics(subscriberOnlyTopics)
+
+	topics := make([]string, 0, subscriberOnlyTopics)
+	for i := range subscriberOnlyTopics {
+		// The client-supplied key shape: an arbitrary pair/window that
+		// no publisher will ever write to.
+		topics = append(topics, fmt.Sprintf("closed:native/fiat:USD/%d", i+1))
+	}
+
+	before := heapInUse()
+	_, cancel, err := hub.Subscribe(topics, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+	after := heapInUse()
+
+	if got := hub.TopicCount(); got != subscriberOnlyTopics {
+		t.Fatalf("TopicCount() = %d, want %d — the subscription did not mint the "+
+			"topics this test is measuring", got, subscriberOnlyTopics)
+	}
+	if got := hub.BufferedTopicCount(); got != 0 {
+		t.Errorf("BufferedTopicCount() = %d after subscribing to %d topics with no "+
+			"publisher, want 0 — a topic nothing has published to has nothing to "+
+			"replay, so its ring is pure cost", got, subscriberOnlyTopics)
+	}
+
+	perTopic := int64(after-before) / int64(subscriberOnlyTopics)
+	if perTopic >= lazyRingBudgetBytes {
+		t.Errorf("subscriber-only topics cost %d bytes each (%d topics, %d bytes total), "+
+			"want under %d — at the shipped 8192-stream cap × 9 alias topics that is "+
+			"%.1f GiB of rings that can never hold an event",
+			perTopic, subscriberOnlyTopics, int64(after-before), lazyRingBudgetBytes,
+			float64(perTopic)*8192*9/(1<<30))
+	}
+	t.Logf("subscriber-only topic cost: %d bytes each", perTopic)
+}
+
+// The ring must still exist — and still replay — the moment a topic
+// actually carries an event. Lazy must not mean absent.
+func TestHub_PublishAllocatesTheRingAndReplayStillWorks(t *testing.T) {
+	hub := streaming.NewHub(0)
+
+	quiet, cancelQuiet, err := hub.Subscribe([]string{"closed:native/fiat:USD/7"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancelQuiet()
+	if got := hub.BufferedTopicCount(); got != 0 {
+		t.Fatalf("BufferedTopicCount() = %d before any publish, want 0", got)
+	}
+
+	first := hub.Publish("tip:native/fiat:USD/5", "tip_update", []byte(`{"v":"1"}`))
+	hub.Publish("tip:native/fiat:USD/5", "tip_update", []byte(`{"v":"2"}`))
+
+	if got := hub.BufferedTopicCount(); got != 1 {
+		t.Errorf("BufferedTopicCount() = %d after publishing to one topic, want 1 — "+
+			"a published topic MUST hold a replay ring", got)
+	}
+	if got := hub.TopicCount(); got != 2 {
+		t.Errorf("TopicCount() = %d, want 2", got)
+	}
+
+	// Resume from the first event: the second must replay.
+	sub, cancel, err := hub.Subscribe([]string{"tip:native/fiat:USD/5"}, first)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+	select {
+	case ev := <-sub:
+		if string(ev.Data) != `{"v":"2"}` {
+			t.Errorf("replayed event data = %q, want %q", ev.Data, `{"v":"2"}`)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no replay after resuming from the first event id — the lazily " +
+			"allocated ring did not retain the published event")
+	}
+	_ = quiet
+}
+
+// A never-published topic still reaps on its last unsubscribe: the
+// "nothing to replay" arm must read a missing ring as empty, not panic
+// and not treat it as a buffer worth keeping for the idle TTL.
+func TestHub_NeverPublishedTopicStillReapsOnLastUnsubscribe(t *testing.T) {
+	hub := streaming.NewHub(0)
+	hub.SetTopicIdleTTL(time.Hour)
+	// The reaper runs opportunistically on topic CREATION; a threshold of
+	// 1 makes the next creation trigger a pass deterministically.
+	hub.SetMaxTopics(1)
+
+	_, cancel, err := hub.Subscribe([]string{"closed:native/fiat:USD/11"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if got := hub.TopicCount(); got != 1 {
+		t.Fatalf("TopicCount() = %d, want 1", got)
+	}
+	cancel()
+
+	// Minting a topic triggers the pass that should drop it.
+	hub.Publish("tip:native/fiat:USD/5", "tip_update", []byte(`{"v":"1"}`))
+	if got := hub.TopicCount(); got != 1 {
+		t.Errorf("TopicCount() = %d after the subscriber-less unpublished topic "+
+			"should have been reaped, want 1 (the published topic only)", got)
+	}
+	if got := hub.BufferedTopicCount(); got != 1 {
+		t.Errorf("BufferedTopicCount() = %d, want 1", got)
+	}
+}
+
+// heapInUse returns live heap bytes after settling the collector.
+func heapInUse() uint64 {
+	runtime.GC()
+	runtime.GC()
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return m.HeapAlloc
+}
+
+// churnTopics opens and immediately cancels a subscription on n
+// distinct never-published topics — the shape of a client cycling
+// through made-up pairs.
+func churnTopics(t *testing.T, hub *streaming.Hub, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		_, cancel, err := hub.Subscribe([]string{fmt.Sprintf("closed:CHURN%d/USD", i)}, "")
+		if err != nil {
+			t.Fatalf("Subscribe: %v", err)
+		}
+		cancel()
+	}
+}
+
+// TestHub_ReapDropsMintedTopicsButKeepsReplayBuffers pins the halves
+// of the retention policy against each other: topics minted
+// by a client and never published to are dropped as soon as they have
+// no subscriber, while a real topic's ring buffer survives the churn
+// so a reconnecting client still gets its Last-Event-ID replay.
+//
+// The cruder "delete the topic whenever its subscriber count hits 0"
+// fix also bounds the map, but fails the replay half of this test.
+func TestHub_ReapDropsMintedTopicsButKeepsReplayBuffers(t *testing.T) {
+	hub := streaming.NewHub(0)
+
+	id1 := hub.Publish("closed:XLM/USD", "price_update", []byte("first"))
+	hub.Publish("closed:XLM/USD", "price_update", []byte("second"))
+
+	churnTopics(t, hub, 300)
+
+	if got := hub.TopicCount(); got > 128 {
+		t.Fatalf("TopicCount = %d after 300 minted topics, want <= 128", got)
+	}
+	if got := hub.TopicsReaped(); got < 128 {
+		t.Fatalf("TopicsReaped = %d, want >= 128 (the reaper should have run several sweeps)", got)
+	}
+
+	// The real topic kept its buffer: resuming from id1 replays the
+	// event that followed it.
+	sub, cancel, err := hub.Subscribe([]string{"closed:XLM/USD"}, id1)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+	got := drainNonblocking(t, sub, 1, time.Second)
+	if len(got) != 1 || string(got[0].Data) != "second" {
+		t.Fatalf("replay after churn = %v, want the buffered \"second\" event "+
+			"(a published topic's replay window must survive topic reaping)", got)
+	}
+}
+
+// TestHub_ReapDropsBufferedTopicPastIdleTTL — once a published topic
+// has been subscriber-less for longer than the idle TTL, its replay
+// buffer is released too. Otherwise a pair that trades once and goes
+// quiet holds its ring for the life of the process.
+func TestHub_ReapDropsBufferedTopicPastIdleTTL(t *testing.T) {
+	hub := streaming.NewHub(0)
+	hub.SetTopicIdleTTL(time.Nanosecond)
+
+	id1 := hub.Publish("closed:XLM/USD", "price_update", []byte("first"))
+	hub.Publish("closed:XLM/USD", "price_update", []byte("second"))
+
+	churnTopics(t, hub, 128) // forces at least one sweep
+
+	if got := hub.TopicsReaped(); got == 0 {
+		t.Fatal("TopicsReaped = 0, want > 0 (the reaper never ran)")
+	}
+	sub, cancel, err := hub.Subscribe([]string{"closed:XLM/USD"}, id1)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+	if got := drainNonblocking(t, sub, 1, 200*time.Millisecond); len(got) != 0 {
+		t.Fatalf("replay after idle TTL = %v, want none (the buffer should have been released)", got)
+	}
+}
+
+// TestHub_ReapNeverDropsSubscribedTopic — reaping must never detach a
+// live stream from its fanout. Run with the reaper at maximum pressure
+// (tiny ceiling, nanosecond TTL): the subscribed topic still delivers.
+func TestHub_ReapNeverDropsSubscribedTopic(t *testing.T) {
+	hub := streaming.NewHub(0)
+	hub.SetTopicIdleTTL(time.Nanosecond)
+	hub.SetMaxTopics(4)
+
+	sub, cancel, err := hub.Subscribe([]string{"closed:XLM/USD"}, "")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	defer cancel()
+
+	churnTopics(t, hub, 300)
+
+	hub.Publish("closed:XLM/USD", "price_update", []byte("live"))
+	got := drainNonblocking(t, sub, 1, time.Second)
+	if len(got) != 1 || string(got[0].Data) != "live" {
+		t.Fatalf("subscribed topic delivered %v after churn, want the live event "+
+			"(a topic with subscribers must never be reaped)", got)
+	}
+	if n := hub.TopicCount(); n > 8 {
+		t.Errorf("TopicCount = %d with MaxTopics(4), want the ceiling to hold it small", n)
+	}
+}
+
+// TestStream_RejectedStreamsCounter — a connection refused by the caps
+// is counted, so a flood is visible in diagnostics rather than silent.
+func TestStream_RejectedStreamsCounter(t *testing.T) {
+	streaming.SetMaxStreamsPerIP(1)
+	defer streaming.SetMaxStreamsPerIP(0)
+	streaming.SetStreamClientIPResolver(func(*http.Request) string { return "counter-client" })
+	defer streaming.SetStreamClientIPResolver(nil)
+
+	hub := streaming.NewHub(0)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		streaming.Stream(w, r, hub, []string{"topic"}, streaming.StreamOptions{
+			HeartbeatInterval: 30 * time.Second,
+		})
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	before := streaming.StreamsRejected()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	held, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("open first stream: %v", err)
+	}
+	defer held.Body.Close()
+
+	req2, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	resp, err := srv.Client().Do(req2)
+	if err != nil {
+		t.Fatalf("open over-cap stream: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("over-cap status = %d, want 503", resp.StatusCode)
+	}
+
+	if got := streaming.StreamsRejected() - before; got != 1 {
+		t.Errorf("StreamsRejected delta = %d, want 1", got)
 	}
 }

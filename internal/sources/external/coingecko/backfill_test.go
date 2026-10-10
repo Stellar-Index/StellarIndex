@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+
+	"github.com/Stellar-Index/StellarIndex/internal/httpx/httpxtest"
 )
 
 func testPair(t *testing.T) canonical.Pair {
@@ -126,4 +128,16 @@ func TestBackfillRange_RejectsAnEmptyWindow(t *testing.T) {
 
 func itoaMillis(t time.Time) string {
 	return timeMillisString(t)
+}
+
+func TestBackfillRange_KeyDoesNotFollowAnOffOriginRedirect(t *testing.T) {
+	trap := httpxtest.NewRedirectTrap(t, "x-cg-demo-api-key")
+	p := NewPoller()
+	p.Endpoint = trap.URL
+	p.DemoAPIKey = "probe"
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := p.BackfillRange(context.Background(), testPair(t), from, from.AddDate(0, 0, 7)); err == nil {
+		t.Error("BackfillRange succeeded through a refused redirect")
+	}
+	trap.AssertKeyStayedOnOrigin(t)
 }

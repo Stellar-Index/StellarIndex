@@ -93,24 +93,3 @@ func TestSupplyRate(t *testing.T) {
 		t.Errorf("SupplyRate = %s, want 450000", got)
 	}
 }
-
-// Metrics ties it together: a 50%-utilized reserve at the reference
-// config, 10% backstop.
-func TestMetrics(t *testing.T) {
-	rate := big.NewInt(1_000_000_000_000)
-	rd := ReserveData{
-		BSupply: big.NewInt(2_000_000_0000000), BRate: rate,
-		DSupply: big.NewInt(1_000_000_0000000), DRate: rate,
-		IRMod: big.NewInt(1_0000000),
-	}
-	m := Metrics(rd, interestRefConfig(), 1_000_000)
-	if m.UtilizationPct < 49.9 || m.UtilizationPct > 50.1 {
-		t.Errorf("util pct = %v, want ~50", m.UtilizationPct)
-	}
-	if m.BorrowAPR <= 0 || m.SupplyAPR <= 0 || m.SupplyAPR >= m.BorrowAPR {
-		t.Errorf("aprs: borrow=%v supply=%v (supply should be 0 < x < borrow)", m.BorrowAPR, m.SupplyAPR)
-	}
-	if m.SuppliedUnderlying.Sign() <= 0 || m.BorrowedUnderlying.Cmp(m.SuppliedUnderlying) >= 0 {
-		t.Errorf("supplied=%s borrowed=%s", m.SuppliedUnderlying, m.BorrowedUnderlying)
-	}
-}

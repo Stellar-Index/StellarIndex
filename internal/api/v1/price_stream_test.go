@@ -4,15 +4,20 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
 // TestPriceStream_RejectsBadRequests: no hub is 503 stream-unavailable; a
@@ -458,4 +463,431 @@ func TestPriceStream_WindowSeparation(t *testing.T) {
 	if !strings.Contains(frame, `data: {"w":"300"}`) {
 		t.Fatalf("first frame should be the 300s bucket only; frame = %q", frame)
 	}
+}
+
+// TestPriceStream_AliasFanOut_MergesDistinctVenuesIntoOneStream is a
+// documented-defect reproduction, not a green regression
+// guard: it records CURRENT behaviour so the fix (tracked separately —
+// see the finding) has a concrete before/after to work from, rather
+// than landing on top of an un-derived symptom.
+//
+// cmd/stellarindex-aggregator/main.go's defaultPairs() computes XLM
+// under BOTH `native` and `crypto:XLM` as independent (base, quote)
+// pairs — deliberately, so a future CEX connector populates the
+// abstract side without a config change (see that function's own
+// comment). internal/api/v1/price_stream.go's alias fan-out then
+// subscribes a single client to every alias topic of its requested
+// asset, so a `?asset=native` subscriber's ONE connection receives
+// BOTH pairs' publishes, presented as sequential updates on what looks
+// like one series. On r1 today this is latent: publishToStream in
+// internal/aggregate/orchestrator only fires on a successful VWAP
+// write, and crypto:XLM has no venue wired, so it never publishes.
+// This test proves the client-visible merge itself, independent of
+// whether the aggregator is currently driving it — the trigger the
+// finding names ("a future deployment with Binance/Coinbase running")
+// is a config change away, not a code change away.
+//
+// The fix is NOT implemented here: it requires either collapsing
+// alias topics to one canonical topic per market on the subscribe
+// side, or a producer id/sequence on the wire event
+// (internal/api/streaming/redispub/event.go) enforced by the
+// redispub Subscriber (internal/api/streaming/redispub/subscriber.go)
+// — both outside this fix's file scope, and a product decision on
+// which venue should win a merged tick belongs with whoever owns that
+// scope, not a silent default here.
+func TestPriceStream_AliasFanOut_MergesDistinctVenuesIntoOneStream(t *testing.T) {
+	hub := streaming.NewHub(0)
+	srv := v1.New(v1.Options{Hub: hub})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	native, _ := canonical.ParseAsset("native")
+	cryptoXLM, _ := canonical.ParseAsset("crypto:XLM")
+	usd, _ := canonical.ParseAsset("fiat:USD")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/v1/price/stream?asset=native&quote=fiat:USD", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// Two independent venues' closed buckets for the SAME nominal
+	// tick, published under their own (base, quote) pairs exactly as
+	// defaultPairs() configures the aggregator to compute them.
+	hub.Publish(v1.PriceStreamTopic(native, usd, 300), "price_update", []byte(`{"price":"0.1050","venue":"onchain"}`))
+	hub.Publish(v1.PriceStreamTopic(cryptoXLM, usd, 300), "price_update", []byte(`{"price":"0.1200","venue":"cex"}`))
+
+	br := bufio.NewReader(resp.Body)
+	first := readPriceStreamFrame(t, br, 2*time.Second)
+	second := readPriceStreamFrame(t, br, 2*time.Second)
+
+	if !strings.Contains(first, `"venue":"onchain"`) {
+		t.Fatalf("first frame = %q, want the native/onchain publish", first)
+	}
+	if !strings.Contains(second, `"venue":"cex"`) {
+		t.Fatalf("second frame = %q, want the crypto:XLM/cex publish — a SINGLE "+
+			"`?asset=native` subscription received a SECOND, independently-sourced "+
+			"price for what it presented as one series, with nothing on the wire "+
+			"(or in this handler) to tell the client the two frames came from "+
+			"different venues (RLT-345)", second)
+	}
+}
+
+// TestPriceStream_SubstanceWithheld_RefusesConnect — a pair below the
+// thin-market serve floor must get the same 404 + `price-withheld`
+// problem type from the stream that /v1/price gives it, BEFORE the
+// response switches into SSE mode (once the SSE headers are out it is
+// too late to say 404).
+func TestPriceStream_SubstanceWithheld_RefusesConnect(t *testing.T) {
+	hub := streaming.NewHub(0)
+	gate := newClosedStreamGate(true)
+	srv := v1.New(v1.Options{Hub: hub, Substance: gate})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/v1/price/stream?asset=native&quote=fiat:USD", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 — the stream must not open on a withheld pair", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "errors/price-withheld") {
+		t.Errorf("body missing the price-withheld problem type: %s", body)
+	}
+	if strings.Contains(string(body), "text/event-stream") ||
+		strings.Contains(resp.Header.Get("Content-Type"), "event-stream") {
+		t.Errorf("response switched into SSE mode on a withheld pair: %s / %s",
+			resp.Header.Get("Content-Type"), body)
+	}
+	if got := gate.seenSurfaces(); len(got) == 0 || got[0] != "price_stream" {
+		t.Errorf("substance gate surface label = %v, want first call \"price_stream\" "+
+			"(the metric must name WHICH surface withheld)", got)
+	}
+}
+
+// TestPriceStream_ScamFlaggedIssuer_RefusesConnect — the scam gate is
+// the SECOND gate, and a hand-written call site that consults one and
+// forgets the other is the drift shape. With the substance gate
+// disabled (nil, as an operator diagnosing a coverage complaint would
+// leave it), a directory-scam-flagged issuer must still be refused.
+func TestPriceStream_ScamFlaggedIssuer_RefusesConnect(t *testing.T) {
+	hub := streaming.NewHub(0)
+	gate := newClosedStreamGate(true)
+	srv := v1.New(v1.Options{Hub: hub, Scam: gate})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/v1/price/stream?asset="+flaggedIssuerAsset+"&quote=fiat:USD", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 — a flagged issuer's closed bucket must not stream", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "errors/price-withheld") {
+		t.Errorf("body missing the price-withheld problem type: %s", body)
+	}
+	if got := gate.seenSurfaces(); len(got) == 0 || got[0] != "price_stream" {
+		t.Errorf("scam gate surface label = %v, want first call \"price_stream\"", got)
+	}
+}
+
+// TestPriceStream_GateFlipMidStreamWithholdsBucket — the half that a
+// connect-time-only check would miss, and the half that matters most.
+//
+// An SSE connection lives for hours. A connection opened while a pair
+// still cleared the serve floor — including the attacker's own, opened
+// before the dust market it authored was measured or before its issuer
+// was flagged — must stop being served the moment the verdict flips,
+// because the aggregator keeps publishing that pair's closed bucket
+// regardless (nothing on the producer side consults a gate).
+//
+// The assertion is on the CONTENT of the next frames, not on silence: a
+// withheld bucket is published between two servable ones, and the
+// subscriber must see a price_withheld marker in its place — never the
+// withheld price, and never nothing, which reads as a quiet market —
+// then the later servable bucket.
+func TestPriceStream_GateFlipMidStreamWithholdsBucket(t *testing.T) {
+	hub := streaming.NewHub(0)
+	gate := newClosedStreamGate(false) // servable at connect
+	srv := v1.New(v1.Options{Hub: hub, Substance: gate})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	xlm, _ := canonical.ParseAsset("native")
+	usd, _ := canonical.ParseAsset("fiat:USD")
+	topic := v1.PriceStreamTopic(xlm, usd, 300)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/v1/price/stream?asset=native&quote=fiat:USD", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (the pair clears the floor at connect)", resp.StatusCode)
+	}
+	if v, asked := gate.awaitConsultation(gateSyncBudget); asked && v {
+		t.Fatal("connect-time consultation withheld, but the gate was set to allow")
+	}
+
+	// Let the handler's Subscribe register before publishing.
+	time.Sleep(50 * time.Millisecond)
+	br := bufio.NewReader(resp.Body)
+
+	// Bucket 1: servable, and it must arrive — otherwise every later
+	// assertion about a bucket NOT arriving would be vacuous.
+	hub.Publish(topic, "price_update", []byte(`{"price":"0.42"}`))
+	gate.awaitConsultation(gateSyncBudget)
+	if frame := readPriceStreamFrame(t, br, 3*time.Second); !strings.Contains(frame, `"price":"0.42"`) {
+		t.Fatalf("servable bucket did not reach the subscriber; frame = %q", frame)
+	}
+
+	// The verdict flips: this pair is now withheld (dust market measured
+	// / issuer flagged). Bucket 2 must never reach the wire. Wait for the
+	// forwarder to have reached bucket 2 before restoring the verdict, so
+	// the bucket is decided under the withholding verdict and not by a
+	// race with the line below.
+	gate.setWithhold(true)
+	hub.Publish(topic, "price_update", []byte(`{"price":"999.99","as_of":"2026-05-02T12:05:00Z"}`))
+	gate.awaitConsultation(gateSyncBudget)
+
+	// Verdict flips back; bucket 3 is servable again. The subscriber must
+	// see the marker for bucket 2 and then bucket 3.
+	gate.setWithhold(false)
+	hub.Publish(topic, "price_update", []byte(`{"price":"0.43"}`))
+
+	frame := readPriceStreamFrame(t, br, 3*time.Second)
+	if strings.Contains(frame, "999.99") {
+		t.Fatalf("withheld closed bucket was fanned out to the subscriber: %q", frame)
+	}
+	if !strings.Contains(frame, "event: price_withheld") || !strings.Contains(frame, `"reason":"substance"`) ||
+		!strings.Contains(frame, `"as_of":"2026-05-02T12:05:00Z"`) {
+		t.Fatalf("withheld bucket frame = %q, want a price_withheld marker with reason substance and the bucket's as_of", frame)
+	}
+	frame = readPriceStreamFrame(t, br, 3*time.Second)
+	if strings.Contains(frame, "999.99") {
+		t.Fatalf("withheld closed bucket was fanned out to the subscriber: %q", frame)
+	}
+	if !strings.Contains(frame, `"price":"0.43"`) {
+		t.Fatalf("next frame after the withheld bucket = %q, want the later servable bucket", frame)
+	}
+}
+
+// TestPriceStream_NoGatesWired_StillStreams — nil gates mean the
+// operator disabled [pricing_guard]; that must keep today's behaviour,
+// not turn into a deny-everything outage on the stream path.
+func TestPriceStream_NoGatesWired_StillStreams(t *testing.T) {
+	hub := streaming.NewHub(0)
+	srv := v1.New(v1.Options{Hub: hub})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	xlm, _ := canonical.ParseAsset("native")
+	usd, _ := canonical.ParseAsset("fiat:USD")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/v1/price/stream?asset=native&quote=fiat:USD", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with no gates wired", resp.StatusCode)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	hub.Publish(v1.PriceStreamTopic(xlm, usd, 300), "price_update", []byte(`{"price":"0.11"}`))
+
+	br := bufio.NewReader(resp.Body)
+	if frame := readPriceStreamFrame(t, br, 3*time.Second); !strings.Contains(frame, `"price":"0.11"`) {
+		t.Fatalf("ungated deployment stopped streaming; frame = %q", frame)
+	}
+}
+
+// TestPriceStream_StalledGateCoalescesBacklog — buckets that queue while
+// the forwarder is inside a slow gate call must share ONE fresh verdict,
+// not pay the gate budget each. Serial per-event gating lets a stalled DB
+// back the Hub queue up until Publish evicts the subscriber.
+func TestPriceStream_StalledGateCoalescesBacklog(t *testing.T) {
+	hub := streaming.NewHub(0)
+	gate := &stallingGate{entered: make(chan struct{}, 1), hold: make(chan struct{})}
+	srv := v1.New(v1.Options{Hub: hub, Substance: gate})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	xlm, _ := canonical.ParseAsset("native")
+	usd, _ := canonical.ParseAsset("fiat:USD")
+	topic := v1.PriceStreamTopic(xlm, usd, 300)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/v1/price/stream?asset=native&quote=fiat:USD", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	const buckets = 10
+	hub.Publish(topic, "price_update", []byte(`{"price":"b1"}`))
+	select {
+	case <-gate.entered:
+	case <-time.After(gateSyncBudget):
+		t.Fatal("forwarder never consulted the gate for the first bucket")
+	}
+	for i := 2; i <= buckets; i++ {
+		hub.Publish(topic, "price_update", []byte(fmt.Sprintf(`{"price":"b%d"}`, i)))
+	}
+	close(gate.hold)
+
+	br := bufio.NewReader(resp.Body)
+	for i := 1; i <= buckets; i++ {
+		want := fmt.Sprintf(`"price":"b%d"`, i)
+		if frame := readPriceStreamFrame(t, br, 3*time.Second); !strings.Contains(frame, want) {
+			t.Fatalf("frame %d = %q, want %s", i, frame, want)
+		}
+	}
+	// connect + the stalled first bucket + one verdict for the queued rest.
+	if got := gate.calls.Load(); got != 3 {
+		t.Errorf("gate consultations = %d, want 3: the queued buckets must share one verdict", got)
+	}
+}
+
+// closedStreamGate stands in for both pricingguard gates on the stream
+// path. One struct implements PriceSubstanceGate and PriceScamGate so a
+// test can flip the verdict mid-stream, and every consultation is
+// published on `calls` so a test can synchronise on the gate actually
+// having been asked — rather than sleeping and hoping.
+//
+// Mutex-guarded because the per-bucket re-check runs on the forwarder
+// goroutine while the test drives the verdict from its own.
+type closedStreamGate struct {
+	mu       sync.Mutex
+	withhold bool
+	surfaces []string
+	calls    chan bool // verdict, one per consultation (buffered)
+}
+
+// gateSyncBudget is how long the mid-stream test waits for the
+// forwarder goroutine to consult the gate about a bucket it has just
+// been handed. Generous: overrunning it on FIXED code would restore the
+// servable verdict before the withheld bucket was decided and flake the
+// test, while on un-fixed code it is simply dead time before the real
+// assertion fires.
+const gateSyncBudget = 2 * time.Second
+
+func newClosedStreamGate(withhold bool) *closedStreamGate {
+	return &closedStreamGate{withhold: withhold, calls: make(chan bool, 32)}
+}
+
+func (g *closedStreamGate) record(surface string) bool {
+	g.mu.Lock()
+	w := g.withhold
+	g.surfaces = append(g.surfaces, surface)
+	g.mu.Unlock()
+	select {
+	case g.calls <- w:
+	default:
+	}
+	return w
+}
+
+// Allowed implements v1.PriceSubstanceGate (thin-market floor).
+func (g *closedStreamGate) Allowed(_ context.Context, _, _ canonical.Asset, surface string) bool {
+	return !g.record(surface)
+}
+
+func (g *closedStreamGate) Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor pricingguard.SubstanceFloor) {
+	return g.Allowed(ctx, base, quote, "probe"), true, pricingguard.FloorNone
+}
+
+// Withheld implements v1.PriceScamGate (flagged issuer).
+func (g *closedStreamGate) Withheld(_ context.Context, _ canonical.Asset, surface string) bool {
+	return g.record(surface)
+}
+
+func (g *closedStreamGate) setWithhold(v bool) {
+	g.mu.Lock()
+	g.withhold = v
+	g.mu.Unlock()
+}
+
+func (g *closedStreamGate) seenSurfaces() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.surfaces...)
+}
+
+// awaitConsultation waits for the gate to be asked once more and
+// reports the verdict it gave, plus whether it was asked at all inside
+// the budget.
+//
+// Deliberately NON-fatal: it is a synchronisation aid, not the
+// assertion. On un-fixed code the gate is never consulted from this
+// path, and a t.Fatal here would make the mid-stream test fail for
+// "nobody asked" — masking the assertion that actually matters, which
+// is that the withheld bucket reached the subscriber's wire.
+func (g *closedStreamGate) awaitConsultation(budget time.Duration) (verdict, asked bool) {
+	select {
+	case v := <-g.calls:
+		return v, true
+	case <-time.After(budget):
+		return false, false
+	}
+}
+
+// stallingGate allows every pair but blocks its second consultation (the
+// first bucket after connect) until hold is closed, standing in for a
+// stalled directory/substance query.
+type stallingGate struct {
+	calls   atomic.Int32
+	entered chan struct{}
+	hold    chan struct{}
+}
+
+func (g *stallingGate) Allowed(_ context.Context, _, _ canonical.Asset, _ string) bool {
+	if g.calls.Add(1) == 2 {
+		g.entered <- struct{}{}
+		<-g.hold
+	}
+	return true
+}
+
+func (g *stallingGate) Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor pricingguard.SubstanceFloor) {
+	return g.Allowed(ctx, base, quote, "probe"), true, pricingguard.FloorNone
 }

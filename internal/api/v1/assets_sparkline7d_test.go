@@ -21,7 +21,6 @@ import (
 	"context"
 	"database/sql"
 	"sync"
-	"testing"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -149,52 +148,4 @@ func pricedPoints(pts []v1.AssetPricePoint) []string {
 		}
 	}
 	return out
-}
-
-// TestAssetDetail_WithheldPrice_ServesNoPriceHistory — same invariant on
-// the asset DETAIL payload, where the leak was widest: r1 served
-// price_usd null beside 24 hourly and 7 daily priced points for every
-// scam-flagged asset.
-func TestAssetDetail_WithheldPrice_ServesNoPriceHistory(t *testing.T) {
-	const scamID = "JFKBANK2-" + scamAUDIssuer
-	hist24 := []timescale.AssetPricePoint{
-		{T: "2026-08-29T10:00:00Z", P: sptr("0.42")},
-		{T: "2026-08-29T11:00:00Z", P: sptr("0.43")},
-	}
-	hist7d := []timescale.AssetPricePoint{
-		{T: "2026-08-28T00:00:00Z", P: sptr("0.44")},
-		{T: "2026-08-29T00:00:00Z", P: sptr("0.42")},
-	}
-	issuer := scamAUDIssuer
-	assetsReader := &stubAssetsReaderExt{
-		row: timescale.AssetRow{
-			Slug: "jfkbank2", AssetID: scamID, Code: "JFKBANK2",
-			IssuerGStrkey: scamAUDIssuer, PriceUSD: sptr("0.42"),
-		},
-		hist24: hist24,
-		hist7d: hist7d,
-	}
-	srv := v1.New(v1.Options{
-		Assets: &stubAssetReader{byID: map[string]v1.AssetDetail{
-			scamID: {AssetID: scamID, Type: "classic", Code: "JFKBANK2", Issuer: &issuer},
-		}},
-		AssetsReader: assetsReader,
-		Directory:    scamAUDDirectoryStub(),
-	})
-	ts := httpTestServer(t, srv)
-
-	var env struct {
-		Data v1.AssetDetail `json:"data"`
-	}
-	mustDecode(t, mustGet(t, ts.URL+"/v1/assets/"+scamID), &env)
-
-	if env.Data.PriceUSD != nil {
-		t.Fatalf("fixture broken — price_usd = %q, want null (scam-flagged issuer)", *env.Data.PriceUSD)
-	}
-	if len(env.Data.PriceHistory24h) != 0 {
-		t.Errorf("price_history_24h = %+v, want none — the last bucket IS the withheld price", env.Data.PriceHistory24h)
-	}
-	if len(env.Data.PriceHistory7d) != 0 {
-		t.Errorf("price_history_7d = %+v, want none — the last bucket IS the withheld price", env.Data.PriceHistory7d)
-	}
 }

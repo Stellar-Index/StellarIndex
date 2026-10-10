@@ -16,7 +16,7 @@ const pegHandlerTestAUDD = "AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQ
 
 // pegHandlerTestServer wires the full handleAssetGet chain for the
 // declared-peg detail-path tests: a substance gate with a blanket
-// verdict (reusing price_withheld_test.go's stubSubstanceGate), an
+// verdict (reusing price_tip_test.go's stubSubstanceGate), an
 // asset-catalogue overlay row carrying a (dust or real) market price +
 // change pills, a fresh AUD FX point (chart_test.go's
 // stubFXHistoryReader), and AUDD peg-configured.
