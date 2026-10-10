@@ -245,7 +245,7 @@ set.
   op_index)` is NOT enforced: a decoder change that shifts the `ts` of an
   already-stored event makes the re-derive INSERT a second row beside the
   stale one, and nothing deletes the stale row. Per-decoder golden tests
-  (`decode_ts_golden_test.go` in `reflector`, `redstone`, `band`) fail on
+  (the `Test*TimestampGolden` tests in `reflector`, `redstone`, `band`) fail on
   any such change. When one must change, re-derive ONLY via
   `projected-rebuild` (reflector, redstone) or `ch-rebuild -contract-calls`
   (band), never `projector-replay` (generation 0, async cursor rewind).

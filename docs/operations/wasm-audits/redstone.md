@@ -36,7 +36,7 @@ Audit log for the `redstone` source's `BackfillSafe` flag. See
 > Consequences: the decoder is event-driven (`classify` requires
 > topic[0] `REDSTONE`), so no redstone row can come from either hash and
 > the first-deploy window is empty by construction. The walk JSONs'
-> timeline is wrong past that point: `internal/sources/redstone/subset_test.go`
+> timeline is wrong past that point: `internal/sources/redstone/decode_test.go`
 > is a real lake REDSTONE event from the same `CA526Y2N…` address at
 > L59,258,375, inside the range the walk JSONs give `5e93d22c…` (ending
 > L59,336,871 / L59,301,651), so an event-emitting WASM was already active

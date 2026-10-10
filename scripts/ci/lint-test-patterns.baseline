@@ -70,8 +70,7 @@ go-ast internal/ops/chops/projected_rebuild_backfillsafe_test.go
 go-ast internal/ops/chops/soroswap_seed_failclosed_test.go
 go-ast internal/ops/diagnostics/hubble_bq_cap_test.go
 go-ast internal/ops/diagnostics/silent_verdict_test.go
-go-ast internal/ops/ingest/projector_replay_sep41_rollup_test.go
-go-ast internal/ops/ingest/projector_replay_wiring_test.go
+go-ast internal/ops/ingest/projector_replay_refresh_test.go
 go-ast internal/ops/opsutil/range_cursor_key_test.go
 go-ast internal/pipeline/gated_registry_curated_test.go
 go-ast internal/pipeline/late_trade_refresh_guard_test.go
@@ -113,7 +112,7 @@ md-read internal/sources/aquarius/router_gate_test.go
 md-read internal/sources/blend/doc_parity_test.go
 md-read internal/sources/classicmovements/doc_cardinality_test.go
 md-read internal/sources/phoenix/readme_groupkey_test.go
-md-read internal/sources/redstone/doc_parity_test.go
+md-read internal/sources/redstone/decode_test.go
 md-read internal/sources/redstone/readme_test.go
 md-read internal/sources/reflector/decode_test.go
 md-read internal/sources/sorocredit/audit_doc_test.go

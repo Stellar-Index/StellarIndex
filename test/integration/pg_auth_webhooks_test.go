@@ -609,7 +609,7 @@ func execUpMigration(t *testing.T, ctx context.Context, db *sql.DB, name string)
 // This test executes the whole path against real Postgres for an ACTIVE,
 // a SUSPENDED and a CLOSED account, and asserts what each one ENQUEUES
 // as well as what each one DELIVERS. The Go-level worker gate is pinned
-// separately in internal/customerwebhook/account_killswitch_test.go.
+// separately in internal/customerwebhook/worker_test.go.
 
 const killSwitchEvent = platform.WebhookEventIncidentSEV1
 

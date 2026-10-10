@@ -422,7 +422,7 @@ type replayFinisher interface {
 // for the projector to re-walk `replayed` (its upper bound is the ledger
 // the cursor sat at before the rewind), then re-materialize the price
 // CAGGs over it. Split out of projectorReplay so the command stays under
-// the cyclomatic limit; the AST guard in projector_replay_wiring_test.go
+// the cyclomatic limit; the AST guard in projector_replay_refresh_test.go
 // pins both hops — projectorReplay calls this, and this calls
 // awaitProjectorCursor and refreshCAGGsForChunk.
 //
