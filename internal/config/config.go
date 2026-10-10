@@ -1981,15 +1981,22 @@ func defaultAPIConfig() APIConfig {
 // here in the same commit that removes the field; the value is a short note
 // on what replaced it, surfaced in the boot-time warning.
 var RetiredKeys = map[string]string{
-	"aggregate.vwap_window_seconds": "GH-1129: unread — windows come from aggregate.windows via AggregatorWindows()",
-	"aggregate.twap_window_seconds": "GH-1129: unread — windows come from aggregate.windows via AggregatorWindows()",
-	"ingestion.cursor_store_scheme": "GH-1129: unread — cursors are unconditionally Postgres",
-	"ingestion.backfill_batch_size": "GH-1129: unread",
-	"region.name":                   "GH-1129: unread — region label is region.id",
-	"region.home_domain":            "GH-1129: unread — SEP-10 reads api.sep10.home_domain",
-	"stellar.core_http_endpoint":    "GH-1129: unread — no liveness probe consumes it",
-	"obs.trace_exporter":            "unread — no tracer is wired",
-	"obs.trace_sample":              "unread — no tracer is wired",
+	"aggregate.vwap_window_seconds":                   "GH-1129: unread — windows come from aggregate.windows via AggregatorWindows()",
+	"aggregate.twap_window_seconds":                   "GH-1129: unread — windows come from aggregate.windows via AggregatorWindows()",
+	"ingestion.cursor_store_scheme":                   "GH-1129: unread — cursors are unconditionally Postgres",
+	"ingestion.backfill_batch_size":                   "GH-1129: unread",
+	"region.name":                                     "GH-1129: unread — region label is region.id",
+	"region.home_domain":                              "GH-1129: unread — SEP-10 reads api.sep10.home_domain",
+	"stellar.core_http_endpoint":                      "GH-1129: unread — no liveness probe consumes it",
+	"obs.trace_exporter":                              "unread — no tracer is wired",
+	"obs.trace_sample":                                "unread — no tracer is wired",
+	"divergence.per_reference_timeout_seconds":        "never set — divergence.DefaultPerReferenceTimeout",
+	"divergence.supply.per_reference_timeout_seconds": "never set — divergence.DefaultSupplyPerReferenceTimeout",
+	"divergence.supply.refresh_interval_seconds":      "never set — fixed 15-minute cadence in the aggregator",
+	"divergence.reflector.max_age_minutes":            "never set — per-oracle default staleness ceiling",
+	"divergence.redstone.max_age_minutes":             "never set — per-oracle default staleness ceiling",
+	"divergence.band.max_age_minutes":                 "never set — per-oracle default staleness ceiling",
+	"divergence.coingecko.max_age_minutes":            "never set — 30-minute default staleness ceiling",
 }
 
 func Default() Config {
