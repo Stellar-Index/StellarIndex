@@ -610,6 +610,14 @@ function HeroStats({
 // Far more legible than the raw chip cloud on /operations.
 // LatestLedgers — the chain tip, newest first. Each row deep-links
 // to the per-ledger explorer page.
+const LEDGER_CSV_COLUMNS = [
+  'sequence',
+  'close_time',
+  'tx_count',
+  'op_count',
+  'soroban_event_count',
+] as const;
+
 function LatestLedgers({
   ledgers,
   loading,
@@ -625,6 +633,17 @@ function LatestLedgers({
       headingLevel={2}
       title="Latest ledgers"
       source={asExample('/v1/ledgers', { limit: 12 })}
+      download={{
+        name: 'latest-ledgers',
+        columns: LEDGER_CSV_COLUMNS,
+        rows: rows.map((l) => ({
+          sequence: l.sequence,
+          close_time: l.close_time,
+          tx_count: l.tx_count,
+          op_count: l.op_count,
+          soroban_event_count: l.soroban_event_count,
+        })),
+      }}
       bodyClassName="-mx-4 -mb-4"
     >
       {loading && (
@@ -696,6 +715,17 @@ function LatestLedgers({
 // Sourced from /v1/pools (DEX-subclass only, server-side scoped), NOT
 // /v1/markets — the latter aggregates across off-chain CEX reference
 // feeds (BTC/USDT etc.) that aren't Stellar markets at all.
+const POOL_CSV_COLUMNS = [
+  'source',
+  'base',
+  'quote',
+  'volume_24h_usd',
+  'volume_lower_bound',
+  'trade_count_24h',
+  'last_price',
+  'last_trade_at',
+] as const;
+
 function TopMarkets() {
   const { data, isLoading, isError } = usePools(8, 'volume_24h_usd_desc');
   const rows = (data?.pools ?? []).slice(0, 8);
@@ -708,6 +738,7 @@ function TopMarkets() {
         limit: 8,
         order_by: 'volume_24h_usd_desc',
       })}
+      download={{ name: 'top-markets', columns: POOL_CSV_COLUMNS, rows }}
       bodyClassName="-mx-4 -mb-4"
     >
       <FreshnessMarker flags={data?.flags} className="mx-4 mb-3 block" />

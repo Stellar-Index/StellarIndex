@@ -1,4 +1,4 @@
-export type CsvCell = string | number | null | undefined;
+export type CsvCell = string | number | boolean | null | undefined;
 
 function csvField(v: CsvCell): string {
   if (v === null || v === undefined) return '';

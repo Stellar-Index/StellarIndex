@@ -1,5 +1,6 @@
 import { twMerge } from 'tailwind-merge';
 import type { RequestExample } from '@/api/client';
+import { PanelDownload, type PanelDownloadData } from './PanelDownload';
 import { RequestReveal } from './RequestReveal';
 
 export type PanelProps = {
@@ -13,6 +14,8 @@ export type PanelProps = {
   hint?: React.ReactNode;
   /** API request that produced this panel's data. */
   source?: RequestExample;
+  /** Rows to offer as CSV/JSON beside the request reveal. */
+  download?: PanelDownloadData;
   /** Anchor id for deep-linking (e.g. `#confidence-card`). */
   panelId?: string;
   /**
@@ -42,6 +45,7 @@ export function Panel({
   title,
   hint,
   source,
+  download,
   panelId,
   headingLevel = 3,
   className,
@@ -57,7 +61,7 @@ export function Panel({
         className,
       )}
     >
-      {(title || source) && (
+      {(title || source || download) && (
         <header className="mb-3 flex items-start justify-between gap-2">
           {title && (
             <div>
@@ -65,7 +69,12 @@ export function Panel({
               {hint && <p className="text-ink-muted text-xs">{hint}</p>}
             </div>
           )}
-          {source && <RequestReveal example={source} position="inline" />}
+          {(source || download) && (
+            <div className="flex items-center gap-1">
+              {download && <PanelDownload {...download} />}
+              {source && <RequestReveal example={source} position="inline" />}
+            </div>
+          )}
         </header>
       )}
       <div className={twMerge('text-sm', bodyClassName)}>{children}</div>
