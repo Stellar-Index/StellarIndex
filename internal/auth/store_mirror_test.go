@@ -155,3 +155,30 @@ func TestAPIKeyRecordFromPlatform_RefusesUnresolvedQuota(t *testing.T) {
 		t.Fatal("APIKeyRecordFromPlatform accepted MonthlyQuota 0; want an error (0 is unmetered on the Redis record)")
 	}
 }
+
+// TestCreateWithSecret_WritesBoundedIdleTTL proves the register mirror is
+// not written with TTL=0 (permanent). A permanent record in an
+// allkeys-lru pool that open, anonymous registration can create without
+// bound would grow unboundedly. A TTL of -1 (no expiry) fails it.
+func TestCreateWithSecret_WritesBoundedIdleTTL(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	const plaintext = "sip_" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	store := NewRedisAPIKeyStore(rdb)
+	if err := store.CreateWithSecret(context.Background(), MirroredKey{
+		Plaintext: plaintext,
+		Record:    APIKeyRecord{KeyID: "kid_ttl", Identifier: AccountIdentifier("reg-ttl")},
+	}); err != nil {
+		t.Fatalf("CreateWithSecret: %v", err)
+	}
+
+	ttl := mirroredTTL(t, rdb, plaintext)
+	if ttl <= 0 {
+		t.Fatalf("mirrored key TTL = %s (<=0 means no expiry) — an open-registration credential that never ages out grows the allkeys-lru keyspace forever (W1-flow-register-2)", ttl)
+	}
+	if ttl > MirroredKeyIdleTTL {
+		t.Errorf("mirrored key TTL = %s, want <= MirroredKeyIdleTTL (%s)", ttl, MirroredKeyIdleTTL)
+	}
+}

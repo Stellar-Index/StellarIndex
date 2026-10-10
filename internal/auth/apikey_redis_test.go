@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/netip"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // fixedClock returns a deterministic now() for expiry tests.
@@ -349,5 +352,439 @@ func assertSameSubject(t *testing.T, got, want Subject) {
 		if !reflect.DeepEqual(gv.Field(i).Interface(), wv.Field(i).Interface()) {
 			t.Errorf("Subject.%s = %v, want %v", wv.Type().Field(i).Name, gv.Field(i).Interface(), wv.Field(i).Interface())
 		}
+	}
+}
+
+// newStatusCacheValidator wires miniredis + a validator with the
+// account-status gate enabled and a caller-controlled clock so the
+// TTL / staleness transitions are deterministic.
+func newStatusCacheValidator(t *testing.T, accounts AccountStatusReader, clock *time.Time) (*RedisAPIKeyValidator, *miniredis.Miniredis) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	v := NewRedisAPIKeyValidator(rdb,
+		WithAccountStatus(accounts),
+		WithClock(func() time.Time { return *clock }),
+	)
+	return v, mr
+}
+
+// TestRedisAPIKey_AccountStatusBlipRidesOutOnLastKnownActive is the
+// core check: an active customer seen moments ago must keep
+// authenticating through a transient Postgres blip instead of being
+// failed. The second Lookup rides out on the cached last-known-active
+// status rather than propagating the transport failure.
+func TestRedisAPIKey_AccountStatusBlipRidesOutOnLastKnownActive(t *testing.T) {
+	clock := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	accounts := &stubAccountStatusReader{
+		bySlug: map[string]platform.Account{"acme": acctWithStatus("acme", platform.AccountActive)},
+	}
+	v, mr := newStatusCacheValidator(t, accounts, &clock)
+	seedKey(t, mr, "sip_key", APIKeyRecord{
+		KeyID:      "kid",
+		Identifier: AccountIdentifier("acme"),
+		Tier:       TierAPIKey,
+	})
+
+	// Warm the cache with one healthy read.
+	if _, err := v.Lookup(context.Background(), "sip_key"); err != nil {
+		t.Fatalf("warm Lookup: %v", err)
+	}
+
+	// Postgres blips. Advance past the fresh TTL (30s) so the
+	// validator re-reads — and hits the error — rather than serving the
+	// still-fresh entry, isolating the ride-out branch.
+	accounts.err = errors.New("postgres unreachable: connection refused")
+	clock = clock.Add(45 * time.Second)
+
+	sub, err := v.Lookup(context.Background(), "sip_key")
+	if err != nil {
+		t.Fatalf("Lookup during a Postgres blip returned %v; a transient blip must ride out on last-known-active, not fail the active customer", err)
+	}
+	if sub.KeyID != "kid" {
+		t.Errorf("Subject.KeyID = %q, want kid", sub.KeyID)
+	}
+}
+
+// TestRedisAPIKey_AccountStatusBlipNoCacheIsRetryable pins the
+// mis-signalling fix: when there is no usable cached status (cold
+// process, first request), a Postgres transport error is a retryable
+// ErrAccountStatusUnavailable (→ 503), NOT ErrUnauthorized (→ 401
+// "credential invalid"). Still fails closed, but with correct,
+// non-key-rotating semantics.
+func TestRedisAPIKey_AccountStatusBlipNoCacheIsRetryable(t *testing.T) {
+	clock := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	accounts := &stubAccountStatusReader{err: errors.New("postgres unreachable")}
+	v, mr := newStatusCacheValidator(t, accounts, &clock)
+	seedKey(t, mr, "sip_cold", APIKeyRecord{
+		KeyID:      "kid_cold",
+		Identifier: AccountIdentifier("acme"),
+		Tier:       TierAPIKey,
+	})
+
+	sub, err := v.Lookup(context.Background(), "sip_cold")
+	if !errors.Is(err, ErrAccountStatusUnavailable) {
+		t.Fatalf("err = %v, want ErrAccountStatusUnavailable (retryable 503)", err)
+	}
+	if errors.Is(err, ErrUnauthorized) {
+		t.Errorf("a Postgres blip must not map to ErrUnauthorized (401 'credential invalid')")
+	}
+	if sub.KeyID != "" {
+		t.Errorf("Subject leaked on the error path: %+v", sub)
+	}
+}
+
+// TestRedisAPIKey_AccountStatusRideOutBounded pins that the ride-out is
+// bounded: once a cached status ages past the staleness bound
+// (10×TTL = 5m) it is not trusted, so a still-degraded Postgres
+// yields the retryable ErrAccountStatusUnavailable rather than an
+// unbounded stale authentication.
+func TestRedisAPIKey_AccountStatusRideOutBounded(t *testing.T) {
+	clock := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	accounts := &stubAccountStatusReader{
+		bySlug: map[string]platform.Account{"acme": acctWithStatus("acme", platform.AccountActive)},
+	}
+	v, mr := newStatusCacheValidator(t, accounts, &clock)
+	seedKey(t, mr, "sip_key", APIKeyRecord{
+		KeyID:      "kid",
+		Identifier: AccountIdentifier("acme"),
+		Tier:       TierAPIKey,
+	})
+	if _, err := v.Lookup(context.Background(), "sip_key"); err != nil {
+		t.Fatalf("warm Lookup: %v", err)
+	}
+
+	accounts.err = errors.New("postgres unreachable")
+	clock = clock.Add(6 * time.Minute) // past 10×30s staleness bound
+
+	if _, err := v.Lookup(context.Background(), "sip_key"); !errors.Is(err, ErrAccountStatusUnavailable) {
+		t.Fatalf("err = %v, want ErrAccountStatusUnavailable once the cached status is beyond the staleness bound", err)
+	}
+}
+
+// TestRedisAPIKey_AccountStatusReadAtMostOncePerWindow pins the
+// load bound: within the fresh TTL the status is
+// served from cache (one Postgres read per account per window), and a
+// read past the window re-reads.
+func TestRedisAPIKey_AccountStatusReadAtMostOncePerWindow(t *testing.T) {
+	clock := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	accounts := &stubAccountStatusReader{
+		bySlug: map[string]platform.Account{"acme": acctWithStatus("acme", platform.AccountActive)},
+	}
+	v, mr := newStatusCacheValidator(t, accounts, &clock)
+	seedKey(t, mr, "sip_key", APIKeyRecord{
+		KeyID:      "kid",
+		Identifier: AccountIdentifier("acme"),
+		Tier:       TierAPIKey,
+	})
+
+	for i := 0; i < 3; i++ {
+		if _, err := v.Lookup(context.Background(), "sip_key"); err != nil {
+			t.Fatalf("Lookup %d: %v", i, err)
+		}
+	}
+	if accounts.calls != 1 {
+		t.Fatalf("account reads within the fresh window = %d, want 1 (cache should absorb the rest)", accounts.calls)
+	}
+
+	clock = clock.Add(45 * time.Second) // past the fresh TTL
+	if _, err := v.Lookup(context.Background(), "sip_key"); err != nil {
+		t.Fatalf("post-window Lookup: %v", err)
+	}
+	if accounts.calls != 2 {
+		t.Fatalf("account reads after the window elapsed = %d, want 2 (should re-read)", accounts.calls)
+	}
+}
+
+// TestRedisAPIKey_AccountStatusCacheEvictsStaleEntries pins that
+// a write past the staleness bound sweeps out entries that aged past
+// it, bounding the cache to the working set of recently-seen accounts
+// instead of every account slug ever seen for the life of the process.
+func TestRedisAPIKey_AccountStatusCacheEvictsStaleEntries(t *testing.T) {
+	clock := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	accounts := &stubAccountStatusReader{bySlug: map[string]platform.Account{}}
+	v, mr := newStatusCacheValidator(t, accounts, &clock)
+
+	const n = 5
+	for i := 0; i < n; i++ {
+		slug := fmt.Sprintf("acct-%d", i)
+		accounts.bySlug[slug] = acctWithStatus(slug, platform.AccountActive)
+		seedKey(t, mr, "sip_"+slug, APIKeyRecord{
+			KeyID:      "kid-" + slug,
+			Identifier: AccountIdentifier(slug),
+			Tier:       TierAPIKey,
+		})
+		if _, err := v.Lookup(context.Background(), "sip_"+slug); err != nil {
+			t.Fatalf("warm Lookup %s: %v", slug, err)
+		}
+	}
+	if got := statusCacheLen(v); got != n {
+		t.Fatalf("cache size after warming %d distinct accounts = %d, want %d", n, got, n)
+	}
+
+	// Advance past the staleness bound (10x30s = 5m) and touch one more,
+	// distinct account. The write must sweep the unreadable stale
+	// entries rather than leaving them in the map forever.
+	clock = clock.Add(10 * time.Minute)
+	accounts.bySlug["acct-new"] = acctWithStatus("acct-new", platform.AccountActive)
+	seedKey(t, mr, "sip_new", APIKeyRecord{
+		KeyID:      "kid-new",
+		Identifier: AccountIdentifier("acct-new"),
+		Tier:       TierAPIKey,
+	})
+	if _, err := v.Lookup(context.Background(), "sip_new"); err != nil {
+		t.Fatalf("warm Lookup acct-new: %v", err)
+	}
+
+	if got := statusCacheLen(v); got != 1 {
+		t.Fatalf("cache size after the stale sweep = %d, want 1 (only the fresh entry) — stale entries were never evicted", got)
+	}
+}
+
+// statusCacheLen reads the current status cache size under its mutex.
+func statusCacheLen(v *RedisAPIKeyValidator) int {
+	v.status.mu.RLock()
+	defer v.status.mu.RUnlock()
+	return len(v.status.cache)
+}
+
+// TestRedisAPIKey_SuspendedRideOutStillRejected pins that the kill
+// switch is preserved across a blip: a last-known-SUSPENDED account is
+// still rejected off its cached status during a Postgres outage — the
+// ride-out serves whatever status was last read, not a blanket allow.
+func TestRedisAPIKey_SuspendedRideOutStillRejected(t *testing.T) {
+	clock := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	accounts := &stubAccountStatusReader{
+		bySlug: map[string]platform.Account{"acme": acctWithStatus("acme", platform.AccountSuspended)},
+	}
+	v, mr := newStatusCacheValidator(t, accounts, &clock)
+	seedKey(t, mr, "sip_key", APIKeyRecord{
+		KeyID:      "kid",
+		Identifier: AccountIdentifier("acme"),
+		Tier:       TierAPIKey,
+	})
+	// Warm the cache with the suspended status.
+	if _, err := v.Lookup(context.Background(), "sip_key"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("warm Lookup err = %v, want ErrUnauthorized", err)
+	}
+
+	accounts.err = errors.New("postgres unreachable")
+	clock = clock.Add(45 * time.Second)
+
+	if _, err := v.Lookup(context.Background(), "sip_key"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("err = %v, want ErrUnauthorized — a suspended account must stay rejected off its cached status during a blip", err)
+	}
+}
+
+// stubAccountStatusReader is a canned [AccountStatusReader].
+type stubAccountStatusReader struct {
+	bySlug map[string]platform.Account
+	err    error
+	calls  int
+}
+
+func (s *stubAccountStatusReader) GetBySlug(_ context.Context, slug string) (platform.Account, error) {
+	s.calls++
+	if s.err != nil {
+		return platform.Account{}, s.err
+	}
+	a, ok := s.bySlug[slug]
+	if !ok {
+		return platform.Account{}, platform.ErrNotFound
+	}
+	return a, nil
+}
+
+// newSuspendTestValidator wires miniredis + a validator with the
+// account-status gate enabled.
+func newSuspendTestValidator(t *testing.T, accounts AccountStatusReader) (*RedisAPIKeyValidator, *miniredis.Miniredis) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	return NewRedisAPIKeyValidator(rdb, WithAccountStatus(accounts)), mr
+}
+
+func acctWithStatus(slug string, st platform.AccountStatus) platform.Account {
+	return platform.Account{ID: uuid.New(), Slug: slug, Name: slug, Tier: platform.TierPro, Status: st}
+}
+
+// TestRedisAPIKey_SuspendedAccountRejected is the core check: a
+// live, unrevoked, unexpired key belonging to a SUSPENDED account must
+// not authenticate.
+func TestRedisAPIKey_SuspendedAccountRejected(t *testing.T) {
+	for _, st := range []platform.AccountStatus{platform.AccountSuspended, platform.AccountClosed} {
+		t.Run(string(st), func(t *testing.T) {
+			accounts := &stubAccountStatusReader{
+				bySlug: map[string]platform.Account{"acme": acctWithStatus("acme", st)},
+			}
+			v, mr := newSuspendTestValidator(t, accounts)
+			seedKey(t, mr, "sip_live_key", APIKeyRecord{
+				KeyID:      "kid_live",
+				Identifier: AccountIdentifier("acme"),
+				Tier:       TierAPIKey,
+			})
+
+			_, err := v.Lookup(context.Background(), "sip_live_key")
+			if !errors.Is(err, ErrUnauthorized) {
+				t.Fatalf("Lookup err = %v, want ErrUnauthorized — a %s account's key must not authenticate", err, st)
+			}
+			if accounts.calls != 1 {
+				t.Errorf("account lookups = %d, want 1", accounts.calls)
+			}
+		})
+	}
+}
+
+// TestRedisAPIKey_ActiveAccountAllowed pins the allow-path: the gate
+// must not break the ordinary case, and must carry the record's Subject
+// through unchanged.
+func TestRedisAPIKey_ActiveAccountAllowed(t *testing.T) {
+	accounts := &stubAccountStatusReader{
+		bySlug: map[string]platform.Account{"acme": acctWithStatus("acme", platform.AccountActive)},
+	}
+	v, mr := newSuspendTestValidator(t, accounts)
+	seedKey(t, mr, "sip_ok_key", APIKeyRecord{
+		KeyID:           "kid_ok",
+		Identifier:      AccountIdentifier("acme"),
+		Tier:            TierAPIKey,
+		RateLimitPerMin: 10000,
+	})
+
+	sub, err := v.Lookup(context.Background(), "sip_ok_key")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if sub.KeyID != "kid_ok" || sub.RateLimitPerMin != 10000 {
+		t.Errorf("Subject = %+v, want kid_ok @ 10000/min", sub)
+	}
+}
+
+// TestRedisAPIKey_LegacySignupIdentifierUnaffected pins the scope of
+// the gate: a `signup-<emailhash>` record carries no account reference,
+// so it must authenticate without any account lookup at all (the
+// operator kill switch for those is DELETE /v1/admin/keys/{keyID}).
+func TestRedisAPIKey_LegacySignupIdentifierUnaffected(t *testing.T) {
+	accounts := &stubAccountStatusReader{bySlug: map[string]platform.Account{}}
+	v, mr := newSuspendTestValidator(t, accounts)
+	seedKey(t, mr, "sip_legacy_key", APIKeyRecord{
+		KeyID:      "kid_legacy",
+		Identifier: "signup-0011223344556677",
+		Tier:       TierAPIKey,
+	})
+
+	sub, err := v.Lookup(context.Background(), "sip_legacy_key")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if sub.KeyID != "kid_legacy" {
+		t.Errorf("Subject.KeyID = %q, want kid_legacy", sub.KeyID)
+	}
+	if accounts.calls != 0 {
+		t.Errorf("account lookups = %d, want 0 for a legacy signup identifier", accounts.calls)
+	}
+}
+
+// TestRedisAPIKey_MissingAccountRejected pins the fail-closed direction
+// for a dangling reference: an `acct:` key whose account row is gone is
+// the closed-account case, not an unknown one.
+func TestRedisAPIKey_MissingAccountRejected(t *testing.T) {
+	accounts := &stubAccountStatusReader{bySlug: map[string]platform.Account{}}
+	v, mr := newSuspendTestValidator(t, accounts)
+	seedKey(t, mr, "sip_orphan_key", APIKeyRecord{
+		KeyID:      "kid_orphan",
+		Identifier: AccountIdentifier("deleted-co"),
+		Tier:       TierAPIKey,
+	})
+
+	if _, err := v.Lookup(context.Background(), "sip_orphan_key"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("Lookup err = %v, want ErrUnauthorized", err)
+	}
+}
+
+// TestRedisAPIKey_AccountReadErrorFailsClosed pins the degradation
+// direction. Every other store failure in this package degrades toward
+// serving the request; the suspension gate must not — "the account store
+// blipped, so authenticate the suspended customer anyway" is the one
+// degradation a kill switch cannot make.
+func TestRedisAPIKey_AccountReadErrorFailsClosed(t *testing.T) {
+	accounts := &stubAccountStatusReader{err: errors.New("postgres unreachable")}
+	v, mr := newSuspendTestValidator(t, accounts)
+	seedKey(t, mr, "sip_blip_key", APIKeyRecord{
+		KeyID:      "kid_blip",
+		Identifier: AccountIdentifier("acme"),
+		Tier:       TierAPIKey,
+	})
+
+	sub, err := v.Lookup(context.Background(), "sip_blip_key")
+	if err == nil {
+		t.Fatalf("Lookup succeeded with Subject %+v; want an error (fail closed)", sub)
+	}
+	if sub.KeyID != "" {
+		t.Errorf("Subject leaked on the error path: %+v", sub)
+	}
+}
+
+// TestRedisAPIKey_NoAccountReaderIsPreFixBehaviour pins that the gate is
+// strictly opt-in: without a reader wired there is no account lookup and
+// no behaviour change at all.
+func TestRedisAPIKey_NoAccountReaderIsPreFixBehaviour(t *testing.T) {
+	v, mr, _ := newTestValidator(t)
+	seedKey(t, mr, "sip_nogate_key", APIKeyRecord{
+		KeyID:      "kid_nogate",
+		Identifier: AccountIdentifier("acme"),
+		Tier:       TierAPIKey,
+	})
+	sub, err := v.Lookup(context.Background(), "sip_nogate_key")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if sub.KeyID != "kid_nogate" {
+		t.Errorf("Subject.KeyID = %q, want kid_nogate", sub.KeyID)
+	}
+}
+
+// TestRedisAPIKey_AccountOverridesResolved pins that, on the default
+// redis backend an operator's account overrides are enforced on the next
+// Lookup, with the Postgres validator's cascade (the rate-limit override is
+// a floor, the monthly-quota override a ceiling), and a change lands once the
+// account cache refreshes.
+func TestRedisAPIKey_AccountOverridesResolved(t *testing.T) {
+	acct := acctWithStatus("acme", platform.AccountActive)
+	acct.RateLimitPerMinOverride = 50_000
+	acct.MonthlyRequestQuotaOverride = 2_000
+	accounts := &stubAccountStatusReader{bySlug: map[string]platform.Account{"acme": acct}}
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	v := NewRedisAPIKeyValidator(rdb, WithAccountStatus(accounts), WithClock(func() time.Time { return now }))
+	seedKey(t, mr, "sip_override_key", APIKeyRecord{
+		KeyID: "kid_override", Identifier: AccountIdentifier("acme"), Tier: TierAPIKey,
+		RateLimitPerMin: 1_000, MonthlyQuota: 100_000,
+	})
+
+	sub, err := v.Lookup(context.Background(), "sip_override_key")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if sub.RateLimitPerMin != 50_000 || sub.MonthlyQuota != 2_000 {
+		t.Fatalf("Subject budgets = %d/min, %d/month; want the overrides 50000/min, 2000/month",
+			sub.RateLimitPerMin, sub.MonthlyQuota)
+	}
+
+	// Operator clears both overrides: the per-key budget is enforced again
+	// once the account cache refreshes.
+	acct.RateLimitPerMinOverride, acct.MonthlyRequestQuotaOverride = 0, 0
+	accounts.bySlug["acme"] = acct
+	now = now.Add(DefaultAccountStatusCacheTTL + time.Second)
+	sub, err = v.Lookup(context.Background(), "sip_override_key")
+	if err != nil {
+		t.Fatalf("Lookup after refresh: %v", err)
+	}
+	if sub.RateLimitPerMin != 1_000 || sub.MonthlyQuota != 100_000 {
+		t.Errorf("Subject budgets after clearing = %d/min, %d/month; want the per-key 1000/min, 100000/month",
+			sub.RateLimitPerMin, sub.MonthlyQuota)
 	}
 }

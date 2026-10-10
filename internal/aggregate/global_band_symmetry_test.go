@@ -7,25 +7,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Direction-symmetry regression for the ORACLE-AGGREGATOR tier
-// (the seventh band site — the sibling bands in outliers.go,
-// outliers_local.go and served_guard.go are covered by
-// band_symmetry_test.go).
-//
-// An additive band — scoring a source ADDITIVELY in price
-// space, `|p − centre| > K·(1.4826·MAD)` with K = [aggregatorMADFactor]
-// = 5 — is one-sided-blind by construction: a source can only ever
-// be `centre` below the centre, so once K·scale reaches the centre the
-// band's lower edge is non-positive and NO downward print can be
-// rejected, while the mirror-image up-move still is. That happens at a
-// relative MAD of 1/(5·1.4826) = 13.5 %: ordinary disagreement between
-// three vendors on a thin RWA, or on a major mid-crash.
-//
-// The consequence is precisely the failure M8 added this filter to
-// prevent, in the one direction the filter could not see: a vendor
-// publishing a decimal-shifted or stale-to-zero quote is averaged
-// straight into the plain-mean headline price.
-
 // TestRejectAggregatorOutliers_CrashAndPumpBothDropped contaminates one
 // dispersed source set once with a crash quote and once with a pump
 // quote, and asserts BOTH are dropped and the headline is the clean
@@ -126,5 +107,88 @@ func TestRejectAggregatorOutliers_BetweenOldAndNewEdgeIsDropped(t *testing.T) {
 	}
 	if len(kept) != 2 {
 		t.Fatalf("kept %d, want 2 (mid, hi): %v", len(kept), sourceSet(kept))
+	}
+}
+
+func TestRejectAggregatorOutliers(t *testing.T) {
+	t.Run("drops_divergent_source_MAD_positive", func(t *testing.T) {
+		// Two agreeing-but-not-identical sources + one 2x outlier. The
+		// MAD is positive here (agreeing sources differ slightly), so
+		// this exercises the MAD-band path (not the MAD==0 path).
+		rows := []canonical.OracleUpdate{
+			mkAggRow("cg", 10000, 2),  // 100.00
+			mkAggRow("cmc", 10500, 2), // 105.00 (agrees, ~5%)
+			mkAggRow("cc", 21000, 2),  // 210.00 (2x-off outlier)
+		}
+		kept := rejectAggregatorOutliers(rows)
+		got := sourceSet(kept)
+		if len(kept) != 2 || got["cc"] {
+			t.Fatalf("kept = %v, want the 2 agreeing sources (cg, cmc), outlier cc dropped", got)
+		}
+	})
+
+	t.Run("all_agree_no_op", func(t *testing.T) {
+		rows := []canonical.OracleUpdate{
+			mkAggRow("cg", 10000, 2), mkAggRow("cmc", 10010, 2), mkAggRow("cc", 9990, 2),
+		}
+		if kept := rejectAggregatorOutliers(rows); len(kept) != 3 {
+			t.Fatalf("tightly-agreeing sources must all survive; kept %d/3", len(kept))
+		}
+	})
+
+	t.Run("two_sources_passthrough", func(t *testing.T) {
+		// Only 2 sources — no majority to define a consensus, so even a
+		// 2x gap is passed through unchanged (either could be right).
+		rows := []canonical.OracleUpdate{
+			mkAggRow("cg", 10000, 2), mkAggRow("cmc", 20000, 2),
+		}
+		if kept := rejectAggregatorOutliers(rows); len(kept) != 2 {
+			t.Fatalf("2-source input must pass through unchanged; kept %d/2", len(kept))
+		}
+	})
+
+	t.Run("always_keeps_at_least_one", func(t *testing.T) {
+		// A pathological 3-way split (1, 1000, 1000000 — a 1000x low
+		// print and a 1000x high print either side of the median) still
+		// yields a non-empty survivor set (the median centre is always
+		// a survivor), AND the survivor set must actually
+		// exclude both divergent prints, not just be non-empty: a
+		// downward-blind band would let the 1000x-low print "a" survive
+		// alongside the median while only trimming the high side, which
+		// `len(kept) == 0` can never distinguish from the correct
+		// symmetric reject.
+		rows := []canonical.OracleUpdate{
+			mkAggRow("a", 100, 2), mkAggRow("b", 100000, 2), mkAggRow("c", 100000000, 2),
+		}
+		kept := rejectAggregatorOutliers(rows)
+		if len(kept) == 0 {
+			t.Fatal("rejectAggregatorOutliers must never fail closed to zero survivors")
+		}
+		got := sourceSet(kept)
+		if got["a"] {
+			t.Errorf("kept = %v, want the 1000x-low print (a) dropped along with the 1000x-high print (c)", got)
+		}
+		if got["c"] {
+			t.Errorf("kept = %v, want the 1000x-high print (c) dropped", got)
+		}
+		if !got["b"] {
+			t.Errorf("kept = %v, want the median source (b) to survive", got)
+		}
+	})
+}
+
+func TestRejectAggregatorOutliers_BandEdgeIsInclusive(t *testing.T) {
+	// Majority at 4000 → MAD 0 → scale = 20 → half-width 5·20 = 100.
+	for _, tc := range []struct {
+		probe int64
+		keep  bool
+	}{{4100, true}, {4101, false}} {
+		rows := []canonical.OracleUpdate{
+			mkAggRow("a", 4000, 2), mkAggRow("b", 4000, 2), mkAggRow("c", tc.probe, 2),
+		}
+		got := rejectAggregatorOutliers(rows)
+		if kept := len(got) == 3; kept != tc.keep {
+			t.Fatalf("probe %d: kept %d/3, want probe kept=%v", tc.probe, len(got), tc.keep)
+		}
 	}
 }

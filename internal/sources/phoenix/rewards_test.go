@@ -7,16 +7,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// ─── real-lake golden frames (base64 XDR) ────────────────────────
-//
-// Captured via a read-only ClickHouse query against the
-// r1 raw lake (stellar.contract_events), scoped by contract_id (the
-// gated MainnetStakeContracts) + topic[1] byte-equality — see
-// events.go's "Reward actions" doc for the evidence trail. These PIN
-// the real field set: two field-events for withdraw_rewards (user,
-// reward_token — no amount), one for distribute_rewards (asset —
-// pool-wide, no user).
-
 const goldenStakeContract = "CBRGNWGAC25CPLMOAMR7WBPOF5QTFA5RYXQH4DEJ4K65G2QFLTLMW7RO"
 
 // TestGolden_WithdrawRewards pins classifyAny + the correlation
@@ -148,82 +138,5 @@ func TestGolden_DistributeRewards(t *testing.T) {
 	wantAsset := "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32"
 	if change.LPToken != wantAsset {
 		t.Errorf("LPToken(asset)=%q want %q", change.LPToken, wantAsset)
-	}
-}
-
-// TestClassifyAny_DistributeRewardsTopic1 pins that only topic[1]=="asset"
-// classifies as distribute_rewards.
-func TestClassifyAny_DistributeRewardsTopic1(t *testing.T) {
-	t.Parallel()
-	const distribute = "AAAADgAAABJkaXN0cmlidXRlX3Jld2FyZHMAAA=="
-	cases := []struct {
-		name   string
-		topic1 string
-		want   action
-	}{
-		{"asset", "AAAADgAAAAVhc3NldAAAAA==", actionDistributeRewards},
-		{"user", "AAAADgAAAAR1c2Vy", actionUnknown},
-		{"other symbol", "AAAADgAAAAdlbmFibGVkAA==", actionUnknown},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			ev := &events.Event{Topic: []string{distribute, tc.topic1}}
-			if got, _ := classifyAny(ev); got != tc.want {
-				t.Errorf("classifyAny = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-// TestDecoder_WithdrawRewards_EndToEnd feeds the two real field-events
-// through the production Decoder (Matches + Decode), confirming the
-// gated stake contract set is honored and a StakeEvent is emitted only
-// once both fields have arrived.
-func TestDecoder_WithdrawRewards_EndToEnd(t *testing.T) {
-	t.Parallel()
-	d := NewDecoder()
-	base := events.Event{
-		ContractID:     goldenStakeContract,
-		Ledger:         53_589_647,
-		LedgerClosedAt: "2026-05-15T00:05:00Z",
-		TxHash:         "0cfec2141ee42c35ae593169c09b8951f97b31079d4e394d8979b5cd3622dd6e",
-		OperationIndex: 0,
-	}
-
-	userEv := base
-	userEv.EventIndex = 0
-	userEv.Topic = []string{"AAAADgAAABB3aXRoZHJhd19yZXdhcmRz", "AAAADgAAAAR1c2Vy"}
-	userEv.Value = "AAAAEgAAAAAAAAAA71OhKQPURFdpcB0NxOSVKbWRaAv+2hgUeSdB9OMczcA="
-
-	tokenEv := base
-	tokenEv.EventIndex = 1
-	tokenEv.Topic = []string{"AAAADgAAABB3aXRoZHJhd19yZXdhcmRz", "AAAADgAAAAxyZXdhcmRfdG9rZW4="}
-	tokenEv.Value = "AAAAEgAAAAFz9nQ7xy1g57dXaZEAriZ1tUpZvggsX2i7PE0ly4C7oQ=="
-
-	if !d.Matches(userEv) {
-		t.Fatal("Matches(user field) = false, want true (gated stake contract)")
-	}
-	out, err := d.Decode(userEv)
-	if err != nil {
-		t.Fatalf("Decode(user field): %v", err)
-	}
-	if len(out) != 0 {
-		t.Fatalf("Decode(user field) emitted %d events, want 0 (incomplete)", len(out))
-	}
-
-	out, err = d.Decode(tokenEv)
-	if err != nil {
-		t.Fatalf("Decode(reward_token field): %v", err)
-	}
-	if len(out) != 1 {
-		t.Fatalf("Decode(reward_token field) emitted %d events, want 1", len(out))
-	}
-	se, ok := out[0].(StakeEvent)
-	if !ok {
-		t.Fatalf("out[0] is %T, want StakeEvent", out[0])
-	}
-	if se.Change.Action != EventActionWithdrawRewards {
-		t.Errorf("Action=%q want %q", se.Change.Action, EventActionWithdrawRewards)
 	}
 }

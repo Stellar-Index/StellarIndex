@@ -329,3 +329,79 @@ func TestRedisAPIKeyStore_CreatePropagatesEmailVerifiedAt(t *testing.T) {
 		t.Fatalf("unverified Create EmailVerifiedAt = %v, want zero", rec2.EmailVerifiedAt)
 	}
 }
+
+// The mint clamp must bound rate_limit_per_min as well as scopes, or a
+// scope-narrowed operator could mint 100,000/min keys. The store enforces
+// it for every request that names its minter, not only in HTTP handlers.
+func TestClampToMinter_RateLimit(t *testing.T) {
+	cases := []struct {
+		name    string
+		minter  Subject
+		rate    int
+		refused bool
+	}{
+		{"scoped minter on default cannot raise", Subject{Scopes: []string{"admin"}}, MaxKeyRateLimitPerMin, true},
+		{"scoped minter on default may issue default", Subject{Scopes: []string{"admin"}}, 0, false},
+		{"capped minter cannot exceed its own", Subject{RateLimitPerMin: 500}, 501, true},
+		{"capped minter may match its own", Subject{Scopes: []string{"admin"}, RateLimitPerMin: 500}, 500, false},
+		{"full-access minter on default delegates freely", Subject{}, MaxKeyRateLimitPerMin, false},
+	}
+	for _, tc := range cases {
+		_, err := ClampToMinter(tc.minter, nil, tc.rate)
+		if got := errors.Is(err, ErrMintExceedsCaller); got != tc.refused {
+			t.Errorf("%s: refused = %v (err %v), want %v", tc.name, got, err, tc.refused)
+		}
+	}
+}
+
+func TestRedisAPIKeyStore_CreateEnforcesTheMinter(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	ctx := context.Background()
+	narrowed := Subject{Identifier: "operator:staff", Tier: TierOperator, KeyID: "kid_ops", Scopes: []string{"admin"}}
+
+	_, _, err := s.Create(ctx, CreateAPIKeyRequest{
+		Identifier: "acct:target", Tier: TierOperator, RateLimitPerMin: MaxKeyRateLimitPerMin, MintedBy: &narrowed,
+	})
+	if !errors.Is(err, ErrMintExceedsCaller) {
+		t.Fatalf("scoped minter minting a %d/min key: err = %v, want ErrMintExceedsCaller", MaxKeyRateLimitPerMin, err)
+	}
+
+	rec, _, err := s.Create(ctx, CreateAPIKeyRequest{Identifier: "acct:target", MintedBy: &narrowed})
+	if err != nil {
+		t.Fatalf("in-bounds mint: %v", err)
+	}
+	if len(rec.Scopes) != 1 || rec.Scopes[0] != "admin" {
+		t.Errorf("child of a scoped minter got scopes %v, want the minter's [admin], never full access", rec.Scopes)
+	}
+}
+
+// TestRedisAPIKeyStore_RevokeKeyByID_NothingRevokedIsAnError is the store
+// contract behind the operator kill switch: a revoke that matched
+// no key must be distinguishable from one that killed a credential. A nil
+// here would let DELETE /v1/admin/keys/{id} answer 204 and write a key.revoke
+// audit row for a typo'd identifier while the leaked key kept working.
+func TestRedisAPIKeyStore_RevokeKeyByID_NothingRevokedIsAnError(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	ctx := context.Background()
+	rec, _, err := s.Create(ctx, CreateAPIKeyRequest{Identifier: "acct:owner", Label: "k"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	cases := []struct{ name, identifier, keyID string }{
+		{"unknown key id", "acct:owner", "kid_doesnotexist"},
+		{"typo'd identifier", "acct:0wner", rec.KeyID},
+	}
+	for _, tc := range cases {
+		if err := s.RevokeKeyByID(ctx, tc.identifier, tc.keyID); !errors.Is(err, ErrKeyNotFound) {
+			t.Errorf("%s: RevokeKeyByID = %v, want ErrKeyNotFound", tc.name, err)
+		}
+	}
+
+	if err := s.RevokeKeyByID(ctx, "acct:owner", rec.KeyID); err != nil {
+		t.Fatalf("owner revoke: %v", err)
+	}
+	if err := s.RevokeKeyByID(ctx, "acct:owner", rec.KeyID); !errors.Is(err, ErrKeyNotFound) {
+		t.Errorf("second revoke of the same key = %v, want ErrKeyNotFound (nothing left to revoke)", err)
+	}
+}

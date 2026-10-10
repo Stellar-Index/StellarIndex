@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/xdr"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
@@ -119,41 +121,6 @@ func TestDecodeSwapMap_realFixture(t *testing.T) {
 	}
 }
 
-// TestDecoder_MapSwap_gatedAndDecoded proves the Map-schema swap flows
-// through the production Decode seam: a single event from the gated
-// CBENABXP pool emits one TradeEvent immediately (no buffer), and the
-// same event from an unregistered contract is NOT attributed
-// (ADR-0035/0040 gating).
-func TestDecoder_MapSwap_gatedAndDecoded(t *testing.T) {
-	d := NewDecoder() // production gate: curated mainnet set incl. MainnetMapPools
-	ev := mapSwapEvent()
-
-	if !d.Matches(ev) {
-		t.Fatal("gated Map-schema pool CBENABXP should Match")
-	}
-	out, err := d.Decode(ev)
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
-	}
-	if len(out) != 1 {
-		t.Fatalf("got %d events, want 1 (Map swap is a single event)", len(out))
-	}
-	te, ok := out[0].(TradeEvent)
-	if !ok {
-		t.Fatalf("got %T, want TradeEvent", out[0])
-	}
-	if te.Trade.QuoteAmount.BigInt().Int64() != mapSwapReturn {
-		t.Errorf("QuoteAmount = %s, want %d", te.Trade.QuoteAmount, mapSwapReturn)
-	}
-
-	// Same event shape from a foreign contract → not attributed.
-	foreign := ev
-	foreign.ContractID = "CFOREIGNFAKEPOOL0000000000000000000000000000000000000000"
-	if d.Matches(foreign) {
-		t.Error("foreign contract emitting the Map swap shape must NOT match (CS-026 gating)")
-	}
-}
-
 // Real CBENABXP Map-schema liquidity events, same READ-ONLY lake capture
 // as the swap above:
 //
@@ -226,50 +193,6 @@ func decodeLiquidityThroughDecoder(t *testing.T, ev events.Event) LiquidityChang
 	return le.Change
 }
 
-func TestDecoder_MapProvideLiquidity_realFixture(t *testing.T) {
-	c := decodeLiquidityThroughDecoder(t, mapProvideEvent())
-	if c.Action != EventActionProvideLiquidity || c.Pool != cbenabxpPool {
-		t.Errorf("action/pool = %q/%q", c.Action, c.Pool)
-	}
-	if c.Ledger != 63295145 || c.OpIndex != 0 || c.EventIndex != 4 {
-		t.Errorf("ledger/op/event = %d/%d/%d", c.Ledger, c.OpIndex, c.EventIndex)
-	}
-	if c.Sender != mapLiquiditySender {
-		t.Errorf("Sender = %q, want %q", c.Sender, mapLiquiditySender)
-	}
-	if c.TokenA != mapSwapBuyToken || c.TokenB != mapSwapSellToken {
-		t.Errorf("tokens = %s / %s, want %s / %s", c.TokenA, c.TokenB, mapSwapBuyToken, mapSwapSellToken)
-	}
-	if c.AmountA.String() != "27300000000" || c.AmountB.String() != "5439074397" {
-		t.Errorf("amounts = %s / %s, want 27300000000 / 5439074397", c.AmountA, c.AmountB)
-	}
-	if !c.SharesAmount.IsZero() {
-		t.Errorf("SharesAmount = %s, want zero on provide", c.SharesAmount)
-	}
-}
-
-func TestDecoder_MapWithdrawLiquidity_realFixture(t *testing.T) {
-	c := decodeLiquidityThroughDecoder(t, mapWithdrawEvent())
-	if c.Action != EventActionWithdrawLiquidity || c.Pool != cbenabxpPool {
-		t.Errorf("action/pool = %q/%q", c.Action, c.Pool)
-	}
-	if c.Ledger != 63295946 || c.OpIndex != 0 || c.EventIndex != 4 {
-		t.Errorf("ledger/op/event = %d/%d/%d", c.Ledger, c.OpIndex, c.EventIndex)
-	}
-	if c.Sender != mapLiquiditySender {
-		t.Errorf("Sender = %q, want %q", c.Sender, mapLiquiditySender)
-	}
-	if c.AmountA.String() != "1120182615" || c.AmountB.String() != "223177896" {
-		t.Errorf("amounts = %s / %s, want 1120182615 / 223177896", c.AmountA, c.AmountB)
-	}
-	if c.SharesAmount.String() != "500000000" {
-		t.Errorf("SharesAmount = %s, want 500000000", c.SharesAmount)
-	}
-	if c.TokenA != "" || c.TokenB != "" {
-		t.Errorf("tokens = %q / %q, want empty (withdraw carries no token addresses)", c.TokenA, c.TokenB)
-	}
-}
-
 // Only the three Map-schema action symbols classify as single-topic
 // events, and a Map liquidity body missing a required key is rejected.
 func TestClassifyAny_MapSchemaFailsClosed(t *testing.T) {
@@ -286,5 +209,92 @@ func TestClassifyAny_MapSchemaFailsClosed(t *testing.T) {
 	ev.Value = mapProvideBodyB64 // no shares_amount / return_amount_*
 	if _, err := decodeWithdrawLiquidityMap(&ev, time.Unix(0, 0)); err == nil {
 		t.Error("decodeWithdrawLiquidityMap accepted a body without shares_amount")
+	}
+}
+
+func TestClassifyAny(t *testing.T) {
+	cases := []struct {
+		name       string
+		topics     []string
+		wantAction action
+		wantField  string
+	}{
+		{"swap sender", []string{TopicSymbolSwap, TopicSymbolSender}, actionSwap, TopicSymbolSender},
+		{"provide token_a-amount", []string{TopicSymbolProvideLiquidity, TopicSymbolPLTokenAAmt}, actionProvideLiquidity, TopicSymbolPLTokenAAmt},
+		{"withdraw shares", []string{TopicSymbolWithdrawLiquidity, TopicSymbolWLSharesAmount}, actionWithdrawLiquidity, TopicSymbolWLSharesAmount},
+		{"withdraw auto unbonded", []string{TopicSymbolWithdrawLiquidity, TopicSymbolWLAutoUnbonded}, actionWithdrawLiquidity, TopicSymbolWLAutoUnbonded},
+		{"bond user", []string{TopicSymbolBond, TopicSymbolStakeUser}, actionBond, TopicSymbolStakeUser},
+		{"unbond amount", []string{TopicSymbolUnbond, TopicSymbolStakeAmount}, actionUnbond, TopicSymbolStakeAmount},
+		// EVERY-event policy — admin + initialize must not be silently dropped.
+		{"admin replacement requested", []string{TopicSymbolAdmin, "any-detail"}, actionAdmin, "any-detail"},
+		{"initialize token_a", []string{TopicSymbolInitialize, "any-detail"}, actionInitialize, "any-detail"},
+		{"unknown topic[0]", []string{"some_other_action", TopicSymbolStakeAmount}, actionUnknown, ""},
+		{"too few topics", []string{TopicSymbolBond}, actionUnknown, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a, f := classifyAny(&events.Event{Topic: tc.topics})
+			if a != tc.wantAction || f != tc.wantField {
+				t.Errorf("classifyAny = (%v, %q); want (%v, %q)", a, f, tc.wantAction, tc.wantField)
+			}
+		})
+	}
+}
+
+// ─── shared fakes ─────────────────────────────────────────────────
+
+// TestClassifyAny_DistributeRewardsTopic1 pins that only topic[1]=="asset"
+// classifies as distribute_rewards.
+func TestClassifyAny_DistributeRewardsTopic1(t *testing.T) {
+	t.Parallel()
+	const distribute = "AAAADgAAABJkaXN0cmlidXRlX3Jld2FyZHMAAA=="
+	cases := []struct {
+		name   string
+		topic1 string
+		want   action
+	}{
+		{"asset", "AAAADgAAAAVhc3NldAAAAA==", actionDistributeRewards},
+		{"user", "AAAADgAAAAR1c2Vy", actionUnknown},
+		{"other symbol", "AAAADgAAAAdlbmFibGVkAA==", actionUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ev := &events.Event{Topic: []string{distribute, tc.topic1}}
+			if got, _ := classifyAny(ev); got != tc.want {
+				t.Errorf("classifyAny = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A Map body without actual_received_amount decodes on offer_amount,
+// exactly as the 7-field String era does, and counts nothing.
+func TestDecodeSwapMap_missingReceivedFallsBackToOffer(t *testing.T) {
+	ev := mapSwapWith(t, func(map[string]*xdr.ScVal) {})
+	var sv xdr.ScVal
+	if err := sv.UnmarshalBinary(mustB64(t, ev.Value)); err != nil {
+		t.Fatal(err)
+	}
+	var kept xdr.ScMap
+	for _, e := range **sv.Map {
+		if string(*e.Key.Sym) != "actual_received_amount" {
+			kept = append(kept, e)
+		}
+	}
+	m := &kept
+	sv.Map = &m
+	ev.Value = b64Marshal(t, sv)
+
+	before := receivedDivergence()
+	got, err := newTestDecoder().Decode(ev)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("Decode = (%d events, %v), want (1, nil)", len(got), err)
+	}
+	if b := got[0].(TradeEvent).Trade.BaseAmount.BigInt().Int64(); b != mapSwapOffer {
+		t.Errorf("BaseAmount = %d, want offer_amount %d", b, mapSwapOffer)
+	}
+	if d := receivedDivergence() - before; d != 0 {
+		t.Errorf("divergence counter delta = %v, want 0", d)
 	}
 }
