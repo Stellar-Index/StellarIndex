@@ -166,3 +166,22 @@ describe('SearchModal fiat direct-jump href', () => {
     expect(currencyRows[0].href).toBe('/external/assets/us-dollar');
   });
 });
+
+describe('SearchModal muxed accounts', () => {
+  it('routes an M-address to its base G-account without a backend call', async () => {
+    renderOpen();
+    const input = screen.getByRole('textbox', {
+      name: /search coins, pairs, protocols/i,
+    });
+    fireEvent.change(input, {
+      target: {
+        value:
+          'MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAAE2JUG6',
+      },
+    });
+    const link = await screen.findByRole('link', { name: /muxed account/i });
+    expect(link.getAttribute('href')).toBe(
+      '/accounts/GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ/',
+    );
+  });
+});

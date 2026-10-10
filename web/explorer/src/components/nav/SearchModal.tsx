@@ -10,6 +10,7 @@ import { apiGet } from '@/api/client';
 import { useCoins, useVerifiedSlugs, coinSlug, type Coin } from '@/api/hooks';
 import { assetHref, assetHrefFor } from '@/lib/fiat-slugs';
 import { availableRoutes } from '@/lib/network-routes';
+import { muxedBaseAccount } from '@/lib/strkey';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { truncateMiddle } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
@@ -396,6 +397,16 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
   });
 
   const explorerResult = useMemo<Result | null>(() => {
+    // The backend doesn't classify muxed M-addresses; resolve them locally.
+    const base = muxedBaseAccount(debouncedQ.trim());
+    if (base) {
+      return {
+        type: 'account',
+        label: `Muxed account → ${base.slice(0, 8)}…${base.slice(-6)}`,
+        hint: 'opens the base G-account',
+        href: `/accounts/${base}/`,
+      };
+    }
     const c = explorer.data;
     if (!c || c.kind === 'unknown') return null;
     const href = explorerHref(c);

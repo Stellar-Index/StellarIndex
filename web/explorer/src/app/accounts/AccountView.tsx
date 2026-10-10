@@ -38,6 +38,7 @@ import {
   stroopsToXlm,
 } from '../explorer-shared';
 import { CrossReference } from '@/components/CrossReference';
+import { muxedBaseAccount } from '@/lib/strkey';
 
 // Stellar account IDs are 56 chars: 'G' + 55 base32 alphanumerics.
 const ACCOUNT_RE = /^G[A-Z2-7]{55}$/;
@@ -117,22 +118,44 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
   );
 
   if (!looksValid) {
+    const base = muxedBaseAccount(id);
+    const isContract = /^C[A-Z2-7]{55}$/.test(id);
     return (
       <Shell id={id}>
-        <Panel title="Invalid account ID" bodyClassName="text-sm text-ink-body">
-          <p>
-            <span className="font-mono break-all">{id}</span> isn&apos;t a valid
-            Stellar account ID. Account IDs are 56 characters, starting with{' '}
-            <code className="font-mono">G</code>.
-          </p>
-          {/^M[A-Z2-7]{68}$/.test(id) && (
+        <Panel
+          title={
+            base
+              ? 'Muxed account'
+              : isContract
+                ? 'Contract address'
+                : 'Invalid account ID'
+          }
+          bodyClassName="text-sm text-ink-body"
+        >
+          <p className="font-mono break-all">{id}</p>
+          {base ? (
             <p className="mt-2">
-              This looks like a <strong>muxed account</strong> (M-address) — a
-              G-account plus an embedded routing ID, used by exchanges and
-              custodians to distinguish customers behind one shared account.
-              Look up the underlying G-address to see its state and activity;
-              wallets and most explorers can decode the M-form.
+              <span title="An M-address is a G-account plus a routing ID; state and activity live on the G-account.">
+                Base account:
+              </span>{' '}
+              <Link
+                href={`/accounts/${base}/`}
+                className="text-brand-600 font-mono break-all hover:underline"
+              >
+                {base}
+              </Link>
             </p>
+          ) : isContract ? (
+            <p className="mt-2">
+              <Link
+                href={`/contracts/${id}/`}
+                className="text-brand-600 hover:underline"
+              >
+                Open contract →
+              </Link>
+            </p>
+          ) : (
+            <p className="text-ink-muted mt-2">Not a G-, M- or C-address.</p>
           )}
         </Panel>
       </Shell>

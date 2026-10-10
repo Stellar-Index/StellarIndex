@@ -184,3 +184,25 @@ describe('AccountView state charts', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('AccountView non-G addresses', () => {
+  it('links a muxed M-address to its base account', () => {
+    renderWithClient(
+      <AccountView id="MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAAAACJUQ" />,
+    );
+    const link = screen.getByRole('link', {
+      name: 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ',
+    });
+    expect(link.getAttribute('href')).toBe(
+      '/accounts/GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ/',
+    );
+  });
+
+  it('links a C-address to the contract page', () => {
+    const C = 'CA' + 'A'.repeat(54);
+    renderWithClient(<AccountView id={C} />);
+    expect(
+      screen.getByRole('link', { name: /open contract/i }).getAttribute('href'),
+    ).toBe(`/contracts/${C}/`);
+  });
+});
