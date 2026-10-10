@@ -89,7 +89,7 @@ describe('route reachability', () => {
       .filter((route) => !UNLINKED_BY_DESIGN.has(route))
       .sort();
     expect(dark, `unreachable routes: ${dark.join(', ')}`).toEqual([]);
-  }, 15_000); // walks the whole route graph; 5 s flakes under verify's parallel lanes
+  });
 
   it('keeps the by-design exemptions honest', () => {
     // An exemption for a route that no longer exists is dead weight that

@@ -32,6 +32,8 @@ export default defineConfig({
     // are — no jsdom DOM APIs needed, but the shared config/setup applies.
     include: ['src/**/*.{test,spec}.{ts,tsx}', 'functions/**/*.{test,spec}.js'],
     css: false,
+    // Guard tests walk the whole src tree; 5 s flakes under verify's parallel lanes.
+    testTimeout: 15_000,
     restoreMocks: true,
   },
 });

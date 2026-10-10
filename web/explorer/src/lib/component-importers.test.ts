@@ -27,5 +27,5 @@ describe('component importers', () => {
       .map((f) => relative(SRC, f))
       .sort();
     expect(orphans, 'components with no importer (delete them)').toEqual([]);
-  }, 15_000); // walks the whole src tree; 5 s flakes under verify's parallel lanes
+  });
 });
