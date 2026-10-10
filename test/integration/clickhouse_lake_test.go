@@ -204,9 +204,11 @@ func TestClickHouseTxHashIndexProbeFallback(t *testing.T) {
 	const (
 		ledgerA = uint32(72_000_001) // index target + fast-path answer
 		ledgerB = uint32(72_000_500) // latest-ingested + scan answer
-		txHash  = "2222222222222222222222222222222222222222222222222222222222222222"
-		txIdxA  = uint32(3)
-		txIdxB  = uint32(9)
+		// Unique to this test: the fallback scan has no ledger scope, so a
+		// hash shared with another test's newer row would win it.
+		txHash = "7a1b0c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
+		txIdxA = uint32(3)
+		txIdxB = uint32(9)
 	)
 	closeTime := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	// Strictly increasing ingested_at so the bloom scan's `ORDER BY ingested_at
