@@ -89,31 +89,17 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return d.reg.Has(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder]. Returns one consumer.Event
-// per successful decode. Body shape varies per event; the kind is
-// preserved in the returned struct's [Event.EventKind] string so
-// the sink can demultiplex.
+// Decode implements [dispatcher.Decoder]. Returns one consumer.Event per
+// successful decode; the kind is preserved in EventKind so the sink can
+// demultiplex. Auctions return New/Fill/DeleteAuctionEvent; the 18
+// money-market / emission / admin events return PositionEvent / EmissionEvent /
+// AdminEvent.
 //
-// The three auction events return the NewAuctionEvent /
-// FillAuctionEvent / DeleteAuctionEvent structs (sink-side
-// blend_auctions table). The 18 money-market / emission / admin events
-// return PositionEvent / EmissionEvent / AdminEvent — the sink writes
-// them to blend_positions / blend_emissions / blend_admin via the
-// migration-0042 schemas.
-//
-// Decode routes the event by kind (decodeByKind) and stamps EventIndex
-// onto the position/emission/admin outputs — the per-event
-// discriminator that distinguishes multiple same-kind events emitted in
-// a single operation. Without it those rows would collide on the
-// blend_positions / blend_emissions / blend_admin primary key and all
-// but one would be silently dropped; (asset, user) alone does not
-// separate same-(asset, user, kind)-per-op events.
-//
-// The three auction events (new/fill/delete) carry EventIndex too —
-// their decode functions set it directly from events.Event.EventIndex
-// (blend_auctions PK, migration 0058), so the loop below only needs to
-// fan it onto the non-auction structs whose decode helpers don't see
-// the raw event.
+// EventIndex is stamped onto the position/emission/admin outputs here: without
+// it, same-(asset, user, kind) events in one operation collide on the
+// blend_positions / blend_emissions / blend_admin primary key and all but one
+// are silently dropped. The auction decoders set it themselves
+// (blend_auctions PK, migration 0058).
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	outs, err := d.decodeByKind(ev)
 	if err != nil {

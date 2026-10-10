@@ -19,31 +19,23 @@ type PoolTokens struct {
 }
 
 // Decoder is the dispatcher-facing view of SushiSwap V3 (ADR-0035
-// factory-anchored gating). It owns two pieces of state that are seeded
-// together and must never disagree:
+// factory-anchored gating). It owns two pieces of state that must never
+// disagree:
 //
-//  1. reg — the contract-identity gate: the factory trust roots plus every
-//     pool the factory has created. This is what Matches consults.
-//  2. poolTokens — the pool → (token0, token1) money mapping. Token
-//     identities exist ONLY in the factory's `pool_created` body, so a
-//     swap that passes the gate still cannot be priced without this.
+//  1. reg: the contract-identity gate (factory roots plus every factory-created
+//     pool), which Matches consults.
+//  2. poolTokens: pool -> (token0, token1). Token identities exist ONLY in the
+//     factory's `pool_created` body, so a gated swap cannot be priced without it.
 //
-// Both are seeded from the same three places, in the same order the other
-// gated sources use: the in-code curated table ([MainnetPools], covering
-// history), the protocol_contracts DB warm (contractid.WithSeed, covering
-// pools admitted by an operator or discovered after the table was frozen),
-// and live factory `pool_created` events (covering everything from here
-// on). The DB warm reaches the gate only — protocol_contracts stores a
-// contract SET, not token identities, so a pool admitted purely that way
-// is gated IN but has no token mapping unless the sushiswap_v3_pools row
-// (contractid.WithAttrSeed) carries it; without one its swaps fail closed and are counted
-// ([Decoder.SkippedUnknownPool]) instead of being written with invented
-// assets.
+// Both are seeded from the curated [MainnetPools] table, the protocol_contracts
+// DB warm (contractid.WithSeed) and live `pool_created` events. The DB warm
+// reaches the gate only; a pool admitted that way has no token mapping unless the
+// sushiswap_v3_pools row (contractid.WithAttrSeed) carries it, and its swaps fail
+// closed and are counted ([Decoder.SkippedUnknownPool]) rather than written with
+// invented assets.
 //
-// No correlation buffer: unlike Soroswap (swap+sync) or Phoenix (8 field
-// events), a V3 `swap` body is self-contained — both amounts, the
-// post-swap price and the tick all arrive in one event. There is nothing
-// to hold across events, so there is no orphan class here.
+// No correlation buffer: a V3 `swap` body is self-contained, unlike Soroswap
+// (swap+sync) or Phoenix (8 field events).
 type Decoder struct {
 	reg *contractid.Registry
 
@@ -114,28 +106,20 @@ func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 // Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY, not
 // topic bytes (ADR-0035).
 //
-// This gate is not a formality here, it is the whole safety story. Every
-// event in this protocol has a ONE-element Symbol topic vector and the
-// symbols are the most generic on the network: a bounded 10k-ledger census
-// of pubnet puts `mint` at 33% and `burn` at 12% of ALL contract events,
-// and any contract at all may emit a Map body under a `swap` symbol. A
-// topic-only decoder would therefore attribute a large slice of the
-// network's token traffic to SushiSwap and, worse, would let an arbitrary
-// contract mint trades at prices of its choosing.
+// The gate is the whole safety story: every topic is a one-element generic
+// Symbol, and any contract may emit a Map body under a `swap` symbol. A
+// topic-only decoder would misattribute network token traffic to SushiSwap and
+// let an arbitrary contract mint trades at prices of its choosing.
 //
-//   - `pool_created` matches ONLY from one of [MainnetFactories]. This is
-//     the trust root: without it any contract could announce a pool with
-//     token identities of its choosing, seed itself into the registry, and
-//     have its own swaps recorded as real trades at fabricated prices.
+//   - `pool_created` matches ONLY from one of [MainnetFactories], the trust
+//     root; otherwise any contract could seed itself into the registry with
+//     token identities of its choosing.
 //   - every other event matches ONLY from a REGISTERED pool.
 //
-// Coverage note (ADR-0035): an un-seeded real pool has its events dropped,
-// so registry completeness is load-bearing. It is held by three
-// independent seeds — the curated [MainnetPools] table, the
-// protocol_contracts warm, and the factory's own `pool_created` events
-// living in the lake from the factory's first ledger (substrate continuity,
-// ADR-0033 Claim 1). A pool the curated table misses fails CLOSED into a
-// visible recognition gap; it is never silently mis-attributed.
+// Registry completeness is load-bearing: an un-seeded real pool has its events
+// dropped. Three seeds hold it ([MainnetPools], the protocol_contracts warm, and
+// the factory's own `pool_created` events in the lake, ADR-0033 Claim 1). A
+// missed pool fails CLOSED into a visible gap, never a mis-attribution.
 func (d *Decoder) Matches(ev events.Event) bool {
 	kind := classify(&ev)
 	if kind == "" {

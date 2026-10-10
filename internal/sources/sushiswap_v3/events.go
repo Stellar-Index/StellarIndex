@@ -1,40 +1,23 @@
-// Package sushiswap_v3 decodes on-chain events from SushiSwap V3 on
-// Stellar — a Uniswap-V3-shaped concentrated-liquidity AMM deployed on
-// Soroban, whose pools are created by a single on-chain pool factory.
+// Package sushiswap_v3 decodes on-chain events from SushiSwap V3 on Stellar,
+// a Uniswap-V3-shaped concentrated-liquidity AMM on Soroban whose pools are
+// created by a single factory ([MainnetFactory]).
 //
-// Shape of the protocol, as proven from the certified ClickHouse lake
-// (`stellar.contract_events`, swept over ledgers
-// [61,487,379, 64,276,390]):
+// Every pool topic is a ONE-element Symbol vector and the pool address is not in
+// it, so topic bytes identify nothing: gating must be on contract identity
+// (ADR-0035). `swap`, `mint` and `burn` are among the most common symbols on
+// pubnet (a 10k-ledger census puts `mint` at 33% and `burn` at 12% of all
+// contract events).
 //
-//   - One factory, CD3KRKGD… ([MainnetFactory]), emits `pool_created`
-//     carrying {fee, pool_address, sender, tick_spacing, token0, token1}.
-//     60 such events name 58 distinct pools (two are emitted twice inside
-//     their own creation transaction, so the seed must be idempotent).
-//   - Each pool emits `swap` / `mint` / `burn` / `collect` plus the
-//     lifecycle trio `init` / `upgraded` / `migrated`. Every topic is a
-//     ONE-element Symbol topic vector — the pool address is NOT in the
-//     topics, so topic bytes alone identify nothing and gating must be on
-//     contract identity (ADR-0035). `swap`, `mint` and `burn` in
-//     particular are among the most common symbols on pubnet (a bounded
-//     10k-ledger census puts `mint` at 33% and `burn` at 12% of ALL
-//     contract events).
-//   - `swap` is the only trade-forming event: its body is a 7-entry Map
-//     {amount0 i128, amount1 i128, liquidity u128, recipient Address,
-//     sender Address, sqrt_price_x96 u256, tick i32}. All 97,349 swaps in
-//     history carry exactly those seven keys, ACROSS BOTH deployed WASM
-//     versions — the pools were upgraded at ledger 61,594,973 and again at
-//     62,898,378 (factory `wasm_approved` → per-pool `pool_upgraded`), and
-//     the pre-upgrade bodies are field-identical. Decoding is by field
-//     name regardless (docs/architecture/ingest-pipeline.md#contract-schema-evolution), so
-//     a future upgrade that appends a field stays readable.
+// `swap` is the only trade-forming event: a 7-entry Map {amount0 i128, amount1
+// i128, liquidity u128, recipient, sender, sqrt_price_x96 u256, tick i32}. The
+// body is identical across both deployed WASM versions; decoding is by field
+// name (docs/architecture/ingest-pipeline.md#contract-schema-evolution) so an
+// appended field stays readable. The factory emitted `pool_created` twice for
+// two pools inside their creation transaction, so seeding must be idempotent.
 //
-// Concentrated liquidity, and what this package deliberately does NOT do:
-// a V3 pool prices from `sqrt_price_x96` and a tick range, not from
-// constant-product reserves. Reserve-based TVL and reserve-based pricing
-// would both be WRONG here, so neither is derived. `sqrt_price_x96` and
-// `tick` are decoded and carried for completeness but no price is computed
-// from them; the trade rows this package emits carry the two realised
-// amounts, which are exact and orientation-free.
+// A V3 pool prices from `sqrt_price_x96` and a tick range, not reserves, so
+// reserve-based TVL or pricing would be WRONG and neither is derived. Trade rows
+// carry the two realised amounts, which are exact and orientation-free.
 package sushiswap_v3
 
 import (
@@ -162,34 +145,20 @@ type PoolMeta struct {
 	CreatedAt   uint32
 }
 
-// MainnetPools is the curated, lake-verified pool table — every pool the
-// factory has created, keyed by pool C-strkey.
+// MainnetPools is the curated pool table: every pool the factory has created,
+// keyed by pool C-strkey, decoded from the factory's `pool_created` events (not
+// from any third-party listing).
 //
-// Provenance: decoded from all 60 `pool_created` events the factory
-// [MainnetFactory] emitted between ledgers 61,487,379 and 64,116,662
-// (60 events name 58 distinct pools — CBRKPTX4… and
-// CDNHCFJ6… each carry a duplicate emission inside their own creation
-// transaction). Nothing here comes from a third-party pool listing: the
-// six contracts a public listing names are all present below, but they are
-// present because the factory created them.
+// It carries tokens, not just ids, because it does two jobs: the ADR-0035 gate
+// seed (via [MainnetGatedSet]), and the money mapping, since token0 / token1
+// appear ONLY in the creation event.
 //
-// The table serves two jobs at once, which is why it carries the tokens
-// and not just the ids:
-//
-//  1. It is the ADR-0035 gate seed (via [MainnetGatedSet]) — the trust
-//     root that lets a restart mid-history accept a real pool's events
-//     without first replaying that pool's creation event.
-//  2. It is the money mapping — token0 / token1 appear ONLY in the
-//     factory's creation event, so without this a cold-started decoder
-//     could gate a swap in but not name its assets.
-//
-// A pool created after this table was frozen is picked up live from the
-// factory's `pool_created` event (which seeds both the gate and the token
-// map) and persisted to protocol_contracts; a process that starts AFTER
-// such a pool's creation ledger admits it through the protocol_contracts
-// warm but has no token mapping for it until that creation event is
-// replayed, so its swaps fail closed into a counted, visible gap
-// (ErrUnknownPool) rather than a mis-assetted trade. See the README.
+// A pool created after the table was frozen is picked up live from
+// `pool_created` and persisted to protocol_contracts. A process that starts
+// after such a creation ledger admits the pool via the protocol_contracts warm
+// but has no token mapping until that event is replayed, so its swaps fail
+// closed into a counted gap (ErrUnknownPool) rather than a mis-assetted trade.
+// See the README.
 var MainnetPools = map[string]PoolMeta{
 	"CA5MIPAAG3UULVAHK7U3U6VBBM52YIHMCZOOSHNTPUSLYR7NKNHVD6WK": {
 		Token0:      "CCKCKCPHYVXQD4NECBFJTFSCU2AMSJGCNG4O6K4JVRE2BLPR7WNDBQIQ",

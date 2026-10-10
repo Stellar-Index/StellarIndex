@@ -23,31 +23,23 @@ type PairTokens struct {
 	Token1 canonical.Asset
 }
 
-// Decoder is the dispatcher-facing view of Soroswap. It owns two
-// pieces of state:
+// Decoder is the dispatcher-facing view of Soroswap. It owns two pieces of
+// state:
 //
-//  1. A swap+sync correlation buffer (per discovery doc Q-notes;
-//     Soroswap emits a SwapEvent followed by an immediately-
-//     following SyncEvent in the same transaction).
-//  2. A pair→(token0, token1) registry seeded by factory new_pair
-//     events. The swap event itself only carries amounts; token
-//     identities come from the pair contract's deploy record.
+//  1. A swap+sync correlation buffer: Soroswap emits a SwapEvent followed
+//     immediately by a SyncEvent in the same transaction.
+//  2. A pair->(token0, token1) registry seeded by factory new_pair events. The
+//     swap event carries only amounts; token identities come from the pair's
+//     deploy record.
 //
-// The Decoder processes four topic shapes:
-//   - SoroswapPair:swap  → feeds the swap+sync buffer
-//   - SoroswapPair:sync  → feeds the swap+sync buffer; completes a pair
-//   - SoroswapPair:skim  → emits a SkimEvent (excess-reserves claim)
-//   - SoroswapFactory:new_pair → populates the pair→tokens registry
+// Topic shapes: SoroswapPair:swap and :sync feed the buffer (sync completes a
+// pair), :skim emits a SkimEvent, SoroswapFactory:new_pair populates the
+// registry. Other pair events (deposit/withdraw) match but produce no output.
+// The pair's LP-share SEP-41 token events are classified but NOT claimed (see
+// the EventPairToken arm in Matches).
 //
-// Other pair-contract events (deposit/withdraw) match but produce
-// no output — they're not trades and have their own follow-ups.
-// The pair's LP-SHARE SEP-41 token events (transfer/mint/burn/
-// approve, Symbol topic[0]) are classified but NOT claimed — see
-// the EventPairToken arm in Matches.
-//
-// Per docs/architecture/ingest-pipeline.md the dispatcher is
-// serial, but the mutex is belt-and-braces and also lets operator
-// tooling call SeedPair concurrently at startup to warm the cache
+// The dispatcher is serial (docs/architecture/ingest-pipeline.md); the mutex also
+// lets operator tooling call SeedPair concurrently at startup to warm the cache
 // from Timescale.
 type Decoder struct {
 	// mu guards buf, pairTokens and the skip counters. Every critical
