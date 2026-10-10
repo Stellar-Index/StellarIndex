@@ -167,7 +167,10 @@ export function CreatorBoard() {
                 >
                   Created
                 </Th>
-                <Th align="right" title="Immutable history">
+                <Th
+                  align="right"
+                  title="Immutable history. 0 is real: since CAP-33 a sponsor can cover the reserve"
+                >
                   Funded (XLM)
                 </Th>
                 <Th
@@ -217,9 +220,6 @@ export function CreatorBoard() {
             </TBody>
           </Table>
         </TableWrap>
-        <p className="text-ink-muted text-[11px]">
-          0 XLM funded is real: since CAP-33 a sponsor can cover the reserve.
-        </p>
       </Panel>
     </>
   );
