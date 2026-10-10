@@ -16,203 +16,173 @@ import {
 } from './format';
 import { truncateMiddle } from '@/components/ui';
 
+// One row per case: [args, expected]. Strict equality, so null stays null.
+function table<A extends unknown[]>(
+  fn: (...a: A) => unknown,
+  rows: [A, unknown][],
+) {
+  it.each(rows)('%j -> %j', (args, want) => {
+    expect(fn(...args)).toBe(want);
+  });
+}
+
 describe('formatPrice', () => {
-  it('formats with 2–8 fraction digits and grouping', () => {
-    expect(formatPrice(1234.5)).toBe('1,234.50');
-    expect(formatPrice(0)).toBe('0.00');
-  });
-  it('parses numeric strings', () => {
-    expect(formatPrice('42')).toBe('42.00');
-  });
-  it('returns an em-dash for non-finite input', () => {
-    expect(formatPrice('not-a-number')).toBe('—');
-    expect(formatPrice(Infinity)).toBe('—');
-  });
+  table(formatPrice, [
+    [[1234.5], '1,234.50'],
+    [[0], '0.00'],
+    [['42'], '42.00'],
+    [['not-a-number'], '—'],
+    [[Infinity], '—'],
+  ]);
 });
 
 describe('formatCompact', () => {
-  it('uses compact notation', () => {
-    expect(formatCompact(1_500_000)).toBe('1.5M');
-    expect(formatCompact(2_000)).toBe('2K');
-  });
-  it('returns an em-dash for junk', () => {
-    expect(formatCompact('x')).toBe('—');
-  });
+  table(formatCompact, [
+    [[1_500_000], '1.5M'],
+    [[2_000], '2K'],
+    [['x'], '—'],
+  ]);
 });
 
 describe('AGT-06: dead-code percentage footgun removed', () => {
-  it('does not export formatPctChange/formatLedger — every real percentage field in the app is already a percentage point, not a fraction, so a fraction-based helper is a footgun, not a utility', () => {
+  it('does not export formatPctChange/formatLedger — a fraction-based percentage helper is a footgun, every real percentage field is already a percentage point', () => {
     expect('formatPctChange' in format).toBe(false);
     expect('formatLedger' in format).toBe(false);
   });
 });
 
-describe('formatPriceSmall / formatPairPrice', () => {
-  it('keeps sub-threshold precision instead of collapsing to 0.00', () => {
-    expect(formatPriceSmall(150)).toBe('150.00');
-    expect(formatPriceSmall(0.0005)).toBe('0.0005'); // plain decimal
-    expect(formatPairPrice(1500)).toBe('1500.00');
-  });
+describe('formatPriceSmall', () => {
+  table(formatPriceSmall, [
+    [[150], '150.00'],
+    [[0.0005], '0.0005'],
+    [[0], '0'],
+    // COR-01: a negative price is bad data and must not render as a healthy zero.
+    [[-0.5], '-0.5'],
+    // The exact decimal is rounded, not its nearest double (2.0000499999…).
+    [['2.00005'], '2.0001'],
+    [['150'], '150.00'],
+    [['0.0123456'], '0.012346'],
+    [['0.0005'], '0.0005'],
+    [['0'], '0'],
+    [['-0.5'], '-0.5'],
+    [[1e-25], '<0.00000000000000000001'],
+    [[-1e-25], '-<0.00000000000000000001'],
+  ]);
 
-  it('renders a real zero as the bare "0"', () => {
-    expect(formatPriceSmall(0)).toBe('0');
-  });
-
-  it('COR-01: does not mask a negative price as a legitimate "0"', () => {
-    // A negative price is bad data, not a zero — it must render
-    // distinguishably (and not identically to a healthy zero-price row).
-    expect(formatPriceSmall(-0.5)).not.toBe('0');
-    expect(formatPriceSmall(-0.5)).toBe('-0.5'); // plain decimal
+  it('never emits an exponent for tiny prices', () => {
+    for (const n of [3.353e-4, 1e-6, 9.9e-9, 2.5e-11]) {
+      expect(formatPriceSmall(n)).not.toMatch(/e/i);
+    }
   });
 });
 
-describe('formatPriceSmall / formatPairPrice on wire strings', () => {
-  it('rounds the exact decimal, not its nearest double', () => {
-    // 2.00005's double is 2.0000499999…, which toFixed(4) rounds down.
-    expect(formatPairPrice('2.00005')).toBe('2.0001');
-    expect(formatPriceSmall('2.00005')).toBe('2.0001');
-    expect(formatPairPrice('12345678901234567.89')).toBe(
-      '12345678901234567.89',
-    );
-  });
-
-  it('keeps the number path bands and the sub-unit tail', () => {
-    expect(formatPriceSmall('150')).toBe('150.00');
-    expect(formatPriceSmall('0.0123456')).toBe('0.012346');
-    expect(formatPriceSmall('0.0005')).toBe('0.0005');
-    expect(formatPairPrice('0.00001234567')).toBe('0.00001235');
-    expect(formatPairPrice('0.000000000000000000001')).toBe(
-      '<0.00000000000000000001',
-    );
-    expect(formatPriceSmall('0')).toBe('0');
-    expect(formatPriceSmall('-0.5')).toBe('-0.5');
-    expect(formatPairPrice('abc')).toBe('—');
-  });
+describe('formatPairPrice', () => {
+  table(formatPairPrice, [
+    [[1500], '1500.00'],
+    [['2.00005'], '2.0001'],
+    [['12345678901234567.89'], '12345678901234567.89'],
+    [['0.00001234567'], '0.00001235'],
+    [['0.000000000000000000001'], '<0.00000000000000000001'],
+    [['abc'], '—'],
+  ]);
 });
 
 describe('formatOraclePrice', () => {
-  // Extracted from oracles/OraclesView so the /oracles table and
-  // the per-asset oracle panel cannot drift apart. These pin the exact
-  // pre-extraction behaviour.
-  it('keeps 4 digits at/above 1 and 6 below, on the real oracle shapes', () => {
-    // Reflector USDC at 14 decimals, Band USDC at 9 (r1).
-    expect(formatOraclePrice('1.00003382630191')).toBe('1.0000');
-    expect(formatOraclePrice('0.999822000')).toBe('0.999822');
-    expect(formatOraclePrice('0.17892015847842')).toBe('0.178920');
-  });
-
-  it('drops to significant digits below a cent rather than to 0.000000', () => {
-    expect(formatOraclePrice('0.0000034521')).toBe('0.000003452');
-    expect(formatOraclePrice('0')).toBe('0');
-  });
-
-  // An oracle reading is evidence. A value we cannot parse is reported
-  // verbatim, never swallowed into an em-dash.
-  it('renders an unparseable wire value verbatim', () => {
-    expect(formatOraclePrice('not-a-number')).toBe('not-a-number');
-  });
-
-  // Number('') is 0, so the naive form rendered a blank price as an
-  // oracle quoting the asset at ZERO. Blank is absence, not a reading.
-  it('does not turn a blank price into a zero quote', () => {
-    expect(formatOraclePrice('')).toBe('');
-    expect(formatOraclePrice('   ')).toBe('   ');
-    // A real zero still renders as one.
-    expect(formatOraclePrice('0')).toBe('0');
-    expect(formatOraclePrice('0.00000000')).toBe('0');
-  });
+  // An oracle reading is evidence: unparseable values are reported verbatim,
+  // and a blank is absence, not a zero quote (Number('') is 0).
+  table(formatOraclePrice, [
+    [['1.00003382630191'], '1.0000'],
+    [['0.999822000'], '0.999822'],
+    [['0.17892015847842'], '0.178920'],
+    [['0.0000034521'], '0.000003452'],
+    [['0'], '0'],
+    [['0.00000000'], '0'],
+    [['not-a-number'], 'not-a-number'],
+    [[''], ''],
+    [['   '], '   '],
+  ]);
 });
 
 describe('formatRelative', () => {
-  it('never renders NaN — em-dash for missing timestamps', () => {
-    expect(formatRelative(null)).toBe('—');
-    expect(formatRelative(undefined)).toBe('—');
+  table(formatRelative, [
+    [[null], '—'],
+    [[undefined], '—'],
+  ]);
+
+  it('drops the suffix for dense feeds when asked', () => {
+    const iso = new Date(Date.now() - 3 * 3600_000).toISOString();
+    expect(formatRelative(iso)).toBe('3h ago');
+    expect(formatRelative(iso, { suffix: false })).toBe('3h');
   });
 });
 
-describe('scaleBaseUnits / formatBaseUnits', () => {
-  it('BigInt-divides smallest-unit integer strings past 2^53 without mis-scaling', () => {
-    // 554421152474348098 stroops ≈ 5.54e17 — past 2^53, where a
-    // Number()-then-divide path silently rounds the integer first.
-    expect(format.formatBaseUnits('554421152474348098', 7)).toBe(
-      '55,442,115,247.4348',
-    );
+describe('formatBaseUnits', () => {
+  // 554421152474348098 is past 2^53, where Number()-then-divide mis-scales.
+  table(format.formatBaseUnits, [
+    [['554421152474348098', 7], '55,442,115,247.4348'],
+    [[undefined, 7], '—'],
+    [['', 7], '—'],
+    [['not-a-number', 7], '—'],
+    [['0', 7], '0'],
+    [['-25000000', 7], '-2.5'],
+    [['10000000000', 7], '1,000'],
+  ]);
+});
+
+describe('scaleBaseUnits', () => {
+  table(format.scaleBaseUnits, [
+    [[null, 7], null],
+    [['garbage', 7], null],
+    [['2500000000', 7], 250],
+  ]);
+
+  it('BigInt-divides past 2^53', () => {
     expect(format.scaleBaseUnits('554421152474348098', 7)).toBeCloseTo(
       55442115247.43481,
       3,
     );
   });
-
-  it('keeps absent/garbage values as "—"/null — never NaN or a fabricated zero', () => {
-    expect(format.formatBaseUnits(undefined, 7)).toBe('—');
-    expect(format.formatBaseUnits('', 7)).toBe('—');
-    expect(format.formatBaseUnits('not-a-number', 7)).toBe('—');
-    expect(format.scaleBaseUnits(null, 7)).toBeNull();
-    expect(format.scaleBaseUnits('garbage', 7)).toBeNull();
-  });
-
-  it('handles zero, negatives, and fraction trimming', () => {
-    expect(format.formatBaseUnits('0', 7)).toBe('0');
-    expect(format.formatBaseUnits('-25000000', 7)).toBe('-2.5');
-    expect(format.formatBaseUnits('10000000000', 7)).toBe('1,000');
-    expect(format.scaleBaseUnits('2500000000', 7)).toBe(250);
-  });
 });
 
 describe('baseUnitsDecimal', () => {
+  table(format.baseUnitsDecimal, [
+    [['554421152474348098', 7], '55442115247.4348098'],
+    [['5', 7], '0.0000005'],
+    [['-25000000', 7], '-2.5000000'],
+    [['42', 0], '42'],
+    [[undefined, 7], null],
+    [['', 7], null],
+    [['1.5', 7], null],
+    [['1e9', 7], null],
+    [['100', -1], null],
+    [['100', 1.5], null],
+  ]);
+
   it('scales exactly, so rounding the result is exact too', () => {
-    expect(format.baseUnitsDecimal('554421152474348098', 7)).toBe(
-      '55442115247.4348098',
-    );
-    expect(format.baseUnitsDecimal('5', 7)).toBe('0.0000005');
-    expect(format.baseUnitsDecimal('-25000000', 7)).toBe('-2.5000000');
-    expect(format.baseUnitsDecimal('42', 0)).toBe('42');
     // As a float, 2.00005 sits just below the half and rounds to 2.0000.
     expect(formatPriceSmall(format.baseUnitsDecimal('200005000', 8)!)).toBe(
       '2.0001',
     );
   });
-
-  it('is null for anything but a plain integer and a valid scale', () => {
-    expect(format.baseUnitsDecimal(undefined, 7)).toBeNull();
-    expect(format.baseUnitsDecimal('', 7)).toBeNull();
-    expect(format.baseUnitsDecimal('1.5', 7)).toBeNull();
-    expect(format.baseUnitsDecimal('1e9', 7)).toBeNull();
-    expect(format.baseUnitsDecimal('100', -1)).toBeNull();
-    expect(format.baseUnitsDecimal('100', 1.5)).toBeNull();
-  });
 });
 
 describe('formatDecimalAmount', () => {
-  it('groups a headline money string exactly, at every magnitude', () => {
-    expect(format.formatDecimalAmount('40538494.54')).toBe('40,538,494.54');
-    expect(format.formatDecimalAmount('1569.77')).toBe('1,569.77');
-    expect(format.formatDecimalAmount('0.01')).toBe('0.01');
-    // Bare integer / short fraction on the wire still renders 2 places.
-    expect(format.formatDecimalAmount('1000')).toBe('1,000.00');
-    expect(format.formatDecimalAmount('1000.5')).toBe('1,000.50');
-    expect(format.formatDecimalAmount('-12.30')).toBe('-12.30');
-  });
-
-  it('keeps every digit past 2^53 — the whole reason it is not Number()', () => {
-    // 9007199254740993 = 2^53 + 1: Number() renders this as
-    // 9,007,199,254,740,992 (the odd unit is unrepresentable), so a
-    // parse-first formatter is off by a dollar before it starts.
-    expect(format.formatDecimalAmount('9007199254740993.07')).toBe(
-      '9,007,199,254,740,993.07',
-    );
-    expect(format.formatDecimalAmount('123456789012345678901234.99')).toBe(
-      '123,456,789,012,345,678,901,234.99',
-    );
-  });
-
-  it('returns null (never a zero-looking placeholder) for absence/garbage', () => {
-    expect(format.formatDecimalAmount(undefined)).toBeNull();
-    expect(format.formatDecimalAmount(null)).toBeNull();
-    expect(format.formatDecimalAmount('')).toBeNull();
-    expect(format.formatDecimalAmount('NaN')).toBeNull();
-    expect(format.formatDecimalAmount('1e6')).toBeNull();
-  });
+  // 9007199254740993 = 2^53 + 1: a parse-first formatter is off before it starts.
+  table(format.formatDecimalAmount, [
+    [['40538494.54'], '40,538,494.54'],
+    [['1569.77'], '1,569.77'],
+    [['0.01'], '0.01'],
+    [['1000'], '1,000.00'],
+    [['1000.5'], '1,000.50'],
+    [['-12.30'], '-12.30'],
+    [['9007199254740993.07'], '9,007,199,254,740,993.07'],
+    [['123456789012345678901234.99'], '123,456,789,012,345,678,901,234.99'],
+    [[undefined], null],
+    [[null], null],
+    [[''], null],
+    [['NaN'], null],
+    [['1e6'], null],
+  ]);
 });
 
 describe('truncateMiddle', () => {
@@ -224,75 +194,40 @@ describe('truncateMiddle', () => {
   });
 });
 
-// Operator call: no scientific notation anywhere a price
-// renders — "$3.353e-4" is not user-friendly; "$0.0003353" is no less
-// accurate.
+// No scientific notation anywhere a price renders.
 describe('formatSubunitPrice', () => {
-  it('renders the founding example as a plain decimal', () => {
-    expect(formatSubunitPrice(3.353e-4)).toBe('0.0003353');
-  });
-  it('keeps 4 significant digits however deep the leading zeros', () => {
-    expect(formatSubunitPrice(1.234e-7)).toBe('0.0000001234');
-  });
-  it('trims trailing zeros', () => {
-    expect(formatSubunitPrice(0.0005)).toBe('0.0005');
-  });
-  it('keeps the bad-data negative sign visible (COR-01)', () => {
-    expect(formatSubunitPrice(-3.353e-4)).toBe('-0.0003353');
-  });
-  it('caps the decimal tail at 20 places for deep dust', () => {
-    // 1e-18 still renders as an honest plain decimal within the cap —
-    // long, but accurate, and monospace columns absorb it.
-    expect(formatSubunitPrice(1e-18)).toBe('0.000000000000000001');
-    expect(formatSubunitPrice(1e-20)).toBe('0.00000000000000000001');
-  });
-  it('renders dust below the cap as a signed bound, never "0" or "-0"', () => {
-    expect(formatSubunitPrice(1e-25)).toBe('<0.00000000000000000001');
-    expect(formatSubunitPrice(-1e-25)).toBe('-<0.00000000000000000001');
-    expect(formatPriceSmall(1e-25)).not.toBe('0');
-    expect(formatPriceSmall(-1e-25)).toBe('-<0.00000000000000000001');
-  });
+  table(formatSubunitPrice, [
+    [[3.353e-4], '0.0003353'],
+    [[1.234e-7], '0.0000001234'],
+    [[0.0005], '0.0005'],
+    [[-3.353e-4], '-0.0003353'],
+    // Decimal tail is capped at 20 places.
+    [[1e-18], '0.000000000000000001'],
+    [[1e-20], '0.00000000000000000001'],
+    // Dust below the cap is a signed bound, never "0" or "-0".
+    [[1e-25], '<0.00000000000000000001'],
+    [[-1e-25], '-<0.00000000000000000001'],
+  ]);
 });
 
-describe('formatPriceSmall — no scientific notation', () => {
-  it('never emits an exponent for tiny prices', () => {
-    for (const n of [3.353e-4, 1e-6, 9.9e-9, 2.5e-11]) {
-      expect(formatPriceSmall(n)).not.toMatch(/e/i);
-    }
-  });
-});
-
-// The consolidated relative/duration canonicals.
 describe('formatDurationShort', () => {
-  it('formats second buckets without a suffix', () => {
-    expect(formatDurationShort(45)).toBe('45s');
-    expect(formatDurationShort(180)).toBe('3m');
-    expect(formatDurationShort(7200)).toBe('2h');
-    expect(formatDurationShort(200000)).toBe('2d');
-  });
-  it('renders negative (clock-skewed) and non-finite lags as unknown', () => {
-    expect(formatDurationShort(-5)).toBe('—');
-    expect(formatDurationShort(Number.NaN)).toBe('—');
-  });
+  table(formatDurationShort, [
+    [[45], '45s'],
+    [[180], '3m'],
+    [[7200], '2h'],
+    [[200000], '2d'],
+    [[-5], '—'],
+    [[Number.NaN], '—'],
+  ]);
 });
 
 describe('formatDurationLong', () => {
-  it('formats compound durations', () => {
-    expect(formatDurationLong(135 * 60_000)).toBe('2h 15m');
-    expect(formatDurationLong(30 * 60_000)).toBe('30m');
-    expect(formatDurationLong(120 * 60_000)).toBe('2h');
-  });
-  it('guards non-finite input (previously rendered "NaNm")', () => {
-    expect(formatDurationLong(Number.NaN)).toBe('—');
-  });
-});
-
-describe('formatRelative suffix option', () => {
-  it('drops the suffix for dense feeds when asked', () => {
-    const iso = new Date(Date.now() - 3 * 3600_000).toISOString();
-    expect(formatRelative(iso)).toBe('3h ago');
-    expect(formatRelative(iso, { suffix: false })).toBe('3h');
-  });
+  table(formatDurationLong, [
+    [[135 * 60_000], '2h 15m'],
+    [[30 * 60_000], '30m'],
+    [[120 * 60_000], '2h'],
+    [[Number.NaN], '—'],
+  ]);
 });
 
 describe('formatRelativeLong', () => {
@@ -304,121 +239,87 @@ describe('formatRelativeLong', () => {
 });
 
 describe('multiplyDecimalStrings', () => {
-  it('multiplies exactly without rounding to a fixed scale', () => {
-    expect(format.multiplyDecimalStrings('0.000000001', '0.0003')).toBe(
-      '0.0000000000003',
-    );
-    expect(format.multiplyDecimalStrings('2.50', '4')).toBe('10');
-    expect(format.multiplyDecimalStrings('123456789012345678901', '1.5')).toBe(
-      '185185183518518518351.5',
-    );
-  });
-
-  it('carries the sign and never renders a negative zero', () => {
-    expect(format.multiplyDecimalStrings('-0.5', '0.25')).toBe('-0.125');
-    expect(format.multiplyDecimalStrings('-0.5', '-0.25')).toBe('0.125');
-    expect(format.multiplyDecimalStrings('-0.5', '0.00')).toBe('0');
-  });
-
-  it('returns null for a non-decimal input', () => {
-    expect(format.multiplyDecimalStrings('1e-9', '1')).toBeNull();
-    expect(format.multiplyDecimalStrings('NaN', '1')).toBeNull();
-    expect(format.multiplyDecimalStrings('', '1')).toBeNull();
-  });
+  table(format.multiplyDecimalStrings, [
+    [['0.000000001', '0.0003'], '0.0000000000003'],
+    [['2.50', '4'], '10'],
+    [['123456789012345678901', '1.5'], '185185183518518518351.5'],
+    [['-0.5', '0.25'], '-0.125'],
+    [['-0.5', '-0.25'], '0.125'],
+    [['-0.5', '0.00'], '0'],
+    [['1e-9', '1'], null],
+    [['NaN', '1'], null],
+    [['', '1'], null],
+  ]);
 });
 
 describe('formatCompactUnits', () => {
-  it('rounds the exact value, not a float that crossed the display boundary', () => {
-    // 512,304,999,999,999.966… whole units: 512.3T. Number()-then-divide
-    // yields 512305000000000 and so "512.31T".
-    expect(format.formatCompactUnits('5123049999999999660566', 7)).toBe(
-      '512.3T',
-    );
-    expect(format.formatCompactUnits('8030049999999999577453', 7)).toBe('803T');
-  });
-
-  it('keeps an 18-decimal supply above 2^53 base units at its true magnitude', () => {
-    expect(format.formatCompactUnits('1000000000000000000000000000', 18)).toBe(
-      '1B',
-    );
-  });
-
-  it('formats decimal strings and small values to two exact places', () => {
-    expect(format.formatCompactUnits('1250.0000000')).toBe('1.25K');
-    expect(format.formatCompactUnits('1234.5')).toBe('1.23K');
-    expect(format.formatCompactUnits('12.345')).toBe('12.35');
-    expect(format.formatCompactUnits('-12.345')).toBe('-12.35');
-    expect(format.formatCompactUnits('7')).toBe('7');
-    expect(format.formatCompactUnits('123456', 7)).toBe('0.01');
-  });
-
-  it('renders an absent or non-decimal value as a dash, never a zero', () => {
-    expect(format.formatCompactUnits(undefined)).toBe('—');
-    expect(format.formatCompactUnits('')).toBe('—');
-    expect(format.formatCompactUnits('1e27')).toBe('—');
-  });
+  // Rounds the exact value, not a float that crossed the display boundary.
+  table(format.formatCompactUnits, [
+    [['5123049999999999660566', 7], '512.3T'],
+    [['8030049999999999577453', 7], '803T'],
+    [['1000000000000000000000000000', 18], '1B'],
+    [['1250.0000000'], '1.25K'],
+    [['1234.5'], '1.23K'],
+    [['12.345'], '12.35'],
+    [['-12.345'], '-12.35'],
+    [['7'], '7'],
+    [['123456', 7], '0.01'],
+    [[undefined], '—'],
+    [[''], '—'],
+    [['1e27'], '—'],
+  ]);
 });
 
 describe('decimalOrNull', () => {
-  it('parses a decimal and reports absence as null, never 0', () => {
-    expect(format.decimalOrNull('12.5')).toBe(12.5);
-    expect(format.decimalOrNull('0')).toBe(0);
-    expect(format.decimalOrNull(undefined)).toBeNull();
-    expect(format.decimalOrNull(null)).toBeNull();
-    expect(format.decimalOrNull('')).toBeNull();
-    expect(format.decimalOrNull('n/a')).toBeNull();
-  });
+  table(format.decimalOrNull, [
+    [['12.5'], 12.5],
+    [['0'], 0],
+    [[undefined], null],
+    [[null], null],
+    [[''], null],
+    [['n/a'], null],
+  ]);
 });
 
 describe('compareDecimalDesc', () => {
-  it('orders exactly above 2^53, treats absent as 0, ties malformed', () => {
+  table(compareDecimalDesc, [
+    [[null, ''], 0],
+    [['1', null], -1],
+    [['x', '1'], 1],
+  ]);
+
+  it('orders exactly above 2^53 and ranks malformed rows as 0', () => {
     const rows = ['9007199254740992', null, '9007199254740993', ''];
     expect([...rows].sort(compareDecimalDesc)[0]).toBe('9007199254740993');
-    expect(compareDecimalDesc(null, '')).toBe(0);
-    expect(compareDecimalDesc('1', null)).toBe(-1);
-    expect(compareDecimalDesc('x', '1')).toBe(1);
-    // A malformed row ranks as 0, so it cannot scramble the valid rows.
     expect(['1', 'x', '5'].sort(compareDecimalDesc)).toEqual(['5', '1', 'x']);
   });
 });
 
 describe('formatUsdWhole', () => {
-  it('rounds half away from zero in BigInt, exact above 2^53', () => {
-    expect(format.formatUsdWhole('9007199254740993.5')).toBe(
-      '$9,007,199,254,740,994',
-    );
-    expect(format.formatUsdWhole('1234.49')).toBe('$1,234');
-    expect(format.formatUsdWhole('-1234.5')).toBe('-$1,235');
-    expect(format.formatUsdWhole(null)).toBe('—');
-    expect(format.formatUsdWhole('1e5')).toBe('—');
-  });
+  table(format.formatUsdWhole, [
+    [['9007199254740993.5'], '$9,007,199,254,740,994'],
+    [['1234.49'], '$1,234'],
+    [['-1234.5'], '-$1,235'],
+    [[null], '—'],
+    [['1e5'], '—'],
+  ]);
 });
 
 describe('formatWhole', () => {
-  it('rounds like formatUsdWhole, without the currency', () => {
-    expect(format.formatWhole('9007199254740993.5')).toBe(
-      '9,007,199,254,740,994',
-    );
-    expect(format.formatWhole('-1234.5')).toBe('-1,235');
-    expect(format.formatWhole('-0.4')).toBe('0');
-    expect(format.formatWhole(null)).toBe('—');
-    expect(format.formatWhole('1e5')).toBe('—');
-  });
+  table(format.formatWhole, [
+    [['9007199254740993.5'], '9,007,199,254,740,994'],
+    [['-1234.5'], '-1,235'],
+    [['-0.4'], '0'],
+    [[null], '—'],
+    [['1e5'], '—'],
+  ]);
 });
 
 describe('divideDecimalString', () => {
-  it('divides exactly above 2^53', () => {
-    expect(format.divideDecimalString('18014398509481986', 2, 0)).toBe(
-      '9007199254740993',
-    );
-  });
-
-  it('keeps the value scale when it exceeds places', () => {
-    expect(format.divideDecimalString('10.0000005', 2, 2)).toBe('5.0000002');
-  });
-
-  it('returns null for a zero count or malformed value', () => {
-    expect(format.divideDecimalString('10', 0)).toBeNull();
-    expect(format.divideDecimalString('abc', 2)).toBeNull();
-  });
+  table(format.divideDecimalString, [
+    [['18014398509481986', 2, 0], '9007199254740993'],
+    [['10.0000005', 2, 2], '5.0000002'],
+    [['10', 0], null],
+    [['abc', 2], null],
+  ]);
 });

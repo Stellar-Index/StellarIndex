@@ -28,6 +28,13 @@ const coverage = {
   computed_at: '2026-09-14T17:57:59Z',
 };
 
+const span = {
+  first_ledger: 100,
+  last_ledger: 200,
+  first_at: '2021-05-23T17:01:53Z',
+  last_at: '2026-09-14T17:40:53Z',
+};
+
 const graph = {
   data: {
     account: ACCOUNT,
@@ -38,10 +45,7 @@ const graph = {
             account: CREATOR,
             creations: 1,
             funded_stroops: '4455340000',
-            first_ledger: 43_611_183,
-            last_ledger: 43_611_183,
-            first_at: '2022-11-17T16:12:20Z',
-            last_at: '2022-11-17T16:12:20Z',
+            ...span,
           },
         ],
         total: 1,
@@ -54,20 +58,14 @@ const graph = {
         accounts: 12_345,
         creations: 20_000,
         funded_stroops: '123450000000',
-        first_ledger: 100,
-        last_ledger: 200,
-        first_at: '2021-05-23T17:01:53Z',
-        last_at: '2026-09-14T17:40:53Z',
+        ...span,
       },
       // Non-zero, so the cross-link to the sponsor view is offered.
       sponsored: {
         accounts: 785_615,
         sponsorships_started: 2_585_729,
         revocations_issued: 1712,
-        first_ledger: 300,
-        last_ledger: 400,
-        first_at: '2021-05-23T17:01:53Z',
-        last_at: '2026-09-14T17:40:53Z',
+        ...span,
       },
     },
     coverage: { creation: coverage, sponsorship: coverage },
@@ -80,15 +78,7 @@ const graphPage = {
     ...graph.data,
     relation: 'created',
     edges: [
-      {
-        account: CREATOR,
-        creations: 2,
-        funded_stroops: '10000000',
-        first_ledger: 100,
-        last_ledger: 200,
-        first_at: '2024-01-01T00:00:00Z',
-        last_at: '2024-02-01T00:00:00Z',
-      },
+      { account: CREATOR, creations: 2, funded_stroops: '10000000', ...span },
     ],
   },
 };
@@ -102,9 +92,7 @@ const creators = {
         accounts_created: 12_345,
         funded_stroops: '123450000000',
         live_accounts: 9_876,
-        // Deliberately not a stroop figure that renders as the same
-        // string as live_accounts — 9,876 XLM beside 9,876 accounts
-        // would make the assertions below pass on the wrong cell.
+        // Must not render like live_accounts, or assertions pass on the wrong cell.
         live_stroops: '55500000000',
       },
     ],
@@ -124,8 +112,6 @@ const state = {
 
 function route(path: string) {
   if (path.endsWith('/graph/history')) {
-    // Exercised on its own in AccountRelationHistory.test.tsx; here the
-    // point is that a 404 on this one arm does not take the page down.
     throw new Error(`404 Not Found on ${path}`);
   }
   if (path.endsWith('/graph')) return graphPage;
@@ -158,14 +144,9 @@ describe('AccountRelationView', () => {
     });
   });
 
-  /**
-   * THE FINDING THIS GUARDS. The static export builds ONE `shell`
-   * document per board and the CF Function serves it for every address,
-   * so the component is rendered with `shell` at build time and with ''
-   * on the server render before hydration. Firing the account fetches
-   * for either would be a guaranteed 404 per page view, and rendering a
-   * loading state forever would be worse.
-   */
+  // The static export builds ONE `shell` document per board, served for every
+  // address, and the server render passes ''. Fetching for either is a
+  // guaranteed 404 per page view.
   it.each(['shell', '', 'not-an-account'])(
     'refuses %o as an address without calling the API',
     async (bad) => {
@@ -183,35 +164,26 @@ describe('AccountRelationView', () => {
     ).toHaveAttribute('href', '/insights/creators/');
   });
 
-  it('leads with the relation the page is about', async () => {
+  it('leads with the relation, keeps the address whole and links to its full page', async () => {
     renderView();
-    // Waited for on a LOADED figure, not on the panel title: the loading
-    // state carries the same title, so a title match would resolve before
-    // any data had arrived.
+    // Waited for on a LOADED figure, not the panel title: the loading state
+    // carries the same title.
     expect(
       await screen.findByText('operations, not addresses'),
     ).toBeInTheDocument();
     expect(screen.getByText('20,000')).toBeInTheDocument();
     expect(screen.getAllByText('12,345').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Accounts created').length).toBeGreaterThan(0);
-  });
-
-  it('keeps the address whole and links to its full account page', async () => {
-    renderView();
     expect(
-      await screen.findByRole('heading', { level: 1, name: ACCOUNT }),
+      screen.getByRole('heading', { level: 1, name: ACCOUNT }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('link', { name: /Full account page/ }),
     ).toHaveAttribute('href', `/accounts/${ACCOUNT}/`);
   });
 
-  /**
-   * An account can rank on both boards, and the two are different kinds
-   * of fact that must not be added together. The cross-link is how a
-   * reader gets the other answer without the page implying it is the
-   * same one — and it is offered only when there is something there.
-   */
+  // The two boards are different facts that must not be added together; the
+  // cross-link is offered only when there is something there.
   it('offers the sibling relation when the address is active in it', async () => {
     renderView();
     const link = await screen.findByRole('link', {
@@ -244,32 +216,22 @@ describe('AccountRelationView', () => {
     expect(screen.queryByText(/Also a sponsor/)).not.toBeInTheDocument();
   });
 
-  it('shows who created this address, not only whom it created', async () => {
+  it('shows who created this address, the board standing, held assets and the paginated created list', async () => {
     renderView();
     expect(await screen.findByText('Created by')).toBeInTheDocument();
     expect(screen.getByTitle(CREATOR)).toBeInTheDocument();
-  });
 
-  it('shows the board standing and what the created set still holds', async () => {
-    renderView();
     expect(await screen.findByText('#7')).toBeInTheDocument();
     expect(screen.getByText(/of 955,023 creators/)).toBeInTheDocument();
     expect(screen.getByText('Created set still live')).toBeInTheDocument();
     expect(screen.getByText('9,876')).toBeInTheDocument();
     expect(screen.getByText('XLM the set holds now')).toBeInTheDocument();
     expect(screen.getByText(/80\.0% of/)).toBeInTheDocument();
-  });
 
-  it('shows the assets the address itself holds', async () => {
-    renderView();
     expect(await screen.findByText('Positions')).toBeInTheDocument();
-  });
 
-  it('lists the accounts it created, paginated', async () => {
-    renderView();
-    // The edges panel's own column control — "Accounts created" is also
-    // a summary-stat label, so the heading text alone would not prove
-    // the table rendered.
+    // The edges panel's own column control; "Accounts created" is also a
+    // summary-stat label, so the heading text alone would not prove the table.
     expect(
       await screen.findByRole('button', { name: /Creations/ }),
     ).toBeInTheDocument();
@@ -278,11 +240,7 @@ describe('AccountRelationView', () => {
     ).toBeInTheDocument();
   });
 
-  /**
-   * One arm being absent must not take the page with it: graph/history
-   * 404s on a deployment whose API predates it, and every other panel
-   * here reads a different endpoint.
-   */
+  // graph/history 404s on an API that predates it; other panels read other endpoints.
   it('survives the history arm being absent', async () => {
     renderView();
     expect(

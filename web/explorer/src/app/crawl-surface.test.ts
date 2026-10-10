@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -19,29 +20,15 @@ import { metadata as txMeta } from './tx/page';
 /**
  * CRAWL-SURFACE GUARDS
  *
- * The sitemap and the long-tail shells are the two halves of one
- * contract: what the site asks Google to index, and what it asks Google
- * to leave alone. Both halves were inverted at once.
- *
- * The sitemap enumerated the pricing surface but none of the
- * chain-explorer hubs (/network, /ledgers, /transactions, /operations,
- * /accounts, /contracts, /protocols) — indexable, canonical-tagged,
- * content-rich pages reachable only from the nav.
- *
- * Meanwhile /assets/shell/ and /markets/shell/ — the single baked
- * documents functions/{assets,markets}/[[path]].js return with a 200 for
- * EVERY unmatched path under those prefixes — carried indexable
- * metadata, so any garbage URL a crawler tried came back as a soft-404
- * eligible for the index.
+ * The sitemap and the long-tail shells are two halves of one contract:
+ * what the site asks Google to index, and what it asks Google to leave
+ * alone.
  */
 
-// Every API-derived sitemap section now goes through buildFetch
-// (src/lib/buildFetch.ts) — an unreachable or empty listing fails the
-// BUILD (the old bare-fetch/catch/[] fallback silently and
-// permanently dropped a whole URL family on a single transient
-// failure). Stub one benign row per listing so these tests, which only
-// assert on the STATICALLY enumerated pages, don't take a dependency on
-// live API reachability.
+// Every API-derived sitemap section goes through buildFetch, which fails the
+// build on an unreachable or empty listing. Stub one benign row per listing
+// so these tests, which assert on the STATICALLY enumerated pages, don't
+// depend on live API reachability.
 function stubFetchMinimal() {
   const ok = (rows: unknown) =>
     Promise.resolve(
@@ -80,8 +67,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-// Hubs that exist on every network (src/lib/network-routes.ts leaves
-// chain-native routes ungated), so they belong in every build's sitemap.
+async function sitemapPaths() {
+  stubFetchMinimal();
+  return (await sitemap()).map((e) => new URL(e.url).pathname);
+}
+
+// Chain-native hubs exist on every network, so every build's sitemap lists them.
 const EXPLORER_HUBS = [
   '/network',
   '/ledgers',
@@ -92,146 +83,73 @@ const EXPLORER_HUBS = [
   '/protocols',
 ];
 
+const AUTH = 'authenticated surface, noindex via dashboard/layout';
+// A noindex URL in a sitemap is a Search Console error, so these stay out.
+const NOT_FOR_CRAWLERS: ReadonlyMap<string, string> = new Map([
+  ['/signin', 'auth gateway, noindex'],
+  ['/signup', 'auth gateway, noindex'],
+  ...[
+    '/dashboard',
+    '/dashboard/admin',
+    '/dashboard/keys',
+    '/dashboard/price-alerts',
+    '/dashboard/settings',
+    '/dashboard/usage',
+    '/dashboard/webhooks',
+  ].map((r): [string, string] => [r, AUTH]),
+  ['/accounts/[g]', 'per-account shell, noindex long tail'],
+]);
+
 describe('sitemap', () => {
   it('lists the chain-explorer hubs', async () => {
-    stubFetchMinimal();
-    const entries = await sitemap();
-    const paths = new Set(entries.map((e) => new URL(e.url).pathname));
+    const paths = new Set(await sitemapPaths());
     for (const hub of EXPLORER_HUBS) {
       expect(paths, `sitemap is missing ${hub}`).toContain(`${hub}/`);
     }
   });
 
-  /**
-   * The sitemap's other half: everything it submits must be a page a
-   * READER can also get to.
-   *
-   * /insights/sponsors and /insights/creators are the shape this is
-   * written against. Both return real data, both have finished pages,
-   * both were in the sitemap — and the operator still reported "I don't
-   * see pages on the explorer for the sponsors / creators", because the
-   * only way in is the /insights hub. That case is fine (the hub is in
-   * the rail and cards both children), but it is one link away from the
-   * failure mode: had /insights lost its rail entry, the pair would have
-   * been advertised to Google and unreachable to a person, and nothing
-   * would have failed. That is finding S-020 exactly — an orphaned
-   * island that links only to itself.
-   *
-   * A sitemap entry is a crawler hint, never a click path, so the walk
-   * (lib/route-graph) deliberately does not treat the sitemap as a root.
-   * This test joins the two: sitemap ⊆ reachable-from-the-nav.
-   */
+  // sitemap is a crawler hint, never a click path, so the route-graph walk
+  // does not root at it; this joins the two: sitemap ⊆ reachable-from-nav.
   it('submits nothing a reader cannot navigate to', async () => {
-    stubFetchMinimal();
-    const entries = await sitemap();
     const reachable = reachableRoutes();
-
     const orphaned = [
       ...new Set(
-        entries
-          .map((e) => new URL(e.url).pathname)
+        (await sitemapPaths())
           .map((path) => routeFor(path))
           .filter((route): route is string => route !== null)
           .filter((route) => !reachable.has(route)),
       ),
     ].sort();
-
     expect(
       orphaned,
       `sitemapped but unreachable from the nav/footer: ${orphaned.join(', ')}`,
     ).toEqual([]);
   }, 15_000); // walks the whole route graph and builds the sitemap; 5 s flakes under verify's parallel lanes
 
-  /**
-   * And the reverse: a sitemap entry that names no page at all. The
-   * lending section shipped `/lending/undefined` this way (reading a
-   * `contract_id` field the API doesn't send), and the source section
-   * emitted ~33 /exchanges|/dexes URLs that 404'd — Google penalises a
-   * sitemap full of broken URLs. `routeFor` returning null means no
-   * `page.tsx` claims the path.
-   *
-   * Fetch is stubbed offline here, so only the statically enumerated
-   * entries are under test; the API-derived sections fall back to [].
-   */
+  // routeFor returning null means no page.tsx claims the path.
   it('names a real page for every entry', async () => {
-    stubFetchMinimal();
-    const entries = await sitemap();
     const unrouted = [
-      ...new Set(
-        entries
-          .map((e) => new URL(e.url).pathname)
-          .filter((path) => routeFor(path) === null),
-      ),
+      ...new Set((await sitemapPaths()).filter((p) => routeFor(p) === null)),
     ].sort();
-
     expect(
       unrouted,
       `sitemap entries with no page.tsx: ${unrouted.join(', ')}`,
     ).toEqual([]);
   });
 
-  /**
-   * The third side: a page good enough to put in the nav is good enough
-   * to submit. /bridges (linked from search and from the accounts
-   * activity panel) and /external/assets (an "External" entry in the
-   * rail, whose per-currency CHILDREN were sitemapped while the hub that
-   * indexes them was not) were both missing here — the same omission
-   * this file already records for the seven chain-explorer hubs, made
-   * again by the two newest members of those families.
-   *
-   * Scoped to what the chrome links directly, because that set is
-   * hand-curated: an entry appears there only when someone decided the
-   * page is a product surface, which is exactly the decision that should
-   * also put it in front of a crawler.
-   *
-   * STATIC routes only. A dynamic route's sitemap entries come from the
-   * API-derived sections (assetPages, convertPages, …), and fetch is
-   * stubbed offline here so those correctly fall back to []. Asserting
-   * over them would test the stub, not the sitemap.
-   */
-  const isDynamic = (route: string) => route.includes('[');
-
-  const NOT_FOR_CRAWLERS: ReadonlyMap<string, string> = new Map([
-    // robots:noindex — a noindex URL in a sitemap is a Search Console
-    // error ("Submitted URL marked 'noindex'"), so these must stay out.
-    ['/signin', 'auth gateway, noindex'],
-    ['/signup', 'auth gateway, noindex'],
-    ['/dashboard', 'authenticated surface, noindex via dashboard/layout'],
-    ['/dashboard/admin', 'authenticated surface, noindex via dashboard/layout'],
-    ['/dashboard/keys', 'authenticated surface, noindex via dashboard/layout'],
-    [
-      '/dashboard/price-alerts',
-      'authenticated surface, noindex via dashboard/layout',
-    ],
-    [
-      '/dashboard/settings',
-      'authenticated surface, noindex via dashboard/layout',
-    ],
-    ['/dashboard/usage', 'authenticated surface, noindex via dashboard/layout'],
-    [
-      '/dashboard/webhooks',
-      'authenticated surface, noindex via dashboard/layout',
-    ],
-    // Unbounded per-entity long tail, served as a noindex shell.
-    ['/accounts/[g]', 'per-account shell, noindex long tail'],
-  ]);
-
+  // STATIC routes only: dynamic routes' entries come from API-derived
+  // sections, which the offline stub cannot meaningfully exercise.
   it('submits every page the nav offers', async () => {
-    stubFetchMinimal();
-    const entries = await sitemap();
     const sitemapped = new Set(
-      entries
-        .map((e) => new URL(e.url).pathname)
+      (await sitemapPaths())
         .map((path) => routeFor(path))
         .filter((route): route is string => route !== null),
     );
-
     const missing = [...chromeLinkedRoutes()]
-      .filter((route) => !isDynamic(route))
+      .filter((route) => !route.includes('['))
       .filter((route) => !sitemapped.has(route))
       .filter((route) => !NOT_FOR_CRAWLERS.has(route))
       .sort();
-
     expect(
       missing,
       `linked from the nav but absent from the sitemap: ${missing.join(', ')}`,
@@ -239,8 +157,7 @@ describe('sitemap', () => {
   });
 
   it('keeps the crawler exemptions honest', () => {
-    // An exemption for a route that no longer exists is dead weight that
-    // would silently cover a future route of the same name.
+    // An exemption for a vanished route would silently cover a future route of the same name.
     const stale = [...NOT_FOR_CRAWLERS.keys()]
       .filter((route) => !ROUTES.has(route))
       .sort();
@@ -252,123 +169,68 @@ describe('sitemap', () => {
 });
 
 describe('long-tail shell metadata', () => {
-  it('keeps the /assets shell out of the index', async () => {
-    // generateStaticParams emits case variants of every slug, so the
-    // sentinel reaches the page as shell/SHELL alike.
-    for (const slug of ['shell', 'SHELL']) {
-      const meta = await assetMetadata({ params: Promise.resolve({ slug }) });
-      expect(meta.robots, `/assets/${slug} is indexable`).toMatchObject({
-        index: false,
-      });
-    }
-  });
+  const shells: [string, () => Promise<Metadata>][] = [
+    [
+      '/assets/shell',
+      () => assetMetadata({ params: Promise.resolve({ slug: 'shell' }) }),
+    ],
+    // generateStaticParams emits case variants of every slug.
+    [
+      '/assets/SHELL',
+      () => assetMetadata({ params: Promise.resolve({ slug: 'SHELL' }) }),
+    ],
+    [
+      '/markets/shell',
+      () => pairMetadata({ params: Promise.resolve({ pair: 'shell' }) }),
+    ],
+    [
+      '/markets/not-a-pair',
+      () => pairMetadata({ params: Promise.resolve({ pair: 'not-a-pair' }) }),
+    ],
+    [
+      '/issuers/shell',
+      () => issuerMetadata({ params: Promise.resolve({ g_strkey: 'shell' }) }),
+    ],
+    [
+      '/lending/shell',
+      () => poolMetadata({ params: Promise.resolve({ pool: 'shell' }) }),
+    ],
+  ];
 
-  it('keeps the /markets shell and non-pair slugs out of the index', async () => {
-    for (const pair of ['shell', 'not-a-pair']) {
-      const meta = await pairMetadata({ params: Promise.resolve({ pair }) });
-      expect(meta.robots, `/markets/${pair} is indexable`).toMatchObject({
-        index: false,
-      });
-    }
-  });
-
-  it('keeps the /issuers shell out of the index', async () => {
-    const meta = await issuerMetadata({
-      params: Promise.resolve({ g_strkey: 'shell' }),
-    });
-    expect(meta.robots, '/issuers/shell is indexable').toMatchObject({
+  it.each(shells)('keeps %s out of the index', async (route, load) => {
+    expect((await load()).robots, `${route} is indexable`).toMatchObject({
       index: false,
     });
   });
 
-  /**
-   * functions/lending/[[path]].js now serves /lending/shell/ for
-   * any pool id outside the build-time pre-render (same S1b pattern as
-   * /assets and /markets) — its baked metadata must stay generic and out
-   * of the index, and declare its own empty `alternates` (F095) rather
-   * than inheriting the root layout's canonical.
-   */
-  it('keeps the /lending shell out of the index and clears the canonical', async () => {
-    const meta = await poolMetadata({ params: Promise.resolve({ pool: 'shell' }) });
-    expect(meta.robots, '/lending/shell is indexable').toMatchObject({
+  // Next's metadata merge only touches keys present on the returned object, so
+  // a shell with no `alternates` key inherits the root layout's canonical '/'.
+  it.each(
+    shells.filter(
+      ([route]) => route !== '/assets/SHELL' && route !== '/markets/not-a-pair',
+    ),
+  )(
+    '%s declares an empty alternates instead of inheriting the root canonical',
+    async (route, load) => {
+      const meta = await load();
+      expect(
+        meta,
+        `${route} must declare alternates itself, not inherit the root layout canonical`,
+      ).toHaveProperty('alternates');
+      expect(meta.alternates?.canonical).toBeUndefined();
+    },
+  );
+
+  // These render entirely from their query string and tag themselves with a
+  // bare-path canonical, so the one crawlable URL is an empty shell.
+  it.each([
+    ['/contract', contractMeta],
+    ['/ledger', ledgerMeta],
+    ['/tx', txMeta],
+    ['/operation', operationMeta],
+  ])('keeps the query-param shell %s out of the index', (route, meta) => {
+    expect(meta.robots, `${route} is indexable`).toMatchObject({
       index: false,
     });
-    expect(meta, '/lending/shell must declare alternates itself').toHaveProperty(
-      'alternates',
-    );
-    expect(meta.alternates?.canonical).toBeUndefined();
-  });
-
-  /**
-   * F095: Next's metadata merge (lib/metadata/resolve-metadata.js
-   * `mergeMetadata`) only touches keys present on the object a segment
-   * returns — it iterates `for (const key in metadata)`. A shell that
-   * returns no `alternates` key at all does not get "no canonical"; it
-   * inherits the root layout's `alternates: { canonical: '/' }`
-   * unchanged, so every arbitrary long-tail /assets/* and /markets/*
-   * hit baked a rel=canonical pointing at the homepage. noindex hid the
-   * consequence (the tag was never crawled under an indexed URL) but
-   * did not remove the tag itself. The fix must explicitly declare
-   * `alternates` on the shell's metadata so the merge overrides the
-   * parent instead of falling through to it.
-   */
-  it('overrides the root layout canonical instead of inheriting it', async () => {
-    const assetMeta = await assetMetadata({
-      params: Promise.resolve({ slug: 'shell' }),
-    });
-    expect(
-      assetMeta,
-      '/assets/shell must declare alternates itself, not inherit the root layout canonical',
-    ).toHaveProperty('alternates');
-    expect(assetMeta.alternates?.canonical).toBeUndefined();
-
-    const marketMeta = await pairMetadata({
-      params: Promise.resolve({ pair: 'shell' }),
-    });
-    expect(
-      marketMeta,
-      '/markets/shell must declare alternates itself, not inherit the root layout canonical',
-    ).toHaveProperty('alternates');
-    expect(marketMeta.alternates?.canonical).toBeUndefined();
-
-    const issuerMeta = await issuerMetadata({
-      params: Promise.resolve({ g_strkey: 'shell' }),
-    });
-    expect(
-      issuerMeta,
-      '/issuers/shell must declare alternates itself, not inherit the root layout canonical',
-    ).toHaveProperty('alternates');
-    expect(issuerMeta.alternates?.canonical).toBeUndefined();
-  });
-
-  /**
-   * The query-param entity pages are the third shape of the same defect.
-   * /contract?id=, /ledger?seq=, /tx?hash= and /operation?tx=&i= render
-   * ENTIRELY from their query string, and each tags itself
-   * `canonical: '/<route>'` — so the one URL a crawler can construct, and
-   * the one every parameterised hit is consolidated onto, is the bare
-   * path, which renders an empty shell.
-   *
-   * The first three exist specifically to catch inbound legacy links, so
-   * they are the most likely of all these pages to actually be crawled.
-   * Every canonical counterpart (/contracts/[id], /ledgers/[seq],
-   * /transactions/[hash], /accounts/[g]) already carries noindex; these
-   * did not.
-   *
-   * `follow: true` throughout — the outbound links are real and should
-   * keep flowing; it is only the empty shell that must not be indexed.
-   */
-  it('keeps the query-param entity shells out of the index', async () => {
-    const shells = {
-      '/contract': contractMeta,
-      '/ledger': ledgerMeta,
-      '/tx': txMeta,
-      '/operation': operationMeta,
-    };
-    for (const [route, meta] of Object.entries(shells)) {
-      expect(meta.robots, `${route} is indexable`).toMatchObject({
-        index: false,
-      });
-    }
   });
 });
