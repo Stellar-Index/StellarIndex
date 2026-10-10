@@ -80,6 +80,30 @@ export function formatWhole(raw: string | null | undefined): string {
   return n == null ? '—' : n.toLocaleString('en-US');
 }
 
+/**
+ * formatReadable — a decimal wire string at a readable precision: compact
+ * from 1M ("$11.26B"), whole and grouped from 1K ("12,346"), two places
+ * below that, four significant digits below 1. Null for a non-decimal.
+ */
+export function formatReadable(
+  raw: string | null | undefined,
+  usd = false,
+): string | null {
+  const m = raw == null ? null : /^(-?)(\d+)(?:\.(\d+))?$/.exec(raw.trim());
+  if (!m) return null;
+  const [, sign, whole] = m;
+  const body = raw!.trim().replace(/^-/, '');
+  const out =
+    whole.length > 6
+      ? formatCompactUnits(body)
+      : whole.length > 3
+        ? formatWhole(body)
+        : whole === '0'
+          ? formatSubunitPrice(Number(body))
+          : formatCompactUnits(body);
+  return `${sign && out !== '0' ? '-' : ''}${usd ? '$' : ''}${out}`;
+}
+
 function roundWhole(raw: string | null | undefined): bigint | null {
   if (raw == null) return null;
   const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(raw.trim());
