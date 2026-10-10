@@ -2258,8 +2258,7 @@ function BackfillCoverageTable({
   if (!rows || rows.length === 0) {
     return (
       <div className="border-warn-300 bg-warn-50 text-warn-700 rounded-lg border p-3 text-xs">
-        Coverage snapshot pending. Gap scans run every 30 min (6 h for the
-        largest tables); the completeness verdict runs daily at 05:30 UTC.
+        Coverage snapshot pending.
       </div>
     );
   }

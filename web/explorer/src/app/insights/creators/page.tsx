@@ -51,16 +51,7 @@ export default function CreatorsPage() {
             <code className="font-mono">CreateAccount</code> operation and the
             account it created. That link is immutable, so counts only grow.
           </p>
-          <p>
-            It is <strong>not</strong> sponsorship, which is revocable and
-            point-in-time and is not served here; nothing on this page is a
-            sponsorship figure.
-          </p>
-          <p>
-            The board is a precomputed rollup, only as current as its last
-            cycle. Read the counts as covering the stated ledger span and
-            nothing wider.
-          </p>
+          <p>Not sponsorship. Counts cover the stated ledger span only.</p>
         </div>
       </details>
     </Container>

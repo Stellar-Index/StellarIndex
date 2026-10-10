@@ -90,8 +90,7 @@ export function HistoryTabPanel({
         })}
         bodyClassName="text-sm text-ink-muted"
       >
-        No trades observed against XLM in the recent window. Try the Markets tab
-        to see other quote pairs that have traded.
+        No trades against XLM in the recent window.
       </Panel>
     );
   }
