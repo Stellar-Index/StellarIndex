@@ -78,6 +78,9 @@ func TestExactTierUSDVolume_TracksTheWaterfall(t *testing.T) {
 			if cerr != nil {
 				t.Fatalf("ClassifyUSDVolumeTier: %v", cerr)
 			}
+			if !tier.Exact() {
+				t.Fatalf("tier = %q, want an exact tier for this fixture", tier)
+			}
 			got, ok := ExactTierUSDVolume(tier, decimals, tr.BaseAmount.String(), tr.QuoteAmount.String())
 			if !ok {
 				t.Fatalf("ExactTierUSDVolume declined tier %q/%d", tier, decimals)

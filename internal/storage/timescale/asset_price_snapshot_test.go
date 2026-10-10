@@ -259,13 +259,19 @@ func TestAssetPriceSnapshot_MoneyStaysNumeric(t *testing.T) {
 	}
 }
 
-// TestRefreshAssetPriceSnapshotPrune_sargable — the prune deletes on a
-// bare computed_at comparison so a lapsed asset's last known price
-// cannot linger as if it were current.
-func TestRefreshAssetPriceSnapshotPrune_sargable(t *testing.T) {
+// TestRollupPrunes_sargable: each rollup prune deletes on a bare
+// computed_at comparison (index-friendly, no function on the column), so
+// the sweep stays cheap and a lapsed row cannot linger as if current.
+func TestRollupPrunes_sargable(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(refreshAssetPriceSnapshotPrune, "computed_at < now()") {
-		t.Errorf("prune must compare computed_at < now() directly, got: %q", refreshAssetPriceSnapshotPrune)
+	for name, q := range map[string]string{
+		"refreshAssetVolumePrune":        refreshAssetVolumePrune,
+		"refreshAssetPriceSnapshotPrune": refreshAssetPriceSnapshotPrune,
+		"refreshProtocolEventsPrune":     refreshProtocolEventsPrune,
+	} {
+		if !strings.Contains(q, "computed_at < now()") {
+			t.Errorf("%s must compare computed_at < now() directly, got: %q", name, q)
+		}
 	}
 }
 

@@ -13,75 +13,30 @@ import (
 // SEP41NetMintAtOrBefore SQL needs a real DB and lives in
 // test/integration/ per the established convention.
 
-func TestInsertSEP41SupplyEvent_RejectsEmptyContractID(t *testing.T) {
-	s := &Store{}
-	err := s.InsertSEP41SupplyEvent(context.Background(), SEP41SupplyEvent{
-		TxHash: strings.Repeat("a", 64),
-		Kind:   SEP41EventMint,
-		Amount: big.NewInt(1),
-	})
-	if err == nil || !strings.Contains(err.Error(), "ContractID") {
-		t.Errorf("err=%v should mention ContractID", err)
+// TestInsertSEP41SupplyEvent_RejectsInvalidRows. Amounts are
+// non-negative by convention (event_kind carries direction), so a negative
+// amount is upstream confusion the observer missed. "transfer" is a valid
+// SEP-41 event but not supply-affecting.
+func TestInsertSEP41SupplyEvent_RejectsInvalidRows(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	cases := []struct {
+		name       string
+		in         SEP41SupplyEvent
+		wantSubstr string
+	}{
+		{"empty contract", SEP41SupplyEvent{TxHash: hash, Kind: SEP41EventMint, Amount: big.NewInt(1)}, "ContractID"},
+		{"empty tx hash", SEP41SupplyEvent{ContractID: "C1", Kind: SEP41EventMint, Amount: big.NewInt(1)}, "TxHash"},
+		{"transfer kind", SEP41SupplyEvent{ContractID: "C1", TxHash: hash, Kind: SEP41EventKind("transfer"), Amount: big.NewInt(1)}, "Kind"},
+		{"nil amount", SEP41SupplyEvent{ContractID: "C1", TxHash: hash, Kind: SEP41EventMint}, "Amount"},
+		{"negative amount", SEP41SupplyEvent{ContractID: "C1", TxHash: hash, Kind: SEP41EventMint, Amount: big.NewInt(-1)}, "negative"},
 	}
-}
-
-func TestInsertSEP41SupplyEvent_RejectsEmptyTxHash(t *testing.T) {
-	s := &Store{}
-	err := s.InsertSEP41SupplyEvent(context.Background(), SEP41SupplyEvent{
-		ContractID: "C1",
-		Kind:       SEP41EventMint,
-		Amount:     big.NewInt(1),
-	})
-	if err == nil || !strings.Contains(err.Error(), "TxHash") {
-		t.Errorf("err=%v should mention TxHash", err)
-	}
-}
-
-func TestInsertSEP41SupplyEvent_RejectsInvalidKind(t *testing.T) {
-	s := &Store{}
-	err := s.InsertSEP41SupplyEvent(context.Background(), SEP41SupplyEvent{
-		ContractID: "C1",
-		TxHash:     strings.Repeat("a", 64),
-		Kind:       SEP41EventKind("transfer"), // valid SEP-41 event but NOT supply-affecting
-		Amount:     big.NewInt(1),
-	})
-	if err == nil {
-		t.Fatal("expected error on transfer kind (not supply-affecting)")
-	}
-	if !strings.Contains(err.Error(), "Kind") {
-		t.Errorf("err=%v should mention Kind", err)
-	}
-}
-
-func TestInsertSEP41SupplyEvent_RejectsNilAmount(t *testing.T) {
-	s := &Store{}
-	err := s.InsertSEP41SupplyEvent(context.Background(), SEP41SupplyEvent{
-		ContractID: "C1",
-		TxHash:     strings.Repeat("a", 64),
-		Kind:       SEP41EventMint,
-	})
-	if err == nil || !strings.Contains(err.Error(), "Amount") {
-		t.Errorf("err=%v should mention Amount", err)
-	}
-}
-
-// TestInsertSEP41SupplyEvent_RejectsNegativeAmount — by
-// convention amounts are non-negative; event_kind discriminates
-// direction. A negative amount is upstream confusion the
-// observer hasn't caught.
-func TestInsertSEP41SupplyEvent_RejectsNegativeAmount(t *testing.T) {
-	s := &Store{}
-	err := s.InsertSEP41SupplyEvent(context.Background(), SEP41SupplyEvent{
-		ContractID: "C1",
-		TxHash:     strings.Repeat("a", 64),
-		Kind:       SEP41EventMint,
-		Amount:     big.NewInt(-1),
-	})
-	if err == nil {
-		t.Fatal("expected error on negative amount")
-	}
-	if !strings.Contains(err.Error(), "negative") {
-		t.Errorf("err=%v should mention negative", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (&Store{}).InsertSEP41SupplyEvent(context.Background(), tc.in)
+			if err == nil || !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Errorf("err=%v should mention %s", err, tc.wantSubstr)
+			}
+		})
 	}
 }
 

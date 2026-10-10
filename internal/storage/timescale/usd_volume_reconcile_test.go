@@ -1,11 +1,8 @@
 package timescale
 
 import (
-	"context"
 	"math/big"
 	"testing"
-
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // ─── the exact-tier valuation identity ───────────────
@@ -232,101 +229,5 @@ func TestPeggedLegSum_PicksTheLegThatPriced(t *testing.T) {
 	}
 	if got := g.PeggedLegSum(TierEstimated); got != "" {
 		t.Errorf("estimated tier leg = %q, want empty", got)
-	}
-}
-
-// TestClassifyUSDVolumeTier_TracksTheWaterfall is the lockstep guard, and it
-// is the one that actually matters.
-//
-// TestClassifyUSDVolumeTier above pins hardcoded expectations, so it stays
-// green through a change that re-orders the waterfall's legs or swaps which
-// amount a tier divides — the classifier would then attribute the wrong tier
-// and verify-usd-volume would check `usd_volume == quote/10^d` on rows the
-// writer built from the BASE leg, reporting a fleet-wide violation (or, in
-// the mirror case, silently verifying nothing).
-//
-// This closes that by round-tripping a real canonical.Trade through the
-// PRODUCTION valuation function and asserting the classifier's answer
-// reproduces it exactly: same tier semantics, same decimal scale, same leg.
-// If tradeUSDVolume changes and ClassifyUSDVolumeTier does not, this fails.
-func TestClassifyUSDVolumeTier_TracksTheWaterfall(t *testing.T) {
-	spec := testQuoteSpec(t)
-	usdcAsset, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatal(err)
-	}
-	usd, err := canonical.NewFiatAsset("USD")
-	if err != nil {
-		t.Fatal(err)
-	}
-	xlm, err := canonical.NewCryptoAsset("XLM")
-	if err != nil {
-		t.Fatal(err)
-	}
-	usdx, err := canonical.NewClassicAsset("USDX", "GBUYUAI75XXWDZEKLY66CFYKQPET5JR4EENXZBUZ3YXZ7DS56Z4OKOFU")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cases := []struct {
-		name        string
-		source      string
-		base, quote canonical.Asset
-		baseAmt     int64
-		quoteAmt    int64
-	}{
-		{"cex USD quote (tier 1/2)", "binance", xlm, usd, 10_000_000_000, 1_250_000_000},
-		{"dex pegged quote (tier 2)", "sdex", canonical.NativeAsset(), usdcAsset, 10_000_000_000, 1_250_000_000},
-		{"dex pegged base (tier 2b)", "sdex", usdcAsset, canonical.NativeAsset(), 1_250_000_000, 10_000_000_000},
-		// BOTH legs pegged — the only shape whose answer depends on the
-		// ORDER the waterfall probes its legs in, and therefore the only
-		// one that catches a re-ordering. The amounts differ so picking the
-		// wrong leg produces a different number rather than the same one.
-		{"dex both legs pegged (quote wins)", "sdex", usdcAsset, usdx, 1_250_000_000, 9_990_000_000},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			pair, perr := canonical.NewPair(tc.base, tc.quote)
-			if perr != nil {
-				t.Fatal(perr)
-			}
-			tr := canonical.Trade{
-				Source:      tc.source,
-				Pair:        pair,
-				BaseAmount:  canonical.NewAmount(big.NewInt(tc.baseAmt)),
-				QuoteAmount: canonical.NewAmount(big.NewInt(tc.quoteAmt)),
-			}
-
-			// The production waterfall's answer.
-			got := tradeUSDVolume(context.Background(), tr, spec, nil)
-			if got == nil {
-				t.Fatalf("tradeUSDVolume declined a fixture the classifier calls an exact tier")
-			}
-
-			// The classifier's answer, reconstructed from the same row.
-			tier, decimals, cerr := ClassifyUSDVolumeTier(tc.source, tc.base.String(), tc.quote.String(), spec)
-			if cerr != nil {
-				t.Fatalf("ClassifyUSDVolumeTier: %v", cerr)
-			}
-			if !tier.Exact() {
-				t.Fatalf("tier = %q, want an exact tier for this fixture", tier)
-			}
-
-			leg := tc.quoteAmt
-			if tier == TierBasePegged {
-				leg = tc.baseAmt
-			}
-			want := new(big.Rat).SetFrac(big.NewInt(leg), scaleDenominator(decimals))
-			gotRat, ok := new(big.Rat).SetString(*got)
-			if !ok {
-				t.Fatalf("tradeUSDVolume returned an unparseable value %q", *got)
-			}
-			if gotRat.Cmp(want) != 0 {
-				t.Errorf("waterfall produced %s but the classifier's tier %q + decimals %d imply %s — "+
-					"the two have drifted, so verify-usd-volume would check the wrong identity",
-					gotRat.FloatString(10), tier, decimals, want.FloatString(10))
-			}
-		})
 	}
 }

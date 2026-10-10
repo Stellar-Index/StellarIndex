@@ -63,12 +63,3 @@ func TestCountRecentEventsQuery_aquariusCoversNonTradeTables(t *testing.T) {
 		}
 	}
 }
-
-// TestRefreshProtocolEventsPrune_sargable asserts the prune deletes on a
-// bare computed_at comparison (index-friendly, no function on the
-// column) so the stale-source sweep stays cheap.
-func TestRefreshProtocolEventsPrune_sargable(t *testing.T) {
-	if !strings.Contains(refreshProtocolEventsPrune, "computed_at < now()") {
-		t.Errorf("prune must compare computed_at < now() directly, got: %q", refreshProtocolEventsPrune)
-	}
-}

@@ -10,62 +10,33 @@ import (
 // round-trip against Postgres needs testcontainers-go and lives in
 // test/integration/ (per CONTRIBUTING.md §Testing).
 
-func TestUpsertSACBalanceSeedProvenance_RejectsEmptyContractID(t *testing.T) {
-	s := &Store{}
-	err := s.UpsertSACBalanceSeedProvenance(context.Background(), SACBalanceSeedProvenance{
-		AssetKey: "PHO:GAX5...",
-		Source:   SACBalanceSeedSourceFullHistory,
-	})
-	if err == nil || !strings.Contains(err.Error(), "ContractID") {
-		t.Errorf("err=%v should mention ContractID", err)
+func TestUpsertSACBalanceSeedProvenance_RejectsInvalidRows(t *testing.T) {
+	const (
+		contract = "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32"
+		asset    = "PHO:GAX5..."
+	)
+	cases := []struct {
+		name       string
+		in         SACBalanceSeedProvenance
+		wantSubstr string
+	}{
+		{"empty contract", SACBalanceSeedProvenance{AssetKey: asset, Source: SACBalanceSeedSourceFullHistory}, "ContractID"},
+		{"empty asset", SACBalanceSeedProvenance{ContractID: contract, Source: SACBalanceSeedSourceFullHistory}, "AssetKey"},
+		{"invalid source", SACBalanceSeedProvenance{ContractID: contract, AssetKey: asset, Source: "made_up_source"}, "invalid source"},
+		{"negative holders", SACBalanceSeedProvenance{
+			ContractID: contract, AssetKey: asset, Source: SACBalanceSeedSourceCurrentState, HoldersSeeded: -1,
+		}, "negative"},
+		{"full_history without LakeVerifiedThrough", SACBalanceSeedProvenance{
+			ContractID: contract, AssetKey: asset, Source: SACBalanceSeedSourceFullHistory,
+		}, "LakeVerifiedThrough"},
 	}
-}
-
-func TestUpsertSACBalanceSeedProvenance_RejectsEmptyAssetKey(t *testing.T) {
-	s := &Store{}
-	err := s.UpsertSACBalanceSeedProvenance(context.Background(), SACBalanceSeedProvenance{
-		ContractID: "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32",
-		Source:     SACBalanceSeedSourceFullHistory,
-	})
-	if err == nil || !strings.Contains(err.Error(), "AssetKey") {
-		t.Errorf("err=%v should mention AssetKey", err)
-	}
-}
-
-func TestUpsertSACBalanceSeedProvenance_RejectsInvalidSource(t *testing.T) {
-	s := &Store{}
-	err := s.UpsertSACBalanceSeedProvenance(context.Background(), SACBalanceSeedProvenance{
-		ContractID: "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32",
-		AssetKey:   "PHO:GAX5...",
-		Source:     "made_up_source",
-	})
-	if err == nil || !strings.Contains(err.Error(), "invalid source") {
-		t.Errorf("err=%v should mention invalid source", err)
-	}
-}
-
-func TestUpsertSACBalanceSeedProvenance_RejectsNegativeHoldersSeeded(t *testing.T) {
-	s := &Store{}
-	err := s.UpsertSACBalanceSeedProvenance(context.Background(), SACBalanceSeedProvenance{
-		ContractID:    "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32",
-		AssetKey:      "PHO:GAX5...",
-		Source:        SACBalanceSeedSourceCurrentState,
-		HoldersSeeded: -1,
-	})
-	if err == nil || !strings.Contains(err.Error(), "negative") {
-		t.Errorf("err=%v should mention negative HoldersSeeded", err)
-	}
-}
-
-func TestUpsertSACBalanceSeedProvenance_RejectsUnverifiedFullHistory(t *testing.T) {
-	s := &Store{}
-	err := s.UpsertSACBalanceSeedProvenance(context.Background(), SACBalanceSeedProvenance{
-		ContractID: "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32",
-		AssetKey:   "PHO:GAX5...",
-		Source:     SACBalanceSeedSourceFullHistory,
-	})
-	if err == nil || !strings.Contains(err.Error(), "LakeVerifiedThrough") {
-		t.Errorf("err=%v should refuse full_history without LakeVerifiedThrough", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (&Store{}).UpsertSACBalanceSeedProvenance(context.Background(), tc.in)
+			if err == nil || !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Errorf("err=%v should mention %s", err, tc.wantSubstr)
+			}
+		})
 	}
 }
 

@@ -11,46 +11,34 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TestInsertSupply_RejectsZeroValueStruct — the supply-package
-// computers always populate AssetKey + TotalSupply + CirculatingSupply.
-// A caller passing a zero-value Supply is a bug; surface it loudly
-// rather than letting the DB reject it (or worse, write garbage if
-// future migrations relax the CHECK constraints).
-func TestInsertSupply_RejectsZeroValueStruct(t *testing.T) {
-	// Use a Store with a nil *sql.DB — InsertSupply must reject
-	// before it gets to the DB call, so the nil deref never fires.
-	s := &Store{}
-	err := s.InsertSupply(context.Background(), supply.Supply{})
-	if err == nil {
-		t.Fatal("expected error on zero-value Supply; got nil")
+// TestInsertSupply_RejectsInvalidRows: every case must fail before the
+// DB call (the Store has a nil *sql.DB, so reaching it would panic).
+// The computers always populate AssetKey + both supplies; a zero-value or
+// half-filled Supply is a caller bug. Migration 0117 carries no CHECK on
+// SACWrappedStroops, so this guard is its only enforcement: a negative
+// escrow reading would satisfy the cross-check's escrow bound.
+func TestInsertSupply_RejectsInvalidRows(t *testing.T) {
+	cases := []struct {
+		name string
+		in   supply.Supply
+	}{
+		{"zero value", supply.Supply{}},
+		{"nil total", supply.Supply{AssetKey: "XLM", CirculatingSupply: big.NewInt(0)}},
+		{"nil circulating", supply.Supply{AssetKey: "XLM", TotalSupply: big.NewInt(0)}},
+		{"negative SAC wrapped", supply.Supply{
+			AssetKey:          "USDC:GA1",
+			TotalSupply:       big.NewInt(100),
+			CirculatingSupply: big.NewInt(90),
+			SACWrappedStroops: big.NewInt(-1),
+		}},
 	}
-	if got := err.Error(); got == "" {
-		t.Errorf("error message is empty: %q", got)
-	}
-}
-
-// TestInsertSupply_RequiresTotalSupply — AssetKey set but TotalSupply
-// nil should still fail before touching the DB.
-func TestInsertSupply_RequiresTotalSupply(t *testing.T) {
-	s := &Store{}
-	err := s.InsertSupply(context.Background(), supply.Supply{
-		AssetKey:          "XLM",
-		CirculatingSupply: big.NewInt(0),
-	})
-	if err == nil {
-		t.Fatal("expected error when TotalSupply is nil; got nil")
-	}
-}
-
-// TestInsertSupply_RequiresCirculatingSupply — likewise.
-func TestInsertSupply_RequiresCirculatingSupply(t *testing.T) {
-	s := &Store{}
-	err := s.InsertSupply(context.Background(), supply.Supply{
-		AssetKey:    "XLM",
-		TotalSupply: big.NewInt(0),
-	})
-	if err == nil {
-		t.Fatal("expected error when CirculatingSupply is nil; got nil")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (&Store{}).InsertSupply(context.Background(), tc.in)
+			if err == nil || err.Error() == "" {
+				t.Fatalf("InsertSupply(%+v) err = %v, want a non-empty error", tc.in, err)
+			}
+		})
 	}
 }
 
@@ -201,26 +189,6 @@ func TestAssembleSupply_RejectsBadSACWrapped(t *testing.T) {
 		sql.NullString{Valid: true, String: "not-a-number"})
 	if err == nil {
 		t.Fatal("expected error for unparseable sac_wrapped_stroops; got nil")
-	}
-}
-
-// TestInsertSupply_RejectsNegativeSACWrapped — migration 0117
-// deliberately carries no CHECK constraint (adding one to a compressed
-// hypertable needs the decompress-every-chunk dance), so this guard is
-// the only enforcement point at the write boundary. A negative escrow
-// reading is nonsense that would nonetheless SATISFY the cross-check's
-// escrow bound, so it must never reach the table.
-func TestInsertSupply_RejectsNegativeSACWrapped(t *testing.T) {
-	// nil *sql.DB: the guard must reject before any DB call.
-	s := &Store{}
-	err := s.InsertSupply(context.Background(), supply.Supply{
-		AssetKey:          "USDC:GA1",
-		TotalSupply:       big.NewInt(100),
-		CirculatingSupply: big.NewInt(90),
-		SACWrappedStroops: big.NewInt(-1),
-	})
-	if err == nil {
-		t.Fatal("expected error for negative SACWrappedStroops; got nil")
 	}
 }
 
