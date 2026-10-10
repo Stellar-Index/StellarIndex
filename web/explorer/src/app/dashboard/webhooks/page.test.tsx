@@ -1,5 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { DashboardWebhook, WebhookDelivery } from '@/api/account';
@@ -35,8 +34,9 @@ vi.mock('@/api/account', async (importOriginal) => ({
   rotateDashboardWebhookSecret,
 }));
 
-import { useMe } from '@/api/hooks';
 import WebhooksPage from './page';
+
+import { renderSignedInPage } from '../../../../test/dashboard-page';
 
 afterEach(() => {
   listDashboardWebhooks.mockReset();
@@ -47,9 +47,11 @@ afterEach(() => {
   rotateDashboardWebhookSecret.mockReset();
 });
 
+const WH_ID = 'a1b2c3d4-0000-4000-8000-000000000001';
+
 function webhook(overrides: Partial<DashboardWebhook> = {}): DashboardWebhook {
   return {
-    id: 'a1b2c3d4-0000-4000-8000-000000000001',
+    id: WH_ID,
     name: 'production-alerts',
     url: 'https://example.com/hooks/stellarindex',
     events: ['price.alert'],
@@ -60,24 +62,8 @@ function webhook(overrides: Partial<DashboardWebhook> = {}): DashboardWebhook {
   };
 }
 
-function renderWebhooksPage() {
-  vi.mocked(useMe).mockReturnValue({
-    isLoading: false,
-    isError: false,
-    data: { user: { email: 'a@b.com' } },
-    refetch: vi.fn(),
-  } as unknown as ReturnType<typeof useMe>);
+const renderWebhooksPage = () => renderSignedInPage(<WebhooksPage />);
 
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <WebhooksPage />
-    </QueryClientProvider>,
-  );
-}
-
-// Self-service webhook management: the dashboard session API serves full
-// CRUD at /v1/dashboard/webhooks, and this page is the only UI over it.
 describe('/dashboard/webhooks self-service management', () => {
   it('registers a new webhook through the dashboard session API and reveals its secret once', async () => {
     listDashboardWebhooks.mockResolvedValue([]);
@@ -108,8 +94,7 @@ describe('/dashboard/webhooks self-service management', () => {
       }),
     );
 
-    // The signing secret is surfaced exactly once, from the create
-    // response — never re-fetched or re-derived.
+    // Surfaced once, from the create response.
     expect(await screen.findByText(/wsec_deadbeef/)).toBeInTheDocument();
   });
 
@@ -137,9 +122,7 @@ describe('/dashboard/webhooks self-service management', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
 
     await waitFor(() =>
-      expect(deleteDashboardWebhook).toHaveBeenCalledWith(
-        'a1b2c3d4-0000-4000-8000-000000000001',
-      ),
+      expect(deleteDashboardWebhook).toHaveBeenCalledWith(WH_ID),
     );
     await waitFor(() =>
       expect(listDashboardWebhooks.mock.calls.length).toBeGreaterThan(1),
@@ -149,7 +132,7 @@ describe('/dashboard/webhooks self-service management', () => {
   it('rotates the signing secret in place and reveals the new one without deleting the webhook', async () => {
     listDashboardWebhooks.mockResolvedValue([webhook()]);
     rotateDashboardWebhookSecret.mockResolvedValue({
-      webhook_id: 'a1b2c3d4-0000-4000-8000-000000000001',
+      webhook_id: WH_ID,
       secret:
         'wsec_cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe', // gitleaks:allow
       previous_secret_expires_at: '2026-08-02T12:00:00Z',
@@ -162,9 +145,7 @@ describe('/dashboard/webhooks self-service management', () => {
     );
 
     await waitFor(() =>
-      expect(rotateDashboardWebhookSecret).toHaveBeenCalledWith(
-        'a1b2c3d4-0000-4000-8000-000000000001',
-      ),
+      expect(rotateDashboardWebhookSecret).toHaveBeenCalledWith(WH_ID),
     );
     expect(await screen.findByText(/wsec_cafebabe/)).toBeInTheDocument();
     expect(deleteDashboardWebhook).not.toHaveBeenCalled();
@@ -187,13 +168,12 @@ describe('/dashboard/webhooks self-service management', () => {
 
     await waitFor(() =>
       expect(listWebhookDeliveries).toHaveBeenCalledWith(
-        'a1b2c3d4-0000-4000-8000-000000000001',
+        WH_ID,
         expect.anything(),
       ),
     );
 
-    // The page must surface delivery state: the status ("Failed" — no
-    // delivered_at, no next_attempt_at) and the failure reason.
+    // No delivered_at and no next_attempt_at read as "Failed".
     expect(await screen.findByText('Failed')).toBeInTheDocument();
     expect(screen.getByText(/connection refused/)).toBeInTheDocument();
     expect(screen.getByText(/HTTP 502/)).toBeInTheDocument();

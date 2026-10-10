@@ -30,10 +30,17 @@ function edge(
   };
 }
 
-// Served ascending by account id — that ordering IS the cursor — so the
-// biggest funder is deliberately NOT first in the payload.
+// Served ascending by account id (the cursor), so the biggest funder is not first.
 const BIG = '9007199254740993';
 const SMALL = '9007199254740992';
+
+const span = (from_ledger: number, from_time: string) => ({
+  from_ledger,
+  thru_ledger: 64_428_050,
+  from_time,
+  thru_time: '2026-09-14T17:45:39Z',
+  computed_at: '2026-09-14T17:57:59Z',
+});
 
 const graph = {
   data: {
@@ -58,20 +65,8 @@ const graph = {
     ],
     next_cursor: `G${'CC'.padEnd(55, 'A')}`,
     coverage: {
-      creation: {
-        from_ledger: 3,
-        thru_ledger: 64_428_050,
-        from_time: '2015-09-30T17:15:54Z',
-        thru_time: '2026-09-14T17:45:39Z',
-        computed_at: '2026-09-14T17:57:59Z',
-      },
-      sponsorship: {
-        from_ledger: 32_747_295,
-        thru_ledger: 64_428_050,
-        from_time: '2020-11-23T16:00:18Z',
-        thru_time: '2026-09-14T17:45:39Z',
-        computed_at: '2026-09-14T17:57:59Z',
-      },
+      creation: span(3, '2015-09-30T17:15:54Z'),
+      sponsorship: span(32_747_295, '2020-11-23T16:00:18Z'),
     },
     note: 'History, not live state.',
   },
@@ -136,12 +131,8 @@ describe('AccountRelationEdges', () => {
     ).toHaveAttribute('aria-sort', 'ascending');
   });
 
-  /**
-   * THE FINDING THIS GUARDS. funded_stroops is an exact decimal string.
-   * Sorting it through Number() rounds anything past 2^53 to the same
-   * float, so the two biggest funders on the page — the rows the sort
-   * exists to surface — would stay in whatever order they arrived.
-   */
+  // funded_stroops is an exact decimal string; sorting through Number() rounds
+  // anything past 2^53 to the same float and leaves the top funders unordered.
   it('orders the funded column exactly, past the float-precision ceiling', async () => {
     renderPanel();
     await screen.findByRole('button', { name: /XLM funded/ });
@@ -151,12 +142,7 @@ describe('AccountRelationEdges', () => {
     expect(rowOrder()[0]).toContain('CC');
   });
 
-  /**
-   * The sort is page-local and must say so. The endpoint is keyset-paged
-   * by counterparty account id, so there is no whole-set ranking to ask
-   * for; presenting a 50-row sort as a leaderboard over 785,615 rows
-   * would be the same error as reading a snapshot as a total.
-   */
+  // The endpoint is keyset-paged, so the sort is page-local and must say so.
   it('states that the headers sort the page and not the whole set', async () => {
     renderPanel();
     const note = await screen.findByText(/sort/i, { selector: 'p' });
@@ -207,19 +193,23 @@ describe('AccountRelationEdges', () => {
     ).toBeInTheDocument();
   });
 
-  it('reads an empty edge list as an answer rather than a failure', async () => {
-    apiGet.mockResolvedValue({ data: { ...graph.data, edges: [] } });
+  it.each([
+    [
+      'reads an empty edge list as an answer rather than a failure',
+      () => apiGet.mockResolvedValue({ data: { ...graph.data, edges: [] } }),
+      /no accounts created in the covered span/i,
+    ],
+    [
+      'calls a warming graph warming',
+      () =>
+        apiGet.mockRejectedValue(
+          new Error(`503 Service Unavailable on /v1/accounts/${ACCOUNT}/graph`),
+        ),
+      /warming/i,
+    ],
+  ])('%s', async (_name, arrange, text) => {
+    arrange();
     renderPanel();
-    expect(
-      await screen.findByText(/no accounts created in the covered span/i),
-    ).toBeInTheDocument();
-  });
-
-  it('calls a warming graph warming', async () => {
-    apiGet.mockRejectedValue(
-      new Error(`503 Service Unavailable on /v1/accounts/${ACCOUNT}/graph`),
-    );
-    renderPanel();
-    expect(await screen.findByText(/warming/i)).toBeInTheDocument();
+    expect(await screen.findByText(text)).toBeInTheDocument();
   });
 });

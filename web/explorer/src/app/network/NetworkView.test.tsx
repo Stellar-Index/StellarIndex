@@ -8,8 +8,7 @@ vi.mock('@/api/client', async () => {
   return { ...actual, apiGet: vi.fn() };
 });
 
-// The chart canvases are next/dynamic + lightweight-charts; the semantics
-// under test (the hero-strip figures and their captions) are DOM.
+// Chart canvases are next/dynamic + lightweight-charts; the figures under test are DOM.
 vi.mock('next/dynamic', () => ({
   default: () => {
     const Stub = () => <div data-testid="chart-stub" />;
@@ -17,9 +16,8 @@ vi.mock('next/dynamic', () => ({
   },
 }));
 
-// CURRENT_NETWORK is resolved from NEXT_PUBLIC_NETWORK at module load and
-// NetworkView derives its mainnet gate at module load too, so each test
-// sets the id, resets the module graph, and re-imports the view.
+// The network id and NetworkView's mainnet gate resolve at module load, so each
+// test sets the id, resets the module graph, and re-imports the view.
 const net = vi.hoisted(() => ({ id: 'mainnet' as 'mainnet' | 'testnet' }));
 vi.mock('@/lib/networks', async () => {
   const actual =
@@ -82,12 +80,14 @@ async function renderView() {
   );
 }
 
-// XLM supply 2.11× route divergence: the network
-// strip showed the ledger header's total_coins (~105B, which still counts
-// the ~55B burned in 2019) as an unlabeled "Total XLM" while
-// /v1/assets/native serves total_supply 50.0B. Both are right under their
-// definitions — the strip must lead with the served figure and caption the
-// ledger-header one with what it is.
+// The ledger header's total_coins (~105B) still counts the ~55B burned in 2019;
+// /v1/assets/native serves 50.0B. The strip must lead with the served figure
+// and caption the ledger-header one.
+const heroCell = async (label: string, selector?: string) =>
+  (await screen.findByText(label, { selector })).closest(
+    'div.min-w-0',
+  ) as HTMLElement;
+
 describe('NetworkView hero strip — XLM supply', () => {
   beforeEach(() => {
     net.id = 'mainnet';
@@ -97,14 +97,12 @@ describe('NetworkView hero strip — XLM supply', () => {
   it('on mainnet leads with the served 50.0B total + circulating and captions the ledger total_coins', async () => {
     routeApi(NATIVE);
     await renderView();
-    const totalLabel = await screen.findByText('Total XLM');
-    const cell = totalLabel.closest('div.min-w-0') as HTMLElement;
+    const cell = await heroCell('Total XLM');
     await waitFor(() => expect(cell).toHaveTextContent('50B'));
     expect(cell).toHaveTextContent(
       /34\.69B circulating · SDF reserves excluded/,
     );
-    // The ledger-header figure is still there, but named and explained —
-    // never the headline value.
+    // The ledger-header figure is named and explained, never the headline.
     expect(cell).toHaveTextContent(
       /ledger total_coins 105\.44B · includes the 2019 burn/,
     );
@@ -117,10 +115,7 @@ describe('NetworkView hero strip — XLM supply', () => {
   it('on mainnet without served supply falls back to a captioned ledger total_coins', async () => {
     routeApi(null);
     await renderView();
-    const label = await screen.findByText('Ledger total_coins', {
-      selector: 'span',
-    });
-    const cell = label.closest('div.min-w-0') as HTMLElement;
+    const cell = await heroCell('Ledger total_coins', 'span');
     await waitFor(() => expect(cell).toHaveTextContent('105.44B'));
     expect(cell).toHaveTextContent(/ledger header · includes the 2019 burn/);
     expect(cell).toHaveTextContent(/10\.47M XLM in fee pool/);
@@ -131,10 +126,7 @@ describe('NetworkView hero strip — XLM supply', () => {
     net.id = 'testnet';
     routeApi(NATIVE);
     await renderView();
-    const label = await screen.findByText('Ledger total_coins', {
-      selector: 'span',
-    });
-    const cell = label.closest('div.min-w-0') as HTMLElement;
+    const cell = await heroCell('Ledger total_coins', 'span');
     await waitFor(() => expect(cell).toHaveTextContent('105.44B'));
     expect(cell).toHaveTextContent(/ledger header/);
     expect(cell).not.toHaveTextContent(/2019/);
@@ -156,8 +148,8 @@ describe('NetworkView hero strip — XLM supply', () => {
   });
 });
 
-// Pubnet's P24 upgrade (ledger 59,501,299) credited the fee pool with
-// 31,879,035 stroops no transaction paid; the API flags it on that day.
+// The P24 upgrade credited the fee pool with 31,879,035 stroops no transaction
+// paid; the API flags it on that day.
 describe('dailyFeeBurn', () => {
   it('subtracts the served fee_pool_adjustment across the P24 upgrade day', async () => {
     const { dailyFeeBurn } = await import('./NetworkView');
@@ -195,28 +187,19 @@ describe('NetworkView active sources volume', () => {
   it('ranks and rounds source volume above 2^53 from the exact decimal', async () => {
     routeApi(NATIVE);
     const base = vi.mocked(apiGet).getMockImplementation()!;
+    const source = (name: string, volume_24h_usd: string) => ({
+      name,
+      class: 'exchange',
+      subclass: 'amm',
+      volume_24h_usd,
+    });
     vi.mocked(apiGet).mockImplementation(async (path: string, ...rest) => {
       if (path === '/v1/sources') {
         return {
           data: [
-            {
-              name: 'aquarius',
-              class: 'exchange',
-              subclass: 'amm',
-              volume_24h_usd: '9007199254740992',
-            },
-            {
-              name: 'soroswap',
-              class: 'exchange',
-              subclass: 'amm',
-              volume_24h_usd: '9007199254740993',
-            },
-            {
-              name: 'phoenix',
-              class: 'exchange',
-              subclass: 'amm',
-              volume_24h_usd: '1000000004999999999',
-            },
+            source('aquarius', '9007199254740992'),
+            source('soroswap', '9007199254740993'),
+            source('phoenix', '1000000004999999999'),
           ],
         };
       }

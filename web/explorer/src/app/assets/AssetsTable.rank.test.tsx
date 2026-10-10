@@ -1,160 +1,152 @@
-import { afterEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { AssetsTable } from './AssetsTable';
 import type { Coin } from '@/api/hooks';
 
-// The /assets directory table.
-//
-// 1. RANKING. JFKBANK2 (issuer tagged malicious/unsafe) rendered at #12
-//    on the live page — above USDV, MJQ and BRAVO — on $62.32K of 24h
-//    volume with no price, no market cap and no %-changes. The scam gate
-//    withheld its numbers; the ordering never followed. A flagged asset
-//    must sit below every unflagged one whatever the active sort key,
-//    with its row and its ⚠ Flagged pill intact.
-// 2. IDENTIFIERS. Rows rendered raw 65-character ids in full. They must
-//    be middle-truncated with the tail kept (issuer strkeys differ near
-//    the end) and the full value reachable on hover and on copy.
-
 const SCAM_ISSUER = 'GB7KFNUR5IAIN5NTYM2BUWWUTM6QMUBXF7NHXXKAMRPFLFWR7KL5BANK';
 const SCAM_ID = `JFKBANK2-${SCAM_ISSUER}`;
 const USDV_ISSUER = 'GBLTXF46JTCGMWFJASQLVXMMA36IPYTDCN4EN73HRXCGDCGYBZM3A6VD';
-const USDV_ID = `USDV-${USDV_ISSUER}`;
 const SOROBAN_ID = 'CAUPHTOPWQOTVWZNTFPTSY6TIWU2LGZQVLGCEB2NF4YGKS6XUSGHIPXV';
+const EXTERNAL = {
+  endpoint: '/v1/external/assets',
+  basePath: '/external/assets',
+};
 
-// baseCoin is the minimum shape the table needs; each row spreads its
-// own fields over it.
-function baseCoin(): Coin {
+function coin(
+  code: string | undefined,
+  issuer: string | undefined,
+  fields: Partial<Coin> & { volume_24h_usd: string },
+): Coin {
+  const id = issuer ? `${code}-${issuer}` : (fields.asset_id ?? 'x');
   return {
     kind: 'stellar_asset',
-    asset_id: 'x',
-    code: 'X',
-    slug: 'x',
+    asset_id: id,
+    code,
+    slug: id,
+    issuer,
     decimals: 7,
     sep1_status: 'not_applicable',
     first_seen_ledger: 1,
     last_seen_ledger: 1,
     observation_count: 1,
+    ...fields,
   } as unknown as Coin;
 }
 
-// Incoming order mirrors the reported page: the flagged high-volume row
-// arrives ABOVE the legitimate ones.
-const assets: Coin[] = [
-  {
-    ...baseCoin(),
-    asset_id: SCAM_ID,
-    code: 'JFKBANK2',
-    slug: SCAM_ID,
-    issuer: SCAM_ISSUER,
-    volume_24h_usd: '62341.98',
-    circulating_supply: '5000000000000000000',
-    issuer_directory_tags: ['malicious', 'unsafe'],
-  } as unknown as Coin,
-  {
-    ...baseCoin(),
-    asset_id: USDV_ID,
-    code: 'USDV',
-    slug: USDV_ID,
-    issuer: USDV_ISSUER,
-    price_usd: '1.0001',
-    volume_24h_usd: '1200.5',
-  } as unknown as Coin,
-  {
-    ...baseCoin(),
-    asset_id: SOROBAN_ID,
-    code: undefined,
-    slug: SOROBAN_ID,
-    price_usd: '0.02',
-    volume_24h_usd: '900',
-  } as unknown as Coin,
-];
-
-// Mutable so a test can put the table on a cursor-paginated page. The
-// mock hardcoding '' would hide the rank column restarting at 1 on
-// page 2: every test would run on page 1.
-let searchParams = new URLSearchParams('');
+// The mocked hook reads these; searchParams is mutable so a test can put the
+// table on a cursor page (a hardcoded '' would run every test on page 1).
+const state = vi.hoisted(() => ({
+  assets: [] as Array<{ code?: string }>,
+  searchParams: new URLSearchParams(''),
+  thinOpts: [] as Array<{ includeThin?: boolean } | undefined>,
+}));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
-  useSearchParams: () => searchParams,
+  useSearchParams: () => state.searchParams,
 }));
-
-afterEach(() => {
-  searchParams = new URLSearchParams('');
-});
 
 vi.mock('@/api/hooks', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
   return {
     ...actual,
-    useAssets: () => ({
-      data: { assets, next_cursor: '' },
-      isLoading: false,
-      isError: false,
-      error: null,
-    }),
+    useAssets: (...args: unknown[]) => {
+      state.thinOpts.push(args[4] as { includeThin?: boolean } | undefined);
+      return {
+        data: { assets: state.assets, next_cursor: '' },
+        isLoading: false,
+        isError: false,
+        error: null,
+      };
+    },
   };
 });
 
-function renderTable() {
+afterEach(() => {
+  state.searchParams = new URLSearchParams('');
+  state.thinOpts.length = 0;
+});
+
+function renderTable(props: Parameters<typeof AssetsTable>[0] = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <AssetsTable />
+      <AssetsTable {...props} />
     </QueryClientProvider>,
   );
 }
 
-// renderedCodes reads the first data cell of each row in DOM order.
-function renderedRowLabels(): string[] {
-  return screen
+// First data cell index 0 is the rank, 1 is the Asset label (code plus the
+// middle-truncated raw id).
+const column = (i: number): string[] =>
+  screen
     .getAllByRole('row')
     .slice(1) // header
-    .map((tr) => tr.querySelectorAll('td')[1]?.textContent?.trim() ?? '');
-}
+    .map((tr) => tr.querySelectorAll('td')[i]?.textContent?.trim() ?? '');
+const rankCells = () => column(0);
+const labels = () => column(1);
+const codes = (assets: Array<{ code?: string }>): string[] =>
+  labels().map(
+    (label) =>
+      assets.find((a) => a.code && label.startsWith(a.code))?.code ?? label,
+  );
 
-describe('AssetsTable flagged-asset ranking (#356)', () => {
+// A flagged high-volume asset arrives above the legitimate ones; the scam
+// gate withholds its numbers, so the ordering must follow.
+describe('AssetsTable flagged-asset ranking', () => {
+  beforeEach(() => {
+    state.assets = [
+      coin('JFKBANK2', SCAM_ISSUER, {
+        volume_24h_usd: '62341.98',
+        circulating_supply: '5000000000000000000',
+        issuer_directory_tags: ['malicious', 'unsafe'],
+      }),
+      coin('USDV', USDV_ISSUER, {
+        price_usd: '1.0001',
+        volume_24h_usd: '1200.5',
+      }),
+      coin(undefined, undefined, {
+        asset_id: SOROBAN_ID,
+        price_usd: '0.02',
+        volume_24h_usd: '900',
+      }),
+    ];
+  });
+
   it('ranks the flagged asset below every unflagged one on the default order', () => {
     renderTable();
-    const labels = renderedRowLabels();
-    const flagged = labels.findIndex((l) => l.startsWith('JFKBANK2'));
-    const unflagged = labels.findIndex((l) => l.startsWith('USDV'));
+    const l = labels();
+    const flagged = l.findIndex((x) => x.startsWith('JFKBANK2'));
+    const unflagged = l.findIndex((x) => x.startsWith('USDV'));
     expect(flagged).toBeGreaterThan(-1);
     expect(unflagged).toBeGreaterThan(-1);
     expect(flagged).toBeGreaterThan(unflagged);
     // Demoted, never hidden: the row and its pill are still on the page.
     expect(screen.getAllByText(/Flagged/)).toHaveLength(1);
-    expect(labels).toHaveLength(3);
+    expect(l).toHaveLength(3);
   });
 
   it('keeps the flagged asset last after the user sorts by 24h volume', () => {
     renderTable();
     // Volume desc would put JFKBANK2 ($62.3k) on top of USDV ($1.2k).
     fireEvent.click(screen.getByRole('button', { name: /Volume 24h/ }));
-    const labels = renderedRowLabels();
-    expect(labels.findIndex((l) => l.startsWith('JFKBANK2'))).toBeGreaterThan(
-      labels.findIndex((l) => l.startsWith('USDV')),
+    const l = labels();
+    expect(l.findIndex((x) => x.startsWith('JFKBANK2'))).toBeGreaterThan(
+      l.findIndex((x) => x.startsWith('USDV')),
     );
   });
-});
 
-describe('AssetsTable long-identifier truncation (#356)', () => {
   it('middle-truncates the classic id, keeping head and tail, with the full value on hover and on copy', () => {
     renderTable();
-    // The raw 65-char id is never rendered in full...
     expect(screen.queryByText(SCAM_ID)).toBeNull();
-    // ...the elided form keeps the head AND the tail (issuer strkeys
-    // differ near the end, so a head-only truncation is ambiguous).
+    // Issuer strkeys differ near the end, so a head-only truncation is ambiguous.
     const elided = screen.getByText('JFKBANK2…L5BANK');
-    expect(elided).toBeInTheDocument();
-    // The full value round-trips through the title attribute.
     expect(elided).toHaveAttribute('title', SCAM_ID);
-    // ...and a copy control carries the un-elided value.
     const row = elided.closest('tr') as HTMLElement;
     expect(
       row.querySelector('button[aria-label="Copy to clipboard"]'),
@@ -164,64 +156,131 @@ describe('AssetsTable long-identifier truncation (#356)', () => {
   it('labels an uncatalogued Soroban row with its truncated contract id instead of an empty cell', () => {
     renderTable();
     const elided = screen.getByText('CAUPHT…IPXV');
-    expect(elided).toBeInTheDocument();
     expect(elided).toHaveAttribute('title', SOROBAN_ID);
     expect(screen.queryByText(SOROBAN_ID)).toBeNull();
   });
-});
 
-// The "#" column is a per-PAGE counter, but cursor pagination keeps no
-// depth in the URL — only the opaque cursor. So on page 2 the counter
-// restarted at 1 and re-labelled the 101st asset "#1" under a header
-// that reads as a global rank (wave-D EXR-06).
-//
-// Suppression, not arithmetic: depth*limit+i would print a DIFFERENT
-// wrong number, because suppressCatalogueTwins and foldAliasTwins drop
-// rows post-query so pages under-fill (measured 81/96/99/96 at
-// limit=100). A rank the data cannot back is better omitted than
-// guessed.
-describe('AssetsTable rank column across cursor pages (EXR-06)', () => {
-  function rankCells(): string[] {
-    return screen
-      .getAllByRole('row')
-      .slice(1) // header
-      .map((tr) => tr.querySelectorAll('td')[0]?.textContent?.trim() ?? '');
-  }
-
+  // The "#" column is a per-page counter and cursor pagination keeps no depth
+  // in the URL, so page 2 would re-label the 101st asset "#1". Suppress rather
+  // than guess: pages under-fill after post-query twin folding.
   it('numbers the rows on the unpaginated first page', () => {
-    renderTable();
-    expect(rankCells()[0]).toBe('1');
-  });
-
-  it('renders no rank once the user has paged past the first', () => {
-    // Any non-empty cursor means "not page 1", which is all the URL
-    // carries — there is no page number to recover.
-    searchParams = new URLSearchParams('cursor=opaque-page-2-cursor');
-    renderTable();
-    expect(rankCells().every((c) => c === '')).toBe(true);
-  });
-});
-
-// The same over-claim happens WITHOUT pagination. Clicking a
-// sortable header re-sorts `rankedAssets` client-side; numbering the
-// result "#1, #2, …" presents that page-local sort order as a
-// directory-wide rank, which it is not.
-describe('AssetsTable rank column under a non-default column sort (Q224)', () => {
-  function rankCells(): string[] {
-    return screen
-      .getAllByRole('row')
-      .slice(1) // header
-      .map((tr) => tr.querySelectorAll('td')[0]?.textContent?.trim() ?? '');
-  }
-
-  it('still numbers rows in the untouched default order', () => {
     renderTable();
     expect(rankCells()).toEqual(['1', '2', '3']);
   });
 
+  it('renders no rank once the user has paged past the first', () => {
+    state.searchParams = new URLSearchParams('cursor=opaque-page-2-cursor');
+    renderTable();
+    expect(rankCells().every((c) => c === '')).toBe(true);
+  });
+
+  // A header re-sort is page-local, so numbering it would claim a directory-wide rank.
   it('renders no rank once the user sorts by a column', () => {
     renderTable();
     fireEvent.click(screen.getByRole('button', { name: /Volume 24h/ }));
     expect(rankCells().every((c) => c === '')).toBe(true);
+  });
+});
+
+// The server's rank tier reads the price rollup, but the handler withholds the
+// price of rows failing the substance floor, so rows rank as priced and serve
+// as dashes. The fixture reproduces that interleave in server order.
+describe('AssetsTable priced-first default ranking', () => {
+  const PRICED_FIRST = [
+    'USDZ',
+    'XRP',
+    'TESOURO',
+    'THIN',
+    'EURZ',
+    'APPLELEGACY',
+  ];
+  // Every row carries a circulating supply so the "Circulating" sort ranks on
+  // values alone, EURZ (unpriced) largest.
+  const fixture = [
+    coin('USDZ', USDV_ISSUER, {
+      price_usd: '1.0010792014',
+      volume_24h_usd: '52422.98',
+      circulating_supply: '10000000000',
+    }),
+    // A thin-market price is served under include_thin but ranks unpriced.
+    coin('THIN', USDV_ISSUER, {
+      price_usd: '0.0500000000',
+      thin_market: true,
+      volume_24h_usd: '60000.00',
+      circulating_supply: '50000000000',
+    }),
+    coin('EURZ', USDV_ISSUER, {
+      volume_24h_usd: '51556.15',
+      circulating_supply: '90000000000000000000',
+    }),
+    coin('XRP', USDV_ISSUER, {
+      price_usd: '1.4631046310',
+      volume_24h_usd: '68784.30',
+      circulating_supply: '20000000000',
+    }),
+    coin('APPLELEGACY', USDV_ISSUER, {
+      volume_24h_usd: '2694.96',
+      circulating_supply: '30000000000',
+    }),
+    coin('TESOURO', USDV_ISSUER, {
+      price_usd: '0.2449733656',
+      volume_24h_usd: '1180.52',
+      circulating_supply: '40000000000',
+    }),
+  ];
+  beforeEach(() => {
+    state.assets = fixture;
+  });
+
+  it('ranks every row with a served price above every row without one', () => {
+    renderTable();
+    expect(codes(fixture)).toEqual(PRICED_FIRST);
+  });
+
+  it('demotes without hiding — every fetched row is still on the page', () => {
+    renderTable();
+    const rendered = codes(fixture);
+    expect(rendered).toHaveLength(fixture.length);
+    for (const a of fixture) expect(rendered).toContain(a.code);
+  });
+
+  it('shows a thin-market price with a warning badge, ranked with the unpriced rows', () => {
+    renderTable();
+    expect(state.thinOpts.at(-1)?.includeThin).toBe(true);
+    const row = screen.getAllByRole('row')[4];
+    expect(row).toHaveTextContent('THIN');
+    expect(row).toHaveTextContent('$0.05');
+    expect(row?.querySelector('[title^="Low confidence"]')).not.toBeNull();
+  });
+
+  it('does not ask /external/assets for thin prices', () => {
+    renderTable(EXTERNAL);
+    expect(state.thinOpts.at(-1)?.includeThin).toBe(false);
+  });
+
+  it('leaves an explicit column sort alone', () => {
+    renderTable();
+    fireEvent.click(screen.getByRole('button', { name: /Circulating/ }));
+    // EURZ is unpriced with the largest supply; the user asked for a supply
+    // ranking, so it leads.
+    expect(codes(fixture)[0]).toBe('EURZ');
+  });
+
+  // The substance-floor explanation is only true of the Stellar listing;
+  // /external/assets shares the component but is outside that gate's scope.
+  it('names the substance floor on the Stellar listing', () => {
+    renderTable();
+    expect(screen.getByTitle(/rank below priced ones/)).toHaveAttribute(
+      'title',
+      expect.stringMatching(/substance floor/),
+    );
+  });
+
+  it('states the rule without the on-chain cause on /external/assets', () => {
+    renderTable(EXTERNAL);
+    const note = screen.getByTitle(/rank below priced ones/);
+    expect(note.title).not.toMatch(/substance floor/);
+    // The ranking still partitions on the price the response carried.
+    expect(codes(fixture)).toEqual(PRICED_FIRST);
   });
 });

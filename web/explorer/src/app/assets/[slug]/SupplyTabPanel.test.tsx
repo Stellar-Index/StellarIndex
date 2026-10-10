@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -46,22 +46,24 @@ vi.mock('@/api/hooks', async () => {
 import { apiGet } from '@/api/client';
 import { SupplyTabPanel } from './SupplyTabPanel';
 
-// Frontend-honesty sweep: the market-cap chart had no isError branch, so
-// a failed /v1/chart fell into `points.length < 2` and asserted "No
-// market-cap history for this asset" — a claim about the asset made from
-// a query that never answered.
-describe('SupplyTabPanel market-cap chart', () => {
-  function renderPanel() {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    return render(
-      <QueryClientProvider client={client}>
-        <SupplyTabPanel assetID="USDC-GA5ZSEJ" />
-      </QueryClientProvider>,
-    );
-  }
+function renderPanel() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <SupplyTabPanel assetID="USDC-GA5ZSEJ" />
+    </QueryClientProvider>,
+  );
+}
 
+afterEach(() => {
+  assetExtra.fields = {};
+});
+
+// A failed /v1/chart must not assert "no history" about an asset the query
+// never answered for.
+describe('SupplyTabPanel market-cap chart', () => {
   it('says the history is unavailable when the chart query fails', async () => {
     vi.mocked(apiGet).mockRejectedValue(new Error('HTTP 503'));
     renderPanel();
@@ -89,22 +91,12 @@ describe('SupplyTabPanel market-cap chart', () => {
   });
 });
 
-// The live supply block scaled every token by the ASSET's decimals
-// (7 by default), so an 18-decimal token read 10^11 too large, and the
-// hook dropped the envelope so `flags.stale` and the floor caveat never
-// rendered.
+// Supply scales by the contract-declared decimals, not the asset's default,
+// and the envelope's flags (stale, floor caveat) must reach the tab.
 describe('SupplyTabPanel on-chain supply', () => {
-  function renderPanel() {
+  beforeEach(() => {
     vi.mocked(apiGet).mockResolvedValue({ data: { points: [] } });
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    return render(
-      <QueryClientProvider client={client}>
-        <SupplyTabPanel assetID="USDC-GA5ZSEJ" />
-      </QueryClientProvider>,
-    );
-  }
+  });
 
   const storageSupply = {
     asset_id: 'USDC-GA5ZSEJ',
@@ -167,8 +159,6 @@ describe('SupplyTabPanel on-chain supply', () => {
     expect(screen.getByText(/Fresh to ledger 63,340,102/)).toBeInTheDocument();
   });
 
-  // useAsset dropped the envelope, so the asset's own flags never
-  // reached the client-fetched Supply tab.
   it('renders the asset envelope flags', () => {
     supplyQuery.data = undefined;
     renderPanel();
@@ -182,13 +172,9 @@ describe('SupplyTabPanel on-chain supply', () => {
       data: { ...storageSupply, total_supply: raw, decimals: 18 },
     };
     assetExtra.fields = { decimals: 18, circulating_supply: raw };
-    try {
-      renderPanel();
-      expect(screen.getAllByText('499.99')).toHaveLength(2);
-      expect(screen.queryByText('500')).not.toBeInTheDocument();
-    } finally {
-      assetExtra.fields = {};
-    }
+    renderPanel();
+    expect(screen.getAllByText('499.99')).toHaveLength(2);
+    expect(screen.queryByText('500')).not.toBeInTheDocument();
   });
 
   it('labels an issuer-declared max beside the circulating basis', () => {
@@ -198,14 +184,10 @@ describe('SupplyTabPanel on-chain supply', () => {
       supply_basis: 'issuer_exclusion',
       max_supply_basis: 'sep1_declared_max',
     };
-    try {
-      renderPanel();
-      expect(
-        screen.getByText('Issuer-declared in stellar.toml'),
-      ).toBeInTheDocument();
-      expect(screen.getByText(/issuer_exclusion/)).toBeInTheDocument();
-    } finally {
-      assetExtra.fields = {};
-    }
+    renderPanel();
+    expect(
+      screen.getByText('Issuer-declared in stellar.toml'),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/issuer_exclusion/)).toBeInTheDocument();
   });
 });
