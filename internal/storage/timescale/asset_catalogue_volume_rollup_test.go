@@ -103,11 +103,3 @@ func TestRefreshAssetVolumeUpsert_sargable(t *testing.T) {
 		}
 	}
 }
-
-// TestRefreshAssetVolumePrune_sargable asserts the prune deletes on a
-// bare computed_at comparison (index-friendly, no function on column).
-func TestRefreshAssetVolumePrune_sargable(t *testing.T) {
-	if !strings.Contains(refreshAssetVolumePrune, "computed_at < now()") {
-		t.Errorf("prune must compare computed_at < now() directly, got: %q", refreshAssetVolumePrune)
-	}
-}

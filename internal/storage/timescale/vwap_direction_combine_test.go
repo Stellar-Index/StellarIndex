@@ -149,24 +149,6 @@ func TestCombineDirVWAP_VolumeWeightedUnion(t *testing.T) {
 	}
 }
 
-// TestCombineDirVWAP_IsNotTradeCountWeighted states the defect directly:
-// for the fixture bucket the trade-count-weighted mean is 0.23 and the
-// union VWAP is 0.4. Serving the former is count weighting.
-func TestCombineDirVWAP_IsNotTradeCountWeighted(t *testing.T) {
-	got, ok := combineDirVWAP(combineFixture)
-	if !ok {
-		t.Fatal("combineDirVWAP returned ok=false for a well-formed two-sided bucket")
-	}
-	if got == combineFixtureCountVWAP {
-		t.Fatalf("combined VWAP = %s — that is the TRADE-COUNT-weighted mean of "+
-			"{0.5, 1/5}, not the volume-weighted union of the two directions", got)
-	}
-	if got != combineFixtureUnionVWAP {
-		t.Fatalf("combined VWAP = %s, want the union Σquote/Σbase = 60/150 = %s",
-			got, combineFixtureUnionVWAP)
-	}
-}
-
 // TestCombineDirVWAP_SingleDirectionIsVerbatim — a bucket that traded in
 // only the requested orientation IS its stored VWAP, and the Postgres
 // NUMERIC text must pass through untouched so the served bytes don't

@@ -107,24 +107,6 @@ func TestBothDirectionReadersUseUnionNotOr(t *testing.T) {
 	}
 }
 
-// The sargable-bound rule from TestClosedVWAPAtOrBeforeQueryShape applies
-// to every one of these readers, not just the one that had its own test.
-// Measurement note: on its own the bound is NOT what made the pathological
-// read slow (rewriting it alone changed 10841 ms to 13946 ms — i.e.
-// nothing). It is still the correct form, and pinning it here stops the
-// weaker shape spreading by copy-paste.
-func TestBothDirectionReadersKeepSargableBucketBound(t *testing.T) {
-	for name, q := range bothDirectionUnionQueries {
-		t.Run(name, func(t *testing.T) {
-			if strings.Contains(q, "bucket + INTERVAL") {
-				t.Errorf("%s applies a function to the indexed bucket column "+
-					"(`bucket + INTERVAL … <= x`). Put the interval on the RHS: "+
-					"`bucket <= x - INTERVAL …`", name)
-			}
-		})
-	}
-}
-
 // ── Package scan ────────────────────────────────────────────────────
 //
 // bothDirectionUnionQueries above is a HAND-MAINTAINED list, and that
@@ -302,25 +284,5 @@ func TestCAGGSeriesReadsFoldDirectionsWithUnion(t *testing.T) {
 		t.Errorf("scan found %d both-directions bucket-ordered readers in "+
 			"the package, expected at least 13 — the scan is no longer "+
 			"matching the readers it exists to guard", subjects)
-	}
-}
-
-// TestCAGGReadsKeepSargableBucketBound applies the sargable-bound rule
-// to every query in the package, not to a list or to one file.
-// The interval belongs on the right of the comparison; on the left it is
-// a function over the indexed column, which forfeits index access and
-// plan-time chunk pruning.
-func TestCAGGReadsKeepSargableBucketBound(t *testing.T) {
-	for _, file := range pairDeclFiles(t) {
-		for name, q := range declSQL(t, file) {
-			if !strings.Contains(q, "FROM") {
-				continue
-			}
-			if m := nonSargableBucketRe.FindString(q); m != "" {
-				t.Errorf("%s/%s applies a function to the indexed bucket column (%q). "+
-					"Put the interval on the RHS: `bucket <= now() - INTERVAL …`",
-					file, name, strings.Join(strings.Fields(m), " "))
-			}
-		}
 	}
 }

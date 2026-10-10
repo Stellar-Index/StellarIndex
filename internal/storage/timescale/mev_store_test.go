@@ -205,8 +205,8 @@ func TestTradesForArbScan_UnparseableAssetIsAnError(t *testing.T) {
 // ─── OracleUpdatesForMEVScan ──────────────────────────────────────────
 
 // TestOracleUpdatesForMEVScan_ValuesAndArgs covers the mapping + the
-// window/cap binding. The raw:-row exclusion this query also carries is
-// pinned separately in mev_shape_test.go.
+// window/cap binding. The raw:-row exclusion and the since bound are
+// pinned on the issued SQL below.
 func TestOracleUpdatesForMEVScan_ValuesAndArgs(t *testing.T) {
 	ts := time.Date(2026, 8, 29, 9, 30, 0, 0, time.UTC)
 	store, conn := newScriptedStore(t, scriptedResult{
@@ -238,9 +238,8 @@ func TestOracleUpdatesForMEVScan_ValuesAndArgs(t *testing.T) {
 	}
 }
 
-// TestOracleUpdatesForMEVScan_ExcludesRawRowsFromTheIssuedSQL is the
-// behavioural counterpart of mev_shape_test.go: it asserts the predicate
-// on the statement the store ACTUALLY issues, not on the const it is
+// TestOracleUpdatesForMEVScan_ExcludesRawRowsFromTheIssuedSQL asserts the
+// predicates on the statement the store ACTUALLY issues, not on the const it is
 // built from, so a refactor that stops using the const cannot drop the
 // guard unnoticed.
 //
@@ -266,6 +265,9 @@ func TestOracleUpdatesForMEVScan_ExcludesRawRowsFromTheIssuedSQL(t *testing.T) {
 	}
 	if !strings.Contains(q, "ledger > 0") {
 		t.Errorf("the MEV oracle scan must stay on-chain-only (ledger > 0):\n%s", q)
+	}
+	if !strings.Contains(q, "ts > $1") {
+		t.Errorf("the MEV oracle scan must stay since-bounded (ts > $1):\n%s", q)
 	}
 	if !strings.Contains(q, "ORDER BY ledger DESC, tx_hash DESC, op_index DESC") {
 		t.Errorf("the MEV oracle scan must cap to the NEWEST updates, not the oldest:\n%s", q)

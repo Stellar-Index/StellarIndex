@@ -13,141 +13,61 @@ import (
 // (per CONTRIBUTING.md §Testing, integration tests run
 // via testcontainers-go).
 
-func TestInsertTrustlineObservation_RejectsEmptyAccountID(t *testing.T) {
-	s := &Store{}
-	err := s.InsertTrustlineObservation(context.Background(), TrustlineObservation{
-		AssetKey: "USDC:GA5...",
-		Balance:  big.NewInt(0),
-	})
-	if err == nil {
-		t.Fatal("expected error on empty AccountID")
+// TestInsertObservation_RejectsMissingFields: each single-row writer
+// refuses a row missing an identity field or its balance, and names it.
+func TestInsertObservation_RejectsMissingFields(t *testing.T) {
+	ctx := context.Background()
+	zero := big.NewInt(0)
+	const asset = "USDC:GA5..."
+	cases := []struct {
+		name       string
+		call       func(*Store) error
+		wantSubstr string
+	}{
+		{"trustline/AccountID", func(s *Store) error {
+			return s.InsertTrustlineObservation(ctx, TrustlineObservation{AssetKey: asset, Balance: zero})
+		}, "AccountID"},
+		{"trustline/AssetKey", func(s *Store) error {
+			return s.InsertTrustlineObservation(ctx, TrustlineObservation{AccountID: "GA1", Balance: zero})
+		}, "AssetKey"},
+		{"trustline/Balance", func(s *Store) error {
+			return s.InsertTrustlineObservation(ctx, TrustlineObservation{AccountID: "GA1", AssetKey: asset})
+		}, "Balance"},
+		{"claimable/ClaimableID", func(s *Store) error {
+			return s.InsertClaimableObservation(ctx, ClaimableObservation{AssetKey: asset, Balance: zero})
+		}, "ClaimableID"},
+		{"claimable/AssetKey", func(s *Store) error {
+			return s.InsertClaimableObservation(ctx, ClaimableObservation{ClaimableID: "abc", Balance: zero})
+		}, "AssetKey"},
+		{"claimable/Balance", func(s *Store) error {
+			return s.InsertClaimableObservation(ctx, ClaimableObservation{ClaimableID: "abc", AssetKey: asset})
+		}, "Balance"},
+		{"lp_reserve/PoolID", func(s *Store) error {
+			return s.InsertLPReserveObservation(ctx, LPReserveObservation{AssetKey: asset, Balance: zero})
+		}, "PoolID"},
+		{"lp_reserve/AssetKey", func(s *Store) error {
+			return s.InsertLPReserveObservation(ctx, LPReserveObservation{PoolID: "deadbeef", Balance: zero})
+		}, "AssetKey"},
+		{"lp_reserve/Balance", func(s *Store) error {
+			return s.InsertLPReserveObservation(ctx, LPReserveObservation{PoolID: "deadbeef", AssetKey: asset})
+		}, "Balance"},
+		{"sac_balance/ContractID", func(s *Store) error {
+			return s.InsertSACBalanceObservation(ctx, SACBalanceObservation{AssetKey: asset, Holder: "GA1", Balance: zero})
+		}, "ContractID"},
+		{"sac_balance/Holder", func(s *Store) error {
+			return s.InsertSACBalanceObservation(ctx, SACBalanceObservation{ContractID: "CA1", AssetKey: asset, Balance: zero})
+		}, "Holder"},
+		{"sac_balance/Balance", func(s *Store) error {
+			return s.InsertSACBalanceObservation(ctx, SACBalanceObservation{ContractID: "CA1", AssetKey: asset, Holder: "GA1"})
+		}, "Balance"},
 	}
-	if !strings.Contains(err.Error(), "AccountID") {
-		t.Errorf("err=%v should mention AccountID", err)
-	}
-}
-
-func TestInsertTrustlineObservation_RejectsEmptyAssetKey(t *testing.T) {
-	s := &Store{}
-	err := s.InsertTrustlineObservation(context.Background(), TrustlineObservation{
-		AccountID: "GA1",
-		Balance:   big.NewInt(0),
-	})
-	if err == nil || !strings.Contains(err.Error(), "AssetKey") {
-		t.Errorf("err=%v should mention AssetKey", err)
-	}
-}
-
-func TestInsertTrustlineObservation_RejectsNilBalance(t *testing.T) {
-	s := &Store{}
-	err := s.InsertTrustlineObservation(context.Background(), TrustlineObservation{
-		AccountID: "GA1",
-		AssetKey:  "USDC:GA5...",
-	})
-	if err == nil || !strings.Contains(err.Error(), "Balance") {
-		t.Errorf("err=%v should mention Balance", err)
-	}
-}
-
-func TestInsertClaimableObservation_RejectsEmptyClaimableID(t *testing.T) {
-	s := &Store{}
-	err := s.InsertClaimableObservation(context.Background(), ClaimableObservation{
-		AssetKey: "USDC:GA5...",
-		Balance:  big.NewInt(0),
-	})
-	if err == nil || !strings.Contains(err.Error(), "ClaimableID") {
-		t.Errorf("err=%v should mention ClaimableID", err)
-	}
-}
-
-func TestInsertClaimableObservation_RejectsEmptyAssetKey(t *testing.T) {
-	s := &Store{}
-	err := s.InsertClaimableObservation(context.Background(), ClaimableObservation{
-		ClaimableID: "abc",
-		Balance:     big.NewInt(0),
-	})
-	if err == nil || !strings.Contains(err.Error(), "AssetKey") {
-		t.Errorf("err=%v should mention AssetKey", err)
-	}
-}
-
-func TestInsertClaimableObservation_RejectsNilBalance(t *testing.T) {
-	s := &Store{}
-	err := s.InsertClaimableObservation(context.Background(), ClaimableObservation{
-		ClaimableID: "abc",
-		AssetKey:    "USDC:GA5...",
-	})
-	if err == nil || !strings.Contains(err.Error(), "Balance") {
-		t.Errorf("err=%v should mention Balance", err)
-	}
-}
-
-func TestInsertLPReserveObservation_RejectsEmptyPoolID(t *testing.T) {
-	s := &Store{}
-	err := s.InsertLPReserveObservation(context.Background(), LPReserveObservation{
-		AssetKey: "USDC:GA5...",
-		Balance:  big.NewInt(0),
-	})
-	if err == nil || !strings.Contains(err.Error(), "PoolID") {
-		t.Errorf("err=%v should mention PoolID", err)
-	}
-}
-
-func TestInsertLPReserveObservation_RejectsEmptyAssetKey(t *testing.T) {
-	s := &Store{}
-	err := s.InsertLPReserveObservation(context.Background(), LPReserveObservation{
-		PoolID:  "deadbeef",
-		Balance: big.NewInt(0),
-	})
-	if err == nil || !strings.Contains(err.Error(), "AssetKey") {
-		t.Errorf("err=%v should mention AssetKey", err)
-	}
-}
-
-func TestInsertLPReserveObservation_RejectsNilBalance(t *testing.T) {
-	s := &Store{}
-	err := s.InsertLPReserveObservation(context.Background(), LPReserveObservation{
-		PoolID:   "deadbeef",
-		AssetKey: "USDC:GA5...",
-	})
-	if err == nil || !strings.Contains(err.Error(), "Balance") {
-		t.Errorf("err=%v should mention Balance", err)
-	}
-}
-
-func TestInsertSACBalanceObservation_RejectsEmptyContractID(t *testing.T) {
-	s := &Store{}
-	err := s.InsertSACBalanceObservation(context.Background(), SACBalanceObservation{
-		AssetKey: "USDC:GA5...",
-		Holder:   "GA1",
-		Balance:  big.NewInt(0),
-	})
-	if err == nil || !strings.Contains(err.Error(), "ContractID") {
-		t.Errorf("err=%v should mention ContractID", err)
-	}
-}
-
-func TestInsertSACBalanceObservation_RejectsEmptyHolder(t *testing.T) {
-	s := &Store{}
-	err := s.InsertSACBalanceObservation(context.Background(), SACBalanceObservation{
-		ContractID: "CA1",
-		AssetKey:   "USDC:GA5...",
-		Balance:    big.NewInt(0),
-	})
-	if err == nil || !strings.Contains(err.Error(), "Holder") {
-		t.Errorf("err=%v should mention Holder", err)
-	}
-}
-
-func TestInsertSACBalanceObservation_RejectsNilBalance(t *testing.T) {
-	s := &Store{}
-	err := s.InsertSACBalanceObservation(context.Background(), SACBalanceObservation{
-		ContractID: "CA1",
-		AssetKey:   "USDC:GA5...",
-		Holder:     "GA1",
-	})
-	if err == nil || !strings.Contains(err.Error(), "Balance") {
-		t.Errorf("err=%v should mention Balance", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(&Store{})
+			if err == nil || !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Errorf("err=%v should mention %s", err, tc.wantSubstr)
+			}
+		})
 	}
 }
 

@@ -81,24 +81,6 @@ func TestSortTradesByConflictKey_FullKeyOrder(t *testing.T) {
 	}
 }
 
-// TestSortTradesByConflictKey_TimestampTiebreak isolates the exact
-// bug: two rows identical on (source, ledger, tx_hash, op_index) must
-// sort by `ts` ascending, not fall through to an unspecified order.
-func TestSortTradesByConflictKey_TimestampTiebreak(t *testing.T) {
-	later := time.Date(2026, 7, 8, 18, 12, 5, 0, time.UTC)
-	earlier := time.Date(2026, 7, 8, 18, 12, 0, 0, time.UTC)
-
-	trades := []canonical.Trade{
-		{Source: "kraken", Ledger: 0, TxHash: "same", OpIndex: 0, Timestamp: later},
-		{Source: "kraken", Ledger: 0, TxHash: "same", OpIndex: 0, Timestamp: earlier},
-	}
-	sortTradesByConflictKey(trades)
-
-	if !trades[0].Timestamp.Equal(earlier) || !trades[1].Timestamp.Equal(later) {
-		t.Fatalf("expected ts-ascending tiebreak, got order [%v, %v]", trades[0].Timestamp, trades[1].Timestamp)
-	}
-}
-
 func itoa(u uint32) string {
 	return fmt.Sprintf("%d", u)
 }

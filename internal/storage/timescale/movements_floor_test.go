@@ -9,39 +9,31 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestMovementsFloor_DefaultsToPubnetConst: with nothing installed (unit
-// tests, leaf callers) MovementsFloor resolves to the pubnet const — the
-// pre-network-abstraction behaviour is invariant.
-func TestMovementsFloor_DefaultsToPubnetConst(t *testing.T) {
-	timescale.InstallMovementsFloor(0) // reset to "not installed"
-	t.Cleanup(func() { timescale.InstallMovementsFloor(0) })
-	if got := timescale.MovementsFloor(); got != timescale.SEP41MovementsFloorLedger {
-		t.Errorf("MovementsFloor() with nothing installed = %d, want const %d",
-			got, timescale.SEP41MovementsFloorLedger)
+// TestMovementsFloor covers the install contract. A test net installs
+// genesis (=1) so the /movements tail never floors above every ledger it
+// has. 0 means "not installed" and falls back to the pubnet const, so a
+// mis-wired empty config can never collapse the floor to 0 (the PG tail
+// would double-count with the CH archive below the boundary).
+func TestMovementsFloor(t *testing.T) {
+	cases := []struct {
+		name    string
+		install []uint32
+		want    uint32
+	}{
+		{"nothing installed is the pubnet const", nil, timescale.SEP41MovementsFloorLedger},
+		{"install overrides", []uint32{1}, 1},
+		{"zero is a no-op", []uint32{12345, 0}, timescale.SEP41MovementsFloorLedger},
 	}
-}
-
-// TestMovementsFloor_InstallOverrides: a test net installs genesis (=1)
-// and MovementsFloor returns it — the fix that keeps the /movements tail
-// from flooring above every ledger a reset test net has.
-func TestMovementsFloor_InstallOverrides(t *testing.T) {
-	t.Cleanup(func() { timescale.InstallMovementsFloor(0) })
-	timescale.InstallMovementsFloor(1)
-	if got := timescale.MovementsFloor(); got != 1 {
-		t.Errorf("MovementsFloor() after InstallMovementsFloor(1) = %d, want 1", got)
-	}
-}
-
-// TestMovementsFloor_ZeroIsNoOp: InstallMovementsFloor(0) must NOT zero
-// the boundary — 0 means "not installed" and falls back to the const, so
-// a mis-wired empty config can never collapse the floor to 0 (which would
-// let the PG tail double-count with the CH archive below the boundary).
-func TestMovementsFloor_ZeroIsNoOp(t *testing.T) {
-	t.Cleanup(func() { timescale.InstallMovementsFloor(0) })
-	timescale.InstallMovementsFloor(12345)
-	timescale.InstallMovementsFloor(0)
-	if got := timescale.MovementsFloor(); got != timescale.SEP41MovementsFloorLedger {
-		t.Errorf("MovementsFloor() after InstallMovementsFloor(0) = %d, want const %d (0 must not zero the boundary)",
-			got, timescale.SEP41MovementsFloorLedger)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			timescale.InstallMovementsFloor(0)
+			t.Cleanup(func() { timescale.InstallMovementsFloor(0) })
+			for _, v := range tc.install {
+				timescale.InstallMovementsFloor(v)
+			}
+			if got := timescale.MovementsFloor(); got != tc.want {
+				t.Errorf("MovementsFloor() after installing %v = %d, want %d", tc.install, got, tc.want)
+			}
+		})
 	}
 }

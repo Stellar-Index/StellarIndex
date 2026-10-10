@@ -9,43 +9,38 @@ import (
 // Defensive-guard coverage. The full INSERT/SELECT round-trip lives in
 // test/integration/ per the established testcontainers-go pattern.
 
-func TestUpsertProtocolContract_rejectsEmptySource(t *testing.T) {
-	s := &Store{}
-	err := s.UpsertProtocolContract(context.Background(), "", "Cchild", "Cfactory", 1)
-	if err == nil || !strings.Contains(err.Error(), "source or contract_id") {
-		t.Errorf("err=%v should mention empty source or contract_id", err)
+func TestProtocolContracts_rejectInvalidArgs(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name       string
+		call       func(*Store) error
+		wantSubstr string
+	}{
+		{"upsert empty source", func(s *Store) error {
+			return s.UpsertProtocolContract(ctx, "", "Cchild", "Cfactory", 1)
+		}, "source or contract_id"},
+		{"upsert empty contract", func(s *Store) error {
+			return s.UpsertProtocolContract(ctx, "blend", "", "Cfactory", 1)
+		}, "source or contract_id"},
+		{"upsert empty factory", func(s *Store) error {
+			return s.UpsertProtocolContract(ctx, "blend", "Cchild", "", 1)
+		}, "factory_id"},
+		{"load empty source", func(s *Store) error {
+			_, err := s.LoadProtocolContracts(ctx, "")
+			return err
+		}, "empty source"},
+		{"list empty source", func(s *Store) error {
+			_, err := s.ListProtocolContracts(ctx, "")
+			return err
+		}, "empty source"},
 	}
-}
-
-func TestUpsertProtocolContract_rejectsEmptyContract(t *testing.T) {
-	s := &Store{}
-	err := s.UpsertProtocolContract(context.Background(), "blend", "", "Cfactory", 1)
-	if err == nil || !strings.Contains(err.Error(), "source or contract_id") {
-		t.Errorf("err=%v should mention empty source or contract_id", err)
-	}
-}
-
-func TestUpsertProtocolContract_rejectsEmptyFactory(t *testing.T) {
-	s := &Store{}
-	err := s.UpsertProtocolContract(context.Background(), "blend", "Cchild", "", 1)
-	if err == nil || !strings.Contains(err.Error(), "factory_id") {
-		t.Errorf("err=%v should mention empty factory_id", err)
-	}
-}
-
-func TestLoadProtocolContracts_rejectsEmptySource(t *testing.T) {
-	s := &Store{}
-	_, err := s.LoadProtocolContracts(context.Background(), "")
-	if err == nil || !strings.Contains(err.Error(), "empty source") {
-		t.Errorf("err=%v should mention empty source", err)
-	}
-}
-
-func TestListProtocolContracts_rejectsEmptySource(t *testing.T) {
-	s := &Store{}
-	_, err := s.ListProtocolContracts(context.Background(), "")
-	if err == nil || !strings.Contains(err.Error(), "empty source") {
-		t.Errorf("err=%v should mention empty source", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(&Store{})
+			if err == nil || !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Errorf("err=%v should mention %s", err, tc.wantSubstr)
+			}
+		})
 	}
 }
 
