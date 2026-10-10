@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ReactElement } from 'react';
+import type { ComponentProps } from 'react';
 
 import type { LiveTip, StreamFrame } from '@/lib/live/hooks';
 
@@ -15,28 +15,63 @@ const useTipStream = vi.hoisted(() =>
 vi.mock('@/lib/live/hooks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/live/hooks')>()),
   useTipStream,
-  // A real clock reading so staleness verdicts run in render (the
-  // production interval hasn't ticked yet inside a render test).
+  // A real clock so staleness verdicts run inside render.
   useLiveClock: () => Date.now(),
 }));
 
-// LiveAssetPrice now also runs useChangeSummary (a TanStack Query
-// consumer, F090) alongside its hand-rolled price poll — every render
-// needs a QueryClient. Retries off so a rejected/404 fetch settles
-// immediately instead of a test waiting through backoff.
-function renderPrice(ui: ReactElement) {
+const AUDD = 'AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU';
+const USDC = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+const THIN = 'THIN-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+const CAUP7 = 'CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J';
+const PEG_CAPTION =
+  /pegged · declared 1:1 fiat peg × fx rate · not a market price/i;
+const WITHHELD = 'https://api.stellarindex.io/errors/price-withheld';
+
+type Text = string | RegExp;
+const shows = (...t: Text[]) =>
+  t.forEach((x) => expect(screen.getByText(x)).toBeInTheDocument());
+const hides = (...t: Text[]) =>
+  t.forEach((x) => expect(screen.queryByText(x)).not.toBeInTheDocument());
+
+type Props = ComponentProps<typeof LiveAssetPrice>;
+
+function renderPrice(over: Partial<Props> = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  const props: Props = {
+    assetID: 'native',
+    initialPrice: '0.17',
+    initialProvenance: 'vwap1m',
+    ...over,
+  };
   return render(
-    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+    <QueryClientProvider client={client}>
+      <LiveAssetPrice {...props} />
+    </QueryClientProvider>,
   );
 }
 
+// Requests whose URL lacks `path` get a bodiless 404.
+function stubFetch(status: number, body: unknown, path = '') {
+  const reply = async (input: string | URL) => {
+    const hit = String(input).includes(path);
+    const code = hit ? status : 404;
+    return {
+      status: code,
+      ok: code === 200,
+      json: async () => (hit ? body : {}),
+    };
+  };
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(reply));
+}
+
+const fetchSettled = () => vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+
 beforeEach(() => {
-  // The 60s /v1/price poll fallback AND the /v1/changes change-summary
-  // query: fail both so tests exercise pure baked-value + stream
-  // behavior deterministically unless a test stubs its own fetch.
+  useTipStream.mockReturnValue(null);
+  // Both the /v1/price poll and the /v1/changes query fail unless a test
+  // stubs its own fetch, so baked + stream behaviour is deterministic.
   vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
 });
 afterEach(() => {
@@ -45,389 +80,165 @@ afterEach(() => {
 });
 
 describe('LiveAssetPrice', () => {
-  it('falls back to the baked price + provenance when no stream frames arrive', () => {
-    useTipStream.mockReturnValue(null);
-    renderPrice(
-      <LiveAssetPrice
-        assetID="native"
-        initialPrice="0.17"
-        initialProvenance="vwap1m"
-      />,
-    );
-    expect(screen.getByText(/\$0\.17/)).toBeInTheDocument();
-    expect(screen.getByText(/1-min VWAP · USD/i)).toBeInTheDocument();
-    expect(
-      screen.queryByRole('status', { name: 'live' }),
-    ).not.toBeInTheDocument();
-  });
+  it.each([
+    ['vwap1m', 'native', '0.17', /\$0\.17/, /1-min VWAP · USD/i, null],
+    ['declared_peg', AUDD, '0.655', /\$0\.655/, PEG_CAPTION, /VWAP/i],
+    // Fetched live from /v1/assets, and not the aggregator's FX cross-rate.
+    [
+      'transitive',
+      CAUP7,
+      '7768.93',
+      /7,?768/,
+      /two-hop DEX route/i,
+      /as baked at deploy|triangulated via XLM/i,
+    ],
+  ] as const)(
+    'renders a baked %s price with its own caption',
+    (initialProvenance, assetID, initialPrice, price, caption, absent) => {
+      renderPrice({ assetID, initialPrice, initialProvenance });
+      shows(price, caption);
+      if (absent) hides(absent);
+      expect(
+        screen.queryByRole('status', { name: 'live' }),
+      ).not.toBeInTheDocument();
+    },
+  );
 
-  it('a fresh tip frame takes over the headline with the live caption', () => {
+  it.each([
+    ['a fresh tip frame takes over with the live caption', 0, '0.1745', true],
+    ['a stale tip frame does not claim live', 60_000, '0.17', false],
+  ])('%s', (_, age, shown, live) => {
     useTipStream.mockReturnValue({
       data: {
         data: { price: '0.1745' },
         as_of: '2026-08-08T00:00:00Z',
         sources: ['sdex'],
       },
-      receivedAt: Date.now(),
+      receivedAt: Date.now() - age,
     });
-    renderPrice(
-      <LiveAssetPrice
-        assetID="native"
-        initialPrice="0.17"
-        initialProvenance="vwap1m"
-      />,
-    );
-    expect(screen.getByText(/\$0\.1745/)).toBeInTheDocument();
+    renderPrice();
     expect(
-      screen.getByText(/live tip price · USD · streaming/i),
+      screen.getByText(new RegExp(`\\$${shown.replace('.', '\\.')}`)),
     ).toBeInTheDocument();
-    expect(screen.getByRole('status', { name: 'live' })).toBeInTheDocument();
+    expect(
+      screen.queryByText(/live tip price · USD · streaming/i) !== null,
+    ).toBe(live);
+    expect(screen.queryByRole('status', { name: 'live' }) !== null).toBe(live);
   });
 
-  it('a baked declared-peg price renders the pegged caption, never a market claim', () => {
-    useTipStream.mockReturnValue(null);
-    renderPrice(
-      <LiveAssetPrice
-        assetID="AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU"
-        initialPrice="0.655"
-        initialProvenance="declared_peg"
-      />,
-    );
-    expect(screen.getByText(/\$0\.655/)).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /pegged · declared 1:1 fiat peg × fx rate · not a market price/i,
-      ),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/VWAP/i)).not.toBeInTheDocument();
-  });
+  // Withheld-replaces-baked purges market snapshots; a peg or a
+  // global-market fill is not one, so the verdict must not blank it.
+  it.each([
+    ['declared_peg', AUDD, '0.655', PEG_CAPTION],
+    [
+      'global_market',
+      USDC,
+      '0.97',
+      /global market · cross-venue aggregator price/i,
+    ],
+  ] as const)(
+    'a price-withheld poll does not blank a %s price',
+    async (initialProvenance, assetID, initialPrice, caption) => {
+      stubFetch(404, { type: WITHHELD });
+      renderPrice({ assetID, initialPrice, initialProvenance });
+      await fetchSettled();
+      await screen.findByText(`$${initialPrice}`, { exact: false });
+      shows(caption);
+      hides(/price withheld|as baked at deploy/i);
+    },
+  );
 
-  it('a price-withheld poll verdict does NOT blank a declared-peg price', async () => {
-    // The withheld-replaces-baked rule exists to purge lower-trust
-    // MARKET snapshots; a declared-peg basis is not a market claim, so
-    // the peg price + caption must survive the server's (expected)
-    // price-withheld verdict for the same asset's market books.
-    useTipStream.mockReturnValue(null);
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        status: 404,
-        ok: false,
-        json: async () => ({
-          type: 'https://api.stellarindex.io/errors/price-withheld',
-        }),
-      }),
-    );
-    renderPrice(
-      <LiveAssetPrice
-        assetID="AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU"
-        initialPrice="0.655"
-        initialProvenance="declared_peg"
-      />,
-    );
-    // Wait for the poll's withheld verdict to land, then assert the
-    // peg price is still on screen with its honest caption.
-    await vi.waitFor(() => {
-      expect(fetch).toHaveBeenCalled();
+  it('a price-withheld poll replaces a market-provenance price with the server wording', async () => {
+    stubFetch(404, {
+      type: WITHHELD,
+      title: 'Price withheld — issuer flagged',
+      detail:
+        'a directory-flagged issuer is on one leg of native / fiat:USD, so no price is published for this market',
     });
-    expect(await screen.findByText(/\$0\.655/)).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /pegged · declared 1:1 fiat peg × fx rate · not a market price/i,
-      ),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/price withheld/i)).not.toBeInTheDocument();
-  });
-
-  it('a price-withheld poll verdict does NOT blank a global-market price', async () => {
-    // A global-market fill exists only because the Stellar market was
-    // refused, so /v1/price withholding that market is expected.
-    useTipStream.mockReturnValue(null);
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        status: 404,
-        ok: false,
-        json: async () => ({
-          type: 'https://api.stellarindex.io/errors/price-withheld',
-        }),
-      }),
-    );
-    renderPrice(
-      <LiveAssetPrice
-        assetID="USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-        initialPrice="0.97"
-        initialProvenance="global_market"
-      />,
-    );
-    await vi.waitFor(() => {
-      expect(fetch).toHaveBeenCalled();
-    });
-    expect(await screen.findByText(/\$0\.97/)).toBeInTheDocument();
-    expect(
-      screen.getByText(/global market · cross-venue aggregator price/i),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/as baked at deploy/i)).not.toBeInTheDocument();
-  });
-
-  it('a price-withheld poll verdict still replaces a market-provenance baked price', async () => {
-    useTipStream.mockReturnValue(null);
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        status: 404,
-        ok: false,
-        json: async () => ({
-          type: 'https://api.stellarindex.io/errors/price-withheld',
-          title: 'Price withheld — issuer flagged',
-          detail:
-            'a directory-flagged issuer is on one leg of native / fiat:USD, so no price is published for this market',
-        }),
-      }),
-    );
-    renderPrice(
-      <LiveAssetPrice
-        assetID="native"
-        initialPrice="0.17"
-        initialProvenance="listing"
-      />,
-    );
-    // The caption comes from the server's own problem-body wording
-    // — never a hardcoded liquidity-only string, which would
-    // be false for a scam-issuer withhold like this one.
-    expect(
-      await screen.findByText(/directory-flagged issuer/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText(/market too thin to aggregate/i),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText(/\$0\.17/)).not.toBeInTheDocument();
+    renderPrice({ initialProvenance: 'listing' });
+    await screen.findByText(/directory-flagged issuer/i);
+    hides(/market too thin to aggregate/i, /\$0\.17/);
   });
 
   it('a thin-market poll shows the price with a warning badge and the substance note', async () => {
-    useTipStream.mockReturnValue(null);
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        status: 200,
-        ok: true,
-        json: async () => ({
-          data: {
-            price: '0.0421',
-            substance: {
-              base: 'THIN-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-              quote: 'fiat:USD',
-              window_seconds: 86400,
-              measured_at: '2026-10-07T00:00:00Z',
-              volume_usd: '12.5',
-              buckets: 2,
-              valued_buckets: 2,
-              span_seconds: 600,
-              floor: {
-                min_volume_usd: '1000',
-                min_buckets: 6,
-                min_span_seconds: 3600,
-              },
-              failed: 'volume',
-            },
+    stubFetch(200, {
+      data: {
+        price: '0.0421',
+        substance: {
+          base: THIN,
+          quote: 'fiat:USD',
+          window_seconds: 86400,
+          measured_at: '2026-10-07T00:00:00Z',
+          volume_usd: '12.5',
+          buckets: 2,
+          valued_buckets: 2,
+          span_seconds: 600,
+          floor: {
+            min_volume_usd: '1000',
+            min_buckets: 6,
+            min_span_seconds: 3600,
           },
-          flags: { thin_market: true },
-        }),
-      }),
-    );
-    renderPrice(
-      <LiveAssetPrice
-        assetID="THIN-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-        initialPrice={null}
-        initialProvenance={null}
-      />,
-    );
+          failed: 'volume',
+        },
+      },
+      flags: { thin_market: true },
+    });
+    renderPrice({ assetID: THIN, initialPrice: null, initialProvenance: null });
     expect(await screen.findByText(/\$0\.0421/)).toBeInTheDocument();
-    expect(vi.mocked(fetch).mock.calls[0]?.[0] as string).toContain(
+    expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).toContain(
       'include_thin=true',
     );
-    expect(
-      screen.getByText(/thin market · low confidence · in no total/i),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/1-min VWAP/i)).not.toBeInTheDocument();
-    const badge = screen.getByText('⚠');
-    expect(badge.getAttribute('title')).toMatch(
+    shows(/thin market · low confidence · in no total/i);
+    hides(/1-min VWAP/i);
+    expect(screen.getByText('⚠').getAttribute('title')).toMatch(
       /traded \$12\.5.*floor \$1(\.0)?K.*2 active price buckets \(floor 6\)/,
     );
-    expect(
-      screen.getByText(/Over the last 24 hours it traded/),
-    ).toBeInTheDocument();
-    // The tip stream for a thin pair is withheld; never open it.
+    shows(/Over the last 24 hours it traded/);
+    // A thin pair's tip stream is withheld; never open it.
     expect(useTipStream).toHaveBeenLastCalledWith(null);
   });
 
-  it('a thin-market poll does NOT displace a declared-peg price', async () => {
-    useTipStream.mockReturnValue(null);
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        status: 200,
-        ok: true,
-        json: async () => ({
-          data: { price: '0.42' },
-          flags: { thin_market: true },
-        }),
-      }),
-    );
-    renderPrice(
-      <LiveAssetPrice
-        assetID="AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU"
-        initialPrice="0.655"
-        initialProvenance="declared_peg"
-      />,
-    );
-    await vi.waitFor(() => {
-      expect(fetch).toHaveBeenCalled();
+  it('a thin-market poll does not displace a declared-peg price', async () => {
+    stubFetch(200, { data: { price: '0.42' }, flags: { thin_market: true } });
+    renderPrice({
+      assetID: AUDD,
+      initialPrice: '0.655',
+      initialProvenance: 'declared_peg',
     });
-    expect(await screen.findByText(/\$0\.655/)).toBeInTheDocument();
-    expect(
-      screen.getByText(/pegged · declared 1:1 fiat peg/i),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/\$0\.42/)).not.toBeInTheDocument();
-    expect(screen.queryByText('⚠')).not.toBeInTheDocument();
-  });
-
-  it('a stale tip frame does NOT claim live (WB-04)', () => {
-    useTipStream.mockReturnValue({
-      data: { data: { price: '0.1745' }, as_of: '2026-08-08T00:00:00Z' },
-      receivedAt: Date.now() - 60_000,
-    });
-    renderPrice(
-      <LiveAssetPrice
-        assetID="native"
-        initialPrice="0.17"
-        initialProvenance="vwap1m"
-      />,
-    );
-    expect(screen.getByText(/\$0\.17/)).toBeInTheDocument();
-    expect(screen.queryByText(/streaming/i)).not.toBeInTheDocument();
+    await fetchSettled();
+    await screen.findByText(/\$0\.655/);
+    shows(PEG_CAPTION);
+    hides(/\$0\.42/, '⚠');
   });
 });
 
-// REGRESSION: the transitive price must be visible in the UI.
-//
-// /v1/price answers for DIRECT markets only, so a two-hop asset gets
-// price:null there while /v1/assets serves a real substance-gated
-// figure (measured on CAUP7: null vs 7768.93, basis "transitive").
-// AssetPathView passed initialPrice={null} regardless, so exactly the
-// assets transitive pricing was built for rendered a permanent "—".
-describe('LiveAssetPrice — transitive provenance', () => {
-  it('renders a transitive price with an honest caption', () => {
-    useTipStream.mockReturnValue(null);
-    renderPrice(
-      <LiveAssetPrice
-        assetID="CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
-        initialPrice="7768.93"
-        initialProvenance="transitive"
-      />,
+// The 24h pill must follow the live change-summary feed, not the
+// build-time figure, or its arrow can contradict the live price.
+describe('LiveAssetPrice — 24h change pill', () => {
+  it('overrides a stale baked UP pill with the live DOWN figure', async () => {
+    const change = {
+      entity_type: 'coin',
+      entity_id: 'native',
+      h24_delta_pct: -5.2,
+    };
+    stubFetch(
+      200,
+      {
+        data: {
+          ...change,
+          refreshed_at: '2026-09-19T15:00:00Z',
+          current_value: '0.170',
+        },
+      },
+      '/v1/changes/',
     );
-    expect(screen.getByText(/7,?768/)).toBeInTheDocument();
-    expect(screen.getByText(/two-hop DEX route/i)).toBeInTheDocument();
-  });
-
-  // A transitive price is fetched live from /v1/assets on this render —
-  // it is the POLL that has nothing to say, not the price that is old.
-  it('does not caption a transitive price "as baked at deploy"', () => {
-    useTipStream.mockReturnValue(null);
-    renderPrice(
-      <LiveAssetPrice
-        assetID="CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
-        initialPrice="7768.93"
-        initialProvenance="transitive"
-      />,
-    );
-    expect(screen.queryByText(/as baked at deploy/i)).not.toBeInTheDocument();
-  });
-
-  // It must NOT be captioned as the aggregator's FX cross-rate: that is
-  // a different derivation with a different trust story.
-  it('is not labelled "triangulated via XLM"', () => {
-    useTipStream.mockReturnValue(null);
-    renderPrice(
-      <LiveAssetPrice
-        assetID="CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
-        initialPrice="7768.93"
-        initialProvenance="transitive"
-      />,
-    );
-    expect(screen.queryByText(/triangulated via XLM/i)).not.toBeInTheDocument();
-  });
-});
-
-// REGRESSION: the 24h change pill must not be built ONCE
-// from the build-time `change_24h_pct` and handed in as a static React
-// node — the price beside it kept refreshing live, so a large intraday
-// move could leave the pill's direction arrow flatly contradicting the
-// live price. LiveAssetPrice must re-derive the pill from the same live
-// change-summary feed ChangeSummaryStrip renders (GET
-// /v1/changes/coin/{id}), overriding the baked figure once the worker
-// reports a fresher one.
-describe('LiveAssetPrice — 24h change pill (F090)', () => {
-  function mockChangesFetch(h24DeltaPct: number) {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockImplementation((input: string | URL) => {
-        const url = String(input);
-        if (url.includes('/v1/changes/')) {
-          return Promise.resolve({
-            ok: true,
-            status: 200,
-            json: async () => ({
-              data: {
-                entity_type: 'coin',
-                entity_id: 'native',
-                refreshed_at: '2026-09-19T15:00:00Z',
-                current_value: '0.170',
-                h24_delta_pct: h24DeltaPct,
-              },
-            }),
-          });
-        }
-        // /v1/price poll — irrelevant here, keep the baked price.
-        return Promise.resolve({
-          ok: false,
-          status: 404,
-          json: async () => ({}),
-        });
-      }),
-    );
-  }
-
-  it('overrides a stale build-time UP pill with a live DOWN figure from the change-summary worker', async () => {
-    useTipStream.mockReturnValue(null);
-    mockChangesFetch(-5.2);
-    renderPrice(
-      <LiveAssetPrice
-        assetID="native"
-        initialPrice="0.17"
-        initialProvenance="vwap1m"
-        initialChangePct={2.1}
-      />,
-    );
-
-    // The live worker says -5.20% (DOWN); the build-time bake said
-    // +2.10% (UP). The rendered pill must reflect the LIVE figure, not
-    // the stale baked one that started the arrow pointing the wrong way.
+    renderPrice({ initialChangePct: 2.1 });
     expect(await screen.findByText(/-5\.20%/)).toBeInTheDocument();
-    expect(screen.queryByText(/\+2\.10%/)).not.toBeInTheDocument();
+    hides(/\+2\.10%/);
   });
 
-  it('keeps the baked pill when the change-summary worker has no row yet', () => {
-    useTipStream.mockReturnValue(null);
-    // Default beforeEach fetch stub rejects every request — no worker row.
-    renderPrice(
-      <LiveAssetPrice
-        assetID="native"
-        initialPrice="0.17"
-        initialProvenance="vwap1m"
-        initialChangePct={2.1}
-      />,
-    );
-    expect(screen.getByText(/\+2\.10%/)).toBeInTheDocument();
+  it('keeps the baked pill when the worker has no row yet', () => {
+    renderPrice({ initialChangePct: 2.1 });
+    shows(/\+2\.10%/);
   });
 });
