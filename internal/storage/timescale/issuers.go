@@ -347,25 +347,13 @@ type IssuerSep1Currency struct {
 	ApprovalCriteria       string `json:"ApprovalCriteria,omitempty"`
 }
 
-// GetIssuerSep1Cached returns the cached SEP-1 payload for an issuer
-// G-strkey, parsed from the `issuers.sep1_payload` JSONB column. Returns
-// (nil, nil) when the issuer row exists but has no payload yet (the
-// sep1-refresh cron hasn't visited it). Returns (nil, sql.ErrNoRows)
-// when the issuer is completely unknown.
-//
-// Stands in for a live per-request HTTPS fetch via
-// [metadata.Resolver.Resolve] — that fetch dominated /v1/assets/{id}
-// p95 (4+ seconds on cold issuers). The DB-cached path is one indexed
-// SELECT.
 // IssuerSep1Unreachable reports whether the issuer's current failure streak
 // is one the payload alone cannot show: attempts that ended without a
 // storable document, and that no systemic-outage unwind took back.
 //
-// [GetIssuerSep1Cached] returns (nil, nil) for both of the ways an issuer can
-// hold no payload, and they are opposite findings: OUR backlog, or the
-// ISSUER's publication — e.g. a real asset manager's stellar.toml with
-// an unterminated string on line 20, leaving thirteen live RWA-class
-// declarations unreadable.
+// [GetIssuerSep1Cached] returns (nil, nil) for both ways an issuer can hold
+// no payload, and they are opposite findings: OUR backlog, or the ISSUER's
+// publication (e.g. a malformed stellar.toml).
 //
 // It reads sep1_consecutive_failures, not sep1_resolved_at, because the
 // refresh cron stamps resolved_at BEFORE each fetch and keeps it through
@@ -386,6 +374,10 @@ func (s *Store) IssuerSep1Unreachable(ctx context.Context, gStrkey string) (bool
 	return unreachable, nil
 }
 
+// GetIssuerSep1Cached returns the cached SEP-1 payload for an issuer
+// G-strkey from `issuers.sep1_payload`: (nil, nil) when the row exists with
+// no payload yet, (nil, sql.ErrNoRows) when the issuer is unknown. It stands
+// in for a live per-request HTTPS fetch that dominated /v1/assets/{id} p95.
 func (s *Store) GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*IssuerSep1Cached, error) {
 	q := `SELECT sep1_payload, ` + sep1PayloadOutlivedSQL + ` FROM issuers WHERE g_strkey = $1`
 	var (
@@ -533,27 +525,21 @@ func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
 //
 // # Why this overwrites
 //
-// issuers.home_domain must not be write-once. A writer that refused a
-// row already holding a value, on the theory that a SEP-1 resolver's
-// domain is "better sourced" than the AccountEntry's, would be wrong:
-// that resolver does not write this column; it READS it to choose which
-// domain to fetch. Such a clause would protect one snapshot of the
-// AccountEntry from a newer snapshot of the same AccountEntry, and the
-// column would freeze at whatever it was first given.
+// issuers.home_domain must not be write-once. The SEP-1 resolver does not
+// write this column, it READS it to choose which domain to fetch, so a
+// refuse-if-set clause would only protect one AccountEntry snapshot from a
+// newer one and freeze the column.
 //
-// A frozen identity column is an attack surface, not a conservatism. An
-// anchor that moves domain with SetOptions and lets the old name lapse
-// keeps the lapsed name here for good; the hourly SEP-1 refresh keeps
-// fetching that name; and whoever registers it next can serve a
-// stellar.toml listing the anchor's issuer account back, satisfy the
-// bidirectional check, and inherit the anchor's verified org identity.
-// Re-running the enrich job is the documented on-chain remediation for
-// exactly that, and while the column was write-once it was a no-op.
+// A frozen identity column is an attack surface. An anchor that moves
+// domain with SetOptions and lets the old name lapse keeps the lapsed name
+// here; the hourly SEP-1 refresh keeps fetching it; and whoever registers it
+// next can serve a stellar.toml listing the anchor's issuer account back,
+// satisfy the bidirectional check, and inherit the anchor's verified org
+// identity. Re-running the enrich job is the on-chain remediation.
 //
 // The predicate keeps the write off rows that already agree, so a re-run
-// still reports only the rows it actually changed. A row it does change has
-// its SEP-1 state unbound in the same statement; see
-// [sep1ResetOnHomeDomainChange].
+// reports only the rows it changed. A row it does change has its SEP-1
+// state unbound in the same statement; see [sep1ResetOnHomeDomainChange].
 func (s *Store) SyncIssuerHomeDomain(ctx context.Context, gStrkey, homeDomain string) (bool, error) {
 	if homeDomain == "" {
 		return false, nil
@@ -721,35 +707,30 @@ const (
 )
 
 // MarkIssuerSep1Failed records a terminating attempt that produced no
-// payload — dead domain, TLS error, SSRF-blocked, unparseable TOML,
-// failed write — and advances the retry ladder. Returns the issuer's
-// new consecutive-failure count.
+// payload (dead domain, TLS error, SSRF-blocked, unparseable TOML, failed
+// write) and advances the retry ladder. Returns the issuer's new
+// consecutive-failure count.
 //
-// Two separate jobs, and they are easy to conflate:
+// Two separate jobs, easy to conflate:
 //
-//   - sep1_resolved_at = NOW() is QUEUE HYGIENE, independent of the
-//     ladder. IssuersNeedingSep1Refresh orders `sep1_resolved_at ASC
-//     NULLS FIRST`, so a row left NULL stays the first candidate on
-//     every subsequent run; unstamped, the ~43k pubnet issuers with dead
-//     home_domains would occupy the whole front of the queue and good
-//     issuers behind them would never be reached. Every failure path
-//     must stamp it.
+//   - sep1_resolved_at = NOW() is QUEUE HYGIENE, independent of the ladder.
+//     IssuersNeedingSep1Refresh orders `sep1_resolved_at ASC NULLS FIRST`,
+//     so an unstamped row stays the first candidate every run and the ~43k
+//     issuers with dead home_domains would fill the front of the queue.
+//     Every failure path must stamp it.
+//   - sep1_consecutive_failures / sep1_next_attempt_after are the BUDGET.
+//     Stamping alone only reorders the queue; the ladder stops a domain that
+//     has 404'd two hundred times getting as many attempts as one that
+//     answers.
 //
-//   - sep1_consecutive_failures / sep1_next_attempt_after are the
-//     BUDGET. Stamping alone only reorders the queue; it still hands a
-//     domain that has 404'd two hundred times exactly as many attempts
-//     as one that answers. The ladder is what stops that.
+// One statement, so the count and the deferral cannot disagree. The SET
+// expressions read the PRE-UPDATE sep1_consecutive_failures (Postgres
+// semantics): the deferral uses `prior failures` and the count `prior + 1`,
+// so a first failure yields count 1 and a one-day deferral.
 //
-// The whole update is one statement so the count and the deferral
-// derived from it cannot disagree. The SET expressions read the
-// PRE-UPDATE value of sep1_consecutive_failures (Postgres semantics),
-// which is why the deferral uses `prior failures` and the count uses
-// `prior + 1`: a first failure yields count 1 and a one-day deferral.
-//
-// Both interval parameters carry an explicit ::interval cast. An
-// untyped bind parameter beside an interval operator leaves Postgres
-// unable to resolve the operator and raises 42883 at runtime on every
-// call, while compiling and reviewing perfectly.
+// Both interval parameters carry an explicit ::interval cast: an untyped
+// bind parameter beside an interval operator raises 42883 at runtime on
+// every call while compiling and reviewing fine.
 func (s *Store) MarkIssuerSep1Failed(ctx context.Context, gStrkey string) (int, error) {
 	const q = `
         UPDATE issuers
@@ -902,43 +883,33 @@ type IssuerAuthFlagsOnRecord struct {
 	AsOfLedger *uint32
 }
 
-// IssuersNeedingChainRecheck returns every issuer whose auth-flag columns are
-// already FILLED from a live (or pre-0153 unlabelled) reading, oldest-first by
-// primary key, together with the values currently on record.
+// IssuersNeedingChainRecheck returns every issuer whose auth-flag columns
+// are already FILLED from a live (or pre-0153 unlabelled) reading,
+// oldest-first by primary key, with the values currently on record.
 //
-// `limit` <= 0 returns every candidate, which is the intended setting: the
-// caller writes back only the rows the chain disagrees with, so re-offering
-// the whole filled set costs one bulk lake read per batch and, in the steady
-// state, nothing in Postgres.
+// `limit` <= 0 returns every candidate, the intended setting: the caller
+// writes back only rows the chain disagrees with, so re-offering the whole
+// filled set costs one bulk lake read per batch and, in steady state,
+// nothing in Postgres.
 //
 // # WHY A THIRD QUEUE
 //
-// The other two queues can each only ever see a row once.
 // [Store.IssuerGStrkeysNeedingFlags] is `auth_required IS NULL`, so a row
-// leaves it the moment it is filled, and [Store.IssuerGStrkeysNeedingRecheck]
-// covers only `last_known_before_removal` rows. Between them a FILLED,
-// live-sourced row is never read again — and `issuers.home_domain` rides on
-// exactly those rows.
-//
-// That is what kept an anchor's identity unfixable from chain even after the
-// column stopped being write-once (see [Store.SyncIssuerHomeDomain]): nothing
-// scheduled ever re-read it. `issuer-enrich`, the job whose whole purpose is
-// to sync the column, is a manual one-shot with no timer; `issuer-flags` is
-// the nightly one. So an anchor that moves domain with SetOptions and lets the
-// old name lapse keeps the lapsed name on this row until an operator happens
-// to run a backfill by hand, the hourly SEP-1 refresh keeps fetching that
-// name, and whoever registers it next can serve a stellar.toml listing the
-// anchor's issuer account back and inherit its verified org identity.
+// leaves it once filled, and [Store.IssuerGStrkeysNeedingRecheck] covers
+// only `last_known_before_removal` rows. A FILLED, live-sourced row is never
+// read again, yet `issuers.home_domain` rides on exactly those rows:
+// `issuer-enrich` (the job that syncs it) is a manual one-shot, `issuer-flags`
+// the nightly one. An anchor that moves domain and lets the old name lapse
+// would keep it on this row (see [Store.SyncIssuerHomeDomain]).
 //
 // `last_known_before_removal` rows are EXCLUDED because the queue above
-// already carries them, under a rule this one must not apply to them: their
-// removal ledger is fixed, so re-writing one that is still merged is a no-op
-// UPDATE and only a LIVE hit (the account re-created at the same address)
-// changes anything. The two queues therefore PARTITION the filled rows rather
-// than overlapping on ~10k of them every night. The exception is a merged row
-// that still holds a home_domain, stored while it was live: re-writing it is
-// NOT a no-op, because the persist clears a merged account's identity, so it
-// is offered here until that write lands and then drops out.
+// carries them under a rule this one must not apply: their removal ledger is
+// fixed, so re-writing a still-merged one is a no-op UPDATE and only a LIVE
+// hit (account re-created at the same address) changes anything. The two
+// queues PARTITION the filled rows rather than overlapping on ~10k nightly.
+// The exception is a merged row that still holds a home_domain stored while
+// live: re-writing it is NOT a no-op, because the persist clears a merged
+// account's identity, so it is offered here until that write lands.
 func (s *Store) IssuersNeedingChainRecheck(ctx context.Context, limit int) ([]IssuerAuthFlagsOnRecord, error) {
 	q := `
         SELECT g_strkey,

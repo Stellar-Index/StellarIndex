@@ -14,46 +14,37 @@ import (
 )
 
 // earliestBucketSQL finds the START of the oldest materialised bucket a
-// prices_<granularity> CAGG holds for a pair, across every canonical
-// identity form of both legs AND both stored market directions, inside
-// the half-open window [$3, $4).
+// prices_<granularity> CAGG holds for a pair, across every canonical identity
+// form of both legs AND both stored market directions, inside the half-open
+// window [$3, $4).
 //
-// Shape, and why it is this shape rather than the obvious one: the
-// obvious `WHERE base_asset = ANY($1) AND quote_asset = ANY($2)` does
-// NOT reach prices_<g>_pair_bucket_idx — a ScalarArrayOpExpr on the
-// leading index columns is planned as a bucket-ordered scan with the
-// pair as a post-filter, so proving a sparse or absent direction empty
-// walks every chunk. Measured on r1 against prices_1d (EXPLAIN
-// ANALYZE): the array form ran 5 666 ms and touched ~4.2M rows
-// for XLM/USD; this form — one correlated `min(bucket)` per (form,
-// form, direction) combination, each an equality lookup the index
-// satisfies as an Index Only Scan — ran 6.9 ms with 20 ms planning and
-// zero heap fetches. Same answer, same single round trip.
+// Shape: the obvious `WHERE base_asset = ANY($1) AND quote_asset = ANY($2)`
+// does NOT reach prices_<g>_pair_bucket_idx. A ScalarArrayOpExpr on the
+// leading index columns is planned as a bucket-ordered scan with the pair as
+// a post-filter, so proving a sparse or absent direction empty walks every
+// chunk. On r1 against prices_1d the array form ran 5 666 ms (~4.2M rows) for
+// XLM/USD; one correlated `min(bucket)` per (form, form, direction)
+// combination, each an equality lookup the index satisfies as an Index Only
+// Scan, ran 6.9 ms. Same answer, same single round trip.
 //
-// The alias forms arrive as bound arrays and are cross-joined here, so
-// the SQL text is STATIC: no per-request arm generation, no injection
-// surface, one prepared plan for every pair.
+// The alias forms arrive as bound arrays and are cross-joined here, so the
+// SQL text is STATIC: no per-request arm generation, no injection surface,
+// one prepared plan for every pair.
 //
-// The window is required and both bounds are Go-side literals rather
-// than now(): TimescaleDB does run-time chunk exclusion for now(),
-// which leaves the PLANNER enumerating every chunk (the same trap
-// [Store.LatestClosedVWAP1mForPair] documents), so a caller-supplied
-// upper bound is what keeps planning flat. The ADR-0015 closed-bucket
-// guard rides on that same bound as `bucket <= $4 - INTERVAL` — the
-// sargable spelling, never `bucket + INTERVAL <= $4`, which is a
-// function on the indexed column and gives the predicate back to the
-// filter stage.
+// The window is required and both bounds are Go-side literals rather than
+// now(): TimescaleDB's run-time chunk exclusion for now() leaves the PLANNER
+// enumerating every chunk (the trap [Store.LatestClosedVWAP1mForPair]
+// documents). The ADR-0015 closed-bucket guard rides on that bound as
+// `bucket <= $4 - INTERVAL`, the sargable spelling, never
+// `bucket + INTERVAL <= $4`.
 //
-// Both bounds are bound with an explicit `::timestamptz`, and the cast
-// on $4 is load-bearing. Its FIRST use in the statement is the operand
-// of `- INTERVAL`, and PostgreSQL resolves a binary operator with one
-// untyped operand by assuming it has the other operand's type — so an
-// uncast $4 there is parsed as `interval - interval`, and the whole
-// statement fails with "operator does not exist: timestamp with time
-// zone <= interval" (42883) before a single row is read. A probe error
-// is silent by design (no signal, one warning), so this is exactly the
-// failure the integration test in test/integration exists to execute —
-// and the one it caught on its first run against the migrated schema.
+// Both bounds are bound with an explicit `::timestamptz`, and the cast on $4
+// is load-bearing: its FIRST use is the operand of `- INTERVAL`, and
+// PostgreSQL resolves a binary operator with one untyped operand by assuming
+// the other operand's type, so an uncast $4 parses as `interval - interval`
+// and fails with 42883 before a row is read. A probe error is silent by
+// design (no signal, one warning), which is why the integration test in
+// test/integration must execute this statement.
 const earliestBucketSQL = `
 	SELECT min(m) FROM (
 	    SELECT (SELECT min(p.bucket)
@@ -92,47 +83,38 @@ const earliestBucketStoredSQL = `
 `
 
 // EarliestBucket returns the START of the oldest CLOSED bucket the
-// prices_<granularity> CAGG holds for the pair inside [from, to), and
-// whether one exists at all. It is the coverage-FLOOR primitive behind
-// the API's outside-coverage signal: an empty series is only worth
-// annotating if the server can say when its own history for that pair
-// begins, and that answer is one bounded read rather than a property
-// any of the serving reads happen to return.
+// prices_<granularity> CAGG holds for the pair inside [from, to), and whether
+// one exists at all. It is the coverage-FLOOR primitive behind the API's
+// outside-coverage signal: an empty series is only worth annotating if the
+// server can say when its own history for that pair begins.
 //
-// Alias-complete on BOTH legs and BOTH stored directions. The serving
-// reads this floor explains ([Store.OHLCSeries], [Store.HistoryPoints],
-// [Store.HistoryPointsInRange]) each take ONE literal spelling per leg;
-// it is the API layer that walks canonical.AssetAliases across both
-// legs before calling them and serves whatever the first populated
-// spelling holds. XLM's native / crypto:XLM / SAC forms are disjoint
-// venue populations, and the SDEX decoder records a market in whichever
-// orientation the venue used, so the floor of what the API serves is
-// the floor across that whole walk — one read that spans it, rather
-// than one per spelling. A floor read against one spelling of one
-// direction would report a floor years later than the one the serving
-// walk actually honours — and a floor that is too LATE is exactly the
-// input that would make a caller's window look like it predates the
-// held history when it does not.
+// Alias-complete on BOTH legs and BOTH stored directions. The serving reads
+// this floor explains ([Store.OHLCSeries], [Store.HistoryPoints],
+// [Store.HistoryPointsInRange]) each take ONE literal spelling per leg; the
+// API layer walks canonical.AssetAliases across both legs and serves
+// whatever the first populated spelling holds. XLM's native / crypto:XLM /
+// SAC forms are disjoint venue populations, and the SDEX decoder records a
+// market in whichever orientation the venue used, so the floor of what the
+// API serves is the floor across that whole walk. A floor read against one
+// spelling of one direction would report a floor too LATE, making a caller's
+// window look like it predates the held history when it does not.
 //
-// The direction fold matches the CAGG-backed series reads
-// ([Store.OHLCSeries], [Store.HistoryPointsInRange]), which combine
-// both stored orientations into the requested one. A surface whose
-// serving read spans ONE stored orientation must not use this fold —
-// see [Store.EarliestBucketAsStored].
+// The direction fold matches the CAGG-backed series reads, which combine both
+// stored orientations into the requested one. A surface whose serving read
+// spans ONE stored orientation must not use this fold; see
+// [Store.EarliestBucketAsStored].
 //
-// The alias fold on the QUOTE leg is the same conditional claim: it
-// belongs to a surface whose read walks the quote's spellings, which
-// /v1/chart, /v1/price/at and the non-fiat /v1/ohlc series all do. The
-// fiat-quoted /v1/ohlc series does not — it reads each USD-pegged
-// constituent in one named quote spelling — so it takes
+// The alias fold on the QUOTE leg is the same conditional claim: it belongs
+// to surfaces that walk the quote's spellings (/v1/chart, /v1/price/at and
+// the non-fiat /v1/ohlc series). The fiat-quoted /v1/ohlc series reads each
+// USD-pegged constituent in one named quote spelling, so it takes
 // [Store.EarliestBucketLiteralQuote] instead.
 //
-// [from, to) is mandatory and half-open; `to` must be strictly after
-// `from` (the guard [Store.OHLCSeries] applies for the same reason —
-// a degenerate window is a caller bug, not an empty answer). Callers
-// pass the network's first possible bucket as `from` and a Go-side
-// `now` as `to`, which keeps the read bounded at both ends and the
-// plan flat.
+// [from, to) is mandatory and half-open; `to` must be strictly after `from`
+// (the guard [Store.OHLCSeries] applies: a degenerate window is a caller
+// bug, not an empty answer). Callers pass the network's first possible
+// bucket as `from` and a Go-side `now` as `to`, keeping the read bounded at
+// both ends and the plan flat.
 //
 // Returns (zero, false, nil) when the pair has no bucket in the window.
 func (s *Store) EarliestBucket(

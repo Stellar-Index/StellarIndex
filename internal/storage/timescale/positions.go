@@ -8,30 +8,24 @@ import (
 )
 
 // This file is the read side for GET /v1/accounts/{g_strkey}/positions
-// (the "DeFi positions" view) — six per-protocol fold queries, one per
-// venue table the ADR-0035-gated on-chain sources write into. Every
-// query is a `WHERE <user_col> = $1 GROUP BY <venue_col...>` bounded by
-// positionsVenueLimit (a user's realistic venue fan-out is nowhere near
-// the cap — this is defence-in-depth, the same convention
-// poolTokensRowLimit uses in pool_tokens.go), and every `WHERE` clause
-// is served by a user-leading index (four pre-existing; two added by
-// migration 0107 — see that file's header for which four already had
-// one).
+// (the "DeFi positions" view): six per-protocol fold queries, one per venue
+// table the ADR-0035-gated on-chain sources write into. Every query is a
+// `WHERE <user_col> = $1 GROUP BY <venue_col...>` bounded by
+// positionsVenueLimit (defence-in-depth, the same convention
+// poolTokensRowLimit uses in pool_tokens.go), and every `WHERE` is served by
+// a user-leading index (four pre-existing; two added by migration 0107).
 //
 // Net-position amounts are computed HERE, in SQL, as a per-venue SUM of
-// signed per-event deltas — "event_derived" basis. None of these tables
-// track a running balance the projector maintains; the served-tier
-// design is strictly append-only (ADR-0031/0032 "one writer, sole
-// writer" — the projector INSERTs one row per observed event, never
-// UPDATEs a running total). sorocredit's credit_positions is the one
-// exception (see CreditPositionsByOwner) — it has no per-event amount
-// at all, so its "current" figure is the protocol's own most-recently-
-// published statement, "basis: stateful", not a delta sum.
+// signed per-event deltas ("event_derived" basis). None of these tables
+// track a running balance: the served tier is append-only (ADR-0031/0032,
+// the projector INSERTs one row per observed event, never UPDATEs a running
+// total). sorocredit's credit_positions is the one exception (see
+// CreditPositionsByOwner): it has no per-event amount, so its "current"
+// figure is the protocol's own most-recently-published statement, "basis:
+// stateful".
 //
-// positionsVenueLimit bounds every fold's venue fan-out per the
-// task's "a user won't have >500 venues" note. Every fold orders by its
-// venue key before the LIMIT so which venues survive the cap is not
-// plan-dependent.
+// Every fold orders by its venue key before the LIMIT so which venues
+// survive positionsVenueLimit is not plan-dependent.
 const positionsVenueLimit = 500
 
 // queryFold runs one of this file's `WHERE <user_col> = $1 ... LIMIT
@@ -62,42 +56,33 @@ func queryFold[T any](ctx context.Context, db *sql.DB, label, query string, args
 	return out, nil
 }
 
-// BlendPositionFold is one (pool, asset) money-market fold for a user,
-// read from blend_positions (migration 0045/0053/0054). SupplyNet and
-// BorrowNet are independent nets — a user can carry both a supply and a
-// borrow position in the same (pool, asset) simultaneously (over-
-// collateralized borrowing against the same reserve is not how Blend
-// works, but supplying reserve A while borrowing reserve A in the SAME
-// pool is a legitimate degenerate case the fold does not special-case
-// away) — each becomes its own position row at the handler layer,
-// independently net-zero-filtered.
+// BlendPositionFold is one (pool, asset) money-market fold for a user, read
+// from blend_positions (migration 0045/0053/0054). SupplyNet and BorrowNet
+// are independent nets: a user can carry both a supply and a borrow position
+// in the same (pool, asset), so each becomes its own position row at the
+// handler layer, independently net-zero-filtered.
 //
-// SupplyNet sums `token_amount` (the migration-0045 doc comment:
-// "token_amount = tokens_in (supply/supply_collateral) = tokens_out
-// (withdraw/withdraw_collateral)" — the UNDERLYING asset amount, NOT
+// SupplyNet sums `token_amount` (the UNDERLYING asset amount, NOT
 // `b_or_d_amount`, the b-token amount) signed +supply/+supply_collateral,
-// -withdraw/-withdraw_collateral. BorrowNet sums the same `token_amount`
-// column signed +borrow/+flash_loan, -repay: a flash_loan mints
-// d-tokens to the user (`tokens_out`, `d_tokens_minted`) that stay owed
-// until a `repay` burns them, so excluding it would net that repay to a
-// negative debt.
+// -withdraw/-withdraw_collateral. BorrowNet sums the same column signed
+// +borrow/+flash_loan, -repay: a flash_loan mints d-tokens to the user that
+// stay owed until a `repay` burns them, so excluding it would net that repay
+// to a negative debt.
 //
-// Because these are summed UNDERLYING amounts observed at each
-// historical event, NOT a live read of the pool's current b/d-token
-// exchange rate, the fold does not (and cannot, from this table alone)
-// reflect interest accrued since each event — amount_semantics
-// "net_underlying_at_event_time" at the handler layer documents this
-// explicitly per event.
+// These are summed UNDERLYING amounts at each historical event, not a live
+// read of the pool's b/d-token exchange rate, so the fold cannot reflect
+// interest accrued since each event (amount_semantics
+// "net_underlying_at_event_time" at the handler layer documents this).
 //
 // SupplySuperseded / BorrowSuperseded mark a leg an auction or bad-debt
 // write-off has moved b/d-tokens into or out of (blendAuctionMovesSQL).
 // Those moves carry no underlying amount, so SupplyNet/BorrowNet stop
-// describing the position and stay wrong after any later event. For such
-// a leg SupplyTokens/BorrowTokens is its exact b/d-token balance (the
-// events' b_or_d_amount plus every move), which is how the handler tells
-// a fully seized leg (zero tokens) from a partly seized one. A superseded
-// leg exists even with no blend_positions row (a filler that only ever
-// received a lot), and its last activity includes the move.
+// describing the position and stay wrong after any later event. For such a
+// leg SupplyTokens/BorrowTokens is its exact b/d-token balance (the events'
+// b_or_d_amount plus every move), which is how the handler tells a fully
+// seized leg (zero tokens) from a partly seized one. A superseded leg exists
+// even with no blend_positions row (a filler that only ever received a lot),
+// and its last activity includes the move.
 type BlendPositionFold struct {
 	Pool               string
 	Asset              string
@@ -411,29 +396,23 @@ func (s *Store) DefindexVaultSharesByUser(ctx context.Context, address string) (
 // credit_positions (migration 0090) LEFT-JOINed against that position's
 // MOST RECENT credit_statements row.
 //
-// UNLIKE every other protocol in this file, sorocredit has no per-event
-// amount to sum: credit_positions is purely an identity registry (one
-// row per opened position, from `NewCollateralContract` — see
-// migration 0090's header and internal/sources/sorocredit/README.md's
-// event table). The closest thing to "how big is this position right
-// now" is the protocol's own most-recently-published `StatementPublished`
-// amount (credit_statements.amount) — a value the PROTOCOL computed and
-// published, not one this fold derives by summing deltas. That is
-// exactly "basis: stateful" at the handler layer (as opposed to every
-// other protocol here, which is "basis: event_derived").
+// Unlike every other protocol here, sorocredit has no per-event amount to
+// sum: credit_positions is an identity registry (one row per opened
+// position, from `NewCollateralContract`; see migration 0090 and
+// internal/sources/sorocredit/README.md). The closest thing to its size is
+// the protocol's own most-recently-published `StatementPublished` amount
+// (credit_statements.amount), a value the PROTOCOL computed, i.e. "basis:
+// stateful" at the handler layer rather than "event_derived".
 //
-// LatestAmount is the empty string / LatestActivity is the zero time
-// when the position has never had a statement published yet (a
-// just-opened position) — the handler surfaces that as a position with
-// no reportable amount rather than guessing 0.
+// LatestAmount is the empty string / LatestActivity the zero time when no
+// statement has been published yet (a just-opened position); the handler
+// surfaces that as no reportable amount rather than guessing 0.
 //
 // Withdrawn reports whether a `Withdrawal` event (credit_events,
 // event_type='withdrawal') has ever fired against this position's
-// collateral_contract — the same "still open" proxy
-// CreditWindowAnalytics uses (sorocredit.go), except UNWINDOWED here
-// (credit_events carries NO retention — migration 0090 — so an
-// all-time EXISTS is the honest signal, not a window-scoped
-// approximation).
+// collateral_contract, the same "still open" proxy CreditWindowAnalytics
+// uses (sorocredit.go) but UNWINDOWED: credit_events carries NO retention
+// (migration 0090), so an all-time EXISTS is the honest signal.
 type CreditPositionFold struct {
 	CollateralContract string
 	PositionUUID       string

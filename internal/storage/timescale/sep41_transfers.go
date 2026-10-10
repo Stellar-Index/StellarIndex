@@ -222,33 +222,30 @@ func (s *Store) InsertSEP41Transfer(ctx context.Context, r SEP41TransferRow) err
 }
 
 // sep41TransferLookbackLadder is the trailing-window ladder
-// [Store.ListSEP41Transfers] walks before it falls back to the
-// full-history read. Each rung is a `ledger_close_time >= now-D` floor;
-// the first rung that fills the caller's page wins.
+// [Store.ListSEP41Transfers] walks before it falls back to the full-history
+// read. Each rung is a `ledger_close_time >= now-D` floor; the first rung
+// that fills the caller's page wins.
 //
-// Why a ladder instead of one unbounded query: no index yields one
-// contract's rows in ledger_close_time DESC order (the
-// sep41_transfers_contract_{from,to}_idx put the address before the time,
-// and the primary key leads with time), so an unbounded read materialises
-// and sorts every row a busy contract owns before the LIMIT applies. For
-// the USDC SAC that is a Seq Scan + Sort over ~17M rows and blows the
-// handler budget; a quiet contract is cheap, so cost grows with how
-// interesting the contract is.
+// Why a ladder: no index yields one contract's rows in ledger_close_time
+// DESC order (sep41_transfers_contract_{from,to}_idx put the address before
+// the time, and the primary key leads with time), so an unbounded read
+// materialises and sorts every row a busy contract owns before the LIMIT.
+// For the USDC SAC that is a Seq Scan + Sort over ~17M rows and blows the
+// handler budget.
 //
 // A floor inside the recent data turns the plan into an Incremental Sort
-// over the time index, so the LIMIT stops early (sub-millisecond on r1).
-// The rungs must stay narrow enough for chunk exclusion to leave only the
-// newest chunks: 7d is the widest window measured to keep the index plan,
-// and 90d falls back to the per-chunk Seq Scan + Sort. They do not depend
-// on fitting inside one chunk.
+// over the time index, so the LIMIT stops early. The rungs must stay narrow
+// enough for chunk exclusion to leave only the newest chunks: 7d is the
+// widest window measured to keep the index plan, and 90d falls back to the
+// per-chunk Seq Scan + Sort.
 //
-// The short-circuit is safe because the read is time-ordered: every row
-// a rung's floor excludes is strictly older than every row it keeps, so
-// a rung that returns a full page returned exactly the newest page.
+// The short-circuit is safe because the read is time-ordered: every row a
+// rung's floor excludes is strictly older than every row it keeps, so a rung
+// that returns a full page returned exactly the newest page.
 //
-// Cost: a rung that cannot fill its page walks its whole window of the
-// time index (on r1: 36ms at 1h, 2.2s at 24h, past a 9s timeout at 7d),
-// so the ladder as a whole is bounded by [SEP41TransferLadderBudget]; see
+// A rung that cannot fill its page walks its whole window of the time index
+// (on r1: 36ms at 1h, 2.2s at 24h, past a 9s timeout at 7d), so the ladder
+// is bounded by [SEP41TransferLadderBudget]; see
 // [Store.walkSEP41TransferLadder].
 var sep41TransferLookbackLadder = []time.Duration{
 	time.Hour,
@@ -281,26 +278,22 @@ const SEP41TransferLadderBudget = 3 * time.Second
 // /v1/contracts/{id}/transfers.
 //
 // Full history stays reachable: a contract whose page none of the
-// [sep41TransferLookbackLadder] rungs can fill falls through to an
-// unbounded read. That fallback is cheap for a genuinely low-volume
-// contract, whose rows the planner reaches through
-// sep41_transfers_contract_from_idx (1.3s at limit=100 on r1 for a
-// contract with 21k rows in the newest chunk), but NOT for every
-// contract that reaches it: a contract with a large history and fewer
-// than `limit` rows in the widest rung still takes the same per-chunk
-// sort that times out. The ladder mitigates the timeout class for
-// contracts that are busy now; it does not eliminate it, and that
-// residual class pays the ladder first, so its fallback runs on the
-// caller's remaining time — at least 5s of the handler's 8s deadline.
-// The root cause — no index yielding one contract's rows in
-// ledger_close_time DESC order — is only removed by a (contract_id,
-// ledger_close_time DESC) index together with an ORDER BY the
-// compressed chunks can serve (the read also orders by op_index, which
-// compress_orderby lacks, so a compressed chunk still sorts its whole
-// segment); the index is heavy DDL on a hypertable of hundreds of
-// millions of rows and belongs in its own migration with the by-hand
-// CONCURRENTLY step r1 needs (migrations 0083 / 0106 set that
-// convention).
+// [sep41TransferLookbackLadder] rungs can fill falls through to an unbounded
+// read. That is cheap for a genuinely low-volume contract (the planner uses
+// sep41_transfers_contract_from_idx), but NOT for a contract with a large
+// history and fewer than `limit` rows in the widest rung: it still takes the
+// per-chunk sort that times out, after paying the ladder first, so its
+// fallback runs on the caller's remaining time (at least 5s of the 8s
+// handler deadline).
+//
+// The root cause, no index yielding one contract's rows in ledger_close_time
+// DESC order, is only removed by a (contract_id, ledger_close_time DESC)
+// index together with an ORDER BY the compressed chunks can serve (the read
+// also orders by op_index, which compress_orderby lacks, so a compressed
+// chunk still sorts its whole segment). That index is heavy DDL on a
+// hypertable of hundreds of millions of rows and belongs in its own
+// migration with the by-hand CONCURRENTLY step r1 needs (migrations 0083 /
+// 0106 set that convention).
 func (s *Store) ListSEP41Transfers(ctx context.Context, contractID, fromAddr, toAddr string, limit int) ([]SEP41TransferRow, error) {
 	return s.listSEP41TransfersAt(ctx, contractID, fromAddr, toAddr, limit, time.Now(), SEP41TransferLadderBudget)
 }
@@ -514,37 +507,32 @@ func cursorIndex16(v uint32) int16 {
 }
 
 // ListSEP41TransfersByAddress returns one address's SEP-41 'transfer'
-// history — both sides (from_addr = address OR to_addr = address) —
-// newest first, keyset-paged by the composite (ledger, tx_hash,
-// op_index, event_index) cursor. ADR-0048 D5: this is the Postgres
-// "recent tail" half of the unified GET /v1/accounts/{g}/movements
-// feed; internal/api/v1/explorer/movements.go merges it with
-// ClickHouse's stellar.account_movements (the pre-P23 archive) —
-// SEP41MovementsFloorLedger's doc comment has the non-overlap
-// argument.
+// history, both sides (from_addr = address OR to_addr = address), newest
+// first, keyset-paged by the composite (ledger, tx_hash, op_index,
+// event_index) cursor. ADR-0048 D5: this is the Postgres "recent tail" half
+// of the unified GET /v1/accounts/{g}/movements feed;
+// internal/api/v1/explorer/movements.go merges it with ClickHouse's
+// stellar.account_movements (the pre-P23 archive). SEP41MovementsFloorLedger's
+// doc comment has the non-overlap argument.
 //
 // Scope, deliberately narrower than ListSEP41Transfers:
-//   - event_kind = 'transfer' only — approve/set_admin/set_authorized
-//     don't move an asset amount, so they aren't "movements".
-//   - ledger >= SEP41MovementsFloorLedger. Below the P23 boundary, any
-//     transfer of a CLASSIC asset already has a
-//     stellar.account_movements row (ADR-0047); a pure Soroban-native
-//     SEP-41 token transfer below the boundary is real activity this
-//     scope doesn't surface via this feed yet — a documented gap (see
-//     the OpenAPI description for GET /accounts/{g_strkey}/movements),
-//     not a bug.
+//   - event_kind = 'transfer' only: approve/set_admin/set_authorized don't
+//     move an asset amount.
+//   - ledger >= SEP41MovementsFloorLedger. Below the P23 boundary a transfer
+//     of a CLASSIC asset already has a stellar.account_movements row
+//     (ADR-0047); a pure Soroban-native SEP-41 transfer below it is a
+//     documented gap (see the OpenAPI description for GET
+//     /accounts/{g_strkey}/movements), not a bug.
 //
-// direction, when non-empty, must be "sent"/"received"/"self"
-// (mirroring clickhouse.AccountMovementDirection, which this package
-// can't import — see SEP41MovementsFloorLedger's doc comment on the
-// import-direction rule) and is evaluated against `address`: "sent" =
-// from_addr=address (and to_addr != address), "received" = the
-// reverse, "self" = from_addr=address AND to_addr=address.
+// direction, when non-empty, must be "sent"/"received"/"self" (mirroring
+// clickhouse.AccountMovementDirection, which this package can't import; see
+// SEP41MovementsFloorLedger's doc comment) and is evaluated against
+// `address`: "sent" = from_addr=address (and to_addr != address), "received"
+// = the reverse, "self" = both.
 //
 // contractID, when non-empty, restricts every arm to that token contract
-// BEFORE the LIMIT, so an ?asset= page is filled from matching rows
-// rather than from the address's newest `limit` transfers of any token
-// (the caller maps the canonical asset id to its contract).
+// BEFORE the LIMIT, so an ?asset= page is filled from matching rows rather
+// than from the address's newest `limit` transfers of any token.
 //
 
 // sep41TransfersByAddressQuery assembles the UNION arm set for one

@@ -225,43 +225,22 @@ type SupplyObservation struct {
 
 // LatestSupplyObservations returns the most-recent supply observation per
 // canonical asset_id, restricted to observations no older than maxAge.
-// Keys are canonical asset_ids: the observer's asset_key is CODE:ISSUER
-// (colon) and `XLM`, which we translate to the listing's CODE-ISSUER
-// (dash) and `native`. The /v1/assets listing uses this to fill
-// market_cap WHERE supply exists rather than leaving every row null;
-// coverage is whatever the observer's watch-list covers.
+// Keys are canonical asset_ids: the observer's CODE:ISSUER (colon) and `XLM`
+// are translated to the listing's CODE-ISSUER (dash) and `native`. The
+// /v1/assets listing fills market_cap WHERE supply exists; coverage is
+// whatever the observer's watch-list covers.
 //
-// # Why this reads the observation log and not the supply_1d CAGG
+// It reads the observation log, not the supply_1d CAGG: supply_1d is a daily
+// `last()` roll-up whose refresh end_offset means the newest bucket is
+// always a COMPLETED PREVIOUS day (aged ~2.9h to ~26.9h on a 6-hourly
+// refresh), with nothing on the wire saying so. For USDC that can understate
+// supply by several percent (tens of millions of dollars of market cap). The
+// log ticks every five minutes. Against supply_1d a 24h vintage bound would
+// disable this arm entirely (every bucket is older by construction).
 //
-// Taking `max(bucket)` from supply_1d would carry no vintage bound at
-// all. supply_1d is a DAILY roll-up of this same table — `last()` per
-// asset per day — and its refresh policy carries an end_offset, so the
-// current day's bucket is never fully covered by a refresh window and is
-// never materialised. The newest bucket is therefore always a COMPLETED
-// PREVIOUS day, so the value it holds is the last observation of the
-// previous UTC day and nothing fresher can ever come out of that arm. On
-// r1's 6-hourly refresh it ages from about 2.9 hours when the bucket
-// lands to about 26.9 hours just before the next one does — it was
-// 17 h 47 m old when this was measured — with nothing on the wire
-// saying so.
-//
-// The distance that opens up is not a rounding matter. For USDC — this
-// index's single largest served market cap — the newest supply_1d bucket
-// can understate supply by several percent, tens of millions of dollars
-// of market cap, from a roll-up that is itself a faithful copy of a
-// reading that was correct when it was taken. The underlying observation
-// log ticks every five minutes and tracks the lake's independent flow sum.
-//
-// So the arm was reading the right pipeline through the wrong table.
-// Reading the observations directly makes the arm as fresh as the
-// observer, and makes the vintage bound below meaningful rather than
-// decorative — against supply_1d a 24h bound would have disabled this
-// arm entirely (every bucket is older than that by construction) and a
-// 48h bound would have admitted the 354.8M figure unchanged.
-//
-// maxAge must be positive. A non-positive value admits nothing, which is
-// the safe direction — the caller falls back to its next arm rather than
-// publishing an observation of unknown vintage.
+// maxAge must be positive. A non-positive value admits nothing, the safe
+// direction: the caller falls back to its next arm rather than publishing an
+// observation of unknown vintage.
 func (s *Store) LatestSupplyObservations(ctx context.Context, maxAge time.Duration) (map[string]SupplyObservation, error) {
 	// The cutoff is computed by POSTGRES, not by the caller: these rows
 	// are stamped with the writer's clock, and comparing them against a
@@ -547,31 +526,26 @@ var directoryScamFlaggedExpr = `EXISTS (SELECT 1 FROM unnest(dir.tags) t ` +
 // SELECT.
 const rankTierMarker = "/*RANK_TIER*/"
 
-// listingRankTierExpr is the PRIMARY, ASCENDING sort key of the
-// /v1/assets listing: a small integer tier that is compared
-// BEFORE the volume / observation-count key, so it dominates whatever
-// the active sort is.
+// listingRankTierExpr is the PRIMARY, ASCENDING sort key of the /v1/assets
+// listing: a small integer tier compared BEFORE the volume /
+// observation-count key, so it dominates whatever the active sort is.
 //
-//	0 — rankable.
-//	1 — unpriced: no USD price at all. Volume order only — that listing
-//	    IS a price/market-cap table, so a row with no price must not
-//	    outrank one that has a price. The observation-count order is an
-//	    ACTIVITY ranking whose contract says nothing about price, so it
-//	    keeps tiers {0, 2} only.
-//	2 — directory-flagged: the issuer carries a scam-class tag. Applies
-//	    to EVERY order. The row and its "⚠ Flagged" pill stay — we do not
-//	    hide a flagged asset, we refuse to RANK it. Withholding its price
-//	    (pricingguard.ScamGate + the API payload suppression) while still
-//	    ranking it above real assets on 24h volume would be a
-//	    half-measure: a wash-traded scam token could sit near the top of
-//	    the flagship /assets page with no price, no market cap and a red
-//	    pill.
+//	0 - rankable.
+//	1 - unpriced: no USD price at all. Volume order only: that listing IS a
+//	    price/market-cap table, so a row with no price must not outrank one
+//	    that has a price. The observation-count order is an ACTIVITY ranking
+//	    that says nothing about price, so it keeps tiers {0, 2} only.
+//	2 - directory-flagged: the issuer carries a scam-class tag. Applies to
+//	    EVERY order. The row and its "⚠ Flagged" pill stay; we refuse to RANK
+//	    it. Withholding its price (pricingguard.ScamGate + API payload
+//	    suppression) while still ranking it on 24h volume would let a
+//	    wash-traded scam token sit near the top with no price and a red pill.
 //
-// It is emitted as the rank_tier column so the keyset cursor can encode
-// the same value the ORDER BY ranks on — a cursor that omits the LEADING
-// sort key skips or repeats rows across pages — and is repeated verbatim
-// in assetsOrderBy + assetsCursorPredicate. Same three-call-site contract
-// as adjustedVolume24hExpr; keep the three in step.
+// It is emitted as the rank_tier column so the keyset cursor can encode the
+// same value the ORDER BY ranks on (a cursor omitting the LEADING sort key
+// skips or repeats rows across pages), and is repeated verbatim in
+// assetsOrderBy + assetsCursorPredicate. Same three-call-site contract as
+// adjustedVolume24hExpr; keep the three in step.
 func listingRankTierExpr(order AssetsOrder) string {
 	if order == AssetsOrderVolume24hUSDDesc {
 		return `(CASE WHEN ` + directoryScamFlaggedExpr + ` THEN 2 ` +
@@ -581,40 +555,30 @@ func listingRankTierExpr(order AssetsOrder) string {
 }
 
 // listAssetsBaseSelect is the SELECT shared by every permutation of
-// WHERE-clause buildAssetsQuery composes. Pulled out of the function
-// body so buildAssetsQuery stays under the funlen threshold and the SQL
-// is editable as a single block.
+// WHERE-clause buildAssetsQuery composes (kept out of the function body for
+// the funlen threshold).
 //
 // It reads NO hypertable and NO continuous aggregate. Both money columns
-// come from worker-maintained rollups keyed on asset_id — volume from
-// asset_volume_24h (migration 0087) and price/change/source_count from
-// asset_price_snapshot (migration 0154) — so the cost of a listing page
-// is the spine plus three small hash joins, whatever the
-// limit / cursor / filter. Materialising twelve `DISTINCT ON … FROM
-// prices_1m` CTEs per call for every asset in the catalogue instead
-// costs seconds and hundreds of thousands of buffers per call to return
-// about a hundred rows. Keep it that way —
-// if you find yourself adding a prices_1m read here, the answer is
-// another column on a rollup.
+// come from worker-maintained rollups keyed on asset_id (volume from
+// asset_volume_24h, migration 0087; price/change/source_count from
+// asset_price_snapshot, migration 0154), so a listing page costs the spine
+// plus three small hash joins whatever the limit / cursor / filter.
+// Materialising twelve `DISTINCT ON … FROM prices_1m` CTEs per call costs
+// seconds and hundreds of thousands of buffers. If you are adding a
+// prices_1m read here, add a column to a rollup instead.
 //
-// Volume aggregation: prices_1m.volume_usd summed across the
-// trailing 24h, where the asset participates as base OR quote —
-// computed by internal/aggregate/assetvolrollup.
-// There is no per-asset stats table to read instead
-// (classic_asset_stats_5m never got a writer; migration 0152 dropped
-// it), and most classic assets have no direct fiat:USD pair either.
-// The CTE-with-UNION in the refresh sidesteps both.
+// Volume: prices_1m.volume_usd summed over the trailing 24h where the asset
+// is base OR quote, computed by internal/aggregate/assetvolrollup. Most
+// classic assets have no direct fiat:USD pair, which the refresh's
+// CTE-with-UNION handles.
 //
-// Price + 1h/24h/7d change: latest + lookback snapshots, with XLM
-// triangulation when no direct USD-quote pair (fiat:USD or the USDC
-// stablecoin proxy) exists — the derivation is unchanged and now lives
-// in refreshAssetPriceSnapshotUpsert (asset_price_snapshot.go), which
-// also documents the staleness contract this query's join enforces.
+// Price + 1h/24h/7d change come from refreshAssetPriceSnapshotUpsert
+// (asset_price_snapshot.go), which also documents the staleness contract
+// this query's join enforces.
 //
-// market_cap_usd + circulating_supply remain NULL — their proper
-// sources (asset_supply_history) aren't running for the long
-// tail of classic assets today, and fabricating values would
-// defeat the "stop lying" rule.
+// market_cap_usd + circulating_supply remain NULL: asset_supply_history
+// doesn't cover the long tail of classic assets, and fabricating values
+// would defeat the "stop lying" rule.
 const listAssetsBaseSelect = `
 		WITH catalogue_assets AS (
 		  -- The listing spine. Was FROM classic_assets directly, which
@@ -1109,38 +1073,32 @@ type AssetPricePoint struct {
 	P *string
 }
 
-// Rounding scale for the catalogue reads that serve a USD price as
-// ROUNDed text from RAW prices_1m ratios: the per-asset row's price_usd
+// Rounding scale for the catalogue reads that serve a USD price as ROUNDed
+// text from RAW prices_1m ratios: the per-asset row's price_usd
 // ([getAssetBySlugSQL]) and the four price-history series.
 //
-// These reads stay RAW — the API corrects them for a confirmed
-// non-7-decimals token (v1.Server.normalizeCatalogueUSD), and doing it
-// here as well would apply the factor twice. What belongs here is the
-// ROUNDING, because it runs before that correction can: a flat
-// ROUND(raw, 10) on an 18-decimals token (correction 10^11) would turn
-// a 1 USD price, raw 1e-11, into zero, and a 14 USD one into a raw
-// 1e-10 that reads back as exactly 10 USD, leaving the reader able
-// only to withhold.
+// These reads stay RAW: the API corrects them for a confirmed non-7-decimals
+// token (v1.Server.normalizeCatalogueUSD), and correcting here too would
+// apply the factor twice. The ROUNDING belongs here because it runs before
+// that correction: a flat ROUND(raw, 10) on an 18-decimals token (correction
+// 10^11) would turn a 1 USD price, raw 1e-11, into zero.
 //
-// Rounding the raw ratio to 10 + k places, where the correction is 10^k,
-// IS rounding the corrected price to 10 places:
+// Rounding the raw ratio to 10 + k places, where the correction is 10^k, IS
+// rounding the corrected price to 10 places:
 //
 //	ROUND(raw, 10 + k) * 10^k  ==  ROUND(raw * 10^k, 10)
 //
-// so the rounding moves after the correction without moving the multiply
-// out of the one place that owns it. k comes from
-// nonstandard_decimals_assets and is floored at zero: a token with FEWER
-// than 7 decimals scales DOWN, which only shrinks the rounding error, so
-// it keeps the 10 places it always had. An asset with no confirmed row
-// resolves to exactly 10 — the same ROUND(…, 10), the same bytes.
+// k comes from nonstandard_decimals_assets, floored at zero: a token with
+// FEWER than 7 decimals scales DOWN, which only shrinks the rounding error.
+// An asset with no confirmed row resolves to exactly 10, the same bytes as
+// ROUND(…, 10).
 //
 // The API tells the two apart by the text itself (ROUND(x, n)::text has
-// exactly n fraction places), so a value rounded at the old scale keeps
-// its precision floor and one rounded here does not need it.
+// exactly n fraction places).
 //
 // Three spellings of one expression, differing only in how the asset is
-// named at each site. MAX because the alias-array form may match more
-// than one spelling of the asset.
+// named at each site. MAX because the alias-array form may match more than
+// one spelling of the asset.
 const (
 	catalogueRoundPlacesHead = `10 + COALESCE((SELECT MAX(GREATEST(nda.decimals - 7, 0))
 		                          FROM nonstandard_decimals_assets nda
@@ -1411,31 +1369,23 @@ var getAssetPriceHistory7dSQL = `
 		 ORDER BY days.bucket ASC
 `
 
-// AssetATH is the asset's all-time-high USD price plus the day
-// it was observed. Computed across every USD-quoted day-bucket
-// in `prices_1d` (direct USD-stablecoin pairs and `fiat:USD`).
-// Triangulated paths (asset/XLM × XLM/USD) are intentionally
-// excluded — they introduce two layers of price-discovery
-// noise and a single bad XLM/USD reading on a thin day could
+// AssetATH is the asset's all-time-high USD price plus the day it was
+// observed, across every USD-quoted day-bucket in `prices_1d` (direct
+// USD-stablecoin pairs and `fiat:USD`). Triangulated paths (asset/XLM ×
+// XLM/USD) are excluded: a single bad XLM/USD reading on a thin day could
 // fabricate an ATH.
 //
-// The metric is "highest day-VWAP" rather than "highest single
-// tick" — the day-bucket VWAP is volume-weighted and naturally
-// rejects sub-stroop dust prints. A `max(quote/base)` definition
-// put XLM's ATH at $1.03 because a single 1-stroop ↔ 1-stroop
-// SDEX dust trade pegged the day's max. CoinGecko / CMC use single-tick
-// highs across hour buckets that are themselves smoothed; we
-// don't have that smoothing layer pre-launch, so day-VWAP is
-// the closest dust-resistant approximation.
+// The metric is "highest day-VWAP", not "highest single tick": the
+// volume-weighted bucket rejects sub-stroop dust prints. A `max(quote/base)`
+// definition put XLM's ATH at $1.03 because one 1-stroop SDEX dust trade
+// pegged the day's max.
 //
-// USD-quote allowlist note: the `USDT-GCQTGZQQ…` issuer is EXCLUDED
-// from every USD allowlist — there is no Tether on Stellar (the
-// verified catalogue lists no stellar network for USDT); that asset
-// trades unpegged (~\-e.09), which fabricated an XLM "ATH" of \.78 on
-// thin Jan-2025 days (volume_usd=0 dust). USD proxies are
-// [usdProxyQuotes]: the verified USDC issuer, its SAC (where the
-// Soroban XLM/USD book trades) and fiat:USD; new proxies require a
-// verified-catalogue entry.
+// The `USDT-GCQTGZQQ…` issuer is EXCLUDED from every USD allowlist: there
+// is no Tether on Stellar, and that asset trades unpegged, which fabricated
+// an XLM "ATH" on thin days (volume_usd=0 dust). USD proxies are
+// [usdProxyQuotes]: the verified USDC issuer, its SAC (where the Soroban
+// XLM/USD book trades) and fiat:USD; new proxies require a verified-catalogue
+// entry.
 //
 // A day-bucket only counts if its pair cleared [athMinDayVolumeUSD] and
 // [athMinDayTrades], so a lone print on an empty book cannot set the high.
@@ -1836,30 +1786,26 @@ func (s *Store) GetAssetByAssetID(ctx context.Context, assetID string) (AssetRow
 
 // GetNativeAssetRow returns the synthetic AssetRow for native XLM.
 //
-// Native XLM has no row in classic_assets — that table only tracks
-// issued classic assets, by definition. Without a special-case path
-// the public lookup `/v1/coins/XLM` either 404s (no slug match) or
-// returns whichever issued token's code happens to be "XLM" wins
-// the disambiguation tiebreak (today: a scam token issued by
-// GAE5PQNUIP5E…).
+// Native XLM has no row in classic_assets (that table only tracks issued
+// assets). Without this path `/v1/coins/XLM` either 404s or lets whichever
+// issued token has code "XLM" win the disambiguation tiebreak (a scam token).
 //
 // Population:
 //   - Slug / Code: hardcoded "XLM"
 //   - AssetID: "native" (the canonical pair-side identifier)
 //   - IssuerGStrkey: "" (native has no issuer)
 //   - First/Last seen ledger: 0 (unset; see ledger_bounds)
-//   - ObservationCount: 0 with ObservationCountUnmeasured set — no
-//     registry row counts native's trades, and no cheap read does
+//   - ObservationCount: 0 with ObservationCountUnmeasured set; no registry
+//     row counts native's trades, and no cheap read does
 //   - PriceUSD + Change*Pct: same xlm_usd / xlm_usd_{1h,24h,7d}
-//     stablecoin-proxy chain used by GetAssetBySlug + the listing
-//     query for non-native assets
-//   - Volume24hUSD: SUM(volume_usd) where the asset is base or quote
-//     in the trailing 24h
-//   - MarketCapUSD / CirculatingSupply: NULL — supply pipeline
-//     doesn't yet emit a row for native (algorithm 1 work)
+//     stablecoin-proxy chain as GetAssetBySlug and the listing query
+//   - Volume24hUSD: SUM(volume_usd) where the asset is base or quote in the
+//     trailing 24h
+//   - MarketCapUSD / CirculatingSupply: NULL; the supply pipeline emits no
+//     row for native
 //
-// Always returns a populated row (no sql.ErrNoRows path) — the
-// underlying CTEs LEFT JOIN out to NULL when there's no data.
+// Always returns a populated row (no sql.ErrNoRows path): the underlying
+// CTEs LEFT JOIN out to NULL when there's no data.
 func (s *Store) GetNativeAssetRow(ctx context.Context) (AssetRow, error) {
 	row, err := scanAssetRow(s.db.QueryRowContext(ctx, getNativeAssetSQL, canonical.NativeSACContractID()))
 	if err != nil {
