@@ -269,3 +269,16 @@ describe('throughputSummary', () => {
     });
   });
 });
+
+describe('closeGaps', () => {
+  it('gives each ledger its seconds after the previous and none to the oldest', async () => {
+    const { closeGaps } = await import('./NetworkView');
+    expect(
+      closeGaps([
+        { close_time: '2026-10-10T00:00:16Z' },
+        { close_time: '2026-10-10T00:00:05Z' },
+        { close_time: '2026-10-10T00:00:00Z' },
+      ]),
+    ).toEqual([11, 5, null]);
+  });
+});
