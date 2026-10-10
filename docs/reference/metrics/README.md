@@ -4134,8 +4134,7 @@ eventually).
 Buckets span 10 ms → 30 s — covers a healthy local cache-only
 refresh (≤ 50 ms when every reference is cached), a single slow
 vendor (~1-5 s on CG / Chainlink), and the worst-case
-per-reference timeout (`per_reference_timeout_seconds`,
-default 5 s) compounded across multiple references. No alert
+per-reference timeout (default 5 s) compounded across multiple references. No alert
 wired today; the existing failing-rate signal lives in the
 `_total` counter.
 

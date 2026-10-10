@@ -52,8 +52,6 @@ const (
 //     heartbeat floor; 26h tolerates one missed heartbeat + slack.
 //   - Band relays are relayer-driven and sparse (hours apart); 26h
 //     matches the Redstone rationale.
-//
-// Operators tune via `[divergence.<oracle>].max_age_minutes`.
 const (
 	DefaultOracleMaxAgeReflector = 30 * time.Minute
 	DefaultOracleMaxAgeRedstone  = 26 * time.Hour

@@ -245,6 +245,10 @@ func supplyStaleness(now func() time.Time, maxAge time.Duration, refName string,
 // structural noise.
 const DefaultSupplyThreshold = 0.01
 
+// DefaultSupplyPerReferenceTimeout bounds each supply-reference HTTP call
+// when the caller sets none (supply endpoints are slower than price ones).
+const DefaultSupplyPerReferenceTimeout = 10 * time.Second
+
 // SupplyService runs one supply cross-check cycle per [Tick]. For each
 // configured [SupplyCheck] it loads our served circulating figure,
 // fans out to every reference, computes the relative divergence, and
@@ -293,7 +297,7 @@ func NewSupplyService(opts SupplyServiceOptions) (*SupplyService, error) {
 	}
 	timeout := opts.PerReferenceTimeout
 	if timeout <= 0 {
-		timeout = 10 * time.Second
+		timeout = DefaultSupplyPerReferenceTimeout
 	}
 	nowFn := opts.NowFn
 	if nowFn == nil {
