@@ -265,39 +265,18 @@ test-load-guard:
 	    echo "Refusing to load-test production target $$K6_TARGET"; exit 2;; \
 	esac
 
+# SCENARIO is a scenario-file suffix (price, vwap, history, batch, streaming,
+# mixed, explorer, ...); empty runs every scenario. Spike is separate: it
+# warns about on-call silences first.
+SCENARIO ?=
+LOAD_SCENARIOS = $(if $(SCENARIO),$(wildcard test/load/scenarios/[0-9]*-$(SCENARIO)*.js),$(wildcard test/load/scenarios/[0-9]*.js))
+
 .PHONY: test-load
-test-load: test-load-guard ## Run all k6 scenarios against $K6_TARGET (slow; ~30 min)
-	@for s in test/load/scenarios/[0-9]*.js; do \
+test-load: test-load-guard ## Run k6 scenarios against $K6_TARGET; SCENARIO=price|vwap|history|batch|streaming|mixed|explorer for one (default all, ~30 min)
+	@if [ -z "$(LOAD_SCENARIOS)" ]; then echo "No k6 scenario matches SCENARIO=$(SCENARIO)"; exit 2; fi
+	@for s in $(LOAD_SCENARIOS); do \
 	  echo "=== $$s ==="; k6 run --out $(PROM_OUT) $$s || exit $$?; \
 	done
-
-.PHONY: test-load-mixed
-test-load-mixed: test-load-guard ## Run the canonical mixed-realistic SLA proof (Task #77)
-	@k6 run --out $(PROM_OUT) test/load/scenarios/06-mixed-realistic.js
-
-.PHONY: test-load-price
-test-load-price: test-load-guard ## Run only the price hot-path scenario (5 min)
-	@k6 run --out $(PROM_OUT) test/load/scenarios/01-price-hot-path.js
-
-.PHONY: test-load-vwap
-test-load-vwap: test-load-guard ## Run only the VWAP/TWAP scenario (5 min)
-	@k6 run --out $(PROM_OUT) test/load/scenarios/02-vwap-twap.js
-
-.PHONY: test-load-history
-test-load-history: test-load-guard ## Run only the history scenario (5 min)
-	@k6 run --out $(PROM_OUT) test/load/scenarios/03-history.js
-
-.PHONY: test-load-batch
-test-load-batch: test-load-guard ## Run only the batch scenario (5 min)
-	@k6 run --out $(PROM_OUT) test/load/scenarios/04-batch.js
-
-.PHONY: test-load-streaming
-test-load-streaming: test-load-guard ## Run only the SSE streaming scenario (5 min)
-	@k6 run --out $(PROM_OUT) test/load/scenarios/05-streaming.js
-
-.PHONY: test-load-explorer
-test-load-explorer: test-load-guard ## Run only the ClickHouse-backed explorer scenario (7 min)
-	@k6 run --out $(PROM_OUT) test/load/scenarios/08-explorer-lake.js
 
 .PHONY: test-load-spike
 test-load-spike: test-load-guard ## Run the 10× spike scenario (5 min). Posts AlertManager silence if ALERTMANAGER_URL set
