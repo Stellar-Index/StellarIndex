@@ -27,9 +27,8 @@ type stubPriceReader struct {
 	snapshots map[string]v1.PriceSnapshot
 	stale     map[string]bool
 	sources   map[string][]string
-	// recent is the per-pair history returned by RecentClosedSnapshots.
-	// Same key shape as `snapshots`. Empty/missing yields []v1.PriceSnapshot{}
-	// (no observations) — matches the production reader's contract.
+	// recent is the per-pair RecentClosedSnapshots history, same key shape.
+	// A missing key yields no observations, like the production reader.
 	recent map[string][]v1.PriceSnapshot
 	// err fails EVERY call; errByPair fails only the listed pairs, for
 	// states where one pair is refused while a fallback leg still serves.
@@ -38,10 +37,8 @@ type stubPriceReader struct {
 
 	// calls counts LatestPrice invocations (coalescing check).
 	calls int32
-	// startedCh, if non-nil, is signaled on entry to every LatestPrice
-	// call; releaseCh, if non-nil, is read before the call returns —
-	// together they hold N concurrent calls open at once so a test can
-	// observe whether they collapsed onto one upstream read.
+	// startedCh is signaled on entry to every LatestPrice call and releaseCh
+	// is read before it returns, holding N concurrent calls open at once.
 	startedCh chan struct{}
 	releaseCh chan struct{}
 }
@@ -86,111 +83,127 @@ func (r *stubPriceReader) RecentClosedSnapshots(_ context.Context, a, q canonica
 	return rows, nil
 }
 
-func TestPrice_NoReader_Returns503(t *testing.T) {
-	srv := v1.New(v1.Options{})
-	ts := startHTTPTest(t, srv.Handler())
+const pathNativeUSD = "/v1/price?asset=native&quote=fiat:USD"
 
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, "price-unavailable") {
-		t.Errorf("error type missing: %s", body)
-	}
+// usdcPeg is the declared classic USD peg the stablecoin proxy tests use.
+var usdcPeg = mustClassicTest("USDC", testUSDCIssuer)
+
+// priceGet serves path from a server built with opts.
+func priceGet(t *testing.T, opts v1.Options, path string) (int, string) {
+	t.Helper()
+	return getBody(t, startHTTPTest(t, v1.New(opts).Handler()).URL+path)
 }
 
-func TestPrice_MissingAssetParam(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestPrice_InvalidAssetReturns400(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=garbage-format")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestPrice_IdentityPairReturns400(t *testing.T) {
-	// XLM / XLM is always 1 — reject as a bad request.
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=native")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, "identity-price") {
-		t.Errorf("error type missing: %s", body)
-	}
-}
-
-func TestPrice_HappyPath(t *testing.T) {
-	snap := v1.PriceSnapshot{
-		AssetID:    "native",
-		Quote:      "fiat:USD",
-		Price:      "0.1242",
-		PriceType:  "last_trade",
-		ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
-	}
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{"native/fiat:USD": snap},
-		sources:   map[string][]string{"native/fiat:USD": {"sdex"}},
-	}
-	srv := v1.New(v1.Options{Prices: reader})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	// Envelope shape: {"data":{"price":"0.1242",...},"flags":{"stale":false,...},"sources":["sdex"]}
-	for _, s := range []string{
-		`"price":"0.1242"`,
-		`"price_type":"last_trade"`,
-		`"stale":false`,
-		`"sources":["sdex"]`,
-	} {
+// checkBody asserts every want is in body and no absent is.
+func checkBody(t *testing.T, body string, want, absent []string) {
+	t.Helper()
+	for _, s := range want {
 		if !strings.Contains(body, s) {
 			t.Errorf("body missing %q: %s", s, body)
 		}
 	}
+	for _, s := range absent {
+		if strings.Contains(body, s) {
+			t.Errorf("body must not contain %q: %s", s, body)
+		}
+	}
 }
 
-func TestPrice_StaleFlagSet(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.1242", PriceType: "last_trade"},
+// usdReader serves snap for native/fiat:USD with the given sources.
+func usdReader(snap v1.PriceSnapshot, sources ...string) *stubPriceReader {
+	r := &stubPriceReader{snapshots: map[string]v1.PriceSnapshot{"native/fiat:USD": snap}}
+	if sources != nil {
+		r.sources = map[string][]string{"native/fiat:USD": sources}
+	}
+	return r
+}
+
+func TestPrice_RequestErrors(t *testing.T) {
+	notFound := func() *stubPriceReader { return &stubPriceReader{err: v1.ErrPriceNotFound} }
+	for _, tc := range []struct {
+		name    string
+		opts    v1.Options
+		path    string
+		status  int
+		want    string // substring the body must carry
+		notWant string // substring it must not
+	}{
+		{name: "no reader", opts: v1.Options{}, path: pathNativeUSD, status: 503, want: "price-unavailable"},
+		{name: "missing asset", opts: v1.Options{Prices: &stubPriceReader{}}, path: "/v1/price", status: 400},
+		{name: "invalid asset", opts: v1.Options{Prices: &stubPriceReader{}}, path: "/v1/price?asset=garbage-format", status: 400},
+		{name: "identity pair", opts: v1.Options{Prices: &stubPriceReader{}}, path: "/v1/price?asset=native&quote=native", status: 400, want: "identity-price"},
+		{name: "not found", opts: v1.Options{Prices: notFound()}, path: pathNativeUSD, status: 404},
+		{name: "internal error is not leaked", opts: v1.Options{Prices: &stubPriceReader{err: errors.New("db timeout")}}, path: pathNativeUSD, status: 500, notWant: "db timeout"},
+		{
+			name: "cache miss keeps 404",
+			opts: v1.Options{Prices: notFound(), Triangulated: &stubTriangulatedPriceLooker{found: false}},
+			path: pathNativeUSD, status: 404,
 		},
-		stale: map[string]bool{"native/fiat:USD": true},
-	}
-	srv := v1.New(v1.Options{Prices: reader})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"stale":true`) {
-		t.Errorf("stale flag not set: %s", body)
+		{
+			name: "proxy: non-USD quote skips the USD peg",
+			opts: v1.Options{Prices: notFound(), USDPeggedClassics: []canonical.Asset{usdcPeg}},
+			path: "/v1/price?asset=native&quote=fiat:EUR", status: 404,
+		},
+		{
+			name: "proxy: USDC/EUR is a cross-rate, not a $1 peg",
+			opts: v1.Options{Prices: notFound()},
+			path: "/v1/price?asset=crypto:USDC&quote=fiat:EUR", status: 404,
+		},
+		{
+			name: "fiat cross fallback needs both sides fiat",
+			opts: v1.Options{Prices: notFound(), Currencies: &stubCurrenciesReader{snap: &v1.CurrenciesSnapshot{
+				Currencies: []v1.CurrencyEntry{{Ticker: "EUR", RateUSD: 0.92}},
+			}}},
+			path: pathNativeUSD, status: 404,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, body := priceGet(t, tc.opts, tc.path)
+			if status != tc.status {
+				t.Errorf("status = %d, want %d: %s", status, tc.status, body)
+			}
+			var want, notWant []string
+			if tc.want != "" {
+				want = []string{tc.want}
+			}
+			if tc.notWant != "" {
+				notWant = []string{tc.notWant}
+			}
+			checkBody(t, body, want, notWant)
+		})
 	}
 }
 
-// stubTriangulatedPriceLooker implements v1.TriangulatedPriceLooker.
-// It exists primarily to test the Redis-VWAP-fallback path: when
-// Timescale has no row for the requested pair, the handler should
-// honour cache hits regardless of whether the provenance marker is
-// present (direct stablecoin-fiat-proxy rewrites have no marker but
-// must still surface so the headline pair serves real data).
+func TestPrice_Served(t *testing.T) {
+	happy := usdReader(v1.PriceSnapshot{
+		AssetID: "native", Quote: "fiat:USD", Price: "0.1242", PriceType: "last_trade",
+		ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
+	}, "sdex")
+	stale := usdReader(v1.PriceSnapshot{Price: "0.1242", PriceType: "last_trade"})
+	stale.stale = map[string]bool{"native/fiat:USD": true}
+	for _, tc := range []struct {
+		name   string
+		reader *stubPriceReader
+		path   string
+		want   []string
+	}{
+		{"happy path", happy, pathNativeUSD, []string{`"price":"0.1242"`, `"price_type":"last_trade"`, `"stale":false`, `"sources":["sdex"]`}},
+		{"stale flag", stale, pathNativeUSD, []string{`"stale":true`}},
+		{"quote defaults to USD", usdReader(v1.PriceSnapshot{Price: "0.12"}), "/v1/price?asset=native", []string{`"price":"0.12"`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, body := priceGet(t, v1.Options{Prices: tc.reader}, tc.path)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d: %s", status, body)
+			}
+			checkBody(t, body, tc.want, nil)
+		})
+	}
+}
+
+// stubTriangulatedPriceLooker implements v1.TriangulatedPriceLooker. Cache
+// hits must be honoured whether or not the provenance marker is present:
+// direct stablecoin-fiat-proxy rewrites carry none but still surface.
 type stubTriangulatedPriceLooker struct {
 	value          string
 	isTriangulated bool
@@ -204,151 +217,45 @@ func (s *stubTriangulatedPriceLooker) LookupTriangulatedVWAP(
 	return v1.CachedVWAP{Value: s.value, Triangulated: s.isTriangulated, ObservedAt: time.Now().UTC()}, s.found, s.err
 }
 
-// TestPrice_RedisVWAPFallback_DirectRewriteServes — when prices_1m
-// has no row for the requested pair (typical for a stablecoin-fiat-
-// proxy rewrite like XLM/fiat:USD synthesised from XLM/USDC-GA5Z…),
-// the handler falls through to the Redis VWAP cache. With found=true
-// AND isTriangulated=false the response is 200 with
-// `flags.triangulated=false` — direct rewrites are NOT triangulated.
-//
-// The handler must not insist on
-// the provenance marker (else 404); the rewrite case has none by design.
-func TestPrice_RedisVWAPFallback_DirectRewriteServes(t *testing.T) {
-	reader := &stubPriceReader{
-		err: v1.ErrPriceNotFound, // Timescale miss
-	}
-	looker := &stubTriangulatedPriceLooker{
-		value:          "0.1242",
-		isTriangulated: false, // direct (rewritten) VWAP — no marker
-		found:          true,
-	}
-	srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (Redis fallback should serve direct rewrites)", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	for _, s := range []string{
-		`"price":"0.1242"`,
-		`"price_type":"vwap"`,
-		`"triangulated":false`,
+// Every priceFallback degradation MUST surface flags.stale=true: the
+// fallback chain is itself the staleness signal.
+func TestPrice_RedisVWAPFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		path   string
+		looker *stubTriangulatedPriceLooker
+		want   []string
+	}{
+		{
+			name: "direct rewrite has no triangulation marker", path: pathNativeUSD,
+			looker: &stubTriangulatedPriceLooker{value: "0.1242", found: true},
+			want:   []string{`"price":"0.1242"`, `"price_type":"vwap"`, `"triangulated":false`, `"stale":true`},
+		},
+		{
+			name: "triangulated sets the flag", path: "/v1/price?asset=crypto:XLM&quote=fiat:EUR",
+			looker: &stubTriangulatedPriceLooker{value: "0.5500", isTriangulated: true, found: true},
+			want:   []string{`"price":"0.5500"`, `"triangulated":true`, `"stale":true`},
+		},
 	} {
-		if !strings.Contains(body, s) {
-			t.Errorf("body missing %q: %s", s, body)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			status, body := priceGet(t, v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceNotFound}, Triangulated: tc.looker}, tc.path)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", status, body)
+			}
+			checkBody(t, body, tc.want, nil)
+		})
 	}
 }
 
-// TestPrice_RedisVWAPFallback_TriangulatedSetsFlag — when the
-// provenance marker IS present the response sets
-// `flags.triangulated=true` so the customer can tell the value came
-// from the triangulation worker (vs. a direct rewrite).
-func TestPrice_RedisVWAPFallback_TriangulatedSetsFlag(t *testing.T) {
-	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
-	looker := &stubTriangulatedPriceLooker{
-		value:          "0.5500",
-		isTriangulated: true,
-		found:          true,
-	}
-	srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:EUR")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"triangulated":true`) {
-		t.Errorf("triangulated flag not set: %s", body)
-	}
-}
-
-// TestPrice_FallbackChainSetsStaleFlag pins the contract:
-// every priceFallback degradation MUST surface flags.stale=true.
-//
-// Scenario: Redis BGSAVE blocked → cache empty → every
-// closed-bucket read hits ErrPriceNotFound → priceFallback serves
-// last-known-good for hours. If the handler cleared the flag after
-// a successful fallback, customers would get stale data with
-// stale=false, defeating
-// the entire point of the contract.
-//
-// The fallback chain is itself the staleness signal — by definition
-// any path that lands in priceFallback is below the surface's
-// documented baseline contract. This test pins that semantic for
-// every fallback the handler reaches.
-func TestPrice_FallbackChainSetsStaleFlag(t *testing.T) {
-	t.Run("triangulated fallback", func(t *testing.T) {
-		reader := &stubPriceReader{err: v1.ErrPriceNotFound}
-		looker := &stubTriangulatedPriceLooker{
-			value:          "0.5500",
-			isTriangulated: true,
-			found:          true,
-		}
-		srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
-		ts := startHTTPTest(t, srv.Handler())
-
-		resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:EUR")
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status = %d, want 200", resp.StatusCode)
-		}
-		body, _ := readAll(resp)
-		if !strings.Contains(body, `"stale":true`) {
-			t.Errorf("triangulated fallback must set stale=true; body: %s", body)
-		}
-	})
-	t.Run("direct stablecoin-rewrite fallback", func(t *testing.T) {
-		reader := &stubPriceReader{err: v1.ErrPriceNotFound}
-		looker := &stubTriangulatedPriceLooker{
-			value:          "0.1242",
-			isTriangulated: false, // direct rewrite — no triangulation marker
-			found:          true,
-		}
-		srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
-		ts := startHTTPTest(t, srv.Handler())
-
-		resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status = %d, want 200", resp.StatusCode)
-		}
-		body, _ := readAll(resp)
-		if !strings.Contains(body, `"stale":true`) {
-			t.Errorf("direct-rewrite fallback must set stale=true; body: %s", body)
-		}
-	})
-}
-
-// TestPrice_RedisVWAPFallback_NotFoundPreserves404 — when the cache
-// has no value for the requested pair, the handler still returns
-// 404 just as if the looker weren't wired at all.
-func TestPrice_RedisVWAPFallback_NotFoundPreserves404(t *testing.T) {
-	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
-	looker := &stubTriangulatedPriceLooker{found: false}
-	srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", resp.StatusCode)
-	}
-}
-
-// stubCompositeMetaLooker implements BOTH v1.TriangulatedPriceLooker
-// and the optional v1.CompositeMetaLooker capability. It backs the
-// composite-quality-flag tests: a triangulated composite carries the
-// aggregator's router-quality meta (diverged / rerouted), which the
-// handler decodes and surfaces on the envelope Flags.
+// stubCompositeMetaLooker implements v1.TriangulatedPriceLooker and the
+// optional v1.CompositeMetaLooker, which carries the router's quality meta.
 type stubCompositeMetaLooker struct {
-	// triangulated-value behaviour (LookupTriangulatedVWAP)
 	value          string
 	isTriangulated bool
 	found          bool
-	// composite-meta behaviour (LookupCompositeMeta)
-	metaRaw   []byte
-	metaFound bool
-	metaErr   error
+	metaRaw        []byte
+	metaFound      bool
+	metaErr        error
 }
 
 func (s *stubCompositeMetaLooker) LookupTriangulatedVWAP(
@@ -363,352 +270,125 @@ func (s *stubCompositeMetaLooker) LookupCompositeMeta(
 	return s.metaRaw, s.metaFound, s.metaErr
 }
 
-// TestPrice_TriangulatedCompositeFlags pins the L3 fix: the aggregator
-// persists the router's composite-quality decomposition to
-// cachekeys.VWAPCompositeMeta on every router-priced triangulation
-// target, but /v1/price had NO reader — the `diverged` (routes
-// disagreed) and `rerouted` (a configured leg was dry, price came via a
-// substitute path) signals were silently dropped. The handler now reads
-// the meta on the triangulated serve path and surfaces both as
-// flags.diverged / flags.rerouted (omitempty — absent when false).
+// The aggregator's composite-quality meta (diverged, rerouted,
+// pivot_unverified) surfaces as omitempty envelope flags.
 func TestPrice_TriangulatedCompositeFlags(t *testing.T) {
-	t.Run("diverged and rerouted both surface", func(t *testing.T) {
-		reader := &stubPriceReader{err: v1.ErrPriceNotFound}
-		looker := &stubCompositeMetaLooker{
-			value:          "0.5500",
-			isTriangulated: true,
-			found:          true,
-			metaRaw:        []byte(`{"path_count":2,"combined_confidence":0.81,"low_confidence":false,"diverged":true,"rerouted":true}`),
-			metaFound:      true,
-		}
-		srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
-		ts := startHTTPTest(t, srv.Handler())
-
-		resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:EUR")
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status = %d, want 200", resp.StatusCode)
-		}
-		body, _ := readAll(resp)
-		for _, s := range []string{
-			`"triangulated":true`,
-			`"diverged":true`,
-			`"rerouted":true`,
-		} {
-			if !strings.Contains(body, s) {
-				t.Errorf("body missing %q: %s", s, body)
-			}
-		}
-	})
-
-	t.Run("diverged only — rerouted omitted when false", func(t *testing.T) {
-		reader := &stubPriceReader{err: v1.ErrPriceNotFound}
-		looker := &stubCompositeMetaLooker{
-			value:          "0.5500",
-			isTriangulated: true,
-			found:          true,
-			metaRaw:        []byte(`{"diverged":true,"rerouted":false}`),
-			metaFound:      true,
-		}
-		srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
-		ts := startHTTPTest(t, srv.Handler())
-
-		resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:EUR")
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status = %d, want 200", resp.StatusCode)
-		}
-		body, _ := readAll(resp)
-		if !strings.Contains(body, `"diverged":true`) {
-			t.Errorf("diverged flag not set: %s", body)
-		}
-		if strings.Contains(body, `"rerouted"`) {
-			t.Errorf("rerouted must be omitted when false (omitempty): %s", body)
-		}
-	})
-
-	t.Run("pivot_unverified surfaces, omitted when false", func(t *testing.T) {
-		for _, tc := range []struct {
-			meta string
-			want bool
-		}{
-			{`{"pivot_proxy_share":{"crypto:XLM/fiat:USD":1},"pivot_unverified":true}`, true},
-			{`{"pivot_proxy_share":{"crypto:XLM/fiat:USD":0.4}}`, false},
-		} {
-			looker := &stubCompositeMetaLooker{
-				value: "0.5500", isTriangulated: true, found: true,
-				metaRaw: []byte(tc.meta), metaFound: true,
-			}
-			srv := v1.New(v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceNotFound}, Triangulated: looker})
-			ts := startHTTPTest(t, srv.Handler())
-
-			resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:EUR")
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("status = %d, want 200", resp.StatusCode)
-			}
-			body, _ := readAll(resp)
-			if got := strings.Contains(body, `"pivot_unverified":true`); got != tc.want {
-				t.Errorf("meta %s: pivot_unverified present = %v, want %v: %s", tc.meta, got, tc.want, body)
-			}
-			if !tc.want && strings.Contains(body, `"pivot_unverified"`) {
-				t.Errorf("pivot_unverified must be omitted when false: %s", body)
-			}
-		}
-	})
-
-	t.Run("no meta — both flags omitted", func(t *testing.T) {
-		reader := &stubPriceReader{err: v1.ErrPriceNotFound}
-		looker := &stubCompositeMetaLooker{
-			value:          "0.5500",
-			isTriangulated: true,
-			found:          true,
-			// metaFound=false — the router did not price this pair this
-			// cycle (or the meta TTL'd out). Flags must stay unset.
-			metaFound: false,
-		}
-		srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
-		ts := startHTTPTest(t, srv.Handler())
-
-		resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:EUR")
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status = %d, want 200", resp.StatusCode)
-		}
-		body, _ := readAll(resp)
-		if !strings.Contains(body, `"triangulated":true`) {
-			t.Errorf("triangulated flag not set: %s", body)
-		}
-		if strings.Contains(body, `"diverged"`) || strings.Contains(body, `"rerouted"`) {
-			t.Errorf("composite flags must be absent when no meta exists: %s", body)
-		}
-	})
-}
-
-// TestPrice_DirectServeStillSurfacesCompositeFlags pins that a
-// configured router target (e.g. XLM/EUR) can also carry a real
-// closed 1m bucket (a genuine CEX print), in which case the direct
-// value wins and flags.triangulated stays false. The aggregator still
-// runs the chain every tick and persists its composite-quality meta
-// regardless of which arm ends up serving — attachCompositeFlags must
-// not drop diverged/rerouted just because the DIRECT value served.
-func TestPrice_DirectServeStillSurfacesCompositeFlags(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"crypto:XLM/fiat:EUR": {Price: "0.0900", PriceType: "last_trade"},
-		},
+	tri := func(meta string) *stubCompositeMetaLooker {
+		return &stubCompositeMetaLooker{value: "0.5500", isTriangulated: true, found: true, metaRaw: []byte(meta), metaFound: meta != ""}
 	}
-	looker := &stubCompositeMetaLooker{
-		// Not consulted for this pair's price (the direct read served),
-		// but the router still ran its chain and wrote meta this tick.
-		metaRaw:   []byte(`{"diverged":true,"rerouted":true}`),
-		metaFound: true,
-	}
-	srv := v1.New(v1.Options{Prices: reader, Triangulated: looker})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:EUR")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"triangulated":false`) {
-		t.Errorf("direct serve must keep triangulated=false: %s", body)
-	}
-	for _, s := range []string{`"diverged":true`, `"rerouted":true`} {
-		if !strings.Contains(body, s) {
-			t.Errorf("body missing %q (composite meta must surface regardless of served arm): %s", s, body)
-		}
-	}
-}
-
-// TestPrice_StablecoinFiatProxy_FallsThroughToClassicPeg — the
-// fix for the production regression where /v1/price?asset=native&quote=fiat:USD
-// 404'd even though the aggregator had populated native/USDC-classic
-// because the operator hadn't enabled
-// [aggregate].enable_stablecoin_fiat_proxy. The handler-side fallback
-// walks usdPeggedClassics and returns the first peg whose pair has a
-// row, with flags.triangulated=true and the requested quote echoed back.
-func TestPrice_StablecoinFiatProxy_FallsThroughToClassicPeg(t *testing.T) {
-	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatalf("parse USDC: %v", err)
-	}
-	pegSnap := v1.PriceSnapshot{
-		AssetID:    "native",
-		Quote:      usdcClassic.String(),
-		Price:      "0.1626",
-		PriceType:  "vwap",
-		ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
-	}
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/" + usdcClassic.String(): pegSnap,
-		},
-		sources: map[string][]string{
-			"native/" + usdcClassic.String(): {"sdex"},
-		},
-	}
-	srv := v1.New(v1.Options{
-		Prices:            reader,
-		USDPeggedClassics: []canonical.Asset{usdcClassic},
-	})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (stablecoin-fiat-proxy fallback should serve)", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	for _, want := range []string{
-		`"price":"0.1626"`,
-		`"price_type":"vwap"`,
-		`"quote":"fiat:USD"`,
-		`"triangulated":true`,
-		`"sources":["sdex"]`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("body missing %q: %s", want, body)
-		}
-	}
-}
-
-// TestPrice_StablecoinFiatProxy_NoPegsLeaves404 — when the operator
-// hasn't declared any usd_pegged_classic_assets, the fallback skips
-// silently and the handler still 404s. This pins the opt-in shape.
-func TestPrice_StablecoinFiatProxy_NoPegsLeaves404(t *testing.T) {
-	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
-	srv := v1.New(v1.Options{Prices: reader}) // no USDPeggedClassics
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", resp.StatusCode)
-	}
-}
-
-// TestPrice_StablecoinFiatProxy_PegItselfReturnsOne pins that
-// querying the declared USD peg against
-// fiat:USD must return ~$1, not 404. Otherwise /v1/price?asset=
-// USDC-GA5Z…&quote=fiat:USD would 404 because the fallback loop
-// skips peg==asset while the asset-detail page surfaces a
-// real enrichment price. The peg-self branch returns a
-// synthetic price=1.0 snapshot with PriceType=peg so the wire
-// shape across single + batch + asset-detail is consistent.
-func TestPrice_StablecoinFiatProxy_PegItselfReturnsOne(t *testing.T) {
-	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatalf("parse USDC: %v", err)
-	}
-	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
-	srv := v1.New(v1.Options{
-		Prices:            reader,
-		USDPeggedClassics: []canonical.Asset{usdcClassic},
-	})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.PriceSnapshot `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	if env.Data.Price != "1.000000000000" {
-		t.Errorf("price = %q, want 1.000000000000 (peg-self should map to $1)", env.Data.Price)
-	}
-	if env.Data.PriceType != "peg" {
-		t.Errorf("price_type = %q, want peg", env.Data.PriceType)
-	}
-	if env.Data.Quote != "fiat:USD" {
-		t.Errorf("quote = %q, want fiat:USD", env.Data.Quote)
-	}
-}
-
-// TestPrice_StablecoinFiatProxy_NonUSDQuoteSkips — the fallback only
-// fires for quote=fiat:USD. Other fiat quotes (EUR, GBP) shouldn't
-// pull the USD-pegged classic; if the user wants EUR pricing they
-// need on-chain EUR-quoted trades or the fiat-cross-rate fallback.
-func TestPrice_StablecoinFiatProxy_NonUSDQuoteSkips(t *testing.T) {
-	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatalf("parse USDC: %v", err)
-	}
-	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
-	srv := v1.New(v1.Options{
-		Prices:            reader,
-		USDPeggedClassics: []canonical.Asset{usdcClassic},
-	})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:EUR")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404 (USDC peg should not fire for EUR quote)", resp.StatusCode)
-	}
-}
-
-// TestPrice_StablecoinFiatProxy_CryptoTickerSelfPeg pins P2-4(b):
-// the abstract global-ticker form of a stablecoin (crypto:USDC,
-// crypto:EURC) priced in the fiat it tracks must return ~$1, not
-// 404 (/v1/price?asset=crypto:USDC&quote=fiat:USD), even though
-// tryStablecoinFiatProxy alone recognises only the classic-issued
-// peg (USDC-GA5Z…) in usdPeggedClassics — the crypto:<TICKER> form
-// the catalogue + explorer use falls through it. The aggregate.FiatProxy
-// arm covers it (and the EUR/MXN pegs) WITHOUT any operator
-// usd_pegged_classic_assets config, so this server wires none.
-func TestPrice_StablecoinFiatProxy_CryptoTickerSelfPeg(t *testing.T) {
-	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
-	srv := v1.New(v1.Options{Prices: reader}) // no USDPeggedClassics
-	ts := startHTTPTest(t, srv.Handler())
-
+	notFound := &stubPriceReader{err: v1.ErrPriceNotFound}
 	for _, tc := range []struct {
+		name   string
+		reader *stubPriceReader
+		looker *stubCompositeMetaLooker
+		want   []string
+		absent []string
+	}{
+		{
+			name: "diverged and rerouted both surface", reader: notFound,
+			looker: tri(`{"path_count":2,"combined_confidence":0.81,"low_confidence":false,"diverged":true,"rerouted":true}`),
+			want:   []string{`"triangulated":true`, `"diverged":true`, `"rerouted":true`},
+		},
+		{
+			name: "rerouted omitted when false", reader: notFound,
+			looker: tri(`{"diverged":true,"rerouted":false}`),
+			want:   []string{`"diverged":true`}, absent: []string{`"rerouted"`},
+		},
+		{
+			name: "pivot_unverified surfaces", reader: notFound,
+			looker: tri(`{"pivot_proxy_share":{"crypto:XLM/fiat:USD":1},"pivot_unverified":true}`),
+			want:   []string{`"pivot_unverified":true`},
+		},
+		{
+			name: "pivot_unverified omitted when false", reader: notFound,
+			looker: tri(`{"pivot_proxy_share":{"crypto:XLM/fiat:USD":0.4}}`),
+			absent: []string{`"pivot_unverified"`},
+		},
+		{
+			name: "no meta leaves both flags unset", reader: notFound, looker: tri(""),
+			want: []string{`"triangulated":true`}, absent: []string{`"diverged"`, `"rerouted"`},
+		},
+		{
+			// A configured router target can also carry a genuine closed bucket;
+			// the meta must surface whichever arm served.
+			name: "direct serve still surfaces the meta",
+			reader: &stubPriceReader{snapshots: map[string]v1.PriceSnapshot{
+				"crypto:XLM/fiat:EUR": {Price: "0.0900", PriceType: "last_trade"},
+			}},
+			looker: &stubCompositeMetaLooker{metaRaw: []byte(`{"diverged":true,"rerouted":true}`), metaFound: true},
+			want:   []string{`"triangulated":false`, `"diverged":true`, `"rerouted":true`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, body := priceGet(t, v1.Options{Prices: tc.reader, Triangulated: tc.looker}, "/v1/price?asset=crypto:XLM&quote=fiat:EUR")
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", status, body)
+			}
+			checkBody(t, body, tc.want, tc.absent)
+		})
+	}
+}
+
+// With no operator-enabled proxy, the handler walks the declared classic
+// pegs and serves the first one with a row, echoing the requested quote.
+func TestPrice_StablecoinFiatProxy_FallsThroughToClassicPeg(t *testing.T) {
+	pegKey := "native/" + usdcPeg.String()
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{pegKey: {
+			AssetID: "native", Quote: usdcPeg.String(), Price: "0.1626", PriceType: "vwap",
+			ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
+		}},
+		sources: map[string][]string{pegKey: {"sdex"}},
+	}
+	status, body := priceGet(t, v1.Options{Prices: reader, USDPeggedClassics: []canonical.Asset{usdcPeg}}, pathNativeUSD)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", status, body)
+	}
+	checkBody(t, body, []string{`"price":"0.1626"`, `"price_type":"vwap"`, `"quote":"fiat:USD"`, `"triangulated":true`, `"sources":["sdex"]`}, nil)
+}
+
+// A stablecoin priced in the fiat it tracks is a synthetic $1 peg, not a
+// 404: the classic-issued peg via USDPeggedClassics, and the abstract
+// crypto:<TICKER> form via the aggregate.FiatProxy arm with no operator config.
+func TestPrice_StablecoinFiatProxy_SelfPegReturnsOne(t *testing.T) {
+	for _, tc := range []struct {
+		opts         v1.Options
 		asset, quote string
 	}{
-		{"crypto:USDC", "fiat:USD"},
-		{"crypto:USDT", "fiat:USD"},
-		{"crypto:EURC", "fiat:EUR"},
+		{v1.Options{USDPeggedClassics: []canonical.Asset{usdcPeg}}, usdcPeg.String(), "fiat:USD"},
+		{v1.Options{}, "crypto:USDC", "fiat:USD"},
+		{v1.Options{}, "crypto:USDT", "fiat:USD"},
+		{v1.Options{}, "crypto:EURC", "fiat:EUR"},
 	} {
-		resp := mustGet(t, ts.URL+"/v1/price?asset="+tc.asset+"&quote="+tc.quote)
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("%s/%s: status = %d, want 200", tc.asset, tc.quote, resp.StatusCode)
+		tc.opts.Prices = &stubPriceReader{err: v1.ErrPriceNotFound}
+		status, body := priceGet(t, tc.opts, "/v1/price?asset="+tc.asset+"&quote="+tc.quote)
+		if status != http.StatusOK {
+			t.Fatalf("%s/%s: status = %d, want 200: %s", tc.asset, tc.quote, status, body)
 		}
-		var env struct {
+		var resp struct {
 			Data v1.PriceSnapshot `json:"data"`
 		}
-		mustDecode(t, resp, &env)
-		if env.Data.Price != "1.000000000000" {
-			t.Errorf("%s/%s: price = %q, want 1.000000000000", tc.asset, tc.quote, env.Data.Price)
+		if err := json.Unmarshal([]byte(body), &resp); err != nil {
+			t.Fatalf("%s/%s: decode: %v", tc.asset, tc.quote, err)
 		}
-		if env.Data.PriceType != "peg" {
-			t.Errorf("%s/%s: price_type = %q, want peg", tc.asset, tc.quote, env.Data.PriceType)
+		if resp.Data.Price != "1.000000000000" {
+			t.Errorf("%s/%s: price = %q, want 1.000000000000", tc.asset, tc.quote, resp.Data.Price)
 		}
-		if env.Data.Quote != tc.quote {
-			t.Errorf("%s/%s: quote = %q, want %s", tc.asset, tc.quote, env.Data.Quote, tc.quote)
+		if resp.Data.PriceType != "peg" {
+			t.Errorf("%s/%s: price_type = %q, want peg", tc.asset, tc.quote, resp.Data.PriceType)
+		}
+		if resp.Data.Quote != tc.quote {
+			t.Errorf("%s/%s: quote = %q, want %s", tc.asset, tc.quote, resp.Data.Quote, tc.quote)
 		}
 	}
 }
 
-// TestPrice_StablecoinFiatProxy_CrossPegQuoteSkips — the self-peg arm
-// fires ONLY when the requested quote IS the fiat the stablecoin
-// tracks. crypto:USDC priced in fiat:EUR is a real cross-rate (USD→
-// EUR), not a $1 peg, so it must NOT synthesise 1.0 — it falls
-// through to 404 (no cross-rate data wired here). Guards against the
-// FiatProxy arm hiding a genuine FX conversion behind a flat peg.
-func TestPrice_StablecoinFiatProxy_CrossPegQuoteSkips(t *testing.T) {
-	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
-	srv := v1.New(v1.Options{Prices: reader})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:USDC&quote=fiat:EUR")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404 (USDC/EUR is a cross-rate, not a $1 peg)", resp.StatusCode)
-	}
-}
-
-// stubDivergenceLooker is a minimal v1.DivergenceLooker for tests.
-// firing controls what DivergenceFiringFor returns; err is the
-// surfaced error (nil = clean response).
+// stubDivergenceLooker is a minimal v1.DivergenceLooker. A zero window is
+// "unrecorded".
 type stubDivergenceLooker struct {
 	firing  bool
 	checked bool
-	window  time.Duration // the verdict's recorded window; 0 = unrecorded
+	window  time.Duration
 	err     error
 	calls   int
 }
@@ -718,7 +398,7 @@ func (s *stubDivergenceLooker) DivergenceFiringFor(_ context.Context, _, _ canon
 	return s.firing, s.checked, s.window, s.err
 }
 
-// stubConfidenceLooker is a minimal v1.ConfidenceLooker for tests.
+// stubConfidenceLooker is a minimal v1.ConfidenceLooker.
 type stubConfidenceLooker struct {
 	score v1.PriceSnapshotConfidence
 	found bool
@@ -731,235 +411,103 @@ func (s *stubConfidenceLooker) LookupConfidence(_ context.Context, _, _ canonica
 	return s.score, s.found, s.err
 }
 
-// TestPrice_ConfidenceFlowsToWire — when the looker returns a
-// cached score, the response includes both `confidence` and
-// `confidence_factors` on the data object.
-func TestPrice_ConfidenceFlowsToWire(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
+func TestPrice_Confidence(t *testing.T) {
+	snap := v1.PriceSnapshot{Price: "0.07", PriceType: "vwap"}
+	substituted := snap
+	// The staple is looked up from a cache keyed only by (asset, quote,
+	// window), so it would describe the current tick, not the older
+	// last-known-good bucket a substituted snapshot actually serves.
+	substituted.Substituted = true
+	full := v1.PriceSnapshotConfidence{
+		Confidence: 0.92,
+		Factors:    v1.ConfidenceFactors{ZScore: 0.95, SourceCount: 0.95, Diversity: 1.0, Liquidity: 1.0, CrossOracle: 1.0, BaselineQuality: 1.0},
+	}
+	for _, tc := range []struct {
+		name      string
+		snap      v1.PriceSnapshot
+		conf      *stubConfidenceLooker // nil: none wired
+		wantCalls int                   // -1: not asserted
+		want      []string
+		absent    []string
+	}{
+		{
+			"cached score reaches the wire", snap, &stubConfidenceLooker{score: full, found: true}, 1,
+			[]string{`"confidence":0.92`, `"confidence_factors"`, `"baseline_quality":1`},
+			nil,
 		},
-	}
-	conf := &stubConfidenceLooker{
-		score: v1.PriceSnapshotConfidence{
-			Confidence: 0.92,
-			Factors: v1.ConfidenceFactors{
-				ZScore: 0.95, SourceCount: 0.95, Diversity: 1.0,
-				Liquidity: 1.0, CrossOracle: 1.0, BaselineQuality: 1.0,
-			},
+		{
+			"substituted snapshot skips the staple", substituted, &stubConfidenceLooker{score: full, found: true}, 0,
+			nil,
+			[]string{`"confidence"`},
 		},
-		found: true,
-	}
-	srv := v1.New(v1.Options{Prices: reader, Confidence: conf})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"confidence":0.92`) {
-		t.Errorf("confidence float not set: %s", body)
-	}
-	if !strings.Contains(body, `"confidence_factors"`) {
-		t.Errorf("confidence_factors not present: %s", body)
-	}
-	if !strings.Contains(body, `"baseline_quality":1`) {
-		t.Errorf("factor sub-fields missing: %s", body)
-	}
-	if conf.calls != 1 {
-		t.Errorf("looker calls = %d, want 1", conf.calls)
+		{
+			"cache miss omits the fields", snap, &stubConfidenceLooker{}, -1,
+			nil,
+			[]string{`"confidence"`, `"confidence_factors"`},
+		},
+		{
+			"lookup error is best effort", snap, &stubConfidenceLooker{err: errors.New("redis exploded")}, -1,
+			[]string{`"price":"0.07"`},
+			[]string{`"confidence"`},
+		},
+		{"no looker wired", snap, nil, -1, nil, []string{`"confidence"`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := v1.Options{Prices: usdReader(tc.snap)}
+			if tc.conf != nil {
+				opts.Confidence = tc.conf
+			}
+			status, body := priceGet(t, opts, pathNativeUSD)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", status, body)
+			}
+			checkBody(t, body, tc.want, tc.absent)
+			if tc.conf != nil && tc.wantCalls >= 0 && tc.conf.calls != tc.wantCalls {
+				t.Errorf("looker calls = %d, want %d", tc.conf.calls, tc.wantCalls)
+			}
+		})
 	}
 }
 
-// TestPrice_SubstitutedSnapshotSkipsConfidenceStaple — RNC27: when the
-// serving-sanity guard substituted an older last-known-good bucket for
-// the served value (snapshot.Substituted), the confidence staple must
-// NOT be stapled — it's looked up from a SEPARATE cache keyed only by
-// (asset, quote, window), with no as-of of its own, so it would answer
-// for the CURRENT tick rather than for the older bucket actually served.
-func TestPrice_SubstitutedSnapshotSkipsConfidenceStaple(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap", Substituted: true},
-		},
-	}
-	conf := &stubConfidenceLooker{
-		score: v1.PriceSnapshotConfidence{Confidence: 0.92},
-		found: true,
-	}
-	srv := v1.New(v1.Options{Prices: reader, Confidence: conf})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if strings.Contains(body, `"confidence"`) {
-		t.Errorf("confidence must not be stapled onto a substituted (last-known-good) snapshot: %s", body)
-	}
-	if conf.calls != 0 {
-		t.Errorf("confidence looker calls = %d, want 0 — must not even be consulted on a substituted snapshot", conf.calls)
+func TestPrice_Divergence(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		div       *stubDivergenceLooker // nil: none wired
+		want      string
+		wantCalls int
+	}{
+		// An evaluated (checked) firing verdict ends the alias walk.
+		{"firing", &stubDivergenceLooker{firing: true, checked: true}, `"divergence_warning":true`, 1},
+		{"clean", &stubDivergenceLooker{}, `"divergence_warning":false`, 1},
+		{"no looker", nil, `"divergence_warning":false`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := v1.Options{Prices: usdReader(v1.PriceSnapshot{Price: "0.07", PriceType: "vwap"})}
+			if tc.div != nil {
+				opts.Divergence = tc.div
+			}
+			_, body := priceGet(t, opts, pathNativeUSD)
+			checkBody(t, body, []string{tc.want}, nil)
+			if tc.div != nil && tc.div.calls != tc.wantCalls {
+				t.Errorf("divergence lookup calls = %d, want %d", tc.div.calls, tc.wantCalls)
+			}
+		})
 	}
 }
 
-// TestPrice_ConfidenceCacheMissOmitsFields — looker returns
-// (zero, false, nil): the snapshot has no confidence-related
-// fields on the wire (omitempty hides them).
-func TestPrice_ConfidenceCacheMissOmitsFields(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
-		},
-	}
-	conf := &stubConfidenceLooker{found: false}
-	srv := v1.New(v1.Options{Prices: reader, Confidence: conf})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if strings.Contains(body, `"confidence"`) {
-		t.Errorf("confidence field shouldn't appear on cache miss: %s", body)
-	}
-	if strings.Contains(body, `"confidence_factors"`) {
-		t.Errorf("confidence_factors shouldn't appear on cache miss: %s", body)
-	}
-}
-
-// TestPrice_ConfidenceLookerErrorIsBestEffort — a looker error
-// must NOT cause the price endpoint to fail. Confidence fields
-// stay unset; the price still flows.
-func TestPrice_ConfidenceLookerErrorIsBestEffort(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
-		},
-	}
-	conf := &stubConfidenceLooker{err: errors.New("redis exploded")}
-	srv := v1.New(v1.Options{Prices: reader, Confidence: conf})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 — confidence error must NOT fail the price call", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if strings.Contains(body, `"confidence"`) {
-		t.Errorf("confidence shouldn't appear on lookup error: %s", body)
-	}
-}
-
-// TestPrice_NoConfidenceLookerOmitsFields — when the binary
-// hasn't wired a ConfidenceLooker, the field is silently absent.
-// Same shape as a cache miss.
-func TestPrice_NoConfidenceLookerOmitsFields(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
-		},
-	}
-	srv := v1.New(v1.Options{Prices: reader})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if strings.Contains(body, `"confidence"`) {
-		t.Errorf("confidence shouldn't appear without a looker: %s", body)
-	}
-}
-
-// TestPrice_DivergenceFires — when the lookup says the warning is
-// firing for this asset, flags.divergence_warning is true.
-func TestPrice_DivergenceFires(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
-		},
-	}
-	// An evaluated (checked) firing verdict ends the alias walk; an
-	// unchecked one does not (TestPrice_DivergenceFreshVerdictBeatsStandingWarning).
-	div := &stubDivergenceLooker{firing: true, checked: true}
-	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"divergence_warning":true`) {
-		t.Errorf("divergence_warning not set: %s", body)
-	}
-	if div.calls != 1 {
-		t.Errorf("divergence lookup calls = %d, want 1", div.calls)
-	}
-}
-
-// TestPrice_DivergenceClean — when the lookup says no warning,
-// flags.divergence_warning stays false.
-func TestPrice_DivergenceClean(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
-		},
-	}
-	div := &stubDivergenceLooker{firing: false}
-	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"divergence_warning":false`) {
-		t.Errorf("divergence_warning expected false: %s", body)
-	}
-}
-
-// TestPrice_DivergenceErrorIsBestEffort — a divergence lookup error
-// must NOT cause the price endpoint to fail. Flag stays at default
-// (false); the price still flows.
-func TestPrice_DivergenceErrorIsBestEffort(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
-		},
-	}
-	div := &stubDivergenceLooker{err: errors.New("redis exploded")}
-	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 — divergence error must NOT fail the price call", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"divergence_warning":false`) {
-		t.Errorf("flag expected default false on lookup error: %s", body)
-	}
-}
-
-// TestPrice_NoDivergenceLookerLeavesFlagFalse — when no
-// DivergenceLooker is wired (typical pre-launch / no-Redis state),
-// the flag never fires and no lookup is attempted.
-func TestPrice_NoDivergenceLookerLeavesFlagFalse(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
-		},
-	}
-	srv := v1.New(v1.Options{Prices: reader})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"divergence_warning":false`) {
-		t.Errorf("flag should default to false without a looker: %s", body)
-	}
-}
+// divVerdict is one cached divergence verdict.
+type divVerdict = struct{ firing, checked bool }
 
 // stubAliasDivergenceLooker answers per SPELLING, so a test can put the
 // cached verdict under one member of an alias family and query another —
 // the r1 shape, where the worker refreshes `crypto:XLM/fiat:USD` and
 // nothing is ever written under `native`.
 type stubAliasDivergenceLooker struct {
-	// verdicts is keyed on the asset's wire form; a spelling absent from
-	// the map is a cache miss (no verdict), which is what the production
-	// adapter returns for an unindexed base.
-	verdicts map[string]struct{ firing, checked bool }
-	// asked records every spelling consulted, in order. Guarded because
-	// the tip stream consults the looker from its producer goroutine
-	// while the test goroutine reads the record back.
+	// verdicts is keyed on the asset's wire form; an absent spelling is a
+	// cache miss, as with the production adapter for an unindexed base.
+	verdicts map[string]divVerdict
+	// asked records every spelling consulted, in order; guarded because the
+	// tip stream consults the looker from its producer goroutine.
 	mu    sync.Mutex
 	asked []string
 	// window is every verdict's recorded aggregation window.
@@ -974,141 +522,69 @@ func (s *stubAliasDivergenceLooker) DivergenceFiringFor(_ context.Context, a, _ 
 	return v.firing, v.checked, s.window, nil
 }
 
-// askedSpellings returns a copy of the consulted-spelling record.
 func (s *stubAliasDivergenceLooker) askedSpellings() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.asked...)
 }
 
-// TestPrice_DivergenceCheckedFollowsServedSpelling — the r1 shape: the
-// worker refreshes `crypto:XLM/fiat:USD` and the price read for `native`
-// resolves to that same market. The verdict is asked for the served
-// spelling, so ?asset=native reports the check that describes the price it
-// returns, and no other spelling is consulted.
-func TestPrice_DivergenceCheckedFollowsServedSpelling(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"crypto:XLM/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
-		},
-	}
-	div := &stubAliasDivergenceLooker{
-		verdicts: map[string]struct{ firing, checked bool }{
-			"crypto:XLM": {firing: false, checked: true},
-		},
-	}
-	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"divergence_checked":true`) || !strings.Contains(body, `"divergence_warning":false`) {
-		t.Errorf("want the served crypto:XLM market's clean verdict (warning=false, checked=true): %s", body)
-	}
-	if asked := div.askedSpellings(); len(asked) != 1 || asked[0] != "crypto:XLM" {
-		t.Errorf("spellings asked = %v, want only the served crypto:XLM", asked)
-	}
-}
-
-// TestPrice_DivergenceVerdictNeverFromAnotherSpelling: the price
-// is served from `native` (the SDEX book) and only `crypto:XLM` (the CEX
-// market) holds a verdict. Falling through to it vouched for an SDEX price
-// with a check that never saw it; the served market has no verdict, so the
-// response must say unchecked.
-func TestPrice_DivergenceVerdictNeverFromAnotherSpelling(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
-		},
-	}
-	for _, sibling := range []struct {
-		name    string
-		verdict struct{ firing, checked bool }
+// The verdict must describe the market the price was served from: it is
+// asked for the served spelling first, and a sibling spelling's verdict is
+// never borrowed to vouch for a price it never saw.
+func TestPrice_DivergenceVerdictFollowsServedSpelling(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		servedKey string
+		verdicts  map[string]divVerdict
+		want      []string
+		asked     []string // nil: not asserted
 	}{
-		{"clean sibling verdict", struct{ firing, checked bool }{firing: false, checked: true}},
-		{"firing sibling verdict", struct{ firing, checked bool }{firing: true, checked: true}},
+		{
+			name: "served crypto:XLM market's clean verdict", servedKey: "crypto:XLM/fiat:USD",
+			verdicts: map[string]divVerdict{"crypto:XLM": {checked: true}},
+			want:     []string{`"divergence_checked":true`, `"divergence_warning":false`},
+			asked:    []string{"crypto:XLM"},
+		},
+		{
+			name: "clean sibling verdict never reaches a native-served price", servedKey: "native/fiat:USD",
+			verdicts: map[string]divVerdict{"crypto:XLM": {checked: true}},
+			want:     []string{`"divergence_checked":false`, `"divergence_warning":false`},
+			asked:    []string{"native"},
+		},
+		{
+			name: "firing sibling verdict never reaches a native-served price", servedKey: "native/fiat:USD",
+			verdicts: map[string]divVerdict{"crypto:XLM": {firing: true, checked: true}},
+			want:     []string{`"divergence_checked":false`, `"divergence_warning":false`},
+			asked:    []string{"native"},
+		},
+		{
+			// A below-quorum record carries the last evaluated warning forward
+			// (firing, unchecked); a sibling's fresh clean verdict must not replace it.
+			name: "standing warning on the served spelling", servedKey: "native/fiat:USD",
+			verdicts: map[string]divVerdict{"native": {firing: true}, "crypto:XLM": {checked: true}},
+			want:     []string{`"divergence_checked":false`, `"divergence_warning":true`},
+		},
+		{
+			name: "walk starts at the served alias, not the requested spelling", servedKey: "crypto:XLM/fiat:USD",
+			verdicts: map[string]divVerdict{"native": {firing: true, checked: true}, "crypto:XLM": {checked: true}},
+			want:     []string{`"divergence_warning":false`},
+			asked:    []string{"crypto:XLM"},
+		},
 	} {
-		t.Run(sibling.name, func(t *testing.T) {
-			div := &stubAliasDivergenceLooker{
-				verdicts: map[string]struct{ firing, checked bool }{"crypto:XLM": sibling.verdict},
+		t.Run(tc.name, func(t *testing.T) {
+			div := &stubAliasDivergenceLooker{verdicts: tc.verdicts}
+			reader := &stubPriceReader{snapshots: map[string]v1.PriceSnapshot{
+				tc.servedKey: {Price: "0.18726015145022901497", PriceType: "vwap"},
+			}}
+			status, body := priceGet(t, v1.Options{Prices: reader, Divergence: div}, pathNativeUSD)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", status, body)
 			}
-			srv := v1.New(v1.Options{Prices: reader, Divergence: div})
-			ts := startHTTPTest(t, srv.Handler())
-
-			resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-			body, _ := readAll(resp)
-			if !strings.Contains(body, `"divergence_checked":false`) || !strings.Contains(body, `"divergence_warning":false`) {
-				t.Errorf("crypto:XLM's verdict reached a native-served price; want (warning=false, checked=false): %s", body)
-			}
-			if asked := div.askedSpellings(); len(asked) != 1 || asked[0] != "native" {
-				t.Errorf("spellings asked = %v, want only the served native", asked)
+			checkBody(t, body, tc.want, nil)
+			if asked := div.askedSpellings(); tc.asked != nil && !reflect.DeepEqual(asked, tc.asked) {
+				t.Errorf("spellings asked = %v, want %v", asked, tc.asked)
 			}
 		})
-	}
-}
-
-// TestPrice_DivergenceStandingWarningOnServedSpelling — a below-quorum
-// record carries the served pair's last evaluated warning forward
-// (firing=true, checked=false). It is served as such, flagged unchecked,
-// and a sibling spelling's fresh clean verdict does not replace it: that
-// verdict describes a different market.
-func TestPrice_DivergenceStandingWarningOnServedSpelling(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
-		},
-	}
-	div := &stubAliasDivergenceLooker{
-		verdicts: map[string]struct{ firing, checked bool }{
-			"native":     {firing: true, checked: false},
-			"crypto:XLM": {firing: false, checked: true},
-		},
-	}
-	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"divergence_checked":false`) || !strings.Contains(body, `"divergence_warning":true`) {
-		t.Errorf("want native's standing warning (warning=true, checked=false), got: %s", body)
-	}
-}
-
-// conflictingXLMVerdicts puts a FIRING verdict under `native` and a clean
-// one under `crypto:XLM` — two disjoint venue populations — so a test can
-// tell which spelling's verdict reached the response.
-func conflictingXLMVerdicts() *stubAliasDivergenceLooker {
-	return &stubAliasDivergenceLooker{
-		verdicts: map[string]struct{ firing, checked bool }{
-			"native":     {firing: true, checked: true},
-			"crypto:XLM": {firing: false, checked: true},
-		},
-	}
-}
-
-// TestPrice_DivergenceWalkStartsAtServedAlias — when `native` misses and
-// the price is served from `crypto:XLM`, the verdict walk must start at
-// `crypto:XLM`, not at the requested spelling: the served market's clean
-// verdict describes the value returned, `native`'s firing one does not.
-func TestPrice_DivergenceWalkStartsAtServedAlias(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"crypto:XLM/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
-		},
-	}
-	div := conflictingXLMVerdicts()
-	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
-	ts := startHTTPTest(t, srv.Handler())
-
-	status, body := getBody(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200: %s", status, body)
-	}
-	if !strings.Contains(body, `"divergence_warning":false`) {
-		t.Errorf("verdict must come from the served crypto:XLM market (clean), not native: %s", body)
-	}
-	if asked := div.askedSpellings(); len(asked) == 0 || asked[0] != "crypto:XLM" {
-		t.Errorf("lookup order = %v, want the served spelling crypto:XLM first", asked)
 	}
 }
 
@@ -1121,179 +597,89 @@ func (f *failingDivergenceLooker) DivergenceFiringFor(context.Context, canonical
 	return false, false, 0, errors.New("redis exploded")
 }
 
-// TestPrice_DivergenceLookupErrorStopsTheWalk — the spellings share one
-// backing store, so a store that failed for the first is not going to
-// answer for the second: the walk ends at the first error, and an
-// outage costs one round-trip per request rather than one per alias.
-// The response still flows with the flag left false, as
-// TestPrice_DivergenceErrorIsBestEffort pins.
+// The spellings share one backing store, so the walk ends at the first
+// error: an outage costs one round-trip per request, not one per alias. The
+// price still flows with the flags left false.
 func TestPrice_DivergenceLookupErrorStopsTheWalk(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
-		},
-	}
 	div := &failingDivergenceLooker{}
-	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 — divergence error must NOT fail the price call", resp.StatusCode)
+	status, body := priceGet(t, v1.Options{Prices: usdReader(v1.PriceSnapshot{Price: "0.07", PriceType: "vwap"}), Divergence: div}, pathNativeUSD)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — divergence error must NOT fail the price call: %s", status, body)
 	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"divergence_checked":false`) {
-		t.Errorf("flag must stay false on lookup error: %s", body)
-	}
+	checkBody(t, body, []string{`"divergence_checked":false`, `"divergence_warning":false`}, nil)
 	if n := div.calls.Load(); n != 1 {
-		t.Errorf("lookups on a failing store = %d, want 1 — the walk stops at the first error rather than retrying each of the %d spellings",
+		t.Errorf("lookups on a failing store = %d, want 1 (walk stops at the first error, not each of the %d spellings)",
 			n, len(canonical.AssetAliases(canonical.NativeAsset())))
 	}
 }
 
-func TestPrice_DefaultQuoteIsUSD(t *testing.T) {
-	// Omit quote param — handler defaults to fiat:USD.
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.12"},
-		},
-	}
-	srv := v1.New(v1.Options{Prices: reader})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native")
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d", resp.StatusCode)
-	}
-}
-
-func TestPrice_NotFoundReturns404(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceNotFound}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", resp.StatusCode)
-	}
-}
-
-func TestPrice_InternalErrorReturns500(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{err: errors.New("db timeout")}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500", resp.StatusCode)
-	}
-	// Body must NOT leak the underlying error message.
-	body, _ := readAll(resp)
-	if strings.Contains(body, "db timeout") {
-		t.Errorf("internal error leaked to client: %s", body)
-	}
-}
-
-// ─── LastTradeToSnapshot ─────────────────────────────────────────
-
-// TestVWAP1mToSnapshot is the CAGG-served counterpart to
-// TestLastTradeToSnapshot. Confirms the snapshot's ObservedAt
-// reflects the END of the 1-minute window (not its start) and the
-// VWAP string is passed through unchanged from the prices_1m row.
+// VWAP1m is the CAGG-served counterpart to LastTradeToSnapshot: ObservedAt
+// is the END of the 1-minute window and the NUMERIC text passes through.
 func TestVWAP1mToSnapshot(t *testing.T) {
 	bucketStart := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	got := v1.VWAP1mToSnapshot("native", "fiat:USD", "0.123456789", bucketStart)
 
-	if got.AssetID != "native" {
-		t.Errorf("AssetID = %q, want native", got.AssetID)
-	}
-	if got.Quote != "fiat:USD" {
-		t.Errorf("Quote = %q, want fiat:USD", got.Quote)
+	if got.AssetID != "native" || got.Quote != "fiat:USD" {
+		t.Errorf("pair = %q/%q, want native/fiat:USD", got.AssetID, got.Quote)
 	}
 	if got.Price != "0.123456789" {
 		t.Errorf("Price = %q, want pass-through of NUMERIC text 0.123456789", got.Price)
 	}
 	if got.PriceType != "vwap" {
-		t.Errorf("PriceType = %q, want vwap (CAGG-served path)", got.PriceType)
+		t.Errorf("PriceType = %q, want vwap", got.PriceType)
 	}
 	if got.WindowSeconds != 60 {
-		t.Errorf("WindowSeconds = %d, want 60 (1-minute CAGG)", got.WindowSeconds)
+		t.Errorf("WindowSeconds = %d, want 60", got.WindowSeconds)
 	}
-	wantObserved := bucketStart.Add(60 * time.Second)
-	if !got.ObservedAt.Time().Equal(wantObserved) {
-		t.Errorf("ObservedAt = %v, want %v (END of window, not start)", got.ObservedAt, wantObserved)
+	if want := bucketStart.Add(60 * time.Second); !got.ObservedAt.Time().Equal(want) {
+		t.Errorf("ObservedAt = %v, want %v (END of window, not start)", got.ObservedAt, want)
 	}
 }
 
 func TestLastTradeToSnapshot(t *testing.T) {
-	usdc, _ := canonical.NewClassicAsset("USDC", testUSDCIssuer)
-	pair, _ := canonical.NewPair(canonical.NativeAsset(), usdc)
-
-	// 100 XLM @ 12.42 USDC = 1e9 base stroops, 12_420_000 quote stroops.
-	// Ratio = 12_420_000 / 1_000_000_000 = 0.01242 in stroop-units.
-	// At decimals=7 we get a str with 7 fractional digits.
-	tr := canonical.Trade{
-		Source:      "sdex",
-		Ledger:      52_430_001,
-		TxHash:      "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
-		OpIndex:     0,
-		Timestamp:   time.Unix(1745000000, 0).UTC(),
-		Pair:        pair,
-		BaseAmount:  canonical.NewAmount(big.NewInt(1_000_000_000)),
-		QuoteAmount: canonical.NewAmount(big.NewInt(12_420_000)),
-	}
-
-	snap, ok := v1.LastTradeToSnapshot(tr, 7)
-	if !ok {
-		t.Fatal("priceable trade reported not priceable")
-	}
-	if snap.AssetID != "native" {
-		t.Errorf("asset = %q", snap.AssetID)
-	}
-	if snap.PriceType != "last_trade" {
-		t.Errorf("price_type = %q", snap.PriceType)
-	}
-	// 12_420_000 / 1_000_000_000 scaled to 7 decimals =
-	// (12_420_000 * 10^7) / 1_000_000_000 = 12_420_000 / 100 = 124_200
-	// → "0.0124200"
-	if snap.Price != "0.0124200" {
-		t.Errorf("price = %q, want 0.0124200", snap.Price)
-	}
-	if !snap.ObservedAt.Time().Equal(tr.Timestamp) {
-		t.Errorf("timestamp lost")
-	}
-}
-
-func TestLastTradeToSnapshot_zeroDecimals(t *testing.T) {
-	tr := canonical.Trade{
-		Source: "sdex", Ledger: 1, TxHash: "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
-		OpIndex: 0, Timestamp: time.Now(),
-		Pair:        mustPair(canonical.NativeAsset(), mustClassicTest("USDC", testUSDCIssuer)),
-		BaseAmount:  canonical.NewAmount(big.NewInt(1_000)),
-		QuoteAmount: canonical.NewAmount(big.NewInt(12_420)),
-	}
-	snap, _ := v1.LastTradeToSnapshot(tr, 0)
-	if snap.Price != "12" { // 12420 / 1000 = 12 with no decimals
-		t.Errorf("price = %q, want 12", snap.Price)
+	for _, tc := range []struct {
+		name             string
+		base, quote      int64
+		decimals         int
+		wantPrice        string
+		wantNotPriceable bool
+	}{
+		// 12_420_000 / 1_000_000_000 scaled to 7 decimals = 0.0124200.
+		{name: "7 decimals", base: 1_000_000_000, quote: 12_420_000, decimals: 7, wantPrice: "0.0124200"},
+		{name: "zero decimals", base: 1_000, quote: 12_420, decimals: 0, wantPrice: "12"},
+		// A zero-leg trade has no price: the snapshot is refused, never "0".
+		{name: "zero quote", base: 5_000_000_000, decimals: 7, wantNotPriceable: true},
+		{name: "zero base", quote: 7_000_000, decimals: 7, wantNotPriceable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := canonical.Trade{
+				Source: "sdex", Ledger: 52_430_001, Timestamp: time.Unix(1745000000, 0).UTC(),
+				TxHash:      "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
+				Pair:        mustPair(canonical.NativeAsset(), usdcPeg),
+				BaseAmount:  canonical.NewAmount(big.NewInt(tc.base)),
+				QuoteAmount: canonical.NewAmount(big.NewInt(tc.quote)),
+			}
+			snap, ok := v1.LastTradeToSnapshot(tr, tc.decimals)
+			if ok == tc.wantNotPriceable {
+				t.Fatalf("priceable = %v (snapshot %+v), want %v", ok, snap, !tc.wantNotPriceable)
+			}
+			if tc.wantNotPriceable {
+				return
+			}
+			if snap.AssetID != "native" || snap.PriceType != "last_trade" {
+				t.Errorf("asset/price_type = %q/%q, want native/last_trade", snap.AssetID, snap.PriceType)
+			}
+			if snap.Price != tc.wantPrice {
+				t.Errorf("price = %q, want %s", snap.Price, tc.wantPrice)
+			}
+			if !snap.ObservedAt.Time().Equal(tr.Timestamp) {
+				t.Errorf("timestamp lost")
+			}
+		})
 	}
 }
 
-// A zero-leg trade has no price: the snapshot is refused, never "0".
-func TestLastTradeToSnapshot_zeroLegNotPriceable(t *testing.T) {
-	for name, legs := range map[string][2]int64{"zero quote": {5_000_000_000, 0}, "zero base": {0, 7_000_000}} {
-		tr := canonical.Trade{
-			Source: "sdex", Ledger: 1, TxHash: "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
-			Timestamp:   time.Now(),
-			Pair:        mustPair(canonical.NativeAsset(), mustClassicTest("USDC", testUSDCIssuer)),
-			BaseAmount:  canonical.NewAmount(big.NewInt(legs[0])),
-			QuoteAmount: canonical.NewAmount(big.NewInt(legs[1])),
-		}
-		if snap, ok := v1.LastTradeToSnapshot(tr, 7); ok {
-			t.Errorf("%s: got priceable snapshot %+v, want ok=false", name, snap)
-		}
-	}
-}
-
-// stubFrozenLooker implements v1.FrozenLooker for tests. `frozen`
-// controls FrozenForPair's bool return; `err` is the surfaced error.
+// stubFrozenLooker implements v1.FrozenLooker.
 type stubFrozenLooker struct {
 	frozen bool
 	err    error
@@ -1305,189 +691,69 @@ func (s *stubFrozenLooker) FrozenForPair(_ context.Context, _, _ canonical.Asset
 	return s.frozen, s.err
 }
 
-// TestPrice_FrozenSetsBothFlags — when the looker says frozen, the
-// envelope carries flags.frozen=true AND flags.single_source=true,
-// regardless of how many sources the snapshot reports. (Per
-// anomaly.ActionFreeze a frozen response IS the LKG, which is by
-// definition single-sourced.)
+// A frozen response IS the held last-known-good, which is by definition
+// single-sourced (anomaly.ActionFreeze), however many sources the bucket has.
 func TestPrice_FrozenSetsBothFlags(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
-		},
-		// Multi-source on the underlying snapshot to prove the freeze
-		// override forces single_source=true even so.
-		sources: map[string][]string{
-			"native/fiat:USD": {"sdex", "soroswap", "binance"},
-		},
-	}
+	reader := usdReader(v1.PriceSnapshot{Price: "0.07", PriceType: "vwap"}, "sdex", "soroswap", "binance")
 	frz := &stubFrozenLooker{frozen: true}
-	// A frozen response IS the held last-known-good, so the
-	// fixture has to hold one. A freeze wired with no
-	// VWAP cache at all would be a shape production cannot take (both lookers
-	// hang off the same Redis client) and would certify the
-	// defect: the reader's raw 0.07 served under frozen=true.
+	// The fixture must hold a last-known-good: a freeze with no VWAP cache is
+	// a shape production cannot take and would certify the raw 0.07 being
+	// served under frozen=true.
 	held := &stubTriangulatedPriceLooker{value: "0.0655", found: true}
-	srv := v1.New(v1.Options{Prices: reader, Freeze: frz, Triangulated: held})
-	ts := startHTTPTest(t, srv.Handler())
 
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"frozen":true`) {
-		t.Errorf("frozen flag not set: %s", body)
-	}
-	if !strings.Contains(body, `"single_source":true`) {
-		t.Errorf("single_source flag should be forced true on freeze: %s", body)
-	}
-	if !strings.Contains(body, `"price":"0.0655"`) || strings.Contains(body, `"0.07"`) {
-		t.Errorf("frozen response must carry the held value, not the raw bucket: %s", body)
-	}
+	_, body := priceGet(t, v1.Options{Prices: reader, Freeze: frz, Triangulated: held}, pathNativeUSD)
+	checkBody(t, body, []string{`"frozen":true`, `"single_source":true`, `"price":"0.0655"`}, []string{`"0.07"`})
 	if frz.calls != 1 {
 		t.Errorf("freeze lookup calls = %d, want 1", frz.calls)
 	}
 }
 
-// TestPrice_NotFrozenSingleSourceFromSourceCount — when not frozen,
-// single_source mirrors len(sources)==1.
+// When not frozen, single_source mirrors len(sources)==1 (omitempty when
+// false), with or without a FrozenLooker wired.
 func TestPrice_NotFrozenSingleSourceFromSourceCount(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "last_trade"},
-		},
-		sources: map[string][]string{
-			"native/fiat:USD": {"sdex"}, // single source
-		},
-	}
-	frz := &stubFrozenLooker{frozen: false}
-	srv := v1.New(v1.Options{Prices: reader, Freeze: frz})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if strings.Contains(body, `"frozen":true`) {
-		t.Errorf("frozen flag should not fire: %s", body)
-	}
-	if !strings.Contains(body, `"single_source":true`) {
-		t.Errorf("single_source should be true with 1 source: %s", body)
-	}
-}
-
-// TestPrice_NotFrozenMultiSourceLeavesSingleSourceFalse — multi-source
-// + not-frozen leaves single_source absent (omitempty).
-func TestPrice_NotFrozenMultiSourceLeavesSingleSourceFalse(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
-		},
-		sources: map[string][]string{
-			"native/fiat:USD": {"sdex", "soroswap"},
-		},
-	}
-	frz := &stubFrozenLooker{frozen: false}
-	srv := v1.New(v1.Options{Prices: reader, Freeze: frz})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if strings.Contains(body, `"single_source":true`) {
-		t.Errorf("single_source should not fire on multi-source: %s", body)
-	}
-	if strings.Contains(body, `"frozen":true`) {
-		t.Errorf("frozen should not fire when looker says false: %s", body)
+	one := v1.PriceSnapshot{Price: "0.07", PriceType: "last_trade"}
+	for _, tc := range []struct {
+		name    string
+		sources []string
+		freeze  *stubFrozenLooker // nil: none wired
+		want    []string
+		absent  []string
+	}{
+		{"one source", []string{"sdex"}, &stubFrozenLooker{}, []string{`"single_source":true`}, []string{`"frozen":true`}},
+		{"two sources", []string{"sdex", "soroswap"}, &stubFrozenLooker{}, nil, []string{`"single_source":true`, `"frozen":true`}},
+		{"no looker, one source", []string{"sdex"}, nil, []string{`"single_source":true`}, []string{`"frozen":true`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := v1.Options{Prices: usdReader(one, tc.sources...)}
+			if tc.freeze != nil {
+				opts.Freeze = tc.freeze
+			}
+			_, body := priceGet(t, opts, pathNativeUSD)
+			checkBody(t, body, tc.want, tc.absent)
+		})
 	}
 }
 
-// TestPrice_FreezeErrorIsBestEffort — a freeze lookup error must NOT
-// cause the price call to fail. Flag stays false; the price still
-// flows. Mirrors the divergence-error contract.
-func TestPrice_FreezeErrorIsBestEffort(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
-		},
-		sources: map[string][]string{
-			"native/fiat:USD": {"sdex", "soroswap"},
-		},
-	}
+// A freeze lookup error means the status is UNKNOWN, not "confirmed not
+// frozen": the price still flows, but single_source must not be derived
+// from the source count and frozen_checked must reflect the failed read.
+func TestPrice_FreezeErrorIsBestEffortAndUnasserted(t *testing.T) {
+	reader := usdReader(v1.PriceSnapshot{Price: "0.07", PriceType: "vwap"}, "sdex")
 	before := testutil.ToFloat64(obs.APIFreezeLookupFailuresTotal)
 	frz := &stubFrozenLooker{err: errors.New("redis exploded")}
-	srv := v1.New(v1.Options{Prices: reader, Freeze: frz})
-	ts := startHTTPTest(t, srv.Handler())
 
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 — freeze lookup error must NOT fail the price call", resp.StatusCode)
+	status, body := priceGet(t, v1.Options{Prices: reader, Freeze: frz}, pathNativeUSD)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — freeze lookup error must NOT fail the price call", status)
 	}
-	body, _ := readAll(resp)
-	if strings.Contains(body, `"frozen":true`) {
-		t.Errorf("frozen should default false on lookup error: %s", body)
-	}
+	checkBody(t, body, nil, []string{`"frozen":true`, `"single_source":true`, `"frozen_checked":true`})
 	if got := testutil.ToFloat64(obs.APIFreezeLookupFailuresTotal) - before; frz.calls == 0 || got != float64(frz.calls) {
 		t.Errorf("freeze lookup failure counter delta = %v, want %d (one per failed lookup)", got, frz.calls)
 	}
 }
 
-// TestPrice_FreezeErrorLeavesSingleSourceUnasserted — a freeze lookup
-// error means the freeze status is UNKNOWN, not "confirmed not
-// frozen". The error must not silently fall into the
-// not-frozen branch with single_source derived from the raw
-// source count as if the freeze check had cleared the pair
-// — that asserts a fact (single-sourced AND confirmed unfrozen) the
-// failed read never established. A single-source bucket must not
-// claim single_source=true off that silent assumption, and
-// frozen_checked must reflect the failed read.
-func TestPrice_FreezeErrorLeavesSingleSourceUnasserted(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
-		},
-		sources: map[string][]string{
-			"native/fiat:USD": {"sdex"}, // single source
-		},
-	}
-	frz := &stubFrozenLooker{err: errors.New("redis exploded")}
-	srv := v1.New(v1.Options{Prices: reader, Freeze: frz})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if strings.Contains(body, `"single_source":true`) {
-		t.Errorf("single_source must not be derived from source count when the freeze check itself failed: %s", body)
-	}
-	if strings.Contains(body, `"frozen_checked":true`) {
-		t.Errorf("frozen_checked must be false when the marker read failed: %s", body)
-	}
-}
-
-// TestPrice_NoFreezeLooker_DerivesFromSources — without a FrozenLooker
-// wired, frozen never fires and single_source comes from the
-// observation count.
-func TestPrice_NoFreezeLooker_DerivesFromSources(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {Price: "0.07", PriceType: "last_trade"},
-		},
-		sources: map[string][]string{
-			"native/fiat:USD": {"sdex"},
-		},
-	}
-	srv := v1.New(v1.Options{Prices: reader}) // no Freeze
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if strings.Contains(body, `"frozen":true`) {
-		t.Errorf("frozen should not fire without a looker: %s", body)
-	}
-	if !strings.Contains(body, `"single_source":true`) {
-		t.Errorf("single_source should derive from len(sources)==1: %s", body)
-	}
-}
-
-// TestPriceBatch_FrozenORedAcrossRows — a batch where one row freezes
-// and others don't sets envelope.flags.frozen=true (and
-// single_source=true). Envelope flags are OR over per-row signals,
-// matching the Stale flag's contract.
+// Envelope flags are OR over per-row signals, like Stale: one frozen row
+// sets frozen and single_source on the batch.
 func TestPriceBatch_FrozenORedAcrossRows(t *testing.T) {
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
@@ -1499,34 +765,15 @@ func TestPriceBatch_FrozenORedAcrossRows(t *testing.T) {
 			"fiat:EUR/fiat:USD": {"sdex", "soroswap"},
 		},
 	}
-	// Looker freezes only the EUR row, not native.
-	frz := &batchFreezeLooker{frozenForBase: "EUR"}
-	// The frozen row serves its held last-known-good, so the
-	// fixture holds one (see TestPrice_FrozenSetsBothFlags). Only the
-	// frozen row consults it — both rows have a closed bucket.
+	// Only the EUR row freezes; it serves its held last-known-good (see
+	// TestPrice_FrozenSetsBothFlags) while the other keeps its closed bucket.
 	held := &stubTriangulatedPriceLooker{value: "1.08", found: true}
-	srv := v1.New(v1.Options{Prices: reader, Freeze: frz, Triangulated: held})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native,fiat:EUR&quote=fiat:USD")
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"price":"1.08"`) || strings.Contains(body, `"1.10"`) {
-		t.Errorf("frozen row must carry the held value, not the raw bucket: %s", body)
-	}
-	if !strings.Contains(body, `"price":"0.07"`) {
-		t.Errorf("unfrozen row must still serve its closed bucket: %s", body)
-	}
-	if !strings.Contains(body, `"frozen":true`) {
-		t.Errorf("envelope frozen should fire when ANY row is frozen: %s", body)
-	}
-	if !strings.Contains(body, `"single_source":true`) {
-		t.Errorf("envelope single_source should follow frozen: %s", body)
-	}
+	_, body := priceGet(t, v1.Options{Prices: reader, Freeze: &batchFreezeLooker{frozenForBase: "EUR"}, Triangulated: held},
+		"/v1/price/batch?asset_ids=native,fiat:EUR&quote=fiat:USD")
+	checkBody(t, body, []string{`"price":"1.08"`, `"price":"0.07"`, `"frozen":true`, `"single_source":true`}, []string{`"1.10"`})
 }
 
-// batchFreezeLooker freezes any pair whose base.Code matches the
-// configured value. Lets a single test cover "freeze fires for asset
-// X but not asset Y".
+// batchFreezeLooker freezes any pair whose base.Code matches frozenForBase.
 type batchFreezeLooker struct {
 	frozenForBase string
 }
@@ -1535,7 +782,6 @@ func (b *batchFreezeLooker) FrozenForPair(_ context.Context, asset, _ canonical.
 	return asset.Code == b.frozenForBase, nil
 }
 
-// helper
 func mustPair(base, quote canonical.Asset) canonical.Pair {
 	p, err := canonical.NewPair(base, quote)
 	if err != nil {
@@ -1552,190 +798,69 @@ func mustClassicTest(code, issuer string) canonical.Asset {
 	return a
 }
 
-// stubCurrenciesReader is the test seam for the fiat-cross-rate
-// fallback on /v1/price. Returns whatever Snapshot it was
-// configured with; nil → "warming up" branch.
+// stubCurrenciesReader is the test seam for the fiat-cross-rate fallback;
+// a nil snap is the "warming up" branch.
 type stubCurrenciesReader struct {
 	snap *v1.CurrenciesSnapshot
 }
 
 func (s *stubCurrenciesReader) Latest() *v1.CurrenciesSnapshot { return s.snap }
 
-// TestPrice_FiatCrossRate_EURUSD — when the asset and quote are
-// both fiat and direct trade data is absent (the steady state for
-// fiat conversions on Stellar), the handler synthesises a cross
-// rate from the forex snapshot. EUR rate_usd=0.92 means
-// 1 USD = 0.92 EUR, so 1 EUR = 1/0.92 = ~1.0869565 USD.
-//
-// flags.triangulated=true documents the synthesis to the caller —
-// this isn't a direct on-chain trade.
+// With both sides fiat and no direct trades (the steady state on Stellar),
+// the handler synthesises a cross rate from the forex snapshot and flags it
+// triangulated. EUR rate_usd=0.92 means 1 EUR = 1/0.92 = ~1.0869565 USD.
 func TestPrice_FiatCrossRate_EURUSD(t *testing.T) {
-	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
 	now := time.Now().UTC()
-	currencies := &stubCurrenciesReader{
-		snap: &v1.CurrenciesSnapshot{
-			Currencies: []v1.CurrencyEntry{
-				{Ticker: "EUR", Name: "Euro", RateUSD: 0.92, UpdatedAt: now},
-			},
-			PublishedAt: now,
-		},
-	}
+	currencies := &stubCurrenciesReader{snap: &v1.CurrenciesSnapshot{
+		Currencies:  []v1.CurrencyEntry{{Ticker: "EUR", Name: "Euro", RateUSD: 0.92, UpdatedAt: now}},
+		PublishedAt: now,
+	}}
 	fixings := fixingsOf(hourlyFixing("EUR", "0.92", now.Add(-timescale.FXFixingLag).Truncate(time.Hour)))
-	srv := v1.New(v1.Options{Prices: reader, Currencies: currencies, FXFixings: fixings})
-	ts := startHTTPTest(t, srv.Handler())
 
-	resp := mustGet(t, ts.URL+"/v1/price?asset=fiat:EUR&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (fiat cross-rate fallback)", resp.StatusCode)
+	status, body := priceGet(t, v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceNotFound}, Currencies: currencies, FXFixings: fixings},
+		"/v1/price?asset=fiat:EUR&quote=fiat:USD")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (fiat cross-rate fallback): %s", status, body)
 	}
-	body, _ := readAll(resp)
-	for _, s := range []string{
-		`"asset_id":"fiat:EUR"`,
-		`"quote":"fiat:USD"`,
-		`"price_type":"vwap"`,
-		`"triangulated":true`,
+	// The digits past 1.086 depend on strconv.FormatFloat's shortest round-trip form.
+	checkBody(t, body, []string{`"asset_id":"fiat:EUR"`, `"quote":"fiat:USD"`, `"price_type":"vwap"`, `"triangulated":true`, `"price":"1.086`}, nil)
+}
+
+// SDEX writes `native` and CEX writes `crypto:XLM`; the public surface must
+// serve whichever spelling holds the VWAP, preferring a fresh one.
+func TestPrice_XLMAlias(t *testing.T) {
+	xlm := v1.PriceSnapshot{AssetID: "crypto:XLM", Quote: "fiat:USD", Price: "0.1500", PriceType: "vwap", ObservedAt: v1.WireTime(time.Now().UTC())}
+	native := v1.PriceSnapshot{AssetID: "native", Quote: "fiat:USD", Price: "0.1500", PriceType: "vwap", ObservedAt: v1.WireTime(time.Now().UTC())}
+	staleNative := v1.PriceSnapshot{AssetID: "native", Quote: "fiat:USD", Price: "0.1000", PriceType: "vwap", ObservedAt: v1.WireTime(time.Now().Add(-48 * time.Hour).UTC())}
+	for _, tc := range []struct {
+		name      string
+		snapshots map[string]v1.PriceSnapshot
+		stale     map[string]bool
+		path      string
+	}{
+		{"native falls through to crypto:XLM", map[string]v1.PriceSnapshot{"crypto:XLM/fiat:USD": xlm}, nil, pathNativeUSD},
+		{"crypto:XLM falls through to native", map[string]v1.PriceSnapshot{"native/fiat:USD": native}, nil, "/v1/price?asset=crypto:XLM&quote=fiat:USD"},
+		{
+			"fresh alias beats stale literal",
+			map[string]v1.PriceSnapshot{"native/fiat:USD": staleNative, "crypto:XLM/fiat:USD": xlm},
+			map[string]bool{"native/fiat:USD": true},
+			pathNativeUSD,
+		},
 	} {
-		if !strings.Contains(body, s) {
-			t.Errorf("body missing %q: %s", s, body)
-		}
-	}
-	// 1/0.92 ≈ 1.0869565… — assert the price is in the right range
-	// without pinning every digit. The exact serialisation depends
-	// on Go's strconv.FormatFloat shortest-round-trip output.
-	if !strings.Contains(body, `"price":"1.086`) {
-		t.Errorf("price not ~1.086…: %s", body)
+		t.Run(tc.name, func(t *testing.T) {
+			status, body := priceGet(t, v1.Options{Prices: &stubPriceReader{snapshots: tc.snapshots, stale: tc.stale}}, tc.path)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", status, body)
+			}
+			checkBody(t, body, []string{`"price":"0.1500"`}, []string{`"stale":true`, `"triangulated":true`})
+		})
 	}
 }
 
-// TestPrice_FiatCrossRate_NotFiatBothSides — the cross-rate fallback
-// only fires when BOTH asset and quote are fiat. native/fiat:USD
-// stays on the Redis/Triangulated path so this branch doesn't
-// silently shadow the stablecoin proxy.
-func TestPrice_FiatCrossRate_NotFiatBothSides(t *testing.T) {
-	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
-	currencies := &stubCurrenciesReader{
-		snap: &v1.CurrenciesSnapshot{
-			Currencies: []v1.CurrencyEntry{
-				{Ticker: "EUR", RateUSD: 0.92},
-			},
-		},
-	}
-	srv := v1.New(v1.Options{Prices: reader, Currencies: currencies})
-	ts := startHTTPTest(t, srv.Handler())
-
-	// native is AssetType=Native, not fiat — fiat cross fallback
-	// must not fire here. Without a Triangulated looker either,
-	// the original 404 stands.
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404 (fiat fallback shouldn't fire for native/fiat:USD)", resp.StatusCode)
-	}
-}
-
-// TestPrice_XLMAlias_NativeFallsThroughToCryptoXLM verifies that
-// /v1/price?asset=native&quote=fiat:USD picks up a VWAP published
-// under crypto:XLM/fiat:USD when no native/fiat:USD key exists.
-// This guards a customer-visible stale-price bug:
-// SDEX writes `native`, CEX writes `crypto:XLM`; the
-// aggregator's pair-set published under crypto:XLM only, and the
-// public surface queried by `native` and missed.
-func TestPrice_XLMAlias_NativeFallsThroughToCryptoXLM(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"crypto:XLM/fiat:USD": {
-				AssetID:    "crypto:XLM",
-				Quote:      "fiat:USD",
-				Price:      "0.1500",
-				PriceType:  "vwap",
-				ObservedAt: v1.WireTime(time.Now().UTC()),
-			},
-		},
-		stale:   map[string]bool{"crypto:XLM/fiat:USD": false},
-		sources: map[string][]string{"crypto:XLM/fiat:USD": {"binance", "bitstamp", "coinbase"}},
-	}
-	srv := v1.New(v1.Options{Prices: reader})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status %d, want 200", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"price":"0.1500"`) {
-		t.Errorf("expected price 0.1500 from crypto:XLM alias; got: %s", body)
-	}
-	if strings.Contains(body, `"stale":true`) {
-		t.Errorf("alias-served price should not flag stale=true; got: %s", body)
-	}
-	if strings.Contains(body, `"triangulated":true`) {
-		t.Errorf("alias-served price should not flag triangulated=true; got: %s", body)
-	}
-}
-
-// TestPrice_XLMAlias_CryptoXLMFallsThroughToNative verifies the
-// symmetric case — a customer querying with crypto:XLM picks up
-// VWAPs published under native.
-func TestPrice_XLMAlias_CryptoXLMFallsThroughToNative(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {
-				AssetID:    "native",
-				Quote:      "fiat:USD",
-				Price:      "0.1500",
-				PriceType:  "vwap",
-				ObservedAt: v1.WireTime(time.Now().UTC()),
-			},
-		},
-		stale:   map[string]bool{"native/fiat:USD": false},
-		sources: map[string][]string{"native/fiat:USD": {"sdex"}},
-	}
-	srv := v1.New(v1.Options{Prices: reader})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		body, _ := readAll(resp)
-		t.Fatalf("status %d, want 200 (body: %s)", resp.StatusCode, body)
-	}
-}
-
-// TestPrice_XLMAlias_PrefersFreshOverStale checks the alias loop's
-// staleness ordering: literal-asset has a stale VWAP, alias has a
-// fresh one → return the fresh alias.
-func TestPrice_XLMAlias_PrefersFreshOverStale(t *testing.T) {
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD":     {AssetID: "native", Quote: "fiat:USD", Price: "0.1000", PriceType: "vwap", ObservedAt: v1.WireTime(time.Now().Add(-48 * time.Hour).UTC())},
-			"crypto:XLM/fiat:USD": {AssetID: "crypto:XLM", Quote: "fiat:USD", Price: "0.1500", PriceType: "vwap", ObservedAt: v1.WireTime(time.Now().UTC())},
-		},
-		stale: map[string]bool{
-			"native/fiat:USD":     true,
-			"crypto:XLM/fiat:USD": false,
-		},
-		sources: map[string][]string{
-			"native/fiat:USD":     {"sdex"},
-			"crypto:XLM/fiat:USD": {"binance"},
-		},
-	}
-	srv := v1.New(v1.Options{Prices: reader})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status %d, want 200", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, `"price":"0.1500"`) {
-		t.Errorf("expected fresh crypto:XLM 0.1500; got: %s", body)
-	}
-}
-
-// gatingStubPriceReader is a stubPriceReader that ALSO implements the
-// optional proxyPairGate (RecentClosedVWAP1mExists) the stablecoin proxy
-// consults to skip empty proxy pairs before the unbounded last-trade walk
-// (empty-alias latency, proxy layer). `exists` keyed
-// on "<base>/<quote>" drives the gate; `latestCalls` records which pairs
-// reached LatestPrice, so a test can prove a gated-out peg is never walked.
+// gatingStubPriceReader also implements the optional proxyPairGate
+// (RecentClosedVWAP1mExists) the stablecoin proxy consults to skip empty
+// pegs before the unbounded last-trade walk. latestCalls records which
+// pairs reached LatestPrice, proving a gated-out peg is never walked.
 type gatingStubPriceReader struct {
 	stubPriceReader
 	exists      map[string]bool
@@ -1753,135 +878,80 @@ func (r *gatingStubPriceReader) LatestPrice(ctx context.Context, a, q canonical.
 	return r.stubPriceReader.LatestPrice(ctx, a, q)
 }
 
-// TestPrice_StablecoinProxy_GateSkipsEmptyPeg pins the fix at
-// the proxy layer: when the reader exposes the recent-existence gate, the
-// stablecoin proxy must SKIP a peg with no recent closed VWAP bucket
-// BEFORE calling LatestPrice — which on a classic-peg quote falls through
-// to an unbounded last-trade walk. Two pegs, empty one first: the empty
-// peg is gated out (never walked) and the populated peg triangulates.
+// A peg with no recent closed VWAP bucket must be skipped BEFORE
+// LatestPrice, which on a classic-peg quote falls into an unbounded
+// last-trade walk. Empty peg first: it is never walked and the live one serves.
 func TestPrice_StablecoinProxy_GateSkipsEmptyPeg(t *testing.T) {
-	emptyPeg, err := canonical.ParseAsset("USDT-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
-	if err != nil {
-		t.Fatalf("parse empty peg: %v", err)
-	}
-	livePeg, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatalf("parse live peg: %v", err)
-	}
+	emptyPeg := mustClassicTest("USDT", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+	liveKey := "native/" + usdcPeg.String()
 	reader := &gatingStubPriceReader{
 		stubPriceReader: stubPriceReader{
-			snapshots: map[string]v1.PriceSnapshot{
-				"native/" + livePeg.String(): {
-					AssetID: "native", Quote: livePeg.String(),
-					Price: "0.1626", PriceType: "vwap",
-					ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
-				},
-			},
-			sources: map[string][]string{"native/" + livePeg.String(): {"sdex"}},
+			snapshots: map[string]v1.PriceSnapshot{liveKey: {
+				AssetID: "native", Quote: usdcPeg.String(), Price: "0.1626", PriceType: "vwap",
+				ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
+			}},
+			sources: map[string][]string{liveKey: {"sdex"}},
 		},
-		exists: map[string]bool{
-			// emptyPeg: false (dormant); livePeg: true (live).
-			"native/" + livePeg.String(): true,
-		},
+		exists:      map[string]bool{liveKey: true},
 		latestCalls: map[string]int{},
 	}
-	srv := v1.New(v1.Options{
-		Prices:            reader,
-		USDPeggedClassics: []canonical.Asset{emptyPeg, livePeg}, // empty first
-	})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusOK {
-		body, _ := readAll(resp)
-		t.Fatalf("status = %d, want 200 (live peg should triangulate): %s", resp.StatusCode, body)
+	status, body := priceGet(t, v1.Options{Prices: reader, USDPeggedClassics: []canonical.Asset{emptyPeg, usdcPeg}}, pathNativeUSD)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (live peg should triangulate): %s", status, body)
 	}
-	body, _ := readAll(resp)
-	for _, want := range []string{`"price":"0.1626"`, `"quote":"fiat:USD"`, `"triangulated":true`} {
-		if !strings.Contains(body, want) {
-			t.Errorf("body missing %q: %s", want, body)
-		}
-	}
-	// The load-bearing assertion: the empty peg was NEVER walked.
+	checkBody(t, body, []string{`"price":"0.1626"`, `"quote":"fiat:USD"`, `"triangulated":true`}, nil)
 	if n := reader.latestCalls["native/"+emptyPeg.String()]; n != 0 {
-		t.Errorf("empty peg native/%s walked %d times, want 0 (gate must skip it)", emptyPeg.String(), n)
+		t.Errorf("empty peg walked %d times, want 0 (gate must skip it)", n)
 	}
-	if n := reader.latestCalls["native/"+livePeg.String()]; n != 1 {
-		t.Errorf("live peg native/%s walked %d times, want 1", livePeg.String(), n)
+	if n := reader.latestCalls[liveKey]; n != 1 {
+		t.Errorf("live peg walked %d times, want 1", n)
 	}
 }
 
-// TestPrice_StablecoinProxy_GateAllEmpty_FastMiss — when EVERY proxy peg
-// is gated out (no recent closed bucket anywhere), the proxy returns a
-// miss without walking any pair. With no other fallback layer wired, the
-// handler 404s, and LatestPrice is never called.
+// With EVERY peg gated out the proxy misses without walking any pair, and
+// with no other fallback wired the handler 404s.
 func TestPrice_StablecoinProxy_GateAllEmpty_FastMiss(t *testing.T) {
-	peg, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	if err != nil {
-		t.Fatalf("parse peg: %v", err)
-	}
 	reader := &gatingStubPriceReader{
 		stubPriceReader: stubPriceReader{err: v1.ErrPriceNotFound},
-		exists:          map[string]bool{}, // gate false for everything
+		exists:          map[string]bool{},
 		latestCalls:     map[string]int{},
 	}
-	srv := v1.New(v1.Options{
-		Prices:            reader,
-		USDPeggedClassics: []canonical.Asset{peg},
-	})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404 (all pegs gated out → fast miss)", resp.StatusCode)
+	status, body := priceGet(t, v1.Options{Prices: reader, USDPeggedClassics: []canonical.Asset{usdcPeg}}, pathNativeUSD)
+	if status != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (all pegs gated out): %s", status, body)
 	}
-	// The primary alias read walks native/fiat:USD (+ crypto:XLM/fiat:USD);
-	// the load-bearing assertion is that the CLASSIC-PEG pair — the one
-	// whose LatestPrice miss triggers the unbounded last-trade walk — is
-	// never touched once the gate reports it empty.
-	if n := reader.latestCalls["native/"+peg.String()]; n != 0 {
-		t.Errorf("peg pair native/%s walked %d times, want 0 (gate must skip it)", peg.String(), n)
+	// The primary alias read legitimately walks native/fiat:USD; the
+	// load-bearing check is that the classic-peg pair never is.
+	if n := reader.latestCalls["native/"+usdcPeg.String()]; n != 0 {
+		t.Errorf("peg pair walked %d times, want 0 (gate must skip it)", n)
 	}
 }
 
-// TestPrice_ConcurrentRequests_Coalesced is a regression guard: a
-// burst of concurrent requests for the SAME pair must collapse onto one
-// upstream LatestPrice call, not drive one per request.
+// A burst of concurrent requests for the SAME pair must collapse onto one
+// upstream LatestPrice call.
 func TestPrice_ConcurrentRequests_Coalesced(t *testing.T) {
-	snap := v1.PriceSnapshot{
-		AssetID:    "native",
-		Quote:      "fiat:USD",
-		Price:      "0.1242",
-		PriceType:  "last_trade",
-		ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
-	}
 	const n = 8
-	reader := &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{"native/fiat:USD": snap},
-		sources:   map[string][]string{"native/fiat:USD": {"sdex"}},
-		startedCh: make(chan struct{}, n),
-		releaseCh: make(chan struct{}),
-	}
-	srv := v1.New(v1.Options{Prices: reader})
-	ts := startHTTPTest(t, srv.Handler())
+	reader := usdReader(v1.PriceSnapshot{
+		AssetID: "native", Quote: "fiat:USD", Price: "0.1242", PriceType: "last_trade",
+		ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
+	}, "sdex")
+	reader.startedCh = make(chan struct{}, n)
+	reader.releaseCh = make(chan struct{})
+	ts := startHTTPTest(t, v1.New(v1.Options{Prices: reader}).Handler())
 
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
-			if resp.StatusCode != http.StatusOK {
+			if resp := mustGet(t, ts.URL+pathNativeUSD); resp.StatusCode != http.StatusOK {
 				t.Errorf("status = %d, want 200", resp.StatusCode)
 			}
 		}()
 	}
 
-	// Drain startedCh for a bounded window: a coalesced handler lets
-	// exactly one call reach the reader (the rest wait inside the
-	// coalescing layer, never signaling startedCh); an uncoalesced
-	// handler lets all n reach it almost immediately. Either way the
-	// window settles well before it elapses on localhost.
+	// A coalesced handler lets one call reach the reader; an uncoalesced one
+	// lets all n through almost at once. Either settles well inside the window.
 	deadline := time.After(200 * time.Millisecond)
 drain:
 	for {
@@ -1895,7 +965,7 @@ drain:
 	wg.Wait()
 
 	if got := atomic.LoadInt32(&reader.calls); got != 1 {
-		t.Errorf("LatestPrice calls = %d, want 1 (n=%d identical concurrent requests should coalesce onto one upstream read)", got, n)
+		t.Errorf("LatestPrice calls = %d, want 1 (n=%d identical concurrent requests should coalesce)", got, n)
 	}
 }
 
@@ -1921,12 +991,10 @@ func (l *pairKeyedCompositeLooker) LookupCompositeMeta(
 	return m, ok, nil
 }
 
-// TestPrice_FallbackCompositeIsSpellingIndependent pins that the
-// aggregator publishes the GBP composite under crypto:XLM/fiat:GBP only,
-// so on a closed-bucket miss ?asset=native must reach that same composite
-// — value, triangulated flag and the composite's own router meta — rather
-// than falling to a request-time FX cross. Everything but the echoed
-// asset_id must match the crypto:XLM response.
+// The aggregator publishes the GBP composite under crypto:XLM/fiat:GBP
+// only, so on a closed-bucket miss ?asset=native must reach that same
+// composite (value, triangulated flag, router meta) rather than a
+// request-time FX cross. Everything but the echoed asset_id must match.
 func TestPrice_FallbackCompositeIsSpellingIndependent(t *testing.T) {
 	observed := time.Date(2026, 9, 18, 8, 55, 0, 0, time.UTC)
 	looker := &pairKeyedCompositeLooker{
@@ -1937,29 +1005,28 @@ func TestPrice_FallbackCompositeIsSpellingIndependent(t *testing.T) {
 			"crypto:XLM/fiat:GBP": []byte(`{"path_count":1,"combined_confidence":0.9,"low_confidence":false,"diverged":true,"rerouted":false}`),
 		},
 	}
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceNotFound}, Triangulated: looker})
-	ts := startHTTPTest(t, srv.Handler())
+	opts := v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceNotFound}, Triangulated: looker}
 
-	type envelope struct {
+	type response struct {
 		Data    map[string]any `json:"data"`
 		Flags   map[string]any `json:"flags"`
 		Sources []string       `json:"sources"`
 	}
-	get := func(asset string) envelope {
+	get := func(asset string) response {
 		t.Helper()
-		status, body := getBody(t, ts.URL+"/v1/price?asset="+asset+"&quote=fiat:GBP")
+		status, body := priceGet(t, opts, "/v1/price?asset="+asset+"&quote=fiat:GBP")
 		if status != http.StatusOK {
 			t.Fatalf("asset=%s: status = %d, want 200: %s", asset, status, body)
 		}
-		var env envelope
-		if err := json.Unmarshal([]byte(body), &env); err != nil {
+		var resp response
+		if err := json.Unmarshal([]byte(body), &resp); err != nil {
 			t.Fatalf("asset=%s: decode: %v: %s", asset, err, body)
 		}
-		if got := env.Data["asset_id"]; got != asset {
+		if got := resp.Data["asset_id"]; got != asset {
 			t.Fatalf("asset=%s: asset_id = %v, want the requested spelling echoed", asset, got)
 		}
-		delete(env.Data, "asset_id")
-		return env
+		delete(resp.Data, "asset_id")
+		return resp
 	}
 
 	composite := get("crypto:XLM")

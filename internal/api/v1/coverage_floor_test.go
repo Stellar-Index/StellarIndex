@@ -293,95 +293,41 @@ func ohlcCoverageGetPair(t *testing.T, ts *testServer, pairQS, from, to string) 
 	return env
 }
 
-// TestOHLCSeries_BelowCoverageFloorIsFlagged is the defect itself.
-//
-// Without the floor flag, GET /v1/ohlc?base=crypto:XLM&quote=fiat:USD&interval=1d
-// &from=2016-01-01&to=2016-03-01 answers `{"intervals":[]}` with
-// `flags.stale:false` and nothing else — byte-identical to the answer
-// for a window the pair traded through quietly. The pair's daily
-// candles begin 2018-07-01; 2016 is two and a half years below that
-// floor, and the response would say so nowhere.
-func TestOHLCSeries_BelowCoverageFloorIsFlagged(t *testing.T) {
-	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
-	ts := ohlcCoverageServer(t, probe)
-
-	env := ohlcCoverageGet(t, ts, "2016-01-01T00:00:00Z", "2016-03-01T00:00:00Z")
-	if !env.Flags.OutsideCoverage {
-		t.Errorf("flags.outside_coverage = false for a window entirely below the %s floor",
-			xlmCoverageFloor.Format(time.RFC3339))
-	}
-	if env.CoverageFrom == nil {
-		t.Fatalf("coverage_from absent; want %s", xlmCoverageFloor.Format(time.RFC3339))
-	}
-	if !env.CoverageFrom.Equal(xlmCoverageFloor) {
-		t.Errorf("coverage_from = %s, want %s", env.CoverageFrom, xlmCoverageFloor)
-	}
-}
-
-// TestOHLCSeries_StraddlingWindowIsNotFlagged — a window that CONTAINS
-// the floor contains covered time, so its emptiness is a genuine
-// market answer for that part. Flagging it would be the same lie in
-// the opposite direction: "never held" about a period that was.
-func TestOHLCSeries_StraddlingWindowIsNotFlagged(t *testing.T) {
-	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
-	ts := ohlcCoverageServer(t, probe)
-
-	env := ohlcCoverageGet(t, ts, "2018-01-01T00:00:00Z", "2019-01-01T00:00:00Z")
-	if env.Flags.OutsideCoverage {
-		t.Errorf("flags.outside_coverage = true for a window straddling the floor")
-	}
-	if env.CoverageFrom == nil || !env.CoverageFrom.Equal(xlmCoverageFloor) {
-		t.Errorf("coverage_from = %v, want the floor echoed even when the flag is off", env.CoverageFrom)
-	}
-}
-
-// TestOHLCSeries_QuietInCoverageWindowIsNotFlagged — the real hole in
-// this pair's daily candles runs 2021-02 → 2026-03 (measured on r1),
-// entirely ABOVE the floor. That window is covered and empty, which is
-// exactly what "quiet" means; only `coverage_from` should appear.
-func TestOHLCSeries_QuietInCoverageWindowIsNotFlagged(t *testing.T) {
-	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
-	ts := ohlcCoverageServer(t, probe)
-
-	env := ohlcCoverageGet(t, ts, "2023-01-01T00:00:00Z", "2023-02-01T00:00:00Z")
-	if env.Flags.OutsideCoverage {
-		t.Errorf("flags.outside_coverage = true for a quiet window inside coverage")
-	}
-	if env.CoverageFrom == nil || !env.CoverageFrom.Equal(xlmCoverageFloor) {
-		t.Errorf("coverage_from = %v, want the floor", env.CoverageFrom)
-	}
-}
-
-// TestOHLCSeries_ProbeErrorYieldsNoSignal — a failed probe must leave
-// the response exactly as it is today: empty series, no annotation, no
-// flag. The one-way rule. Staying silent costs a caller the advisory;
-// guessing would tell them their window predates the held history on
-// the strength of a database hiccup.
-func TestOHLCSeries_ProbeErrorYieldsNoSignal(t *testing.T) {
-	probe := &coverageFloorProbe{err: errors.New("prices_1d unavailable")}
-	ts := ohlcCoverageServer(t, probe)
-
-	env := ohlcCoverageGet(t, ts, "2016-01-01T00:00:00Z", "2016-03-01T00:00:00Z")
-	if env.Flags.OutsideCoverage {
-		t.Errorf("flags.outside_coverage = true off a FAILED probe — a false coverage claim")
-	}
-	if env.CoverageFrom != nil {
-		t.Errorf("coverage_from = %v off a failed probe, want absent", env.CoverageFrom)
-	}
-}
-
-// TestOHLCSeries_UnknownFloorYieldsNoSignal — a probe that reached the
-// database and found no daily bucket is NOT proof the pair has no
-// history: a pair whose first trades landed an hour ago has no closed
-// daily bucket yet. Absence stays unknown.
-func TestOHLCSeries_UnknownFloorYieldsNoSignal(t *testing.T) {
-	probe := &coverageFloorProbe{found: false}
-	ts := ohlcCoverageServer(t, probe)
-
-	env := ohlcCoverageGet(t, ts, "2016-01-01T00:00:00Z", "2016-03-01T00:00:00Z")
-	if env.Flags.OutsideCoverage || env.CoverageFrom != nil {
-		t.Errorf("no-floor probe produced a signal: outside=%v from=%v",
-			env.Flags.OutsideCoverage, env.CoverageFrom)
+// The annotation is one-way: it fires only for a window entirely below a
+// KNOWN floor. A straddling or in-coverage window is a genuine market
+// answer, and a failed or empty probe leaves the response unannotated
+// rather than guessing from a database hiccup or a pair too new to have a
+// closed daily bucket.
+func TestOHLCSeries_CoverageFloorAnnotation(t *testing.T) {
+	const below1, below2 = "2016-01-01T00:00:00Z", "2016-03-01T00:00:00Z"
+	for _, tc := range []struct {
+		name        string
+		probe       *coverageFloorProbe
+		from, to    string
+		wantOutside bool
+		wantFloor   bool // coverage_from echoed, even when the flag is off
+	}{
+		{"below the floor is flagged", &coverageFloorProbe{floor: xlmCoverageFloor, found: true}, below1, below2, true, true},
+		{"straddling window is not flagged", &coverageFloorProbe{floor: xlmCoverageFloor, found: true}, "2018-01-01T00:00:00Z", "2019-01-01T00:00:00Z", false, true},
+		{"quiet window inside coverage is not flagged", &coverageFloorProbe{floor: xlmCoverageFloor, found: true}, "2023-01-01T00:00:00Z", "2023-02-01T00:00:00Z", false, true},
+		{"probe error yields no signal", &coverageFloorProbe{err: errors.New("prices_1d unavailable")}, below1, below2, false, false},
+		{"unknown floor yields no signal", &coverageFloorProbe{found: false}, below1, below2, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := ohlcCoverageGet(t, ohlcCoverageServer(t, tc.probe), tc.from, tc.to)
+			if env.Flags.OutsideCoverage != tc.wantOutside {
+				t.Errorf("flags.outside_coverage = %v, want %v", env.Flags.OutsideCoverage, tc.wantOutside)
+			}
+			if !tc.wantFloor {
+				if env.CoverageFrom != nil {
+					t.Errorf("coverage_from = %v, want absent", env.CoverageFrom)
+				}
+				return
+			}
+			if env.CoverageFrom == nil || !env.CoverageFrom.Equal(xlmCoverageFloor) {
+				t.Errorf("coverage_from = %v, want %s", env.CoverageFrom, xlmCoverageFloor)
+			}
+		})
 	}
 }
 
