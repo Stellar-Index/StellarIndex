@@ -27,7 +27,6 @@ function point(
   };
 }
 
-// 2024-01-01T00:00:00Z / 2024-04-01T00:00:00Z in Unix seconds.
 const JAN_2024 = Date.UTC(2024, 0, 1) / 1000;
 const APR_2024 = Date.UTC(2024, 3, 1) / 1000;
 
@@ -47,51 +46,49 @@ describe('month arithmetic', () => {
   });
 });
 
+const utc = (y: number, m: number) => Date.UTC(y, m, 1) / 1000;
+const newAccounts = (p: HistoryPoint) => p.new_accounts;
+
 describe('monthlyLine', () => {
-  /**
-   * THE FINDING THIS GUARDS. The endpoint emits NO point for a month
-   * with no activity. Handing the served points straight to the chart
-   * joins the two sides of the hole with a straight line — a value
-   * nobody published, drawn at the same confidence as the ones that
-   * were. The quiet months must arrive as gap slots instead.
-   */
+  // The endpoint emits NO point for a quiet month; handing the served
+  // points to the chart would draw a value nobody published across the hole.
   it('breaks the line at a quiet month instead of drawing through it', () => {
     const line = monthlyLine(
       [point('2024-01', 5), point('2024-04', 7)],
-      (p) => p.new_accounts,
+      newAccounts,
     );
 
     expect(line).toEqual([
       { time: JAN_2024, value: 5 },
-      { time: Date.UTC(2024, 1, 1) / 1000, value: null },
-      { time: Date.UTC(2024, 2, 1) / 1000, value: null },
+      { time: utc(2024, 1), value: null },
+      { time: utc(2024, 2), value: null },
       { time: APR_2024, value: 7 },
     ]);
-    // Nothing was interpolated into the hole: no slot between the two
-    // served months carries a number at all.
-    expect(line.slice(1, 3).every((p) => p.value === null)).toBe(true);
   });
 
-  it('spans a year boundary a month at a time', () => {
-    const line = monthlyLine(
+  it.each([
+    [
+      'spans a year boundary a month at a time',
       [point('2023-11', 1), point('2024-02', 2)],
-      (p) => p.new_accounts,
-    );
-    expect(line.map((p) => p.time)).toEqual([
-      Date.UTC(2023, 10, 1) / 1000,
-      Date.UTC(2023, 11, 1) / 1000,
-      Date.UTC(2024, 0, 1) / 1000,
-      Date.UTC(2024, 1, 1) / 1000,
-    ]);
-    expect(line.map((p) => p.value)).toEqual([1, null, null, 2]);
-  });
-
-  it('orders points that arrived out of order', () => {
-    const line = monthlyLine(
+      [utc(2023, 10), utc(2023, 11), utc(2024, 0), utc(2024, 1)],
+      [1, null, null, 2],
+    ],
+    [
+      'orders points that arrived out of order',
       [point('2024-03', 3), point('2024-01', 1)],
-      (p) => p.new_accounts,
-    );
-    expect(line.map((p) => p.value)).toEqual([1, null, 3]);
+      [utc(2024, 0), utc(2024, 1), utc(2024, 2)],
+      [1, null, 3],
+    ],
+    [
+      'drops a point whose period label is not a month',
+      [point('2024-01', 5), { ...point('2024-02', 9), period: 'whenever' }],
+      [JAN_2024],
+      [5],
+    ],
+  ])('%s', (_name, points, times, values) => {
+    const line = monthlyLine(points, newAccounts);
+    expect(line.map((p) => p.time)).toEqual(times);
+    expect(line.map((p) => p.value)).toEqual(values);
   });
 
   it('reads whichever figure the caller asks for', () => {
@@ -99,45 +96,26 @@ describe('monthlyLine', () => {
     expect(line).toEqual([{ time: JAN_2024, value: 41 }]);
   });
 
-  it('drops a point whose period label is not a month', () => {
-    const line = monthlyLine(
-      [point('2024-01', 5), { ...point('2024-02', 9), period: 'whenever' }],
-      (p) => p.new_accounts,
-    );
-    expect(line).toEqual([{ time: JAN_2024, value: 5 }]);
-  });
-
   it('plots the points as they came rather than allocating an unbounded spine', () => {
-    // A span past the slot ceiling: the gap filling bails out, and the
-    // only casualty is that the holes are drawn joined.
+    // Past the slot ceiling gap filling bails out; holes are drawn joined.
     const line = monthlyLine(
       [point('1900-01', 1), point('2024-01', 2)],
-      (p) => p.new_accounts,
+      newAccounts,
     );
     expect(line).toHaveLength(2);
     expect(MAX_MONTH_SLOTS).toBeGreaterThan(0);
   });
-
-  it('has nothing to draw for an empty series', () => {
-    expect(monthlyLine([], (p) => p.new_accounts)).toEqual([]);
-  });
 });
 
 describe('cumulativeLine', () => {
-  /**
-   * The deliberate exception to the rule above. A running total that
-   * gained nothing in a month has not become UNKNOWN in that month — the
-   * monthly counts are exact and sum to the whole-history total, so
-   * carrying the total forward states a fact. Breaking the line here
-   * would claim the opposite.
-   */
+  // Unlike monthlyLine: a running total that gained nothing is not unknown,
+  // so carrying it forward states a fact.
   it('carries the total across a quiet month unbroken', () => {
     const line = cumulativeLine(
       [point('2024-01', 5), point('2024-04', 7)],
-      (p) => p.new_accounts,
+      newAccounts,
     );
     expect(line.map((p) => p.value)).toEqual([5, 5, 5, 12]);
-    expect(line.some((p) => p.value === null)).toBe(false);
   });
 
   it('ends at the sum of every point', () => {
@@ -146,13 +124,16 @@ describe('cumulativeLine', () => {
       point('2024-02', 4),
       point('2024-03', 1),
     ];
-    const line = cumulativeLine(points, (p) => p.new_accounts);
+    const line = cumulativeLine(points, newAccounts);
     expect(line[line.length - 1].value).toBe(10);
   });
+});
 
-  it('has nothing to draw for an empty series', () => {
-    expect(cumulativeLine([], (p) => p.new_accounts)).toEqual([]);
-  });
+it.each([
+  ['monthlyLine', monthlyLine],
+  ['cumulativeLine', cumulativeLine],
+])('%s has nothing to draw for an empty series', (_name, fn) => {
+  expect(fn([], newAccounts)).toEqual([]);
 });
 
 function edge(over: Partial<GraphEdge>): GraphEdge {
@@ -166,6 +147,8 @@ function edge(over: Partial<GraphEdge>): GraphEdge {
   };
 }
 
+const accounts = (rows: GraphEdge[]) => rows.map((e) => e.account);
+
 describe('sortEdges', () => {
   it('counts events from whichever relation the edge belongs to', () => {
     expect(edgeEvents(edge({ creations: 3 }))).toBe(3);
@@ -173,14 +156,8 @@ describe('sortEdges', () => {
     expect(edgeEvents(edge({}))).toBe(0);
   });
 
-  /**
-   * THE FINDING THIS GUARDS. funded_stroops is an exact decimal string
-   * (ADR-0003). A comparator that routed it through Number() would round
-   * anything past 2^53 to the same float and then leave two genuinely
-   * different rows in whatever order they arrived — silently mis-ordering
-   * exactly the biggest funders the sort exists to surface. 9.0072e15
-   * stroops is ~900M XLM, which real creators on this board exceed.
-   */
+  // funded_stroops is an exact decimal string (ADR-0003); routing it through
+  // Number() ties anything past 2^53 and mis-orders the biggest funders.
   it('orders funded stroops exactly, past the float-precision ceiling', () => {
     const smaller = edge({
       account: 'GSMALL',
@@ -192,10 +169,14 @@ describe('sortEdges', () => {
     });
     expect(Number(smaller.funded_stroops)).toBe(Number(larger.funded_stroops));
 
-    const desc = sortEdges([smaller, larger], 'funded', 'desc');
-    expect(desc.map((e) => e.account)).toEqual(['GLARGE', 'GSMALL']);
-    const asc = sortEdges([smaller, larger], 'funded', 'asc');
-    expect(asc.map((e) => e.account)).toEqual(['GSMALL', 'GLARGE']);
+    expect(accounts(sortEdges([smaller, larger], 'funded', 'desc'))).toEqual([
+      'GLARGE',
+      'GSMALL',
+    ]);
+    expect(accounts(sortEdges([smaller, larger], 'funded', 'asc'))).toEqual([
+      'GSMALL',
+      'GLARGE',
+    ]);
   });
 
   it('treats an absent or unparsable funded figure as zero rather than throwing', () => {
@@ -207,32 +188,18 @@ describe('sortEdges', () => {
     expect(sortEdges(rows, 'funded', 'desc')[0].account).toBe('GREAL');
   });
 
-  it('sorts by event count, account id and ledger span in both directions', () => {
-    const rows = [
-      edge({ account: 'GB', creations: 1, first_ledger: 30, last_ledger: 90 }),
-      edge({ account: 'GA', creations: 9, first_ledger: 10, last_ledger: 20 }),
-      edge({ account: 'GC', creations: 5, first_ledger: 20, last_ledger: 50 }),
-    ];
-    expect(sortEdges(rows, 'events', 'desc').map((e) => e.account)).toEqual([
-      'GA',
-      'GC',
-      'GB',
-    ]);
-    expect(sortEdges(rows, 'account', 'asc').map((e) => e.account)).toEqual([
-      'GA',
-      'GB',
-      'GC',
-    ]);
-    expect(sortEdges(rows, 'first', 'asc').map((e) => e.account)).toEqual([
-      'GA',
-      'GC',
-      'GB',
-    ]);
-    expect(sortEdges(rows, 'last', 'desc').map((e) => e.account)).toEqual([
-      'GB',
-      'GC',
-      'GA',
-    ]);
+  const byColumn = [
+    edge({ account: 'GB', creations: 1, first_ledger: 30, last_ledger: 90 }),
+    edge({ account: 'GA', creations: 9, first_ledger: 10, last_ledger: 20 }),
+    edge({ account: 'GC', creations: 5, first_ledger: 20, last_ledger: 50 }),
+  ];
+  it.each([
+    ['events', 'desc', ['GA', 'GC', 'GB']],
+    ['account', 'asc', ['GA', 'GB', 'GC']],
+    ['first', 'asc', ['GA', 'GC', 'GB']],
+    ['last', 'desc', ['GB', 'GC', 'GA']],
+  ] as const)('sorts by %s %s', (key, dir, expected) => {
+    expect(accounts(sortEdges(byColumn, key, dir))).toEqual(expected);
   });
 
   it('leaves the served order alone for rows it has no reason to move', () => {
@@ -240,7 +207,7 @@ describe('sortEdges', () => {
       edge({ account: 'GFIRST', creations: 2 }),
       edge({ account: 'GSECOND', creations: 2 }),
     ];
-    expect(sortEdges(rows, 'events', 'desc').map((e) => e.account)).toEqual([
+    expect(accounts(sortEdges(rows, 'events', 'desc'))).toEqual([
       'GFIRST',
       'GSECOND',
     ]);
@@ -249,27 +216,18 @@ describe('sortEdges', () => {
   it('does not mutate the array it was given', () => {
     const rows = [edge({ account: 'GB' }), edge({ account: 'GA' })];
     sortEdges(rows, 'account', 'asc');
-    expect(rows.map((e) => e.account)).toEqual(['GB', 'GA']);
+    expect(accounts(rows)).toEqual(['GB', 'GA']);
   });
 });
 
+// graph/history 404s on older API builds; that must stay distinguishable
+// from the 503 "warming" case.
 describe('errorStatus', () => {
-  /**
-   * THE FINDING THIS GUARDS. `graph/history` is newer than the API build
-   * on some deployments, where it 404s. Treating that as the sibling
-   * "warming" 503 would tell a reader to retry for a rollup cycle that
-   * has already run — the endpoint has to ship first. The three cases
-   * have to stay distinguishable.
-   */
-  it('recovers the status the client encoded in the message', () => {
-    expect(
-      errorStatus(new Error('404 Not Found on /v1/accounts/G…/graph/history')),
-    ).toBe(404);
-    expect(
-      errorStatus(
-        new Error('503 Service Unavailable on /v1/accounts/G…/graph — warming'),
-      ),
-    ).toBe(503);
+  it.each([
+    ['404 Not Found on /v1/accounts/G…/graph/history', 404],
+    ['503 Service Unavailable on /v1/accounts/G…/graph — warming', 503],
+  ])('recovers the status the client encoded in %j', (message, status) => {
+    expect(errorStatus(new Error(message))).toBe(status);
   });
 
   it('is null when the failure was not an HTTP one', () => {
@@ -280,22 +238,17 @@ describe('errorStatus', () => {
 });
 
 describe('isAccountId', () => {
-  it('accepts a real G-strkey and refuses near-misses', () => {
-    expect(
-      isAccountId('GDB3RSSWTUXO7MBTNMHUP3DRBIUR3QRV2CVFRAKMN4GM2B4QNGEUT6CU'),
-    ).toBe(true);
-    // Lowercase: G-strkeys are case-SENSITIVE base32 and are never
-    // lowercased anywhere in the explorer.
-    expect(
-      isAccountId('gdb3rsswtuxo7mbtnmhup3drbiur3qrv2cvfrakmn4gm2b4qngeut6cu'),
-    ).toBe(false);
-    // The shell sentinel the static export builds, and the empty string
-    // the server render sees before hydration.
-    expect(isAccountId('shell')).toBe(false);
-    expect(isAccountId('')).toBe(false);
+  const VALID = 'GDB3RSSWTUXO7MBTNMHUP3DRBIUR3QRV2CVFRAKMN4GM2B4QNGEUT6CU';
+  it.each([
+    [VALID, true],
+    // G-strkeys are case-SENSITIVE and never lowercased in the explorer.
+    [VALID.toLowerCase(), false],
+    // The static-export shell sentinel and the pre-hydration empty string.
+    ['shell', false],
+    ['', false],
     // A contract id, not an account.
-    expect(
-      isAccountId('CADR6Q2UOCDJAGXMAB2E6SRT35STLZ2IGLZUCXJQG7TC2LNKCU5RTQVY'),
-    ).toBe(false);
+    ['CADR6Q2UOCDJAGXMAB2E6SRT35STLZ2IGLZUCXJQG7TC2LNKCU5RTQVY', false],
+  ])('isAccountId(%j) is %s', (id, ok) => {
+    expect(isAccountId(id)).toBe(ok);
   });
 });
