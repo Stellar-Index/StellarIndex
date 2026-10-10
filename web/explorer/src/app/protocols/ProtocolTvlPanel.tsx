@@ -4,7 +4,7 @@ import { HATCH_BG, HBarList } from '@/components/charts/Bars';
 import {
   compareDecimalStrings,
   formatCompactUnits,
-  formatDecimalAmount,
+  formatReadable,
   formatRelative,
 } from '@/lib/format';
 import { Badge } from '@/components/ui';
@@ -148,11 +148,11 @@ export function ProtocolTvlPanel({
  * hidden behind a hover a touch device cannot perform.
  *
  * The figure is formatted from the DECIMAL STRING via
- * `formatDecimalAmount` (BigInt + Intl). Nothing here calls `Number()`
+ * `formatReadable` (BigInt + Intl). Nothing here calls `Number()`
  * on money: `usd` on the bars above is geometry, this is the figure.
  */
 export function DexTvlHeadline({ total }: { total: DexTvlTotal }) {
-  const figure = formatDecimalAmount(total.tvl_usd);
+  const figure = formatReadable(total.tvl_usd, true);
   // A total whose own decimal string will not parse is not renderable as
   // a number; showing the raw string would be a bare figure with no
   // grouping and no way to tell it apart from a real one.
@@ -164,13 +164,16 @@ export function DexTvlHeadline({ total }: { total: DexTvlTotal }) {
         Total value locked
       </div>
       <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="tnum text-ink font-mono text-3xl font-semibold tracking-tight">
+        <span
+          className="tnum text-ink font-mono text-3xl font-semibold tracking-tight"
+          title={total.tvl_usd}
+        >
           {total.lower_bound && (
             <span className="text-ink-muted" aria-hidden>
               ≥{' '}
             </span>
           )}
-          ${figure}
+          {figure}
         </span>
         {total.lower_bound && (
           <span

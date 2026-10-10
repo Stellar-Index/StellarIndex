@@ -111,9 +111,8 @@ describe('ProtocolTvlPanel headline total', () => {
   it('renders a lower-bound total exactly, with ledger, basis and exclusions reachable', () => {
     render(<ProtocolTvlPanel rows={ROWS} total={TOTAL} />);
     expect(screen.getByText('Total value locked')).toBeInTheDocument();
-    // The EXACT figure, grouped from the decimal string — not $40.21M,
-    // and not a Number()-rounded approximation.
-    expect(screen.getByText(/\$40,206,675\.17/)).toBeInTheDocument();
+    // Readable on the page; the exact decimal string on hover.
+    expect(screen.getByTitle('40206675.17')).toHaveTextContent('$40.21M');
     // Lower bound: the "≥" mark the bars already use, plus the split.
     expect(screen.getByText('≥')).toBeInTheDocument();
     expect(screen.getByText(/75 of 225 pools priced/)).toBeInTheDocument();
@@ -142,7 +141,7 @@ describe('ProtocolTvlPanel headline total', () => {
         }}
       />,
     );
-    expect(screen.getByText(/\$40,206,675\.17/)).toBeInTheDocument();
+    expect(screen.getByText(/\$40\.21M/)).toBeInTheDocument();
     expect(screen.queryByText('≥')).not.toBeInTheDocument();
     expect(screen.queryByText(/of 225 pools priced/)).not.toBeInTheDocument();
   });

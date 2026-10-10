@@ -11,7 +11,7 @@ import { truncateMiddle } from '@/lib/format';
 import type { components } from '@/api/types';
 
 import { AccountPositions } from '../accounts/AccountPositions';
-import { formatTimestamp, stroopsToXlm } from '../explorer-shared';
+import { formatTimestamp, xlmReadable } from '../explorer-shared';
 import { AccountRelationEdges } from './AccountRelationEdges';
 import { AccountRelationCohort } from './AccountRelationCohort';
 import { AccountRelationHistory } from './AccountRelationHistory';
@@ -220,7 +220,7 @@ export function AccountRelationView({
                   label="XLM funded"
                   value={
                     side.accounts > 0
-                      ? stroopsToXlm(data.outbound.created.funded_stroops)
+                      ? xlmReadable(data.outbound.created.funded_stroops)
                       : '—'
                   }
                   sub="starting balances paid"

@@ -12,6 +12,7 @@ import {
   decimalOrNull,
   compareDecimalStrings,
   formatCompactUnits,
+  formatReadable,
   formatUsdWhole,
   sumDecimalStrings,
 } from '@/lib/format';
@@ -111,13 +112,13 @@ export function PoolReserves({ pool }: { pool: string }) {
       {q.data?.tvl_usd && (
         <div className="text-ink-body text-sm">
           Pool TVL:{' '}
-          <span className="text-ink font-mono">
+          <span className="text-ink font-mono" title={q.data.tvl_usd}>
             {lowerBound && (
               <span className="text-ink-muted" aria-hidden>
                 ≥{' '}
               </span>
             )}
-            {formatUsdWhole(q.data.tvl_usd)}
+            {formatReadable(q.data.tvl_usd, true) ?? '—'}
           </span>{' '}
           <span className="text-ink-muted">
             {lowerBound ? (

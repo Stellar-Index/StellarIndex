@@ -150,10 +150,8 @@ describe('DexProtocolsTable headline total', () => {
     const label = await screen.findByText('Total value locked');
     // Scoped to the card: the table's own TVL cells carry a "≥" too.
     const card = label.parentElement as HTMLElement;
-    // Money comes off the DECIMAL STRING, grouped; never Number().
-    await waitFor(() =>
-      expect(card.textContent).toMatch(/≥\s*\$2,600,000\.00/),
-    );
+    // Money comes off the DECIMAL STRING, BigInt-exact; never Number().
+    await waitFor(() => expect(card.textContent).toMatch(/≥\s*\$2\.6M/));
     expect(screen.getByText(/40 of 42 pools priced/)).toBeInTheDocument();
     expect(screen.getByText(new RegExp(total.basis))).toBeInTheDocument();
     expect(screen.getByText(/What this total excludes/)).toBeInTheDocument();

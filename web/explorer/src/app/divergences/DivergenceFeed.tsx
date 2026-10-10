@@ -428,7 +428,7 @@ function DivergenceSeriesPanel({
             priceLines={priceLines}
             legend={{
               valueLabel: 'Δ%',
-              formatValue: (n) => `${n > 0 ? '+' : ''}${n.toFixed(3)}%`,
+              formatValue: (n) => `${n > 0 ? '+' : ''}${n.toFixed(2)}%`,
             }}
             ariaLabel={`Divergence of our VWAP vs ${lines.map((l) => l.label).join(', ')} over the last ${days} day(s), in percent`}
           />

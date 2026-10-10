@@ -18,6 +18,7 @@ import {
   CopyHash,
   formatTimestamp,
   stroopsToXlm,
+  xlmReadable,
 } from '../explorer-shared';
 
 /**
@@ -157,13 +158,13 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
           <Field
             label="Total coins"
             mono
-            value={l.total_coins ? `${stroopsToXlm(l.total_coins)} XLM` : '—'}
+            value={l.total_coins ? `${xlmReadable(l.total_coins)} XLM` : '—'}
             sub={l.total_coins ? totalCoinsCaption() : undefined}
           />
           <Field
             label="Fee pool"
             mono
-            value={l.fee_pool ? `${stroopsToXlm(l.fee_pool)} XLM` : '—'}
+            value={l.fee_pool ? `${xlmReadable(l.fee_pool)} XLM` : '—'}
             sub="All fees collected network-wide; not redistributed since inflation ended"
           />
           <Field

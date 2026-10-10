@@ -12,7 +12,7 @@ import { useAssets } from '@/api/hooks';
 import type { components } from '@/api/types';
 import {
   formatCompactUnits,
-  formatDecimalAmount,
+  formatReadable,
   formatOraclePrice,
   formatRelative,
   formatRelativeLong,
@@ -283,13 +283,12 @@ function useRWAAssets() {
 }
 
 /**
- * Money, from the served decimal string. `formatDecimalAmount` returns
+ * Money, from the served decimal string. `formatReadable` returns
  * null rather than a placeholder precisely so each surface decides what
  * absence looks like — here, absence is never a dash in a money cell.
  */
 function usd(value: string | null | undefined): string | null {
-  const f = formatDecimalAmount(value, 2);
-  return f == null ? null : `$${f}`;
+  return formatReadable(value, true);
 }
 
 /**

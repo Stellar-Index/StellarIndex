@@ -16,7 +16,6 @@ import {
   formatCompact,
   formatCompactUnits,
   formatPriceSmall,
-  formatSubunitPrice,
   multiplyDecimalStrings,
   positiveDecimal,
 } from '@/lib/format';
@@ -1617,10 +1616,7 @@ function VerifiedCurrencyView({
         />
         {priceNum != null && Number.isFinite(priceNum) && (
           <div className="tnum text-ink font-mono text-2xl">
-            $
-            {priceNum < 0.001
-              ? formatSubunitPrice(priceNum)
-              : priceNum.toFixed(priceNum >= 100 ? 2 : 6)}
+            ${formatPriceSmall(priceNum)}
             <span className="text-ink-muted ml-2 text-xs">USD</span>
           </div>
         )}

@@ -36,6 +36,7 @@ import {
   relativeAge,
   renderOpFieldValue,
   stroopsToXlm,
+  xlmReadable,
 } from '../explorer-shared';
 import { CrossReference } from '@/components/CrossReference';
 import { muxedBaseAccount } from '@/lib/strkey';
@@ -533,8 +534,8 @@ function AccountStatePanel({
     <Panel title="State" source={source} bodyClassName="space-y-5">
       <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-4">
         <Stat
-          label="Native balance"
-          value={`${stroopsToXlm(state.balance ?? '0')} XLM`}
+          label="XLM balance"
+          value={`${xlmReadable(state.balance ?? '0')} XLM`}
           mono
         />
         <Stat label="Sequence" value={state.seq_num ?? '—'} mono />

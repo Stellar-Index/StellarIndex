@@ -1,5 +1,6 @@
 'use client';
 
+import { formatPriceSmall } from '@/lib/format';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
@@ -125,7 +126,9 @@ export function PairPathView() {
           )}
           {!isLoading && !isError && data?.price && (
             <div className="space-y-1">
-              <div className="text-h2 text-ink font-mono">{data.price}</div>
+              <div className="text-h2 text-ink font-mono" title={data.price}>
+                {formatPriceSmall(data.price)}
+              </div>
               <p className="text-ink-muted text-sm">
                 {quoteLabel} per {baseLabel}
                 {data.observed_at ? ` · observed ${data.observed_at}` : ''}
