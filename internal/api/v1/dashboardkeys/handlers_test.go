@@ -76,14 +76,27 @@ func sessionRequest(t *testing.T, method, target string, body any, sc dashboarda
 	return req
 }
 
+func doCreate(t *testing.T, h *Handlers, sc dashboardauth.SessionContext, body createRequest) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	h.HandleCreate(w, sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", body, sc))
+	return w
+}
+
+func doRevoke(t *testing.T, h *Handlers, sc dashboardauth.SessionContext, id string) *httptest.ResponseRecorder {
+	req := sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/"+id, nil, sc)
+	req.SetPathValue("id", id)
+	w := httptest.NewRecorder()
+	h.HandleRevoke(w, req)
+	return w
+}
+
 func TestHandleCreate_HappyPath(t *testing.T) {
 	h, _, sc := newTestRig(t)
-	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{
+	w := doCreate(t, h, sc, createRequest{
 		Name:            "production",
 		RateLimitPerMin: 1000,
-	}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
+	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -112,24 +125,29 @@ func TestHandleCreate_AnonRejected401(t *testing.T) {
 	}
 }
 
-func TestHandleCreate_ViewerCannotMint(t *testing.T) {
-	h, _, sc := newTestRig(t)
-	sc.User.Role = platform.RoleViewer
-	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{Name: "x"}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
-	if w.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want 403", w.Code)
+func TestHandleCreate_Rejections(t *testing.T) {
+	cases := []struct {
+		name string
+		role platform.Role
+		body createRequest
+		want int
+	}{
+		{"viewer cannot mint", platform.RoleViewer, createRequest{Name: "x"}, http.StatusForbidden},
+		{"missing name", platform.RoleOwner, createRequest{Name: "  "}, http.StatusBadRequest},
+		{"malformed expires_at", platform.RoleOwner, createRequest{Name: "x", ExpiresAt: "not-rfc3339"}, http.StatusBadRequest},
+		{"past expires_at", platform.RoleOwner, createRequest{Name: "x", ExpiresAt: "2020-01-01T00:00:00Z"}, http.StatusBadRequest},
 	}
-}
-
-func TestHandleCreate_RejectsMissingName(t *testing.T) {
-	h, _, sc := newTestRig(t)
-	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{Name: "  "}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d", w.Code)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store, sc := newTestRig(t)
+			sc.User.Role = tc.role
+			if w := doCreate(t, h, sc, tc.body); w.Code != tc.want {
+				t.Errorf("status = %d, want %d", w.Code, tc.want)
+			}
+			if len(store.byID) != 0 {
+				t.Errorf("key minted despite rejection")
+			}
+		})
 	}
 }
 
@@ -161,12 +179,10 @@ func TestHandleCreate_TierClampsRateLimit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, store, sc := newTestRig(t)
 			sc.Account.Tier = tc.tier
-			req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{
+			w := doCreate(t, h, sc, createRequest{
 				Name:            "tier-test",
 				RateLimitPerMin: tc.requested,
-			}, sc)
-			w := httptest.NewRecorder()
-			h.HandleCreate(w, req)
+			})
 			if w.Code != http.StatusCreated {
 				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 			}
@@ -215,12 +231,10 @@ func TestHandleCreate_ClampsMonthlyQuota(t *testing.T) {
 			h, store, sc := newTestRig(t)
 			sc.Account.Tier = tc.tier
 			sc.Account.MonthlyRequestQuotaOverride = tc.override
-			req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{
+			w := doCreate(t, h, sc, createRequest{
 				Name:         "quota-test",
 				MonthlyQuota: tc.requested,
-			}, sc)
-			w := httptest.NewRecorder()
-			h.HandleCreate(w, req)
+			})
 			if w.Code != http.StatusCreated {
 				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 			}
@@ -293,49 +307,6 @@ func TestDefaultMintedKey_MatchesAccountEffectiveLimits(t *testing.T) {
 	}
 }
 
-func TestHandleCreate_RejectsMalformedExpiresAt(t *testing.T) {
-	h, _, sc := newTestRig(t)
-	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{
-		Name:      "x",
-		ExpiresAt: "not-rfc3339",
-	}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d", w.Code)
-	}
-}
-
-func TestHandleCreate_RejectsPastExpiresAt(t *testing.T) {
-	h, _, sc := newTestRig(t)
-	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{
-		Name:      "x",
-		ExpiresAt: "2020-01-01T00:00:00Z",
-	}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d", w.Code)
-	}
-}
-
-func TestHandleCreate_QuotaEnforced(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	// Rig default account is Starter — seed to that tier's ceiling.
-	for i := 0; i < sc.Account.Tier.MaxActiveKeys(); i++ {
-		store.byID[uuid.New().String()] = platform.APIKey{
-			ID: uuid.New().String(), AccountID: sc.Account.ID,
-			Name: "seed", KeyPrefix: "sip_seedseed",
-		}
-	}
-	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{Name: "one-too-many"}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
-	if w.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409", w.Code)
-	}
-}
-
 // TestHandleCreate_QuotaIsTierAware pins the tier ladder: a Free
 // account caps out well below Starter, the same key count passes on
 // a higher tier, and Config.KeyQuotas overrides the ladder per tier.
@@ -385,12 +356,10 @@ func TestHandleCreate_QuotaIsTierAware(t *testing.T) {
 
 func TestHandleCreate_CIDRAndBareIPParse(t *testing.T) {
 	h, _, sc := newTestRig(t)
-	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{
+	w := doCreate(t, h, sc, createRequest{
 		Name:        "test",
 		IPAllowlist: []string{"203.0.113.0/24", "198.51.100.7"},
-	}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
+	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -514,81 +483,46 @@ func TestHandleList_BoundsRevokedHistory(t *testing.T) {
 	}
 }
 
-func TestHandleRevoke_HappyPath(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	store.byID["k-mine"] = platform.APIKey{ID: "k-mine", AccountID: sc.Account.ID, Name: "mine"}
-	req := sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/k-mine", nil, sc)
-	req.SetPathValue("id", "k-mine")
-	w := httptest.NewRecorder()
-	h.HandleRevoke(w, req)
-	if w.Code != http.StatusNoContent {
-		t.Errorf("status = %d", w.Code)
+func TestHandleRevoke(t *testing.T) {
+	cases := []struct {
+		name        string
+		role        platform.Role
+		keyID       string
+		keyAccount  func(sc dashboardauth.SessionContext) uuid.UUID
+		createdBy   func(sc dashboardauth.SessionContext) uuid.UUID
+		wantStatus  int
+		wantRevoked bool
+	}{
+		{"owner revokes own-account key", platform.RoleOwner, "k", mine, nobody, http.StatusNoContent, true},
+		{"other account is 404 and untouched", platform.RoleOwner, "k", func(dashboardauth.SessionContext) uuid.UUID { return uuid.New() }, nobody, http.StatusNotFound, false},
+		{"member cannot revoke another user's key", platform.RoleMember, "k", mine, func(dashboardauth.SessionContext) uuid.UUID { return uuid.New() }, http.StatusForbidden, false},
+		{"member can revoke own key", platform.RoleMember, "k", mine, func(sc dashboardauth.SessionContext) uuid.UUID { return sc.User.ID }, http.StatusNoContent, true},
 	}
-	if store.byID["k-mine"].RevokedAt.IsZero() {
-		t.Errorf("RevokedAt not set")
-	}
-}
-
-func TestHandleRevoke_OtherAccount404(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	other := uuid.New()
-	store.byID["k-other"] = platform.APIKey{ID: "k-other", AccountID: other, Name: "other"}
-	req := sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/k-other", nil, sc)
-	req.SetPathValue("id", "k-other")
-	w := httptest.NewRecorder()
-	h.HandleRevoke(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d (revoke leaked across accounts)", w.Code)
-	}
-	// Confirm the other account's key is untouched.
-	if !store.byID["k-other"].RevokedAt.IsZero() {
-		t.Errorf("cross-account revoke succeeded")
-	}
-}
-
-func TestHandleRevoke_MemberCannotRevokeAnotherUsersKey(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	sc.User.Role = platform.RoleMember
-	otherUser := uuid.New()
-	store.byID["k-owner"] = platform.APIKey{ID: "k-owner", AccountID: sc.Account.ID, CreatedByUserID: otherUser, Name: "owner's key"}
-	req := sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/k-owner", nil, sc)
-	req.SetPathValue("id", "k-owner")
-	w := httptest.NewRecorder()
-	h.HandleRevoke(w, req)
-	if w.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want 403 (member revoked a key it didn't create)", w.Code)
-	}
-	if !store.byID["k-owner"].RevokedAt.IsZero() {
-		t.Errorf("member revoked another user's key")
-	}
-}
-
-func TestHandleRevoke_MemberCanRevokeOwnKey(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	sc.User.Role = platform.RoleMember
-	store.byID["k-mine"] = platform.APIKey{ID: "k-mine", AccountID: sc.Account.ID, CreatedByUserID: sc.User.ID, Name: "mine"}
-	req := sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/k-mine", nil, sc)
-	req.SetPathValue("id", "k-mine")
-	w := httptest.NewRecorder()
-	h.HandleRevoke(w, req)
-	if w.Code != http.StatusNoContent {
-		t.Errorf("status = %d, want 204 (member revoking its own key)", w.Code)
-	}
-	if store.byID["k-mine"].RevokedAt.IsZero() {
-		t.Errorf("RevokedAt not set")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store, sc := newTestRig(t)
+			sc.User.Role = tc.role
+			store.byID[tc.keyID] = platform.APIKey{ID: tc.keyID, AccountID: tc.keyAccount(sc), CreatedByUserID: tc.createdBy(sc)}
+			w := doRevoke(t, h, sc, tc.keyID)
+			if w.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tc.wantStatus)
+			}
+			if revoked := !store.byID[tc.keyID].RevokedAt.IsZero(); revoked != tc.wantRevoked {
+				t.Errorf("revoked = %v, want %v", revoked, tc.wantRevoked)
+			}
+		})
 	}
 }
 
 func TestHandleRevoke_AbsentKey404(t *testing.T) {
 	h, _, sc := newTestRig(t)
-	req := sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/k-missing", nil, sc)
-	req.SetPathValue("id", "k-missing")
-	w := httptest.NewRecorder()
-	h.HandleRevoke(w, req)
-	if w.Code != http.StatusNotFound {
+	if w := doRevoke(t, h, sc, "k-missing"); w.Code != http.StatusNotFound {
 		t.Errorf("status = %d", w.Code)
 	}
 }
+
+func mine(sc dashboardauth.SessionContext) uuid.UUID { return sc.Account.ID }
+func nobody(dashboardauth.SessionContext) uuid.UUID  { return uuid.Nil }
 
 // ─── fake APIKeyStore ─────────────────────────────────────────────
 
@@ -764,12 +698,10 @@ func TestToDTO_OmitsZeroTimes(t *testing.T) {
 // unknown scopes 400 before any mint.
 func TestHandleCreate_Scopes(t *testing.T) {
 	h, store, sc := newTestRig(t)
-	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{
+	w := doCreate(t, h, sc, createRequest{
 		Name:   "scoped",
 		Scopes: []string{"read", "account", "read"},
-	}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
+	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -792,12 +724,7 @@ func TestHandleCreate_Scopes(t *testing.T) {
 
 	// Unknown scope → 400, nothing minted.
 	before := len(store.byID)
-	req = sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{
-		Name:   "bad-scope",
-		Scopes: []string{"everything"},
-	}, sc)
-	w = httptest.NewRecorder()
-	h.HandleCreate(w, req)
+	w = doCreate(t, h, sc, createRequest{Name: "bad-scope", Scopes: []string{"everything"}})
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 for unknown scope", w.Code)
 	}
@@ -935,9 +862,7 @@ func TestHandleCreate_WritesKeyMintAuditRow(t *testing.T) {
 	h, _, sc := newTestRig(t)
 	sink := &recordingAuditSink{}
 	h.cfg.Audit = sink
-	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{Name: "production"}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
+	w := doCreate(t, h, sc, createRequest{Name: "production"})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
@@ -977,18 +902,12 @@ func TestHandleRevoke_WritesKeyRevokeAuditRow(t *testing.T) {
 	store.byID["k-theirs"] = platform.APIKey{ID: "k-theirs", AccountID: uuid.New(), Name: "theirs"}
 	store.byID["k-mine"] = platform.APIKey{ID: "k-mine", AccountID: sc.Account.ID, Name: "mine"}
 
-	req := sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/k-theirs", nil, sc)
-	req.SetPathValue("id", "k-theirs")
-	w := httptest.NewRecorder()
-	h.HandleRevoke(w, req)
+	w := doRevoke(t, h, sc, "k-theirs")
 	if w.Code != http.StatusNotFound || len(sink.entries) != 0 {
 		t.Fatalf("cross-account revoke: status %d, audit rows %d — want 404 and none", w.Code, len(sink.entries))
 	}
 
-	req = sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/k-mine", nil, sc)
-	req.SetPathValue("id", "k-mine")
-	w = httptest.NewRecorder()
-	h.HandleRevoke(w, req)
+	w = doRevoke(t, h, sc, "k-mine")
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("status = %d", w.Code)
 	}
