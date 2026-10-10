@@ -186,7 +186,7 @@ export function TokenFlowSummary({
     <div className="space-y-3 px-4 pb-3" data-testid="token-flow-summary">
       <div className="grid gap-4 md:grid-cols-3">
         <div className="space-y-1.5">
-          <h3 className="text-ink-muted text-[11px] tracking-wider uppercase">
+          <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
             Event mix
           </h3>
           <HBarList
@@ -202,7 +202,7 @@ export function TokenFlowSummary({
         </div>
         {s.senders.length > 0 && (
           <div className="space-y-1.5">
-            <h3 className="text-ink-muted text-[11px] tracking-wider uppercase">
+            <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
               Top senders
             </h3>
             <HBarList
@@ -213,7 +213,7 @@ export function TokenFlowSummary({
         )}
         {s.receivers.length > 0 && (
           <div className="space-y-1.5">
-            <h3 className="text-ink-muted text-[11px] tracking-wider uppercase">
+            <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
               Top receivers
             </h3>
             <HBarList

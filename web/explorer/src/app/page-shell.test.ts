@@ -6,7 +6,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { SECTION_HEADING_CLASS } from '@/components/ui/Page';
+import { PANEL_LABEL_CLASS, SECTION_HEADING_CLASS } from '@/components/ui/Page';
 
 vi.setConfig({ testTimeout: 30_000 });
 
@@ -104,6 +104,29 @@ describe('page shell', () => {
           SECTION_HEADING_CLASS.split(' ').every((c) => cls.includes(c)) &&
           !cls.some((c) =>
             /^(uppercase|tracking-|text-(xs|sm|base|lg|\d?xl)$)/.test(c),
+          );
+        if (!ok) bad.push(`${relative(APP, f)}: ${m[1]}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('every uppercase panel <h3> uses the shared label style', () => {
+    // Colour may carry meaning (text-up); size, weight and tracking may not vary.
+    const want = PANEL_LABEL_CLASS.split(' ').filter(
+      (c) => c !== 'text-ink-muted',
+    );
+    const bad: string[] = [];
+    for (const f of sources(APP)) {
+      for (const m of readFileSync(f, 'utf8').matchAll(
+        /<h3 className="([^"]*)"/g,
+      )) {
+        const cls = m[1].split(/\s+/);
+        if (!cls.includes('uppercase')) continue;
+        const ok =
+          want.every((c) => cls.includes(c)) &&
+          !cls.some((c) =>
+            /^(text-(xs|sm|base|\[10px\])|font-medium)$/.test(c),
           );
         if (!ok) bad.push(`${relative(APP, f)}: ${m[1]}`);
       }

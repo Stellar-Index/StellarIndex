@@ -45,7 +45,7 @@ export function CurrencyDeclarations({ asset }: { asset: AssetDetail }) {
 
   return (
     <div className="border-line bg-surface-muted rounded-lg border p-3 text-xs">
-      <h3 className="text-ink-muted mb-1 font-semibold tracking-wider uppercase">
+      <h3 className="text-ink-muted mb-1 text-[11px] font-semibold tracking-wider uppercase">
         SEP-1 currency declarations
       </h3>
       <p className="text-ink-body">
