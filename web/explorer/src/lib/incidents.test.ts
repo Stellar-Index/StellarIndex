@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { loadIncidentsFrom, parseIncidentFile } from './incidents';
+import {
+  loadIncidentsFrom,
+  parseIncidentFile,
+  splitH2Sections,
+} from './incidents';
 
 // TEMPLATE_SEED reproduces the exact shape internal/incidents/_template.md
 // ships: `resolved_at:` and `affected_components:` carry dangling
@@ -65,10 +69,7 @@ postmortem: docs/operations/postmortems/2026-09-19-partial-pricing-outage.md
 
 Body.
 `;
-    const inc = parseIncidentFile(
-      raw,
-      '2026-09-19-partial-pricing-outage.md',
-    );
+    const inc = parseIncidentFile(raw, '2026-09-19-partial-pricing-outage.md');
     expect(inc).not.toBeNull();
     expect(inc!.postmortem).toBe(
       'docs/operations/postmortems/2026-09-19-partial-pricing-outage.md',
@@ -162,5 +163,24 @@ describe('loadIncidentsFrom', () => {
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('incidents: failed to read'),
     );
+  });
+});
+
+describe('splitH2Sections', () => {
+  it('splits on H2 and keeps the text before the first one', () => {
+    const got = splitH2Sections(
+      'lead\n\n## Identification\nfound it\n### Detail\nx\n## Cause\nbug\n',
+    );
+    expect(got.intro).toBe('lead');
+    expect(got.sections).toEqual([
+      { title: 'Identification', body: 'found it\n### Detail\nx' },
+      { title: 'Cause', body: 'bug' },
+    ]);
+  });
+
+  it('ignores an H2 inside a code fence', () => {
+    const got = splitH2Sections('## A\n```\n## not a heading\n```\n');
+    expect(got.sections).toHaveLength(1);
+    expect(got.sections[0]!.body).toContain('## not a heading');
   });
 });
