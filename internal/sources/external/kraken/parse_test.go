@@ -203,7 +203,7 @@ func TestSkipReasons_MatchObsEnum(t *testing.T) {
 
 func TestParseFrame_UnknownSymbolSkipped(t *testing.T) {
 	// A trade on MATIC/USD (in the ADR-0014 allow-list, but not in
-	// DefaultPairs — see binance/start_errors_test.go for rationale)
+	// DefaultPairs — see binance/streamer_test.go for rationale)
 	// mixed with one on XLM/USD: unknown entry is dropped, known
 	// one lands.
 	raw := []byte(`{

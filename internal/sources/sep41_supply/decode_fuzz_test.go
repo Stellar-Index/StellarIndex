@@ -32,7 +32,7 @@ import (
 // Runs as a plain seed-corpus test under `go test`; the generative run is
 // `go test -run=^$ -fuzz=FuzzSEP41Amount -fuzztime=20s ./internal/sources/sep41_supply/`.
 func FuzzSEP41Amount(f *testing.F) {
-	// Seeds: the real fixture amounts (golden_dropped_mint_test.go), the
+	// Seeds: the real fixture amounts (dispatcher_adapter_test.go), the
 	// int64/uint64 boundaries, and the largest representable i128.
 	f.Add(int64(0), uint64(realMintAmount))
 	f.Add(int64(0), uint64(realBurnAmount))

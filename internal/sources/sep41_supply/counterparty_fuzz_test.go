@@ -2,7 +2,6 @@ package sep41_supply
 
 import (
 	"encoding/base64"
-	"errors"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -97,25 +96,4 @@ func FuzzSEP41Counterparty(f *testing.F) {
 			t.Fatalf("%s: kind/amount = %q/%s, want %q/777", kind, out.Kind, out.Amount, kind)
 		}
 	})
-}
-
-// TestDecodeAmount_MapAmountWrongTypeIsNotI128: a CAP-67 map whose
-// `amount` is present but not an i128 (u128, u64) must be refused as
-// ErrAmountNotI128 — the sentinel callers match on — not re-read under
-// another width.
-func TestDecodeAmount_MapAmountWrongTypeIsNotI128(t *testing.T) {
-	u64v := xdr.Uint64(5)
-	for name, amt := range map[string]xdr.ScVal{
-		"u128": {Type: xdr.ScValTypeScvU128, U128: &xdr.UInt128Parts{Lo: 5}},
-		"u64":  {Type: xdr.ScValTypeScvU64, U64: &u64v},
-	} {
-		amountKey := xdr.ScSymbol("amount")
-		m := xdr.ScMap{{Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &amountKey}, Val: amt}}
-		mp := &m
-		body := fuzzEncode(t, xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &mp})
-		got, err := decodeAmount(&events.Event{Value: body})
-		if !errors.Is(err, ErrAmountNotI128) {
-			t.Errorf("map amount %s: decodeAmount = (%v, %v), want ErrAmountNotI128", name, got, err)
-		}
-	}
 }

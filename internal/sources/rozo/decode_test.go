@@ -481,3 +481,26 @@ func TestGolden_FlushEvent_NeverObserved(t *testing.T) {
 		"is exercised only by the synthetic fixtures in TestDecodeFlush_HappyPath / " +
 		"TestDecodeFlush_MissingField above, not real lake bytes")
 }
+
+// TestClassify_LongFormPaymentEvent is the regression guard for the
+// long-form topic: the deployed contract emits topic[0]="payment_event"
+// (full ScSymbol), which the original short-form-only match dropped,
+// leaving rozo_events empty despite 393 lake events.
+func TestClassify_LongFormPaymentEvent(t *testing.T) {
+	t.Parallel()
+	ev := paymentEventLongTopic(t, MainnetPaymentContract)
+
+	if got := Classify(&ev); got != EventPayment {
+		t.Fatalf("Classify(payment_event) = %q, want %q — the live long-form topic must route to the payment decoder", got, EventPayment)
+	}
+	if !NewDecoder().Matches(ev) {
+		t.Fatal("Matches(payment_event from Rozo contract) = false, want true — the live topic was silently dropped before this fix")
+	}
+	out, err := NewDecoder().Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode(payment_event) error = %v, want a valid rozo Event", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("Decode(payment_event) produced %d events, want 1", len(out))
+	}
+}

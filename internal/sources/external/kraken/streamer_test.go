@@ -237,7 +237,7 @@ func TestStreamer_RejectsEmptyPairs(t *testing.T) {
 func TestStreamer_RejectsUnconfiguredPair(t *testing.T) {
 	s := NewStreamer(mustPairMap(t))
 	// MATIC/USD isn't in DefaultPairs (see allow-list comment in
-	// binance/start_errors_test.go for the placeholder rationale).
+	// binance/streamer_test.go for the placeholder rationale).
 	matic, _ := canonical.NewCryptoAsset("MATIC")
 	usd, _ := canonical.NewFiatAsset("USD")
 	p, _ := canonical.NewPair(matic, usd)

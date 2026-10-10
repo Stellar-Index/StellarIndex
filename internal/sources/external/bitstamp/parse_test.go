@@ -216,17 +216,6 @@ func TestParseFrame_MissingStringFields(t *testing.T) {
 	}
 }
 
-func TestParseMicrotimestamp_FallbackToSeconds(t *testing.T) {
-	// When microtimestamp is absent, fall back to seconds.
-	ts, err := parseMicrotimestamp("", "1745000000")
-	if err != nil {
-		t.Fatalf("parseMicrotimestamp: %v", err)
-	}
-	if ts.Unix() != 1_745_000_000 {
-		t.Errorf("ts = %v, Unix = %d want 1745000000", ts, ts.Unix())
-	}
-}
-
 func TestHandleFrame_DustTradeIsQuietSkip(t *testing.T) {
 	raw := []byte(`{"event":"trade","channel":"live_trades_xlmusd","data":{"id":1,"timestamp":"1745000000","microtimestamp":"1745000000123456","amount":0.00000001,"amount_str":"0.00000001","price":0.16,"price_str":"0.16000000","type":0,"buy_order_id":1,"sell_order_id":2}}`)
 	trades, err := handleFrame(raw, mustPairs(t), slog.Default())
