@@ -449,6 +449,7 @@ fi
 #    lint, then vet and build on the touched packages.
 if [ "${#go_files[@]}" -gt 0 ]; then
     add_step "lint-lexicon" "whole tree (takes no file list)" "$ci_dir/lint-lexicon.sh"
+    add_step "lint-test-patterns" "whole tree (takes no file list)" "$ci_dir/lint-test-patterns.sh"
     add_step "check-deprecations" "whole tree (takes no file list)" "$ci_dir/check-deprecations.sh"
     add_step "lint-i128" "whole tree (takes no file list)" "$ci_dir/lint-i128.sh"
     add_step "lint-imports" "whole tree (takes no file list)" "$ci_dir/lint-imports.sh"
