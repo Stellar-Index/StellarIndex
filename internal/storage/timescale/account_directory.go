@@ -28,31 +28,25 @@ type DirectoryEntry struct {
 	Source  string
 }
 
-// DirectoryScamFlagTags is THE curated-directory tag vocabulary that
-// marks an address as scam-class. It lives here — next to the
-// account_directory table it reads from — because it now has THREE
-// consumers that must not drift:
+// DirectoryScamFlagTags is THE curated-directory tag vocabulary that marks an
+// address as scam-class. It lives next to the account_directory table because
+// three consumers must not drift:
 //
-//  1. pricingguard.IsDirectoryScamFlagged (the price/market-cap
-//     withholding gate + the API payload suppression),
-//  2. the /v1/assets listing SQL, which ranks a flagged issuer's
-//     assets BELOW every unflagged one (listingRankTierExpr), and
+//  1. pricingguard.IsDirectoryScamFlagged (price/market-cap withholding and API
+//     payload suppression),
+//  2. the /v1/assets listing SQL, which ranks a flagged issuer's assets BELOW
+//     every unflagged one (listingRankTierExpr), and
 //  3. the explorer's DIRECTORY_SCAM_FLAG_TAGS in
-//     web/explorer/src/lib/directory-tags.ts, which draws the
-//     "⚠ Flagged" pill.
+//     web/explorer/src/lib/directory-tags.ts, which draws the "Flagged" pill.
 //
-// Keeping one Go list means "shows a Flagged pill", "has its price
-// withheld" and "is demoted in the ranking" can never disagree —
-// a split between those three is exactly the drift that would let a
-// pill-bearing scam token rank near the top of the /assets page.
-// Tags are stored in [CanonicalDirectoryTags] form, so the Go matcher
-// (which trims), the SQL predicates and the explorer (which only fold
-// case) see identical bytes; the frontend list is pinned equal by
-// pricingguard's TestScamFlagTagSet_MatchesFrontend.
+// One Go list means "shows a pill", "has its price withheld" and "is demoted"
+// cannot disagree. Tags are stored in [CanonicalDirectoryTags] form so the Go
+// matcher (which trims), the SQL predicates and the explorer (which only fold
+// case) see identical bytes; the frontend list is pinned equal by pricingguard's
+// TestScamFlagTagSet_MatchesFrontend.
 //
-// Lowercase-ASCII by construction — mustSQLTextArrayLiteral (which
-// inlines this list into the listing's ORDER BY) rejects anything
-// else at package-init time.
+// Lowercase-ASCII by construction: mustSQLTextArrayLiteral (which inlines this
+// list into the listing's ORDER BY) rejects anything else at package init.
 var DirectoryScamFlagTags = []string{
 	"malicious",
 	"unsafe",
@@ -67,33 +61,26 @@ var DirectoryScamFlagTags = []string{
 // cap while keeping the full 18.5k-entry sync to ~40 round trips.
 const directoryUpsertChunk = 500
 
-// DirectoryOperatorOverrideSource is the reserved `source` value for a
-// row an OPERATOR owns instead of an upstream sync — the durable escape
-// hatch for a third-party FALSE POSITIVE.
+// DirectoryOperatorOverrideSource is the reserved `source` value for a row an
+// OPERATOR owns instead of an upstream sync: the durable escape hatch for a
+// third-party FALSE POSITIVE.
 //
-// The consequence of a wrong upstream tag is not cosmetic: a scam-class
-// tag withholds the issuer's published price and market cap
-// (pricingguard.ScamGate), demotes its assets below every unflagged one
-// in the /v1/assets ranking (listingRankTierExpr) and draws the
-// explorer's "⚠ Flagged" pill. Without this constant the only
-// correction is `UPDATE account_directory SET tags = …` by hand, which
-// the next daily `directory-sync` overwrites — a fix that holds for
-// hours, not until someone decides otherwise.
+// A wrong scam-class tag is not cosmetic: it withholds the issuer's price and
+// market cap (pricingguard.ScamGate), demotes its assets in the /v1/assets
+// ranking (listingRankTierExpr) and draws the "Flagged" pill. A hand
+// `UPDATE account_directory SET tags = ...` is overwritten by the next daily
+// `directory-sync`.
 //
-// Ownership is what makes it durable, and ownership is the `source`
-// column: ReplaceDirectory only ever touches rows carrying ITS source
-// (see buildDirectoryUpsert) and prunes only rows carrying its source,
-// so a row owned by this one survives every sync of every upstream.
-// Write it with `stellarindex-ops directory-override -clear-scam-flag -reason
-// [-actor]` ([Store.ClearDirectoryScamFlag]); undo it with `-delete`
-// ([Store.DeleteDirectoryOverride]), after which the next sync restores
-// the upstream row.
+// Ownership is the `source` column: ReplaceDirectory only touches and prunes rows
+// carrying ITS source (see buildDirectoryUpsert), so an override survives every
+// sync. Write it with `stellarindex-ops directory-override -clear-scam-flag
+// -reason [-actor]` ([Store.ClearDirectoryScamFlag]); undo with `-delete`
+// ([Store.DeleteDirectoryOverride]), after which the next sync restores the
+// upstream row.
 //
-// An override REPLACES the upstream label for that address rather than
-// layering over it — one row per address is what keeps "price withheld",
-// "demoted in the ranking" and "shows a Flagged pill" from ever
-// disagreeing (see DirectoryScamFlagTags above), and a layered view
-// would reintroduce exactly that split.
+// An override REPLACES the upstream label for that address rather than layering
+// over it; one row per address keeps the three consumers listed at
+// DirectoryScamFlagTags from disagreeing.
 const DirectoryOperatorOverrideSource = "operator-override"
 
 // ErrDirectoryNotScamFlagged is returned by [Store.ClearDirectoryScamFlag]

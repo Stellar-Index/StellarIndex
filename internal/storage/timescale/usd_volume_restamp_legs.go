@@ -13,44 +13,29 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ─── the ESTIMATED tiers' shared row-list re-derive ────────────────────
+// The ESTIMATED tiers' shared row-list re-derive. [usd_volume_restamp.go]
+// repairs the EXACT tiers (a SQL identity); an estimated tier's value is a
+// function of a RATE at the row's timestamp, so each candidate row is rebuilt
+// into the [canonical.Trade] the decoder produced and handed to the function
+// [Store.InsertTrade] calls. Only these vary per tier:
 //
-// [usd_volume_restamp.go] repairs the EXACT tiers, whose value is a pure
-// decimal rescaling of an amount already on the row and is therefore a
-// SQL identity. The estimated tiers cannot be: their value is a function
-// of a RATE at the row's timestamp, so each candidate row is rebuilt into
-// the [canonical.Trade] the decoder produced and handed to the very
-// function [Store.InsertTrade] calls for it. This file is what those
-// tiers share — one scan, one decision skeleton, one write set — so that
-// what varies between them is only:
-//
-//	tier       source scope   scanned leg        value function
-//	xlm-base   DEX            base_asset = XLM   tradeUSDVolumeViaXLMBaseAnchorFor
-//	xlm-quote  DEX            quote_asset = XLM  tradeUSDVolumeViaXLMQuoteAnchorFor
-//	cex-fx     CEX            quote_asset = fiat tradeUSDVolumeViaFiatQuoteFor
+// 	tier       source scope   scanned leg        value function
+// 	xlm-base   DEX            base_asset = XLM   tradeUSDVolumeViaXLMBaseAnchorFor
+// 	xlm-quote  DEX            quote_asset = XLM  tradeUSDVolumeViaXLMQuoteAnchorFor
+// 	cex-fx     CEX            quote_asset = fiat tradeUSDVolumeViaFiatQuoteFor
 //
 // # The substance gate
 //
-// Every tier here prices a row off a leg whose USD rate nobody trading
-// the pair can author: native XLM (the bridge's own anchor) or a vendor
-// fiat feed (`fx_quotes`). A pair with neither — the ~54M token/token
-// rows on production — has NO tier in this file and must stay unpriced.
-// Valuing it would mean reading the tier-3b `<token>/XLM` bridge, which
-// is whatever the last counterparty wrote: one incident stored
-// $8,559,224.82 for a trade worth $0.86 that way, and a
-// fake-XMR plant stamped $182M off two dust trades. Both scans below are
-// bounded by an asset ALLOW-LIST on the tier's own leg, and the Go gate
-// ([restampScope]) re-asserts the tier from the insert path's own
-// primitives, so a widened scan fails CLOSED rather than silently valuing
-// a pair off a poisonable rate.
+// Every tier prices off a leg whose USD rate nobody trading the pair can author:
+// native XLM or a vendor fiat feed (`fx_quotes`). A token/token pair has NO tier
+// here and must stay unpriced: valuing it would read the tier-3b `<token>/XLM`
+// bridge, which is whatever the last counterparty wrote (one incident stored
+// $8,559,224.82 for a trade worth $0.86). Both scans are bounded by an asset
+// ALLOW-LIST on the tier's own leg and the Go gate ([restampScope]) re-asserts
+// the tier, so a widened scan fails CLOSED.
 //
-// # Naming
-//
-// The row/plan/stats vocabulary below was written for the xlm-base tier
-// and keeps its exported spelling — renaming a money-path
-// type across the tree would bury this change in churn. The aliases give
-// the shared vocabulary a tier-neutral name for the code that is not
-// about XLM at all.
+// The row/plan/stats vocabulary keeps the xlm-base tier's exported spelling to
+// avoid churn across a money-path type; the aliases give it a tier-neutral name.
 
 type (
 	// RestampScanParams scopes one window of an estimated-tier re-derive.
@@ -241,29 +226,23 @@ func (s *Store) planRestampTier(ctx context.Context, p RestampScanParams, t rest
 
 // restampDecide judges ONE scanned row for ONE tier.
 //
-// `value` is injected rather than called directly so the decision rules
-// are testable without a live prices_1m / fx_quotes; production passes a
-// closure over the live insert path's own function with the store's
-// installed [VWAPUSDFXResolver] and [USDVolumeQuoteSpec], so the number
-// that reaches the column is the number the insert path computes for the
-// same row.
+// `value` is injected so the decision rules are testable without a live
+// prices_1m / fx_quotes; production passes a closure over the insert path's own
+// function, so the number that reaches the column is the one the insert path
+// computes for the same row.
 //
-// The three rules that make this a re-derive rather than a guess hold for
-// every tier that uses it:
+// Three rules make this a re-derive rather than a guess, for every tier:
 //
 //  1. THE VALUE COMES FROM THE LIVE FUNCTION (`value`).
-//  2. ONLY THAT FUNCTION. A row it declines is REPORTED, never valued
-//     through a second route — writing a fallback estimate at a HIGH
-//     derive_generation is the one state a later correction cannot claw
-//     back.
-//  3. NEVER WRITE NULL OVER A VALUE. A declined row that already carries
-//     a number keeps it, and is counted in
-//     [XLMBaseRestampStats.AnchorDeclinedStored].
+//  2. ONLY THAT FUNCTION. A row it declines is REPORTED, never valued through a
+//     second route: a fallback estimate at a HIGH derive_generation is the one
+//     state a later correction cannot claw back.
+//  3. NEVER WRITE NULL OVER A VALUE. A declined row that already carries a
+//     number keeps it, counted in [XLMBaseRestampStats.AnchorDeclinedStored].
 //
-// The disposition vocabulary is the xlm-base tier's, read generically:
-// `xlmBaseQuotePegged` is "a leg is a declared USD peg, so an EXACT tier
-// owns this row" and `xlmBaseNotDEX` is "outside this tier's source/leg
-// scope".
+// Read generically, `xlmBaseQuotePegged` is "a leg is a declared USD peg, so an
+// EXACT tier owns this row" and `xlmBaseNotDEX` is "outside this tier's
+// source/leg scope".
 func restampDecide(
 	row restampScanRow,
 	spec *USDVolumeQuoteSpec,

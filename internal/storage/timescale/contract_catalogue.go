@@ -5,50 +5,29 @@ import (
 	"fmt"
 )
 
-// ContractCatalogueRows reads catalogue rows for an EXPLICIT set of
-// contract addresses, keyed by contract id.
+// ContractCatalogueRows reads catalogue rows for an EXPLICIT set of contract
+// addresses, keyed by contract id.
 //
-// # Why the listing spine could not be reused
+// Why the listing spine could not be reused: the listing's `catalogue_assets` CTE
+// and `GetAssetBySlug` gate the discovered-contract arm on `EXISTS (SELECT 1 FROM
+// asset_volume_24h ...)`, right for a listing that wants assets with a market
+// (it admitted 60 of ~117k discovered contracts on r1). A tokenized treasury or
+// money-market fund is held, not traded, and can carry a nine-figure supply while
+// absent from every 24h volume rollup. Under that gate a membership decision
+// admitting it would be followed by a join that silently dropped it, reporting a
+// coverage failure that was really a query-shape choice. Here the set is bounded
+// by MEMBERSHIP (the contracts an independent party named), so there is no
+// pagination or ranking.
 //
-// Both existing reads of a Soroban asset — the listing's
-// `catalogue_assets` CTE and `GetAssetBySlug` — gate the
-// discovered-contract arm on `EXISTS (SELECT 1 FROM asset_volume_24h
-// …)`. That gate is right for those callers and is documented as such:
-// discovered_assets holds ~117k contracts because SEP-41 event discovery
-// catches anything emitting token events, and an asset LISTING wants the
-// ones with a market. Measured on r1, it admitted 60 of them.
+// Shared with the listing, deliberately: the price side is the SAME rollup under
+// the SAME floor (asset_price_snapshot with `computed_at > now() -
+// assetPriceSnapshotMaxAge`, the shared constant), so a wedged aggregator makes
+// the join MISS rather than serve an indefinitely old price. Volume, source count
+// and volume character come from the same rollups. market_cap_usd and
+// circulating_supply are NULL in the spine; the API layer fills them.
 //
-// It is wrong for this caller, and not marginally. A tokenized treasury
-// or money-market fund is held, not traded: it can carry a nine-figure
-// on-chain supply and never appear in a 24h volume rollup. Under that
-// gate such a token is absent from the catalogue entirely — /v1/assets
-// does not list it and /v1/assets/{id} 404s it — so a membership
-// decision that admitted it would be followed by a join that silently
-// dropped it. That is the exact defect the RWA funnel's
-// `admitted_but_never_observed_on_chain` drop was added to expose, and
-// exposing it here would report a coverage failure that was really a
-// query-shape choice.
-//
-// The set this reads is bounded by MEMBERSHIP, decided before any
-// number: the caller passes the contracts an independent party named and
-// the definition admitted. There is no pagination to protect and no
-// ranking to compute, so none of the spine's machinery applies.
-//
-// # What it shares with the listing, deliberately
-//
-// The price side is the SAME rollup under the SAME staleness floor:
-// asset_price_snapshot joined with `computed_at > now() -
-// assetPriceSnapshotMaxAge`, so a wedged aggregator makes this join MISS
-// rather than serve an indefinitely-old price, exactly as it does for
-// /v1/assets. The floor is the shared constant, not a copy of its value,
-// so the two cannot drift apart. Volume, source count and volume
-// character come from the same rollups by the same keys. What is absent
-// is absent there too: market_cap_usd and circulating_supply are NULL in
-// the spine for every asset, and the API layer fills them.
-//
-// Rows the catalogue has never observed are simply missing from the
-// returned map. The caller reports that as a drop; it is not an error
-// here.
+// Rows never observed are missing from the map; the caller reports that as a
+// drop. It is not an error here.
 func (s *Store) ContractCatalogueRows(ctx context.Context, contractIDs []string) (map[string]AssetRow, error) {
 	if len(contractIDs) == 0 {
 		return map[string]AssetRow{}, nil

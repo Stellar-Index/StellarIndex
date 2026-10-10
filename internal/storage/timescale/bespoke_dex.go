@@ -1,56 +1,29 @@
 package timescale
 
-// Each per-category visual suite has its own file so suites can be built
-// in parallel without colliding on one file. Shared types
-// (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the scan
-// helpers stay in protocol_bespoke.go.
-//
-// ─── DEX/AMM bespoke analytics (soroswap / phoenix / aquarius / comet /
-//     sdex) ───────────────────────────────────────────────────────────────
-//
+// DEX/AMM bespoke analytics (soroswap / phoenix / aquarius / comet / sdex).
 // Three data tiers, chosen per query so nothing scans the 300M+-row trades
 // hypertable unbounded:
 //
-//  1. dex_volume_by_pair_1d (migration 0064, materialized_only=true) — the
-//     daily per-(source, pair) rollup. Backs the >1-day windows: KPIs,
-//     daily volume/trade series, the pair breakdown, top-5 pair lines and
-//     the top-pairs table. Two deliberate shapes keep sdex 90d cheap:
-//     the window KPI uses a hash-agg pair-count subquery (a naive
-//     count(DISTINCT (base,quote)) row-comparison sort is ~9x slower) and
-//     the top-5 series uses a top CTE + direct index join (re-aggregating
-//     the CAGG through a grouped CTE is ~20x slower).
+//  1. dex_volume_by_pair_1d (migration 0064, materialized_only=true): the daily
+//     per-(source, pair) rollup, for >1-day windows. Two shapes keep sdex 90d
+//     cheap: the window KPI uses a hash-agg pair-count subquery (a naive
+//     count(DISTINCT (base,quote)) row-comparison sort is ~9x slower) and the
+//     top-5 series uses a top CTE + direct index join (re-aggregating the CAGG
+//     through a grouped CTE is ~20x slower). HONESTY FLOOR: it starts well after
+//     genesis, so lifetime figures are "since <floor date>", never "all-time".
+//  2. source_volume_1h (migration 0068, real-time): the 24h window.
+//  3. Raw `trades`, the ONLY place taker addresses and per-trade rows live,
+//     window-bounded. sdex 7d is 1.4s and extrapolates to ~15-20s at 90d, so
+//     raw-derived surfaces are gated OFF for sdex beyond 7 days (dexRawWindowOK)
+//     and the omission is Noted on the block.
 //
-//     HONESTY FLOOR: the CAGG's materialization starts well after
-//     genesis (its min(bucket)) while raw sdex trades extend back to 2018 —
-//     re-materializing genesis-wide was not done. So lifetime figures are
-//     served as "since <floor date>" KPIs, never as "all-time".
-//
-//  2. source_volume_1h (migration 0068, real-time) — the per-(source,
-//     hour) rollup. Backs the 24h window's hourly volume/trade series +
-//     KPIs (the daily CAGG would collapse 24h into one partial point).
-//
-//  3. Raw `trades` — the ONLY place taker addresses and per-trade rows
-//     live, so unique-trader metrics, the priced-trade count behind avg
-//     trade size, the largest-trades table, and every 24h per-pair shape
-//     come from here, window-bounded. Compression segments by (base,
-//     quote, source), so per-source scans prune well: aquarius 90d (1.0M
-//     rows) 1.0s, soroswap/phoenix/comet 90d ≤0.3s, sdex 24h (754k rows)
-//     0.3–1.0s. sdex 7d is 1.4s and extrapolates to ~15–20s at 90d,
-//     so raw-derived surfaces are gated OFF for sdex beyond 7 days
-//     (dexRawWindowOK) and the omission is Noted on the block.
-//
-// taker coverage: aquarius/phoenix/comet/sdex stamp taker on 100% of
-// rows; soroswap's current decoder stamps taker on 100% of new rows, but
-// rows an earlier decoder ingested carry NULL unless re-derived, so
-// trader metrics stay DATA-DRIVEN: served when the window has
-// taker-stamped rows, omitted (with a Note) when it observably has none.
-//
-// Every USD figure is trade-time trades.usd_volume (or its CAGG sums),
-// never ad-hoc pricing. At 24h the XLM legs valuation left unpriced are
-// named and the figure is served as a lower bound; elsewhere NULL-usd
-// trades are excluded from USD sums and averages but still count toward
-// trade totals. All division is exact NUMERIC (ADR-0003); rounding is
-// round(x, 2) — never a float literal.
+// Older soroswap rows carry NULL taker: trader metrics are omitted (with a Note)
+// unless the window has taker-stamped rows.
+// Every USD figure is trade-time trades.usd_volume (or its CAGG sums), never
+// ad-hoc pricing. At 24h the XLM legs valuation left unpriced are named and the
+// figure is served as a lower bound; elsewhere NULL-usd trades are excluded from
+// USD sums and averages but still count toward trade totals. Division is exact
+// NUMERIC (ADR-0003); rounding is round(x, 2), never a float literal.
 
 import (
 	"context"

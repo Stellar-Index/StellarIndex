@@ -8,39 +8,29 @@ import (
 	"time"
 )
 
-// This file is the read side for GET /v1/accounts/{g_strkey}/trades —
-// per-address historic trades out of the `trades` hypertable.
+// Read side for GET /v1/accounts/{g_strkey}/trades: per-address historic trades
+// out of the `trades` hypertable.
 //
-// ACCOUNT ATTRIBUTION. The per-row account attribution is:
+// ACCOUNT ATTRIBUTION: taker is the acting account (tx-level source for sdex, the
+// user/sender for aquarius, phoenix and comet, the SwapEvent `to` recipient for
+// soroswap; older soroswap rows carry NULL unless re-derived). maker is the
+// resting-offer account (sdex only). Both are NULL for off-chain CEX/FX rows
+// (ledger=0), so the read serves "trades where this address is recorded as taker
+// or maker".
 //
-//   taker — the acting account: the tx-level source for sdex, the
-//           user/sender address for aquarius, phoenix, and comet, and
-//           the SwapEvent `to` recipient for soroswap (verified 100%
-//           taker coverage on new rows; soroswap rows ingested before
-//           the decoder captured `to` carry NULL unless re-derived).
-//   maker — the resting-offer account (sdex only).
+// QUERY SHAPE: two index-friendly arms UNION'd, not `taker = $1 OR maker = $1`: an
+// OR across two columns cannot ride one account-leading index in output order, so
+// the planner does a bitmap-or + sort over the account's whole history before the
+// LIMIT. Each arm has its own ORDER BY + LIMIT and walks its partial index
+// (migration 0123) in output order; the union of two top-N arms provably contains
+// the union's top N (same invariant as clickhouse.accountTransactionsQuery). The
+// maker arm excludes rows where the address is ALSO the taker so a self-crossed
+// sdex trade appears once.
 //
-// Both are NULL for off-chain CEX/FX rows (ledger=0 — no Stellar
-// account exists to attribute). The read therefore serves "trades
-// where this address is recorded as taker or maker".
-//
-// QUERY SHAPE: two index-friendly arms UNION'd, not `taker = $1 OR
-// maker = $1` — an OR across two columns can't ride a single
-// account-leading index in output order, so the planner degrades to a
-// bitmap-or + sort over the account's whole history before the LIMIT.
-// Each arm carries its own ORDER BY + LIMIT so it walks its partial
-// index (migration 0123) in output order and stops after one page; the
-// outer merge-sort + LIMIT then picks the page. The union of two
-// individually-top-N arms provably contains the union's top N (same
-// invariant clickhouse.accountTransactionsQuery documents). The maker
-// arm excludes rows where the address is ALSO the taker so a
-// self-crossed sdex trade appears once (as the taker leg).
-//
-// KEYSET: (ts DESC, ledger DESC, tx_hash DESC, op_index DESC). ts alone
-// is not unique (every trade in a ledger shares its close time) and
-// (ts, ledger, op_index) still collides for two same-account txs in one
-// ledger, so tx_hash rides in the tuple — never re-emits a served row,
-// never skips an unserved one.
+// KEYSET: (ts DESC, ledger DESC, tx_hash DESC, op_index DESC). ts alone is not
+// unique and (ts, ledger, op_index) still collides for two same-account txs in
+// one ledger, so tx_hash rides in the tuple: never re-emits a served row, never
+// skips an unserved one.
 
 // accountTradesMaxLimit clamps one page. Mirrors the sibling explorer
 // listings' 200-row ceiling.

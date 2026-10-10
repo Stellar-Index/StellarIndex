@@ -923,32 +923,26 @@ const distinctPairsActivityCTEs = `
 //     the standard keyset tuple-comparison trick is adapted to
 //     mixed ordering.
 func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limit int, order MarketsOrder) (string, []any) {
-	// /v1/markets is a directory listing, not a history view: reading
-	// prices_1m × 14 days (~52k pairs × 20,160 buckets) blew the 8s
-	// handler ceiling. So the 14d-active-pair set comes from prices_1d,
-	// and only the 24h figures read prices_1m (chunk-pruned to the last
-	// day, so exact). A rolling 24h window is not bucket-additive over a
-	// coarser CAGG: prices_1h understated 24h volume ~9%. Detail
-	// endpoints are untouched.
+	// /v1/markets is a directory listing, not a history view: reading prices_1m x
+	// 14 days blew the 8s handler ceiling. So the 14d-active-pair set comes from
+	// prices_1d, and only the 24h figures read prices_1m (chunk-pruned to the last
+	// day, so exact). A rolling 24h window is not bucket-additive over a coarser
+	// CAGG: prices_1h understated 24h volume ~9%.
 	//
 	// d and h are FULL OUTER JOINed because prices_1d (6h end_offset,
-	// materialized_only) has no row yet for a pair whose first trade is
-	// today, and its newest bucket is yesterday's close. last_price,
-	// last_trade_at and bucket_close_at prefer h's fresh prices_1m
-	// values, falling back to d only for pairs idle longer than 24h.
-	// count_24h is COALESCE'd to 0 for 14d-active-but-24h-idle pairs.
+	// materialized_only) has no row yet for a pair whose first trade is today.
+	// last_price, last_trade_at and bucket_close_at prefer h's fresh prices_1m
+	// values, falling back to d only for pairs idle longer than 24h. count_24h is
+	// COALESCE'd to 0 for 14d-active-but-24h-idle pairs.
 	//
 	// $5 is a text[] of the asset's alias forms: XLM is keyed `native`,
-	// `crypto:XLM` or its SAC depending on venue, so a scalar match
-	// omitted the other forms' markets.
-	// canon collapses flipped orientations of the same market (XLM/USDC
-	// and USDC/XLM — the SDEX decoder records both) into ONE row: USD
-	// volume + trade count sum across both directions, and last_price is
-	// the most-recent trade's price re-expressed in the canonical
-	// orientation (inverted for the flipped direction). See
-	// canonOrientSQL / canonical.Orient. `folded` first maps each SAC
-	// spelling onto its classic form, so a market traded on SDEX and on a
-	// Soroban venue is one row; orientation is decided on the folded pair.
+	// `crypto:XLM` or its SAC depending on venue, so a scalar match omitted markets.
+	// canon collapses flipped orientations of the same market (the SDEX decoder
+	// records both XLM/USDC and USDC/XLM) into ONE row: USD volume and trade count
+	// sum across both directions, and last_price is the most recent trade's price in
+	// the canonical orientation (see canonOrientSQL / canonical.Orient). `folded`
+	// first maps each SAC spelling onto its classic form, so a market traded on SDEX
+	// and on a Soroban venue is one row.
 	canonBase, canonQuote, flipped := canonOrientSQL(8)
 	ctes := distinctPairsActivityCTEs + `        raw AS (
             SELECT COALESCE(d.base_asset, h.base_asset)   AS base_asset,
@@ -1026,37 +1020,25 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	}
 }
 
-// pairMarketQuery is the single-pair activity summary behind /v1/pairs.
-// $1 is the MarketsRecencyWindow lower bound, $2/$3 the requested base
-// and quote.
+// pairMarketQuery is the single-pair activity summary behind /v1/pairs. $1 is
+// the MarketsRecencyWindow lower bound, $2/$3 the requested base and quote.
 //
-// LastTradeAt is sourced from trades (exact, second-precision) rather
-// than from a CAGG bucket — that is the documented difference between
-// this endpoint and /v1/markets, whose directory rows round to the
-// minute, and it is preserved here. BucketCloseAt is recomputed from
-// the same value in Go so the wire shape still matches /v1/markets.
+// LastTradeAt comes from trades (exact, second-precision), not a CAGG bucket,
+// unlike /v1/markets whose directory rows round to the minute; BucketCloseAt is
+// recomputed from it in Go so the wire shape matches.
 //
-// Combine BOTH stored directions of the market (the SDEX decoder
-// records XLM/USDC and USDC/XLM as separate rows) into the requested
-// ($2, $3) orientation, matching /v1/markets (canonOrientSQL) and
-// LatestClosedVWAP1mForPair. count_24h + vol_24h_usd sum across
-// directions (USD volume is orientation-independent); last_price is the
-// most-recent bucket's price re-expressed in the requested orientation
-// (inverted for the flipped direction). See canonical.Orient.
+// Both stored directions of the market (the SDEX decoder records XLM/USDC and
+// USDC/XLM separately) are combined into the requested orientation, matching
+// canonOrientSQL and LatestClosedVWAP1mForPair: counts and USD volume sum, and
+// last_price is re-expressed via canonical.Orient.
 //
-// Shape. Every both-directions read is a UNION ALL of two single-direction
-// branches, and each aggregate reads the smallest window that produces it:
-//
-//   - `(A AND B) OR (B AND A)` cannot drive trades_pair_ts_idx /
-//     prices_1m_pair_bucket_idx, so the planner falls back to the bare time
-//     index (measured in [closedVWAP1mAtOrBeforeQuery]).
-//   - MAX(ts) needs one backwards index probe per direction and count_24h
-//     needs 24 hours; one shared 14-day aggregate read 17.2M rows for
-//     crypto:BTC/crypto:USDT and ran 95.7s cold, past the 8s handler ceiling.
-//
-// The `, base_asset` tiebreaker on the last_price sort makes the order total
-// once a bucket holds both orientations, as in [closedVWAP1mAtOrBeforeQuery].
-// Guarded by TestPairMarketQueryShape.
+// Shape: a UNION ALL of two single-direction branches, each aggregate reading the
+// smallest window that produces it. `(A AND B) OR (B AND A)` cannot drive
+// trades_pair_ts_idx / prices_1m_pair_bucket_idx (measured in
+// [closedVWAP1mAtOrBeforeQuery]); one shared 14-day aggregate read 17.2M rows for
+// crypto:BTC/crypto:USDT and ran 95.7s cold, past the 8s handler ceiling. The
+// `, base_asset` tiebreaker on the last_price sort makes the order total once a
+// bucket holds both orientations. Guarded by TestPairMarketQueryShape.
 const pairMarketQuery = `
         WITH last_trade AS (
             SELECT MAX(ts) AS ts FROM (

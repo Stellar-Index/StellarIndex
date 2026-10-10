@@ -11,41 +11,30 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// ─── Per-CALL bound on refresh_continuous_aggregate ──────────────────
+// Per-CALL bound on refresh_continuous_aggregate.
 //
-// The ops backfill pool is plain [Open] — no session statement_timeout,
-// by design — so without this one wedged refresh (a lock queue behind a
-// compression job, a materialisation that never returns) blocks every
-// `-parallel` worker behind ingest.caggRefreshMu until SIGINT instead of
-// failing its own chunk.
+// The ops backfill pool is plain [Open] (no session statement_timeout), so one
+// wedged refresh would block every `-parallel` worker behind
+// ingest.caggRefreshMu until SIGINT instead of failing its own chunk.
 //
-//   - refresh_continuous_aggregate refuses to run inside a transaction
-//     block, so the `SET LOCAL statement_timeout` idiom is unavailable.
-//     The GUC is set at SESSION level on one pinned pooled connection
-//     for exactly the CALL, then restored to its prior value ("0" on the
-//     ops pool, the connector's backstop on an [OpenBackground] pool), so
-//     nothing leaks onto later work.
-//   - statement_timeout is kept although pgx also cancels on a Go
-//     deadline: the server enforces it (query_canceled — see
-//     isStatementTimeoutErr) and the pooled connection stays healthy.
-//     The Go deadline, sized bound + grace, is the second line for a
-//     backend that stopped answering; the driver then closes that
+//   - refresh_continuous_aggregate refuses to run inside a transaction block, so
+//     `SET LOCAL statement_timeout` is unavailable. The GUC is set at SESSION
+//     level on one pinned pooled connection for exactly the CALL, then restored to
+//     its prior value ("0" on the ops pool, the connector's backstop on an
+//     [OpenBackground] pool).
+//   - statement_timeout is kept although pgx also cancels on a Go deadline: the
+//     server enforces it (query_canceled, see isStatementTimeoutErr) and the
+//     connection stays healthy. The Go deadline (bound + grace) is the second line
+//     for a backend that stopped answering; the driver then closes that
 //     connection, never the pool.
 //
-// Sizing derives from the refreshed window, not the view's MinWindow,
-// because refresh cost scales with the trades under it (prices_1m: hundreds
-// of thousands of rows/day). The rate is a THROUGHPUT floor: a refresh that cannot
-// cover its window at 12× real time is wedged for a history backfill.
-//
-//   - [CAGGRefreshTimeoutPerWindowHour]: 5 min of refresh per hour of
-//     window (the 12× floor above).
-//   - [CAGGRefreshTimeoutFloor]: 10 min — covers sub-hour spot repairs,
-//     where fixed per-CALL overhead (invalidation-log scan, chunk locks)
-//     dominates.
-//   - [CAGGRefreshTimeoutCeiling]: 4 h — coarse rungs are padded to
-//     MinWindow (prices_1mo: 93 days) and would compute to days; the
-//     ceiling keeps "wedged" meaning hours, ~10× the longest legitimate
-//     rung measured.
+// Sizing derives from the refreshed window, not the view's MinWindow, because
+// refresh cost scales with the trades under it. The rate is a THROUGHPUT floor: a
+// refresh that cannot cover its window at 12x real time is wedged.
+// [CAGGRefreshTimeoutPerWindowHour] is 5 min per window hour;
+// [CAGGRefreshTimeoutFloor] (10 min) covers sub-hour repairs where per-CALL
+// overhead dominates; [CAGGRefreshTimeoutCeiling] (4 h) stops coarse rungs padded
+// to MinWindow (prices_1mo: 93 days) computing to days.
 const (
 	CAGGRefreshTimeoutPerWindowHour = 5 * time.Minute
 	CAGGRefreshTimeoutFloor         = 10 * time.Minute

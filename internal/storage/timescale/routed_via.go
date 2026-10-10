@@ -8,48 +8,26 @@ import (
 	"time"
 )
 
-// This file is Phase B of router attribution (migration 0025): joining persisted router invocations
-// (soroswap_router_swaps) to the per-pair `trades` rows they drove,
-// and stamping trades.routed_via with the router's registry name.
+// Phase B of router attribution (migration 0025): joining persisted router
+// invocations (soroswap_router_swaps) to the `trades` rows they drove and
+// stamping trades.routed_via with the router's registry name.
 //
-// Policy (documented once, here):
-//
-//   - FIRST-WINS. The UPDATE only touches rows whose routed_via IS
-//     NULL — an existing tag (same router or a different one) is
-//     never overwritten. Re-running any window is therefore
-//     idempotent: already-tagged rows match zero predicates and the
-//     statement is a no-op for them.
-//   - SOURCE-SCOPED. A tx can carry unrelated trades from other
-//     protocols (a composed tx that swaps on Phoenix AND calls the
-//     Soroswap router). Only trades whose `source` matches the
-//     router's underlying venue are tagged — for soroswap-router
-//     that is source='soroswap' (the router exclusively walks
-//     Soroswap pair contracts).
-//   - TIME-BOUNDED. Both sides of the join carry a time predicate so
-//     TimescaleDB prunes chunks on both hypertables. trades.ts and
-//     soroswap_router_swaps.ledger_close_time are the same ledger
-//     close time, but the trades bound is widened by
-//     routedViaTsSlack to survive any second-vs-millisecond
-//     precision skew; correctness comes from the exact
+//   - FIRST-WINS: the UPDATE only touches rows whose routed_via IS NULL, so an
+//     existing tag is never overwritten and re-running a window is idempotent.
+//   - SOURCE-SCOPED: a composed tx can carry unrelated trades (Phoenix AND the
+//     Soroswap router), so only trades whose `source` matches the router's
+//     underlying venue are tagged.
+//   - TIME-BOUNDED: both join sides carry a time predicate so TimescaleDB prunes
+//     chunks. The trades bound is widened by routedViaTsSlack for
+//     second-vs-millisecond skew; correctness comes from the exact
 //     (ledger, tx_hash) equality, the ts bound is pruning only.
-//   - CALL-PATH ATTRIBUTED (migration 0101 / 0103).
-//     A router swap observed as a sub-invocation records the full
-//     wrapping chain in call_path — call_path[1] (Postgres 1-indexed;
-//     Go CallPath[0]) is the OUTERMOST invoking contract. When that
-//     contract is itself a registered 'router'-kind entry (e.g. the
-//     0103 aggregator-exec seed), the trade is tagged with THAT
-//     entry's name instead of the bare routerName argument — so
-//     /v1/aggregators can report volume routed via the specific
-//     wrapper, not just "via soroswap-router" for everything. Falls
-//     back to routerName (the caller's default, e.g.
-//     soroswap_router.SourceName) for: direct top-level calls,
-//     sub-invocations wrapped by an unregistered contract, and
-//     legacy rows written before migration 0101 (call_path IS NULL —
-//     those predate call-path tracking entirely and cannot be told
-//     apart from a direct call). This keeps the fallback bucket
-//     honest — it never claims a SPECIFIC wrapper it doesn't have
-//     evidence for — at the cost of conflating three cases that all
-//     read the same from the API today. See
+//   - CALL-PATH ATTRIBUTED (migration 0101 / 0103): call_path[1] (Postgres
+//     1-indexed; Go CallPath[0]) is the OUTERMOST invoking contract. When it is a
+//     registered 'router'-kind entry the trade is tagged with THAT name, so
+//     /v1/aggregators can report volume via the specific wrapper. Otherwise it
+//     falls back to routerName (direct calls, unregistered wrappers, and legacy
+//     call_path IS NULL rows, which cannot be told apart from direct calls), so
+//     the fallback never claims a wrapper it lacks evidence for. See
 //     docs/adr/0052-contract-call-tree-routing.md.
 
 // routedViaTsSlack widens the trades.ts chunk-pruning bound relative

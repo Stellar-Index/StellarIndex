@@ -5,51 +5,24 @@ import (
 	"fmt"
 )
 
-// countRecentEventsQuery is the trailing-24h per-protocol event census
-// behind GET /v1/protocols' events_24h column: one UNION ALL pass over
-// every served protocol table, each leg labelled with the logical
-// source name the API's protocol registry uses.
+// countRecentEventsQuery is the trailing-24h per-protocol event census behind
+// GET /v1/protocols' events_24h column: one UNION ALL pass over every served
+// protocol table, each leg labelled with the logical source name the API's
+// protocol registry uses.
 //
-// It runs off the request path: the aggregator's protoeventsrollup
-// worker runs it on a slow cadence via [Store.RefreshProtocolEventCounts]
-// and folds the result into the protocol_events_24h rollup (migration
-// 0086), and the handler reads that keyed-on-PK table via
+// It runs off the request path: the aggregator's protoeventsrollup worker runs
+// it via [Store.RefreshProtocolEventCounts] into the protocol_events_24h rollup
+// (migration 0086), and the handler reads that table via
 // CountRecentEventsBySource.
 //
-// Legs and their timestamp columns (verified against migrations/):
-//
-//   - trades (ts, GROUP BY source) — sdex / soroswap / aquarius /
-//     phoenix / comet trade rows (also yields CEX/FX sources; callers
-//     look up only the names they care about).
-//   - aquarius_liquidity / aquarius_reserves / aquarius_reserves_sync /
-//     aquarius_rewards_events / aquarius_admin / aquarius_protocol_fee /
-//     aquarius_kill_switches (ledger_close_time) — summed as
-//     'aquarius' on top of its trades leg.
-//   - blend_positions / blend_emissions / blend_admin
-//     (ledger_close_time) + blend_auctions (ts) — summed as 'blend'.
-//   - blend_backstop_events (ledger_close_time) — 'blend_backstop'
-//     (the Backstop insurance module, a separate logical source).
-//   - blend_emitter_events (ledger_close_time) — 'blend_emitter'
-//     (protocol-emissions plumbing, a separate logical source).
-//   - phoenix_liquidity + phoenix_stake_events (ledger_close_time) —
-//     added into 'phoenix' on top of its trades leg.
-//   - comet_liquidity (ledger_close_time) — added into 'comet'.
-//   - upshift_vault_events (ledger_close_time) — 'upshift' (the vaults
-//     write no trades, so this leg is the source's whole census).
-//   - spectra_events (ledger_close_time) — 'spectra' (own table, no trades).
-//   - soroswap_skim_events (ledger_close_time) — added into 'soroswap'.
-//   - defindex_flows + defindex_fees + defindex_admin_events
-//     (ledger_close_time) — summed as 'defindex'.
-//   - credit_positions + credit_statements + credit_settlements +
-//     credit_events (ledger_close_time) — summed as 'sorocredit'.
-//   - cctp_events / rozo_events (ts) — 'cctp' / 'rozo'.
-//   - soroswap_router_swaps (ledger_close_time) — 'soroswap-router'.
-//   - oracle_updates (ts, GROUP BY source) — reflector-dex /
-//     reflector-cex / reflector-fx / redstone / band.
-//
-// Every leg is a count over a hypertable's most recent 24h of chunks —
-// cheap relative to the 24h volume scans /v1/markets already runs —
-// and the API fronts it with a 60s cache.
+// Several legs sum into one logical source (e.g. 'aquarius', 'blend', 'phoenix',
+// 'defindex', 'sorocredit' add their non-trade tables to the trades leg), and
+// some tables are their own logical source ('blend_backstop', 'blend_emitter',
+// 'upshift', 'spectra', 'soroswap-router'). The trades and oracle_updates legs
+// GROUP BY source and also yield CEX/FX/oracle sources; callers look up only the
+// names they care about. The legs' own SELECTs name each table and timestamp
+// column. Every leg counts a hypertable's most recent 24h of chunks, and the API
+// fronts the result with a 60s cache.
 const countRecentEventsQuery = `
 	SELECT source, count(*) AS n
 	  FROM trades

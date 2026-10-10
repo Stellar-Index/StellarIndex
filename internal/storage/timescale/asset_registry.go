@@ -1,28 +1,22 @@
-// This file is the ONLY writer of `classic_assets` and `issuers`.
+// This file is the ONLY writer of `classic_assets` and `issuers`
+// (ADR-0031/0032: one writer per domain, coverage derived from the data).
 //
-// Two observation sources feed it, and keeping them behind one writer is
-// the point (ADR-0031/0032: one writer per domain, coverage derived from
-// the data rather than from a cursor a second writer forgot to move):
+// Two observation sources feed it:
 //
-//   - TRADES, from the indexer hot path. [Store.registerClassicAssetSeen],
-//     called by InsertTrade / BatchInsertTrades. Advances the trade
-//     provenance columns and `observation_count`.
-//   - TRUSTLINE HOLDINGS, from the ClickHouse lake.
-//     [Store.RegisterClassicAssetsHeld], called by `stellarindex-ops
-//     asset-registry-backfill`. Advances the holding provenance columns
-//     and nothing else.
+//   - TRADES, from the indexer hot path ([Store.registerClassicAssetSeen], called
+//     by InsertTrade / BatchInsertTrades). Advances the trade provenance columns
+//     and `observation_count`.
+//   - TRUSTLINE HOLDINGS, from the ClickHouse lake ([Store.RegisterClassicAssetsHeld],
+//     called by `stellarindex-ops asset-registry-backfill`). Advances the
+//     holding provenance columns and nothing else.
 //
-// The ops job owns NO SQL against either table: it is a feeder that reads
-// the lake and hands observations to the writer below. That is what stops
-// the second source from becoming a second writer with its own INSERT, its
-// own conflict clause and its own idea of what `observation_count` means —
-// the shape ADR-0032 was written about after the per-source tables drifted
-// from `soroban_events`.
+// The ops job owns NO SQL against either table: it reads the lake and hands
+// observations to the writer, so the second source does not become a second
+// writer with its own INSERT, conflict clause and idea of `observation_count`.
 //
 // Both sources are idempotent and MONOTONE: LEAST on the first-seen pair,
-// GREATEST on the last-seen pair, and only the trade source touches the
-// counter. Re-running either over ground it has already covered converges
-// instead of inflating.
+// GREATEST on the last-seen pair, and only the trade source touches the counter.
+// Re-running either over covered ground converges instead of inflating.
 package timescale
 
 import (
@@ -325,34 +319,27 @@ type ClassicAssetHolding struct {
 	LastAt      time.Time
 }
 
-// RegisterClassicAssetsHeld records holdings evidence for a batch of
-// classic assets, creating the `classic_assets` row (and its `issuers`
-// row) when none exists.
+// RegisterClassicAssetsHeld records holdings evidence for a batch of classic
+// assets, creating the `classic_assets` row (and its `issuers` row) when none
+// exists. This is the registry's second observation source; see the file header.
+// What it does NOT do is load-bearing:
 //
-// This is the second of the registry's two observation sources; see the
-// file header for why both live behind one writer. What it does NOT do is
-// as load-bearing as what it does:
+//   - It never touches observation_count, which counts TRADE observations only,
+//     so the explorer "Observations" column, the default listing rank and the
+//     scam-triage sweep keep their meaning. A row created here starts at 0.
+//   - It never touches first_trade_* / last_trade_*, so "last traded" stays NULL
+//     for an asset that has never traded.
+//   - It never touches slug. A slug is a public URL; ON CONFLICT keeps the
+//     existing one, and a new row takes the migration-0135 form (the asset_id
+//     verbatim).
+//   - It does not populate the [Store] dedupe caches, which keep the indexer hot
+//     path off this table; a bulk walk seeding them would suppress the next
+//     trade's observation_count increment.
 //
-//   - It never touches observation_count. That column counts TRADE
-//     observations and nothing else, so the explorer column labelled
-//     "Observations", the default listing rank and the scam-triage sweep
-//     that reads the top of that rank all keep meaning what they meant.
-//     A row this function creates starts at 0 and stays there until a
-//     real trade arrives.
-//   - It never touches first_trade_* / last_trade_*, so "last traded"
-//     stays answerable and stays NULL for an asset that has never traded.
-//   - It never touches slug. A slug is a public URL; ON CONFLICT keeps
-//     whatever the row already has, and a new row takes the migration-0135
-//     form, which is the asset_id verbatim.
-//   - It does not populate the [Store] dedupe caches. Those exist to keep
-//     the indexer hot path off this table for 60 seconds per asset, and a
-//     bulk walk seeding them would suppress the very next trade's
-//     observation_count increment for any asset it had just touched.
-//
-// Returns the number of asset rows and issuer rows the statement reports
-// as affected. Postgres counts an ON CONFLICT DO UPDATE row as affected
-// whether or not any value changed, so treat the asset figure as "rows
-// considered", not "rows changed" — the caller reports it that way.
+// Returns the number of asset rows and issuer rows the statement reports as
+// affected. Postgres counts an ON CONFLICT DO UPDATE row as affected whether or
+// not a value changed, so the asset figure is "rows considered", not "rows
+// changed".
 func (s *Store) RegisterClassicAssetsHeld(ctx context.Context, obs []ClassicAssetHolding) (assets, issuers int64, err error) {
 	for start := 0; start < len(obs); start += classicAssetHoldingBatchMax {
 		end := min(start+classicAssetHoldingBatchMax, len(obs))

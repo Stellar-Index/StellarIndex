@@ -12,40 +12,23 @@ import (
 	"time"
 )
 
-// asset_listing_directory — the cached Stellar slice of an independent
-// price-aggregation platform's own per-coin platform→address map
-// (migration 0160), written by `stellarindex-ops listing-sync` and read
-// from cache.
+// asset_listing_directory: the cached Stellar slice of an independent
+// price-aggregation platform's platform->address map (migration 0160), written by
+// `stellarindex-ops listing-sync`.
 //
-// WHAT A ROW MEANS, precisely. "The platform that publishes a price for
-// coin X states that X lives at this Stellar address." That is a
-// CORROBORATION — a second, independent party having arrived at the same
-// (address → instrument) pairing this index arrived at by another route —
-// and it is the entire content of the claim. The upstream carries no
-// signature, no proof of control of the address, and no undertaking that
-// the pairing is right; a listing is an editorial and commercial decision.
+// A ROW is a CORROBORATION that a second party reached the same (address ->
+// instrument) pairing; the upstream carries no proof of control, and a listing is
+// an editorial and commercial decision. A MISSING ROW means "not listed", nothing
+// else. There are no scam flags here and there must not be: this surface only
+// ADDS corroboration, never withholds, demotes or accuses ([DirectoryScamFlagTags]
+// is where negative verdicts live).
 //
-// WHAT A MISSING ROW MEANS. "Not listed", and nothing else. Almost every
-// asset on the network is not listed. There are no scam flags in this
-// table and there must not be: this surface can only ever ADD
-// corroboration, never withhold, demote or accuse. The in-repo curated
-// scam list and the curated directory's tag vocabulary
-// ([DirectoryScamFlagTags]) remain the only places a negative verdict
-// lives.
-//
-// TWO CLOCKS, TWO BOUNDS. The table holds two facts that rot at
-// completely different rates, and conflating them is the failure this
-// file is shaped to prevent:
-//
-//   - RECOGNITION ages on `synced_at`, OUR clock, bounded by
-//     [listingRecognitionMaxAge].
-//   - The PRICE ages on `priced_at`, the PLATFORM's own published
-//     `last_updated`, bounded by [listingPriceMaxAge].
-//
-// Both bounds are spliced into the reader's SQL, never applied by a
-// caller's convention — the same discipline, and for the same reason, as
-// [assetPriceSnapshotMaxAge] on the listing's price join. A bound that
-// lives in a caller is a bound one new caller can forget.
+// TWO CLOCKS, TWO BOUNDS: RECOGNITION ages on `synced_at` (our clock, bounded by
+// [listingRecognitionMaxAge]); the PRICE ages on `priced_at` (the platform's
+// `last_updated`, bounded by [listingPriceMaxAge]). Conflating them is the failure
+// this file prevents. Both bounds are spliced into the reader's SQL, as with
+// [assetPriceSnapshotMaxAge], because a bound that lives in a caller is one a new
+// caller can forget.
 
 // ListingEntry is one row of the independent listing directory.
 type ListingEntry struct {
@@ -172,33 +155,21 @@ func (c ListingDirectoryCensus) Check() string {
 // visible as [ListingDirectoryCensus.Stale].
 const listingRecognitionMaxAge = "48 hours"
 
-// listingPriceMaxAge is how long the PLATFORM's own published price may
-// be reused, measured on `priced_at` — the platform's clock — and NOT on
-// `synced_at`, ours.
+// listingPriceMaxAge is how long the PLATFORM's published price may be reused,
+// measured on `priced_at` (the platform's clock), NOT `synced_at` (ours).
 //
-// That distinction is the entire reason this constant is separate. A
-// sync that succeeded five minutes ago proves that the FETCH is healthy;
-// it proves nothing whatsoever about the price it fetched. If the
-// upstream's price for a thinly traded asset froze two weeks ago, every
-// hourly pass since has faithfully re-copied the same frozen number with
-// a brand-new `synced_at`, and a bound measured on `synced_at` would
-// launder it as fresh forever. This is the same distinction
-// internal/divergence/coingecko.go's staleness gate draws, and
-// the same reason it rejects rather than trusts.
+// A recent sync proves the FETCH is healthy, not that the price is fresh: if the
+// upstream price for a thin asset froze two weeks ago, every hourly pass
+// re-copies it with a new `synced_at`, and a bound on `synced_at` would launder
+// it as fresh forever. internal/divergence/coingecko.go's staleness gate draws
+// the same distinction.
 //
-// A MISSING `priced_at` is likewise REJECTED, never waved through, for
-// the reason that gate rejects an id absent from its own last-updated
-// map: every request opts into the publication time, so its absence
-// means the response did not honour the contract the bound rests on, and
-// freshness is then not merely old but UNVERIFIABLE. Unverifiable
-// freshness is the state a stale price is indistinguishable from.
+// A MISSING `priced_at` is REJECTED, not waved through: freshness is then
+// UNVERIFIABLE, which a stale price is indistinguishable from.
 //
-// 24 hours because this price is corroboration, not a trading input —
-// nothing in this repo quotes, settles or values a position from it, and
-// the index computes its own prices from observed trades. A day-old
-// aggregate is still a useful second opinion on what an asset is roughly
-// worth; a week-old one is not. Tighter would blank the price on every
-// illiquid listing, which is most of them.
+// 24 hours because this price is corroboration, not a trading input; the index
+// computes its own prices from observed trades. Tighter would blank the price on
+// most (illiquid) listings.
 const listingPriceMaxAge = "24 hours"
 
 // ListingPriceMaxFutureSkew is how far AHEAD of our clock a `priced_at`

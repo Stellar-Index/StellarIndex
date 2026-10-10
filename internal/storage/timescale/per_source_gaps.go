@@ -76,33 +76,20 @@ type GapDetectorTarget struct {
 	// makes this invariant load-bearing.
 	WhereFilter string
 
-	// MinGapSizeOverride overrides [GapDetectorMinGapSize] for this
-	// target. Default 0 means "use the global default of 1000
-	// ledgers." Sparse sources (Blend auctions / admin events that
-	// only emit on operator action; CCTP/Rozo which see infrequent
-	// cross-chain hops) need a much higher threshold or every
-	// quiet stretch trips the page-tier alert as a false positive.
+	// MinGapSizeOverride overrides [GapDetectorMinGapSize] for this target. Default
+	// 0 means the global default of 1000 ledgers. Sparse sources (Blend auctions /
+	// admin events, CCTP/Rozo) need a higher threshold or every quiet stretch trips
+	// the page-tier alert: blend_auctions averages one event per ~735 ledgers.
 	//
-	// blend_auctions had 8049 distinct ledgers across a
-	// 5.9M-ledger span — one event per ~735 ledgers AVERAGE, so the
-	// 1000-ledger threshold is guaranteed to produce hundreds of "gaps" that
-	// aren't gaps. Use a per-target threshold tuned to the source's emit
-	// cadence.
+	// A positive value does not make the source less monitored; it moves the page
+	// threshold to distinguish natural sparsity from "writer halted" (a 500K-ledger
+	// gap on blend_auctions still pages).
 	//
-	// Setting this to a positive value DOES NOT make the source
-	// less monitored — it just shifts the page threshold to a
-	// number that distinguishes "natural sparsity" from "writer
-	// halted." A 500K-ledger gap on blend_auctions still pages.
-	//
-	// ADR-0033 (Phase 6) DEMOTES this from the confidence path to
-	// ALERTING CADENCE ONLY. It is a heuristic that guesses a
-	// sparsity envelope; it can mask a real gap that lands just under
-	// the threshold, so it is NOT a 100%-confidence signal. The
-	// completeness WATERMARK (completeness_snapshots, computed by
-	// `stellarindex-ops compute-completeness`) is the confidence
-	// signal: it proves quiet-vs-gap from the LCM census + hash chain
-	// with NO threshold. Keep MinGapSizeOverride for "page me if a
-	// dense source goes quiet" tripwires; do not read it as coverage.
+	// It is ALERTING CADENCE ONLY (ADR-0033). It is a heuristic that can mask a real
+	// gap just under the threshold, so it is NOT a confidence signal. The
+	// completeness WATERMARK (completeness_snapshots, from `stellarindex-ops
+	// compute-completeness`) proves quiet-vs-gap from the LCM census and hash chain
+	// with no threshold. Do not read this as coverage.
 	MinGapSizeOverride int64
 
 	// ScanCadence overrides [GapDetectorInterval] for this target. Default 0
@@ -147,33 +134,24 @@ type GapDetectorTarget struct {
 	CloseTimeColumn string
 }
 
-// sorobanEventsDistinctLedgerCountSQL answers "how many ledgers in [$1, $2]
-// carry Soroban events" from ledger_ingest_log (migration 0051) instead of
-// from soroban_events itself. ledger_ingest_log has one narrow row per
-// fully-processed ledger keyed by ledger_seq (PK btree), and its
-// soroban_event_count is the LCM-derived census whose documented invariant is
-// `= COUNT(soroban_events WHERE ledger = N)`, so this is a PK range scan
-// (milliseconds) that returns the same number the 257 GB hypertable scan did.
+// sorobanEventsDistinctLedgerCountSQL answers "how many ledgers in [$1, $2] carry
+// Soroban events" from ledger_ingest_log (migration 0051) instead of
+// soroban_events: a PK range scan over one narrow row per processed ledger,
+// whose soroban_event_count is the LCM-derived census (documented invariant
+// `= COUNT(soroban_events WHERE ledger = N)`), rather than a scan of the huge
+// hypertable.
 //
-// SEMANTIC NOTE — census vs observed rows: this counts ledgers the
-// indexer RECORDED as carrying >= 1 eligible contract event (written
-// post-ENQUEUE from the LedgerCloseMeta — after ProcessLedger returns,
-// before the sink drains; see cmd/stellarindex-indexer/main.go
-// recordLedgerIngest), not ledgers with rows physically present in
-// soroban_events. Consequences: during a sink-writer halt density
-// reads HIGH (census says >0, rows absent) while the `_gap_*` gauges
-// stay observed-row-based; and `stellarindex-ops backfill` does NOT
-// write ledger_ingest_log, so a range repaired without
-// `census-backfill` (ADR-0033 recovery §1) reads density 0 here. The
-// two are equal by the ADR-0033 Claim 3 invariant; where they diverge
-// (a persistence shortfall the census caught) the census is the
-// HIGHER, honest expectation and the divergence is surfaced by
-// `stellarindex-ops verify` reconciliation, not by this density
-// number. The gap scan for this target (FindPerSourceLedgerGaps) still
-// reads soroban_events directly, so the writer-halt tripwire stays
-// observed-row-based. Ledgers below the ledger_ingest_log backfill
-// floor read as 0 here; the detector's trailing window (<=
-// GapDetectorFirstScanCap below tip) sits far above that floor.
+// Census vs observed rows: this counts ledgers the indexer RECORDED as carrying
+// >= 1 eligible event (written after ProcessLedger returns, before the sink
+// drains; see recordLedgerIngest in cmd/stellarindex-indexer/main.go), not rows
+// physically present. So during a sink-writer halt density reads HIGH while the
+// `_gap_*` gauges stay observed-row-based, and a range repaired by
+// `stellarindex-ops backfill` without `census-backfill` (ADR-0033 recovery) reads
+// 0 here. Where the two diverge the census is the higher, honest expectation and
+// `stellarindex-ops verify` surfaces the divergence, not this number. The gap
+// scan (FindPerSourceLedgerGaps) still reads soroban_events directly. Ledgers
+// below the ledger_ingest_log backfill floor read as 0; the detector's trailing
+// window sits far above it.
 const sorobanEventsDistinctLedgerCountSQL = `SELECT COUNT(*) FROM ledger_ingest_log WHERE ledger_seq BETWEEN $1 AND $2 AND soroban_event_count > 0`
 
 // SourceNetKey is the [sourcenet] name for this target — its
