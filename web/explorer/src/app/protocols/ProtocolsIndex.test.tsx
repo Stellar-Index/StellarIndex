@@ -11,20 +11,19 @@ vi.mock('@/api/client', async () => {
 import { apiGet } from '@/api/client';
 import { ProtocolsIndex } from './ProtocolsIndex';
 
-// /v1/protocols carries a headline `tvl_total` alongside
-// `protocols[]`, and this component's query must not `return
-// env.data?.protocols ?? []`, dropping the money figure on the floor.
-// These tests pin that the total reaches the page, and that its ABSENT
-// case (tvl_total is `omitempty`; omitted when the reconciliation could
-// admit nothing) renders as absence rather than as a zero.
-
-const PROTOCOLS = [
-  {
-    name: 'aquarius',
-    category: 'amm',
-    description: 'Aquarius AMM',
+function proto(name: string, over: Record<string, unknown>) {
+  return {
+    name,
     genesis_ledger: 1,
     factories: [],
+    ...over,
+  };
+}
+
+const PROTOCOLS = [
+  proto('aquarius', {
+    category: 'amm',
+    description: 'Aquarius AMM',
     contract_count: 228,
     tvl: {
       tvl_usd: '39342115.63',
@@ -33,13 +32,10 @@ const PROTOCOLS = [
       unpriced_pools: 177,
       basis: 'sum of each pool latest post-state reserve snapshot',
     },
-  },
-  {
-    name: 'comet',
+  }),
+  proto('comet', {
     category: 'amm',
     description: 'Comet pool',
-    genesis_ledger: 1,
-    factories: [],
     contract_count: 1,
     tvl: {
       tvl_usd: '1569.77',
@@ -48,7 +44,7 @@ const PROTOCOLS = [
       unpriced_pools: 0,
       basis: 'sum of current per-token pool balance records',
     },
-  },
+  }),
 ];
 
 const TVL_TOTAL = {
@@ -69,27 +65,22 @@ const TVL_TOTAL = {
   ],
 };
 
-function mockProtocols(tvlTotal?: unknown) {
+function mockProtocols(protocols: unknown[], extra: object = {}) {
   vi.mocked(apiGet).mockImplementation(async (path: string) => {
     if (path === '/v1/protocols') {
-      return {
-        data: {
-          protocols: PROTOCOLS,
-          ...(tvlTotal ? { tvl_total: tvlTotal } : {}),
-        },
-      } as never;
+      return { data: { protocols, ...extra } } as never;
     }
     return { data: [] } as never;
   });
 }
 
-function renderIndex() {
+function renderIndex(props: React.ComponentProps<typeof ProtocolsIndex> = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <ProtocolsIndex />
+      <ProtocolsIndex {...props} />
     </QueryClientProvider>,
   );
 }
@@ -98,11 +89,9 @@ describe('ProtocolsIndex headline TVL total', () => {
   beforeEach(() => vi.mocked(apiGet).mockReset());
 
   it('renders the served tvl_total exactly, with its provenance', async () => {
-    mockProtocols(TVL_TOTAL);
+    mockProtocols(PROTOCOLS, { tvl_total: TVL_TOTAL });
     renderIndex();
-    await waitFor(() =>
-      expect(screen.getByText('Total value locked')).toBeInTheDocument(),
-    );
+    expect(await screen.findByText('Total value locked')).toBeInTheDocument();
     // The exact decimal string, grouped — not a compacted "$39.34M", and
     // not a Number()-parsed approximation of it.
     expect(screen.getByText(/\$39,343,685\.40/)).toBeInTheDocument();
@@ -121,76 +110,47 @@ describe('ProtocolsIndex headline TVL total', () => {
   });
 
   it('renders an omitted tvl_total as absent — never $0.00, never a dash', async () => {
-    mockProtocols(undefined);
+    mockProtocols(PROTOCOLS);
     renderIndex();
     // The per-protocol bars still arrive…
-    await waitFor(() =>
-      expect(screen.getByText('Value locked (USD)')).toBeInTheDocument(),
-    );
+    expect(await screen.findByText('Value locked (USD)')).toBeInTheDocument();
     // …and the headline simply is not there.
     expect(screen.queryByText('Total value locked')).not.toBeInTheDocument();
     expect(screen.queryByText(/\$0\.00/)).not.toBeInTheDocument();
   });
 });
 
-// The category landings (/bridges, /yield) are one-liners over this
-// component with `lockedCategory` set. The headline stats must not be
-// summed over every card in the directory while the grid below showed
-// one category, so /bridges published the whole directory's figures —
-// measured live: 16 protocols and 1,146,432 events beside
-// the 2 bridges that actually emitted 2,732.
+// The category landings (/bridges, /yield) lock ProtocolsIndex to one
+// category; headline stats must not be summed over the whole directory.
+
+function bridge(
+  name: string,
+  description: string,
+  count: number,
+  events: number,
+) {
+  return proto(name, {
+    category: 'bridge',
+    description,
+    contract_count: count,
+    events_24h: events,
+    completeness: { complete: true, watermark_ledger: 63_000_000 },
+  });
+}
 
 const DIRECTORY = [
+  bridge('cctp', 'Canonical burn-and-mint USDC bridging.', 4, 1_700),
+  bridge('rozo', 'Intent-bridge payment settlement.', 2, 1_032),
   {
-    name: 'cctp',
-    category: 'bridge',
-    description: 'Canonical burn-and-mint USDC bridging.',
-    genesis_ledger: 1,
-    factories: [],
-    contract_count: 4,
-    events_24h: 1_700,
-    completeness: { complete: true, watermark_ledger: 63_000_000 },
-  },
-  {
-    name: 'rozo',
-    category: 'bridge',
-    description: 'Intent-bridge payment settlement.',
-    genesis_ledger: 1,
-    factories: [],
-    contract_count: 2,
-    events_24h: 1_032,
-    completeness: { complete: true, watermark_ledger: 63_000_000 },
-  },
-  {
-    name: 'sdex',
+    ...bridge('sdex', "Stellar's protocol-native order book.", 0, 1_090_927),
     category: 'dex',
-    description: "Stellar's protocol-native order book.",
-    genesis_ledger: 1,
-    factories: [],
-    contract_count: 0,
-    events_24h: 1_090_927,
-    completeness: { complete: true, watermark_ledger: 63_000_000 },
   },
   {
-    name: 'defindex',
+    ...bridge('defindex', 'Yield vaults and strategies.', 9, 2_468),
     category: 'yield',
-    description: 'Yield vaults and strategies.',
-    genesis_ledger: 1,
-    factories: [],
-    contract_count: 9,
-    events_24h: 2_468,
     completeness: { complete: false, watermark_ledger: 62_900_000 },
   },
 ];
-
-function mockDirectory() {
-  vi.mocked(apiGet).mockImplementation(async (path: string) => {
-    if (path === '/v1/protocols') {
-      return { data: { protocols: DIRECTORY } } as never;
-    }
-    return { data: [] } as never;
-  });
-}
 
 // Stat renders the label in a span inside its own div; the value is that
 // div's next sibling.
@@ -208,15 +168,8 @@ describe('ProtocolsIndex headline stats under a locked category', () => {
   beforeEach(() => vi.mocked(apiGet).mockReset());
 
   it('counts the category shown, not the whole directory', async () => {
-    mockDirectory();
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    render(
-      <QueryClientProvider client={client}>
-        <ProtocolsIndex lockedCategory="bridge" title="Bridges" />
-      </QueryClientProvider>,
-    );
+    mockProtocols(DIRECTORY);
+    renderIndex({ lockedCategory: 'bridge', title: 'Bridges' });
     await waitFor(() => expect(cardCount()).toBe(2));
 
     // The headline is the grid: two bridge cards, two counts.
@@ -235,17 +188,10 @@ describe('ProtocolsIndex headline stats under a locked category', () => {
       if (path === '/v1/protocols') throw new Error('HTTP 503');
       return { data: [] } as never;
     });
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    render(
-      <QueryClientProvider client={client}>
-        <ProtocolsIndex lockedCategory="bridge" title="Bridges" />
-      </QueryClientProvider>,
-    );
-    await waitFor(() =>
-      expect(screen.getByText('Live stats unavailable')).toBeInTheDocument(),
-    );
+    renderIndex({ lockedCategory: 'bridge', title: 'Bridges' });
+    expect(
+      await screen.findByText('Live stats unavailable'),
+    ).toBeInTheDocument();
     expect(cardCount()).toBe(0);
     expect(statValue('Protocols')).toBe('—');
   });

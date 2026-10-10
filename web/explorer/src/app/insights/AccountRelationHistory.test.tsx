@@ -12,8 +12,7 @@ vi.mock('@/api/client', async (importOriginal) => {
   return { ...mod, apiGet };
 });
 
-// The chart is a canvas; what matters for these guards is the GEOMETRY
-// handed to it, so the stub publishes its points back to the DOM.
+// Publish the points handed to the canvas chart back to the DOM.
 vi.mock('@/components/charts/LineChart', () => ({
   LineChart: (props: {
     data: { time: number; value: number | null }[];
@@ -35,8 +34,7 @@ const coverage = {
   computed_at: '2026-09-14T17:57:59Z',
 };
 
-// January and April carry activity; February and March are QUIET, which
-// the endpoint expresses by emitting no point at all for them.
+// February and March are QUIET: the endpoint emits no point for them.
 const history = {
   data: {
     account: ACCOUNT,
@@ -55,19 +53,14 @@ const history = {
       },
       sponsored: {
         points: [
-          {
-            period: '2024-01',
-            period_start: '2024-01-01T00:00:00Z',
-            new_accounts: 4,
-            events: 9,
-          },
-          {
-            period: '2024-04',
-            period_start: '2024-04-01T00:00:00Z',
-            new_accounts: 2,
-            events: 3,
-          },
-        ],
+          ['2024-01', 4, 9],
+          ['2024-04', 2, 3],
+        ].map(([period, new_accounts, events]) => ({
+          period,
+          period_start: `${period}-01T00:00:00Z`,
+          new_accounts,
+          events,
+        })),
         totals: {
           accounts: 6,
           events: 20,
@@ -110,12 +103,8 @@ describe('AccountRelationHistory', () => {
     apiGet.mockResolvedValue(history);
   });
 
-  /**
-   * THE FINDING THIS GUARDS. A quiet month emits no point, and a chart
-   * fed the served points alone joins January to April with a straight
-   * line — three months of invented activity drawn at the same
-   * confidence as the measured ones. The gap has to reach the chart.
-   */
+  // A chart fed the served points alone joins January to April with a
+  // straight line: invented activity drawn as if measured.
   it('hands the chart a break for each quiet month, never an interpolated value', async () => {
     renderPanel();
     await screen.findByTestId('line-chart');
@@ -125,18 +114,6 @@ describe('AccountRelationHistory', () => {
     expect(points.map((p) => p.value)).toEqual([4, null, null, 2]);
   });
 
-  it('says in the copy that the line breaks rather than reading zero', async () => {
-    renderPanel();
-    expect(
-      await screen.findByText(/a month with no activity emits no point/i),
-    ).toBeInTheDocument();
-  });
-
-  /**
-   * The cumulative metric is the deliberate exception: a total that
-   * gained nothing has not become unknown, so it crosses the gap — and
-   * the copy has to say that is a fact rather than an interpolation.
-   */
   it('carries the cumulative line across the gap and explains why that is not interpolation', async () => {
     renderPanel();
     await screen.findByTestId('line-chart');
@@ -149,19 +126,12 @@ describe('AccountRelationHistory', () => {
     ).toBeInTheDocument();
   });
 
-  /**
-   * THE FINDING THIS GUARDS. `events` is a declared LOWER BOUND whenever
-   * the series says so, and `unplaced[]` names exactly what was left
-   * out. Drawing the line without either would be a smaller claim
-   * wearing the full one's name.
-   */
+  // `events` is a declared lower bound; unplaced[] names what was left out.
   it('labels the event series a lower bound and prints the unplaced register', async () => {
     renderPanel();
-    const eventsOption = await screen.findByRole('button', {
-      name: /Started \(lower bound\)/,
-    });
-
-    fireEvent.click(eventsOption);
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Started \(lower bound\)/ }),
+    );
 
     expect(screen.getByText('This line is a lower bound')).toBeInTheDocument();
     expect(
@@ -173,25 +143,16 @@ describe('AccountRelationHistory', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows how many events were placed and how many were not', async () => {
-    renderPanel();
-    expect(await screen.findByText('Placed in a month')).toBeInTheDocument();
-    expect(screen.getByText('Not placeable')).toBeInTheDocument();
-    expect(screen.getByText('12')).toBeInTheDocument();
-  });
-
-  it('carries the payload’s own history-not-live-state note', async () => {
+  it('states the break copy, the placed/unplaced split, the payload note and the coverage span', async () => {
     renderPanel();
     expect(
-      await screen.findByText(/History, not live state/i),
+      await screen.findByText(/a month with no activity emits no point/i),
     ).toBeInTheDocument();
-  });
-
-  it('states the coverage span the absent months are read against', async () => {
-    renderPanel();
-    const strip = await screen.findByText(
-      /the span the rollup behind this arm/i,
-    );
+    expect(screen.getByText('Placed in a month')).toBeInTheDocument();
+    expect(screen.getByText('Not placeable')).toBeInTheDocument();
+    expect(screen.getByText('12')).toBeInTheDocument();
+    expect(screen.getByText(/History, not live state/i)).toBeInTheDocument();
+    const strip = screen.getByText(/the span the rollup behind this arm/i);
     expect(strip.textContent).toContain('32,747,295');
     expect(strip.textContent).toContain('64,428,050');
   });
@@ -204,31 +165,20 @@ describe('AccountRelationHistory', () => {
     expect(screen.queryByTestId('line-chart')).not.toBeInTheDocument();
   });
 
-  /**
-   * THE FINDING THIS GUARDS. graph/history postdates the deployed API on
-   * some environments and 404s there (verified against production,
-   * where /graph answers 200 and /graph/history answers
-   * 404). Calling that "warming" would tell a reader to wait for a
-   * rollup cycle that has already run; the endpoint has to ship first.
-   */
-  it('does not call a missing endpoint a warming one', async () => {
+  // graph/history 404s on deployments older than the endpoint; calling that
+  // "warming" would tell a reader to wait for a rollup that already ran.
+  it.each([
+    ['404 Not Found', /does not serve/i, false],
+    ['503 Service Unavailable', /warming/i, true],
+  ])('classifies a %s failure correctly', async (status, text, warming) => {
     apiGet.mockRejectedValue(
-      new Error(`404 Not Found on /v1/accounts/${ACCOUNT}/graph/history`),
+      new Error(`${status} on /v1/accounts/${ACCOUNT}/graph/history`),
     );
     renderPanel();
 
-    expect(await screen.findByText(/does not serve/i)).toBeInTheDocument();
-    expect(screen.queryByText(/warming/i)).not.toBeInTheDocument();
-  });
-
-  it('does call a warming endpoint a warming one', async () => {
-    apiGet.mockRejectedValue(
-      new Error(
-        `503 Service Unavailable on /v1/accounts/${ACCOUNT}/graph/history`,
-      ),
-    );
-    renderPanel();
-
-    expect(await screen.findByText(/warming/i)).toBeInTheDocument();
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    if (!warming) {
+      expect(screen.queryByText(/warming/i)).not.toBeInTheDocument();
+    }
   });
 });
