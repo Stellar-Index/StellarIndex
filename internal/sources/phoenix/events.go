@@ -45,31 +45,23 @@ const EventActionSwap = "swap"
 
 // ─── Liquidity actions ──────────────────────────────────────────
 //
-// Phoenix's pool contract (both volatile `contracts/pool/` and
-// stableswap `contracts/pool_stable/`) emits the same N-event-per-
-// action shape as `swap` for liquidity management:
+// Pool contracts (volatile and stableswap) emit the same N-event-per-action
+// shape as `swap`:
 //
 //	provide_liquidity (5 events): sender, token_a, token_a-amount,
 //	                              token_b, token_b-amount
 //	withdraw_liquidity (4 events): sender, shares_amount,
 //	                               return_amount_a, return_amount_b
 //
-// The withdraw path also OPTIONALLY emits a 5th
-// `("withdraw_liquidity", "auto unbonded")` event with a tuple body
-// (stake_amount, stake_timestamp). We classify it but do not require
-// it for the withdraw correlation to complete — most withdrawals
-// don't auto-unbond.
+// withdraw may also emit a 5th ("withdraw_liquidity", "auto unbonded") event with
+// a tuple body (stake_amount, stake_timestamp); it is classified but not
+// required for the correlation to complete.
 //
-// Stake contract (`contracts/stake/`) emits its own 3-event-per-
-// action shape for bond/unbond:
+// The stake contract emits 3 events per bond / unbond: user, token, amount.
 //
-//	bond   (3 events): user, token, amount
-//	unbond (3 events): user, token, amount
-//
-// Field strings are the literal contract source — keep spellings
-// identical, including the `-amount` hyphens on the liquidity-token
-// fields. The contract emits all topics as String (not Symbol):
-// soroban-sdk serialises tuple-literal strings as ScVal::String.
+// Field strings are the literal contract source; keep spellings identical,
+// including the `-amount` hyphens. All topics are ScVal::String, not Symbol
+// (soroban-sdk serialises tuple-literal strings that way).
 
 const (
 	EventActionProvideLiquidity  = "provide_liquidity"

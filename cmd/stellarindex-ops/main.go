@@ -1,51 +1,14 @@
-// Binary stellarindex-ops is the admin CLI for operational tasks
-// that don't belong in the long-running binaries. Subcommand
-// implementations live in internal/ops/{ingest,archive,discovery,
-// supply,diagnostics,chops,incident,usage,keys,accounts} (one package per rough bucket; chops
-// covers the ADR-0033/ADR-0034 ClickHouse-lake tools — named chops,
-// not clickhouse, to avoid shadowing internal/storage/clickhouse in
-// every file there) plus internal/ops/opsutil (helpers shared across
-// more than one of those packages). main.go is only the dispatch
-// table + the handful of subcommands too small or too miscellaneous
-// to warrant their own package (docs-config;
-// mint-key and upgrade-key live in internal/ops/keys, freeze-unfreeze and account-erase in internal/ops/accounts, emit-incident lives in internal/ops/incident, usage-rollup-backfill
-// and change-summary-reset in internal/ops/usage).
+// Binary stellarindex-ops is the admin CLI for operational tasks that don't
+// belong in the long-running binaries.
 //
-//   - Ingest / backfill (internal/ops/ingest): `backfill`,
-//     `backfill-external`, `backfill-chainlink`,
-//     `detect-gaps`, `list-cursors`, `reap-cursors`, `resume-stalled`,
-//     `find-data-gaps`, `census-backfill`, `tag-routed-via`,
-//     `seed-soroswap-pairs`, `seed-protocol-contracts`,
-//     `seed-entry-counts`, `projector-replay`, `scan-soroban-events`,
-//     `state-snapshot`, `issuer-enrich`, `sep1-refresh`.
-//   - Archive integrity + WASM tracking (internal/ops/archive):
-//     `verify-archive`, `archive-completeness`, `cross-region-check`,
-//     `cross-region-monitor`, `trim-galexie-archive`,
-//     `rehydrate-galexie-archive`, `galexie-mirror-verify`, `wasm-history`,
-//     `wasm-history-merge-jsonl`, `extract-wasm-from-galexie`,
-//     `compare-entry-changes`.
-//   - Soroban discovery (internal/ops/discovery): `discovery`.
-//   - Supply (internal/ops/supply): `supply`.
-//   - Diagnostics (internal/ops/diagnostics): `rpc-probe`,
-//     `verify-decoders`, `verify-external`, `hubble-check`,
-//     `hubble-soroban-events`.
-//   - ClickHouse lake (internal/ops/chops): `ch-backfill`, `ch-gate`,
-//     `ch-reproject`, `ch-rebuild`, `ch-supply`,
-//     `ch-txindex-backfill`, `ch-participant-backfill`,
-//     `ch-recognition`, `verify-recognition`, `verify-reconciliation`,
-//     `compute-completeness`, `verify-served-values`, `verify-usd-volume`,
-//     `usd-volume-restamp`, `classic-movements-backfill`,
-//     `projected-rebuild`, `reconcile-balances`, `verify-contiguity`,
-//     `verify-hashchain`, `verify-lake`, `verify-network-state`,
-//     `wasm-drift`.
-//   - Doc generation: `docs-config` (regenerates the config
-//     reference from struct tags; called by `make docs-config`).
-//   - Billing/usage recovery: `usage-rollup-backfill` (re-folds the
-//     Redis per-endpoint usage counters into `usage_daily` for a
-//     chosen date range — the recovery path for a day the API's
-//     two-day rollup window skipped).
+// Subcommand implementations live in internal/ops/{ingest,archive,discovery,
+// supply,diagnostics,chops,incident,usage,keys,accounts}, with helpers shared
+// across them in internal/ops/opsutil. chops (the ADR-0033/ADR-0034
+// ClickHouse-lake tools) is not named clickhouse to avoid shadowing
+// internal/storage/clickhouse in every file there. main.go holds only the
+// dispatch table and the few subcommands too small for a package (docs-config).
 //
-// The canonical subcommand list is the `subcommands` map below + the
+// The canonical subcommand list is the `subcommands` map below plus the
 // `stellarindex-ops --help` output.
 package main
 
@@ -85,39 +48,23 @@ func main() {
 	os.Exit(realMain())
 }
 
-// subcommands maps each subcommand name to its handler package's Run
-// function (or, for the handful of subcommands too small to warrant
-// their own package, a leaf closure right here).
+// subcommands maps each subcommand name to its handler: a package Run, or a
+// leaf closure here wrapped in [leaf].
 //
-// A package Run receives the FULL argv starting at the subcommand name
-// itself (args[0] == the map key that reached it, args[1:] its own
-// flags): each internal/ops/* package's Run switches on args[0] and hands
-// args[1:] to the handler, which is what lets several map keys below point
-// at the same package.Run reference.
+// A package Run receives the full argv starting at the subcommand name
+// (args[0] is the map key); each internal/ops/* Run switches on args[0], which
+// lets several keys share one Run.
 //
-// A LEAF handler receives ONLY ITS OWN FLAGS — it is wrapped in [leaf],
-// which strips the verb. That asymmetry is deliberate and load-bearing.
-// Every leaf handler builds a flag.FlagSet and calls fs.Parse(args); Go's
-// flag package STOPS at the first non-flag argument, so handing a leaf the
-// verb-prefixed argv means fs.Parse sees "mint-key" as a positional,
-// parses NOTHING, and every flag keeps its zero value. All four leaf
-// subcommands were broken exactly that way — `stellarindex-ops
-// usage-rollup-backfill -config /etc/stellarindex.toml -from …` answered
-// "-config is required" and could not be invoked at all. It survived
-// because the unit tests call the handlers DIRECTLY with flags-only argv
-// (mint_key_test.go, usage_rollup_backfill_test.go), i.e. they tested the
-// convention the handlers wanted and never the one the dispatcher used.
-// [leaf] makes the two agree at the one place they meet;
-// TestSubcommandDispatch_LeafHandlersSeeTheirFlags pins it.
+// A leaf handler receives only its own flags: [leaf] strips the verb. This is
+// load-bearing. Leaf handlers call fs.Parse(args) and Go's flag package stops
+// at the first non-flag argument, so a verb-prefixed argv parses nothing and
+// leaves every flag zero. Unit tests call handlers directly with flags-only
+// argv, so only TestSubcommandDispatch_LeafHandlersSeeTheirFlags covers the
+// dispatcher path.
 //
-// Handlers return an error to exit 1; realMain prints the "name: err"
-// prefix uniformly. Handlers that have already printed a specific
-// message return opsutil.ErrExitSilently to suppress the prefix. The
-// canonical subcommand list is this table + the usageBody help text.
-//
-// Subcommands the usageBody flags as still-planned (cache-prime,
-// verify-invariants) land via their feature PRs and add their own
-// entry here.
+// Handlers return an error to exit 1; realMain prints the "name: err" prefix.
+// Return opsutil.ErrExitSilently to suppress it after printing a specific
+// message. The canonical list is this table plus the usageBody help text.
 var subcommands = map[string]func(args []string) error{
 	"docs-config":           leaf(func([]string) error { return config.EmitMarkdown(os.Stdout) }),
 	"mint-key":              leaf(keys.Mint),

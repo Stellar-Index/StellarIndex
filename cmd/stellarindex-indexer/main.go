@@ -1,37 +1,28 @@
-// Binary stellarindex-indexer runs the production ingestion
-// pipeline:
+// Binary stellarindex-indexer runs the production ingestion pipeline:
 //
 //	Galexie MinIO → internal/ledgerstream → internal/dispatcher
 //	              → per-source decoders → canonical.Trade /
 //	                canonical.OracleUpdate → TimescaleDB
 //
-// Per docs/architecture/ingest-pipeline.md this is the SINGLE
-// production code path. No stellar-rpc client, no per-source
-// goroutines, no poll loops. One goroutine drives ledgerstream +
-// dispatcher; a second drains the resulting consumer.Events to
-// Timescale. That second goroutine is deliberately unguarded, not
-// panic-isolated: a recover() there would be cosmetic
-// (the writes happen in PersistEvents' fanned-out persistWorker
-// goroutines, whose panics end the process regardless), and
-// swallowing the panic would leave the process answering
-// /metrics and /healthz with a frozen cursor while persisting
-// nothing. Crashing lets systemd restart from the last cursor
-// instead.
+// This is the single production code path (docs/architecture/ingest-pipeline.md):
+// no stellar-rpc client, no per-source goroutines. One goroutine drives
+// ledgerstream + dispatcher; a second drains the resulting consumer.Events
+// to Timescale. That second goroutine is deliberately unguarded: a recover()
+// would be cosmetic (writes happen in PersistEvents' persistWorker goroutines,
+// whose panics end the process anyway) and swallowing a panic would leave
+// /metrics and /healthz answering with a frozen cursor while persisting
+// nothing. Crashing lets systemd restart from the last cursor.
 //
 // Flags:
 //
 //	-config PATH             TOML config file (required)
 //	-dry-run                 Load config, open connections, validate, exit.
-//	                         No ledgers consumed. Boot sanity only.
 //	-verify-hashdb-from N    Run one hashdb verify pass over an
 //	-verify-hashdb-to N      explicit [from,to] ledger range against the
-//	                         archive bucket and exit — for verifying or
-//	                         bootstrapping history older than the live
-//	                         trailing window. Both required together.
+//	                         archive bucket and exit. Both required together.
 //
-// Graceful shutdown: SIGINT + SIGTERM cancel the root context;
-// the binary waits up to 30 s for in-flight work to finish before
-// hard-exiting.
+// SIGINT + SIGTERM cancel the root context; the binary waits up to 30 s for
+// in-flight work before hard-exiting.
 package main
 
 import (
@@ -2477,31 +2468,16 @@ var marshalLedgerCloseMeta = func(lcm sdkxdr.LedgerCloseMeta) ([]byte, error) {
 	return lcm.MarshalBinary()
 }
 
-// recordHashdb appends the ledger's sha256(LCM) into hdb — the
-// append side of the hashdb drift detector, called once per ledger
-// from the live LCM read loop.
+// recordHashdb appends the ledger's sha256(LCM) into hdb, once per ledger from
+// the live LCM read loop.
 //
-// Design choice: this runs SYNCHRONOUSLY on the ingest hot path,
-// unlike e.g. the ClickHouse live-sink fan-out a few lines below
-// (which is explicitly non-blocking, per its own comment, because a
-// slow ClickHouse must never stall ingest). hashdb.Append is a single
-// O(1) positional WriteAt of a fixed 32-byte record — no seek-to-end,
-// no fsync, no network I/O — so its worst realistic latency is a
-// page-cache-resident disk write, several orders of magnitude below
-// the per-ledger budget the rest of this loop already spends on
-// Postgres/ClickHouse round-trips. Fanning it out to a buffered
-// channel (the CH live-sink pattern) would add a goroutine, a channel,
-// and a drop policy for an operation cheap enough that the extra
-// machinery is pure risk with no throughput benefit. If a future
-// profile shows otherwise, revisit — but don't reach for the async
-// pattern preemptively.
+// It runs synchronously, unlike the ClickHouse live-sink fan-out: hashdb.Append
+// is one positional 32-byte WriteAt (no seek, fsync or network), so a channel
+// and drop policy would be pure risk for no throughput gain.
 //
-// Failure-tolerant: any error (disk full, permission, an
-// out-of-order seq) logs a WARN + increments
-// HashdbAppendTotal{"error"} and returns without propagating. A
-// hashdb write failure is a diagnostics-side-channel problem, not an
-// ingest problem — it must never stall or fail the pipeline that
-// actually serves customer data.
+// Errors log a WARN and bump HashdbAppendTotal{"error"} but never propagate: a
+// diagnostics side channel must not stall or fail the pipeline that serves
+// customer data.
 func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logger, lastAppended *atomic.Uint32) {
 	seq := lcm.LedgerSequence()
 
@@ -2545,31 +2521,21 @@ func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logge
 	lastAppended.Store(seq)
 }
 
-// startHashDBVerifier runs the periodic half of the hashdb drift
-// detector: every cfg.VerifyIntervalMinutes it re-reads a trailing
-// window of cfg.VerifyWindowLedgers ledgers from the SAME bucket the
-// append side reads (lsCfg — the live-tail config) and compares each
-// one's freshly-computed hash against verifyDB via
+// startHashDBVerifier runs the periodic half of the hashdb drift detector:
+// every cfg.VerifyIntervalMinutes it re-reads a trailing window of
+// cfg.VerifyWindowLedgers ledgers from the same bucket the append side reads
+// (lsCfg) and compares each fresh hash against verifyDB via
 // archivecompleteness.HashDBWindowVerifier.
 //
-// Modeled on internal/archivecompleteness's own daily-cron-driven
-// check/verify shape (ADR-0017): bounded window, tally-don't-abort on
-// mismatch, loud logging on drift. Implemented here as an in-process
-// ticker rather than a separate systemd timer + one-shot CLI
-// invocation (archivecompleteness's own scheduling shape) so it can
-// (a) share the indexer's already-live obs.Registry /metrics
-// endpoint instead of needing its own scrape target, (b) reuse the
-// bucket config the indexer already has open, and (c) trail the
-// indexer's OWN live-append edge (lastAppended) rather than needing
-// an externally-supplied upper bound.
+// It is an in-process ticker rather than a systemd timer so it shares the
+// indexer's /metrics endpoint and bucket config and trails the indexer's own
+// lastAppended edge.
 //
-// Known limitation: the window is read from the LIVE bucket
+// Known limitation: the window is read from the live bucket
 // (cfg.Storage.S3BucketLive) only. During a large historical catch-up
-// (indexer started far behind the tip), lastAppended can reference
-// ledgers the live bucket doesn't hold yet — the sweep then surfaces
-// as outcome="error" (object not found) rather than silently wrong,
-// and self-heals once the indexer crosses the archive/live seam. The
-// steady-state live-tailing shape (the common deployment) is unaffected.
+// lastAppended can name ledgers the live bucket doesn't hold yet; the sweep
+// then reports outcome="error" (object not found) and self-heals once the
+// indexer crosses the archive/live seam.
 func startHashDBVerifier(
 	parent context.Context,
 	verifyDB *hashdb.DB,

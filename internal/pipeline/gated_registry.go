@@ -97,31 +97,20 @@ var gatedSources = map[string]GatedMeta{
 		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder { return blend_emitter.NewDecoder(opts...) },
 	},
 	phoenix.SourceName: {
-		// Factory-anchored gate (ADR-0040 §1 mechanism 1). The factory's
-		// ("create","liquidity_pool") creation events are inside the
-		// lake: they run from ledger 51,572,026 (captures under
-		// test/fixtures/phoenix/factory-create), and the decoder
-		// admits the pool each one announces, gated on the factory
-		// trust root. The decoder's in-code seed (MainnetGatedSet) is
-		// the cold-start warm root — it also carries the stake
-		// contracts, which the factory does NOT announce (the POOL
-		// deploys them) — and this entry adds the protocol_contracts
-		// warm + live-upsert hook so an admitted pool is durable.
+		// Factory-anchored gate (ADR-0040 §1 mechanism 1): the decoder admits each pool
+		// announced by the factory's ("create","liquidity_pool") events (lake from
+		// ledger 51,572,026; captures in test/fixtures/phoenix/factory-create). The
+		// in-code MainnetGatedSet is the cold-start warm root; this entry adds the
+		// protocol_contracts warm + live-upsert hook so admitted pools are durable.
 		//
-		// CreationSym is the ScvString "create", not a Symbol: the
-		// lake's topic_0_sym column is empty for these rows, which is
-		// why the prefilter also matches topics_xdr (see
-		// internal/storage/clickhouse/event_reader.go topic0Predicate).
+		// CreationSym is the ScvString "create", not a Symbol: the lake's topic_0_sym
+		// column is empty for these rows, which is why the prefilter also matches
+		// topics_xdr (internal/storage/clickhouse/event_reader.go topic0Predicate).
 		//
-		// CuratedSet carries ONLY the stake contracts: the factory's
-		// create events announce a POOL, never the stake contract the
-		// pool itself deploys (see NewDecoder's doc), so without an
-		// explicit trust root here nothing would write them to
-		// protocol_contracts — the decoder's own in-code seed
-		// (MainnetGatedSet) covers ingest/decode but never reaches the
-		// served roster. Pools are deliberately excluded: they already
-		// have a real trust root (the factory + live-upsert hook), and
-		// listing them here too would just be redundant.
+		// CuratedSet carries only the stake contracts: the factory announces pools,
+		// never the stake contract a pool deploys (see NewDecoder's doc), so without a
+		// trust root here nothing writes them to protocol_contracts. Pools already have
+		// the factory as their root.
 		Factories:   []string{phoenix.MainnetFactory},
 		CreationSym: phoenix.EventActionCreate,
 		Genesis:     51_572_016,
@@ -331,53 +320,36 @@ func seedCuratedContracts(
 	return seeded, nil
 }
 
-// GatedRegistryOptions warms the contractid.Registry for every
-// contract-gated source and returns a map keyed by source name.
-// BuildDispatcher / BuildRegistry forward out[source] to each gated
-// decoder's NewDecoder so the in-memory gate resumes with a COMPLETE
-// registry across restarts (the projector cursor advances past the
-// creation events, so live-only seeding would miss every pool deployed
-// before boot — ADR-0035 coverage note).
+// GatedRegistryOptions warms the contractid.Registry for every contract-gated
+// source and returns a map keyed by source name. BuildDispatcher / BuildRegistry
+// forward out[source] to each gated decoder's NewDecoder so the gate resumes
+// with a complete registry across restarts (the projector cursor advances past
+// creation events, so live-only seeding would miss pools deployed before boot;
+// ADR-0035).
 //
-// The warm has TWO inputs, not one:
+// The warm has two inputs:
 //
-//   - the protocol_contracts table, which is where a FACTORY-anchored
-//     source's children live (they are discovered from creation events;
-//     there is nothing in code to seed them with), and
-//   - meta.CuratedSet, the IN-CODE trust root of a curated-set source
-//     (ADR-0040 §1 mechanism 3 — comet, blend_emitter, upshift). Those
-//     sources have no factory and no creation events, so nothing ever
-//     writes their contracts to the table on its own.
+//   - the protocol_contracts table, where a factory-anchored source's children
+//     live (discovered from creation events; nothing in code seeds them), and
+//   - meta.CuratedSet, the in-code trust root of a curated-set source
+//     (ADR-0040 §1 mechanism 3: comet, blend_emitter, upshift), which has no
+//     creation events, so nothing else writes its contracts to the table.
 //
-// Seeding the curated set here is what makes the returned options
-// self-sufficient. Without it, the only thing that puts a curated
-// source's contracts anywhere is an operator remembering to run
-// `stellarindex-ops seed-protocol-contracts -source <name>`, and until
-// they do, two things are true. The options this map hands out carry
-// NOTHING for that source: the gate a caller ends up with holds only
-// what the decoder package happens to re-install in its own constructor
-// (every curated decoder does today — which is a redundancy this layer
-// must not silently depend on, since GatedMeta.CuratedSet is where the
-// trust root is declared and blend's constructor deliberately installs
-// no children at all). And the table itself stays empty, so
-// GET /v1/protocols/{name} serves an empty roster and the explorer's
-// contract-attribution overlay tags none of the contracts — silently,
-// because "children=0" reads exactly like a protocol that has not
-// deployed a pool yet. Measured on r1 without the curated seed:
-// aquarius 352, blend 29, defindex 16, sushiswap_v3 58, upshift 0.
+// Seeding the curated set here keeps the options self-sufficient. Otherwise the
+// options carry nothing for that source (leaning on each decoder constructor
+// re-installing its set is a redundancy this layer must not depend on; blend's
+// installs no children), and the table stays empty, so
+// GET /v1/protocols/{name} serves an empty roster that reads like a protocol
+// with no pools yet.
 //
-// withHook installs the live-upsert persistence callback (the indexer
-// path): when a decoder observes a NEW factory creation event it upserts
-// the child into protocol_contracts so the next restart inherits it. It
-// ALSO arms the curated reconcile — the indexer writes any curated
-// contract the table is missing, so the operator step disappears.
-// Read-only consumers (the recognition / completeness audits) pass
-// withHook=false: they still GATE on the curated set (contractid.WithSeed
-// is a pure constructor option over a compile-time constant and fires no
-// hook — see TestRegistry_WithSeed_doesNotFireHook — so it is not the
-// mutation that clause forbids), but they write nothing, because an audit
-// that registered contracts while auditing them would be manufacturing
-// its own evidence.
+// withHook installs the live-upsert persistence callback (indexer path): a NEW
+// factory creation event upserts the child into protocol_contracts, and it arms
+// the curated reconcile that writes any curated contract the table is missing.
+// Read-only consumers (recognition / completeness audits) pass withHook=false:
+// they still gate on the curated set (contractid.WithSeed is a pure constructor
+// option and fires no hook; TestRegistry_WithSeed_doesNotFireHook) but write
+// nothing, since an audit that registered contracts would manufacture its own
+// evidence.
 //
 // hookCtx scopes the live upserts' lifetime (typically the process root
 // context) and is unused when withHook is false.
