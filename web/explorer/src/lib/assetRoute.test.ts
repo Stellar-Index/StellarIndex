@@ -7,6 +7,9 @@ describe('offChainAssetHref', () => {
     expect(offChainAssetHref('crypto:BTC')).toBe('/external/assets/btc/');
     expect(offChainAssetHref('fiat:EUR')).toBe('/external/assets/eur/');
   });
+  it('sends crypto:XLM to the Stellar Lumens page', () => {
+    expect(offChainAssetHref('crypto:XLM')).toBe('/assets/native/');
+  });
   it('sends raw oracle symbols to the oracle view', () => {
     expect(offChainAssetHref('raw:BTC')).toBe('/oracles/');
   });
