@@ -66,7 +66,7 @@ go-ast internal/metadata/cache_test.go
 go-ast internal/ops/chops/catalogue_completeness_test.go
 go-ast internal/ops/chops/ch_rebuild_trade_lockstep_test.go
 go-ast internal/ops/chops/completeness_panic_guard_test.go
-go-ast internal/ops/chops/projected_rebuild_sep41_rollup_test.go
+go-ast internal/ops/chops/projected_rebuild_backfillsafe_test.go
 go-ast internal/ops/chops/soroswap_seed_failclosed_test.go
 go-ast internal/ops/diagnostics/hubble_bq_cap_test.go
 go-ast internal/ops/diagnostics/silent_verdict_test.go

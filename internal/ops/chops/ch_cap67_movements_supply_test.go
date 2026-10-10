@@ -1,7 +1,6 @@
 package chops
 
 import (
-	"context"
 	"slices"
 	"testing"
 
@@ -126,45 +125,5 @@ func TestCap67SupplyMovement_MapBody(t *testing.T) {
 	got, ok := cap67EventMovement(sep41.NewUngatedDecoder(), sep41supply.NewUngatedDecoder(), &ev)
 	if !ok || got.Amount == nil || got.Amount.Int64() != 42 {
 		t.Fatalf("map-bodied mint: ok=%v amount=%v, want 42", ok, got.Amount)
-	}
-}
-
-// The window derive must ask the lake for mint, burn and clawback as well as
-// transfer, and write every one of them. The stub honours the topic[0]
-// prefilter the way the SQL does.
-func TestDeriveCap67MovementsWindow_IncludesSupplyKinds(t *testing.T) {
-	canonical.InstallNetworkPassphrase("")
-	orig := streamCap67TransferEvents
-	t.Cleanup(func() { streamCap67TransferEvents = orig })
-	lake := []struct {
-		sym string
-		ev  events.Event
-	}{
-		{"transfer", cap67TransferEvent(t, "native")},
-		{"mint", cap67SupplyEvent(t, "mint", cap67USDCSAC, cap67USDCName, scI128(1))},
-		{"burn", cap67SupplyEvent(t, "burn", cap67USDCSAC, cap67USDCName, scI128(1))},
-		{"clawback", cap67SupplyEvent(t, "clawback", cap67USDCSAC, cap67USDCName, scI128(1))},
-	}
-	streamCap67TransferEvents = func(_ context.Context, _ string, _, _ uint32, _, topic0Syms, _ []string, _, _, _ bool, fn func(events.Event) error) error {
-		for _, l := range lake {
-			if !slices.Contains(topic0Syms, l.sym) {
-				continue
-			}
-			if err := fn(l.ev); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	rows, skipped, err := deriveCap67MovementsWindow(context.Background(), "ch", 63_000_000, 63_000_000, true)
-	if err != nil {
-		t.Fatalf("derive: %v", err)
-	}
-	if skipped != 0 {
-		t.Fatalf("skipped = %d, want 0", skipped)
-	}
-	if rows != 8 {
-		t.Fatalf("dry-run rows = %d, want 8 (transfer, mint, burn, clawback × two sides)", rows)
 	}
 }

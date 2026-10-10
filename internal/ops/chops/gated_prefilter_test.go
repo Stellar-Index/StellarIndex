@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
@@ -392,5 +393,34 @@ func TestGatedPrefilter_OversizedSetIsUnscoped(t *testing.T) {
 	}
 	if pf != nil {
 		t.Errorf("oversized prefilter = %d ids, want nil (unscoped)", len(pf))
+	}
+}
+
+// TestGatedPrefilter_PanicIsBlindNotCrash pins, for the aquarius /
+// phoenix prefilter walk: a creation event whose decoder panics must come
+// back as a blind spot (its child is unregistered on the expected side),
+// while the healthy child is still announced.
+func TestGatedPrefilter_PanicIsBlindNotCrash(t *testing.T) {
+	const badLedger = uint32(105)
+	evs := []events.Event{
+		mockCreate(100, prefFactory, prefInWin, 1),
+		mockCreate(badLedger, prefFactory, prefForeign, 2),
+	}
+	src := reconSource{
+		name: "mockgated", genesis: 1, dec: newMockGatedDecoder(),
+		factories: []string{prefFactory}, creationSym: "create",
+		newGatedDec: func() gatedDecoder {
+			return panickingGatedDecoder{mockGatedDecoder: newMockGatedDecoder(), badChild: prefForeign}
+		},
+	}
+	pf, blind, err := gatedPrefilter(context.Background(), countingEventStreamer{evs: evs}, src, 200)
+	if err != nil {
+		t.Fatalf("gatedPrefilter: %v", err)
+	}
+	if !strings.Contains(strings.Join(pf, ","), prefInWin) {
+		t.Errorf("prefilter %v lost the healthy child %s", pf, prefInWin)
+	}
+	if blind.UndecodableMatched != 1 || len(blind.Ledgers) != 1 || blind.Ledgers[0] != badLedger {
+		t.Errorf("blind = %+v, want 1 undecodable on ledger %d", blind, badLedger)
 	}
 }

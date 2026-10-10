@@ -7,10 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -424,5 +427,52 @@ func caseValidateRestampTierFlags_ChunkModeIsAvailableToBothTiers(t *testing.T) 
 		if err == nil || !strings.Contains(err.Error(), "-"+f) {
 			t.Errorf("-%s with -tier exact: err = %v, want a refusal naming the flag", f, err)
 		}
+	}
+}
+
+// A decompress restamps no row for up to ~1.5h, so row progress alone trips
+// the no-progress alert on every healthy run. The walk publishes the chunk's
+// size movement instead, and the AMOUNT is pinned, not just its presence.
+func TestChunkRestamp_ReportsChunkByteProgressThroughADecompressThatWritesNoRow(t *testing.T) {
+	const gib = int64(1) << 30
+	script := []int64{10 * gib, 40 * gib, 90 * gib, 160 * gib}
+	const wantMoved = uint64(150) << 30 // 160-10, however often the poll fires
+
+	day := func(d int) time.Time { return time.Date(2026, 6, d, 0, 0, 0, 0, time.UTC) }
+	chunks := []timescale.TradeChunk{chunkFixture("_hyper_1_9_chunk", day(6), day(13), 160*gib, 10*gib)}
+	from, to := day(6), day(12)
+
+	store := newFakeChunkStore(chunks, day(7).Add(3*time.Hour))
+	store.byteScript = script
+	store.byteScriptDrained = make(chan struct{})
+
+	// A real heartbeat, so the assertion is on the series Prometheus scrapes.
+	path := filepath.Join(t.TempDir(), "ops_job_usd_volume_restamp.prom")
+	hb := opsutil.NewJobHeartbeat("usd-volume-restamp", path, nil)
+	hb.Start()
+
+	var readsAtWork, appliesAtWork int
+	store.onWork = func() { readsAtWork, appliesAtWork = store.reads(), store.applies }
+
+	opts, copts, out := chunkTestOptions(true)
+	opts.Heartbeat = hb
+	copts.ChunkBytesPoll = time.Millisecond
+
+	if err := runXLMBaseChunkRestamp(context.Background(), store, "/etc/stellarindex.toml", from, to, opts, copts); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	hb.Stop(true)
+
+	if appliesAtWork != 0 || readsAtWork < len(script) {
+		t.Errorf("at the end of the decompress: %d row-apply(s) and %d size read(s), want 0 applies and >= %d reads",
+			appliesAtWork, readsAtWork, len(script))
+	}
+	body, err := os.ReadFile(path) //nolint:gosec // t.TempDir path
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("stellarindex_ops_job_progress_bytes_total{ops_job=%q} %d\n", "usd-volume-restamp", wantMoved)
+	if !strings.Contains(string(body), want) {
+		t.Errorf("heartbeat does not publish the observed chunk movement (want %q):\n%s", want, body)
 	}
 }

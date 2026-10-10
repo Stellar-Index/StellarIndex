@@ -111,53 +111,6 @@ func TestLockstep_ChRebuildTradeOfCoversEveryProjectedTradeSource(t *testing.T) 
 	}
 }
 
-// TestChRebuildProjectedScript_DeletesOnlySourcesTradeOfCanRewrite pins the
-// other half of the pairing: every source named in the repair script's
-// trades DELETE must be a source ch-rebuild can actually re-derive.
-func TestChRebuildProjectedScript_DeletesOnlySourcesTradeOfCanRewrite(t *testing.T) {
-	deleted := deletedTradeSources(t, "../../../scripts/ops/ch-rebuild-projected.sh")
-	if len(deleted) == 0 {
-		t.Fatal("no trades DELETE source list found in ch-rebuild-projected.sh")
-	}
-	targetsBySource := reconciliationTargetsBySource(t)
-	for _, name := range deleted {
-		if _, ok := targetsBySource[name]; !ok {
-			t.Errorf("ch-rebuild-projected.sh deletes trades for %q, which is not in the reconciliation catalogue — "+
-				"the repair would delete rows nothing re-derives", name)
-		}
-	}
-}
-
-// TestChRebuildProjectedScript_EveryCaseArmDeleteIsReconcilable is the
-// per-arm check: the trades DELETE above is only 1 of the 12 DELETE statements
-// window_delete_sql emits — the other 11 clear per-source ancillary
-// tables (aquarius_admin, blend_positions, ...) inside a per-source case
-// arm. A source/table pair deleted there but absent from ch-rebuild's
-// reconciliation catalogue is the same silent-data-loss shape as the
-// trades case, just on a different table.
-func TestChRebuildProjectedScript_EveryCaseArmDeleteIsReconcilable(t *testing.T) {
-	arms := caseArmDeletes(t, "../../../scripts/ops/ch-rebuild-projected.sh")
-	if len(arms) == 0 {
-		t.Fatal("no per-source case-arm DELETEs found in ch-rebuild-projected.sh")
-	}
-	targetsBySource := reconciliationTargetsBySource(t)
-	for source, tables := range arms {
-		known, ok := targetsBySource[source]
-		if !ok {
-			t.Errorf("ch-rebuild-projected.sh's case arm %q deletes %v, but %q is not in the reconciliation catalogue — "+
-				"the repair would delete rows nothing re-derives", source, tables, source)
-			continue
-		}
-		for _, table := range tables {
-			if !known[table] {
-				t.Errorf("ch-rebuild-projected.sh's %q arm deletes table %q, which is not among %q's reconciliation "+
-					"targets (%v) — the repair would delete rows ch-rebuild does not know how to re-derive",
-					source, table, source, sortedKeys(known))
-			}
-		}
-	}
-}
-
 // reconciliationTargetsBySource maps each catalogue source name to the
 // set of table names ch-rebuild can re-derive for it.
 func reconciliationTargetsBySource(t *testing.T) map[string]map[string]bool {

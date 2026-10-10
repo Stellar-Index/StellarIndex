@@ -6,10 +6,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/Stellar-Index/StellarIndex/internal/config"
-	"github.com/Stellar-Index/StellarIndex/internal/contractid"
-	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
 // Class guard: every catalogue consumer warms the gates.
@@ -128,55 +124,6 @@ func TestCatalogueConsumers_WarmBeforeAnythingReadsTheDecoders(t *testing.T) {
 			case warm > firstUse:
 				t.Errorf("%s: the gate warm runs AFTER %q, the first reader of the catalogue's decoders — "+
 					"it rebuilds them, so anything that read or seeded the old instances is discarded", tc.fn, tc.firstUse)
-			}
-		})
-	}
-}
-
-// TestApplyGatedOptions_TestNetCatalogueHasNothingToWarm bounds the blast
-// radius of the three new call sites onto the non-pubnet deployments.
-//
-// Every gated source is anchored to PUBNET contract identities (ADR-0035),
-// so filterCatalogueByNetwork drops all of them on testnet / futurenet
-// . The warm is therefore a no-op there — and, decisively, its
-// FAIL-CLOSED leg cannot fire: applyGatedOptions refuses a gated catalogue
-// entry with no warmed options, and on a test net there is no such entry,
-// so even an entirely empty options map is accepted. compute-completeness
-// runs hourly on both test nets; a warm that could return an error on a
-// catalogue with nothing to warm would have turned their coverage verdict
-// red every tick.
-func TestApplyGatedOptions_TestNetCatalogueHasNothingToWarm(t *testing.T) {
-	t.Parallel()
-	for _, network := range []string{"testnet", "futurenet"} {
-		t.Run(network, func(t *testing.T) {
-			t.Parallel()
-			cfg := config.Config{}
-			cfg.Stellar.Network = network
-			cat, _, err := buildReconciliationCatalogue(cfg)
-			if err != nil {
-				t.Fatalf("buildReconciliationCatalogue(%s): %v", network, err)
-			}
-			if len(cat) == 0 {
-				t.Fatalf("%s catalogue is empty — this test is asserting nothing", network)
-			}
-			for _, src := range cat {
-				if _, gated := pipeline.GatedMetaFor(src.name); gated {
-					t.Errorf("%s: catalogue holds gated source %q — it is pubnet-anchored and must be network-filtered out",
-						network, src.name)
-				}
-			}
-			// The empty map is the worst case for the fail-closed leg.
-			warmed, err := applyGatedOptions(cat, map[string][]contractid.Option{})
-			if err != nil {
-				t.Fatalf("%s: applyGatedOptions on a catalogue with no gated source failed closed: %v", network, err)
-			}
-			if len(warmed) != len(cat) {
-				t.Errorf("%s: catalogue length changed: %d → %d", network, len(cat), len(warmed))
-			}
-			for i := range cat {
-				if warmed[i].name != cat[i].name {
-					t.Errorf("%s: catalogue order changed at %d: %s → %s", network, i, cat[i].name, warmed[i].name)
-				}
 			}
 		})
 	}

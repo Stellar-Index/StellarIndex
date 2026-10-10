@@ -206,3 +206,13 @@ func TestRozo_ProjectorSoleWriterInPhase3(t *testing.T) {
 		t.Error("rozo.Event skipped with the projector disabled: no writer")
 	}
 }
+
+func TestSpec_NamesUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for _, s := range specs {
+		if seen[s.Name] {
+			t.Errorf("two specs named %q: SpecByName returns only the first", s.Name)
+		}
+		seen[s.Name] = true
+	}
+}

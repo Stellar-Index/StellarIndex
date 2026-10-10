@@ -4,6 +4,7 @@
 package chops
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -127,21 +128,6 @@ func TestExpireStaleCarries_CapsOldestFirst(t *testing.T) {
 	}
 }
 
-// TestOrderForPass_ExpiredCarryJoinsTheFromGenesisGroup: a re-verify forced by
-// an expired carry is as slow as any other from-genesis reconcile, so it must
-// run after the cheap incremental sources, not ahead of them.
-func TestOrderForPass_ExpiredCarryJoinsTheFromGenesisGroup(t *testing.T) {
-	cat := []reconSource{{name: "a", genesis: 10}, {name: "b", genesis: 10}}
-	prior := map[string]priorProjection{
-		"a": {known: true, ok: true, tip: 100, evidenceExpired: true},
-		"b": {known: true, ok: true, tip: 100},
-	}
-	got := orderForPass(cat, prior, map[string]uint32{"a": 100, "b": 100})
-	if got[0].name != "b" || got[1].name != "a" {
-		t.Errorf("order = [%s %s], want [b a]", got[0].name, got[1].name)
-	}
-}
-
 func TestBuildPriorVerdicts_CarriesTheEvidenceTime(t *testing.T) {
 	proven := time.Date(2026, 9, 1, 5, 40, 0, 0, time.UTC)
 	priorProj, _, _, _ := buildPriorVerdicts([]timescale.CompletenessSnapshot{
@@ -159,5 +145,80 @@ func TestCarriedEvidenceDetail(t *testing.T) {
 	at := time.Date(2026, 9, 1, 5, 40, 0, 0, time.UTC)
 	if d := carriedEvidenceDetail(at); !strings.Contains(d, "2026-09-01T05:40:00Z") {
 		t.Errorf("detail = %q, want it to name the proof time", d)
+	}
+}
+
+// A prior clean projection verdict carries only as far as its Watermark (the
+// range it reconciled), never to Tip, which sits above a recognition gap.
+func TestBuildPriorVerdicts_ProjectionCarryBoundsToWatermarkNotTip(t *testing.T) {
+	const (
+		servedFrom = uint32(61_500_000)
+		watermark  = uint32(62_000_000)
+		tip        = uint32(62_500_000)
+	)
+	snaps := []timescale.CompletenessSnapshot{
+		{Source: "soroswap", ProjectionOK: true, SubstrateOK: true, RecognitionOK: true, Tip: tip, Watermark: watermark},
+	}
+	priorProj, _, _, _ := buildPriorVerdicts(snaps)
+
+	prior := priorProj["soroswap"]
+	if prior.tip != watermark {
+		t.Fatalf("priorProj[soroswap].tip = %d, want %d (Watermark, not Tip=%d)", prior.tip, watermark, tip)
+	}
+	ok, detail := projectionClaim(servedFrom, tip, tip, true, "", prior, testScope)
+	if ok {
+		t.Fatalf("projectionClaim carried a prior verdict over [%d,%d], a band the prior run never reconciled", watermark+1, tip-1)
+	}
+	if !strings.Contains(detail, fmt.Sprintf("%d", watermark)) {
+		t.Errorf("rejection detail must name the prior verdict's true reach (watermark=%d), got: %s", watermark, detail)
+	}
+}
+
+func TestBuildPriorVerdicts_CarriesProjectionVerifiedFrom(t *testing.T) {
+	prior, _, _, _ := buildPriorVerdicts([]timescale.CompletenessSnapshot{
+		{Source: "band", ProjectionOK: true, Watermark: bandTip, ProjectionVerifiedFrom: bandServedMin},
+	})
+	if got := prior["band"].verifiedFrom; got != bandServedMin {
+		t.Fatalf("priorProj[band].verifiedFrom = %d, want %d", got, bandServedMin)
+	}
+}
+
+// -pass resumes each source's projection from its own watermark when its prior
+// verdict is clean (keeping the nightly cheap), from genesis when it is red or
+// unseeded; outside -pass the floor is the operator-stated max(genesis, -from).
+func TestProjectionFloor(t *testing.T) {
+	const (
+		aquariusGenesis     = uint32(52_728_375)
+		healthyGenesis      = uint32(50_746_266)
+		blendEmitterGenesis = uint32(51_499_914)
+		tip                 = uint32(63_997_554)
+	)
+	clean := priorProjection{known: true, ok: true, tip: tip}
+	clean63 := priorProjection{known: true, ok: true, tip: 63_000_000}
+	failing63 := priorProjection{known: true, ok: false, tip: 63_000_000}
+	cases := []struct {
+		name      string
+		genesis   uint32
+		pass      bool
+		prior     priorProjection
+		watermark uint32
+		from      uint
+		want      uint32
+	}{
+		{"pass: healthy resumes at watermark", healthyGenesis, true, clean, tip - 100, 0, tip - 100},
+		{"pass: recognition-capped resumes at its low watermark", aquariusGenesis, true, clean, 55_363_631, 0, 55_363_631},
+		{"pass: never-seeded floors at genesis", blendEmitterGenesis, true, priorProjection{}, 0, 0, blendEmitterGenesis},
+		{"pass: sub-genesis watermark clamps", blendEmitterGenesis, true, clean63, 40_000_000, 0, blendEmitterGenesis},
+		{"pass: clean prior keeps the cheap resume", sushiGenesis, true, priorProjection{known: true, ok: true, tip: sushiTip}, sushiTip, 0, sushiTip},
+		{"pass: failing prior re-verifies from genesis", sushiGenesis, true, priorProjection{known: true, ok: false, tip: sushiTip}, sushiTip, 0, sushiGenesis},
+		{"non-pass -from, clean prior", healthyGenesis, false, clean63, 999_999, 63_000_000, 63_000_000},
+		{"non-pass -from, failing prior", healthyGenesis, false, failing63, 999_999, 63_000_000, 63_000_000},
+		{"non-pass -from, no prior", healthyGenesis, false, priorProjection{}, 999_999, 63_000_000, 63_000_000},
+		{"non-pass full run ignores the watermark", healthyGenesis, false, clean63, 63_000_000, 0, healthyGenesis},
+	}
+	for _, tc := range cases {
+		if got := projectionFloor(tc.genesis, tc.pass, tc.prior, tc.watermark, tc.from); got != tc.want {
+			t.Errorf("%s: projectionFloor = %d, want %d", tc.name, got, tc.want)
+		}
 	}
 }

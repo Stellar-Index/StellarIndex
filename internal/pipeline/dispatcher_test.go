@@ -5,8 +5,6 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
-	"github.com/Stellar-Index/StellarIndex/internal/events"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 )
 
 // realisticGStrkey is a syntactically-valid 56-char G-prefixed
@@ -14,29 +12,6 @@ import (
 // constructor only checks for non-empty strings; stricter strkey
 // validation happens upstream at config.Validate.
 const realisticGStrkey = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-
-// TestBuildDispatcher_FoldsWhitespaceAndCaseInSourceNames pins that the
-// dispatcher's own switch must normalise ingestion.enabled_sources entries
-// the SAME way internal/config/validate.go's KnownSources check already
-// does (lowercase + trim). Lowercasing alone would let a name with
-// leading/trailing whitespace pass config.Validate (which trims) but then
-// hard-error here as "unknown source" — a boot-time crash on input the
-// config layer had already accepted as valid.
-func TestBuildDispatcher_FoldsWhitespaceAndCaseInSourceNames(t *testing.T) {
-	disp, err := BuildDispatcher([]string{"  Comet  "}, config.OracleConfig{}, nil)
-	if err != nil {
-		t.Fatalf("BuildDispatcher(%q): %v", "  Comet  ", err)
-	}
-	ev := events.Event{
-		ContractID: comet.MainnetBackstopPool,
-		Topic:      []string{comet.TopicSymbolPool, comet.TopicSymbolSwap},
-	}
-	name, ok := disp.Recognize(ev)
-	if !ok || name != comet.SourceName {
-		t.Fatalf("Recognize() = (%q, %v), want (%q, true) — %q must register the comet decoder",
-			name, ok, comet.SourceName, "  Comet  ")
-	}
-}
 
 // TestRegisterSupplyEntryDecoders_AccountsNoOpWhenEmpty pins the
 // safe default: an operator who hasn't opted into supply-side

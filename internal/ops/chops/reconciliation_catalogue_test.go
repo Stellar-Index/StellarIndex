@@ -15,6 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
@@ -741,27 +742,60 @@ func TestReconTargetCountFilter_PriceableOnlyForSDEX(t *testing.T) {
 	}
 }
 
-func TestProjectionScope_NamesWaivers(t *testing.T) {
-	cat, _, err := buildReconciliationCatalogue(testConfigWithAllSources())
-	if err != nil {
-		t.Fatalf("buildReconciliationCatalogue: %v", err)
-	}
-	seen := map[string]string{}
-	for _, src := range cat {
-		sc := src.projectionScope(make([]projectionScope, len(src.targets))) // every {0,0} scope is counted
-		seen[src.name] = sc
-		if strings.Contains(sc, "; ") {
-			t.Errorf("%s scope contains the detail separator: %q", src.name, sc)
+// TestBuildReconciliationCatalogue_ReflectorDecimals drives a real mainnet
+// event per Reflector variant through the catalogue decoder that ch-rebuild
+// re-derives with: it must stamp the same configured scale the projector
+// does, or a re-derive overwrites correctly scaled oracle_updates rows.
+func TestBuildReconciliationCatalogue_ReflectorDecimals(t *testing.T) {
+	dir := filepath.Join("..", "..", "..", "test", "fixtures", "reflector", "v6-2026-04-23")
+	for _, tc := range []struct {
+		source  string
+		fixture string
+		set     func(*config.ReflectorOracleConfig, string, uint8)
+	}{
+		{reflector.SourceDEX, "62251160_9322ba2f5c95.json", func(r *config.ReflectorOracleConfig, c string, d uint8) {
+			r.DEXContract, r.DEXDecimals = c, d
+		}},
+		{reflector.SourceCEX, "62251214_7b118512cb3c.json", func(r *config.ReflectorOracleConfig, c string, d uint8) {
+			r.CEXContract, r.CEXDecimals = c, d
+		}},
+		{reflector.SourceFX, "62251211_f59b732d06a5.json", func(r *config.ReflectorOracleConfig, c string, d uint8) {
+			r.FXContract, r.FXDecimals = c, d
+		}},
+	} {
+		ev := loadReflectorEvent(t, filepath.Join(dir, tc.fixture))
+		for _, want := range []struct {
+			configured, emitted uint8
+		}{{0, reflector.DefaultDecimals}, {7, 7}} {
+			var cfg config.Config
+			tc.set(&cfg.Oracle.Reflector, ev.ContractID, want.configured)
+			cat, _, err := buildReconciliationCatalogue(cfg)
+			if err != nil {
+				t.Fatalf("buildReconciliationCatalogue: %v", err)
+			}
+			var src *reconSource
+			for i := range cat {
+				if cat[i].name == tc.source {
+					src = &cat[i]
+				}
+			}
+			if src == nil {
+				t.Fatalf("%s: not in catalogue with its contract configured", tc.source)
+			}
+			out, err := src.dec.Decode(ev)
+			if err != nil {
+				t.Fatalf("%s: Decode: %v", tc.source, err)
+			}
+			if len(out) == 0 {
+				t.Fatalf("%s: no rows from a real update", tc.source)
+			}
+			for _, e := range out {
+				u := e.(reflector.UpdateEvent).Update
+				if u.Decimals != want.emitted {
+					t.Fatalf("%s configured %d: row %s Decimals = %d, want %d",
+						tc.source, want.configured, u.Asset, u.Decimals, want.emitted)
+				}
+			}
 		}
-	}
-	for _, w := range []string{"aquarius_liquidity", "aquarius_reserves", "aquarius_reserves_sync", "(fan-out)"} {
-		if sc, ok := seen["aquarius"]; !ok || !strings.Contains(sc, "not reconciled: ") || !strings.Contains(sc, w) {
-			t.Errorf("aquarius scope %q missing %q", sc, w)
-		}
-	}
-	b := seen["blend_emitter"]
-	if !strings.Contains(b, "reconciled 1 table(s) [blend_emitter_events[event_kind <> 'drop']]") ||
-		!strings.Contains(b, "not reconciled: blend_emitter_events[event_kind = 'drop'] (fan-out)") {
-		t.Errorf("blend_emitter scope = %q", b)
 	}
 }

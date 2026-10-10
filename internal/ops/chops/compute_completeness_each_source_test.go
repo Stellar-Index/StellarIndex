@@ -257,3 +257,18 @@ func TestCatalogue_DefindexReDeriveIsContractScoped(t *testing.T) {
 		t.Error("sep41_transfers must stay out of the pass's forced re-proof")
 	}
 }
+
+// TestOrderForPass_ExpiredCarryJoinsTheFromGenesisGroup: a re-verify forced by
+// an expired carry is as slow as any other from-genesis reconcile, so it must
+// run after the cheap incremental sources, not ahead of them.
+func TestOrderForPass_ExpiredCarryJoinsTheFromGenesisGroup(t *testing.T) {
+	cat := []reconSource{{name: "a", genesis: 10}, {name: "b", genesis: 10}}
+	prior := map[string]priorProjection{
+		"a": {known: true, ok: true, tip: 100, evidenceExpired: true},
+		"b": {known: true, ok: true, tip: 100},
+	}
+	got := orderForPass(cat, prior, map[string]uint32{"a": 100, "b": 100})
+	if got[0].name != "b" || got[1].name != "a" {
+		t.Errorf("order = [%s %s], want [b a]", got[0].name, got[1].name)
+	}
+}
