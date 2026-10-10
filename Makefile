@@ -59,11 +59,6 @@ BINARIES := \
 # compile in CI but be executed by no shard). Add a package
 # here and every CI path picks it up.
 INT_TEST_PKGS := ./test/integration/... ./test/harness/... ./cmd/stellarindex-ops/... ./internal/ops/archive/... ./scripts/ops/...
-SHARD ?= 0
-SHARDS ?= 6
-
-# Default test-cover threshold per package (staticcheck in CI enforces the per-package floor)
-COVER_THRESHOLD := 70
 
 # ──────────────────────────────────────────────────────────────────
 # Help
@@ -192,17 +187,6 @@ test: ## Run unit tests with race detector
 	# concurrent agents, so 2m failed there while passing on the host.
 	$(GO) test -race -timeout 8m ./...
 
-.PHONY: test-cover
-test-cover: ## Unit tests + coverage report + floor check (report-only)
-	$(GO) test -race -coverprofile=coverage.txt -covermode=atomic ./...
-	$(GO) tool cover -html=coverage.txt -o coverage.html
-	@echo "Coverage report: coverage.html"
-	@# Same check CI runs on the same profile, so a coverage drop is
-	@# visible before the push rather than in a PR comment. Report-only
-	@# for the verdict; hard-fails if the profile is unreadable or the
-	@# measured scope collapsed. See scripts/ci/coverage-floor.sh.
-	bash scripts/ci/coverage-floor.sh
-
 .PHONY: test-integration
 test-integration: ## Integration tests (requires Docker; spins its own containers via testcontainers-go)
 	# 35m: suite growth, not a hang. CI hit a 20m deadline on three
@@ -216,13 +200,9 @@ test-integration: ## Integration tests (requires Docker; spins its own container
 	# CI splits it — 4-way by test name across runners
 	# (scripts/ci/integration-shard.sh, `integration-test-shard` matrix
 	# in ci.yml, ~20.5 min serial -> ~5 min per shard). This target stays
-	# the single-process developer entry point; SHARD/SHARDS below runs
-	# one CI slice locally.
+	# the single-process developer entry point; run the script directly
+	# for one CI slice.
 	$(GO) test -tags=integration -timeout 35m $(INT_TEST_PKGS)
-
-.PHONY: test-integration-shard
-test-integration-shard: ## One CI shard of the integration suite: make test-integration-shard SHARD=0 SHARDS=6 (same flags as test-integration; see scripts/ci/integration-shard.sh)
-	./scripts/ci/integration-shard.sh $(SHARD) $(SHARDS)
 
 .PHONY: test-integration-build
 test-integration-build: ## Compile integration tests without running them (no Docker, fast). Catches build-tag breakage from interface changes.
@@ -278,16 +258,6 @@ test-load: test-load-guard ## Run k6 scenarios against $K6_TARGET; SCENARIO=pric
 	  echo "=== $$s ==="; k6 run --out $(PROM_OUT) $$s || exit $$?; \
 	done
 
-.PHONY: test-load-spike
-test-load-spike: test-load-guard ## Run the 10× spike scenario (5 min). Posts AlertManager silence if ALERTMANAGER_URL set
-	@if [ -z "$$ALERTMANAGER_URL" ]; then \
-	  echo "WARN: ALERTMANAGER_URL unset — spike will not silence on-call alerts."; \
-	  echo "      Manually silence APIHighLatencyP95 + APIHighErrorRate before continuing."; \
-	  echo "      Press Ctrl-C to abort, or wait 10s to proceed."; \
-	  sleep 10; \
-	fi
-	@k6 run --out $(PROM_OUT) test/load/scenarios/99-spike.js
-
 .PHONY: test-load-check
 test-load-check: ## Compile-check all k6 scenarios without running them (no target needed)
 	@for s in test/load/scenarios/[0-9]*.js; do \
@@ -308,9 +278,6 @@ test-chaos-check: ## Lint the chaos scenarios (shellcheck) without running them
 	  echo "=== $$s ==="; shellcheck -x "$$s" || exit $$?; \
 	done
 
-.PHONY: test-all
-test-all: lint vet test test-integration ## Everything short of load + chaos
-
 .PHONY: lint-docs
 lint-docs: ## Doc-code consistency linter (freshness, links, ADR integrity, TODO discipline)
 	@./scripts/ci/lint-docs.sh
@@ -322,22 +289,6 @@ lint-imports: ## Import-boundary lint (production ingest doesn't import stellar-
 .PHONY: lint-lexicon
 lint-lexicon: ## Domain-lexicon + idiom ratchet (asset-not-coin, Options-struct ctors, slog-only; docs/architecture/lexicon.md)
 	@./scripts/ci/lint-lexicon.sh
-
-.PHONY: lint-golangci-config
-lint-golangci-config: ## Offline JSON-Schema check of .golangci.yml (#317 — no golangci-lint.run fetch at PR time)
-	@$(GO) run ./scripts/ci/lint-golangci-config
-
-.PHONY: lint-openapi-urls
-lint-openapi-urls: ## ADR-0018 URL-discipline + served-host check on the OpenAPI spec
-	@$(GO) run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
-
-.PHONY: lint-metric-refs
-lint-metric-refs: ## F-1329 dead-alert guard: every stellarindex_* expr token must resolve to an emitter or KNOWN_INERT
-	@./scripts/ci/lint-metric-refs.sh
-
-.PHONY: lint-metric-refs-test
-lint-metric-refs-test: ## Fixtures for the F-1329 guard: a comment-only mention is NOT an emitter
-	@./scripts/ci/lint-metric-refs-test.sh
 
 .PHONY: monitoring-check
 monitoring-check: ## Validate Prometheus rule files with promtool (multi-host + R1 overlay) + dead-metric-ref guard
@@ -384,10 +335,6 @@ vuln: ## Run govulncheck, gated by the accepted-risk allowlist (scripts/ci/govul
 verify: ## Underlying sequential gate; use make prepush for clean-tree, capability and integration enforcement
 	@./scripts/dev/verify.sh
 
-.PHONY: verify-r1-sync
-verify-r1-sync: ## Compare every tracked config path against deployed copy on r1 (operator-pre-deploy check)
-	@bash scripts/dev/verify-r1-sync.sh
-
 .PHONY: verify-cross-region
 verify-cross-region: ## Cross-region byte-identical-VWAP consistency check (ADR-0015 §verification)
 	@# F-1252 (codex audit-2026-05-12): docs/operations/multi-region-cutover.md
@@ -420,22 +367,9 @@ build-docker: ## Build all per-binary Docker images locally (Dockerfiles in dock
 	  docker build --build-arg VERSION=$(VERSION) -t stellarindex/$$b:local -f docker/$$b.Dockerfile . || exit 1; \
 	done
 
-.PHONY: smoke-docker
-smoke-docker: ## Smoke-test all per-binary Docker images (requires `make build-docker` first)
-	@for b in $(BINARIES); do \
-	  echo "Smoke stellarindex/$$b:local --help"; \
-	  out=$$(docker run --rm stellarindex/$$b:local --help 2>&1); rc=$$?; \
-	  echo "$$out" | head -5; \
-	  if [ $$rc -ne 0 ]; then exit $$rc; fi; \
-	done
-
 .PHONY: smoke
 smoke: ## Smoke-test the launch-critical API surface against $$API_BASE_URL (default localhost:3000). Exit code = number of failed checks.
 	@bash scripts/dev/r1-smoke.sh
-
-.PHONY: pre-launch-check
-pre-launch-check: ## Verify R1 is in production-ready shape before DNS cutover. Run on R1 (e.g. via ssh + heredoc).
-	@bash scripts/ops/pre-launch-check.sh
 
 ##@ Database migrations
 
@@ -488,10 +422,6 @@ docs-metrics: ## (no-op) Metrics reference is hand-edited — drift is guarded b
 	@echo "docs-metrics is manual today; docs/reference/metrics/README.md is hand-edited."
 	@echo "Drift enforced by 'make lint-docs'."
 
-.PHONY: docs-serve
-docs-serve: ## Preview docs site locally on :8080
-	@./scripts/dev/docs-serve.sh
-
 ##@ Deploy preflight
 
 # VERSION is a Makefile variable (git describe) by default, so an operator
@@ -504,22 +434,9 @@ preflight-deploy: ## Answer every question deploy.yml will ask, locally: make pr
 
 ##@ Release
 
-.PHONY: release-dryrun
-release-dryrun: ## Validate whether in-repo goreleaser packaging exists for this snapshot
-	@if [ ! -f .goreleaser.yaml ]; then \
-	  echo "release-dryrun: .goreleaser.yaml is not present in this repo snapshot." >&2; \
-	  echo "release-dryrun: use 'make build' plus the external release packaging process documented in docs/operations/release-process.md." >&2; \
-	  exit 2; \
-	fi
-	@goreleaser release --snapshot --clean
-
 ##@ Showcase site (web/explorer/) — see docs/architecture/showcase-site-implementation-plan.md
 
 WEB_EXPLORER_DIR := web/explorer
-
-.PHONY: web-install
-web-install: ## Install showcase-site dependencies (pnpm)
-	cd $(WEB_EXPLORER_DIR) && pnpm install --frozen-lockfile
 
 .PHONY: web-dev
 web-dev: ## Run the showcase site locally with HMR (http://localhost:3000)
@@ -541,10 +458,6 @@ web-lint: ## Lint the showcase site
 web-test: ## Run the showcase site's vitest suite
 	cd $(WEB_EXPLORER_DIR) && pnpm test
 
-.PHONY: web-format
-web-format: ## Format the showcase site (prettier)
-	cd $(WEB_EXPLORER_DIR) && pnpm format
-
 .PHONY: web-generate-api
 web-generate-api: ## Regenerate web/explorer/src/api/types.ts from OpenAPI
 	cd $(WEB_EXPLORER_DIR) && pnpm generate:api
@@ -552,14 +465,6 @@ web-generate-api: ## Regenerate web/explorer/src/api/types.ts from OpenAPI
 ##@ Status page (web/status/) — public-facing status.stellarindex.io
 
 WEB_STATUS_DIR := web/status
-
-.PHONY: status-install
-status-install: ## Install status-page dependencies (pnpm)
-	cd $(WEB_STATUS_DIR) && pnpm install --frozen-lockfile
-
-.PHONY: status-dev
-status-dev: ## Run the status page locally with HMR (http://localhost:3002)
-	cd $(WEB_STATUS_DIR) && pnpm dev
 
 .PHONY: status-build
 status-build: ## Build the status page for production
@@ -578,7 +483,3 @@ status-lint: ## Lint the status page
 .PHONY: clean
 clean: ## Remove build artefacts + coverage
 	@rm -rf bin/ dist/ coverage.txt coverage.html
-
-.PHONY: tidy
-tidy: ## go mod tidy
-	$(GO) mod tidy
