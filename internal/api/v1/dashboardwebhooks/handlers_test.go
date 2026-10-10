@@ -776,3 +776,17 @@ func TestHandlers_EditAndDeleteDoNotNeedSigningKey(t *testing.T) {
 		t.Error("DELETE left the webhook in place")
 	}
 }
+
+// TestHandleDelete_AbsentID404 pins the behaviour the spec now documents:
+// deleting an id this account does not have is 404, never a 204.
+func TestHandleDelete_AbsentID404(t *testing.T) {
+	h, _, sc := newTestRig(t)
+	absent := uuid.New().String()
+	req := sessionReq(t, http.MethodDelete, "/v1/dashboard/webhooks/"+absent, nil, sc)
+	req.SetPathValue("id", absent)
+	w := httptest.NewRecorder()
+	h.HandleDelete(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", w.Code, w.Body.String())
+	}
+}

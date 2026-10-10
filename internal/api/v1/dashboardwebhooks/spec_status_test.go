@@ -1,13 +1,10 @@
 package dashboardwebhooks
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 )
 
@@ -49,19 +46,5 @@ func TestSpecDeclaresParseAndAuthoriseStatuses(t *testing.T) {
 	}
 	if checked < 3 {
 		t.Fatalf("checked %d /dashboard/webhooks/{id} operations, want >= 3 (PATCH, DELETE, deliveries)", checked)
-	}
-}
-
-// TestHandleDelete_AbsentID404 pins the behaviour the spec now documents:
-// deleting an id this account does not have is 404, never a 204.
-func TestHandleDelete_AbsentID404(t *testing.T) {
-	h, _, sc := newTestRig(t)
-	absent := uuid.New().String()
-	req := sessionReq(t, http.MethodDelete, "/v1/dashboard/webhooks/"+absent, nil, sc)
-	req.SetPathValue("id", absent)
-	w := httptest.NewRecorder()
-	h.HandleDelete(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404; body=%s", w.Code, w.Body.String())
 	}
 }

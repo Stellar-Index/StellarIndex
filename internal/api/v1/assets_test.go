@@ -6,12 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -661,6 +670,488 @@ func TestAssetList_SubstanceUnmeasured_WithholdsPriceAndStampsStale(t *testing.T
 					t.Errorf("flags.stale = %v, want %v", env.Flags.Stale, tc.wantStale)
 				}
 			})
+		}
+	}
+}
+
+// paginatingAssetsReader embeds the full stub and overrides only
+// ListAssetsExt, honouring opts.Limit by returning min(Limit, total)
+// rows so the handler's overfetch-by-one logic is exercised exactly as
+// the real store would drive it.
+type paginatingAssetsReader struct {
+	stubAssetsReaderExt
+	total int
+}
+
+func (p *paginatingAssetsReader) ListAssetsExt(_ context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
+	n := opts.Limit
+	if n > p.total {
+		n = p.total
+	}
+	rows := make([]timescale.AssetRow, 0, n)
+	for i := 0; i < n; i++ {
+		rows = append(rows, timescale.AssetRow{
+			AssetID:          "USDC-GAAA",
+			Slug:             "usdc",
+			Code:             "USDC",
+			ObservationCount: int64(i + 1),
+		})
+	}
+	return rows, nil
+}
+
+// TestAssetList_AssetsPaginationEmitsCursor pins the case when the assetsReader
+// catalogue holds more than `limit` rows, /v1/assets MUST emit a next
+// cursor. The previous handler passed `limit` (not limit+1) to the
+// store, so the overfetch sentinel never appeared and the listing was
+// stuck on its first page over a ~199K-asset directory.
+func TestAssetList_AssetsPaginationEmitsCursor(t *testing.T) {
+	srv := v1.New(v1.Options{AssetsReader: &paginatingAssetsReader{total: 1000}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets?limit=50")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data       []v1.AssetDetail `json:"data"`
+		Pagination *struct {
+			Next string `json:"next"`
+		} `json:"pagination"`
+	}
+	mustDecode(t, resp, &env)
+
+	if len(env.Data) != 50 {
+		t.Fatalf("returned %d rows, want exactly the page size 50 (overfetch row must be trimmed)", len(env.Data))
+	}
+	if env.Pagination == nil || env.Pagination.Next == "" {
+		t.Fatalf("no next cursor emitted despite 1000 > 50 rows available (F-1326)")
+	}
+}
+
+// TestAssetList_RejectsMalformedCursor guards cursor validation on both the
+// default listing and the unified (asset_class=all) classic phase: without it
+// a malformed cursor falls through to the keyset predicate's degenerate
+// (0, "") case and reads as a quiet end-of-pagination (empty page, 200 OK).
+func TestAssetList_RejectsMalformedCursor(t *testing.T) {
+	ts := httpTestServer(t, v1.New(v1.Options{AssetsReader: &paginatingAssetsReader{total: 1000}}))
+	for _, q := range []string{
+		"limit=50&cursor=not-a-valid-cursor",
+		"asset_class=all&limit=50&cursor=classic:not-a-valid-cursor",
+	} {
+		t.Run(q, func(t *testing.T) {
+			resp := mustGet(t, ts.URL+"/v1/assets?"+q)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 for a malformed cursor", resp.StatusCode)
+			}
+		})
+	}
+}
+
+// TestAssetList_AssetsPaginationLastPageNoCursor confirms the tail page
+// (rows ≤ limit) correctly omits the cursor.
+func TestAssetList_AssetsPaginationLastPageNoCursor(t *testing.T) {
+	srv := v1.New(v1.Options{AssetsReader: &paginatingAssetsReader{total: 30}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets?limit=50")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data       []v1.AssetDetail `json:"data"`
+		Pagination *struct {
+			Next string `json:"next"`
+		} `json:"pagination"`
+	}
+	mustDecode(t, resp, &env)
+
+	if len(env.Data) != 30 {
+		t.Fatalf("returned %d rows, want 30", len(env.Data))
+	}
+	if env.Pagination != nil && env.Pagination.Next != "" {
+		t.Fatalf("unexpected next cursor on the final page: %q", env.Pagination.Next)
+	}
+}
+
+// listCountingAssetsReader counts the listing reads that reach the
+// store, so a test can assert a rate-limit denial stopped the read
+// rather than merely relabelling its response.
+type listCountingAssetsReader struct {
+	paginatingAssetsReader
+	lists atomic.Int64
+}
+
+func (r *listCountingAssetsReader) ListAssetsExt(ctx context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
+	r.lists.Add(1)
+	return r.paginatingAssetsReader.ListAssetsExt(ctx, opts)
+}
+
+// newAssetsLimitedServer wires /v1/assets behind the production limiter
+// constructor over a Redis-backed anonymous bucket. withStore selects
+// whether an AssetsReader is wired.
+func newAssetsLimitedServer(t *testing.T, anonLimit int, withStore bool) (*testServerImpl, *listCountingAssetsReader) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	opts := v1.Options{
+		RateLimit: middleware.RateLimitBySubject(
+			ratelimit.New(rdb, anonLimit, time.Minute, pinnedWindow), nil, middleware.SkipHealthAndMetrics, nil),
+	}
+	reader := &listCountingAssetsReader{paginatingAssetsReader: paginatingAssetsReader{total: 3}}
+	if withStore {
+		opts.AssetsReader = reader
+	}
+	return startHTTPTest(t, v1.New(opts).Handler()), reader
+}
+
+// TestAssetList_ChargesByThePlanSelected is the regression for the
+// second surface. /v1/assets is one route and several query plans, the
+// query string picks the plan, and the limiter charged all of them one
+// token — so the volume-ranked plan (measured 18x the default) and the
+// cache-defeating `q` scan were bought at the cheapest plan's price.
+//
+// Each case is one request into a fresh 100-token window; the assertion
+// is the exact post-charge remainder.
+func TestAssetList_ChargesByThePlanSelected(t *testing.T) {
+	cases := []struct {
+		name, query   string
+		wantStatus    int
+		wantRemaining string
+	}{
+		{"default listing", "?limit=5", 200, "99"},
+		{"explicit default order", "?order_by=observation_count_desc", 200, "99"},
+		{"volume-ranked plan", "?order_by=volume_24h_usd_desc", 200, "90"},
+		{"search", "?q=usd", 200, "95"},
+		{"search on the volume-ranked plan", "?q=usd&order_by=volume_24h_usd_desc", 200, "86"},
+		// asset_class=all reaches the SAME volume-ranked store read
+		// without naming order_by; pricing only the named parameter would
+		// leave this as the way around the charge.
+		{"unified listing", "?asset_class=all", 200, "90"},
+		{"unified listing + search", "?asset_class=all&q=usd", 200, "86"},
+		// The class-scoped listings filter a few dozen curated rows
+		// in-process and ignore q: no plan selected, base token.
+		{"class-scoped listing ignores q", "?asset_class=stablecoin&q=usd", 200, "99"},
+		// Rejected before any plan is chosen: base token only.
+		{"invalid order_by", "?order_by=bogus", 400, "99"},
+		{"order_by with asset_class", "?asset_class=all&order_by=volume_24h_usd_desc", 400, "99"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, _ := newAssetsLimitedServer(t, 100, true)
+			resp := mustGet(t, ts.URL+"/v1/assets"+tc.query)
+			if resp.StatusCode != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.wantStatus)
+			}
+			got := resp.Header.Get("X-RateLimit-Remaining")
+			if resp.StatusCode == http.StatusOK {
+				got = strconv.Itoa(remainingBeforeProbe(t, resp, ts.URL+assetsProbe))
+			}
+			if got != tc.wantRemaining {
+				t.Fatalf("X-RateLimit-Remaining = %q, want %q", got, tc.wantRemaining)
+			}
+		})
+	}
+}
+
+// assetsProbe is rejected before any plan is chosen (the "invalid
+// order_by" case above pins it at the base token) and answered no-store.
+const assetsProbe = "/v1/assets?order_by=bogus"
+
+// TestAssetList_DeniedPlanDoesNoRead: the surcharge lands before the
+// read. A caller with 2 tokens left cannot buy a 10-token plan, and the
+// store is not touched finding that out. The budget is 13 because the
+// probe that reads the remainder spends one of the 3 the plan leaves.
+func TestAssetList_DeniedPlanDoesNoRead(t *testing.T) {
+	ts, reader := newAssetsLimitedServer(t, 13, true)
+	url := ts.URL + "/v1/assets?order_by=volume_24h_usd_desc&limit=2"
+
+	resp := mustGet(t, url)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("first request: status = %d, want 200", resp.StatusCode)
+	}
+	if got := remainingBeforeProbe(t, resp, ts.URL+assetsProbe); got != 3 {
+		t.Fatalf("X-RateLimit-Remaining = %d, want 3", got)
+	}
+
+	before := reader.lists.Load()
+	resp = mustGet(t, url+"&cursor=")
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second request: status = %d, want 429", resp.StatusCode)
+	}
+	if resp.Header.Get("Retry-After") == "" {
+		t.Error("429 must carry Retry-After")
+	}
+	if got := reader.lists.Load(); got != before {
+		t.Fatalf("a denied request still ran %d listing read(s)", got-before)
+	}
+}
+
+// TestAssetList_NoStoreNoSurcharge: with no AssetsReader wired the
+// volume-ranked plan does not exist to be selected, and the request
+// costs the base token.
+func TestAssetList_NoStoreNoSurcharge(t *testing.T) {
+	ts, _ := newAssetsLimitedServer(t, 100, false)
+	resp := mustGet(t, ts.URL+"/v1/assets?order_by=volume_24h_usd_desc&q=usd")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := remainingBeforeProbe(t, resp, ts.URL+assetsProbe); got != 99 {
+		t.Fatalf("X-RateLimit-Remaining = %d, want 99", got)
+	}
+}
+
+// TestAssetList_QueryLengthIsBounded: `q` was bounded only by the
+// server's header limit while being carried verbatim into the listing
+// cache key and three LIKE patterns. 100 bytes clears the longest value
+// that can match a row (a 69-byte classic asset id); one byte more is a
+// 400 on every path, class-scoped listings included, and reads nothing.
+func TestAssetList_QueryLengthIsBounded(t *testing.T) {
+	ts, reader := newAssetsLimitedServer(t, 100, true)
+
+	resp := mustGet(t, ts.URL+"/v1/assets?q="+strings.Repeat("a", 100))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("100-byte q: status = %d, want 200", resp.StatusCode)
+	}
+
+	before := reader.lists.Load()
+	for _, path := range []string{"/v1/assets?q=", "/v1/assets?asset_class=all&q=", "/v1/assets?asset_class=fiat&q="} {
+		resp = mustGet(t, ts.URL+path+strings.Repeat("a", 101))
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("%s<101 bytes>: status = %d, want 400", path, resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
+			t.Errorf("%s: Content-Type = %q, want application/problem+json", path, ct)
+		}
+	}
+	if got := reader.lists.Load(); got != before {
+		t.Fatalf("an over-long q still ran %d listing read(s)", got-before)
+	}
+
+	// Surrounding whitespace is trimmed before the bound applies.
+	resp = mustGet(t, ts.URL+"/v1/assets?q=%20"+strings.Repeat("a", 100)+"%20")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("padded 100-byte q: status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestAssetList_BootSeededPageIsLabelledStale is the honesty half of the boot seed.
+//
+// A boot-seeded page-set is real data, but it was observed by a
+// PREVIOUS process and is stale by construction. Serving it is the
+// fix; serving it under `flags.stale: false` with `as_of` stamped to
+// the moment of the request would be a new lie — precisely the one
+// /v1/markets was corrected for (markets.go: "never now() over rows a
+// failing refresh has let age past the TTL").
+//
+// The assertions are on the CORRECTED VALUES: stale must be true, and
+// as_of must equal the seed's real observation time to the second, not
+// merely be non-zero.
+func TestAssetList_BootSeededPageIsLabelledStale(t *testing.T) {
+	const ttl = time.Minute
+	reader := v1.NewCachedAssetsReader(&paginatingAssetsReader{total: 1000}, ttl)
+
+	// The key the handler will look up for `?limit=2`: it overfetches
+	// by one, so Limit is 3. Built through the same SeedListing seam
+	// the boot path uses.
+	observedAt := time.Now().Add(-30 * time.Minute).UTC().Truncate(time.Second)
+	opts := timescale.ListAssetsOptions{Limit: 3}
+	seeded := []timescale.AssetRow{
+		{AssetID: "SEEDED1-GAAA", Slug: "seeded1", Code: "SEEDED1", ObservationCount: 9},
+		{AssetID: "SEEDED2-GAAA", Slug: "seeded2", Code: "SEEDED2", ObservationCount: 8},
+	}
+	if !reader.SeedListing(opts, seeded, observedAt) {
+		t.Fatal("SeedListing refused the boot seed")
+	}
+
+	srv := v1.New(v1.Options{AssetsReader: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets?limit=2")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data  []v1.AssetDetail `json:"data"`
+		AsOf  time.Time        `json:"as_of"`
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}
+	mustDecode(t, resp, &env)
+
+	if len(env.Data) != 2 || env.Data[0].AssetID != "SEEDED1-GAAA" {
+		t.Fatalf("data = %+v, want the seeded rows served straight from the boot seed", env.Data)
+	}
+	if !env.Flags.Stale {
+		t.Error("flags.stale = false over a page-set observed 30 minutes ago — a boot seed must be labelled, not passed off as fresh")
+	}
+	if !env.AsOf.Equal(observedAt) {
+		t.Errorf("as_of = %s, want the served rows' real observation time %s",
+			env.AsOf.Format(time.RFC3339Nano), observedAt.Format(time.RFC3339Nano))
+	}
+}
+
+// TestAssetList_FreshCachedPageIsNotLabelledStale is the other side of
+// the same contract: the honest label must discriminate. A page-set
+// inside the TTL is not stale, and stamping `stale: true` on every
+// cached response would make the flag worthless.
+func TestAssetList_FreshCachedPageIsNotLabelledStale(t *testing.T) {
+	reader := v1.NewCachedAssetsReader(&paginatingAssetsReader{total: 1000}, time.Minute)
+	observedAt := time.Now().Add(-2 * time.Second).UTC().Truncate(time.Second)
+	if !reader.SeedListing(timescale.ListAssetsOptions{Limit: 3}, []timescale.AssetRow{
+		{AssetID: "SEEDED1-GAAA", Slug: "seeded1", Code: "SEEDED1"},
+	}, observedAt) {
+		t.Fatal("SeedListing refused the seed")
+	}
+
+	ts := httpTestServer(t, v1.New(v1.Options{AssetsReader: reader}))
+	resp := mustGet(t, ts.URL+"/v1/assets?limit=2")
+	var env struct {
+		AsOf  time.Time `json:"as_of"`
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}
+	mustDecode(t, resp, &env)
+
+	if env.Flags.Stale {
+		t.Error("flags.stale = true over a page-set observed 2 seconds ago under a 1-minute TTL")
+	}
+	if !env.AsOf.Equal(observedAt) {
+		t.Errorf("as_of = %s, want the served rows' observation time %s",
+			env.AsOf.Format(time.RFC3339Nano), observedAt.Format(time.RFC3339Nano))
+	}
+}
+
+// TestAssetList_UncachedReaderStillFresh — the degraded path. A wired
+// reader with no cache (every test double in this package, and any
+// deployment with the listing cache off) answers live, so it must not
+// acquire a stale flag or a back-dated as_of from this change.
+func TestAssetList_UncachedReaderStillFresh(t *testing.T) {
+	ts := httpTestServer(t, v1.New(v1.Options{AssetsReader: &paginatingAssetsReader{total: 10}}))
+	before := time.Now().UTC().Add(-time.Second)
+
+	resp := mustGet(t, ts.URL+"/v1/assets?limit=2")
+	var env struct {
+		Data  []v1.AssetDetail `json:"data"`
+		AsOf  time.Time        `json:"as_of"`
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}
+	mustDecode(t, resp, &env)
+
+	if len(env.Data) != 2 {
+		t.Fatalf("data = %+v", env.Data)
+	}
+	if env.Flags.Stale {
+		t.Error("flags.stale = true on a live uncached read")
+	}
+	if env.AsOf.Before(before) {
+		t.Errorf("as_of = %s is back-dated; a live read stamps now", env.AsOf.Format(time.RFC3339Nano))
+	}
+}
+
+// The listing's ORDER BY has a LEADING rank-tier key (flagged /
+// unpriced rows sort below rankable ones). The keyset cursor MUST carry
+// that key — a cursor that encodes fewer keys than the ORDER BY ranks on
+// resumes at the wrong place and drops whole tiers of rows. These pin the
+// handler's half of that contract: it emits the store's encoding verbatim
+// (tier first) on BOTH /v1/assets paths, and the emitted cursor is
+// accepted back by the same handler's validator.
+
+// The reported row, as the store would hand it to the handler.
+// Named constants rather than inline literals — a G-strkey spelled out
+// next to a field whose name ends in "Key" trips gitleaks' generic-api-key
+// rule (it is a public issuer address, not a secret), and the sibling
+// directory tests already use this shape.
+const (
+	jfkBankIssuer  = "GB7KFNUR5IAIN5NTYM2BUWWUTM6QMUBXF7NHXXKAMRPFLFWR7KL5BANK"
+	jfkBankAssetID = "JFKBANK2-" + jfkBankIssuer
+)
+
+// rankTierAssetsReader returns one demoted row carrying the sort keys the
+// store's listing query would have produced.
+type rankTierAssetsReader struct {
+	stubAssetsReaderExt
+	lastCursor string
+}
+
+func (r *rankTierAssetsReader) ListAssetsExt(_ context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
+	r.lastCursor = opts.Cursor
+	tier := 2
+	sortVol := "62341.98422258"
+	// Two rows so the handler's overfetch-by-one sees a next page at limit=1.
+	rows := make([]timescale.AssetRow, 0, 2)
+	for i := 0; i < 2; i++ {
+		rows = append(rows, timescale.AssetRow{
+			AssetID:          jfkBankAssetID,
+			Slug:             jfkBankAssetID,
+			Code:             "JFKBANK2",
+			IssuerGStrkey:    jfkBankIssuer,
+			ObservationCount: int64(1779 - i),
+			SortVolume24hUSD: &sortVol,
+			RankTier:         &tier,
+		})
+	}
+	return rows, nil
+}
+
+func nextCursorOf(t *testing.T, ts, path string) string {
+	t.Helper()
+	resp := mustGet(t, ts+path)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s status = %d", path, resp.StatusCode)
+	}
+	var env struct {
+		Pagination *struct {
+			Next string `json:"next"`
+		} `json:"pagination"`
+	}
+	mustDecode(t, resp, &env)
+	if env.Pagination == nil || env.Pagination.Next == "" {
+		t.Fatalf("GET %s emitted no next cursor", path)
+	}
+	return env.Pagination.Next
+}
+
+func TestAssetList_NextCursorCarriesTheRankTier(t *testing.T) {
+	reader := &rankTierAssetsReader{}
+	srv := v1.New(v1.Options{AssetsReader: reader})
+	ts := httpTestServer(t, srv)
+
+	// Observation-count listing: <rank_tier>:<observation_count>:<asset_id>.
+	obs := nextCursorOf(t, ts.URL, "/v1/assets?limit=1")
+	wantObs := "2:1779:" + jfkBankAssetID
+	if obs != wantObs {
+		t.Fatalf("observation-count next cursor = %q, want %q", obs, wantObs)
+	}
+
+	// Unified listing's classic phase:
+	// classic:<rank_tier>:<sort_volume>:<asset_id>. The sort volume stays
+	// the §4-B adjusted key, not the raw payload volume.
+	cls := nextCursorOf(t, ts.URL, "/v1/assets?asset_class=all&limit=1")
+	wantCls := "classic:2:62341.98422258:" + jfkBankAssetID
+	if cls != wantCls {
+		t.Fatalf("classic-phase next cursor = %q, want %q", cls, wantCls)
+	}
+
+	// Both must be accepted back by the handler that minted them (which
+	// validates cursors at the boundary), and reach the store intact.
+	for _, tc := range []struct{ path, wantInner string }{
+		{"/v1/assets?limit=1&cursor=" + url.QueryEscape(obs), obs},
+		{"/v1/assets?asset_class=all&limit=1&cursor=" + url.QueryEscape(cls), strings.TrimPrefix(cls, "classic:")},
+	} {
+		resp := mustGet(t, ts.URL+tc.path)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("replaying own cursor on %s: status = %d, want 200", tc.path, resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+		if reader.lastCursor != tc.wantInner {
+			t.Errorf("store received cursor %q, want %q", reader.lastCursor, tc.wantInner)
 		}
 	}
 }

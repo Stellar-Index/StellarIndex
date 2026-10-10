@@ -12,11 +12,13 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming/redispub"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // fakeHub captures Hub.Publish calls.
@@ -436,5 +438,245 @@ func TestSubscriber_ForwardsOneFramePerBucket(t *testing.T) {
 	}
 	if got, want := callValues(t, hub.Calls()), "0.100000000000,"+sentinelValue; got != want {
 		t.Fatalf("forwarded values = [%s], want [%s] — one frame per bucket, in order", got, want)
+	}
+}
+
+// subscribeOutcomes is every outcome label the subscriber can emit. A
+// responder reading `malformed` must not be looking at a clock-skew drop.
+var subscribeOutcomes = []string{"ok", "decode_error", "malformed", "future_observed_at", "stale_observed_at", "duplicate", "dropped_slow_consumer"}
+
+// TestNewSubscriber_SeedsEveryOutcome pins that a wired subscriber
+// exports every outcome at zero before its first message, so a rule can
+// read "no ok events" as a real zero rather than an absent series.
+func TestNewSubscriber_SeedsEveryOutcome(t *testing.T) {
+	_, rdb := newRedis(t)
+	if _, err := redispub.NewSubscriber(rdb, "test:seed", &fakeHub{}, nil); err != nil {
+		t.Fatalf("NewSubscriber: %v", err)
+	}
+	mfs, err := obs.Registry.Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, mf := range mfs {
+		if mf.GetName() != "stellarindex_api_stream_subscribe_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, lp := range m.GetLabel() {
+				if lp.GetName() == "outcome" {
+					seen[lp.GetValue()] = true
+				}
+			}
+		}
+	}
+	for _, o := range subscribeOutcomes {
+		if !seen[o] {
+			t.Errorf("outcome %q not exported after NewSubscriber; exported = %v", o, seen)
+		}
+	}
+}
+
+// TestSubscriber_CountsRejectionsByCause — an API host whose clock lags
+// the aggregator by more than the forward-skew tolerance drops every
+// event. That must be countable as clock skew, distinct from a stale
+// replay and from a malformed payload.
+func TestSubscriber_CountsRejectionsByCause(t *testing.T) {
+	const channel = "test:outcomes"
+	_, rdb := newRedis(t)
+	hub := &fakeHub{}
+	sub, err := redispub.NewSubscriber(rdb, channel, hub, nil)
+	if err != nil {
+		t.Fatalf("NewSubscriber: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = sub.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond) // let SUBSCRIBE bind (miniredis race)
+
+	before := map[string]float64{}
+	for _, o := range subscribeOutcomes {
+		before[o] = testutil.ToFloat64(obs.APIStreamSubscribeTotal.WithLabelValues(o))
+	}
+
+	asset := canonical.NativeAsset().String()
+	const quote = "fiat:USD"
+	event := func(window int, value string, at time.Time) string {
+		return fmt.Sprintf(`{"asset":%q,"quote":%q,"window_seconds":%d,"value_decimal":%q,"observed_at":%q}`,
+			asset, quote, window, value, at.UTC().Format(time.RFC3339))
+	}
+	now := time.Now()
+	publishRaw(t, rdb, channel, event(300, "1.0", now.Add(6*time.Minute)))
+	publishRaw(t, rdb, channel, event(300, "1.0", now.Add(-25*time.Hour)))
+	publishRaw(t, rdb, channel, event(0, "1.0", now))
+	const sentinel = "7.654321000000"
+	publishRaw(t, rdb, channel, event(300, sentinel, now))
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !hasValue(t, hub.Calls(), sentinel) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !hasValue(t, hub.Calls(), sentinel) {
+		t.Fatalf("valid sentinel never fanned out")
+	}
+
+	want := map[string]float64{"ok": 1, "decode_error": 0, "malformed": 1, "future_observed_at": 1, "stale_observed_at": 1}
+	for _, o := range subscribeOutcomes {
+		if got := testutil.ToFloat64(obs.APIStreamSubscribeTotal.WithLabelValues(o)) - before[o]; got != want[o] {
+			t.Errorf("outcome %q incremented by %v, want %v", o, got, want[o])
+		}
+	}
+}
+
+// runSubscriber starts a Subscriber on channel and returns its hub, its
+// Redis client and a raw-payload publisher.
+func runSubscriber(t *testing.T, channel string) (*fakeHub, *redis.Client, func(payload string)) {
+	t.Helper()
+	_, rdb := newRedis(t)
+	hub := &fakeHub{}
+	sub, err := redispub.NewSubscriber(rdb, channel, hub, nil)
+	if err != nil {
+		t.Fatalf("NewSubscriber: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = sub.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond) // let SUBSCRIBE bind (miniredis race)
+	return hub, rdb, func(payload string) { publishRaw(t, rdb, channel, payload) }
+}
+
+func waitForCalls(hub *fakeHub, n int) []hubCall {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(hub.Calls()) < n {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond) // catch a frame that should not have come
+	return hub.Calls()
+}
+
+// A frozen bucket reaches SSE clients as a value-less price_frozen frame in
+// the 60-second series' price_frozen shape, plus frozen_since.
+func TestSubscriber_FrozenEventFansOutAsPriceFrozen(t *testing.T) {
+	const channel = "test:closed"
+	hub, rdb, _ := runSubscriber(t, channel)
+	pub, err := redispub.NewPublisher(rdb, channel)
+	if err != nil {
+		t.Fatalf("NewPublisher: %v", err)
+	}
+	usd, err := canonical.ParseAsset("fiat:USD")
+	if err != nil {
+		t.Fatalf("ParseAsset: %v", err)
+	}
+	pair := canonical.Pair{Base: canonical.NativeAsset(), Quote: usd}
+	bucket := time.Now().UTC().Truncate(time.Minute)
+	since := bucket.Add(-3 * time.Minute)
+	if err := pub.PublishFrozenBucket(context.Background(), pair, 5*time.Minute, bucket, since); err != nil {
+		t.Fatalf("PublishFrozenBucket: %v", err)
+	}
+
+	calls := waitForCalls(hub, 1)
+	if len(calls) != 1 {
+		t.Fatalf("Hub.Publish called %d times, want 1", len(calls))
+	}
+	if calls[0].eventType != "price_frozen" {
+		t.Errorf("event type = %q, want price_frozen", calls[0].eventType)
+	}
+	if want := "closed:native/fiat:USD/300"; calls[0].topic != want {
+		t.Errorf("topic = %q, want %q", calls[0].topic, want)
+	}
+	at, from := bucket.Format(time.RFC3339), since.Format(time.RFC3339)
+	want := fmt.Sprintf(`{"data":{"asset_id":"native","quote":"fiat:USD","observed_at":%q,"window_seconds":300,"frozen_since":%q},"as_of":%q,"flags":{"frozen":true,"frozen_checked":true}}`,
+		at, from, at)
+	if got := string(calls[0].data); got != want {
+		t.Errorf("frame =\n  %s\nwant\n  %s", got, want)
+	}
+}
+
+// A frozen event carrying any part of a value, an impossible frozen_since,
+// or an unknown kind was not produced by an aggregator and is dropped.
+func TestSubscriber_DropsMalformedFrozenEvents(t *testing.T) {
+	hub, _, publish := runSubscriber(t, "test:closed")
+	bucket := time.Now().UTC().Truncate(time.Minute)
+	at, later := bucket.Format(time.RFC3339), bucket.Add(time.Minute).Format(time.RFC3339)
+	head := `{"asset":"native","quote":"fiat:USD","window_seconds":300,"observed_at":"` + at + `"`
+	for _, forged := range []string{
+		head + `,"kind":"frozen","value_decimal":"0.100000000000"}`,
+		head + `,"kind":"frozen","truncated":false}`,
+		head + `,"kind":"frozen","truncated":true,"covered_from":"` + at + `"}`,
+		head + `,"kind":"frozen","frozen_since":"` + later + `"}`,
+		head + `,"kind":"thawed"}`,
+		head + `,"value_decimal":"0.100000000000","frozen_since":"` + at + `"}`,
+	} {
+		publish(forged)
+	}
+	publish(head + `,"kind":"frozen","frozen_since":"` + at + `"}`)
+
+	calls := waitForCalls(hub, 1)
+	if len(calls) != 1 || calls[0].eventType != "price_frozen" {
+		t.Fatalf("forwarded %d frames (%+v), want only the valid price_frozen", len(calls), calls)
+	}
+}
+
+// A topic carries one frame per bucket whatever its kind, in order: a price
+// for a bucket already forwarded as frozen is a duplicate, and the next
+// bucket's price goes out as a price_update.
+func TestSubscriber_OneFramePerBucketAcrossKinds(t *testing.T) {
+	hub, _, publish := runSubscriber(t, "test:closed")
+	bucket := time.Now().UTC().Truncate(time.Minute)
+	event := func(at time.Time, rest string) string {
+		return `{"asset":"native","quote":"fiat:USD","window_seconds":300,"observed_at":"` + at.Format(time.RFC3339) + `",` + rest + `}`
+	}
+	publish(event(bucket.Add(-time.Minute), `"kind":"frozen"`))
+	publish(event(bucket.Add(-time.Minute), `"value_decimal":"0.100000000000"`))
+	publish(event(bucket, `"value_decimal":"0.200000000000"`))
+
+	calls := waitForCalls(hub, 2)
+	if len(calls) != 2 {
+		t.Fatalf("forwarded %d frames, want 2", len(calls))
+	}
+	if calls[0].eventType != "price_frozen" || calls[1].eventType != "price_update" {
+		t.Errorf("event types = %q, %q; want price_frozen, price_update", calls[0].eventType, calls[1].eventType)
+	}
+	if got := decodeCall(t, calls[1].data).Data.Price; got != "0.200000000000" {
+		t.Errorf("second frame price = %q, want the next bucket's", got)
+	}
+}
+
+// TestSubscriber_FrameTimestampsRenderUTC pins that the /v1/price/stream
+// frame renders as_of and observed_at with a literal Z even when the
+// producer's event carried a local offset: a client bucketing on the
+// string would otherwise mis-bucket by the offset.
+func TestSubscriber_FrameTimestampsRenderUTC(t *testing.T) {
+	const channel = "test:closed:utc"
+	_, rdb := newRedis(t)
+	hub := &fakeHub{}
+	sub, err := redispub.NewSubscriber(rdb, channel, hub, nil)
+	if err != nil {
+		t.Fatalf("NewSubscriber: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = sub.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+
+	bucket := time.Now().UTC().Truncate(time.Minute).Add(-2 * time.Minute)
+	local := bucket.In(time.FixedZone("CEST", 2*60*60))
+	publishRaw(t, rdb, channel, fmt.Sprintf(
+		`{"asset":"native","quote":"fiat:USD","window_seconds":300,"value_decimal":"0.100000000000","observed_at":%q}`,
+		local.Format(time.RFC3339)))
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(hub.Calls()) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	calls := hub.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("got %d frames, want 1", len(calls))
+	}
+	want := `"` + bucket.Format("2006-01-02T15:04:05Z") + `"`
+	for _, key := range []string{`"as_of":`, `"observed_at":`} {
+		if !bytes.Contains(calls[0].data, []byte(key+want)) {
+			t.Errorf("frame %s = %s, want %s%s (UTC with a Z offset)", key, calls[0].data, key, want)
+		}
 	}
 }

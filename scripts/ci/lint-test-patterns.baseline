@@ -105,7 +105,7 @@ md-read internal/config/selfhosting_doc_test.go
 md-read internal/customerwebhook/retry_window_internal_test.go
 md-read internal/incidents/incidents_test.go
 md-read internal/ops/archive/verify_archive_tier_e_test.go
-md-read internal/ops/chops/ch_rebuild_backfillsafe_callsite_test.go
+md-read internal/ops/chops/ch_rebuild_backfillsafe_test.go
 md-read internal/ops/ingest/backfill_procedure_docs_test.go
 md-read internal/ops/ingest/directory_sync_test.go
 md-read internal/pricingguard/surface_labels_test.go
