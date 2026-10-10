@@ -70,6 +70,13 @@ function ageText(v: Verdict): string {
   return `${formatDurationShort(v.age_seconds)} ago`;
 }
 
+/** Age as a share of its SLO for the freshness bar; null when there is no real age to plot. */
+export function sloShare(v: Verdict, slo: number): number | null {
+  if (v.age_seconds === null || v.age_seconds === undefined) return null;
+  if (isFutureDated(v) || slo <= 0) return null;
+  return v.age_seconds / slo;
+}
+
 // dateText renders an ISO timestamp as a compact UTC date-time; null →
 // "never" (the API's null means the series is absent, which for a
 // backup stamp reads as "never recorded").
@@ -346,6 +353,7 @@ function VerdictRow({
   resultLabel?: string;
 }) {
   const tone = verdictTone(verdict.status);
+  const share = sloShare(verdict, slo);
   const ageClass =
     verdict.status === 'stale'
       ? 'text-bad-700'
@@ -368,6 +376,21 @@ function VerdictRow({
           <span className={`tnum text-sm ${ageClass}`}>{ageText(verdict)}</span>
         </dd>
       </div>
+      {share !== null && (
+        <div
+          role="meter"
+          aria-label={`${label}: ${Math.round(share * 100)}% of SLO`}
+          aria-valuenow={Math.round(share * 100)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          className="bg-line mt-1 h-1 overflow-hidden rounded-full"
+        >
+          <div
+            className={`h-full rounded-full ${share > 1 ? 'bg-bad-500' : share > 0.8 ? 'bg-warn-500' : 'bg-ok-500'}`}
+            style={{ width: `${Math.min(share, 1) * 100}%` }}
+          />
+        </div>
+      )}
       <div className="text-ink-faint mt-0.5 flex justify-between gap-3 text-[11px]">
         <span>{detail}</span>
         <span className="whitespace-nowrap">{sloText(slo)}</span>

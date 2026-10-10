@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import BackupsPanel from './BackupsPanel';
+import BackupsPanel, { sloShare } from './BackupsPanel';
 
 // The public status page must show backup freshness honestly: green only
 // within SLO, red with the real age past it, grey "no data" when a source is
@@ -288,5 +288,17 @@ describe('BackupsPanel', () => {
       screen.getByText(/absence of data, not an all-clear/),
     ).toBeInTheDocument();
     absent('within SLO');
+  });
+});
+
+describe('sloShare', () => {
+  it('is age over SLO, past 1 when breached', () => {
+    expect(sloShare(verdict('ok', 3600, 7200), 7200)).toBe(0.5);
+    expect(sloShare(verdict('stale', 14400, 7200), 7200)).toBe(2);
+  });
+
+  it('has no bar for an unmeasured or future-dated age', () => {
+    expect(sloShare(verdict('unknown', null, 7200), 7200)).toBeNull();
+    expect(sloShare(verdict('unknown', -30, 7200), 7200)).toBeNull();
   });
 });
