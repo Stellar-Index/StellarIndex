@@ -154,6 +154,10 @@ jobs:
       # Measured standalone: 1.27s.
       - name: lint-lexicon
         run: ./scripts/ci/lint-lexicon.sh
+      - name: lint-test-patterns
+        run: ./scripts/ci/lint-test-patterns.sh
+      - name: lint-test-patterns self-test
+        run: bash scripts/ci/lint-test-patterns-test.sh
       # Measured standalone: 0.11s.
       - name: lint-actions-pinning
         run: bash scripts/ci/lint-actions-pinning.sh

@@ -255,8 +255,7 @@ func TestHandleCreate_OmittedCooldown_DefaultsNonZero(t *testing.T) {
 }
 
 // TestCooldownBelowFloor_Rejected400 pins that an explicit cooldown
-// below platform.MinAlertCooldownSeconds (0 included, formerly the
-// "re-fire every tick" opt-in) is a 400 on create and PATCH — it made the
+// below platform.MinAlertCooldownSeconds (0 included) is a 400 on create and PATCH — it made the
 // level-triggered evaluator enqueue every subscribed webhook each tick.
 // The floor itself is accepted.
 func TestCooldownBelowFloor_Rejected400(t *testing.T) {

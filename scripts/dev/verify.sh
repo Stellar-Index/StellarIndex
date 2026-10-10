@@ -283,6 +283,8 @@ echo "=== Imports ==="       && ./scripts/ci/lint-imports.sh
 echo "=== Imports self-test ===" && ./scripts/ci/lint-imports-test.sh
 echo "=== Protocol registry sync ===" && ./scripts/ci/lint-protocol-registry-sync.sh
 echo "=== Lexicon ==="       && ./scripts/ci/lint-lexicon.sh
+echo "=== Test patterns ===" && ./scripts/ci/lint-test-patterns.sh
+echo "=== Test patterns self-test ===" && ./scripts/ci/lint-test-patterns-test.sh
 echo "=== Deprecation removal versions ===" && ./scripts/ci/check-deprecations.sh
 echo "=== Deprecation removal versions self-test ===" && bash scripts/ci/check-deprecations-test.sh
 echo "=== i128/NUMERIC ===" && ./scripts/ci/lint-i128.sh

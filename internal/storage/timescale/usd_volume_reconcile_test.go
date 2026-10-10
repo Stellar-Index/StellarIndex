@@ -140,7 +140,7 @@ func TestExactTierDelta_HoldsAndCatchesOneUnit(t *testing.T) {
 
 	// One unit off at the render scale: $450.00000001. At a REALISTIC daily
 	// volume this magnitude falls below the float64 ulp entirely — see the
-	// DB-backed sibling (test/integration/usd_volume_value_reconcile_test.go),
+	// DB-backed sibling (test/integration/usd_volume_test.go),
 	// which sizes the fixture to $500M and asserts a naive float check reports
 	// zero. That is why this comparison is exact rational arithmetic.
 	g.SumUSDVolume = "450.00000001"
