@@ -8,29 +8,14 @@ import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import {
   PoolDepthDetail,
-  type PoolDepthRow,
+  type LiquidityPoolRow,
   assetLabel,
   displayUnits,
+  midPriceLabel,
 } from './PoolDepthDetail';
-import { Button, Mono } from '@/components/ui';
+import Link from 'next/link';
+import { Button } from '@/components/ui';
 import { AssetText } from '@/components/AssetLink';
-
-interface LiquidityPoolRow extends PoolDepthRow {
-  pool_hex: string;
-  model: string;
-  trustlines: number;
-  total_shares: string;
-  mid_price_a_in_b: string | null;
-}
-
-function midPriceLabel(mid: string | null): string {
-  if (!mid) return '—';
-  const n = Number(mid);
-  if (!Number.isFinite(n) || n === 0) return mid;
-  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(
-    n,
-  );
-}
 
 /**
  * NativePoolsPanel — CURRENT two-sided reserves + constant-product
@@ -158,15 +143,16 @@ export function NativePoolsPanel() {
                           <AssetText canonical={row.reserve_a.asset} /> /{' '}
                           <AssetText canonical={row.reserve_b.asset} />
                         </span>{' '}
-                        {/* The full pool id was hover-only (`title=`),
-                            unreachable by touch/keyboard. Mono keeps the
-                            hover title AND adds the canonical copy
-                            button, which is the reachable path. */}
-                        <Mono
-                          value={row.pool}
-                          truncate={{ head: 4, tail: 4 }}
-                          className="text-ink-muted text-xs"
-                        />
+                        {/* Touch/keyboard reach the full, copyable id on
+                            the pool's own page. */}
+                        <Link
+                          href={`/liquidity-pools/${row.pool}/`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-ink-muted hover:text-brand-600 text-xs"
+                          title={row.pool}
+                        >
+                          {row.pool.slice(0, 4)}…{row.pool.slice(-4)}
+                        </Link>
                       </td>
                       <td className="py-2 pr-3 text-right tabular-nums">
                         {displayUnits(
