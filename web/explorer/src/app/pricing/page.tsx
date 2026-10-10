@@ -76,7 +76,6 @@ export default function PricingPage() {
     <Container className="space-y-12 py-10 sm:py-14">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Pricing' }]}
-        eyebrow="Plans"
         title="Pricing"
         description={
           <>

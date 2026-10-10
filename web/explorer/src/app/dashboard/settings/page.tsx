@@ -53,7 +53,6 @@ function SettingsBody({ me }: { me: MeResponse }) {
             { label: 'Dashboard', href: '/dashboard' },
             { label: 'Settings' },
           ]}
-          eyebrow="Account"
           title="Settings"
           description="Your profile, plan, and account controls."
         />

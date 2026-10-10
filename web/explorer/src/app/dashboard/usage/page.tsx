@@ -95,7 +95,6 @@ function UsageBody({ me }: { me: MeResponse }) {
             { label: 'Dashboard', href: '/dashboard' },
             { label: 'Usage' },
           ]}
-          eyebrow="Activity"
           title="Usage"
           description="Your daily request volume, per-key activity, and rate-limit headroom."
         />

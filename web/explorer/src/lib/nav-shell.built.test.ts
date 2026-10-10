@@ -50,8 +50,8 @@ const NAV_SOURCES: { file: string; literal: string }[] = [
 ];
 
 /**
- * The shortest real frame in the set is /operations (eyebrow + heading
- * + a two-line description, ~146 chars); a gated route's lean-net branch
+ * The shortest real frame in the set is /operations (heading
+ * + a two-line description, ~138 chars); a gated route's lean-net branch
  * (title + the NetworkUnavailable reason) is longer. The floor sits well
  * below both — a copy edit must not red the build — and far above the 0
  * an unresolved boundary leaves or the ~20 of a heading on its own, so

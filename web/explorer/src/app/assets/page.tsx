@@ -33,7 +33,6 @@ export default async function AssetsPage() {
     <Container className="space-y-8 py-8 sm:py-10">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Assets' }]}
-        eyebrow="Directory"
         title="Assets"
         description="Every classic and Soroban asset observed on Stellar, with live VWAP price."
       />

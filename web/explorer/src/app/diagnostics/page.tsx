@@ -41,7 +41,6 @@ export default function DiagnosticsPage() {
     <Container className="space-y-10 py-8 sm:py-10">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Diagnostics' }]}
-        eyebrow="System health"
         title="Diagnostics"
         description="Live ingest cursors, per-source completeness verdicts and archive completeness."
       />

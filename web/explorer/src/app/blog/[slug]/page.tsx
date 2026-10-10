@@ -58,7 +58,7 @@ export default async function BlogPostPage({ params }: { params: Params }) {
           { label: 'Blog', href: '/blog' },
           { label: post.title },
         ]}
-        eyebrow={`${post.date} · ${post.author}`}
+        meta={`${post.date} · ${post.author}`}
         title={post.title}
         description={post.summary || undefined}
       />

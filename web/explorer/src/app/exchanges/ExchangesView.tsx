@@ -82,7 +82,6 @@ export function ExchangesView() {
     <Container className="space-y-8 py-8 sm:py-10">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Exchanges' }]}
-        eyebrow="Centralised venues"
         title="Exchanges"
         description={
           <>

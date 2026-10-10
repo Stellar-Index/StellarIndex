@@ -837,7 +837,6 @@ function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
   return (
     <PageHeader
       breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Status' }]}
-      eyebrow="System status"
       title="Stellar Index status"
       description="Live health, latency, ingest freshness and a curated public-endpoint matrix, probed from your browser."
       actions={

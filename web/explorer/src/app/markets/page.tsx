@@ -35,11 +35,7 @@ export default function MarketsPage() {
   if (!routeAvailable('/markets')) {
     return (
       <Container className="space-y-8 py-8 sm:py-10">
-        <PageHeader
-          breadcrumbs={MARKETS_CRUMBS}
-          eyebrow="Trading pairs"
-          title="Markets"
-        />
+        <PageHeader breadcrumbs={MARKETS_CRUMBS} title="Markets" />
         <NetworkUnavailable href="/markets" />
       </Container>
     );
@@ -48,7 +44,6 @@ export default function MarketsPage() {
     <Container className="space-y-8 py-8 sm:py-10">
       <PageHeader
         breadcrumbs={MARKETS_CRUMBS}
-        eyebrow="Trading pairs"
         title="Markets"
         description="Top 100 (base, quote) pairs by 24h USD volume, of the thousands that traded on Stellar in the last 14 days. Heatmap, per-venue sub-tables, and a live trade tape land in subsequent passes."
       />
