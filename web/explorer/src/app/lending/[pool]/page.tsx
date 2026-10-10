@@ -313,9 +313,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
           role="status"
           className="border-line bg-surface-subtle text-ink-muted rounded-md border px-3 py-2 text-xs"
         >
-          Auction statistics are unavailable for this build — the lending
-          listing returned no rows, so the figures above are unknown rather than
-          zero. They refresh on the next build.
+          Auction statistics are unavailable for this build.
         </p>
       )}
 
