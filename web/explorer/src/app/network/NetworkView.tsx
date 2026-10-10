@@ -675,7 +675,20 @@ const LEDGER_CSV_COLUMNS = [
   'tx_count',
   'op_count',
   'soroban_event_count',
+  'close_gap_s',
 ] as const;
+
+/** Seconds each ledger closed after the one before it; rows are newest first, so the oldest has none. */
+export function closeGaps(
+  rows: Pick<Ledger, 'close_time'>[],
+): (number | null)[] {
+  return rows.map((l, i) => {
+    const prev = rows[i + 1];
+    if (!prev || !l.close_time || !prev.close_time) return null;
+    const ms = Date.parse(l.close_time) - Date.parse(prev.close_time);
+    return Number.isFinite(ms) ? Math.round(ms / 1000) : null;
+  });
+}
 
 function LatestLedgers({
   ledgers,
@@ -687,6 +700,7 @@ function LatestLedgers({
   error: boolean;
 }) {
   const rows = (ledgers ?? []).slice(0, 12);
+  const gaps = closeGaps(rows);
   return (
     <Panel
       headingLevel={2}
@@ -695,12 +709,13 @@ function LatestLedgers({
       download={{
         name: 'latest-ledgers',
         columns: LEDGER_CSV_COLUMNS,
-        rows: rows.map((l) => ({
+        rows: rows.map((l, i) => ({
           sequence: l.sequence,
           close_time: l.close_time,
           tx_count: l.tx_count,
           op_count: l.op_count,
           soroban_event_count: l.soroban_event_count,
+          close_gap_s: gaps[i],
         })),
       }}
       bodyClassName="-mx-4 -mb-4"
@@ -729,11 +744,16 @@ function LatestLedgers({
                 <Th align="right">Txs</Th>
                 <Th align="right">Ops</Th>
                 <Th align="right">Events</Th>
+                <Th align="right">
+                  <span title="Seconds after the previous ledger closed. The target cadence is about 5 s.">
+                    Close
+                  </span>
+                </Th>
                 <Th align="right">Age</Th>
               </TR>
             </THead>
             <TBody>
-              {rows.map((l) => (
+              {rows.map((l, i) => (
                 <TR key={l.sequence}>
                   <Td>
                     <Link
@@ -751,6 +771,16 @@ function LatestLedgers({
                   </Td>
                   <Td align="right">
                     {(l.soroban_event_count ?? 0).toLocaleString('en-US')}
+                  </Td>
+                  <Td
+                    align="right"
+                    className={
+                      (gaps[i] ?? 0) > 7
+                        ? 'text-warn-700 font-mono tabular-nums'
+                        : 'text-ink-muted font-mono tabular-nums'
+                    }
+                  >
+                    {gaps[i] == null ? '—' : `${gaps[i]}s`}
                   </Td>
                   <Td align="right" className="text-ink-muted">
                     {relativeAge(l.close_time)}
