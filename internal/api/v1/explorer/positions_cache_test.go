@@ -2,6 +2,8 @@ package explorer
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -171,5 +173,53 @@ func TestAccountPositions_HasItsOwnRefreshClass(t *testing.T) {
 	}
 	if got != "contract_detail_pos" {
 		t.Errorf("positions refresh class = %q, want contract_detail_pos", got)
+	}
+}
+
+// TestAccountPositions_FoldsRunConcurrently pins the
+// sub-second fix: the six protocol folds are independent reads and
+// must run CONCURRENTLY (endpoint latency = max, not sum). Serial execution would show max
+// in-flight of 1 and take 6x the delay.
+func TestAccountPositions_FoldsRunConcurrently(t *testing.T) {
+	const delay = 60 * time.Millisecond
+	reader := &slowPositionsReader{delay: delay}
+	h := &Handler{Positions: reader, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	start := time.Now()
+	var cov positionsCoverage
+	_ = h.collectPositions(context.Background(), "GTEST", func(string) string { return "" }, &cov)
+	elapsed := time.Since(start)
+
+	if got := reader.maxFlight.Load(); got < 2 {
+		t.Fatalf("max concurrent folds = %d, want >= 2 — the folds ran serially, which is the 1.99s breach", got)
+	}
+	// Serial would be >= 6*delay; concurrent should land near one delay.
+	if elapsed > 4*delay {
+		t.Errorf("elapsed %v with %v per fold — looks serial, want ~1 fold's latency", elapsed, delay)
+	}
+}
+
+// TestAccountPositions_CoverageOrderIsDeterministic pins that
+// parallelising did not make the degraded-protocol list order
+// (rendered into the wire coverage_note) depend on goroutine
+// scheduling: it must stay in the fixed fold order, run after run.
+func TestAccountPositions_CoverageOrderIsDeterministic(t *testing.T) {
+	var first string
+	for i := 0; i < 20; i++ {
+		reader := &slowPositionsReader{blendFails: true}
+		h := &Handler{Positions: reader, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		var cov positionsCoverage
+		_ = h.collectPositions(context.Background(), "GTEST", func(string) string { return "" }, &cov)
+		note := cov.note()
+		if note == "" {
+			t.Fatal("expected a degraded coverage note (three folds fail in this fixture)")
+		}
+		if i == 0 {
+			first = note
+			continue
+		}
+		if note != first {
+			t.Fatalf("coverage note is scheduling-dependent: run %d = %q, run 0 = %q", i, note, first)
+		}
 	}
 }

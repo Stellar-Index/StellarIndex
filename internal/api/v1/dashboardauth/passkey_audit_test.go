@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -231,69 +232,34 @@ func TestPasskeyDelete_AuditSinkFailureIsCounted(t *testing.T) {
 	}
 }
 
-// TestPasskeyFinishLogin_CloneWarningRefusedAuditedAndCounted — a
-// sign-counter regression is WebAuthn's one signal that the private key
-// exists twice. The login must be refused, and the refusal must leave a
-// durable row and move the counter the clone-warning alert reads.
-func TestPasskeyFinishLogin_CloneWarningRefusedAuditedAndCounted(t *testing.T) {
-	rig, auth, _ := newLiveClockPasskeyRig(t)
-	sink := withAuditSink(rig)
-	stored := storedCredential(t, rig)
-	// The genuine authenticator has already signed at counter 5.
-	if err := rig.passkeys.UpdateWebAuthnCredentialSignCount(context.Background(), stored.ID, 5, rig.now()); err != nil {
-		t.Fatalf("advance stored sign count: %v", err)
-	}
-	refusals := obs.PasskeyLoginRefusalsTotal.WithLabelValues(obs.PasskeyRefusalCloneWarning)
-	before := testutil.ToFloat64(refusals)
+func TestPasskeyFinishRegister_RejectsForeignUserCeremony(t *testing.T) {
+	rig := newPasskeyRig(t)
 
-	cookie, challenge := beginLogin(t, rig)
-	// A copy of the key signs at counter 3 — behind the stored 5.
-	w := finishLogin(t, rig, cookie, auth.assertionBody(t, challenge, flagUserPresent|flagUserVerified, 3))
-	if w.Code != http.StatusBadRequest || sessionCookieSet(w) {
-		t.Fatalf("clone-warning login: status %d, session minted %v — want 400 and no session", w.Code, sessionCookieSet(w))
+	// Ceremony minted for ANOTHER user must not register onto ours.
+	otherID := uuid.New()
+	w0 := httptest.NewRecorder()
+	err := rig.h.setPasskeyCeremonyCookie(w0, passkeyCeremony{
+		Purpose: "register",
+		Session: webauthn.SessionData{
+			Challenge: "example-challenge-placeholder",
+			UserID:    otherID[:],
+			Expires:   rig.now().Add(passkeyCeremonyTTL),
+		},
+	})
+	if err != nil {
+		t.Fatalf("set cookie: %v", err)
 	}
-	if got := testutil.ToFloat64(refusals) - before; got != 1 {
-		t.Fatalf("clone_warning refusals rose by %v, want 1", got)
-	}
-	e := onlyAuditEntry(t, sink)
-	if e.Action != AuditActionPasskeyCloneWarning || e.ActorKind != platform.ActorSystem ||
-		e.ActorUserID != uuid.Nil || e.AccountID != rig.user.AccountID || e.TargetID != stored.ID.String() {
-		t.Fatalf("audit row = %+v, want a system passkey.clone_warning on %s with no actor user", e, stored.ID)
-	}
-	meta := auditMeta(t, e)
-	if meta["credential_owner_user_id"] != rig.user.ID.String() ||
-		meta["stored_sign_count"] != float64(5) || meta["presented_sign_count"] != float64(3) {
-		t.Fatalf("audit metadata = %v, want owner and both sign counts", meta)
-	}
-}
+	c := ceremonyCookie(t, w0)
 
-// TestPasskeyFinishLogin_ReplayIsAuditedAndCounted — a captured
-// finish-login request presented twice is refused; the refusal is
-// recorded against the credential it tried to use.
-func TestPasskeyFinishLogin_ReplayIsAuditedAndCounted(t *testing.T) {
-	rig, auth, _ := newLiveClockPasskeyRig(t)
-	sink := withAuditSink(rig)
-	stored := storedCredential(t, rig)
-	refusals := obs.PasskeyLoginRefusalsTotal.WithLabelValues(obs.PasskeyRefusalCeremonyReplay)
-
-	cookie, challenge := beginLogin(t, rig)
-	body := auth.assertionBody(t, challenge, flagUserPresent|flagUserVerified, 0)
-	if first := finishLogin(t, rig, cookie, body); first.Code != http.StatusOK {
-		t.Fatalf("first finish-login status = %d, want 200", first.Code)
+	body := `{"name":"Example key","credential":{"id":"x"}}`
+	req := rig.withSession(httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/finish-register", strings.NewReader(body)))
+	req.AddCookie(&http.Cookie{Name: PasskeyCeremonyCookieName, Value: c.Value})
+	w := httptest.NewRecorder()
+	rig.h.HandlePasskeyFinishRegister(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
 	}
-	if n := len(sink.all()); n != 0 {
-		t.Fatalf("a successful sign-in wrote %d refusal rows, want 0", n)
-	}
-	before := testutil.ToFloat64(refusals)
-	if second := finishLogin(t, rig, cookie, body); second.Code != http.StatusBadRequest {
-		t.Fatalf("replay status = %d, want 400", second.Code)
-	}
-	if got := testutil.ToFloat64(refusals) - before; got != 1 {
-		t.Fatalf("ceremony_replay refusals rose by %v, want 1", got)
-	}
-	e := onlyAuditEntry(t, sink)
-	if e.Action != AuditActionPasskeyLoginReplay || e.ActorKind != platform.ActorSystem ||
-		e.AccountID != rig.user.AccountID || e.TargetID != stored.ID.String() {
-		t.Fatalf("audit row = %+v, want a system passkey.login_replay on %s", e, stored.ID)
+	if rows, _ := rig.passkeys.ListWebAuthnCredentialsForUser(context.Background(), rig.user.ID); len(rows) != 0 {
+		t.Fatalf("credential stored despite user mismatch (%d rows)", len(rows))
 	}
 }

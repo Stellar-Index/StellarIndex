@@ -417,3 +417,108 @@ func TestMonthlyQuota_StaleFailureDoesNotFailClosed(t *testing.T) {
 		t.Errorf("new blip status = %d, want 200 (a stale failure must not trip the dwell clock)", status)
 	}
 }
+
+func TestMonthlyQuota_ClientAbortsDoNotArmFailClosed(t *testing.T) {
+	clock := newManualClock()
+	reader := &abortAwareMTDReader{}
+	mw := middleware.MonthlyQuota(reader, nil, middleware.WithMonthlyQuotaClock(clock.now))
+	attacker := auth.Subject{Tier: auth.TierAPIKey, KeyID: "K-abort", MonthlyQuota: 1_000_000}
+
+	// An abort flood: nothing but cancelled requests, spanning more than
+	// the dwell window. Otherwise this arms the process-wide clock and
+	// keeps it armed.
+	runAbortedWithSubject(t, mw, attacker)
+	clock.advance(middleware.DefaultMonthlyQuotaDwellTime + time.Second)
+	runAbortedWithSubject(t, mw, attacker)
+	if reader.liveReads != 2 {
+		t.Fatalf("the abort flood reached the counter on a live context %d times, want 2: "+
+			"the month-to-date read is still bound to the client's cancellation", reader.liveReads)
+	}
+
+	// A DIFFERENT, well-behaved metered customer now hits one genuine
+	// transient blip. The gate's documented posture for a single blip is
+	// fail OPEN — the cap is billing fairness, not a security boundary.
+	reader.blip = errors.New("redis MISCONF")
+	victim := auth.Subject{Tier: auth.TierAPIKey, KeyID: "K-victim", MonthlyQuota: 1_000_000}
+	status, _, body := runWithSubject(t, mw, victim)
+	if status != http.StatusOK {
+		t.Fatalf("an innocent metered customer got %d on their FIRST blip, want 200 (fail open). "+
+			"Client aborts pre-armed the process-wide fail-closed clock, so an attacker can convert "+
+			"every customer's next transient hiccup into a 429. Body: %s", status, body)
+	}
+	if strings.Contains(body, "monthly-quota-unavailable") {
+		t.Errorf("fail-closed problem body served on a first blip: %s", body)
+	}
+
+	// And with the counter healthy again, metering is ordinary.
+	reader.blip = nil
+	readsBefore := reader.liveReads
+	if status, _, _ := runWithSubject(t, mw, victim); status != http.StatusOK {
+		t.Fatalf("healthy read status = %d, want 200", status)
+	}
+	if got := reader.liveReads - readsBefore; got != 1 {
+		t.Fatalf("the healthy request read the counter %d times, want 1 — the gate is not actually metering", got)
+	}
+}
+
+// Blast-radius guard: a genuine SUSTAINED outage must still fail closed
+// past the dwell window (W1-flow-register-4). Detaching from the
+// client's cancellation must not detach from the counter's failure.
+func TestMonthlyQuota_RealOutageStillFailsClosedAfterAbortFix(t *testing.T) {
+	clock := newManualClock()
+	reader := &abortAwareMTDReader{blip: errors.New("redis down")}
+	mw := middleware.MonthlyQuota(reader, nil, middleware.WithMonthlyQuotaClock(clock.now))
+	sub := auth.Subject{Tier: auth.TierAPIKey, KeyID: "K1", MonthlyQuota: 1_000_000}
+
+	if status, _, _ := runWithSubject(t, mw, sub); status != http.StatusOK {
+		t.Fatalf("first outage request = %d, want 200 (fail open inside the dwell window)", status)
+	}
+	clock.advance(middleware.DefaultMonthlyQuotaDwellTime + time.Second)
+	status, _, body := runWithSubject(t, mw, sub)
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("sustained-outage request = %d, want 429 (fail CLOSED past the window)", status)
+	}
+	if !strings.Contains(body, "monthly-quota-unavailable") {
+		t.Errorf("body missing the fail-closed problem type: %s", body)
+	}
+}
+
+// TestMonthlyQuota_CapSurvivesKeyRotationAndDoesNotMultiply — the
+// enforcement half of the same loop. A cap of 2 is spent by one key;
+// a freshly minted key on the SAME account must inherit the exhausted
+// counter (429), while an unrelated account is untouched (200).
+func TestMonthlyQuota_CapSurvivesKeyRotationAndDoesNotMultiply(t *testing.T) {
+	ts, _, setSubject := accountScopeStack(t)
+
+	const cap2 = 2
+	setSubject(apiKeySubject("acme", "kid_old", cap2))
+	for i := 1; i <= cap2; i++ {
+		if resp := getPrice(t, ts); resp.StatusCode != http.StatusOK {
+			t.Fatalf("request %d under cap: status = %d, want 200", i, resp.StatusCode)
+		}
+	}
+	if resp := getPrice(t, ts); resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("request at cap on the original key: status = %d, want 429", resp.StatusCode)
+	}
+
+	// Revoke-and-mint on the same account: the plan budget is spent,
+	// so the new credential must be denied too.
+	setSubject(apiKeySubject("acme", "kid_new", cap2))
+	resp := getPrice(t, ts)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("rotated key: status = %d, want 429 — a new KeyID must not reset the account's monthly counter", resp.StatusCode)
+	}
+	if used := resp.Header.Get("X-StellarIndex-Monthly-Used"); used != "2" {
+		t.Errorf("rotated key: X-StellarIndex-Monthly-Used = %q, want \"2\" (the account's spend, not the credential's)", used)
+	}
+	if quota := resp.Header.Get("X-StellarIndex-Monthly-Quota"); quota != "2" {
+		t.Errorf("rotated key: X-StellarIndex-Monthly-Quota = %q, want \"2\"", quota)
+	}
+
+	// A different account must NOT be caught by the same counter —
+	// the fix scopes per account, it does not collapse all callers.
+	setSubject(apiKeySubject("other-co", "kid_other", cap2))
+	if other := getPrice(t, ts); other.StatusCode != http.StatusOK {
+		t.Errorf("unrelated account: status = %d, want 200 — accounts must not share a counter", other.StatusCode)
+	}
+}

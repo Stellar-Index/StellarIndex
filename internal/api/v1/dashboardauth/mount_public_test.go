@@ -114,3 +114,30 @@ func TestMount_LoginEntryPointsMatchOpenAPISecurityNone(t *testing.T) {
 		t.Errorf("spec security:[] /v1/auth ops = %v, want %v", spec, loginEntryPoints)
 	}
 }
+
+// TestMount_PasskeyRoutesGated — without a Passkeys store the routes
+// must not exist; with one they must respond.
+func TestMount_PasskeyRoutesGated(t *testing.T) {
+	plain := newTestRig(t) // no Passkeys store
+	mux := http.NewServeMux()
+	plain.h.Mount(mux, middleware.NewPublicRoutes())
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-login", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unwired passkey route: status = %d, want 404", w.Code)
+	}
+
+	rig := newPasskeyRig(t)
+	mux = http.NewServeMux()
+	rig.h.Mount(mux, middleware.NewPublicRoutes())
+	req = httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-login", nil)
+	// Same-origin write: the RequireSameSiteWrite gate compares the
+	// Origin header against the request's own scheme://host.
+	req.Header.Set("Origin", "http://"+req.Host)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("wired passkey route: status = %d, want 200 (%s)", w.Code, w.Body.String())
+	}
+}

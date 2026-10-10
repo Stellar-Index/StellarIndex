@@ -25,7 +25,6 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
-	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -160,90 +159,6 @@ func ceremonyCookie(t *testing.T, w *httptest.ResponseRecorder) *http.Cookie {
 }
 
 // ─── Begin (options + cookie) ─────────────────────────────────────
-
-func TestPasskeyBeginLogin_OptionsAndCeremonyCookie(t *testing.T) {
-	rig := newPasskeyRig(t)
-	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-login", nil)
-	w := httptest.NewRecorder()
-	rig.h.HandlePasskeyBeginLogin(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (%s)", w.Code, w.Body.String())
-	}
-	var opts struct {
-		PublicKey struct {
-			Challenge string `json:"challenge"`
-			RPID      string `json:"rpId"`
-		} `json:"publicKey"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &opts); err != nil {
-		t.Fatalf("unmarshal options: %v", err)
-	}
-	if opts.PublicKey.Challenge == "" {
-		t.Fatal("options carry no challenge")
-	}
-	// RP ID must be the DashboardBaseURL host — the origin the browser
-	// performs the ceremony on (testRig uses https://app.stellarindex.io).
-	if opts.PublicKey.RPID != "app.stellarindex.io" {
-		t.Fatalf("rpId = %q, want app.stellarindex.io", opts.PublicKey.RPID)
-	}
-
-	c := ceremonyCookie(t, w)
-	if c == nil {
-		t.Fatal("no ceremony cookie set")
-	}
-	if !c.HttpOnly {
-		t.Fatal("ceremony cookie must be HttpOnly")
-	}
-	if c.MaxAge != int(passkeyCeremonyTTL/time.Second) {
-		t.Fatalf("ceremony cookie MaxAge = %d, want %d", c.MaxAge, int(passkeyCeremonyTTL/time.Second))
-	}
-}
-
-// TestPasskeyBeginLogin_CappedPerIP — begin-login is anonymous and each
-// call reserves a ceremony in the shared allkeys-lru Redis, so one IP
-// must not be able to mint reservations at the anonymous request
-// ceiling. Past the cap the call is refused with 429 and, crucially,
-// writes no reservation; another IP keeps its own budget.
-func TestPasskeyBeginLogin_CappedPerIP(t *testing.T) {
-	rig := newPasskeyRig(t)
-	guard := newEvictableCeremonyGuard()
-	rig.h.cfg.PasskeyCeremonyGuard = guard
-
-	begin := func(remoteAddr string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-login", nil)
-		req.RemoteAddr = remoteAddr
-		w := httptest.NewRecorder()
-		rig.h.HandlePasskeyBeginLogin(w, req)
-		return w
-	}
-
-	for i := range passkeyBeginLoginMaxPerIP {
-		if w := begin("203.0.113.7:40000"); w.Code != http.StatusOK {
-			t.Fatalf("begin %d: status = %d, want 200 (%s)", i+1, w.Code, w.Body.String())
-		}
-	}
-	w := begin("203.0.113.7:40001")
-	if w.Code != http.StatusTooManyRequests {
-		t.Fatalf("begin past cap: status = %d, want 429", w.Code)
-	}
-	if got, want := w.Header().Get("Retry-After"), "60"; got != want {
-		t.Fatalf("Retry-After = %q, want %q", got, want)
-	}
-	if c := ceremonyCookie(t, w); c != nil {
-		t.Fatal("a throttled begin still issued a ceremony cookie")
-	}
-	guard.mu.Lock()
-	reserved := len(guard.live)
-	guard.mu.Unlock()
-	if reserved != passkeyBeginLoginMaxPerIP {
-		t.Fatalf("reservations = %d, want %d — a throttled begin wrote to the guard's store",
-			reserved, passkeyBeginLoginMaxPerIP)
-	}
-	if w := begin("198.51.100.9:40000"); w.Code != http.StatusOK {
-		t.Fatalf("other IP: status = %d, want 200", w.Code)
-	}
-}
 
 func TestPasskeyBeginRegister_RequiresSessionAndExcludesExisting(t *testing.T) {
 	rig := newPasskeyRig(t)
@@ -390,120 +305,7 @@ func TestPasskeyCeremonyCookie_RoundTripAndTamper(t *testing.T) {
 
 // ─── Finish (validation layers) ───────────────────────────────────
 
-func TestPasskeyFinishLogin_RejectsWithoutCeremony(t *testing.T) {
-	rig := newPasskeyRig(t)
-	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/finish-login", strings.NewReader(`{}`))
-	w := httptest.NewRecorder()
-	rig.h.HandlePasskeyFinishLogin(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", w.Code)
-	}
-	if sessionCookieSet(w) {
-		t.Fatal("a session cookie was set on a failed login")
-	}
-}
-
-func TestPasskeyFinishLogin_RejectsGarbageAssertion(t *testing.T) {
-	rig := newPasskeyRig(t)
-
-	// Real begin → valid ceremony cookie, then a garbage body.
-	begin := httptest.NewRecorder()
-	rig.h.HandlePasskeyBeginLogin(begin, httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-login", nil))
-	c := ceremonyCookie(t, begin)
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/finish-login", strings.NewReader(`{"not":"an assertion"}`))
-	req.AddCookie(&http.Cookie{Name: PasskeyCeremonyCookieName, Value: c.Value})
-	w := httptest.NewRecorder()
-	rig.h.HandlePasskeyFinishLogin(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", w.Code)
-	}
-	if sessionCookieSet(w) {
-		t.Fatal("a session cookie was set on a failed login")
-	}
-}
-
-func TestPasskeyFinishRegister_RejectsForeignUserCeremony(t *testing.T) {
-	rig := newPasskeyRig(t)
-
-	// Ceremony minted for ANOTHER user must not register onto ours.
-	otherID := uuid.New()
-	w0 := httptest.NewRecorder()
-	err := rig.h.setPasskeyCeremonyCookie(w0, passkeyCeremony{
-		Purpose: "register",
-		Session: webauthn.SessionData{
-			Challenge: "example-challenge-placeholder",
-			UserID:    otherID[:],
-			Expires:   rig.now().Add(passkeyCeremonyTTL),
-		},
-	})
-	if err != nil {
-		t.Fatalf("set cookie: %v", err)
-	}
-	c := ceremonyCookie(t, w0)
-
-	body := `{"name":"Example key","credential":{"id":"x"}}`
-	req := rig.withSession(httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/finish-register", strings.NewReader(body)))
-	req.AddCookie(&http.Cookie{Name: PasskeyCeremonyCookieName, Value: c.Value})
-	w := httptest.NewRecorder()
-	rig.h.HandlePasskeyFinishRegister(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", w.Code)
-	}
-	if rows, _ := rig.passkeys.ListWebAuthnCredentialsForUser(context.Background(), rig.user.ID); len(rows) != 0 {
-		t.Fatalf("credential stored despite user mismatch (%d rows)", len(rows))
-	}
-}
-
 // ─── Session mint (shared path) ───────────────────────────────────
-
-// TestMintSession_SetsSameCookieAsEmailFlow pins that the passkey
-// login's terminal step issues the identical credential the email
-// flows do: a DB session row + the stellarindex_session cookie with
-// the same attributes.
-func TestMintSession_SetsSameCookieAsEmailFlow(t *testing.T) {
-	rig := newPasskeyRig(t)
-	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/finish-login", nil)
-	req.RemoteAddr = "203.0.113.10:44100"
-	w := httptest.NewRecorder()
-	if err := rig.h.mintSession(w, req, rig.user); err != nil {
-		t.Fatalf("mintSession: %v", err)
-	}
-
-	var got *http.Cookie
-	for _, c := range w.Result().Cookies() {
-		if c.Name == SessionCookieName {
-			got = c
-		}
-	}
-	if got == nil || got.Value == "" {
-		t.Fatal("no session cookie set")
-	}
-	if !got.HttpOnly {
-		t.Fatal("session cookie must be HttpOnly")
-	}
-	// W1-auth-passkey-2: the cookie carries a random token, NOT the
-	// session PK, and the row is found by sha256(token). Looking the
-	// session up by the cookie value hashed is how resolveSession does
-	// it; a read of the row yields only the hash, never a replayable id.
-	sess, err := rig.users.GetSessionByTokenHash(context.Background(), HashSessionToken(got.Value))
-	if err != nil {
-		t.Fatalf("session row not created / not resolvable by token hash: %v", err)
-	}
-	// The cookie value must NOT itself be the session id — that was the
-	// unhashed-bearer defect. Even if it happened to parse as a UUID, it
-	// must not equal the stored PK.
-	if got.Value == sess.ID.String() {
-		t.Fatal("cookie value equals the session PK — the raw-id bearer defect (W1-auth-passkey-2) is back")
-	}
-	if sess.UserID != rig.user.ID {
-		t.Fatalf("session user = %s, want %s", sess.UserID, rig.user.ID)
-	}
-	wantExpiry := rig.now().Add(rig.h.cfg.SessionTTL)
-	if !sess.ExpiresAt.Equal(wantExpiry) {
-		t.Fatalf("session expiry = %v, want %v", sess.ExpiresAt, wantExpiry)
-	}
-}
 
 // ─── Management ───────────────────────────────────────────────────
 
@@ -564,32 +366,5 @@ func TestPasskeyListAndDelete_OwnerScoped(t *testing.T) {
 	}
 	if rows, _ := rig.passkeys.ListWebAuthnCredentialsForUser(context.Background(), rig.user.ID); len(rows) != 0 {
 		t.Fatalf("credential not deleted (%d rows)", len(rows))
-	}
-}
-
-// TestMount_PasskeyRoutesGated — without a Passkeys store the routes
-// must not exist; with one they must respond.
-func TestMount_PasskeyRoutesGated(t *testing.T) {
-	plain := newTestRig(t) // no Passkeys store
-	mux := http.NewServeMux()
-	plain.h.Mount(mux, middleware.NewPublicRoutes())
-	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-login", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("unwired passkey route: status = %d, want 404", w.Code)
-	}
-
-	rig := newPasskeyRig(t)
-	mux = http.NewServeMux()
-	rig.h.Mount(mux, middleware.NewPublicRoutes())
-	req = httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-login", nil)
-	// Same-origin write: the RequireSameSiteWrite gate compares the
-	// Origin header against the request's own scheme://host.
-	req.Header.Set("Origin", "http://"+req.Host)
-	w = httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("wired passkey route: status = %d, want 200 (%s)", w.Code, w.Body.String())
 	}
 }

@@ -357,3 +357,286 @@ func (downReader) ContractStats(context.Context) (clickhouse.ContractStats, erro
 func (downReader) ContractTypes(context.Context, []string) (map[string]bool, error) {
 	return nil, errLakeDown
 }
+
+// TestExplorerReads_BoundedByReadTimeout is the regression guard: for every
+// lake-backed handler, assert the reader is invoked with a context whose
+// deadline is set and sits within (0, explorerReadTimeout]. Against the un-fixed
+// code (raw r.Context(), no deadline) hasDL is false and the test fails.
+func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
+	cases := []struct {
+		name     string
+		target   string
+		pathVals map[string]string
+		call     func(h *Handler, w http.ResponseWriter, r *http.Request)
+	}{
+		{"LedgersList", "/v1/ledgers", nil, (*Handler).LedgersList},
+		{"LedgerDetail", "/v1/ledgers/42", map[string]string{"seq": "42"}, (*Handler).LedgerDetail},
+		{"LedgerTransactions", "/v1/ledgers/42/transactions", map[string]string{"seq": "42"}, (*Handler).LedgerTransactions},
+		{"LedgerOperations", "/v1/ledgers/42/operations", map[string]string{"seq": "42"}, (*Handler).LedgerOperations},
+		{"TxDetail", "/v1/tx/" + validTestTxHash, map[string]string{"hash": validTestTxHash}, (*Handler).TxDetail},
+		{"ContractDetail", "/v1/contracts/" + validTestContract, map[string]string{"contract_id": validTestContract}, (*Handler).ContractDetail},
+		{"ContractWasm", "/v1/contracts/" + validTestContract + "/wasm", map[string]string{"contract_id": validTestContract}, (*Handler).ContractWasm},
+		{"OperationsDirectory", "/v1/operations", nil, (*Handler).Operations},
+		{"NetworkThroughput", "/v1/network/throughput", nil, (*Handler).NetworkThroughput},
+		{"AccountTransactions", "/v1/accounts/" + validTestAccount + "/transactions", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountTransactions},
+		{"AccountOperations", "/v1/accounts/" + validTestAccount + "/operations", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountOperations},
+		{"AccountMovements", "/v1/accounts/" + validTestAccount + "/movements", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountMovements},
+		{"AccountState", "/v1/accounts/" + validTestAccount, map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountState},
+		{"AssetHolders", "/v1/assets/native/holders", map[string]string{"asset_id": "native"}, (*Handler).AssetHolders},
+		{"AssetEntryChanges", "/v1/assets/native/entry-changes", map[string]string{"asset_id": "native"}, (*Handler).AssetEntryChanges},
+		{"AccountPositions", "/v1/accounts/" + validTestAccount + "/positions", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountPositions},
+		{"AccountsStats", "/v1/accounts/stats", nil, (*Handler).AccountsStats},
+		{"AccountCreators", "/v1/accounts/creators", nil, (*Handler).AccountCreators},
+		{"AccountSponsors", "/v1/accounts/sponsors", nil, (*Handler).AccountSponsors},
+		{"AccountGraph", "/v1/accounts/" + validTestAccount + "/graph", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountGraph},
+		{"AccountGraphHistory", "/v1/accounts/" + validTestAccount + "/graph/history", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountGraphHistory},
+		{"AccountGraphCohort", "/v1/accounts/" + validTestAccount + "/graph/cohort?relation=created", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountGraphCohort},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			probe := &deadlineProbe{}
+			h := newProbeHandler(&capReader{probe: probe}, &capPositions{probe: probe})
+
+			r := httptest.NewRequest(http.MethodGet, tc.target, nil)
+			for k, v := range tc.pathVals {
+				r.SetPathValue(k, v)
+			}
+			tc.call(h, httptest.NewRecorder(), r)
+
+			if !probe.sawCall {
+				t.Fatalf("%s: handler never reached a lake read — test wiring is wrong", tc.name)
+			}
+			if !probe.hasDL {
+				t.Fatalf("%s: reader received a context with NO deadline — the read is unbounded "+
+					"(C3-1 pool-exhaustion DoS regression)", tc.name)
+			}
+			// Pin the budget to the route's expected read ceiling: present,
+			// positive, never larger than the ceiling, and close to it
+			// (distinguishes the route's own budget from any looser
+			// upstream/middleware deadline). Every read is request-scoped at
+			// explorerReadTimeout except AssetHolders, whose cold-path scan
+			// runs DETACHED on its own assetHoldersRefreshTimeout budget
+			// (stale-while-revalidate) — still
+			// bounded, still cancellation-observing, just not
+			// request-scoped.
+			wantBudget := explorerReadTimeout
+			switch tc.name {
+			case "AssetHolders":
+				wantBudget = assetHoldersRefreshTimeout
+			case "OperationsDirectory":
+				// The never-computed first page is single-flighted
+				// through refreshOpsDirectory, which runs the fill DETACHED
+				// on its own budget (like every sibling cold-path here) so a
+				// burst of concurrent first-page requests shares the one
+				// read instead of each paying for its own — still bounded,
+				// just not request-scoped.
+				wantBudget = opsDirRefreshTimeout
+			case "ContractDetail":
+				// First page is SWR'd: the cold
+				// compute runs DETACHED on the shared contract-detail
+				// budget — still bounded, just not request-scoped.
+				wantBudget = contractDetailRefreshTimeout
+			case "NetworkThroughput":
+				// Snapshot-served: the year-window
+				// scan runs DETACHED on its own refresh budget so it
+				// survives the request that kicked it — still bounded,
+				// just not request-scoped.
+				wantBudget = networkThroughputRefreshTimeout
+			case "AccountPositions":
+				// SWR'd on the shared contract-detail cache:
+				// the six-fold fan-out runs DETACHED on
+				// that budget — still bounded, still
+				// cancellation-observing, just not request-scoped. The
+				// REQUEST-side bound is unchanged (the cold wait is
+				// capped by explorerReadTimeout in the handler).
+				wantBudget = contractDetailRefreshTimeout
+			}
+			if probe.budget <= 0 || probe.budget > wantBudget {
+				t.Fatalf("%s: deadline budget %v not in (0, %v]", tc.name, probe.budget, wantBudget)
+			}
+			if probe.budget < wantBudget-2*time.Second {
+				t.Fatalf("%s: deadline budget %v is smaller than the expected ~%v read ceiling",
+					tc.name, probe.budget, wantBudget)
+			}
+		})
+	}
+}
+
+// TestExplorerReads_ReturnWhenReadExceedsBudget proves the end-to-end anti-DoS
+// property the deadline exists to deliver: a reader that would otherwise block
+// indefinitely is abandoned once the handler's own read budget elapses, so the
+// handler returns (and releases its pool connection) instead of hanging. Against
+// the un-fixed code the reader gets a deadline-less r.Context(), never observes
+// cancellation, and the handler hangs — this test then trips its budget+slack
+// ceiling and fails.
+func TestExplorerReads_ReturnWhenReadExceedsBudget(t *testing.T) {
+	probe := &deadlineProbe{}
+	h := newProbeHandler(&blockingReader{capReader: &capReader{probe: probe}}, nil)
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/ledgers", nil)
+	done := make(chan struct{})
+	start := time.Now()
+	go func() {
+		h.LedgersList(httptest.NewRecorder(), r)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if elapsed := time.Since(start); elapsed < explorerReadTimeout-2*time.Second {
+			t.Fatalf("handler returned in %v — too fast to be the read deadline firing (expected ~%v); "+
+				"the block/return path isn't exercising the timeout", elapsed, explorerReadTimeout)
+		}
+	case <-time.After(explorerReadTimeout + 3*time.Second):
+		t.Fatal("handler did not return within the read budget + slack — the lake read is unbounded " +
+			"(C3-1 pool-exhaustion DoS regression)")
+	}
+}
+
+// TestExplorerReads_DeadlineMapsTo503 is the regression guard. For every
+// lake-backed explorer handler, a read that returns context.DeadlineExceeded
+// must produce 503 + a `…-timeout` problem type. Against the un-fixed code every
+// case yields 500 `errors/internal`.
+func TestExplorerReads_DeadlineMapsTo503(t *testing.T) {
+	cases := []struct {
+		name     string
+		target   string
+		pathVals map[string]string
+		call     func(h *Handler, w http.ResponseWriter, r *http.Request)
+		wantType string
+	}{
+		{
+			"ContractCodeHistory", "/v1/contracts/" + validTestContract + "/code-history",
+			map[string]string{"contract_id": validTestContract},
+			(*Handler).ContractCodeHistory,
+			"https://api.stellarindex.io/errors/contract-code-history-timeout",
+		},
+		{
+			"ContractInteractions", "/v1/contracts/" + validTestContract + "/interactions",
+			map[string]string{"contract_id": validTestContract},
+			(*Handler).ContractInteractions,
+			"https://api.stellarindex.io/errors/contract-interactions-timeout",
+		},
+		{
+			"ContractsList", "/v1/contracts", nil, (*Handler).ContractsList,
+			"https://api.stellarindex.io/errors/contracts-timeout",
+		},
+		{
+			"ContractDetail", "/v1/contracts/" + validTestContract,
+			map[string]string{"contract_id": validTestContract},
+			(*Handler).ContractDetail,
+			"https://api.stellarindex.io/errors/contract-detail-timeout",
+		},
+		{
+			"ContractWasm", "/v1/contracts/" + validTestContract + "/wasm",
+			map[string]string{"contract_id": validTestContract},
+			(*Handler).ContractWasm,
+			"https://api.stellarindex.io/errors/contract-wasm-timeout",
+		},
+		{
+			"LedgersList", "/v1/ledgers", nil, (*Handler).LedgersList,
+			"https://api.stellarindex.io/errors/ledgers-timeout",
+		},
+		{
+			"LedgerDetail", "/v1/ledgers/42",
+			map[string]string{"seq": "42"},
+			(*Handler).LedgerDetail,
+			"https://api.stellarindex.io/errors/ledger-detail-timeout",
+		},
+		{
+			"LedgerTransactions", "/v1/ledgers/42/transactions",
+			map[string]string{"seq": "42"},
+			(*Handler).LedgerTransactions,
+			"https://api.stellarindex.io/errors/ledger-transactions-timeout",
+		},
+		{
+			"LedgerOperations", "/v1/ledgers/42/operations",
+			map[string]string{"seq": "42"},
+			(*Handler).LedgerOperations,
+			"https://api.stellarindex.io/errors/operations-timeout",
+		},
+		{
+			"OperationsDirectory", "/v1/operations", nil, (*Handler).Operations,
+			"https://api.stellarindex.io/errors/operations-timeout",
+		},
+		{
+			"NetworkThroughput", "/v1/network/throughput", nil, (*Handler).NetworkThroughput,
+			"https://api.stellarindex.io/errors/network-throughput-timeout",
+		},
+		{
+			"TxDetail", "/v1/tx/" + validTestTxHash,
+			map[string]string{"hash": validTestTxHash},
+			(*Handler).TxDetail,
+			"https://api.stellarindex.io/errors/tx-detail-timeout",
+		},
+		{
+			"AccountTransactions", "/v1/accounts/" + validTestAccount + "/transactions",
+			map[string]string{"g_strkey": validTestAccount},
+			(*Handler).AccountTransactions,
+			"https://api.stellarindex.io/errors/account-transactions-timeout",
+		},
+		{
+			"AccountOperations", "/v1/accounts/" + validTestAccount + "/operations",
+			map[string]string{"g_strkey": validTestAccount},
+			(*Handler).AccountOperations,
+			"https://api.stellarindex.io/errors/account-operations-timeout",
+		},
+		{
+			"AccountState", "/v1/accounts/" + validTestAccount,
+			map[string]string{"g_strkey": validTestAccount},
+			(*Handler).AccountState,
+			"https://api.stellarindex.io/errors/account-state-timeout",
+		},
+		{
+			"AccountMovements", "/v1/accounts/" + validTestAccount + "/movements",
+			map[string]string{"g_strkey": validTestAccount},
+			(*Handler).AccountMovements,
+			"https://api.stellarindex.io/errors/account-movements-timeout",
+		},
+		{
+			"AssetHolders", "/v1/assets/native/holders",
+			map[string]string{"asset_id": "native"},
+			(*Handler).AssetHolders,
+			"https://api.stellarindex.io/errors/asset-holders-timeout",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var rec problemRecord
+			h := newTimeoutHandler(&rec)
+
+			req := httptest.NewRequest(http.MethodGet, tc.target, nil)
+			for k, v := range tc.pathVals {
+				req.SetPathValue(k, v)
+			}
+			w := httptest.NewRecorder()
+			tc.call(h, w, req)
+
+			if !rec.written {
+				t.Fatalf("%s: no problem+json written — the handler swallowed the deadline", tc.name)
+			}
+			if rec.status != http.StatusServiceUnavailable {
+				t.Fatalf("%s: status = %d (%q / %q), want 503 — a read deadline is not an internal error (C-F1)",
+					tc.name, rec.status, rec.typeURL, rec.title)
+			}
+			if w.Code != http.StatusServiceUnavailable {
+				t.Fatalf("%s: response code = %d, want 503", tc.name, w.Code)
+			}
+			if rec.typeURL != tc.wantType {
+				t.Fatalf("%s: problem type = %q, want %q", tc.name, rec.typeURL, tc.wantType)
+			}
+			if !strings.Contains(rec.title, "timed out") {
+				t.Fatalf("%s: title = %q, want a 'timed out' headline", tc.name, rec.title)
+			}
+			// The detail must name the budget that was blown, so an operator
+			// reading a 503 knows it was the 8s explorer ceiling and not some
+			// upstream proxy timeout.
+			if !strings.Contains(rec.detail, explorerReadTimeout.String()) {
+				t.Fatalf("%s: detail = %q, want it to name the %v read budget",
+					tc.name, rec.detail, explorerReadTimeout)
+			}
+		})
+	}
+}

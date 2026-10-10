@@ -638,3 +638,145 @@ func TestRateLimitBySubject_AnonymousIPv6Slash64SharesBucket(t *testing.T) {
 		t.Fatalf("request from a different /64 status = %d, want 200 (independent bucket)", w.Code)
 	}
 }
+
+// Same property on the single-bucket [middleware.RateLimit] entry point,
+// which shares the take-with-request-context shape.
+func TestRateLimit_ClientAbortsDoNotArmFailClosed(t *testing.T) {
+	rdb, _ := newRLRedis(t)
+	clock := newManualClock()
+	b := ratelimit.New(rdb, 100, time.Minute, ratelimit.WithClock(clock.now))
+
+	h := middleware.RateLimit(b, fixedKeyFn("abort-k"), nil, nil)(okHandler())
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, abortedRequest(t))
+	if got := w.Header().Get("X-RateLimit-Remaining"); got != "99" {
+		t.Errorf("X-RateLimit-Remaining after an aborted request = %q, want %q", got, "99")
+	}
+
+	clock.advance(ratelimit.DefaultDwellTime + time.Second)
+
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, abortedRequest(t))
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatalf("status = 503 — client aborts armed the fail-closed dwell clock on a healthy Redis")
+	}
+
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/price?asset=native", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("an innocent caller got %d, want 200", w.Code)
+	}
+}
+
+// Keying the per-minute limit on KeyID gives every key an
+// account held its own full bucket — a 25-key account runs at 25x its
+// ceiling, and an operator's 100k/min comp becomes 2.5M/min. The monthly
+// quota already counted per account; the rate limit must share that
+// identity, so minting or rotating keys cannot multiply the ceiling.
+func TestRateLimitBySubject_KeysOnOneAccountShareOneBucket(t *testing.T) {
+	rdb, _ := newRLRedis(t)
+	authBucket := ratelimit.New(rdb, 100, time.Minute)
+	h := middleware.RateLimitBySubject(nil, authBucket, nil, nil)(okHandler())
+
+	const perMin = 3
+	serve := func(keyID string) int {
+		r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+		sub := auth.Subject{
+			Identifier:      auth.AccountIdentifier("comped-co"),
+			Tier:            auth.TierAPIKey,
+			KeyID:           keyID,
+			RateLimitPerMin: perMin,
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r.WithContext(auth.WithSubject(r.Context(), sub)))
+		return w.Code
+	}
+
+	keys := []string{"kid_a", "kid_b", "kid_c", "kid_d", "kid_e"}
+	allowed := 0
+	for round := 0; round < 2; round++ {
+		for _, k := range keys {
+			if serve(k) == http.StatusOK {
+				allowed++
+			}
+		}
+	}
+	if allowed != perMin {
+		t.Fatalf("%d keys on one account were allowed %d requests in one window, want %d — the "+
+			"per-minute ceiling must be the account's, not multiplied by its key count", len(keys), allowed, perMin)
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+	other := auth.Subject{Identifier: auth.AccountIdentifier("other-co"), Tier: auth.TierAPIKey, KeyID: "kid_z", RateLimitPerMin: perMin}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r.WithContext(auth.WithSubject(r.Context(), other)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("a different account got %d, want 200 — accounts must not share a bucket", w.Code)
+	}
+}
+
+func TestRateLimitBySubject_ClientAbortsDoNotArmFailClosed(t *testing.T) {
+	rdb, _ := newRLRedis(t)
+	clock := newManualClock()
+	b := ratelimit.New(rdb, 100, time.Minute, ratelimit.WithClock(clock.now))
+
+	h := middleware.RateLimitBySubject(b, nil, nil, nil)(okHandler())
+
+	// First abort: arms the dwell clock if the request context leaks into the limiter.
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, abortedRequest(t))
+	if got := w.Header().Get("X-RateLimit-Remaining"); got != "99" {
+		t.Errorf("X-RateLimit-Remaining after an aborted request = %q, want %q — the take must still "+
+			"reach a HEALTHY Redis and charge the token; an empty header means it errored out and the "+
+			"middleware fell open, which is also unmetered traffic for anyone who aborts", got, "99")
+	}
+
+	// Past the 30 s dwell window, with nothing but aborts in between.
+	clock.advance(ratelimit.DefaultDwellTime + time.Second)
+
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, abortedRequest(t))
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatalf("status = 503 after two aborted requests %v apart — client aborts armed the "+
+			"fail-closed dwell clock, so any client can take the whole bucket's tier offline while "+
+			"Redis is healthy", ratelimit.DefaultDwellTime+time.Second)
+	}
+
+	// The decisive one: a WELL-BEHAVED caller sharing the bucket.
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/price?asset=native", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("an innocent caller got %d, want 200 — the abort flood must not fail the throttle "+
+			"CLOSED for everyone else on this bucket", w.Code)
+	}
+}
+
+// Blast-radius guard: detaching from the client's cancellation must not
+// detach from the BACKEND's failure. A genuinely broken Redis still has
+// to arm the dwell clock and fail closed past the window — that
+// inversion is the reason the clock exists.
+func TestRateLimitBySubject_RealRedisOutageStillFailsClosed(t *testing.T) {
+	rdb, mr := newRLRedis(t)
+	clock := newManualClock()
+	b := ratelimit.New(rdb, 100, time.Minute, ratelimit.WithClock(clock.now))
+
+	h := middleware.RateLimitBySubject(b, nil, nil, nil)(okHandler())
+
+	mr.Kill() // every take from here on is a real transport failure
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/price?asset=native", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("first outage request = %d, want 200 (fail OPEN inside the dwell window)", w.Code)
+	}
+
+	clock.advance(ratelimit.DefaultDwellTime + time.Second)
+
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/price?asset=native", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("sustained-outage request = %d, want 503 — a real Redis outage past the dwell "+
+			"window must still fail CLOSED", w.Code)
+	}
+}

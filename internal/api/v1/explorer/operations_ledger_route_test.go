@@ -3,7 +3,6 @@ package explorer
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -52,39 +51,6 @@ func TestLedgerOperations_SignalsTruncation(t *testing.T) {
 	}
 	if !got.Truncated {
 		t.Error("Truncated = false, want true: served 2 of 1135 operations with no signal")
-	}
-}
-
-// /v1/operations is the directory only: any ?ledger= form, including the
-// empty and zero values, must be refused with a pointer to the per-ledger
-// route rather than served as a directory page.
-func TestOperations_LedgerParamRejected(t *testing.T) {
-	for _, q := range []string{"42", "", "0", "abc"} {
-		probe := &deadlineProbe{}
-		h := newProbeHandler(&capReader{probe: probe}, nil)
-		var problemType, detail string
-		h.WriteProblem = func(w http.ResponseWriter, _ *http.Request, typ, _ string, status int, d string) {
-			problemType, detail = typ, d
-			w.WriteHeader(status)
-		}
-		h.WriteJSON = func(w http.ResponseWriter, _ any, _ bool) {
-			t.Errorf("ledger=%q: served a 200 body", q)
-			w.WriteHeader(http.StatusOK)
-		}
-		rec := httptest.NewRecorder()
-		h.Operations(rec, httptest.NewRequest(http.MethodGet, "/v1/operations?ledger="+q, nil))
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("ledger=%q: status = %d, want 400", q, rec.Code)
-		}
-		if problemType != "https://api.stellarindex.io/errors/invalid-parameter" {
-			t.Errorf("ledger=%q: problem type = %q, want invalid-parameter", q, problemType)
-		}
-		if !strings.Contains(detail, "/v1/ledgers/{seq}/operations") {
-			t.Errorf("ledger=%q: detail = %q, want a pointer to /v1/ledgers/{seq}/operations", q, detail)
-		}
-		if probe.sawCall {
-			t.Errorf("ledger=%q: reached the lake before refusing", q)
-		}
 	}
 }
 

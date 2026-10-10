@@ -4,10 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"testing"
 	"time"
-
-	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // fakeEmailLocker is the in-memory analogue of [auth.RedisSignupEmailLocker]
@@ -47,77 +44,4 @@ func (l *fakeEmailLocker) Release(_ context.Context, key, token string) error {
 		delete(l.held, key)
 	}
 	return nil
-}
-
-// TestSignupNewUser_EmailLocker_PreemptsLoser — when the locker is
-// already held for an email (a concurrent winner is provisioning),
-// the loser must wait + return the winner's user WITHOUT creating
-// a speculative Account row.
-//
-// Proves the full-fix path. The
-// fallback Suspend-on-conflict recovery still serves as defence
-// in depth, but the lock path should never trigger it.
-func TestSignupNewUser_EmailLocker_PreemptsLoser(t *testing.T) {
-	r := newTestRig(t)
-	locker := newFakeEmailLocker()
-	r.cfg.EmailLocker = locker
-
-	// Simulate the winner: pre-hold the lock + insert a User row
-	// behind the winner's Account so the loser's poll converges.
-	emailHash := hashEmailForLocker("owner@example.com")
-	if ok, _, err := locker.Acquire(context.Background(), emailHash, time.Second); !ok || err != nil {
-		t.Fatalf("pre-acquire: ok=%v err=%v", ok, err)
-	}
-
-	winnerAcct, err := r.accounts.Create(context.Background(), platform.Account{
-		Name: "winner", Slug: "winner", BillingEmail: "owner@example.com",
-		Tier: platform.TierFree, Status: platform.AccountActive,
-	})
-	if err != nil {
-		t.Fatalf("seed winner account: %v", err)
-	}
-	winner, err := r.users.CreateUser(context.Background(), platform.User{
-		AccountID: winnerAcct.ID, Email: "owner@example.com", Role: platform.RoleOwner,
-	})
-	if err != nil {
-		t.Fatalf("seed winner user: %v", err)
-	}
-
-	before := len(r.accounts.byID)
-
-	// Loser comes through signupNewUser. Lock acquire fails ->
-	// waitForWinnerUser converges to the winner row -> return.
-	got, err := r.h.signupNewUser(context.Background(), "owner@example.com")
-	if err != nil {
-		t.Fatalf("signupNewUser as loser: %v", err)
-	}
-	if got.ID != winner.ID {
-		t.Errorf("loser got user %v, want winner %v", got.ID, winner.ID)
-	}
-	if got.AccountID != winnerAcct.ID {
-		t.Errorf("loser got AccountID %v, want winner's %v", got.AccountID, winnerAcct.ID)
-	}
-	if delta := len(r.accounts.byID) - before; delta != 0 {
-		t.Errorf("speculative-account rows created by loser = %d, want 0 (lock should pre-empt before Account.Create)", delta)
-	}
-}
-
-// TestSignupNewUser_EmailLocker_WinnerSucceeds — happy path with
-// the lock available. Winner acquires, provisions, releases. The
-// loser case is covered above; this case just proves the lock
-// doesn't break the normal flow.
-func TestSignupNewUser_EmailLocker_WinnerSucceeds(t *testing.T) {
-	r := newTestRig(t)
-	r.cfg.EmailLocker = newFakeEmailLocker()
-
-	got, err := r.h.signupNewUser(context.Background(), "fresh@example.com")
-	if err != nil {
-		t.Fatalf("signupNewUser as winner: %v", err)
-	}
-	if got.Email != "fresh@example.com" {
-		t.Errorf("winner.Email = %q", got.Email)
-	}
-	if got.AccountID == [16]byte{} {
-		t.Errorf("winner.AccountID is zero — Account.Create should have run")
-	}
 }

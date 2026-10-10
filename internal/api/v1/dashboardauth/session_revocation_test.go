@@ -223,3 +223,125 @@ func TestPasskeyRegister_RevokesOtherSessionsKeepsPresented(t *testing.T) {
 		t.Error("passkey enrolment revoked another user's session")
 	}
 }
+
+func TestHandleLogout_IdempotentWithoutCookie(t *testing.T) {
+	r := newTestRig(t)
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
+	w := httptest.NewRecorder()
+	r.h.HandleLogout(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	// Cookie should be cleared anyway.
+	for _, c := range w.Result().Cookies() {
+		if c.Name == SessionCookieName && c.MaxAge >= 0 {
+			t.Errorf("logout did not clear cookie: %+v", c)
+		}
+	}
+}
+
+func TestHandleLogout_RevokesActiveSession(t *testing.T) {
+	r := newTestRig(t)
+	// Mint a session directly.
+	acct, _ := r.accounts.Create(context.Background(), platform.Account{
+		Name: "x", Slug: "x", Tier: platform.TierFree, Status: platform.AccountActive,
+	})
+	user, _ := r.users.CreateUser(context.Background(), platform.User{
+		AccountID: acct.ID, Email: "owner@example.com", Role: platform.RoleOwner,
+	})
+	sess, token := mintTestSession(t, r.users, platform.Session{
+		UserID: user.ID, ExpiresAt: r.now().Add(24 * time.Hour),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+	w := httptest.NewRecorder()
+	r.h.HandleLogout(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d", w.Code)
+	}
+	// Subsequent GetSession must return ErrNotFound.
+	if _, err := r.users.GetSession(context.Background(), sess.ID); !errors.Is(err, platform.ErrNotFound) {
+		t.Errorf("session not revoked after logout: err=%v", err)
+	}
+}
+
+func TestHandleLogout_TolersInvalidCookieValue(t *testing.T) {
+	r := newTestRig(t)
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "not-a-uuid"})
+	w := httptest.NewRecorder()
+	r.h.HandleLogout(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (idempotent)", w.Code)
+	}
+}
+
+// Logout clears both cookies in the same response. A hint that
+// survived logout would send the explorer back for one 401 per page
+// load until it expired on its own — the exact request this change
+// exists to remove.
+func TestHandleLogout_ClearsSessionHint(t *testing.T) {
+	r := prodCookieRig(t)
+	acct, err := r.accounts.Create(context.Background(), platform.Account{
+		Name: "x", Slug: "x", Tier: platform.TierFree, Status: platform.AccountActive,
+	})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	user, err := r.users.CreateUser(context.Background(), platform.User{
+		AccountID: acct.ID, Email: "owner@example.com", Role: platform.RoleOwner,
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	_, token := mintTestSession(t, r.users, platform.Session{
+		UserID: user.ID, ExpiresAt: r.now().Add(24 * time.Hour),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+	w := httptest.NewRecorder()
+	r.h.HandleLogout(w, req)
+
+	hint := cookieNamed(w, SessionHintCookieName)
+	if hint == nil {
+		t.Fatal("logout did not emit a hint-clearing cookie")
+	}
+	if hint.MaxAge >= 0 {
+		t.Errorf("logout did not expire the hint: MaxAge = %d", hint.MaxAge)
+	}
+	if hint.Value != "" {
+		t.Errorf("cleared hint still carries a value: %q", hint.Value)
+	}
+	// Deleting a cookie requires the SAME Domain and Path it was set
+	// with; a mismatch leaves the original in the browser. The
+	// Set-Cookie parser normalises the leading dot away on read-back.
+	if hint.Domain != "stellarindex.io" {
+		t.Errorf("clear Domain = %q, want the hint's configured domain", hint.Domain)
+	}
+	if hint.Path != "/" {
+		t.Errorf("clear Path = %q, want /", hint.Path)
+	}
+	if cookieNamed(w, SessionCookieName) == nil {
+		t.Fatal("logout did not clear the session cookie")
+	}
+}
+
+// Logout without any cookie is already idempotent for the session
+// cookie; the hint must be cleared on that path too, because the two
+// can be out of step (that is the whole stale-hint case).
+func TestHandleLogout_ClearsSessionHintWithoutCookie(t *testing.T) {
+	r := prodCookieRig(t)
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
+	w := httptest.NewRecorder()
+	r.h.HandleLogout(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	hint := cookieNamed(w, SessionHintCookieName)
+	if hint == nil || hint.MaxAge >= 0 {
+		t.Errorf("logout without a session did not expire the hint: %+v", hint)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"testing"
 	"time"
@@ -108,5 +109,113 @@ func TestMintSession_CapsLiveSessionsPerUser(t *testing.T) {
 	}
 	if rig.users.sessions[oldest.ID].RevokedAt.IsZero() {
 		t.Error("oldest session still live after a login beyond the cap")
+	}
+}
+
+// A session issued through the magic-link door must set the JS-readable
+// presence flag beside the HttpOnly session cookie, scoped identically
+// so the explorer origin can see it and so the two expire together.
+func TestMintSession_SetsSessionHintBesideSessionCookie(t *testing.T) {
+	r := prodCookieRig(t)
+	lw := r.postLogin(t, "hint@example.com")
+	if lw.Code != http.StatusOK {
+		t.Fatalf("login: %d", lw.Code)
+	}
+	plaintext := r.extractTokenFromSentEmail(t)
+
+	cb := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
+	cb.RemoteAddr = "203.0.113.5:55123"
+	attachCookies(cb, lw)
+	w := httptest.NewRecorder()
+	r.h.HandleCallback(w, cb)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("callback status = %d, want 303", w.Code)
+	}
+
+	session := cookieNamed(w, SessionCookieName)
+	if session == nil {
+		t.Fatal("session cookie not set")
+	}
+	hint := cookieNamed(w, SessionHintCookieName)
+	if hint == nil {
+		t.Fatal("session hint cookie not set beside the session cookie")
+	}
+
+	// The session cookie is the bearer credential and stays HttpOnly.
+	if !session.HttpOnly {
+		t.Error("session cookie lost HttpOnly")
+	}
+	// The hint exists only to be read by document.cookie.
+	if hint.HttpOnly {
+		t.Error("hint cookie is HttpOnly — the explorer cannot read it, so the probe can never be skipped")
+	}
+
+	// The hint carries the parent domain so the explorer's origin can
+	// read it; the credential it shadows stays host-only.
+	if hint.Domain != "stellarindex.io" {
+		t.Errorf("hint Domain = %q, want the configured parent domain", hint.Domain)
+	}
+	if session.Domain != "" {
+		t.Errorf("session Domain = %q, want host-only", session.Domain)
+	}
+	if hint.Path != session.Path {
+		t.Errorf("hint Path = %q, session Path = %q", hint.Path, session.Path)
+	}
+	if hint.Secure != session.Secure {
+		t.Errorf("hint Secure = %v, session Secure = %v", hint.Secure, session.Secure)
+	}
+	if hint.SameSite != session.SameSite {
+		t.Errorf("hint SameSite = %v, session SameSite = %v", hint.SameSite, session.SameSite)
+	}
+	if !hint.Expires.Equal(session.Expires) {
+		t.Errorf("hint Expires = %v, session Expires = %v", hint.Expires, session.Expires)
+	}
+}
+
+// TestMintSession_SetsSameCookieAsEmailFlow pins that the passkey
+// login's terminal step issues the identical credential the email
+// flows do: a DB session row + the stellarindex_session cookie with
+// the same attributes.
+func TestMintSession_SetsSameCookieAsEmailFlow(t *testing.T) {
+	rig := newPasskeyRig(t)
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/finish-login", nil)
+	req.RemoteAddr = "203.0.113.10:44100"
+	w := httptest.NewRecorder()
+	if err := rig.h.mintSession(w, req, rig.user); err != nil {
+		t.Fatalf("mintSession: %v", err)
+	}
+
+	var got *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == SessionCookieName {
+			got = c
+		}
+	}
+	if got == nil || got.Value == "" {
+		t.Fatal("no session cookie set")
+	}
+	if !got.HttpOnly {
+		t.Fatal("session cookie must be HttpOnly")
+	}
+	// W1-auth-passkey-2: the cookie carries a random token, NOT the
+	// session PK, and the row is found by sha256(token). Looking the
+	// session up by the cookie value hashed is how resolveSession does
+	// it; a read of the row yields only the hash, never a replayable id.
+	sess, err := rig.users.GetSessionByTokenHash(context.Background(), HashSessionToken(got.Value))
+	if err != nil {
+		t.Fatalf("session row not created / not resolvable by token hash: %v", err)
+	}
+	// The cookie value must NOT itself be the session id — that was the
+	// unhashed-bearer defect. Even if it happened to parse as a UUID, it
+	// must not equal the stored PK.
+	if got.Value == sess.ID.String() {
+		t.Fatal("cookie value equals the session PK — the raw-id bearer defect (W1-auth-passkey-2) is back")
+	}
+	if sess.UserID != rig.user.ID {
+		t.Fatalf("session user = %s, want %s", sess.UserID, rig.user.ID)
+	}
+	wantExpiry := rig.now().Add(rig.h.cfg.SessionTTL)
+	if !sess.ExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("session expiry = %v, want %v", sess.ExpiresAt, wantExpiry)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"sync"
 	"testing"
@@ -375,111 +374,6 @@ const (
 	validTestTxHash   = "88526317d98b1eb5a8040123456789abcdef0123456789abcdef0123456789ab"
 )
 
-// TestExplorerReads_BoundedByReadTimeout is the regression guard: for every
-// lake-backed handler, assert the reader is invoked with a context whose
-// deadline is set and sits within (0, explorerReadTimeout]. Against the un-fixed
-// code (raw r.Context(), no deadline) hasDL is false and the test fails.
-func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
-	cases := []struct {
-		name     string
-		target   string
-		pathVals map[string]string
-		call     func(h *Handler, w http.ResponseWriter, r *http.Request)
-	}{
-		{"LedgersList", "/v1/ledgers", nil, (*Handler).LedgersList},
-		{"LedgerDetail", "/v1/ledgers/42", map[string]string{"seq": "42"}, (*Handler).LedgerDetail},
-		{"LedgerTransactions", "/v1/ledgers/42/transactions", map[string]string{"seq": "42"}, (*Handler).LedgerTransactions},
-		{"LedgerOperations", "/v1/ledgers/42/operations", map[string]string{"seq": "42"}, (*Handler).LedgerOperations},
-		{"TxDetail", "/v1/tx/" + validTestTxHash, map[string]string{"hash": validTestTxHash}, (*Handler).TxDetail},
-		{"ContractDetail", "/v1/contracts/" + validTestContract, map[string]string{"contract_id": validTestContract}, (*Handler).ContractDetail},
-		{"ContractWasm", "/v1/contracts/" + validTestContract + "/wasm", map[string]string{"contract_id": validTestContract}, (*Handler).ContractWasm},
-		{"OperationsDirectory", "/v1/operations", nil, (*Handler).Operations},
-		{"NetworkThroughput", "/v1/network/throughput", nil, (*Handler).NetworkThroughput},
-		{"AccountTransactions", "/v1/accounts/" + validTestAccount + "/transactions", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountTransactions},
-		{"AccountOperations", "/v1/accounts/" + validTestAccount + "/operations", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountOperations},
-		{"AccountMovements", "/v1/accounts/" + validTestAccount + "/movements", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountMovements},
-		{"AccountState", "/v1/accounts/" + validTestAccount, map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountState},
-		{"AssetHolders", "/v1/assets/native/holders", map[string]string{"asset_id": "native"}, (*Handler).AssetHolders},
-		{"AssetEntryChanges", "/v1/assets/native/entry-changes", map[string]string{"asset_id": "native"}, (*Handler).AssetEntryChanges},
-		{"AccountPositions", "/v1/accounts/" + validTestAccount + "/positions", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountPositions},
-		{"AccountsStats", "/v1/accounts/stats", nil, (*Handler).AccountsStats},
-		{"AccountCreators", "/v1/accounts/creators", nil, (*Handler).AccountCreators},
-		{"AccountSponsors", "/v1/accounts/sponsors", nil, (*Handler).AccountSponsors},
-		{"AccountGraph", "/v1/accounts/" + validTestAccount + "/graph", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountGraph},
-		{"AccountGraphHistory", "/v1/accounts/" + validTestAccount + "/graph/history", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountGraphHistory},
-		{"AccountGraphCohort", "/v1/accounts/" + validTestAccount + "/graph/cohort?relation=created", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountGraphCohort},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			probe := &deadlineProbe{}
-			h := newProbeHandler(&capReader{probe: probe}, &capPositions{probe: probe})
-
-			r := httptest.NewRequest(http.MethodGet, tc.target, nil)
-			for k, v := range tc.pathVals {
-				r.SetPathValue(k, v)
-			}
-			tc.call(h, httptest.NewRecorder(), r)
-
-			if !probe.sawCall {
-				t.Fatalf("%s: handler never reached a lake read — test wiring is wrong", tc.name)
-			}
-			if !probe.hasDL {
-				t.Fatalf("%s: reader received a context with NO deadline — the read is unbounded "+
-					"(C3-1 pool-exhaustion DoS regression)", tc.name)
-			}
-			// Pin the budget to the route's expected read ceiling: present,
-			// positive, never larger than the ceiling, and close to it
-			// (distinguishes the route's own budget from any looser
-			// upstream/middleware deadline). Every read is request-scoped at
-			// explorerReadTimeout except AssetHolders, whose cold-path scan
-			// runs DETACHED on its own assetHoldersRefreshTimeout budget
-			// (stale-while-revalidate) — still
-			// bounded, still cancellation-observing, just not
-			// request-scoped.
-			wantBudget := explorerReadTimeout
-			switch tc.name {
-			case "AssetHolders":
-				wantBudget = assetHoldersRefreshTimeout
-			case "OperationsDirectory":
-				// The never-computed first page is single-flighted
-				// through refreshOpsDirectory, which runs the fill DETACHED
-				// on its own budget (like every sibling cold-path here) so a
-				// burst of concurrent first-page requests shares the one
-				// read instead of each paying for its own — still bounded,
-				// just not request-scoped.
-				wantBudget = opsDirRefreshTimeout
-			case "ContractDetail":
-				// First page is SWR'd: the cold
-				// compute runs DETACHED on the shared contract-detail
-				// budget — still bounded, just not request-scoped.
-				wantBudget = contractDetailRefreshTimeout
-			case "NetworkThroughput":
-				// Snapshot-served: the year-window
-				// scan runs DETACHED on its own refresh budget so it
-				// survives the request that kicked it — still bounded,
-				// just not request-scoped.
-				wantBudget = networkThroughputRefreshTimeout
-			case "AccountPositions":
-				// SWR'd on the shared contract-detail cache:
-				// the six-fold fan-out runs DETACHED on
-				// that budget — still bounded, still
-				// cancellation-observing, just not request-scoped. The
-				// REQUEST-side bound is unchanged (the cold wait is
-				// capped by explorerReadTimeout in the handler).
-				wantBudget = contractDetailRefreshTimeout
-			}
-			if probe.budget <= 0 || probe.budget > wantBudget {
-				t.Fatalf("%s: deadline budget %v not in (0, %v]", tc.name, probe.budget, wantBudget)
-			}
-			if probe.budget < wantBudget-2*time.Second {
-				t.Fatalf("%s: deadline budget %v is smaller than the expected ~%v read ceiling",
-					tc.name, probe.budget, wantBudget)
-			}
-		})
-	}
-}
-
 // TestCapReader_EveryMethodRecordsDeadline keeps the route table honest: a
 // stub that returns without recording its context makes a route over it
 // look unreachable, so the route never gets added and its deadline goes
@@ -529,37 +423,6 @@ func (b *blockingReader) RecentLedgers(ctx context.Context, _ int, _ uint32) ([]
 		return nil, ctx.Err()
 	case <-time.After(3 * explorerReadTimeout):
 		return nil, errors.New("blocking reader hard fallback fired")
-	}
-}
-
-// TestExplorerReads_ReturnWhenReadExceedsBudget proves the end-to-end anti-DoS
-// property the deadline exists to deliver: a reader that would otherwise block
-// indefinitely is abandoned once the handler's own read budget elapses, so the
-// handler returns (and releases its pool connection) instead of hanging. Against
-// the un-fixed code the reader gets a deadline-less r.Context(), never observes
-// cancellation, and the handler hangs — this test then trips its budget+slack
-// ceiling and fails.
-func TestExplorerReads_ReturnWhenReadExceedsBudget(t *testing.T) {
-	probe := &deadlineProbe{}
-	h := newProbeHandler(&blockingReader{capReader: &capReader{probe: probe}}, nil)
-
-	r := httptest.NewRequest(http.MethodGet, "/v1/ledgers", nil)
-	done := make(chan struct{})
-	start := time.Now()
-	go func() {
-		h.LedgersList(httptest.NewRecorder(), r)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		if elapsed := time.Since(start); elapsed < explorerReadTimeout-2*time.Second {
-			t.Fatalf("handler returned in %v — too fast to be the read deadline firing (expected ~%v); "+
-				"the block/return path isn't exercising the timeout", elapsed, explorerReadTimeout)
-		}
-	case <-time.After(explorerReadTimeout + 3*time.Second):
-		t.Fatal("handler did not return within the read budget + slack — the lake read is unbounded " +
-			"(C3-1 pool-exhaustion DoS regression)")
 	}
 }
 
