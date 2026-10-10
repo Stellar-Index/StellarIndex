@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -67,17 +66,16 @@ func TestValidateConcurrency_RejectsZeroAndNegative(t *testing.T) {
 func TestRunProbe_PassPath(t *testing.T) {
 	// Fake API: every request returns 200 + a healthz-shaped body
 	// + an observed_at near now (so freshness < 30s).
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	url := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":{"observed_at":"` + time.Now().UTC().Format(time.RFC3339) + `","price":"1.0","window_seconds":5}}`))
-	}))
-	defer srv.Close()
+	})
 
 	endpoints := []endpoint{
 		{Name: "healthz", Path: "/healthz"},
 		{Name: "price", Path: "/price", Query: map[string]string{"asset": "native", "quote": "fiat:USD"}},
 	}
-	rep := runProbe(srv.URL, "", endpoints, 200*time.Millisecond, 2, 0, slaTargets{
+	rep := runProbe(url, "", endpoints, 200*time.Millisecond, 2, 0, slaTargets{
 		P95MS:           500, // very generous so the test isn't flaky
 		P99MS:           1000,
 		FreshnessSec:    30,
@@ -101,14 +99,13 @@ func TestRunProbe_PassPath(t *testing.T) {
 
 func TestRunProbe_FailsOnSlowEndpoint(t *testing.T) {
 	// Fake API that delays 600ms — definitely > 200ms p95 target.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	url := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(50 * time.Millisecond) // moderate; we set tight target below to simulate fail
 		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
+	})
 
 	endpoints := []endpoint{{Name: "healthz", Path: "/healthz"}}
-	rep := runProbe(srv.URL, "", endpoints, 200*time.Millisecond, 2, 0, slaTargets{
+	rep := runProbe(url, "", endpoints, 200*time.Millisecond, 2, 0, slaTargets{
 		P95MS:           1, // 1ms target — we'll definitely exceed
 		P99MS:           1,
 		FreshnessSec:    30,
@@ -123,13 +120,12 @@ func TestRunProbe_FailsOnSlowEndpoint(t *testing.T) {
 }
 
 func TestRunProbe_FailsOn5xx(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	url := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
+	})
 
 	endpoints := []endpoint{{Name: "healthz", Path: "/healthz"}}
-	rep := runProbe(srv.URL, "", endpoints, 100*time.Millisecond, 1, 0, slaTargets{
+	rep := runProbe(url, "", endpoints, 100*time.Millisecond, 1, 0, slaTargets{
 		P95MS:           1000,
 		P99MS:           5000,
 		FreshnessSec:    300,
@@ -156,16 +152,15 @@ func TestRunProbe_FailsOn5xx(t *testing.T) {
 // and count, which TestRunProbe_RequestHangingAtDeadlineIsAFailure
 // pins from the other side.
 func TestRunProbe_DeadlineCancelledSamplesNotCountedAsFailures(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	url := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		// Long enough that at end-of-run every worker is reliably
 		// still inside c.Do() when the run ctx is cancelled.
 		time.Sleep(40 * time.Millisecond)
 		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
+	})
 
 	endpoints := []endpoint{{Name: "healthz", Path: "/healthz"}}
-	rep := runProbe(srv.URL, "", endpoints, 150*time.Millisecond, 4, 0, slaTargets{
+	rep := runProbe(url, "", endpoints, 150*time.Millisecond, 4, 0, slaTargets{
 		P95MS:           10000, // generous — this test is about availability, not latency
 		P99MS:           10000,
 		FreshnessSec:    30,
@@ -182,68 +177,6 @@ func TestRunProbe_DeadlineCancelledSamplesNotCountedAsFailures(t *testing.T) {
 	}
 	if st.Samples == 0 {
 		t.Error("no samples recorded — the run deadline must stop new requests, not lose the ones already made")
-	}
-}
-
-func TestHit_ParsesObservedAt(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"data":{"observed_at":"` + now.Format(time.RFC3339) + `"}}`))
-	}))
-	defer srv.Close()
-	c := &http.Client{Timeout: time.Second}
-	_, failure, observed, _ := hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"})
-	if failure != "" {
-		t.Fatalf("hit returned not-ok: %s", failure)
-	}
-	if !observed.Equal(now) {
-		t.Errorf("observed=%v want %v", observed, now)
-	}
-}
-
-func TestHit_NoObservedAt(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"status":"ok"}`)) // no data.observed_at
-	}))
-	defer srv.Close()
-	c := &http.Client{Timeout: time.Second}
-	_, failure, observed, _ := hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"})
-	if failure != "" {
-		t.Fatalf("hit returned not-ok on 200: %s", failure)
-	}
-	if !observed.IsZero() {
-		t.Errorf("observed=%v want zero", observed)
-	}
-}
-
-func TestHit_AttachesAuthorizationWhenAPIKeySet(t *testing.T) {
-	var sawAuth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawAuth = r.Header.Get("Authorization")
-		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
-	c := &http.Client{Timeout: time.Second}
-	_, failure, _, _ := hit(context.Background(), c, srv.URL, "sip_test_xyz", endpoint{Path: "/x"})
-	if failure != "" {
-		t.Fatal("hit returned not-ok")
-	}
-	if sawAuth != "Bearer sip_test_xyz" {
-		t.Errorf("Authorization = %q, want %q", sawAuth, "Bearer sip_test_xyz")
-	}
-}
-
-func TestHit_OmitsAuthorizationWhenAPIKeyEmpty(t *testing.T) {
-	var sawAuth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawAuth = r.Header.Get("Authorization")
-		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
-	c := &http.Client{Timeout: time.Second}
-	_, _, _, _ = hit(context.Background(), c, srv.URL, "", endpoint{Path: "/x"})
-	if sawAuth != "" {
-		t.Errorf("Authorization = %q, want empty (no key passed)", sawAuth)
 	}
 }
 
@@ -424,16 +357,15 @@ func abs(x float64) float64 {
 //
 // in aggregateEndpointStats and this reports ~1.0 s against a 2 s run.
 func TestRunProbe_FreshnessMeasuredAtSampleTime(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	url := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":{"observed_at":"` +
 			time.Now().UTC().Format(time.RFC3339Nano) + `","price":"1.0","window_seconds":5}}`))
-	}))
-	defer srv.Close()
+	})
 
 	const runFor = 2 * time.Second
-	rep := runProbe(srv.URL, "", []endpoint{{Name: "price-tip", Path: "/price/tip"}},
-		runFor, 2, 0, slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.0})
+	rep := runProbe(url, "", []endpoint{{Name: "price-tip", Path: "/price/tip"}},
+		runFor, 2, 0, looseSLA(99.0))
 
 	if len(rep.PerEndpoint) != 1 {
 		t.Fatalf("PerEndpoint len=%d want 1", len(rep.PerEndpoint))
@@ -543,7 +475,7 @@ func TestRunProbe_HardOutageEmitsNoLatency(t *testing.T) {
 func TestRunProbe_RequestHangingAtDeadlineIsAFailure(t *testing.T) {
 	var served atomic.Int32
 	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	url := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if served.Add(1) <= 3 {
 			_, _ = w.Write([]byte(`{}`))
 			return
@@ -552,12 +484,11 @@ func TestRunProbe_RequestHangingAtDeadlineIsAFailure(t *testing.T) {
 		case <-r.Context().Done():
 		case <-release:
 		}
-	}))
-	defer srv.Close()
+	})
 	defer close(release)
 
-	rep := runProbe(srv.URL, "", []endpoint{{Name: "price", Path: "/price"}},
-		300*time.Millisecond, 1, 0, slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.9})
+	rep := runProbe(url, "", []endpoint{{Name: "price", Path: "/price"}},
+		300*time.Millisecond, 1, 0, looseSLA(99.9))
 	st := rep.PerEndpoint[0]
 	// Errors may be 2: a second hung request can start if the first one's
 	// client timer fires a tick before the run deadline's.
@@ -605,7 +536,7 @@ func TestAggregateEndpointStats_FreshnessIsStalestResponse(t *testing.T) {
 // and /oracle/latest answering `{"data":[]}` during an oracle outage
 // would read 100 % available.
 func TestRunProbe_PairEndpointsRejectBodiesThatBreakTheirContract(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	url := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.HasSuffix(r.URL.Path, "/oracle/latest") {
 			_, _ = w.Write([]byte(`{"data":[]}`))
@@ -614,11 +545,10 @@ func TestRunProbe_PairEndpointsRejectBodiesThatBreakTheirContract(t *testing.T) 
 		// A refactor nested observed_at one level down.
 		_, _ = w.Write([]byte(`{"data":{"price":"1.0","meta":{"observed_at":"` +
 			time.Now().UTC().Format(time.RFC3339) + `"}}}`))
-	}))
-	defer srv.Close()
+	})
 
 	eps := pairEndpoints("native", "fiat:USD", defaultClosedBucketFreshTarget)
-	rep := runProbe(srv.URL, "", eps, 150*time.Millisecond, 1, 0, slaTargets{
+	rep := runProbe(url, "", eps, 150*time.Millisecond, 1, 0, slaTargets{
 		P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.9,
 	})
 	if rep.Verdict == "pass" {
@@ -675,37 +605,14 @@ func TestMain_RejectsOutOfRangeNumericFlags(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// -duration 50ms keeps an unvalidated run short; a later
 			// -duration in tc.args overrides it.
-			cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcessMain$")
-			cmd.Env = append(os.Environ(), "SLA_PROBE_HELPER=1",
-				"SLA_PROBE_HELPER_ARGS=-base-url "+deadURL+" -duration 50ms "+tc.args)
-			var stderr strings.Builder
-			cmd.Stderr = &stderr
-			err := cmd.Run()
-			var exitErr *exec.ExitError
-			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
-				t.Fatalf("%s: exit = %v, want usage exit 2; stderr:\n%s", tc.args, err, stderr.String())
+			out, code := runHelperMain(t, "-base-url "+deadURL+" -duration 50ms "+tc.args)
+			if code != 2 {
+				t.Fatalf("%s: exit = %d, want usage exit 2; output:\n%s", tc.args, code, out)
 			}
-			if !strings.Contains(stderr.String(), tc.flagName) {
-				t.Errorf("%s: stderr does not name %s:\n%s", tc.args, tc.flagName, stderr.String())
+			if !strings.Contains(out, tc.flagName) {
+				t.Errorf("%s: output does not name %s:\n%s", tc.args, tc.flagName, out)
 			}
 		})
-	}
-}
-
-// TestHit_OracleWithReadingsIsASuccess keeps the contract check from
-// rejecting the healthy shape it guards.
-func TestHit_OracleWithReadingsIsASuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"data":[{"source":"reflector","price":"0.1"}]}`))
-	}))
-	defer srv.Close()
-	eps := pairEndpoints("native", "fiat:USD", defaultClosedBucketFreshTarget)
-	oracle := eps[len(eps)-1]
-	if oracle.Name != "oracle-latest" {
-		t.Fatalf("last pair endpoint = %q, want oracle-latest", oracle.Name)
-	}
-	if _, failure, _, _ := hit(context.Background(), &http.Client{Timeout: time.Second}, srv.URL, "", oracle); failure != "" {
-		t.Error("an oracle response with one reading was rejected")
 	}
 }
 
@@ -723,7 +630,7 @@ func TestHit_OracleWithReadingsIsASuccess(t *testing.T) {
 // ObservedAtFreshSec collapse to the same merged value and the USDC pair
 // is never named in FailedReasons.
 func TestRunProbe_MultiPairDoesNotMergeSamples(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	url := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var observedAt time.Time
 		if r.URL.Query().Get("asset") == "usdc" {
@@ -733,8 +640,7 @@ func TestRunProbe_MultiPairDoesNotMergeSamples(t *testing.T) {
 			observedAt = time.Now().UTC()
 		}
 		_, _ = w.Write([]byte(`{"data":{"observed_at":"` + observedAt.Format(time.RFC3339Nano) + `","price":"1.0","window_seconds":5}}`))
-	}))
-	defer srv.Close()
+	})
 
 	var endpoints []endpoint
 	endpoints = append(endpoints, pairEndpoints("native", "fiat:USD", defaultClosedBucketFreshTarget)...)
@@ -743,8 +649,8 @@ func TestRunProbe_MultiPairDoesNotMergeSamples(t *testing.T) {
 	// concurrency == len(endpoints): each worker starts on a distinct
 	// endpoint (collectSamples' round-robin), guaranteeing every one of
 	// the 6 endpoints gets sampled at least once within the short run.
-	rep := runProbe(srv.URL, "", endpoints, 500*time.Millisecond, len(endpoints), 0,
-		slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.0})
+	rep := runProbe(url, "", endpoints, 500*time.Millisecond, len(endpoints), 0,
+		looseSLA(99.0))
 
 	if len(rep.PerEndpoint) != 6 {
 		t.Fatalf("PerEndpoint len=%d want 6 (2 pairs x 3 endpoints)", len(rep.PerEndpoint))
@@ -810,18 +716,14 @@ func TestMain_UsageDoesNotPrintAPIKey(t *testing.T) {
 	for _, tc := range cases {
 		args := tc.args
 		t.Run(args, func(t *testing.T) {
-			cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcessMain$")
-			cmd.Env = append(os.Environ(), "SLA_PROBE_HELPER=1",
-				"STELLARINDEX_PROBE_API_KEY="+probeKey,
-				"SLA_PROBE_HELPER_ARGS="+args)
-			out, err := cmd.CombinedOutput()
-			if got := cmd.ProcessState.ExitCode(); got != tc.wantExit {
-				t.Fatalf("%s: exit = %d (%v), want %d; output:\n%s", args, got, err, tc.wantExit, out)
+			out, got := runHelperMain(t, args, "STELLARINDEX_PROBE_API_KEY="+probeKey)
+			if got != tc.wantExit {
+				t.Fatalf("%s: exit = %d, want %d; output:\n%s", args, got, tc.wantExit, out)
 			}
-			if !strings.Contains(string(out), "-api-key") {
+			if !strings.Contains(out, "-api-key") {
 				t.Fatalf("%s: output is not the usage text:\n%s", args, out)
 			}
-			if strings.Contains(string(out), probeKey) {
+			if strings.Contains(out, probeKey) {
 				t.Errorf("%s: usage output leaks STELLARINDEX_PROBE_API_KEY:\n%s", args, out)
 			}
 		})
@@ -849,14 +751,13 @@ func TestResolveAPIKey_FallsBackToEnv(t *testing.T) {
 // own per-key rate limit and fails the run on 429s.
 func TestRunProbe_MaxRPSPacesRequests(t *testing.T) {
 	var n atomic.Int64
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	url := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		n.Add(1)
 		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
+	})
 
-	rep := runProbe(srv.URL, "", []endpoint{{Name: "healthz", Path: "/healthz"}},
-		time.Second, 2, 20, slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.0})
+	rep := runProbe(url, "", []endpoint{{Name: "healthz", Path: "/healthz"}},
+		time.Second, 2, 20, looseSLA(99.0))
 	// 20 rps over 1 s plus a burst of 2 (one token per worker) is ~22.
 	if got := n.Load(); got < 10 || got > 30 {
 		t.Errorf("server saw %d requests in a 1 s run at -max-rps 20, want 10..30", got)
@@ -869,18 +770,17 @@ func TestRunProbe_MaxRPSPacesRequests(t *testing.T) {
 // TestRunProbe_NamesRateLimitedFailures: a failed run must say why, so a
 // rate-limited probe reads as 429s rather than as an unexplained outage.
 func TestRunProbe_NamesRateLimitedFailures(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	url := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/assets" {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
 		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
+	})
 
 	eps := []endpoint{{Name: "healthz", Path: "/healthz"}, {Name: "assets", Path: "/assets"}}
-	rep := runProbe(srv.URL, "", eps, 150*time.Millisecond, 1, 0,
-		slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.9})
+	rep := runProbe(url, "", eps, 150*time.Millisecond, 1, 0,
+		looseSLA(99.9))
 	var assets stats
 	for _, st := range rep.PerEndpoint {
 		if st.Endpoint == "assets" {
@@ -1028,4 +928,72 @@ func TestFetchNetwork(t *testing.T) {
 			t.Errorf("%s: = %q, want pubnet", name, got)
 		}
 	}
+}
+
+// serve starts a stub API for the test and returns its URL.
+func serve(t *testing.T, h http.HandlerFunc) string {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// looseSLA is a latency-insensitive target set for tests about
+// availability or freshness.
+func looseSLA(availabilityPct float64) slaTargets {
+	return slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: availabilityPct}
+}
+
+func TestHit_Success(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	oracle := pairEndpoints("native", "fiat:USD", defaultClosedBucketFreshTarget)[2]
+	if oracle.Name != "oracle-latest" {
+		t.Fatalf("pair endpoint 2 = %q, want oracle-latest", oracle.Name)
+	}
+	cases := []struct {
+		name         string
+		body         string
+		apiKey       string
+		ep           endpoint
+		wantAuth     string
+		wantObserved time.Time
+	}{
+		{"parses observed_at", `{"data":{"observed_at":"` + now.Format(time.RFC3339) + `"}}`, "", endpoint{Path: "/x"}, "", now},
+		{"no observed_at", `{"status":"ok"}`, "", endpoint{Path: "/x"}, "", time.Time{}},
+		{"sends bearer key", `{}`, "sip_test_xyz", endpoint{Path: "/x"}, "Bearer sip_test_xyz", time.Time{}},
+		// The contract check must not reject the healthy oracle shape.
+		{"oracle with a reading", `{"data":[{"source":"reflector","price":"0.1"}]}`, "", oracle, "", time.Time{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var sawAuth string
+			url := serve(t, func(w http.ResponseWriter, r *http.Request) {
+				sawAuth = r.Header.Get("Authorization")
+				_, _ = w.Write([]byte(tc.body))
+			})
+			_, failure, observed, _ := hit(context.Background(), &http.Client{Timeout: time.Second}, url, tc.apiKey, tc.ep)
+			if failure != "" {
+				t.Fatalf("hit failed: %s", failure)
+			}
+			if !observed.Equal(tc.wantObserved) {
+				t.Errorf("observed=%v want %v", observed, tc.wantObserved)
+			}
+			if sawAuth != tc.wantAuth {
+				t.Errorf("Authorization = %q, want %q", sawAuth, tc.wantAuth)
+			}
+		})
+	}
+}
+
+// runHelperMain re-executes the test binary into main() with args and
+// returns its combined output and exit code.
+func runHelperMain(t *testing.T, args string, extraEnv ...string) (string, int) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcessMain$")
+	cmd.Env = append(append(os.Environ(), "SLA_PROBE_HELPER=1", "SLA_PROBE_HELPER_ARGS="+args), extraEnv...)
+	out, err := cmd.CombinedOutput()
+	if cmd.ProcessState == nil {
+		t.Fatalf("helper did not start: %v", err)
+	}
+	return string(out), cmd.ProcessState.ExitCode()
 }

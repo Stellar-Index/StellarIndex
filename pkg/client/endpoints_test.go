@@ -65,23 +65,6 @@ func TestHistorySinceInception_HappyPath(t *testing.T) {
 	}
 }
 
-// TestHistorySinceInception_AssetRequired — Asset is required;
-// empty Asset short-circuits client-side without a network call.
-func TestHistorySinceInception_AssetRequired(t *testing.T) {
-	c := client.New(client.Options{BaseURL: "http://nope.invalid"})
-	_, err := c.HistorySinceInception(context.Background(), client.HistoryQuery{})
-	if err == nil {
-		t.Fatal("expected error for empty Asset")
-	}
-	var apiErr *client.APIError
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("err = %T, want *APIError", err)
-	}
-	if apiErr.Status != 400 {
-		t.Errorf("Status = %d, want 400", apiErr.Status)
-	}
-}
-
 // TestAssets_PaginationCarriesCursor — cursor + limit are forwarded
 // as query params; missing values are omitted (no `cursor=` or
 // `limit=` on a fresh-walk request).
@@ -171,19 +154,6 @@ func TestAsset_PathEscapesAssetID(t *testing.T) {
 	}
 }
 
-// TestAsset_AssetIDRequired pins the empty-arg short-circuit.
-func TestAsset_AssetIDRequired(t *testing.T) {
-	c := client.New(client.Options{BaseURL: "http://nope.invalid"})
-	_, err := c.Asset(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty asset_id")
-	}
-	var apiErr *client.APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 400 {
-		t.Errorf("err = %v, want *APIError with Status 400", err)
-	}
-}
-
 // TestAssetMetadata_PathPrefix — the metadata endpoint reuses the
 // same path-escape pattern as Asset, with /metadata appended.
 func TestAssetMetadata_PathPrefix(t *testing.T) {
@@ -230,13 +200,7 @@ func TestAssetSupplyFlows_DecodesDecimalStrings(t *testing.T) {
 
 // TestMe_PathOnly — Me has no parameters; just a path round-trip.
 func TestMe_PathOnly(t *testing.T) {
-	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/account/me" {
-			t.Errorf("path = %q, want /v1/account/me", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data": {"key_id":"k_abc","label":"prod","tier":"sep10","rate_limit_per_min":1000}, "as_of": "2026-04-28T10:00:00Z","flags":{}}`))
-	})
+	c := newJSONServer(t, "/v1/account/me", `{"data": {"key_id":"k_abc","label":"prod","tier":"sep10","rate_limit_per_min":1000}, "as_of": "2026-04-28T10:00:00Z","flags":{}}`)
 	got, err := c.Me(context.Background())
 	if err != nil {
 		t.Fatalf("Me: %v", err)
@@ -338,19 +302,6 @@ func TestPriceTip_OmitsZeroWindowSeconds(t *testing.T) {
 	}
 }
 
-// TestPriceTip_AssetRequired — empty Asset short-circuits.
-func TestPriceTip_AssetRequired(t *testing.T) {
-	c := client.New(client.Options{BaseURL: "http://nope.invalid"})
-	_, err := c.PriceTip(context.Background(), client.PriceTipQuery{})
-	if err == nil {
-		t.Fatal("expected error for empty Asset")
-	}
-	var apiErr *client.APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 400 {
-		t.Errorf("err = %v, want *APIError Status=400", err)
-	}
-}
-
 // TestPriceBatch_GETUnder100 — a 3-asset batch routes via GET
 // with the canonical comma-separated `asset_ids` param. Pinned
 // because the GET-vs-POST routing is the SDK's main value-add
@@ -436,47 +387,6 @@ func TestPriceBatch_POSTOver100(t *testing.T) {
 	}
 	if sawAssetIDsLen != 150 {
 		t.Errorf("body asset_ids len = %d, want 150", sawAssetIDsLen)
-	}
-}
-
-// TestPriceBatch_EmptyAssetIDs — empty batch short-circuits
-// client-side without a network call. Mirrors the
-// PriceQuery.Asset == "" check on the single-asset method.
-func TestPriceBatch_EmptyAssetIDs(t *testing.T) {
-	c := client.New(client.Options{BaseURL: "http://nope.invalid"})
-	_, err := c.PriceBatch(context.Background(), client.PriceBatchQuery{})
-	if err == nil {
-		t.Fatal("expected error for empty AssetIDs")
-	}
-	var apiErr *client.APIError
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("err = %T, want *APIError", err)
-	}
-	if apiErr.Status != 400 {
-		t.Errorf("Status = %d, want 400", apiErr.Status)
-	}
-}
-
-// TestPriceBatch_OverPOSTCap — >1000 ids never round-trip; the
-// SDK rejects client-side. Splitting into chunks would mask the
-// envelope-wide flags.stale OR semantic on subsets the caller
-// wouldn't see — that's a caller decision, not the SDK's.
-func TestPriceBatch_OverPOSTCap(t *testing.T) {
-	ids := make([]string, 1001)
-	for i := range ids {
-		ids[i] = "x" + strconv.Itoa(i)
-	}
-	c := client.New(client.Options{BaseURL: "http://nope.invalid"})
-	_, err := c.PriceBatch(context.Background(), client.PriceBatchQuery{AssetIDs: ids})
-	if err == nil {
-		t.Fatal("expected error for >1000 ids")
-	}
-	var apiErr *client.APIError
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("err = %T, want *APIError", err)
-	}
-	if apiErr.Status != 400 {
-		t.Errorf("Status = %d, want 400", apiErr.Status)
 	}
 }
 
@@ -566,33 +476,6 @@ func TestOHLC_OmitsZeroTimes(t *testing.T) {
 		Base: "native", Quote: "fiat:USD",
 	}); err != nil {
 		t.Fatalf("OHLC: %v", err)
-	}
-}
-
-// TestOHLC_BaseQuoteRequired — both Base and Quote must be set.
-// /v1/ohlc deliberately doesn't default Quote to fiat:USD (unlike
-// /v1/price) — candlestick charts pin a specific pair so the SDK
-// must as well.
-func TestOHLC_BaseQuoteRequired(t *testing.T) {
-	c := client.New(client.Options{BaseURL: "http://nope.invalid"})
-	for _, tc := range []struct {
-		name string
-		q    client.OHLCQuery
-	}{
-		{"empty Base", client.OHLCQuery{Quote: "fiat:USD"}},
-		{"empty Quote", client.OHLCQuery{Base: "native"}},
-		{"both empty", client.OHLCQuery{}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := c.OHLC(context.Background(), tc.q)
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			var apiErr *client.APIError
-			if !errors.As(err, &apiErr) || apiErr.Status != 400 {
-				t.Errorf("err = %v, want *APIError 400", err)
-			}
-		})
 	}
 }
 
@@ -751,30 +634,6 @@ func TestHistory_OmitsZeroOptional(t *testing.T) {
 	}
 }
 
-// TestHistory_BaseQuoteRequired — both Base and Quote required;
-// short-circuits client-side without a network call.
-func TestHistory_BaseQuoteRequired(t *testing.T) {
-	c := client.New(client.Options{BaseURL: "http://nope.invalid"})
-	for _, tc := range []struct {
-		name string
-		q    client.HistoryRangeQuery
-	}{
-		{"empty Base", client.HistoryRangeQuery{Quote: "fiat:USD"}},
-		{"empty Quote", client.HistoryRangeQuery{Base: "native"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := c.History(context.Background(), tc.q)
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			var apiErr *client.APIError
-			if !errors.As(err, &apiErr) || apiErr.Status != 400 {
-				t.Errorf("err = %v, want *APIError 400", err)
-			}
-		})
-	}
-}
-
 // TestSources_HappyPath — happy-path round-trip pinning the
 // optional class filter + decode of the registry shape.
 func TestSources_HappyPath(t *testing.T) {
@@ -907,37 +766,8 @@ func TestPair_EmptyArrayOnUnknownPair(t *testing.T) {
 	}
 }
 
-// TestPair_BaseQuoteRequired — both arguments are required.
-func TestPair_BaseQuoteRequired(t *testing.T) {
-	c := client.New(client.Options{BaseURL: "http://nope.invalid"})
-	for _, tc := range []struct {
-		name        string
-		base, quote string
-	}{
-		{"empty base", "", "fiat:USD"},
-		{"empty quote", "native", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := c.Pair(context.Background(), tc.base, tc.quote)
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			var apiErr *client.APIError
-			if !errors.As(err, &apiErr) || apiErr.Status != 400 {
-				t.Errorf("err = %v, want *APIError 400", err)
-			}
-		})
-	}
-}
-
 func TestUsage_EmptyArrayDecodes(t *testing.T) {
-	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/account/usage" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data": [], "as_of": "2026-04-28T10:00:00Z","flags":{}}`))
-	})
+	c := newJSONServer(t, "/v1/account/usage", `{"data": [], "as_of": "2026-04-28T10:00:00Z","flags":{}}`)
 	got, err := c.Usage(context.Background())
 	if err != nil {
 		t.Fatalf("Usage: %v", err)
@@ -997,21 +827,6 @@ func TestIssuer_PathEscapes(t *testing.T) {
 	}
 }
 
-// TestIssuer_GStrkeyRequired — the SDK rejects empty G-strkey at
-// the boundary instead of round-tripping a 404 — saves a network
-// hop and surfaces the real bug at the call site.
-func TestIssuer_GStrkeyRequired(t *testing.T) {
-	c := client.New(client.Options{BaseURL: "http://nope.invalid"})
-	_, err := c.Issuer(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty g_strkey")
-	}
-	var apiErr *client.APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 400 {
-		t.Errorf("err = %v, want *APIError with Status 400", err)
-	}
-}
-
 // TestKeys_HappyPath — list keys for the authenticated caller;
 // pins the wire shape (Account[]) and that order is preserved.
 func TestKeys_HappyPath(t *testing.T) {
@@ -1057,22 +872,6 @@ func TestRevokeKey_HappyPath(t *testing.T) {
 	}
 }
 
-// TestRevokeKey_EmptyKeyID — argument validation runs client-side
-// without a network round trip, returning a 400-classed APIError.
-func TestRevokeKey_EmptyKeyID(t *testing.T) {
-	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("server hit for empty keyID — should validate client-side")
-	})
-	err := c.RevokeKey(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty keyID")
-	}
-	var apiErr *client.APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 400 {
-		t.Errorf("err = %v, want *APIError with Status 400", err)
-	}
-}
-
 // TestRevokeKey_404 — the SDK maps an error status to *APIError so
 // callers can branch on the status without parsing the message.
 func TestRevokeKey_404(t *testing.T) {
@@ -1095,12 +894,7 @@ func TestRevokeKey_404(t *testing.T) {
 // including the nested Region / Latency / Freshness / Incidents
 // shapes.
 func TestStatus_HappyPath(t *testing.T) {
-	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/status" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
+	c := newJSONServer(t, "/v1/status", `{
 			"data": {
 				"overall": "ok",
 				"region": {"name": "r1", "deployment": "production"},
@@ -1111,8 +905,7 @@ func TestStatus_HappyPath(t *testing.T) {
 			},
 			"as_of": "2026-05-05T15:00:00.001Z",
 			"flags": {"stale": false}
-		}`))
-	})
+		}`)
 	got, err := c.Status(context.Background())
 	if err != nil {
 		t.Fatalf("Status: %v", err)
@@ -1133,13 +926,7 @@ func TestStatus_HappyPath(t *testing.T) {
 
 // TestHealthz / TestReadyz / TestVersion — operational helpers.
 func TestHealthz_HappyPath(t *testing.T) {
-	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/healthz" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"status":"ok","uptime":"22m"},"as_of":"2026-05-05T15:00:00Z","flags":{}}`))
-	})
+	c := newJSONServer(t, "/v1/healthz", `{"data":{"status":"ok","uptime":"22m"},"as_of":"2026-05-05T15:00:00Z","flags":{}}`)
 	got, err := c.Healthz(context.Background())
 	if err != nil || got.Data.Status != "ok" {
 		t.Fatalf("Healthz = %v, err = %v", got, err)
@@ -1147,13 +934,7 @@ func TestHealthz_HappyPath(t *testing.T) {
 }
 
 func TestVersion_HappyPath(t *testing.T) {
-	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/version" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"version":"v0.0.0-rc.1","build_date":"2026-05-05","commit":"abc123","dirty":"false","go_version":"go1.25"},"as_of":"2026-05-05T15:00:00Z","flags":{}}`))
-	})
+	c := newJSONServer(t, "/v1/version", `{"data":{"version":"v0.0.0-rc.1","build_date":"2026-05-05","commit":"abc123","dirty":"false","go_version":"go1.25"},"as_of":"2026-05-05T15:00:00Z","flags":{}}`)
 	got, err := c.Version(context.Background())
 	if err != nil {
 		t.Fatalf("Version: %v", err)
@@ -1214,13 +995,7 @@ func TestObservations_HappyPath(t *testing.T) {
 // TestChangeSummary_HappyPath — pins the per-entity rollup shape
 // and the URL path-arg encoding for entity_type + entity_id.
 func TestChangeSummary_HappyPath(t *testing.T) {
-	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/changes/coin/crypto:XLM" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"entity_type":"coin","entity_id":"crypto:XLM","refreshed_at":"2026-05-09T00:00:00Z","current_value":"0.163","h24_delta_pct":3.21,"streak_direction":"down","acceleration":"increasing"},"as_of":"2026-05-09T00:00:00Z","flags":{}}`))
-	})
+	c := newJSONServer(t, "/v1/changes/coin/crypto:XLM", `{"data":{"entity_type":"coin","entity_id":"crypto:XLM","refreshed_at":"2026-05-09T00:00:00Z","current_value":"0.163","h24_delta_pct":3.21,"streak_direction":"down","acceleration":"increasing"},"as_of":"2026-05-09T00:00:00Z","flags":{}}`)
 	got, err := c.ChangeSummary(context.Background(), client.ChangeSummaryQuery{
 		EntityType: "coin", EntityID: "crypto:XLM",
 	})
@@ -1235,29 +1010,12 @@ func TestChangeSummary_HappyPath(t *testing.T) {
 	}
 }
 
-// TestChangeSummary_RequiresFields — both EntityType and
-// EntityID are mandatory; empty values short-circuit.
-func TestChangeSummary_RequiresFields(t *testing.T) {
-	c := client.New(client.Options{BaseURL: "http://nope.invalid"})
-	if _, err := c.ChangeSummary(context.Background(), client.ChangeSummaryQuery{EntityID: "x"}); err == nil {
-		t.Error("ChangeSummary with empty EntityType returned no error")
-	}
-	if _, err := c.ChangeSummary(context.Background(), client.ChangeSummaryQuery{EntityType: "coin"}); err == nil {
-		t.Error("ChangeSummary with empty EntityID returned no error")
-	}
-}
-
 // TestIncidents_HappyPath — pins the path, the IncidentsList
 // nesting (data.incidents + data.count), severity / status
 // strings as opaque tags, and the *time.Time ResolvedAt with
 // the omitempty branch.
 func TestIncidents_HappyPath(t *testing.T) {
-	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/incidents" {
-			t.Errorf("path = %q, want /v1/incidents", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
+	c := newJSONServer(t, "/v1/incidents", `{
 			"data": {
 				"incidents": [
 					{
@@ -1283,8 +1041,7 @@ func TestIncidents_HappyPath(t *testing.T) {
 			},
 			"as_of": "2026-05-09T04:24:24Z",
 			"flags": {}
-		}`))
-	})
+		}`)
 	got, err := c.Incidents(context.Background())
 	if err != nil {
 		t.Fatalf("Incidents: %v", err)
@@ -1338,13 +1095,7 @@ func TestIncidents_EmptyList(t *testing.T) {
 // "<CODE>:<G_STRKEY>") that lets clients resolve a SAC contract
 // back to its underlying classic asset.
 func TestSACWrappers_HappyPath(t *testing.T) {
-	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/sac-wrappers" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"CA4L5XQ7FY7BTJAAD6VPW6JPSJ3M2A62BBULXH7XYHLHAOFFY6SBT2Z4":"PSY:GCH3HFAY25TU2CPUEMF7OT7PGHUMXQITQQOOKZV6VRETY7SCEPARAEGO"},"as_of":"2026-05-08T23:00:00Z","flags":{}}`))
-	})
+	c := newJSONServer(t, "/v1/sac-wrappers", `{"data":{"CA4L5XQ7FY7BTJAAD6VPW6JPSJ3M2A62BBULXH7XYHLHAOFFY6SBT2Z4":"PSY:GCH3HFAY25TU2CPUEMF7OT7PGHUMXQITQQOOKZV6VRETY7SCEPARAEGO"},"as_of":"2026-05-08T23:00:00Z","flags":{}}`)
 	got, err := c.SACWrappers(context.Background())
 	if err != nil {
 		t.Fatalf("SACWrappers: %v", err)
@@ -1359,13 +1110,7 @@ func TestSACWrappers_HappyPath(t *testing.T) {
 // TestCursors_HappyPath — diagnostics endpoint returns
 // non-paginated array; test pins the wire shape.
 func TestCursors_HappyPath(t *testing.T) {
-	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/diagnostics/cursors" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data": [{"source":"sdex","sub_source":"","last_ledger":62413938,"last_updated":"2026-05-04T14:35:00Z","lag_seconds":42}], "as_of": "2026-05-04T14:35:42Z", "flags": {}}`))
-	})
+	c := newJSONServer(t, "/v1/diagnostics/cursors", `{"data": [{"source":"sdex","sub_source":"","last_ledger":62413938,"last_updated":"2026-05-04T14:35:00Z","lag_seconds":42}], "as_of": "2026-05-04T14:35:42Z", "flags": {}}`)
 	got, err := c.Cursors(context.Background())
 	if err != nil {
 		t.Fatalf("Cursors: %v", err)
@@ -1379,13 +1124,7 @@ func TestCursors_HappyPath(t *testing.T) {
 // Pins the path, the *string Volume24hUSD round-trip, and the
 // integer source counts.
 func TestNetworkStats_HappyPath(t *testing.T) {
-	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/network/stats" {
-			t.Errorf("path = %q, want /v1/network/stats", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"volume_24h_usd":"3958193034.60","markets_count_24h":22158,"assets_indexed":86114,"latest_ledger":62484113,"exchange_sources":11,"total_sources":21},"as_of":"2026-05-09T04:17:59Z","flags":{}}`))
-	})
+	c := newJSONServer(t, "/v1/network/stats", `{"data":{"volume_24h_usd":"3958193034.60","markets_count_24h":22158,"assets_indexed":86114,"latest_ledger":62484113,"exchange_sources":11,"total_sources":21},"as_of":"2026-05-09T04:17:59Z","flags":{}}`)
 	got, err := c.NetworkStats(context.Background())
 	if err != nil {
 		t.Fatalf("NetworkStats: %v", err)
@@ -1429,12 +1168,7 @@ func TestNetworkStats_NullVolume(t *testing.T) {
 // (one row per Blend pool from the 7d auction stream), and the
 // per-pool wire shape.
 func TestLendingPools_HappyPath(t *testing.T) {
-	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/lending/pools" {
-			t.Errorf("path = %q, want /v1/lending/pools", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
+	c := newJSONServer(t, "/v1/lending/pools", `{
 			"data": [
 				{
 					"protocol": "blend",
@@ -1455,8 +1189,7 @@ func TestLendingPools_HappyPath(t *testing.T) {
 			],
 			"as_of": "2026-05-09T10:00:00Z",
 			"flags": {}
-		}`))
-	})
+		}`)
 	got, err := c.LendingPools(context.Background())
 	if err != nil {
 		t.Fatalf("LendingPools: %v", err)
@@ -1544,20 +1277,6 @@ func TestVWAP_HappyPath(t *testing.T) {
 	}
 	if got.Data.OutliersFiltered != 1 {
 		t.Errorf("OutliersFiltered = %d, want 1", got.Data.OutliersFiltered)
-	}
-}
-
-// TestVWAP_ValidatesRequired — empty Base or Quote returns 400
-// without making an HTTP call.
-func TestVWAP_ValidatesRequired(t *testing.T) {
-	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("server should not have been hit")
-	})
-	if _, err := c.VWAP(context.Background(), client.AggregateQuery{Quote: "fiat:USD"}); err == nil {
-		t.Error("missing base should error")
-	}
-	if _, err := c.VWAP(context.Background(), client.AggregateQuery{Base: "native"}); err == nil {
-		t.Error("missing quote should error")
 	}
 }
 
@@ -1697,4 +1416,98 @@ func TestEnvelope_PaginationPointerRoundTrip(t *testing.T) {
 	if withPage.Pagination == nil || withPage.Pagination.Next != "c1" {
 		t.Fatalf("present pagination should decode to {Next:c1}, got %+v", withPage.Pagination)
 	}
+}
+
+// Argument validation runs client-side: no request reaches the
+// (unresolvable) host, and the caller gets a 400-classed APIError.
+func TestEndpoints_RejectInvalidArgsClientSide(t *testing.T) {
+	ctx := context.Background()
+	tooMany := make([]string, 1001)
+	for i := range tooMany {
+		tooMany[i] = "x" + strconv.Itoa(i)
+	}
+	cases := []struct {
+		name string
+		call func(c *client.Client) error
+	}{
+		{"HistorySinceInception empty asset", func(c *client.Client) error {
+			_, err := c.HistorySinceInception(ctx, client.HistoryQuery{})
+			return err
+		}},
+		{"Asset empty asset_id", func(c *client.Client) error { _, err := c.Asset(ctx, ""); return err }},
+		{"PriceTip empty asset", func(c *client.Client) error {
+			_, err := c.PriceTip(ctx, client.PriceTipQuery{})
+			return err
+		}},
+		{"PriceBatch empty ids", func(c *client.Client) error {
+			_, err := c.PriceBatch(ctx, client.PriceBatchQuery{})
+			return err
+		}},
+		{"PriceBatch over POST cap", func(c *client.Client) error {
+			_, err := c.PriceBatch(ctx, client.PriceBatchQuery{AssetIDs: tooMany})
+			return err
+		}},
+		// /v1/ohlc deliberately doesn't default Quote to fiat:USD.
+		{"OHLC empty base", func(c *client.Client) error {
+			_, err := c.OHLC(ctx, client.OHLCQuery{Quote: "fiat:USD"})
+			return err
+		}},
+		{"OHLC empty quote", func(c *client.Client) error {
+			_, err := c.OHLC(ctx, client.OHLCQuery{Base: "native"})
+			return err
+		}},
+		{"OHLC both empty", func(c *client.Client) error { _, err := c.OHLC(ctx, client.OHLCQuery{}); return err }},
+		{"History empty base", func(c *client.Client) error {
+			_, err := c.History(ctx, client.HistoryRangeQuery{Quote: "fiat:USD"})
+			return err
+		}},
+		{"History empty quote", func(c *client.Client) error {
+			_, err := c.History(ctx, client.HistoryRangeQuery{Base: "native"})
+			return err
+		}},
+		{"Pair empty base", func(c *client.Client) error { _, err := c.Pair(ctx, "", "fiat:USD"); return err }},
+		{"Pair empty quote", func(c *client.Client) error { _, err := c.Pair(ctx, "native", ""); return err }},
+		{"Issuer empty g_strkey", func(c *client.Client) error { _, err := c.Issuer(ctx, ""); return err }},
+		{"RevokeKey empty key id", func(c *client.Client) error { return c.RevokeKey(ctx, "") }},
+		{"ChangeSummary empty entity type", func(c *client.Client) error {
+			_, err := c.ChangeSummary(ctx, client.ChangeSummaryQuery{EntityID: "x"})
+			return err
+		}},
+		{"ChangeSummary empty entity id", func(c *client.Client) error {
+			_, err := c.ChangeSummary(ctx, client.ChangeSummaryQuery{EntityType: "coin"})
+			return err
+		}},
+		{"VWAP empty base", func(c *client.Client) error {
+			_, err := c.VWAP(ctx, client.AggregateQuery{Quote: "fiat:USD"})
+			return err
+		}},
+		{"VWAP empty quote", func(c *client.Client) error {
+			_, err := c.VWAP(ctx, client.AggregateQuery{Base: "native"})
+			return err
+		}},
+	}
+	c := client.New(client.Options{BaseURL: "http://nope.invalid"})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(c)
+			var apiErr *client.APIError
+			if !errors.As(err, &apiErr) || apiErr.Status != 400 {
+				t.Errorf("err = %v, want *APIError with Status 400", err)
+			}
+		})
+	}
+}
+
+// newJSONServer serves body as JSON and fails the test if a request
+// arrives on any path other than wantPath.
+func newJSONServer(t *testing.T, wantPath, body string) *client.Client {
+	t.Helper()
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != wantPath {
+			t.Errorf("path = %q, want %q", r.URL.Path, wantPath)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	})
+	return c
 }
