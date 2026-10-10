@@ -113,6 +113,20 @@ describe('SupplyTabPanel on-chain supply', () => {
     expect(screen.queryByText('100000T')).not.toBeInTheDocument();
   });
 
+  it('labels native XLM as the ledger counter, not the total supply', () => {
+    supplyQuery.data = {
+      data: {
+        asset_id: 'native',
+        total_supply: '1054439020873472865',
+        flow_count: 0,
+        source: 'ledger_total_coins',
+      },
+    };
+    renderPanel();
+    expect(screen.getByText('Ledger total_coins')).toBeInTheDocument();
+    expect(screen.getByText('includes burned XLM')).toBeInTheDocument();
+  });
+
   it('renders base units when the contract declares no scale', () => {
     supplyQuery.data = { data: storageSupply };
     renderPanel();
