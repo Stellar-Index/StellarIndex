@@ -1649,23 +1649,23 @@ zfs_snapshots_enabled: true
 # renders this through zfs-snapshot.env.j2 and compares the two.
 #
 # ClickHouse merges churn ~250 GB/day of parts, so each retained day
-# pins ~250 GB. Postgres keeps three days: its pinned churn measures
-# 0.15-0.2 TiB over a week, and pgBackRest PITR (repo1 + off-site repo2)
-# already covers a logical fault older than that.
+# pins ~250 GB; one day each for ClickHouse and Postgres, because their
+# off-site copies (the B2 lake copy, pgBackRest PITR repo1 + repo2) cover
+# a fault older than that.
 #
 # minio: the Galexie LCM archive (~2.6 TB) — the CDP source of truth the
 # lake and the served tier are RE-DERIVED FROM. It is append-mostly, so
 # a retained day pins only what was deleted or overwritten that day —
 # ~0 on the happy path — which is why it gets Postgres's week rather
-# than the lake's three days: the window is there to NOTICE a deletion,
+# than the lake's one day: the window is there to NOTICE a deletion,
 # and the cost of the window is only paid when there is something to
 # recover. Losing it is a very long recovery (re-ingest from the public
 # Stellar history archives), not an unrecoverable loss.
 zfs_snapshot_datasets:
   - name: "clickhouse"
-    retention_days: 3
+    retention_days: 1
   - name: "postgres"
-    retention_days: 3
+    retention_days: 1
   - name: "minio"
     retention_days: 7
 # Hard guardrail: below this much pool free space the job prunes the

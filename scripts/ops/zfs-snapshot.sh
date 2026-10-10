@@ -76,7 +76,7 @@
 #
 #   ZFS_SNAPSHOT_POOL            pool to read free space from   (data)
 #   ZFS_SNAPSHOT_DATASETS        space-separated `<dataset>:<retention_days>`
-#                                (data/clickhouse:3 data/postgres:3
+#                                (data/clickhouse:1 data/postgres:1
 #                                 data/minio:7). MUST stay in step with
 #                                 the role's zfs_snapshot_datasets —
 #                                 scripts/ci/zfs-snapshot-coverage-test.sh
@@ -100,7 +100,7 @@
 set -euo pipefail
 
 ZFS_SNAPSHOT_POOL="${ZFS_SNAPSHOT_POOL:-data}"
-ZFS_SNAPSHOT_DATASETS="${ZFS_SNAPSHOT_DATASETS:-data/clickhouse:3 data/postgres:3 data/minio:7}"
+ZFS_SNAPSHOT_DATASETS="${ZFS_SNAPSHOT_DATASETS:-data/clickhouse:1 data/postgres:1 data/minio:7}"
 ZFS_SNAPSHOT_MIN_FREE_BYTES="${ZFS_SNAPSHOT_MIN_FREE_BYTES:-2199023255552}"  # 2 TiB
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 
