@@ -9,32 +9,29 @@ import (
 	"time"
 )
 
-// ─── The exact-tier usd_volume RE-STAMP ───────────────────────────
+// The exact-tier usd_volume RE-STAMP.
 //
 // [usd_volume_reconcile.go] is the READ side of the exact-tier identity
-// (`usd_volume = pegged_leg / 10^decimals`): verify-usd-volume reports
-// violations. This file is the WRITE side, correcting rows stamped before
-// the insert path enforced the identity, under this discipline:
+// (`usd_volume = pegged_leg / 10^decimals`); this file is the WRITE side,
+// correcting rows stamped before the insert path enforced it:
 //
-//   - tier and scale come from [ClassifyUSDVolumeTier], the SAME
-//     classifier the verifier uses (lock-stepped to the insert waterfall by
-//     TestClassifyUSDVolumeTier_TracksTheWaterfall); the tool never picks a
-//     leg or scale on its own;
+//   - tier and scale come from [ClassifyUSDVolumeTier], the SAME classifier the
+//     verifier uses (lock-stepped to the insert waterfall by
+//     TestClassifyUSDVolumeTier_TracksTheWaterfall); the tool never picks a leg
+//     or scale on its own;
 //   - each corrected row gets the run's `derive_generation`, guarded by
-//     `derive_generation <= $gen` like the InsertTrade upsert, so neither a
-//     live gen-0 replay nor an older re-derive can overwrite a correction;
+//     `derive_generation <= $gen` like the InsertTrade upsert, so neither a live
+//     gen-0 replay nor an older re-derive can overwrite a correction;
 //   - a row that ALREADY satisfies the identity is untouched (value and
 //     generation), so re-running a window is idempotent;
-//   - every rewrite first copies the prior usd_volume and derive_generation
-//     into `usd_volume_restamp_log` (migration 0175) in the same transaction
+//   - every rewrite first copies the prior usd_volume and derive_generation into
+//     `usd_volume_restamp_log` (migration 0175) in the same transaction
 //     ([Store.restampTradesUSDVolume]), so a bad run can be undone;
-//   - NULL rows are left alone unless the operator opts in (FillNull):
-//     filling one is a COVERAGE change, not a value repair.
+//   - NULL rows are left alone unless the operator opts in (FillNull): filling
+//     one is a COVERAGE change, not a value repair.
 //
-// Estimated tiers (3/4: FX rate / XLM anchor at trade time) are OUT of
-// scope: their value is not reproducible from the row alone and needs the
-// full resolver-backed waterfall, which is
-// `ch-rebuild`'s job (the usd-volume-rederive runbook in docs/operations/).
+// Estimated tiers are OUT of scope here: their value is not reproducible from
+// the row alone (see the usd-volume-rederive runbook in docs/operations/).
 
 // ExactTierUSDVolume renders the exact-tier identity for one row: the
 // pegged leg divided by 10^decimals, rendered EXACTLY as [tradeUSDVolume]
@@ -231,33 +228,26 @@ func (w usdVolumeRestampWrite) statements() (logStmt, updateStmt string) {
 	return logStmt, updateStmt
 }
 
-// restampTradesUSDVolume is the one path that rewrites `trades.usd_volume`
-// in place. In ONE transaction it copies every target row's before-image
-// into `usd_volume_restamp_log`, rewrites the rows, and refuses to commit
-// unless the two row counts agree.
+// restampTradesUSDVolume is the one path that rewrites `trades.usd_volume` in
+// place. In ONE transaction it copies every target row's before-image into
+// `usd_volume_restamp_log`, rewrites the rows, and refuses to commit unless the
+// two row counts agree.
 //
-// REPEATABLE READ, because the before-image and the rewrite are two
-// statements: at READ COMMITTED a writer committing between them would
-// leave the log holding a value the UPDATE never overwrote. One snapshot
-// makes both see the same rows, and a row changed under it fails the
+// REPEATABLE READ, because the before-image and the rewrite are two statements:
+// at READ COMMITTED a writer committing between them would leave the log holding
+// a value the UPDATE never overwrote. A row changed under the snapshot fails the
 // UPDATE with a serialization error that rolls the log back too.
 //
 // The transaction lifts the decompression cap
-// (`timescaledb.max_tuples_decompressed_per_dml_transaction = 0`): the
-// historical span lives in COMPRESSED chunks, and the default 100k-tuple
-// cap aborts a single day's DML (one measured day needed
-// 265k). It also pins a CUSTOM plan: the `ts` bounds are what let the
-// planner prune the statement to the chunks it covers, a GENERIC plan
-// cannot know them, and equal-shaped batches reuse one prepared statement
-// ([Store.applyXLMBaseRestampBatch] carries the measurement).
+// (`timescaledb.max_tuples_decompressed_per_dml_transaction = 0`): history lives
+// in COMPRESSED chunks and the default 100k-tuple cap aborts a single day's DML
+// (one measured day needed 265k). It also pins a CUSTOM plan, since the `ts`
+// bounds are what let the planner prune chunks and a GENERIC plan cannot know
+// them ([Store.applyXLMBaseRestampBatch] carries the measurement).
 //
-// `SET LOCAL`, and POSTGRES scopes it — not the driver. A session `SET`
-// OUTLIVES the call: pgx v5's stdlib adapter resets nothing on reuse (its
-// default `ResetSession` only pings and discards a conn left
-// mid-transaction — pgx v5 stdlib/sql.go), so the lifted cap would ride
-// the pooled connection and uncap every later DML on it. `SET LOCAL` is
-// unwound by COMMIT/ROLLBACK itself — the same tx-scoped GUC discipline as
-// [Store.FindPerSourceLedgerGaps] and [Store.SEP41SupplyEventKindResum].
+// `SET LOCAL`, because POSTGRES scopes it, not the driver: a session `SET`
+// outlives the call, as pgx v5's stdlib adapter does not reset it on reuse, so
+// the lifted cap would ride the pooled connection and uncap later DML.
 func (s *Store) restampTradesUSDVolume(ctx context.Context, w usdVolumeRestampWrite) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {

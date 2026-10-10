@@ -97,46 +97,30 @@ const pricelessTradeLegs = `(
      AND quote_asset NOT IN (` + coverageQuoteProxies + `)
   ) legs`
 
-// popularPricelessCandidatesSQL extracts, per trades asset (either leg) that has
-// ANY priced volume in the trailing 7 days, the signal set the tripwire
-// classifies. It PRE-FILTERS to priceless assets above a coarse RAW-volume
-// floor ($1 / 1 trade) so the (small) candidate set the worker classifies
-// is bounded without paying a full-history scan; the market-character
-// discount, the popularity floor and the withheld verdict are applied by
-// the pure classifier, never here — this query only measures.
+// popularPricelessCandidatesSQL extracts, per trades asset (either leg) with ANY
+// priced volume in the trailing 7 days, the signal set the tripwire classifies. It
+// PRE-FILTERS to priceless assets above a coarse RAW-volume floor ($1 / 1 trade)
+// so the candidate set stays bounded; the market-character discount, popularity
+// floor and withheld verdict are applied by the pure classifier, never here.
 //
-// The counterparty key is UNORDERED (LEAST/GREATEST) so a round-trip
-// A->B / B->A folds into the one concentrated pair it economically is,
-// matching the volume-character rollup design.
+// The counterparty key is UNORDERED (LEAST/GREATEST) so a round-trip A->B / B->A
+// folds into the one concentrated pair it economically is.
 //
-// ONE POPULATION. Only the SDEX decoder records both sides of a fill:
-// on every Soroban AMM (aquarius, soroswap, phoenix, comet,
-// sushiswap_v3) the resting side is the POOL — a venue every trade of
-// that market shares, not an independent economic actor — so those rows
-// carry a taker and a NULL maker (measured on r1: 100% of the rows of
-// all five AMM sources, 27.8k in 24h). Requiring both columns non-NULL
-// in the numerator while the vol7d denominator took every row measured
-// the two over DIFFERENT populations: the share of an AMM-only asset
-// was 0 by construction, so the wash exclusion could never fire for it
-// and a farm painting volume on an AMM self-selected straight into the
-// alert (measured on r1: two AMM-only assets above the $10k popularity
-// floor at 0.95 / 0.9999 single-taker concentration, both reading 0).
-// The key therefore DEGENERATES to the one known account when a side is
-// unknown — for an AMM, "one wallet swapping back and forth through the
-// pool", which is the AMM-shaped ping-pong signature.
+// ONE POPULATION. Only the SDEX decoder records both sides of a fill; on every
+// Soroban AMM the resting side is the POOL, so those rows carry a taker and a NULL
+// maker. Requiring both columns in the numerator while the vol7d denominator took
+// every row measured two DIFFERENT populations: an AMM-only asset's share was 0 by
+// construction, so the wash exclusion never fired and a farm painting volume on an
+// AMM went straight into the alert. The key therefore DEGENERATES to the one known
+// account when a side is unknown (the AMM ping-pong signature).
 //
-// Rows with NO account on either side (the external CEX feeds —
-// binance, coinbase, kraken, bitstamp record neither) still cannot
-// enter the numerator, so unattributed volume dilutes the share
-// DOWNWARD: the tripwire errs toward paging a human, never toward
-// silently suppressing a gap it cannot measure. attributed_vol_share
-// reports how much of the asset's volume the share was measured over.
+// Rows with NO account on either side (external CEX feeds) cannot enter the
+// numerator, so unattributed volume dilutes the share DOWNWARD: the tripwire errs
+// toward paging a human, never toward suppressing a gap it cannot measure.
+// attributed_vol_share reports what the share was measured over.
 //
-// COST: widening the population cost this leg ~14s on r1 (EXPLAIN
-// ANALYZE measured 6.6s -> 20.7s over the same 7d scan). The rows
-// read are unchanged; the planner declines to parallelise the wider
-// aggregate. That keeps a full sweep around 70s, well inside
-// DefaultSweepTimeout (5 min) and the 10-minute cadence.
+// COST: the wider population added ~14s on r1 (the planner declines to parallelise
+// the aggregate); a full sweep stays ~70s, inside DefaultSweepTimeout (5 min).
 const popularPricelessCandidatesSQL = `
 WITH vol7d AS (
   SELECT asset_id,

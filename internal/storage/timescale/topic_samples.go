@@ -24,67 +24,42 @@ type TopicSample struct {
 	MaxLedger uint32
 }
 
-// distinctTopicSampleWindow bounds how far back (wall-clock) the cheap
-// PHASE-1 scan looks for a representative event per (contract_id,
-// topic_0_sym) shape. Mirrors the gap detector's trailing-window bound
-// (computeGapScanWindow, gap_detector.go): recognition only needs
-// ONE example event per shape to test against a decoder's Matches() —
-// an event from yesterday recognizes exactly as well as one from years
-// ago — so scanning the FULL requested [from,to] range (which, for
-// compute-completeness's default call, is the whole Soroban era) just
-// to pick one representative row per shape is pure wasted IO.
+// distinctTopicSampleWindow bounds how far back (wall-clock) the cheap PHASE-1
+// scan looks for a representative event per (contract_id, topic_0_sym) shape.
+// Mirrors the gap detector's trailing-window bound (computeGapScanWindow):
+// recognition needs ONE example event per shape, and a recent one recognizes as
+// well as an old one, so scanning the whole requested range just to pick one row
+// per shape is wasted IO (an unbounded run once took 2h before being cancelled).
 //
-// Once sep41_transfers' CAP-67 unified-event firehose reached
-// full-history depth, a non-`-ch` `compute-completeness` run over an
-// unbounded scan here ran 2h before being cancelled — the failure mode
-// the gap detector hit against the SAME table's growth.
-//
-// Deep, full-Soroban-era-history recognition coverage is NOT this
-// window's job: the `-ch` ClickHouse recognition path
+// Full-history recognition is NOT this window's job: the `-ch` ClickHouse path
 // (computeRecognitionGapsCH / clickhouse.DistinctTopicShapes) is the
-// authoritative full-history ADR-0033 Claim 2a check — and the one
-// r1's compute-completeness.timer always runs (run-compute-
-// completeness.sh passes -ch unconditionally). This Postgres path
-// backs ad hoc / local-dev `verify-recognition` + `compute-
-// completeness` (non-`-ch`) invocations; bounding it here keeps THOSE
-// safe without weakening the production verdict. See
-// [Store.distinctSorobanContractTopicPairs] for how shapes whose only
-// activity predates the window are still found, cheaply.
+// authoritative ADR-0033 Claim 2a check and the one the production timer runs.
+// This Postgres path backs ad hoc / local-dev runs; see
+// [Store.distinctSorobanContractTopicPairs] for how shapes whose only activity
+// predates the window are still found cheaply.
 const distinctTopicSampleWindow = 30 * 24 * time.Hour
 
-// DistinctSorobanTopicSamples returns one representative row per
-// distinct (contract_id, topic_0_sym) present in soroban_events over
-// [from, to], with per-shape count and ledger span. It is the input to
-// the recognition audit: every distinct on-chain event shape, ready to
-// run through the decoder chain.
+// DistinctSorobanTopicSamples returns one representative row per distinct
+// (contract_id, topic_0_sym) present in soroban_events over [from, to], with
+// per-shape count and ledger span. It is the input to the recognition audit.
 //
-// Cost is bounded independently of how large soroban_events grows (see
-// distinctTopicSampleWindow): a cheap trailing-window scan (chunk-pruned
-// by ledger_close_time, the hypertable partition key) finds the
-// representative row for almost every shape by touching a handful of
-// recent chunks instead of the whole table, and a narrow index-only /
-// bloom-pruned fallback recovers any shape whose only activity predates
-// the window — without ever reading the wide XDR/body columns across
-// full history (that wide-column full-history read, not row count
-// alone, is what took an unbounded query 2h with soroban_events at
-// 357GB / ~3.56B rows on r1).
+// Cost is bounded independently of table size (see distinctTopicSampleWindow): a
+// trailing-window scan, chunk-pruned by ledger_close_time, finds almost every
+// shape, and a narrow index-only / bloom-pruned fallback recovers shapes whose
+// only activity predates the window, never reading the wide XDR/body columns
+// across full history (that read, not row count alone, made an unbounded query
+// take 2h).
 //
-// COVERAGE LIMIT. This Postgres path is NOT a complete
-// recognition audit, in TWO ways a caller must not conflate with
-// "no gaps found":
+// COVERAGE LIMIT. This path is NOT a complete recognition audit; a caller must
+// not read "no gaps found" as complete:
 //
-//   - Shapes whose topic[0] is not a Symbol/String (topic_0_sym IS
-//     NULL) are recovered ONLY if they appear inside the trailing
-//     [distinctTopicSampleWindow]; the pre-window fallback phase rides
-//     a partial index that excludes NULL topic_0_sym by construction
+//   - Shapes whose topic[0] is not a Symbol/String (topic_0_sym IS NULL) are
+//     recovered ONLY inside the trailing [distinctTopicSampleWindow]; the
+//     pre-window fallback rides a partial index that excludes NULL topic_0_sym
 //     (see [Store.distinctSorobanContractTopicPairs]).
-//   - The window bound itself is a cost ceiling, not a claim about
-//     history.
+//   - The window bound is a cost ceiling, not a claim about history.
 //
-// The authoritative full-history ADR-0033 Claim 2a check is the
-// ClickHouse path (computeRecognitionGapsCH /
-// clickhouse.DistinctTopicShapes), which is what r1's
-// compute-completeness timer always runs.
+// The authoritative check is the ClickHouse path (computeRecognitionGapsCH).
 func (s *Store) DistinctSorobanTopicSamples(ctx context.Context, from, to uint32) ([]TopicSample, error) {
 	return s.distinctSorobanTopicSamplesAt(ctx, from, to, time.Now())
 }

@@ -9,51 +9,30 @@ import (
 	"time"
 )
 
-// ─── the usd_volume VALUE reconcile ─────────────
+// The usd_volume VALUE reconcile.
 //
-// The existing usd-volume alerts (configs/prometheus/rules.r1/usd-volume-coverage.yml)
-// are a COVERAGE check: they read the ratio of
-// trades inserted with a non-NULL `usd_volume`. That catches "we stopped
-// pricing this venue" and nothing else. A trade priced with the WRONG number
-// is 100% covered and completely wrong, and every volume surface we publish —
-// DEX volume, asset volume, venue rankings, market share — is a sum of that
-// column.
+// The usd-volume alerts (configs/prometheus/rules.r1/usd-volume-coverage.yml)
+// check COVERAGE only. A trade priced with the WRONG number is 100% covered and
+// completely wrong, and every published volume surface sums that column.
 //
-// This file is the value half's read side: the day-scoped SQL aggregation
-// and the exact rational arithmetic that judges it. The TIER CLASSIFIER
-// deliberately lives in trades.go instead, immediately beside the waterfall
-// it mirrors — see [ClassifyUSDVolumeTier]. Two reasons, and both matter:
-// the two must move together or the check silently verifies a waterfall the
-// writer no longer runs, and this file must not import
-// internal/sources/external (the storage-below-compute layering rule; that
-// upward edge is grandfathered for trades.go, and the baseline only
-// shrinks).
+// This file is the value half's read side: the day-scoped SQL aggregation and the
+// exact rational arithmetic that judges it. The TIER CLASSIFIER lives in trades.go
+// beside the waterfall it mirrors ([ClassifyUSDVolumeTier]): they must move
+// together or the check verifies a waterfall the writer no longer runs, and this
+// file must not import internal/sources/external (storage-below-compute layering).
 //
-// It deliberately does NOT try to re-price trades from an independent
-// price series: `usd_volume` is a
-// five-tier waterfall (see tradeUSDVolume) whose upper tiers are VWAP/FX
-// ESTIMATES, and this repo has already measured the two routes diverging by
-// up to 134.92% on the same trades, so any cross-series comparison needs a
-// calibrated tolerance nobody has measured yet.
+// It does NOT re-price trades from an independent series: the upper tiers are
+// VWAP/FX ESTIMATES measured diverging by up to 134.92% on the same trades, and
+// nobody has calibrated a tolerance. It exploits the BOTTOM tiers instead: tiers
+// 1/2 (QUOTE leg is USD or a declared peg) and 2b (BASE leg is) are pure decimal
+// rescalings of an amount on the row:
 //
-// What it does instead is exploit the fact that the BOTTOM tiers are not
-// estimates at all. Tiers 1/2 (the QUOTE leg is USD or a declared USD peg)
-// and tier 2b (the BASE leg is) are pure decimal rescalings of an amount
-// already stored on the row:
+// 	usd_volume = pegged_leg_amount / 10^decimals
 //
-//	usd_volume = pegged_leg_amount / 10^decimals
-//
-// That is an EXACT arithmetic identity with no price lookup, no time
-// alignment and therefore no tolerance to argue about — and it covers the
-// largest and most load-bearing slice of the volume surface. If it does not
-// hold, `usd_volume` was computed with the wrong scale, the wrong leg, a
-// stale peg list, or by a superseded backfill vintage, and every aggregate
-// built on it is wrong by exactly that factor.
-//
-// The estimated tiers are still MEASURED here (their sums and row counts are
-// returned) so an operator can read the real divergence distribution off a
-// production run and calibrate a threshold for them afterwards. They are not
-// judged, because judging them would require the number that run produces.
+// An EXACT identity with no price lookup or tolerance. If it fails, `usd_volume`
+// used the wrong scale, leg, peg list or backfill vintage, and every aggregate on
+// it is wrong by that factor. Estimated tiers are MEASURED (sums, row counts) so
+// an operator can calibrate a threshold later, but not judged.
 
 // USDVolumeTier names how a trade's `usd_volume` was derived, mirroring the
 // waterfall in [tradeUSDVolume]. Stable strings: they appear in the

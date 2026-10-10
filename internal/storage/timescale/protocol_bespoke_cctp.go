@@ -6,52 +6,30 @@ import (
 	"strconv"
 )
 
-// ─── CCTP bespoke analytics (the SDF-showcase suite) ─────────────────────
+// CCTP bespoke analytics.
 //
-// Direction map: deposit_for_burn = OUTBOUND (Stellar USDC burned for a
-// remote mint); mint_and_withdraw = INBOUND (remote burn minted on Stellar).
-// message_sent/received and the admin/config events carry no value and are
-// excluded from flow sums.
+// deposit_for_burn = OUTBOUND, mint_and_withdraw = INBOUND; message and
+// admin/config events carry no value and are excluded from flow sums.
 //
-// Two data-honesty rules every query below encodes:
+//  1. VALUE ROWS ARE READ RAW, one transfer per stored event row, with no
+//     per-(tx, op) collapse: cctp_events' PK discriminates on event_index, and
+//     collapsing with max(amount) would HALVE a genuine batched double-transfer
+//     in one op (same-op same-type groups exist on the wire).
+//  2. mint_and_forward IS NOT A SEPARATE TRANSFER. It always accompanies
+//     mint_and_withdraw for the SAME funds, restating the value at the LOCAL
+//     7-decimal SAC scale (exactly 10x) while mint_and_withdraw carries the
+//     CANONICAL 6-decimal amount. Inbound sums use mint_and_withdraw ONLY;
+//     summing both counts the transfer 11x. deposit_for_burn is the canonical
+//     scale too (TestDepositForBurnAmount_IsCanonicalSixDecimals).
 //
-//  1. VALUE ROWS ARE READ RAW — one transfer per stored event row, no
-//     per-(tx, op) collapse. cctp_events' PK discriminates on
-//     event_index and the projector writes one row per event, so every
-//     row is a real transfer. Collapsing per (tx_hash, op_index) with
-//     max(amount) would silently HALVE a genuine batched double-transfer
-//     in one op: the class exists on the wire (a lake census found
-//     same-op same-type groups among admin events — attester_enabled ×2,
-//     remote_token_messenger_added ×23 in single ops), so value events
-//     CAN legitimately double up too, even though none do today.
+// Inbound source-chain attribution: the same-op message_received row's
+// message_body carries the BurnMessage; hex chars 33..72 are the low 20 bytes of
+// the burn-side USDC token, resolved via cctpBurnTokenChains (see cctp_chains.go).
+// That receive side is the ONE place a per-(tx, op) group survives: the join
+// needs exactly one body row per op or every mint row would fan out (see
+// cctpRecvCTE). Outbound uses counterparty_domain via Circle's domain registry.
 //
-//  2. mint_and_forward IS NOT A SEPARATE TRANSFER. Every mint_and_forward
-//     op also emits mint_and_withdraw for the SAME funds (0 forward-only
-//     ops), and the forward amount was exactly 10× the withdraw amount on
-//     every pair observed — the forward event restates the
-//     value at the LOCAL 7-decimal SAC scale while mint_and_withdraw
-//     carries the CANONICAL 6-decimal amount the SAC leg was verified
-//     against. Inbound sums use mint_and_withdraw ONLY; summing both
-//     would count the same transfer 11× over. This is a real semantic
-//     rule about the protocol's event vocabulary, NOT twin dedup, so it holds
-//     under raw reads. Outbound deposit_for_burn is the same canonical scale
-//     (cctp TestDepositForBurnAmount_IsCanonicalSixDecimals): its amount
-//     equals the same-tx BurnMessage amount the 6-decimal destination mints.
-//
-// Source-chain attribution (inbound): the same-op message_received row's
-// message_body carries the CCTP BurnMessage; hex chars 33..72 are the low
-// 20 bytes of the burn-side USDC token, resolved via cctpBurnTokenChains
-// (see cctp_chains.go for the verification trail). The receive side is the
-// ONE place a per-(tx, op) group survives: the join needs exactly one body
-// row per op or every mint row it joins would fan out per body (see
-// cctpRecvCTE). Destination attribution (outbound): counterparty_domain
-// via Circle's domain registry.
-//
-// All division is exact NUMERIC — never a float literal (ADR-0003). Every
-// query is either window-bounded (ts > now() - $1::interval) or an
-// explicitly all-time aggregate over the tiny cctp_events table
-// (~33k rows — full scans are trivially cheap, and the whole
-// block is built under the window-keyed protocol-detail cache).
+// Division is exact NUMERIC, never a float literal (ADR-0003).
 
 // cctpSeriesNameInbound / …Outbound are the direction-stable total-series
 // names the frontend pairs on; cctpPerChainPrefix* prefix the per-chain

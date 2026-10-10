@@ -626,46 +626,24 @@ func scanSum(ctx context.Context, db *sql.DB, q string, args ...any) (*big.Int, 
 }
 
 // MinClassicComponentLedger returns how far the slowest of the four
-// classic-supply component OBSERVERS has progressed, scoped to
-// ledgers at-or-before `asOfLedger`. Used by the supply Refresher to
-// detect snapshots whose component observations lag the snapshot
-// ledger by more than a threshold.
+// classic-supply component OBSERVERS has progressed, scoped to ledgers
+// at-or-before `asOfLedger`. The supply Refresher uses it to detect snapshots
+// whose component observations lag the snapshot ledger.
 //
-// Each component contributes its observer WATERMARK — MAX(ledger)
-// across ALL assets in that table — and the function returns the MIN
-// of those four watermarks.
+// Each component contributes its observer WATERMARK, MAX(ledger) across ALL
+// assets in its table; the result is the MIN of the four. The watermark is
+// deliberately global, NOT per-asset: the observers write a row only when a
+// balance CHANGES, so a per-asset MAX(ledger) measures activity, not freshness (a
+// quiet asset is not a stale asset; the per-asset form froze 37 of 48 watched
+// assets' supply once claimable_observations was populated from lake history). A
+// dead observer stops advancing its watermark across every asset, which is still
+// caught.
 //
-// The watermark is deliberately global, NOT
-// per-asset. These four observers are event-driven: they write a row
-// only when a balance actually CHANGES. So a per-asset MAX(ledger)
-// answers "when did this asset last see activity in this component",
-// which is not a freshness signal at all — a quiet asset is not a
-// stale asset. The observer watermark answers the question the gate
-// actually asks: "has this observer processed recent ledgers?" A dead
-// observer stops advancing its watermark across every asset, which is
-// still caught.
-//
-// This bug was LATENT for months because claimable_observations was
-// ~4% populated: assets with no claimable rows were excluded by the
-// NULLIF below, so the wrong quantity was never consulted. Seeding
-// claimable from lake history (30,753 assets) populated it, and every
-// watched asset whose last claimable event was older than the
-// dormancy horizon froze — 37 of 48 assets stopped publishing supply
-// within hours, and the ONLY three still fresh were precisely the
-// three with live claimable activity. Note that the doc comment above
-// this function already described "the slowest observer"; the query
-// had always implemented "the slowest per-asset activity" instead.
-//
-// A component whose table is entirely empty contributes no signal
-// (NULLIF → excluded from the MIN) rather than pinning the result
-// to 0.
-//
-// An asset with NO observations in ANY component is genuinely
-// uninstrumented; it still returns 0 so the caller skips the
-// freshness gate via the documented zero-means-no-signal contract on
-// Supply.MinComponentLedger. Without that guard, switching to global
-// watermarks would hand an uninstrumented asset a healthy-looking
-// freshness anchor and let a zero-valued supply publish.
+// An entirely empty component contributes no signal (NULLIF, excluded from the
+// MIN). An asset with NO observations in ANY component is uninstrumented and
+// returns 0, so the caller skips the freshness gate via the zero-means-no-signal
+// contract on Supply.MinComponentLedger; without that guard global watermarks
+// would hand it a healthy-looking anchor and let a zero-valued supply publish.
 func (s *Store) MinClassicComponentLedger(ctx context.Context, assetKey string, asOfLedger uint32) (uint32, error) {
 	// Cheap per-asset half: is this asset instrumented at all? Postgres
 	// short-circuits the OR chain, so a normal asset stops at the first

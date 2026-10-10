@@ -14,34 +14,28 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ─── the XLM-BASE usd_volume RE-DERIVE ───────────────────────────────
-//
-// The estimated-tier counterpart of [usd_volume_restamp.go], for the one
-// estimated tier whose input no counterparty authors: the XLM-base anchor
-// (`usd_volume = base_amount/1e7 x XLM/USD at ts`,
-// [usdVolumeViaXLMBaseAnchor]). The population is on-chain DEX trades with
-// an XLM base and a non-pegged quote whose stored value differs from the
-// anchor's, up to the day before a later re-derive's first row (the
-// runbook gives `-to`). Most of it is coverage (`-fill-null`), not
-// correction; note prices_1m/prices_1d coalesce NULL to 0, so a CAGG ratio
-// misreads holes as valuation errors.
+// The XLM-BASE usd_volume re-derive: the estimated-tier counterpart of
+// [usd_volume_restamp.go] for the tier no counterparty authors
+// (`usd_volume = base_amount/1e7 x XLM/USD at ts`, [usdVolumeViaXLMBaseAnchor]).
+// Most of the population is coverage (`-fill-null`), not correction;
+// prices_1m/prices_1d coalesce NULL to 0, so a CAGG ratio misreads holes as
+// valuation errors.
 //
 // Why the arithmetic is not done in SQL:
 //
 //  1. THE VALUE COMES FROM THE LIVE FUNCTION: each row is rebuilt into its
 //     [canonical.Trade] and passed to [usdVolumeViaXLMBaseAnchor] with the
-//     store's [VWAPUSDFXResolver] and [USDVolumeQuoteSpec], anchored to the
-//     row's `ts`, so there is no second waterfall to drift.
-//  2. ONLY THE ANCHOR: where it declines the row is REPORTED, never valued
-//     via [tradeUSDVolumeViaFX], the route that wrote the defect. A wrong
-//     value at a high `derive_generation` cannot be clawed back; an
-//     unpriced row can.
-//  3. NEVER WRITE NULL OVER A VALUE: a declined row that carries a number
-//     is left as is and counted in [XLMBaseRestampStats.AnchorDeclinedStored].
+//     store's [VWAPUSDFXResolver] and [USDVolumeQuoteSpec], so there is no
+//     second waterfall to drift.
+//  2. ONLY THE ANCHOR: where it declines a row, the row is REPORTED, never
+//     valued via [tradeUSDVolumeViaFX], the route that wrote the defect. A wrong
+//     value at a high `derive_generation` cannot be clawed back; an unpriced
+//     row can.
+//  3. NEVER WRITE NULL OVER A VALUE: a declined row that carries a number is
+//     left as is and counted in [XLMBaseRestampStats.AnchorDeclinedStored].
 //
-// Scope is decided in Go from the insert path's own primitives: a DEX
-// source subclass, an XLM base ([isXLMAsset]) and a non-pegged quote
-// ([usdVolumeDecimals]); pegged quotes belong to `-tier exact`.
+// Scope is decided in Go from the insert path's own primitives (DEX source, XLM
+// base, non-pegged quote); pegged quotes belong to `-tier exact`.
 
 // The candidate scan for one bounded window is the shared one
 // ([restampScanSelect], usd_volume_restamp_legs.go) with this tier's leg:
@@ -496,45 +490,29 @@ func (s *Store) applyXLMBaseRestampBatches(ctx context.Context, plan *XLMBaseRes
 	return total, nil
 }
 
-// ─── why the batch UPDATE carries a redundant `ts` range ────────────────
+// Why the batch UPDATE carries a redundant `ts` range.
 //
-// `trades` is a hypertable with 260 chunks, 258 of them compressed. An
-// UPDATE that names `trades` and constrains `ts` only through a join
-// clause (`t.ts = v.ts`) cannot be pruned at planning time, so the plan
-// makes EVERY chunk a result relation and hash-joins the batch against an
-// Append over all of them. Measured on production: the plan
-// for one batch carried 260 `Update on …_chunk` targets, an Append of 260
-// sequential scans estimated at 61.9M rows, cost 10,040,409 — and because
-// TimescaleDB has to service the DML on each compressed chunk in that
-// list, and none of the join clauses can be turned into a scan key on a
-// `segmentby`/`orderby` column, it decompressed the chunks WHOLESALE. A
-// 23-row UPDATE ran 60 minutes, wrote ~270 GB of WAL (a 50x jump over the
-// box's baseline, ending the second it was cancelled), left 119.7M dead
-// tuples across 55 compressed chunks it had no rows in, and changed
-// nothing. That — not per-row decompression inside the targeted chunk —
-// is what made both the day walk and the chunk walk crawl.
+// `trades` is a hypertable of mostly compressed chunks. An UPDATE that
+// constrains `ts` only through a join clause (`t.ts = v.ts`) cannot be pruned at
+// planning time: every chunk becomes a result relation and TimescaleDB
+// decompresses them wholesale. Measured on production, a 23-row UPDATE ran 60
+// minutes, wrote ~270 GB of WAL and changed nothing.
 //
-// The remedy is information, not a different write: `t.ts = v.ts` already
-// forces every matched row's `ts` to be one of the batch's own values, so
-// bounding `t.ts` by the batch's own minimum and maximum cannot exclude a row
-// the join would have matched. It is a provably redundant predicate that the
-// planner can prune on. With it the same batch plans as ONE result relation
-// over a nested loop / merge join driven by an index — cost 61.99 at 23 rows,
-// 18,614 at 10,000.
+// `t.ts = v.ts` already forces every matched row's `ts` into the batch's own
+// values, so bounding `t.ts` by the batch's min and max cannot exclude a row
+// the join would match. The planner can prune on it: one result relation over
+// an index-driven nested loop / merge join.
 //
 // Two smaller shapes hang off the same statement:
 //
 //   - `tx_hash` is `char(64)`. Binding it as `text` makes the comparison
-//     `(t.tx_hash)::text = v.tx_hash`, which no index on the column can
-//     serve; binding it as `bpchar` lets the join ride `trades_pkey` on
-//     all five key columns (`Inner Unique: true`, cost 2.92 a probe).
-//   - the pruning only happens in a CUSTOM plan. Batches of equal length
-//     produce identical statement text, so pgx reuses one prepared
-//     statement and Postgres may promote it to a generic plan, which
-//     cannot know the bounds and would silently restore the 260-chunk
-//     plan. `SET LOCAL plan_cache_mode = force_custom_plan` pins it, and
-//     LOCAL keeps it off the pooled connection the same way the
-//     decompression cap is kept off it.
+//     `(t.tx_hash)::text = v.tx_hash`, which no index can serve; binding it as
+//     `bpchar` lets the join ride `trades_pkey` on all five key columns.
+//   - Pruning only happens in a CUSTOM plan. Equal-length batches share one
+//     prepared statement that Postgres may promote to a generic plan, which
+//     cannot know the bounds and would restore the all-chunk plan.
+//     `SET LOCAL plan_cache_mode = force_custom_plan` pins it; LOCAL keeps it
+//     off the pooled connection.
 
 // xlmBaseRestampTSBounds returns the inclusive `ts` span of one batch.
 // The planner scan orders by `ts`, so a batch is normally contiguous and

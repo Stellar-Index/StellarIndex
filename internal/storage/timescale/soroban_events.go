@@ -330,42 +330,28 @@ type LedgerGap struct {
 	Size  int64 `json:"size"`
 }
 
-// FindSorobanEventsLedgerGaps scans the soroban_events.ledger column
-// in [from, to] and returns every contiguous gap of size >=
-// minGapSize. Used as the **data-derived** alternative to the
-// cursor-derived density projection: cursor coverage counts "did
-// we walk this ledger" (process measurement); this query counts
-// "is the data we should have actually in the table" (reality).
+// FindSorobanEventsLedgerGaps scans the soroban_events.ledger column in
+// [from, to] and returns every contiguous gap of size >= minGapSize. It is the
+// **data-derived** alternative to the cursor-derived density projection: cursor
+// coverage counts "did we walk this ledger", this query counts "is the data we
+// should have actually in the table". They diverge under failures the cursor
+// cannot see, e.g. a writer halt where cursors advance but the sink has
+// back-pressured to a stop and no rows land.
 //
-// The two diverge under failure modes the cursor inventory can't
-// see — a cascade-window soroban_events writer halt is the
-// canonical example: cursors record "advanced past this ledger" but
-// the writer's sink has back-pressured to a stop, so no rows land.
-// The honest signal of that failure is the gap in distinct-ledger
-// coverage, not the cursor record.
+// minGapSize filters out expected event-free gaps. Operators typically use ~1000
+// to surface structurally significant gaps (~1.5 h of none is a writer-halt
+// signature).
 //
-// minGapSize filters out the expected event-free gaps (Soroban
-// activity is dense but not gap-free — many blocks emit no events).
-// Operator-facing usage typically sets minGapSize to ~1000 to
-// surface only structurally-significant gaps (a few seconds of
-// no-Soroban-activity at the network level is common; ~1.5 h of
-// it is a writer-halt cascade's signature).
+// Implementation: LAG() over distinct ledgers, emitting a gap when the
+// difference > 1 and the gap size meets the threshold.
 //
-// Implementation uses the LAG() window-function pattern: order
-// distinct ledgers, compare each row to its predecessor, emit a
-// gap when the difference > 1 AND the gap size meets the
-// threshold.
-//
-// Chunk-pruning (ADR-0033): soroban_events is partitioned by
-// ledger_close_time, NOT ledger, so a `WHERE ledger BETWEEN` filter
-// alone forces a SELECT DISTINCT across every chunk in the table.
-// When ledger_ingest_log fully covers [from,to] we bound
-// ledger_close_time exactly (see [Store.SorobanEventsTimeBound]) and
-// prune to the day-chunks that hold the range — the same pattern
-// StreamSorobanEvents uses. The fullyCovered guard is a correctness
-// requirement: a partial time bound could exclude in-range ledgers
-// and fabricate phantom gaps, so without full coverage we fall back
-// to the (correct, slower) unpruned distinct scan.
+// Chunk-pruning (ADR-0033): soroban_events is partitioned by ledger_close_time,
+// NOT ledger, so `WHERE ledger BETWEEN` alone forces a SELECT DISTINCT across
+// every chunk. When ledger_ingest_log fully covers [from,to] we bound
+// ledger_close_time exactly (see [Store.SorobanEventsTimeBound]), as
+// StreamSorobanEvents does. The fullyCovered guard is a correctness requirement:
+// a partial time bound could exclude in-range ledgers and fabricate phantom gaps,
+// so without full coverage we fall back to the correct, slower unpruned scan.
 func (s *Store) FindSorobanEventsLedgerGaps(ctx context.Context, from, to, minGapSize int64) ([]LedgerGap, error) {
 	if to < from {
 		return nil, fmt.Errorf("timescale: FindSorobanEventsLedgerGaps: to (%d) < from (%d)", to, from)

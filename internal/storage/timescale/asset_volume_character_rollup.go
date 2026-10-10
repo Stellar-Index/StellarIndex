@@ -24,38 +24,28 @@ import (
 // through the SAME Go path ([volumeCharacterFromSums]).
 
 // assetVolumeCharacterRollupSQLTemplate is the all-asset generalization of
-// assetVolumeCharacterSQL. Where the per-asset query takes an alias array
-// for ONE asset (base OR quote = ANY($1)), this projects EVERY trade onto
-// BOTH its base_asset and its quote_asset (as "the asset", with the other
-// side as counterpart) — a UNION ALL of the two projections — folds each
-// raw side onto its CANONICAL asset via the alias_map (the same fold
-// assetAliasArray applies per-asset, so a SAC twin and its classic agree),
-// then GROUP BYs the canonical asset.
+// assetVolumeCharacterSQL: it projects EVERY trade onto BOTH its base_asset and
+// quote_asset (UNION ALL), folds each raw side onto its CANONICAL asset via the
+// alias_map (as assetAliasArray does per-asset, so a SAC twin and its classic
+// agree), then GROUP BYs the canonical asset.
 //
-// The {{ALIAS_VALUES}} token is replaced (strings.Replace, not Sprintf —
-// the LIKE patterns carry literal % that a format verb would mangle) by the
-// alias-fold VALUES rows built from the process AliasRegistry (see
-// buildAliasMapValues); the alias-pair params start at $1. {{WINDOW}} is the
-// trailing window as an interval LITERAL: against a bind parameter the planner
-// cannot exclude chunks, so this ~23-minute roll held ACCESS SHARE on every
-// trades chunk and starved the trades compression policy.
+// {{ALIAS_VALUES}} is replaced (strings.Replace, not Sprintf: the LIKE patterns
+// carry literal %) by the alias-fold VALUES rows from the process AliasRegistry
+// (see buildAliasMapValues); alias params start at $1. {{WINDOW}} is the trailing
+// window as an interval LITERAL: against a bind parameter the planner cannot
+// exclude chunks, so this ~23-minute roll held ACCESS SHARE on every trades chunk
+// and starved the compression policy.
 //
 // Every per-asset signal is reproduced exactly:
-//   - total_vol / *_vol are SUM(usd_volume::double precision) — the SAME
-//     double the per-asset query sums, so the Go-derived shares match to
-//     full precision.
-//   - the (maker,taker) pair is UNORDERED (LEAST/GREATEST) so a round-trip
-//     folds to the one concentrated pair it economically is; maker is read
-//     through the same volumeCharacterMakerSQL fragments, so a pool is never
-//     an account and a classic-pool fill is keyed on its lone taker.
-//   - issuer is derived per canonical asset_id: the G-strkey suffix of a
-//     classic 'CODE-GISSUER' id, the empty string for native/soroban/
-//     fiat/crypto — the same value canonical.ParseAsset(assetID).Issuer
-//     gives the per-asset query, so the issuer-side predicate matches.
-//   - market_styled tests the RAW counterpart (native / fiat:% / USDC-%),
-//     never the folded form — identical to the per-asset predicate.
-//   - total_vol_num is the EXACT NUMERIC sum (ADR-0003) for the stored
-//     volume_usd column; it renders the identical 2dp wire value.
+//   - total_vol / *_vol are SUM(usd_volume::double precision), the SAME double the
+//     per-asset query sums, so Go-derived shares match to full precision.
+//   - the (maker,taker) pair is UNORDERED (LEAST/GREATEST); maker is read through
+//     volumeCharacterMakerSQL, so a pool is never an account.
+//   - issuer is the G-strkey suffix of a classic 'CODE-GISSUER' id, empty
+//     otherwise, matching canonical.ParseAsset(assetID).Issuer.
+//   - market_styled tests the RAW counterpart, never the folded form.
+//   - total_vol_num is the EXACT NUMERIC sum (ADR-0003) for the stored volume_usd
+//     column.
 const assetVolumeCharacterRollupSQLTemplate = `
 WITH alias_map(form, canon) AS (
   VALUES {{ALIAS_VALUES}}

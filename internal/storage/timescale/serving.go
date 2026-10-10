@@ -10,50 +10,30 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
-// OpenServing is [Open] with a session-level `statement_timeout` applied
-// to every connection in the pool. The API serving binary uses it so a
-// runaway request-path query is bounded SQL-side even if Go-side context
-// cancellation races; without a pool-level statement_timeout, an
-// unauthenticated client could hold serving backends indefinitely. It is
-// the defense-in-depth backstop UNDER the app-layer per-request context
-// deadline, which is the primary bound.
+// OpenServing is [Open] with a session-level `statement_timeout` applied to every
+// connection in the pool, so a runaway request-path query is bounded SQL-side even
+// if Go-side context cancellation races. It is the backstop UNDER the app-layer
+// per-request deadline, which is the primary bound.
 //
-// The indexer/aggregator pools get their own generous session backstop
-// via [OpenBackground]; the one-shot ops/migrate/heavy-backfill pools
-// stay unbounded on plain [Open]. In every bounded pool the heavy batch
-// scans (per_source_gaps, source_coverage, row_counts, …) set their own
-// longer `SET LOCAL statement_timeout` inside a transaction, which
-// overrides the session default for exactly those statements. A plain
-// request-path read (no explicit SET LOCAL) inherits this session default
-// and is bounded by it.
+// The indexer/aggregator pools get their own backstop via [OpenBackground]; the
+// one-shot ops/migrate/backfill pools stay unbounded on plain [Open]. Heavy batch
+// scans in a bounded pool set their own longer `SET LOCAL statement_timeout`
+// inside a transaction, which overrides the session default.
 //
-// statementTimeout <= 0 falls back to plain [Open] (no session timeout,
-// and no plan-mode override — the two session settings ride the same
-// post-connect mechanism).
+// statementTimeout <= 0 falls back to plain [Open] (no timeout, no plan-mode
+// override; both ride the same post-connect mechanism).
 //
-// The serving pool ADDITIONALLY runs `SET plan_cache_mode =
-// force_custom_plan` on every connection, for the /v1/price p95 tail:
-// the request path's raw-trades fallback (TradesInRange) is a
-// parameterised query over the trades hypertable, and Postgres's
-// prepared-statement logic flips it to a GENERIC plan after five
-// executions. Building that generic plan means planning across every
-// chunk of the hypertable takes hundreds of milliseconds, and the
-// plancache invalidates roughly once a minute in steady state
-// (autovacuum/analyze on hot chunks, compression jobs, chunk DDL), so a
-// steady share of serving requests paid that cost at BIND. Custom plans
-// for the same query bind in a few milliseconds, and TimescaleDB's
-// planner prunes chunks far better with known parameters. Forcing
-// custom plans on the SERVING pool trades ≤3 ms of per-query planning
-// for eliminating the rebuild-tail class entirely. The
-// indexer/aggregator (OpenBackground) and ops pools keep the default
-// plan_cache_mode: their long-lived batch statements are exactly where
-// generic plans pay off.
+// The serving pool ADDITIONALLY runs `SET plan_cache_mode = force_custom_plan`
+// for the /v1/price p95 tail: the raw-trades fallback (TradesInRange) is a
+// parameterised query that Postgres flips to a GENERIC plan after five
+// executions, and planning that across every hypertable chunk takes hundreds of
+// milliseconds each time the plan cache invalidates (about once a minute).
+// Custom plans bind in milliseconds and prune chunks better. Other pools keep the
+// default: their long-lived batch statements are where generic plans pay off.
 //
-// Both settings are applied via a post-connect SET run on every new
-// pooled connection (a wrapping driver.Connector), rather than by
-// string-munging the operator DSN — so it works identically for URL
-// and keyword-form DSNs and never disturbs the configured connection
-// string.
+// Both settings are applied via a post-connect SET on every new pooled connection
+// (a wrapping driver.Connector), not by editing the operator DSN, so URL and
+// keyword-form DSNs behave alike.
 func OpenServing(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
 	return openWithSessionSetup(ctx, dsn, statementTimeout, true)
 }

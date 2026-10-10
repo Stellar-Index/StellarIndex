@@ -119,25 +119,17 @@ func (s *Store) IssuerGStrkeysNeedingFlags(ctx context.Context, limit int) ([]st
 //
 // `limit` <= 0 returns every candidate.
 //
-// # WHY A SECOND QUEUE
-//
-// A Stellar account can be re-created at the same address after an
+// Why a second queue: an account can be re-created at the same address after an
 // account_merge, at which point a `last_known_before_removal` reading stops
-// being true. Nothing else would ever revisit it: the primary queue is
-// `auth_required IS NULL`, and these rows HAVE auth_required, so filling them
-// takes them out of the drain's sight for good. Without this queue the
-// provenance column would be a one-way latch — filling the residue would
-// create a fresh class of permanently-stale rows.
+// being true. The primary queue is `auth_required IS NULL` and these rows HAVE
+// auth_required, so nothing else would revisit them.
 //
-// `live` rows are deliberately NOT re-checked here. They can go stale too (an
-// issuer that merges its account tomorrow), but the API's read path already
-// re-reads a live AccountEntry per request and outranks the persisted value,
-// so a stale `live` row is corrected on the next drain over the same data
-// rather than needing its own queue. A `last_known` row is the one the read
-// path CANNOT correct on its own: absence from the current-state projection
-// is what a merged account and a lake-coverage gap both look like, so the API
-// may never conclude "removed" — only this job, which reads an actual
-// `removed` row, may.
+// `live` rows are deliberately NOT re-checked: the API read path re-reads a live
+// AccountEntry per request and outranks the persisted value. A `last_known` row
+// is the one the read path CANNOT correct, because absence from the
+// current-state projection looks the same for a merged account and a
+// lake-coverage gap; only this job, which reads an actual `removed` row, may
+// conclude "removed".
 func (s *Store) IssuerGStrkeysNeedingRecheck(ctx context.Context, limit int) ([]string, error) {
 	q := `SELECT g_strkey FROM issuers WHERE auth_flags_source = $1 ORDER BY g_strkey`
 	args := []any{AuthFlagsSourceLastKnownBeforeRemoval}
@@ -190,35 +182,27 @@ var persistIssuerAuthFlagsQuery = `
 		        OR auth_flags_as_of_ledger <= $8::integer)`
 
 // PersistIssuerAuthFlags writes decoded auth flags for the given issuers,
-// returning how many rows it actually changed.
+// returning how many rows it actually changed. UPDATE, not upsert: account
+// entries must not invent issuer rows.
 //
-// The flags already resolve at read time from the lake's AccountEntry, but
-// that depends on a warm account-state cache; persisting them gives a
-// fallback that survives a cold cache, a restart and a load spike.
+// home_domain follows the reading's provenance, and a changed domain unbinds the
+// row's SEP-1 state in the same statement (sep1ResetOnHomeDomainChange):
 //
-// UPDATE, not upsert: this fills columns on known issuers and is not a
-// discovery path; account entries must not invent issuer rows.
-//
-// home_domain follows the reading's provenance, and a changed domain unbinds
-// the row's SEP-1 state in the same statement (sep1ResetOnHomeDomainChange):
-//
-//   - live: set to exactly what the AccountEntry declares; "" CLEARS it,
-//     since clickhouse.BulkAccountAuthFlags decodes every live account.
-//   - last_known_before_removal: cleared. A merged account's domain can no
-//     longer be checked against SEP-1's [[CURRENCIES]] back-reference, so
-//     keeping it is an impersonation surface.
+//   - live: set to exactly what the AccountEntry declares; "" CLEARS it.
+//   - last_known_before_removal: cleared. A merged account's domain can no longer
+//     be checked against SEP-1's [[CURRENCIES]] back-reference, so keeping it is
+//     an impersonation surface.
 //   - "" (unlabelled): a non-empty value overwrites; an empty one is ignored.
 //
-// No COALESCE keeping the stored value: the SEP-1 resolver READS this column
-// to pick the domain to fetch, so a write-once column would stop an anchor
-// that moved, cleared or lapsed its domain from ever taking it back. See
-// [Store.SyncIssuerHomeDomain].
+// No COALESCE keeping the stored value: the SEP-1 resolver READS this column, so a
+// write-once column would stop an anchor that moved or cleared its domain from
+// taking it back. See [Store.SyncIssuerHomeDomain].
 //
-// auth_flags_source and auth_flags_as_of_ledger move TOGETHER or not at
-// all, so a reading is never claimed true at a ledger it was not taken
-// from. An empty Source leaves both untouched. A labelled reading older
-// than the one on record is refused and not counted, so out-of-order drain
-// runs cannot reinstate a home_domain the account moved away from.
+// auth_flags_source and auth_flags_as_of_ledger move TOGETHER or not at all, so a
+// reading is never claimed true at a ledger it was not taken from. An empty Source
+// leaves both untouched. A labelled reading older than the one on record is refused
+// and not counted, so out-of-order drain runs cannot reinstate a home_domain the
+// account moved away from.
 func (s *Store) PersistIssuerAuthFlags(ctx context.Context, flags []IssuerAuthFlags) (int, error) {
 	if len(flags) == 0 {
 		return 0, nil
