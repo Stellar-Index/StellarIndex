@@ -37,7 +37,7 @@ import (
 //     `supply seed-sac-balances -full-history` would have written via
 //     clickhouse.StreamSACBalanceSeedsFullHistory + Store
 //     .InsertSACBalanceObservation (test/integration/
-//     sac_full_history_seed_test.go covers that extraction step
+//     clickhouse_entries_test.go covers that extraction step
 //     against ClickHouse; this test covers what happens to Algorithm 2
 //     once the row lands in Postgres, which is the same table either
 //     seed source writes to — sac_balance_observations. No new

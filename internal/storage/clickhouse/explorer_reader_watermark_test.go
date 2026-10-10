@@ -18,7 +18,7 @@ import (
 // tx_hash_index_test.go — SQL shape assertions, same convention as
 // explorer_reader_union_bounds_test.go); the live-ClickHouse correctness proof
 // — bounded rows == unbounded rows, incl. a participant row ABOVE the sourced
-// watermark — is test/integration/account_activity_watermark_test.go.
+// watermark — is test/integration/clickhouse_accounts_test.go.
 
 // Query-shape classifiers for the watermark reads.
 func isAccountActivityProbe(q string) bool {
