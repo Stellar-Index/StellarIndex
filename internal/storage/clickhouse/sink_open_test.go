@@ -150,51 +150,54 @@ func TestOpenSinkAcceptsMigratedDatabase(t *testing.T) {
 	}
 }
 
-// TestOpenSinkRefusesUnmigratedDatabase: Ping succeeds against an
-// un-migrated endpoint, so Open must refuse it by name instead of returning a
-// Sink whose first Flush fails.
-func TestOpenSinkRefusesUnmigratedDatabase(t *testing.T) {
-	var tables []string
+// TestOpenSinkRefusesIncompleteSchema: Ping succeeds against an un-migrated
+// endpoint, so Open must refuse a missing table or additive-ALTER column by
+// name instead of returning a Sink whose first Flush (or INSERT) fails.
+func TestOpenSinkRefusesIncompleteSchema(t *testing.T) {
+	var unmigrated []string
 	for _, name := range sinkTables {
 		if name != "supply_flows" && name != "ledgers" {
-			tables = append(tables, name)
+			unmigrated = append(unmigrated, name)
 		}
 	}
-	s, _, err := openAgainstFake(t, tables)
-	if err == nil {
-		t.Fatal("openSink against a database missing stellar.supply_flows and stellar.ledgers: want error, got nil")
+	cases := []struct {
+		name      string
+		tables    []string
+		noColumns []string
+		want      []string
+		present   string
+	}{
+		{
+			"missing tables", unmigrated, nil,
+			[]string{"stellar.supply_flows", "stellar.ledgers"},
+			"stellar.transactions",
+		},
+		{
+			"missing operator columns", sinkTables,
+			[]string{"transactions.fee_bump_fee", "ledger_entry_changes.intra_ledger_seq"},
+			[]string{"stellar.transactions.fee_bump_fee", "stellar.ledger_entry_changes.intra_ledger_seq"},
+			"stellar.transactions.fee_account",
+		},
+		{"empty database", nil, nil, []string{"stellar.ledgers"}, ""},
 	}
-	if s != nil {
-		t.Fatal("openSink returned a Sink alongside its error")
-	}
-	for _, want := range []string{"stellar.supply_flows", "stellar.ledgers"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not name missing table %s", err, want)
-		}
-	}
-	if strings.Contains(err.Error(), "stellar.transactions") {
-		t.Errorf("error %q names stellar.transactions, which is present", err)
-	}
-}
-
-// TestOpenSinkRefusesMissingOperatorColumns: every table exists but the
-// additive-ALTER columns do not; Open must refuse by name instead of letting
-// each transactions / ledger_entry_changes INSERT fail.
-func TestOpenSinkRefusesMissingOperatorColumns(t *testing.T) {
-	s, _, err := openAgainstFake(t, sinkTables, "transactions.fee_bump_fee", "ledger_entry_changes.intra_ledger_seq")
-	if err == nil {
-		t.Fatal("openSink against a database missing operator-scope columns: want error, got nil")
-	}
-	if s != nil {
-		t.Fatal("openSink returned a Sink alongside its error")
-	}
-	for _, want := range []string{"stellar.transactions.fee_bump_fee", "stellar.ledger_entry_changes.intra_ledger_seq"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not name missing column %s", err, want)
-		}
-	}
-	if strings.Contains(err.Error(), "stellar.transactions.fee_account") {
-		t.Errorf("error %q names fee_account, which is present", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, err := openAgainstFake(t, tc.tables, tc.noColumns...)
+			if err == nil {
+				t.Fatalf("openSink against a database with %s: want error, got nil", tc.name)
+			}
+			if s != nil {
+				t.Fatal("openSink returned a Sink alongside its error")
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not name missing %s", err, want)
+				}
+			}
+			if tc.present != "" && strings.Contains(err.Error(), tc.present) {
+				t.Errorf("error %q names %s, which is present", err, tc.present)
+			}
+		})
 	}
 }
 
@@ -224,14 +227,6 @@ func TestSinkColumnsMatchFlushInserts(t *testing.T) {
 				t.Errorf("sinkColumns lists %s.%s, absent from its INSERT", table, c)
 			}
 		}
-	}
-}
-
-// TestOpenSinkRefusesEmptyDatabase: a wrong endpoint with no stellar tables
-// at all is refused.
-func TestOpenSinkRefusesEmptyDatabase(t *testing.T) {
-	if _, _, err := openAgainstFake(t, nil); err == nil || !strings.Contains(err.Error(), "stellar.ledgers") {
-		t.Fatalf("openSink against an empty database: err = %v, want a missing-table error naming stellar.ledgers", err)
 	}
 }
 

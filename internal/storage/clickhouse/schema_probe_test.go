@@ -47,34 +47,6 @@ func (c *probeConn) Query(context.Context, string, ...any) (driver.Rows, error) 
 	return &probeRows{}, nil
 }
 
-// TestProbeSchema_TransientErrorDoesNotLatch pins that a transient probe
-// error is retried. With a plain sync.Once the FIRST call's outcome is
-// final for the process lifetime: a transient ClickHouse error at that
-// instant — a restart mid-deploy, a reset connection, a request-context
-// deadline — latches the probe to false and silently degrades every
-// subsequent read until the process is restarted. No error, no metric, no self-heal.
-func TestProbeSchema_TransientErrorDoesNotLatch(t *testing.T) {
-	conn := &probeConn{results: []error{
-		// 1st: a transport failure — the server never answered.
-		&net.OpError{Op: "read", Err: errors.New("connection reset by peer")},
-		// 2nd: healthy again.
-		nil,
-	}}
-	r := &ExplorerReader{conn: conn, lecVersionProbe: schemaProbe{retryAfter: -1}}
-	ctx := context.Background()
-
-	if got := r.ledgerEntriesVersioned(ctx); got {
-		t.Fatalf("first probe = true, want false — the transient error means we have no answer yet")
-	}
-	if got := r.ledgerEntriesVersioned(ctx); !got {
-		t.Errorf("second probe = false, want true — a transient failure must not latch the fallback "+
-			"for the process lifetime (conn saw %d queries)", conn.calls)
-	}
-	if conn.calls != 2 {
-		t.Errorf("conn.Query called %d times, want 2 (re-probe after a non-answer)", conn.calls)
-	}
-}
-
 // TestProbeSchema_DefinitiveAnswersAreCached — the caching half must
 // survive: once the SERVER has answered, the probe stops querying. A
 // re-probe on every read would put an extra round-trip on the hot path.
@@ -110,58 +82,64 @@ func TestProbeSchema_DefinitiveAnswersAreCached(t *testing.T) {
 	})
 }
 
-// TestProbeSchema_ContextDeadlineDoesNotLatch — the concrete production
-// trigger: the very first read of a fresh process runs under a request
-// deadline that expires. That must not permanently downgrade the reader.
-func TestProbeSchema_ContextDeadlineDoesNotLatch(t *testing.T) {
-	conn := &probeConn{results: []error{context.DeadlineExceeded, nil}}
-	r := &ExplorerReader{conn: conn, txIndexProbe: schemaProbe{retryAfter: -1}}
-
-	if r.txHashIndexAvailable(context.Background()) {
-		t.Fatal("first probe = true, want false on a deadline")
+// TestProbeSchema_NonAnswerDoesNotLatch pins that a probe error which is not
+// a schema verdict is retried. With a plain sync.Once the FIRST call's outcome
+// is final for the process lifetime: a transport reset, an expired request
+// deadline on a fresh process, or a RESOURCE exception (ClickHouse raises
+// *clickhouse.Exception for overload too, not just schema verdicts) would latch
+// the probe false. For lecVersionProbe that means falling back to ledger_seq as
+// the RMT version key forever, serving non-final intra-ledger balances until
+// someone restarts the API. No error, no metric, no self-heal.
+func TestProbeSchema_NonAnswerDoesNotLatch(t *testing.T) {
+	lecVersioned := func(r *ExplorerReader) bool { return r.ledgerEntriesVersioned(context.Background()) }
+	txIndex := func(r *ExplorerReader) bool { return r.txHashIndexAvailable(context.Background()) }
+	resource := func(code int32, name string) error {
+		return &clickhouse.Exception{Code: code, Name: name, Message: name}
 	}
-	if !r.txHashIndexAvailable(context.Background()) {
-		t.Error("second probe = false, want true — one expired request deadline must not " +
-			"disable the tx-hash index for the life of the process")
-	}
-}
-
-// TestProbeSchema_ResourceExceptionDoesNotLatch pins the second-review half
-// of the schema-probe latch rule. ClickHouse raises an Exception for plain RESOURCE conditions —
-// 202 TOO_MANY_SIMULTANEOUS_QUERIES, 159 TIMEOUT_EXCEEDED, 241
-// MEMORY_LIMIT_EXCEEDED, 209 SOCKET_TIMEOUT — not just for schema verdicts.
-// Treating "any *clickhouse.Exception" as a definitive answer meant one
-// overload blip latched the probe false for the PROCESS LIFETIME. For
-// lecVersionProbe that means falling back to ledger_seq as the RMT version
-// key forever, i.e. serving non-final intra-ledger balances until someone
-// restarts the API — the exact silent-degradation shape the sync.Once fix
-// was supposed to remove.
-func TestProbeSchema_ResourceExceptionDoesNotLatch(t *testing.T) {
-	resourceCodes := []struct {
-		code int32
-		name string
+	cases := []struct {
+		name  string
+		err   error
+		txIdx bool
+		why   string
 	}{
-		{202, "TOO_MANY_SIMULTANEOUS_QUERIES"},
-		{159, "TIMEOUT_EXCEEDED"},
-		{241, "MEMORY_LIMIT_EXCEEDED"},
-		{209, "SOCKET_TIMEOUT"},
-		{1002, "UNKNOWN_EXCEPTION"}, // catch-all: not an answer either
+		{
+			"transport", &net.OpError{Op: "read", Err: errors.New("connection reset by peer")}, false,
+			"a transient failure must not latch the fallback for the process lifetime",
+		},
+		{
+			"deadline", context.DeadlineExceeded, true,
+			"one expired request deadline must not disable the tx-hash index for the life of the process",
+		},
+		{"TOO_MANY_SIMULTANEOUS_QUERIES", resource(202, "TOO_MANY_SIMULTANEOUS_QUERIES"), false, ""},
+		{"TIMEOUT_EXCEEDED", resource(159, "TIMEOUT_EXCEEDED"), false, ""},
+		{"MEMORY_LIMIT_EXCEEDED", resource(241, "MEMORY_LIMIT_EXCEEDED"), false, ""},
+		{"SOCKET_TIMEOUT", resource(209, "SOCKET_TIMEOUT"), false, ""},
+		{"UNKNOWN_EXCEPTION", resource(1002, "UNKNOWN_EXCEPTION"), false, ""}, // catch-all: not an answer either
 	}
-	for _, rc := range resourceCodes {
-		t.Run(rc.name, func(t *testing.T) {
-			conn := &probeConn{results: []error{
-				&clickhouse.Exception{Code: rc.code, Name: rc.name, Message: rc.name},
-				nil, // the store recovers
-			}}
-			r := &ExplorerReader{conn: conn, lecVersionProbe: schemaProbe{retryAfter: -1}}
-
-			if r.ledgerEntriesVersioned(context.Background()) {
-				t.Fatalf("first probe = true, want false while the store is returning %s", rc.name)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := &probeConn{results: []error{tc.err, nil}}
+			r := &ExplorerReader{conn: conn}
+			probe := lecVersioned
+			if tc.txIdx {
+				r.txIndexProbe = schemaProbe{retryAfter: -1}
+				probe = txIndex
+			} else {
+				r.lecVersionProbe = schemaProbe{retryAfter: -1}
 			}
-			if !r.ledgerEntriesVersioned(context.Background()) {
-				t.Errorf("second probe = false after the store recovered — code %d (%s) is a "+
-					"RESOURCE condition, not a schema verdict, and must not latch the fallback "+
-					"for the process lifetime (conn saw %d queries)", rc.code, rc.name, conn.calls)
+			why := tc.why
+			if why == "" {
+				why = "a RESOURCE condition, not a schema verdict, must not latch the fallback for the process lifetime"
+			}
+
+			if probe(r) {
+				t.Fatalf("first probe = true, want false while the store is returning %v — no answer yet", tc.err)
+			}
+			if !probe(r) {
+				t.Errorf("second probe = false after the store recovered — %s (conn saw %d queries)", why, conn.calls)
+			}
+			if conn.calls != 2 {
+				t.Errorf("conn.Query called %d times, want 2 (re-probe after a non-answer)", conn.calls)
 			}
 		})
 	}

@@ -96,6 +96,8 @@ func TestRecentOperations_CursorPageIsBoundedBelowTheCursor(t *testing.T) {
 	if !strings.Contains(q, "AND ledger_seq >= ?") {
 		t.Fatalf("cursor page carries no tail-window lower bound (this is the #444 defect):\n%s", q)
 	}
+	// The ledger binds to both keyset arms; a 3-arg tuple shape would bind
+	// tx_index to `ledger_seq = ?` and silently return a different page.
 	args := conn.args[0]
 	want := []any{cur.Ledger, cur.Ledger, cur.A, cur.B, cur.Ledger - uint32(recentLedgersTailWindow), windowRows(25, windowFactorKeys)}
 	if len(args) != len(want) {
