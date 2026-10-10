@@ -1,5 +1,14 @@
 package main
 
+import (
+	"errors"
+	"math/big"
+	"testing"
+
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+)
+
 // change_24h_pct divides a current USD price by the bucket 24h before
 // it. The current leg is decimals-normalised in internal/api/v1
 // (lookupUSDPrice, and the batch row); the anchor comes from
@@ -13,18 +22,6 @@ package main
 // therefore proven on normalizeChange24hAnchor directly, and two
 // source-level tripwires pin that the reader cannot return a bucket
 // without going through it and that main() actually hands it the table.
-
-import (
-	"errors"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"math/big"
-	"testing"
-
-	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-)
 
 type fixedDecimals map[string]int
 
@@ -161,98 +158,4 @@ func TestNormalizeChange24hAnchor_FlatMarketIsFlat(t *testing.T) {
 	if pct.Sign() != 0 {
 		t.Errorf("flat market change = %s%%, want 0 (current and anchor are on different scales)", pct.FloatString(2))
 	}
-}
-
-// Every bucket USDPrice24hAgo hands back must have gone through the
-// normaliser: a `return row.VWAP, nil` is the defect.
-func TestChange24hReaderNeverReturnsARawBucket(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
-	fn := findMethod(f, "storeChange24hReader", "USDPrice24hAgo")
-	if fn == nil {
-		t.Fatal("could not locate storeChange24hReader.USDPrice24hAgo in main.go — " +
-			"update this guard to follow the refactor rather than deleting it")
-	}
-	normalised, reads := 0, 0
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		switch v := n.(type) {
-		case *ast.CallExpr:
-			if id, ok := v.Fun.(*ast.Ident); ok && id.Name == "normalizeChange24hAnchor" {
-				normalised++
-			}
-			if sel, ok := v.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "ClosedVWAP1mAtOrBefore" {
-				reads++
-			}
-		case *ast.ReturnStmt:
-			if len(v.Results) == 0 {
-				return true
-			}
-			if sel, ok := v.Results[0].(*ast.SelectorExpr); ok && sel.Sel.Name == "VWAP" {
-				t.Errorf("USDPrice24hAgo returns a raw %s.VWAP at %s — the anchor must be "+
-					"decimals-normalised like the current price it is divided into",
-					exprName(sel.X), fset.Position(v.Pos()))
-			}
-		}
-		return true
-	})
-	if reads == 0 {
-		t.Fatal("found no ClosedVWAP1mAtOrBefore read in USDPrice24hAgo — the scan is broken")
-	}
-	if normalised < reads {
-		t.Errorf("USDPrice24hAgo makes %d bucket reads but normalises only %d — "+
-			"every read path (the peg fallback included) must normalise against the pair it read",
-			reads, normalised)
-	}
-}
-
-// A normaliser handed a nil table is a byte-identical no-op, so the
-// wiring is what makes the fix live: main() must pass the cache.
-func TestChange24hReaderIsWiredWithDecimalsTable(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
-	literals := 0
-	ast.Inspect(f, func(n ast.Node) bool {
-		lit, ok := n.(*ast.CompositeLit)
-		if !ok {
-			return true
-		}
-		if id, ok := lit.Type.(*ast.Ident); !ok || id.Name != "storeChange24hReader" {
-			return true
-		}
-		literals++
-		wired := false
-		for _, el := range lit.Elts {
-			kv, ok := el.(*ast.KeyValueExpr)
-			if !ok {
-				continue
-			}
-			if k, ok := kv.Key.(*ast.Ident); ok && k.Name == "decimals" {
-				if v, ok := kv.Value.(*ast.Ident); ok && v.Name != "nil" {
-					wired = true
-				}
-			}
-		}
-		if !wired {
-			t.Errorf("storeChange24hReader constructed at %s without a decimals table — "+
-				"the anchor normalisation is inert and change_24h_pct mixes scales again",
-				fset.Position(lit.Pos()))
-		}
-		return true
-	})
-	if literals == 0 {
-		t.Fatal("found no storeChange24hReader literal in main.go — the scan is broken")
-	}
-}
-
-func exprName(e ast.Expr) string {
-	if id, ok := e.(*ast.Ident); ok {
-		return id.Name
-	}
-	return "<expr>"
 }

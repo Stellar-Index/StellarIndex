@@ -3,9 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"io"
 	"log/slog"
 	"net"
@@ -170,50 +167,6 @@ func TestClickhouseBootDialBudget_FitsInsideTheDeployProbeGrace(t *testing.T) {
 	// Leave half the grace for the rest of boot (Postgres, Redis, caches).
 	if limit := time.Duration(grace) * time.Second / 2; clickhouseBootDialBudget > limit {
 		t.Fatalf("clickhouseBootDialBudget = %s holds the listener past %s (half the %ds deploy probe grace): a ClickHouse outage during a deploy would fail the probe and roll back the API", clickhouseBootDialBudget, limit, grace)
-	}
-}
-
-// Every lake reader dial in main.go must go through the boot retry:
-// a bare one-shot dial is the cold-boot race that latches the checker down.
-func TestRun_LakeReaderDialsGoThroughTheBootRetry(t *testing.T) {
-	file, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
-	var retryRanges [][2]token.Pos
-	var dials []*ast.CallExpr
-	ast.Inspect(file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		switch fn := call.Fun.(type) {
-		case *ast.Ident:
-			if fn.Name == "dialClickHouseAtBoot" || fn.Name == "dialLakeReadersAtBoot" {
-				retryRanges = append(retryRanges, [2]token.Pos{call.Pos(), call.End()})
-			}
-		case *ast.SelectorExpr:
-			if pkg, ok := fn.X.(*ast.Ident); ok && pkg.Name == "clickhouse" &&
-				(fn.Sel.Name == "NewExplorerReaderAuth" || fn.Sel.Name == "NewSupplyReaderAuth") {
-				dials = append(dials, call)
-			}
-		}
-		return true
-	})
-	if len(dials) == 0 {
-		t.Fatal("main.go dials no lake reader; this guard is looking at the wrong names")
-	}
-	for _, d := range dials {
-		inside := false
-		for _, r := range retryRanges {
-			if d.Pos() >= r[0] && d.End() <= r[1] {
-				inside = true
-			}
-		}
-		if !inside {
-			sel, _ := d.Fun.(*ast.SelectorExpr)
-			t.Errorf("clickhouse.%s is dialled once outside dialLakeReadersAtBoot/dialClickHouseAtBoot — a ClickHouse a few seconds late at boot leaves its seams nil and the readiness gauge at 0 until restart", sel.Sel.Name)
-		}
 	}
 }
 

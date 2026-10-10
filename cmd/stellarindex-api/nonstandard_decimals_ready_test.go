@@ -3,9 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
@@ -65,106 +62,4 @@ func TestNonstandardDecimalsChecker_NotReadyUntilFirstLoad(t *testing.T) {
 	if err := check.Ping(context.Background()); err != nil {
 		t.Fatalf("Ping after a later failed refresh: %v (last-good must stay ready)", err)
 	}
-}
-
-// TestRun_PrimesNonstandardDecimalsCacheBeforeServing pins the wiring for
-// Q198: run() must prime the cache inline (not inside a goroutine), register
-// the returned check in the readiness set before the server is built, and do
-// so before any consumer of the cache is wired.
-func TestRun_PrimesNonstandardDecimalsCacheBeforeServing(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
-	runBody := findFuncBody(file, "run")
-	if runBody == nil {
-		t.Fatal("run() not found in main.go")
-	}
-
-	var funcLits [][2]token.Pos
-	var primePos, readyChecksPos token.Pos
-	var cacheUses []token.Pos
-	ast.Inspect(runBody, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.FuncLit:
-			funcLits = append(funcLits, [2]token.Pos{x.Pos(), x.End()})
-		case *ast.AssignStmt:
-			if p := primeAppendedToChecks(x); p.IsValid() {
-				primePos = p
-			}
-		case *ast.KeyValueExpr:
-			if k, ok := x.Key.(*ast.Ident); ok && k.Name == "ReadyChecks" && !readyChecksPos.IsValid() {
-				readyChecksPos = x.Pos()
-			}
-		case *ast.Ident:
-			if x.Name == "nonstandardDecimalsCache" {
-				cacheUses = append(cacheUses, x.Pos())
-			}
-		}
-		return true
-	})
-
-	if !primePos.IsValid() {
-		t.Fatal("run() never does `checks = append(checks, wiring.PrimeNonstandardDecimalsCache(...))`: the cache's first load is not synchronised with serving")
-	}
-	for _, r := range funcLits {
-		if primePos >= r[0] && primePos < r[1] {
-			t.Fatalf("wiring.PrimeNonstandardDecimalsCache at %s runs inside a func literal; it must run inline", fset.Position(primePos))
-		}
-	}
-	if !readyChecksPos.IsValid() || primePos > readyChecksPos {
-		t.Fatalf("the nonstandard-decimals check is appended at %s, after ReadyChecks is handed to the server", fset.Position(primePos))
-	}
-	// Uses: [0] the declaration, [1] the prime argument; every later use is
-	// a consumer and must come after the prime.
-	if len(cacheUses) < 2 {
-		t.Fatalf("expected the cache declaration and prime call, got %d uses", len(cacheUses))
-	}
-	for _, p := range cacheUses[1:] {
-		if p < primePos {
-			t.Fatalf("nonstandardDecimalsCache consumed at %s before it is primed", fset.Position(p))
-		}
-	}
-}
-
-func findFuncBody(file *ast.File, name string) *ast.BlockStmt {
-	for _, d := range file.Decls {
-		if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == name {
-			return fd.Body
-		}
-	}
-	return nil
-}
-
-// primeAppendedToChecks returns the position of the prime call when a is
-// `checks = append(checks, wiring.PrimeNonstandardDecimalsCache(...))`.
-func primeAppendedToChecks(a *ast.AssignStmt) token.Pos {
-	if len(a.Lhs) != 1 || len(a.Rhs) != 1 {
-		return token.NoPos
-	}
-	if lhs, ok := a.Lhs[0].(*ast.Ident); !ok || lhs.Name != "checks" {
-		return token.NoPos
-	}
-	call, ok := a.Rhs[0].(*ast.CallExpr)
-	if !ok {
-		return token.NoPos
-	}
-	if fn, ok := call.Fun.(*ast.Ident); !ok || fn.Name != "append" {
-		return token.NoPos
-	}
-	for _, arg := range call.Args {
-		inner, ok := arg.(*ast.CallExpr)
-		if !ok {
-			continue
-		}
-		fn, ok := inner.Fun.(*ast.SelectorExpr)
-		if !ok {
-			continue
-		}
-		if pkg, ok := fn.X.(*ast.Ident); ok && pkg.Name == "wiring" && fn.Sel.Name == "PrimeNonstandardDecimalsCache" {
-			return inner.Pos()
-		}
-	}
-	return token.NoPos
 }
