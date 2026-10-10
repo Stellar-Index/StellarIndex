@@ -69,7 +69,7 @@ func TestNewHandlers_ValidatesCallerConfigInPlace(t *testing.T) {
 // authenticated request.
 //
 // Shape rather than a behavioural test, matching
-// internal/api/v1/sse_producer_recover_test.go's rationale for the
+// internal/api/v1/source_shape_rules_internal_test.go's rationale for the
 // same problem class: actually driving a real panic through
 // TouchSession and observing "the test process didn't crash" is not a
 // safe or deterministic thing to assert inline (an unrecovered panic

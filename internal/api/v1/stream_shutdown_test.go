@@ -3,14 +3,9 @@ package v1_test
 import (
 	"bufio"
 	"context"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -83,90 +78,6 @@ func TestStreamHandlersEndOnTheShutdownDrain(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestEveryStreamCallSitePassesTheServerDrain is the coverage the
-// behavioural test above cannot give cheaply: /v1/price/tip/stream and
-// /v1/observations/stream need substantial fixtures to reach their SSE
-// bodies, and a NEW stream endpoint would be covered by neither.
-//
-// Every call into the streaming package's writers must pass
-// s.streamOptions(). An inline streaming.StreamOptions{} is the exact
-// regression this guards — it is what all four call sites looked like
-// before, and it is invisible to every other test.
-func TestEveryStreamCallSitePassesTheServerDrain(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read package dir: %v", err)
-	}
-
-	var checked int
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		checked += auditStreamCallSites(t, name)
-	}
-
-	// If the stream endpoints were restructured, re-point this guard at
-	// the new shape rather than deleting it — a passing count of zero
-	// would mean the guard silently stopped guarding.
-	if checked == 0 {
-		t.Fatal("found no calls into the streaming writers — this guard no longer covers anything")
-	}
-	t.Logf("stream writer call sites checked: %d", checked)
-}
-
-// auditStreamCallSites reports how many streaming-writer calls the file
-// contains, failing t for each one that does not pass s.streamOptions().
-func auditStreamCallSites(t *testing.T, path string) int {
-	t.Helper()
-
-	src, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, path, src, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
-
-	writers := map[string]bool{
-		"Stream":                       true,
-		"StreamFromChannel":            true,
-		"StreamFromChannelPreAdmitted": true,
-	}
-
-	var found int
-	ast.Inspect(file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		pkg, ok := sel.X.(*ast.Ident)
-		if !ok || pkg.Name != "streaming" || !writers[sel.Sel.Name] {
-			return true
-		}
-		found++
-
-		last := call.Args[len(call.Args)-1]
-		start, end := fset.Position(last.Pos()).Offset, fset.Position(last.End()).Offset
-		got := string(src[start:end])
-		if got != "s.streamOptions()" {
-			t.Errorf("%s: streaming.%s is passed %s, want s.streamOptions() — "+
-				"a stream built without the server's shutdown drain holds "+
-				"httpSrv.Shutdown open for the whole drain budget",
-				fset.Position(call.Pos()), sel.Sel.Name, got)
-		}
-		return true
-	})
-	return found
 }
 
 // TestStreamDrainDoesNotAffectOrdinaryHandlers pins the SCOPE of the

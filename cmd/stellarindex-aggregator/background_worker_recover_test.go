@@ -22,7 +22,7 @@ import (
 // dependency and would still only cover the ones that exist today. So this
 // derives the worker set from the source itself and fails if any of them lacks
 // recovery. Same discipline as the API binary's TestBackgroundWorkersRecover
-// and the v1 package's TestSSEProducerGoroutinesRecover. The shared
+// and the v1 package's TestSourceShapeRules/sse_producer_goroutines_recover. The shared
 // guard's own recover-and-log behaviour is proven separately in
 // internal/worker (TestRecover_ContainsPanicAndLogs).
 //

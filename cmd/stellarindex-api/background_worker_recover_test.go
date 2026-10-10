@@ -26,7 +26,7 @@ import (
 // through a real dependency, and would still only cover the ones that exist
 // today. So this derives the worker set from the source itself and fails if any
 // of them lacks recovery — find every call site of the thing being guarded, not
-// a sample. Same discipline as TestSSEProducerGoroutinesRecover.
+// a sample. Same discipline as the v1 package's TestSourceShapeRules/sse_producer_goroutines_recover.
 //
 // The walk must see `go namedFunc(…)` as well as the `go func(){…}()`
 // spelling, or those workers would not count toward this test's own "did I
