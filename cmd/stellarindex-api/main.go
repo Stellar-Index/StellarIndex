@@ -1528,7 +1528,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		go func() {
 			defer bgWG.Done()
 			defer recoverBackgroundWorker(logger, "holds-watch")
-			holds.Watch(rootCtx, cfg.API.HoldsFile, cfg.API.HoldsReloadInterval, apiSrv.SetHolds, logger.With("component", "holds"))
+			holds.Watch(rootCtx, cfg.API.HoldsFile, holdsReloadInterval, apiSrv.SetHolds, logger.With("component", "holds"))
 		}()
 	}
 
@@ -1868,9 +1868,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	if cfg.SignupReaper.Enabled {
 		if orphans, ok := platformAccountStore.(signupreaper.OrphanStore); ok && orphans != nil {
 			reaper := signupreaper.New(orphans, signupreaper.Options{
-				Interval: time.Duration(cfg.SignupReaper.IntervalMinutes) * time.Minute,
-				MinAge:   time.Duration(cfg.SignupReaper.MinAgeMinutes) * time.Minute,
-				Logger:   logger.With("component", "signup-reaper"),
+				Logger: logger.With("component", "signup-reaper"),
 			})
 			bgWG.Add(1)
 			go func() {
@@ -1881,8 +1879,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				}
 			}()
 			logger.Info("signup-reaper worker started",
-				"interval_minutes", cfg.SignupReaper.IntervalMinutes,
-				"min_age_minutes", cfg.SignupReaper.MinAgeMinutes)
+				"interval", signupreaper.DefaultInterval, "min_age", signupreaper.DefaultMinAge)
 		} else {
 			logger.Info("signup-reaper enabled but Postgres account store not wired — skipping")
 		}
@@ -2383,6 +2380,9 @@ func (t *inProcessLoginThrottle) Allow(ctx context.Context, ip, email string) (b
 // so the Redis-less fallback enforces the same policy with
 // single-instance accounting.
 const inProcessSignupIPThrottleMaxPerHour = 5
+
+// holdsReloadInterval is how often the API re-reads the holds file.
+const holdsReloadInterval = 15 * time.Second
 
 // inProcessSignupIPThrottle implements v1.SignupIPThrottle
 // as the Redis-less fallback for the

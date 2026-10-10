@@ -956,10 +956,6 @@ func run(cfgPath string, dryRun bool) error {
 	// distinguishable as "disabled" rather than "stale".
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		decimalsguard.MarkEnabled(time.Now())
-		backfillWindow := decimalsguard.DefaultBackfillWindow
-		if days := cfg.DecimalsGuard.BackfillWindowDays; days > 0 {
-			backfillWindow = time.Duration(days) * 24 * time.Hour
-		}
 		refresherWG.Add(1)
 		go func() {
 			defer worker.Recover(logger, "decimals-guard")
@@ -971,9 +967,8 @@ func run(cfgPath string, dryRun bool) error {
 			}
 			defer func() { _ = er.Close() }()
 			guard := decimalsguard.New(store, er, decimalsguard.Options{
-				Window:         decimalsguard.DefaultWindow,
-				BackfillWindow: backfillWindow,
-				Logger:         logger.With("component", "decimals-guard"),
+				Window: decimalsguard.DefaultWindow,
+				Logger: logger.With("component", "decimals-guard"),
 				// Persists each confirmed offender into
 				// nonstandard_decimals_assets (migration 0093) so the
 				// API's read-time serving guard can decline pricing —
@@ -1026,8 +1021,7 @@ func run(cfgPath string, dryRun bool) error {
 				decimals: decimalsLookup,
 			},
 			pricealerts.Options{
-				Interval: time.Duration(cfg.PriceAlerts.IntervalSeconds) * time.Second,
-				Logger:   logger.With("component", "price-alerts"),
+				Logger: logger.With("component", "price-alerts"),
 			},
 		)
 		refresherWG.Add(1)
@@ -1038,7 +1032,7 @@ func run(cfgPath string, dryRun bool) error {
 				logger.Error("price-alert evaluator exited with error", "err", err)
 			}
 		}()
-		logger.Info("price-alert evaluator: wired", "interval_seconds", cfg.PriceAlerts.IntervalSeconds)
+		logger.Info("price-alert evaluator: wired", "interval", pricealerts.DefaultInterval)
 	}
 
 	// ─── Priceless-popular coverage tripwire ────

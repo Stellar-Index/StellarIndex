@@ -80,7 +80,7 @@ Repo2 should let us prune repo1's local diffs (the deferred Phase A step). **Not
 
 Small, high-value, non-re-derivable. **No such job exists yet.** A daily job tars `/etc/stellarindex*`, `/etc/pgbackrest*`, systemd units, the ansible vault, and CH/PG DDL snapshots; `age`/`gpg`-encrypts; uploads off-site. Codify as a systemd timer in the archival-node role.
 
-> **hashdb (`/var/lib/stellarindex/hashdb.bin`, ADR-0016) is deliberately out of every stream and out of `zfs_snapshot_datasets`.** It is a disposable append-log the indexer regenerates; losing it costs a re-append of the trailing `verify_window_ledgers` window (default 20000, ~1 day at 5s/ledger) on next start. Per-region switch: `stellarindex_hashdb_enabled` in `stellarindex.toml.j2`.
+> **hashdb (`/var/lib/stellarindex/hashdb.bin`, ADR-0016) is deliberately out of every stream and out of `zfs_snapshot_datasets`.** It is a disposable append-log the indexer regenerates; losing it costs a re-append of the trailing verify window (20000 ledgers, ~1 day at 5s/ledger) on next start. Per-region switch: `stellarindex_hashdb_enabled` in `stellarindex.toml.j2`.
 
 ### 4. ClickHouse lake → S3 (high) — full, incremental, for RTO
 

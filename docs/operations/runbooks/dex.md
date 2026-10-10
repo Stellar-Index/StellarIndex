@@ -227,7 +227,7 @@ Immediate (stop serving the wrong number) — **now mostly automatic**:
       periodic freshness sweep (20-minute trailing window, catches a token
       that is STILL trading) and — since 2026-07-09 — a one-time startup
       `Guard.Backfill` pass that scans a much longer historical window
-      (default 90 days, `[decimals_guard].backfill_window_days`) exactly
+      (90 days, `decimalsguard.DefaultBackfillWindow`) exactly
       once when the aggregator process starts, so a token that traded and
       then went quiet is confirmed and upserted without waiting for it to
       trade again. The API's `NonstandardDecimalsCache` (`internal/api/v1`)
@@ -260,7 +260,7 @@ Immediate (stop serving the wrong number) — **now mostly automatic**:
       replaced by normalization, so it is permanently zero).
 - [ ] **Manual hand-seed — now a fallback, not the primary path.** Only
       needed when: the token's last trade is OLDER than
-      `backfill_window_days` (default 90d, so the startup pass never scans
+      the 90-day backfill window (so the startup pass never scans
       back far enough), the aggregator hasn't restarted since this fix
       shipped, or ClickHouse was unreachable at the aggregator's last
       startup (the whole guard — sweep AND backfill — is best-effort and
@@ -491,8 +491,8 @@ skew was live before normalization/suppression.
   traded inside a 20-minute window again, so it stayed unseeded until an
   operator hand-inserted the row. Added `Guard.Backfill`: a one-time pass,
   run once at aggregator startup before the periodic loop begins, that
-  scans a much longer historical window (default 90 days, config-surfaced
-  via `[decimals_guard].backfill_window_days`) through the SAME
+  scans a much longer historical window (90 days,
+  `decimalsguard.DefaultBackfillWindow`) through the SAME
   classify+report path the periodic sweep uses, and logs a
   `decimals-guard: startup backfill complete` summary
   (`scanned_pairs`/`confirmed_offenders`). The manual `INSERT` above is now
@@ -659,9 +659,7 @@ recomputation after the re-derive.
   — both share the same classify+report path), `internal/storage/timescale/soroban_dex_assets.go`
   (the shared time-bounded enumerator both call with different windows),
   `internal/storage/clickhouse/token_decimals_reader.go` (the resolver).
-  Backfill's lookback window is config-surfaced:
-  `internal/config.DecimalsGuardConfig.BackfillWindowDays` (`[decimals_guard]`
-  in `configs/example.toml`), default 90 days
+  Backfill's lookback window is fixed at 90 days
   (`decimalsguard.DefaultBackfillWindow`).
 - Enforcement (historical — the 422 decline, 2026-07-09 → 2026-07-10):
   `internal/api/v1/nonstandard_decimals_guard.go` was DELETED on

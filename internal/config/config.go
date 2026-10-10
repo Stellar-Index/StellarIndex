@@ -23,25 +23,24 @@ import (
 //
 // Adding a field without `doc:` fails `make docs-config`.
 type Config struct {
-	Region        RegionConfig        `toml:"region" doc:"Region identity — ID, display name, home domain."`
-	Stellar       StellarConfig       `toml:"stellar" doc:"Endpoints for stellar-core and stellar-rpc."`
-	Storage       StorageConfig       `toml:"storage" doc:"Postgres/TimescaleDB, Redis, MinIO connection details."`
-	Ingestion     IngestionConfig     `toml:"ingestion" doc:"Source orchestration — which connectors to run, backfill bounds, cursor store."`
-	Oracle        OracleConfig        `toml:"oracle" doc:"On-chain oracle contract addresses (Reflector, Redstone, Band)."`
-	External      ExternalConfig      `toml:"external" doc:"Off-chain connectors — CEX/FX/aggregator sources that run parallel to the on-chain dispatcher."`
-	Aggregate     AggregateConfig     `toml:"aggregate" doc:"VWAP/TWAP windows + outlier thresholds."`
-	Anomaly       AnomalyConfig       `toml:"anomaly" doc:"Per-asset-class anomaly detection thresholds (Phase 1) + Phase-2 freeze thresholds (per-asset MAD-baseline + multi-factor confidence + source count). Both layers run; either freezes on its own (Phase 1: class freeze_pct AND source_count<=1; Phase 2: the 3-signal AND) and both share one freeze lifecycle (ADR-0019)."`
-	API           APIConfig           `toml:"api" doc:"Public API serving plane — port, auth mode, rate limits, CDN."`
-	Metadata      MetadataConfig      `toml:"metadata" doc:"Asset metadata overlay — SEP-1 issuer→home-domain map, operator overrides."`
-	Supply        SupplyConfig        `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
-	Trades        TradesConfig        `toml:"trades" doc:"Trade-insert policy — operator-declared USD-pegged stablecoins so on-chain DEX trades populate trades.usd_volume at insert time (launch-readiness L2.2 phase 1)."`
-	PricingGuard  PricingGuardConfig  `toml:"pricing_guard" doc:"Serving-side price guards — the thin-market substance gate that withholds aggregated price claims for on-chain pairs whose trailing market activity is below the serve floor (2026-08-04 valuation incident)."`
-	DecimalsGuard DecimalsGuardConfig `toml:"decimals_guard" doc:"internal/decimalsguard's one-time startup backfill pass — how far back it scans trade history to self-seed nonstandard_decimals_assets for Soroban tokens that traded and then went dormant."`
-	Divergence    DivergenceConfig    `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
-	PriceAlerts   PriceAlertsConfig   `toml:"price_alerts" doc:"Customer price-threshold alert evaluator. Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
-	SignupReaper  SignupReaperConfig  `toml:"signup_reaper" doc:"F-1255 speculative-account reaper. Deletes orphan accounts left by a lost signup race (Suspended with a 'signup-race:' reason, no user, no key). Runs in the API binary when the dashboard is wired. On by default — the rows are pure garbage."`
-	HashDB        HashDBConfig        `toml:"hashdb" doc:"Drift detector — on-disk (ledger_seq -> sha256(LCM)) record appended by the indexer's live ingest loop and periodically re-verified against a fresh re-read of the same bucket, catching upstream rewrites of previously-fetched ledger bytes. Off by default (opt-in first deploy)."`
-	Obs           ObsConfig           `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
+	Region       RegionConfig       `toml:"region" doc:"Region identity — ID, display name, home domain."`
+	Stellar      StellarConfig      `toml:"stellar" doc:"Endpoints for stellar-core and stellar-rpc."`
+	Storage      StorageConfig      `toml:"storage" doc:"Postgres/TimescaleDB, Redis, MinIO connection details."`
+	Ingestion    IngestionConfig    `toml:"ingestion" doc:"Source orchestration — which connectors to run, backfill bounds, cursor store."`
+	Oracle       OracleConfig       `toml:"oracle" doc:"On-chain oracle contract addresses (Reflector, Redstone, Band)."`
+	External     ExternalConfig     `toml:"external" doc:"Off-chain connectors — CEX/FX/aggregator sources that run parallel to the on-chain dispatcher."`
+	Aggregate    AggregateConfig    `toml:"aggregate" doc:"VWAP/TWAP windows + outlier thresholds."`
+	Anomaly      AnomalyConfig      `toml:"anomaly" doc:"Per-asset-class anomaly detection thresholds (Phase 1) + Phase-2 freeze thresholds (per-asset MAD-baseline + multi-factor confidence + source count). Both layers run; either freezes on its own (Phase 1: class freeze_pct AND source_count<=1; Phase 2: the 3-signal AND) and both share one freeze lifecycle (ADR-0019)."`
+	API          APIConfig          `toml:"api" doc:"Public API serving plane — port, auth mode, rate limits, CDN."`
+	Metadata     MetadataConfig     `toml:"metadata" doc:"Asset metadata overlay — SEP-1 issuer→home-domain map, operator overrides."`
+	Supply       SupplyConfig       `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
+	Trades       TradesConfig       `toml:"trades" doc:"Trade-insert policy — operator-declared USD-pegged stablecoins so on-chain DEX trades populate trades.usd_volume at insert time (launch-readiness L2.2 phase 1)."`
+	PricingGuard PricingGuardConfig `toml:"pricing_guard" doc:"Serving-side price guards — the thin-market substance gate that withholds aggregated price claims for on-chain pairs whose trailing market activity is below the serve floor (2026-08-04 valuation incident)."`
+	Divergence   DivergenceConfig   `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
+	PriceAlerts  PriceAlertsConfig  `toml:"price_alerts" doc:"Customer price-threshold alert evaluator. Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
+	SignupReaper SignupReaperConfig `toml:"signup_reaper" doc:"F-1255 speculative-account reaper. Deletes orphan accounts left by a lost signup race (Suspended with a 'signup-race:' reason, no user, no key). Runs in the API binary when the dashboard is wired. On by default — the rows are pure garbage."`
+	HashDB       HashDBConfig       `toml:"hashdb" doc:"Drift detector — on-disk (ledger_seq -> sha256(LCM)) record appended by the indexer's live ingest loop and periodically re-verified against a fresh re-read of the same bucket, catching upstream rewrites of previously-fetched ledger bytes. Off by default (opt-in first deploy)."`
+	Obs          ObsConfig          `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
 }
 
 // HashDBConfig gates the hashdb drift detector (internal/hashdb): an on-disk
@@ -61,25 +60,11 @@ type HashDBConfig struct {
 	// already grants /var/lib/stellarindex — the same mount
 	// verify-archive's state file uses).
 	Path string `toml:"path" doc:"Filesystem path of the hashdb file (ledger_seq -> sha256(LCM)). Created on first run if missing." default:"/var/lib/stellarindex/hashdb.bin"`
-
-	// VerifyIntervalMinutes is the gap between periodic verify
-	// sweeps. 0 falls back to the indexer's default (60m) rather than
-	// reaching time.NewTicker(0) at runtime.
-	VerifyIntervalMinutes int `toml:"verify_interval_minutes" doc:"Minutes between hashdb verify sweeps. 0 = the indexer default (60)." default:"60"`
-
-	// VerifyWindowLedgers is how many trailing ledgers each sweep
-	// re-reads from the bucket and re-verifies against hashdb. 0
-	// falls back to the indexer's default (20000 — roughly a day of
-	// ledger closes at ~5s/ledger). Kept well below the indexer's
-	// live-append edge (see the SafetyMargin in the verify loop) so
-	// the sweep never races an in-flight Append for the same ledger.
-	VerifyWindowLedgers uint32 `toml:"verify_window_ledgers" doc:"Trailing ledger count each verify sweep re-checks against hashdb. 0 = the indexer default (20000, ~1 day)." default:"20000"`
 }
 
 // validate enforces HashDBConfig's constraints only when Enabled —
 // a disabled block with zero-value fields is fine (nothing consumes
-// them). Same pattern as SignupReaperConfig.validate /
-// PriceAlertsConfig.validate.
+// them).
 func (hc HashDBConfig) validate() error {
 	if !hc.Enabled {
 		return nil
@@ -87,39 +72,8 @@ func (hc HashDBConfig) validate() error {
 	if hc.Path == "" {
 		return fmt.Errorf("hashdb: path must be set when enabled")
 	}
-	if hc.VerifyIntervalMinutes < 0 {
-		return fmt.Errorf("hashdb: verify_interval_minutes must be >= 0, got %d", hc.VerifyIntervalMinutes)
-	}
-	// Above ~1 day between sweeps the periodic half of the hashdb drift
-	// detector stops meaningfully bounding how long a rewrite can go
-	// unnoticed. 0 defers to the indexer's 60m default, so it's exempt
-	// from the ceiling.
-	if hc.VerifyIntervalMinutes > maxHashDBVerifyIntervalMinutes {
-		return fmt.Errorf("hashdb: verify_interval_minutes must be <= %d (24h), got %d",
-			maxHashDBVerifyIntervalMinutes, hc.VerifyIntervalMinutes)
-	}
-	// Unbounded, VerifyWindowLedgers can exceed the chain's whole
-	// height: every tick then re-streams and re-hashes the ENTIRE
-	// archive from verifyDB.StartLedger() instead of a trailing
-	// window, hammering the live bucket on the same cadence meant for
-	// a ~day-sized re-check. 0 defers to the 20000 (~1 day) library
-	// default, so it's exempt from the ceiling.
-	if hc.VerifyWindowLedgers > maxHashDBVerifyWindowLedgers {
-		return fmt.Errorf("hashdb: verify_window_ledgers must be <= %d (~10 days), got %d",
-			maxHashDBVerifyWindowLedgers, hc.VerifyWindowLedgers)
-	}
 	return nil
 }
-
-// maxHashDBVerifyIntervalMinutes / maxHashDBVerifyWindowLedgers cap
-// HashDBConfig's two tuning knobs at roughly 10x their library
-// defaults (60m / 20000 ledgers, see defaultHashDBConfig) — enough
-// headroom for a slower region without letting a config typo turn
-// the periodic verify sweep into a rare, archive-wide re-read.
-const (
-	maxHashDBVerifyIntervalMinutes = 24 * 60
-	maxHashDBVerifyWindowLedgers   = 200000
-)
 
 // SignupReaperConfig gates the speculative-account reaper
 // (internal/signupreaper). The reaper deletes orphan `accounts` rows
@@ -132,32 +86,6 @@ const (
 type SignupReaperConfig struct {
 	// Enabled starts the reaper loop in the API binary. On by default.
 	Enabled bool `toml:"enabled" doc:"Start the speculative-account reaper loop in the API binary. On by default — the reaped rows (Suspended signup-race orphans with no user/key) are pure garbage. Set false to disable." default:"true"`
-
-	// IntervalMinutes is the sweep cadence. Signup-race orphans are
-	// rare, so hourly is ample. 0 falls back to the library default
-	// (60m). Validated >= 0 when Enabled.
-	IntervalMinutes int `toml:"interval_minutes" doc:"Minutes between reaper sweeps. 0 = library default (60)." default:"60"`
-
-	// MinAgeMinutes is how long an orphan must have been suspended
-	// before it is eligible for deletion — a safety window well past
-	// any in-flight signup race. 0 falls back to the library default
-	// (1440m = 24h). Validated >= 0 when Enabled.
-	MinAgeMinutes int `toml:"min_age_minutes" doc:"Minimum minutes a suspended orphan must age before the reaper deletes it (safety window). 0 = library default (1440 = 24h)." default:"1440"`
-}
-
-// validate is the sub-validator hook Config.Validate calls. Only
-// enforces constraints when the reaper is enabled.
-func (sc SignupReaperConfig) validate() error {
-	if !sc.Enabled {
-		return nil
-	}
-	if sc.IntervalMinutes < 0 {
-		return fmt.Errorf("signup_reaper: interval_minutes must be >= 0, got %d", sc.IntervalMinutes)
-	}
-	if sc.MinAgeMinutes < 0 {
-		return fmt.Errorf("signup_reaper: min_age_minutes must be >= 0, got %d", sc.MinAgeMinutes)
-	}
-	return nil
 }
 
 // PriceAlertsConfig gates the aggregator's price-alert evaluator
@@ -170,26 +98,6 @@ func (sc SignupReaperConfig) validate() error {
 type PriceAlertsConfig struct {
 	// Enabled starts the evaluator loop in the aggregator binary.
 	Enabled bool `toml:"enabled" doc:"Start the price-alert evaluator loop in the aggregator. Off by default." default:"false"`
-
-	// IntervalSeconds is the sweep cadence — the gap between successive
-	// passes over the enabled price_alerts set. 0 falls back to the
-	// library default (30s). Validated > 0 when Enabled so an operator
-	// enabling the worker with a zero cadence fails at boot rather than
-	// reaching time.NewTicker(0) at runtime.
-	IntervalSeconds int `toml:"interval_seconds" doc:"Sweep cadence in seconds between price-alert evaluation passes. 0 = library default (30s)." default:"30"`
-}
-
-// validate is the sub-validator hook Config.Validate calls. Only
-// enforces constraints when the worker is enabled — a disabled worker
-// with a zero cadence is fine (the field is simply unused).
-func (pc PriceAlertsConfig) validate() error {
-	if !pc.Enabled {
-		return nil
-	}
-	if pc.IntervalSeconds < 0 {
-		return fmt.Errorf("price_alerts: interval_seconds must be >= 0, got %d", pc.IntervalSeconds)
-	}
-	return nil
 }
 
 // TradesConfig configures policy that runs at trade-insert time
@@ -406,26 +314,6 @@ func defaultPricingGuardConfig() PricingGuardConfig {
 		SubstanceWindowHours:    24,
 		FXCrossMaxAgeHours:      76,
 	}
-}
-
-// DecimalsGuardConfig configures internal/decimalsguard's startup backfill
-// pass (Guard.Backfill), which seeds non-7-decimal Soroban tokens that went
-// dormant before the periodic sweep's fixed 20-minute window saw them (token
-// CC2RB…, decimals()=9, went unseeded for weeks).
-type DecimalsGuardConfig struct {
-	// BackfillWindowDays bounds the startup pass's index-sargable scan for
-	// Soroban-legged (source, asset) pairs. 0 => 90
-	// (decimalsguard.DefaultBackfillWindow). Tokens dormant longer than this need
-	// the dex.md runbook's manual seed.
-	BackfillWindowDays int `toml:"backfill_window_days" doc:"How many days of trade history the decimals-guard's one-time startup backfill pass scans for distinct Soroban-legged (source, asset) pairs, to self-seed nonstandard_decimals_assets for tokens that traded and then went dormant. 0 = library default (90)." default:"90"`
-}
-
-// validate is the sub-validator hook Config.Validate calls.
-func (dc DecimalsGuardConfig) validate() error {
-	if dc.BackfillWindowDays < 0 {
-		return fmt.Errorf("%w: decimals_guard: backfill_window_days must be >= 0, got %d", ErrInvalidConfig, dc.BackfillWindowDays)
-	}
-	return nil
 }
 
 // DivergenceConfig wires the divergence cross-check references. The
@@ -1273,8 +1161,7 @@ type APIConfig struct {
 	// 0 disables it.
 	FailedAuthRateLimitPerMin int `toml:"failed_auth_rate_limit_per_min" doc:"Cap on INVALID-credential (failed-auth) attempts per minute, enforced inside the Auth middleware so credential-stuffing / API-key guessing is throttled even though auth rejects before the main rate limiter (C3-5). Only active when auth_mode != none. Applied independently per resolved client IP and, in the apikey / apikey_optional modes, per presented key prefix (the 12-char display prefix), so guessing aimed at one key from many IPs is still capped; a valid key is never throttled by it. Redis-backed when available, in-process fixed-window fallback otherwise. 0 disables the failed-auth throttle." default:"20"`
 
-	HoldsFile           string        `toml:"holds_file" doc:"Path to a TOML file of [[hold]] entries (asset, contract_id, ledger_from, ledger_to, reason) that mark matching supply, balance and holder responses as under review. Polled every holds_reload_interval; a missing file means no holds; an invalid or zero-byte file keeps the previous list, so delete the file to lift every hold. Empty disables the feature." default:""`
-	HoldsReloadInterval time.Duration `toml:"holds_reload_interval" doc:"How often the API re-reads holds_file." default:"15s"`
+	HoldsFile string `toml:"holds_file" doc:"Path to a TOML file of [[hold]] entries (asset, contract_id, ledger_from, ledger_to, reason) that mark matching supply, balance and holder responses as under review. Polled every 15s; a missing file means no holds; an invalid or zero-byte file keeps the previous list, so delete the file to lift every hold. Empty disables the feature." default:""`
 
 	// SingleInstance asserts exactly ONE API instance, unlocking the per-process
 	// fallbacks for the auth throttles and passkey replay guard when Redis is
@@ -1863,10 +1750,8 @@ type ObsConfig struct {
 // TestDefault_MatchesStructTags.
 func defaultHashDBConfig() HashDBConfig {
 	return HashDBConfig{
-		Enabled:               false,
-		Path:                  "/var/lib/stellarindex/hashdb.bin",
-		VerifyIntervalMinutes: 60,
-		VerifyWindowLedgers:   20000,
+		Enabled: false,
+		Path:    "/var/lib/stellarindex/hashdb.bin",
 	}
 }
 
@@ -1916,7 +1801,6 @@ func defaultAPIConfig() APIConfig {
 		FailedAuthRateLimitPerMin: 20,
 		RateLimitDwell:            30 * time.Second,
 		MonthlyQuotaDwell:         30 * time.Second,
-		HoldsReloadInterval:       15 * time.Second,
 		// Unauthenticated-DoS chokepoint: the app-layer request
 		// deadline (15s) is the primary bound; the serving-pool
 		// statement_timeout (30s) is the SQL-side backstop, kept longer so
@@ -1997,6 +1881,14 @@ var RetiredKeys = map[string]string{
 	"divergence.redstone.max_age_minutes":             "never set — per-oracle default staleness ceiling",
 	"divergence.band.max_age_minutes":                 "never set — per-oracle default staleness ceiling",
 	"divergence.coingecko.max_age_minutes":            "never set — 30-minute default staleness ceiling",
+	"decimals_guard":                                  "never set — backfill window fixed at 90d in decimalsguard",
+	"decimals_guard.backfill_window_days":             "never set — fixed 90d in decimalsguard",
+	"price_alerts.interval_seconds":                   "never set — fixed 30s in pricealerts",
+	"signup_reaper.interval_minutes":                  "never set — fixed 60m in signupreaper",
+	"signup_reaper.min_age_minutes":                   "never set — fixed 24h in signupreaper",
+	"hashdb.verify_interval_minutes":                  "never set — fixed 60m in the indexer",
+	"hashdb.verify_window_ledgers":                    "never set — fixed 20000 ledgers in the indexer",
+	"api.holds_reload_interval":                       "never set — fixed 15s in the API",
 }
 
 func Default() Config {
@@ -2068,25 +1960,13 @@ func Default() Config {
 		API:          defaultAPIConfig(),
 		Divergence:   defaultDivergenceConfig(),
 		PricingGuard: defaultPricingGuardConfig(),
-		DecimalsGuard: DecimalsGuardConfig{
-			// 90 days — matches decimalsguard.DefaultBackfillWindow.
-			BackfillWindowDays: 90,
-		},
 		PriceAlerts: PriceAlertsConfig{
-			// Off by default — operator opts in once alerts + webhooks
-			// are wired. Non-zero cadence so an accidental Enabled=true
-			// without an interval doesn't reach time.NewTicker(0).
-			Enabled:         false,
-			IntervalSeconds: 30,
+			// Off by default: the operator opts in once alerts + webhooks are wired.
+			Enabled: false,
 		},
 		SignupReaper: SignupReaperConfig{
-			// On by default — signup-race orphans are pure
-			// garbage (no user, no key). Non-zero cadence + age so the
-			// worker never reaches time.NewTicker(0) and always leaves a
-			// safety window before deleting.
-			Enabled:         true,
-			IntervalMinutes: 60,
-			MinAgeMinutes:   1440,
+			// On by default: signup-race orphans are pure garbage (no user, no key).
+			Enabled: true,
 		},
 		Supply: SupplyConfig{
 			// Cadence is only consumed when AggregatorRefreshEnabled is

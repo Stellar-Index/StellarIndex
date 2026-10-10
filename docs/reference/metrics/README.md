@@ -1727,9 +1727,8 @@ Counter, labels `outcome` (`ok` / `drift` / `error`) and `window`
 (`recent` = trailing window).
 
 Per-sweep outcome of the ADR-0016 hashdb drift detector's periodic
-verify side: every `[hashdb].verify_interval_minutes` (default 60),
-the indexer re-reads a trailing window of `[hashdb].verify_window_ledgers`
-(default 20000) ledgers from the same bucket the append side reads
+verify side: every 60 minutes (`hashDBVerifyInterval` in the indexer),
+the indexer re-reads a trailing window of 20000 (`hashDBVerifyWindow`) ledgers from the same bucket the append side reads
 and compares each one's freshly-computed hash against the recorded
 value (`internal/archivecompleteness.HashDBWindowVerifier`).
 
@@ -1749,9 +1748,9 @@ Buckets 1 s – 30 min.
 
 Wall-clock of one full verify sweep — re-reading thousands of ledgers
 from S3/MinIO is not cheap, unlike the append side. Chart `ok` p95/p99
-to see whether the window size (`[hashdb].verify_window_ledgers`) is
+to see whether the window size (`hashDBVerifyWindow`) is
 still comfortably inside the sweep interval; if `ok` durations
-approach `verify_interval_minutes`, either shrink the window or widen
+approach the 60-minute interval, either shrink the window or widen
 the interval so sweeps don't start overlapping.
 
 ### `stellarindex_hashdb_drift_total`

@@ -583,13 +583,12 @@ trusted_proxy_cidrs      = []
 # the probe.
 # tls_cert_probe_hosts = ["api.stellarindex.io", "status.stellarindex.io", "stellarindex.io"]
 
-# holds_file / holds_reload_interval — TOML file of [[hold]] entries
+# holds_file — TOML file of [[hold]] entries
 # (asset, contract_id, ledger_from, ledger_to, reason; all set selectors
 # must match) that flag matching supply, balance and holder responses
-# `flags.under_review`. Re-read every interval; a missing file means no
+# `flags.under_review`. Re-read every 15s; a missing file means no
 # holds, an invalid or zero-byte one keeps the previous list. Empty path disables it.
 # holds_file = "/etc/stellarindex/holds.toml"
-# holds_reload_interval = "15s"
 
 # prometheus_url — Prometheus HTTP API root backing /v1/status. Empty
 # leaves /v1/status serving an in-process surface (uptime + region).
@@ -950,19 +949,6 @@ enabled = false
 # "AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU" = "AUD"
 
 # ──────────────────────────────────────────────────────────────────
-# Decimals guard — internal/decimalsguard's one-time startup backfill
-# pass. The periodic freshness sweep only enumerates a short (20m)
-# trailing window, so a non-7-decimal Soroban token that traded and
-# then went dormant is invisible to it forever; this pass scans a
-# much longer historical window ONCE at process start to self-seed
-# nonstandard_decimals_assets for such tokens (closes the gap that
-# left an operator hand-seeding the row). A token dormant for longer than this window still needs
-# the runbook's manual hand-seed fallback.
-# ──────────────────────────────────────────────────────────────────
-[decimals_guard]
-backfill_window_days = 90
-
-# ──────────────────────────────────────────────────────────────────
 # Price alerts — customer price-threshold alert evaluator.
 # Off by default; when enabled the aggregator sweeps
 # price_alerts against the latest closed VWAP every tick and enqueues
@@ -970,7 +956,6 @@ backfill_window_days = 90
 # ──────────────────────────────────────────────────────────────────
 [price_alerts]
 enabled          = false
-interval_seconds = 30   # 0 = library default
 
 # ──────────────────────────────────────────────────────────────────
 # Signup reaper — speculative-account reaper. Deletes orphan
@@ -980,8 +965,6 @@ interval_seconds = 30   # 0 = library default
 # ──────────────────────────────────────────────────────────────────
 [signup_reaper]
 enabled              = true
-interval_minutes     = 60     # 0 = library default
-min_age_minutes      = 1440   # 0 = library default (24h)
 
 # ──────────────────────────────────────────────────────────────────
 # HashDB — ADR-0016 drift detector. The indexer's live LCM read loop
@@ -994,8 +977,6 @@ min_age_minutes      = 1440   # 0 = library default (24h)
 [hashdb]
 enabled                   = false
 path                      = "/var/lib/stellarindex/hashdb.bin"
-verify_interval_minutes   = 60
-verify_window_ledgers     = 20000
 
 # ──────────────────────────────────────────────────────────────────
 # Obs — metrics and logs.

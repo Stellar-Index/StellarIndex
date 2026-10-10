@@ -850,7 +850,7 @@ func run(cfgPath string, dryRun bool) error {
 		}()
 
 		hashdbVerifyStop, hashdbVerifyDone := startHashDBVerifier(
-			rootCtx, cfg.HashDB, hashdbVerifyDB, liveCfg,
+			rootCtx, hashdbVerifyDB, liveCfg,
 			&hashdbLastAppended, logger.With("component", "hashdb-verify"),
 		)
 		defer func() {
@@ -860,8 +860,8 @@ func run(cfgPath string, dryRun bool) error {
 
 		logger.Info("hashdb drift detector enabled",
 			"path", cfg.HashDB.Path,
-			"verify_interval_minutes", cfg.HashDB.VerifyIntervalMinutes,
-			"verify_window_ledgers", cfg.HashDB.VerifyWindowLedgers,
+			"verify_interval", hashDBVerifyInterval,
+			"verify_window_ledgers", hashDBVerifyWindow,
 		)
 	}
 
@@ -2417,19 +2417,11 @@ func recordCursorMetric(ledger uint32) {
 
 // ─── HashDB drift detector ───────────────────────────────
 
-// defaultHashDBVerifyInterval / defaultHashDBVerifyWindow are the
-// library fallbacks config.HashDBConfig's zero-value fields defer to
-// — kept here (not in internal/config) because they're specific to
-// how THIS binary schedules the sweep, not a config-schema concern.
-// Mirrors config.Default()'s HashDB values; tested by
-// TestDefault_MatchesStructTags on the config side, so a
-// drift between the two would only show up as "the documented
-// default and the fallback-when-zero disagree" — low stakes (both
-// paths are only reachable via explicit operator opt-in), but kept
-// identical for least-surprise.
+// hashDBVerifyInterval / hashDBVerifyWindow schedule the periodic drift sweep;
+// the window (~1 day of ledgers) trails the live-append edge.
 const (
-	defaultHashDBVerifyInterval = 60 * time.Minute
-	defaultHashDBVerifyWindow   = uint32(20000)
+	hashDBVerifyInterval = 60 * time.Minute
+	hashDBVerifyWindow   = uint32(20000)
 
 	// hashDBVerifySafetyMargin trails the verify window's upper bound
 	// behind the indexer's own last-appended ledger. Not strictly
@@ -2580,21 +2572,11 @@ func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logge
 // steady-state live-tailing shape (the common deployment) is unaffected.
 func startHashDBVerifier(
 	parent context.Context,
-	hcfg config.HashDBConfig,
 	verifyDB *hashdb.DB,
 	lsCfg ledgerstream.Config,
 	lastAppended *atomic.Uint32,
 	logger *slog.Logger,
 ) (context.CancelFunc, <-chan struct{}) {
-	interval := time.Duration(hcfg.VerifyIntervalMinutes) * time.Minute
-	if interval <= 0 {
-		interval = defaultHashDBVerifyInterval
-	}
-	window := hcfg.VerifyWindowLedgers
-	if window == 0 {
-		window = defaultHashDBVerifyWindow
-	}
-
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
 
@@ -2620,12 +2602,12 @@ func startHashDBVerifier(
 		// return) is the point: a stopped verifier otherwise looks
 		// exactly like a clean chain.
 		defer worker.Recover(logger, "hashdb-verify")
-		ticker := time.NewTicker(interval)
+		ticker := time.NewTicker(hashDBVerifyInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				hashDBVerifySweep(ctx, logger, verifyDB, lsCfg, lastAppended, window, seenDrifted)
+				hashDBVerifySweep(ctx, logger, verifyDB, lsCfg, lastAppended, hashDBVerifyWindow, seenDrifted)
 			case <-ctx.Done():
 				return
 			}
