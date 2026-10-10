@@ -13,6 +13,7 @@ import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { hueByIdentity } from '@/components/charts/dailyGaps';
 import type { NamedLineSeries } from '@/components/charts/LineChart';
 import type { paths } from '@/api/types';
+import { formatPriceSmall } from '@/lib/format';
 
 import { DivergenceMultiples } from './DivergenceMultiples';
 
@@ -220,16 +221,20 @@ function PairRows({
                 <td
                   rowSpan={span}
                   className="py-1.5 pr-4 text-right align-top font-mono tabular-nums"
+                  title={pair.our_price}
                 >
-                  {pair.our_price}
+                  {formatPriceSmall(pair.our_price)}
                 </td>
               </>
             )}
             <td className="py-1.5 pr-4">
               <code className="text-[11px]">{r.reference}</code>
             </td>
-            <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
-              {r.ref_price}
+            <td
+              className="py-1.5 pr-4 text-right font-mono tabular-nums"
+              title={r.ref_price}
+            >
+              {formatPriceSmall(r.ref_price)}
             </td>
             <td
               className={`py-1.5 pr-4 text-right font-mono tabular-nums ${
