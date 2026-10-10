@@ -364,8 +364,8 @@ applied (last row).
 ## 9. Files
 
 - `internal/api/v1/price_tip.go` — `tipMergePairs` (the fix: `merge` and `last`), `tipWindowEscalating`, the last tier in `computeTip`; `tipWindowVWAP` takes the pair set it is reading.
-- `internal/api/v1/price_tip_thin_pool_test.go` — red→green for the tip: the closed-book fall-through, XLM's established-only merge, the deeper pool, the Soroban-only wrapped classic (with the call order), and the named-SAC cross.
-- `internal/api/v1/thin_pool_third_alias_test.go` — the `/v1/price` walk pins.
+- `internal/api/v1/price_tip_test.go` — red→green for the tip: the closed-book fall-through, XLM's established-only merge, the deeper pool, the Soroban-only wrapped classic (with the call order), and the named-SAC cross.
+- `internal/api/v1/price_test.go` — the `/v1/price` walk pins.
 - `internal/aggregate/global_thin_pool_test.go` — the headline-tier pins for configured wrappers.
 - `docs/operations/v1-launch-plan.md` — row 1.9 and D7 marked done, pointing here.
 - `CHANGELOG.md` — the served-behaviour change on the tip.

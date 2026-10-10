@@ -155,36 +155,6 @@ func TestCachedRWAMembership_RequestNeverBlocksOnRebuild(t *testing.T) {
 	close(reader.release)
 }
 
-// The detached rebuild must not inherit the request context that
-// happened to trigger it. If it does, the caller giving up kills the
-// rebuild, and the entry stays cold for the next caller to try again.
-func TestRefreshRWAMembership_DoesNotInheritCallerCancellation(t *testing.T) {
-	reader := newBlockingRWASep1Reader()
-	s := rwaCacheTestServer(reader)
-	seedRWACache(s, rwaMembershipTTL+time.Minute)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	s.cachedRWAMembership(ctx)
-	select {
-	case <-reader.entered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("no rebuild was started")
-	}
-	cancel() // the caller gives up while the scan is still running
-
-	// Give a context-inheriting rebuild time to die of it.
-	time.Sleep(100 * time.Millisecond)
-	if reader.sawCancel.Load() {
-		t.Fatal("the rebuild inherited the caller's cancellation: " +
-			"a request that gives up must not kill the rebuild behind it")
-	}
-	close(reader.release)
-	waitForRWAFlight(t, s)
-	if reader.sawCancel.Load() {
-		t.Fatal("the rebuild saw the caller's cancellation")
-	}
-}
-
 // A cache that has NEVER been filled is the one case that still waits.
 // An empty set there is not a stale answer — it is the statement that
 // no real-world asset exists on Stellar, which is false.
@@ -210,34 +180,6 @@ func TestCachedRWAMembership_WaitsWhenNeverBuilt(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("cold read never returned after the build completed")
-	}
-}
-
-// A rebuild that fails must leave the last good set exactly as it was.
-// Blanking it would empty the page on a transient read error, on a
-// surface whose inputs move on a daily cadence.
-func TestRefreshRWAMembership_KeepsLastGoodSetOnFailure(t *testing.T) {
-	reader := newBlockingRWASep1Reader()
-	reader.mu.Lock()
-	reader.err = context.DeadlineExceeded
-	reader.mu.Unlock()
-	s := rwaCacheTestServer(reader)
-	seedRWACache(s, rwaMembershipTTL+time.Minute)
-
-	if m := s.cachedRWAMembership(context.Background()); len(m.members) != 1 {
-		t.Fatalf("stale read did not serve the last good set: %+v", m.members)
-	}
-	select {
-	case <-reader.entered:
-	case <-time.After(2 * time.Second):
-		t.Fatal("no rebuild was started")
-	}
-	close(reader.release)
-	waitForRWAFlight(t, s)
-
-	after := s.cachedRWAMembership(context.Background())
-	if len(after.members) != 1 || after.members[0].code != "USTRY" {
-		t.Fatalf("a failed rebuild blanked the served set: %+v", after.members)
 	}
 }
 

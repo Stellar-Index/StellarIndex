@@ -47,7 +47,7 @@ func newBatchLimitedServer(t *testing.T, anonLimit int) (*testServerImpl, *count
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 
-	// countingPriceReader (price_tip_shared_test.go) counts LatestPrice
+	// countingPriceReader (price_tip_stream_admit_internal_test.go) counts LatestPrice
 	// calls, which lets a test assert the one thing a rate-limit denial
 	// exists to guarantee: that the work was NOT done. A 429 written
 	// after the fan-out would be a status code and nothing else.
@@ -67,131 +67,6 @@ func postBatch(t *testing.T, url string, ids []string) *http.Response {
 		t.Fatalf("marshal: %v", err)
 	}
 	return mustPostJSON(t, url+"/v1/price/batch", string(body))
-}
-
-// TestPriceBatch_ChargesOneTokenPerID is the rate-limit regression.
-// One rate-limit token must not buy a whole batch: a 40-id GET left 99
-// of 100 tokens, so the per-minute ceiling bounded HTTP requests while
-// the work behind them was the caller's to choose. A batch must cost
-// its id count.
-func TestPriceBatch_ChargesOneTokenPerID(t *testing.T) {
-	ts, reader := newBatchLimitedServer(t, 100)
-	url := ts.URL + "/v1/price/batch?asset_ids=" + strings.Join(batchIDs(40), ",")
-
-	// Each probe that reads the remainder spends one token of its own.
-	for i, wantRemaining := range []int{60, 19} {
-		resp := mustGet(t, url)
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("batch %d: status = %d, want 200", i+1, resp.StatusCode)
-		}
-		if got := remainingBeforeProbe(t, resp, ts.URL+batchProbe); got != wantRemaining {
-			t.Fatalf("batch %d: X-RateLimit-Remaining = %d, want %d (40 ids must cost 40 tokens)",
-				i+1, got, wantRemaining)
-		}
-	}
-
-	// 80 spent on batches, 2 on probes; a third 40-id batch does not fit
-	// in the remaining 18.
-	served := reader.calls.Load()
-	resp := mustGet(t, url)
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("third batch: status = %d, want 429", resp.StatusCode)
-	}
-	if resp.Header.Get("Retry-After") == "" {
-		t.Error("429 must carry Retry-After")
-	}
-	if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
-		t.Errorf("429 Content-Type = %q, want application/problem+json", ct)
-	}
-	if got := reader.calls.Load(); got != served {
-		t.Fatalf("a denied batch still resolved %d price(s); the charge must land BEFORE the fan-out", got-served)
-	}
-}
-
-// TestPriceBatch_POSTChargesPerID pins the variant the findings name:
-// the JSON-body route whose 1000-id ceiling is what made one token
-// worth a thousand resolutions. Against the deployed 6000/min anonymous
-// budget a full batch must leave 5000, not 5999.
-func TestPriceBatch_POSTChargesPerID(t *testing.T) {
-	ts, _ := newBatchLimitedServer(t, 6000)
-
-	resp := postBatch(t, ts.URL, batchIDs(1000))
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "5000" {
-		t.Fatalf("X-RateLimit-Remaining after a 1000-id POST = %q, want 5000", got)
-	}
-}
-
-// TestPriceBatch_OverCeilingBatchSpendsTheWindow pins the decision for
-// a batch priced above the caller's whole budget (1000 ids against the
-// 60/min default). It is served into an untouched window — refusing it
-// in every window would make the documented 1000-id ceiling unusable
-// behind a Retry-After that never comes true — and it takes the entire
-// window with it, so the next request of any size is denied.
-func TestPriceBatch_OverCeilingBatchSpendsTheWindow(t *testing.T) {
-	ts, _ := newBatchLimitedServer(t, 60)
-
-	resp := postBatch(t, ts.URL, batchIDs(1000))
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("first batch in a fresh window: status = %d, want 200", resp.StatusCode)
-	}
-	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "0" {
-		t.Fatalf("X-RateLimit-Remaining = %q, want 0 (the batch must spend the whole window)", got)
-	}
-
-	resp = mustGet(t, ts.URL+"/v1/price/batch?asset_ids=fiat:EUR")
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("request after an over-ceiling batch: status = %d, want 429", resp.StatusCode)
-	}
-}
-
-// TestPriceBatch_ChargeFollowsTheWorkDone pins what the cost is a count
-// OF: the de-duplicated ids the handler will resolve. Forty copies of
-// one id are one resolution and cost one token; a request rejected as
-// malformed does no resolution and costs only the base token every
-// request pays.
-func TestPriceBatch_ChargeFollowsTheWorkDone(t *testing.T) {
-	ts, reader := newBatchLimitedServer(t, 100)
-
-	dupes := strings.TrimSuffix(strings.Repeat("fiat:EUR,", 40), ",")
-	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids="+dupes)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if got := remainingBeforeProbe(t, resp, ts.URL+batchProbe); got != 99 {
-		t.Fatalf("40 duplicates of one id: X-RateLimit-Remaining = %d, want 99", got)
-	}
-
-	// 101 ids on the GET route is a 400 (ceiling 100): base token only,
-	// on top of the probe's.
-	before := reader.calls.Load()
-	resp = mustGet(t, ts.URL+"/v1/price/batch?asset_ids="+strings.Join(batchIDs(101), ","))
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
-	}
-	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "97" {
-		t.Fatalf("a rejected batch: X-RateLimit-Remaining = %q, want 97 (base token only)", got)
-	}
-	if got := reader.calls.Load(); got != before {
-		t.Fatalf("a 400 resolved %d price(s)", got-before)
-	}
-}
-
-// TestPriceBatch_UnlimitedDeploymentIsUncharged: with no limiter wired
-// there is no account to charge, and the batch is served as before.
-func TestPriceBatch_UnlimitedDeploymentIsUncharged(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := postBatch(t, ts.URL, batchIDs(1000))
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "" {
-		t.Fatalf("X-RateLimit-Remaining = %q on a deployment with no limiter", got)
-	}
 }
 
 // Guards the fixture itself: the ids must stay distinct at the sizes

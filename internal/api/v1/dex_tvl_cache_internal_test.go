@@ -294,35 +294,6 @@ func TestDEXTVLCache_MissingReadersOmitProtocols(t *testing.T) {
 	}
 }
 
-func TestTVLValuer_LegEdgeCases(t *testing.T) {
-	v := newTVLValuer(stubTVLPricer{rates: map[string]string{"native": "2"}}, nil, nil, time.Now())
-	ctx := context.Background()
-
-	if usd, ok := v.legUSD(ctx, canonical.XLMSacContractID, big.NewInt(0)); !ok || usd.Sign() != 0 {
-		t.Errorf("zero reserve should price as exactly 0 (ok=%v usd=%v)", ok, usd)
-	}
-	if _, ok := v.legUSD(ctx, canonical.XLMSacContractID, big.NewInt(-1)); ok {
-		t.Error("negative reserve must be unpriceable")
-	}
-	if _, ok := v.legUSD(ctx, canonical.XLMSacContractID, nil); ok {
-		t.Error("nil reserve must be unpriceable")
-	}
-	if _, ok := v.legUSD(ctx, "not-a-strkey", big.NewInt(1)); ok {
-		t.Error("malformed token must be unpriceable")
-	}
-	// i128-scale reserve: 2^80 raw units at rate 2 — exact big math,
-	// never a float or int64 (ADR-0003).
-	huge := new(big.Int).Lsh(big.NewInt(1), 80)
-	usd, ok := v.legUSD(ctx, canonical.XLMSacContractID, huge)
-	if !ok {
-		t.Fatal("huge reserve should price")
-	}
-	want := new(big.Rat).SetFrac(new(big.Int).Mul(huge, big.NewInt(2)), big.NewInt(10_000_000))
-	if usd.Cmp(want) != 0 {
-		t.Errorf("huge reserve usd = %s, want %s", usd.FloatString(4), want.FloatString(4))
-	}
-}
-
 // TestDEXTVLCache_RefreshObservesMetrics pins the paired
 // counter+histogram instrumentation: an all-protocols-ok refresh
 // records outcome="ok", a refresh with a failing protocol records

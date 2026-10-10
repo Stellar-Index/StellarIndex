@@ -315,3 +315,149 @@ func TestVWAP_CarriesNoDivergenceVerdict(t *testing.T) {
 		})
 	}
 }
+
+// TestVWAP_NonFiatQuoteAliasFirstHit — depth lives under native/<USDC>;
+// a ?base=crypto:XLM query must resolve it via the alias loop instead of
+// 404ing on the literal crypto:XLM/<USDC> pair.
+func TestVWAP_NonFiatQuoteAliasFirstHit(t *testing.T) {
+	usdc, err := canonical.ParseAsset(w2t2USDC)
+	if err != nil {
+		t.Fatalf("parse USDC: %v", err)
+	}
+	native, _ := canonical.ParseAsset("native")
+	nativePair, _ := canonical.NewPair(native, usdc)
+
+	// One trade at 16/100 = 0.16, keyed under the native form only.
+	trade := canonical.Trade{
+		Source: "sdex", Ledger: 1,
+		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
+		Timestamp:   time.Unix(1_772_000_000, 0).UTC(),
+		Pair:        nativePair,
+		BaseAmount:  canonical.NewAmount(big.NewInt(100)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(16)),
+	}
+	reader := &pairAwareHistoryReader{
+		tradesByPair: map[string][]canonical.Trade{
+			"native/" + usdc.String(): {trade},
+		},
+	}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	// Aliased input: base=crypto:XLM must fall through to native/<USDC>.
+	resp := mustGet(t, ts.URL+"/v1/vwap?base=crypto:XLM&quote="+usdc.String())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("aliased base status = %d, want 200 (alias loop must serve native-keyed depth)", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"0.1600000000"`) {
+		t.Errorf("body missing served VWAP 0.16: %s", body)
+	}
+
+	// Primary form unchanged: base=native still serves the same rate.
+	respNative := mustGet(t, ts.URL+"/v1/vwap?base=native&quote="+usdc.String())
+	if respNative.StatusCode != http.StatusOK {
+		t.Fatalf("primary base=native status = %d, want 200", respNative.StatusCode)
+	}
+	bodyNative, _ := readAll(respNative)
+	if !strings.Contains(bodyNative, `"price":"0.1600000000"`) {
+		t.Errorf("primary form body missing VWAP 0.16: %s", bodyNative)
+	}
+}
+
+// TestVWAP_CacheUnavailable503 — The TradesInRange call
+// returning MISCONF lands on the cache-unavailable 503 branch.
+func TestVWAP_CacheUnavailable503(t *testing.T) {
+	reader := &stubHistoryReader{err: miscOnfErr}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/vwap?base=native&quote=fiat:USD")
+	assertCacheUnavailable(t, resp)
+}
+
+func TestVWAP_ProxyDeviationBand(t *testing.T) {
+	usdc := installPegAliasRegistry(t)
+	xlm, _ := canonical.ParseAsset("native")
+	classicPair, _ := canonical.NewPair(xlm, usdc)
+	trade := canonical.Trade{
+		Source: "sdex", Ledger: 1,
+		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
+		Timestamp:   time.Now().UTC().Add(-time.Minute),
+		Pair:        classicPair,
+		BaseAmount:  canonical.NewAmount(big.NewInt(100)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(16)),
+	}
+	for _, tc := range []struct {
+		usdcUSD string
+		want    bool
+	}{{"0.95", true}, {"1.001", false}, {"", false}} {
+		byPair := map[string]string{}
+		if tc.usdcUSD != "" {
+			byPair[depegUSDCUSDPair] = tc.usdcUSD
+		}
+		srv := v1.New(v1.Options{
+			History: &pairAwareHistoryReader{tradesByPair: map[string][]canonical.Trade{
+				depegXLMUSDCPair: {trade},
+			}},
+			PriceAt:           &recordingPriceAtReader{byPair: byPair},
+			USDPeggedClassics: []canonical.Asset{usdc},
+		})
+		resp := mustGet(t, startHTTPTest(t, srv.Handler()).URL+"/v1/vwap?base=native&quote=fiat:USD")
+		body, _ := readAll(resp)
+		if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"triangulated":true`) {
+			t.Fatalf("usdc/usd=%q: status %d, body %s", tc.usdcUSD, resp.StatusCode, body)
+		}
+		if got := strings.Contains(string(body), `"proxy_deviation":true`); got != tc.want {
+			t.Errorf("usdc/usd=%q: proxy_deviation present = %v, want %v\n%s", tc.usdcUSD, got, tc.want, body)
+		}
+	}
+}
+
+// TestVWAP_NonstandardDecimals_Normalizes proves /v1/vwap
+// does not decline a confirmed non-7-decimals pair — it computes
+// entirely from raw trades at query time, so the fix is to serve the
+// CORRECTED price (aggregate.AdjustPrice) rather than 422. See
+// docs/operations/runbooks/dex.md "Root cause
+// analysis". flaggedAsset is declared decimals()=18 here; base_amount =
+// 2.5*10^18, quote_amount = 1.242*10^7 (USDC, 7dp) → true price 0.4968,
+// the SAME golden case as internal/aggregate's TestAdjustPrice_Golden18DecimalToken.
+func TestVWAP_NonstandardDecimals_Normalizes(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 18)
+	baseAmount, ok := new(big.Int).SetString("2500000000000000000", 10)
+	if !ok {
+		t.Fatal("bad big.Int literal")
+	}
+	xlmUSD, err := canonical.ParseAsset(flaggedAsset)
+	if err != nil {
+		t.Fatalf("ParseAsset: %v", err)
+	}
+	usd, _ := canonical.ParseAsset("fiat:USD")
+	pair, err := canonical.NewPair(xlmUSD, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	trade := canonical.Trade{
+		Source:      "aquarius",
+		Ledger:      1,
+		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
+		Timestamp:   time.Unix(1_772_000_000, 0).UTC(),
+		Pair:        pair,
+		BaseAmount:  canonical.NewAmount(baseAmount),
+		QuoteAmount: canonical.NewAmount(big.NewInt(12_420_000)),
+	}
+	srv := v1.New(v1.Options{
+		History:             &stubHistoryReader{trades: []canonical.Trade{trade}},
+		NonstandardDecimals: cache,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/vwap?base="+flaggedAsset+"&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (query-time compute is normalized, not declined)", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"0.4968000000"`) {
+		t.Errorf("body missing normalized price 0.4968000000: %s", body)
+	}
+}

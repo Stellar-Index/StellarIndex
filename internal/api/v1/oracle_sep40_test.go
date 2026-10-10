@@ -795,3 +795,156 @@ func TestOracleXLastPrice_FallbackCrossSetsTriangulated(t *testing.T) {
 		t.Errorf("flags.stale = false, want true — every fallback answer is stale on this surface")
 	}
 }
+
+// TestOraclePrices_NonstandardDecimals_Normalizes — the SEP-40
+// prices(asset, records) passthrough reads the same raw prices_1m CAGG
+// (RecentClosedSnapshots) and must be guarded and normalized
+// like the /v1/price closed-bucket path.
+func TestOraclePrices_NonstandardDecimals_Normalizes(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	key := flaggedAsset + "/fiat:USD"
+	reader := &stubPriceReader{
+		recent: map[string][]v1.PriceSnapshot{key: {{
+			AssetID: flaggedAsset, Quote: "fiat:USD", Price: "41.32",
+			PriceType: "vwap", ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
+		}}},
+	}
+	srv := v1.New(v1.Options{Prices: reader, NonstandardDecimals: cache})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset="+flaggedAsset)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"4132.0000000000"`) {
+		t.Errorf("oracle prices row not normalized: %s", body)
+	}
+}
+
+func TestOracleXLastPrice_NonstandardDecimals_Normalizes(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	key := flaggedAsset + "/fiat:USD"
+	srv := v1.New(v1.Options{
+		Prices: &stubPriceReader{
+			snapshots: map[string]v1.PriceSnapshot{key: {
+				AssetID: flaggedAsset, Quote: "fiat:USD", Price: "41.32",
+				PriceType: "vwap", ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
+			}},
+			sources: map[string][]string{key: {"aquarius"}},
+		},
+		NonstandardDecimals: cache,
+	})
+	tsrv := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, tsrv.URL+"/v1/oracle/x_last_price?base="+flaggedAsset+"&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"4132.0000000000"`) {
+		t.Errorf("/v1/oracle/x_last_price not normalized (want 4132.0000000000): %s", body)
+	}
+}
+
+func TestOraclePrices_WithheldPegLegAnswersWithheldNotEmpty(t *testing.T) {
+	usdc, _ := oraclePegs(t)
+	reader := &stubPriceReader{
+		errByPair: map[string]error{"native/" + usdc.String(): v1.ErrPriceWithheld},
+	}
+	srv := v1.New(v1.Options{Prices: reader, USDPeggedClassics: []canonical.Asset{usdc}})
+	ts := startHTTPTest(t, srv.Handler())
+
+	status, body := getBody(t, ts.URL+"/v1/oracle/prices?asset=native&records=5")
+	if status != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 price-withheld (a refused peg leg is not a miss): %s", status, body)
+	}
+	if !strings.Contains(body, "errors/price-withheld") {
+		t.Errorf("body missing the price-withheld problem type: %s", body)
+	}
+}
+
+// The destructive branch's boundary: a withheld verdict on one peg is a
+// verdict on THAT pair, so a later peg that serves still wins, exactly as
+// walkUSDPegs does for lastprice.
+func TestOraclePrices_WithheldPegLegDoesNotHideALaterServingPeg(t *testing.T) {
+	usdc, usdt := oraclePegs(t)
+	reader := &stubPriceReader{
+		errByPair: map[string]error{"native/" + usdc.String(): v1.ErrPriceWithheld},
+		recent:    map[string][]v1.PriceSnapshot{"native/" + usdt.String(): pegSeries(usdt.String(), "0.1631")},
+	}
+	srv := v1.New(v1.Options{Prices: reader, USDPeggedClassics: []canonical.Asset{usdc, usdt}})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset=native&records=5")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 via the second peg", resp.StatusCode)
+	}
+	var env struct {
+		Data  []v1.SEP40Price `json:"data"`
+		Flags v1.Flags        `json:"flags"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 1 || env.Data[0].Price != "0.1631" {
+		t.Fatalf("data = %+v, want the USDT peg's single 0.1631 record", env.Data)
+	}
+}
+
+func TestOraclePrices_PegFallbackIsStale(t *testing.T) {
+	usdc, _ := oraclePegs(t)
+	cases := []struct {
+		name   string
+		recent map[string][]v1.PriceSnapshot
+		want   bool
+	}{
+		{"direct fiat:USD series", map[string][]v1.PriceSnapshot{"native/fiat:USD": pegSeries("fiat:USD", "0.1620")}, false},
+		{"peg-proxied series", map[string][]v1.PriceSnapshot{"native/" + usdc.String(): pegSeries(usdc.String(), "0.1626")}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := v1.New(v1.Options{
+				Prices:            &stubPriceReader{recent: tc.recent},
+				USDPeggedClassics: []canonical.Asset{usdc},
+			})
+			ts := startHTTPTest(t, srv.Handler())
+			resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset=native&records=5")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			var env struct {
+				Data  []v1.SEP40Price `json:"data"`
+				Flags v1.Flags        `json:"flags"`
+			}
+			mustDecode(t, resp, &env)
+			if len(env.Data) != 1 {
+				t.Fatalf("got %d records, want 1", len(env.Data))
+			}
+			if env.Flags.Stale != tc.want || env.Flags.Triangulated != tc.want {
+				t.Errorf("flags stale=%v triangulated=%v, want both %v",
+					env.Flags.Stale, env.Flags.Triangulated, tc.want)
+			}
+		})
+	}
+}
+
+// TestOraclePrices_DeclaredPegSACTwinNeverProbesItsOwnClassicForm: the
+// self-pair guard on the surface that walks the pegs with its own reader call.
+func TestOraclePrices_DeclaredPegSACTwinNeverProbesItsOwnClassicForm(t *testing.T) {
+	usdc := installPegAliasRegistry(t)
+	reader := &recordingRecentReader{}
+	srv := v1.New(v1.Options{Prices: reader, USDPeggedClassics: []canonical.Asset{usdc}})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset="+pegAliasUSDCSAC)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("status = %d, want 200. Body: %s", resp.StatusCode, body)
+	}
+	reader.mu.Lock()
+	asked := append([]string(nil), reader.calls...)
+	reader.mu.Unlock()
+	if callIndex(asked, pegAliasUSDCSAC+"/fiat:USD") < 0 {
+		t.Errorf("the requested pair was never read (asked=%v)", asked)
+	}
+	assertNoPegSelfPairRead(t, asked)
+}

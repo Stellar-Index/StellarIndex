@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/obstest"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -365,5 +367,52 @@ func TestCachedBespoke_ColdRespectsCallerDeadline(t *testing.T) {
 	// The detached build survived the abandoned wait, so the next read is warm.
 	if _, _, ok := srv.cachedBespoke(context.Background(), "cctp", "bridge", 90); !ok {
 		t.Error("the detached build did not outlive the request — the retry must land warm")
+	}
+}
+
+// TestPrewarmProtocolDetails_SweepWarmsEveryProtocolWindow verifies one
+// full sweep builds EVERY registry protocol × every ?days= window into
+// the detail cache (each entry healthy: analytics.status "ok", bespoke
+// present) and that every rebuild observed the paired
+// stellarindex_protocol_detail_refresh metrics (the
+// counter+histogram pattern, asserted via obstest because per-label
+// histogram children aren't Collectors).
+func TestPrewarmProtocolDetails_SweepWarmsEveryProtocolWindow(t *testing.T) {
+	oldPause := protocolDetailPrewarmPause
+	protocolDetailPrewarmPause = 0
+	defer func() { protocolDetailPrewarmPause = oldPause }()
+
+	stub := &prewarmBespokeStub{}
+	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: stub})
+
+	before := obstest.HistogramSampleCount(t, obs.ProtocolDetailRefreshDurationSeconds, "outcome", "ok")
+	srv.PrewarmProtocolDetails(context.Background())
+
+	wantKeys := len(protocolRegistry) * len(protocolBespokeWindows)
+	srv.protoDetailMu.Lock()
+	gotKeys := len(srv.protoDetailCache)
+	for key, e := range srv.protoDetailCache {
+		if e.view.Analytics == nil || e.view.Analytics.Status != protocolAnalyticsOK {
+			t.Errorf("entry %q analytics = %+v, want status %q", key, e.view.Analytics, protocolAnalyticsOK)
+		}
+		if e.view.Bespoke == nil {
+			t.Errorf("entry %q bespoke absent, want the stub block", key)
+		}
+	}
+	srv.protoDetailMu.Unlock()
+	if gotKeys != wantKeys {
+		t.Fatalf("sweep cached %d keys, want %d (registry %d × windows %d)",
+			gotKeys, wantKeys, len(protocolRegistry), len(protocolBespokeWindows))
+	}
+	for _, meta := range protocolRegistry {
+		if got := stub.windows(meta.Name); len(got) != len(protocolBespokeWindows) {
+			t.Errorf("%s bespoke built for windows %v, want all of %v", meta.Name, got, protocolBespokeWindows)
+		}
+	}
+	// >= not ==: detached refreshes from other tests in this package may
+	// still be draining and observing concurrently.
+	after := obstest.HistogramSampleCount(t, obs.ProtocolDetailRefreshDurationSeconds, "outcome", "ok")
+	if after-before < uint64(wantKeys) {
+		t.Errorf("refresh histogram advanced %d, want >= %d", after-before, wantKeys)
 	}
 }

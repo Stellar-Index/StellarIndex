@@ -153,3 +153,17 @@ func TestProtocolsList_RosterFailureOmitsNotZeros(t *testing.T) {
 		t.Fatalf("coverage_note = %q, want it to name the omitted degraded source blend", env.Data.CoverageNote)
 	}
 }
+
+func TestProtocolsList_OmittedRowsAreNoStore(t *testing.T) {
+	roster := map[string][]timescale.ProtocolContract{
+		"blend": {{Source: "blend", ContractID: "CPOOL1", FactoryID: "CFACTORY1", FirstLedger: 51_500_000}},
+	}
+	healthy := v1.New(v1.Options{ProtocolContracts: &rosterCacheStubReader{bySource: roster}})
+	if got := cacheControlOf(t, healthy, "/v1/protocols"); got != "public, max-age=60" {
+		t.Errorf("full roster: Cache-Control = %q, want public, max-age=60", got)
+	}
+	failing := v1.New(v1.Options{ProtocolContracts: &rosterCacheStubReader{bySource: roster, errFor: map[string]bool{"blend": true}}})
+	if got := cacheControlOf(t, failing, "/v1/protocols"); got != "no-store" {
+		t.Errorf("roster read failed: Cache-Control = %q, want no-store", got)
+	}
+}
