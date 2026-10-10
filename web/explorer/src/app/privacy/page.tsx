@@ -30,19 +30,17 @@ export default function PrivacyPage() {
             { label: 'Privacy Policy' },
           ]}
           title="Privacy Policy"
-          description={
-            <>
-              This policy explains what personal data Stellar Index collects
-              when you use the explorer at stellarindex.io or the API at
-              api.stellarindex.io, why, for how long, who processes it, and what
-              rights you have. The short version: we run no advertising or
-              analytics trackers, we never sell data, and the only personal data
-              we hold is what an account and abuse-prevention use — an email
-              address, IP addresses and browser user agents. Section 6 lists how
-              long each is kept; some records have no automatic deletion.
-            </>
-          }
         />
+        <p className="text-ink-muted text-[15px] leading-relaxed">
+          This policy explains what personal data Stellar Index collects when
+          you use the explorer at stellarindex.io or the API at
+          api.stellarindex.io, why, for how long, who processes it, and what
+          rights you have. The short version: we run no advertising or analytics
+          trackers, we never sell data, and the only personal data we hold is
+          what an account and abuse-prevention use — an email address, IP
+          addresses and browser user agents. Section 6 lists how long each is
+          kept; some records have no automatic deletion.
+        </p>
         <p className="text-ink-muted text-xs">Last updated: {LAST_UPDATED}</p>
       </header>
 

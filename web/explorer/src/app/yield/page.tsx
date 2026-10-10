@@ -17,11 +17,5 @@ export const metadata: Metadata = {
 };
 
 export default function YieldPage() {
-  return (
-    <ProtocolsIndex
-      lockedCategory="yield"
-      title="Yield protocols"
-      description="Yield vaults and strategies on Stellar — Soroban contracts that route deposits across DeFi for return. Each protocol page carries its full contract roster, the distribution of every event type it emits, live vault-flow analytics, and a verified-completeness verdict against the certified ledger lake."
-    />
-  );
+  return <ProtocolsIndex lockedCategory="yield" title="Yield protocols" />;
 }

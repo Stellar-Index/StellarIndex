@@ -51,16 +51,7 @@ export default function SponsorsPage() {
 
   return (
     <Container className="space-y-6 py-8">
-      <PageHeader
-        title="Account sponsors"
-        breadcrumbs={CRUMBS}
-        description={
-          <>
-            Accounts that pay base reserves for other accounts: arrangements
-            started, accounts covered, and revocations.
-          </>
-        }
-      />
+      <PageHeader title="Account sponsors" breadcrumbs={CRUMBS} />
 
       <SponsorBoard />
 

@@ -197,7 +197,6 @@ export function AssetTrustFacts({
   });
 
   const pending: string[] = [];
-  if (!issuer) pending.push('issuer account facts (native or contract asset)');
   if (issuer && issuerQ.isError) pending.push('issuer facts (read failed)');
   if (holdersQ.isError) pending.push('holder facts (read failed)');
   else if (holders && holderCount == null) {
