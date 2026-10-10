@@ -104,7 +104,9 @@ swap_and_wait() {
 [[ -n "$PIN" ]] && finish skipped pinned
 [[ -e "$STOP_FILE" ]] && finish skipped stop_file
 
-apt-get update -q >/dev/null 2>&1 || finish failed apt_update
+# Refresh only SDF's list: an unrelated broken repo (Caddy's started returning 402) must not block core upgrades.
+apt-get update -q -o Dir::Etc::sourcelist=sources.list.d/sdf.list -o Dir::Etc::sourceparts=- \
+  -o APT::Get::List-Cleanup=0 >/dev/null 2>&1 || finish failed apt_update
 installed=$(dpkg-query -W -f='${Version}' stellar-core 2>/dev/null) || finish failed not_installed
 policy=$(apt-cache policy stellar-core 2>/dev/null)
 candidate=$(awk '/Candidate:/ && !seen {print $2; seen = 1}' <<<"$policy")

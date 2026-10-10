@@ -44,8 +44,8 @@ import (
 // largest Blend pool, and this test was green throughout — a reader
 // following the pointer got the 503 the exclusion was supposed to
 // explain away. What that route ACTUALLY answers is now covered where it
-// can be measured rather than parsed: test/integration's
-// test/integration/assets_test.go executes the reserve read against
+// can be measured rather than parsed:
+// test/integration/clickhouse_entries_test.go executes the reserve read against
 // a real ClickHouse and bounds what it costs.
 
 // exclusionLocationClaim matches the verbs that promise a reader they

@@ -12,7 +12,7 @@ import (
 // properties: it is drawn from the change log reconcile-balances proves, not
 // the ledger_entries_current projection, and its order takes the seed, so
 // different seeds draw different cohorts. The executing proof is
-// test/integration/lake_test.go.
+// test/integration/clickhouse_rollups_test.go.
 func TestSampleAccountIDsQuery_SeededChangeLogFrame(t *testing.T) {
 	q := strings.Join(strings.Fields(sampleAccountIDsQuery), " ")
 	if !strings.Contains(q, "FROM stellar.ledger_entry_changes ") {
