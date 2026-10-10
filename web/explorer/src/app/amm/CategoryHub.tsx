@@ -16,12 +16,10 @@ import { CURRENT_NETWORK } from '@/lib/networks';
 export function CategoryHub({
   category,
   title,
-  description,
   footnote,
 }: {
   category: string;
   title: string;
-  description: string;
   footnote?: React.ReactNode;
 }) {
   const items = PROTOCOLS.filter((p) => p.category === category);
@@ -50,7 +48,6 @@ export function CategoryHub({
           { label: 'Protocols', href: '/protocols' },
         ]}
         title={title}
-        description={description}
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

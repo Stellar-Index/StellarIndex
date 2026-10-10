@@ -83,18 +83,6 @@ export function ExchangesView() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Exchanges' }]}
         title="Exchanges"
-        description={
-          <>
-            Connected centralised exchanges feeding the Stellar Index
-            aggregator. Per-venue 24h USD volume, trade count, and coverage.
-            Click a venue for its full pair list. On-chain DEXes and AMM pools
-            live at{' '}
-            <Link href="/dexes" className="text-brand-600 hover:underline">
-              /dexes
-            </Link>
-            .
-          </>
-        }
       />
 
       {rows.length > 0 && (

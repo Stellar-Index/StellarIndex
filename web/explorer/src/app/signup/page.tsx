@@ -53,7 +53,6 @@ export default function SignupPage() {
           { label: 'Create account' },
         ]}
         title="Create your account"
-        description="Magic-link sign-in — no passwords. Once you're in, mint API keys and watch usage under your account. Accounts are free; higher partner rate limits are staff-set on request."
       />
 
       <section className="border-line bg-surface mb-12 rounded-xl border p-6 shadow-sm sm:p-8">

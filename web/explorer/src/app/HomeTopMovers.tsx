@@ -41,8 +41,7 @@ export function HomeTopMovers() {
       <div className="space-y-1">
         <h2 className="text-h3 text-ink font-semibold">Top movers</h2>
         <p className="text-ink-body text-sm">
-          24-hour price change across the most active classic assets. Updates
-          every refresh; no synthesised data.
+          24h price change, most active classic assets.
         </p>
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

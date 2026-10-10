@@ -31,20 +31,6 @@ export default function LiquidityPoolsPage() {
             { label: 'Native liquidity pools' },
           ]}
           title="Native liquidity pools"
-          description={
-            <>
-              Protocol-native (CAP-38) constant-product pools, settled at ledger
-              close with no smart contract. Soroban AMMs (Soroswap, Aquarius,
-              Phoenix, Comet) are on{' '}
-              <Link
-                href="/amm"
-                className="text-brand-600 font-medium underline"
-              >
-                AMM protocols
-              </Link>
-              .
-            </>
-          }
         />
         <details className="text-ink-muted text-xs">
           <summary className="cursor-pointer">About these pools</summary>

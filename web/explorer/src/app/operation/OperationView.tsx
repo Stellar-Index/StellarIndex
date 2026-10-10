@@ -353,7 +353,6 @@ function Shell({
           { label: last },
         ]}
         title={type ? type : 'Operation'}
-        description="One operation inside a Stellar transaction, as recorded on the ledger."
       />
       {children}
     </Container>

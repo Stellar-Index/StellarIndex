@@ -98,9 +98,7 @@ export function AccountRelationView({
             ) : (
               <>No account id was given in the URL.</>
             )}{' '}
-            An account id is 56 characters: a leading <code>G</code> followed by
-            55 uppercase base32 characters. They are case-sensitive and are
-            never lowercased.
+            An account id is 56 characters starting with <code>G</code>.
           </p>
           <p>
             <Link
@@ -146,7 +144,6 @@ export function AccountRelationView({
         <PageHeader
           title={<span className="font-mono break-all">{account}</span>}
           breadcrumbs={crumbs}
-          description={`This address as a ${vocabulary.actor}: the accounts it has ${creation ? 'created' : 'sponsored'}, over time and today.`}
         />
         <div className="text-ink-body flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <Link

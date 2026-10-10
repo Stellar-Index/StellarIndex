@@ -281,6 +281,7 @@ let coinsCachePromise: Promise<BuildCoinsCache | null> | null = null;
 function assetSymbol(coin: { code?: string; asset_id?: string }): string {
   if (coin.code) return coin.code;
   const id = coin.asset_id ?? '';
+  if (id === 'native') return 'XLM';
   return id.length > 12 ? `${id.slice(0, 4)}…${id.slice(-4)}` : id || 'Asset';
 }
 
@@ -811,7 +812,14 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   const faqLD = {
     '@context': 'https://schema.org',
     '@type': 'FAQPage',
-    mainEntity: assetFaqFor(assetSymbol(coin), !!coin.issuer).map((entry) => ({
+    mainEntity: assetFaqFor(
+      assetSymbol(coin),
+      coin.asset_id === 'native'
+        ? 'native'
+        : coin.issuer
+          ? 'classic'
+          : 'contract',
+    ).map((entry) => ({
       '@type': 'Question',
       name: entry.q,
       acceptedAnswer: {
@@ -874,11 +882,15 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             { label: 'Assets', href: '/assets' },
             { label: assetSymbol(coin) },
           ]}
-          title={assetSymbol(coin)}
-          description={
-            globalView?.name && globalView.name !== coin.code
-              ? globalView.name
-              : undefined
+          title={
+            coin.asset_id === 'native' ? 'Stellar Lumens' : assetSymbol(coin)
+          }
+          meta={
+            coin.asset_id === 'native'
+              ? 'XLM'
+              : globalView?.name && globalView.name !== coin.code
+                ? globalView.name
+                : undefined
           }
           actions={
             <>

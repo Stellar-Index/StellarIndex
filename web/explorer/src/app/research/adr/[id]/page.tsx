@@ -70,10 +70,10 @@ export default async function ADRPage({
           { label: 'Research', href: '/research' },
           { label: `ADR-${adr.id}` },
         ]}
-        meta={`ADR-${adr.id}`}
         title={adr.title}
-        description={
+        meta={
           <span className="inline-flex items-center gap-3">
+            ADR-{adr.id}
             <StatusBadge status={adr.status} />
             <span className="text-xs">{adr.date}</span>
           </span>

@@ -217,7 +217,7 @@ describe('AssetOraclesPanel — symbol-matched raw: feeds', () => {
     for (const t of [
       'redstone',
       '0.999719',
-      /a resemblance, not an identity/,
+      'Symbol match only — not attributed to this asset',
     ]) {
       within(group).getByText(t);
     }

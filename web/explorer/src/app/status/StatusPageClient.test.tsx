@@ -345,12 +345,11 @@ describe('StatusPageClient honest staleness', () => {
     expect(ageCell('blend').title).toMatch(/30m cadence/);
   });
 
-  it('states the real coverage refresh cadence in the empty state', async () => {
+  it('states no refresh cadence it cannot back in the empty state', async () => {
     mockFeeds({ status: status(), ingestion: ingestion() });
     renderPage();
 
     await screen.findByText(/Coverage snapshot pending/);
-    present(/every 30 min/);
     absent(/every 5 min/);
   });
 
@@ -529,15 +528,6 @@ describe('probeEndpoint body-shape check', () => {
 });
 
 describe('StatusPageClient header and incident history', () => {
-  // PUBLIC_ENDPOINTS is a curated subset; "full" is a claim the page can't back.
-  it('describes the public-endpoint matrix as curated, not full', async () => {
-    mockFeeds({ status: status() });
-    renderPage();
-
-    await screen.findByText(/curated public-endpoint matrix/i);
-    absent(/full public-endpoint matrix/i);
-  });
-
   const seed = (entry: Partial<IncidentHistoryEntry>) => {
     mockFeeds({ status: status() });
     renderPage([

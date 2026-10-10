@@ -17,14 +17,6 @@ export default function CompanyPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Company' }]}
         title="Data infrastructure for Stellar."
-        description={
-          <>
-            Stellar Index is a public, vendor-neutral data surface for the
-            Stellar network — complete, verified, per-protocol on-chain data,
-            complete history and supply, and aggregated prices for every Stellar
-            asset, all served by the Stellar Index API.
-          </>
-        }
       />
 
       <section className="space-y-3">

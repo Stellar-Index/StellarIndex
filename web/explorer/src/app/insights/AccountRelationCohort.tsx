@@ -357,9 +357,7 @@ export function AccountRelationCohort({
           </p>
         )}
         <p className="text-ink-faint text-[11px]">
-          Current balances of the cohort, valued at the live rate where one was
-          found. A pool share is a classic liquidity-pool position and is never
-          priced; nothing unpriced is counted at zero.
+          Unpriced holdings, including pool shares, are not counted.
         </p>
       </Panel>
 
@@ -425,9 +423,7 @@ export function AccountRelationCohort({
               </>
             ) : (
               <Callout tone="info" title="No priced asset moved">
-                None of the cohort&rsquo;s moved assets is priced both live and
-                on the index&rsquo;s own markets in the same month, so there is
-                no USD line to draw; the activity line above is exact.
+                No USD line to draw.
               </Callout>
             )}
             <p className="text-ink-faint text-[11px]">
