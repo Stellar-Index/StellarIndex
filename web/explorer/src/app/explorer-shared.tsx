@@ -12,6 +12,7 @@
 
 import type { components, paths } from '@/api/types';
 import { CopyButton } from '@/components/ui';
+import { baseUnitsDecimal, formatReadable } from '@/lib/format';
 
 // ---------------------------------------------------------------------------
 // Wire shapes — every endpoint is wrapped as { data, as_of, flags }.
@@ -123,6 +124,11 @@ export function stroopsToXlm(raw: string | number | null | undefined): string {
     maximumFractionDigits: 7,
   });
   return s;
+}
+
+/** xlmReadable — stroops at a readable precision ("50B", "12,346", "1.5"). */
+export function xlmReadable(stroops: string | null | undefined): string {
+  return formatReadable(baseUnitsDecimal(stroops, 7)) ?? '—';
 }
 
 // bigStroopsToXlm formats an exact stroop BigInt as XLM: integer part

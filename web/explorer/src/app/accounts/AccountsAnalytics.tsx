@@ -8,7 +8,7 @@ import { HBarList, type HBarItem } from '@/components/charts/Bars';
 import { AssetLink } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact, formatCompactUnits } from '@/lib/format';
-import { type Envelope, stroopsToXlm } from '../explorer-shared';
+import { type Envelope, xlmReadable } from '../explorer-shared';
 
 // Mirrors api/v1 explorer.AccountsStatsView (GET /v1/accounts/stats).
 // Stroops values arrive as strings (ADR-0003).
@@ -123,11 +123,11 @@ export function AccountsAnalytics() {
           />
           <Stat
             label="Median balance"
-            value={`${stroopsToXlm(s.balances.median_stroops)} XLM`}
+            value={`${xlmReadable(s.balances.median_stroops)} XLM`}
           />
           <Stat
             label="p99 balance"
-            value={`${stroopsToXlm(s.balances.p99_stroops)} XLM`}
+            value={`${xlmReadable(s.balances.p99_stroops)} XLM`}
           />
           <Stat
             label="Top-100 hold"

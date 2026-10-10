@@ -285,14 +285,7 @@ describe('RWAView', () => {
     // A bare dash beside real figures reads as zero.
     atLeast('Unavailable', 2);
     // Neither this platform's figure nor a third party's instrument valuation.
-    absent(
-      '$1,284,500.00',
-      '$0.00',
-      '$1.0740',
-      /redstone/,
-      '-3.06%',
-      '$1,324,956.69',
-    );
+    absent('$1.28M', '$0.00', '$1.0740', /redstone/, '-3.06%', '$1.32M');
   });
 
   it('says the total is not published rather than showing zero', async () => {
@@ -332,7 +325,7 @@ describe('RWAView', () => {
       }),
     );
 
-    await screen.findAllByText('$1,284,500.00');
+    await screen.findAllByText('$1.28M');
     present(/Also a floor\./, /no market valuation and contribute/);
   });
 
@@ -487,11 +480,11 @@ describe('RWAView', () => {
     atLeast(/GCRYUG…ATMYWC/, 1);
     atLeast('Etherfuse', 1);
     // Headline, row and both breakdowns: each level sums the one below.
-    atLeast('$1,284,500.00', 3);
+    atLeast('$1.28M', 3);
     atLeast(/redstone/, 1);
     present('-3.06%', /carry an independent oracle valuation/);
     // The backing on the row and in both breakdowns, never named a market cap.
-    atLeast('$1,324,956.69', 3);
+    atLeast('$1.32M', 3);
     present(
       'Value of the backing',
       /Circulating supply × an independent oracle/,
@@ -583,8 +576,8 @@ describe('RWAView', () => {
     );
 
     await screen.findByText('USDY');
-    atLeast('$1,324,956.69', 3);
-    absent('$1,284,500.00');
+    atLeast('$1.32M', 3);
+    absent('$1.28M');
     expect(screen.getAllByText('Not published')).toHaveLength(1);
     atLeast('Unavailable', 2);
   });
@@ -601,7 +594,7 @@ describe('RWAView', () => {
     );
 
     await screen.findByText('USTRY');
-    absent('$1,324,956.69');
+    absent('$1.32M');
     screen.getAllByTitle(/no circulating-supply reading does/);
   });
 
@@ -696,8 +689,8 @@ describe('RWAView — contract arm', () => {
 
     // A stated refusal: "we will not" must read differently from "we forgot".
     await screen.findAllByTitle(/nothing binds a contract address/);
-    absent('$1,324,956.69');
-    atLeast('$1,284,500.00', 1);
+    absent('$1.32M');
+    atLeast('$1.28M', 1);
   });
 
   it('accounts in the funnel for every asset the oracles do not price', async () => {
@@ -766,8 +759,8 @@ describe('RWAView — contract arm', () => {
         backing.compareDocumentPosition(market) &
           Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
-      atLeast('$992,488,360.69', 1);
-      atLeast('$17,128,565.34', 1);
+      atLeast('$992.49M', 1);
+      atLeast('$17.13M', 1);
       // Page text from the SERVED basis, not a tooltip.
       expect(
         screen.getByText(
@@ -782,7 +775,7 @@ describe('RWAView — contract arm', () => {
         /at least this much, not exactly this much/,
       );
       // The unpriced funds still publish backing; the market column says withheld.
-      present('$439,462,363.05', '$535,897,722.98');
+      present('$439.46M', '$535.9M');
       atLeast('at reference price', 2);
       atLeast('Unavailable', 1);
       absent('$0.00');
@@ -949,14 +942,14 @@ describe('RWAView — the wider sector', () => {
     show(sectorView());
 
     await screen.findByText('Stablecoins');
-    present('$373,704,359.91', '4 fiat-backed tokens issued on Stellar');
+    present('$373.7M', '4 fiat-backed tokens issued on Stellar');
     // 992,488,360.69 + 373,704,359.91, exactly.
     await screen.findByText('Combined');
     present(
-      '$1,366,192,720.60',
+      '$1.37B',
       /Two bases, added\./,
       /not the real-world-asset figure/,
-      '$992,488,360.69',
+      '$992.49M',
       /Not a real-world asset\./,
       /the definition above refuses the whole class/,
     );
@@ -966,7 +959,7 @@ describe('RWAView — the wider sector', () => {
     apiGet.mockRejectedValue(new Error('stablecoin catalogue unreachable'));
     show(sectorView());
 
-    await screen.findByText('$992,488,360.69');
+    await screen.findByText('$992.49M');
     present('Unavailable');
     // A smaller claim must never wear the bigger name.
     present('Not published');
@@ -991,7 +984,7 @@ describe('RWAView — the wider sector', () => {
         },
       ],
       [
-        '$357,540,715.76',
+        '$357.54M',
         '2 fiat-backed tokens issued on Stellar, 1 of them listing-priced',
         /This total mixes two bases\./,
         /provenance: listing_platform_price/,
@@ -1007,7 +1000,7 @@ describe('RWAView — the wider sector', () => {
           listing_valuation: { status: 'published', value_usd: '999999999.00' },
         },
       ],
-      ['$354,959,662.86', /Two bases, added\./],
+      ['$354.96M', /Two bases, added\./],
       [/This total mixes two bases\./],
     ],
     [
@@ -1016,7 +1009,7 @@ describe('RWAView — the wider sector', () => {
         USDC,
         { code: 'USDT0', listing_valuation: { status: 'listing_unavailable' } },
       ],
-      ['$354,959,662.86', '1 fiat-backed token issued on Stellar'],
+      ['$354.96M', '1 fiat-backed token issued on Stellar'],
       [/This total mixes two bases\./],
     ],
   ])('%s', async (name, rows, shown, hidden) => {
@@ -1126,12 +1119,10 @@ describe('RWAView — curated arm', () => {
       'Counted by the curator, not verified here',
       'Published by the curator',
     );
-    atLeast('$558,700,000.00', 1);
-    present('$560,024,956.69', 'No — curator only', 'Realiz');
-    atLeast('$1,324,956.69', 1);
-    expect(
-      screen.queryByText('$560,024,956.69', headline),
-    ).not.toBeInTheDocument();
+    atLeast('$558.7M', 1);
+    present('$560.02M', 'No — curator only', 'Realiz');
+    atLeast('$1.32M', 1);
+    expect(screen.queryByText('$560.02M', headline)).not.toBeInTheDocument();
   });
 
   it('draws the comparison without a published panel when no published block is served', async () => {
@@ -1153,23 +1144,17 @@ describe('RWAView — curated arm', () => {
     );
 
     await screen.findByText(/As a third-party curator counts it/);
-    present(
-      'Published by the curator',
-      '$4,004,795,860.00',
-      /for August 2025, computed/,
-    );
+    present('Published by the curator', '$4B', /for August 2025, computed/);
     // Signed, and published − verified, never the other way round.
     present(
-      '+$3,659,195,881.27',
+      '+$3.66B',
       'US Treasuries',
-      '$904,795,860.00',
+      '$904.8M',
       /2 months published · dune query 6961845 \/ 6961847/,
     );
     // An empty "counted by the curator" cell would read as "counts nothing".
     absent('Counted by the curator, not verified here', 'No — curator only');
-    expect(
-      screen.queryByText('$4,004,795,860.00', headline),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText('$4B', headline)).not.toBeInTheDocument();
   });
 
   it('renders no curated panel when the deployment has no curated reader', async () => {

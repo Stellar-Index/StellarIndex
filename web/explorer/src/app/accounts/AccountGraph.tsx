@@ -23,6 +23,7 @@ import {
   type Envelope,
   formatTimestamp,
   stroopsToXlm,
+  xlmReadable,
 } from '../explorer-shared';
 
 type AccountGraphResp = components['schemas']['AccountGraph'];
@@ -218,7 +219,7 @@ export function AccountGraphPanel({ id }: { id: string }) {
         <GraphStat
           label="XLM funded"
           value={
-            created.accounts > 0 ? stroopsToXlm(created.funded_stroops) : '—'
+            created.accounts > 0 ? xlmReadable(created.funded_stroops) : '—'
           }
         />
         <GraphStat

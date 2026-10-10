@@ -93,9 +93,7 @@ describe('PoolReserves', () => {
     });
     renderIt();
     const line = await screen.findByText(/Pool TVL:/);
-    expect(line.textContent).toContain('$9,007,199,254,740,993');
-    expect(
-      screen.getAllByText('$9,007,199,254,740,993').length,
-    ).toBeGreaterThan(0);
+    expect(line.textContent).toContain('$9007.2T');
+    expect(screen.getByTitle('9007199254740993')).toBeInTheDocument();
   });
 });

@@ -14,7 +14,7 @@ import type {
 } from '@/api/relationTypes';
 import { formatCompact } from '@/lib/format';
 
-import { formatTimestamp, stroopsToXlm } from '../explorer-shared';
+import { formatTimestamp, xlmReadable } from '../explorer-shared';
 import { RELATION, type Relation } from './accountRelation';
 
 // The board endpoints take `?account=`, a keyed read that returns one
@@ -137,8 +137,8 @@ export function AccountRelationStanding({
               />
               <Stat
                 label="XLM the set holds now"
-                value={stroopsToXlm(row.live_stroops)}
-                sub="native only"
+                value={xlmReadable(row.live_stroops)}
+                sub="XLM only"
               />
             </>
           )}

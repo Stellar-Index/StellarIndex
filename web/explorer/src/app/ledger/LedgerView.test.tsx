@@ -73,7 +73,7 @@ describe('LedgerView total_coins caption', () => {
   it('captions the mainnet header total_coins as including the 2019 burn', async () => {
     routeApi();
     renderView();
-    const value = await screen.findByText('105,443,902,087.3472865 XLM');
+    const value = await screen.findByText('105.44B XLM');
     const cell = value.closest('dd')!;
     expect(cell).toHaveAttribute(
       'title',
@@ -85,7 +85,7 @@ describe('LedgerView total_coins caption', () => {
     net.id = 'testnet';
     routeApi();
     renderView();
-    const value = await screen.findByText('105,443,902,087.3472865 XLM');
+    const value = await screen.findByText('105.44B XLM');
     const cell = value.closest('dd')!;
     expect(cell).toHaveAttribute(
       'title',

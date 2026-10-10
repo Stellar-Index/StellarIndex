@@ -92,9 +92,8 @@ describe('ProtocolsIndex headline TVL total', () => {
     mockProtocols(PROTOCOLS, { tvl_total: TVL_TOTAL });
     renderIndex();
     expect(await screen.findByText('Total value locked')).toBeInTheDocument();
-    // The exact decimal string, grouped — not a compacted "$39.34M", and
-    // not a Number()-parsed approximation of it.
-    expect(screen.getByText(/\$39,343,685\.40/)).toBeInTheDocument();
+    // Readable on the page; the exact decimal string on hover.
+    expect(screen.getByTitle('39343685.40')).toHaveTextContent('$39.34M');
     // lower_bound is true, so the "at least" reading is on the page.
     expect(screen.getByText('≥')).toBeInTheDocument();
     expect(screen.getByText(/52 of 229 pools priced/)).toBeInTheDocument();
