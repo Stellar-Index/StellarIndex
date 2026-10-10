@@ -6,7 +6,7 @@ import { CopyButton } from '@/components/ui';
  * Snippet block with a Copy button. Lifted out of WidgetsPage so
  * the parent can stay a server component (file reads, no client
  * state) while just this island opts into the browser bundle.
- * Copy behavior is the canonical ui CopyButton (FEC audit A3-F7).
+ * Copy behavior is the canonical ui CopyButton.
  */
 export function CopyableSnippet({ snippet }: { snippet: string }) {
   return (

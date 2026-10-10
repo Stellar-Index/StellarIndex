@@ -4,11 +4,9 @@ import type { ReactNode } from 'react';
 import { Container, EmptyState } from '@/components/ui';
 
 /**
- * Shared frame for entity not-found / CI-stub branches (FEC audit A1-7/A1-8):
+ * Shared frame for entity not-found / CI-stub branches:
  * every "no such {entity}" branch renders in the standard Container frame with
- * the design-system EmptyState. The bare prose-width divs this replaces were
- * the founding container-drift shape, hand-written divergently per route
- * (sources vs issuers vs markets).
+ * the design-system EmptyState.
  */
 export function EntityNotFoundShell({
   title,

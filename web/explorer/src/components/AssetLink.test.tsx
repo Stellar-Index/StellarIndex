@@ -10,7 +10,7 @@ describe('assetSlug', () => {
   it('returns the full canonical id for a classic asset, not the bare code', () => {
     // The bare code is ambiguous — every USDC-alike shares /assets/USDC,
     // so a code-derived link can resolve to a different issuer's asset
-    // than the row the user clicked (wave-D EXR-02). The canonical id is
+    // than the row the user clicked The canonical id is
     // pre-rendered for the same asset set, so this never links worse.
     expect(
       assetSlug(
@@ -60,7 +60,7 @@ describe('assetSlug', () => {
     // ADR-0028 rwa: ids have no /assets page: the API 400s on the bare
     // code and 404s on the prefixed id, so BOTH spellings are dead.
     // Returning null renders a plain label instead of promising a page
-    // that does not exist (wave-D SI-OC-02).
+    // that does not exist.
     //
     // Stripping the prefix the way fiat:/crypto: do would produce
     // /assets/XAU and /assets/BENJI — which the API rejects — swapping

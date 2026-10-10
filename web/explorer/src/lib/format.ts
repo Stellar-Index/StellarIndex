@@ -225,9 +225,7 @@ export function formatPriceSmall(n: number | string): string {
   if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
   if (n >= 0.001) return n.toFixed(6);
   if (n > 0) return formatSubunitPrice(n);
-  // COR-01: a negative price is bad data, not a legitimate zero — collapsing
-  // both to the bare string '0' made a negative value look like a normal,
-  // healthy zero price instead of surfacing it as the anomaly it is.
+  // A negative price is bad data, not a legitimate zero; surface it.
   if (n < 0) return formatSubunitPrice(n);
   return '0';
 }
@@ -313,9 +311,8 @@ export function formatRelative(
 
 /**
  * formatRelativeLong — coarse long-form relative time ("2 hours ago",
- * "3 months ago", "just now"). THE long-form canonical (FEC audit A3-F1):
- * re-homed from lib/account-format so exactly one word-form implementation
- * exists; account surfaces ("last active" prose) want words and >30d
+ * "3 months ago", "just now"). THE long-form canonical:
+ * account surfaces ("last active" prose) want words and >30d
  * granularity the short form lacks.
  */
 export function formatRelativeLong(iso: string | null | undefined): string {
@@ -339,9 +336,7 @@ export function formatRelativeLong(iso: string | null | undefined): string {
 
 /**
  * formatDurationShort — seconds → "45s" / "3m" / "5h" / "2d" (no suffix).
- * FEC audit A3-F1b: consolidates the formatLag twins (diagnostics/sources)
- * and the status page's formatAge/timeSince; formatAge's negative→'—'
- * guard wins (a clock-skewed lag must read as unknown, not "-5s").
+ * Negative → '—' (a clock-skewed lag must read as unknown, not "-5s").
  */
 export function formatDurationShort(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '—';
@@ -649,11 +644,9 @@ export function multiplyDecimalStrings(a: string, b: string): string | null {
 
 /**
  * Truncate a long identifier (G-strkey, C-id, tx hash) to `head…tail`.
- * THE canonical for the whole app (FEC audit A2-06): server-safe here in
- * lib — the previous home (ui/Mono.tsx) is a 'use client' module, so
- * server components physically could not call it (RSC turns client-module
- * exports into throwing client references). Null/empty renders '—'
- * (display-site winner semantics from explorer-shared.shortHash); head/tail
+ * Server-safe here in lib: ui/Mono.tsx is a 'use client' module, and server
+ * components cannot call client-module exports (RSC turns them into
+ * throwing client references). Null/empty renders '—'; head/tail
  * stay parameterized because per-context lengths (16/16, 8/6, 6/4) are
  * deliberate.
  */

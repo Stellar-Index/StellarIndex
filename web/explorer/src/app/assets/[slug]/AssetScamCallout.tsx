@@ -12,7 +12,7 @@ import { scamFlagTags } from '@/lib/directory-tags';
  * `/v1/assets/{id}` payload — carrying the same `issuer_directory_tags`
  * and `issuer_scam_reason` — and rendered no warning at all. So the
  * long-tail assets, which is where a scam token actually sits, were the
- * ones served without the warning (wave-D EXR-01).
+ * ones served without the warning.
  *
  * Keeping one component means the two paths cannot drift again, and the
  * guard in `src/lib/trust-surface-guards.test.ts` fails if an asset view

@@ -248,8 +248,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
   const anyVolume =
     totalVolume24hUSD != null && !/^0(\.0*)?$/.test(totalVolume24hUSD);
 
-  // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
-  // inside Breadcrumbs below — no hand-rolled LD.
+  // BreadcrumbList JSON-LD derives from the visible Crumb[] inside Breadcrumbs below.
   return (
     <Container className="space-y-6 py-8">
       {detail.scam_reason && (

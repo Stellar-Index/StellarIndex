@@ -61,7 +61,7 @@ export function ProtocolsIndex({
   lockedCategory?: string;
   title?: string;
 } = {}) {
-  // S-015: several AMM protocols have no factory-seeded contract
+  // Several AMM protocols have no factory-seeded contract
   // roster yet (only blend is seeded; the ADR-0035 gates are pending
   // team answers) — their cards read "CONTRACTS 0" as if broken. The
   // per-source stats the /dexes page already uses carry the observed

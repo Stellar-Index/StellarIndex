@@ -150,7 +150,7 @@ function kindTone(kind: string): string {
 // entry — bold + code + link substitutions, then truncate at the
 // first newline-newline (matches the visual rhythm where the bold
 // heading is the "what" and the rest is the "why"). Tokenizing is the
-// canonical lib/markdown Inline (FEC audit A3-F9); links render as
+// canonical lib/markdown Inline; links render as
 // plain spans because this strip is a preview, not a link surface.
 function ChangelogPreview({ text }: { text: string }) {
   const firstPara = text.split(/\n\n/)[0]!.trim();

@@ -72,12 +72,8 @@ export function HomeRecentTrades() {
     [markets.data],
   );
 
-  // FEC audit A6-4: the fan-out is a react-query query and the stream
-  // nudge is the canonical useLedgerFollow — the previous hand-rolled
-  // generation-counter/last-poll machinery re-implemented exactly what
-  // the hook + query cache own. The 10s coalesce (documented deliberate
-  // above) survives as the hook's minIntervalMs; the 30s fallback is
-  // refetchInterval.
+  // The stream nudge is useLedgerFollow; the 10s coalesce is its
+  // minIntervalMs and the 30s fallback is refetchInterval.
   useLedgerFollow(['home-recent-trades'], STREAM_COALESCE_MS);
   const q = useQuery<Trade[]>({
     queryKey: ['home-recent-trades', pairs],

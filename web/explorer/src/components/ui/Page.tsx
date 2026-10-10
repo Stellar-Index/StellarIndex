@@ -66,7 +66,7 @@ export function PageHeader({
 
 /**
  * Breadcrumbs — the visible trail AND its schema.org BreadcrumbList in one
- * place (FEC A1-6 one-rule). The JSON-LD is derived from the same `items`
+ * place (one rule). The JSON-LD is derived from the same `items`
  * array the nav renders, via lib/seo's breadcrumbJsonLd — pages must not
  * hand-roll BreadcrumbList (guarded in lib/fec-consolidation-guards.test.ts).
  */

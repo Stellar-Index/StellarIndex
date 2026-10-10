@@ -1,8 +1,6 @@
-// Canonical asset-id display/slug helpers — SERVER-SAFE home (FEC audit
-// A3-F2b + A2-06 lesson: components/AssetLink.tsx is 'use client', so
-// server components physically cannot call functions exported from it —
-// RSC turns client-module exports into throwing client references. The
-// implementations live here; AssetLink re-exports them for client code.
+// Canonical asset-id display/slug helpers, server-safe: components/AssetLink.tsx
+// is 'use client', and server components cannot call its exports (RSC turns
+// them into throwing client references). AssetLink re-exports these.
 
 import { CURRENT_NETWORK_ID, type NetworkId } from '@/lib/networks';
 

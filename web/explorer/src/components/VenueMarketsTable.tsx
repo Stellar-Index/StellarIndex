@@ -17,8 +17,7 @@ import {
 } from '@/lib/format';
 // /v1/markets row from the generated OpenAPI contract, via the shared
 // alias in src/api/hooks.ts (Market = MarketRow) — the contract-derived
-// type wins (FEC audit A3-F8): if /v1/markets changes, this build breaks
-// loudly instead of a private interface silently diverging.
+// type wins: if /v1/markets changes, this build breaks loudly.
 import type { Market } from '@/api/hooks';
 import { useCursorPager } from '@/lib/useCursorPager';
 import { SortPill } from '@/components/SortPill';

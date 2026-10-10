@@ -54,14 +54,10 @@ export function Mono({
 }
 
 /**
- * useCopyToClipboard — THE clipboard behavior (FEC audit A3-F7): 5 forks
- * existed and the differences were all defects on one side or the other.
- * This hook keeps the winning behaviors from each: unmount-safe reset
- * timer (CopyValue's effect cleanup — Mono's bare setTimeout fired after
- * unmount), preventDefault+stopPropagation (a copy click inside a row
- * <Link> must not navigate — live on OperationView), and a try/catch
- * (insecure context / permission denial must not be an unhandled
- * rejection). Reset delay 1400ms (majority).
+ * useCopyToClipboard — THE clipboard behavior:
+ * unmount-safe reset timer, preventDefault+stopPropagation (a copy click
+ * inside a row <Link> must not navigate), and a try/catch (insecure context
+ * / permission denial must not be an unhandled rejection). Reset delay 1400ms.
  */
 export function useCopyToClipboard(value: string, resetMs = 1400) {
   const [copied, setCopied] = useState(false);

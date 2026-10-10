@@ -57,7 +57,7 @@ describe('formatPriceSmall', () => {
     [[150], '150.00'],
     [[0.0005], '0.0005'],
     [[0], '0'],
-    // COR-01: a negative price is bad data and must not render as a healthy zero.
+    // A negative price is bad data and must not render as a healthy zero.
     [[-0.5], '-0.5'],
     // The exact decimal is rounded, not its nearest double (2.0000499999…).
     [['2.00005'], '2.0001'],

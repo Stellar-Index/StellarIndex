@@ -31,9 +31,9 @@ interface IssuerDetail {
 
 /**
  * IssuerPathView — the runtime fallback for issuers beyond the
- * pre-rendered top-100 (site audit S-022: search and asset pages link
- * to arbitrary issuers, which hard-404'd because /issuers had no CF
- * function shell, unlike accounts/contracts/ledgers/transactions).
+ * pre-rendered top-100 (search and asset pages link to arbitrary
+ * issuers, so /issuers needs a CF function shell like accounts/contracts/
+ * ledgers/transactions).
  * Served by functions/issuers/[[path]].js; noindex, like the other
  * long-tail shells.
  */

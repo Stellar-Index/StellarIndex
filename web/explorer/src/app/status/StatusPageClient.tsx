@@ -51,7 +51,7 @@ import {
 // query (STATUS_POLL_MS, same 30 s — one clock, so the banner and
 // this page cannot disagree in one viewport); this constant drives the
 // page-local ingestion + endpoint-probe loops, which stay bespoke
-// (per-region independence, latency measurement — A6-6 rationale).
+// (per-region independence, latency measurement).
 const POLL_INTERVAL_MS = 30_000;
 
 // Hot-tier endpoint probes also run at POLL_INTERVAL_MS. Warm-tier
@@ -537,7 +537,7 @@ interface IncidentsAPIShape {
 // Live-feed fetch outcome — distinguishes "the request failed"
 // (we're showing only the build-time corpus) from "succeeded but
 // empty" (genuinely no incidents) so the empty-state copy can be
-// honest. (WB-02c)
+// honest.
 type IncidentFeedState = 'loading' | 'ok' | 'error';
 
 export default function StatusPageClient({
@@ -545,7 +545,7 @@ export default function StatusPageClient({
 }: {
   // Build-time incident corpus, pre-projected to the UI-flat shape
   // by the server wrapper. Rendered immediately so past incidents
-  // are visible even when the live API is fully down (WB-02b).
+  // are visible even when the live API is fully down.
   seedIncidents: IncidentHistoryEntry[];
 }) {
   // The /v1/status doc — from the SHARED useStatus query (one poll loop
@@ -820,7 +820,7 @@ export default function StatusPageClient({
       {CURRENT_NETWORK.pricing && <BackupsPanel />}
       {/* EndpointMatrix renders UNCONDITIONALLY — it doesn't depend on
               the /v1/status feed; the matrix runs its own independent
-              probes (so red badges show during an outage). WB-02 */}
+              probes (so red badges show during an outage). */}
       <EndpointMatrix endpoints={VISIBLE_ENDPOINTS} health={endpointHealth} />
       {/* Incident history is mainnet-only: the lean test-nets run no
               Alertmanager, so there is no incident feed to show and no
@@ -967,7 +967,7 @@ function OverallBanner({
 // or ongoing-incident announcement is the first thing a visitor should
 // see. It polls independently on the standard cadence and collapses to
 // nothing on an empty list. A fetch/parse FAILURE keeps the last-known
-// notices and marks them (WB-04 — mirrors useStatus): the endpoint fails
+// notices and marks them (mirrors useStatus): the endpoint fails
 // during exactly the outage an operator's notice announces, and clearing
 // on error blanked the banner from every open tab for the whole window
 // (web-status-6). Only a successful (possibly empty) response clears it.
@@ -1957,7 +1957,7 @@ function RegionPanel({
   const liveLedger = useLedgerStream(region.apiBaseUrl);
   const clock = useLiveClock();
 
-  // Treat the stream as live only while events are still arriving. (WB-04)
+  // Treat the stream as live only while events are still arriving.
   const liveFresh =
     liveLedger != null &&
     !isFrameStale(clock, liveLedger.receivedAt, LEDGER_LIVE_STALE_MS)

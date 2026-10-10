@@ -137,10 +137,7 @@ export async function apiGet<T>(
 }
 
 /**
- * Envelope — the standard /v1 response wrapper (FEC audit A3-F4:
- * re-homed here from app/explorer-shared so src/api code can use it,
- * and extended with `pagination` — its absence was exactly why the
- * pager tables each inlined a private envelope type).
+ * Envelope — the standard /v1 response wrapper.
  */
 export type Envelope<T> = {
   data: T;

@@ -8,9 +8,8 @@ import { API_BASE_URL as API_BASE, timeoutSignal } from '@/api/client';
 
 /**
  * LivePrice — client-side price hydration for the embed widgets
- * (Pass-B AM-14: the embeds were fully static, selling a build-time
- * price as a live ticker; under a deploy freeze they read days-stale
- * with no hint). Renders the baked price immediately, then replaces
+ * (a build-time price would read days-stale under a deploy freeze).
+ * Renders the baked price immediately, then replaces
  * it with the live VWAP and keeps it fresh on a 60s cadence. The API
  * is CORS-open for reads, so this works from any embedding origin.
  */

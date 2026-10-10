@@ -113,7 +113,7 @@ export function AssetLabel({
   // full id in the tooltip so the namespace stays discoverable. Same
   // shape as the unmapped-oracle branch above, and for the same reason:
   // the prefix carries meaning a bare "XAU" loses, but showing
-  // "rwa:XAU" inline in a dense cell is noise (wave-D SI-OC-02).
+  // "rwa:XAU" inline in a dense cell is noise.
   if (canonical.startsWith('rwa:')) {
     return (
       <span
@@ -163,7 +163,7 @@ export function AssetLabel({
     if (resolved) {
       // The SAC map may resolve to either the dash form (USDC-GA5Z…) or
       // the colon form (USDC:GA5Z…). Split on WHICHEVER separator appears
-      // first (site-audit S8/S33): keying only on '-' meant a colon-form
+      // first: keying only on '-' meant a colon-form
       // resolution fell through with indexOf('-') === -1 and rendered the
       // near-full issuer key in the Base column, blowing out the cell.
       const sepIx = firstSep(resolved);
@@ -192,9 +192,7 @@ export function AssetLabel({
   }
   // Classic credit asset: <CODE>-<G-issuer>. Pool/trade rows from the
   // lake serve the colon form (<CODE>:<G-issuer>) — normalise it here
-  // so both spellings get the same code + issuer-org rendering
-  // (site-audit S-014: colon-form rows fell through to the raw
-  // truncated-string fallback next to fully-resolved dash-form rows).
+  // so both spellings get the same code + issuer-org rendering.
   if (/^[A-Za-z0-9]{1,12}:G[A-Z2-7]{55}$/.test(canonical)) {
     canonical = canonical.replace(':', '-');
   }

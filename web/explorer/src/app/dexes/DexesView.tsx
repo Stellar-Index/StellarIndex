@@ -206,10 +206,7 @@ export function DexesView() {
                 </tr>
               )}
               {/* Distinguish "API failed" from "API returned 0 rows".
-                  Pre-2026-05-13 a 503 from /v1/pools (the trades-
-                  hypertable scan timed out) silently rendered as
-                  "No pools matched." — QA finding F-02 in
-                  docs/review-2026-05-13-live-site-qa.md. */}
+                  A 503 from /v1/pools must not render as "No pools matched." */}
               {!q.isLoading && q.isError && (
                 <tr>
                   <td colSpan={8} className="px-4 py-8 text-center text-sm">

@@ -108,12 +108,9 @@ export function serializeJsonLd(data: unknown): string {
 
 /**
  * breadcrumbJsonLd — the ONE way to build a schema.org BreadcrumbList
- * (FEC A1-6 one-rule). The LD is derived from the SAME `Crumb[]` the
+ * (one rule). The LD is derived from the SAME `Crumb[]` the
  * visible trail renders (ui/Page `Breadcrumbs`, which PageHeader wraps),
- * so UI and structured data cannot diverge again — the audit found both
- * mismatch directions live (LD with no visible trail on /exchanges/[name]
- * + /protocols/[name]; visible trails with no LD on tx/account/ledger/
- * contract/network). `Breadcrumbs` calls this itself; pages should not.
+ * so UI and structured data cannot diverge. `Breadcrumbs` calls this itself; pages should not.
  *
  * Crumbs without an `href` (the current page) emit a ListItem without
  * `item` — explicitly allowed by Google's breadcrumb guidance for the

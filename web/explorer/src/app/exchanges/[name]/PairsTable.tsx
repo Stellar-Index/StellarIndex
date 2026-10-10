@@ -2,8 +2,7 @@
 
 import { VenueMarketsTable } from '@/components/VenueMarketsTable';
 
-/** PairsTable — thin wrapper over the shared VenueMarketsTable (FEC audit
- * A3-F8; see that component for the fold rationale). */
+/** PairsTable — thin wrapper over the shared VenueMarketsTable. */
 export function PairsTable({
   source,
   exchangeName,

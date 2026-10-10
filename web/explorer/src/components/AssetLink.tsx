@@ -26,10 +26,10 @@ export { shortAssetText };
  * `/assets/USDC`, so a link built from the code can resolve to a
  * DIFFERENT issuer's asset than the row the user clicked — including
  * resolving a scam issuer's token to the legitimate one's page, or the
- * reverse (wave-D EXR-02).
+ * reverse.
  *
  * This mirrors the decision already recorded for market pairs at
- * app/markets/[pair]/page.tsx (AM-09), and for the same reason:
+ * app/markets/[pair]/page.tsx, and for the same reason:
  * generateStaticParams emits canonical `asset_id` routes for exactly
  * the same asset set as the short slugs (see the `cache.byAssetId` loop
  * there), so the canonical form never links worse and always links
@@ -56,7 +56,7 @@ export function assetSlug(canonical: string | undefined | null): string | null {
   // There is no /assets page for one: the API 400s on the bare code and
   // 404s on the prefixed id, so BOTH spellings are dead. Returning null
   // renders a plain label instead of a link that goes nowhere
-  // (wave-D SI-OC-02).
+  //.
   //
   // Deliberately not "strip the prefix like fiat:/crypto:". That would
   // produce /assets/XAU, /assets/BENJI, … which the API rejects — it
@@ -81,7 +81,7 @@ export function assetSlug(canonical: string | undefined | null): string | null {
  * assetLinkHref decides the target for a resolved `slug` given the
  * ORIGINAL canonical id it came from. A `fiat:` canonical's declared
  * canonical page is /external/assets/{friendly-slug} (assetHrefFor), not
- * /assets/{slug} — see fiat-slugs.ts's assetHrefFor docstring (AM-16).
+ * /assets/{slug} — see fiat-slugs.ts's assetHrefFor docstring.
  * assetSlug() intentionally still returns the bare ticker for a `fiat:`
  * id (existing callers rely on that), so the fiat/non-fiat branch has to
  * live here, at the href call site, not inside assetSlug.

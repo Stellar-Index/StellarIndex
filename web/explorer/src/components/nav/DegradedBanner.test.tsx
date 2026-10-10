@@ -12,7 +12,7 @@ import { DegradedBanner } from './DegradedBanner';
 // catch. Two consecutive failed polls flip it to a visible
 // "unreachable" state instead of staying invisible forever.
 //
-// The banner reads the SHARED useStatus query (FEC A6-6/D2 fold), so
+// The banner reads the SHARED useStatus query so
 // each case renders under a fresh QueryClient; the failure-counting lives
 // in the shared StatusFeed and these assertions pin that it still surfaces
 // here exactly as before.

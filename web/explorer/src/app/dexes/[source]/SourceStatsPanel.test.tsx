@@ -4,13 +4,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { SourceStatsPanel } from './SourceStatsPanel';
 
-// COR-14/AGT-05: SourceStatsPanel hand-rolled its own formatCompact instead
-// of importing the shared one from @/lib/format, and the two disagreed —
-// the local version's K-branch never rolled over into M (999999 rendered
-// as the wrong-looking "1000.0K" instead of "1M") and it kept an extra
-// trailing ".0" the shared Intl-backed formatter drops (1000 -> "1.0K"
-// instead of "1K"). Mock the volume at exactly that boundary and assert
-// the shared formatter's actual output.
+// SourceStatsPanel must use the shared formatCompact from @/lib/format.
+// Mock the volume at the K->M boundary (999999 -> "1M", 1000 -> "1K") and
+// assert the shared formatter's actual output.
 vi.mock('@/api/client', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/client')>('@/api/client');

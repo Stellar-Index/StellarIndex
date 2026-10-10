@@ -138,9 +138,7 @@ function Block({
 }
 
 function CopyButton({ text }: { text: string }) {
-  // FEC audit A3-F7: the bare clipboard-write await here was an
-  // unhandled promise rejection on insecure contexts / permission denial;
-  // the canonical ui hook carries the try/catch + unmount-safe reset.
+  // The hook handles clipboard rejection (insecure context / denied) and unmount-safe reset.
   const { copied, copy } = useCopyToClipboard(text);
   return (
     <button

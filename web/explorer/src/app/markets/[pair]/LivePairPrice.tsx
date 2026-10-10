@@ -51,7 +51,7 @@ export function LivePairPrice({
    */
   initialChangePct?: number | null;
 }) {
-  // FEC audit A6-5: the 60s poll loop lives in the canonical usePricePoll.
+  // The 60s poll loop is usePricePoll.
   const poll = usePricePoll({
     asset: base,
     quote,

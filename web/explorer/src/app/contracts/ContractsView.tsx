@@ -185,7 +185,7 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
 
   const rows = data?.contracts ?? [];
 
-  // Sortable columns (site-audit S36); default keeps the API's
+  // Sortable columns; default keeps the API's
   // events-ranked order until a header is clicked.
   const contractSortColumns: SortColumn<(typeof rows)[number], string>[] = [
     { key: 'protocol', value: (c) => c.protocol ?? '', initialDir: 'asc' },

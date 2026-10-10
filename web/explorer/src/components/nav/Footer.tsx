@@ -44,8 +44,7 @@ export function Footer() {
               { label: 'Lending', href: '/lending' },
               { label: 'Aggregators', href: '/aggregators' },
               { label: 'Oracles', href: '/oracles' },
-              // S-020: these pages were an orphaned island — they
-              // linked only to each other; nothing linked in.
+              // These pages link only to each other; this is their inbound link.
               { label: 'AMMs on Stellar', href: '/amm' },
               { label: 'SDEX explained', href: '/sdex' },
               { label: 'Liquidity pools', href: '/liquidity-pools' },

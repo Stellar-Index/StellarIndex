@@ -28,7 +28,7 @@ export default function LedgersPage() {
         title="Ledgers"
       />
 
-      {/* S-005: ledger cadence answers "is the network healthy" before
+      {/* Ledger cadence answers "is the network healthy" before
           the row list — same shared series /network renders. */}
       <ThroughputPanel headingLevel={2} defaultMetric="ledgers" />
 

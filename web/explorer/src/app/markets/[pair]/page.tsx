@@ -196,11 +196,9 @@ export async function generateMetadata({
   // Canonical URL: the URL-encoded pair slug. Without this,
   // any case- or encoding-variant of the same pair would be
   // treated as a separate page by Google.
-  // S-crawl (site audit): the route param arrives ALREADY URL-encoded
-  // from generateStaticParams, so encoding it again produced %253A
-  // canonicals that 404 — every one of the ~500 market pages told
-  // crawlers its real URL was a dead page. Decode-then-encode is
-  // idempotent for both encoded and raw inputs; trailing slash matches
+  // The route param arrives ALREADY URL-encoded from generateStaticParams;
+  // encoding again would yield %253A canonicals that 404. Decode-then-encode
+  // is idempotent for both encoded and raw inputs; trailing slash matches
   // the site's canonical form (trailingSlash: true).
   const canonical = `${CURRENT_NETWORK.explorerUrl}/markets/${encodeURIComponent(decodeURIComponent(pair))}/`;
   return {
@@ -311,7 +309,7 @@ export default async function PairPage({ params }: { params: Params }) {
   // Runtime-fallback shell for pairs outside the build-time pre-render.
   // functions/markets/[[path]].js serves this HTML for any unmatched
   // /markets/* path, and the client view reads the pair from the URL
-  // (site-audit S1b — the pre-render is a stale snapshot, not a small one).
+  // (the pre-render is a stale snapshot, not a small one).
   if (pair === 'shell') {
     return (
       <Suspense fallback={null}>
@@ -366,8 +364,7 @@ export default async function PairPage({ params }: { params: Params }) {
     sumDecimalStrings(points.map((pt) => pt.v_usd)),
   );
 
-  // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
-  // inside Breadcrumbs below — no hand-rolled LD.
+  // BreadcrumbList JSON-LD derives from the visible Crumb[] inside Breadcrumbs below.
   // schema.org Dataset — eligibility for Google Dataset Search. contentUrl
   // points at the real public /v1/chart endpoint this page already uses.
   const datasetLD = datasetJsonLd({

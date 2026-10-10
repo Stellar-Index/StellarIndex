@@ -213,8 +213,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
   const selectable = source.selectable === true;
   const topMarkets = selectable ? await fetchSourceMarkets(name) : null;
 
-  // FEC A1-6: BreadcrumbList JSON-LD derives from the visible Crumb[]
-  // inside Breadcrumbs below — no hand-rolled LD.
+  // BreadcrumbList JSON-LD derives from the visible Crumb[] inside Breadcrumbs below.
   return (
     <Container className="space-y-6 py-8">
       <PageHeader

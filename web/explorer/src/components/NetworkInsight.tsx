@@ -29,10 +29,8 @@ export type OpTypeStat = NonNullable<OperationsResp['op_type_stats']>[number];
 export type ThroughputMetric = 'ops' | 'txs' | 'events' | 'ledgers';
 
 /**
- * Shared insight panels for the network-directory pages (site audit
- * S-004/S-005: /transactions, /operations and /ledgers were bare
- * paginated lists while the API already served the aggregates —
- * only /network consumed them). Each panel owns its fetch so a
+ * Shared insight panels for the network-directory pages.
+ * Each panel owns its fetch so a
  * directory page adds insight with one JSX line.
  */
 
@@ -185,7 +183,7 @@ export function ThroughputPanel({
   });
 
   const buckets = tpQ.data?.buckets ?? [];
-  // UXP-16: `partial` marks a bucket that doesn't cover a whole UTC day
+  // `partial` marks a bucket that doesn't cover a whole UTC day
   // (in practice only "today", still accumulating) — the API contract
   // (openapi/stellar-index.v1.yaml, GET /network/throughput) says to
   // EXCLUDE it from window totals and render it distinctly. We drop it
