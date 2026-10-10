@@ -351,7 +351,7 @@ func TestOHLCSeries_CoverageFloorAnnotation(t *testing.T) {
 // The fixture is a stablecoin-quoted pair, which the series read serves
 // from the pair itself; a fiat-quoted pair is served from a constituent
 // set and probes each constituent (see
-// TestCoverageFloor_FiatQuoteProbesEachConstituentOnce).
+// TestCoverageFloor_ProbedOncePerConstituentFamily).
 func TestCoverageFloorProbe_IsBoundedAndDaily(t *testing.T) {
 	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
 	ts := ohlcCoverageServer(t, probe)
@@ -379,72 +379,43 @@ func TestCoverageFloorProbe_IsBoundedAndDaily(t *testing.T) {
 	}
 }
 
-// TestCoverageFloor_ProbedOncePerPairAcrossAliases — the memo, and the
-// single alias-family resolution behind it. `native` and `crypto:XLM`
-// are the same asset; the probe reads every form of both legs in one
-// query, so the second and third requests must cost NOTHING. Without
-// the fold this endpoint would issue a read per identity spelling per
-// request, which is the cost profile an anonymous caller can multiply
-// at will.
-func TestCoverageFloor_ProbedOncePerPairAcrossAliases(t *testing.T) {
-	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
-	ts := ohlcCoverageServer(t, probe)
-
+// TestCoverageFloor_ProbedOncePerConstituentFamily pins the probe's cost
+// bound: the first empty answer costs one probe per constituent family
+// and repeats under any alias spelling of the base cost nothing, so a
+// caller cannot multiply reads at will.
+func TestCoverageFloor_ProbedOncePerConstituentFamily(t *testing.T) {
 	window := "&interval=1d&from=2016-01-01T00:00:00Z&to=2016-03-01T00:00:00Z"
-	var afterFirst int
-	for i, q := range []string{
-		"/v1/ohlc?base=crypto:XLM&quote=" + usdcClassicID + window,
-		"/v1/ohlc?base=native&quote=" + usdcClassicID + window,
-		"/v1/ohlc?base=crypto:XLM&quote=" + usdcClassicID + window,
+	for _, tc := range []struct {
+		name      string
+		quote     string
+		wantFirst int
+	}{
+		// native and crypto:XLM are one asset: one probe, then free.
+		{"stablecoin_quote", usdcClassicID, 1},
+		// The direct pair plus the USD stablecoin backers the aggregator
+		// expands to (no classic pegs are configured on this server).
+		{"fiat_quote", "fiat:USD", 1 + len(aggregateUSDBackers())},
 	} {
-		if resp := mustGet(t, ts.URL+q); resp.StatusCode != http.StatusOK {
-			t.Fatalf("GET %s: status %d", q, resp.StatusCode)
-		}
-		if i == 0 {
-			afterFirst, _, _, _ = probe.snapshot()
-		}
-	}
-	if afterFirst != 1 {
-		t.Errorf("probe calls = %d after the first request, want 1", afterFirst)
-	}
-	if calls, _, _, _ := probe.snapshot(); calls != afterFirst {
-		t.Errorf("probe calls = %d across three requests for two alias spellings of one pair, want the first request's %d", calls, afterFirst)
-	}
-}
-
-// TestCoverageFloor_FiatQuoteProbesEachConstituentOnce — a fiat-quoted
-// pair is served from a constituent set, so its floor costs one probe
-// per constituent FAMILY on the first empty answer (the base's alias
-// spellings fold onto one key each) and nothing on a repeat, under any
-// spelling. This is the cost bound of the fiat case: bounded by the
-// operator's peg list plus the fixed stablecoin backers, never by the
-// caller.
-func TestCoverageFloor_FiatQuoteProbesEachConstituentOnce(t *testing.T) {
-	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
-	ts := ohlcCoverageServer(t, probe)
-
-	window := "&interval=1d&from=2016-01-01T00:00:00Z&to=2016-03-01T00:00:00Z"
-	if resp := mustGet(t, ts.URL+"/v1/ohlc?base=crypto:XLM&quote=fiat:USD"+window); resp.StatusCode != http.StatusOK {
-		t.Fatalf("status %d", resp.StatusCode)
-	}
-	first, _, _, _ := probe.snapshot()
-	// The direct pair plus the USD stablecoin backers the aggregator
-	// expands to (no classic pegs are configured on this server) — one
-	// probe each, no probe per alias spelling of the base.
-	want := 1 + len(aggregateUSDBackers())
-	if first != want {
-		t.Fatalf("probe calls = %d on the first fiat-quoted empty answer, want %d (one per constituent family)", first, want)
-	}
-	for _, q := range []string{
-		"/v1/ohlc?base=native&quote=fiat:USD" + window,
-		"/v1/ohlc?base=crypto:XLM&quote=fiat:USD" + window,
-	} {
-		if resp := mustGet(t, ts.URL+q); resp.StatusCode != http.StatusOK {
-			t.Fatalf("GET %s: status %d", q, resp.StatusCode)
-		}
-	}
-	if calls, _, _, _ := probe.snapshot(); calls != first {
-		t.Errorf("probe calls = %d after two repeats under both spellings, want %d — the memo must absorb them", calls, first)
+		t.Run(tc.name, func(t *testing.T) {
+			probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
+			ts := ohlcCoverageServer(t, probe)
+			var first int
+			for i, base := range []string{"crypto:XLM", "native", "crypto:XLM"} {
+				q := "/v1/ohlc?base=" + base + "&quote=" + tc.quote + window
+				if resp := mustGet(t, ts.URL+q); resp.StatusCode != http.StatusOK {
+					t.Fatalf("GET %s: status %d", q, resp.StatusCode)
+				}
+				if i == 0 {
+					first, _, _, _ = probe.snapshot()
+					if first != tc.wantFirst {
+						t.Fatalf("probe calls = %d after the first request, want %d", first, tc.wantFirst)
+					}
+				}
+			}
+			if calls, _, _, _ := probe.snapshot(); calls != first {
+				t.Errorf("probe calls = %d after repeats under both spellings, want %d: the memo must absorb them", calls, first)
+			}
+		})
 	}
 }
 
@@ -502,10 +473,7 @@ func TestCoverageFloor_UnwiredReaderChangesNothing(t *testing.T) {
 // surface, whose `data` is a bare array, can carry it too.
 func TestHistory_BelowCoverageFloorIsFlagged(t *testing.T) {
 	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
-	ts := httpTestServer(t, v1.New(v1.Options{
-		History:       &stubHistoryReader{},
-		CoverageFloor: probe,
-	}))
+	ts := emptyHistoryServer(t, probe)
 
 	resp := mustGet(t, ts.URL+"/v1/history?base=crypto:XLM&quote=fiat:USD"+
 		"&from=2016-01-01T00:00:00Z&to=2016-03-01T00:00:00Z")
@@ -528,10 +496,7 @@ func TestHistory_BelowCoverageFloorIsFlagged(t *testing.T) {
 // describe is not the window that was read. Neither probe nor flag.
 func TestHistory_DrainedCursorPageIsNotProbed(t *testing.T) {
 	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
-	ts := httpTestServer(t, v1.New(v1.Options{
-		History:       &stubHistoryReader{},
-		CoverageFloor: probe,
-	}))
+	ts := emptyHistoryServer(t, probe)
 
 	// One full page first, to obtain a server-minted cursor.
 	first := mustGet(t, ts.URL+"/v1/history?base=crypto:XLM&quote=fiat:USD"+
@@ -566,10 +531,7 @@ func TestHistory_DrainedCursorPageIsNotProbed(t *testing.T) {
 // held for this pair".
 func TestChart_EmptySeriesCarriesCoverageFrom(t *testing.T) {
 	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
-	ts := httpTestServer(t, v1.New(v1.Options{
-		History:       &stubHistoryReader{},
-		CoverageFloor: probe,
-	}))
+	ts := emptyHistoryServer(t, probe)
 
 	resp := mustGet(t, ts.URL+"/v1/chart?asset=crypto:XLM&quote=fiat:USD&timeframe=24h")
 	if resp.StatusCode != http.StatusOK {
@@ -628,6 +590,15 @@ func TestPriceAt_NotFoundCarriesCoverageExtensions(t *testing.T) {
 	if gap.CoverageFrom == nil || !gap.CoverageFrom.Equal(xlmCoverageFloor) {
 		t.Errorf("coverage_from = %v, want the floor echoed on the gap answer too", gap.CoverageFrom)
 	}
+}
+
+// emptyHistoryServer serves empty history reads with the probe wired.
+func emptyHistoryServer(t *testing.T, probe *coverageFloorProbe) *testServer {
+	t.Helper()
+	return httpTestServer(t, v1.New(v1.Options{
+		History:       &stubHistoryReader{},
+		CoverageFloor: probe,
+	}))
 }
 
 // priceAtMissStub always misses, which is the only path that reaches
@@ -953,10 +924,7 @@ func TestHistory_ReverseStoredMarketCarriesTheFloor(t *testing.T) {
 		// Stored as USDC/AQUA only.
 		probeKey(usdc, aqua): pegFloor2021,
 	}}
-	ts := httpTestServer(t, v1.New(v1.Options{
-		History:       &stubHistoryReader{},
-		CoverageFloor: probe,
-	}))
+	ts := emptyHistoryServer(t, probe)
 	const window = "&from=2019-01-01T00:00:00Z&to=2019-02-01T00:00:00Z"
 
 	getHistory := func(t *testing.T, pairQS string) coverageMeta {
@@ -1124,8 +1092,7 @@ func fiatSeriesGet(t *testing.T, ts *testServer, base string) fiatSeriesEnvelope
 
 // assertSACQuotedSeriesReadLast is the series twin of the ordering
 // [assertNoSACQuotedRead] pins on the point side. The fiat combine DOES read a declared peg's SAC wrapper — that is
-// where a Soroban pool's USD leg lives, and 43 assets on r1 have depth
-// under no other spelling — but it must read every established spelling
+// where a Soroban pool's USD leg lives — but it must read every established spelling
 // of every family FIRST, because a held-back bar is admitted only into a
 // bucket none of them answered. Interleaving the two would let one
 // family's thin pool be consulted before another family's deep book.
@@ -1164,10 +1131,7 @@ func assertSACQuotedSeriesReadLast(t *testing.T, reads []string) {
 // book cannot answer it and the alternative is reporting a day the
 // market traded as quiet.
 //
-// Before 1.15 the second bar was absent and this fixture pinned that:
-// the pool was never read at all, so a bucket only it could answer was
-// served as nothing. The guarantee that survived unchanged is the
-// per-bucket one — see the day-1 assertions.
+// The per-bucket guarantee is the day-1 assertions.
 func TestOHLCSeries_FiatQuoteBookOutranksSACQuotedPool(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	day1 := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1263,8 +1227,7 @@ func TestOHLCSeries_XLMBookOutranksSACQuotedPool(t *testing.T) {
 // One market, AQUA quoted in the USDC SAC, with a daily bar inside the
 // window; the declared peg is classic USDC. No established spelling
 // holds a bucket, so every bucket is unanswered and the held-back
-// spelling fills them: the series serves the pool's bar. This was
-// `intervals: []` before, the state 43 assets on r1 were in.
+// spelling fills them: the series serves the pool's bar.
 //
 // A populated answer carries no coverage annotation at all — the floor
 // exists to explain an empty one — so the probe must not run here. The
@@ -1305,11 +1268,6 @@ func TestOHLCSeries_SACQuotedOnlyDepthIsServed(t *testing.T) {
 // BEFORE the requested window, so the series is genuinely empty, and the
 // floor must now name the pool's first bucket: the combine reads that
 // market, so a floor measured over it is a claim this surface can keep.
-//
-// Before 1.15 naming it would have been wrong — the read could not serve
-// the market the floor described, so `outside_coverage` had to stay
-// silent rather than report "quiet" about a window the pool traded
-// through. Widening the read is what makes the wider floor honest.
 func TestOHLCSeries_SACQuotedDepthOutsideTheWindowStillCarriesItsFloor(t *testing.T) {
 	usdc := installUSDCSACRegistry(t)
 	aqua := mustParseAsset(t, aquaClassicID)
