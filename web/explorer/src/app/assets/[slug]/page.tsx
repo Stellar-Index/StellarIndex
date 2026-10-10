@@ -738,7 +738,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   // slug, so the sentinel arrives as shell/SHELL too.
   if (slug.toLowerCase() === 'shell') {
     return (
-      <Container className="space-y-8 py-8 sm:py-10">
+      <Container className="space-y-6 py-8">
         <Suspense fallback={null}>
           <AssetPathView />
         </Suspense>
@@ -783,7 +783,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     // CI stub only: render the client-side fallback so the
     // networkless export still hydrates and retries from the browser.
     return (
-      <Container className="space-y-8 py-8 sm:py-10">
+      <Container className="space-y-6 py-8">
         <PageHeader
           breadcrumbs={[{ label: 'Assets', href: '/assets' }, { label: slug }]}
           title={slug}
@@ -866,7 +866,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
       ? assetIDParts[1]
       : null;
   return (
-    <Container className="space-y-8 py-8 sm:py-10">
+    <Container className="space-y-6 py-8">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(faqLD) }}
@@ -1605,7 +1605,7 @@ function VerifiedCurrencyView({
   const chartAssetID = isFiat ? `fiat:${view.ticker}` : null;
   const priceNum = view.price_usd ? Number(view.price_usd) : null;
   return (
-    <Container className="space-y-8 py-8 sm:py-10">
+    <Container className="space-y-6 py-8">
       <header className="space-y-3">
         <PageHeader
           breadcrumbs={[

@@ -79,7 +79,7 @@ export function ExchangesView() {
   const totalMarkets = rows.reduce((s, r) => s + (r.markets_count_24h ?? 0), 0);
 
   return (
-    <Container className="space-y-8 py-8 sm:py-10">
+    <Container className="space-y-6 py-8">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Exchanges' }]}
         title="Exchanges"

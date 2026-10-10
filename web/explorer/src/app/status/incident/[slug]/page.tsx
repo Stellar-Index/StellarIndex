@@ -76,7 +76,7 @@ export default async function IncidentPage({
         : 'warn';
 
   return (
-    <Container className="max-w-4xl space-y-6 py-10">
+    <Container className="max-w-4xl space-y-6 py-8">
       <PageHeader
         breadcrumbs={[
           { label: 'Home', href: '/' },

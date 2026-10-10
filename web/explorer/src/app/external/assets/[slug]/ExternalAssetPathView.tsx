@@ -35,7 +35,7 @@ export function ExternalAssetPathView() {
   const notTracked = /^4\d\d\b/.test(q.error?.message ?? '');
 
   return (
-    <Container className="space-y-8 py-8 sm:py-10">
+    <Container className="space-y-6 py-8">
       <PageHeader
         breadcrumbs={[
           { label: 'Home', href: '/' },

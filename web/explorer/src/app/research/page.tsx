@@ -40,7 +40,7 @@ export default function ResearchPage() {
   }
 
   return (
-    <Container className="space-y-10 py-8">
+    <Container className="space-y-6 py-8">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Research' }]}
         title="Research"

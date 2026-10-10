@@ -73,7 +73,7 @@ export function ContractsView() {
   const [view, setView] = useState<'active' | 'registry'>('active');
 
   return (
-    <Container className="space-y-8 py-8 sm:py-10">
+    <Container className="space-y-6 py-8">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Contracts' }]}
         title="Contracts"

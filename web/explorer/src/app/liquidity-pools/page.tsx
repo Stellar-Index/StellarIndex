@@ -21,7 +21,7 @@ export const metadata: Metadata = {
 
 export default function LiquidityPoolsPage() {
   return (
-    <Container className="space-y-8 py-8 sm:py-10">
+    <Container className="space-y-6 py-8">
       {/* Prose stays reading-width; the live pools data below gets the full frame
           (frame wide, copy narrow — the /pricing pattern). */}
       <div className="max-w-3xl space-y-8">
