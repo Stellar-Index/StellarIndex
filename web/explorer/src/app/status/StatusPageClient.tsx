@@ -1434,7 +1434,7 @@ function EndpointMatrix({
       <div className="space-y-5">
         {grouped.map(([group, eps]) => (
           <div key={group}>
-            <h3 className="text-ink-faint mb-2 text-[11px] font-semibold tracking-wider uppercase">
+            <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
               {group}
             </h3>
             <Card flat className="overflow-x-auto">
@@ -2274,7 +2274,7 @@ function BackfillCoverageTable({
   return (
     <div>
       <div className="mb-2 flex items-baseline justify-between">
-        <h3 className="text-ink-faint text-[11px] font-semibold tracking-wider uppercase">
+        <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
           Ingest coverage — genesis → tip
         </h3>
         <span
@@ -2497,7 +2497,7 @@ function SourceHealthTable({ rows }: { rows: IngestionSnapshot['sources'] }) {
   if (safeRows.length === 0) return null;
   return (
     <div>
-      <h3 className="text-ink-faint mb-2 text-[11px] font-semibold tracking-wider uppercase">
+      <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
         Sources — {safeRows.length} registered
       </h3>
       <SourceVolumeCharts rows={safeRows} />
@@ -2583,7 +2583,7 @@ function Panel({
 }) {
   return (
     <div className="border-line bg-surface-muted rounded-lg border p-4">
-      <h3 className="text-ink-faint mb-2 flex items-center justify-between gap-2 text-[11px] font-semibold tracking-wider uppercase">
+      <h3 className="text-ink-muted mb-2 flex items-center justify-between gap-2 text-[11px] font-semibold tracking-wider uppercase">
         <span>{title}</span>
         {accessory}
       </h3>

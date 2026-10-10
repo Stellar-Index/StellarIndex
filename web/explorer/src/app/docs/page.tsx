@@ -189,7 +189,7 @@ export default function DocsPage() {
         <div className="space-y-6">
           {ENDPOINTS.map((g) => (
             <div key={g.group} className="space-y-2">
-              <h3 className="text-brand-600 text-sm font-semibold tracking-wider uppercase">
+              <h3 className="text-ink-muted text-brand-600 text-[11px] font-semibold tracking-wider uppercase">
                 {g.group}
               </h3>
               <dl className="divide-line border-line divide-y rounded-lg border">

@@ -83,7 +83,7 @@ export function PremiumBars({ assets }: { assets: PremiumAsset[] }) {
   if (buckets.length < 2) return null;
   return (
     <div className="border-line-subtle border-b px-4 pb-4">
-      <h3 className="text-ink-muted mb-2 text-[11px] tracking-wider uppercase">
+      <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
         Premium or discount now
       </h3>
       <DivergingColumns
