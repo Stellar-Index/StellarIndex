@@ -23,6 +23,7 @@ import { ConcentrationDonut } from '../ConcentrationDonut';
 import {
   type Envelope,
   stroopsToXlm,
+  xlmReadable,
   formatTimestamp,
 } from '../../explorer-shared';
 
@@ -208,12 +209,16 @@ export function CreatorBoard() {
                   <Td align="right">
                     {c.accounts_created.toLocaleString('en-US')}
                   </Td>
-                  <Td align="right">{stroopsToXlm(c.funded_stroops)}</Td>
+                  <Td align="right" title={stroopsToXlm(c.funded_stroops)}>
+                    {xlmReadable(c.funded_stroops)}
+                  </Td>
                   <Td align="right">
                     {c.live_accounts.toLocaleString('en-US')}
                   </Td>
                   <Td align="right">{survivalPct(c)}</Td>
-                  <Td align="right">{stroopsToXlm(c.live_stroops)}</Td>
+                  <Td align="right" title={stroopsToXlm(c.live_stroops)}>
+                    {xlmReadable(c.live_stroops)}
+                  </Td>
                   <Td align="right">{formatTimestamp(c.last_created_at)}</Td>
                 </TR>
               ))}

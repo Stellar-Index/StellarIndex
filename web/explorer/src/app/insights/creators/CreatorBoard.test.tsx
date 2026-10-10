@@ -82,6 +82,7 @@ describe('CreatorBoard', () => {
     expect(table.getByText('4.0%')).toBeInTheDocument();
     // Stroops render as XLM through the BigInt path, never Number().
     expect(table.getByText('529,069')).toBeInTheDocument();
+    expect(table.getByText('7,172')).toHaveAttribute('title', '7,172.1284463');
   });
 
   it('charts created against still-live for each top creator', async () => {

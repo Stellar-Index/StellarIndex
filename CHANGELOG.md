@@ -20,6 +20,34 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.111.0] — 2026-10-10
+
+104 commits since v0.110.0. No migrations, no `pkg/*` break. Removed config keys no deployment sets (#3119, #3120).
+
+### Added
+
+- **api:** account trades carry `base_decimals`/`quote_decimals`; Blend positions carry `decimals` (#3165, #3166).
+- **web:** native liquidity pool pages, external-asset price charts, contract state-archival verdict, ledger page charts with CSV/JSON export (#3136, #3139, #3135, #3132).
+- **web:** CSV/JSON download on panels, the RWA set, the MEV feed and freeze timeline, and `/network` (#3128, #3146, #3145, #3144).
+- **web:** status page 90-day incident strip and backup age-vs-SLO bars; latest-ledgers close gap; `/operations` type filter; verified-currency chips on `/assets` (#3149, #3148, #3147, #3141, #3137).
+- **web:** tx page shows fee bumps, the failing op and memo type; protocol pages link website, docs and source; muxed M- and C-addresses route (#3129, #3131, #3127).
+
+### Fixed
+
+- **api,web:** oracle feeds named by the classic asset their SAC wraps (#3134).
+- **web:** same-code pool sides told apart and linked by issuer (#3140, #3133); duplicate SDEX volume chart dropped (#3142); XLM `total_coins` labelled as a counter (#3138).
+- **ops:** projected-rebuild stays inside the ClickHouse query budget (#3125).
+- **ansible:** the core auto-upgrade apt update is scoped to SDF's list (#3091).
+
+### Changed
+
+- **web:** figures render at a readable precision with the exact value on hover (#3159–#3166); XLM is "Stellar Lumens", never "native" (#3155).
+- **web:** page descriptions, eyebrows and long explainers cut; one style for section headings and panel labels; one "External references" footer (#3150–#3158, #3130, #3126).
+- **ops:** ClickHouse and Postgres ZFS snapshots keep one day (#3167).
+- **config:** unset `[divergence]` tuning keys and worker tuning keys removed; unused service flags hardcoded (#3119, #3120, #3124).
+- **ops:** `backfill-router`, `backfill-index`, `sdex-claim-audit`, the CoinGecko historical-backfill path, unreferenced scripts and 18 Makefile targets deleted (#3115, #3118, #3121–#3123).
+- **test:** split test subjects consolidated, doc-prose pins dropped, go/ast tests frozen by a shrink-only baseline (#3062–#3114).
+
 ## [v0.110.0] — 2026-10-10
 
 84 commits since v0.109.0. Two migrations (0213, 0214). No `pkg/*` break.
@@ -96,42 +124,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 ### Changed
 
 - Go bumped to 1.27.2 and golang.org/x/net to v0.60.0 (#2899).
-
-## [v0.106.0] — 2026-10-08
-
-336 commits since v0.105.0. Five migrations (0208–0212), all additive. No `pkg/*` break; `pkg/client` gains `volume_lower_bound` fields.
-
-### Migrations
-
-- **0208:** `freeze_events.released_by` records who closed a freeze (#2391).
-- **0209:** `oracle_updates.published_price` keeps the publisher's integer for inverted feeds (#2420).
-- **0210:** `spectra_events` and `spectra_markets` hypertables (#2516).
-- **0211:** `cagg_late_refresh_windows` persists the late-trade cagg refresh window (#2531).
-- **0212:** `asset_volume_24h.unpriced_trades` (#2599).
-
-### Added
-
-- **spectra:** new source — factory-anchored decoder, tables, projector wiring and replay audit (#2516, #2520, #2537, #2544).
-- **api:** `GET /v1/assets/{asset_id}/movements`, with CSV on `Accept: text/csv` (#2555, #2593); `GET /v1/ledgers/at` resolves a timestamp to its ledger (#2587, #2590); `/v1/operations` filters by operation type (#2580); `If-None-Match` answered with 304 via a body-hash ETag (#2528).
-- **coverage:** USD volume pricing coverage published as its own axis (#2495).
-- **indexer:** each hashdb sweep re-verifies a random slice of older history (#2452).
-- **pipeline:** rozo promoted to projector sole writer (#2567).
-- **ops:** disk-gated ordinal re-derive wrapper and `ch-backfill -changes-only` (#2511); non-forced `trades-cagg-refresh` (#2532); DNS cutover gated on the USD volume pricing bars (#2525); every bespoke writer behind the shared `-write` gate (#2551, #2597, #2661).
-- **wasmaudit:** blend V1 factory, 40 phoenix and 22 aquarius WASMs audited for replay (#2719, #2721, #2732).
-- **web:** thin-market prices carry a low-confidence badge (#2660).
-- **alerts:** ticket when a node has needed a reboot for 7 days (#2581).
-
-### Fixed
-
-- **volume:** XLM legs and per-venue/Soroban volume valued at trade time, not today's price (#2498, #2512, #2527, #2540); listing and detail 24h volume flagged as a lower bound when trades went unpriced (#2599).
-- **canonical:** the native XLM SAC and alias baseline derive from the installed network (#2428, #2432, #2585, #2586).
-- **ingest:** trades caggs refreshed over trades written past a policy's lookback (#2492, #2531, #2571).
-- **api:** `as_of` stamped with the cache fill time (#2534, #2570); idempotency replay never carries stored CORS headers (#2598); CORS wildcard+credentials rejected at config load (#2402).
-- **external:** coinbase, kraken, binance and bitstamp candles parsed exactly or the page fails (#2562, #2566); kraken REST pair param (#2395).
-- **ops:** backfills record projection dirty windows (#2411, #2449); backfill-router gated on WASM audits (#2450); chunk restamp lock budget charges waiting only (#2417); verify-archive tier D measures self coverage from `history/` (#2722).
-- **ansible:** needrestart is list-only, so security upgrades no longer restart Postgres (#2579); TimescaleDB pinned to the test-harness version (#2487).
-- **security:** unused anonymous registrations are erased (#2418).
-
-### Changed
-
-- 177 documentation commits strip history notes from comments and docs.

@@ -37,6 +37,33 @@ describe('AssetPathView', () => {
     expect(container.firstElementChild?.children.length).toBeGreaterThan(0);
   });
 
+  it.each([
+    ['/assets/crypto:BTC', '/external/assets/btc/'],
+    ['/assets/raw:BTC', '/oracles/'],
+  ])('sends %s to %s instead of querying /v1/assets', (path, target) => {
+    const replace = vi.fn();
+    const loc = window.location;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { pathname: path, replace },
+    });
+    vi.mocked(apiGet).mockClear();
+    try {
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <AssetPathView />
+        </QueryClientProvider>,
+      );
+      expect(replace).toHaveBeenCalledWith(target);
+      expect(apiGet).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: loc,
+      });
+    }
+  });
+
   it('does not throw on a malformed percent-escape segment', () => {
     expect(() => renderAtPath('/assets/USDT%ZZ')).not.toThrow();
   });

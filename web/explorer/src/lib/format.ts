@@ -254,6 +254,13 @@ export function formatPairPrice(n: number | string): string {
         : formatSubunitPrice(n);
 }
 
+/** formatFractionPrice — a Stellar offer's n/d price at pair-price precision. */
+export function formatFractionPrice(n: number, d: number): string {
+  if (!Number.isSafeInteger(n) || n < 0) return '—';
+  const q = divideDecimalString(String(n), d, 12);
+  return q == null ? '—' : formatPairPrice(q);
+}
+
 // formatOraclePrice — the oracle-reading price column (/oracles and the
 // per-asset oracle panel). Takes the wire STRING so a value the
 // API sent but JS cannot parse renders verbatim rather than as '—': an

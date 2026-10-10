@@ -20,6 +20,7 @@ import {
   TR,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
+import { baseUnitsDecimal, formatUnitsReadable } from '@/lib/format';
 import type { components } from '@/api/types';
 import { type Envelope, formatTimestamp } from '../explorer-shared';
 
@@ -230,6 +231,26 @@ function ProtocolGroup({
   );
 }
 
+// Unscaled when the API names no scale: those units are unconfirmed.
+export function PositionAmount({
+  amount,
+  decimals,
+}: {
+  amount: string;
+  decimals?: number;
+}) {
+  if (amount === '') return <>—</>;
+  if (decimals == null) return <>{amount}</>;
+  const scaled = baseUnitsDecimal(amount, decimals);
+  const exact =
+    scaled == null
+      ? amount
+      : decimals > 0
+        ? scaled.replace(/\.?0+$/, '')
+        : scaled;
+  return <span title={exact}>{formatUnitsReadable(amount, decimals)}</span>;
+}
+
 function PositionRow({ p }: { p: AccountPosition }) {
   const semanticsLabel =
     SEMANTICS_LABEL[p.amount_semantics] ?? p.amount_semantics;
@@ -263,7 +284,7 @@ function PositionRow({ p }: { p: AccountPosition }) {
         className="font-mono"
         title={`${semanticsLabel} · ${basisLabel} (${p.amount_semantics} — ${p.basis})`}
       >
-        {p.amount === '' ? '—' : p.amount}
+        <PositionAmount amount={p.amount} decimals={p.decimals} />
       </Td>
       <Td>
         <div className="text-ink-muted text-xs whitespace-nowrap">

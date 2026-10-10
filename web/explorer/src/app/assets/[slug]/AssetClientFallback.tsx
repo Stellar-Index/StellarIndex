@@ -5,6 +5,7 @@ import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
 import { API_BASE_URL } from '@/api/client';
+import { offChainAssetHref } from '@/lib/assetRoute';
 
 // AssetClientFallback — re-fetches /v1/assets/{slug} from the
 // browser when the build-time fetch failed. Cloudflare Pages
@@ -31,6 +32,11 @@ export function AssetClientFallback({ slug }: { slug: string }) {
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
   useEffect(() => {
+    const offChain = offChainAssetHref(slug);
+    if (offChain) {
+      window.location.replace(offChain);
+      return;
+    }
     const controller = new AbortController();
     fetch(`${API_BASE_URL}/v1/assets/${encodeURIComponent(slug)}`, {
       signal: controller.signal,
