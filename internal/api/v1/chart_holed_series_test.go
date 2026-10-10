@@ -143,18 +143,26 @@ func (s *chartOHLCStore) LatestTradePerSource(
 // `crypto:XLM/fiat:USD` series holds the first ten and last five, the Soroban
 // `<XLM SAC>/<USDC SAC>` pool the 25 between.
 func holedFlagshipStore() *chartOHLCStore {
-	cex := map[time.Time]string{}
-	for _, n := range holedCEXDays() {
-		cex[holedDay(n)] = holedCEXPrice
-	}
-	pool := map[time.Time]string{}
-	for _, n := range holedPoolDays() {
-		pool[holedDay(n)] = holedPoolPrice
-	}
 	return newChartOHLCStore(map[string]map[time.Time]string{
-		"crypto:XLM/fiat:USD":                              cex,
-		canonical.XLMSacContractID + "/" + pegAliasUSDCSAC: pool,
+		"crypto:XLM/fiat:USD":                              holedAt(holedCEXPrice, holedCEXDays()),
+		canonical.XLMSacContractID + "/" + pegAliasUSDCSAC: holedAt(holedPoolPrice, holedPoolDays()),
 	})
+}
+
+// holedCEXOnlyStore holds just the CEX spelling, leaving the 25-day break.
+func holedCEXOnlyStore() *chartOHLCStore {
+	return newChartOHLCStore(map[string]map[time.Time]string{
+		"crypto:XLM/fiat:USD": holedAt(holedCEXPrice, holedCEXDays()),
+	})
+}
+
+// holedAt prices each days-ago offset in days.
+func holedAt(price string, days []int) map[time.Time]string {
+	out := map[time.Time]string{}
+	for _, n := range days {
+		out[holedDay(n)] = price
+	}
+	return out
 }
 
 // holedCEXDays / holedPoolDays are disjoint days-ago offsets covering 40..1.
@@ -208,6 +216,29 @@ func chartPriceByDay(env chartEnvelope) map[time.Time]string {
 		out[p.T.Time().UTC()] = p.P
 	}
 	return out
+}
+
+type sinceInceptionBody struct {
+	Data struct {
+		Points        []struct{}   `json:"points"`
+		Discontinuous bool         `json:"discontinuous"`
+		GapStartsAt   *v1.WireTime `json:"gap_starts_at"`
+		GapEndsAt     *v1.WireTime `json:"gap_ends_at"`
+	} `json:"data"`
+	Flags v1.Flags `json:"flags"`
+}
+
+func getSinceInception(t *testing.T, ts *testServer) sinceInceptionBody {
+	t.Helper()
+	resp := mustGet(t, ts.URL+"/v1/history/since-inception?asset=native&quote=fiat:USD&granularity=1d")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body sinceInceptionBody
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	return body
 }
 
 const holedChartQ = "/v1/chart?asset=native&quote=fiat:USD&timeframe=1y&granularity=1d"
@@ -351,30 +382,33 @@ func TestChart_ABucketRendersTheSameInEveryWindow(t *testing.T) {
 	}
 }
 
-// A series with a hole says so on the wire. `timeframe=all` never raises
-// `truncated`, so without this signal a five-year hole has no marker.
-func TestChart_DiscontinuousSignal(t *testing.T) {
-	cex := map[time.Time]string{}
-	for _, n := range holedCEXDays() {
-		cex[holedDay(n)] = holedCEXPrice
+// requireHoleDeclared asserts a series over the CEX-only store names its
+// 25-day break.
+func requireHoleDeclared(t *testing.T, points int, discontinuous bool, start, end *v1.WireTime) {
+	t.Helper()
+	if !discontinuous {
+		t.Fatalf("discontinuous = false over %d points spanning a 25-day break", points)
 	}
-	ts := holedServer(t, newChartOHLCStore(map[string]map[time.Time]string{"crypto:XLM/fiat:USD": cex}))
-
-	env := getChart(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&timeframe=all&granularity=1d")
-	if !env.Data.Discontinuous {
-		t.Fatalf("discontinuous = false over %d points spanning a 25-day break", len(env.Data.Points))
-	}
-	if env.Data.GapStartsAt == nil || env.Data.GapEndsAt == nil {
+	if start == nil || end == nil {
 		t.Fatal("gap_starts_at / gap_ends_at not populated on a discontinuous series")
 	}
-	if got, want := env.Data.GapStartsAt.Time().UTC(), holedDay(31); !got.Equal(want) {
+	if got, want := start.Time().UTC(), holedDay(31); !got.Equal(want) {
 		t.Errorf("gap_starts_at = %s, want %s (last bucket before the break)",
 			got.Format(time.RFC3339), want.Format(time.RFC3339))
 	}
-	if got, want := env.Data.GapEndsAt.Time().UTC(), holedDay(5); !got.Equal(want) {
+	if got, want := end.Time().UTC(), holedDay(5); !got.Equal(want) {
 		t.Errorf("gap_ends_at = %s, want %s (first bucket after it)",
 			got.Format(time.RFC3339), want.Format(time.RFC3339))
 	}
+}
+
+// A series with a hole says so on the wire. `timeframe=all` never raises
+// `truncated`, so without this signal a five-year hole has no marker.
+func TestChart_DiscontinuousSignal(t *testing.T) {
+	ts := holedServer(t, holedCEXOnlyStore())
+
+	env := getChart(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&timeframe=all&granularity=1d")
+	requireHoleDeclared(t, len(env.Data.Points), env.Data.Discontinuous, env.Data.GapStartsAt, env.Data.GapEndsAt)
 	if env.Data.Truncated {
 		t.Error("truncated = true; `timeframe=all` never raises it, which is why the gap signal exists")
 	}
@@ -427,20 +461,7 @@ func TestChartMarketCap_HoledPriceLegReachesTheProxyWalk(t *testing.T) {
 func TestHistorySinceInception_HoledSeriesReachesTheProxyWalk(t *testing.T) {
 	ts := holedServer(t, holedFlagshipStore())
 
-	resp := mustGet(t, ts.URL+"/v1/history/since-inception?asset=native&quote=fiat:USD&granularity=1d")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	var env struct {
-		Data struct {
-			Points        []struct{} `json:"points"`
-			Discontinuous bool       `json:"discontinuous"`
-		} `json:"data"`
-		Flags v1.Flags `json:"flags"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatal(err)
-	}
+	env := getSinceInception(t, ts)
 	if got := len(env.Data.Points); got != 40 {
 		t.Fatalf("points = %d, want 40 — since-inception must serve the pool's buckets too", got)
 	}
@@ -455,76 +476,58 @@ func TestHistorySinceInception_HoledSeriesReachesTheProxyWalk(t *testing.T) {
 // since-inception carries the same gap signal rather than asserting a
 // continuity it does not have.
 func TestHistorySinceInception_DeclaresItsOwnHole(t *testing.T) {
-	cex := map[time.Time]string{}
-	for _, n := range holedCEXDays() {
-		cex[holedDay(n)] = holedCEXPrice
-	}
-	ts := holedServer(t, newChartOHLCStore(map[string]map[time.Time]string{"crypto:XLM/fiat:USD": cex}))
-
-	resp := mustGet(t, ts.URL+"/v1/history/since-inception?asset=native&quote=fiat:USD&granularity=1d")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	var env struct {
-		Data struct {
-			Points        []struct{} `json:"points"`
-			Discontinuous bool       `json:"discontinuous"`
-			GapStartsAt   *time.Time `json:"gap_starts_at"`
-			GapEndsAt     *time.Time `json:"gap_ends_at"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		t.Fatal(err)
-	}
-	if !env.Data.Discontinuous {
-		t.Fatalf("discontinuous = false over %d points spanning a 25-day break", len(env.Data.Points))
-	}
-	if got, want := env.Data.GapStartsAt.UTC(), holedDay(31); !got.Equal(want) {
-		t.Errorf("gap_starts_at = %s, want %s", got.Format(time.RFC3339), want.Format(time.RFC3339))
-	}
-	if got, want := env.Data.GapEndsAt.UTC(), holedDay(5); !got.Equal(want) {
-		t.Errorf("gap_ends_at = %s, want %s", got.Format(time.RFC3339), want.Format(time.RFC3339))
-	}
+	env := getSinceInception(t, holedServer(t, holedCEXOnlyStore()))
+	requireHoleDeclared(t, len(env.Data.Points), env.Data.Discontinuous, env.Data.GapStartsAt, env.Data.GapEndsAt)
 }
 
-// The declared peg's own dollar series has no observed market under any
-// spelling, so the chart derives it through XLM (/v1/ohlc serves nothing for
-// it). The merge must leave that route last, whole-series, and reached only
-// when nothing observed answered.
-func TestChart_DerivedXLMCrossSurvivesTheMerge(t *testing.T) {
-	ts := holedServer(t, newChartOHLCStore(map[string]map[time.Time]string{
-		pegAliasUSDCClassic + "/native": {holedDay(3): "6.2500000000", holedDay(2): "6.2500000000"},
-		"crypto:XLM/fiat:USD":           {holedDay(3): holedCEXPrice, holedDay(2): holedCEXPrice},
-	}))
+// Series carried by a proxy route keep every bucket and say they were
+// triangulated. The declared peg's own dollar series has no observed market
+// under any spelling, so the chart derives it through XLM (/v1/ohlc serves
+// nothing for it); the merge must leave that route last, whole-series, and
+// reached only when nothing observed answered. An asset whose whole series
+// comes from a proxy quote (AQUA, yXLM on production) keeps every bucket.
+func TestChart_ProxyRoutedSeriesSurviveTheMerge(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		asset      string
+		series     map[string]map[time.Time]string
+		wantPoints int
+		wantPrice  string // every point, when set
+	}{
+		{
+			"derived XLM cross", pegAliasUSDCClassic,
+			map[string]map[time.Time]string{
+				pegAliasUSDCClassic + "/native": {holedDay(3): "6.2500000000", holedDay(2): "6.2500000000"},
+				"crypto:XLM/fiat:USD":           {holedDay(3): holedCEXPrice, holedDay(2): holedCEXPrice},
+			},
+			2,
+			// 6.25 XLM per USDC x $0.16 per XLM = $1.00.
+			"1.0000000000",
+		},
+		{
+			"proxy-only asset", pegAliasAquaClassic,
+			map[string]map[time.Time]string{
+				pegAliasAquaClassic + "/" + pegAliasUSDCSAC: holedDays("0.0041000000", 5, 1),
+			},
+			5, "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := holedServer(t, newChartOHLCStore(tc.series))
 
-	env := getChart(t, ts.URL+"/v1/chart?asset="+pegAliasUSDCClassic+"&quote=fiat:USD&timeframe=1y&granularity=1d")
-	if got := len(env.Data.Points); got != 2 {
-		t.Fatalf("points = %d, want 2 — the XLM cross is the only route to this series and must survive", got)
-	}
-	if !env.Flags.Triangulated {
-		t.Error("flags.triangulated = false on a derived series")
-	}
-	// 6.25 XLM per USDC × $0.16 per XLM = $1.00.
-	for _, p := range env.Data.Points {
-		if p.P != "1.0000000000" {
-			t.Errorf("derived point = %q, want 1.0000000000", p.P)
-		}
-	}
-}
-
-// An asset whose whole series comes from a proxy quote (AQUA, yXLM on
-// production) keeps every bucket.
-func TestChart_ProxyOnlyAssetKeepsItsSeries(t *testing.T) {
-	ts := holedServer(t, newChartOHLCStore(map[string]map[time.Time]string{
-		pegAliasAquaClassic + "/" + pegAliasUSDCSAC: holedDays("0.0041000000", 5, 1),
-	}))
-
-	env := getChart(t, ts.URL+"/v1/chart?asset="+pegAliasAquaClassic+"&quote=fiat:USD&timeframe=1y&granularity=1d")
-	if got := len(env.Data.Points); got != 5 {
-		t.Fatalf("points = %d, want 5 — every bucket of a proxy-only asset stays served", got)
-	}
-	if !env.Flags.Triangulated {
-		t.Error("flags.triangulated = false on a series served entirely through the peg")
+			got := getChart(t, ts.URL+"/v1/chart?asset="+tc.asset+"&quote=fiat:USD&timeframe=1y&granularity=1d")
+			if n := len(got.Data.Points); n != tc.wantPoints {
+				t.Fatalf("points = %d, want %d — the proxy route is the only way to this series", n, tc.wantPoints)
+			}
+			if !got.Flags.Triangulated {
+				t.Error("flags.triangulated = false on a series served through a proxy route")
+			}
+			for _, p := range got.Data.Points {
+				if tc.wantPrice != "" && p.P != tc.wantPrice {
+					t.Errorf("derived point = %q, want %s", p.P, tc.wantPrice)
+				}
+			}
+		})
 	}
 }
 
