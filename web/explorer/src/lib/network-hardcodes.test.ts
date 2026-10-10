@@ -35,7 +35,6 @@ import { describe, expect, it, vi } from 'vitest';
 // 30 s leaves a genuine hang failing.
 vi.setConfig({ testTimeout: 30_000 });
 
-
 const SRC = join(__dirname, '..');
 
 /**
@@ -77,7 +76,10 @@ const ALLOWED = new Map<string, string>([
   ['app/dashboard/page.tsx', 'mainnet-only surface'],
   // Byte-for-byte mirror of public/_headers' CSP, which names every
   // network's API origin (mainnet, testnet, futurenet) in connect-src.
-  ['../functions/_shared/shellFallback.js', 'CSP mirror of public/_headers; lists all networks'],
+  [
+    '../functions/_shared/shellFallback.js',
+    'CSP mirror of public/_headers; lists all networks',
+  ],
 ]);
 
 /**
@@ -124,9 +126,8 @@ function offenders(pattern: RegExp): string[] {
 
 describe('no mainnet hardcodes in explorer source', () => {
   it('never links to stellar.expert with a fixed network segment', () => {
-    // Must go through stellarExpertUrl()/StellarExpertLink, which resolve the
-    // segment per network and render nothing where stellar.expert has no
-    // explorer for this network (futurenet).
+    // Must go through stellarExpertUrl(), which resolves the segment per
+    // network and returns null where stellar.expert has no explorer (futurenet).
     expect(offenders(/stellar\.expert\/explorer\/(public|testnet)\b/)).toEqual(
       [],
     );
@@ -145,6 +146,11 @@ describe('no mainnet hardcodes in explorer source', () => {
     // issuers page had exactly this and the first version of this guard
     // missed it, because the guard only knew about stellar.expert.
     expect(offenders(/https:\/\/stellarchain\.io/)).toEqual([]);
+  });
+
+  it('never hardcodes the mainnet steexp.com origin', () => {
+    // steexp hosts all three networks; go through steexpEntityUrl().
+    expect(offenders(/https:\/\/steexp\.com/)).toEqual([]);
   });
 
   it('never hardcodes the mainnet API origin', () => {

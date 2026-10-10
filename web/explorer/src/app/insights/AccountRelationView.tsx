@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { Container, PageHeader, Stat } from '@/components/ui';
-import { StellarExpertLink } from '@/components/StellarExpertLink';
+import { CrossReference } from '@/components/CrossReference';
 import { apiGet, asExample, type Envelope } from '@/api/client';
 import { truncateMiddle } from '@/lib/format';
 import type { components } from '@/api/types';
@@ -165,13 +165,6 @@ export function AccountRelationView({
               {numFmt.format(otherCount)} accounts →
             </Link>
           )}
-          <StellarExpertLink
-            kind="account"
-            id={account}
-            className="text-ink-muted hover:text-brand-600 hover:underline"
-          >
-            stellar.expert ↗
-          </StellarExpertLink>
         </div>
       </header>
 
@@ -332,6 +325,7 @@ export function AccountRelationView({
           account page rather than reimplemented: one portfolio reader,
           one set of pricing rules. */}
       <AccountPositions id={account} />
+      <CrossReference kind="account" id={account} />
     </Container>
   );
 }

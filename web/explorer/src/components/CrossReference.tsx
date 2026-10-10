@@ -1,23 +1,20 @@
-// CrossReference — one short line pointing at the other Stellar explorers.
-//
-// Replaces the scatter of inline "view on stellar.expert" links that would
-// sit mid-content on asset, account, contract and issuer pages. Those read as
-// though StellarIndex were deferring to a third party for the data it was
-// itself displaying; a single, quiet line at the foot of the page is the
-// honest amount of deference — the reader can cross-check, without being
-// pushed off the page mid-sentence.
-//
-// Network-aware on both targets. stellar.expert has no futurenet explorer, so
-// on futurenet only stellarchain.io is offered rather than a link that would
-// silently land the reader on the wrong chain.
-import { stellarChainEntityUrl, stellarExpertUrl } from '@/lib/networks';
+// CrossReference — one quiet "External references" line at the foot of an
+// entity page, never mid-content. Each target is network-aware; a target with
+// no explorer (or no verified route) for this entity on this network is
+// omitted rather than linked wrongly.
+import {
+  stellarChainEntityUrl,
+  stellarExpertUrl,
+  steexpEntityUrl,
+} from '@/lib/networks';
 
-/** Our entity kind → each explorer's own path segment. */
+/** Our entity kind → each explorer's own path segment (null = no route). */
 const KINDS = {
-  tx: { expert: 'tx', chain: 'transactions' },
-  account: { expert: 'account', chain: 'accounts' },
-  contract: { expert: 'contract', chain: 'contracts' },
-  asset: { expert: 'asset', chain: null },
+  tx: { expert: 'tx', chain: 'transactions', steexp: 'tx' },
+  account: { expert: 'account', chain: 'accounts', steexp: 'account' },
+  contract: { expert: 'contract', chain: 'contracts', steexp: 'contract' },
+  asset: { expert: 'asset', chain: null, steexp: 'asset' },
+  ledger: { expert: 'ledger', chain: null, steexp: 'ledger' },
 } as const;
 
 export function CrossReference({
@@ -30,35 +27,31 @@ export function CrossReference({
   className?: string;
 }) {
   const map = KINDS[kind];
-  const expert = stellarExpertUrl(map.expert, id);
-  const chain = map.chain ? stellarChainEntityUrl(map.chain, id) : null;
-  if (!expert && !chain) return null;
+  const links = [
+    { label: 'stellar.expert', href: stellarExpertUrl(map.expert, id) },
+    {
+      label: 'stellarchain.io',
+      href: map.chain ? stellarChainEntityUrl(map.chain, id) : null,
+    },
+    { label: 'steexp', href: steexpEntityUrl(map.steexp, id) },
+  ].filter((l): l is { label: string; href: string } => l.href != null);
 
   return (
     <p className={className ?? 'text-ink-faint mt-4 text-[11px]'}>
-      Cross-reference on{' '}
-      {expert && (
-        <a
-          href={expert}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="hover:text-brand-600 underline"
-        >
-          stellar.expert
-        </a>
-      )}
-      {expert && chain ? ' · ' : null}
-      {chain && (
-        <a
-          href={chain}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="hover:text-brand-600 underline"
-        >
-          stellarchain.io
-        </a>
-      )}
-      .
+      External references:{' '}
+      {links.map((l, i) => (
+        <span key={l.label}>
+          {i > 0 && ' · '}
+          <a
+            href={l.href}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="hover:text-brand-600 underline"
+          >
+            {l.label}
+          </a>
+        </span>
+      ))}
     </p>
   );
 }

@@ -19,9 +19,9 @@ import {
 } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { ogImageFor, shellMetadata } from '@/lib/seo';
-import { StellarExpertLink } from '@/components/StellarExpertLink';
+import { CrossReference } from '@/components/CrossReference';
 import { routeAvailable } from '@/lib/network-routes';
-import { CURRENT_NETWORK, stellarChainEntityUrl } from '@/lib/networks';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 /**
  * /issuers/[g_strkey] — single-issuer detail page.
@@ -222,6 +222,10 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
   // read the asset list", not "this issuer issued nothing" — every tile
   // below renders '—' rather than a fabricated 0.
   const assets = detail.assets ?? null;
+  // home_domain is attacker-controlled; link it only as a strict hostname.
+  const homeUrl = isSafeHomeDomain(detail.home_domain)
+    ? `https://${detail.home_domain}`
+    : null;
   const totalObs =
     assets?.reduce((sum, a) => sum + a.observation_count, 0) ?? null;
   // Sum per-asset 24h USD volume from the parallel /v1/coins?issuer= fetch.
@@ -309,18 +313,26 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           )}
           {detail.home_domain && (
             <p className="text-ink-body text-sm">
-              {/* home_domain is attacker-controlled on-chain data — only
-          link it when it parses as a strict hostname, else render
-          as plain text (phishing guard, WA-02). */}
-              {isSafeHomeDomain(detail.home_domain) ? (
-                <a
-                  href={`https://${detail.home_domain}`}
-                  target="_blank"
-                  rel="noreferrer noopener nofollow"
-                  className="hover:text-brand-600 font-mono hover:underline"
-                >
-                  {detail.home_domain}
-                </a>
+              {homeUrl ? (
+                <>
+                  <a
+                    href={homeUrl}
+                    target="_blank"
+                    rel="noreferrer noopener nofollow"
+                    className="hover:text-brand-600 font-mono hover:underline"
+                  >
+                    {detail.home_domain}
+                  </a>
+                  {' · '}
+                  <a
+                    href={`${homeUrl}/.well-known/stellar.toml`}
+                    target="_blank"
+                    rel="noreferrer noopener nofollow"
+                    className="hover:text-brand-600 hover:underline"
+                  >
+                    stellar.toml
+                  </a>
+                </>
               ) : (
                 <span
                   className="text-ink-muted font-mono"
@@ -421,65 +433,6 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           )}
         </Panel>
       </div>
-
-      <Panel
-        headingLevel={2}
-        title="External views"
-        hint="Cross-reference this issuer on other Stellar explorers"
-        bodyClassName="text-sm text-ink-body"
-      >
-        <ul className="space-y-2">
-          <li>
-            <StellarExpertLink
-              kind="account"
-              id={g_strkey}
-              className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"
-            >
-              stellar.expert
-              <span className="text-ink-faint text-[10px] tracking-wider uppercase">
-                ↗
-              </span>
-            </StellarExpertLink>
-            <span className="text-ink-faint ml-2 text-xs">
-              account history, balance, signers
-            </span>
-          </li>
-          <li>
-            <a
-              href={stellarChainEntityUrl('accounts', g_strkey)}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"
-            >
-              stellarchain.io
-              <span className="text-ink-faint text-[10px] tracking-wider uppercase">
-                ↗
-              </span>
-            </a>
-            <span className="text-ink-faint ml-2 text-xs">
-              ledger entries, operations log
-            </span>
-          </li>
-          {isSafeHomeDomain(detail.home_domain) && (
-            <li>
-              <a
-                href={`https://${detail.home_domain}/.well-known/stellar.toml`}
-                target="_blank"
-                rel="noreferrer noopener nofollow"
-                className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"
-              >
-                stellar.toml
-                <span className="text-ink-faint text-[10px] tracking-wider uppercase">
-                  ↗
-                </span>
-              </a>
-              <span className="text-ink-faint ml-2 text-xs">
-                SEP-1 source on {detail.home_domain}
-              </span>
-            </li>
-          )}
-        </ul>
-      </Panel>
 
       <Panel
         headingLevel={2}
@@ -600,6 +553,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           </>
         )}
       </Panel>
+      <CrossReference kind="account" id={g_strkey} />
     </Container>
   );
 }

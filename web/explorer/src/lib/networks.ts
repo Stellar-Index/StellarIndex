@@ -39,6 +39,8 @@ export interface NetworkInfo {
    * works on futurenet.
    */
   stellarChainUrl: string;
+  /** This network's steexp.com origin; steexp hosts all three networks. */
+  steexpUrl: string;
   /** This network's explorer origin (where the switcher link points). */
   explorerUrl: string;
   /** This network's API origin (grey/DNS-only) for the live-tip probe. */
@@ -100,6 +102,7 @@ export const NETWORKS: NetworkInfo[] = [
     stellarName: 'Pubnet',
     stellarExpertPath: 'public',
     stellarChainUrl: 'https://stellarchain.io',
+    steexpUrl: 'https://steexp.com',
     explorerUrl: 'https://stellarindex.io',
     apiBaseUrl: 'https://api.stellarindex.io',
     live: true,
@@ -116,6 +119,7 @@ export const NETWORKS: NetworkInfo[] = [
     stellarName: 'Testnet',
     stellarExpertPath: 'testnet',
     stellarChainUrl: 'https://testnet.stellarchain.io',
+    steexpUrl: 'https://testnet.steexp.com',
     explorerUrl: 'https://testnet.stellarindex.io',
     apiBaseUrl: 'https://api.testnet.stellarindex.io',
     live: true,
@@ -132,6 +136,7 @@ export const NETWORKS: NetworkInfo[] = [
     stellarName: 'Futurenet',
     stellarExpertPath: null,
     stellarChainUrl: 'https://futurenet.stellarchain.io',
+    steexpUrl: 'https://futurenet.steexp.com',
     explorerUrl: 'https://futurenet.stellarindex.io',
     apiBaseUrl: 'https://api.futurenet.stellarindex.io',
     live: true,
@@ -190,4 +195,9 @@ export function stellarChainEntityUrl(
   id: string,
 ): string {
   return `${CURRENT_NETWORK.stellarChainUrl}/${kind}/${encodeURIComponent(id)}`;
+}
+
+/** Absolute steexp.com URL for an entity on THIS network. */
+export function steexpEntityUrl(kind: string, id: string): string {
+  return `${CURRENT_NETWORK.steexpUrl}/${kind}/${encodeURIComponent(id)}`;
 }
