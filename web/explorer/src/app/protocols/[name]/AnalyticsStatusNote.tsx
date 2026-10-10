@@ -34,9 +34,8 @@ export function AnalyticsStatusNote({
         role="status"
         className="border-line bg-surface-subtle text-ink-muted rounded-md border px-3 py-2 text-xs"
       >
-        Some protocol analytics are temporarily unavailable — missing sections
-        and zero-looking figures here mean the analytics build degraded, not
-        that activity is zero. Refreshes automatically.
+        Analytics temporarily unavailable — blanks and zeros here do not mean
+        zero activity.
       </p>
     );
   }
@@ -63,9 +62,7 @@ export function AnalyticsStatusNote({
 export function BespokeUnavailable() {
   return (
     <p className="border-line text-ink-muted rounded-md border px-3 py-6 text-center text-sm">
-      This protocol&rsquo;s analytics suite is temporarily unavailable — the
-      server-side build degraded. It refreshes automatically; reload in a
-      minute.
+      Analytics temporarily unavailable.
     </p>
   );
 }

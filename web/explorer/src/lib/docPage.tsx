@@ -91,7 +91,6 @@ export function buildDocPage(config: DocPageConfig) {
               : config.pillLabel
           }
           title={doc.title}
-          description={doc.description}
           actions={
             <a
               href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${doc.source_path}`}

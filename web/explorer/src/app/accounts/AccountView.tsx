@@ -307,32 +307,12 @@ function rankedInNative(data: AccountsListResp | undefined): boolean {
   return data ? data.ranked_by === 'native_xlm' : !CURRENT_NETWORK.pricing;
 }
 
-/**
- * The /accounts directory frame — heading + standing description.
- *
- * Split out of AccountsDirectory so the STATIC document can carry it:
- * the body reads the URL through useSearchParams and so sits inside a
- * Suspense boundary, and that boundary's fallback is all the export
- * bakes. useQuery forces no such bailout, so the header subscribes to
- * the same /v1/accounts query as the table below it. The export ships
- * the network's pricing fallback — the copy the page metadata declares
- * — and once the response lands the served `ranked_by` wins here and in
- * the Panel at once: the API ranks by native XLM whenever its price
- * catalogue degrades, mainnet included, and this sentence must never
- * claim a USD ranking above a table titled "Ranked by XLM balance".
- */
+/** The /accounts header; the ranking basis lives on the table's Panel title. */
 export function AccountsDirectoryHeader() {
-  const q = useAccountsDirectoryQuery();
-  const isNative = rankedInNative(q.data);
   return (
     <PageHeader
       breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Accounts' }]}
       title="Accounts"
-      description={
-        isNative
-          ? `Largest accounts on Stellar ${CURRENT_NETWORK.label}, ranked by native XLM balance.`
-          : 'Richest accounts on Stellar, ranked by total USD value of priced holdings.'
-      }
     />
   );
 }
@@ -431,7 +411,7 @@ function AccountsDirectory() {
             </table>
             <p className="text-ink-muted text-xs">
               {isNative
-                ? 'Native XLM balance · accounts outside the captured window are excluded'
+                ? 'XLM balance · accounts outside the captured window are excluded'
                 : `Summed across ${q.data.priced_assets} priced asset${q.data.priced_assets === 1 ? '' : 's'} · wealth outside the captured window is excluded`}
             </p>
           </>
@@ -529,9 +509,7 @@ function AccountStatePanel({
         source={source}
         bodyClassName="text-sm text-ink-muted"
       >
-        No live account state in the captured ledger window yet — the account
-        wasn’t touched since entry-change capture began. Sourced activity still
-        shows below.
+        No account state captured yet.
       </Panel>
     );
   }

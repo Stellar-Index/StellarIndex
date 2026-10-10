@@ -77,17 +77,7 @@ export default function PricingPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Pricing' }]}
         title="Pricing"
-        description={
-          <>
-            Stellar Index is free — there are no paid plans. Anonymous reads
-            work without an account; a free account (one curl: POST
-            /v1/register) adds per-account usage analytics and a budget that is
-            yours alone rather than shared with everything else on your IP. It
-            is not a throughput upgrade — on the hosted deployment an anonymous
-            IP&apos;s limit deliberately exceeds a single free key&apos;s.
-            Higher partner limits are set by our staff on request.
-          </>
-        }
+        meta="Free. No paid plans."
       />
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">

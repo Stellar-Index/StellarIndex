@@ -74,7 +74,6 @@ function OverviewBody({ me }: { me: MeResponse }) {
         <PageHeader
           breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Dashboard' }]}
           title={`Welcome back, ${firstName(me)}`}
-          description="Your account at a glance — keys, plan, and where to go next."
           actions={
             <ButtonLink href="/dashboard/keys" variant="primary">
               <Plus className="h-4 w-4" />

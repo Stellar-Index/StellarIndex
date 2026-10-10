@@ -68,11 +68,7 @@ export default function InsightsPage() {
   }
   return (
     <Container className="space-y-6 py-8">
-      <PageHeader
-        breadcrumbs={INSIGHTS_CRUMBS}
-        title="Insights"
-        description="Signals over the raw data."
-      />
+      <PageHeader breadcrumbs={INSIGHTS_CRUMBS} title="Insights" />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {availableRoutes(SURFACES).map((s) => {

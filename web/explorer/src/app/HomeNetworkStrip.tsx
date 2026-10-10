@@ -136,7 +136,7 @@ export function HomeNetworkStrip() {
       <Cell
         label="Assets indexed"
         value={assetsIndexed != null ? formatCompact(assetsIndexed) : '—'}
-        sub="classic + native"
+        sub="classic assets"
         href="/assets"
       />
       <Cell

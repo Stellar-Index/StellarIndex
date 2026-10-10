@@ -100,8 +100,7 @@ export function AccountDefiPositionsPanel({ id }: { id: string }) {
   });
 
   const source = asExample(`/v1/accounts/${id}/positions`, queryParams);
-  const panelHint =
-    'net DeFi positions folded from on-chain events — no valuation applied, see each row’s semantics';
+  const panelHint = 'Not valued';
 
   const filters = (
     <label className="text-ink-muted flex items-center gap-2 text-xs">

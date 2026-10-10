@@ -10,11 +10,5 @@ export const metadata: Metadata = {
 };
 
 export default function BridgesPage() {
-  return (
-    <ProtocolsIndex
-      lockedCategory="bridge"
-      title="Bridges"
-      description="Cross-chain settlement on Stellar — Circle CCTP v2 (canonical burn-and-mint USDC) and Rozo (intent-bridge payments). Each bridge page carries its full contract roster, the distribution of every event type it emits, and a verified-completeness verdict against the certified ledger lake."
-    />
-  );
+  return <ProtocolsIndex lockedCategory="bridge" title="Bridges" />;
 }

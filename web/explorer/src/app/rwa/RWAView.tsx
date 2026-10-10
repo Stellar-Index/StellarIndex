@@ -847,9 +847,7 @@ function UnreachedPanel({
   return (
     <Panel title="Recognised issuers we hold no token for" headingLevel={2}>
       <p className="text-ink-muted text-xs leading-relaxed">
-        Named as issuers or custodians by an independent directory, unflagged.
-        We hold no Stellar asset for them, so they are absent above, not
-        refused.
+        Named by an independent directory; no Stellar asset held.
       </p>
       <ul className="border-line mt-3 space-y-1.5 border-t pt-3 text-xs">
         {entities.map((e) => (
@@ -1371,13 +1369,9 @@ function SectorTotals({
                   This total mixes two bases.
                 </strong>
               </summary>{' '}
-              {stable.listingPriced} of the {stable.valued} tokens trade too
-              thinly on Stellar for this index to publish a market cap from what
-              it observed, so the figure used for them is their supply valued at
-              an independent listing platform&rsquo;s own price for that exact
-              address — <code>provenance: listing_platform_price</code> on the
-              asset. Nobody was observed paying it here. The rest are observed
-              market caps, and the per-asset pages say which is which.
+              {stable.listingPriced} of the {stable.valued} tokens are valued at
+              a listing platform&rsquo;s price, not an observed trade (
+              <code>provenance: listing_platform_price</code>).
             </details>
           )}
         </StatCell>
@@ -2009,18 +2003,7 @@ function DefinitionPanel({
               Which tokens are compared against an instrument.
             </strong>{' '}
             Only the exact <span className="font-mono">(code, issuer)</span>{' '}
-            pairs listed below. A code is not an identity: anyone can issue a
-            token called USTRY, and answering one of those with the real
-            instrument&rsquo;s value would publish a discount to a security it
-            has nothing to do with. The list is short by construction, and a
-            pair missing from it shows the reason rather than a number.
-          </p>
-          <p className="mt-2">
-            What the comparison rests on is that one token is one unit of the
-            named instrument. The evidence is the issuer&rsquo;s own
-            domain-bound declaration and the independent recognition of its
-            account — the same evidence that admitted the asset — and is not a
-            separate measurement.
+            pairs below; anyone can issue a token called USTRY.
           </p>
           {definition.bound_instruments.length > 0 && (
             <ul className="mt-2 space-y-0.5">
@@ -2066,28 +2049,17 @@ function DefinitionPanel({
             <strong className="text-ink-body">
               Two valuations, kept apart on purpose.
             </strong>{' '}
-            <em>Market cap</em> is circulating supply times a price somebody was
-            observed paying, and it reaches this page only after the same
-            thin-market, dust-liquidity and scam-issuer gates the asset pages
-            apply have each declined to withhold it. <em>Value of backing</em>{' '}
-            is circulating supply times{' '}
+            <em>Market cap</em> is supply times an observed trade price.{' '}
+            <em>Value of backing</em> is supply times{' '}
             {oracleOnly(provenances)
-              ? 'what an independent oracle says one unit of the underlying instrument is worth'
+              ? 'an independent oracle price for the underlying'
               : MIXED_REFERENCE_PROSE}
-            . Nobody was observed paying that, and none of those gates can check
-            it — there is no market in it for them to measure.
-          </p>
-          <p className="mt-2">
-            Tokenized treasuries are held, not traded, so most never get a
-            market price; an issuer&apos;s figure is not proof anyone would pay
-            it. The two columns are never added together. Tokens with no
-            reference figure are counted, by reason, in the coverage panel.
+            . The two are never added together.
           </p>
         </div>
         <p className="text-ink-muted mt-3 text-[11px] leading-relaxed">
-          Live data from <span className="font-mono">{ENDPOINT}</span>. Market
-          values pass the same gates as the asset pages. The full definition,
-          with the evidence behind each requirement, is in the{' '}
+          Live data from <span className="font-mono">{ENDPOINT}</span>. Full
+          definition in the{' '}
           <Link href="/methodology" className="hover:text-brand-600 underline">
             methodology
           </Link>

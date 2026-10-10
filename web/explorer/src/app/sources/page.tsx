@@ -1,6 +1,5 @@
 import { DataTrustTabs } from '@/components/nav/DataTrustTabs';
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { SourcesTable } from './SourcesTable';
 
 import { Container, PageHeader } from '@/components/ui';
@@ -21,16 +20,6 @@ export default function SourcesPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Sources' }]}
         title="Stellar sources"
-        description={
-          <>
-            On-chain venues by class; only DEXes feed VWAP. Off-chain feeds are
-            under{' '}
-            <Link href="/exchanges" className="text-brand-600 hover:underline">
-              exchanges
-            </Link>
-            .
-          </>
-        }
       />
 
       <DataTrustTabs active="/sources" />

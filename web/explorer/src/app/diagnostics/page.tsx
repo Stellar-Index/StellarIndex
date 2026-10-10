@@ -42,7 +42,6 @@ export default function DiagnosticsPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Diagnostics' }]}
         title="Diagnostics"
-        description="Live ingest cursors, per-source completeness verdicts and archive completeness."
       />
       <DataTrustTabs active="/diagnostics" />
 
