@@ -6,11 +6,6 @@ import type { components } from '@/api/types';
 
 import { RWAPremiumPanel, premiumLines } from './RWAPremiumPanel';
 
-// The panel draws one line for a handful of the set and leaves holes
-// everywhere else. Both of those are ways a reader gets misled — the
-// line taken for the state of the sector, and a hole drawn through as
-// if it were data — so both are what these tests are about.
-
 type Schemas = components['schemas'];
 type View = Schemas['RWAPremiumHistoryView'];
 type Series = Schemas['RWAPremiumSeries'];
@@ -23,10 +18,8 @@ vi.mock('@/api/client', async () => {
   return { ...actual, apiGetData };
 });
 
-// The canvas chart is client-only and never mounts under jsdom in a way
-// worth asserting on; stub it and capture both the accessible name it
-// is handed and the reference lines, since the zero line is part of the
-// chart's meaning rather than its decoration.
+// Stub the canvas chart; capture its props (aria-label, and the zero line,
+// which is part of the chart's meaning).
 const chartProps = vi.hoisted(() => ({ current: null as unknown }));
 vi.mock('@/components/charts/LineChart', () => ({
   LineChart: (props: { ariaLabel?: string }) => {
@@ -104,64 +97,65 @@ describe('RWAPremiumPanel', () => {
     chartProps.current = null;
   });
 
-  it('says how much of the set the line actually covers', async () => {
-    apiGetData.mockResolvedValue(view());
-    renderPanel();
-    expect((await screen.findAllByText(/1 of 11/)).length).toBeGreaterThan(0);
-    expect(
-      screen.getByText(/7 carry a curated binding to an instrument feed/),
-    ).toBeInTheDocument();
-  });
-
-  it('states that a silent day is a break, not a flat stretch', async () => {
-    apiGetData.mockResolvedValue(view());
-    renderPanel();
-    expect(
-      await screen.findByText(/a break in the line, never a flat stretch/),
-    ).toBeInTheDocument();
-  });
-
-  it('reports the days it saw trades on and refused to price', async () => {
-    apiGetData.mockResolvedValue(
-      view({ series: [series({ market_withheld_days: 12 })] }),
-    );
-    renderPanel();
-    expect(
-      await screen.findByText(/12 days carried observed trades/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/did not clear the thin-market floor/),
-    ).toBeInTheDocument();
-  });
-
-  it('accounts for the members with no series at all', async () => {
-    apiGetData.mockResolvedValue(
-      view({
+  it.each([
+    [
+      'how much of the set the line covers',
+      {},
+      [/7 carry a curated binding to an instrument feed/],
+      [/1 of 11/],
+    ],
+    [
+      'that a silent day is a break, not a flat stretch',
+      {},
+      [/a break in the line, never a flat stretch/],
+    ],
+    [
+      'the days it saw trades on and refused to price',
+      { series: [series({ market_withheld_days: 12 })] },
+      [
+        /12 days carried observed trades/,
+        /did not clear the thin-market floor/,
+      ],
+    ],
+    [
+      'the members with no series at all',
+      {
         excluded: [
           { reason: 'no_market_history', assets: 4, detail: 'never traded' },
           { reason: 'not_bound', assets: 4, detail: 'no binding' },
         ],
-      }),
-    );
-    renderPanel();
-    expect(
-      await screen.findByText(/4 that have never traded against a dollar/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
+      },
+      [
+        /4 that have never traded against a dollar/,
         /4 with no oracle feed bound to their exact \(code, issuer\)/,
-      ),
-    ).toBeInTheDocument();
-  });
+      ],
+    ],
+  ] as [string, Partial<View>, RegExp[], RegExp[]?][])(
+    'states %s',
+    async (_name, over, texts, repeated = []) => {
+      apiGetData.mockResolvedValue(view(over));
+      renderPanel();
+      for (const t of texts)
+        expect(await screen.findByText(t)).toBeInTheDocument();
+      for (const t of repeated)
+        expect((await screen.findAllByText(t)).length).toBeGreaterThan(0);
+    },
+  );
 
-  it('draws a zero line, because the sign is the finding', async () => {
+  it('hands the chart a par line, a coverage-bearing text alternative and the requested window', async () => {
     apiGetData.mockResolvedValue(view());
     renderPanel();
-    await screen.findByRole('img');
+    const chart = await screen.findByRole('img');
+    // The sign is the finding, so the zero line is drawn.
     const props = chartProps.current as { priceLines?: { value: number }[] };
     expect(props.priceLines).toEqual([
       expect.objectContaining({ value: 0, label: 'par' }),
     ]);
+    expect(chart.getAttribute('aria-label')).toMatch(/1 of 11/);
+    expect(chart.getAttribute('aria-label')).toMatch(/Positive is a premium/);
+    expect(apiGetData).toHaveBeenCalledWith('/v1/rwa/premium', {
+      timeframe: '1y',
+    });
   });
 
   it('renders an explanation, never an empty plot, when nothing is comparable', async () => {
@@ -184,25 +178,7 @@ describe('RWAPremiumPanel', () => {
   it('names the instrument in text, so identity never rests on colour', async () => {
     apiGetData.mockResolvedValue(view());
     renderPanel();
-    const legend = await screen.findAllByText('CETES');
-    expect(legend.length).toBeGreaterThan(0);
-  });
-
-  it('carries the coverage into the chart’s text alternative', async () => {
-    apiGetData.mockResolvedValue(view());
-    renderPanel();
-    const chart = await screen.findByRole('img');
-    expect(chart.getAttribute('aria-label')).toMatch(/1 of 11/);
-    expect(chart.getAttribute('aria-label')).toMatch(/Positive is a premium/);
-  });
-
-  it('asks for the requested window', async () => {
-    apiGetData.mockResolvedValue(view());
-    renderPanel();
-    await screen.findByRole('img');
-    expect(apiGetData).toHaveBeenCalledWith('/v1/rwa/premium', {
-      timeframe: '1y',
-    });
+    expect((await screen.findAllByText('CETES')).length).toBeGreaterThan(0);
   });
 });
 
@@ -243,7 +219,6 @@ describe('premiumLines — the gaps and the hues', () => {
   });
 
   it('drops a series the window left empty rather than drawing a bare axis', () => {
-    const lines = premiumLines([series({ points: [] })]);
-    expect(lines).toHaveLength(0);
+    expect(premiumLines([series({ points: [] })])).toHaveLength(0);
   });
 });
