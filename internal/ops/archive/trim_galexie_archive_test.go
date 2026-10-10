@@ -15,131 +15,88 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 )
 
-// TestParseTrimFlags_Defaults verifies the safety primitives: when
-// neither --dry-run nor --commit is set, the parser leaves dryRun
-// at its flag default (false) and trimGalexieArchive's body
-// promotes it to true. We test the latter behaviour by mimicking
-// the promotion logic.
-func TestParseTrimFlags_Defaults(t *testing.T) {
+// TestParseTrimFlags covers the trim flag gates: every safety primitive
+// (HEAD-before-delete, the max-files ceiling, the second acknowledgement for
+// -no-verify-upstream, no dry-run beside a commit) is asserted here. The
+// parser leaves dryRun false by default; trimGalexieArchive promotes it.
+func TestParseTrimFlags(t *testing.T) {
 	t.Parallel()
-	opts, err := parseTrimFlags([]string{"-older-than-ledger", "1000"})
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	base := []string{"-older-than-ledger", "1000"}
+	with := func(extra ...string) []string { return append(slices.Clone(base), extra...) }
+	cases := []struct {
+		name    string
+		args    []string
+		wantErr string // substring; empty means the parse must succeed
+		check   func(t *testing.T, o trimOpts)
+	}{
+		{"defaults", base, "", func(t *testing.T, o trimOpts) {
+			if o.olderThan != 1000 {
+				t.Errorf("olderThan = %d, want 1000", o.olderThan)
+			}
+			if !o.verifyUpstream {
+				t.Errorf("verifyUpstream must default to true (HEAD-before-delete is the primary safety primitive)")
+			}
+			if o.maxFiles != 100000 {
+				t.Errorf("maxFiles default = %d, want 100000", o.maxFiles)
+			}
+			if o.dryRun || o.commit {
+				t.Errorf("neither dryRun nor commit should be set by default (the body promotes dryRun=true post-parse); got dryRun=%v commit=%v", o.dryRun, o.commit)
+			}
+		}},
+		{"no-verify-upstream alone is refused", with("-no-verify-upstream"), "i-have-verified-cold-out-of-band", nil},
+		{"no-verify-upstream with ack", with("-no-verify-upstream", "-i-have-verified-cold-out-of-band"), "", func(t *testing.T, o trimOpts) {
+			if o.verifyUpstream {
+				t.Errorf("-no-verify-upstream should flip verifyUpstream to false")
+			}
+			if !o.iHaveVerifiedOutOfBand {
+				t.Errorf("iHaveVerifiedOutOfBand should be true")
+			}
+		}},
+		{"ack alone is harmless", with("-i-have-verified-cold-out-of-band"), "", func(t *testing.T, o trimOpts) {
+			if !o.verifyUpstream {
+				t.Errorf("verifyUpstream must still default to true when -no-verify-upstream isn't passed")
+			}
+		}},
+		// -commit is the units' spelling of the shared -write gate; both arm the same delete.
+		{"commit arms the delete", with("-commit"), "", func(t *testing.T, o trimOpts) {
+			if !o.commit || o.dryRun {
+				t.Errorf("commit=%v dryRun=%v, want commit=true dryRun=false", o.commit, o.dryRun)
+			}
+		}},
+		{"write arms the delete", with("-write"), "", func(t *testing.T, o trimOpts) {
+			if !o.commit || o.dryRun {
+				t.Errorf("commit=%v dryRun=%v, want commit=true dryRun=false", o.commit, o.dryRun)
+			}
+		}},
+		// The shared gate lets -write win over -dry-run; an irreversible
+		// DELETE must not, so contradictory flags are refused before any S3 call.
+		{"dry-run with commit is refused", with("-dry-run", "-commit"), "mutually exclusive", nil},
+		{"dry-run with write is refused", with("-dry-run", "-write"), "mutually exclusive", nil},
+		{"cutoff overflow", []string{"-older-than-ledger", "9999999999"}, "uint32 range", nil},
+		// -max-files once had only a > 0 check, so a typo could delete the full archive.
+		{"max-files 99999999 refused", with("-max-files", "99999999"), "max-files", nil},
+		{"max-files 1000001 refused", with("-max-files", "1000001"), "max-files", nil},
+		{"max-files 0 refused", with("-max-files", "0"), "max-files", nil},
+		{"max-files 1000000 accepted", with("-max-files", "1000000"), "", nil},
+		{"max-files 100000 accepted", with("-max-files", "100000"), "", nil},
 	}
-	if opts.olderThan != 1000 {
-		t.Errorf("olderThan = %d, want 1000", opts.olderThan)
-	}
-	if !opts.verifyUpstream {
-		t.Errorf("verifyUpstream must default to true (HEAD-before-delete is the primary safety primitive)")
-	}
-	if opts.maxFiles != 100000 {
-		t.Errorf("maxFiles default = %d, want 100000", opts.maxFiles)
-	}
-	if opts.dryRun || opts.commit {
-		t.Errorf("neither dryRun nor commit should be set by default (the body promotes dryRun=true post-parse); got dryRun=%v commit=%v", opts.dryRun, opts.commit)
-	}
-}
-
-// TestParseTrimFlags_NoVerifyUpstreamAloneIsRefused is the
-// refusal regression: --no-verify-upstream disables the ONLY check that the
-// cold tier actually holds the files hot is about to lose, so it must
-// NOT be usable on its own — a second explicit acknowledgement flag
-// (--i-have-verified-cold-out-of-band) is required.
-func TestParseTrimFlags_NoVerifyUpstreamAloneIsRefused(t *testing.T) {
-	t.Parallel()
-	_, err := parseTrimFlags([]string{"-older-than-ledger", "1000", "-no-verify-upstream"})
-	if err == nil {
-		t.Fatal("expected -no-verify-upstream ALONE (no second ack) to be refused, got nil error")
-	}
-	if !strings.Contains(err.Error(), "i-have-verified-cold-out-of-band") {
-		t.Errorf("error should name the required second flag, got: %v", err)
-	}
-}
-
-// TestParseTrimFlags_NoVerifyUpstreamWithAck: the safety-primitive
-// bypass IS usable once both flags are set together.
-func TestParseTrimFlags_NoVerifyUpstreamWithAck(t *testing.T) {
-	t.Parallel()
-	opts, err := parseTrimFlags([]string{
-		"-older-than-ledger", "1000",
-		"-no-verify-upstream",
-		"-i-have-verified-cold-out-of-band",
-	})
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if opts.verifyUpstream {
-		t.Errorf("-no-verify-upstream should flip verifyUpstream to false")
-	}
-	if !opts.iHaveVerifiedOutOfBand {
-		t.Errorf("iHaveVerifiedOutOfBand should be true")
-	}
-}
-
-// TestParseTrimFlags_AckAloneWithoutNoVerifyIsHarmless: the ack flag
-// by itself (verify-upstream still on) is not an error — it's only
-// meaningful paired with -no-verify-upstream, but passing it alone
-// must not break the default safe path.
-func TestParseTrimFlags_AckAloneWithoutNoVerifyIsHarmless(t *testing.T) {
-	t.Parallel()
-	opts, err := parseTrimFlags([]string{"-older-than-ledger", "1000", "-i-have-verified-cold-out-of-band"})
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if !opts.verifyUpstream {
-		t.Errorf("verifyUpstream must still default to true when -no-verify-upstream isn't passed")
-	}
-}
-
-func TestParseTrimFlags_CommitOptIn(t *testing.T) {
-	t.Parallel()
-	opts, err := parseTrimFlags([]string{"-older-than-ledger", "1000", "-commit"})
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if !opts.commit {
-		t.Errorf("-commit should set opts.commit=true")
-	}
-	if opts.dryRun {
-		t.Errorf("-commit alone should NOT also set dryRun; got dryRun=true")
-	}
-}
-
-// -commit is kept as the units' spelling of the shared -write gate; both
-// must arm the same delete.
-func TestParseTrimFlags_WriteIsCommit(t *testing.T) {
-	t.Parallel()
-	for _, flagName := range []string{"-commit", "-write"} {
-		opts, err := parseTrimFlags([]string{"-older-than-ledger", "1000", flagName})
-		if err != nil {
-			t.Fatalf("%s: parse: %v", flagName, err)
-		}
-		if !opts.commit || opts.dryRun {
-			t.Errorf("%s: commit=%v dryRun=%v, want commit=true dryRun=false", flagName, opts.commit, opts.dryRun)
-		}
-	}
-}
-
-// The shared gate lets -write win over -dry-run; an irreversible DELETE must
-// not, so contradictory flags are refused before any S3 call.
-func TestParseTrimFlags_DryRunWithCommitOrWriteIsRefused(t *testing.T) {
-	t.Parallel()
-	for _, flagName := range []string{"-commit", "-write"} {
-		_, err := parseTrimFlags([]string{"-older-than-ledger", "1000", "-dry-run", flagName})
-		if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
-			t.Errorf("-dry-run %s: err = %v, want a mutually-exclusive refusal", flagName, err)
-		}
-	}
-}
-
-func TestParseTrimFlags_OverflowGuard(t *testing.T) {
-	t.Parallel()
-	_, err := parseTrimFlags([]string{"-older-than-ledger", "9999999999"})
-	if err == nil {
-		t.Fatal("expected error for uint32 overflow, got nil")
-	}
-	if !strings.Contains(err.Error(), "uint32 range") {
-		t.Errorf("unexpected error: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			opts, err := parseTrimFlags(tc.args)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if tc.check != nil {
+				tc.check(t, opts)
+			}
+		})
 	}
 }
 

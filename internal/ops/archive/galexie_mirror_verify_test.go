@@ -286,14 +286,26 @@ func TestWriteMirrorVerifyTextfile(t *testing.T) {
 }
 
 func TestParseMirrorVerifyFlags(t *testing.T) {
-	if _, err := parseMirrorVerifyFlags([]string{"-from", "10", "-to", "5"}); err == nil {
-		t.Error("-from above -to accepted")
-	}
-	if _, err := parseMirrorVerifyFlags([]string{"-parallel", "0"}); err == nil {
-		t.Error("-parallel 0 accepted")
-	}
-	opts, err := parseMirrorVerifyFlags([]string{"-from", "64000"})
-	if err != nil || opts.from != 64000 || opts.to != 0 || opts.parallel != 4 {
-		t.Fatalf("defaults: %+v, %v", opts, err)
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		wantErr bool
+	}{
+		{"from above to", []string{"-from", "10", "-to", "5"}, true},
+		{"parallel zero", []string{"-parallel", "0"}, true},
+		{"defaults", []string{"-from", "64000"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, err := parseMirrorVerifyFlags(tc.args)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("%v accepted", tc.args)
+				}
+				return
+			}
+			if err != nil || opts.from != 64000 || opts.to != 0 || opts.parallel != 4 {
+				t.Fatalf("defaults: %+v, %v", opts, err)
+			}
+		})
 	}
 }

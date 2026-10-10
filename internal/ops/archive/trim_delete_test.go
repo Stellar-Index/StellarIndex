@@ -96,28 +96,6 @@ func TestDeleteTrimCandidates_UnverifiedDeleteFails(t *testing.T) {
 	}
 }
 
-// TestParseTrimFlags_MaxFilesCeiling: --max-files had only a > 0 check, so
-// -max-files 99999999 was accepted despite the "a typo can never delete the
-// full archive" claim.
-func TestParseTrimFlags_MaxFilesCeiling(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		v      string
-		wantOK bool
-	}{
-		{"99999999", false},
-		{"1000001", false},
-		{"0", false},
-		{"1000000", true},
-		{"100000", true},
-	} {
-		_, err := parseTrimFlags([]string{"-older-than-ledger", "1000", "-max-files", tc.v})
-		if (err == nil) != tc.wantOK {
-			t.Errorf("-max-files %s: err = %v, want ok=%v", tc.v, err, tc.wantOK)
-		}
-	}
-}
-
 // TestCheckTrimCutoff: --older-than-ledger was unbounded against the tip, so
 // -older-than-ledger 4294967295 would trim the hot tier to the live seam.
 func TestCheckTrimCutoff(t *testing.T) {
