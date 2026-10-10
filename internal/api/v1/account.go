@@ -301,41 +301,23 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 
 // handleAccountUsage serves GET /v1/account/usage.
 //
-// Preferred path: the [UsageRollupReader] seam over the
-// `usage_daily` Timescale hypertable (maintained by the API
-// binary's usage-rollup worker) — one row per (day, endpoint
-// family) over the trailing 30 days, with errors + throttled
-// filled. Fallback path: the legacy [UsageReader] per-day Redis
-// totals (one row per day, no endpoint) when the rollup reader is
-// unwired, errors, or hasn't produced rows for this subject yet
-// (fresh deployment / worker not yet swept). Any day the rollup
-// reader is missing entirely (a worker-outage gap, not "zero
-// traffic") is backfilled from the legacy reader rather than
-// silently dropped.
+// Preferred path: the [UsageRollupReader] over the `usage_daily` hypertable
+// (one row per day and endpoint family, trailing 30 days). Fallback: the
+// legacy [UsageReader] per-day Redis totals when the rollup reader is
+// unwired, errors, or has no rows yet for this subject. A day missing from the
+// rollup (a worker-outage gap, not zero traffic) is backfilled from the legacy
+// reader rather than dropped.
 //
-// Subject keying calls [middleware.UsageKeyForSubject] directly rather
-// than re-deriving the key inline, so the writer + both readers stay in
-// lock-step (`id:<Identifier>` — the OWNER ACCOUNT — with `key:<KeyID>`
-// only for credentials carrying no owner reference). The account key is
-// what makes this endpoint's name true: the rows cover every key the
-// account holds, not just the one that authenticated the call, and they
-// survive a key rotation. The `?from=` / `?to=` query params
-// are reserved in the OpenAPI spec but ignored — every successful
-// response is the trailing 30-day window today; full from/to honouring
-// lands when an operator surface needs it.
+// Keying goes through [middleware.UsageKeyForSubject] so the writer and both
+// readers stay in lock-step: `id:<Identifier>` (the OWNER ACCOUNT), with
+// `key:<KeyID>` only for credentials with no owner. Rows therefore cover
+// every key the account holds and survive key rotation. A magic-link session
+// reads under `id:acct:<slug>` via [usageKeyForSession]; anonymous callers
+// get 401. `?from=` / `?to=` are reserved in the OpenAPI spec but ignored.
 //
-// A magic-link dashboard session authenticates this route too, same
-// precedence as [Server.handleAccountMe]: a session identifies the
-// account directly, so it reads under that account's key
-// (`id:acct:<slug>`, via [usageKeyForSession]) without needing the caller
-// to also hold an API key. Anonymous callers (neither session nor API
-// key) receive 401.
-//
-// Backend-absent posture: the handler returns `[]` in the
-// wire-shape envelope (200 OK with an empty data array). Callers
-// that distinguish "no usage reported" from "usage backend not
-// wired" can probe `/v1/readyz` (NOT `/healthz` — the
-// per-dependency `checks` field is `/readyz`-only).
+// Backend absent: 200 with an empty data array. Callers who must tell "no
+// usage" from "backend not wired" probe `/v1/readyz` (its per-dependency
+// `checks` field is not on `/healthz`).
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	key := ""
 	if s.SessionPeeker != nil {

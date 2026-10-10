@@ -30,32 +30,22 @@ type networkStatsStaleReader interface {
 	GetNetworkStatsAt(ctx context.Context) (timescale.NetworkStats, time.Time, bool, error)
 }
 
-// NetworkStats is the wire shape for /v1/network/stats. Numeric
-// fields are stringified per ADR-0003 (volume can exceed int64
-// in raw cents).
+// NetworkStats is the wire shape for /v1/network/stats. Numeric fields are
+// stringified per ADR-0003 (volume can exceed int64 in raw cents).
 //
-// Source-count semantics — important and easy to confuse with
-// /v1/status.freshness.{active,total}_sources:
+// Source counts are easy to confuse with /v1/status.freshness.*_sources:
 //
-//   - ExchangeSources / TotalSources here count entries in the
-//     static `internal/sources/external.Registry` map — i.e.,
-//     "sources the binary knows how to read." Independent of
-//     operator config; constant across regions running the same
-//     build.
-//   - /v1/status.freshness.total_sources counts sources switched
-//     on in this region — every scraped
-//     `stellarindex_source_enabled == 1` series, whichever binary
-//     publishes it (the indexer for its configured sources and
-//     connectors, the API binary for the `massive` FX worker it
-//     hosts); a strict subset.
-//   - /v1/status.freshness.active_sources further narrows to
-//     enabled sources that have emitted an event in the last 7 days.
+//   - ExchangeSources / TotalSources here count the static
+//     `internal/sources/external.Registry`: sources the binary knows how to
+//     read. Independent of config; constant across regions on one build.
+//   - /v1/status.freshness.total_sources counts sources switched on in this
+//     region (every scraped `stellarindex_source_enabled == 1` series,
+//     whichever binary publishes it); a strict subset.
+//   - /v1/status.freshness.active_sources narrows that to sources that emitted
+//     an event in the last 7 days.
 //
-// So the counts here change only when the Registry does; the two
-// /v1/status counts depend on the region's config and traffic. The gap
-// between the two `total_sources` fields is by design (different
-// metrics), kept in separate envelopes so the names don't collide in
-// any single response.
+// The gap between the two `total_sources` fields is by design (different
+// metrics, separate envelopes).
 type NetworkStats struct {
 	Volume24hUSD    *string `json:"volume_24h_usd,omitempty"`
 	MarketsCount24h int64   `json:"markets_count_24h"`

@@ -12,39 +12,29 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// This file holds the bounded-TTL + single-flight layer in front of the
-// two UNAUTHENTICATED explorer reads whose cost is set by the size of
-// the lake rather than by the request: GET /v1/assets/{asset_id}/holders
-// and the GET /v1/contracts directory.
+// This file holds the bounded-TTL + single-flight layer in front of the two
+// UNAUTHENTICATED explorer reads whose cost is set by the size of the lake,
+// not the request: GET /v1/assets/{asset_id}/holders and the GET /v1/contracts
+// directory. A client looping either would otherwise hold every connection of
+// the shared explorer pool; explorerReadTimeout bounds one request but does
+// not prevent that.
 //
-// Run on every request, over the shared explorer pool, with no
-// credential required, either scan would let a single client looping it
-// hold every connection and stall every lake-backed endpoint behind it,
-// which the per-request explorerReadTimeout bounds but does not prevent.
-// The defence is the one already in the tree for the same class of read:
+//   - A short TTL cache with a bounded entry count, keyed on the query's
+//     expensive dimension (as accountStateCache, opsDirCache, opTypeStatsCache).
+//   - Per-key single-flight, so a burst of misses launches ONE scan.
+//   - `limit` is deliberately NOT in the cache key: one warm entry holds the
+//     maximum page and every request size slices from it (see
+//     AccountsByWealthCached). The cost is set by the scan, not by LIMIT.
 //
-//   - a short TTL cache keyed on the query's expensive dimension, with a
-//     bounded entry count (accountStateCache, opsDirCache, opTypeStatsCache);
-//   - a per-key single-flight so a burst of concurrent misses for the
-//     same key launches ONE scan, not N (AccountStateCached);
-//   - the `limit` argument deliberately excluded from the cache key —
-//     one warm entry holds the maximum page and every request size slices
-//     from it, exactly as AccountsByWealthCached documents ("a single
-//     warm entry covers all traffic — the limit argument is not a cache
-//     key"). The aggregation cost is set by the scan, not by LIMIT.
-//
-// Refresh model (both scans can outlast the 8s request budget, so the
-// request path cannot be what fills the cache): the underlying scans run
-// DETACHED from any request context, on their own bounded budget, and the
-// request path only ever (a) serves a fresh entry, (b) serves a STALE
-// entry — 200 + flags.stale + the entry's real as_of — while a
-// single-flight detached refresh runs, or (c) on a stone-cold key, waits
-// for the detached compute up to its own deadline (fast keys fill within
-// it; a key whose scan outlives the request 503s THIS request but the
-// compute keeps running, so the retry lands warm). A failed refresh keeps
-// the previous entry — old-but-real beats blank. PrewarmContractsDirectory
-// keeps the directory's default rung permanently warm off the API's
-// 5-minute prewarm loop.
+// Refresh model: both scans can outlast the 8s request budget, so the request
+// path cannot be what fills the cache. Scans run DETACHED from any request
+// context on their own budget. A request (a) serves a fresh entry, (b) serves a
+// STALE entry (200 + flags.stale + the entry's real as_of) while a
+// single-flight refresh runs, or (c) on a stone-cold key waits for the detached
+// compute up to its own deadline; if the scan outlives it, THIS request 503s but
+// the compute continues, so the retry lands warm. A failed refresh keeps the
+// previous entry: old-but-real beats blank. PrewarmContractsDirectory keeps the
+// directory's default rung warm off the 5-minute prewarm loop.
 
 // perKeyFlight collapses concurrent work for the same key. Derived from the
 // clickhouse-package helper of the same name (this package cannot import an

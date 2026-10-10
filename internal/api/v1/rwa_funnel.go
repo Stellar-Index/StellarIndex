@@ -411,37 +411,25 @@ func rwaClassicStages(m rwaMembership, join rwaCatalogueJoin, served int) []RWAF
 	c := m.census
 
 	// Every issuer with an on-chain home_domain, less those holding no
-	// attestation — and that gap is TWO findings with two different
-	// owners, so it is reported as two drops.
+	// attestation. That gap is TWO findings with two owners, reported as two drops:
 	//
-	// An issuer nothing has fetched yet is an operator's backlog: a
-	// cron that has not reached that account, movable by running it. An
-	// issuer whose domain WAS reached and served nothing storable is
-	// the issuer's own publication: dead, parked, or serving no SEP-1
-	// document. Nobody here can fetch a file that is not there.
+	// An issuer nothing has fetched yet is an operator backlog (a cron that has not
+	// reached it). An issuer whose domain WAS reached and served nothing storable
+	// is the issuer's own publication problem; nobody here can fetch a file that is
+	// not there. They are split because the second dominates: measured on
+	// production, 40,838 domain-bearing issuers held no payload and exactly ONE had
+	// never been attempted. Calling all of them backlog would overstate both
+	// reachable coverage and the operator's share of the gap.
 	//
-	// They are split because the second dominates: measured on
-	// production, 40,838 domain-bearing issuers held no payload and
-	// exactly ONE of them had never been attempted. Naming all of them an
-	// unfetched backlog would overstate both this index's reachable
-	// coverage and the operator's share of the gap, on a page whose
-	// whole purpose is saying who can move a number.
+	// The split cannot say WHY a reached domain served nothing: no per-attempt
+	// outcome is stored, so 404, dead name, TLS failure and a document without SEP-1
+	// are one count. The reason string therefore says what was observed, not whose
+	// fault it was.
 	//
-	// What the split cannot say is WHY a reached domain served nothing:
-	// no per-attempt outcome is stored, so a 404, a dead name, a TLS
-	// failure and a document with no SEP-1 in it are one count. It is
-	// attributed to the issuer because that is where the sampled
-	// population lives; a transport fault at this end would land here
-	// too, which is the reason the reason string says what was
-	// observed rather than whose fault it was.
-	//
-	// Clamped at zero because a negative difference is nonsense on the
-	// wire, and the fetched-but-empty count is clamped to the gap for
-	// the same reason, with the never-attempted remainder taking what
-	// is left. Neither clamp can hide the inconsistency that produced
-	// one: the census Check() bounds the same two counts against the
-	// same population independently of the stage arithmetic, and
-	// Balanced requires both.
+	// Both counts are clamped (the gap at zero; fetched-but-empty to the gap, with
+	// the never-attempted remainder taking the rest). Neither clamp hides an
+	// inconsistency: the census Check() bounds the same counts against the same
+	// population independently, and Balanced requires both.
 	gap := max(c.IssuersWithHomeDomain-c.IssuersWithPayload, 0)
 	servedNothing := min(c.IssuersFetchedWithoutPayload, gap)
 	neverFetched := gap - servedNothing

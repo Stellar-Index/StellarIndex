@@ -166,36 +166,29 @@ func (c *DEXTVLCache) Total() *DEXTVLTotalView {
 	return c.total
 }
 
-// reconcileDEXTVLTotal folds a per-protocol snapshot into the headline
-// total, admitting only the parts whose own published claims hold. Its
-// action is to REFUSE rather than to warn: a protocol that fails
-// admission is dropped from the sum and named in `excluded`, so a
-// wrong total is never served in the first place.
+// reconcileDEXTVLTotal folds a per-protocol snapshot into the headline total,
+// admitting only parts whose own published claims hold. It REFUSES rather than
+// warns: a protocol failing admission is dropped from the sum and named in
+// `excluded`, so a wrong total is never served.
 //
-// The three refusals are the ways a part can be internally inconsistent
-// with the response it is published in:
+// Refusals:
 //
-//   - stale — Refresh's carryPrev keeps a protocol's PREVIOUS entry when
-//     its reserve read fails, so `snapshot` can hold a figure from an
-//     earlier cycle. Summing it would stamp the total with an `as_of`
-//     no component honours. This is the live failure mode: it happens
-//     every time stellarindex_dex_tvl_refresh_failing is true. Refresh
-//     NAMES the carried protocols rather than leaving this to be
-//     inferred from a stamp comparison — RFC3339 is second-resolution,
-//     so two refreshes can share an as_of and a carried figure would
-//     pass an equality test while being a cycle old.
-//   - unparseable — the sum must be exact; a part that does not parse
-//     as a non-negative decimal has no defined contribution.
-//   - pool accounting — every pool is counted priced XOR unpriced, so
-//     pools_total must equal their sum. When it doesn't, the money and
-//     the coverage claim came from different accountings and the
-//     lower-bound story is no longer provable.
+//   - stale: Refresh's carryPrev keeps a protocol's PREVIOUS entry when its
+//     reserve read fails, so `snapshot` can hold an earlier cycle's figure
+//     (the live failure mode whenever stellarindex_dex_tvl_refresh_failing is
+//     true). Refresh NAMES carried protocols instead of inferring staleness
+//     from a stamp comparison: RFC3339 is second-resolution, so a carried
+//     figure could share an as_of and pass an equality test.
+//   - unparseable: the sum must be exact; a part that is not a non-negative
+//     decimal has no defined contribution.
+//   - pool accounting: every pool is priced XOR unpriced, so pools_total must
+//     equal their sum; otherwise money and coverage came from different
+//     accountings and the lower-bound claim is unprovable.
 //
-// at is the refresh instant the snapshot was computed at, carried
-// names the protocols serving a previous cycle's figure, and unavailable
-// names the derived protocols with no figure in snapshot at all — each
-// is listed in `excluded` and makes the total a lower bound. Returns nil
-// for an empty snapshot (nothing to total).
+// at is the refresh instant, carried names protocols serving a previous
+// cycle's figure, unavailable names derived protocols with no figure in
+// snapshot; each is listed in `excluded` and makes the total a lower bound.
+// Returns nil for an empty snapshot.
 func reconcileDEXTVLTotal(snapshot map[string]ProtocolTVLView, at time.Time, carried []string, unavailable []DEXTVLExclusion) *DEXTVLTotalView {
 	if len(snapshot) == 0 {
 		return nil

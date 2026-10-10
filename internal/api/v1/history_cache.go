@@ -13,36 +13,22 @@ import (
 )
 
 // CachedHistoryReader wraps a [HistoryReader], adding a small
-// stale-while-revalidate cache to **`LatestTradePerSource` only** —
-// the storage primitive behind `/v1/observations` (ADR-0018
-// Surface 3). Every other HistoryReader method is pure pass-through
-// (they're already range-bounded / CAGG-backed and fast).
+// stale-while-revalidate cache to **`LatestTradePerSource` only**, the
+// primitive behind `/v1/observations` (ADR-0018 Surface 3). Every other method
+// is pass-through (range-bounded or CAGG-backed and fast).
 //
-// Why this one method: `LatestTradePerSource` is a
-// `DISTINCT ON (source) … WHERE base=$1 AND quote=$2
-// ORDER BY source, ts DESC` over the `trades` hypertable with no
-// time bound. It is not a slow query: migration 0037's
-// `trades_pair_source_ts_idx ON trades (base_asset, quote_asset,
-// source, ts DESC, ledger DESC)` makes the plan a Merge Append of
-// per-chunk SkipScans, measured on r1 at 49 ms (native/fiat:USD),
-// 289 ms (heaviest pair) and 47 ms to prove a novel pair empty. The
-// cache earns its place by keeping the status page's poll off the
-// database. The handler caps it at 8s and returns 503 on overrun.
+// The query is not slow: a DISTINCT ON (source) over `trades` with no time
+// bound, but migration 0037's `trades_pair_source_ts_idx` makes it a Merge
+// Append of per-chunk SkipScans (measured on r1: 49 ms native/fiat:USD, 289 ms
+// heaviest pair). The cache keeps the status page's poll (one fixed key,
+// `native|fiat:USD|`, every ~2 min) off the database; the exact result,
+// including a legitimate empty slice, is cached.
 //
-// The status page polls one fixed key (`native|fiat:USD|`) every
-// ~2 min, so SWR gives a ~100% hit rate after warm-up with zero
-// correctness loss (the exact query result — including a legitimate
-// empty slice — is cached).
-//
-// SWR shape mirrors the pattern in
-// asset_catalogue_cache.go / markets_cache.go with one deliberate change:
-// the cold fill runs in a **detached** goroutine on its own budget,
-// not the request ctx. The handler's hard 8s ceiling would
-// otherwise fail every cold call before it could populate the cache
-// — the endpoint would 503 forever and never warm. Decoupling the
-// fill lets the first caller(s) 503 (bounded by their own ctx)
-// while the fill completes out-of-band and warms the cache for the
-// next poll.
+// Shape follows asset_catalogue_cache.go / markets_cache.go with one change: the
+// cold fill runs in a **detached** goroutine on its own budget. The handler's
+// hard 8s ceiling would otherwise fail every cold call before it could populate
+// the cache, so the endpoint would 503 forever. Detached, the first caller(s)
+// 503 while the fill warms the cache for the next poll.
 type CachedHistoryReader struct {
 	// logger sinks a panic recovered in a detached refresh goroutine.
 	// It is the PROCESS DEFAULT rather than the API Server's logger:

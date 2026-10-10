@@ -9,41 +9,25 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// CachedIssuersReader wraps an [IssuersReader] with a per-process
-// TTL cache + single-flight refetch. Uncached, `/v1/issuers`
-// measured p95 ~404ms — over the 200ms SLO. The
-// underlying SQL is a 5-table-equivalent aggregate:
+// CachedIssuersReader wraps an [IssuersReader] with a per-process TTL cache
+// and single-flight refetch. Uncached, `/v1/issuers` measured p95 ~404ms
+// against a 200ms SLO.
 //
-//	SELECT ... FROM issuers i JOIN classic_assets c USING(g_strkey)
-//	 GROUP BY i.g_strkey ... ORDER BY total_obs DESC LIMIT $1
+// The SQL is a full GROUP BY over issuers JOIN classic_assets with
+// sum(observation_count): two seq scans plus a HashAggregate no index can
+// avoid (~196ms for the query alone). The catalogue moves on a
+// minutes-to-hours timescale, so the 24h+ observation ranking is not
+// materially stale at the TTL; same rationale as CachedSourcesStatsReader /
+// CachedMarketsReader.
 //
-// EXPLAIN ANALYZE on r1 showed two seq scans
-// (issuers ~58k rows + classic_assets ~190k rows) feeding a
-// HashAggregate over 57k groups and a top-N heapsort. No single
-// index helps because the GROUP BY + sum(observation_count)
-// requires the full hashagg regardless of access path. The data
-// shape (one row per (g_strkey, asset)) is small enough that the
-// scan itself is the right plan — Postgres just has nothing else
-// it can do. Query alone is ~196ms; the rest of the p95 budget is
-// JSON marshalling + HTTP overhead.
+// GetIssuer + ListIssuerAssets are pass-through: keyed on one G-strkey and
+// already index-backed (`issuers_pkey`, `classic_assets_issuer_idx`), so
+// caching adds bookkeeping for no win.
 //
-// The catalogue moves on the human timescale of "new issuer
-// observed on SDEX" (minutes-to-hours) — the underlying ranking by
-// 24h+ observation totals isn't materially stale at 5 min. Same
-// freshness rationale as CachedSourcesStatsReader / CachedMarketsReader.
-//
-// GetIssuer + ListIssuerAssets are pass-through — they're keyed
-// too narrowly (one G-strkey) to share across callers and the
-// underlying queries already hit `issuers_pkey` /
-// `classic_assets_issuer_idx`, so they're sub-millisecond at the
-// DB layer. Caching them would just add LRU bookkeeping for no
-// throughput win.
-//
-// Single-flight: concurrent callers during a refetch share one
-// upstream call. Same write-on-success / delete-on-error /
-// waiter-err-pointer pattern as CachedMarketsReader: a waiter holds its
-// own pointer to the entry, so it reads the leader's error even after
-// the leader removed that entry from the map.
+// Single-flight follows CachedMarketsReader's write-on-success /
+// delete-on-error / waiter-err-pointer pattern: a waiter holds its own pointer
+// to the entry, so it reads the leader's error even after the leader removed
+// the entry from the map.
 type CachedIssuersReader struct {
 	upstream IssuersReader
 	ttl      time.Duration

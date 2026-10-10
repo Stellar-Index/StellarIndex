@@ -5,34 +5,22 @@ import (
 	"strings"
 )
 
-// TrailingSlashRedirect 308-redirects any non-root request whose
-// path ends with `/` to the same path with the trailing slash
-// stripped (query string preserved).
+// TrailingSlashRedirect 308-redirects any non-root request whose path ends
+// with `/` to the same path without it (query preserved).
 //
-// Why: every v1 route is registered without a trailing slash
-// (`GET /v1/assets`, `GET /v1/assets/{slug}`, …) and Go's net/http
-// ServeMux treats `/v1/assets/` as a *different* path that 404s.
-// Many client libraries auto-append a trailing slash by default
-// (curl users mistype, axios with `baseURL: '.../v1/'` joins
-// awkwardly, OpenAPI generators emit either form depending on
-// codegen flags). Without this middleware those clients hit a
-// dead 404 even though the resource exists. With it they take
-// a single 308 hop and land on the live handler.
+// Why: v1 routes are registered without a trailing slash and Go's ServeMux
+// treats `/v1/assets/` as a different path that 404s, yet many clients append
+// one (curl typos, axios baseURL joins, OpenAPI generators). One 308 hop lands
+// them on the live handler.
 //
-// 308 (rather than 301/302) preserves the request method and
-// body so a POST/DELETE doesn't silently degrade to GET on the
-// hop. Browsers and standard clients all honour 308 since 2017.
+// 308 rather than 301/302 preserves method and body, so POST/DELETE do not
+// degrade to GET. The redirect is method-agnostic. The root `/` is exempt, as
+// is any path that is itself a registered exact-match index route (a mux
+// pattern ending in `/{$}`, e.g. `GET /errors/{$}`); see muxMatcher.
 //
-// The redirect is method-agnostic — applies to GET, HEAD, POST,
-// DELETE etc. The root path `/` is exempt (it would redirect to
-// the empty string), and so is any path that is itself a
-// registered exact-match index route (a mux pattern ending in
-// `/{$}`, e.g. `GET /errors/{$}`) — see muxMatcher below.
-//
-// Sits OUTSIDE the mux so the redirect happens before the mux's
-// 404 fires. Sits INSIDE Logger so the redirect itself is
-// logged, and OUTSIDE the mux's CaptureRoute so it doesn't try
-// to record a route pattern for the redirect response.
+// Sits OUTSIDE the mux so the redirect precedes the mux's 404, INSIDE Logger so
+// the redirect is logged, and OUTSIDE CaptureRoute so no route pattern is
+// recorded for it.
 func TrailingSlashRedirect(mux muxMatcher) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

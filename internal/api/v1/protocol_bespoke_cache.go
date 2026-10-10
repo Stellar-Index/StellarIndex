@@ -13,36 +13,28 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// This file puts a LAST-GOOD layer under the per-category bespoke
-// analytics block of /v1/protocols/{name} — the visual suite (KPIs,
-// series, tables) the CCTP/DEX/lending/yield/oracle pages render.
+// This file puts a LAST-GOOD layer under the per-category bespoke analytics
+// block of /v1/protocols/{name} (the KPI/series/table suite the
+// CCTP/DEX/lending/yield/oracle pages render).
 //
-// Why: the detail VIEW is prewarmed + stale-served, but the bespoke block
-// is built LAST in buildProtocolDetail, so it inherits whatever is left of
-// the rebuild's 90-second budget after the roster + lake analytics. Under
-// load that remainder reaches zero and the store returns `context deadline
-// exceeded` ("protocol bespoke build failed …"). enrichBespoke then
-// honestly drops the block, and — when no HEALTHY entry exists yet (cold
-// process, fresh deploy, a whole window that has never built) — without a
-// cache of its own the bespoke-less view would be cached and stamped
-// fresh, so the page would render its suite as ABSENT.
+// Why: the bespoke block is built LAST in buildProtocolDetail, so it inherits
+// whatever remains of the rebuild's 90-second budget after the roster and lake
+// analytics. Under load that reaches zero and the build fails with `context
+// deadline exceeded`; enrichBespoke then drops the block, and with no healthy
+// entry yet (cold process, fresh deploy) the bespoke-less view would be cached
+// and stamped fresh, so the page would render its suite as ABSENT.
 //
-// This uses the pattern already used for every other expensive read
-// here: the block gets its own TTL-less cache with a detached,
-// single-flighted, GATED refresh. A build serves the previous block
-// instantly and never waits — except on a TRUE first-ever miss, which
-// waits for the detached compute bounded by the build's own context (the
-// compute survives that deadline, so the next build lands warm). A failed
-// or starved refresh keeps the last good block: old-but-real beats blank.
+// The block gets its own TTL-less cache with a detached, single-flighted, GATED
+// refresh. A build serves the previous block instantly; only a TRUE first-ever
+// miss waits, bounded by the build's context (the compute survives that
+// deadline, so the next build lands warm). A failed or starved refresh keeps the
+// last good block.
 //
-// Refresh cadence: every build kicks a refresh UNCONDITIONALLY (the
-// single flight collapses duplicates). Builds are already rate-limited by
-// the detail cache — the prewarm sweep touches each (protocol, window)
-// key about every 13–16 minutes — so an unconditional kick refreshes the
-// block at exactly the sweep cadence. A freshness-gated kick would
-// instead sawtooth (the sweep would skip the still-fresh block, then find
-// it stale one sweep later), which is the same failure PrewarmProtocolDetails
-// avoids by refreshing unconditionally.
+// Cadence: every build kicks a refresh UNCONDITIONALLY (single flight collapses
+// duplicates). Builds are already rate-limited by the detail cache (the prewarm
+// sweep touches each (protocol, window) key every ~13-16 minutes), so this
+// refreshes at the sweep cadence. A freshness-gated kick would sawtooth, the
+// same failure PrewarmProtocolDetails avoids.
 
 // bespokeStaleAfter is the age past which a SERVED bespoke block is
 // reported stale (the detail view's analytics.status drops ok → stale).
