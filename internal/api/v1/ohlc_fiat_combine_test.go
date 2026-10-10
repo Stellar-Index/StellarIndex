@@ -28,7 +28,7 @@ const (
 // TRADE level by the $0.01 notional floor on the CAGG extremes (migration
 // 0115) — which the band, comparing whole-constituent extremes, could never
 // reach. Proof that the dust really is gone is DB-backed:
-// test/integration/ohlc_dust_floor_test.go.
+// test/integration/pg_pricing_test.go.
 //
 // The band was ALSO a correctness hazard in the other direction: a
 // genuine large trade far from VWAP is a real market event and suppressing it

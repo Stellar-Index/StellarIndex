@@ -28,7 +28,7 @@ import (
 // These tests pin the worker's contract. The DELETE predicate itself —
 // including that a LIVE (unexpired) token is never reaped — is proven
 // against real Postgres in
-// test/integration/magic_link_token_reaper_test.go.
+// test/integration/pg_auth_core_test.go.
 
 type sweepCall struct{ olderThan time.Time }
 

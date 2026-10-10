@@ -13,7 +13,7 @@ import (
 
 // TestPerSourceLedgerGapsQuerySeedsAcrossWindowBoundary pins the query
 // SHAPE half of the CA2-A10/A11 fix (the DB-backed behaviour is proven
-// in test/integration/gap_detector_test.go): the seed placeholder
+// in test/integration/pg_ops_pipeline_test.go): the seed placeholder
 // ($4) must be UNION-ALLed into the scanned ledger set, guarded so a
 // non-positive or in-window seed is a no-op, for every registered
 // target — this is the mechanism that lets a gap spanning two scan

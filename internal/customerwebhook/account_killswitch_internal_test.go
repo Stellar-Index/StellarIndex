@@ -17,7 +17,7 @@ import (
 // complete the contract here by reporting every account active. The
 // kill switch's own behaviour is pinned in account_killswitch_test.go
 // (delivery path) and in
-// test/integration/customerwebhook_account_killswitch_test.go (SQL).
+// test/integration/pg_auth_webhooks_test.go (SQL).
 
 // WebhookAccountStatus completes the DeliveryStore contract for nopStore.
 func (nopStore) WebhookAccountStatus(context.Context, uuid.UUID) (platform.AccountStatus, error) {

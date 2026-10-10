@@ -228,7 +228,7 @@ const (
 // sep1_consecutive_failures = 0 and sep1_next_attempt_after = NULL in
 // the same statement that writes the payload, so a success erases the
 // ladder step its own pre-mark took (proved against Postgres in
-// test/integration/sep1_retry_backoff_test.go). And the mark happens
+// test/integration/pg_assets_sep1_test.go). And the mark happens
 // exactly once per issuer per run, so the systemic-outage unwind — which
 // takes back exactly one ladder step per failed key — still balances.
 func refreshOneSep1Issuer(

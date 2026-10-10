@@ -7,7 +7,7 @@ import (
 )
 
 // Defensive-guard coverage. The INSERT/SELECT round-trip runs against
-// real TimescaleDB in test/integration/soroswap_pairs_storage_test.go.
+// real TimescaleDB in test/integration/pg_sources_amm_test.go.
 
 func TestUpsertSoroswapPair_rejectsEmptyPair(t *testing.T) {
 	s := &Store{}

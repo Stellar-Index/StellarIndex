@@ -15,7 +15,7 @@ import (
 )
 
 // The DELETE predicates are proven against real Postgres in
-// test/integration/platform_retention_reaper_test.go; these pin the
+// test/integration/pg_auth_platform_test.go; these pin the
 // worker: the cutoff it hands the store, and what it reports.
 
 var fixedNow = time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)

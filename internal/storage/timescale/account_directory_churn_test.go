@@ -10,7 +10,7 @@ import (
 // refusal: 5 % of the held rows, never below the floor, unbounded
 // for a source's first sync and for the operator's explicit opt-in.
 // The refusal itself runs against Postgres in
-// test/integration/account_directory_churn_test.go.
+// test/integration/pg_accounts_test.go.
 func TestDirectoryChurnLimit_Ceiling(t *testing.T) {
 	cases := []struct {
 		name     string

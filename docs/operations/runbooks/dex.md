@@ -695,7 +695,7 @@ recomputation after the re-derive.
   `internal/decimalsguard/lockstep_test.go`
   (`TestLockstep_EveryPersistedRowMatchesTheLake` is the invariant),
   `internal/api/v1/assets_decimals_lockstep_test.go` (null-not-a-number on
-  every disagreement shape), `test/integration/nonstandard_decimals_assets_test.go`
+  every disagreement shape), `test/integration/pg_assets_supply_test.go`
   (reconcile through the real store on Postgres).
 - Metrics: `stellarindex_dex_trade_nonstandard_decimals_total` (detection),
   `stellarindex_price_serve_declined_nonstandard_decimals_total` (live
