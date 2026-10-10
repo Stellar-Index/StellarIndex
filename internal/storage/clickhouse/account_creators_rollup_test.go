@@ -440,7 +440,7 @@ func TestCreatorsRollupLiveAccountsDedupeRecycledAddresses(t *testing.T) {
 // recycle: A creates X, X merges, B re-creates X. The live join must credit
 // X's current incarnation to its latest creator only, or X is counted once
 // per creator in live_accounts_total. Executing proof:
-// test/integration/creators_rollup_cross_creator_recycle_test.go.
+// test/integration/creators_rollup_test.go.
 func TestCreatorsRollupLiveCreditsLatestCreatorOnly(t *testing.T) {
 	board := creatorsRollupStatement(t, "account_creators_rollup_staging")
 
