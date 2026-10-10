@@ -200,8 +200,7 @@ the `env:` column.
 | `api.rate_limit_dwell` | `duration` | `30s` | — | Fail-open dwell window for the anon/key/failed-auth rate-limit buckets before Take starts returning ratelimit.ErrThrottleUnavailable (fail-CLOSED, 503) on sustained Redis errors. Mirrors ratelimit.DefaultDwellTime. Negative disables the inversion (legacy fail-open-always). |
 | `api.monthly_quota_dwell` | `duration` | `30s` | — | Fail-open dwell window for the monthly-quota middleware before month-to-date read errors flip it to fail-CLOSED (429 + Retry-After). Mirrors middleware.DefaultMonthlyQuotaDwellTime. Negative disables the inversion (legacy fail-open-always). |
 | `api.failed_auth_rate_limit_per_min` | `int` | `20` | — | Cap on INVALID-credential (failed-auth) attempts per minute, enforced inside the Auth middleware so credential-stuffing / API-key guessing is throttled even though auth rejects before the main rate limiter (C3-5). Only active when auth_mode != none. Applied independently per resolved client IP and, in the apikey / apikey_optional modes, per presented key prefix (the 12-char display prefix), so guessing aimed at one key from many IPs is still capped; a valid key is never throttled by it. Redis-backed when available, in-process fixed-window fallback otherwise. 0 disables the failed-auth throttle. |
-| `api.holds_file` | `string` | `` | — | Path to a TOML file of [[hold]] entries (asset, contract_id, ledger_from, ledger_to, reason) that mark matching supply, balance and holder responses as under review. Polled every holds_reload_interval; a missing file means no holds; an invalid or zero-byte file keeps the previous list, so delete the file to lift every hold. Empty disables the feature. |
-| `api.holds_reload_interval` | `duration` | `15s` | — | How often the API re-reads holds_file. |
+| `api.holds_file` | `string` | `` | — | Path to a TOML file of [[hold]] entries (asset, contract_id, ledger_from, ledger_to, reason) that mark matching supply, balance and holder responses as under review. Polled every 15s; a missing file means no holds; an invalid or zero-byte file keeps the previous list, so delete the file to lift every hold. Empty disables the feature. |
 | `api.single_instance` | `bool` | `false` | — | Assert this deployment runs exactly ONE API instance. Only consulted when Redis is DISABLED (storage.redis_addr empty and no sentinels): the auth throttles + passkey ceremony replay guard then fall back to per-PROCESS state, which is unsafe behind more than one instance (cross-instance ceremony replay → session mint; throttle caps multiply by replica count). With Redis absent the API refuses to start unless this is true, so a multi-instance-without-Redis topology cannot silently downgrade a session-minting path. No effect when Redis is configured. Default false (the safe assumption: assume multiple instances until told otherwise). |
 | `api.request_timeout` | `duration` | `15s` | — | Per-request context deadline applied to every non-streaming request by the API's RequestTimeout middleware, so every handler inherits a bound even when it forgets its own. Streaming (SSE) endpoints are exempt (they own their lifecycle via client-disconnect ctx cancellation). HARD MINIMUM: it must EXCEED 12s, the longest per-handler budget (config.APIMaxHandlerBudget), or the API refuses to boot — at or below it the blanket deadline reaches every reader first, so each handler's own '…-timeout' 503 is unreachable and the ceilings they advertise are fiction. Keep it under the 30s http.Server WriteTimeout. 0 disables the middleware entirely (no deadline injected, and the minimum does not apply). |
 | `api.serving_statement_timeout` | `duration` | `30s` | — | Session-level Postgres statement_timeout applied to every connection in the API's serving pool (via a post-connect SET), so a runaway request-path query is bounded SQL-side even if Go-side ctx cancellation races. Keep it LONGER than request_timeout so the app-layer deadline fires first (defense in depth). The indexer/aggregator pools are unaffected — their heavy batch scans set their own longer SET LOCAL statement_timeout inside a transaction, which overrides this session default. 0 disables it (plain Open, no session timeout). |
@@ -289,12 +288,6 @@ the `env:` column.
 | `pricing_guard.disable_fiat_basis` | `bool` | `false` | — | Disable the ADR-0053 fiat basis rule: /v1/price and /v1/price/batch serve a single-venue direct fiat book as-is instead of the USD-anchored derivation (multi-venue USD leg × bound FX fixing). Kill switch, not a tuning knob. |
 | `pricing_guard.fiat_pegged_classic_assets` | `map` | `{}` | — | Maps classic credit asset_keys (CODE-ISSUER) to the ISO-4217 fiat ticker the operator declares them 1:1-pegged to (e.g. AUDD-G… = "AUD"). The API fills the asset's listing/detail price_usd from the declared peg × current fiat→USD FX rate when no market-derived price survives the substance gate, stamped price_basis="declared_peg" on the wire. Never overwrites a market-derived price. Empty disables the fill. |
 
-### `[decimals_guard]`
-
-| Key | Type | Default | Env override | Description |
-| --- | ---- | ------- | ------------ | ----------- |
-| `decimals_guard.backfill_window_days` | `int` | `90` | — | How many days of trade history the decimals-guard's one-time startup backfill pass scans for distinct Soroban-legged (source, asset) pairs, to self-seed nonstandard_decimals_assets for tokens that traded and then went dormant. 0 = library default (90). |
-
 ### `[divergence]`
 
 | Key | Type | Default | Env override | Description |
@@ -335,15 +328,12 @@ the `env:` column.
 | Key | Type | Default | Env override | Description |
 | --- | ---- | ------- | ------------ | ----------- |
 | `price_alerts.enabled` | `bool` | `false` | — | Start the price-alert evaluator loop in the aggregator. Off by default. |
-| `price_alerts.interval_seconds` | `int` | `30` | — | Sweep cadence in seconds between price-alert evaluation passes. 0 = library default (30s). |
 
 ### `[signup_reaper]`
 
 | Key | Type | Default | Env override | Description |
 | --- | ---- | ------- | ------------ | ----------- |
 | `signup_reaper.enabled` | `bool` | `true` | — | Start the speculative-account reaper loop in the API binary. On by default — the reaped rows (Suspended signup-race orphans with no user/key) are pure garbage. Set false to disable. |
-| `signup_reaper.interval_minutes` | `int` | `60` | — | Minutes between reaper sweeps. 0 = library default (60). |
-| `signup_reaper.min_age_minutes` | `int` | `1440` | — | Minimum minutes a suspended orphan must age before the reaper deletes it (safety window). 0 = library default (1440 = 24h). |
 
 ### `[hashdb]`
 
@@ -351,8 +341,6 @@ the `env:` column.
 | --- | ---- | ------- | ------------ | ----------- |
 | `hashdb.enabled` | `bool` | `false` | — | Start the hashdb append-on-ingest + periodic verify sweep in the indexer. Off by default — opt in per region once proven. |
 | `hashdb.path` | `string` | `/var/lib/stellarindex/hashdb.bin` | — | Filesystem path of the hashdb file (ledger_seq -> sha256(LCM)). Created on first run if missing. |
-| `hashdb.verify_interval_minutes` | `int` | `60` | — | Minutes between hashdb verify sweeps. 0 = the indexer default (60). |
-| `hashdb.verify_window_ledgers` | `uint32` | `20000` | — | Trailing ledger count each verify sweep re-checks against hashdb. 0 = the indexer default (20000, ~1 day). |
 
 ### `[obs]`
 

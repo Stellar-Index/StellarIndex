@@ -99,9 +99,6 @@ func (c Config) Validate() error {
 	if err := c.PricingGuard.validate(); err != nil {
 		return err
 	}
-	if err := c.DecimalsGuard.validate(); err != nil {
-		return err
-	}
 	if err := c.Obs.validate(); err != nil {
 		return err
 	}
@@ -114,12 +111,6 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Metadata.validate(); err != nil {
-		return err
-	}
-	if err := c.PriceAlerts.validate(); err != nil {
-		return err
-	}
-	if err := c.SignupReaper.validate(); err != nil {
 		return err
 	}
 	if err := c.HashDB.validate(); err != nil {

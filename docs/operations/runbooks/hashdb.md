@@ -79,7 +79,7 @@ sum(rate(stellarindex_hashdb_verify_runs_total{window="recent",outcome=~"error|o
 - Bucket unreachable (check `galexie-archive-tip-lag`, [runbook](archive.md#stellarindex_galexie_archive_tip_lag_high), and MinIO connectivity).
 - **An in-window object was rewritten to bytes that no longer XDR-decode, or deleted.** Potentially the tamper class, not blindness. The sweep streams strictly (missing objects are errors) and aborts at the first bad object; later ledgers in the window went unverified. A decode failure or "object … is missing" naming an already-ingested ledger (not mid-catch-up) warrants the three-way comparison above. If drift was tallied before the stream error, the run records `outcome="drift"` (stream error attached to the log), not `error`.
 
-Diagnose: `journalctl -u stellarindex-indexer | grep -E "hashdb verify sweep (failed|incomplete)"` (WARN includes the error; `incomplete` = stream ended early without error, or no ledger in the window had a recorded baseline: triage like a missing object). Fix the connectivity/disk cause; the sweep retries every `verify_interval_minutes` with no operator action. If the error names a specific in-window object, escalate per the drift section.
+Diagnose: `journalctl -u stellarindex-indexer | grep -E "hashdb verify sweep (failed|incomplete)"` (WARN includes the error; `incomplete` = stream ended early without error, or no ledger in the window had a recorded baseline: triage like a missing object). Fix the connectivity/disk cause; the sweep retries every 60 minutes with no operator action. If the error names a specific in-window object, escalate per the drift section.
 
 ## stellarindex_hashdb_verify_stale
 

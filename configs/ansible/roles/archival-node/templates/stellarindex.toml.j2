@@ -431,12 +431,10 @@ watched_issuer_accounts = {{ stellarindex_metadata_watched_issuer_accounts | def
 # region once proven") — set stellarindex_hashdb_enabled: true in a
 # region's inventory once its rollout is clean. Path matches the
 # indexer's existing /var/lib/stellarindex mount (14-stellarindex-
-# services.yml); interval/window keep the library defaults.
+# services.yml). The sweep interval and window are fixed in the indexer.
 [hashdb]
 enabled                 = {{ 'true' if stellarindex_hashdb_enabled | default(false) | bool else 'false' }}
 path                    = "/var/lib/stellarindex/hashdb.bin"
-verify_interval_minutes = 60
-verify_window_ledgers   = 20000
 
 # ──────────────────────────────────────────────────────────────────
 # [supply] — operator-curated registries.

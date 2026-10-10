@@ -529,15 +529,9 @@ func TestValidate_RejectsWithoutSentinel(t *testing.T) {
 		mut    func(*config.Config)
 		errSub string
 	}{
-		// Unbounded, verify_window_ledgers can exceed the chain height and turn
-		// every periodic sweep into a full-archive re-read.
-		"hashdb verify interval minutes over 24h": {
-			func(c *config.Config) { hashDB(c); c.HashDB.VerifyIntervalMinutes = 24*60 + 1 },
-			"verify_interval_minutes",
-		},
-		"hashdb verify window ledgers over ceiling": {
-			func(c *config.Config) { hashDB(c); c.HashDB.VerifyWindowLedgers = 200001 },
-			"verify_window_ledgers",
+		"hashdb enabled without path": {
+			func(c *config.Config) { hashDB(c); c.HashDB.Path = "" },
+			"hashdb: path",
 		},
 		// A typo is a config mistake, not "this account has zero reserves".
 		"sdf reserve account malformed": {
