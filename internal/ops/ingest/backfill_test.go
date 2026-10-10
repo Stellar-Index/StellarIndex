@@ -373,36 +373,34 @@ func TestPlanBackfillChunks(t *testing.T) {
 // validation without the full integration plumbing.
 func TestParseBackfillFlags_Parallel(t *testing.T) {
 	cfgPath := writeMinimalConfig(t, []string{"sdex"})
-	t.Run("default is 1", func(t *testing.T) {
-		opts, _, err := parseBackfillFlags([]string{"-config", cfgPath, "-from", "100", "-to", "200", "-dry-run"})
-		if err != nil {
-			t.Fatalf("parse: %v", err)
-		}
-		if opts.parallel != 1 {
-			t.Errorf("parallel = %d, want 1", opts.parallel)
-		}
-	})
-	t.Run("explicit 8 accepted", func(t *testing.T) {
-		opts, _, err := parseBackfillFlags([]string{"-config", cfgPath, "-from", "100", "-to", "200", "-parallel", "8", "-dry-run"})
-		if err != nil {
-			t.Fatalf("parse: %v", err)
-		}
-		if opts.parallel != 8 {
-			t.Errorf("parallel = %d, want 8", opts.parallel)
-		}
-	})
-	t.Run("zero rejected", func(t *testing.T) {
-		_, _, err := parseBackfillFlags([]string{"-config", cfgPath, "-from", "100", "-to", "200", "-parallel", "0", "-dry-run"})
-		if err == nil {
-			t.Fatal("expected error for parallel=0")
-		}
-	})
-	t.Run("negative rejected", func(t *testing.T) {
-		_, _, err := parseBackfillFlags([]string{"-config", cfgPath, "-from", "100", "-to", "200", "-parallel", "-3", "-dry-run"})
-		if err == nil {
-			t.Fatal("expected error for parallel=-3")
-		}
-	})
+	for _, tc := range []struct {
+		name    string
+		extra   []string
+		want    int
+		wantErr bool
+	}{
+		{"default is 1", nil, 1, false},
+		{"explicit 8 accepted", []string{"-parallel", "8"}, 8, false},
+		{"zero rejected", []string{"-parallel", "0"}, 0, true},
+		{"negative rejected", []string{"-parallel", "-3"}, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"-config", cfgPath, "-from", "100", "-to", "200", "-dry-run"}, tc.extra...)
+			opts, _, err := parseBackfillFlags(args)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %v", tc.extra)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if opts.parallel != tc.want {
+				t.Errorf("parallel = %d, want %d", opts.parallel, tc.want)
+			}
+		})
+	}
 }
 
 // fakeCAGGRefresher is a DB-free caggRefresher: canned
