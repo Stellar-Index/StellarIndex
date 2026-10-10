@@ -15,62 +15,40 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestPriceStream_NoHub_Returns503 — the endpoint is mounted but
-// returns 503 until a Hub is wired (typical pre-aggregator state).
-func TestPriceStream_NoHub_Returns503(t *testing.T) {
-	srv := v1.New(v1.Options{})
-	ts := httptest.NewServer(srv.Handler())
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/v1/price/stream?asset=native&quote=fiat:USD")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, "stream-unavailable") {
-		t.Errorf("error type missing: %s", body)
-	}
-}
-
-// TestPriceStream_RejectsGranularity — closed-bucket stream is fixed
-// at 1m; ?granularity= returns 400.
-func TestPriceStream_RejectsGranularity(t *testing.T) {
-	hub := streaming.NewHub(0)
-	srv := v1.New(v1.Options{Hub: hub})
-	ts := httptest.NewServer(srv.Handler())
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/v1/price/stream?asset=native&quote=fiat:USD&granularity=1m")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, "invalid-stream-param") {
-		t.Errorf("error type missing: %s", body)
-	}
-}
-
-func TestPriceStream_MissingAsset_Returns400(t *testing.T) {
-	hub := streaming.NewHub(0)
-	srv := v1.New(v1.Options{Hub: hub})
-	ts := httptest.NewServer(srv.Handler())
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/v1/price/stream")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
+// TestPriceStream_RejectsBadRequests: no hub is 503 stream-unavailable; a
+// granularity, missing asset or negative window is 400.
+func TestPriceStream_RejectsBadRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name, query, wantBody string
+		noHub                 bool
+		want                  int
+	}{
+		{name: "no hub", noHub: true, query: "?asset=native&quote=fiat:USD", want: http.StatusServiceUnavailable, wantBody: "stream-unavailable"},
+		{name: "granularity", query: "?asset=native&quote=fiat:USD&granularity=1m", want: http.StatusBadRequest, wantBody: "invalid-stream-param"},
+		{name: "missing asset", query: "", want: http.StatusBadRequest},
+		{name: "negative window", query: "?asset=native&quote=fiat:USD&window_seconds=-5", want: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := v1.Options{Hub: streaming.NewHub(0)}
+			if tc.noHub {
+				opts = v1.Options{}
+			}
+			ts := httptest.NewServer(v1.New(opts).Handler())
+			defer ts.Close()
+			resp, err := http.Get(ts.URL + "/v1/price/stream" + tc.query)
+			if err != nil {
+				t.Fatalf("GET: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tc.want {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+			if tc.wantBody != "" {
+				if body, _ := readAll(resp); !strings.Contains(body, tc.wantBody) {
+					t.Errorf("error type %q missing: %s", tc.wantBody, body)
+				}
+			}
+		})
 	}
 }
 
@@ -479,23 +457,5 @@ func TestPriceStream_WindowSeparation(t *testing.T) {
 	frame := readPriceStreamFrame(t, br, 2*time.Second)
 	if !strings.Contains(frame, `data: {"w":"300"}`) {
 		t.Fatalf("first frame should be the 300s bucket only; frame = %q", frame)
-	}
-}
-
-// TestPriceStream_RejectsBadWindowSeconds — a malformed window returns
-// 400 pre-stream.
-func TestPriceStream_RejectsBadWindowSeconds(t *testing.T) {
-	hub := streaming.NewHub(0)
-	srv := v1.New(v1.Options{Hub: hub})
-	ts := httptest.NewServer(srv.Handler())
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/v1/price/stream?asset=native&quote=fiat:USD&window_seconds=-5")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}
 }

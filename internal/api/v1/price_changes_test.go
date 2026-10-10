@@ -40,30 +40,29 @@ func (priceChangesAgeStub) PriceAt(
 	}
 }
 
-func TestHandlePriceChanges_503WhenReaderNil(t *testing.T) {
-	s := &Server{}
-	rec := httptest.NewRecorder()
-	s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet, "/v1/price/changes?asset=native", nil))
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status %d, want 503: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestHandlePriceChanges_MissingAsset400(t *testing.T) {
-	s := &Server{Options: Options{PriceAt: priceChangesAgeStub{}}}
-	rec := httptest.NewRecorder()
-	s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet, "/v1/price/changes", nil))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status %d, want 400: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestHandlePriceChanges_Identity400(t *testing.T) {
-	s := &Server{Options: Options{PriceAt: priceChangesAgeStub{}}}
-	rec := httptest.NewRecorder()
-	s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet, "/v1/price/changes?asset=fiat:USD&quote=fiat:USD", nil))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status %d, want 400: %s", rec.Code, rec.Body.String())
+// TestHandlePriceChanges_RejectsBadRequests: no reader is 503; a missing
+// asset or identity pair is 400.
+func TestHandlePriceChanges_RejectsBadRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name, target string
+		noReader     bool
+		want         int
+	}{
+		{name: "no reader", noReader: true, target: "/v1/price/changes?asset=native", want: http.StatusServiceUnavailable},
+		{name: "missing asset", target: "/v1/price/changes", want: http.StatusBadRequest},
+		{name: "identity pair", target: "/v1/price/changes?asset=fiat:USD&quote=fiat:USD", want: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{Options: Options{PriceAt: priceChangesAgeStub{}}}
+			if tc.noReader {
+				s = &Server{}
+			}
+			rec := httptest.NewRecorder()
+			s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet, tc.target, nil))
+			if rec.Code != tc.want {
+				t.Fatalf("status %d, want %d: %s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
 	}
 }
 

@@ -31,65 +31,43 @@ func mkTipTrade(ts time.Time, base, quote int64, source string) canonical.Trade 
 	}
 }
 
-func TestPriceTip_NoReader_Returns503(t *testing.T) {
-	srv := v1.New(v1.Options{})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price/tip?asset=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", resp.StatusCode)
+// TestPriceTip_RejectsBadRequests: no reader is 503; a granularity,
+// missing asset, identity pair or out-of-range window is 400.
+func TestPriceTip_RejectsBadRequests(t *testing.T) {
+	cases := []struct {
+		name, query, wantBody string
+		noReader              bool
+		want                  int
+	}{
+		{name: "no reader", noReader: true, query: "?asset=native&quote=fiat:USD", want: http.StatusServiceUnavailable},
+		{name: "granularity", query: "?asset=native&quote=fiat:USD&granularity=1m", want: http.StatusBadRequest, wantBody: "invalid-tip-param"},
+		{name: "missing asset", query: "", want: http.StatusBadRequest},
+		{name: "identity pair", query: "?asset=native&quote=native", want: http.StatusBadRequest},
 	}
-}
-
-// TestPriceTip_RejectsGranularity — ADR-0018 URL-discipline rule:
-// granularity is a closed-bucket concept; accepting it on the tip
-// URL would let a stray query param silently change the consistency
-// contract. 400 with a tip-specific error type.
-func TestPriceTip_RejectsGranularity(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price/tip?asset=native&quote=fiat:USD&granularity=1m")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
-	}
-	body, _ := readAll(resp)
-	if !strings.Contains(body, "invalid-tip-param") {
-		t.Errorf("error type missing: %s", body)
-	}
-}
-
-func TestPriceTip_MissingAsset_Returns400(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price/tip")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestPriceTip_IdentityPair_Returns400(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price/tip?asset=native&quote=native")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-// TestPriceTip_InvalidWindowSeconds — boundaries on the [1, 60]
-// clamp. Anything else is a 400.
-func TestPriceTip_InvalidWindowSeconds(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
 	for _, raw := range []string{"0", "61", "-1", "abc", "9999999999999999999"} {
-		resp := mustGet(t, ts.URL+"/v1/price/tip?asset=native&quote=fiat:USD&window_seconds="+raw)
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("window_seconds=%q → %d, want 400", raw, resp.StatusCode)
-		}
+		cases = append(cases, struct {
+			name, query, wantBody string
+			noReader              bool
+			want                  int
+		}{name: "window_seconds=" + raw, query: "?asset=native&quote=fiat:USD&window_seconds=" + raw, want: http.StatusBadRequest})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := v1.Options{Prices: &stubPriceReader{}}
+			if tc.noReader {
+				opts = v1.Options{}
+			}
+			ts := startHTTPTest(t, v1.New(opts).Handler())
+			resp := mustGet(t, ts.URL+"/v1/price/tip"+tc.query)
+			if resp.StatusCode != tc.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+			if tc.wantBody != "" {
+				if body, _ := readAll(resp); !strings.Contains(body, tc.wantBody) {
+					t.Errorf("error type %q missing: %s", tc.wantBody, body)
+				}
+			}
+		})
 	}
 }
 

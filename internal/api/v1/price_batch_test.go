@@ -15,92 +15,61 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-func TestPriceBatch_NoReader_Returns503(t *testing.T) {
-	srv := v1.New(v1.Options{})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native")
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", resp.StatusCode)
-	}
-}
-
-func TestPriceBatch_MissingAssetIds400(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price/batch")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestPriceBatch_EmptyAfterTrim400(t *testing.T) {
-	// `?asset_ids=,,` parses to zero usable ids and must 400.
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=,,,")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestPriceBatch_TooManyAssets400(t *testing.T) {
-	// 101 distinct asset_ids must 400 (limit fires after dedupe).
-	// Synthesise unique 3-character fiat codes (A..Z + AA..) so each
-	// entry is a distinct fiat:XYZ — dedupe will not collapse them
-	// and the limit check is the only failure mode.
-	ids := make([]string, 0, 101)
+// TestPriceBatch_RejectsBadRequests covers the GET and POST refusals:
+// no reader wired is 503; malformed or over-cap input is 400.
+func TestPriceBatch_RejectsBadRequests(t *testing.T) {
+	// 101 distinct GET ids (limit fires after dedupe) and 1001 distinct
+	// POST ids (POST cap is 1000), as unique fiat:XYZ codes so dedupe
+	// cannot collapse them.
+	getIDs := make([]string, 0, 101)
 	for i := 0; i < 101; i++ {
-		ids = append(ids, "fiat:"+string(rune('A'+i%26))+string(rune('A'+i/26))+"X")
+		getIDs = append(getIDs, "fiat:"+string(rune('A'+i%26))+string(rune('A'+i/26))+"X")
 	}
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids="+strings.Join(ids, ","))
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
+	postIDs := make([]string, 0, 1001)
+	for i := 0; i < 1001; i++ {
+		postIDs = append(postIDs, fmt.Sprintf("fiat:%c%c%c", 'A'+i%26, 'A'+(i/26)%26, 'A'+(i/26/26)%26))
 	}
-}
-
-func TestPriceBatch_InvalidAssetReturns400(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native,@@@")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
+	cases := []struct {
+		name     string
+		noReader bool
+		query    string // GET when post is empty
+		post     string
+		want     int
+	}{
+		{name: "GET no reader", noReader: true, query: "?asset_ids=native", want: http.StatusServiceUnavailable},
+		{name: "POST no reader", noReader: true, post: `{"asset_ids":["native"]}`, want: http.StatusServiceUnavailable},
+		{name: "GET missing asset_ids", query: "", want: http.StatusBadRequest},
+		{name: "GET empty after trim", query: "?asset_ids=,,,", want: http.StatusBadRequest},
+		{name: "GET too many assets", query: "?asset_ids=" + strings.Join(getIDs, ","), want: http.StatusBadRequest},
+		{name: "GET invalid asset", query: "?asset_ids=native,@@@", want: http.StatusBadRequest},
+		{name: "GET invalid quote", query: "?asset_ids=native&quote=garbage", want: http.StatusBadRequest},
+		{name: "GET identity pair", query: "?asset_ids=fiat:USD&quote=fiat:USD", want: http.StatusBadRequest},
+		{name: "GET asset_ids and pairs both", query: "?asset_ids=native&pairs=native", want: http.StatusBadRequest},
+		{name: "POST invalid quote", post: `{"asset_ids":["native"],"quote":"garbage"}`, want: http.StatusBadRequest},
+		{name: "POST not json", post: `not-json`, want: http.StatusBadRequest},
+		{name: "POST truncated json", post: `{`, want: http.StatusBadRequest},
+		{name: "POST int ids", post: `{"asset_ids":[1,2]}`, want: http.StatusBadRequest},
+		{name: "POST unknown field", post: `{"asset_ids":["native"],"quote":"x","unknown":42}`, want: http.StatusBadRequest},
+		{name: "POST empty array", post: `{"asset_ids":[]}`, want: http.StatusBadRequest},
+		{name: "POST too many assets", post: `{"asset_ids":["` + strings.Join(postIDs, `","`) + `"]}`, want: http.StatusBadRequest},
 	}
-}
-
-func TestPriceBatch_InvalidQuote400(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native&quote=garbage")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400 (invalid quote id)", resp.StatusCode)
-	}
-}
-
-func TestPriceBatchPost_InvalidQuote400(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustPostJSON(t, ts.URL+"/v1/price/batch",
-		`{"asset_ids":["native"],"quote":"garbage"}`)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400 (invalid quote id)", resp.StatusCode)
-	}
-}
-
-func TestPriceBatch_IdentityRejected400(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=fiat:USD&quote=fiat:USD")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := v1.Options{Prices: &stubPriceReader{}}
+			if tc.noReader {
+				opts = v1.Options{}
+			}
+			ts := startHTTPTest(t, v1.New(opts).Handler())
+			var resp *http.Response
+			if tc.post != "" {
+				resp = mustPostJSON(t, ts.URL+"/v1/price/batch", tc.post)
+			} else {
+				resp = mustGet(t, ts.URL+"/v1/price/batch"+tc.query)
+			}
+			if resp.StatusCode != tc.want {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+		})
 	}
 }
 
@@ -410,61 +379,6 @@ func mustPostJSON(t *testing.T, url, body string) *http.Response {
 	return resp
 }
 
-func TestPriceBatchPost_NoReader_Returns503(t *testing.T) {
-	srv := v1.New(v1.Options{})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustPostJSON(t, ts.URL+"/v1/price/batch", `{"asset_ids":["native"]}`)
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", resp.StatusCode)
-	}
-}
-
-func TestPriceBatchPost_InvalidJSON400(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	for _, body := range []string{
-		`not-json`,
-		`{`,
-		`{"asset_ids":[1,2]}`, // ints, not strings
-		`{"asset_ids":["native"],"quote":"x","unknown":42}`, // DisallowUnknownFields
-	} {
-		resp := mustPostJSON(t, ts.URL+"/v1/price/batch", body)
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("body %q status = %d, want 400", body, resp.StatusCode)
-		}
-	}
-}
-
-func TestPriceBatchPost_EmptyArray400(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustPostJSON(t, ts.URL+"/v1/price/batch", `{"asset_ids":[]}`)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestPriceBatchPost_TooManyAssets400(t *testing.T) {
-	// 1001 distinct ids must 400 (POST cap is 1000).
-	ids := make([]string, 0, 1001)
-	for i := 0; i < 1001; i++ {
-		// Synthesise unique fiat:XYZ codes.
-		ids = append(ids, fmt.Sprintf("fiat:%c%c%c",
-			'A'+i%26, 'A'+(i/26)%26, 'A'+(i/26/26)%26))
-	}
-	body := `{"asset_ids":["` + strings.Join(ids, `","`) + `"]}`
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-
-	resp := mustPostJSON(t, ts.URL+"/v1/price/batch", body)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
 func TestPriceBatchPost_OmitsMissingAssets(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	reader := &stubPriceReader{
@@ -570,15 +484,6 @@ func TestPriceBatch_PairsAcceptedAsAssetIdsAlias(t *testing.T) {
 	resp := mustGet(t, ts.URL+"/v1/price/batch?pairs=native")
 	if resp.StatusCode == http.StatusBadRequest {
 		t.Errorf("pairs= alias rejected (400); want it accepted as asset_ids= alias")
-	}
-}
-
-func TestPriceBatch_AssetIdsAndPairsBoth_Returns400(t *testing.T) {
-	srv := v1.New(v1.Options{Prices: &stubPriceReader{}})
-	ts := startHTTPTest(t, srv.Handler())
-	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native&pairs=native")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status=%d want 400 (both asset_ids+pairs)", resp.StatusCode)
 	}
 }
 
