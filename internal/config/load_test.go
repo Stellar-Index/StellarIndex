@@ -840,6 +840,38 @@ twap_window_seconds = 0
 	}
 }
 
+// TestLoadReader_RemovedWorkerKeysBootWithWarning: old configs still carrying
+// the removed worker-tuning keys must load.
+func TestLoadReader_RemovedWorkerKeysBootWithWarning(t *testing.T) {
+	body := `
+[region]
+id = "r1"
+
+[stellar]
+network = "pubnet"
+
+[decimals_guard]
+backfill_window_days = 90
+
+[price_alerts]
+interval_seconds = 30
+
+[signup_reaper]
+interval_minutes = 60
+min_age_minutes = 1440
+
+[hashdb]
+verify_interval_minutes = 60
+verify_window_ledgers = 20000
+
+[api]
+holds_reload_interval = "15s"
+`
+	if _, err := config.LoadReader(strings.NewReader(body), "test.toml"); err != nil {
+		t.Fatalf("removed worker keys should boot with a warning, not fail: %v", err)
+	}
+}
+
 // TestLoadReader_DwellWindowsConfigurable: api.rate_limit_dwell and
 // api.monthly_quota_dwell are operator-tunable and must round-trip through
 // config.
