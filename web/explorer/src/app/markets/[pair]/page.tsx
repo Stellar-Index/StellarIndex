@@ -7,11 +7,11 @@ import {
   baseUnitsDecimal,
   formatPriceSmall,
   compareDecimalStrings,
-  formatBaseUnits,
   formatCompactUnits,
   formatPairPrice,
   ratioPct,
   sumDecimalStrings,
+  formatUnitsReadable,
 } from '@/lib/format';
 import {
   serializeJsonLd,
@@ -570,14 +570,17 @@ export default async function PairPage({ params }: { params: Params }) {
                         decimals /v1/history resolves (the token
                         contract's declared decimals() for Soroban tokens),
                         falling back to 7 for native/classic/fiat where the
-                        field is omitted. formatBaseUnits divides via BigInt
+                        field is omitted. formatUnitsReadable divides via BigInt
                         first (ADR-0003) so an i128-scale trade amount
                         doesn't round through a Number()-then-divide. */}
                     <td className="text-ink-muted px-3 py-2 text-right tabular-nums">
-                      {formatBaseUnits(t.base_amount, t.base_decimals ?? 7)}
+                      {formatUnitsReadable(t.base_amount, t.base_decimals ?? 7)}
                     </td>
                     <td className="text-ink-muted px-3 py-2 text-right tabular-nums">
-                      {formatBaseUnits(t.quote_amount, t.quote_decimals ?? 7)}
+                      {formatUnitsReadable(
+                        t.quote_amount,
+                        t.quote_decimals ?? 7,
+                      )}
                     </td>
                   </tr>
                 ))}

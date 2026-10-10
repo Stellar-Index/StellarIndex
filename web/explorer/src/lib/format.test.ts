@@ -13,6 +13,7 @@ import {
   formatDurationLong,
   formatRelativeLong,
   formatOraclePrice,
+  formatUnitsReadable,
 } from './format';
 import { truncateMiddle } from '@/components/ui';
 
@@ -337,4 +338,15 @@ describe('divideDecimalString', () => {
     [['10', 0], null],
     [['abc', 2], null],
   ]);
+});
+
+describe('formatUnitsReadable', () => {
+  it.each([
+    ['123456789', 7, '12.35'],
+    ['1000000000000000', 7, '100M'],
+    ['9007199254740993', 0, '9007.2T'],
+    [null, 7, '—'],
+  ] as const)('%s at %i decimals → %s', (raw, d, want) => {
+    expect(formatUnitsReadable(raw, d)).toBe(want);
+  });
 });

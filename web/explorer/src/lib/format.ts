@@ -402,6 +402,14 @@ export function baseUnitsDecimal(
   return neg ? `-${out}` : out;
 }
 
+/** formatUnitsReadable — a smallest-unit integer string at formatReadable precision. */
+export function formatUnitsReadable(
+  raw: string | null | undefined,
+  decimals: number,
+): string {
+  return formatReadable(baseUnitsDecimal(raw, decimals)) ?? '—';
+}
+
 /**
  * formatBaseUnits — smallest-unit integer string → grouped whole-unit
  * display string with up to `maxFrac` fractional digits (trailing zeros

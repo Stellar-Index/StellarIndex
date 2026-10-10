@@ -10,7 +10,7 @@ import { formatBaseUnits } from '@/lib/format';
 // pattern F096 removed from the OHLC volume figure elsewhere on this
 // page. A Soroban i128 trade amount can exceed 2^53 stroops; Number()
 // rounds it before the divide ever runs. format.ts's formatBaseUnits
-// divides via BigInt first, so every digit survives.
+// divides via BigInt first; formatUnitsReadable builds on it.
 //
 // Source-text guard, like ohlc-volume-scale.test.ts alongside it: the
 // regression is a literal reimplementation at this call site, whatever
@@ -26,10 +26,10 @@ describe('markets/[pair] recent-trades amount scale', () => {
 
   it('renders base_amount/quote_amount through the shared BigInt-safe helper', () => {
     expect(src).toMatch(
-      /formatBaseUnits\(t\.base_amount, t\.base_decimals \?\? 7\)/,
+      /formatUnitsReadable\(\s*t\.base_amount,\s*t\.base_decimals \?\? 7,?\s*\)/,
     );
     expect(src).toMatch(
-      /formatBaseUnits\(t\.quote_amount, t\.quote_decimals \?\? 7\)/,
+      /formatUnitsReadable\(\s*t\.quote_amount,\s*t\.quote_decimals \?\? 7,?\s*\)/,
     );
   });
 

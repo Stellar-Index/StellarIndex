@@ -7,7 +7,7 @@ import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { useHistory, type TradeRow } from '@/api/hooks';
 import { useObservationsFollow } from '@/lib/live/hooks';
-import { formatBaseUnits, formatRelative } from '@/lib/format';
+import { formatRelative, formatUnitsReadable } from '@/lib/format';
 import { TradeScatter } from '../../markets/[pair]/TradeScatter';
 import { HBarList, type HBarItem } from '@/components/charts/Bars';
 
@@ -156,12 +156,15 @@ export function HistoryTabPanel({
                 {r.ledger}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">
-                {formatBaseUnits(r.base_amount, r.base_decimals ?? decimals)}
+                {formatUnitsReadable(
+                  r.base_amount,
+                  r.base_decimals ?? decimals,
+                )}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">
                 {/* quote leg is always DEFAULT_QUOTE ('native' XLM, fixed 7
                     decimals) — never the base asset's own `decimals` prop. */}
-                {formatBaseUnits(r.quote_amount, r.quote_decimals ?? 7)}
+                {formatUnitsReadable(r.quote_amount, r.quote_decimals ?? 7)}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">
                 {r.price ?? '—'}

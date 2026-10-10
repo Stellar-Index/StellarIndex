@@ -11,9 +11,9 @@ import { assetHref } from '@/lib/fiat-slugs';
 import {
   formatCompact,
   formatCompactUnits,
-  formatBaseUnits,
   formatPrice,
   truncateMiddle,
+  formatUnitsReadable,
 } from '@/lib/format';
 import type { paths } from '@/api/types';
 import { SidebarAssetIcon } from '../assets/[slug]/SidebarAssetIcon';
@@ -240,7 +240,7 @@ function SacMovement({
                   {truncateMiddle(h.account_id, 8, 6)}
                 </Link>
                 <span className="text-ink-body font-mono tabular-nums">
-                  {formatBaseUnits(h.balance, decimals)}
+                  {formatUnitsReadable(h.balance, decimals)}
                 </span>
               </li>
             ))}
