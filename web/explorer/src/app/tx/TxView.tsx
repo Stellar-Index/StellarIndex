@@ -130,6 +130,11 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
   }
 
   const tx = data;
+  const failedOp = tx.successful
+    ? undefined
+    : (tx.operations ?? []).find(
+        (o) => o.result_code != null && o.result_code !== 0,
+      );
 
   return (
     <Shell hash={tx.hash ?? null}>
@@ -138,6 +143,18 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
         hint={formatTimestamp(tx.close_time)}
         source={asExample(`/v1/tx/${tx.hash}`)}
       >
+        {tx.successful === false && (
+          <p
+            role="alert"
+            className="border-bad-300 bg-bad-50 text-bad-700 mb-4 rounded-md border px-3 py-2 text-sm"
+          >
+            Failed
+            {failedOp
+              ? ` at op #${failedOp.op_index}: ${failedOp.inner_result ?? failedOp.result ?? 'unknown'}`
+              : `: ${tx.fee_bump?.inner_result ?? tx.result}`}
+            . The fee was charged; no operation took effect.
+          </p>
+        )}
         <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-4">
           <FieldWide label="Hash">
             <CopyHash value={tx.hash} head={16} tail={16} />
@@ -168,19 +185,20 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
             }
           />
           <Field
-            label="Max fee"
+            label={tx.fee_bump ? 'Max fee (fee payer)' : 'Max fee'}
             mono
             value={tx.max_fee != null ? `${stroopsToXlm(tx.max_fee)} XLM` : '—'}
           />
-          <Field
-            label="Memo"
-            mono
-            value={
-              tx.memo_type && tx.memo_type !== 'none'
-                ? `${tx.memo_type}${tx.memo ? `: ${tx.memo}` : ''}`
-                : '—'
-            }
-          />
+          {tx.fee_bump && (
+            <Field
+              label="Max fee (inner)"
+              mono
+              value={`${stroopsToXlm(tx.fee_bump.inner_max_fee)} XLM`}
+            />
+          )}
+          <Field label="Memo">
+            <Memo type={tx.memo_type} text={tx.memo} b64={tx.memo_base64} />
+          </Field>
           <FieldWide label="Source account">
             <span className="inline-flex items-center gap-2">
               <Link
@@ -194,7 +212,38 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
               <CopyValue value={tx.source_account ?? ''} />
             </span>
           </FieldWide>
+          {tx.fee_bump && (
+            <FieldWide label="Fee bump">
+              <span
+                className="inline-flex flex-wrap items-center gap-2 text-xs"
+                title="Another account paid this transaction's fee. The inner transaction is unchanged."
+              >
+                paid by
+                <Link
+                  href={`/accounts/${encodeURIComponent(tx.fee_bump.fee_account)}/`}
+                  className="text-brand-600 font-mono hover:underline"
+                  title={tx.fee_bump.fee_account}
+                >
+                  {tx.fee_bump.fee_account.slice(0, 12)}…
+                  {tx.fee_bump.fee_account.slice(-8)}
+                </Link>
+                {tx.fee_bump.inner_hash && (
+                  <>
+                    · inner tx
+                    <CopyHash
+                      value={tx.fee_bump.inner_hash}
+                      head={8}
+                      tail={8}
+                    />
+                  </>
+                )}
+              </span>
+            </FieldWide>
+          )}
         </dl>
+        {tx.coverage_note && (
+          <p className="text-ink-faint mt-3 text-[11px]">{tx.coverage_note}</p>
+        )}
         <div className="mt-4 space-y-3">
           <FeeHeadroomBar
             charged={tx.fee_charged}
@@ -208,7 +257,11 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
       </Panel>
 
       <OperationsPanel hash={tx.hash ?? ''} operations={tx.operations ?? []} />
-      <EventsPanel hash={tx.hash ?? ''} events={tx.events ?? []} />
+      <EventsPanel
+        hash={tx.hash ?? ''}
+        events={tx.events ?? []}
+        failed={tx.successful === false}
+      />
     </Shell>
   );
 }
@@ -353,7 +406,7 @@ function OperationCard({ hash, op }: { hash: string; op: TxOperation }) {
           // the human `op.result` slug is shown (code kept in the title).
           <TxStatusBadge
             successful={op.result_code === 0}
-            result={op.result}
+            result={op.inner_result ?? op.result}
             code={op.result_code}
           />
         )}
@@ -407,7 +460,15 @@ function OperationCard({ hash, op }: { hash: string; op: TxOperation }) {
   );
 }
 
-function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
+function EventsPanel({
+  hash,
+  events,
+  failed,
+}: {
+  hash: string;
+  events: TxEvent[];
+  failed: boolean;
+}) {
   const source = asExample(`/v1/tx/${hash}`);
   if (events.length === 0) {
     return (
@@ -416,7 +477,9 @@ function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
         source={source}
         bodyClassName="text-sm text-ink-muted"
       >
-        This transaction emitted no Soroban contract events.
+        {failed
+          ? 'Failed transaction: any events were rolled back.'
+          : 'This transaction emitted no Soroban contract events.'}
       </Panel>
     );
   }
@@ -479,6 +542,38 @@ function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
 // errorStatus pulls the HTTP status out of the apiGet error message
 // ("<status> <statusText> on <path>"). Returns null when it can't
 // parse one.
+// memo_base64 is set when a text memo is not valid UTF-8; show it raw.
+function Memo({
+  type,
+  text,
+  b64,
+}: {
+  type?: string;
+  text?: string;
+  b64?: string;
+}) {
+  if (!type || type === 'none')
+    return <span className="text-ink-muted">—</span>;
+  const value = text ?? b64;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <span className="bg-surface-muted text-ink-muted rounded-sm px-1.5 py-0.5 text-[10px] uppercase">
+        {type}
+      </span>
+      {value && <span className="font-mono text-xs break-all">{value}</span>}
+      {text == null && b64 && (
+        <span
+          className="text-ink-faint text-[10px]"
+          title="Not valid UTF-8; shown as base64"
+        >
+          base64
+        </span>
+      )}
+      {value && <CopyValue value={value} />}
+    </span>
+  );
+}
+
 function errorStatus(err: unknown): number | null {
   if (!(err instanceof Error)) return null;
   const m = err.message.match(/^(\d{3})\b/);
