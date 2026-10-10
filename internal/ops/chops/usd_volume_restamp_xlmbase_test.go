@@ -71,7 +71,7 @@ func TestCheckRestampLiveOverlap(t *testing.T) {
 // silent no-op. An operator who typed -report and got a write run, or
 // who typed -min-rel-delta and got every row rewritten, has been
 // actively misled by the tool on a money column.
-func TestValidateRestampTierFlags(t *testing.T) {
+func caseValidateRestampTierFlags(t *testing.T) {
 	t.Parallel()
 	if err := validateRestampTierFlags(restampTierExact, nil); err != nil {
 		t.Fatalf("bare -tier exact: %v", err)
@@ -157,4 +157,12 @@ func TestRatPercent(t *testing.T) {
 	if got := ratPercent(big.NewRat(1, 3)); got != "33.3333%" {
 		t.Errorf("ratPercent(1/3) = %q, want 33.3333%%", got)
 	}
+}
+
+// TestRestampFlagValidation groups the restamp flag-combination checks as named subtests.
+func TestRestampFlagValidation(t *testing.T) {
+	t.Run("ValidateRestampTierFlags", caseValidateRestampTierFlags)
+	t.Run("ValidateRestampTierFlags_ChunkModeIsAvailableToBothTiers", caseValidateRestampTierFlags_ChunkModeIsAvailableToBothTiers)
+	t.Run("ValidateRestampTierFlags_MirrorTiers", caseValidateRestampTierFlags_MirrorTiers)
+	t.Run("ValidateRestampChunkFlags", caseValidateRestampChunkFlags)
 }

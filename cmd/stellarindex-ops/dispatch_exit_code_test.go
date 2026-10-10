@@ -11,14 +11,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// TestDispatchExitCode_HelpIsNotAFailure: every subcommand
+// caseDispatchExitCode_HelpIsNotAFailure: every subcommand
 // flag.FlagSet uses flag.ContinueOnError, so `-h`/`-help` on a subcommand
 // surfaces as flag.ErrHelp from fs.Parse, propagated up through the
 // handler's Run. That must not fall through to the generic error
 // branch, which would print "<subcommand>: flag: help requested" and return exit
 // code 1 — indistinguishable from a real failure for a scripted caller
 // that asked for help.
-func TestDispatchExitCode_HelpIsNotAFailure(t *testing.T) {
+func caseDispatchExitCode_HelpIsNotAFailure(t *testing.T) {
 	var stderr bytes.Buffer
 	code := dispatchExitCode("backfill", flag.ErrHelp, &stderr)
 
@@ -30,10 +30,10 @@ func TestDispatchExitCode_HelpIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestDispatchExitCode_WrappedHelpIsNotAFailure covers a handler that wraps
+// caseDispatchExitCode_WrappedHelpIsNotAFailure covers a handler that wraps
 // flag.ErrHelp (fmt.Errorf("%w", ...)) rather than returning it bare —
 // errors.Is must still unwrap it.
-func TestDispatchExitCode_WrappedHelpIsNotAFailure(t *testing.T) {
+func caseDispatchExitCode_WrappedHelpIsNotAFailure(t *testing.T) {
 	var stderr bytes.Buffer
 	wrapped := errors.Join(flag.ErrHelp)
 	code := dispatchExitCode("backfill", wrapped, &stderr)
@@ -43,10 +43,10 @@ func TestDispatchExitCode_WrappedHelpIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestDispatchExitCode_RealErrorsStillFail guards against a too-broad fix:
+// caseDispatchExitCode_RealErrorsStillFail guards against a too-broad fix:
 // an ordinary handler error must still print the "<subcommand>: <err>"
 // prefix and return 1.
-func TestDispatchExitCode_RealErrorsStillFail(t *testing.T) {
+func caseDispatchExitCode_RealErrorsStillFail(t *testing.T) {
 	var stderr bytes.Buffer
 	code := dispatchExitCode("backfill", errors.New("boom"), &stderr)
 
@@ -58,9 +58,9 @@ func TestDispatchExitCode_RealErrorsStillFail(t *testing.T) {
 	}
 }
 
-// TestDispatchExitCode_ExitSilentlyStillSilent guards the existing
+// caseDispatchExitCode_ExitSilentlyStillSilent guards the existing
 // ErrExitSilently convention (handler already printed its own message).
-func TestDispatchExitCode_ExitSilentlyStillSilent(t *testing.T) {
+func caseDispatchExitCode_ExitSilentlyStillSilent(t *testing.T) {
 	var stderr bytes.Buffer
 	code := dispatchExitCode("backfill", opsutil.ErrExitSilently, &stderr)
 
@@ -72,9 +72,9 @@ func TestDispatchExitCode_ExitSilentlyStillSilent(t *testing.T) {
 	}
 }
 
-// TestDispatchExitCode_ExitCodeErrorStillWins guards the existing
+// caseDispatchExitCode_ExitCodeErrorStillWins guards the existing
 // opsutil.ExitCodeError convention (a specific non-1 exit code).
-func TestDispatchExitCode_ExitCodeErrorStillWins(t *testing.T) {
+func caseDispatchExitCode_ExitCodeErrorStillWins(t *testing.T) {
 	var stderr bytes.Buffer
 	code := dispatchExitCode("reconcile-balances", &opsutil.ExitCodeError{Code: 3, Err: errors.New("3 mismatches")}, &stderr)
 
@@ -110,4 +110,13 @@ func TestEverySubcommandHelpExitsZero(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestDispatchExitCode runs every exit-code mapping of the dispatch chokepoint as a named subtest.
+func TestDispatchExitCode(t *testing.T) {
+	t.Run("DispatchExitCode_HelpIsNotAFailure", caseDispatchExitCode_HelpIsNotAFailure)
+	t.Run("DispatchExitCode_WrappedHelpIsNotAFailure", caseDispatchExitCode_WrappedHelpIsNotAFailure)
+	t.Run("DispatchExitCode_RealErrorsStillFail", caseDispatchExitCode_RealErrorsStillFail)
+	t.Run("DispatchExitCode_ExitSilentlyStillSilent", caseDispatchExitCode_ExitSilentlyStillSilent)
+	t.Run("DispatchExitCode_ExitCodeErrorStillWins", caseDispatchExitCode_ExitCodeErrorStillWins)
 }

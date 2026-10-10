@@ -50,11 +50,11 @@ enabled_sources = ["` + strings.Join(sources, `","`) + `"]
 	return path
 }
 
-// TestBackfill_RejectsMissingFlags locks down the no-default-genesis
+// caseBackfill_RejectsMissingFlags locks down the no-default-genesis
 // guard. Operators have wiped the trades hypertable by typing
 // `backfill -config PATH` without -from before — the flag is
 // required so a fat-finger can't trigger a multi-day genesis replay.
-func TestBackfill_RejectsMissingFlags(t *testing.T) {
+func caseBackfill_RejectsMissingFlags(t *testing.T) {
 	cfg := writeMinimalConfig(t, []string{"sdex"})
 	cases := []struct {
 		name       string
@@ -369,9 +369,9 @@ func TestPlanBackfillChunks(t *testing.T) {
 	}
 }
 
-// TestParseBackfillFlags_Parallel — exercise the flag's
+// caseParseBackfillFlags_Parallel — exercise the flag's
 // validation without the full integration plumbing.
-func TestParseBackfillFlags_Parallel(t *testing.T) {
+func caseParseBackfillFlags_Parallel(t *testing.T) {
 	cfgPath := writeMinimalConfig(t, []string{"sdex"})
 	for _, tc := range []struct {
 		name    string
@@ -778,9 +778,9 @@ func TestRefreshCAGGsForChunk_TimeoutIsFatalAndNamed(t *testing.T) {
 	}
 }
 
-// TestParseBackfillFlags_WriteGate pins the fail-closed mode contract:
+// caseParseBackfillFlags_WriteGate pins the fail-closed mode contract:
 // omitting both flags refuses, -dry-run previews, and only -write applies.
-func TestParseBackfillFlags_WriteGate(t *testing.T) {
+func caseParseBackfillFlags_WriteGate(t *testing.T) {
 	cfgPath := writeMinimalConfig(t, []string{"sdex"})
 	base := []string{"-config", cfgPath, "-from", "100", "-to", "200"}
 
@@ -807,4 +807,11 @@ func TestParseBackfillFlags_WriteGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBackfillFlags groups the backfill flag-parsing contracts as named subtests.
+func TestBackfillFlags(t *testing.T) {
+	t.Run("Backfill_RejectsMissingFlags", caseBackfill_RejectsMissingFlags)
+	t.Run("ParseBackfillFlags_Parallel", caseParseBackfillFlags_Parallel)
+	t.Run("ParseBackfillFlags_WriteGate", caseParseBackfillFlags_WriteGate)
 }

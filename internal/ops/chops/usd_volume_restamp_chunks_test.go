@@ -672,7 +672,7 @@ func TestClampTradesChunk(t *testing.T) {
 	}
 }
 
-func TestValidateRestampChunkFlags(t *testing.T) {
+func caseValidateRestampChunkFlags(t *testing.T) {
 	t.Parallel()
 	if err := validateRestampChunkFlags(true, map[string]bool{"chunk-batch": true, "min-free-bytes": true, "generation": true, "allow-live-adjacent": true}); err != nil {
 		t.Fatalf("-chunks with its own flags: %v", err)
