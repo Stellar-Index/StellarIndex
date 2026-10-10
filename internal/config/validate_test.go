@@ -9,51 +9,141 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// TestValidate_HashDBVerifyBoundsRejected: HashDBConfig.validate
-// checked VerifyIntervalMinutes >= 0 but never bounded it above, and
-// never looked at VerifyWindowLedgers at all. Unbounded,
-// verify_window_ledgers can exceed the chain height, turning every
-// periodic sweep into a full-archive re-read on the interval meant for
-// a ~day-sized trailing window (see startHashDBVerifier /
-// hashDBVerifySweep in cmd/stellarindex-indexer/main.go). Like
-// HashDBConfig.validate's other checks, this doesn't wrap
-// ErrInvalidConfig (same family as SignupReaperConfig.validate /
-// PriceAlertsConfig.validate).
-func TestValidate_HashDBVerifyBoundsRejected(t *testing.T) {
-	cases := map[string]struct {
-		mut    func(*config.Config)
-		errSub string
-	}{
-		"verify interval minutes over 24h": {
-			func(c *config.Config) {
-				c.HashDB.Enabled = true
-				c.HashDB.Path = "/var/lib/stellarindex/hashdb.bin"
-				c.HashDB.VerifyIntervalMinutes = 24*60 + 1
-			},
-			"verify_interval_minutes",
+const (
+	testReserveAccount = "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4"
+	testReflectorC     = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+	testClassicUSDC    = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+)
+
+// withBad returns Default() with a mutator applied.
+func withBad(mut func(*config.Config)) config.Config {
+	c := config.Default()
+	mut(&c)
+	return c
+}
+
+// reflectorSourceWithout enables source with every reflector contract set,
+// then applies unset, so only the cleared contract is empty.
+func reflectorSourceWithout(source string, unset func(*config.Config)) func(*config.Config) {
+	return func(c *config.Config) {
+		c.Ingestion.EnabledSources = []string{source}
+		c.Oracle.Reflector.DEXContract = testReflectorC
+		c.Oracle.Reflector.CEXContract = testReflectorC
+		c.Oracle.Reflector.FXContract = testReflectorC
+		unset(c)
+	}
+}
+
+// coldTier points the cold tier at the public AWS bucket.
+func coldTier(c *config.Config) {
+	c.Storage.S3ColdEndpoint = "https://s3.us-east-2.amazonaws.com"
+	c.Storage.S3ColdRegion = "us-east-2"
+	c.Storage.S3ColdBucketArchive = "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
+}
+
+// TestValidate_Accepts is the other half of the rejection tables: each row
+// is a shape Validate must let through, so a guard that refused everything
+// cannot satisfy the rejections alone.
+func TestValidate_Accepts(t *testing.T) {
+	cases := map[string]func(*config.Config){
+		// Default() MUST pass: every binary depends on a fresh install working.
+		"defaults": func(*config.Config) {},
+
+		"testnet with its own archive": func(c *config.Config) {
+			c.Stellar.Network = "testnet"
+			c.Stellar.HistoryArchiveURL = "https://history.stellar.org/prd/core-testnet/core_testnet_001"
 		},
-		"verify window ledgers over ceiling": {
-			func(c *config.Config) {
-				c.HashDB.Enabled = true
-				c.HashDB.Path = "/var/lib/stellarindex/hashdb.bin"
-				c.HashDB.VerifyWindowLedgers = 200001
-			},
-			"verify_window_ledgers",
+		"futurenet with its own archive": func(c *config.Config) {
+			c.Stellar.Network = "futurenet"
+			c.Stellar.HistoryArchiveURL = "http://history.stellar.org/dev/core-futurenet/core_futurenet_001"
+		},
+
+		// request_timeout must outlive the longest handler budget: the
+		// shipped default, one tick above the bound, and 0 (middleware off).
+		"request timeout default":            func(c *config.Config) { c.API.RequestTimeout = config.Default().API.RequestTimeout },
+		"request timeout one tick above max": func(c *config.Config) { c.API.RequestTimeout = config.APIMaxHandlerBudget + time.Nanosecond },
+		"request timeout disabled":           func(c *config.Config) { c.API.RequestTimeout = 0 },
+
+		"classic USD peg": func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{testClassicUSDC} },
+		"classic fiat pegs": func(c *config.Config) {
+			c.PricingGuard.FiatPeggedClassicAssets = map[string]string{
+				"AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU": "AUD",
+				"AUDR-GAAVW6EQ4N4SHNTKBLTOBXKS6CEIMT2KZI7YQ5B37ECNVPFLBIGRKLIL": "AUD",
+			}
+		},
+
+		"empty oracle contracts": func(c *config.Config) {
+			c.Oracle.Reflector.DEXContract = ""
+			c.Oracle.Reflector.CEXContract = ""
+			c.Oracle.Reflector.FXContract = ""
+		},
+		// Format-only validation: not a real mainnet address.
+		"valid reflector C-strkey": func(c *config.Config) { c.Oracle.Reflector.DEXContract = testReflectorC },
+
+		"empty S3 block": func(c *config.Config) {
+			c.Storage.S3Endpoint = ""
+			c.Storage.S3BucketArchive = ""
+			c.Storage.S3BucketLive = ""
+			c.Storage.S3AccessKeyEnv = ""
+			c.Storage.S3SecretKeyEnv = ""
+			c.Storage.S3Region = ""
+		},
+
+		// Cold-tier credential pair: both empty selects anonymous reads of
+		// the public bucket; both named is the private-bucket shape.
+		"cold tier anonymous": coldTier,
+		"cold tier static credentials": func(c *config.Config) {
+			coldTier(c)
+			c.Storage.S3ColdAccessKeyEnv = "STELLARINDEX_S3_COLD_ACCESS_KEY"
+			c.Storage.S3ColdSecretKeyEnv = "STELLARINDEX_S3_COLD_SECRET_KEY"
+		},
+
+		"clickhouse projector on, sink on": func(c *config.Config) { c.Storage.ClickHouseProjectorSource, c.Storage.ClickHouseLiveSink = true, true },
+		"clickhouse projector off, sink on": func(c *config.Config) {
+			c.Storage.ClickHouseProjectorSource, c.Storage.ClickHouseLiveSink = false, true
+		},
+		"clickhouse both off": func(c *config.Config) {
+			c.Storage.ClickHouseProjectorSource, c.Storage.ClickHouseLiveSink = false, false
+		},
+
+		// The runtime ConfigReserveBalanceReader rejects a genuinely
+		// uncovered account; Validate has no DB access to know whether the
+		// AccountEntry observer covers it.
+		"observer-only SDF reserve account": func(c *config.Config) {
+			c.Supply.SDFReserveAccounts = []string{testReserveAccount}
+			c.Supply.ReserveBalancesStroops = nil
+		},
+
+		"max_market_cap_volume_ratio 0 is the off switch": func(c *config.Config) { c.Aggregate.MaxMarketCapVolumeRatio = 0 },
+
+		"composite_reference boundaries and zero sentinels": func(c *config.Config) {
+			cr := &c.Aggregate.CompositeReference
+			cr.LegDispersionBps = 10_000
+			cr.ReleaseBandPct = 100
+			cr.ToleranceBps = 0
+			cr.MinLegSources = 0
+			cr.FXMaxAgeHours = 0
+			c.Aggregate.Triangulations = []config.TriangulationChainConfig{
+				{Target: "crypto:XLM/fiat:GBP", Legs: []string{"crypto:XLM/fiat:USD", "fiat:USD/fiat:GBP"}},
+				{Target: "crypto:XLM/fiat:EUR", Legs: []string{"crypto:XLM/fiat:USD", "fiat:USD/fiat:EUR"}},
+			}
 		},
 	}
-
-	for name, tc := range cases {
+	for name, mut := range cases {
 		t.Run(name, func(t *testing.T) {
-			c := config.Default()
-			tc.mut(&c)
-			err := c.Validate()
-			if err == nil {
-				t.Fatal("expected validation error, got nil")
-			}
-			if !strings.Contains(err.Error(), tc.errSub) {
-				t.Errorf("err = %v; want substring %q", err, tc.errSub)
+			if err := withBad(mut).Validate(); err != nil {
+				t.Fatalf("Validate: %v", err)
 			}
 		})
+	}
+}
+
+// TestValidate_CompositeReferenceDefaults pins the shipped defaults.
+func TestValidate_CompositeReferenceDefaults(t *testing.T) {
+	cr := config.Default().Aggregate.CompositeReference
+	if !cr.Enabled || cr.ToleranceBps != 75 || cr.MinLegSources != 2 || cr.FXMaxAgeHours != 76 ||
+		cr.ReleaseBandPct != 2.0 || cr.LegDispersionBps != 0 || len(cr.Targets) != 2 {
+		t.Fatalf("shipped composite_reference defaults drifted: %+v", cr)
 	}
 }
 
@@ -89,14 +179,6 @@ func TestValidate_RPCEndpointErrorsOmitURL(t *testing.T) {
 	}
 }
 
-func TestValidate_DefaultPasses(t *testing.T) {
-	// Default() MUST pass Validate — that's the "fresh install
-	// works" contract every binary depends on.
-	if err := config.Default().Validate(); err != nil {
-		t.Fatalf("Default().Validate: %v", err)
-	}
-}
-
 // TestDefault_BackgroundStatementTimeoutIsGenerousBackstop pins that the indexer/aggregator pools must ship with a
 // non-zero, GENEROUS SQL-side statement_timeout backstop out of the box.
 // Zero would leave those pools unbounded; a tight value would
@@ -111,55 +193,6 @@ func TestDefault_BackgroundStatementTimeoutIsGenerousBackstop(t *testing.T) {
 	}
 	if serving := config.Default().API.ServingStatementTimeout; got <= serving {
 		t.Fatalf("Storage.BackgroundStatementTimeout (%v) must exceed the serving bound (%v)", got, serving)
-	}
-}
-
-// TestValidate_RequestTimeoutAboveHandlerBudgetAccepted is the other half
-// of the two rejection cases in the table below: the check must reject a
-// request_timeout that cannot outlive the handler budgets WITHOUT
-// rejecting the ones that can. A guard that refused everything would pass
-// the rejection cases just as well.
-//
-// The default (15s) is the value the API actually ships with, so it is the
-// case that matters most; one tick above the bound is the boundary.
-func TestValidate_RequestTimeoutAboveHandlerBudgetAccepted(t *testing.T) {
-	for _, d := range []time.Duration{
-		config.Default().API.RequestTimeout,
-		config.APIMaxHandlerBudget + time.Nanosecond,
-		0, // the middleware is disabled entirely — nothing to order
-	} {
-		c := config.Default()
-		c.API.RequestTimeout = d
-		if err := c.Validate(); err != nil {
-			t.Errorf("api.request_timeout = %v must validate (longest handler budget is %v), got: %v",
-				d, config.APIMaxHandlerBudget, err)
-		}
-	}
-}
-
-// withBad returns Default() with a mutator applied. Helper so each
-// test case is one line.
-func withBad(mut func(*config.Config)) config.Config {
-	c := config.Default()
-	mut(&c)
-	return c
-}
-
-// TestValidate_TestnetArchiveAccepted: a test-net network paired with its
-// OWN (core-testnet / core-futurenet) history archive validates — the
-// guard only rejects the PUBNET (core-live) archive on a non-pubnet
-// network, not any test-net archive URL.
-func TestValidate_TestnetArchiveAccepted(t *testing.T) {
-	for _, tc := range []struct{ network, archive string }{
-		{"testnet", "https://history.stellar.org/prd/core-testnet/core_testnet_001"},
-		{"futurenet", "http://history.stellar.org/dev/core-futurenet/core_futurenet_001"},
-	} {
-		c := config.Default()
-		c.Stellar.Network = tc.network
-		c.Stellar.HistoryArchiveURL = tc.archive
-		if err := c.Validate(); err != nil {
-			t.Errorf("%s + %s should validate, got: %v", tc.network, tc.archive, err)
-		}
 	}
 }
 
@@ -416,8 +449,53 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			},
 			"s3_cold_endpoint",
 		},
-	}
 
+		// Reflector contracts: enabling a reflector source whose contract is
+		// empty must fail Validate, not defer to indexer startup.
+		"reflector-dex source without dex_contract": {reflectorSourceWithout("reflector-dex", func(c *config.Config) { c.Oracle.Reflector.DEXContract = "" }), "reflector-dex"},
+		"reflector-cex source without cex_contract": {reflectorSourceWithout("reflector-cex", func(c *config.Config) { c.Oracle.Reflector.CEXContract = "" }), "reflector-cex"},
+		"reflector-fx source without fx_contract":   {reflectorSourceWithout("reflector-fx", func(c *config.Config) { c.Oracle.Reflector.FXContract = "" }), "reflector-fx"},
+
+		// A typo in enabled_sources is caught at Validate time, before the
+		// storage-open and RPC-probe budget is spent.
+		"unknown source": {func(c *config.Config) { c.Ingestion.EnabledSources = []string{"soroswap", "sorowsap"} }, "unknown source"},
+
+		// projector_source reads forward events FROM ClickHouse, which only
+		// makes sense while the live sink is WRITING them.
+		"clickhouse projector source without live sink (names projector_source)": {
+			func(c *config.Config) {
+				c.Storage.ClickHouseProjectorSource = true
+				c.Storage.ClickHouseLiveSink = false
+			},
+			"clickhouse_projector_source",
+		},
+		"clickhouse projector source without live sink (names live_sink)": {
+			func(c *config.Config) {
+				c.Storage.ClickHouseProjectorSource = true
+				c.Storage.ClickHouseLiveSink = false
+			},
+			"clickhouse_live_sink",
+		},
+
+		// 0 is the documented off switch; a negative ceiling would silently
+		// disable the guard while reading as a configured value.
+		"negative max_market_cap_volume_ratio": {func(c *config.Config) { c.Aggregate.MaxMarketCapVolumeRatio = -1 }, "max_market_cap_volume_ratio"},
+
+		"composite leg_dispersion_bps above 10000": {func(c *config.Config) { c.Aggregate.CompositeReference.LegDispersionBps = 10_001 }, "aggregate.composite_reference.leg_dispersion_bps"},
+		"composite leg_dispersion_bps negative":    {func(c *config.Config) { c.Aggregate.CompositeReference.LegDispersionBps = -1 }, "aggregate.composite_reference.leg_dispersion_bps"},
+		"composite release_band_pct above 100":     {func(c *config.Config) { c.Aggregate.CompositeReference.ReleaseBandPct = 100.5 }, "aggregate.composite_reference.release_band_pct"},
+		"composite release_band_pct negative":      {func(c *config.Config) { c.Aggregate.CompositeReference.ReleaseBandPct = -0.1 }, "aggregate.composite_reference.release_band_pct"},
+		"composite tolerance_bps above 10000":      {func(c *config.Config) { c.Aggregate.CompositeReference.ToleranceBps = 10_001 }, "aggregate.composite_reference.tolerance_bps"},
+		"composite min_leg_sources negative":       {func(c *config.Config) { c.Aggregate.CompositeReference.MinLegSources = -1 }, "aggregate.composite_reference.min_leg_sources"},
+		"composite fx_max_age_hours negative":      {func(c *config.Config) { c.Aggregate.CompositeReference.FXMaxAgeHours = -1 }, "aggregate.composite_reference.fx_max_age_hours"},
+		"composite target unparseable":             {func(c *config.Config) { c.Aggregate.CompositeReference.Targets = []string{"not-a-pair"} }, "aggregate.composite_reference.targets"},
+		"composite target without chain when chains exist": {func(c *config.Config) {
+			c.Aggregate.Triangulations = []config.TriangulationChainConfig{
+				{Target: "crypto:XLM/fiat:EUR", Legs: []string{"crypto:XLM/fiat:USD", "fiat:USD/fiat:EUR"}},
+			}
+			c.Aggregate.CompositeReference.Targets = []string{"crypto:XLM/fiat:GBP"}
+		}, "no [[aggregate.triangulations]] row"},
+	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			err := withBad(tc.mut).Validate()
@@ -434,139 +512,57 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 	}
 }
 
-func TestValidate_USDPeggedClassicAssetsAccepted(t *testing.T) {
-	// A well-formed classic credit asset (CODE-ISSUER, 7-decimal by
-	// protocol) is the only accepted shape for a declared USD peg.
-	c := withBad(func(c *config.Config) {
-		c.Trades.USDPeggedClassicAssets = []string{
-			"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-		}
-	})
-	if err := c.Validate(); err != nil {
-		t.Fatalf("valid classic USD peg rejected: %v", err)
+// TestValidate_RejectsWithoutSentinel covers checks whose errors do not wrap
+// ErrInvalidConfig (HashDBConfig, SupplyConfig and MetadataConfig validate
+// in the older style), so asserting the sentinel would test something they
+// never satisfy.
+func TestValidate_RejectsWithoutSentinel(t *testing.T) {
+	// A flipped character keeps the prefix, length and alphabet but breaks the
+	// CRC: the account matches nothing on-chain and would contribute 0 to
+	// circulating supply with a clean boot.
+	flipped := testReserveAccount[:20] + "A" + testReserveAccount[21:]
+	hashDB := func(c *config.Config) {
+		c.HashDB.Enabled = true
+		c.HashDB.Path = "/var/lib/stellarindex/hashdb.bin"
 	}
-}
-
-func TestValidate_FiatPeggedClassicAssetsAccepted(t *testing.T) {
-	// A classic credit asset mapped to a known ISO-4217 fiat ticker is
-	// the accepted shape for a declared fiat peg (the AUDD → AUD entry).
-	c := withBad(func(c *config.Config) {
-		c.PricingGuard.FiatPeggedClassicAssets = map[string]string{
-			"AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU": "AUD",
-			"AUDR-GAAVW6EQ4N4SHNTKBLTOBXKS6CEIMT2KZI7YQ5B37ECNVPFLBIGRKLIL": "AUD",
-		}
-	})
-	if err := c.Validate(); err != nil {
-		t.Fatalf("valid classic fiat peg rejected: %v", err)
-	}
-}
-
-func TestValidate_OracleContractsOptional(t *testing.T) {
-	// Every Reflector variant empty is fine — operator may run the
-	// API without any oracle contracts configured.
-	c := config.Default()
-	c.Oracle.Reflector.DEXContract = ""
-	c.Oracle.Reflector.CEXContract = ""
-	c.Oracle.Reflector.FXContract = ""
-	if err := c.Validate(); err != nil {
-		t.Fatalf("empty-oracle config should validate: %v", err)
-	}
-}
-
-func TestValidate_ValidReflectorAddressPasses(t *testing.T) {
-	c := config.Default()
-	// Known-format-valid C-strkey (not a real mainnet address —
-	// validation is format-only per canonical/strkey.go).
-	c.Oracle.Reflector.DEXContract = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
-	if err := c.Validate(); err != nil {
-		t.Fatalf("valid C-strkey should pass: %v", err)
-	}
-}
-
-func TestValidate_S3BlockOptional(t *testing.T) {
-	// Operator running local dev without any object store: all S3
-	// fields empty. Validate must accept this (Default() sets them
-	// but clearing the whole block should be valid).
-	c := config.Default()
-	c.Storage.S3Endpoint = ""
-	c.Storage.S3BucketArchive = ""
-	c.Storage.S3BucketLive = ""
-	c.Storage.S3AccessKeyEnv = ""
-	c.Storage.S3SecretKeyEnv = ""
-	c.Storage.S3Region = ""
-	if err := c.Validate(); err != nil {
-		t.Fatalf("empty S3 block should validate: %v", err)
-	}
-}
-
-// TestValidate_ColdTierCredentialPairs pins both accepted shapes of the
-// ADR-0027 cold-tier credential pair, so the all-or-nothing rule above
-// can't be satisfied by simply rejecting everything.
-func TestValidate_ColdTierCredentialPairs(t *testing.T) {
-	// Production shape: cold tier enabled, both *_key_env empty =>
-	// anonymous reads of the public aws-public-blockchain bucket.
-	anon := config.Default()
-	anon.Storage.S3ColdEndpoint = "https://s3.us-east-2.amazonaws.com"
-	anon.Storage.S3ColdRegion = "us-east-2"
-	anon.Storage.S3ColdBucketArchive = "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
-	if err := anon.Validate(); err != nil {
-		t.Fatalf("anonymous cold tier (both *_key_env empty) rejected: %v", err)
-	}
-
-	// Private-bucket shape: both names set, UPPER_SNAKE_CASE.
-	static := anon
-	static.Storage.S3ColdAccessKeyEnv = "STELLARINDEX_S3_COLD_ACCESS_KEY"
-	static.Storage.S3ColdSecretKeyEnv = "STELLARINDEX_S3_COLD_SECRET_KEY"
-	if err := static.Validate(); err != nil {
-		t.Fatalf("static-credential cold tier (both *_key_env named) rejected: %v", err)
-	}
-}
-
-func TestValidate_RejectsUnknownSource(t *testing.T) {
-	// A typo in enabled_sources must be caught at Validate time so
-	// dry-run doesn't waste the storage-open + RPC-probe budget before
-	// reporting it.
-	c := config.Default()
-	c.Ingestion.EnabledSources = []string{"soroswap", "sorowsap"}
-	err := c.Validate()
-	if err == nil {
-		t.Fatal("expected validation error for unknown source")
-	}
-	if !errors.Is(err, config.ErrInvalidConfig) {
-		t.Errorf("err not wrapped as ErrInvalidConfig: %v", err)
-	}
-	if !strings.Contains(err.Error(), "unknown source") {
-		t.Errorf("expected 'unknown source' in error: %v", err)
-	}
-}
-
-func TestValidate_ReflectorSourceRequiresContract(t *testing.T) {
-	// enabled_sources lists reflector-dex but dex_contract is empty →
-	// must fail Validate, not defer to indexer startup.
 	cases := map[string]struct {
-		source string
-		clear  func(*config.Config)
+		mut    func(*config.Config)
+		errSub string
 	}{
-		"reflector-dex": {"reflector-dex", func(c *config.Config) { c.Oracle.Reflector.DEXContract = "" }},
-		"reflector-cex": {"reflector-cex", func(c *config.Config) { c.Oracle.Reflector.CEXContract = "" }},
-		"reflector-fx":  {"reflector-fx", func(c *config.Config) { c.Oracle.Reflector.FXContract = "" }},
+		// Unbounded, verify_window_ledgers can exceed the chain height and turn
+		// every periodic sweep into a full-archive re-read.
+		"hashdb verify interval minutes over 24h": {
+			func(c *config.Config) { hashDB(c); c.HashDB.VerifyIntervalMinutes = 24*60 + 1 },
+			"verify_interval_minutes",
+		},
+		"hashdb verify window ledgers over ceiling": {
+			func(c *config.Config) { hashDB(c); c.HashDB.VerifyWindowLedgers = 200001 },
+			"verify_window_ledgers",
+		},
+		// A typo is a config mistake, not "this account has zero reserves".
+		"sdf reserve account malformed": {
+			func(c *config.Config) { c.Supply.SDFReserveAccounts = []string{"not-a-g-strkey"} },
+			"sdf_reserve_accounts",
+		},
+		"sdf reserve account bad checksum": {
+			func(c *config.Config) { c.Supply.SDFReserveAccounts = []string{testReserveAccount, flipped} },
+			"sdf_reserve_accounts[1]",
+		},
+		"watched issuer account malformed": {
+			func(c *config.Config) {
+				c.Metadata.WatchedIssuerAccounts = []string{"GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2", "USDC"}
+			},
+			"watched_issuer_accounts[1]",
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			c := config.Default()
-			c.Ingestion.EnabledSources = []string{tc.source}
-			// Set ALL reflector contracts first so only the one we
-			// clear below is empty; avoids false-positive matches.
-			c.Oracle.Reflector.DEXContract = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
-			c.Oracle.Reflector.CEXContract = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
-			c.Oracle.Reflector.FXContract = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
-			tc.clear(&c)
-			err := c.Validate()
+			err := withBad(tc.mut).Validate()
 			if err == nil {
-				t.Fatalf("expected error when %s enabled but contract empty", tc.source)
+				t.Fatal("expected validation error, got nil")
 			}
-			if !strings.Contains(err.Error(), tc.source) {
-				t.Errorf("error should name the source %q: %v", tc.source, err)
+			if !strings.Contains(err.Error(), tc.errSub) {
+				t.Errorf("err = %v; want substring %q", err, tc.errSub)
 			}
 		})
 	}
@@ -593,247 +589,10 @@ func TestValidate_ReflectorDecimalsCeiling(t *testing.T) {
 	}
 }
 
-// TestValidate_ClickHouseProjectorSourceRequiresLiveSink locks the
-// ADR-0041 feed-switch dependency: the projector reading
-// forward events FROM ClickHouse only makes sense if the dual-sink is
-// WRITING them. The invariant is documented on the field ("Requires
-// clickhouse_live_sink") and a misconfig
-// (projector_source=true, live_sink=false) would silently mis-read.
-func TestValidate_ClickHouseProjectorSourceRequiresLiveSink(t *testing.T) {
-	// The bad combo: read from CH but never write to it.
-	bad := withBad(func(c *config.Config) {
-		c.Storage.ClickHouseProjectorSource = true
-		c.Storage.ClickHouseLiveSink = false
-	})
-	err := bad.Validate()
-	if err == nil {
-		t.Fatal("expected rejection of projector_source=true with live_sink=false, got nil")
-	}
-	if !errors.Is(err, config.ErrInvalidConfig) {
-		t.Errorf("err not wrapped as ErrInvalidConfig: %v", err)
-	}
-	if !strings.Contains(err.Error(), "clickhouse_projector_source") ||
-		!strings.Contains(err.Error(), "clickhouse_live_sink") {
-		t.Errorf("err should name both fields; got %v", err)
-	}
-
-	// Every valid combination must pass.
-	valid := []struct {
-		name            string
-		projectorSource bool
-		liveSink        bool
-	}{
-		{"both on (production / Default)", true, true},
-		{"sink on, projector off", false, true},
-		{"both off", false, false},
-	}
-	for _, tc := range valid {
-		t.Run(tc.name, func(t *testing.T) {
-			c := withBad(func(c *config.Config) {
-				c.Storage.ClickHouseProjectorSource = tc.projectorSource
-				c.Storage.ClickHouseLiveSink = tc.liveSink
-			})
-			if err := c.Validate(); err != nil {
-				t.Fatalf("valid combo %s rejected: %v", tc.name, err)
-			}
-		})
-	}
-}
-
-// TestValidate_SDFReserveAccountObserverOnlyAccepted — SupplyConfig.Validate must not
-// unconditionally require a matching reserve_balances_stroops entry for every
-// sdf_reserve_accounts entry, else the documented "the LCM
-// AccountEntry observer covers it, no static balance needed"
-// deployment shape is un-loadable — Validate() has no DB access and
-// can't know whether the observer covers the account, so a blanket
-// requirement is wrong for that (fully supported) path.
-// This asserts a syntactically valid G-strkey
-// account with NO static balance entry passes config validation. The
-// runtime rejection for a genuinely-uncovered account still happens
-// downstream in ConfigReserveBalanceReader.ReserveBalanceTotal
-// (internal/supply/config_reader.go) — see that type's doc.
-func TestValidate_SDFReserveAccountObserverOnlyAccepted(t *testing.T) {
-	c := config.Default()
-	c.Supply.SDFReserveAccounts = []string{"GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4"}
-	c.Supply.ReserveBalancesStroops = nil
-	if err := c.Validate(); err != nil {
-		t.Fatalf("Validate: %v (observer-only SDF reserve account must be accepted without a static balance entry)", err)
-	}
-}
-
-// TestValidate_SDFReserveAccountMalformedRejected — a typo'd sdf_reserve_accounts entry is a
-// config mistake, not "this account happens to have zero reserves."
-// Kept as its own test (not folded into TestValidate_RejectsBadFields)
-// because SupplyConfig.Validate — unlike the lowercase validate()
-// family — doesn't wrap ErrInvalidConfig; asserting that here would
-// test a sentinel this pre-existing method never satisfies.
-func TestValidate_SDFReserveAccountMalformedRejected(t *testing.T) {
-	c := config.Default()
-	c.Supply.SDFReserveAccounts = []string{"not-a-g-strkey"}
-	err := c.Validate()
-	if err == nil {
-		t.Fatal("expected an error for a malformed sdf_reserve_accounts entry, got nil")
-	}
-	if !strings.Contains(err.Error(), "sdf_reserve_accounts") {
-		t.Errorf("err = %v; want substring %q", err, "sdf_reserve_accounts")
-	}
-}
-
-func TestValidate_WatchedIssuerAccountMalformedRejected(t *testing.T) {
-	c := config.Default()
-	c.Metadata.WatchedIssuerAccounts = []string{"GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2", "USDC"}
-	err := c.Validate()
-	if err == nil || !strings.Contains(err.Error(), "watched_issuer_accounts[1]") {
-		t.Fatalf("err = %v; want a watched_issuer_accounts[1] rejection", err)
-	}
-}
-
-// TestValidate_SDFReserveAccountBadChecksumRejected — an entry with the
-// right prefix, length and alphabet but a wrong CRC (one character
-// flipped) matches no on-chain account, so its reserve balance would
-// contribute 0 and overstate XLM circulating supply with a clean boot.
-func TestValidate_SDFReserveAccountBadChecksumRejected(t *testing.T) {
-	const reserveAccount = "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4"
-	flipped := reserveAccount[:20] + "A" + reserveAccount[21:]
-	c := config.Default()
-	c.Supply.SDFReserveAccounts = []string{reserveAccount, flipped}
-	err := c.Validate()
-	if err == nil {
-		t.Fatal("Validate accepted a reserve account with a bad strkey checksum")
-	}
-	if !strings.Contains(err.Error(), "sdf_reserve_accounts[1]") {
-		t.Errorf("err = %v; want it to name sdf_reserve_accounts[1]", err)
-	}
-}
-
-// TestValidate_CompositeReferenceBounds pins the
-// `[aggregate.composite_reference]` validation: the shipped defaults
-// pass, each out-of-band knob is rejected as ErrInvalidConfig naming the
-// key, and an enabled allow-list entry without a triangulation row is
-// rejected once a chain table exists.
-func TestValidate_CompositeReferenceBounds(t *testing.T) {
-	base := config.Default()
-	if err := base.Validate(); err != nil {
-		t.Fatalf("defaults must validate: %v", err)
-	}
-	if cr := base.Aggregate.CompositeReference; !cr.Enabled || cr.ToleranceBps != 75 ||
-		cr.MinLegSources != 2 || cr.FXMaxAgeHours != 76 || cr.ReleaseBandPct != 2.0 || cr.LegDispersionBps != 0 ||
-		len(cr.Targets) != 2 {
-		t.Fatalf("shipped composite_reference defaults drifted: %+v", cr)
-	}
-
-	cases := []struct {
-		name   string
-		mutate func(c *config.Config)
-		want   string
-	}{
-		{
-			"leg_dispersion_bps_above_10000", func(c *config.Config) { c.Aggregate.CompositeReference.LegDispersionBps = 10_001 },
-			"aggregate.composite_reference.leg_dispersion_bps",
-		},
-		{
-			"leg_dispersion_bps_negative", func(c *config.Config) { c.Aggregate.CompositeReference.LegDispersionBps = -1 },
-			"aggregate.composite_reference.leg_dispersion_bps",
-		},
-		{
-			"release_band_pct_above_100", func(c *config.Config) { c.Aggregate.CompositeReference.ReleaseBandPct = 100.5 },
-			"aggregate.composite_reference.release_band_pct",
-		},
-		{
-			"release_band_pct_negative", func(c *config.Config) { c.Aggregate.CompositeReference.ReleaseBandPct = -0.1 },
-			"aggregate.composite_reference.release_band_pct",
-		},
-		{
-			"tolerance_bps_above_10000", func(c *config.Config) { c.Aggregate.CompositeReference.ToleranceBps = 10_001 },
-			"aggregate.composite_reference.tolerance_bps",
-		},
-		{
-			"min_leg_sources_negative", func(c *config.Config) { c.Aggregate.CompositeReference.MinLegSources = -1 },
-			"aggregate.composite_reference.min_leg_sources",
-		},
-		{
-			"fx_max_age_hours_negative", func(c *config.Config) { c.Aggregate.CompositeReference.FXMaxAgeHours = -1 },
-			"aggregate.composite_reference.fx_max_age_hours",
-		},
-		{
-			"target_unparseable", func(c *config.Config) { c.Aggregate.CompositeReference.Targets = []string{"not-a-pair"} },
-			"aggregate.composite_reference.targets",
-		},
-		{"target_without_chain_when_chains_exist", func(c *config.Config) {
-			c.Aggregate.Triangulations = []config.TriangulationChainConfig{
-				{Target: "crypto:XLM/fiat:EUR", Legs: []string{"crypto:XLM/fiat:USD", "fiat:USD/fiat:EUR"}},
-			}
-			c.Aggregate.CompositeReference.Targets = []string{"crypto:XLM/fiat:GBP"}
-		}, "no [[aggregate.triangulations]] row"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			c := config.Default()
-			tc.mutate(&c)
-			err := c.Validate()
-			if err == nil {
-				t.Fatal("Validate accepted an out-of-band composite_reference value")
-			}
-			if !errors.Is(err, config.ErrInvalidConfig) {
-				t.Errorf("err = %v, want ErrInvalidConfig", err)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("err = %q, want it to name %q", err, tc.want)
-			}
-		})
-	}
-
-	// Accepted: the boundary values, zero sentinels, and a listed target
-	// that HAS its chain.
-	ok := config.Default()
-	ok.Aggregate.CompositeReference.LegDispersionBps = 10_000
-	ok.Aggregate.CompositeReference.ReleaseBandPct = 100
-	ok.Aggregate.CompositeReference.ToleranceBps = 0
-	ok.Aggregate.CompositeReference.MinLegSources = 0
-	ok.Aggregate.CompositeReference.FXMaxAgeHours = 0
-	ok.Aggregate.Triangulations = []config.TriangulationChainConfig{
-		{Target: "crypto:XLM/fiat:GBP", Legs: []string{"crypto:XLM/fiat:USD", "fiat:USD/fiat:GBP"}},
-		{Target: "crypto:XLM/fiat:EUR", Legs: []string{"crypto:XLM/fiat:USD", "fiat:USD/fiat:EUR"}},
-	}
-	if err := ok.Validate(); err != nil {
-		t.Errorf("boundary / sentinel values rejected: %v", err)
-	}
-}
-
-// TestMaxMarketCapVolumeRatioRejectsANegativeCeiling — 0 is the documented
-// off switch and every positive value is a real ceiling, so a negative one is
-// neither. Accepting it would silently disable the guard while reading, in a
-// config file, as though a ceiling had been set.
-func TestMaxMarketCapVolumeRatioRejectsANegativeCeiling(t *testing.T) {
-	cfg := config.Default()
-	cfg.Aggregate.MaxMarketCapVolumeRatio = -1
-
-	err := cfg.Validate()
-
-	if err == nil {
-		t.Fatal("a negative aggregate.max_market_cap_volume_ratio was accepted")
-	}
-	if !errors.Is(err, config.ErrInvalidConfig) {
-		t.Errorf("err = %v, want config.ErrInvalidConfig", err)
-	}
-	if !strings.Contains(err.Error(), "max_market_cap_volume_ratio") {
-		t.Errorf("err = %v, want it to name the field the operator has to fix", err)
-	}
-
-	cfg.Aggregate.MaxMarketCapVolumeRatio = 0
-	if err := cfg.Validate(); err != nil {
-		t.Errorf("0 must be accepted as the documented off switch: %v", err)
-	}
-}
-
-// TestLoadReader_GH1129DeadFieldsRetired: eight TOML fields
-// were parsed, defaulted and in several cases validated with hard
-// requirements while nothing outside internal/config read them. A
-// self-hosted deployment's config that set (or omitted, for
-// region.home_domain) one of these would gate boot on a field that
-// controlled nothing. They are on config.RetiredKeys: an old
-// config carrying them boots with a warning instead of failing.
-func TestLoadReader_GH1129DeadFieldsRetired(t *testing.T) {
+// TestLoadReader_RetiredKeysBootWithWarning: fields nothing outside
+// internal/config reads are on config.RetiredKeys, so an old config that
+// still carries them (even with invalid values) boots instead of failing.
+func TestLoadReader_RetiredKeysBootWithWarning(t *testing.T) {
 	body := `
 [region]
 id = "r1"
@@ -858,14 +617,10 @@ twap_window_seconds = 0
 	}
 }
 
-// TestLoadReader_GH1131DwellWindowsConfigurable —
-// ratelimit.WithDwellTime and middleware.WithMonthlyQuotaDwellTime were
-// documented as operator-tunable ("Operators with a stricter or looser
-// Redis-availability SLO tune this") but needed a TOML key, so the
-// alert arithmetic (rule window 10m vs the hardcoded 30s dwell) could
-// not be tuned around without a rebuild. api.rate_limit_dwell /
-// api.monthly_quota_dwell must round-trip through config.
-func TestLoadReader_GH1131DwellWindowsConfigurable(t *testing.T) {
+// TestLoadReader_DwellWindowsConfigurable: api.rate_limit_dwell and
+// api.monthly_quota_dwell are operator-tunable and must round-trip through
+// config.
+func TestLoadReader_DwellWindowsConfigurable(t *testing.T) {
 	body := `
 [region]
 id = "r1"

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -185,9 +186,16 @@ func (s *fakeStore) MarkAttemptFailed(_ context.Context, _ uuid.UUID, _ string, 
 
 func newTestRig(t *testing.T) (*Handlers, *fakeStore, dashboardauth.SessionContext) {
 	t.Helper()
+	return newRigWith(t, func(s *fakeStore) platform.WebhookStore { return s })
+}
+
+// newRigWith builds the rig over a store derived from the fake, for tests
+// that need a failing or degraded store.
+func newRigWith(t *testing.T, wrap func(*fakeStore) platform.WebhookStore) (*Handlers, *fakeStore, dashboardauth.SessionContext) {
+	t.Helper()
 	store := newFakeStore()
 	h, err := NewHandlers(Config{
-		Webhooks: store,
+		Webhooks: wrap(store),
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Now:      func() time.Time { return time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC) },
 	})
@@ -225,15 +233,52 @@ func sessionReq(t *testing.T, method, target string, body any, sc dashboardauth.
 	return req
 }
 
+const hooksPath = "/v1/dashboard/webhooks"
+
+// call invokes a handler as the session; a non-nil id is set as the {id}
+// path value and appended to the target, with suffix after it.
+func call(t *testing.T, fn http.HandlerFunc, method, suffix string, id uuid.UUID, body any, sc dashboardauth.SessionContext) *httptest.ResponseRecorder {
+	t.Helper()
+	target := hooksPath
+	if id != uuid.Nil {
+		target += "/" + id.String()
+	}
+	req := sessionReq(t, method, target+suffix, body, sc)
+	if id != uuid.Nil {
+		req.SetPathValue("id", id.String())
+	}
+	w := httptest.NewRecorder()
+	fn(w, req)
+	return w
+}
+
+// seedHook stores a webhook for accountID (pass uuid.New() for a stranger's)
+// and returns its id.
+func seedHook(store *fakeStore, accountID uuid.UUID, mut func(*platform.CustomerWebhook)) uuid.UUID {
+	id := uuid.New()
+	w := platform.CustomerWebhook{
+		ID: id, AccountID: accountID, Name: "n",
+		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
+	}
+	if mut != nil {
+		mut(&w)
+	}
+	store.webhooks[id] = w
+	return id
+}
+
+func createBody(name, url string, events ...platform.WebhookEventType) createRequest {
+	evs := make([]string, len(events))
+	for i, e := range events {
+		evs[i] = string(e)
+	}
+	return createRequest{Name: name, URL: url, Events: evs}
+}
+
 func TestHandleCreate_HappyPath(t *testing.T) {
 	h, store, sc := newTestRig(t)
-	req := sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks", createRequest{
-		Name:   "ops-slack",
-		URL:    "https://hooks.slack.example/services/T/B/X",
-		Events: []string{string(platform.WebhookEventIncidentSEV1)},
-	}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
+	w := call(t, h.HandleCreate, http.MethodPost, "", uuid.Nil,
+		createBody("ops-slack", "https://hooks.slack.example/services/T/B/X", platform.WebhookEventIncidentSEV1), sc)
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
@@ -255,87 +300,73 @@ func TestHandleCreate_HappyPath(t *testing.T) {
 
 func TestHandleCreate_AnonRejected401(t *testing.T) {
 	h, _, _ := newTestRig(t)
-	req := httptest.NewRequest(http.MethodPost, "/v1/dashboard/webhooks", nil)
 	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
+	h.HandleCreate(w, httptest.NewRequest(http.MethodPost, hooksPath, nil))
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", w.Code)
 	}
 }
 
-func TestHandleCreate_ViewerCannotManage(t *testing.T) {
-	h, _, sc := newTestRig(t)
-	sc.User.Role = platform.RoleViewer
-	req := sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks", createRequest{
-		Name:   "ops",
-		URL:    "https://example.com/hook",
-		Events: []string{string(platform.WebhookEventAnomalyFreeze)},
-	}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
-	if w.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want 403", w.Code)
+// TestHandleCreate_Rejections pins the create gates. The SSRF rows pin the
+// registration guard: internal, loopback, link-local, private, CGN and
+// cloud-metadata destinations are refused, as are userinfo-embedded URLs.
+func TestHandleCreate_Rejections(t *testing.T) {
+	type createCase struct {
+		name   string
+		role   platform.Role
+		url    string
+		events []platform.WebhookEventType
+		want   int
 	}
-}
-
-func TestHandleCreate_RejectsHTTPURL(t *testing.T) {
-	h, _, sc := newTestRig(t)
-	req := sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks", createRequest{
-		Name:   "ops",
-		URL:    "http://example.com/hook", // plain HTTP, not HTTPS
-		Events: []string{string(platform.WebhookEventIncidentSEV1)},
-	}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", w.Code)
+	cases := []createCase{
+		{
+			name: "viewer cannot manage", role: platform.RoleViewer, url: "https://example.com/hook",
+			events: []platform.WebhookEventType{platform.WebhookEventAnomalyFreeze}, want: http.StatusForbidden,
+		},
+		{
+			name: "plain http", url: "http://example.com/hook",
+			events: []platform.WebhookEventType{platform.WebhookEventIncidentSEV1}, want: http.StatusBadRequest,
+		},
+		{
+			name: "unknown event type", url: "https://example.com/hook",
+			events: []platform.WebhookEventType{"made.up.event"}, want: http.StatusBadRequest,
+		},
 	}
-}
-
-// TestHandleCreate_RejectsSSRFTargets pins
-// the SSRF guard: webhook URLs that point at internal /
-// loopback / link-local / private / CGN / cloud-metadata
-// destinations must be rejected at registration. Userinfo-
-// embedded URLs are also rejected so an attacker can't disguise
-// credentials in the URL itself.
-func TestHandleCreate_RejectsSSRFTargets(t *testing.T) {
-	cases := []struct {
-		name string
-		url  string
-	}{
-		{"loopback IPv4 literal", "https://127.0.0.1/hook"},
-		{"loopback IPv6 literal", "https://[::1]/hook"},
-		{"RFC1918 10/8", "https://10.0.0.1/hook"},
-		{"RFC1918 192.168", "https://192.168.1.1/hook"},
-		{"RFC1918 172.16", "https://172.16.0.1/hook"},
-		{"link-local", "https://169.254.169.254/latest/meta-data/"},
-		{"unspecified", "https://0.0.0.0/hook"},
-		{"CGN 100.64", "https://100.64.0.1/hook"},
-		{"userinfo embedded", "https://user:pass@example.com/hook"},
-		{"empty hostname", "https:///hook"},
+	for name, u := range map[string]string{
+		"ssrf loopback IPv4 literal": "https://127.0.0.1/hook",
+		"ssrf loopback IPv6 literal": "https://[::1]/hook",
+		"ssrf RFC1918 10/8":          "https://10.0.0.1/hook",
+		"ssrf RFC1918 192.168":       "https://192.168.1.1/hook",
+		"ssrf RFC1918 172.16":        "https://172.16.0.1/hook",
+		"ssrf link-local":            "https://169.254.169.254/latest/meta-data/",
+		"ssrf unspecified":           "https://0.0.0.0/hook",
+		"ssrf CGN 100.64":            "https://100.64.0.1/hook",
+		"ssrf userinfo embedded":     "https://user:pass@example.com/hook",
+		"ssrf empty hostname":        "https:///hook",
+	} {
+		cases = append(cases, createCase{name, "", u, []platform.WebhookEventType{platform.WebhookEventIncidentSEV1}, http.StatusBadRequest})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h, _, sc := newTestRig(t)
-			req := sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks", createRequest{
-				Name:   "ssrf-probe",
-				URL:    tc.url,
-				Events: []string{string(platform.WebhookEventIncidentSEV1)},
-			}, sc)
-			w := httptest.NewRecorder()
-			h.HandleCreate(w, req)
-			if w.Code != http.StatusBadRequest {
-				t.Errorf("status = %d (body=%s), want 400 for SSRF target %q",
-					w.Code, w.Body.String(), tc.url)
+			h, store, sc := newTestRig(t)
+			if tc.role != "" {
+				sc.User.Role = tc.role
+			}
+			w := call(t, h.HandleCreate, http.MethodPost, "", uuid.Nil, createBody("ops", tc.url, tc.events...), sc)
+			if w.Code != tc.want {
+				t.Errorf("status = %d (body=%s), want %d for %q", w.Code, w.Body.String(), tc.want, tc.url)
+			}
+			if len(store.webhooks) != 0 {
+				t.Errorf("rejected create stored %d webhooks", len(store.webhooks))
 			}
 		})
 	}
 }
 
-// TestBlockedResolvedAddrError_DoesNotLeakResolvedIP pins RSEC-Y1: the
-// error validateWebhookURL returns for a DNS-resolved internal address must
-// name the customer-supplied hostname, never the resolved IP — that error
-// text is written verbatim into the 400 response body.
+// TestBlockedResolvedAddrError_DoesNotLeakResolvedIP: the error
+// validateWebhookURL returns for a DNS-resolved internal address must
+// name the customer-supplied hostname, never the resolved IP, because
+// that text is written verbatim into the 400 response body.
 func TestBlockedResolvedAddrError_DoesNotLeakResolvedIP(t *testing.T) {
 	host := "rebind.example.net"
 	err := blockedResolvedAddrError(host, []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}})
@@ -350,76 +381,28 @@ func TestBlockedResolvedAddrError_DoesNotLeakResolvedIP(t *testing.T) {
 	}
 }
 
-func TestHandleCreate_RejectsUnknownEventType(t *testing.T) {
-	h, _, sc := newTestRig(t)
-	req := sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks", createRequest{
-		Name:   "ops",
-		URL:    "https://example.com/hook",
-		Events: []string{"made.up.event"},
-	}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", w.Code)
-	}
-}
-
-func TestHandleCreate_QuotaEnforced(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	// Pre-populate the tier's quota (the rig's account is Free).
-	for i := 0; i < sc.Account.Tier.MaxWebhooks(); i++ {
-		store.webhooks[uuid.New()] = platform.CustomerWebhook{
-			ID:        uuid.New(),
-			AccountID: sc.Account.ID,
-		}
-	}
-	req := sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks", createRequest{
-		Name:   "one-too-many",
-		URL:    "https://example.com/hook",
-		Events: []string{string(platform.WebhookEventIncidentSEV1)},
-	}, sc)
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, req)
-	if w.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409", w.Code)
-	}
-}
-
 // TestHandleCreate_QuotaIsTierAware pins the tier ladder: the same
 // webhook count that 409s a Free account passes on a Pro account,
 // and Config.WebhookQuotas overrides the ladder per tier.
 func TestHandleCreate_QuotaIsTierAware(t *testing.T) {
 	h, store, sc := newTestRig(t)
 	for i := 0; i < platform.TierFree.MaxWebhooks(); i++ {
-		store.webhooks[uuid.New()] = platform.CustomerWebhook{
-			ID:        uuid.New(),
-			AccountID: sc.Account.ID,
-		}
+		seedHook(store, sc.Account.ID, nil)
 	}
-	hookReq := func(name string) *http.Request {
-		return sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks", createRequest{
-			Name:   name,
-			URL:    "https://example.com/hook",
-			Events: []string{string(platform.WebhookEventIncidentSEV1)},
-		}, sc)
+	create := func(h *Handlers, name string) *httptest.ResponseRecorder {
+		return call(t, h.HandleCreate, http.MethodPost, "", uuid.Nil,
+			createBody(name, "https://example.com/hook", platform.WebhookEventIncidentSEV1), sc)
 	}
 
-	// Free (rig default) is at cap → 409.
-	w := httptest.NewRecorder()
-	h.HandleCreate(w, hookReq("over-free"))
-	if w.Code != http.StatusConflict {
+	if w := create(h, "over-free"); w.Code != http.StatusConflict {
 		t.Fatalf("free at cap: status = %d, want 409", w.Code)
 	}
 
-	// Same account on Pro sails through.
 	sc.Account.Tier = platform.TierPro
-	w = httptest.NewRecorder()
-	h.HandleCreate(w, hookReq("pro-ok"))
-	if w.Code != http.StatusCreated {
+	if w := create(h, "pro-ok"); w.Code != http.StatusCreated {
 		t.Fatalf("pro tier: status = %d (body=%s), want 201", w.Code, w.Body.String())
 	}
 
-	// Config override: cap Pro at 1 — the account (now over it) 409s.
 	h2, err := NewHandlers(Config{
 		Webhooks:      store,
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -428,31 +411,17 @@ func TestHandleCreate_QuotaIsTierAware(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandlers: %v", err)
 	}
-	w = httptest.NewRecorder()
-	h2.HandleCreate(w, hookReq("over-override"))
-	if w.Code != http.StatusConflict {
+	if w := create(h2, "over-override"); w.Code != http.StatusConflict {
 		t.Errorf("pro override cap 1: status = %d, want 409", w.Code)
 	}
 }
 
 func TestHandleList_ScopesToAccount(t *testing.T) {
 	h, store, sc := newTestRig(t)
-	// Mine
-	mine := uuid.New()
-	store.webhooks[mine] = platform.CustomerWebhook{
-		ID: mine, AccountID: sc.Account.ID, Name: "mine",
-		URL: "https://x.example", Events: []string{"incident.sev1"}, Enabled: true,
-	}
-	// Someone else's — must NOT appear in the response
-	stranger := uuid.New()
-	store.webhooks[stranger] = platform.CustomerWebhook{
-		ID: stranger, AccountID: uuid.New(), Name: "stranger",
-		URL: "https://y.example", Events: []string{"incident.sev1"}, Enabled: true,
-	}
+	seedHook(store, sc.Account.ID, func(w *platform.CustomerWebhook) { w.Name = "mine" })
+	seedHook(store, uuid.New(), func(w *platform.CustomerWebhook) { w.Name = "stranger" })
 
-	req := sessionReq(t, http.MethodGet, "/v1/dashboard/webhooks", nil, sc)
-	w := httptest.NewRecorder()
-	h.HandleList(w, req)
+	w := call(t, h.HandleList, http.MethodGet, "", uuid.Nil, nil, sc)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
@@ -474,26 +443,17 @@ func TestReads_RequireManageRole(t *testing.T) {
 		t.Run(string(role), func(t *testing.T) {
 			h, store, sc := newTestRig(t)
 			sc.User.Role = role
-			id := uuid.New()
-			store.webhooks[id] = platform.CustomerWebhook{
-				ID: id, AccountID: sc.Account.ID, Name: "mine",
-				URL: "https://x.example/hook?token=t", Events: []string{"incident.sev1"}, Enabled: true,
-			}
+			id := seedHook(store, sc.Account.ID, func(w *platform.CustomerWebhook) { w.URL = "https://x.example/hook?token=t" })
 			want := http.StatusForbidden
 			if role == platform.RoleMember {
 				want = http.StatusOK
 			}
 
-			w := httptest.NewRecorder()
-			h.HandleList(w, sessionReq(t, http.MethodGet, "/v1/dashboard/webhooks", nil, sc))
+			w := call(t, h.HandleList, http.MethodGet, "", uuid.Nil, nil, sc)
 			if w.Code != want {
 				t.Errorf("list: status = %d, want %d (body %s)", w.Code, want, w.Body.String())
 			}
-
-			req := sessionReq(t, http.MethodGet, "/v1/dashboard/webhooks/"+id.String()+"/deliveries", nil, sc)
-			req.SetPathValue("id", id.String())
-			w = httptest.NewRecorder()
-			h.HandleListDeliveries(w, req)
+			w = call(t, h.HandleListDeliveries, http.MethodGet, "/deliveries", id, nil, sc)
 			if w.Code != want {
 				t.Errorf("deliveries: status = %d, want %d (body %s)", w.Code, want, w.Body.String())
 			}
@@ -501,75 +461,48 @@ func TestReads_RequireManageRole(t *testing.T) {
 	}
 }
 
-func TestHandleDelete_RejectsCrossAccount(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	stranger := uuid.New()
-	store.webhooks[stranger] = platform.CustomerWebhook{
-		ID: stranger, AccountID: uuid.New(),
-		URL: "https://y.example", Events: []string{"incident.sev1"}, Enabled: true,
-	}
-	req := sessionReq(t, http.MethodDelete, "/v1/dashboard/webhooks/"+stranger.String(), nil, sc)
-	req.SetPathValue("id", stranger.String())
-	w := httptest.NewRecorder()
-	h.HandleDelete(w, req)
-	// Cross-account must look like not-found, not 403 — don't
-	// leak existence.
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404 (no existence leak)", w.Code)
-	}
-	// Webhook must still exist after the rejected delete.
-	if _, ok := store.webhooks[stranger]; !ok {
-		t.Error("cross-account delete should not have removed the row")
-	}
-}
-
-// TestHandleDelete_HappyPath — owner deletes their own webhook;
-// row gone, 204.
-func TestHandleDelete_HappyPath(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	mine := uuid.New()
-	store.webhooks[mine] = platform.CustomerWebhook{
-		ID: mine, AccountID: sc.Account.ID,
-		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
-	}
-	req := sessionReq(t, http.MethodDelete, "/v1/dashboard/webhooks/"+mine.String(), nil, sc)
-	req.SetPathValue("id", mine.String())
-	w := httptest.NewRecorder()
-	h.HandleDelete(w, req)
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204; body=%s", w.Code, w.Body.String())
-	}
-	if _, ok := store.webhooks[mine]; ok {
-		t.Error("row should be deleted")
+// TestHandleDelete: a cross-account delete must look like not-found, not
+// 403, so existence does not leak, and must leave the row in place.
+func TestHandleDelete(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		own     bool
+		want    int
+		wantRow bool
+	}{
+		{"own webhook", true, http.StatusNoContent, false},
+		{"cross-account", false, http.StatusNotFound, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store, sc := newTestRig(t)
+			acct := uuid.New()
+			if tc.own {
+				acct = sc.Account.ID
+			}
+			id := seedHook(store, acct, nil)
+			w := call(t, h.HandleDelete, http.MethodDelete, "", id, nil, sc)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", w.Code, tc.want, w.Body.String())
+			}
+			if _, ok := store.webhooks[id]; ok != tc.wantRow {
+				t.Errorf("row present = %v, want %v", ok, tc.wantRow)
+			}
+		})
 	}
 }
 
-// TestHandleUpdate_HappyPath — owner patches name + enabled; the
-// resulting row carries the new values, secret + account id stay
-// immutable.
+// TestHandleUpdate_HappyPath: patching name + enabled changes those; the
+// secret and account id stay immutable.
 func TestHandleUpdate_HappyPath(t *testing.T) {
 	h, store, sc := newTestRig(t)
-	mine := uuid.New()
 	originalSecret := []byte("original-secret")
-	store.webhooks[mine] = platform.CustomerWebhook{
-		ID:         mine,
-		AccountID:  sc.Account.ID,
-		Name:       "before",
-		URL:        "https://before.example/hook",
-		SigningKey: originalSecret,
-		Events:     []string{"incident.sev1"},
-		Enabled:    true,
-	}
+	mine := seedHook(store, sc.Account.ID, func(w *platform.CustomerWebhook) {
+		w.Name = "before"
+		w.SigningKey = originalSecret
+	})
 
 	falseB := false
-	patch := updateRequest{
-		Name:    strPtr("after"),
-		Enabled: &falseB,
-	}
-	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+mine.String(), patch, sc)
-	req.SetPathValue("id", mine.String())
-	w := httptest.NewRecorder()
-	h.HandleUpdate(w, req)
+	w := call(t, h.HandleUpdate, http.MethodPatch, "", mine, updateRequest{Name: strPtr("after"), Enabled: &falseB}, sc)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
@@ -588,78 +521,45 @@ func TestHandleUpdate_HappyPath(t *testing.T) {
 	}
 }
 
-// TestHandleUpdate_RejectsCrossAccount — same existence-leak
-// posture as Delete.
-func TestHandleUpdate_RejectsCrossAccount(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	stranger := uuid.New()
-	store.webhooks[stranger] = platform.CustomerWebhook{
-		ID: stranger, AccountID: uuid.New(),
-		Name: "stranger", URL: "https://x.example",
-		Events: []string{"incident.sev1"}, Enabled: true,
-	}
-	patch := updateRequest{Name: strPtr("renamed")}
-	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+stranger.String(), patch, sc)
-	req.SetPathValue("id", stranger.String())
-	w := httptest.NewRecorder()
-	h.HandleUpdate(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", w.Code)
-	}
-	if store.webhooks[stranger].Name != "stranger" {
-		t.Error("cross-account update should not have mutated the row")
+// TestHandleUpdate_Rejections: every rejected PATCH leaves the stored row
+// untouched. Cross-account is a 404 (same existence-leak posture as
+// delete); a duplicate url is the PATCH half of UNIQUE (account_id, url).
+func TestHandleUpdate_Rejections(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		stranger bool
+		patch    updateRequest
+		want     int
+	}{
+		{"cross-account", true, updateRequest{Name: strPtr("renamed")}, http.StatusNotFound},
+		{"http url", false, updateRequest{URL: strPtr("http://insecure.example/hook")}, http.StatusBadRequest},
+		{"whitespace-only name", false, updateRequest{Name: strPtr("   ")}, http.StatusBadRequest},
+		{"duplicate url", false, updateRequest{URL: strPtr("https://sibling.example/hook")}, http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store, sc := newTestRig(t)
+			acct := sc.Account.ID
+			if tc.stranger {
+				acct = uuid.New()
+			}
+			id := seedHook(store, acct, func(w *platform.CustomerWebhook) { w.Name = "before" })
+			seedHook(store, sc.Account.ID, func(w *platform.CustomerWebhook) { w.URL = "https://sibling.example/hook" })
+			before := store.webhooks[id]
+
+			w := call(t, h.HandleUpdate, http.MethodPatch, "", id, tc.patch, sc)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", w.Code, tc.want, w.Body.String())
+			}
+			if !reflect.DeepEqual(store.webhooks[id], before) {
+				t.Errorf("rejected update mutated the row: %+v -> %+v", before, store.webhooks[id])
+			}
+		})
 	}
 }
 
-// TestHandleUpdate_RejectsBadURL — PATCHing an http:// URL must
-// 400 (HTTPS-only contract).
-func TestHandleUpdate_RejectsBadURL(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	mine := uuid.New()
-	store.webhooks[mine] = platform.CustomerWebhook{
-		ID: mine, AccountID: sc.Account.ID,
-		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
-	}
-	patch := updateRequest{URL: strPtr("http://insecure.example/hook")}
-	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+mine.String(), patch, sc)
-	req.SetPathValue("id", mine.String())
-	w := httptest.NewRecorder()
-	h.HandleUpdate(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", w.Code)
-	}
-	if store.webhooks[mine].URL != "https://ok.example" {
-		t.Error("rejected update should have preserved the original URL")
-	}
-}
-
-// TestHandleUpdate_RejectsEmptyName pins the behaviour: PATCHing an empty (or
-// whitespace-only) name must 400, matching the create path's
-// validation, instead of silently writing an empty name.
-func TestHandleUpdate_RejectsEmptyName(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	mine := uuid.New()
-	store.webhooks[mine] = platform.CustomerWebhook{
-		ID: mine, AccountID: sc.Account.ID,
-		Name: "before", URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
-	}
-	patch := updateRequest{Name: strPtr("   ")}
-	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+mine.String(), patch, sc)
-	req.SetPathValue("id", mine.String())
-	w := httptest.NewRecorder()
-	h.HandleUpdate(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", w.Code)
-	}
-	if store.webhooks[mine].Name != "before" {
-		t.Errorf("rejected update should have preserved the original name, got %q", store.webhooks[mine].Name)
-	}
-}
-
-// failGetStore wraps fakeStore and makes GetWebhook fail starting on
-// its THIRD call, simulating a transient read error on the
-// post-update reload while leaving the handler's two earlier lookups
-// (parseAndAuthorise, then the pre-patch "current" fetch) unaffected.
+// failGetStore makes GetWebhook fail from its THIRD call, simulating a
+// transient read error on the post-update reload while leaving the
+// handler's two earlier lookups (authorise, pre-patch fetch) unaffected.
 type failGetStore struct {
 	*fakeStore
 	calls int
@@ -673,137 +573,62 @@ func (s *failGetStore) GetWebhook(ctx context.Context, id uuid.UUID) (platform.C
 	return s.fakeStore.GetWebhook(ctx, id)
 }
 
-// TestHandleUpdate_ReloadFailureReturns500 pins the behaviour: when the
-// post-update GetWebhook reload fails, the handler must surface a
-// 500, not silently write 200 with a zero-value DTO.
+// A failed post-update reload must surface a 500, not a 200 with a
+// zero-value DTO.
 func TestHandleUpdate_ReloadFailureReturns500(t *testing.T) {
-	store := newFakeStore()
-	sc := dashboardauth.SessionContext{
-		Session: platform.Session{ID: uuid.New(), UserID: uuid.New()},
-		User:    platform.User{ID: uuid.New(), Email: "owner@example.com", Role: platform.RoleOwner},
-		Account: platform.Account{ID: uuid.New(), Slug: "example", Tier: platform.TierFree, Status: platform.AccountActive},
-	}
-	sc.User.AccountID = sc.Account.ID
-	mine := uuid.New()
-	store.webhooks[mine] = platform.CustomerWebhook{
-		ID: mine, AccountID: sc.Account.ID,
-		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
-	}
+	h, store, sc := newRigWith(t, func(s *fakeStore) platform.WebhookStore { return &failGetStore{fakeStore: s} })
+	mine := seedHook(store, sc.Account.ID, nil)
 
-	h, err := NewHandlers(Config{
-		Webhooks: &failGetStore{fakeStore: store},
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Now:      func() time.Time { return time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC) },
-	})
-	if err != nil {
-		t.Fatalf("NewHandlers: %v", err)
-	}
-
-	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+mine.String(), updateRequest{Name: strPtr("renamed")}, sc)
-	req.SetPathValue("id", mine.String())
-	w := httptest.NewRecorder()
-	h.HandleUpdate(w, req)
+	w := call(t, h.HandleUpdate, http.MethodPatch, "", mine, updateRequest{Name: strPtr("renamed")}, sc)
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500 when the post-update reload fails", w.Code)
 	}
 }
 
-// TestHandleListDeliveries_ZeroTimestampsOmitted pins the behaviour: a
-// delivery row with no scheduled retry and no delivery yet must
-// genuinely omit next_attempt_at/delivered_at, not serialize the
-// year-1 zero timestamp (omitempty is a no-op on a struct-typed
-// time.Time).
-func TestHandleListDeliveries_ZeroTimestampsOmitted(t *testing.T) {
+// TestHandleListDeliveries: the caller's own log is returned, a row with no
+// scheduled retry and no delivery omits next_attempt_at/delivered_at (not
+// the year-1 zero time; omitempty is a no-op on time.Time), and another
+// account's webhook is a 404.
+func TestHandleListDeliveries(t *testing.T) {
 	h, store, sc := newTestRig(t)
-	mine := uuid.New()
-	store.webhooks[mine] = platform.CustomerWebhook{
-		ID: mine, AccountID: sc.Account.ID,
-		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
-	}
+	mine := seedHook(store, sc.Account.ID, nil)
 	store.deliveries[mine] = []platform.WebhookDelivery{
-		{ID: uuid.New(), WebhookID: mine, EventType: "incident.sev1"},
+		{ID: uuid.New(), WebhookID: mine, EventType: "incident.sev1", AttemptCount: 1, LastResponseStatus: 200},
+		{ID: uuid.New(), WebhookID: mine, EventType: "anomaly.freeze", AttemptCount: 3, LastResponseStatus: 503},
+	}
+	stranger := seedHook(store, uuid.New(), nil)
+	store.deliveries[stranger] = []platform.WebhookDelivery{
+		{ID: uuid.New(), WebhookID: stranger, EventType: "incident.sev1"},
 	}
 
-	req := sessionReq(t, http.MethodGet, "/v1/dashboard/webhooks/"+mine.String()+"/deliveries", nil, sc)
-	req.SetPathValue("id", mine.String())
-	w := httptest.NewRecorder()
-	h.HandleListDeliveries(w, req)
+	w := call(t, h.HandleListDeliveries, http.MethodGet, "/deliveries", mine, nil, sc)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
-
 	var raw struct {
 		Deliveries []map[string]any `json:"deliveries"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(raw.Deliveries) != 1 {
-		t.Fatalf("got %d deliveries, want 1", len(raw.Deliveries))
+	if len(raw.Deliveries) != 2 {
+		t.Fatalf("got %d deliveries, want 2", len(raw.Deliveries))
 	}
-	d := raw.Deliveries[0]
-	if v, present := d["next_attempt_at"]; present {
-		t.Errorf("next_attempt_at should be omitted when zero, got %v", v)
-	}
-	if v, present := d["delivered_at"]; present {
-		t.Errorf("delivered_at should be omitted when zero, got %v", v)
-	}
-}
-
-// TestHandleListDeliveries_HappyPath — returns the delivery log
-// for the caller's own webhook.
-func TestHandleListDeliveries_HappyPath(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	mine := uuid.New()
-	store.webhooks[mine] = platform.CustomerWebhook{
-		ID: mine, AccountID: sc.Account.ID,
-		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
-	}
-	// Seed two delivery rows.
-	store.deliveries[mine] = []platform.WebhookDelivery{
-		{ID: uuid.New(), WebhookID: mine, EventType: "incident.sev1", AttemptCount: 1, LastResponseStatus: 200},
-		{ID: uuid.New(), WebhookID: mine, EventType: "anomaly.freeze", AttemptCount: 3, LastResponseStatus: 503},
+	for _, d := range raw.Deliveries {
+		for _, field := range []string{"next_attempt_at", "delivered_at"} {
+			if v, present := d[field]; present {
+				t.Errorf("%s should be omitted when zero, got %v", field, v)
+			}
+		}
 	}
 
-	req := sessionReq(t, http.MethodGet, "/v1/dashboard/webhooks/"+mine.String()+"/deliveries", nil, sc)
-	req.SetPathValue("id", mine.String())
-	w := httptest.NewRecorder()
-	h.HandleListDeliveries(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
-	}
-	var resp deliveriesResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(resp.Deliveries) != 2 {
-		t.Errorf("got %d deliveries, want 2", len(resp.Deliveries))
-	}
-}
-
-// TestHandleListDeliveries_CrossAccount404 — listing another
-// account's deliveries returns 404 (existence-leak protection).
-func TestHandleListDeliveries_CrossAccount404(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	stranger := uuid.New()
-	store.webhooks[stranger] = platform.CustomerWebhook{
-		ID: stranger, AccountID: uuid.New(),
-		URL: "https://x.example", Events: []string{"incident.sev1"}, Enabled: true,
-	}
-	store.deliveries[stranger] = []platform.WebhookDelivery{
-		{ID: uuid.New(), WebhookID: stranger, EventType: "incident.sev1"},
-	}
-	req := sessionReq(t, http.MethodGet, "/v1/dashboard/webhooks/"+stranger.String()+"/deliveries", nil, sc)
-	req.SetPathValue("id", stranger.String())
-	w := httptest.NewRecorder()
-	h.HandleListDeliveries(w, req)
+	w = call(t, h.HandleListDeliveries, http.MethodGet, "/deliveries", stranger, nil, sc)
 	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", w.Code)
+		t.Errorf("cross-account: status = %d, want 404", w.Code)
 	}
 }
 
-// strPtr is a tiny test helper — Go has no literal *string syntax
-// and inline helpers like `&s` need a temporary variable.
+// strPtr: Go has no literal *string syntax.
 func strPtr(s string) *string { return &s }
 
 // TestValidateWebhookName_CountsCodePoints: maxLength 200 is code points
@@ -870,46 +695,20 @@ func TestValidateWebhookURL_PortAndLength(t *testing.T) {
 // TestHandleCreate_DuplicateURLConflicts pins the UNIQUE
 // (account_id, url): a second registration of the same destination is a
 // 409, not a second row fanning every event out to it again.
+// TestHandleCreate_DuplicateURLConflicts pins the UNIQUE
+// (account_id, url): a second registration of the same destination is a
+// 409, not a second row fanning every event out to it again.
 func TestHandleCreate_DuplicateURLConflicts(t *testing.T) {
 	h, store, sc := newTestRig(t)
-	body := createRequest{
-		Name:   "ops",
-		URL:    "https://hooks.example/dup",
-		Events: []string{string(platform.WebhookEventIncidentSEV1)},
-	}
+	body := createBody("ops", "https://hooks.example/dup", platform.WebhookEventIncidentSEV1)
 	for i, want := range []int{http.StatusCreated, http.StatusConflict} {
-		w := httptest.NewRecorder()
-		h.HandleCreate(w, sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks", body, sc))
+		w := call(t, h.HandleCreate, http.MethodPost, "", uuid.Nil, body, sc)
 		if w.Code != want {
 			t.Fatalf("create #%d status = %d, want %d; body=%s", i+1, w.Code, want, w.Body.String())
 		}
 	}
 	if len(store.webhooks) != 1 {
 		t.Errorf("store holds %d webhooks, want 1", len(store.webhooks))
-	}
-}
-
-// TestHandleUpdate_DuplicateURLConflicts is the PATCH half of the same
-// uniqueness: moving a webhook onto a sibling's url is a 409.
-func TestHandleUpdate_DuplicateURLConflicts(t *testing.T) {
-	h, store, sc := newTestRig(t)
-	a, b := uuid.New(), uuid.New()
-	for id, u := range map[uuid.UUID]string{a: "https://a.example/hook", b: "https://b.example/hook"} {
-		store.webhooks[id] = platform.CustomerWebhook{
-			ID: id, AccountID: sc.Account.ID, Name: "n", URL: u,
-			Events: []string{"incident.sev1"}, Enabled: true,
-		}
-	}
-	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+b.String(),
-		updateRequest{URL: strPtr("https://a.example/hook")}, sc)
-	req.SetPathValue("id", b.String())
-	w := httptest.NewRecorder()
-	h.HandleUpdate(w, req)
-	if w.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409; body=%s", w.Code, w.Body.String())
-	}
-	if got := store.webhooks[b].URL; got != "https://b.example/hook" {
-		t.Errorf("rejected update rewrote url to %q", got)
 	}
 }
 
@@ -958,31 +757,10 @@ func (s unsealableStore) GetWebhook(ctx context.Context, id uuid.UUID) (platform
 // deleting the webhook: delete + recreate is the recovery from a lost
 // seal key.
 func TestHandlers_EditAndDeleteDoNotNeedSigningKey(t *testing.T) {
-	store := newFakeStore()
-	sc := dashboardauth.SessionContext{
-		Session: platform.Session{ID: uuid.New(), UserID: uuid.New()},
-		User:    platform.User{ID: uuid.New(), Email: "owner@example.com", Role: platform.RoleOwner},
-		Account: platform.Account{ID: uuid.New(), Slug: "example", Tier: platform.TierFree, Status: platform.AccountActive},
-	}
-	sc.User.AccountID = sc.Account.ID
-	mine := uuid.New()
-	store.webhooks[mine] = platform.CustomerWebhook{
-		ID: mine, AccountID: sc.Account.ID, Name: "before",
-		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
-	}
-	h, err := NewHandlers(Config{
-		Webhooks: unsealableStore{store},
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Now:      func() time.Time { return time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC) },
-	})
-	if err != nil {
-		t.Fatalf("NewHandlers: %v", err)
-	}
+	h, store, sc := newRigWith(t, func(s *fakeStore) platform.WebhookStore { return unsealableStore{s} })
+	mine := seedHook(store, sc.Account.ID, func(w *platform.CustomerWebhook) { w.Name = "before" })
 
-	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+mine.String(), updateRequest{Name: strPtr("renamed")}, sc)
-	req.SetPathValue("id", mine.String())
-	w := httptest.NewRecorder()
-	h.HandleUpdate(w, req)
+	w := call(t, h.HandleUpdate, http.MethodPatch, "", mine, updateRequest{Name: strPtr("renamed")}, sc)
 	if w.Code != http.StatusOK {
 		t.Fatalf("PATCH status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
@@ -990,10 +768,7 @@ func TestHandlers_EditAndDeleteDoNotNeedSigningKey(t *testing.T) {
 		t.Errorf("PATCH stored name %q, want renamed", got)
 	}
 
-	req = sessionReq(t, http.MethodDelete, "/v1/dashboard/webhooks/"+mine.String(), nil, sc)
-	req.SetPathValue("id", mine.String())
-	w = httptest.NewRecorder()
-	h.HandleDelete(w, req)
+	w = call(t, h.HandleDelete, http.MethodDelete, "", mine, nil, sc)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("DELETE status = %d, want 204; body=%s", w.Code, w.Body.String())
 	}

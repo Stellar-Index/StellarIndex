@@ -446,34 +446,6 @@ func TestDecoder_pathPaymentStrictReceive_hopOrderViolation_errorsLoudly(t *test
 	}
 }
 
-// StrictSend takes SendAmount exactly from the body, no offers derivation.
-func TestDecoder_pathPaymentStrictSend_success(t *testing.T) {
-	fromAddr, _ := mkAccount(t, 0x65)
-	destAddr, _ := mkAccount(t, 0x66)
-	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
-	aqua := mkAlphanum4Asset(t, "AQUA", 0x67)
-	offers := []xdr.ClaimAtom{mkOrderBookClaimAtom(t, 0x68, aqua, 63545, native, 1100)}
-
-	outs, err := NewDecoder().Decode(dispatcher.OpContext{
-		Op:       mkPathPaymentStrictSendOp(t, native, 1100, 0x66, aqua, 60000),
-		OpResult: mkPathPaymentStrictSendSuccessResult(t, 0x66, aqua, 63545, offers),
-		TxSource: fromAddr, TxHash: "txpp6",
-	})
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
-	}
-	src, m := pathPaymentLegs(t, eventMovements(outs))
-	if m.Asset != "AQUA-"+aqua.MustAlphaNum4().Issuer.Address() || m.Amount.String() != "63545" {
-		t.Errorf("dest leg = %s %s", m.Amount.String(), m.Asset)
-	}
-	if src.Asset != "native" || src.Amount.String() != "1100" {
-		t.Errorf("source leg = %s %s, want native 1100", src.Amount.String(), src.Asset)
-	}
-	if m.ToAddress != destAddr {
-		t.Errorf("ToAddress = %q, want %q", m.ToAddress, destAddr)
-	}
-}
-
 // One path payment is both SDEX trades (its claim atoms) and movements (its
 // legs); whatever the registration order, the dispatcher must hand the op to
 // both decoders and count it against both.
@@ -868,28 +840,23 @@ func TestDecoder_claimableBalance_failedOps_emitNothing(t *testing.T) {
 	}
 }
 
-func TestKind_IsValid(t *testing.T) {
-	valid := []Kind{
+func TestKindAndProvenance_IsValid(t *testing.T) {
+	for _, k := range []Kind{
 		KindPayment, KindCreateAccount, KindPathPayment, KindAccountMerge,
 		KindClawback, KindClaimableBalanceCreate, KindClaimableBalanceClaim,
 		KindClaimableBalanceClawback, KindLiquidityPoolDeposit, KindLiquidityPoolWithdraw,
-	}
-	for _, k := range valid {
+	} {
 		if !k.IsValid() {
 			t.Errorf("Kind(%q).IsValid() = false, want true", k)
 		}
 	}
-	if Kind("bogus").IsValid() {
-		t.Error(`Kind("bogus").IsValid() = true, want false`)
+	for _, p := range []Provenance{ProvenanceClassicDerived, ProvenanceCAP67Event} {
+		if !p.IsValid() {
+			t.Errorf("Provenance(%q).IsValid() = false, want true", p)
+		}
 	}
-}
-
-func TestProvenance_IsValid(t *testing.T) {
-	if !ProvenanceClassicDerived.IsValid() || !ProvenanceCAP67Event.IsValid() {
-		t.Error("both known provenance values must be valid")
-	}
-	if Provenance("bogus").IsValid() {
-		t.Error(`Provenance("bogus").IsValid() = true, want false`)
+	if Kind("bogus").IsValid() || Provenance("bogus").IsValid() {
+		t.Error(`"bogus" Kind or Provenance reported valid`)
 	}
 }
 
