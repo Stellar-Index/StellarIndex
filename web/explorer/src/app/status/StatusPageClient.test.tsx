@@ -11,6 +11,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import StatusPageClient, {
+  incidentDays,
   probeEndpoint,
   type IncidentHistoryEntry,
   type PublicEndpoint,
@@ -576,5 +577,29 @@ describe('StatusPageClient header and incident history', () => {
       .mocked(globalThis.fetch)
       .mock.calls.find(([u]) => String(u).includes('/v1/incidents'));
     expect(call?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe('incidentDays', () => {
+  it('buckets by start day, keeps the worst severity, drops out-of-window days', () => {
+    const days = incidentDays(
+      [
+        { date: '2026-10-09', severity: 'minor' },
+        { date: '2026-10-09', severity: 'major' },
+        { date: '2026-10-10', severity: 'maintenance' },
+        { date: '2026-10-01', severity: 'major' },
+      ],
+      '2026-10-10',
+      3,
+    );
+    expect(days).toEqual([
+      { day: '2026-10-08', severity: null, count: 0 },
+      { day: '2026-10-09', severity: 'major', count: 2 },
+      { day: '2026-10-10', severity: 'maintenance', count: 1 },
+    ]);
+  });
+
+  it('returns nothing for an unparseable end day', () => {
+    expect(incidentDays([], 'not-a-day')).toEqual([]);
   });
 });
