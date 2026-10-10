@@ -4,7 +4,13 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { components } from '@/api/types';
 
-import { RWAView, splitBasis, sumStablecoins, sumUsd } from './RWAView';
+import {
+  RWAView,
+  rwaCsvRow,
+  splitBasis,
+  sumStablecoins,
+  sumUsd,
+} from './RWAView';
 
 type Schemas = components['schemas'];
 type View = Schemas['RWAAssetsView'];
@@ -1224,5 +1230,28 @@ describe('sumStablecoins', () => {
     ],
   ])('totals %j', (rows, expected) => {
     expect(sumStablecoins(rows)).toEqual(expected);
+  });
+});
+
+describe('rwaCsvRow', () => {
+  it('carries both valuations as served strings with their statuses', () => {
+    const row = rwaCsvRow(asset());
+    expect(row.market_cap_usd).toBe(CAP);
+    expect(row.reference_value_usd).toBe(REF);
+    expect(row.premium_pct).toBe('-3.0574');
+    expect(row.circulating_supply).toBe('12336218000000');
+    expect(row.market_cap_status).toBe('published');
+  });
+
+  it('leaves a withheld value blank and keeps the reason', () => {
+    const row = rwaCsvRow(
+      asset({
+        valuation: { status: 'withheld_low_liquidity' },
+        reference: undefined,
+      }),
+    );
+    expect(row.market_cap_usd).toBe('');
+    expect(row.market_cap_status).toBe('withheld_low_liquidity');
+    expect(row.reference_source).toBe('');
   });
 });
