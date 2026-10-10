@@ -119,11 +119,13 @@ func TestAssetGet_NoCatalogue_NoWarning(t *testing.T) {
 	}
 }
 
-func TestAssetGet_NativeAndFiat_NoWarning(t *testing.T) {
+// A code no verified currency claims on Stellar gets no warning either, even
+// with a syntactically valid but unknown issuer.
+func TestAssetGet_NativeFiatAndUnknownCode_NoWarning(t *testing.T) {
 	srv := v1.New(v1.Options{VerifiedCurrencies: newTestCatalogue(t)})
 	ts := httpTestServer(t, srv)
 
-	for _, path := range []string{"/v1/assets/native", "/v1/assets/fiat:USD"} {
+	for _, path := range []string{"/v1/assets/native", "/v1/assets/fiat:USD", "/v1/assets/XYZWHATEVER-" + otherRealIssuer} {
 		t.Run(path, func(t *testing.T) {
 			resp := mustGet(t, ts.URL+path)
 			if resp.StatusCode != http.StatusOK {
@@ -141,29 +143,6 @@ func TestAssetGet_NativeAndFiat_NoWarning(t *testing.T) {
 				t.Error("collision flag set")
 			}
 		})
-	}
-}
-
-func TestAssetGet_UnknownCode_NoWarning(t *testing.T) {
-	// A code that no verified currency claims on Stellar → no
-	// warning, even with a syntactically-valid-but-unknown issuer.
-	srv := v1.New(v1.Options{VerifiedCurrencies: newTestCatalogue(t)})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/XYZWHATEVER-"+otherRealIssuer)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var env struct {
-		Data  v1.AssetDetail `json:"data"`
-		Flags v1.Flags       `json:"flags"`
-	}
-	mustDecode(t, resp, &env)
-	if env.Data.UnverifiedWarning != nil {
-		t.Errorf("warning attached on unknown code: %+v", env.Data.UnverifiedWarning)
-	}
-	if env.Flags.UnverifiedTickerCollision {
-		t.Error("collision flag set on unknown code")
 	}
 }
 

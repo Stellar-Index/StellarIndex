@@ -243,40 +243,10 @@ func TestAssetGet_Sep1OverlayRefusesNonClassicMatch(t *testing.T) {
 	}
 }
 
-func TestAssetGet_Sep1NotFetchedWhenIssuerNotInCache(t *testing.T) {
-	// Issuer hasn't been visited by the sep1-refresh cron yet — handler
-	// surfaces "not_fetched" without crashing or stalling.
-	issuer := testUSDCIssuer
-	domain := "offline.example"
-	reader := &stubAssetReader{
-		byID: map[string]v1.AssetDetail{
-			"USDC-" + testUSDCIssuer: {
-				AssetID: "USDC-" + testUSDCIssuer, Type: "classic", Code: "USDC",
-				Issuer: &issuer, HomeDomain: &domain, Decimals: 7,
-			},
-		},
-	}
-	sep1 := &stubSep1Cache{err: errors.New("dns: nxdomain")}
-
-	srv := v1.New(v1.Options{Assets: reader, Sep1Cache: sep1})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/USDC-"+testUSDCIssuer)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (cache miss is not fatal)", resp.StatusCode)
-	}
-	var env struct {
-		Data v1.AssetDetail `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	if env.Data.Sep1Status != "not_fetched" {
-		t.Errorf("sep1_status = %q, want not_fetched", env.Data.Sep1Status)
-	}
-}
-
-func TestAssetGet_Sep1NotFetchedWhenCacheUnwired(t *testing.T) {
-	// Reader provides HomeDomain but server has no Sep1Cache —
-	// handler reports "not_fetched", same as the live-fetch era.
+// TestAssetGet_Sep1NotFetched: an issuer the sep1-refresh cron has not visited
+// yet, or a server with no Sep1Cache at all, surfaces "not_fetched" with a 200
+// rather than crashing or stalling.
+func TestAssetGet_Sep1NotFetched(t *testing.T) {
 	issuer := testUSDCIssuer
 	domain := "circle.com"
 	reader := &stubAssetReader{
@@ -287,16 +257,26 @@ func TestAssetGet_Sep1NotFetchedWhenCacheUnwired(t *testing.T) {
 			},
 		},
 	}
-
-	srv := v1.New(v1.Options{Assets: reader}) // No Sep1Cache.
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/assets/USDC-"+testUSDCIssuer)
-	var env struct {
-		Data v1.AssetDetail `json:"data"`
-	}
-	mustDecode(t, resp, &env)
-	if env.Data.Sep1Status != "not_fetched" {
-		t.Errorf("sep1_status = %q, want not_fetched", env.Data.Sep1Status)
+	for _, tc := range []struct {
+		name string
+		opts v1.Options
+	}{
+		{"issuer not in cache", v1.Options{Assets: reader, Sep1Cache: &stubSep1Cache{err: errors.New("dns: nxdomain")}}},
+		{"cache unwired", v1.Options{Assets: reader}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httpTestServer(t, v1.New(tc.opts))
+			resp := mustGet(t, ts.URL+"/v1/assets/USDC-"+testUSDCIssuer)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (cache miss is not fatal)", resp.StatusCode)
+			}
+			var body struct {
+				Data v1.AssetDetail `json:"data"`
+			}
+			mustDecode(t, resp, &body)
+			if body.Data.Sep1Status != "not_fetched" {
+				t.Errorf("sep1_status = %q, want not_fetched", body.Data.Sep1Status)
+			}
+		})
 	}
 }
