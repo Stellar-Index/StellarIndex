@@ -58,7 +58,7 @@ export function MevKindCharts({ events }: { events: readonly MevKindEvent[] }) {
   return (
     <div className="grid gap-6 md:grid-cols-2" data-testid="mev-kind-charts">
       <div className="space-y-2">
-        <h3 className="text-ink-body text-xs font-semibold tracking-wider uppercase">
+        <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
           By kind
         </h3>
         <HBarList
@@ -73,7 +73,7 @@ export function MevKindCharts({ events }: { events: readonly MevKindEvent[] }) {
       </div>
       {days.length > 1 && (
         <div className="space-y-2">
-          <h3 className="text-ink-body text-xs font-semibold tracking-wider uppercase">
+          <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
             Per day (UTC)
           </h3>
           <StackedColumns

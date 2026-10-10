@@ -204,7 +204,7 @@ function PostgresCard({
   const offsite = pg.repos.find((r) => r.kind === 'offsite');
   return (
     <div className="border-line bg-surface-muted rounded-lg border p-4">
-      <h3 className="text-ink-faint mb-2 text-[11px] font-semibold tracking-wider uppercase">
+      <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
         Postgres (pgBackRest)
       </h3>
       <dl className="space-y-2 text-sm">
@@ -282,7 +282,7 @@ function DrillAndLakeCard({
         }`;
   return (
     <div className="border-line bg-surface-muted rounded-lg border p-4">
-      <h3 className="text-ink-faint mb-2 text-[11px] font-semibold tracking-wider uppercase">
+      <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
         Restore drill &amp; ClickHouse
       </h3>
       <dl className="space-y-2 text-sm">
