@@ -10,7 +10,7 @@ import { apiGet, asExample, type Envelope } from '@/api/client';
 import { truncateMiddle } from '@/lib/format';
 import type { components } from '@/api/types';
 
-import { formatTimestamp, stroopsToXlm } from '../explorer-shared';
+import { formatTimestamp, stroopsToXlm, xlmReadable } from '../explorer-shared';
 import {
   edgeEvents,
   errorStatus,
@@ -181,8 +181,12 @@ export function AccountRelationEdges({
                 </Td>
                 <Td align="right">{numFmt.format(edgeEvents(e))}</Td>
                 {creation && (
-                  <Td align="right" className="font-mono">
-                    {stroopsToXlm(e.funded_stroops)}
+                  <Td
+                    align="right"
+                    className="font-mono"
+                    title={stroopsToXlm(e.funded_stroops)}
+                  >
+                    {xlmReadable(e.funded_stroops)}
                   </Td>
                 )}
                 <Td align="right">{formatTimestamp(e.first_at)}</Td>

@@ -8,7 +8,12 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
 import { InlineBar } from '@/components/ContractCharts';
-import { formatUsdWhole, formatWhole, ratioPct } from '@/lib/format';
+import {
+  formatFractionPrice,
+  formatUsdWhole,
+  formatWhole,
+  ratioPct,
+} from '@/lib/format';
 import {
   DirectoryLabel,
   type DirectoryInfo,
@@ -612,7 +617,10 @@ function AccountStatePanel({
             {state.offers.map((o) => (
               <li key={o.offer_id}>
                 #{o.offer_id}: {xlmReadable(o.amount)} {o.selling} → {o.buying}{' '}
-                @ {o.price_n}/{o.price_d}
+                @{' '}
+                <span title={`${o.price_n}/${o.price_d}`}>
+                  {formatFractionPrice(o.price_n, o.price_d)}
+                </span>
               </li>
             ))}
           </ul>

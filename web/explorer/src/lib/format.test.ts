@@ -352,3 +352,15 @@ describe('formatUnitsReadable', () => {
     expect(formatUnitsReadable(raw, d)).toBe(want);
   });
 });
+
+describe('formatFractionPrice', () => {
+  it('renders an offer price as a decimal at pair-price precision', () => {
+    expect(format.formatFractionPrice(3125000, 1000000)).toBe('3.1250');
+    expect(format.formatFractionPrice(1, 3)).toBe('0.333333');
+    expect(format.formatFractionPrice(2147483647, 1)).toBe('2147483647.00');
+  });
+
+  it('refuses a zero denominator rather than dividing by it', () => {
+    expect(format.formatFractionPrice(1, 0)).toBe('—');
+  });
+});
