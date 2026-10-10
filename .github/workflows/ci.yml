@@ -1786,7 +1786,7 @@ jobs:
         # wired into scripts/dev/verify.sh for local dev.
         run: python3 ./scripts/ci/lint-rule-structure.py
       - name: runbook-annotations lint (no promtool)
-        # YAML-aware guard (audit C4-1): every alert's runbook_url must live
+        # YAML-aware guard : every alert's runbook_url must live
         # in `annotations`, not `labels` — else the Alertmanager Discord
         # templates render no runbook link. Fails if a runbook_url regresses
         # into labels. Also exercised via lint-docs.sh §9 + verify.sh.
