@@ -10,7 +10,7 @@ import { apiGet, asExample, API_BASE_URL } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { dropPartialTrailingDay } from '@/lib/series';
 import { CopyHash, relativeAge, formatTimestamp } from '../../explorer-shared';
-import { categoryTone } from '../registry';
+import { categoryTone, PROTOCOLS } from '../registry';
 import { TimeSeriesChart } from './TimeSeriesChart';
 import { AnalyticsStatusNote, BespokeUnavailable } from './AnalyticsStatusNote';
 import { BespokeSection, type Bespoke } from './BespokeSection';
@@ -818,7 +818,14 @@ function RoleChip({ kind }: { kind?: string }) {
 
 // ─── Footer ──────────────────────────────────────────────────────────────────
 
+const LINK_LABELS = [
+  ['website', 'Website'],
+  ['docs', 'Docs'],
+  ['source', 'Contract source'],
+] as const;
+
 function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
+  const links = PROTOCOLS.find((p) => p.name === name)?.links;
   return (
     <Panel title="Protocol identity" bodyClassName="space-y-4">
       {data.factories.length > 0 && (
@@ -860,6 +867,21 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
       )}
 
       <div className="border-line flex flex-wrap gap-x-6 gap-y-2 border-t pt-3 text-xs">
+        {LINK_LABELS.map(([key, label]) => {
+          const href = links?.[key];
+          return href ? (
+            <a
+              key={key}
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-brand-600 inline-flex items-center gap-1 hover:underline"
+            >
+              {label}
+              <ExternalLink className="h-3 w-3" aria-hidden />
+            </a>
+          ) : null;
+        })}
         {data.verification_page && (
           <a
             href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${data.verification_page}`}
