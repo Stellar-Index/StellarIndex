@@ -71,11 +71,8 @@ export function staticFrame(html: string): StaticFrame | null {
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim(),
-    belowHeader: /<[a-z]|[^\s<>]/i.test(
-      afterHeader(stripped)
-        .replace(/<!--[\s\S]*?-->/g, '')
-        .replace(/<\/[^>]+>/g, ''),
-    ),
+    // An opening element, or text after a tag; comments and closing tags match neither.
+    belowHeader: /<[a-z]|(?:^|>)\s*[^\s<]/i.test(afterHeader(stripped)),
   };
 }
 
