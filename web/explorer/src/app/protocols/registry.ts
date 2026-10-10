@@ -20,35 +20,55 @@ export interface ProtocolRegistryEntry {
   category: string;
   /** Short fallback description (the API serves the authoritative one). */
   description: string;
+  /** Protocol's own website, docs and contract source; each URL checked live. */
+  links?: { website?: string; docs?: string; source?: string };
 }
 
 export const PROTOCOLS: ProtocolRegistryEntry[] = [
   {
     name: 'sdex',
+    links: {
+      docs: 'https://developers.stellar.org/docs/learn/fundamentals/liquidity-on-stellar-sdex-liquidity-pools',
+      source: 'https://github.com/stellar/stellar-core',
+    },
     category: 'dex',
     label: 'SDEX',
     description: "Stellar's protocol-native central-limit order book.",
   },
   {
     name: 'soroswap',
+    links: {
+      website: 'https://soroswap.finance',
+      docs: 'https://docs.soroswap.finance',
+      source: 'https://github.com/soroswap/core',
+    },
     category: 'amm',
     label: 'Soroswap',
     description: 'Constant-product Soroban AMM pairs.',
   },
   {
     name: 'aquarius',
+    links: {
+      website: 'https://aqua.network',
+      docs: 'https://docs.aqua.network',
+    },
     category: 'amm',
     label: 'Aquarius',
     description: 'Incentivised constant-product and stableswap pools.',
   },
   {
     name: 'phoenix',
+    links: {
+      website: 'https://www.phoenix-hub.io',
+      source: 'https://github.com/Phoenix-Protocol-Group/phoenix-contracts',
+    },
     category: 'amm',
     label: 'Phoenix',
     description: 'Soroban constant-product AMM with liquidity + stake events.',
   },
   {
     name: 'sushiswap_v3',
+    links: { website: 'https://www.sushi.com', docs: 'https://docs.sushi.com' },
     category: 'amm',
     label: 'SushiSwap V3',
     description:
@@ -56,12 +76,18 @@ export const PROTOCOLS: ProtocolRegistryEntry[] = [
   },
   {
     name: 'comet',
+    links: { source: 'https://github.com/CometDEX/comet-contracts-v1' },
     category: 'amm',
     label: 'Comet',
     description: 'Balancer-v1-style weighted pools on Soroban.',
   },
   {
     name: 'blend',
+    links: {
+      website: 'https://www.blend.capital',
+      docs: 'https://docs.blend.capital',
+      source: 'https://github.com/blend-capital/blend-contracts-v2',
+    },
     category: 'lending',
     label: 'Blend',
     description: 'Isolated lending pools on Soroban.',
@@ -75,60 +101,112 @@ export const PROTOCOLS: ProtocolRegistryEntry[] = [
   },
   {
     name: 'upshift',
+    links: {
+      website: 'https://www.upshift.finance',
+      docs: 'https://docs.upshift.finance',
+      source:
+        'https://github.com/upshift-protocol/stellar-upshift-vault-contracts',
+    },
     category: 'yield',
     label: 'Upshift',
-    description: 'Institutional tokenized vaults (earnUSDC, earnXLM) minting shares against one underlying.',
+    description:
+      'Institutional tokenized vaults (earnUSDC, earnXLM) minting shares against one underlying.',
   },
   {
     name: 'defindex',
+    links: {
+      website: 'https://www.defindex.io',
+      docs: 'https://docs.defindex.io',
+      source: 'https://github.com/paltalabs/defindex',
+    },
     category: 'yield',
     label: 'DeFindex',
     description: 'Yield vaults and strategies across Soroban DeFi.',
   },
   {
     name: 'cctp',
+    links: {
+      website: 'https://www.circle.com/cross-chain-transfer-protocol',
+      docs: 'https://developers.circle.com/cctp',
+      source: 'https://github.com/circlefin/stellar-cctp',
+    },
     category: 'bridge',
     label: 'Circle CCTP',
     description: 'Canonical burn-and-mint USDC bridging.',
   },
   {
     name: 'rozo',
+    links: {
+      website: 'https://rozo.ai',
+      source: 'https://github.com/RozoAI/rozo-intents-contracts',
+    },
     category: 'bridge',
     label: 'Rozo',
     description: 'Intent-bridge payment settlement on Stellar.',
   },
   {
     name: 'soroswap-router',
+    links: {
+      website: 'https://soroswap.finance',
+      docs: 'https://docs.soroswap.finance',
+      source: 'https://github.com/soroswap/core',
+    },
     category: 'amm',
     label: 'Soroswap Router',
     description: 'Aggregated multi-hop swap intents from router invocations.',
   },
   {
     name: 'band',
+    links: {
+      website: 'https://www.bandprotocol.com',
+      docs: 'https://docs.bandchain.org',
+      source:
+        'https://github.com/bandprotocol/band-std-reference-contracts-soroban',
+    },
     category: 'oracle',
     label: 'Band Protocol',
     description: 'Reference-rate oracle observed from relay() invocations.',
   },
   {
     name: 'reflector-dex',
+    links: {
+      website: 'https://reflector.network',
+      docs: 'https://reflector.network/docs',
+      source: 'https://github.com/reflector-network/reflector-contract',
+    },
     category: 'oracle',
     label: 'Reflector (DEX)',
     description: 'Reflector oracle — Stellar-DEX price feed.',
   },
   {
     name: 'reflector-cex',
+    links: {
+      website: 'https://reflector.network',
+      docs: 'https://reflector.network/docs',
+      source: 'https://github.com/reflector-network/reflector-contract',
+    },
     category: 'oracle',
     label: 'Reflector (CEX)',
     description: 'Reflector oracle — centralized-exchange price feed.',
   },
   {
     name: 'reflector-fx',
+    links: {
+      website: 'https://reflector.network',
+      docs: 'https://reflector.network/docs',
+      source: 'https://github.com/reflector-network/reflector-contract',
+    },
     category: 'oracle',
     label: 'Reflector (FX)',
     description: 'Reflector oracle — fiat exchange-rate feed.',
   },
   {
     name: 'redstone',
+    links: {
+      website: 'https://www.redstone.finance',
+      docs: 'https://docs.redstone.finance',
+      source: 'https://github.com/redstone-finance/redstone-oracles-monorepo',
+    },
     category: 'oracle',
     label: 'RedStone',
     description: 'Batched multi-feed price pushes to the RedStone adapter.',
