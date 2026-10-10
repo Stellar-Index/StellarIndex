@@ -507,7 +507,8 @@ func (h *Handler) movementsSupplyRange(ctx context.Context, wm uint32) supplyRan
 // P23 on, and in the Postgres tail, it is `transfer` alone; classicmovements
 // has no fee or order-book-fill kind at any epoch.
 func movementsKindGapNote(supply supplyRange) string {
-	const noFees = ", and fees and order-book fills are not served at any ledger"
+	const noFees = ", and order-book fills are not served at any ledger; fees are not movements (ADR-0047 D3) " +
+		"and are shown per transaction as fee_charged"
 	if supply.from == 0 {
 		return "from 2025-09-03 (P23) on, this feed carries transfer movements only — mint, burn and clawback " +
 			"(including every payment to or from an asset's issuer) are not served yet" + noFees

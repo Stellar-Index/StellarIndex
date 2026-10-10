@@ -43,7 +43,13 @@ const KIND_LABEL: Record<KindCoverage['kind'], string> = {
   fill: 'Order-book fills',
 };
 
-function coverageDetail(c: KindCoverage): string {
+// Fees are not movement rows by design (ADR-0047 D3): each transaction's
+// fee_charged is shown in the account's Transactions table.
+const feesShownPerTx = (c: KindCoverage) =>
+  c.kind === 'fee' && c.status === 'not_served';
+
+export function coverageDetail(c: KindCoverage): string {
+  if (feesShownPerTx(c)) return 'shown per transaction';
   if (c.status === 'not_served') return 'not served';
   const range = c.from_ledger
     ? `ledgers ${c.from_ledger}-${c.through_ledger ?? 'tip'}`
@@ -62,7 +68,16 @@ function CoverageStrip({
     <div className="space-y-1" data-testid="movements-coverage">
       <div className="flex flex-wrap gap-1.5">
         {(coverage ?? []).map((c) => (
-          <Badge key={c.kind} tone={c.status === 'served' ? 'ok' : 'warn'}>
+          <Badge
+            key={c.kind}
+            tone={
+              c.status === 'served'
+                ? 'ok'
+                : feesShownPerTx(c)
+                  ? 'neutral'
+                  : 'warn'
+            }
+          >
             {KIND_LABEL[c.kind]}: {coverageDetail(c)}
           </Badge>
         ))}
