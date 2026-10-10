@@ -19,7 +19,7 @@ import (
 // The resolver's substance gate: a rate for a classic or Soroban asset
 // values a trade only when the market it came from clears the
 // published-price floor at the trade's time. The executing proof against
-// real Postgres is test/integration/usd_fx_resolver_substance_test.go.
+// real Postgres is test/integration/pg_pricing_fx_oracle_test.go.
 
 const substanceTestIssuer = "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2"
 

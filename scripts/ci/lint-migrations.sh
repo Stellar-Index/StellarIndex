@@ -63,7 +63,7 @@
 # This pass covers single-line `name type` DDL only: a view/CAGG column
 # typed by its expression (`… ::double precision AS volume_usd`), a type
 # on the next line or a float DOMAIN pass it. The authoritative check is
-# TestMoneyColumnsAreNumeric (test/integration/money_columns_test.go),
+# TestMoneyColumnsAreNumeric (test/integration/pg_migrations_test.go),
 # which reads the resolved type of every column from pg_catalog
 # (domains and array elements resolved) and reuses the `name` stem
 # pattern below.

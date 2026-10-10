@@ -21,7 +21,7 @@ import (
 //
 // The query is assembled inline, so the scripted driver records the text
 // the store actually issued. The executing proof against real Postgres
-// is test/integration/pair_market_substance_at_test.go.
+// is test/integration/pg_pricing_markets_test.go.
 
 func substanceAtQuery(t *testing.T, asOf time.Time, window time.Duration, g HistoryGranularity) recordedStmt {
 	t.Helper()

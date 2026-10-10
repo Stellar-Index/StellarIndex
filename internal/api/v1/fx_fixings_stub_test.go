@@ -9,7 +9,7 @@ import (
 
 // stubFXFixings binds each ticker to one fixed fixing whatever the bucket
 // end; the binding rule itself is covered against Postgres in
-// test/integration/fx_fixings_test.go.
+// test/integration/pg_pricing_fx_oracle_test.go.
 type stubFXFixings struct {
 	bindings map[string]timescale.FXFixingBinding
 	err      error

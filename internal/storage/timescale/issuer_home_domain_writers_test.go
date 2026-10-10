@@ -20,7 +20,7 @@ var (
 // TestEveryIssuersHomeDomainWriterUnbindsSep1 fails when a statement that
 // writes issuers.home_domain does not route through
 // sep1ResetOnHomeDomainChange. The executing proof is
-// test/integration/issuer_home_domain_sep1_unbind_test.go; this catches the
+// test/integration/pg_assets_sep1_test.go; this catches the
 // next writer, which that test cannot know about.
 func TestEveryIssuersHomeDomainWriterUnbindsSep1(t *testing.T) {
 	files, err := filepath.Glob("*.go")

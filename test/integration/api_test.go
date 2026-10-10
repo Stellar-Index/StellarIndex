@@ -756,7 +756,7 @@ func (r apiMarketsAdapter) AllPools(ctx context.Context, filter timescale.PoolsF
 
 // mkAPITrade builds a Trade with a unique TxHash per (ledger, nonce).
 // Reuses the integration-test hex-encoding trick from
-// trades_range_test.go — keeps trade IDs distinct so the primary key
+// pg_trades_test.go — keeps trade IDs distinct so the primary key
 // doesn't collide.
 func mkAPITrade(nonce int, ts time.Time, pair c.Pair, base, quote int64) c.Trade {
 	h := make([]byte, 64)

@@ -480,7 +480,7 @@ fi
 # Every failed SEP-1 attempt stamps sep1_resolved_at, so an age over it
 # stayed green while the refresh failed every domain. Only a
 # success stamps sep1_payload_fetched_at. Behaviour is executed against
-# Postgres in test/integration/sep1_identity_history_test.go.
+# Postgres in test/integration/pg_assets_sep1_test.go.
 SEP1_ROW="$(grep -E "^[[:space:]]*SELECT 'sep1'," "$SRC")"
 if [[ "$SEP1_ROW" == *"max(sep1_payload_fetched_at)"* && "$SEP1_ROW" != *"sep1_resolved_at"* ]]; then
   ok "sep1 age is max(sep1_payload_fetched_at)"

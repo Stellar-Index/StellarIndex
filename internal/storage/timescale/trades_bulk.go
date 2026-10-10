@@ -27,7 +27,7 @@ import (
 //
 // Measured (integration harness, TimescaleDB 2.26.4-pg15, real `trades`
 // hypertable with all nine indexes; see
-// test/integration/trades_bulk_backfill_test.go):
+// test/integration/pg_trades_test.go):
 //
 //   - Landing a batch is ~2.4x slower into a COMPRESSED chunk than into an
 //     uncompressed one, and ~3.3x slower for COPY — TimescaleDB has to

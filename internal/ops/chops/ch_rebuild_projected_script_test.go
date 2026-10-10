@@ -465,7 +465,7 @@ func TestChRebuildProjectedScript_PreflightMatchesTheWriteItPrecedes(t *testing.
 // The DELETE batch is one transaction: psql autocommits each statement
 // otherwise, and a failure on the ninth table would leave the first eight
 // emptied. (Executed against real Postgres in
-// test/integration/ch_rebuild_projected_script_test.go.)
+// test/integration/pg_ops_pipeline_test.go.)
 func TestChRebuildProjectedScript_DeleteBatchIsOneTransaction(t *testing.T) {
 	t.Parallel()
 	run := runProjectedScript(t, "", nil)

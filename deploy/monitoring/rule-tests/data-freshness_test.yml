@@ -130,7 +130,7 @@ tests:
   # together, and for a year only the two TWAPs had a detector. The
   # prices_* arm carries its own gauge family (the SQL and its
   # trades-referenced predicate are executed by
-  # test/integration/cagg_history_detector_test.go); what this case pins
+  # test/integration/pg_trades_caggs_test.go); what this case pins
   # is that the alert routes it — same severity, same runbook, the
   # view label passed through.
   - interval: 1m

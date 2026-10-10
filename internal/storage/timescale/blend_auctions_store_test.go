@@ -368,7 +368,7 @@ func TestBlendReserveConfigs_ParsesAndSkipsUnparseable(t *testing.T) {
 		// only one immediately followed (same asset) by set_reserve
 		// is applied. A cancel_set_reserve, a superseding queue, or
 		// nothing yet must all be excluded (see the executing
-		// coverage in test/integration/blend_money_market_storage_test.go).
+		// coverage in test/integration/pg_sources_lending_test.go).
 		"LEAD(event_kind)",
 		"next_kind = 'set_reserve'",
 	} {

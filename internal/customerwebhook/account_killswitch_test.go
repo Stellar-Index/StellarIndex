@@ -29,7 +29,7 @@ import (
 // These tests pin the delivery end of the gate. The store end (the
 // resolver, the two enqueue writers and the claim query, all SQL) is
 // pinned against real Postgres in
-// test/integration/customerwebhook_account_killswitch_test.go.
+// test/integration/pg_auth_webhooks_test.go.
 
 // WebhookAccountStatus completes the DeliveryStore contract for the
 // package's in-memory fake. That fake models the customer_webhooks table
@@ -239,7 +239,7 @@ func TestNew_RefusesAStoreThatCannotAnswerTheKillSwitch(t *testing.T) {
 //
 // The positive half (the refusal lands in PublishResult.Suppressed) is
 // asserted end-to-end against real Postgres in
-// test/integration/customerwebhook_account_killswitch_test.go; keeping
+// test/integration/pg_auth_webhooks_test.go; keeping
 // it out of this file lets the file compile — and so fail on its
 // assertions rather than on a build error — against code lacking the fix.
 func TestFanout_SuppressedEnqueueIsNotALostEvent(t *testing.T) {

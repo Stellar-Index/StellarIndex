@@ -333,7 +333,7 @@ func TestNativeLiquidityPoolsRanked_SameLedgerLastChangeWins(t *testing.T) {
 // --- fixture builders (scaffolding only — assertions go through the real readers) ---
 
 // contractIDFromSeed fills a 32-byte contract id with a single seed byte,
-// consistent with mustContractStrkey(t, seed) (decoders_to_storage_test.go) so
+// consistent with mustContractStrkey(t, seed) (pg_sources_misc_test.go) so
 // the id and its C-strkey refer to the same contract.
 func contractIDFromSeed(seed byte) xdr.ContractId {
 	var id xdr.ContractId

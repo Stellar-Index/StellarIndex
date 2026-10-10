@@ -10,7 +10,7 @@
 // Without this lint the guard is only a copy-paste convention (~39 files when
 // the lint was added), and nothing rejects a writer that forgets the WHERE clause.
 // This is the static PR-time complement to the two representative-table
-// integration test (test/integration/derive_generation_guard_protocol_test.go).
+// integration test (test/integration/pg_ops_pipeline_test.go).
 //
 // Writers that build the INSERT dynamically (table name interpolated via
 // fmt.Sprintf rather than written as a literal) are exempt: the guard clause

@@ -80,7 +80,7 @@ fills below the ledger's own measurement resolution.
   `WITH NO DATA`: applying it empties the views (~1.1 TB) until re-materialised
   per the migration header.
 - `internal/api/v1/ohlc_fiat_combine.go`: the 2× band removed.
-- `test/integration/ohlc_dust_floor_test.go`: the 2↔15-stroop crumb serves
+- `test/integration/pg_pricing_test.go`: the 2↔15-stroop crumb serves
   `0.1333333333` before and `0.1822` after, on every grain.
 
 NULL `usd_volume` never satisfies the filter, so an entirely unpriced bucket

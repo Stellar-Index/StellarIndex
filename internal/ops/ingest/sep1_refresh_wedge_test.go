@@ -204,7 +204,7 @@ func TestSep1RefreshLoopSurvivesAHostileTOML(t *testing.T) {
 // outcome, which is exactly the assumption the wedge exploited. The mark
 // costs a success nothing, because SetIssuerSep1Payload clears the
 // ladder in the same statement that writes the payload — proved against
-// Postgres in test/integration/sep1_retry_backoff_test.go.
+// Postgres in test/integration/pg_assets_sep1_test.go.
 func TestSep1RefreshLoopMarksBeforeASuccessToo(t *testing.T) {
 	log := &sep1CallLog{}
 	srv, domain := sep1TestDomain(t, log, "GBEHIND", healthyTOML)
