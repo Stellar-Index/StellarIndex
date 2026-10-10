@@ -1,38 +1,24 @@
 // Package bitstamp streams live trades from Bitstamp's public
 // WebSocket API. Adds EUR/GBP depth to the XLM market coverage
-// Kraken already provides, with a different liquidity profile
-// (Bitstamp skews European retail).
+// Kraken already provides.
 //
-// Architectural contrast with Kraken:
+// Differences from Kraken that shape the code:
 //
-//   - Subscription model: Bitstamp requires ONE subscribe message
-//     per channel; Kraken accepts an array in a single method call.
-//     We send N subscribe frames sequentially after connect.
-//   - Channel naming: "live_trades_xlmusd" (lowercase, concat, no
-//     separator). The venue is a holdover from its Pusher-protocol
-//     origins even after the raw-WS migration in 2020.
-//   - Precision: Bitstamp emits BOTH float forms (price, amount) AND
-//     string forms (price_str, amount_str). We use the string forms
-//     uniformly — the i128 invariant (ADR-0003) says no floats on
-//     the price path, and Bitstamp's string fields preserve vendor-
-//     side precision.
-//   - Microtimestamp: stringified microseconds-since-epoch, not ms
-//     (Binance) or RFC3339 (Kraken).
-//   - Periodic server-initiated reconnect: Bitstamp sends a
-//     `bts:request_reconnect` event every ~hour asking clients to
-//     reconnect and rebalance to a different node. We honour it by
-//     closing the connection; backoff reconnect picks up.
+//   - Bitstamp requires ONE subscribe message per channel; we send N
+//     subscribe frames sequentially after connect.
+//   - Channel naming is "live_trades_xlmusd" (lowercase, concatenated).
+//   - Bitstamp emits both float (price, amount) and string (price_str,
+//     amount_str) forms. We use the string forms only: no floats on the
+//     price path (ADR-0003).
+//   - Microtimestamp is stringified microseconds since epoch.
+//   - Roughly hourly the server sends `bts:request_reconnect` to rebalance
+//     clients. We honour it by closing the connection; the backoff
+//     reconnect picks up.
 //
-// Wire format reference:
-// https://www.bitstamp.net/websocket/v2/
-//
+// Wire format reference: https://www.bitstamp.net/websocket/v2/
 // Typical session:
 //
-//	→ Dial wss://ws.bitstamp.net
 //	→ {"event":"bts:subscribe","data":{"channel":"live_trades_xlmusd"}}
-//	← {"event":"bts:subscription_succeeded","channel":"live_trades_xlmusd","data":{}}
-//	→ {"event":"bts:subscribe","data":{"channel":"live_trades_xlmeur"}}
-//	← {"event":"bts:subscription_succeeded","channel":"live_trades_xlmeur","data":{}}
 //	← {"event":"trade","channel":"live_trades_xlmusd","data":{"id":...,"price_str":"0.17582","amount_str":"100.5","microtimestamp":"1745000000123456","type":0,...}}
 //	← {"event":"bts:request_reconnect","channel":"","data":{}}  # ~hourly
 package bitstamp

@@ -2,36 +2,26 @@
 // daily net asset value of registered mutual funds.
 //
 // Role in the aggregator:
-//
-//   - Emits canonical.OracleUpdate, never Trade: a fund NAV is the fund
-//     administrator's statement of what one share is worth, not an
-//     executed trade.
+//   - Emits canonical.OracleUpdate, never Trade: a fund NAV is an
+//     administrator's statement of share value, not an executed trade.
 //   - Rows are keyed `raw:<TICKER>` under source `tiingo`. The fund
-//     tickers are on none of the canonical allow-lists, and the raw
-//     namespace is what keeps them record-layer only: Pair.Validate
-//     refuses a raw leg, so a NAV can never become a pair, a VWAP input
-//     or a supply key. The one reader that interprets them is the RWA
-//     reference surface, through the curated (code, issuer) → ticker
-//     binding in internal/rwa.
-//   - Registry class is oracle with IncludeInVWAP false.
+//     tickers are on no canonical allow-list, and the raw namespace keeps
+//     them record-layer only: Pair.Validate refuses a raw leg, so a NAV
+//     can never become a pair, a VWAP input or a supply key. Only the RWA
+//     reference surface reads them, via the curated (code, issuer) →
+//     ticker binding in internal/rwa.
+//   - Registry class is oracle, IncludeInVWAP false.
 //
-// Tiingo publishes the SEC-reported NAV, rounded to 2 dp, dated the
-// business day it was struck; it lands the evening of that day, so the
-// newest bar is usually the previous business day's.
+// Tiingo publishes the SEC-reported NAV (2 dp), dated the business day it
+// was struck and landing that evening, so the newest bar is usually the
+// previous business day's.
 //
-// Wire format (captured from the live API):
+// Wire format: GET https://api.tiingo.com/tiingo/daily/WTTSX/prices?startDate=YYYY-MM-DD
+// with `Authorization: Token <key>`, returning
+// [{"date":"YYYY-MM-DDT00:00:00.000Z","close":9.44,...}]. A fund with no NAV history returns `[]` with 200: no NAV, not an error.
 //
-//	GET https://api.tiingo.com/tiingo/daily/WTTSX/prices?startDate=YYYY-MM-DD
-//	Authorization: Token <key>
-//
-//	[{"date":"YYYY-MM-DDT00:00:00.000Z","close":9.44,"high":9.44,"low":9.44,
-//	  "open":9.44,"volume":0,"adjClose":9.44,...}]
-//
-// A fund with no NAV history returns `[]` with 200 — no NAV, not an error.
-//
-// Free-tier limits are 50 requests/hour and 1,000/day. The default hourly
-// cadence spends one request per ticker per poll: 12 tickers × 24 = 288
-// requests/day, 8,928/month.
+// Free tier is 50 requests/hour, 1,000/day; hourly polling spends one
+// request per ticker per poll.
 package tiingo
 
 import (

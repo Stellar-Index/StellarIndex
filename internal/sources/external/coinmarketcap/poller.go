@@ -1,35 +1,26 @@
 // Package coinmarketcap polls CoinMarketCap's Pro /v2 quotes endpoint
-// for cross-check reference prices. `ClassAggregator` — divergence
+// for cross-check reference prices. `ClassAggregator`: divergence
 // signal only, excluded from VWAP.
 //
-// Tier notes:
-//   - Hobbyist / Basic: 10k credits/month, 30 calls/min. Usable for
-//     low-cadence divergence checks.
-//   - Startup: 120k/month, 30/min. Fine for 1-min cadence.
-//   - Standard ($79/mo): 500k/month, 60/min, **redistribution allowed**.
-//     This is the minimum for production (earlier tiers prohibit
-//     redistributing the data).
+// Tier: production needs Standard ($79/mo, 500k credits/month, 60
+// calls/min), the minimum tier that allows redistribution of the data.
+// Hobbyist/Basic (10k/month) and Startup (120k/month) suit only low-cadence
+// divergence checks.
 //
 // Wire shape (verified):
 //
 //	GET https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbol=XLM,BTC,ETH&convert=USD
 //	Header: X-CMC_PRO_API_KEY: KEY
 //
-//	{
-//	  "data": {
-//	    "XLM": [{ "quote": { "USD": { "price": 0.17582, "last_updated": "..." }}}],
-//	    "BTC": [{ "quote": { "USD": { "price": 50000.0,  "last_updated": "..." }}}]
-//	  },
-//	  "status": { "error_code": 0, "error_message": null, ... }
-//	}
+//	{"data": {"XLM": [{"quote": {"USD": {"price": 0.17582, "last_updated": "..."}}}]},
+//	 "status": {"error_code": 0, "error_message": null, ...}}
 //
-// Note: CMC wraps each symbol's payload in an array because multiple
-// coins can share a ticker (e.g. two distinct projects both ticker
-// "ETH2"). `id=` mode is unambiguous (the numeric CMC id pins one
+// CMC wraps each symbol's payload in an array because multiple coins can
+// share a ticker. `id=` mode is unambiguous (the numeric CMC id pins one
 // project) and its single response entry is verified against the
 // requested id before use. `symbol=` mode carries no discriminator we
-// can check — CMC's ranking is undocumented and unstable — so an
-// entry with more than one coin is refused rather than guessed at.
+// can check (CMC's ranking is undocumented and unstable), so an entry
+// with more than one coin is refused rather than guessed at.
 package coinmarketcap
 
 import (

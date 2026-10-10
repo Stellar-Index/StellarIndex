@@ -16,17 +16,8 @@
 //
 //	GET https://api.exchangeratesapi.io/v1/latest?access_key=KEY&base=USD&symbols=EUR,GBP,JPY,...
 //
-//	{
-//	  "success": true,
-//	  "timestamp": 1745000000,
-//	  "base": "USD",
-//	  "date": "YYYY-MM-DD",
-//	  "rates": {
-//	    "EUR": 0.92350,
-//	    "GBP": 0.78450,
-//	    "JPY": 149.5600
-//	  }
-//	}
+//	{"success": true, "timestamp": 1745000000, "base": "USD",
+//	 "date": "YYYY-MM-DD", "rates": {"EUR": 0.92350, "GBP": 0.78450}}
 package exchangeratesapi
 
 import (

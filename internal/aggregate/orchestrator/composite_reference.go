@@ -19,51 +19,30 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Composite-reference corroboration for structurally single-venue
-// targets (design doc
-// docs/design/composite-route-corroboration-for-structurally-single-venue.md
-// §10 amendment).
+// Composite-reference corroboration for structurally single-venue targets
+// (docs/design/composite-route-corroboration-for-structurally-single-venue.md §10).
 //
-// A pair like crypto:XLM/fiat:GBP is quoted by one or two venues, so
-// the ADR-0019 phase-2 freeze (confidence < 0.45 AND z > 5 AND
-// source_count <= 1) fires on every large move whether the move is a
-// venue-specific spike or the whole market repricing. The direct
-// venue's own history cannot tell those apart — but its configured
-// triangulation chain can: XLM/USD (multi-venue, deep) × USD/GBP
-// (institutional FX, massive.com) is an excellent REFERENCE for XLM/GBP
-// fair value. This file evaluates that reference on the CURRENT bucket
-// and lets it CORROBORATE or REFUTE the freeze decision:
+// A pair like crypto:XLM/fiat:GBP is quoted by one or two venues, so the
+// ADR-0019 phase-2 freeze (confidence < 0.45 AND z > 5 AND source_count <= 1)
+// fires on every large move, venue-specific or market-wide. Its triangulation
+// chain can tell them apart: XLM/USD (deep) × USD/GBP (massive.com FX) is a
+// good reference for XLM/GBP fair value. It is evaluated on the CURRENT bucket to CORROBORATE or REFUTE the
+// freeze: within [CompositeReferenceConfig.ToleranceBps] of the direct print
+// means a market-wide move, so the fire is SUPPRESSED (corroboration_basis=
+// composite); disagreement or an unavailable composite freezes as before.
 //
-//   - direct print agrees with the composite within
-//     [CompositeReferenceConfig.ToleranceBps] → the move is market-wide
-//     → the phase-2 fire is SUPPRESSED (or, mid-hold, the release lens
-//     agrees) and the decision carries corroboration_basis=composite;
-//   - composite disagrees (flat while the venue spiked, or moved
-//     elsewhere) → venue-specific → freeze exactly as before,
-//     corroboration_basis=venue;
-//   - composite unavailable (leg not refreshed this tick, leg too thin,
-//     FX leg stale / not from the FX source class, chain unconfigured)
-//     → freeze exactly as before, the reason string says why.
-//
-// Why CURRENT bucket, never a prior tick's sample (the rejected first
-// implementation, 95da898d): a tick-lagged composite that AGREED with
-// the pre-spike print certified the pre-spike LEVEL, not the spike —
-// it suppressed a z≈50 single-venue manipulation that must freeze. The
-// reference here is rebuilt from THIS tick's XLM/USD publish and an FX
-// snap at THIS bucket's end, so it can only agree with the spike if the
-// deep market moved with it.
+// CURRENT bucket, never a prior tick's sample: a tick-lagged composite that
+// agreed with the pre-spike print certified the pre-spike LEVEL and
+// suppressed a z≈50 single-venue manipulation that must freeze.
 //
 // Hard invariants (pinned by composite_reference_test.go):
-//   - the composite NEVER contributes to VWAP and NEVER raises the
-//     served or freeze-leg source_count ([distinctSourceCount]) — the
-//     `sources=` field in the freeze reason stays the real venue count;
-//     it only changes the freeze VERDICT and says on what basis;
-//   - the reference is only as strong as its weakest leg: the priced
-//     (crypto/USD) leg must itself carry >= MinLegSources distinct
-//     venues on the current bucket, and the FX leg must be fresh within
-//     FXMaxAge and come from the FX source class (never an oracle);
-//   - targets with >= 2 real venues on the bucket are never evaluated,
-//     so their outputs are byte-identical to before.
+//   - the composite NEVER contributes to VWAP and NEVER raises the served or
+//     freeze-leg source_count ([distinctSourceCount]); it only changes the
+//     freeze VERDICT;
+//   - the reference is only as strong as its weakest leg: the priced leg
+//     needs >= MinLegSources venues, the FX leg must be fresh within
+//     FXMaxAge and from the FX source class;
+//   - targets with >= 2 real venues on the bucket are never evaluated.
 
 // CompositeReferenceConfig gates and tunes the composite-reference
 // corroboration. Zero-valued numeric fields fall back to the

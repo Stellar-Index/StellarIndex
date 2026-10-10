@@ -11,23 +11,10 @@
 //
 //	wss://stream.binance.com:9443/stream?streams=<sym1>@aggTrade/<sym2>@aggTrade
 //
-// Each frame:
-//
-//	{
-//	  "stream": "xlmusdt@aggTrade",
-//	  "data": {
-//	    "e": "aggTrade",       // event type
-//	    "E": 1745000000000,    // event time (ms)
-//	    "s": "XLMUSDT",        // symbol
-//	    "a": 123456,           // aggregate trade ID
-//	    "p": "0.1758",         // price (string, exact decimal)
-//	    "q": "152.34",         // quantity in base (string)
-//	    "f": 12345,            // first underlying trade id
-//	    "l": 12399,            // last underlying trade id
-//	    "T": 1745000000000,    // trade time (ms — the ledger-close-equivalent)
-//	    "m": true              // buyer was maker (→ trade was seller-initiated)
-//	  }
-//	}
+// Each frame is {"stream": "xlmusdt@aggTrade", "data": {...}}; data carries
+// s (symbol), p and q (price and base quantity, exact decimal strings),
+// T (trade time, ms: the ledger-close equivalent) and m (buyer was maker,
+// so the trade was seller-initiated).
 //
 // Symbols are base+quote with no separator, uppercase (XLMUSDT); the
 // normalizer maps them through a hardcoded pair map.

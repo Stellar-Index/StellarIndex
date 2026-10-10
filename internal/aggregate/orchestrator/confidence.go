@@ -139,31 +139,25 @@ func (o *Orchestrator) computeConfidence(
 		return confidenceComputation{}, false
 	}
 
-	// Frog-boiling (ADR-0019 §"Multi-window safeguard"): MaxZScore
-	// only asks whether THIS bucket's return is unusual, so a slow
-	// sustained push — every bucket individually unremarkable, the
-	// window medians drifting along with the attack — scores ~0 at
-	// every window length. MaxDriftZScore scores the sustained drift
-	// itself, and the larger of the two becomes the confidence input.
+	// Frog-boiling (ADR-0019 §"Multi-window safeguard"): MaxZScore only
+	// asks whether THIS bucket's return is unusual, so a slow sustained
+	// push, with the window medians drifting along, scores ~0 at every
+	// window length. MaxDriftZScore scores the drift itself, and the larger
+	// of the two becomes the confidence input.
 	//
-	// It feeds the SCORE ONLY — never the freeze leg below. That is a
-	// hard structural constraint, not a tuning preference:
-	// MaxDriftZScore takes no observation, so it is a pure function of
-	// the hourly-refreshed baseline row. A publication decision gated
-	// on it cannot self-clear when the current bucket is fine — it
-	// stays engaged until the drift ages out of all three windows.
-	// Measured on the real path (SplitByLookback -> NewMultiBaseline),
-	// one genuine +50%-over-7-days repricing of a quiet asset holds
-	// driftZ above 5 for 30 days, 24 of them AFTER the move finished:
-	// a month of serving a pre-repricing last-known-good price.
+	// It feeds the SCORE ONLY, never the freeze leg below. MaxDriftZScore
+	// takes no observation, so it is a pure function of the hourly-refreshed
+	// baseline row; a freeze gated on it cannot self-clear when the current
+	// bucket is fine. Measured on the real path, one genuine +50%-over-7-days
+	// repricing of a quiet asset holds driftZ above 5 for 30 days, 24 of them
+	// AFTER the move finished: a month of serving a pre-repricing
+	// last-known-good price.
 	//
-	// Nor can that be repaired by demanding the current bucket
-	// corroborate before drift may freeze — corroboration means
-	// observedZ is itself over the threshold, which is exactly the
-	// pre-existing spike check. A window-level statistic can either
-	// latch or add nothing to a per-bucket decision, so drift stays
-	// out of the freeze path entirely and expresses itself as reduced
-	// confidence, which is graded, self-correcting and non-destructive.
+	// Requiring the current bucket to corroborate does not fix this:
+	// corroboration means observedZ is itself over the threshold, which is
+	// the existing spike check. A window-level statistic either latches or
+	// adds nothing to a per-bucket decision, so drift expresses itself only
+	// as reduced confidence, which is graded and self-correcting.
 	scoringZ := observedZ
 	if dz, _, ok := multi.MaxDriftZScore(); ok && dz > scoringZ {
 		scoringZ = dz
@@ -362,35 +356,26 @@ func distinctSourceClassCount(trades []canonicalTrade) int {
 }
 
 // approxUSDVolume returns an approximation of bucket USD volume.
-// Best when the pair quotes in fiat:USD or a USD-pegged stablecoin
-// — sums each trade's QuoteAmount scaled by ITS SOURCE's decimals.
+// Best when the pair quotes in fiat:USD or a USD-pegged stablecoin;
+// sums each trade's QuoteAmount scaled by ITS SOURCE's decimals.
 //
-// For non-USD-quoted pairs it returns [confidence.LiquidityUnmeasured]
-// — NOT 0. Zero is a measurement ("this bucket carried no
-// dollars"), and a zero LiquidityFactor drives the geometric mean to
-// zero, so returning it for every pair we simply cannot value in USD
-// served a permanently-0 confidence for 8 of the 12 pairs in
-// defaultPairs() and pinned the Phase 2 freeze's confidence leg true
-// for them. The sentinel routes to the neutral factor instead, so the
-// score reflects the factors we DID measure.
+// For non-USD-quoted pairs it returns [confidence.LiquidityUnmeasured],
+// NOT 0. Zero is a measurement ("no dollars traded"), and a zero
+// LiquidityFactor drives the geometric mean to zero, which pinned the
+// Phase 2 freeze's confidence leg true for every pair we cannot value in
+// USD. The sentinel routes to the neutral factor, so the score reflects
+// the factors we DID measure.
 //
-// The quote amount's smallest-unit scale is a per-SOURCE property, not a
-// constant. Off-chain CEX / aggregator quotes use 1e8 (8 decimals — see
-// each poller's externalAmountDecimals), the FX pollers 1e6, on-chain
-// legs 1e7. A fixed 1e7 divisor would overstate every 8dp CEX quote by
-// 10×, and every pair this function values (fiat:USD + the abstract
-// crypto:* stablecoin tickers) is that off-chain 8dp convention.
+// The quote amount's scale is a per-SOURCE property: off-chain CEX /
+// aggregator quotes use 1e8 (see each poller's externalAmountDecimals), FX
+// pollers 1e6, on-chain legs 1e7. A fixed 1e7 divisor would overstate every
+// 8dp CEX quote by 10×, and every pair valued here is the off-chain 8dp
+// convention. LiquidityFactor is log-linear across its band, so a one-decade
+// error shifts it by ln(10)/ln(ceiling/floor) (a third of [0,1] on the
+// [1e3, 1e6] band). Resolve the scale as the contribution-sink USD
+// valuation does: external.Metadata.AmountScaleDecimals.
 //
-// That error is not benign: the LiquidityFactor is log-LINEAR across its
-// band, so a 10× (one-decade) volume error shifts the factor by
-// ln(10)/ln(ceiling/floor) for any true volume inside it (a third of the
-// full [0,1] range on the [1e3, 1e6] band), materially distorting the
-// per-pair confidence ranking. Resolve the scale the same way the
-// contribution-sink USD valuation does —
-// external.Metadata.AmountScaleDecimals.
-//
-// Refines once L2.2 (`usd_volume` column populated per trade) ships
-// and the trade carries an authoritative USD figure.
+// Refines once L2.2 (`usd_volume` column populated per trade) ships.
 func approxUSDVolume(trades []canonicalTrade, pair canonical.Pair) float64 {
 	if !isUSDQuoted(pair) {
 		return confidence.LiquidityUnmeasured
@@ -427,37 +412,26 @@ func isUSDQuoted(pair canonical.Pair) bool {
 
 // baselineAgeDays returns how much real history backs the 30d
 // baseline, in DAYS-EQUIVALENT of 1-minute buckets: the number of 1m
-// buckets that fed the median/MAD divided by 1440 (1m buckets per
-// 24h). Returns -1 (the [confidence.BaselineQualityFactor] sentinel)
-// when the 30d window is in bootstrap.
+// buckets that fed the median/MAD divided by 1440. Returns -1 (the
+// [confidence.BaselineQualityFactor] sentinel) when the 30d window is in
+// bootstrap.
 //
-// The bucket count is Day30.N+1, not Day30.N: N counts bucket-to-
-// bucket RETURNS and N returns span N+1 buckets. Dividing N itself
-// makes this measure structurally unable to reach 30: a window in which
-// the pair traded in all 43,200 minutes yields 43,199 returns and would
-// read 29.99931, under every threshold in [confidence], leaving the
+// The bucket count is Day30.N+1, not Day30.N: N counts bucket-to-bucket
+// RETURNS, and N returns span N+1 buckets. Dividing N would make this
+// unable to reach 30 (a fully-traded window yields 43,199 returns and
+// reads 29.99931, under every [confidence] threshold), leaving the
 // bootstrap cap engaged forever. A completely-observed window reads
-// exactly 30.0, and no window can read higher.
+// exactly 30.0, and none can read higher.
 //
-// This is sample DENSITY, not calendar age, despite the name. It deliberately takes no wall-clock input:
-// LatestBaseline's computedAt says when the refresher last WROTE the
-// row, which is a property of the refresh loop's cadence rather than
-// of the asset, and nothing available here carries the asset's
-// first-observation time — so a true calendar maturity is not
-// derivable at this layer. Density is also the better signal: a
-// baseline is trustworthy in proportion to the observations behind
-// it, so a calendar-mature but sparsely-traded pair SHOULD score low.
-// See [confidence.Inputs.BaselineAgeDays] for the consumer-side
-// framing.
-//
-// Density is kept over calendar age on purpose: (1) confidence in a price
-// BASELINE is a function of how many observations back it, so a mature
-// pair that barely trades has a genuinely thin baseline and scoring it
-// conservatively is correct; (2) un-capping by calendar age raises
-// confidence on thin baselines, the LESS-safe direction for a
-// money-adjacent signal. The current behaviour errs LOW = safe. A calendar
-// maturity signal must be ADDITIVE (never a replacement for density) and
-// plumbed from storage's first-observation time.
+// This is sample DENSITY, not calendar age, despite the name. It takes no
+// wall-clock input: LatestBaseline's computedAt says when the refresher
+// last WROTE the row, and nothing available here carries the asset's
+// first-observation time. Density is also the better signal: a
+// calendar-mature but sparsely-traded pair has a genuinely thin baseline,
+// and un-capping by calendar age would raise confidence on thin baselines,
+// the less-safe direction for a money-adjacent signal. A calendar maturity
+// signal must be ADDITIVE (never replace density) and plumbed from
+// storage's first-observation time. See [confidence.Inputs.BaselineAgeDays].
 func baselineAgeDays(multi baseline.MultiBaseline) float64 {
 	if multi.Day30 == nil {
 		return -1

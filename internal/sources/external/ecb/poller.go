@@ -10,29 +10,13 @@
 // insert idempotent.
 //
 // Wire shape (verified against
-// https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml):
+// https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml): a
+// gesmes:Envelope holding <Cube><Cube time="YYYY-MM-DD"> with one
+// <Cube currency="USD" rate="1.0825"/> per currency.
 //
-//	<gesmes:Envelope xmlns:gesmes="..." xmlns="...">
-//	  <gesmes:subject>Reference rates</gesmes:subject>
-//	  <gesmes:Sender>
-//	    <gesmes:name>European Central Bank</gesmes:name>
-//	  </gesmes:Sender>
-//	  <Cube>
-//	    <Cube time="YYYY-MM-DD">
-//	      <Cube currency="USD" rate="1.0825"/>
-//	      <Cube currency="JPY" rate="162.45"/>
-//	      <Cube currency="GBP" rate="0.8450"/>
-//	      ...
-//	    </Cube>
-//	  </Cube>
-//	</gesmes:Envelope>
-//
-// Each inner <Cube> element's `rate` is "1 EUR = X currency". To fit
-// our canonical "price of Asset in Quote" semantics we invert:
-//
-//	Asset = <currency>, Quote = EUR, Price = 1 / rate
-//
-// So for USD at rate=1.0825: Asset=USD, Quote=EUR, Price=0.9238.
+// Each `rate` is "1 EUR = X currency". To fit our canonical "price of
+// Asset in Quote" we invert: Asset = <currency>, Quote = EUR,
+// Price = 1 / rate (USD at 1.0825 gives 0.9238).
 //
 // Sibling package frankfurter also reads an ECB-backed feed, as a one-shot
 // historical client for scripts/ops/fx-history-backfill rather than a live

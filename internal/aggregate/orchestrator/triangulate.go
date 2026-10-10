@@ -250,39 +250,27 @@ func (o *Orchestrator) resolveChainLegs(
 // routeTarget prices ONE target through the window's edge graph and
 // returns the [obs.AggregatorTriangulationsTotal] outcome label.
 //
-// The direct base→quote edge is excluded so the router is forced through
-// hub assets — a 1-hop "route" equal to the direct price would
-// corroborate nothing and defeat triangulation. Outcome mapping is
-// backward-compatible with the static path: a single-route target
-// publishes "ok" (or "missing_leg" when its leg is dry, which the
-// triangulation-chains-dry alert reads); an unreachable target whose leg
-// was frozen inherits the freeze ("frozen_leg"). "low_confidence"
-// covers both "no route clears min_route_confidence" AND "a
-// leg-substitution reroute did not clear [aggregate.RouteTrustFloor]": in both
-// the composite is flagged but NOT published over the direct price.
-// "proxy_pivot" does the same when a priced leg's stablecoin-proxy prints
-// disagree with its own-quote prints ([Orchestrator.refuseProxyPivot]).
+// The direct base→quote edge is excluded so the router must go through
+// hub assets: a 1-hop "route" equal to the direct price would corroborate
+// nothing. Outcomes: a single-route target publishes "ok" (or "missing_leg"
+// when its leg is dry, which the triangulation-chains-dry alert reads); an
+// unreachable target whose leg was frozen inherits the freeze
+// ("frozen_leg"). "low_confidence" covers both "no route clears
+// min_route_confidence" AND "a leg-substitution reroute did not clear
+// [aggregate.RouteTrustFloor]": the composite is flagged but NOT published
+// over the direct price. "proxy_pivot" does the same when a priced leg's
+// stablecoin-proxy prints disagree with its own-quote prints
+// ([Orchestrator.refuseProxyPivot]).
 //
-// R3 — when a configured leg is DRY (st.legDry) but the router still
-// reaches the target, the composite came from a SUBSTITUTE path. The
-// reroute is kept (it is the multi-path robustness we want) but it is (a)
-// gated on [aggregate.RouteTrustFloor] so a thin substitute cannot silently
-// displace the direct price, and (b) flagged (compositeMeta.Rerouted) so
-// the substitution is observable rather than a silent behaviour change.
-// The gate applies IN ADDITION to min_route_confidence (which ships at 0)
-// and only to reroutes, never to the ordinary all-legs-present chain. It is
-// strict and sits at the bootstrap cap, so a substitute whose weakest leg is
-// unscored, cache-only or still bootstrapping cannot displace a direct
-// market.
-//
-// H2 — a leg FROZEN this tick (st.frozen) that the router still reaches the
-// target AROUND is the same kind of substitution as a dry leg, so it is gated
-// + flagged identically (rerouted := st.legDry || st.frozen). And a target
-// frozen this tick on its OWN direct market is left serving its frozen
-// last-known-good: a fresh composite must not silently overwrite the value a
-// freeze marker says is frozen (an honest value paired with a contradictory
-// state). Both respect the freeze consistently instead of letting
-// triangulation walk around it unflagged.
+// A leg that is DRY (st.legDry) or FROZEN this tick (st.frozen), with the
+// target still reachable AROUND it, yields a SUBSTITUTE-path composite
+// (rerouted := st.legDry || st.frozen). The reroute is kept for multi-path
+// robustness but gated on [aggregate.RouteTrustFloor] (in addition to
+// min_route_confidence, reroutes only; it sits at the bootstrap cap so a
+// substitute with an unscored, cache-only or bootstrapping weakest leg
+// cannot displace a direct market) and flagged (compositeMeta.Rerouted). A
+// target frozen on its OWN direct market keeps serving its frozen
+// last-known-good: a fresh composite must not overwrite it.
 func (o *Orchestrator) routeTarget(
 	ctx context.Context,
 	chain TriangulationChain,
