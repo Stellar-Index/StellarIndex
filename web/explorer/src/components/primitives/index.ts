@@ -18,9 +18,6 @@ export type { SparklineProps } from './Sparkline';
 export { StreakIndicator } from './StreakIndicator';
 export type { StreakIndicatorProps } from './StreakIndicator';
 
-export { RankBadge } from './RankBadge';
-export type { RankBadgeProps } from './RankBadge';
-
 export { AccelerationArrow } from './AccelerationArrow';
 export type { AccelerationArrowProps } from './AccelerationArrow';
 

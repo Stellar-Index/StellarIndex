@@ -28,7 +28,7 @@ const SRC = join(__dirname, '..');
 const APP = join(SRC, 'app');
 
 /** Every file under a directory, recursively. */
-function walk(dir: string, out: string[] = []): string[] {
+export function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) walk(full, out);
@@ -103,7 +103,7 @@ const STATIC_IMPORT =
 const DYNAMIC_IMPORT = /import\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 const importCache = new Map<string, string[]>();
-function importsOf(file: string): string[] {
+export function importsOf(file: string): string[] {
   let found = importCache.get(file);
   if (found === undefined) {
     const src = sourceOf(file);

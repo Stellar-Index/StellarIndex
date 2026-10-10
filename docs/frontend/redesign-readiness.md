@@ -50,7 +50,7 @@ shape.
     TabNav/Segmented, Mono/CopyButton.
   - `components/primitives/` — presentational domain atoms (barrel
     `@/components/primitives`): Sparkline, DirectionPill, MultiWindowDelta,
-    RankBadge, StreakIndicator, AccelerationArrow. Contract: **props-only, no
+    StreakIndicator, AccelerationArrow. Contract: **props-only, no
     data-fetching, deterministic** — ideal redesign + test targets.
   - `components/charts/` — LineChart, CandleChart, DonutChart, MarketChart
     (wrap `lightweight-charts`).
@@ -70,7 +70,6 @@ shape.
 | A primitive's look (button, card, table…) | `web/explorer/src/components/ui/<Name>.tsx` — one edit, all call sites |
 | A data atom (sparkline, delta pill…) | `web/explorer/src/components/primitives/<Name>.tsx` |
 | Global nav / footer / search | `web/explorer/src/components/nav/` |
-| See it all rendered | `/dev/styleguide` and `/dev/primitives` routes (living reference) |
 
 ## Per-route decomposition status
 
@@ -129,8 +128,7 @@ always run it after an extraction rather than assuming a section is self-contain
 
 ## The redesign playbook
 
-- **To restyle globally:** edit `@theme` tokens in `globals.css`. Verify on
-  `/dev/styleguide`. Avoid raw hex in components — add/adjust a token instead.
+- **To restyle globally:** edit `@theme` tokens in `globals.css`. Avoid raw hex in components — add/adjust a token instead.
 - **To restyle one component everywhere:** edit its file in `components/ui/`.
   If a page has a *local* re-implementation (see smells), fold it into the
   primitive so the change lands once.
