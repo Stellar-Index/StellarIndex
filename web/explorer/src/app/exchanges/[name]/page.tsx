@@ -71,7 +71,7 @@ export default async function ExchangeDetailPage({
             { label: 'Exchanges', href: '/exchanges' },
             { label: info.name },
           ]}
-          eyebrow={info.type}
+          meta={info.type}
           title={info.name}
           description={info.blurb}
         />

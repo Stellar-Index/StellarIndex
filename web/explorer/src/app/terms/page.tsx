@@ -35,7 +35,6 @@ export default function TermsPage() {
             { label: 'Home', href: '/' },
             { label: 'Terms of Service' },
           ]}
-          eyebrow="Legal"
           title="Terms of Service"
           description={
             <>

@@ -27,7 +27,6 @@ export default function OperationsPage() {
     <Container className="space-y-6 py-8">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Operations' }]}
-        eyebrow="Explorer"
         title="Operations"
         description="Every operation on the network, newest first, decoded straight from the certified lake. Click a hash for the full transaction."
       />

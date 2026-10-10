@@ -181,7 +181,6 @@ function WebhooksBody() {
             { label: 'Dashboard', href: '/dashboard' },
             { label: 'Webhooks' },
           ]}
-          eyebrow="Notifications"
           title="Webhooks"
           description="Register an HTTPS endpoint to receive price alerts, incidents, and anomaly events as signed JSON POSTs."
           actions={

@@ -33,7 +33,6 @@ export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
             { label: 'External assets', href: '/external/assets' },
             { label: view.name || view.ticker },
           ]}
-          eyebrow="External asset"
           title={
             <span className="flex flex-wrap items-baseline gap-3">
               <span>{view.name}</span>

@@ -70,7 +70,7 @@ export default async function ADRPage({
           { label: 'Research', href: '/research' },
           { label: `ADR-${adr.id}` },
         ]}
-        eyebrow={`ADR-${adr.id}`}
+        meta={`ADR-${adr.id}`}
         title={adr.title}
         description={
           <span className="inline-flex items-center gap-3">

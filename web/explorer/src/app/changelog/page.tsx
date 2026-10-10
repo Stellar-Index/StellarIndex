@@ -23,7 +23,6 @@ export default function ChangelogPage() {
     <Container className="space-y-8 py-10 [&>*]:max-w-4xl">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Changelog' }]}
-        eyebrow="Changelog"
         title="Every release, every change."
         description={
           <>

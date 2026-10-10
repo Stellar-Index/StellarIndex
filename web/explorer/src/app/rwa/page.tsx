@@ -46,7 +46,6 @@ export default function RWAPage() {
             { label: 'Home', href: '/' },
             { label: 'Real-world assets' },
           ]}
-          eyebrow="Tokenized instruments"
           title="Real-world assets"
         />
         <NetworkUnavailable href="/rwa" />
@@ -60,7 +59,6 @@ export default function RWAPage() {
           { label: 'Home', href: '/' },
           { label: 'Real-world assets' },
         ]}
-        eyebrow="Tokenized instruments"
         title="Real-world assets"
         description="Tokenized treasuries, commodities, equities and property on Stellar, keyed by (code, issuer)."
       />

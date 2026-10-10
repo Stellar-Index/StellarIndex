@@ -52,7 +52,6 @@ export default function WidgetsPage() {
     <Container className="space-y-12 py-10 [&>*]:max-w-5xl">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Widgets' }]}
-        eyebrow="Embed"
         title="Widgets"
         description={
           <>

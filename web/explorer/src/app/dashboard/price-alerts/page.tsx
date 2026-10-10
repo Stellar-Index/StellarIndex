@@ -142,7 +142,6 @@ function PriceAlertsBody() {
             { label: 'Dashboard', href: '/dashboard' },
             { label: 'Price alerts' },
           ]}
-          eyebrow="Notifications"
           title="Price alerts"
           description="Get notified when a pair crosses a threshold — delivered to your webhooks as a price.alert event."
           actions={

@@ -16,7 +16,6 @@ export default function CompanyPage() {
     <Container className="space-y-12 py-12 [&>*]:max-w-3xl">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Company' }]}
-        eyebrow="Company"
         title="Data infrastructure for Stellar."
         description={
           <>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -837,7 +837,6 @@ function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
   return (
     <PageHeader
       breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Status' }]}
-      eyebrow="System status"
       title="Stellar Index status"
       description="Live health, latency, ingest freshness and a curated public-endpoint matrix, probed from your browser."
       actions={
@@ -1732,6 +1731,94 @@ function severityBadgeTone(s: IncidentHistoryEntry['severity']): BadgeTone {
   return s === 'major' ? 'bad' : s === 'minor' ? 'warn' : 'ok';
 }
 
+const SEVERITY_RANK = { maintenance: 1, minor: 2, major: 3 } as const;
+
+export interface IncidentDay {
+  day: string;
+  severity: IncidentHistoryEntry['severity'] | null;
+  count: number;
+}
+
+// incidentDays buckets incidents by start day over the `days` days ending at
+// endDay (YYYY-MM-DD, inclusive), oldest first; each day keeps its worst severity.
+export function incidentDays(
+  entries: readonly Pick<IncidentHistoryEntry, 'date' | 'severity'>[],
+  endDay: string,
+  days = 90,
+): IncidentDay[] {
+  const end = Date.parse(`${endDay}T00:00:00Z`);
+  if (!Number.isFinite(end) || days <= 0) return [];
+  const out: IncidentDay[] = [];
+  const index = new Map<string, IncidentDay>();
+  for (let i = days - 1; i >= 0; i--) {
+    const day = new Date(end - i * 86_400_000).toISOString().slice(0, 10);
+    const d: IncidentDay = { day, severity: null, count: 0 };
+    out.push(d);
+    index.set(day, d);
+  }
+  for (const e of entries) {
+    const d = index.get(e.date);
+    if (!d) continue;
+    d.count++;
+    if (!d.severity || SEVERITY_RANK[e.severity] > SEVERITY_RANK[d.severity]) {
+      d.severity = e.severity;
+    }
+  }
+  return out;
+}
+
+const DAY_CELL_TONE: Record<IncidentHistoryEntry['severity'], string> = {
+  major: 'bg-bad-500',
+  minor: 'bg-warn-500',
+  maintenance: 'bg-ok-300',
+};
+
+const noSubscribe = () => () => {};
+
+function IncidentStrip({
+  entries,
+}: {
+  entries: readonly IncidentHistoryEntry[];
+}) {
+  // Client-only: the static export has no "today" to render at build time.
+  const today = useSyncExternalStore(
+    noSubscribe,
+    () => new Date().toISOString().slice(0, 10),
+    () => null,
+  );
+  if (!today) return null;
+  const cells = incidentDays(entries, today);
+  const total = cells.reduce((n, d) => n + d.count, 0);
+  return (
+    <Card className="mb-3 p-4">
+      <div className="text-ink-faint mb-2 flex justify-between text-xs">
+        <span>90 days ago</span>
+        <span>
+          {total} incident{total === 1 ? '' : 's'} in 90 days
+        </span>
+        <span>Today</span>
+      </div>
+      <div
+        role="img"
+        aria-label={`Incidents per day over the last 90 days: ${total} in total`}
+        className="flex h-6 gap-px"
+      >
+        {cells.map((d) => (
+          <span
+            key={d.day}
+            title={
+              d.count === 0
+                ? `${d.day}: no incidents`
+                : `${d.day}: ${d.count} incident${d.count === 1 ? '' : 's'} (worst: ${d.severity})`
+            }
+            className={`flex-1 rounded-[1px] ${d.severity ? DAY_CELL_TONE[d.severity] : 'bg-ok-500'}`}
+          />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 function IncidentHistory({
   entries,
   feed,
@@ -1756,6 +1843,7 @@ function IncidentHistory({
       >
         Incident history
       </SectionHead>
+      <IncidentStrip entries={entries} />
       {entries.length === 0 ? (
         <Card className="text-ink-faint px-4 py-6 text-center text-sm">
           {feed === 'error'
