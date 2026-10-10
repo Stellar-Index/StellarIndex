@@ -12,32 +12,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// seedEntryCounts authoritatively recomputes the per-source entry
-// tally (source_entry_counts, migration 0035) from a full GROUP BY
-// over every decoded-event hypertable (the list lives on
-// [timescale.Store.SeedSourceEntryCounts]), overwriting the table.
+// seedEntryCounts authoritatively recomputes the per-source entry tally
+// (source_entry_counts, migration 0035) from a full GROUP BY over every
+// decoded-event hypertable (list on [timescale.Store.SeedSourceEntryCounts]),
+// overwriting the table.
 //
-// Why this exists: the writers keep source_entry_counts live — the
-// trade / oracle / FX inserts bump it only for a row that landed, the
-// other served-tier sinks bump it once per persisted event (see
-// pipeline.bumpEntryCount). But a fresh table starts at 0 and
-// only counts entries ingested SINCE the counter went live — it does
-// not know about the ~60M+ rows of pre-existing history. This
-// subcommand is the one-shot reconciliation: run it ONCE after the
-// all-time backfill completes to fold in (a) all pre-counter history
-// and (b) any O(process-crash) increment drift. Re-running is safe
-// and converges (it SETs, not ADDs).
+// The writers keep the counter live, but a fresh table only counts entries ingested
+// SINCE the counter went live, so this is the one-shot reconciliation for
+// pre-counter history and crash-induced increment drift. It SETs, not ADDs, so
+// re-running converges.
 //
-// When to run: AFTER the all-time backfill is complete and ingest is
-// only appending at the live tip. The GROUP BY scans every `trades`
-// chunk in one transaction — fine within the 4096
-// max_locks_per_transaction budget (819,200-entry table) and quick
-// once the disk-IO contention from the backfill is gone, but slow +
-// lock-hungry if run mid-backfill. The scan window is not perfectly
-// race-free against concurrent tip-ingest (a few seconds × ~150
-// trades/s of in-flight rows may be over/under-counted by O(low
-// thousands) out of 60M+, <0.01%); it self-corrects on the next run.
-// Run during quiescence for exactness.
+// Run it after the all-time backfill, when ingest only appends at the tip: the
+// GROUP BY scans every `trades` chunk in one transaction (within the 4096
+// max_locks_per_transaction budget) but is slow and lock-hungry mid-backfill. It is
+// not race-free against concurrent tip ingest (counts may be off by O(low
+// thousands) of 60M+, <0.01%) and self-corrects on the next run.
 //
 // Flags:
 //
@@ -45,9 +34,7 @@ import (
 //	-write         Overwrite source_entry_counts. -dry-run instead only
 //	               loads the config; a run passing neither is refused so a
 //	               script written before -write fails rather than skipping.
-//	-timeout DUR   Wall-clock budget. Default 30m (a full trades
-//	               GROUP BY over ~2,700+ chunks is minutes post-
-//	               backfill; generous headroom).
+//	-timeout DUR   Wall-clock budget. Default 30m.
 func seedEntryCounts(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("seed-entry-counts")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")

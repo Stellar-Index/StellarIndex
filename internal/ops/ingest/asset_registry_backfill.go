@@ -93,49 +93,23 @@ type assetRegistryCounts struct {
 
 // ─── entry point ────────────────────────────────────────────────────────
 
-// assetRegistryBackfill populates `classic_assets` (and therefore
-// `issuers`) from trustline holdings in the ClickHouse lake.
+// assetRegistryBackfill populates `classic_assets` (and therefore `issuers`)
+// from trustline holdings in the ClickHouse lake.
 //
-// # THE GAP THIS CLOSES
+// Why: the registry writer runs only from InsertTrade/BatchInsertTrades, so an
+// asset that is held but never traded on the SDEX never reaches classic_assets,
+// issuers, the SEP-1 fetch or RWA candidacy (a held-not-traded fund like BENJI
+// had zero rows). This job closes that gap from the lake.
 //
-// Without this job, `classic_assets` has one population path: a trade. The registry
-// writer is called from InsertTrade and BatchInsertTrades and from nowhere
-// else, and `issuers` is written only from inside that writer. So the whole
-// attestation chain hung off a trade:
+// Why an ops job and not a live hook: the lake is the source of truth for entry
+// state (ADR-0034) and coverage is derived from data (ADR-0031). The reconcile is
+// idempotent and monotone, so a missed run costs only freshness, and it keeps a
+// Postgres upsert off the dispatcher hot path for every trustline change.
 //
-//	trade -> classic_assets -> issuers -> SEP-1 fetch -> RWA candidacy
-//
-// An asset that is HELD but never traded on the SDEX is invisible at every
-// step. Measured on the production lake without this job: 512,496 distinct
-// classic assets had a trustline, 199,793 had a registry row — 312,703
-// absent, 61% of the population. Franklin Templeton's BENJI was the clearest
-// case: 12,498 trustlines, more than all eighteen impersonating BENJIs
-// combined, zero rows in classic_assets and zero in issuers, because a
-// money-market fund is bought and held rather than day-traded.
-//
-// # WHY AN OPS JOB AND NOT A LIVE HOOK
-//
-// The lake is the source of truth for entry state (ADR-0034), and coverage
-// here is derived from the data rather than from a cursor (ADR-0031). A
-// periodic reconcile that reads the lake and converges the registry is the
-// same shape as the asset-holders rollup that already runs on a timer, and
-// it is idempotent and monotone, so a missed run costs freshness and nothing
-// else. The alternative — registering from every LedgerEntryChange on the
-// dispatcher hot path — would put a Postgres upsert behind every trustline
-// change on the network for an answer that only needs to be right on the
-// cadence at which a SEP-1 refresh runs anyway.
-//
-// # RESUMING
-//
-// The walk is keyset-paginated on the asset string, ascending. Any early
-// stop — signal, timeout, -limit, error — prints a RESUME line carrying
-// -resume-from <asset_id>, and re-running from it re-enters exactly where
-// the walk stopped.
-//
-// Resuming is an OPTIMISATION, not a correctness requirement. Both writes
-// are idempotent and monotone (LEAST/GREATEST, no counter increment), so a
-// run restarted from the beginning converges to the same rows; it just pays
-// for ground it has already covered.
+// Resuming: the walk is keyset-paginated on the asset string, ascending. Any early
+// stop prints a RESUME line carrying -resume-from <asset_id>. Resuming is an
+// optimisation only: both writes are idempotent and monotone (LEAST/GREATEST), so
+// a restart from the beginning converges to the same rows.
 func assetRegistryBackfill(args []string) error {
 	fs := flag.NewFlagSet("asset-registry-backfill", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

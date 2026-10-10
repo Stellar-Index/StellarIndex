@@ -13,39 +13,28 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// tagRoutedVia is the HISTORICAL half of router attribution
-// (migration 0025 Phase B). It walks the persisted
-// router-invocation record (soroswap_router_swaps) in ledger windows
-// and back-tags every same-(ledger, tx_hash) soroswap `trades` row
-// via the same timescale.TagTradesRoutedVia primitive the live
-// sweeper uses — so the historical and live tagging policies
-// (first-wins, soroswap-scoped, time-bounded, call-path-attributed)
-// cannot drift. As of migration 0101/0103, a row whose
-// router call was recorded as a sub_invocation is tagged with its
-// outermost wrapping contract's registry name when that contract is
-// registered (e.g. the aggregator-exec seed); otherwise — including
-// every row from before call_path tracking existed — it falls back
-// to routed_via='soroswap-router'.
+// tagRoutedVia is the HISTORICAL half of router attribution (migration 0025
+// Phase B). It walks soroswap_router_swaps in ledger windows and back-tags every
+// same-(ledger, tx_hash) soroswap `trades` row via timescale.TagTradesRoutedVia,
+// the primitive the live sweeper uses, so historical and live tagging policy
+// (first-wins, soroswap-scoped, time-bounded, call-path-attributed) cannot drift.
+// A row whose router call was a sub_invocation gets its outermost wrapping
+// contract's registry name when registered (migrations 0101/0103); otherwise it
+// falls back to routed_via='soroswap-router'.
 //
-// SQL-only: no Galexie walk, no decoders. Both join sides are
-// already in Postgres. Each window is one UPDATE whose predicate is
-// bounded by the window's router-swap close-time span, so
-// TimescaleDB prunes trades chunks per window. Windows over trades
-// chunks older than the compression horizon decompress the affected
-// segments — that is why this runs windowed rather than as one
+// SQL-only: no Galexie walk, no decoders. Each window is one UPDATE bounded by the
+// window's router-swap close-time span so TimescaleDB prunes trades chunks; windows
+// over compressed chunks decompress segments, hence windowed rather than one
 // statement over all history.
 //
-// Idempotent + resumable: already-tagged rows never match
-// (routed_via IS NULL), and progress checkpoints into
-// ingestion_cursors as (source='tag-routed-via', sub_source='<from>-<to>')
-// after each completed window. Re-running the same resolved -from/-to
-// (-resume defaults to true) resumes past the last completed window; a
-// different range, or -resume=false, sweeps from its start (harmless, just
-// slower).
+// Idempotent and resumable: tagged rows never match (routed_via IS NULL), and
+// progress checkpoints into ingestion_cursors as (source='tag-routed-via',
+// sub_source='<from>-<to>') after each window. Re-running the same resolved
+// -from/-to (-resume defaults to true) resumes; a different range or -resume=false
+// sweeps from its start (harmless, slower).
 //
-// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN that
-// reports the windows holding router swaps it WOULD tag, writing neither
-// the tags nor a checkpoint. -write applies.
+// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN that reports the
+// windows it WOULD tag, writing neither tags nor a checkpoint. -write applies.
 func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // linear windowed pass: flags → bounds → per-window UPDATE + checkpoint
 	fs, gate := opsutil.NewMutatingFlagSet("tag-routed-via")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

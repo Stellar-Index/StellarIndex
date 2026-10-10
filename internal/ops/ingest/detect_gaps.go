@@ -18,31 +18,23 @@ import (
 )
 
 // detectGaps compares every LIVE per-source cursor (see
-// [timescale.LiveCursorSources]) against the stellar-rpc network tip
-// and reports any source lagging by more than `threshold` ledgers.
-// One-shot job namespaces (backfill, projected-rebuild, …) are excluded
-// — their last_ledger is a historical range end, not a live position,
-// so including them can only produce false LAGGING verdicts. Exits
-// non-zero when at least one live source is lagging, or when no live
-// cursor exists at all, so the command works as a prometheus-style
-// health probe from a cron / k8s Job.
+// [timescale.LiveCursorSources]) against the stellar-rpc network tip and reports
+// any source lagging by more than `threshold` ledgers. One-shot job namespaces
+// (backfill, projected-rebuild, ...) are excluded: their last_ledger is a
+// historical range end, so including them only produces false LAGGING verdicts.
+// Exits non-zero when a live source is lagging or no live cursor exists, so it
+// works as a health probe from cron.
 //
-// For sources that track multiple sub-cursors (the projector tracks
-// one per registered decoder), the MINIMUM last-ledger across the
-// source's rows is used — we care about the slowest position, not
-// the fastest.
+// Sources with several sub-cursors (the projector tracks one per decoder) use the
+// MINIMUM last-ledger: the slowest position matters.
 //
 // Two more failure modes are checked:
-//
-//   - A source catalogued in ingestion.enabled_sources (and, for a
-//     projected domain, actually registered by [projector.BuildRegistry])
-//     but with no matching ingestion_cursors row — reaped, or never
-//     started — would otherwise vanish from the verdict silently, because the
-//     lag table only ever looks at rows that exist. See
+//   - A source in ingestion.enabled_sources (for a projected domain, also
+//     registered by [projector.BuildRegistry]) with no ingestion_cursors row would
+//     vanish from the verdict, since the lag table only sees existing rows. See
 //     [catalogueMissingProjectorSources].
-//   - The RPC tip itself is asserted fresh against wall-clock (its own
-//     closeTime), not just used as ground truth. A stuck or disconnected
-//     RPC node would otherwise make every source read "ok" against a frozen tip.
+//   - The RPC tip is asserted fresh against wall-clock (its closeTime), so a stuck
+//     RPC node cannot make every source read "ok" against a frozen tip.
 func detectGaps(args []string) error {
 	fs := flag.NewFlagSet("detect-gaps", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

@@ -19,37 +19,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// resume-stalled — resume every stalled backfill cursor with a
-// remaining range, producing a sequence of `backfill -resume`-shape
-// invocations that march each cursor to its assigned `to` ledger.
+// resume-stalled resumes every stalled backfill cursor that has a remaining range.
 //
-// Why this exists. A decoder-density read found 167 stalled `backfill`
-// cursors with cumulative 100-150 K missing ledgers per source — the
-// dominant population preventing 100% decoder density. Each stalled
-// cursor's sub_source embeds its target as `<from>-<to>:<decoder-csv>`, so
-// the remaining range is well-defined; this command resumes every stall in
-// one shot, without a hand-rolled SQL+shell loop.
+// Each stalled cursor's sub_source embeds its target as `<from>-<to>:<decoder-csv>`,
+// so the remaining range is well-defined. The command selects
+// `source LIKE 'backfill%'` rows in ingestion_cursors whose `last_updated` is older
+// than `--min-lag` and whose `last_ledger` is below the parsed `to`, then runs
+// `runBackfillChunk` over [last_ledger+1, to] with `-resume` semantics (idempotent
+// re-runs are safe).
 //
-// This subcommand:
-//
-//  1. Queries `ingestion_cursors` for `source LIKE 'backfill%'` rows
-//     whose `last_updated` is older than `--min-lag` AND whose
-//     `last_ledger` is strictly less than the parsed `to` of the
-//     range encoded in their `sub_source`.
-//  2. For each, derives `[last_ledger+1, to]` + the decoder CSV.
-//  3. Invokes the same `runBackfillChunk` path the regular
-//     `backfill` subcommand uses, with `-resume` semantics so
-//     idempotent re-runs are safe.
-//
-// Sequencing: stalled cursors run sequentially in this first cut
-// — operators wanting concurrency can launch multiple invocations
-// against disjoint `--source-filter` regexes. Per-cursor failure
-// is logged + continued; the subcommand returns non-zero only when
-// at least one cursor errored.
-//
-// See `docs/operations/backfill-with-live-ingest.md` for the
-// posture this subcommand fits into (resume runs at reduced
-// parallelism while live ingest is active).
+// Cursors run sequentially; for concurrency launch several invocations against
+// disjoint `--source-filter` regexes. A per-cursor failure is logged and skipped;
+// the command returns non-zero only if at least one cursor errored. See
+// docs/operations/backfill-with-live-ingest.md (resume runs at reduced parallelism
+// while live ingest is active).
 const stalledCursorSubPattern = `^(\d+)-(\d+):(.+)$`
 
 // dataGapGateTimeout bounds the data-derived gap-gate queries run

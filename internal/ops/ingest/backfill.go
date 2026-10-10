@@ -45,34 +45,20 @@ import (
 // distinct "raw-event capture" mode of operation).
 const SorobanEventsPseudoSource = "soroban-events"
 
-// ─── stellarindex-ops backfill ──────────────────────────────────
+// stellarindex-ops backfill: replays a bounded ledger range through the same
+// dispatcher + decoder + sink path the live indexer uses; CAGGs auto-materialise
+// on the inserted rows. It differs from the indexer in three ways:
 //
-// Replays a bounded ledger range through the same dispatcher +
-// decoder + sink path the live indexer uses, producing trade rows
-// into the trades hypertable. CAGGs (1m / 15m / 1h / 4h / 1d / 1w /
-// 1mo per migration 0002) auto-materialise on the inserted rows.
+//  1. Bounded range [-from, -to]; ledgerstream.Stream exits at -to, no live tail.
+//  2. No cursor row written: sharing the indexer's `ledgerstream` cursor would
+//     make the indexer mis-resume from a historical ledger on its next start.
+//  3. BackfillSafe gate: every on-chain Soroban source is BackfillSafe=false until
+//     its decoder is audited against every WASM version that ran in the range
+//     (contracts upgrade in place). Backfill refuses an unsafe source.
 //
-// Differs from the indexer in three load-bearing ways:
-//
-//  1. Bounded range [-from, -to]. ledgerstream.Stream exits at -to;
-//     no live tail. Backfill is a one-shot operation.
-//  2. No cursor row written. The indexer's `ledgerstream` cursor
-//     drives "resume from cursor+1" on restart. Backfill has its
-//     own explicit -from; if it crashed and were to share that
-//     cursor, the indexer would mis-resume from a historical
-//     ledger on its next start.
-//  3. BackfillSafe gate. internal/sources/external.Registry marks
-//     every on-chain Soroban source `BackfillSafe=false` until its
-//     decoder has been audited against every WASM version that ran
-//     for the replay range (AGENTS.md "Soroban DeFi contracts
-//     upgrade in place"). Backfill refuses to run an unsafe source.
-//
-// Trade-row idempotency is the storage layer's responsibility — the
-// trades hypertable currently dedupes on (source, ledger, tx_hash,
-// op_index, ts), so re-running over the same range is a no-op only
-// when the replay reproduces the same timestamp too. Aggregator CAGGs
-// recompute from the underlying rows so duplicate suppression at
-// insert time is sufficient once that storage identity matches.
+// Idempotency is the storage layer's job: trades dedupes on (source, ledger,
+// tx_hash, op_index, ts), so a re-run is a no-op only when the replay reproduces
+// the same timestamp.
 
 // backfillOpts holds the parsed + validated CLI inputs. Pulled out
 // of the entry point so flag-parsing + validation are unit-testable
@@ -642,33 +628,25 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	return nil
 }
 
-// backfillChunkCoverage turns a chunk walk that did not cover its range
-// into a hard error, naming the bucket it read.
+// backfillChunkCoverage turns a chunk walk that did not cover its range into a
+// hard error, naming the bucket it read.
 //
-// `backfill` is the third copy of the "vacuous success on a tolerated
-// trailing miss" class: erroring on walked == 0 alone fails open, so like
-// chops.backfillCoverage and censusCoverage it fails a PARTIAL walk. pipeline.LedgerstreamConfig
-// opts every walk into TolerateTrailingMissing, and ledgerstream measures
-// that tolerance window against the walk's own `to` — the CHUNK's top,
-// not the network tip — so for any chunk (or any request under 65,536
-// ledgers) "trailing edge" degrades to "anywhere in the range": a missing
-// object ends the walk WITHOUT an error. The SDK also drops its prefetch
-// buffer on the miss, so the walk stops up to a buffer short of the hole.
-// Without this check the chunk would log "chunk complete", refresh the
-// CAGGs over what it got and exit 0 — a trade hole whose only evidence is
-// a success.
+// Erroring on walked == 0 alone fails open. pipeline.LedgerstreamConfig opts every
+// walk into TolerateTrailingMissing, and ledgerstream measures that window against
+// the walk's own `to` (the CHUNK's top, not the network tip), so for any chunk
+// "trailing edge" degrades to "anywhere in the range": a missing object ends the
+// walk WITHOUT an error, and the SDK drops its prefetch buffer so it stops up to a
+// buffer short of the hole. Without this check the chunk would log "chunk
+// complete" and exit 0, leaving a trade hole whose only evidence is a success.
 //
-// The bar is the command's contract: "[from,to] has been walked". The
-// default bucket is the archive, an hourly MIRROR of live, so a `-to`
-// near the tip legitimately comes up short — and that is an incomplete
-// backfill too, not a success. Failing closed costs a `-resume` re-run
-// (writes are idempotent; the drained prefix is checkpointed); failing
-// open costs a hole nobody looks for.
+// The default bucket is the archive, an hourly mirror of live, so a `-to` near the
+// tip legitimately comes up short; that is an incomplete backfill too. Failing
+// closed costs a `-resume` re-run (writes are idempotent); failing open costs a
+// hole nobody looks for.
 //
-// `startFrom` is the ledger this run actually started at (post-resume),
-// not chunk.from: ledgers banked by an earlier run are that run's
-// business, and re-charging them here would fail every resumed chunk —
-// the same rule censusCoverage states.
+// `startFrom` is the ledger this run started at (post-resume), not chunk.from:
+// ledgers banked by an earlier run must not be re-charged here (same rule as
+// censusCoverage).
 func backfillChunkCoverage(chunk chunkRange, startFrom uint32, walked uint64, bucket string) error {
 	if startFrom > chunk.to {
 		return nil // nothing was requested of this run
@@ -810,40 +788,22 @@ type caggRefresher interface {
 	timescale.CAGGStepRefresher
 }
 
-// caggRefreshMu serialises the refresh loop across every `-parallel`
-// worker in this process.
+// caggRefreshMu serialises the refresh loop across every `-parallel` worker in
+// this process.
 //
-// `-parallel N` is N goroutines in ONE process (see the WaitGroup fan-out in
-// runBackfill), each walking the same refresh plan ([chunkCAGGRefreshPlan])
-// at the end of its own chunk. TimescaleDB already serialises two refreshes
-// of the SAME continuous aggregate — but it does it by rejecting the loser
-// with 55P03 immediately, not by making it wait.
-// [timescale.Store.RefreshContinuousAggregate] absorbs that with a bounded
-// retry, which is enough for a cheap view such as prices_1mo (a handful of
-// calendar buckets). It is not enough for prices_1m, first in the list and by
-// far the longest rung: its cost is the chunk's trade count, hundreds of
-// thousands of rows for a sub-chunk of the documented `-parallel 4` weekly
-// loop. A worker that loses that race retries for a fixed budget and then
-// fails — and a refresh failure is FATAL to the chunk, so the cursor does not
-// checkpoint and the loop halts on a collision that is not a fault at all.
+// TimescaleDB rejects the loser of two concurrent refreshes of the SAME aggregate
+// with 55P03 immediately instead of waiting. [timescale.Store.RefreshContinuousAggregate]
+// absorbs that with a bounded retry, enough for cheap views but not for prices_1m,
+// the first and longest rung (cost scales with the chunk's trade count). A worker
+// that loses that race fails, a refresh failure is fatal to the chunk, and the
+// cursor does not checkpoint.
 //
-// The lock is BROADER than the race it removes, and that is a real
-// cost rather than a free one. Timescale's 55P03 is per continuous
-// aggregate: two workers refreshing DIFFERENT views never collide and
-// could run concurrently. Holding one mutex across the whole loop
-// serialises those too, so W workers over V views take W×V×t where a
-// per-view lock would pipeline to (W+V−1)×t. What stays parallel is
-// the decode + insert phase, which is where the wall-clock of a
-// backfill actually goes and which runs outside this lock.
-//
-// It is taken anyway because a lost race here is not a slow chunk but
-// a FAILED one — a refresh error is fatal to the chunk, the
-// cursor does not checkpoint, and the operator re-walks the chunk
-// under `-resume`. Paying refresh throughput to remove that is the
-// right trade at V=19 views; a per-view lock is the shape to reach for
-// if the refresh tail ever dominates a run. It also leaves the retry
-// budget for genuine contention from another process (the policy
-// refresher, or an operator's manual re-materialisation).
+// The lock is broader than the race: 55P03 is per aggregate, so one mutex also
+// serialises refreshes of different views (W×V×t instead of (W+V−1)×t). Decode +
+// insert, where a backfill's wall-clock goes, stays parallel outside the lock. A
+// failed chunk costs more than the lost throughput at V=19 views; a per-view lock
+// is the shape to reach for if the refresh tail ever dominates. The retry budget
+// is left for genuine contention from another process.
 var caggRefreshMu sync.Mutex
 
 // refreshCAGGsForChunk refreshes every aggregate rooted on a table the

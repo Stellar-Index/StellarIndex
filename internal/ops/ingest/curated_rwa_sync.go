@@ -24,35 +24,22 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// curated-rwa-sync — cache the totals a third party PUBLISHES about
-// tokenized real-world assets on Stellar into curated_rwa_published_series
-// (migration 0162) for the RWA surface's CURATED arm.
+// curated-rwa-sync caches the totals a third party PUBLISHES about tokenized
+// real-world assets on Stellar into curated_rwa_published_series (migration 0162)
+// for the RWA surface's CURATED arm.
 //
-// # What it reads, and why only that
+// The first curator is the Stellar team's "RWAs on Stellar" Dune dashboard. Its
+// per-asset inputs (dataset_recognized_assets, dataset_asset_prices) are private
+// to the uploading team, so no outside key can read them. What anyone can read is
+// the latest RESULT of the dashboard's public queries via
+// GET /api/v1/query/{id}/results: the monthly RWA market-cap total and its split
+// by the curator's subclass labels. This run reads exactly those two results and
+// stores them under the curator's name. It executes nothing; a latest-result read
+// bills by datapoints, never by execution.
 //
-// The first curator is the Stellar team's "RWAs on Stellar" dashboard
-// (dune.com/stellar/rwas). That dashboard values `stellar.token_balances`
-// against two CSV uploads, `dune.stellar.dataset_recognized_assets`
-// (membership, company, subclass) and `dune.stellar.dataset_asset_prices`
-// (a close_usd per contract). Both are PRIVATE to the uploading team: a
-// SQL execution over either from any outside account is refused with
-// "Uploaded table (...) does not exist or it is private". So the
-// per-asset list this arm was first built to read cannot be read, by
-// anyone, with any key.
-//
-// What the curator does let anyone read is the latest RESULT of the
-// dashboard's public queries, via GET /api/v1/query/{id}/results: the
-// monthly RWA market-cap total and that total split by the curator's own
-// subclass labels. This run reads exactly those two results, as
-// published, and stores them under the curator's name. It executes
-// nothing: a read of a public query's latest result bills by datapoints
-// (fractions of a credit) and never by execution.
-//
-// Nothing read here attests to anything. A row is the curator's
-// arithmetic over the curator's private inputs: no signature, no
-// per-asset breakdown, no market. The surface serves it as
-// `curated.published` beside the verified set and never inside it, with
-// the signed gap between the two.
+// Nothing here attests to anything: a row is the curator's arithmetic over private
+// inputs, with no signature, per-asset breakdown or market. The surface serves it
+// as `curated.published` beside the verified set and never inside it.
 
 const (
 	curatedRWACuratorDune  = "dune:stellar"

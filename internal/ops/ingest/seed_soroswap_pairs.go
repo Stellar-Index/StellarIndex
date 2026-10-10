@@ -17,40 +17,29 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// seedSoroswapPairs reads every pair contract the Soroswap factory
-// has ever deployed via stellar-rpc simulateTransaction, then writes
-// the (pair, token0, token1) tuples to the soroswap_pairs registry
-// table.
+// seedSoroswapPairs reads every pair contract the Soroswap factory has deployed via
+// stellar-rpc simulateTransaction and writes the (pair, token0, token1) tuples to
+// the soroswap_pairs registry.
 //
-// Run once on first deployment (or after a factory reset) so the
-// indexer + parallel backfill chunks boot with the registry primed.
-// Subsequent factory new_pair events are upserted live by the
-// indexer (see internal/pipeline/soroswap_registry.go), so this
-// subcommand is one-shot bootstrap, not a regular cron.
+// One-shot bootstrap for first deployment or a factory reset, so the indexer and
+// backfill chunks boot with the registry primed; later new_pair events are upserted
+// live (internal/pipeline/soroswap_registry.go). The sweep is ~3N+1 simulate calls
+// at a 300ms throttle, under public stellar-rpc's ~3-5 req/s limit.
+//
+// Insert-only: a pair already in the registry is never rewritten, since on-chain
+// new_pair rows outrank an unauthenticated RPC simulation. A pair whose RPC tokens
+// disagree with its row is printed as a diff, left untouched, and fails the run.
+//
+// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN reporting the pairs
+// it WOULD insert; -write applies.
 //
 // Flags:
 //
-//	-config PATH    TOML config (required). Used for postgres DSN +
-//	                soroswap factory contract + RPC fallback.
+//	-config PATH    TOML config (required): postgres DSN, soroswap factory, RPC fallback.
 //	-rpc URL        Override RPC endpoint. Falls back to
 //	                cfg.Oracle.Soroswap.SeedRPCEndpoint, then to the
 //	                first cfg.Stellar.RPCEndpoints entry.
-//	-timeout DUR    Total wall-clock budget. Default 15m — enough
-//	                for ~200 mainnet pairs at 300ms throttle.
-//
-// The sweep is ~3N+1 simulateTransaction calls with a 300ms throttle
-// between each, so wall-time scales linearly with pair count. Public
-// stellar-rpc endpoints rate-limit at ~3-5 req/s; the throttle keeps
-// us comfortably below.
-//
-// Insert-only: a pair already in the registry is never rewritten. Those
-// rows come from on-chain new_pair events, which outrank an unauthenticated
-// RPC simulation; a pair whose RPC tokens disagree with its row is printed
-// as a diff, left untouched, and fails the run.
-//
-// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN that
-// walks the factory and reports the pairs it WOULD insert, writing none
-// of them. -write applies.
+//	-timeout DUR    Total wall-clock budget. Default 15m.
 func seedSoroswapPairs(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("seed-soroswap-pairs")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")

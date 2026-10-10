@@ -15,45 +15,28 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// sep1RefreshCmd resolves the SEP-1 stellar.toml for every issuer
-// with a home_domain set and writes the parsed payload back to
-// `issuers.sep1_payload` + bumps `sep1_resolved_at`.
-//
-// Run from cron once an hour (sep1-refresh.timer):
+// sep1RefreshCmd resolves the SEP-1 stellar.toml for every issuer with a
+// home_domain and writes the parsed payload to `issuers.sep1_payload`, bumping
+// `sep1_resolved_at`. Run hourly from sep1-refresh.timer:
 //
 //	stellarindex-ops sep1-refresh -config /etc/stellarindex/api.toml \
 //	    -limit 750 -older-than 24h -timeout 25m
 //
-// Per-issuer fetch failures are logged + counted; they don't abort
-// the run. The resolver respects its built-in 10s per-request
-// timeout + SSRF guard, the parser refuses a document nested past its
-// structural-depth budget before decoding it, and each issuer runs on
-// its own [sep1PerIssuerBudget] — so no single slow or malicious
-// operator domain can stall the whole batch.
+// Per-issuer failures are logged and counted, not fatal. The resolver's 10s request
+// timeout and SSRF guard, the parser's structural-depth limit and the per-issuer
+// [sep1PerIssuerBudget] keep one slow or malicious domain from stalling the batch.
 //
-// A failure also advances that issuer's retry ladder (migration 0159),
-// so a home_domain that serves nothing settles at ~1 attempt/month
-// instead of one a day, and the budget goes to domains that answer. A
-// success clears the ladder, so a recovering domain is back on the fast
-// cadence the moment it publishes a document. The loop is deliberately
-// SEQUENTIAL: the TOML parser's cost is superlinear in input size on
-// attacker-authored input (a measured 4.5 GB from 38 KB), and the unit
-// runs under MemoryMax=2G — concurrent parses would multiply the one
-// thing that ceiling exists to bound.
+// A failure advances that issuer's retry ladder (migration 0159), so a dead
+// home_domain settles at ~1 attempt/month; a success clears it. The loop is
+// SEQUENTIAL on purpose: TOML parsing is superlinear on attacker-authored input (a
+// measured 4.5 GB from 38 KB) and the unit runs under MemoryMax=2G, so concurrent
+// parses would multiply the cost that ceiling exists to bound.
 //
-// Once a payload is written, /v1/issuers list responses surface
-// `org_name` from `sep1_payload->>'OrgName'`.
-//
-// sep1DomainOverrides maps issuers whose ON-CHAIN home_domain no
-// longer serves a stellar.toml to the domain that DOES. Curated the
-// same way the API's knownIssuers map is (hand-vetted, reviewed in
-// PR): the on-chain value is authoritative for identity, but the
-// TOML's physical location can rot independently — Circle's
-// circle.com/.well-known/stellar.toml 404s (redirect chain to
-// www.circle.com then "Invalid .well-known request", when last
-// verified) while the legacy Centre consortium domain still serves
-// the full document, incl. the USDC image + org metadata wallets
-// need.
+// sep1DomainOverrides maps issuers whose ON-CHAIN home_domain no longer serves a
+// stellar.toml to the domain that does. Hand-vetted like the API's knownIssuers:
+// the on-chain value is authoritative for identity, but the TOML's location can
+// rot independently (circle.com/.well-known/stellar.toml 404s while the legacy
+// Centre domain still serves the full document).
 var sep1DomainOverrides = map[string]string{
 	// USDC / EURC issuers — Circle (Centre) toml.
 	"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": "centre.io",
@@ -205,32 +188,21 @@ const (
 	sep1OurFault
 )
 
-// refreshOneSep1Issuer fetches, parses and stores one issuer's
-// stellar.toml, reporting whether a payload was written and, if not,
-// whose fault that was.
+// refreshOneSep1Issuer fetches, parses and stores one issuer's stellar.toml,
+// reporting whether a payload was written and, if not, whose fault that was.
 //
-// # Why the attempt is marked FIRST
+// The attempt is marked FIRST. The candidate query is `ORDER BY sep1_resolved_at
+// ASC NULLS FIRST`, so an unstamped row stays candidate #1 every run. The input
+// class that most needs marking (an oversized or hostile document) is the one that
+// gets the worker cgroup-SIGKILLed under MemoryMax=2G, so marking on the way out of
+// a failure never runs and the same row would head the queue forever. Stamping
+// before the fetch lets the retry ladder defer the poison row.
 //
-// The mark is queue hygiene: the candidate query is `ORDER BY
-// sep1_resolved_at ASC NULLS FIRST`, so a row that is never stamped
-// stays candidate #1 on every subsequent run. Marking it only on the way
-// OUT of a failure assumes the worker survives to get there — and the
-// one input class that most needs marking is the class that kills the
-// worker. An oversized or hostile document decoded under the unit's
-// MemoryMax=2G earns a cgroup SIGKILL mid-loop, nothing is written, and
-// the identical row heads the queue again an hour later, forever,
-// freezing issuer metadata for every issuer behind it. Stamping BEFORE
-// the fetch is what makes the marker survive the kill: the poison row is
-// deferred by the retry ladder and the next run reaches the rest of the
-// population.
-//
-// The pre-mark costs a healthy issuer nothing. SetIssuerSep1Payload sets
-// sep1_consecutive_failures = 0 and sep1_next_attempt_after = NULL in
-// the same statement that writes the payload, so a success erases the
-// ladder step its own pre-mark took (proved against Postgres in
-// test/integration/pg_assets_sep1_test.go). And the mark happens
-// exactly once per issuer per run, so the systemic-outage unwind — which
-// takes back exactly one ladder step per failed key — still balances.
+// The pre-mark costs a healthy issuer nothing: SetIssuerSep1Payload resets
+// sep1_consecutive_failures and sep1_next_attempt_after in the same statement
+// (test/integration/pg_assets_sep1_test.go). The mark happens once per issuer per
+// run, so the systemic-outage unwind, which takes back one step per failed key,
+// still balances.
 func refreshOneSep1Issuer(
 	ctx context.Context, store sep1Store, chain sep1ChainReader, resolver sep1Resolver,
 	c timescale.IssuerSep1Candidate, dryRun bool,
@@ -383,41 +355,29 @@ func sep1Candidates(
 
 // Systemic-outage guard.
 //
-// THE PROBLEM WITH A BACKOFF, stated plainly: it cannot tell "this
-// domain is dead" from "our DNS is down". Both look like a failed
-// fetch. Left alone, an outage on our side walks the WHOLE population
-// up the ladder — six bad days is enough to reach the 30-day cap — and
-// then the job goes quiet. Nothing catches it downstream either: the
-// data-freshness watchdog reads `max(sep1_resolved_at)` over `issuers`,
-// and a failed attempt stamps that column just as a success does, so
-// the gauge stays green while the refresh is doing nothing useful.
+// A backoff cannot tell "this domain is dead" from "our DNS is down". Left alone,
+// an outage on our side walks the whole population up the ladder (six bad days
+// reaches the 30-day cap) and the job goes quiet. The data-freshness watchdog
+// cannot catch it either: it reads `max(sep1_resolved_at)`, which a failed attempt
+// stamps just like a success.
 //
-// So the run judges ITSELF, on the one population whose failures carry
-// that information: domains that HAVE served a stellar.toml (the row holds
-// a payload). A domain that has never answered failing again says nothing
-// about us. Counting those would make the verdict a property of the network, not
-// of the run: on testnet, where nearly every home_domain is junk, a healthy
-// run went 19 ok / 731 failed every hour, tripped the guard, and its unwind
-// kept the junk off the ladder so the next run was the same. Domains reached
-// on earlier runs failing en masse is a regression, and that is not a
-// property of the issuer population. When that verdict lands the run does
-// two things no silent backoff would:
+// So the run judges ITSELF on the one population whose failures carry information:
+// domains that HAVE served a stellar.toml (the row holds a payload). A domain that
+// never answered failing again says nothing about us; counting those made the
+// verdict a property of the network (on testnet a healthy run went 19 ok / 731
+// failed, tripped the guard, and its unwind kept the junk off the ladder so the
+// next run was the same). When the verdict lands, the run:
 //
-//  1. Unwinds the ladder step it just applied to every domain it
-//     failed, so a bad night leaves no trace on the schedule and
-//     recovery is immediate rather than metered out over 30 days.
-//  2. Returns an error, so the systemd oneshot enters `failed` and the
-//     existing stellarindex_systemd_unit_failed alert (infra.yml, 15m)
-//     tickets it. Loud beats quiet: the alternative is a job that
-//     reports "0 succeeded, 750 failed" to a journal nobody reads and
-//     exits 0.
+//  1. Unwinds the ladder step it applied to every domain it failed, so recovery is
+//     immediate rather than metered over 30 days.
+//  2. Returns an error, so the systemd oneshot fails and
+//     stellarindex_systemd_unit_failed (infra.yml, 15m) tickets it, instead of
+//     exiting 0 on "0 succeeded, 750 failed".
 //
-// On r1, a healthy run failed 291 of 500, and all 291 were domains that
-// had never produced a payload (migration 0159), so the regression rate
-// of a healthy run is near zero. 90% sits far above that and below
-// "everything is broken". minAttempts counts only the reached domains,
-// so a short run (a nearly-drained queue, a deadline-truncated batch, a
-// targeted -issuer refresh) cannot trip it on a handful.
+// On r1 a healthy run failed 291 of 500, all domains that never produced a payload
+// (migration 0159), so the regression rate of a healthy run is near zero. 90% sits
+// far above that and below "everything is broken". minAttempts counts only reached
+// domains, so a short run cannot trip it on a handful.
 const (
 	defaultSystemicFailureRate = 0.90
 	systemicMinAttempts        = 50
