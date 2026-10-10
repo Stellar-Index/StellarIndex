@@ -12,15 +12,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// asset_price_snapshot — the per-asset headline-price rollup behind the
+// asset_price_snapshot: the per-asset headline-price rollup behind the
 // GET /v1/assets listing.
 //
 // Deriving the price column per request meant twelve `DISTINCT ON … FROM
-// prices_1m` CTEs for every asset on every uncached variant: on r1 the
-// listing statement averaged 2.4 s (max 10 s) with a 51 MB disk sort. So
-// [assetPriceCTEs] runs here, off the request path, on the volume rollup's
-// cadence, and the listing LEFT JOINs the result (the pattern of migrations
-// 0087 and 0149).
+// prices_1m` CTEs for every asset on every uncached variant (2.4 s average,
+// 10 s max, 51 MB disk sort on r1). So [assetPriceCTEs] runs here, off the
+// request path, on the volume rollup's cadence, and the listing LEFT JOINs
+// the result (the pattern of migrations 0087 and 0149).
 //
 // Not a continuous aggregate: the substrate is a `DISTINCT ON` over a UNION
 // of quote forms, XLM identities and both directions, which no `GROUP BY`
@@ -28,16 +27,15 @@ import (
 // would stall the listing; the upsert+prune here takes row locks only, as
 // [Store.RefreshAssetVolume24h] does.
 //
-// Rollup age (CAGG lag ~90 s + 2 min refresh + 2 min API cache, ~5.5 min
-// worst case) is capped by [assetPriceSnapshotMaxAge] in the listing's
-// join, so a dead aggregator renders assets unpriced rather than serving
-// old prices. Observation age is not capped: the price is the newest
-// traded minute across arms ([priceArmPickExpr]) and can be up to the
-// 7-day lookback old, since a hard cutoff would blank every
-// weekly-trading asset.
+// Rollup age (~5.5 min worst case) is capped by [assetPriceSnapshotMaxAge]
+// in the listing's join, so a dead aggregator renders assets unpriced rather
+// than serving old prices. Observation age is not capped: the price is the
+// newest traded minute across arms ([priceArmPickExpr]) and can be up to the
+// 7-day lookback old, since a hard cutoff would blank every weekly-trading
+// asset.
 //
-// GET /v1/assets/{id} stays on its own millisecond single-asset query, so
-// a listing row can lag its detail page by up to the ceiling above.
+// GET /v1/assets/{id} stays on its own single-asset query, so a listing row
+// can lag its detail page by up to the ceiling above.
 
 // assetPriceSnapshotMaxAge is how old an `asset_price_snapshot` row may
 // be and still be served by the listing. Spliced into the listing's
@@ -139,21 +137,19 @@ func priceChangePctExpr(lookback string) string {
 }
 
 // snapshotNormalizedPriceUSDExpr is [snapshotPriceUSDExpr] with the
-// dex-nonstandard-decimals forward normalisation applied, and it is the
-// value the rollup STORES. `nda` is the refresh's LEFT JOIN onto
+// dex-nonstandard-decimals forward normalisation applied; it is the value the
+// rollup STORES. `nda` is the refresh's LEFT JOIN onto
 // nonstandard_decimals_assets (migration 0093).
 //
-// prices_1m holds raw smallest-unit ratios, so for a token whose
-// decimals() is not 7 every arm is off by the same 10^(7 - decimals); one
-// factor corrects whichever arm answered, as
-// v1.Server.normalizeCatalogueUSD does.
+// prices_1m holds raw smallest-unit ratios, so for a token whose decimals()
+// is not 7 every arm is off by the same 10^(7 - decimals); one factor
+// corrects whichever arm answered, as v1.Server.normalizeCatalogueUSD does.
 //
 // It normalises at write, unlike prices_1m and change_summary_5m, because
-// nothing ratchets (the whole table is overwritten each pass, unlike
-// /v1/changes' GREATEST/LEAST extremes), every listing reader and the RWA
-// market cap read this one column, and the column is unrounded NUMERIC, so
-// correcting before the listing's ROUND(price_usd, 10) keeps an 18-decimals
-// token's 1e-11 raw ratio from rounding to zero.
+// nothing ratchets (the table is overwritten each pass), every listing reader
+// and the RWA market cap read this one column, and the column is unrounded
+// NUMERIC, so correcting before the listing's ROUND(price_usd, 10) keeps an
+// 18-decimals token's 1e-11 raw ratio from rounding to zero.
 //
 // A READER OF THIS COLUMN MUST NOT NORMALISE IT AGAIN. The change columns
 // need no factor: the scale cancels in each ratio.
@@ -192,17 +188,17 @@ const (
 )
 
 // unionPriceArmCTE renders the CTE pair `<name>_rows` / `<name>` for one
-// price arm. Per asset, `<name>` carries the newest 1-minute bucket in
-// window in which the asset traded against any of quotes, in EITHER
-// stored direction; the VWAP of the union of that bucket's rows; and the
-// distinct venues behind them.
+// price arm. Per asset, `<name>` carries the newest 1-minute bucket in window
+// in which the asset traded against any of quotes, in EITHER stored
+// direction; the VWAP of the union of that bucket's rows; and the distinct
+// venues behind them.
 //
 // prices_1m keeps a market in whichever direction its source wrote it
 // (Soroban AMMs store base = token_in; SDEX stores base = the offer's sold
-// asset, the inverse, and so both directions), and `vwap` is
-// always base priced in quote. So each row is re-expressed as two legs in
-// the arm's (asset, quote) orientation and the leg sums are re-divided,
-// the SQL form of [combineDirVWAP]:
+// asset, the inverse, so both directions), and `vwap` is always base priced
+// in quote. So each row is re-expressed as two legs in the arm's
+// (asset, quote) orientation and the leg sums are re-divided, the SQL form of
+// [combineDirVWAP]:
 //
 //	(asset, q) row: asset leg = volume_priced,         q leg = vwap × volume_priced
 //	(q, asset) row: asset leg = vwap × volume_priced,  q leg = volume_priced
@@ -210,12 +206,12 @@ const (
 // volume_priced, not volume: vwap covers only trades with both legs > 0
 // (migration 0187), so its weight must too.
 //
-// Reading one direction, or preferring one, priced an asset from
-// whichever side of its book last traded in that orientation: days old,
-// or one-sided, while the other side was live.
+// Reading or preferring one direction prices an asset from whichever side of
+// its book last traded in that orientation: days old, or one-sided, while the
+// other side was live.
 //
-// asset is "" for every asset (the rollup) or a scalar SQL expression
-// that pins the arm to one asset (the detail query).
+// asset is "" for every asset (the rollup) or a scalar SQL expression that
+// pins the arm to one asset (the detail query).
 func unionPriceArmCTE(name, quotes, window, asset string) string {
 	var baseSide, flipped string
 	if asset != "" {
