@@ -210,6 +210,11 @@ func getHistoryPage(t *testing.T, ts *testServer, query string) historyPage {
 	return page
 }
 
+func aquaUSDC(t *testing.T) (aqua, usdc canonical.Asset) {
+	t.Helper()
+	return mustParseAsset(t, aquaClassicID), mustParseAsset(t, usdcClassicID)
+}
+
 // priceString renders a nullable wire price for comparison and messages.
 func priceString(p *string) string {
 	if p == nil {
@@ -229,82 +234,96 @@ func orientationQuery(base, quote canonical.Asset, limit int) string {
 	}.Encode()
 }
 
-// TestHistory_ReverseStoredMarketServesInvertedRows is the defect
-// itself: the market exists only as USDC/AQUA, and `?base=AQUA&quote=
-// USDC` returned an empty page every time while /v1/ohlc served it.
+// TestHistory_OrientationRendering pins, to the value, how a stored row is
+// re-expressed in the requested orientation (AQUA/USDC).
 //
-// The inversion is pinned to the value, not to non-emptiness: the two
-// legs swap, the two smallest-unit amounts swap with them, and `price`
-// — rendered as quote/base — comes back as the exact reciprocal. The
-// 7:1 row is the one that would expose a float round-trip: 1/(1/7)
-// does not return 7 in binary floating point.
-func TestHistory_ReverseStoredMarketServesInvertedRows(t *testing.T) {
+//   - reverse-stored: the market exists only as USDC/AQUA and used to serve an
+//     empty page. The legs and amounts swap, `price` is the exact reciprocal,
+//     and both directions are read, requested first. The 7:1 row would expose
+//     a float round-trip: 1/(1/7) is not 7 in binary floating point.
+//   - stored-orientation: a row already held as asked is served untouched.
+//   - zero-leg: a flipped one-side-zero row (SDEX rounding fill) makes the
+//     zero leg the denominator and renders "price": null without dropping or
+//     poisoning the page.
+//   - exact-at-scale: magnitudes where a float, or a reciprocal taken as a
+//     division rather than a swap, drifts. Only the final render rounds: ten
+//     fractional digits, extended only when the first significant digit lies
+//     beyond the tenth place, so a positive price is never an all-zero string.
+func TestHistory_OrientationRendering(t *testing.T) {
 	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
+	aqua, usdc := aquaUSDC(t)
 
-	store := &orientedTradeStore{rows: []canonical.Trade{
-		// Stored USDC/AQUA: 7 USDC units bought 1 AQUA unit.
-		storedTrade(t, "sdex", 10, "a1", usdc, aqua, 7, 1),
-		// Stored USDC/AQUA: 1 USDC unit bought 3 AQUA units.
-		storedTrade(t, "sdex", 20, "a2", usdc, aqua, 1, 3),
-	}}
-	ts := httpTestServer(t, v1.New(v1.Options{History: store}))
-
-	page := getHistoryPage(t, ts, orientationQuery(aqua, usdc, 50))
-	if len(page.Data) != 2 {
-		t.Fatalf("rows = %d, want 2 — a market stored only as USDC/AQUA must serve under ?base=AQUA&quote=USDC", len(page.Data))
-	}
-	for i, want := range []struct {
-		base, quote, price string
+	type wantRow struct{ base, quote, price string }
+	for _, tc := range []struct {
+		name      string
+		rows      []canonical.Trade
+		want      []wantRow
+		wantReads bool
 	}{
-		{base: "1", quote: "7", price: "7.0000000000"},
-		{base: "3", quote: "1", price: "0.3333333333"},
+		{
+			name: "reverse-stored",
+			rows: []canonical.Trade{
+				storedTrade(t, "sdex", 10, "a1", usdc, aqua, 7, 1), // 7 USDC units bought 1 AQUA unit
+				storedTrade(t, "sdex", 20, "a2", usdc, aqua, 1, 3), // 1 USDC unit bought 3 AQUA units
+			},
+			want:      []wantRow{{"1", "7", "7.0000000000"}, {"3", "1", "0.3333333333"}},
+			wantReads: true,
+		},
+		{
+			name: "stored-orientation",
+			rows: []canonical.Trade{storedTrade(t, "sdex", 10, "b1", aqua, usdc, 7, 1)},
+			want: []wantRow{{"7", "1", "0.1428571428"}},
+		},
+		{
+			name: "zero-leg",
+			rows: []canonical.Trade{
+				storedTrade(t, "sdex", 10, "5a", usdc, aqua, 5, 0),
+				storedTrade(t, "sdex", 20, "5b", usdc, aqua, 5, 1),
+			},
+			want: []wantRow{{"0", "5", "null"}, {"1", "5", "5.0000000000"}},
+		},
+		{
+			name: "exact-at-scale",
+			rows: []canonical.Trade{
+				storedTradeAmounts(t, "sdex", 10, "4a", usdc, aqua, "1000000000000000001", "3"),
+				storedTradeAmounts(t, "sdex", 20, "4b", usdc, aqua, "3", "1000000000000000001"),
+				storedTradeAmounts(t, "sdex", 30, "4c", usdc, aqua, "7", "1"),
+				storedTradeAmounts(t, "sdex", 40, "4d", usdc, aqua, "1", "3"),
+			},
+			want: []wantRow{
+				{"3", "1000000000000000001", "333333333333333333.6666666666"},
+				{"1000000000000000001", "3", "0.000000000000000002999999999999"},
+				{"1", "7", "7.0000000000"},
+				{"3", "1", "0.3333333333"},
+			},
+		},
 	} {
-		got := page.Data[i]
-		if got.BaseAsset != aqua.String() || got.QuoteAsset != usdc.String() {
-			t.Errorf("row %d pair = %s/%s, want %s/%s — a flipped row is re-expressed in the requested orientation",
-				i, got.BaseAsset, got.QuoteAsset, aqua, usdc)
-		}
-		if got.BaseAmount != want.base || got.QuoteAmount != want.quote {
-			t.Errorf("row %d amounts = %s/%s, want %s/%s — the two legs swap with the pair",
-				i, got.BaseAmount, got.QuoteAmount, want.base, want.quote)
-		}
-		if priceString(got.Price) != want.price {
-			t.Errorf("row %d price = %s, want %s — the flipped price is the exact reciprocal",
-				i, priceString(got.Price), want.price)
-		}
-	}
-	// Both directions were asked for, in the requested-first order.
-	pairs := store.readPairs()
-	if len(pairs) != 2 || pairs[0] != aqua.String()+"/"+usdc.String() || pairs[1] != usdc.String()+"/"+aqua.String() {
-		t.Errorf("reads = %v, want the requested orientation then its flip", pairs)
-	}
-}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := &orientedTradeStore{rows: tc.rows}
+			ts := httpTestServer(t, v1.New(v1.Options{History: store}))
 
-// TestHistory_StoredOrientationIsUntouched pins the other half: a row
-// already held the way it was asked for is served byte-for-byte as the
-// store returned it. The fold re-expresses, it does not renormalise.
-func TestHistory_StoredOrientationIsUntouched(t *testing.T) {
-	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
-
-	store := &orientedTradeStore{rows: []canonical.Trade{
-		storedTrade(t, "sdex", 10, "b1", aqua, usdc, 7, 1),
-	}}
-	ts := httpTestServer(t, v1.New(v1.Options{History: store}))
-
-	page := getHistoryPage(t, ts, orientationQuery(aqua, usdc, 50))
-	if len(page.Data) != 1 {
-		t.Fatalf("rows = %d, want 1", len(page.Data))
-	}
-	got := page.Data[0]
-	if got.BaseAsset != aqua.String() || got.QuoteAsset != usdc.String() {
-		t.Errorf("pair = %s/%s, want %s/%s", got.BaseAsset, got.QuoteAsset, aqua, usdc)
-	}
-	if got.BaseAmount != "7" || got.QuoteAmount != "1" || priceString(got.Price) != "0.1428571428" {
-		t.Errorf("row = %s/%s @ %s, want 7/1 @ 0.1428571428", got.BaseAmount, got.QuoteAmount, priceString(got.Price))
+			page := getHistoryPage(t, ts, orientationQuery(aqua, usdc, 50))
+			if len(page.Data) != len(tc.want) {
+				t.Fatalf("rows = %d, want %d — a degenerate or reverse-stored row must not drop the page", len(page.Data), len(tc.want))
+			}
+			for i, w := range tc.want {
+				got := page.Data[i]
+				if got.BaseAsset != aqua.String() || got.QuoteAsset != usdc.String() {
+					t.Errorf("row %d pair = %s/%s, want %s/%s", i, got.BaseAsset, got.QuoteAsset, aqua, usdc)
+				}
+				if got.BaseAmount != w.base || got.QuoteAmount != w.quote || priceString(got.Price) != w.price {
+					t.Errorf("row %d = %s/%s @ %s, want %s/%s @ %s",
+						i, got.BaseAmount, got.QuoteAmount, priceString(got.Price), w.base, w.quote, w.price)
+				}
+			}
+			if tc.wantReads {
+				pairs := store.readPairs()
+				if len(pairs) != 2 || pairs[0] != aqua.String()+"/"+usdc.String() || pairs[1] != usdc.String()+"/"+aqua.String() {
+					t.Errorf("reads = %v, want the requested orientation then its flip", pairs)
+				}
+			}
+		})
 	}
 }
 
@@ -314,8 +333,7 @@ func TestHistory_StoredOrientationIsUntouched(t *testing.T) {
 // re-expressed by the orientation it was STORED in.
 func TestHistory_BothDirectionsMergeInKeysetOrder(t *testing.T) {
 	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
+	aqua, usdc := aquaUSDC(t)
 
 	store := &orientedTradeStore{rows: []canonical.Trade{
 		storedTrade(t, "sdex", 10, "c1", aqua, usdc, 4, 1),  // requested-side
@@ -385,8 +403,7 @@ func drainHistory(t *testing.T, ts *testServer, query string) (rows []v1.TradeRo
 // remain in the other direction.
 func TestHistory_PageBoundaryAcrossDirections(t *testing.T) {
 	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
+	aqua, usdc := aquaUSDC(t)
 
 	// Strictly interleaved: odd seconds requested-side, even flipped.
 	rows := []canonical.Trade{
@@ -424,8 +441,7 @@ func TestHistory_PageBoundaryAcrossDirections(t *testing.T) {
 // identically — rather than by time.
 func TestHistory_PageBoundaryWithinOneLedger(t *testing.T) {
 	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
+	aqua, usdc := aquaUSDC(t)
 
 	rows := []canonical.Trade{
 		storedTrade(t, "sdex", 10, "e1", aqua, usdc, 1, 21),
@@ -461,8 +477,7 @@ func TestHistory_PageBoundaryWithinOneLedger(t *testing.T) {
 // comes back SHORT with a cursor rather than full and lossy.
 func TestHistory_PageIsNotCutThroughATieGroup(t *testing.T) {
 	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
+	aqua, usdc := aquaUSDC(t)
 
 	tied := storedTrade(t, "blend_emitter", 20, "f2", aqua, usdc, 1, 31)
 	tiedFlip := storedTrade(t, "blenda", 20, "f2", usdc, aqua, 32, 1)
@@ -488,37 +503,6 @@ func TestHistory_PageIsNotCutThroughATieGroup(t *testing.T) {
 		t.Fatalf("drained %d rows in pages %v, want %d", len(served), sizes, len(rows))
 	}
 	assertServedExactlyOnce(t, served, rows, sizes)
-}
-
-// TestHistory_FlippedRowWithZeroAmountRendersNullPrice pins a flipped
-// one-side-zero row (stored SDEX rounding fill): the zero leg becomes the
-// denominator, and the row renders "price": null without dropping or
-// poisoning the page.
-func TestHistory_FlippedRowWithZeroAmountRendersNullPrice(t *testing.T) {
-	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
-
-	store := &orientedTradeStore{rows: []canonical.Trade{
-		// Stored USDC/AQUA with a zero AQUA leg: flipping makes it the
-		// base, i.e. the price denominator.
-		storedTrade(t, "sdex", 10, "5a", usdc, aqua, 5, 0),
-		storedTrade(t, "sdex", 20, "5b", usdc, aqua, 5, 1),
-	}}
-	ts := httpTestServer(t, v1.New(v1.Options{History: store}))
-
-	page := getHistoryPage(t, ts, orientationQuery(aqua, usdc, 50))
-	if len(page.Data) != 2 {
-		t.Fatalf("rows = %d, want 2 — a degenerate row must not drop the page", len(page.Data))
-	}
-	if page.Data[0].BaseAmount != "0" || page.Data[0].QuoteAmount != "5" || page.Data[0].Price != nil {
-		t.Errorf("degenerate row = %s/%s @ %s, want 0/5 @ null",
-			page.Data[0].BaseAmount, page.Data[0].QuoteAmount, priceString(page.Data[0].Price))
-	}
-	if priceString(page.Data[1].Price) != "5.0000000000" {
-		t.Errorf("neighbour price = %s, want 5.0000000000 — one degenerate row must not poison the rest",
-			priceString(page.Data[1].Price))
-	}
 }
 
 // ─── Tie groups that outrun the page ──────────────────────────────────
@@ -547,8 +531,7 @@ func TestHistory_FlippedRowWithZeroAmountRendersNullPrice(t *testing.T) {
 // up so limit=1 cannot be read as a boundary artefact.
 func TestHistory_OverLimitTieGroupIsCompletedBeforeItIsServed(t *testing.T) {
 	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
+	aqua, usdc := aquaUSDC(t)
 
 	for _, tc := range []struct {
 		name  string
@@ -589,11 +572,9 @@ func TestHistory_OverLimitTieGroupIsCompletedBeforeItIsServed(t *testing.T) {
 // across pages.
 func TestHistory_TieGroupSweepServesEachRowOnce(t *testing.T) {
 	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
+	aqua, usdc := aquaUSDC(t)
 	sources := []string{"s1", "s2", "s3", "s4"}
 
-	duplicated := 0
 	store := &orientedTradeStore{}
 	ts := httpTestServer(t, v1.New(v1.Options{History: store}))
 	for mask := 0; mask < 256; mask++ {
@@ -613,30 +594,13 @@ func TestHistory_TieGroupSweepServesEachRowOnce(t *testing.T) {
 			store.reset(rows, nil)
 			served, sizes := drainHistory(t, ts, orientationQuery(aqua, usdc, limit))
 
-			seen := map[string]int{}
-			for _, r := range served {
-				seen[servedIdentity(r)]++
-			}
-			for _, r := range rows {
-				switch n := seen[fixtureIdentity(r)]; {
-				case n == 0:
-					t.Errorf("mask=%d limit=%d: %s tx…%s never served (pages %v)",
-						mask, limit, r.Source, r.TxHash[60:], sizes)
-				case n > 1:
-					duplicated++
-				}
+			if !assertServedExactlyOnce(t, served, rows, sizes) {
+				t.Errorf("mask=%d limit=%d", mask, limit)
 			}
 		}
 	}
-	// ZERO, not "few". Pagination here is exactly-once: a page that ends
-	// on a complete tie group resumes PAST the group by key rather than
-	// at one row of it, so no row of that group can come back. A client
-	// appending pages and summing volume is entitled to that, and a
-	// change that re-introduces a single repeat is a change that makes
-	// every integrator's total quietly wrong.
-	if duplicated != 0 {
-		t.Errorf("rows served more than once = %d, want 0 — pagination is exactly-once", duplicated)
-	}
+	// Exactly-once, not "few": a page ending on a complete tie group resumes
+	// past it by key, so a client summing volume across pages is never inflated.
 }
 
 // servedIdentity is the trades primary key as it appears on the wire —
@@ -654,9 +618,10 @@ func fixtureIdentity(t canonical.Trade) string {
 
 // assertServedExactlyOnce fails when the drain did not return each
 // fixture row exactly one time, and when it returned anything the
-// fixture does not hold.
-func assertServedExactlyOnce(t *testing.T, served []v1.TradeRow, rows []canonical.Trade, sizes []int) {
+// fixture does not hold. It reports whether the drain was clean.
+func assertServedExactlyOnce(t *testing.T, served []v1.TradeRow, rows []canonical.Trade, sizes []int) bool {
 	t.Helper()
+	ok := true
 	seen := map[string]int{}
 	for _, r := range served {
 		seen[servedIdentity(r)]++
@@ -665,11 +630,14 @@ func assertServedExactlyOnce(t *testing.T, served []v1.TradeRow, rows []canonica
 		if n := seen[fixtureIdentity(r)]; n != 1 {
 			t.Errorf("row %s served %d times, want exactly 1 (pages %v, %d rows drained)",
 				fixtureIdentity(r), n, sizes, len(served))
+			ok = false
 		}
 	}
 	if len(seen) != len(rows) {
 		t.Errorf("served %d distinct rows, fixture holds %d (pages %v)", len(seen), len(rows), sizes)
+		ok = false
 	}
+	return ok
 }
 
 // ─── The flip against the two other things that read these rows ───────
@@ -703,43 +671,6 @@ func TestHistory_FlippedRowNonstandardDecimals(t *testing.T) {
 	}
 	if priceString(got.Price) != "2.5000000000" {
 		t.Errorf("price = %s, want 2.5000000000 — 250 USD over 100 tokens, corrected for a 9dp base against a 7dp quote", priceString(got.Price))
-	}
-}
-
-// TestHistory_FlippedInversionIsExactAtScale puts the swap at magnitudes
-// where a float — or a reciprocal taken as a division rather than as a
-// swap — drifts. Nothing here is rounded except the final render, which
-// floors at ten fractional digits and extends past them only for a
-// price whose first significant digit lies beyond the tenth place —
-// a positive price is never served as an all-zero string.
-func TestHistory_FlippedInversionIsExactAtScale(t *testing.T) {
-	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
-
-	store := &orientedTradeStore{rows: []canonical.Trade{
-		storedTradeAmounts(t, "sdex", 10, "4a", usdc, aqua, "1000000000000000001", "3"),
-		storedTradeAmounts(t, "sdex", 20, "4b", usdc, aqua, "3", "1000000000000000001"),
-		storedTradeAmounts(t, "sdex", 30, "4c", usdc, aqua, "7", "1"),
-		storedTradeAmounts(t, "sdex", 40, "4d", usdc, aqua, "1", "3"),
-	}}
-	ts := httpTestServer(t, v1.New(v1.Options{History: store}))
-
-	page := getHistoryPage(t, ts, orientationQuery(aqua, usdc, 50))
-	if len(page.Data) != 4 {
-		t.Fatalf("rows = %d, want 4", len(page.Data))
-	}
-	for i, want := range []struct{ base, quote, price string }{
-		{"3", "1000000000000000001", "333333333333333333.6666666666"},
-		{"1000000000000000001", "3", "0.000000000000000002999999999999"},
-		{"1", "7", "7.0000000000"},
-		{"3", "1", "0.3333333333"},
-	} {
-		got := page.Data[i]
-		if got.BaseAmount != want.base || got.QuoteAmount != want.quote || priceString(got.Price) != want.price {
-			t.Errorf("row %d = %s/%s @ %s, want %s/%s @ %s",
-				i, got.BaseAmount, got.QuoteAmount, priceString(got.Price), want.base, want.quote, want.price)
-		}
 	}
 }
 
@@ -786,8 +717,7 @@ func storedTradeAmounts(t *testing.T, source string, sec int64, txSuffix string,
 // group exists.
 func TestHistory_PastGroupCursorPointingBeyondTheWindowTerminates(t *testing.T) {
 	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
+	aqua, usdc := aquaUSDC(t)
 
 	// A complete two-source group at +10s, then one later row at +30s so
 	// the first page ends on the group with rows still behind it.
@@ -842,8 +772,7 @@ func TestHistory_PastGroupCursorPointingBeyondTheWindowTerminates(t *testing.T) 
 // it cannot loop, and it cannot lose one.
 func TestHistory_PastGroupCursorDeclinesToWrapOpIndex(t *testing.T) {
 	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
+	aqua, usdc := aquaUSDC(t)
 
 	rows := []canonical.Trade{
 		storedTrade(t, "zzz_src", 10, "d1", aqua, usdc, 1, 71),
@@ -906,8 +835,7 @@ func TestHistoryCursor_PastGroupMarkerIsNotASourceName(t *testing.T) {
 // the fixture that would bring it back.
 func TestHistory_TieGroupLargerThanAnyPageIsServedWhole(t *testing.T) {
 	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
+	aqua, usdc := aquaUSDC(t)
 
 	// One group: 300 rows in the requested orientation plus a single
 	// flipped row whose source sorts BELOW all of them. Far past any
@@ -962,8 +890,7 @@ func TestHistory_TieGroupLargerThanAnyPageIsServedWhole(t *testing.T) {
 // the point of stepping past it.
 func TestHistory_ExactlyOnceUnderEitherSourceCollation(t *testing.T) {
 	t.Parallel()
-	usdc := mustParseAsset(t, usdcClassicID)
-	aqua := mustParseAsset(t, aquaClassicID)
+	aqua, usdc := aquaUSDC(t)
 	// Names whose byte order and reversed order disagree, and which
 	// carry the `-` and `_` a non-C collation weighs oddly.
 	sources := []string{"a-x", "a_x", "blend", "blend_emitter", "sdex", "soroswap-router", "zz", "m1"}
@@ -1015,19 +942,8 @@ func TestHistory_ExactlyOnceUnderEitherSourceCollation(t *testing.T) {
 				served, sizes := drainHistory(t, ts, orientationQuery(aqua, usdc, limit))
 				drains++
 
-				count := map[string]int{}
-				for _, r := range served {
-					count[servedIdentity(r)]++
-				}
-				for _, r := range rows {
-					if n := count[fixtureIdentity(r)]; n != 1 {
-						t.Fatalf("collation=%s iter=%d limit=%d rows=%d: %s served %d times, want 1 (pages %v)",
-							coll.name, iter, limit, len(rows), fixtureIdentity(r), n, sizes)
-					}
-				}
-				if len(count) != len(rows) {
-					t.Fatalf("collation=%s iter=%d limit=%d: served %d distinct rows, stored %d",
-						coll.name, iter, limit, len(count), len(rows))
+				if !assertServedExactlyOnce(t, served, rows, sizes) {
+					t.Fatalf("collation=%s iter=%d limit=%d rows=%d", coll.name, iter, limit, len(rows))
 				}
 			}
 		}

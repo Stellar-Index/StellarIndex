@@ -277,22 +277,16 @@ func mkHistTrade(price int64) canonical.Trade {
 }
 
 func TestHistory_503WhenReaderNil(t *testing.T) {
-	srv := v1.New(v1.Options{})
-	ts := httpTestServer(t, srv)
+	ts := httpTestServer(t, v1.New(v1.Options{}))
 
-	resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503 (no reader wired)", resp.StatusCode)
-	}
-}
-
-func TestHistory_MissingBase400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/history?quote=fiat:USD")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
+	for _, path := range []string{
+		"/v1/history?base=native&quote=fiat:USD",
+		"/v1/history/since-inception?asset=native",
+	} {
+		resp := mustGet(t, ts.URL+path)
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("%s: status = %d, want 503 (no reader wired)", path, resp.StatusCode)
+		}
 	}
 }
 
@@ -327,74 +321,34 @@ func TestHistory_BaseAndAssetBothPresent_Rejected(t *testing.T) {
 	}
 }
 
-// parseBaseQuote has four branches; TestHistory_MissingBase400
-// covers one. The remaining three (bad base, missing quote, bad
-// quote) all share the same shape — quick coverage round-trip.
+func TestHistory_BadRequest400(t *testing.T) {
+	ts := httpTestServer(t, v1.New(v1.Options{History: &stubHistoryReader{}}))
 
-func TestHistory_BadBase400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/history?base=garbage&quote=fiat:USD")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400 (invalid base id)", resp.StatusCode)
+	fromAfterTo := url.Values{
+		"base": {"native"}, "quote": {"fiat:USD"},
+		"from": {"2026-04-23T12:00:00Z"}, "to": {"2026-04-23T11:00:00Z"},
+	}.Encode()
+	const ok = "/v1/history?base=native&quote=fiat:USD"
+	cases := map[string]string{
+		"missing base":                  "/v1/history?quote=fiat:USD",
+		"bad base":                      "/v1/history?base=garbage&quote=fiat:USD",
+		"missing quote":                 "/v1/history?base=native",
+		"bad quote":                     "/v1/history?base=native&quote=garbage",
+		"invalid from":                  ok + "&from=yesterday",
+		"from after to":                 "/v1/history?" + fromAfterTo,
+		"limit zero":                    ok + "&limit=0",
+		"limit over max":                ok + "&limit=10001",
+		"limit negative":                ok + "&limit=-5",
+		"limit not numeric":             ok + "&limit=abc",
+		"since-inception missing asset": "/v1/history/since-inception",
 	}
-}
-
-func TestHistory_MissingQuote400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/history?base=native")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestHistory_BadQuote400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=garbage")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400 (invalid quote id)", resp.StatusCode)
-	}
-}
-
-func TestHistory_InvalidTime400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD&from=yesterday")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestHistory_FromAfterTo400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-
-	q := url.Values{}
-	q.Set("base", "native")
-	q.Set("quote", "fiat:USD")
-	q.Set("from", "2026-04-23T12:00:00Z")
-	q.Set("to", "2026-04-23T11:00:00Z")
-	resp := mustGet(t, ts.URL+"/v1/history?"+q.Encode())
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestHistory_InvalidLimit400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-
-	for _, bad := range []string{"0", "10001", "-5", "abc"} {
-		resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD&limit="+bad)
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("limit=%q: status = %d, want 400", bad, resp.StatusCode)
-		}
+	for name, path := range cases {
+		t.Run(name, func(t *testing.T) {
+			resp := mustGet(t, ts.URL+path)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", resp.StatusCode)
+			}
+		})
 	}
 }
 
@@ -491,44 +445,37 @@ func TestHistory_DefaultWindowIs1Hour(t *testing.T) {
 	}
 }
 
-func TestHistory_EmitsNextCursorWhenPageFull(t *testing.T) {
-	// With limit=2 and reader returning exactly 2 rows, the handler
-	// treats the page as full and emits a next cursor. Clients then
-	// re-issue with ?cursor=<that> to get subsequent pages.
-	trades := []canonical.Trade{mkHistTrade(100), mkHistTrade(101)}
-	srv := v1.New(v1.Options{History: &stubHistoryReader{trades: trades}})
-	ts := httpTestServer(t, srv)
+// A full page (rows == limit) emits a next cursor; a short page means the
+// window is exhausted and emits none.
+func TestHistory_NextCursorOnlyWhenPageFull(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		limit    string
+		rows     int
+		wantNext bool
+	}{
+		{"page full", "2", 2, true},
+		{"page short", "50", 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var trades []canonical.Trade
+			for i := 0; i < tc.rows; i++ {
+				trades = append(trades, mkHistTrade(int64(100+i)))
+			}
+			ts := httpTestServer(t, v1.New(v1.Options{History: &stubHistoryReader{trades: trades}}))
 
-	resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD&limit=2")
-	var env struct {
-		Data       []v1.TradeRow `json:"data"`
-		Pagination *struct {
-			Next string `json:"next"`
-		} `json:"pagination"`
-	}
-	mustDecode(t, resp, &env)
-	if env.Pagination == nil || env.Pagination.Next == "" {
-		t.Fatalf("page full → expected next cursor, got: %+v", env.Pagination)
-	}
-}
-
-func TestHistory_NoCursorWhenPageNotFull(t *testing.T) {
-	// Reader returns fewer rows than limit → window exhausted →
-	// no next cursor.
-	trades := []canonical.Trade{mkHistTrade(100)}
-	srv := v1.New(v1.Options{History: &stubHistoryReader{trades: trades}})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD&limit=50")
-	var env struct {
-		Data       []v1.TradeRow `json:"data"`
-		Pagination *struct {
-			Next string `json:"next"`
-		} `json:"pagination"`
-	}
-	mustDecode(t, resp, &env)
-	if env.Pagination != nil && env.Pagination.Next != "" {
-		t.Errorf("short page → no next cursor, got %q", env.Pagination.Next)
+			resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD&limit="+tc.limit)
+			var env struct {
+				Pagination *struct {
+					Next string `json:"next"`
+				} `json:"pagination"`
+			}
+			mustDecode(t, resp, &env)
+			gotNext := env.Pagination != nil && env.Pagination.Next != ""
+			if gotNext != tc.wantNext {
+				t.Errorf("next cursor present = %v, want %v (pagination=%+v)", gotNext, tc.wantNext, env.Pagination)
+			}
+		})
 	}
 }
 
@@ -738,26 +685,6 @@ func TestHistory_PaginationUnionsInterleavedAliasForms(t *testing.T) {
 }
 
 // ─── /v1/history/since-inception ────────────────────────────────
-
-func TestHistorySinceInception_503WhenReaderNil(t *testing.T) {
-	srv := v1.New(v1.Options{})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/history/since-inception?asset=native")
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", resp.StatusCode)
-	}
-}
-
-func TestHistorySinceInception_MissingAsset400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/history/since-inception")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
 
 // TestHistorySinceInception_BadGranularity400 confirms unknown
 // granularity surfaces as 400 — the reader returns
