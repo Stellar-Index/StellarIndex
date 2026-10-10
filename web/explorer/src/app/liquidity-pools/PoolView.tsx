@@ -46,13 +46,18 @@ export function PoolView({ id }: { id: string }) {
   let body: React.ReactNode;
   if (!valid) {
     body = (
-      <Panel title="Liquidity pool" bodyClassName="text-sm text-ink-body">
+      <Panel
+        headingLevel={2}
+        title="Liquidity pool"
+        bodyClassName="text-sm text-ink-body"
+      >
         Not a native liquidity-pool id: expected an L… strkey or 64-char hex.
       </Panel>
     );
   } else if (q.isLoading) {
     body = (
       <Panel
+        headingLevel={2}
         title="Liquidity pool"
         source={source}
         bodyClassName="text-sm text-ink-muted"
@@ -63,6 +68,7 @@ export function PoolView({ id }: { id: string }) {
   } else if (!row) {
     body = (
       <Panel
+        headingLevel={2}
         title="Liquidity pool"
         source={source}
         bodyClassName="text-sm text-ink-body"
@@ -77,7 +83,12 @@ export function PoolView({ id }: { id: string }) {
     const b = assetLabel(row.reserve_b.asset);
     body = (
       <>
-        <Panel title="Pool" source={source} bodyClassName="space-y-3">
+        <Panel
+          headingLevel={2}
+          title="Pool"
+          source={source}
+          bodyClassName="space-y-3"
+        >
           <div className="text-lg font-semibold">
             <AssetText canonical={row.reserve_a.asset} /> /{' '}
             <AssetText canonical={row.reserve_b.asset} />
@@ -137,6 +148,7 @@ export function PoolView({ id }: { id: string }) {
           </StatGrid>
         </Panel>
         <Panel
+          headingLevel={2}
           title="Depth"
           hint="Constant-product estimate from current reserves, not an order book"
           source={source}
