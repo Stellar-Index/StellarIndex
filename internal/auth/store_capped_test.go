@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -98,5 +99,32 @@ func TestCreateCapped_RevokedKeysDoNotCount(t *testing.T) {
 	}
 	if _, _, err := s.CreateCapped(ctx, CreateAPIKeyRequest{Identifier: owner}, 1); err != nil {
 		t.Fatalf("CreateCapped after revoking the only key: %v", err)
+	}
+}
+
+// TestCreateCapped_ChildKeySlidingIdleTTL — a self-service child is
+// written with the idle TTL, and a validated Lookup slides it back up.
+func TestCreateCapped_ChildKeySlidingIdleTTL(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	ctx := context.Background()
+
+	parent := Subject{Identifier: AccountIdentifier("child-ttl"), Tier: TierAPIKey, KeyID: "kid_parent"}
+	_, plaintext, err := NewRedisAPIKeyStore(rdb).CreateCapped(ctx, ChildKeyRequest(parent, "rotated", nil), 25)
+	if err != nil {
+		t.Fatalf("CreateCapped: %v", err)
+	}
+	key := cachekeys.APIKey(hashAPIKey(plaintext)).String()
+	if ttl := mr.TTL(key); ttl <= 0 || ttl > MirroredKeyIdleTTL {
+		t.Fatalf("child key TTL = %s, want in (0, %s]: a self-service key must age out once abandoned", ttl, MirroredKeyIdleTTL)
+	}
+
+	mr.FastForward(80 * 24 * time.Hour)
+	if _, err := NewRedisAPIKeyValidator(rdb).Lookup(ctx, plaintext); err != nil {
+		t.Fatalf("Lookup(child key): %v", err)
+	}
+	if ttl := mr.TTL(key); ttl < MirroredKeyIdleTTL-time.Minute {
+		t.Fatalf("child key TTL after Lookup = %s, want ~%s: use must slide the idle window", ttl, MirroredKeyIdleTTL)
 	}
 }

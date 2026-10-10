@@ -9,11 +9,6 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// Decoder tests using SDK-encoded single-value SCVal bodies.
-// Complements real_fixture_test.go (mainnet captures) by covering
-// shapes that rarely appear on mainnet: i128 above the 2^63
-// boundary (ADR-0003), wrong body kind, unknown field topic.
-
 func makeC(t *testing.T, seed byte) string {
 	t.Helper()
 	var raw [32]byte
@@ -159,5 +154,23 @@ func TestTopicConstantsMatchEncoderOutput(t *testing.T) {
 		if disc != uint32(xdr.ScValTypeScvString) {
 			t.Errorf("topic[%d]: disc=%d, want %d (ScvString)", i, disc, xdr.ScValTypeScvString)
 		}
+	}
+}
+
+func TestSdkDecodeAddress_invalidBase64(t *testing.T) {
+	if _, err := sdkDecodeAddress("!!not-base64!!"); err == nil {
+		t.Error("expected parse error for invalid base64, got nil")
+	}
+}
+
+func TestSdkDecodeAsset_invalidBase64(t *testing.T) {
+	if _, err := sdkDecodeAsset("@@bad@@"); err == nil {
+		t.Error("expected parse error for invalid base64, got nil")
+	}
+}
+
+func TestSdkDecodeI128_invalidBase64(t *testing.T) {
+	if _, err := sdkDecodeI128("###garbage###"); err == nil {
+		t.Error("expected parse error for invalid base64, got nil")
 	}
 }

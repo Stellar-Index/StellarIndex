@@ -476,3 +476,61 @@ func TestFiatProxy_CodesAreOnCanonicalAllowList(t *testing.T) {
 		}
 	}
 }
+
+func TestFiatBackers_DeterministicOrder(t *testing.T) {
+	// Map iteration is randomised per range statement, so repeating the
+	// call is what catches an unsorted return.
+	want := FiatBackers("USD")
+	if len(want) < 2 {
+		t.Fatalf("FiatBackers(USD) = %v — need at least two backers to test ordering", want)
+	}
+	for i := 1; i < len(want); i++ {
+		if want[i-1] >= want[i] {
+			t.Fatalf("FiatBackers(USD) = %v — not sorted; the orchestrator's fetch plan "+
+				"and therefore its merge order would differ between calls", want)
+		}
+	}
+	for i := 0; i < 64; i++ {
+		got := FiatBackers("USD")
+		if len(got) != len(want) {
+			t.Fatalf("call %d returned %d backers, want %d", i, len(got), len(want))
+		}
+		for k := range got {
+			if got[k] != want[k] {
+				t.Fatalf("call %d = %v, want %v — FiatBackers is not deterministic", i, got, want)
+			}
+		}
+	}
+}
+
+func TestExpandTargetPair_DeterministicOrder(t *testing.T) {
+	base, err := canonical.NewCryptoAsset("XLM")
+	if err != nil {
+		t.Fatalf("base: %v", err)
+	}
+	quote, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("quote: %v", err)
+	}
+	target, err := canonical.NewPair(base, quote)
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+
+	want, err := ExpandTargetPair(target)
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	for i := 0; i < 64; i++ {
+		got, err := ExpandTargetPair(target)
+		if err != nil {
+			t.Fatalf("expand %d: %v", i, err)
+		}
+		for k := range got {
+			if !got[k].Equal(want[k]) {
+				t.Fatalf("expansion %d = %v, want %v — the fetch plan (and the merge order "+
+					"of the window it assembles) is not reproducible", i, got, want)
+			}
+		}
+	}
+}

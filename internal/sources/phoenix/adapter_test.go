@@ -1,16 +1,19 @@
 package phoenix
 
 import (
+	"encoding/base64"
+	"errors"
 	"math/big"
 	"testing"
+	"time"
+
+	"github.com/stellar/go-stellar-sdk/strkey"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
-
-// ─── consumer.go ──────────────────────────────────────────────────
 
 func TestTradeEvent_implementsConsumerEvent(t *testing.T) {
 	te := TradeEvent{}
@@ -555,5 +558,872 @@ func TestDecoder_EvictedOrphans_countsStaleLiquidityGroup(t *testing.T) {
 	}
 	if got := d.EvictedOrphans(); got != 1 {
 		t.Errorf("EvictedOrphans() = %d, want 1 (the stale liquidity group)", got)
+	}
+}
+
+// TestRawSwap_Decodable_requiresEveryConsumedSlot: an aged-out group missing
+// any slot decodeSwap reads must stay an orphan (never reach decodeSwap and
+// its nil dereference); a group missing only an unread slot is rescuable.
+func TestRawSwap_Decodable_requiresEveryConsumedSlot(t *testing.T) {
+	ev := &events.Event{}
+	for _, tc := range []struct {
+		topic     string
+		decodable bool
+	}{
+		{TopicSymbolSender, false},
+		{TopicSymbolSellToken, false},
+		{TopicSymbolOfferAmount, false},
+		{TopicSymbolBuyToken, false},
+		{TopicSymbolReturnAmount, false},
+		{TopicSymbolActualReceived, true},
+		{TopicSymbolSpreadAmount, true},
+		{TopicSymbolReferralFee, true},
+	} {
+		var r RawSwap
+		for _, f := range stringSwapTopics {
+			if f != tc.topic {
+				if err := r.assign(ev, f); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if got := r.Decodable(); got != tc.decodable {
+			t.Errorf("missing %q: Decodable() = %v, want %v", tc.topic, got, tc.decodable)
+		}
+		if !tc.decodable {
+			if _, err := decodeSwap(&r); !errors.Is(err, ErrIncompleteSwap) {
+				t.Errorf("missing %q: decodeSwap err = %v, want ErrIncompleteSwap", tc.topic, err)
+			}
+		}
+	}
+}
+
+// TestDecoder_SweepOrphansGroupMissingOfferAmount drives the same property
+// through the production path: a 7-field group lacking offer_amount ages out
+// as an orphan, emitting no trade.
+func TestDecoder_SweepOrphansGroupMissingOfferAmount(t *testing.T) {
+	d := newTestDecoder()
+	sell, buy := makeC(t, 0x51), makeC(t, 0x52)
+	senderVal, _ := accountVal(t, 0x53)
+	bodies := map[string]string{
+		TopicSymbolSender:         b64Marshal(t, senderVal),
+		TopicSymbolSellToken:      b64Marshal(t, contractVal(t, sell)),
+		TopicSymbolActualReceived: b64Marshal(t, i128HiLo(0, 10)),
+		TopicSymbolBuyToken:       b64Marshal(t, contractVal(t, buy)),
+		TopicSymbolReturnAmount:   b64Marshal(t, i128HiLo(0, 20)),
+		TopicSymbolSpreadAmount:   b64Marshal(t, i128HiLo(0, 1)),
+		TopicSymbolReferralFee:    b64Marshal(t, i128HiLo(0, 0)),
+	}
+	for topic, body := range bodies {
+		if out, err := d.Decode(makeFieldEventAt(t, topic, body, "old", "2026-04-23T12:00:00Z")); err != nil || len(out) != 0 {
+			t.Fatalf("buffering %q: out=%v err=%v", topic, out, err)
+		}
+	}
+	// Ten minutes later: the old group is past defaultOrphanMaxAge.
+	out, err := d.Decode(makeFieldEventAt(t, TopicSymbolSender, bodies[TopicSymbolSender], "new", "2026-04-23T12:10:00Z"))
+	if err != nil || len(out) != 0 {
+		t.Fatalf("sweep: out=%v err=%v, want no trade", out, err)
+	}
+	if got := d.EvictedOrphans(); got != 1 {
+		t.Fatalf("EvictedOrphans = %d, want 1", got)
+	}
+}
+
+// realCreateBody is a real factory ("create","liquidity_pool") body from
+// test/fixtures/phoenix/factory-create (ledger 51572026).
+const realCreateBody = "AAAAEgAAAAFOKMq33nPyGnLDFPIU2W2jUUiShHdABJPjEW7pvCVp4A=="
+
+func createEvent(emitter, topic1, body string) events.Event {
+	return events.Event{
+		Topic:          []string{TopicSymbolCreate, topic1},
+		Value:          body,
+		Ledger:         51_572_026,
+		TxHash:         "02cea787b98e0b3d426ea36d9510e62b1d125a16162059d13a2895531f0887b9",
+		EventIndex:     3,
+		ContractID:     emitter,
+		LedgerClosedAt: "2024-05-07T20:27:59Z",
+	}
+}
+
+func TestDecodeAnnouncedPool_realBodyAndNonContractRejected(t *testing.T) {
+	raw, err := base64.StdEncoding.DecodeString(realCreateBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := strkey.Encode(strkey.VersionByteContract, raw[8:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := createEvent(MainnetFactory, TopicCreateLiquidityPool, realCreateBody)
+	got, err := decodeAnnouncedPool(&ev)
+	if err != nil || got != want {
+		t.Fatalf("decodeAnnouncedPool(real) = %q, %v; want %q", got, err, want)
+	}
+
+	acct, _ := accountVal(t, 0x61)
+	ev.Value = b64Marshal(t, acct)
+	if got, err := decodeAnnouncedPool(&ev); !errors.Is(err, ErrMalformedPayload) {
+		t.Fatalf("decodeAnnouncedPool(account) = %q, %v; want ErrMalformedPayload", got, err)
+	}
+}
+
+// TestDecoder_CreatePoolGate pins the three legs of pool admission: only the
+// ("create","liquidity_pool") pair classifies, only a FACTORY emitter matches
+// (a curated pool republishing the topics must not), and a matched
+// announcement admits the pool into the gate.
+func TestDecoder_CreatePoolGate(t *testing.T) {
+	if a, _ := classifyAny(&events.Event{Topic: []string{TopicSymbolCreate, TopicSymbolSender}}); a != actionUnknown {
+		t.Fatalf(`classifyAny(("create","sender")) = %v, want actionUnknown`, a)
+	}
+
+	d := NewDecoder()
+	curated := MainnetPools[0]
+	if d.Matches(createEvent(curated, TopicCreateLiquidityPool, realCreateBody)) {
+		t.Fatal("Matches accepted a create announcement from a curated pool, not the factory")
+	}
+	if d.Matches(createEvent(MainnetFactory, TopicSymbolSender, realCreateBody)) {
+		t.Fatal(`Matches accepted a factory ("create","sender") event`)
+	}
+
+	// A pool outside the curated seed, so admission is observable.
+	ann := createEvent(MainnetFactory, TopicCreateLiquidityPool, b64Marshal(t, contractVal(t, makeC(t, 0x77))))
+	if !d.Matches(ann) {
+		t.Fatal("Matches rejected the factory's create announcement")
+	}
+	pool, err := decodeAnnouncedPool(&ann)
+	if err != nil {
+		t.Fatal(err)
+	}
+	swapFromPool := events.Event{Topic: []string{TopicSymbolSwap, TopicSymbolSender}, ContractID: pool}
+	if d.Matches(swapFromPool) {
+		t.Fatal("announced pool matched before its announcement was decoded")
+	}
+	if out, err := d.Decode(ann); err != nil || len(out) != 0 {
+		t.Fatalf("Decode(create) = %v, %v; want no events, no error", out, err)
+	}
+	if !d.Matches(swapFromPool) {
+		t.Fatal("announced pool not admitted after Decode(create)")
+	}
+}
+
+func bufEvent(contract string, idx int) *events.Event {
+	return &events.Event{ContractID: contract, TxHash: "tx", Ledger: 7, EventIndex: idx}
+}
+
+// A second action through the same contract in the same op must not
+// overwrite the first action's filled slot; the open group rotates out.
+func TestBuffer_RotatesOpenGroupOnSecondAction(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	cases := []struct {
+		name  string
+		first []string
+		again string
+		open  func(b *buffer) int
+		step  func(b *buffer, e *events.Event, topic string) (int, error)
+	}{
+		{
+			"provide",
+			[]string{TopicSymbolPLSender, TopicSymbolPLTokenA},
+			TopicSymbolPLSender,
+			func(b *buffer) int { return len(b.pl) },
+			func(b *buffer, e *events.Event, topic string) (int, error) {
+				_, n, err := b.absorbProvideLiquidity(e, topic, now)
+				return n, err
+			},
+		},
+		{
+			"withdraw",
+			[]string{TopicSymbolWLSender, TopicSymbolWLSharesAmount},
+			TopicSymbolWLSender,
+			func(b *buffer) int { return len(b.wl) },
+			func(b *buffer, e *events.Event, topic string) (int, error) {
+				_, n, err := b.absorbWithdrawLiquidity(e, topic, now)
+				return n, err
+			},
+		},
+		{
+			"bond",
+			[]string{TopicSymbolStakeUser, TopicSymbolStakeToken},
+			TopicSymbolStakeUser,
+			func(b *buffer) int { return len(b.bond) },
+			func(b *buffer, e *events.Event, topic string) (int, error) {
+				_, n, err := b.absorbStake(e, topic, now, true)
+				return n, err
+			},
+		},
+		{
+			"withdraw_rewards",
+			[]string{TopicSymbolWRUser},
+			TopicSymbolWRUser,
+			func(b *buffer) int { return len(b.withdrawRewards) },
+			func(b *buffer, e *events.Event, topic string) (int, error) {
+				_, n, err := b.absorbWithdrawRewards(e, topic, now)
+				return n, err
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newBuffer()
+			for i, topic := range tc.first {
+				if n, err := tc.step(b, bufEvent("C", i), topic); err != nil || n != 0 {
+					t.Fatalf("first action field %s: evicted=%d err=%v", topic, n, err)
+				}
+			}
+			// Redelivery of an already-held field (same EventIndex) is not a rotation.
+			if n, err := tc.step(b, bufEvent("C", 0), tc.first[0]); err != nil || n != 0 {
+				t.Fatalf("redelivery: evicted=%d err=%v, want 0", n, err)
+			}
+			n, err := tc.step(b, bufEvent("C", 10), tc.again)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n != 1 {
+				t.Errorf("evicted = %d, want 1 (first action's open group rotated out)", n)
+			}
+			if got := tc.open(b); got != 1 {
+				t.Errorf("open groups = %d, want 1 (fresh generation)", got)
+			}
+		})
+	}
+}
+
+// A late optional auto-unbonded event after the withdraw completed must not
+// open an empty group that later ages out as a false orphan.
+func TestBuffer_LateAutoUnbondedOpensNoGroup(t *testing.T) {
+	b := newBuffer()
+	now := time.Unix(1_700_000_000, 0)
+	for i, topic := range []string{TopicSymbolWLSender, TopicSymbolWLSharesAmount, TopicSymbolWLReturnAmountA, TopicSymbolWLReturnAmountB} {
+		done, _, err := b.absorbWithdrawLiquidity(bufEvent("C", i), topic, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (done != nil) != (i == 3) {
+			t.Fatalf("field %d: completed=%v", i, done != nil)
+		}
+	}
+	if _, _, err := b.absorbWithdrawLiquidity(bufEvent("C", 4), TopicSymbolWLAutoUnbonded, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.wl) != 0 {
+		t.Errorf("open withdraw groups = %d, want 0", len(b.wl))
+	}
+}
+
+// Drain at the end of a bounded stream emits the pre-upgrade 7-field swap
+// that no later event is left to sweep, counts the rest as orphans, and
+// leaves nothing buffered.
+func TestDecoder_Drain_rescuesOpenSwapAndCountsOrphans(t *testing.T) {
+	d := newTestDecoder()
+	sender, sell, buy := makeC(t, 0x10), makeC(t, 0x20), makeC(t, 0x30)
+	zero := i128Body(t, big.NewInt(0))
+	fields := []struct{ topic, body string }{
+		{TopicSymbolSender, addrBody(t, sender)},
+		{TopicSymbolSellToken, addrBody(t, sell)},
+		{TopicSymbolOfferAmount, i128Body(t, big.NewInt(1_000_000))},
+		{TopicSymbolBuyToken, addrBody(t, buy)},
+		{TopicSymbolReturnAmount, i128Body(t, big.NewInt(2_000_000))},
+		{TopicSymbolSpreadAmount, zero},
+		{TopicSymbolReferralFee, zero},
+	}
+	for _, f := range fields {
+		if _, err := d.Decode(makeFieldEventAt(t, f.topic, f.body, "tx-7field", "2026-04-23T12:00:00Z")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range fields[:2] {
+		if _, err := d.Decode(makeFieldEventAt(t, f.topic, f.body, "tx-broken", "2026-04-23T12:00:01Z")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := d.Drain()
+	if len(out) != 1 {
+		t.Fatalf("Drain emitted %d events, want 1 (the 7-field swap)", len(out))
+	}
+	if _, ok := out[0].(TradeEvent); !ok {
+		t.Fatalf("drained event is %T, want TradeEvent", out[0])
+	}
+	if got := d.EvictedOrphans(); got != 1 {
+		t.Errorf("EvictedOrphans = %d, want 1 (the 2-field group)", got)
+	}
+	if again := d.Drain(); len(again) != 0 || d.buf.size() != 0 {
+		t.Errorf("second Drain emitted %d, buffered %d; want empty", len(again), d.buf.size())
+	}
+}
+
+func TestDecoder_ProvideLiquidity_completesOnFifthField(t *testing.T) {
+	restore := installAddressI128Fakes(t)
+	defer restore()
+	d := newTestDecoder()
+
+	fields := []struct{ topic, body string }{
+		{TopicSymbolPLSender, "addr:" + plSender},
+		{TopicSymbolPLTokenA, "addr:" + plTokenA},
+		{TopicSymbolPLTokenAAmt, "i128:1000000000"}, // 100 token_a
+		{TopicSymbolPLTokenB, "addr:" + plTokenB},
+		{TopicSymbolPLTokenBAmt, "i128:50000000"}, // 5 token_b
+	}
+
+	var out []consumer.Event
+	for i, f := range fields {
+		emitted, err := d.Decode(plField(f.topic, f.body, plTxHash))
+		if err != nil {
+			t.Fatalf("field %d (%s): %v", i, f.topic, err)
+		}
+		if i < 4 && len(emitted) != 0 {
+			t.Fatalf("field %d: got %d events, want 0 (still buffering)", i, len(emitted))
+		}
+		if i == 4 {
+			out = emitted
+		}
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1", len(out))
+	}
+	le, ok := out[0].(LiquidityEvent)
+	if !ok {
+		t.Fatalf("expected LiquidityEvent, got %T", out[0])
+	}
+	if le.Change.Action != EventActionProvideLiquidity {
+		t.Errorf("Action = %q, want %q", le.Change.Action, EventActionProvideLiquidity)
+	}
+	if le.Change.Pool != plPool {
+		t.Errorf("Pool = %q, want %q", le.Change.Pool, plPool)
+	}
+	if le.Change.Sender != plSender {
+		t.Errorf("Sender = %q, want %q", le.Change.Sender, plSender)
+	}
+	if le.Change.TokenA != plTokenA || le.Change.TokenB != plTokenB {
+		t.Errorf("tokens = (%q,%q), want (%q,%q)", le.Change.TokenA, le.Change.TokenB, plTokenA, plTokenB)
+	}
+	if le.Change.AmountA.BigInt().Cmp(big.NewInt(1_000_000_000)) != 0 {
+		t.Errorf("AmountA = %s", le.Change.AmountA)
+	}
+	if le.Change.AmountB.BigInt().Cmp(big.NewInt(50_000_000)) != 0 {
+		t.Errorf("AmountB = %s", le.Change.AmountB)
+	}
+}
+
+func TestDecoder_ProvideLiquidity_outOfOrder(t *testing.T) {
+	restore := installAddressI128Fakes(t)
+	defer restore()
+	d := newTestDecoder()
+
+	// Reverse contract emission order — the buffer is order-independent.
+	fields := []struct{ topic, body string }{
+		{TopicSymbolPLTokenBAmt, "i128:50000000"},
+		{TopicSymbolPLTokenB, "addr:" + plTokenB},
+		{TopicSymbolPLTokenAAmt, "i128:1000000000"},
+		{TopicSymbolPLTokenA, "addr:" + plTokenA},
+		{TopicSymbolPLSender, "addr:" + plSender},
+	}
+	var out []consumer.Event
+	for i, f := range fields {
+		emitted, err := d.Decode(plField(f.topic, f.body, plTxHash))
+		if err != nil {
+			t.Fatalf("field %d (%s): %v", i, f.topic, err)
+		}
+		if i == 4 {
+			out = emitted
+		}
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1 after 5th field", len(out))
+	}
+}
+
+// ─── withdraw_liquidity ─────────────────────────────────────────
+
+func TestDecoder_WithdrawLiquidity_completesOnFourthField(t *testing.T) {
+	restore := installAddressI128Fakes(t)
+	defer restore()
+	d := newTestDecoder()
+
+	fields := []struct{ topic, body string }{
+		{TopicSymbolWLSender, "addr:" + plSender},
+		{TopicSymbolWLSharesAmount, "i128:7000000"},
+		{TopicSymbolWLReturnAmountA, "i128:99000000"},
+		{TopicSymbolWLReturnAmountB, "i128:4900000"},
+	}
+	var out []consumer.Event
+	for i, f := range fields {
+		emitted, err := d.Decode(wlField(f.topic, f.body, wlTxHash))
+		if err != nil {
+			t.Fatalf("field %d (%s): %v", i, f.topic, err)
+		}
+		if i < 3 && len(emitted) != 0 {
+			t.Fatalf("field %d: got %d events, want 0 (still buffering)", i, len(emitted))
+		}
+		if i == 3 {
+			out = emitted
+		}
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1", len(out))
+	}
+	le := out[0].(LiquidityEvent)
+	if le.Change.Action != EventActionWithdrawLiquidity {
+		t.Errorf("Action = %q", le.Change.Action)
+	}
+	if le.Change.Pool != wlPool {
+		t.Errorf("Pool = %q, want %q", le.Change.Pool, wlPool)
+	}
+	if le.Change.SharesAmount.BigInt().Cmp(big.NewInt(7_000_000)) != 0 {
+		t.Errorf("SharesAmount = %s", le.Change.SharesAmount)
+	}
+	// Withdraw rows must NOT carry token addresses (contract doesn't emit them).
+	if le.Change.TokenA != "" || le.Change.TokenB != "" {
+		t.Errorf("withdraw token addresses leaked: a=%q b=%q", le.Change.TokenA, le.Change.TokenB)
+	}
+}
+
+// TestDecoder_WithdrawLiquidity_optionalAutoUnbondedIgnored proves
+// the optional 5th event (auto unbonded) is recognised (no
+// ErrUnknownField) but discarded — the withdraw record completes on
+// the 4 required fields regardless of its arrival.
+func TestDecoder_WithdrawLiquidity_optionalAutoUnbondedIgnored(t *testing.T) {
+	restore := installAddressI128Fakes(t)
+	defer restore()
+	d := newTestDecoder()
+
+	fields := []struct{ topic, body string }{
+		{TopicSymbolWLSender, "addr:" + plSender},
+		{TopicSymbolWLAutoUnbonded, "ignored-tuple-body"}, // interleaved — must not break correlation
+		{TopicSymbolWLSharesAmount, "i128:7000000"},
+		{TopicSymbolWLReturnAmountA, "i128:99000000"},
+		{TopicSymbolWLReturnAmountB, "i128:4900000"},
+	}
+	var out []consumer.Event
+	for _, f := range fields {
+		emitted, err := d.Decode(wlField(f.topic, f.body, wlTxHash))
+		if err != nil {
+			t.Fatalf("field %s: %v", f.topic, err)
+		}
+		if len(emitted) > 0 {
+			out = emitted
+		}
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1 (auto unbonded should not block completion)", len(out))
+	}
+}
+
+// ─── bond / unbond ──────────────────────────────────────────────
+
+func TestDecoder_Bond_completesOnThirdField(t *testing.T) {
+	restore := installAddressI128Fakes(t)
+	defer restore()
+	d := newTestDecoder()
+
+	fields := []struct{ topic, body string }{
+		{TopicSymbolStakeUser, "addr:" + stakeUser},
+		{TopicSymbolStakeToken, "addr:" + lpTokenC},
+		{TopicSymbolStakeAmount, "i128:12345678"},
+	}
+	var out []consumer.Event
+	for i, f := range fields {
+		emitted, err := d.Decode(bondField(f.topic, f.body, bondTx))
+		if err != nil {
+			t.Fatalf("field %d: %v", i, err)
+		}
+		if i < 2 && len(emitted) != 0 {
+			t.Fatalf("field %d: got %d events, want 0 (still buffering)", i, len(emitted))
+		}
+		if i == 2 {
+			out = emitted
+		}
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1", len(out))
+	}
+	se := out[0].(StakeEvent)
+	if se.Change.Action != EventActionBond {
+		t.Errorf("Action = %q, want %q", se.Change.Action, EventActionBond)
+	}
+	if se.Change.Contract != stakeC {
+		t.Errorf("Contract = %q", se.Change.Contract)
+	}
+	if se.Change.User != stakeUser || se.Change.LPToken != lpTokenC {
+		t.Errorf("user/token = (%q, %q)", se.Change.User, se.Change.LPToken)
+	}
+	if se.Change.Amount.BigInt().Cmp(big.NewInt(12_345_678)) != 0 {
+		t.Errorf("Amount = %s", se.Change.Amount)
+	}
+}
+
+// TestDecoder_BondAndUnbond_independentBuffers proves bond + unbond
+// from the same (ledger, tx, op) do NOT collide — they use distinct
+// per-action correlation maps. (Phoenix's stake contract uses the
+// same field name `amount` for both, so a single shared map would
+// merge them.)
+func TestDecoder_BondAndUnbond_independentBuffers(t *testing.T) {
+	restore := installAddressI128Fakes(t)
+	defer restore()
+	d := newTestDecoder()
+
+	// Same ledger / tx / op shared across bond + unbond — proves
+	// per-action sharding of the buffer.
+	const sharedTx = "shareeshareeshareeshareeshareeshareeshareeshareeshareesharee123"
+
+	bondFields := []struct{ topic, body string }{
+		{TopicSymbolStakeUser, "addr:" + stakeUser},
+		{TopicSymbolStakeToken, "addr:" + lpTokenC},
+		{TopicSymbolStakeAmount, "i128:1000"},
+	}
+	unbondFields := []struct{ topic, body string }{
+		{TopicSymbolStakeUser, "addr:" + stakeUser},
+		{TopicSymbolStakeToken, "addr:" + lpTokenC},
+		{TopicSymbolStakeAmount, "i128:500"},
+	}
+
+	emit := func(ev events.Event) consumer.Event {
+		out, err := d.Decode(ev)
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(out) == 1 {
+			return out[0]
+		}
+		return nil
+	}
+
+	// Interleave: bond[0], unbond[0], bond[1], unbond[1], bond[2], unbond[2]
+	var bondOut, unbondOut consumer.Event
+	for i := 0; i < 3; i++ {
+		bondEv := bondField(bondFields[i].topic, bondFields[i].body, sharedTx)
+		if v := emit(bondEv); v != nil {
+			bondOut = v
+		}
+		// Force unbond into the SAME (ledger, tx, op) by overriding
+		// — distinct only in the action topic[0]. This is the worst
+		// case for buffer-key collision.
+		unbondEv := unbondField(unbondFields[i].topic, unbondFields[i].body, sharedTx)
+		unbondEv.Ledger = bondEv.Ledger
+		unbondEv.OperationIndex = bondEv.OperationIndex
+		if v := emit(unbondEv); v != nil {
+			unbondOut = v
+		}
+	}
+	if bondOut == nil || unbondOut == nil {
+		t.Fatalf("both should complete: bond=%v unbond=%v", bondOut != nil, unbondOut != nil)
+	}
+	if bondOut.(StakeEvent).Change.Action != EventActionBond {
+		t.Errorf("bondOut.Action = %q", bondOut.(StakeEvent).Change.Action)
+	}
+	if unbondOut.(StakeEvent).Change.Action != EventActionUnbond {
+		t.Errorf("unbondOut.Action = %q", unbondOut.(StakeEvent).Change.Action)
+	}
+	if bondOut.(StakeEvent).Change.Amount.BigInt().Cmp(big.NewInt(1000)) != 0 {
+		t.Errorf("bond amount = %s, want 1000", bondOut.(StakeEvent).Change.Amount)
+	}
+	if unbondOut.(StakeEvent).Change.Amount.BigInt().Cmp(big.NewInt(500)) != 0 {
+		t.Errorf("unbond amount = %s, want 500", unbondOut.(StakeEvent).Change.Amount)
+	}
+}
+
+// ─── Decoder.Matches ────────────────────────────────────────────
+
+func TestDecoder_Matches_allFiveActions(t *testing.T) {
+	d := newTestDecoder()
+	cases := []struct {
+		name  string
+		topic []string
+	}{
+		{"swap", []string{TopicSymbolSwap, TopicSymbolSender}},
+		{"provide_liquidity", []string{TopicSymbolProvideLiquidity, TopicSymbolPLSender}},
+		{"withdraw_liquidity", []string{TopicSymbolWithdrawLiquidity, TopicSymbolWLSender}},
+		{"bond", []string{TopicSymbolBond, TopicSymbolStakeUser}},
+		{"unbond", []string{TopicSymbolUnbond, TopicSymbolStakeUser}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !d.Matches(events.Event{ContractID: plPool, Topic: tc.topic}) {
+				t.Errorf("Matches((%s, …)) = false", tc.name)
+			}
+		})
+	}
+	if d.Matches(events.Event{ContractID: plPool, Topic: []string{"unrelated_action", TopicSymbolSender}}) {
+		t.Error("Matches(unrelated topic[0]) = true")
+	}
+}
+
+// ─── consumer.Event impls ───────────────────────────────────────
+
+// TestBuffer_ProvideLiquidity_backfillOldEventsComplete proves the
+// 5-event reassembly survives a 6-hour-old ClosedAt — the same
+// regression guard the swap path has. Without using the event's own
+// ClosedAt for eviction reference, replaying ancient events would
+// evict the first-absorbed field when the 5th arrived.
+func TestBuffer_ProvideLiquidity_backfillOldEventsComplete(t *testing.T) {
+	restore := installAddressI128Fakes(t)
+	defer restore()
+	d := newTestDecoder()
+
+	old := time.Now().UTC().Add(-6 * time.Hour)
+	fields := []struct{ topic, body string }{
+		{TopicSymbolPLSender, "addr:" + plSender},
+		{TopicSymbolPLTokenA, "addr:" + plTokenA},
+		{TopicSymbolPLTokenAAmt, "i128:1000"},
+		{TopicSymbolPLTokenB, "addr:" + plTokenB},
+		{TopicSymbolPLTokenBAmt, "i128:2000"},
+	}
+	var out []consumer.Event
+	for i, f := range fields {
+		ev := plField(f.topic, f.body, plTxHash)
+		ev.LedgerClosedAt = old.Format(time.RFC3339)
+		emitted, err := d.Decode(ev)
+		if err != nil {
+			t.Fatalf("field %d: %v", i, err)
+		}
+		if len(emitted) > 0 {
+			out = emitted
+		}
+	}
+	if len(out) != 1 {
+		t.Fatal("backfilled 5-event provide failed to complete")
+	}
+}
+
+// TestDecoder_Liquidity_PopulatesEventIndex pins that the completed
+// provide_liquidity / withdraw_liquidity reassembly must carry the
+// FIRST field-event's in-op EventIndex onto the LiquidityChange so two
+// same-(op,action) liquidity actions don't collapse on the
+// phoenix_liquidity PK (migration 0060) via ON CONFLICT.
+func TestDecoder_Liquidity_PopulatesEventIndex(t *testing.T) {
+	restore := installAddressI128Fakes(t)
+	defer restore()
+	d := newTestDecoder()
+
+	fields := []struct{ topic, body string }{
+		{TopicSymbolPLSender, "addr:" + plSender},
+		{TopicSymbolPLTokenA, "addr:" + plTokenA},
+		{TopicSymbolPLTokenAAmt, "i128:1000000000"},
+		{TopicSymbolPLTokenB, "addr:" + plTokenB},
+		{TopicSymbolPLTokenBAmt, "i128:50000000"},
+	}
+	var out []consumer.Event
+	for i, f := range fields {
+		ev := plField(f.topic, f.body, plTxHash)
+		// The buffer stamps EventIndex from the FIRST arriving field —
+		// give the rest distinct indices to prove only the first wins.
+		ev.EventIndex = 11 + i
+		emitted, err := d.Decode(ev)
+		if err != nil {
+			t.Fatalf("field %d (%s): %v", i, f.topic, err)
+		}
+		if i == 4 {
+			out = emitted
+		}
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1", len(out))
+	}
+	le := out[0].(LiquidityEvent)
+	if le.Change.EventIndex != 11 {
+		t.Errorf("EventIndex = %d, want 11 (first field-event's index, F-1324)", le.Change.EventIndex)
+	}
+}
+
+// TestDecoder_Stake_PopulatesEventIndex pins the same for the stake path
+// (phoenix_stake_events PK, migration 0060): the bond / unbond
+// reassembly carries the first field-event's in-op EventIndex.
+func TestDecoder_Stake_PopulatesEventIndex(t *testing.T) {
+	restore := installAddressI128Fakes(t)
+	defer restore()
+	d := newTestDecoder()
+
+	fields := []struct{ topic, body string }{
+		{TopicSymbolStakeUser, "addr:" + plSender},
+		{TopicSymbolStakeToken, "addr:" + plTokenA},
+		{TopicSymbolStakeAmount, "i128:7000000"},
+	}
+	var out []consumer.Event
+	for i, f := range fields {
+		ev := bondField(f.topic, f.body, bondTx)
+		ev.EventIndex = 20 + i
+		emitted, err := d.Decode(ev)
+		if err != nil {
+			t.Fatalf("field %d (%s): %v", i, f.topic, err)
+		}
+		if i == 2 {
+			out = emitted
+		}
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1", len(out))
+	}
+	se := out[0].(StakeEvent)
+	if se.Change.EventIndex != 20 {
+		t.Errorf("EventIndex = %d, want 20 (first field-event's index, F-1324)", se.Change.EventIndex)
+	}
+}
+
+// TestDecoder_WithdrawLiquidity_twoInOneOp mirrors ledger 63767534: one op
+// withdraws twice from the same pool (field events 6-9 and 14-17). Both
+// actions must emit, each keyed by its own first EventIndex.
+func TestDecoder_WithdrawLiquidity_twoInOneOp(t *testing.T) {
+	restore := installAddressI128Fakes(t)
+	defer restore()
+	d := newTestDecoder()
+
+	fields := []struct{ topic, body string }{
+		{TopicSymbolWLSender, "addr:" + plSender},
+		{TopicSymbolWLSharesAmount, "i128:7000000"},
+		{TopicSymbolWLReturnAmountA, "i128:99000000"},
+		{TopicSymbolWLReturnAmountB, "i128:4900000"},
+	}
+	var got []int
+	for _, start := range []int{6, 14} {
+		for i, f := range fields {
+			ev := wlField(f.topic, f.body, wlTxHash)
+			ev.EventIndex = start + i
+			emitted, err := d.Decode(ev)
+			if err != nil {
+				t.Fatalf("event %d (%s): %v", ev.EventIndex, f.topic, err)
+			}
+			for _, e := range emitted {
+				got = append(got, e.(LiquidityEvent).Change.EventIndex)
+			}
+		}
+	}
+	if len(got) != 2 || got[0] != 6 || got[1] != 14 {
+		t.Fatalf("emitted EventIndex = %v, want [6 14]", got)
+	}
+}
+
+// TestDecoder_MapSwap_gatedAndDecoded proves the Map-schema swap flows
+// through the production Decode seam: a single event from the gated
+// CBENABXP pool emits one TradeEvent immediately (no buffer), and the
+// same event from an unregistered contract is NOT attributed
+// (ADR-0035/0040 gating).
+func TestDecoder_MapSwap_gatedAndDecoded(t *testing.T) {
+	d := NewDecoder() // production gate: curated mainnet set incl. MainnetMapPools
+	ev := mapSwapEvent()
+
+	if !d.Matches(ev) {
+		t.Fatal("gated Map-schema pool CBENABXP should Match")
+	}
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d events, want 1 (Map swap is a single event)", len(out))
+	}
+	te, ok := out[0].(TradeEvent)
+	if !ok {
+		t.Fatalf("got %T, want TradeEvent", out[0])
+	}
+	if te.Trade.QuoteAmount.BigInt().Int64() != mapSwapReturn {
+		t.Errorf("QuoteAmount = %s, want %d", te.Trade.QuoteAmount, mapSwapReturn)
+	}
+
+	// Same event shape from a foreign contract → not attributed.
+	foreign := ev
+	foreign.ContractID = "CFOREIGNFAKEPOOL0000000000000000000000000000000000000000"
+	if d.Matches(foreign) {
+		t.Error("foreign contract emitting the Map swap shape must NOT match (CS-026 gating)")
+	}
+}
+
+func TestDecoder_MapProvideLiquidity_realFixture(t *testing.T) {
+	c := decodeLiquidityThroughDecoder(t, mapProvideEvent())
+	if c.Action != EventActionProvideLiquidity || c.Pool != cbenabxpPool {
+		t.Errorf("action/pool = %q/%q", c.Action, c.Pool)
+	}
+	if c.Ledger != 63295145 || c.OpIndex != 0 || c.EventIndex != 4 {
+		t.Errorf("ledger/op/event = %d/%d/%d", c.Ledger, c.OpIndex, c.EventIndex)
+	}
+	if c.Sender != mapLiquiditySender {
+		t.Errorf("Sender = %q, want %q", c.Sender, mapLiquiditySender)
+	}
+	if c.TokenA != mapSwapBuyToken || c.TokenB != mapSwapSellToken {
+		t.Errorf("tokens = %s / %s, want %s / %s", c.TokenA, c.TokenB, mapSwapBuyToken, mapSwapSellToken)
+	}
+	if c.AmountA.String() != "27300000000" || c.AmountB.String() != "5439074397" {
+		t.Errorf("amounts = %s / %s, want 27300000000 / 5439074397", c.AmountA, c.AmountB)
+	}
+	if !c.SharesAmount.IsZero() {
+		t.Errorf("SharesAmount = %s, want zero on provide", c.SharesAmount)
+	}
+}
+
+func TestDecoder_MapWithdrawLiquidity_realFixture(t *testing.T) {
+	c := decodeLiquidityThroughDecoder(t, mapWithdrawEvent())
+	if c.Action != EventActionWithdrawLiquidity || c.Pool != cbenabxpPool {
+		t.Errorf("action/pool = %q/%q", c.Action, c.Pool)
+	}
+	if c.Ledger != 63295946 || c.OpIndex != 0 || c.EventIndex != 4 {
+		t.Errorf("ledger/op/event = %d/%d/%d", c.Ledger, c.OpIndex, c.EventIndex)
+	}
+	if c.Sender != mapLiquiditySender {
+		t.Errorf("Sender = %q, want %q", c.Sender, mapLiquiditySender)
+	}
+	if c.AmountA.String() != "1120182615" || c.AmountB.String() != "223177896" {
+		t.Errorf("amounts = %s / %s, want 1120182615 / 223177896", c.AmountA, c.AmountB)
+	}
+	if c.SharesAmount.String() != "500000000" {
+		t.Errorf("SharesAmount = %s, want 500000000", c.SharesAmount)
+	}
+	if c.TokenA != "" || c.TokenB != "" {
+		t.Errorf("tokens = %q / %q, want empty (withdraw carries no token addresses)", c.TokenA, c.TokenB)
+	}
+}
+
+// TestDecoder_WithdrawRewards_EndToEnd feeds the two real field-events
+// through the production Decoder (Matches + Decode), confirming the
+// gated stake contract set is honored and a StakeEvent is emitted only
+// once both fields have arrived.
+func TestDecoder_WithdrawRewards_EndToEnd(t *testing.T) {
+	t.Parallel()
+	d := NewDecoder()
+	base := events.Event{
+		ContractID:     goldenStakeContract,
+		Ledger:         53_589_647,
+		LedgerClosedAt: "2026-05-15T00:05:00Z",
+		TxHash:         "0cfec2141ee42c35ae593169c09b8951f97b31079d4e394d8979b5cd3622dd6e",
+		OperationIndex: 0,
+	}
+
+	userEv := base
+	userEv.EventIndex = 0
+	userEv.Topic = []string{"AAAADgAAABB3aXRoZHJhd19yZXdhcmRz", "AAAADgAAAAR1c2Vy"}
+	userEv.Value = "AAAAEgAAAAAAAAAA71OhKQPURFdpcB0NxOSVKbWRaAv+2hgUeSdB9OMczcA="
+
+	tokenEv := base
+	tokenEv.EventIndex = 1
+	tokenEv.Topic = []string{"AAAADgAAABB3aXRoZHJhd19yZXdhcmRz", "AAAADgAAAAxyZXdhcmRfdG9rZW4="}
+	tokenEv.Value = "AAAAEgAAAAFz9nQ7xy1g57dXaZEAriZ1tUpZvggsX2i7PE0ly4C7oQ=="
+
+	if !d.Matches(userEv) {
+		t.Fatal("Matches(user field) = false, want true (gated stake contract)")
+	}
+	out, err := d.Decode(userEv)
+	if err != nil {
+		t.Fatalf("Decode(user field): %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("Decode(user field) emitted %d events, want 0 (incomplete)", len(out))
+	}
+
+	out, err = d.Decode(tokenEv)
+	if err != nil {
+		t.Fatalf("Decode(reward_token field): %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("Decode(reward_token field) emitted %d events, want 1", len(out))
+	}
+	se, ok := out[0].(StakeEvent)
+	if !ok {
+		t.Fatalf("out[0] is %T, want StakeEvent", out[0])
+	}
+	if se.Change.Action != EventActionWithdrawRewards {
+		t.Errorf("Action=%q want %q", se.Change.Action, EventActionWithdrawRewards)
+	}
+}
+
+func TestDecoder_NameMatchesSourceName(t *testing.T) {
+	if got := newTestDecoder().Name(); got != SourceName {
+		t.Errorf("Name() = %q, want %q", got, SourceName)
 	}
 }

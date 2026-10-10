@@ -456,12 +456,6 @@ func TestDecodeSwap_incomplete(t *testing.T) {
 	}
 }
 
-func TestDecoder_NameMatchesSourceName(t *testing.T) {
-	if got := newTestDecoder().Name(); got != SourceName {
-		t.Errorf("Name() = %q, want %q", got, SourceName)
-	}
-}
-
 func TestBufferBackfillOldEventsComplete(t *testing.T) {
 	// Regression: the planned backfill path replays ancient events;
 	// without using the event's own ClosedAt as the eviction

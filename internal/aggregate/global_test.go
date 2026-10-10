@@ -269,73 +269,6 @@ func sourceSet(rows []canonical.OracleUpdate) map[string]bool {
 	return m
 }
 
-func TestRejectAggregatorOutliers(t *testing.T) {
-	t.Run("drops_divergent_source_MAD_positive", func(t *testing.T) {
-		// Two agreeing-but-not-identical sources + one 2x outlier. The
-		// MAD is positive here (agreeing sources differ slightly), so
-		// this exercises the MAD-band path (not the MAD==0 path).
-		rows := []canonical.OracleUpdate{
-			mkAggRow("cg", 10000, 2),  // 100.00
-			mkAggRow("cmc", 10500, 2), // 105.00 (agrees, ~5%)
-			mkAggRow("cc", 21000, 2),  // 210.00 (2x-off outlier)
-		}
-		kept := rejectAggregatorOutliers(rows)
-		got := sourceSet(kept)
-		if len(kept) != 2 || got["cc"] {
-			t.Fatalf("kept = %v, want the 2 agreeing sources (cg, cmc), outlier cc dropped", got)
-		}
-	})
-
-	t.Run("all_agree_no_op", func(t *testing.T) {
-		rows := []canonical.OracleUpdate{
-			mkAggRow("cg", 10000, 2), mkAggRow("cmc", 10010, 2), mkAggRow("cc", 9990, 2),
-		}
-		if kept := rejectAggregatorOutliers(rows); len(kept) != 3 {
-			t.Fatalf("tightly-agreeing sources must all survive; kept %d/3", len(kept))
-		}
-	})
-
-	t.Run("two_sources_passthrough", func(t *testing.T) {
-		// Only 2 sources — no majority to define a consensus, so even a
-		// 2x gap is passed through unchanged (either could be right).
-		rows := []canonical.OracleUpdate{
-			mkAggRow("cg", 10000, 2), mkAggRow("cmc", 20000, 2),
-		}
-		if kept := rejectAggregatorOutliers(rows); len(kept) != 2 {
-			t.Fatalf("2-source input must pass through unchanged; kept %d/2", len(kept))
-		}
-	})
-
-	t.Run("always_keeps_at_least_one", func(t *testing.T) {
-		// A pathological 3-way split (1, 1000, 1000000 — a 1000x low
-		// print and a 1000x high print either side of the median) still
-		// yields a non-empty survivor set (the median centre is always
-		// a survivor), AND the survivor set must actually
-		// exclude both divergent prints, not just be non-empty: a
-		// downward-blind band would let the 1000x-low print "a" survive
-		// alongside the median while only trimming the high side, which
-		// `len(kept) == 0` can never distinguish from the correct
-		// symmetric reject.
-		rows := []canonical.OracleUpdate{
-			mkAggRow("a", 100, 2), mkAggRow("b", 100000, 2), mkAggRow("c", 100000000, 2),
-		}
-		kept := rejectAggregatorOutliers(rows)
-		if len(kept) == 0 {
-			t.Fatal("rejectAggregatorOutliers must never fail closed to zero survivors")
-		}
-		got := sourceSet(kept)
-		if got["a"] {
-			t.Errorf("kept = %v, want the 1000x-low print (a) dropped along with the 1000x-high print (c)", got)
-		}
-		if got["c"] {
-			t.Errorf("kept = %v, want the 1000x-high print (c) dropped", got)
-		}
-		if !got["b"] {
-			t.Errorf("kept = %v, want the median source (b) to survive", got)
-		}
-	})
-}
-
 func TestAverageAggregatorPrices_RejectsZeroPrices(t *testing.T) {
 	zero := big.NewInt(0)
 	rows := []canonical.OracleUpdate{
@@ -711,5 +644,152 @@ func TestComputeGlobalPrice_StaleVWAPIsLastResort(t *testing.T) {
 	}
 	if reader.triCalls == 0 {
 		t.Error("the triangulated tier must be tried before a stale VWAP is served")
+	}
+}
+
+const (
+	thinPoolAquaIssuer  = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+	thinPoolAquaClassic = "AQUA-" + thinPoolAquaIssuer
+	thinPoolAquaSAC     = "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK"
+)
+
+func installThinPoolRegistry(t *testing.T) canonical.Asset {
+	t.Helper()
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{
+		thinPoolAquaSAC: "AQUA:" + thinPoolAquaIssuer,
+	})
+	if err != nil {
+		t.Fatalf("NewAliasRegistry: %v", err)
+	}
+	canonical.InstallAliasRegistry(reg)
+	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })
+	classic, err := canonical.NewClassicAsset("AQUA", thinPoolAquaIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	return classic
+}
+
+func assertVWAPCalls(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("vwap query order = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("vwap query[%d] = %q, want %q (full order %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+// TestComputeGlobalPrice_VWAPTierConfiguredWrapperSACLast: a configured
+// classic↔SAC family walks classic FIRST. When the classic book clears
+// the trade-count floor the SAC pool is never queried — the tier has no
+// freshness preference, so a quiet-but-deep classic bucket beats a fresh
+// thin pool by ORDER alone — and when the classic misses the SAC form is
+// reached, second, so a Soroban-only market still prices.
+func TestComputeGlobalPrice_VWAPTierConfiguredWrapperSACLast(t *testing.T) {
+	classic := installThinPoolRegistry(t)
+	quote, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("fiat: %v", err)
+	}
+
+	// (1) the classic book has depth — the pool must not be consulted,
+	// however many trades it claims.
+	deep := &aliasAwareReader{byBase: map[string]int64{
+		thinPoolAquaClassic: 50,
+		thinPoolAquaSAC:     9_999,
+	}}
+	res, err := ComputeGlobalPrice(context.Background(), classic, quote, deep, DefaultGlobalPriceOptions())
+	if err != nil {
+		t.Fatalf("ComputeGlobalPrice (deep classic): %v", err)
+	}
+	if res.Authority != AuthorityVWAPNative || res.TradeCount != 50 {
+		t.Errorf("authority/trade_count = %q/%d, want vwap_native/50 (the classic book, not the SAC pool)", res.Authority, res.TradeCount)
+	}
+	assertVWAPCalls(t, deep.vwapCalls, []string{thinPoolAquaClassic})
+
+	// (2) the classic form misses — the SAC form is the last resort and
+	// is reached, in second position.
+	sacOnly := &aliasAwareReader{byBase: map[string]int64{thinPoolAquaSAC: 12}}
+	res, err = ComputeGlobalPrice(context.Background(), classic, quote, sacOnly, DefaultGlobalPriceOptions())
+	if err != nil {
+		t.Fatalf("ComputeGlobalPrice (SAC only): %v", err)
+	}
+	if res.Authority != AuthorityVWAPNative || res.TradeCount != 12 {
+		t.Errorf("authority/trade_count = %q/%d, want vwap_native/12", res.Authority, res.TradeCount)
+	}
+	assertVWAPCalls(t, sacOnly.vwapCalls, []string{thinPoolAquaClassic, thinPoolAquaSAC})
+}
+
+// TestComputeGlobalPrice_VWAPTierBelowFloorSACDoesNotRescue: a classic
+// bucket UNDER the trade-count floor falls through to the SAC form — the
+// floor is per-form, and the SAC pool can then answer. That is the one
+// arrangement in which a thin pool prices a wrapped classic on this tier,
+// and it is bounded by the same floor: the pool must itself clear
+// VWAPMinTradeCount, and the reader behind it (globalPriceReader in the
+// API binary) withholds the pair when the alias-union market is below the
+// substance floor. Pinned so the boundary is explicit rather than
+// implied.
+func TestComputeGlobalPrice_VWAPTierBelowFloorSACDoesNotRescue(t *testing.T) {
+	classic := installThinPoolRegistry(t)
+	quote, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("fiat: %v", err)
+	}
+	opts := DefaultGlobalPriceOptions() // VWAPMinTradeCount = 5
+
+	// Classic under the floor, SAC also under the floor: NO tier-1 price.
+	both := &aliasAwareReader{byBase: map[string]int64{
+		thinPoolAquaClassic: 2,
+		thinPoolAquaSAC:     3,
+	}}
+	if _, err := ComputeGlobalPrice(context.Background(), classic, quote, both, opts); err == nil {
+		t.Errorf("ComputeGlobalPrice served a tier-1 price from two sub-floor buckets; want ErrNoPrice")
+	}
+	assertVWAPCalls(t, both.vwapCalls, []string{thinPoolAquaClassic, thinPoolAquaSAC})
+}
+
+func TestComputeGlobalPrice_VWAPTierAcceptsExactlyMinTradeCount(t *testing.T) {
+	base, quote := usdcUSDPair(t)
+	opts := DefaultGlobalPriceOptions()
+	r := &stubGlobalReader{}
+	r.vwap.price, r.vwap.ok, r.vwap.tradeCount = "1.0", true, opts.VWAPMinTradeCount
+	got, err := ComputeGlobalPrice(context.Background(), base, quote, r, opts)
+	if err != nil || got.Authority != AuthorityVWAPNative {
+		t.Fatalf("tradeCount == floor: (%+v, %v), want the VWAP tier", got, err)
+	}
+}
+
+// TestComputeGlobalPrice_AggregatorRejectsDivergentSource is the
+// divergent-source proof: averaging the global Tier-2 headline's aggregator
+// sources with a PLAIN MEAN lets a single 2x-off print drag the
+// served price ~33%. A median+MAD filter drops the divergent
+// print and serves the consensus of the two agreeing sources.
+func TestComputeGlobalPrice_AggregatorRejectsDivergentSource(t *testing.T) {
+	reader := &stubGlobalReader{}
+	reader.vwap.ok = false // force the aggregator tier
+	reader.agg.rows = []canonical.OracleUpdate{
+		mkAggRow("coingecko", 10000, 2),     // 100.00
+		mkAggRow("coinmarketcap", 10020, 2), // 100.20 (agrees)
+		mkAggRow("cryptocompare", 20000, 2), // 200.00 (2x-off outlier)
+	}
+	base, quote := usdcUSDPair(t)
+	opts := DefaultGlobalPriceOptions()
+	opts.AggregatorSources = []string{"coingecko", "coinmarketcap", "cryptocompare"}
+
+	res, err := ComputeGlobalPrice(context.Background(), base, quote, reader, opts)
+	if err != nil {
+		t.Fatalf("ComputeGlobalPrice: %v", err)
+	}
+	// Plain mean = (100.00 + 100.20 + 200.00)/3 = 133.40 — one
+	// bad print moving the headline ~33%. Robust =
+	// (100.00 + 100.20)/2 = 100.10.
+	if res.Price != "100.10000000000000" {
+		t.Fatalf("served price = %q, want 100.10000000000000 (consensus of the two agreeing sources, not the 133.40 inflated mean)", res.Price)
+	}
+	if len(res.Sources) != 2 {
+		t.Fatalf("contributing sources = %v, want 2 (the 200.00 outlier dropped)", res.Sources)
 	}
 }

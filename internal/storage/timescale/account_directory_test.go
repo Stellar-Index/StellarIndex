@@ -189,3 +189,138 @@ func TestDirectoryChurn_BoundsUnflagged(t *testing.T) {
 		t.Fatalf("ordinary churn refused: %v", err)
 	}
 }
+
+// TestDirectoryChurnLimit_Ceiling pins the arithmetic behind the sync
+// refusal: 5 % of the held rows, never below the floor, unbounded
+// for a source's first sync and for the operator's explicit opt-in.
+// The refusal itself runs against Postgres in
+// test/integration/pg_accounts_test.go.
+func TestDirectoryChurnLimit_Ceiling(t *testing.T) {
+	cases := []struct {
+		name     string
+		limit    DirectoryChurnLimit
+		existing int64
+		want     int64
+		bounded  bool
+	}{
+		{"default over the live table", DefaultDirectoryChurnLimit, 18500, 925, true},
+		{"default rounds up", DefaultDirectoryChurnLimit, 18501, 926, true},
+		{"floor holds a small table open", DefaultDirectoryChurnLimit, 2, 100, true},
+		{"floor is the minimum, not an offset", DefaultDirectoryChurnLimit, 2000, 100, true},
+		{"first sync is unbounded", DefaultDirectoryChurnLimit, 0, 0, false},
+		{"operator opt-in is unbounded", DirectoryChurnUnbounded, 18500, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, bounded := tc.limit.ceiling(tc.existing)
+			if bounded != tc.bounded || got != tc.want {
+				t.Fatalf("ceiling(%d) = (%d, %v), want (%d, %v)", tc.existing, got, bounded, tc.want, tc.bounded)
+			}
+		})
+	}
+}
+
+// TestDirectoryChurn_UnflagCeilingIsSizedOnTheFlaggedSet: the un-flag
+// cap is a fraction of the addresses flagged before the sync, not of
+// every row the source holds. Flagged rows are a minority, so a
+// row-sized cap (925 on the live table) admitted clearing almost the
+// whole flagged set in one run.
+func TestDirectoryChurn_UnflagCeilingIsSizedOnTheFlaggedSet(t *testing.T) {
+	cases := []struct {
+		name      string
+		rows      int64
+		flagged   int
+		unflagged int64
+		refused   bool
+	}{
+		{"row-sized cap no longer admits clearing the set", 18500, 1000, 925, true},
+		{"one over 5 % of the flagged set", 18500, 1000, 51, true},
+		{"5 % of the flagged set", 18500, 1000, 50, false},
+		{"floor holds a small flagged set open", 18500, 40, 10, false},
+		{"floor is the minimum, not an offset", 18500, 40, 11, true},
+		{"whole small flagged set", 18500, 40, 40, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before := &directoryChurn{rows: tc.rows, flagged: map[string]struct{}{}}
+			for i := range tc.flagged {
+				before.flagged[fmt.Sprintf("G%055d", i)] = struct{}{}
+			}
+			err := before.check(DefaultDirectoryChurnLimit, DirectorySyncResult{Unflagged: tc.unflagged})
+			if got := errors.Is(err, ErrDirectoryChurnExceeded); got != tc.refused {
+				t.Fatalf("%d of %d flagged un-flagged: err = %v, refused = %v, want %v", tc.unflagged, tc.flagged, err, got, tc.refused)
+			}
+			if err := before.check(DirectoryChurnUnbounded, DirectorySyncResult{Unflagged: tc.unflagged}); err != nil {
+				t.Fatalf("-accept-churn refused %d un-flags: %v", tc.unflagged, err)
+			}
+		})
+	}
+}
+
+func TestDirectoryChurnLimit_UnflagCeiling(t *testing.T) {
+	if got, ok := DefaultDirectoryChurnLimit.unflagCeiling(1001); !ok || got != 51 {
+		t.Fatalf("unflagCeiling(1001) = (%d, %v), want (51, true): rounds up", got, ok)
+	}
+	if _, ok := DefaultDirectoryChurnLimit.unflagCeiling(0); ok {
+		t.Fatal("unflagCeiling(0) bounded, want unbounded: nothing flagged, nothing to clear")
+	}
+	if _, ok := DirectoryChurnUnbounded.unflagCeiling(1000); ok {
+		t.Fatal("DirectoryChurnUnbounded.unflagCeiling bounded, want unbounded")
+	}
+}
+
+// TestReplaceDirectoryWithin_RefusesBeforeTheDB — the argument checks
+// run before any DB call (s.db is nil: reaching one would panic), for
+// the bounded entry point exactly as for ReplaceDirectory.
+func TestReplaceDirectoryWithin_RefusesBeforeTheDB(t *testing.T) {
+	s := &Store{}
+	ctx := t.Context()
+	if _, err := s.ReplaceDirectoryWithin(ctx, "stellar-expert", nil, DirectoryChurnUnbounded); err == nil {
+		t.Fatal("ReplaceDirectoryWithin(empty) = nil error, want refusal")
+	}
+	if _, err := s.ReplaceDirectoryWithin(ctx, DirectoryOperatorOverrideSource, directoryEntriesN(1), DirectoryChurnUnbounded); err == nil {
+		t.Fatal("ReplaceDirectoryWithin(operator-override source) = nil error, want refusal")
+	}
+}
+
+// TestBuildDirectoryUpsert_ConflictArmIsOwnershipScoped — the conflict
+// arm must update only rows the syncing source already OWNS.
+//
+// Two things broke when it did not. Migration 0136 promises the table is
+// "scoped by `source` so a future second directory source can coexist
+// without the syncs deleting each other's rows", and an unconditional
+// `source = EXCLUDED.source` makes every sync steal every shared address
+// from the other. And with `source` rewritten there is no durable
+// operator override for a false-positive scam flag at all: a hand-held
+// correction is adopted into the upstream snapshot and overwritten by
+// the next daily run, while the issuer's price stays withheld.
+func TestBuildDirectoryUpsert_ConflictArmIsOwnershipScoped(t *testing.T) {
+	q, _ := buildDirectoryUpsert(directoryEntriesN(2), "stellar-expert")
+
+	if !strings.Contains(q, "WHERE account_directory.source = EXCLUDED.source") {
+		t.Errorf("conflict arm is not ownership-scoped — a sync would overwrite rows another source owns:\n%s", q)
+	}
+	// `source` must never appear in the SET list: the WHERE already pins
+	// it equal, and rewriting it is exactly how a row changed hands.
+	// EXCLUDED.source may therefore be referenced exactly once, by the
+	// guard.
+	if got := strings.Count(q, "EXCLUDED.source"); got != 1 {
+		t.Errorf("EXCLUDED.source referenced %d times, want 1 (the ownership guard only):\n%s", got, q)
+	}
+}
+
+// TestReplaceDirectory_RefusesReservedOverrideSource — a sync running as
+// the operator source would adopt every override into its snapshot and
+// then prune the ones that snapshot omits, deleting the corrections the
+// source exists to protect. Must refuse before touching the DB (s.db is
+// nil here, so a DB call would panic — reaching the guard proves order).
+func TestReplaceDirectory_RefusesReservedOverrideSource(t *testing.T) {
+	s := &Store{}
+	_, _, err := s.ReplaceDirectory(context.Background(), DirectoryOperatorOverrideSource, directoryEntriesN(1))
+	if err == nil {
+		t.Fatal("ReplaceDirectory(operator-override source) = nil error, want refusal")
+	}
+	if !strings.Contains(err.Error(), DirectoryOperatorOverrideSource) {
+		t.Errorf("error %q does not name the reserved source", err)
+	}
+}

@@ -82,3 +82,14 @@ func isIntLit(e ast.Expr, v string) bool {
 	lit, ok := e.(*ast.BasicLit)
 	return ok && lit.Kind == token.INT && lit.Value == v
 }
+
+func TestFilterFreshAggregatorRows_ZeroMaxAgeKeepsEverything(t *testing.T) {
+	old := mkAggRow("a", 1, 2)
+	old.Timestamp = time.Unix(0, 0)
+	if got := filterFreshAggregatorRows([]canonical.OracleUpdate{old}, 0); len(got) != 1 {
+		t.Fatalf("maxAge 0 must not filter; kept %d/1", len(got))
+	}
+	if got := filterFreshAggregatorRows([]canonical.OracleUpdate{old}, time.Hour); len(got) != 0 {
+		t.Fatalf("a 1970 row must be stale at maxAge 1h; kept %d/1", len(got))
+	}
+}
