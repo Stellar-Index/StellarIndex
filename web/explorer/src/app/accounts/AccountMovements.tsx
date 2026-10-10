@@ -24,12 +24,11 @@ import {
 import { apiGet, asExample } from '@/api/client';
 import { useLedgerFollow } from '@/lib/live/hooks';
 import type { components } from '@/api/types';
-import { formatBaseUnits } from '@/lib/format';
+import { formatBaseUnits, formatUnitsReadable } from '@/lib/format';
 import {
   type Envelope,
   formatTimestamp,
   relativeAge,
-  stroopsToXlm,
 } from '../explorer-shared';
 
 type AccountMovementsResp = components['schemas']['AccountMovements'];
@@ -523,6 +522,5 @@ export function formatMovementAmount(
   decimals: number | null | undefined,
 ): string {
   if (decimals == null) return `${formatBaseUnits(amount, 0)} base units`;
-  if (decimals === 7) return stroopsToXlm(amount);
-  return formatBaseUnits(amount, decimals, Math.min(decimals, 7));
+  return formatUnitsReadable(amount, decimals);
 }

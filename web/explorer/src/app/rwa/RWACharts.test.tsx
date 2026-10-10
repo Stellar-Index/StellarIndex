@@ -32,7 +32,8 @@ describe('ShareBars', () => {
         ]}
       />,
     );
-    expect(screen.getByText('$9,007,199,254,740,993')).toBeInTheDocument();
+    expect(screen.getByText('$9007.2T')).toBeInTheDocument();
+    expect(screen.getByTitle('$9007199254740993.01')).toBeInTheDocument();
   });
 });
 

@@ -7,22 +7,14 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import type { components } from '@/api/types';
-import { formatRelative } from '@/lib/format';
+import { formatReadable, formatRelative } from '@/lib/format';
 import { RoutedVolumeBars } from './RoutedVolumeBars';
 
 type AggregatorRow = components['schemas']['AggregatorRow'];
 
-const usdFmt = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 0,
-});
-
 function fmtVolume(v: string | null): string {
   if (v === null) return '—';
-  const n = Number(v);
-  if (!Number.isFinite(n)) return v;
-  return usdFmt.format(n);
+  return formatReadable(v, true) ?? v;
 }
 
 /**

@@ -11,8 +11,8 @@ describe('formatMovementAmount', () => {
     expect(formatMovementAmount('2500000', 6)).toBe('2.5');
   });
 
-  it('keeps the stroop rendering for 7-decimal rows', () => {
-    expect(formatMovementAmount('12345678', 7)).toBe('1.2345678');
+  it('rounds a 7-decimal row for reading', () => {
+    expect(formatMovementAmount('12345678', 7)).toBe('1.23');
   });
 
   it('shows labelled base units when the scale is unknown', () => {
