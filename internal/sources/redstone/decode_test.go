@@ -17,25 +17,8 @@ import (
 
 // Build helpers ─────────────────────────────────────────────────
 
-// encodeAddressArg builds the base64 SCVal::Address form of the
-// relayer G-strkey — what the dispatcher would hand us in OpArgs[0].
-func encodeAddressArg(t *testing.T, gStrkey string) string {
+func marshalB64(t *testing.T, sv xdr.ScVal) string {
 	t.Helper()
-	raw, err := strkey.Decode(strkey.VersionByteAccountID, gStrkey)
-	if err != nil {
-		t.Fatalf("decode strkey: %v", err)
-	}
-	var pub xdr.Uint256
-	copy(pub[:], raw)
-	aid := xdr.AccountId{
-		Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
-		Ed25519: &pub,
-	}
-	addr := xdr.ScAddress{
-		Type:      xdr.ScAddressTypeScAddressTypeAccount,
-		AccountId: &aid,
-	}
-	sv := xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &addr}
 	b, err := sv.MarshalBinary()
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -43,8 +26,43 @@ func encodeAddressArg(t *testing.T, gStrkey string) string {
 	return base64.StdEncoding.EncodeToString(b)
 }
 
-// encodeStringVecArg builds the base64 SCVal::Vec<String> that the
-// write_prices op arg feed_ids comes in as.
+func addressScVal(t *testing.T, gStrkey string) xdr.ScVal {
+	t.Helper()
+	raw, err := strkey.Decode(strkey.VersionByteAccountID, gStrkey)
+	if err != nil {
+		t.Fatalf("decode strkey: %v", err)
+	}
+	var pub xdr.Uint256
+	copy(pub[:], raw)
+	aid := xdr.AccountId{Type: xdr.PublicKeyTypePublicKeyTypeEd25519, Ed25519: &pub}
+	addr := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: &aid}
+	return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &addr}
+}
+
+// symMap builds an ScVal::Map with symbol keys, in the given order.
+func symMap(keys []string, vals []xdr.ScVal) xdr.ScVal {
+	m := make(xdr.ScMap, len(keys))
+	for i, k := range keys {
+		sym := xdr.ScSymbol(k)
+		m[i] = xdr.ScMapEntry{Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym}, Val: vals[i]}
+	}
+	pm := &m
+	return xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &pm}
+}
+
+func vecScVal(items []xdr.ScVal) xdr.ScVal {
+	vec := xdr.ScVec(items)
+	pvec := &vec
+	return xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &pvec}
+}
+
+// encodeAddressArg is the base64 SCVal::Address OpArgs[0] form of a relayer G-strkey.
+func encodeAddressArg(t *testing.T, gStrkey string) string {
+	t.Helper()
+	return marshalB64(t, addressScVal(t, gStrkey))
+}
+
+// encodeStringVecArg is the base64 SCVal::Vec<String> write_prices feed_ids arg.
 func encodeStringVecArg(t *testing.T, feedIDs []string) string {
 	t.Helper()
 	items := make([]xdr.ScVal, len(feedIDs))
@@ -52,122 +70,54 @@ func encodeStringVecArg(t *testing.T, feedIDs []string) string {
 		s := xdr.ScString(id)
 		items[i] = xdr.ScVal{Type: xdr.ScValTypeScvString, Str: &s}
 	}
-	vec := xdr.ScVec(items)
-	pvec := &vec
-	sv := xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &pvec}
-	b, err := sv.MarshalBinary()
-	if err != nil {
-		t.Fatalf("marshal vec: %v", err)
-	}
-	return base64.StdEncoding.EncodeToString(b)
+	return marshalB64(t, vecScVal(items))
 }
 
-// encodePayloadArg builds the base64 ScBytes we use as args[2]; the
-// decoder doesn't inspect it, so a short sentinel is enough.
+// encodePayloadArg is the base64 ScBytes args[2]; the decoder never inspects it.
 func encodePayloadArg(t *testing.T) string {
 	t.Helper()
 	b := xdr.ScBytes{0xAA, 0xBB}
-	sv := xdr.ScVal{Type: xdr.ScValTypeScvBytes, Bytes: &b}
-	raw, err := sv.MarshalBinary()
-	if err != nil {
-		t.Fatalf("marshal payload: %v", err)
-	}
-	return base64.StdEncoding.EncodeToString(raw)
+	return marshalB64(t, xdr.ScVal{Type: xdr.ScValTypeScvBytes, Bytes: &b})
 }
 
-// encodeWritePricesBody builds the WritePrices event body:
-//
-//	Map { "updater": Address, "updated_feeds": Vec<PriceData> }
-//
-// prices are passed as *big.Int so tests can exercise the U256
-// path (Redstone's canonical scale is 8 decimals; 1.0 at 8 dec = 1e8).
+// encodeWritePricesBody builds the WritePrices event body
+// Map { "updater": Address, "updated_feeds": Vec<PriceData> }; prices are
+// *big.Int to exercise the U256 path (Redstone scale is 8 decimals).
 func encodeWritePricesBody(t *testing.T, updater string, prices []*big.Int, packageTs, writeTs uint64) string {
 	t.Helper()
-	// updater Address
-	raw, err := strkey.Decode(strkey.VersionByteAccountID, updater)
-	if err != nil {
-		t.Fatalf("decode updater: %v", err)
-	}
-	var pub xdr.Uint256
-	copy(pub[:], raw)
-	aid := xdr.AccountId{
-		Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
-		Ed25519: &pub,
-	}
-	addr := xdr.ScAddress{
-		Type:      xdr.ScAddressTypeScAddressTypeAccount,
-		AccountId: &aid,
-	}
-	updaterSv := xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &addr}
-
-	// Vec<PriceData>
 	items := make([]xdr.ScVal, len(prices))
 	for i, p := range prices {
-		priceSv := u256ScVal(t, p)
-		pkgU := xdr.Uint64(packageTs)
-		wrU := xdr.Uint64(writeTs)
-		pkgSv := xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &pkgU}
-		wrSv := xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &wrU}
-
-		pdKeys := []string{"price", "package_timestamp", "write_timestamp"}
-		pdVals := []xdr.ScVal{priceSv, pkgSv, wrSv}
-		m := make(xdr.ScMap, len(pdKeys))
-		for j, k := range pdKeys {
-			sym := xdr.ScSymbol(k)
-			m[j] = xdr.ScMapEntry{
-				Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym},
-				Val: pdVals[j],
-			}
-		}
-		pm := &m
-		items[i] = xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &pm}
+		pkgU, wrU := xdr.Uint64(packageTs), xdr.Uint64(writeTs)
+		items[i] = symMap(
+			[]string{"price", "package_timestamp", "write_timestamp"},
+			[]xdr.ScVal{
+				u256ScVal(t, p),
+				{Type: xdr.ScValTypeScvU64, U64: &pkgU},
+				{Type: xdr.ScValTypeScvU64, U64: &wrU},
+			})
 	}
-	vec := xdr.ScVec(items)
-	pvec := &vec
-	feedsSv := xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &pvec}
-
-	// outer map
-	outerKeys := []string{"updated_feeds", "updater"}
-	outerVals := []xdr.ScVal{feedsSv, updaterSv}
-	outer := make(xdr.ScMap, len(outerKeys))
-	for i, k := range outerKeys {
-		sym := xdr.ScSymbol(k)
-		outer[i] = xdr.ScMapEntry{
-			Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym},
-			Val: outerVals[i],
-		}
-	}
-	pouter := &outer
-	body := xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &pouter}
-	b, err := body.MarshalBinary()
-	if err != nil {
-		t.Fatalf("marshal body: %v", err)
-	}
-	return base64.StdEncoding.EncodeToString(b)
+	return marshalB64(t, symMap(
+		[]string{"updated_feeds", "updater"},
+		[]xdr.ScVal{vecScVal(items), addressScVal(t, updater)}))
 }
 
-// u256ScVal builds an ScVal::U256 from a non-negative *big.Int,
-// splitting into the four 64-bit words the SDK expects.
+// u256ScVal builds an ScVal::U256 from a non-negative *big.Int.
 func u256ScVal(t *testing.T, n *big.Int) xdr.ScVal {
 	t.Helper()
 	if n.Sign() < 0 {
 		t.Fatalf("u256 does not accept negative: %s", n)
 	}
-	buf := n.Bytes() // big-endian, no leading zeros
+	buf := n.Bytes()
 	if len(buf) > 32 {
 		t.Fatalf("value exceeds 256 bits: %s", n)
 	}
 	padded := make([]byte, 32)
 	copy(padded[32-len(buf):], buf)
-	hiHi := beUint64(padded[0:8])
-	hiLo := beUint64(padded[8:16])
-	loHi := beUint64(padded[16:24])
-	loLo := beUint64(padded[24:32])
 	parts := xdr.UInt256Parts{
-		HiHi: xdr.Uint64(hiHi),
-		HiLo: xdr.Uint64(hiLo),
-		LoHi: xdr.Uint64(loHi),
-		LoLo: xdr.Uint64(loLo),
+		HiHi: xdr.Uint64(beUint64(padded[0:8])),
+		HiLo: xdr.Uint64(beUint64(padded[8:16])),
+		LoHi: xdr.Uint64(beUint64(padded[16:24])),
+		LoLo: xdr.Uint64(beUint64(padded[24:32])),
 	}
 	return xdr.ScVal{Type: xdr.ScValTypeScvU256, U256: &parts}
 }
@@ -180,21 +130,14 @@ func beUint64(b []byte) uint64 {
 	return v
 }
 
-// Deterministic test identifiers. `relayerG` is strkey-encoded
-// from a fixed byte pattern so the checksum round-trips through
-// strkey.Decode/Encode without depending on key generation.
-// adapterC is the real mainnet adapter from
-// docs/protocols/redstone.md.
 const (
-	adapterC  = "CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG"
-	oneBTCAt8 = 50_000_000_000_000 // $500,000 at 8 decimals
-	oneETHAt8 = 3_500_000_000_000  // $35,000 at 8 decimals
+	adapterC  = "CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG" // real mainnet adapter, docs/protocols/redstone.md
+	oneBTCAt8 = 50_000_000_000_000                                         // $500,000 at 8 decimals
+	oneETHAt8 = 3_500_000_000_000                                          // $35,000 at 8 decimals
 )
 
-// relayerG is computed at init from a fixed 32-byte seed — a known
-// public key bit pattern strkey-encodes to a valid G-address with a
-// correct checksum. Hardcoding the strkey string invites checksum
-// drift (what caught this test-suite the first time).
+// relayerG is strkey-encoded at init from a fixed seed: a hardcoded string
+// invites checksum drift.
 var relayerG = func() string {
 	seed := [32]byte{
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -209,43 +152,53 @@ var relayerG = func() string {
 	return s
 }()
 
+// batchEvent builds a relayer write_prices event for feedIDs/prices (len must match
+// unless the test wants a mismatch) with the given package/write timestamps.
+func batchEvent(t *testing.T, feedIDs []string, prices []int64, pkgTs, wrTs uint64) *events.Event {
+	t.Helper()
+	bis := make([]*big.Int, len(prices))
+	for i, p := range prices {
+		bis[i] = big.NewInt(p)
+	}
+	return &events.Event{
+		Topic: []string{TopicSymbolRedstone},
+		Value: encodeWritePricesBody(t, relayerG, bis, pkgTs, wrTs),
+		OpArgs: []string{
+			encodeAddressArg(t, relayerG),
+			encodeStringVecArg(t, feedIDs),
+			encodePayloadArg(t),
+		},
+		ContractID:     adapterC,
+		Ledger:         52_000_000,
+		TxHash:         "abcd",
+		LedgerClosedAt: "2026-04-23T12:00:00Z",
+	}
+}
+
+// decodeBatch decodes a one-package batch and fails the test on error.
+func decodeBatch(t *testing.T, feedIDs []string, prices []int64) []canonical.OracleUpdate {
+	t.Helper()
+	updates, err := decodeWritePrices(batchEvent(t, feedIDs, prices, 1, 2), time.Now())
+	if err != nil {
+		t.Fatalf("decodeWritePrices: %v", err)
+	}
+	return updates
+}
+
 // ─── Tests ───────────────────────────────────────────────────────
 
 func TestClassify_MatchesRedstone(t *testing.T) {
-	e := &events.Event{Topic: []string{TopicSymbolRedstone}}
-	if !classify(e) {
+	if !classify(&events.Event{Topic: []string{TopicSymbolRedstone}}) {
 		t.Errorf("expected classify true for REDSTONE topic")
 	}
-	// non-matching
-	e2 := &events.Event{Topic: []string{"AAAACwAAAAhTT1JPU1dBUAAAAAA="}}
-	if classify(e2) {
+	if classify(&events.Event{Topic: []string{"AAAACwAAAAhTT1JPU1dBUAAAAAA="}}) {
 		t.Errorf("expected classify false for non-REDSTONE")
 	}
 }
 
 func TestDecode_HappyPath_TwoKnownFeeds(t *testing.T) {
 	const pkgTs = uint64(1_745_000_000_000) // ms
-	const wrTs = uint64(1_745_000_060_000)
-	body := encodeWritePricesBody(t, relayerG,
-		[]*big.Int{big.NewInt(oneBTCAt8), big.NewInt(oneETHAt8)},
-		pkgTs, wrTs)
-
-	args := []string{
-		encodeAddressArg(t, relayerG),
-		encodeStringVecArg(t, []string{"BTC", "ETH"}),
-		encodePayloadArg(t),
-	}
-
-	ev := &events.Event{
-		Topic:          []string{TopicSymbolRedstone},
-		Value:          body,
-		OpArgs:         args,
-		ContractID:     adapterC,
-		Ledger:         52_000_000,
-		TxHash:         "abcd",
-		OperationIndex: 0,
-		LedgerClosedAt: "2026-04-23T12:00:00Z",
-	}
+	ev := batchEvent(t, []string{"BTC", "ETH"}, []int64{oneBTCAt8, oneETHAt8}, pkgTs, 1_745_000_060_000)
 	closedAt, _ := time.Parse(time.RFC3339, ev.LedgerClosedAt)
 
 	updates, err := decodeWritePrices(ev, closedAt)
@@ -255,10 +208,8 @@ func TestDecode_HappyPath_TwoKnownFeeds(t *testing.T) {
 	if len(updates) != 2 {
 		t.Fatalf("expected 2 updates, got %d", len(updates))
 	}
-
-	btc, _ := canonical.NewCryptoAsset("BTC")
-	if !updates[0].Asset.Equal(btc) {
-		t.Errorf("updates[0].Asset = %+v want %+v", updates[0].Asset, btc)
+	if !updates[0].Asset.Equal(mustCrypto("BTC")) {
+		t.Errorf("updates[0].Asset = %+v want BTC", updates[0].Asset)
 	}
 	if updates[0].Price.BigInt().Cmp(big.NewInt(oneBTCAt8)) != 0 {
 		t.Errorf("updates[0].Price = %s want %d", updates[0].Price, oneBTCAt8)
@@ -266,53 +217,26 @@ func TestDecode_HappyPath_TwoKnownFeeds(t *testing.T) {
 	if updates[0].Decimals != 8 {
 		t.Errorf("decimals = %d want 8", updates[0].Decimals)
 	}
-	// Timestamp should come from PackageTimestamp, not ledger close.
+	// Timestamp comes from package_timestamp, not ledger close.
 	if updates[0].Timestamp.UnixMilli() != int64(pkgTs) {
-		t.Errorf("timestamp not from package_timestamp: got %d want %d",
-			updates[0].Timestamp.UnixMilli(), pkgTs)
+		t.Errorf("timestamp not from package_timestamp: got %d want %d", updates[0].Timestamp.UnixMilli(), pkgTs)
 	}
 	if updates[0].Observer != relayerG {
 		t.Errorf("observer = %q want %q", updates[0].Observer, relayerG)
 	}
-	// OpIndex fan-out: same OperationIndex=0, slots 0 and 1.
 	if updates[0].OpIndex != 0 || updates[1].OpIndex != 1 {
 		t.Errorf("OpIndex fanout wrong: [%d, %d]", updates[0].OpIndex, updates[1].OpIndex)
 	}
-
-	eth, _ := canonical.NewCryptoAsset("ETH")
-	if !updates[1].Asset.Equal(eth) {
-		t.Errorf("updates[1].Asset = %+v want %+v", updates[1].Asset, eth)
+	if !updates[1].Asset.Equal(mustCrypto("ETH")) {
+		t.Errorf("updates[1].Asset = %+v want ETH", updates[1].Asset)
 	}
 }
 
-// TestDecodeWritePrices_EventIndexPreventsSameOpCollision is the
-// regression test for a same-op collision: two REDSTONE
-// events emitted by the SAME operation (OperationIndex equal) but at
-// different positions in that operation's contract-event list
-// (EventIndex differs) must not collide, so the fanout base cannot be
-// OperationIndex ALONE. It must incorporate EventIndex too, so
-// two events within one op get disjoint 1024-wide OpIndex blocks.
+// Two events from the SAME operation but different EventIndex must get
+// disjoint OpIndex blocks, so the fan-out base cannot be OperationIndex alone.
 func TestDecodeWritePrices_EventIndexPreventsSameOpCollision(t *testing.T) {
-	const pkgTs = uint64(1_745_000_000_000)
-	const wrTs = uint64(1_745_000_060_000)
-	body := encodeWritePricesBody(t, relayerG, []*big.Int{big.NewInt(oneBTCAt8)}, pkgTs, wrTs)
-	args := []string{
-		encodeAddressArg(t, relayerG),
-		encodeStringVecArg(t, []string{"BTC"}),
-		encodePayloadArg(t),
-	}
-
-	evFirst := &events.Event{
-		Topic:          []string{TopicSymbolRedstone},
-		Value:          body,
-		OpArgs:         args,
-		ContractID:     adapterC,
-		Ledger:         52_000_000,
-		TxHash:         "abcd",
-		OperationIndex: 3,
-		EventIndex:     0,
-		LedgerClosedAt: "2026-04-23T12:00:00Z",
-	}
+	evFirst := batchEvent(t, []string{"BTC"}, []int64{oneBTCAt8}, 1_745_000_000_000, 1_745_000_060_000)
+	evFirst.OperationIndex, evFirst.EventIndex = 3, 0
 	closedAt, _ := time.Parse(time.RFC3339, evFirst.LedgerClosedAt)
 	updatesFirst, err := decodeWritePrices(evFirst, closedAt)
 	if err != nil {
@@ -320,96 +244,53 @@ func TestDecodeWritePrices_EventIndexPreventsSameOpCollision(t *testing.T) {
 	}
 
 	evSecond := *evFirst
-	evSecond.OperationIndex = 3 // SAME operation as evFirst
-	evSecond.EventIndex = 1     // a DIFFERENT event within it
+	evSecond.EventIndex = 1
 	updatesSecond, err := decodeWritePrices(&evSecond, closedAt)
 	if err != nil {
 		t.Fatalf("decodeWritePrices (second): %v", err)
 	}
-
 	if len(updatesFirst) != 1 || len(updatesSecond) != 1 {
 		t.Fatalf("expected 1 update each, got %d and %d", len(updatesFirst), len(updatesSecond))
 	}
 	if updatesFirst[0].OpIndex == updatesSecond[0].OpIndex {
-		t.Errorf("two events in the SAME operation (OperationIndex=3) with different EventIndex (0 vs 1) collided on OpIndex=%d — the fanout base must incorporate EventIndex, not just OperationIndex",
+		t.Errorf("EventIndex 0 vs 1 in the same operation collided on OpIndex=%d — the fanout base must incorporate EventIndex",
 			updatesFirst[0].OpIndex)
 	}
 }
 
-func TestDecode_FeedIDCountMismatch(t *testing.T) {
-	// 2 prices, 1 feed id — simulates the freshness verifier dropping
-	// one submitted feed.
-	body := encodeWritePricesBody(t, relayerG,
-		[]*big.Int{big.NewInt(oneBTCAt8), big.NewInt(oneETHAt8)},
-		1, 2)
-	args := []string{
-		encodeAddressArg(t, relayerG),
-		encodeStringVecArg(t, []string{"BTC"}),
-		encodePayloadArg(t),
+func TestDecode_BatchErrors(t *testing.T) {
+	// 2 prices, 1 feed id: the freshness verifier dropped one submitted feed.
+	mismatch := batchEvent(t, []string{"BTC"}, []int64{oneBTCAt8, oneETHAt8}, 1, 2)
+	noArgs := batchEvent(t, []string{"BTC"}, []int64{1}, 1, 2)
+	noArgs.OpArgs = nil
+	cases := []struct {
+		name string
+		ev   *events.Event
+		want error
+	}{
+		{"feedIDCountMismatch", mismatch, ErrFeedIDCountMismatch},
+		{"missingOpArgs", noArgs, ErrMissingOpArgs},
+		{"nonRedstoneTopic", &events.Event{Topic: []string{"AAAADwAAAAhTT1JPU1dBUAAAAAA="}}, ErrNotRedstoneEvent},
 	}
-	ev := &events.Event{
-		Topic:  []string{TopicSymbolRedstone},
-		Value:  body,
-		OpArgs: args,
-		TxHash: "abcd",
-	}
-	_, err := decodeWritePrices(ev, time.Now())
-	if !errors.Is(err, ErrFeedIDCountMismatch) {
-		t.Errorf("expected ErrFeedIDCountMismatch, got %v", err)
-	}
-}
-
-func TestDecode_MissingOpArgs(t *testing.T) {
-	body := encodeWritePricesBody(t, relayerG,
-		[]*big.Int{big.NewInt(1)}, 1, 2)
-	ev := &events.Event{
-		Topic:  []string{TopicSymbolRedstone},
-		Value:  body,
-		OpArgs: nil,
-		TxHash: "abcd",
-	}
-	_, err := decodeWritePrices(ev, time.Now())
-	if !errors.Is(err, ErrMissingOpArgs) {
-		t.Errorf("expected ErrMissingOpArgs, got %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := decodeWritePrices(tc.ev, time.Now()); !errors.Is(err, tc.want) {
+				t.Errorf("expected %v, got %v", tc.want, err)
+			}
+		})
 	}
 }
 
-// Oracle capture-totality: a feed_id outside the ADR-0028
-// registry is RECORDED verbatim as raw:<feed_id> at its own vector
-// position, not skipped. Skipping the middle entry would
-// yield 2 updates; instead BTC/ETH keep OpIndex 0/2 and the raw row
-// fills slot 1 (no existing row moves).
+// Oracle capture-totality: a feed_id outside the ADR-0028 registry is
+// RECORDED verbatim as raw:<feed_id> at its own vector slot, so known feeds
+// keep their OpIndex.
 func TestDecode_UnknownFeedRecordedAsRaw_KnownLandsUnmoved(t *testing.T) {
-	// Three feeds: BTC (known), NOTAFEED (outside the ADR-0028
-	// registry — e.g. a 20th feed RedStone deployed), ETH (known).
-	body := encodeWritePricesBody(t, relayerG,
-		[]*big.Int{
-			big.NewInt(oneBTCAt8),
-			big.NewInt(9_000_000), // synthetic unknown-feed price
-			big.NewInt(oneETHAt8),
-		}, 1, 2)
-	args := []string{
-		encodeAddressArg(t, relayerG),
-		encodeStringVecArg(t, []string{"BTC", "NOTAFEED", "ETH"}),
-		encodePayloadArg(t),
-	}
-	ev := &events.Event{
-		Topic:  []string{TopicSymbolRedstone},
-		Value:  body,
-		OpArgs: args,
-		TxHash: "abcd",
-	}
-	updates, err := decodeWritePrices(ev, time.Now())
-	if err != nil {
-		t.Fatalf("decodeWritePrices: %v", err)
-	}
+	updates := decodeBatch(t, []string{"BTC", "NOTAFEED", "ETH"}, []int64{oneBTCAt8, 9_000_000, oneETHAt8})
 	if len(updates) != 3 {
 		t.Fatalf("expected 3 updates (BTC + raw:NOTAFEED + ETH), got %d", len(updates))
 	}
-	btc, _ := canonical.NewCryptoAsset("BTC")
-	eth, _ := canonical.NewCryptoAsset("ETH")
 	raw, _ := canonical.NewOracleRawAsset("NOTAFEED")
-	if !updates[0].Asset.Equal(btc) {
+	if !updates[0].Asset.Equal(mustCrypto("BTC")) {
 		t.Errorf("updates[0].Asset = %+v want BTC", updates[0].Asset)
 	}
 	if !updates[1].Asset.Equal(raw) || updates[1].Asset.IsMapped() {
@@ -421,48 +302,21 @@ func TestDecode_UnknownFeedRecordedAsRaw_KnownLandsUnmoved(t *testing.T) {
 	if updates[1].Price.BigInt().Cmp(big.NewInt(9_000_000)) != 0 {
 		t.Errorf("updates[1].Price = %s want 9000000 (recorded verbatim, no Invert)", updates[1].Price)
 	}
-	if !updates[2].Asset.Equal(eth) {
+	if !updates[2].Asset.Equal(mustCrypto("ETH")) {
 		t.Errorf("updates[2].Asset = %+v want ETH", updates[2].Asset)
 	}
-	// OpIndex preserves original-slot positions: BTC=0, raw=1, ETH=2
-	// — identical to what the pre-totality skip decoder produced for
-	// BTC and ETH.
-	if updates[0].OpIndex != 0 {
-		t.Errorf("BTC OpIndex = %d, want 0", updates[0].OpIndex)
-	}
-	if updates[1].OpIndex != 1 {
-		t.Errorf("raw:NOTAFEED OpIndex = %d, want 1 (its own vector slot)", updates[1].OpIndex)
-	}
-	if updates[2].OpIndex != 2 {
-		t.Errorf("ETH OpIndex = %d, want 2 (raw row at slot 1 must not shift it)", updates[2].OpIndex)
+	for i, u := range updates {
+		if u.OpIndex != uint32(i) {
+			t.Errorf("updates[%d].OpIndex = %d, want %d (original vector slot; the raw row must not shift ETH)", i, u.OpIndex, i)
+		}
 	}
 }
 
-// All-unknown batch: raw rows, not ErrEmptyUpdates. This is the shape
-// of every batch during the relayer expansion (~5,600
-// events lost until feeds.go caught up and history was replayed).
+// An all-unknown batch decodes to raw rows, not ErrEmptyUpdates (every batch
+// during the relayer expansion had this shape). "BENJI" alone is not a real
+// feed_id; the real one is BENJI_ETHEREUM_FUNDAMENTAL.
 func TestDecode_AllUnknown_RecordedAsRaw(t *testing.T) {
-	body := encodeWritePricesBody(t, relayerG,
-		[]*big.Int{big.NewInt(1), big.NewInt(2)},
-		1, 2)
-	args := []string{
-		encodeAddressArg(t, relayerG),
-		// Both outside the ADR-0028 registry. Note "BENJI" alone is
-		// NOT a real feed_id — the real one is
-		// "BENJI_ETHEREUM_FUNDAMENTAL" (see TestDecode_RWAFeeds).
-		encodeStringVecArg(t, []string{"BENJI", "NOTAFEED"}),
-		encodePayloadArg(t),
-	}
-	ev := &events.Event{
-		Topic:  []string{TopicSymbolRedstone},
-		Value:  body,
-		OpArgs: args,
-		TxHash: "abcd",
-	}
-	updates, err := decodeWritePrices(ev, time.Now())
-	if err != nil {
-		t.Fatalf("all-unknown batch must decode to raw rows, got error: %v", err)
-	}
+	updates := decodeBatch(t, []string{"BENJI", "NOTAFEED"}, []int64{1, 2})
 	if len(updates) != 2 {
 		t.Fatalf("expected 2 raw updates, got %d", len(updates))
 	}
@@ -477,30 +331,11 @@ func TestDecode_AllUnknown_RecordedAsRaw(t *testing.T) {
 	}
 }
 
-// An unmapped feed_id with a `/<FIAT>` suffix is quoted in that fiat
-// (RedStone's EUROC/EUR convention) but the raw code keeps the FULL
-// feed_id verbatim, and the price is never inverted — orientation of
-// an unmapped feed is unknown. A suffix that is not an allow-listed
-// fiat falls back to USD.
+// An unmapped feed_id with a `/<FIAT>` suffix is quoted in that fiat (EUROC/EUR
+// convention) but the raw code keeps the FULL feed_id and the price is never
+// inverted; a non-allow-listed suffix falls back to USD.
 func TestDecode_UnknownFeedQuoteSuffix(t *testing.T) {
-	body := encodeWritePricesBody(t, relayerG,
-		[]*big.Int{big.NewInt(1_234), big.NewInt(5_678)},
-		1, 2)
-	args := []string{
-		encodeAddressArg(t, relayerG),
-		encodeStringVecArg(t, []string{"XYZ/EUR", "SolvBTC.BBN_FUNDAMENTAL/NOTFIAT"}),
-		encodePayloadArg(t),
-	}
-	ev := &events.Event{
-		Topic:  []string{TopicSymbolRedstone},
-		Value:  body,
-		OpArgs: args,
-		TxHash: "abcd",
-	}
-	updates, err := decodeWritePrices(ev, time.Now())
-	if err != nil {
-		t.Fatalf("decodeWritePrices: %v", err)
-	}
+	updates := decodeBatch(t, []string{"XYZ/EUR", "SolvBTC.BBN_FUNDAMENTAL/NOTFIAT"}, []int64{1_234, 5_678})
 	if len(updates) != 2 {
 		t.Fatalf("expected 2 raw updates, got %d", len(updates))
 	}
@@ -523,85 +358,38 @@ func TestDecode_UnknownFeedQuoteSuffix(t *testing.T) {
 	}
 }
 
+// ADR-0028 registry: an RWA feed whose feed_id differs from its display name,
+// the EUR-quoted EUROC feed (never hardcoded to USD), a plain RWA feed and a
+// tokenized-BTC crypto feed.
 func TestDecode_RWAandQuoteCurrency(t *testing.T) {
-	// Exercises the ADR-0028 feed registry: an RWA feed whose
-	// feed_id ≠ display name, the EUR-quoted EUROC feed (which must not be
-	// hardcoded to USD), a plain RWA feed, and a tokenized-BTC crypto
-	// feed.
-	feedIDs := []string{
-		"BENJI_ETHEREUM_FUNDAMENTAL", // → rwa:BENJI, USD
-		"EUROC/EUR",                  // → crypto:EUROC, EUR
-		"GILTS",                      // → rwa:GILTS, USD
-		"SolvBTC",                    // → crypto:SolvBTC, USD
-	}
-	body := encodeWritePricesBody(t, relayerG,
-		[]*big.Int{
-			big.NewInt(1_00000000),
-			big.NewInt(1_05000000),
-			big.NewInt(100_00000000),
-			big.NewInt(95000_00000000),
-		}, 1, 2)
-	args := []string{
-		encodeAddressArg(t, relayerG),
-		encodeStringVecArg(t, feedIDs),
-		encodePayloadArg(t),
-	}
-	ev := &events.Event{
-		Topic:  []string{TopicSymbolRedstone},
-		Value:  body,
-		OpArgs: args,
-		TxHash: "abcd",
-	}
-	updates, err := decodeWritePrices(ev, time.Now())
-	if err != nil {
-		t.Fatalf("decodeWritePrices: %v", err)
-	}
+	updates := decodeBatch(t,
+		[]string{"BENJI_ETHEREUM_FUNDAMENTAL", "EUROC/EUR", "GILTS", "SolvBTC"},
+		[]int64{1_00000000, 1_05000000, 100_00000000, 95000_00000000})
 	if len(updates) != 4 {
 		t.Fatalf("expected 4 updates, got %d", len(updates))
 	}
-
-	wantBenji, _ := canonical.NewRWAAsset("BENJI")
-	if !updates[0].Asset.Equal(wantBenji) {
-		t.Errorf("feed_id BENJI_ETHEREUM_FUNDAMENTAL → %s, want rwa:BENJI", updates[0].Asset)
+	want := []struct{ asset, quote string }{
+		{"rwa:BENJI", "fiat:USD"},
+		{"crypto:EUROC", "fiat:EUR"},
+		{"rwa:GILTS", "fiat:USD"},
+		{"crypto:SolvBTC", "fiat:USD"},
 	}
-	if updates[0].Quote.String() != "fiat:USD" {
-		t.Errorf("BENJI quote = %s, want fiat:USD", updates[0].Quote)
-	}
-
-	wantEUROC, _ := canonical.NewCryptoAsset("EUROC")
-	if !updates[1].Asset.Equal(wantEUROC) {
-		t.Errorf("feed_id EUROC/EUR → %s, want crypto:EUROC", updates[1].Asset)
-	}
-	if updates[1].Quote.String() != "fiat:EUR" {
-		t.Errorf("EUROC quote = %s, want fiat:EUR (pre-ecc289c6 this was mislabelled USD)", updates[1].Quote)
-	}
-
-	wantGILTS, _ := canonical.NewRWAAsset("GILTS")
-	if !updates[2].Asset.Equal(wantGILTS) {
-		t.Errorf("feed_id GILTS → %s, want rwa:GILTS", updates[2].Asset)
-	}
-
-	wantSolv, _ := canonical.NewCryptoAsset("SolvBTC")
-	if !updates[3].Asset.Equal(wantSolv) {
-		t.Errorf("feed_id SolvBTC → %s, want crypto:SolvBTC", updates[3].Asset)
+	for i, w := range want {
+		if updates[i].Asset.String() != w.asset {
+			t.Errorf("updates[%d] asset = %s, want %s", i, updates[i].Asset, w.asset)
+		}
+		if updates[i].Quote.String() != w.quote {
+			t.Errorf("updates[%d] quote = %s, want %s", i, updates[i].Quote, w.quote)
+		}
 	}
 }
 
+// The registry must hold exactly the 32 known mainnet feeds (19 from ADR-0028,
+// 11 from the ledger-63624934 relayer expansion, USDT0, earnUSDC_FUNDAMENTAL);
+// a drift means a feed changed without updating docs and this count.
 func TestFeedRegistry_Has32Feeds(t *testing.T) {
-	// The registry must cover exactly the 32 known mainnet feeds:
-	// 19 captured for ADR-0028 + 11 from the ledger-63624934
-	// relayer expansion + USDT0. A drift
-	// here means a feed was added/removed without updating the docs +
-	// this registry in lock-step.
-	//
-	// USDT0 was arriving unmapped and being recorded as `raw:USDT0`,
-	// which is the designed fail-safe (capture totality — an unknown
-	// symbol is stored verbatim, never dropped) and which tickets
-	// stellarindex_ingestion_oracle_unknown_symbols so the allow-list
-	// owner sees the gap. Mapping it promotes the existing rows in
-	// place on replay; no capture is lost either way.
 	if len(feedRegistry) != 32 {
-		t.Errorf("feedRegistry has %d feeds, want 32 (ADR-0028 + 2026-07-24 expansion + USDT0 + earnUSDC_FUNDAMENTAL)", len(feedRegistry))
+		t.Errorf("feedRegistry has %d feeds, want 32 — update BOTH this and the doc comment in feeds.go", len(feedRegistry))
 	}
 	for feedID, entry := range feedRegistry {
 		if err := entry.Base.Validate(); err != nil {
@@ -613,16 +401,10 @@ func TestFeedRegistry_Has32Feeds(t *testing.T) {
 	}
 }
 
+// No two feed_ids may share a (Base, Quote) pair: feeds arrive in one batch, so
+// a shared pair would interleave two quantities into one series (e.g.
+// SolvBTC_FUNDAMENTAL NAV ratio ~1.003 vs SolvBTC_FUNDAMENTAL/USD ~65,430).
 func TestFeedRegistry_UniquePairs(t *testing.T) {
-	// No two feed_ids may map to the same (Base, Quote) pair: feeds
-	// arrive together in one write_prices batch, so a shared pair
-	// would interleave two different quantities into one price
-	// series. The relayer expansion makes this live — e.g.
-	// `SolvBTC_FUNDAMENTAL` (NAV ratio vs BTC, ~1.003) vs
-	// `SolvBTC_FUNDAMENTAL/USD` (NAV in USD, ~65,430) MUST land on
-	// distinct base codes, and bare `EUROC` (USD-quoted) vs
-	// `EUROC/EUR` (EUR-quoted) may share a base only because the
-	// quote differs.
 	seen := make(map[string]string, len(feedRegistry))
 	for feedID, entry := range feedRegistry {
 		pair := entry.Base.String() + "|" + entry.Quote.String()
@@ -633,97 +415,45 @@ func TestFeedRegistry_UniquePairs(t *testing.T) {
 	}
 }
 
-// TestDecode_2026_07_24_ExpansionFeeds is the regression test for the
-// relayer expansion (ledger 63624934): RedStone began
-// publishing 11 feed_ids outside the original 19-feed registry.
-// Batches mixing old + new feeds dropped the new entries per-feed;
-// batches of ONLY new feeds failed whole with ErrEmptyUpdates —
-// "undecodable-but-matched" projection blindness (~5,600 events).
-// This all-new-feeds batch must decode fully, with the asset /
-// quote mapping verified live (see feeds.go comments).
-func TestDecode_2026_07_24_ExpansionFeeds(t *testing.T) {
+// The relayer expansion (ledger 63624934) published 11 feed_ids outside the
+// original registry; an all-new batch used to fail whole with ErrEmptyUpdates.
+// Mapping verified live (see feeds.go).
+func TestDecode_ExpansionFeeds(t *testing.T) {
 	feedIDs := []string{
-		"EUROC", // bare — USD-quoted, unlike registered EUROC/EUR
-		"USDe",
-		"sUSDe",
-		"savUSD_FUNDAMENTAL",
-		"SolvBTC_FUNDAMENTAL/USD",
-		"SolvBTC.BBN_FUNDAMENTAL/USD",
-		"USDY_FUNDAMENTAL/USD",
-		"USST_FUNDAMENTAL",
-		"XAUm_FUNDAMENTAL/USD",
-		"deJAAA_FUNDAMENTAL/USD",
-		"deJTRSY_FUNDAMENTAL/USD",
+		"EUROC", // bare: USD-quoted, unlike registered EUROC/EUR
+		"USDe", "sUSDe", "savUSD_FUNDAMENTAL",
+		"SolvBTC_FUNDAMENTAL/USD", "SolvBTC.BBN_FUNDAMENTAL/USD",
+		"USDY_FUNDAMENTAL/USD", "USST_FUNDAMENTAL", "XAUm_FUNDAMENTAL/USD",
+		"deJAAA_FUNDAMENTAL/USD", "deJTRSY_FUNDAMENTAL/USD",
 	}
-	// Live values captured from api.redstone.finance,
-	// scaled to RedStone's fixed 8 decimals.
-	prices := []*big.Int{
-		big.NewInt(1_13979753),     // EUROC in USD ≈ EUR/USD
-		big.NewInt(99984603),       // USDe ~0.9998
-		big.NewInt(1_24071513),     // sUSDe ~1.2407
-		big.NewInt(1_18773631),     // savUSD ~1.1877
-		big.NewInt(6543063_913439), // SolvBTC NAV in USD ~65,430
-		big.NewInt(6543063_913439), // SolvBTC.BBN NAV in USD
-		big.NewInt(1_14081251),     // USDY ~1.1408
-		big.NewInt(1_00957429),     // USST ~1.0096
-		big.NewInt(4115_66800000),  // XAUm ~4,115.67/oz
-		big.NewInt(1_04038535),     // deJAAA ~1.0404
-		big.NewInt(1_03152715),     // deJTRSY ~1.0315
+	// Live values from api.redstone.finance at 8 decimals.
+	prices := []int64{
+		1_13979753, 99984603, 1_24071513, 1_18773631, 6543063_913439, 6543063_913439,
+		1_14081251, 1_00957429, 4115_66800000, 1_04038535, 1_03152715,
 	}
-	body := encodeWritePricesBody(t, relayerG, prices,
-		1_753_500_000_000, 1_753_500_060_000)
-	args := []string{
-		encodeAddressArg(t, relayerG),
-		encodeStringVecArg(t, feedIDs),
-		encodePayloadArg(t),
-	}
-	ev := &events.Event{
-		Topic:      []string{TopicSymbolRedstone},
-		Value:      body,
-		OpArgs:     args,
-		ContractID: adapterC,
-		Ledger:     63_624_934,
-		TxHash:     "expansion",
-	}
-	updates, err := decodeWritePrices(ev, time.Now())
-	if err != nil {
-		t.Fatalf("decodeWritePrices: %v (pre-fix this was ErrEmptyUpdates — every feed unknown)", err)
-	}
+	updates := decodeBatch(t, feedIDs, prices)
 	if len(updates) != len(feedIDs) {
 		t.Fatalf("expected %d updates, got %d — an expansion feed is still outside the registry", len(feedIDs), len(updates))
 	}
-
-	wantAssets := []struct{ asset, quote string }{
-		{"crypto:EUROC", "fiat:USD"}, // NOT fiat:EUR — that's the EUROC/EUR feed
-		{"crypto:USDe", "fiat:USD"},
-		{"crypto:sUSDe", "fiat:USD"},
-		{"crypto:savUSD_FUNDAMENTAL", "fiat:USD"},
-		{"crypto:SolvBTC_FUNDAMENTAL_USD", "fiat:USD"}, // `/` normalized to `_`
-		{"crypto:SolvBTC.BBN_FUNDAMENTAL_USD", "fiat:USD"},
-		{"rwa:USDY", "fiat:USD"},
-		{"rwa:USST", "fiat:USD"},
-		{"rwa:XAUm", "fiat:USD"},
-		{"rwa:deJAAA", "fiat:USD"},
-		{"rwa:deJTRSY", "fiat:USD"},
+	wantAssets := []string{
+		"crypto:EUROC", // quote fiat:USD, NOT fiat:EUR (that is the EUROC/EUR feed)
+		"crypto:USDe", "crypto:sUSDe", "crypto:savUSD_FUNDAMENTAL",
+		"crypto:SolvBTC_FUNDAMENTAL_USD", // `/` normalized to `_`
+		"crypto:SolvBTC.BBN_FUNDAMENTAL_USD",
+		"rwa:USDY", "rwa:USST", "rwa:XAUm", "rwa:deJAAA", "rwa:deJTRSY",
 	}
 	for i, want := range wantAssets {
-		if got := updates[i].Asset.String(); got != want.asset {
-			t.Errorf("feed %q → asset %s, want %s", feedIDs[i], got, want.asset)
+		if got := updates[i].Asset.String(); got != want {
+			t.Errorf("feed %q → asset %s, want %s", feedIDs[i], got, want)
 		}
-		if got := updates[i].Quote.String(); got != want.quote {
-			t.Errorf("feed %q → quote %s, want %s", feedIDs[i], got, want.quote)
+		if got := updates[i].Quote.String(); got != "fiat:USD" {
+			t.Errorf("feed %q → quote %s, want fiat:USD", feedIDs[i], got)
 		}
-		// None of the expansion feeds is Invert: prices pass through
-		// unchanged (the MXNe lesson — a silent inversion here would
-		// be a ~1.3× to ~65,000× error depending on the feed).
-		if updates[i].Price.BigInt().Cmp(prices[i]) != 0 {
-			t.Errorf("feed %q price = %s, want %s unchanged", feedIDs[i], updates[i].Price, prices[i])
+		// None is Invert: a silent inversion would be a 1.3x to 65,000x error.
+		if updates[i].Price.BigInt().Cmp(big.NewInt(prices[i])) != 0 {
+			t.Errorf("feed %q price = %s, want %d unchanged", feedIDs[i], updates[i].Price, prices[i])
 		}
 	}
-
-	// The /USD-suffixed SolvBTC NAV feeds must not collide with the
-	// unsuffixed ratio feeds' series: same batch, different quantity
-	// (~65,430 vs ~1.003).
 	ratio := feedRegistry["SolvBTC_FUNDAMENTAL"]
 	usd := feedRegistry["SolvBTC_FUNDAMENTAL/USD"]
 	if ratio.Base.Equal(usd.Base) && ratio.Quote.Equal(usd.Quote) {
@@ -731,53 +461,26 @@ func TestDecode_2026_07_24_ExpansionFeeds(t *testing.T) {
 	}
 }
 
-func TestDecode_NonRedstoneTopic_Rejects(t *testing.T) {
-	ev := &events.Event{Topic: []string{"AAAADwAAAAhTT1JPU1dBUAAAAAA="}}
-	_, err := decodeWritePrices(ev, time.Now())
-	if !errors.Is(err, ErrNotRedstoneEvent) {
-		t.Errorf("expected ErrNotRedstoneEvent, got %v", err)
-	}
-}
-
-// TestDecode_RealMainnetEvent_BytesWrappedBody exercises the
-// exact on-wire body shape RedStone's adapter contract emits: an
-// `ScVal::Bytes` wrapping the XDR-encoded WritePrices struct
-// (the Rust impl uses `self.to_xdr(env).to_val()` — see
-// redstone-public-contracts/packages/stellar-connector/.../event.rs).
-// Earlier helper tests built the Map directly, which masked a bug
-// where the decoder's Map-assertion ran against the outer Bytes
-// wrapper and silently rejected every real event.
-//
-// Fixture: event pulled from mainnet ledger 62265977 (tx
-// 349bd590…c7a8b) via sorobanrpc.com getEvents.
-// Contains one XLM price update at package_timestamp
-// 2026-04-23T12:30:06Z. Feed id from the tx's write_prices args.
+// The adapter emits an ScVal::Bytes wrapping the XDR-encoded WritePrices
+// struct. Helper tests that build the Map directly once masked a bug where
+// the decoder asserted Map on the outer Bytes and rejected every real event.
+// Fixture: mainnet ledger 62265977 (tx 349bd590…c7a8b), one XLM update.
 func TestDecode_RealMainnetEvent_BytesWrappedBody(t *testing.T) {
-	// The actual event body from ledger 62265977. Outer wrapper is
-	// ScVal::Bytes(248); inner parse yields Map{updater, updated_feeds}.
 	body := "AAAADQAAAPgAAAARAAAAAQAAAAIAAAAPAAAADXVwZGF0ZWRfZmVlZHMAAAAAAAAQAAAAAQAAAAEAAAARAAAAAQAAAAMAAAAPAAAAEXBhY2thZ2VfdGltZXN0YW1wAAAAAAAABQAAAZ2/ru8wAAAADwAAAAVwcmljZQAAAAAAAAsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABA0AaYAAAAA8AAAAPd3JpdGVfdGltZXN0YW1wAAAAAAUAAAGdv68KiAAAAA8AAAAHdXBkYXRlcgAAAAASAAAAAAAAAAAk1wP6EQQ6Z6YlFesVDZAkQ3o7tjIdDJoRh0/hHzC1Bw=="
 
-	// OpArgs built to match the real tx's write_prices(updater,
-	// feed_ids, payload) call with feed_ids=["XLM"] — matching the
-	// single entry in updated_feeds. args[0] is the REAL relayer
-	// address from the tx (GASNOA72…, the same SCVal bytes the body's
-	// `updater` field carries): the decoder now enforces body↔args
-	// updater agreement, so a synthetic mismatched updater here would
-	// (correctly) refuse.
-	args := []string{
-		"AAAAEgAAAAAAAAAAJNcD+hEEOmemJRXrFQ2QJEN6O7YyHQyaEYdP4R8wtQc=",
-		encodeStringVecArg(t, []string{"XLM"}),
-		encodePayloadArg(t),
-	}
-
+	// args[0] is the REAL relayer address from the tx: the decoder enforces
+	// body↔args updater agreement, so a synthetic one would (correctly) refuse.
 	ev := &events.Event{
-		Topic:          []string{TopicSymbolRedstone},
-		Value:          body,
-		OpArgs:         args,
+		Topic: []string{TopicSymbolRedstone},
+		Value: body,
+		OpArgs: []string{
+			"AAAAEgAAAAAAAAAAJNcD+hEEOmemJRXrFQ2QJEN6O7YyHQyaEYdP4R8wtQc=",
+			encodeStringVecArg(t, []string{"XLM"}),
+			encodePayloadArg(t),
+		},
 		ContractID:     adapterC,
 		Ledger:         62_265_977,
 		TxHash:         "349bd590c679a9d69ac0ff3eb49a673f95cf9d77016fc3d019eb654c772c7a8b",
-		OperationIndex: 0,
 		LedgerClosedAt: "2026-04-24T13:30:13Z",
 	}
 	closedAt, _ := time.Parse(time.RFC3339, ev.LedgerClosedAt)
@@ -789,113 +492,61 @@ func TestDecode_RealMainnetEvent_BytesWrappedBody(t *testing.T) {
 	if len(updates) != 1 {
 		t.Fatalf("expected 1 update, got %d", len(updates))
 	}
-
-	xlm, _ := canonical.NewCryptoAsset("XLM")
-	if !updates[0].Asset.Equal(xlm) {
+	if !updates[0].Asset.Equal(mustCrypto("XLM")) {
 		t.Errorf("Asset = %+v want XLM", updates[0].Asset)
 	}
-	// Price from the event body: 4349500000 (0x103401A60 = U256).
 	if updates[0].Price.BigInt().Cmp(big.NewInt(4_349_500_000)) != 0 {
 		t.Errorf("Price = %s want 4349500000", updates[0].Price)
 	}
 }
 
-// mxneUSDMXNAt8 is RedStone's on-chain MXNe value in market-FX
-// orientation: ~17.3911 pesos per USD (USDMXN), scaled to 8 decimals.
-const mxneUSDMXNAt8 = int64(1_739_110_000) // 17.3911 × 1e8
+// mxneUSDMXNAt8 is MXNe in market-FX orientation: ~17.3911 pesos per USD at 8 decimals.
+const mxneUSDMXNAt8 = int64(1_739_110_000)
 
-// TestDecode_MXNe_InvertedToTokenInUSD is the FIX-2 regression.
-// RedStone publishes MXNe as USDMXN (~17.39 pesos/USD); our registry
-// marks it Invert, so the decoder must reciprocate to MXNe-in-USD
-// (~0.0575) — matching every other feed (quote fiat:USD) and
-// reflector-fx MXN (~0.0573, verified live). Un-inverted
-// it serves ~17.39, implying 1 MXNe = $17.39 — a ~302× error.
+// RedStone publishes MXNe as USDMXN (~17.39); the registry marks it Invert so
+// the decoder must reciprocate to MXNe-in-USD (~0.0575). Un-inverted it would
+// imply 1 MXNe = $17.39, a ~302x error.
 func TestDecode_MXNe_InvertedToTokenInUSD(t *testing.T) {
-	body := encodeWritePricesBody(t, relayerG,
-		[]*big.Int{big.NewInt(mxneUSDMXNAt8)}, 1_745_000_000_000, 1_745_000_060_000)
-	args := []string{
-		encodeAddressArg(t, relayerG),
-		encodeStringVecArg(t, []string{"MXNe"}),
-		encodePayloadArg(t),
-	}
-	ev := &events.Event{
-		Topic:          []string{TopicSymbolRedstone},
-		Value:          body,
-		OpArgs:         args,
-		ContractID:     adapterC,
-		Ledger:         52_000_001,
-		TxHash:         "mxne",
-		OperationIndex: 0,
-		LedgerClosedAt: "2026-04-23T12:00:00Z",
-	}
-	closedAt, _ := time.Parse(time.RFC3339, ev.LedgerClosedAt)
-
-	updates, err := decodeWritePrices(ev, closedAt)
-	if err != nil {
-		t.Fatalf("decodeWritePrices: %v", err)
-	}
+	updates := decodeBatch(t, []string{"MXNe"}, []int64{mxneUSDMXNAt8})
 	if len(updates) != 1 {
 		t.Fatalf("expected 1 update, got %d", len(updates))
 	}
-
-	mxne, _ := canonical.NewCryptoAsset("MXNe")
-	if !updates[0].Asset.Equal(mxne) {
+	if !updates[0].Asset.Equal(mustCrypto("MXNe")) {
 		t.Errorf("asset = %s want crypto:MXNe", updates[0].Asset)
 	}
 	if updates[0].Quote.String() != "fiat:USD" {
 		t.Errorf("quote = %s want fiat:USD", updates[0].Quote)
 	}
-	// Value must be reciprocated: ~0.0575 in USD, NOT the raw ~17.39.
 	scaled, _ := new(big.Rat).SetFrac(updates[0].Price.BigInt(), big.NewInt(100_000_000)).Float64()
 	if scaled < 0.055 || scaled > 0.060 {
 		t.Errorf("MXNe-in-USD = %v, want ~0.0575 (raw USDMXN ~17.39 means the inversion did not run)", scaled)
 	}
-	// Guard explicitly against the un-inverted value.
 	if updates[0].Price.BigInt().Cmp(big.NewInt(mxneUSDMXNAt8)) == 0 {
-		t.Error("MXNe price stored un-inverted (still ~17.39 pesos/USD) — the Invert path did not fire")
+		t.Error("MXNe price stored un-inverted — the Invert path did not fire")
 	}
 }
 
-// TestDecode_NonInvertedCurrencyFeed_Unchanged pins that inversion is
-// scoped to Invert feeds only: the sibling Mexican-peso RWA feed
-// CETES (published dollars-per-unit, ~$0.067) passes through
-// unchanged. A regression that inverted every currency feed would
-// turn CETES into ~14.85 and be caught here.
+// Inversion is scoped to Invert feeds: CETES (dollars-per-unit, ~$0.067) must
+// pass through unchanged and record no separate published_price (the price
+// already IS the publisher's integer).
 func TestDecode_NonInvertedCurrencyFeed_Unchanged(t *testing.T) {
 	const cetesUSDAt8 = int64(6_734_600) // 0.067346 × 1e8
-	body := encodeWritePricesBody(t, relayerG,
-		[]*big.Int{big.NewInt(cetesUSDAt8)}, 1_745_000_000_000, 1_745_000_060_000)
-	args := []string{
-		encodeAddressArg(t, relayerG),
-		encodeStringVecArg(t, []string{"CETES"}),
-		encodePayloadArg(t),
-	}
-	ev := &events.Event{
-		Topic:      []string{TopicSymbolRedstone},
-		Value:      body,
-		OpArgs:     args,
-		ContractID: adapterC,
-		Ledger:     52_000_002,
-		TxHash:     "cetes",
-	}
-	updates, err := decodeWritePrices(ev, time.Now())
-	if err != nil {
-		t.Fatalf("decodeWritePrices: %v", err)
-	}
+	updates := decodeBatch(t, []string{"CETES"}, []int64{cetesUSDAt8})
 	if len(updates) != 1 {
 		t.Fatalf("expected 1 update, got %d", len(updates))
 	}
 	if updates[0].Price.BigInt().Cmp(big.NewInt(cetesUSDAt8)) != 0 {
-		t.Errorf("CETES price = %s, want %d unchanged (non-Invert feed must not be reciprocated)",
-			updates[0].Price, cetesUSDAt8)
+		t.Errorf("CETES price = %s, want %d unchanged (non-Invert feed must not be reciprocated)", updates[0].Price, cetesUSDAt8)
 	}
 	if updates[0].Quote.String() != "fiat:USD" {
 		t.Errorf("CETES quote = %s want fiat:USD", updates[0].Quote)
 	}
+	if got, ok := publishedPriceOf(t, updates[0]); ok {
+		t.Errorf("non-Invert feed recorded published_price %q; want absent", got)
+	}
 }
 
-// TestReciprocalAtScale checks the exact big.Int reciprocal used by
-// the Invert path (ADR-0003 — no float/int64 truncation).
+// The exact big.Int reciprocal used by the Invert path (ADR-0003: no float or int64 truncation).
 func TestReciprocalAtScale(t *testing.T) {
 	// 1/2.0 at 8 decimals: raw 2e8 → 0.5e8.
 	if got := reciprocalAtScale(canonical.NewAmount(big.NewInt(200_000_000)), 8); got.BigInt().Cmp(big.NewInt(50_000_000)) != 0 {
@@ -912,29 +563,18 @@ func TestReciprocalAtScale(t *testing.T) {
 	}
 }
 
-// TestDecode_EmptyOnWireBatch_IsRecognizedNoOp pins the empty-batch
-// no-op semantics against REAL lake bytes (ledger 63,699,567, contract
-// CA526Y2N…): the adapter emits
-// `{updated_feeds: [], updater}` (Bytes-wrapped) when its freshness
-// verifier drops every candidate feed. ~1.5% of ALL REDSTONE events
-// ever have this shape; treating it as an error kept redstone
-// projection_ok=false under honest-blind completeness accounting.
-// It must decode to ZERO updates with NO error.
+// Real lake bytes (ledger 63,699,567): the adapter emits `{updated_feeds: [],
+// updater}` when its freshness verifier drops every feed (~1.5% of all events).
+// It must decode to ZERO updates with NO error, with no OpArgs: the no-op
+// classification must not depend on args.
 func TestDecode_EmptyOnWireBatch_IsRecognizedNoOp(t *testing.T) {
-	// Real event body from the lake (base64 data_xdr, verbatim).
 	const realBody = "AAAADQAAAGwAAAARAAAAAQAAAAIAAAAPAAAADXVwZGF0ZWRfZmVlZHMAAAAAAAAQAAAAAQAAAAAAAAAPAAAAB3VwZGF0ZXIAAAAAEgAAAAAAAAAAI55i1HMFV5Z4R37dzgSnns7qJjbxzw6uCHkzbmb6XRI="
-
-	// NO OpArgs — the exact production shape: empty-batch pushes often
-	// lack usable args, and a replay proved an args-gated
-	// empty check leaves those ledgers "undecodable-but-matched". The
-	// no-op classification must not depend on args at all.
 	ev := &events.Event{
 		Topic:          []string{TopicSymbolRedstone},
 		Value:          realBody,
 		ContractID:     adapterC,
 		Ledger:         63_699_567,
 		TxHash:         "efgh",
-		OperationIndex: 0,
 		LedgerClosedAt: "2026-07-29T09:30:00Z",
 	}
 	closedAt, _ := time.Parse(time.RFC3339, ev.LedgerClosedAt)
@@ -948,24 +588,14 @@ func TestDecode_EmptyOnWireBatch_IsRecognizedNoOp(t *testing.T) {
 	}
 }
 
-// TestFeedRegistry_USDT0MapsToItsOwnAsset pins the fix for
-// stellarindex_ingestion_oracle_unknown_symbols.
-//
-// RedStone's Stellar adapter publishes USDT0 — the omnichain USDT
-// representation. It was absent from the registry, so the decoder
-// recorded it verbatim as `raw:USDT0` (capture totality: an unmapped
-// symbol is stored, never dropped) and the alert ticketed the gap.
-//
-// It maps to `crypto:USDT0`, NOT to `crypto:USDT`. They are different
-// tokens with different issuance and different peg risk, and collapsing
-// them in the decoder is precisely the eager normalisation the
-// stablecoin rule forbids — whether USDT0 should proxy to fiat:USD is
-// an aggregator decision, taken at VWAP time, not here.
+// USDT0 maps to its own `crypto:USDT0`, never `crypto:USDT`: different tokens
+// with different peg risk, and collapsing them in the decoder is the eager
+// stablecoin normalisation the aggregator, not the decoder, may decide. Absent,
+// it would be recorded as raw:USDT0 and ticket the unknown-symbols alert.
 func TestFeedRegistry_USDT0MapsToItsOwnAsset(t *testing.T) {
 	entry, ok := feedRegistry["USDT0"]
 	if !ok {
-		t.Fatal("USDT0 is absent from feedRegistry — it will be recorded as " +
-			"raw:USDT0 and keep ticketing stellarindex_ingestion_oracle_unknown_symbols")
+		t.Fatal("USDT0 is absent from feedRegistry — it will be recorded as raw:USDT0")
 	}
 	if got := entry.Base.String(); got != "crypto:USDT0" {
 		t.Errorf("USDT0 base = %q, want crypto:USDT0", got)
@@ -973,34 +603,16 @@ func TestFeedRegistry_USDT0MapsToItsOwnAsset(t *testing.T) {
 	if got := entry.Quote.String(); got != "fiat:USD" {
 		t.Errorf("USDT0 quote = %q, want fiat:USD", got)
 	}
-	// Distinct from USDT: a join keyed on one must never pick up the other.
-	usdt, ok := feedRegistry["USDT"]
-	if ok && usdt.Base.Equal(entry.Base) {
-		t.Error("USDT0 and USDT resolve to the SAME canonical asset — they are " +
-			"different tokens; conflating them hides a divergence between the two pegs")
+	if usdt, ok := feedRegistry["USDT"]; ok && usdt.Base.Equal(entry.Base) {
+		t.Error("USDT0 and USDT resolve to the SAME canonical asset — they are different tokens")
 	}
 	if entry.Invert {
 		t.Error("USDT0 is published in USD directly; Invert must be false")
 	}
 }
 
-// TestFeedRegistry_CountMatchesItsDocComment stops the registry's size
-// from drifting away from the number written above it. A stale count
-// in a comment reads as a "wrong count" finding against code that is
-// itself correct.
-//
-// If you are adding a feed: update the constant AND the doc comment. The
-// point of the assertion is that you cannot forget.
-func TestFeedRegistry_CountMatchesItsDocComment(t *testing.T) {
-	const documented = 32
-	if got := len(feedRegistry); got != documented {
-		t.Errorf("feedRegistry has %d entries but its doc comment says %d — update BOTH (internal/sources/redstone/feeds.go)", got, documented)
-	}
-}
-
-// publishedPriceOf reads published_price off the row's JSON form, so the
-// recovery test fails at runtime (not compile time) on a build that never
-// recorded the publisher's integer.
+// publishedPriceOf reads published_price off the row's JSON form, so the test
+// fails at runtime (not compile time) on a build that never recorded it.
 func publishedPriceOf(t *testing.T, u canonical.OracleUpdate) (string, bool) {
 	t.Helper()
 	b, err := json.Marshal(u)
@@ -1022,40 +634,12 @@ func publishedPriceOf(t *testing.T, u canonical.OracleUpdate) (string, bool) {
 	return s, true
 }
 
-func decodeOneMXNe(t *testing.T, r int64) canonical.OracleUpdate {
-	t.Helper()
-	ev := &events.Event{
-		Topic: []string{TopicSymbolRedstone},
-		Value: encodeWritePricesBody(t, relayerG,
-			[]*big.Int{big.NewInt(r)}, 1_745_000_000_000, 1_745_000_060_000),
-		OpArgs: []string{
-			encodeAddressArg(t, relayerG),
-			encodeStringVecArg(t, []string{"MXNe"}),
-			encodePayloadArg(t),
-		},
-		ContractID:     adapterC,
-		Ledger:         52_000_001,
-		TxHash:         "mxne",
-		LedgerClosedAt: "2026-04-23T12:00:00Z",
-	}
-	closedAt, _ := time.Parse(time.RFC3339, ev.LedgerClosedAt)
-	updates, err := decodeWritePrices(ev, closedAt)
-	if err != nil {
-		t.Fatalf("decodeWritePrices: %v", err)
-	}
-	if len(updates) != 1 {
-		t.Fatalf("expected 1 update, got %d", len(updates))
-	}
-	return updates[0]
-}
-
-// TestDecode_MXNe_PublishedIntegerRecoverable pins that two distinct
-// on-chain integers collapse to the same 8-dp reciprocal, so the row must
-// carry the publisher's integer verbatim (ADR-0003) or it is lost.
+// Two distinct on-chain integers collapse to the same 8-dp reciprocal, so the
+// row must carry the publisher's integer verbatim (ADR-0003) or it is lost.
 func TestDecode_MXNe_PublishedIntegerRecoverable(t *testing.T) {
 	const wantPrice = "5747126" // round(10^16 / r) for both r below
 	for _, r := range []int64{1_740_000_000, 1_740_000_001} {
-		u := decodeOneMXNe(t, r)
+		u := decodeBatch(t, []string{"MXNe"}, []int64{r})[0]
 		if got := u.Price.String(); got != wantPrice {
 			t.Errorf("r=%d: price = %s, want %s (oriented reciprocal unchanged)", r, got, wantPrice)
 		}
@@ -1063,32 +647,5 @@ func TestDecode_MXNe_PublishedIntegerRecoverable(t *testing.T) {
 		if !ok || got != big.NewInt(r).String() {
 			t.Errorf("r=%d: published_price = %q (present=%v), want the on-chain integer %d", r, got, ok, r)
 		}
-	}
-}
-
-// TestDecode_NonInvertFeed_NoPublishedPrice: price already IS the
-// publisher's integer, so nothing separate is recorded.
-func TestDecode_NonInvertFeed_NoPublishedPrice(t *testing.T) {
-	ev := &events.Event{
-		Topic: []string{TopicSymbolRedstone},
-		Value: encodeWritePricesBody(t, relayerG,
-			[]*big.Int{big.NewInt(6_700_000)}, 1_745_000_000_000, 1_745_000_060_000),
-		OpArgs: []string{
-			encodeAddressArg(t, relayerG),
-			encodeStringVecArg(t, []string{"CETES"}),
-			encodePayloadArg(t),
-		},
-		ContractID:     adapterC,
-		Ledger:         52_000_001,
-		TxHash:         "cetes",
-		LedgerClosedAt: "2026-04-23T12:00:00Z",
-	}
-	closedAt, _ := time.Parse(time.RFC3339, ev.LedgerClosedAt)
-	updates, err := decodeWritePrices(ev, closedAt)
-	if err != nil || len(updates) != 1 {
-		t.Fatalf("decodeWritePrices: %v (n=%d)", err, len(updates))
-	}
-	if got, ok := publishedPriceOf(t, updates[0]); ok {
-		t.Errorf("non-Invert feed recorded published_price %q; want absent", got)
 	}
 }

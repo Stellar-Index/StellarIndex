@@ -8,480 +8,248 @@ import (
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/Stellar-Index/StellarIndex/internal/events"
-
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// TestClassify_depositWithdraw covers the topic-byte equality path —
-// ensures topic[0] = ScvString("BlendStrategy") + topic[1] in
-// {deposit, withdraw} is the only thing the decoder picks up.
-// Verifies the byte-equality constants line up with the SDK encoder.
+type classifyCase struct {
+	name      string
+	topic     []string
+	wantClass string
+}
+
+func runClassify(t *testing.T, fn func(*events.Event) string, cases []classifyCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fn(&events.Event{Topic: tc.topic}); got != tc.wantClass {
+				t.Errorf("class = %q, want %q", got, tc.wantClass)
+			}
+		})
+	}
+}
+
+// Pins the topic-byte equality path: prefix is a String, not a Symbol.
 func TestClassify_depositWithdraw(t *testing.T) {
 	t.Parallel()
+	runClassify(t, classify, []classifyCase{
+		{"deposit", []string{TopicPrefixStrategy, TopicSymbolDeposit}, EventDeposit},
+		{"withdraw", []string{TopicPrefixStrategy, TopicSymbolWithdraw}, EventWithdraw},
+		{"wrong prefix (SoroswapPair)", []string{mustB64String(t, "SoroswapPair"), TopicSymbolDeposit}, ""},
+		{"prefix as Symbol not String", []string{mustB64Symbol(t, "BlendStrategy"), TopicSymbolDeposit}, ""},
+		{"harvest (classification-only)", []string{TopicPrefixStrategy, TopicSymbolHarvest}, EventHarvest},
+		{"single-element topic", []string{TopicPrefixStrategy}, ""},
+	})
+}
+
+const (
+	strategyContract = "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP"
+	vaultContract    = "CCA2ZJP5BVRXYTQH4FAGHCAUMRYCXVC4CRYC2NXHWMR7TIVX36U7F5HR"
+)
+
+// Covers deposit (account `from`), withdraw (contract `from`, as seen on
+// mainnet) and harvest (extra price_per_share ignored: decode-by-name).
+func TestDecodeFlow(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
-		name      string
-		topic     []string
-		wantClass string
+		name       string
+		kind       string
+		topic1     string
+		from       sdkxdr.ScAddress
+		amount     int64
+		extra      []sdkxdr.ScMapEntry
+		wantDir    Direction
+		wantPrefix byte
+		wantAmount string
 	}{
-		{
-			name:      "deposit",
-			topic:     []string{TopicPrefixStrategy, TopicSymbolDeposit},
-			wantClass: EventDeposit,
-		},
-		{
-			name:      "withdraw",
-			topic:     []string{TopicPrefixStrategy, TopicSymbolWithdraw},
-			wantClass: EventWithdraw,
-		},
-		{
-			name:      "wrong prefix (SoroswapPair)",
-			topic:     []string{mustB64String(t, "SoroswapPair"), TopicSymbolDeposit},
-			wantClass: "",
-		},
-		{
-			name:      "prefix as Symbol not String",
-			topic:     []string{mustB64Symbol(t, "BlendStrategy"), TopicSymbolDeposit},
-			wantClass: "",
-		},
-		{
-			// EVERY-event policy: harvest is classified
-			// even though we don't produce a StrategyFlow for it yet.
-			name:      "harvest (classification-only)",
-			topic:     []string{TopicPrefixStrategy, TopicSymbolHarvest},
-			wantClass: EventHarvest,
-		},
-		{
-			name:      "single-element topic",
-			topic:     []string{TopicPrefixStrategy},
-			wantClass: "",
-		},
+		{"deposit from account", EventDeposit, TopicSymbolDeposit, makeAccountAddress(t, 0xAA), 123_456_789_000, nil, DirectionDeposit, 'G', "123456789000"},
+		{"withdraw from contract", EventWithdraw, TopicSymbolWithdraw, makeContractAddress(t, 0xBB), 29_999_999, nil, DirectionWithdraw, 'C', "29999999"},
+		{"harvest", EventHarvest, TopicSymbolHarvest, makeAccountAddress(t, 0xBB), 915_806, []sdkxdr.ScMapEntry{mapEntry(t, "price_per_share", i128SCVal(big.NewInt(1_002_345)))}, DirectionHarvest, 'G', "915806"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ev := &events.Event{Topic: tc.topic}
-			got := classify(ev)
-			if got != tc.wantClass {
-				t.Errorf("classify = %q, want %q", got, tc.wantClass)
+			t.Parallel()
+			entries := append([]sdkxdr.ScMapEntry{
+				mapEntry(t, "from", addrSCVal(tc.from)),
+				mapEntry(t, "amount", i128SCVal(big.NewInt(tc.amount))),
+			}, tc.extra...)
+			ev := &events.Event{
+				Type: "contract", Ledger: 60_000_000, LedgerClosedAt: "2026-05-14T10:30:00Z",
+				ContractID: strategyContract, OperationIndex: 2, TxHash: "abc123",
+				Topic: []string{TopicPrefixStrategy, tc.topic1},
+				Value: mustB64(t, mapSCVal(t, entries...)),
+			}
+			flow, err := decodeFlow(ev, tc.kind)
+			if err != nil {
+				t.Fatalf("decodeFlow: %v", err)
+			}
+			if flow.Source != SourceName {
+				t.Errorf("Source = %q, want %q", flow.Source, SourceName)
+			}
+			if flow.Direction != tc.wantDir {
+				t.Errorf("Direction = %q, want %q", flow.Direction, tc.wantDir)
+			}
+			if flow.From == "" || flow.From[0] != tc.wantPrefix {
+				t.Errorf("From = %q, want prefix %q", flow.From, string(tc.wantPrefix))
+			}
+			if got := flow.Amount.String(); got != tc.wantAmount {
+				t.Errorf("Amount = %q, want %q (no truncation)", got, tc.wantAmount)
+			}
+			if flow.Ledger != 60_000_000 || flow.OpIndex != 2 || flow.TxHash != "abc123" {
+				t.Errorf("header fields not preserved: %+v", flow)
 			}
 		})
 	}
 }
 
-// TestDecodeFlow_deposit covers the happy-path decode of a deposit
-// event with an account (G-strkey) `from`. Verifies amount
-// preservation (no truncation per ADR-0003) and address round-trip.
-func TestDecodeFlow_deposit(t *testing.T) {
+func TestDecodeFlow_errors(t *testing.T) {
 	t.Parallel()
-	ev := &events.Event{
-		Type:           "contract",
-		Ledger:         60_000_000,
-		LedgerClosedAt: "2026-05-14T10:30:00Z",
-		ContractID:     "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
-		OperationIndex: 2,
-		TxHash:         "abc123",
-		Topic:          []string{TopicPrefixStrategy, TopicSymbolDeposit},
-		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "from", addrSCVal(makeAccountAddress(t, 0xAA))),
-			mapEntry(t, "amount", i128SCVal(big.NewInt(123_456_789_000))),
-		)),
+	from := mapEntry(t, "from", addrSCVal(makeAccountAddress(t, 0xAA)))
+	cases := []struct {
+		name string
+		kind string
+		body sdkxdr.ScVal
+		want error
+	}{
+		{"missing amount is ErrMalformedPayload, not a nil-deref", EventDeposit, mapSCVal(t, from), ErrMalformedPayload},
+		{"kind classify() would never return", "rebalance", mapSCVal(t), ErrUnknownEvent},
 	}
-	flow, err := decodeFlow(ev, EventDeposit)
-	if err != nil {
-		t.Fatalf("decodeFlow: %v", err)
-	}
-	if flow.Source != SourceName {
-		t.Errorf("Source = %q, want %q", flow.Source, SourceName)
-	}
-	if flow.Direction != DirectionDeposit {
-		t.Errorf("Direction = %q, want deposit", flow.Direction)
-	}
-	if flow.From == "" || flow.From[0] != 'G' {
-		t.Errorf("From = %q, want a G-strkey account address", flow.From)
-	}
-	if got, want := flow.Amount.String(), "123456789000"; got != want {
-		t.Errorf("Amount = %q, want %q (no truncation)", got, want)
-	}
-	if flow.Ledger != 60_000_000 || flow.OpIndex != 2 || flow.TxHash != "abc123" {
-		t.Errorf("header fields not preserved: %+v", flow)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := &events.Event{
+				ContractID: strategyContract, LedgerClosedAt: "2026-05-14T10:30:00Z",
+				Topic: []string{TopicPrefixStrategy, TopicSymbolDeposit}, Value: mustB64(t, tc.body),
+			}
+			if _, err := decodeFlow(ev, tc.kind); !errors.Is(err, tc.want) {
+				t.Errorf("err = %v, want %v", err, tc.want)
+			}
+		})
 	}
 }
 
-// TestDecodeFlow_withdrawFromContract covers the withdraw branch
-// AND the real-world case where `from` is the vault/router
-// *contract* (a C-strkey), not an end-user account — exactly what
-// scan-soroban-events observed on mainnet. The body shape is
-// identical to deposit; only Direction differs.
-func TestDecodeFlow_withdrawFromContract(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Type:           "contract",
-		Ledger:         60_000_001,
-		LedgerClosedAt: "2026-05-14T10:31:00Z",
-		ContractID:     "CC5CE6MWISDXT3MLNQ7R3FVILFVFEIH3COWGH45GJKL6BD2ZHF7F7JVI",
-		Topic:          []string{TopicPrefixStrategy, TopicSymbolWithdraw},
-		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "from", addrSCVal(makeContractAddress(t, 0xBB))),
-			mapEntry(t, "amount", i128SCVal(big.NewInt(29_999_999))),
-		)),
-	}
-	flow, err := decodeFlow(ev, EventWithdraw)
-	if err != nil {
-		t.Fatalf("decodeFlow: %v", err)
-	}
-	if flow.Direction != DirectionWithdraw {
-		t.Errorf("Direction = %q, want withdraw", flow.Direction)
-	}
-	if flow.From == "" || flow.From[0] != 'C' {
-		t.Errorf("From = %q, want a C-strkey contract address", flow.From)
-	}
-	if got, want := flow.Amount.String(), "29999999"; got != want {
-		t.Errorf("Amount = %q, want %q", got, want)
-	}
-}
-
-// TestDecodeFlow_missingField covers the malformed-input path. A
-// body missing `amount` must return ErrMalformedPayload, not panic
-// on a nil-deref.
-func TestDecodeFlow_missingField(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		ContractID:     "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
-		LedgerClosedAt: "2026-05-14T10:30:00Z",
-		Topic:          []string{TopicPrefixStrategy, TopicSymbolDeposit},
-		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "from", addrSCVal(makeAccountAddress(t, 0xAA))),
-			// no amount
-		)),
-	}
-	_, err := decodeFlow(ev, EventDeposit)
-	if !errors.Is(err, ErrMalformedPayload) {
-		t.Errorf("err = %v, want ErrMalformedPayload", err)
-	}
-}
-
-// TestDecodeFlow_badKind defends the defensive default branch — a
-// kind classify() would never return must still error cleanly.
-func TestDecodeFlow_badKind(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		LedgerClosedAt: "2026-05-14T10:30:00Z",
-		Topic:          []string{TopicPrefixStrategy, TopicSymbolDeposit},
-		Value:          mustB64(t, mapSCVal(t)),
-	}
-	_, err := decodeFlow(ev, "rebalance")
-	if !errors.Is(err, ErrUnknownEvent) {
-		t.Errorf("err = %v, want ErrUnknownEvent", err)
-	}
-}
-
-// ─── Phase B (vault layer) tests ──────────────────────────────
-
-// TestClassifyVault_depositWithdraw mirrors TestClassify_depositWithdraw
-// for the vault-wrapper topic prefix. Topic[1] symbols are shared
-// between strategy + vault layers (`deposit` / `withdraw`), so the
-// reject paths here mainly cover topic[0] discrimination.
+// Vault topic[1] symbols are shared with the strategy layer, so the reject
+// paths mostly cover topic[0] discrimination.
 func TestClassifyVault_depositWithdraw(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name      string
-		topic     []string
-		wantClass string
-	}{
-		{
-			name:      "vault deposit",
-			topic:     []string{TopicPrefixVault, TopicSymbolDeposit},
-			wantClass: EventDeposit,
-		},
-		{
-			name:      "vault withdraw",
-			topic:     []string{TopicPrefixVault, TopicSymbolWithdraw},
-			wantClass: EventWithdraw,
-		},
-		{
-			name:      "strategy prefix routes to classify(), not classifyVault()",
-			topic:     []string{TopicPrefixStrategy, TopicSymbolDeposit},
-			wantClass: "",
-		},
-		{
-			name:      "vault prefix encoded as Symbol not String",
-			topic:     []string{mustB64Symbol(t, "DeFindexVault"), TopicSymbolDeposit},
-			wantClass: "",
-		},
-		// EVERY-event policy: the nine vault governance /
-		// admin / multiplexed-rebalance topics are classified
-		// (still no decoder — classification only). Pre-policy these
-		// returned "" and got silently dropped.
-		{name: "vault rescue", topic: []string{TopicPrefixVault, TopicSymbolRescue}, wantClass: EventRescue},
-		{name: "vault paused", topic: []string{TopicPrefixVault, TopicSymbolPaused}, wantClass: EventPaused},
-		{name: "vault unpaused", topic: []string{TopicPrefixVault, TopicSymbolUnpaused}, wantClass: EventUnpaused},
-		{name: "vault nreceiver", topic: []string{TopicPrefixVault, TopicSymbolNReceiver}, wantClass: EventNReceiver},
-		{name: "vault nmanager", topic: []string{TopicPrefixVault, TopicSymbolNManager}, wantClass: EventNManager},
-		{name: "vault nemanager", topic: []string{TopicPrefixVault, TopicSymbolNEManager}, wantClass: EventNEManager},
-		{name: "vault rbmanager", topic: []string{TopicPrefixVault, TopicSymbolRBManager}, wantClass: EventRBManager},
-		{name: "vault dfees", topic: []string{TopicPrefixVault, TopicSymbolDFees}, wantClass: EventDFees},
-		{name: "vault rebalance (multiplexed body)", topic: []string{TopicPrefixVault, TopicSymbolRebalance}, wantClass: EventRebalance},
-		// n_wasm — a read-only lake
-		// topic census found 2 real occurrences classifyVault didn't
-		// recognize. Classification-only (no decoder), same as the
-		// other 9 admin topics above — the topic encoding itself is
-		// verified (scval.MustEncodeSymbol, same mechanism the whole
-		// package relies on), but a real-lake-bytes body sample was not
-		// pulled: three separate ClickHouse queries (contract-scoped,
-		// ledger-range-scoped, and topic-only) each timed out past
-		// 400s against the raw 233M-row contract_events table without
-		// a skip index on non-contract_id predicates — see
-		// internal/sources/defindex/events.go's EventNWasm doc.
-		{name: "vault n_wasm", topic: []string{TopicPrefixVault, TopicSymbolNWasm}, wantClass: EventNWasm},
-		{
-			name:      "single-element topic",
-			topic:     []string{TopicPrefixVault},
-			wantClass: "",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ev := &events.Event{Topic: tc.topic}
-			got := classifyVault(ev)
-			if got != tc.wantClass {
-				t.Errorf("classifyVault = %q, want %q", got, tc.wantClass)
-			}
-		})
-	}
+	v := func(sym string) []string { return []string{TopicPrefixVault, sym} }
+	runClassify(t, classifyVault, []classifyCase{
+		{"vault deposit", v(TopicSymbolDeposit), EventDeposit},
+		{"vault withdraw", v(TopicSymbolWithdraw), EventWithdraw},
+		{"strategy prefix routes to classify(), not classifyVault()", []string{TopicPrefixStrategy, TopicSymbolDeposit}, ""},
+		{"vault prefix encoded as Symbol not String", []string{mustB64Symbol(t, "DeFindexVault"), TopicSymbolDeposit}, ""},
+		// Classification-only admin topics (no decoder); n_wasm has no real body sample.
+		{"vault rescue", v(TopicSymbolRescue), EventRescue},
+		{"vault paused", v(TopicSymbolPaused), EventPaused},
+		{"vault unpaused", v(TopicSymbolUnpaused), EventUnpaused},
+		{"vault nreceiver", v(TopicSymbolNReceiver), EventNReceiver},
+		{"vault nmanager", v(TopicSymbolNManager), EventNManager},
+		{"vault nemanager", v(TopicSymbolNEManager), EventNEManager},
+		{"vault rbmanager", v(TopicSymbolRBManager), EventRBManager},
+		{"vault dfees", v(TopicSymbolDFees), EventDFees},
+		{"vault rebalance (multiplexed body)", v(TopicSymbolRebalance), EventRebalance},
+		{"vault n_wasm", v(TopicSymbolNWasm), EventNWasm},
+		{"single-element topic", []string{TopicPrefixVault}, ""},
+	})
 }
 
-// TestClassifyFactory_createNfee covers the factory layer added per
-// EVERY-event policy (project_every_event_principle). Factory events
-// are classified-only — Decode returns (nil, nil) on a factory match
-// so the dispatcher's drop-counter doesn't file them as unmatched.
+// Factory events are classified-only: Decode returns (nil, nil) so the
+// dispatcher doesn't count them as unmatched.
 func TestClassifyFactory_createNfee(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name      string
-		topic     []string
-		wantClass string
-	}{
-		{
-			name:      "factory create",
-			topic:     []string{TopicPrefixFactory, TopicSymbolCreate},
-			wantClass: EventCreate,
-		},
-		{
-			name:      "factory n_fee",
-			topic:     []string{TopicPrefixFactory, TopicSymbolNFee},
-			wantClass: EventNFee,
-		},
-		{
-			name:      "strategy prefix routes to classify(), not classifyFactory()",
-			topic:     []string{TopicPrefixStrategy, TopicSymbolCreate},
-			wantClass: "",
-		},
-		{
-			name:      "vault prefix routes to classifyVault(), not classifyFactory()",
-			topic:     []string{TopicPrefixVault, TopicSymbolCreate},
-			wantClass: "",
-		},
-		{
-			name:      "factory prefix encoded as Symbol not String",
-			topic:     []string{mustB64Symbol(t, "DeFindexFactory"), TopicSymbolCreate},
-			wantClass: "",
-		},
-		{
-			name:      "factory with deposit symbol (wrong topic[1])",
-			topic:     []string{TopicPrefixFactory, TopicSymbolDeposit},
-			wantClass: "",
-		},
-		{
-			name:      "single-element topic",
-			topic:     []string{TopicPrefixFactory},
-			wantClass: "",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ev := &events.Event{Topic: tc.topic}
-			got := classifyFactory(ev)
-			if got != tc.wantClass {
-				t.Errorf("classifyFactory = %q, want %q", got, tc.wantClass)
-			}
-		})
-	}
+	runClassify(t, classifyFactory, []classifyCase{
+		{"factory create", []string{TopicPrefixFactory, TopicSymbolCreate}, EventCreate},
+		{"factory n_fee", []string{TopicPrefixFactory, TopicSymbolNFee}, EventNFee},
+		{"strategy prefix routes to classify(), not classifyFactory()", []string{TopicPrefixStrategy, TopicSymbolCreate}, ""},
+		{"vault prefix routes to classifyVault(), not classifyFactory()", []string{TopicPrefixVault, TopicSymbolCreate}, ""},
+		{"factory prefix encoded as Symbol not String", []string{mustB64Symbol(t, "DeFindexFactory"), TopicSymbolCreate}, ""},
+		{"factory with deposit symbol (wrong topic[1])", []string{TopicPrefixFactory, TopicSymbolDeposit}, ""},
+		{"single-element topic", []string{TopicPrefixFactory}, ""},
+	})
 }
 
-// TestDecode_factoryEvent_isClassifiedButEmits0Events verifies that
-// the dispatcher's Decode entrypoint returns (nil, nil) — not the
-// `ErrUnknownEvent` sentinel — for a factory match. This is the
-// closed-loop completeness check: Matches() returns true → Decode()
-// returns no error and no events, the event is consumed cleanly
-// rather than recorded as an unmatched-topic drop. Uses `n_fee`, but
-// `create` behaves identically (there is no
-// create-body fan-out): both recognise + drop cleanly and never decode
-// their body — see TestDecode_factoryCreate_doesNotSeedFromBody and
-// TestDecode_factoryCreate_ignoresBody.
-func TestDecode_factoryEvent_isClassifiedButEmits0Events(t *testing.T) {
-	t.Parallel()
-	d := NewDecoder()
-	// The gate (ADR-0035/0040) only honours factory events from the
-	// canonical trust roots — a create from a foreign contract is
-	// rejected (TestDecoder_GateRejectsForeignContract).
-	ev := events.Event{ContractID: MainnetFactories[0], Topic: []string{TopicPrefixFactory, TopicSymbolNFee}}
-	if !d.Matches(ev) {
-		t.Fatal("Matches(factory n_fee) = false, want true")
-	}
-	out, err := d.Decode(ev)
-	if err != nil {
-		t.Errorf("Decode(factory n_fee) err = %v, want nil", err)
-	}
-	if len(out) != 0 {
-		t.Errorf("Decode(factory n_fee) emitted %d events, want 0", len(out))
-	}
-}
-
-// ─── Factory `create` bodies — untrusted, never seeded ──
-//
-// Real lake bytes (data_xdr) captured via ClickHouse HTTP
-// against r1's certified raw lake, contract-scoped to the 3
-// create-emitting DeFindexFactory instances. Each constant is one
-// full `("DeFindexFactory","create")` event body, byte-identical to
-// what the contract emitted on-chain. They NAME real curated
-// strategies, but the decoder does not seed from these
-// bodies at all — see TestDecode_factoryCreate_doesNotSeedFromBody.
+// Real lake bytes of ("DeFindexFactory","create") bodies (r1 raw lake).
 const (
-	// createBodyTwoStrategies — CDKFHFJI… (current factory), ledger
-	// 57,057,068. One asset with TWO strategies:
-	// CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP
-	// ("blend_autocompound_fixed") and
-	// CCSRX5E4337QMCMC3KO3RDFYI57T5NZV5XB3W3TWE4USCASKGL5URKJL
-	// ("blend_autocompound_yieldblox") — both members of
-	// MainnetStrategies.
+	// Ledger 57,057,068: one asset, TWO strategies, both in MainnetStrategies.
 	createBodyTwoStrategies = "AAAAEQAAAAEAAAADAAAADwAAAAZhc3NldHMAAAAAABAAAAABAAAAAQAAABEAAAABAAAAAgAAAA8AAAAHYWRkcmVzcwAAAAASAAAAAa3vzlmu5Slo92Bh1JTCUlt1ZZ+kKWpl9JnvKeVkd+SWAAAADwAAAApzdHJhdGVnaWVzAAAAAAAQAAAAAQAAAAIAAAARAAAAAQAAAAMAAAAPAAAAB2FkZHJlc3MAAAAAEgAAAAHDqzFQg2uWEDj8Pmz0XyfQAsmsz8xqj9ZUxEsr93IBXAAAAA8AAAAEbmFtZQAAAA4AAAAYYmxlbmRfYXV0b2NvbXBvdW5kX2ZpeGVkAAAADwAAAAZwYXVzZWQAAAAAAAAAAAAAAAAAEQAAAAEAAAADAAAADwAAAAdhZGRyZXNzAAAAABIAAAABpRv0nN7/BgmC2p24jLhHfz63Ne3Du252JykhAkoy+0gAAAAPAAAABG5hbWUAAAAOAAAAHGJsZW5kX2F1dG9jb21wb3VuZF95aWVsZGJsb3gAAAAPAAAABnBhdXNlZAAAAAAAAAAAAAAAAAAPAAAABXJvbGVzAAAAAAAAEQAAAAEAAAAEAAAAAwAAAAAAAAASAAAAAAAAAAA/yG0JmrdjpOcWUQkJHLRLd1OhvkvZDYFcHc7gVBDUmQAAAAMAAAABAAAAEgAAAAAAAAAAixJCFtWLc+peA9dQXbhNguV6nHi4456Q+b2VWsg3JIUAAAADAAAAAgAAABIAAAAAAAAAAJ8DBa6Ko1Zw7Uo5qB28HTW2ZtZrKsggNIY4eX8/F0FiAAAAAwAAAAMAAAASAAAAAAAAAAANx5WIC2/uT2FiHgSp7KMg/li5+cX+rFbIaNgZKoQ7ygAAAA8AAAAJdmF1bHRfZmVlAAAAAAAAAwAAB9A="
-
-	// createBodyZeroStrategies — CDKFHFJI…, ledger 57,147,588. One
-	// asset with an EMPTY strategies Vec — a legitimate, observed
-	// on-chain shape (a vault created with no strategy attached yet),
-	// not malformed.
+	// Ledger 57,147,588: one asset with an EMPTY strategies Vec (legitimate, observed).
 	createBodyZeroStrategies = "AAAAEQAAAAEAAAADAAAADwAAAAZhc3NldHMAAAAAABAAAAABAAAAAQAAABEAAAABAAAAAgAAAA8AAAAHYWRkcmVzcwAAAAASAAAAASAi1W4KumRRb25iYE0pYjK+hk/9+4TVhhPnQjys4CsoAAAADwAAAApzdHJhdGVnaWVzAAAAAAAQAAAAAQAAAAAAAAAPAAAABXJvbGVzAAAAAAAAEQAAAAEAAAAEAAAAAwAAAAAAAAASAAAAAAAAAABuCGdDDiAqa8Ozjwj2jTBN1K57+trQBkkwYN0L5b4o6AAAAAMAAAABAAAAEgAAAAAAAAAAbghnQw4gKmvDs48I9o0wTdSue/ra0AZJMGDdC+W+KOgAAAADAAAAAgAAABIAAAAAAAAAAG4IZ0MOICprw7OPCPaNME3Urnv62tAGSTBg3QvlvijoAAAAAwAAAAMAAAASAAAAAAAAAABuCGdDDiAqa8Ozjwj2jTBN1K57+trQBkkwYN0L5b4o6AAAAA8AAAAJdmF1bHRfZmVlAAAAAAAAAwAAB9A="
-
-	// createBodyEarliestFactory — CAVP2QLP… (the earliest of the 4
-	// factories), ledger 55,484,403. One asset with ONE strategy:
-	// CBTX63BX2I6E2VG2SMFQXDHLAPDOANUWBTMXQNWBV2FT6DIMVQPCSOBW
-	// ("Blend Strategy") — confirms the field layout is
-	// byte-identical across the factory-era history, not just on the
-	// current factory.
+	// Ledger 55,484,403, earliest factory: one asset, one strategy ("Blend Strategy").
 	createBodyEarliestFactory = "AAAAEQAAAAEAAAADAAAADwAAAAZhc3NldHMAAAAAABAAAAABAAAAAQAAABEAAAABAAAAAgAAAA8AAAAHYWRkcmVzcwAAAAASAAAAASW0/NhZrsL6Y0hDjEibPDwQyYttIb5P08swy2iVPvl3AAAADwAAAApzdHJhdGVnaWVzAAAAAAAQAAAAAQAAAAEAAAARAAAAAQAAAAMAAAAPAAAAB2FkZHJlc3MAAAAAEgAAAAFnf2w30jxNVNqTCwuM6wPG4DaWDNl4NsGuiz8NDKweKQAAAA8AAAAEbmFtZQAAAA4AAAAOQmxlbmQgU3RyYXRlZ3kAAAAAAA8AAAAGcGF1c2VkAAAAAAAAAAAAAAAAAA8AAAAFcm9sZXMAAAAAAAARAAAAAQAAAAQAAAADAAAAAAAAABIAAAAAAAAAAI/sKanankkaQEGC08WiRi97yjWn3C73URmgU+eSxFGvAAAAAwAAAAEAAAASAAAAAAAAAACP7Cmp2p5JGkBBgtPFokYve8o1p9wu91EZoFPnksRRrwAAAAMAAAACAAAAEgAAAAAAAAAAj+wpqdqeSRpAQYLTxaJGL3vKNafcLvdRGaBT55LEUa8AAAADAAAAAwAAABIAAAAAAAAAAI/sKanankkaQEGC08WiRi97yjWn3C73URmgU+eSxFGvAAAADwAAAAl2YXVsdF9mZWUAAAAAAAADAAAAZA=="
 )
 
-// TestDecode_factoryCreate_doesNotSeedFromBody is the security
-// regression for body-seeding. The DeFindex factory is
-// PERMISSIONLESS — anyone can create a vault — so a `create` body's
-// NAMED strategy addresses (`assets[].strategies[].address`) are
-// attacker-controlled and must NOT auto-register: a canonical-factory
-// emitter does not vouch for them. A create is still RECOGNISED
-// (Matches true, drops cleanly with no error and no events) but seeds
-// NOTHING — there is no body fan-out.
-//
-// Uses real lake create bytes (which happen to name real curated
-// strategies) against a BARE registry — factory trust roots only, the
-// curated child set WITHHELD — so any Has() hit could only have come
-// from a create-body seed. That is exactly the permissionless-poisoning
-// path this fix closes.
-//
-// RED-PROOF: against a Decode that calls
-// decodeFactoryCreateStrategies + d.reg.Seed), reg.Has(named) is true
-// and reg.Len() > 0 here — this test FAILS. The fix makes them false/0.
-func TestDecode_factoryCreate_doesNotSeedFromBody(t *testing.T) {
+// The factory is PERMISSIONLESS, so a `create` body's named strategies are
+// attacker-controlled: factory events are recognised (Matches true, no
+// error, no events) but never seed the registry and never decode the body.
+// The registry is bare (factory roots only, curated children withheld), so
+// any Has() hit could only come from a body seed.
+func TestDecode_factoryEvents_recognisedNeverSeed(t *testing.T) {
 	t.Parallel()
+	const current = "CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI"
 	cases := []struct {
 		name    string
 		factory string
+		sym     string
 		body    string
-		named   []string // strategy addresses this body NAMES
+		named   []string // strategy addresses the body NAMES
 	}{
+		{"n_fee", MainnetFactories[0], TopicSymbolNFee, "", nil},
+		{"create with non-Map body is not decoded", MainnetFactories[0], TopicSymbolCreate, mustB64(t, i128SCVal(big.NewInt(1))), nil},
+		{"two strategies (current factory)", current, TopicSymbolCreate, createBodyTwoStrategies, []string{
+			strategyContract,
+			"CCSRX5E4337QMCMC3KO3RDFYI57T5NZV5XB3W3TWE4USCASKGL5URKJL",
+		}},
+		{"zero strategies", current, TopicSymbolCreate, createBodyZeroStrategies, nil},
 		{
-			name:    "two strategies (current factory) are NOT seeded",
-			factory: "CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI",
-			body:    createBodyTwoStrategies,
-			named: []string{
-				"CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
-				"CCSRX5E4337QMCMC3KO3RDFYI57T5NZV5XB3W3TWE4USCASKGL5URKJL",
-			},
-		},
-		{
-			name:    "zero strategies also seeds nothing",
-			factory: "CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI",
-			body:    createBodyZeroStrategies,
-			named:   nil,
-		},
-		{
-			name:    "earliest factory strategy is NOT seeded",
-			factory: "CAVP2QLPIG7FQNHI57KXF7KS6NIAAUQKHZZDM3AGVADE64WHFBC5YURX",
-			body:    createBodyEarliestFactory,
-			named:   []string{"CBTX63BX2I6E2VG2SMFQXDHLAPDOANUWBTMXQNWBV2FT6DIMVQPCSOBW"},
+			"earliest factory", "CAVP2QLPIG7FQNHI57KXF7KS6NIAAUQKHZZDM3AGVADE64WHFBC5YURX", TopicSymbolCreate, createBodyEarliestFactory,
+			[]string{"CBTX63BX2I6E2VG2SMFQXDHLAPDOANUWBTMXQNWBV2FT6DIMVQPCSOBW"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			d := NewDecoder()
-			// Bare registry: factory trust roots only, curated child set
-			// WITHHELD — so a Has() hit can only be a create-body seed.
 			d.reg = contractid.New(contractid.WithFactories(MainnetFactories))
-
 			ev := events.Event{
-				Ledger:     60_000_000,
-				ContractID: tc.factory,
-				Topic:      []string{TopicPrefixFactory, TopicSymbolCreate},
-				Value:      tc.body,
+				Ledger: 60_000_000, ContractID: tc.factory,
+				Topic: []string{TopicPrefixFactory, tc.sym}, Value: tc.body,
 			}
 			if !d.Matches(ev) {
-				t.Fatal("Matches(create) = false, want true (canonical factory)")
+				t.Fatal("Matches = false, want true (canonical factory)")
 			}
 			out, err := d.Decode(ev)
 			if err != nil {
-				t.Fatalf("Decode(create) err = %v, want nil (recognised, drops cleanly)", err)
+				t.Fatalf("Decode err = %v, want nil (recognised, body untrusted)", err)
 			}
 			if len(out) != 0 {
-				t.Errorf("Decode(create) emitted %d consumer.Event(s), want 0", len(out))
+				t.Errorf("Decode emitted %d events, want 0", len(out))
 			}
 			if got := d.reg.Len(); got != 0 {
-				t.Errorf("registry grew to %d child(ren) after Decode(create); want 0 — create bodies must not seed", got)
+				t.Errorf("registry grew to %d child(ren); want 0 — bodies must not seed", got)
 			}
 			for _, named := range tc.named {
 				if d.reg.Has(named) {
-					t.Errorf("strategy %s was seeded from the create body — permissionless-poisoning path still open", named)
+					t.Errorf("strategy %s was seeded from the create body — permissionless-poisoning path open", named)
 				}
-				// Its own BlendStrategy flow topic must NOT be recognised.
-				flowEv := events.Event{ContractID: named, Topic: []string{TopicPrefixStrategy, TopicSymbolDeposit}}
-				if d.Matches(flowEv) {
-					t.Errorf("named-but-unseeded strategy %s still matches its own deposit topic — poisoning not closed", named)
+				if d.Matches(events.Event{ContractID: named, Topic: []string{TopicPrefixStrategy, TopicSymbolDeposit}}) {
+					t.Errorf("named-but-unseeded strategy %s matches its own deposit topic", named)
 				}
 			}
 		})
 	}
 }
 
-// TestDecode_curatedStrategy_stillRecognised proves the fix preserves
-// LEGITIMATE DeFindex flows. A strategy in the evidence-verified
-// curated trust root (MainnetStrategies) is seeded by NewDecoder and
-// its own BlendStrategy deposit topic still matches, so real
-// vault↔strategy flows are unaffected by removing the create-body
-// fan-out; only the attacker-controlled named-but-unverified path is
-// closed.
+// Legitimate flows survive: curated strategies are seeded by NewDecoder;
+// anything else stays fail-closed.
 func TestDecode_curatedStrategy_stillRecognised(t *testing.T) {
 	t.Parallel()
-	d := NewDecoder() // production gate: full curated seed (MainnetGatedSet)
-
+	d := NewDecoder()
 	strategy := MainnetStrategies[0]
 	if !d.reg.Has(strategy) {
 		t.Fatalf("curated strategy %s not seeded by NewDecoder", strategy)
 	}
-	flowEv := events.Event{ContractID: strategy, Topic: []string{TopicPrefixStrategy, TopicSymbolDeposit}}
-	if !d.Matches(flowEv) {
-		t.Errorf("curated strategy %s deposit topic does not match — a legitimate flow was broken by the fix", strategy)
+	if !d.Matches(events.Event{ContractID: strategy, Topic: []string{TopicPrefixStrategy, TopicSymbolDeposit}}) {
+		t.Errorf("curated strategy %s deposit topic does not match", strategy)
 	}
-
-	// A contract that is NEITHER curated NOR create-body-seeded stays
-	// fail-closed (the honest recognition gap).
 	attacker := events.Event{
 		ContractID: "CATTACKERSTRATEGY00000000000000000000000000000000000000000",
 		Topic:      []string{TopicPrefixStrategy, TopicSymbolDeposit},
@@ -491,204 +259,112 @@ func TestDecode_curatedStrategy_stillRecognised(t *testing.T) {
 	}
 }
 
-// TestDecode_factoryCreate_ignoresBody pins that a `create` event's
-// body is not decoded at all:
-// even a body that isn't a Map (which the old fan-out would have
-// flagged as ErrMalformedPayload) now drops cleanly — recognised, no
-// error, no events, no seeding. Factory bodies are untrusted, so we
-// never parse them.
-func TestDecode_factoryCreate_ignoresBody(t *testing.T) {
+// Deposit uses `depositor`/`amounts`/`df_tokens_minted`; withdraw swaps in
+// `withdrawer`/`amounts_withdrawn`/`df_tokens_burned`.
+func TestDecodeVaultFlow(t *testing.T) {
 	t.Parallel()
-	d := NewDecoder()
-	before := d.reg.Len()
-	ev := events.Event{
-		ContractID: MainnetFactories[0],
-		Topic:      []string{TopicPrefixFactory, TopicSymbolCreate},
-		Value:      mustB64(t, i128SCVal(big.NewInt(1))), // not a Map — would have errored under the old fan-out
+	amts := func(ns ...int64) sdkxdr.ScVal {
+		vals := make([]sdkxdr.ScVal, len(ns))
+		for i, n := range ns {
+			vals[i] = i128SCVal(big.NewInt(n))
+		}
+		return vecSCVal(t, vals...)
 	}
-	if !d.Matches(ev) {
-		t.Fatal("Matches(create) = false, want true")
+	cases := []struct {
+		name        string
+		kind        string
+		topic1      string
+		userKey     string
+		amountsKey  string
+		dfKey       string
+		user        sdkxdr.ScAddress
+		amounts     sdkxdr.ScVal
+		df          int64
+		wantDir     Direction
+		wantPrefix  byte
+		wantAmounts []string
+		wantDf      string
+	}{
+		{
+			"deposit", EventDeposit, TopicSymbolDeposit, "depositor", "amounts", "df_tokens_minted",
+			makeAccountAddress(t, 0xCC), amts(10_000_000), 9_876_543, DirectionDeposit, 'G',
+			[]string{"10000000"},
+			"9876543",
+		},
+		{
+			"withdraw, two-asset basket", EventWithdraw, TopicSymbolWithdraw, "withdrawer", "amounts_withdrawn", "df_tokens_burned",
+			makeAccountAddress(t, 0xDD), amts(5_000_000, 2_500_000), 7_400_000, DirectionWithdraw, 'G',
+			[]string{"5000000", "2500000"},
+			"7400000",
+		},
+		{
+			"router/aggregator depositor is a C-strkey", EventDeposit, TopicSymbolDeposit, "depositor", "amounts", "df_tokens_minted",
+			makeContractAddress(t, 0xEE), amts(1_111_111), 1_000_000, DirectionDeposit, 'C',
+			[]string{"1111111"},
+			"1000000",
+		},
+		{
+			"empty amounts Vec is legal", EventDeposit, TopicSymbolDeposit, "depositor", "amounts", "df_tokens_minted",
+			makeAccountAddress(t, 0xCC), amts(), 0, DirectionDeposit, 'G', nil, "0",
+		},
 	}
-	out, err := d.Decode(ev)
-	if err != nil {
-		t.Errorf("Decode(create with non-Map body) err = %v, want nil (body untrusted, not decoded)", err)
-	}
-	if len(out) != 0 {
-		t.Errorf("Decode(create) emitted %d events, want 0", len(out))
-	}
-	if d.reg.Len() != before {
-		t.Errorf("registry changed size (%d → %d) on a create — bodies must not seed", before, d.reg.Len())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ev := &events.Event{
+				Type: "contract", Ledger: 60_500_000, LedgerClosedAt: "2026-05-15T08:00:00Z",
+				ContractID: vaultContract, OperationIndex: 1, TxHash: "vault-abc",
+				Topic: []string{TopicPrefixVault, tc.topic1},
+				Value: mustB64(t, mapSCVal(t,
+					mapEntry(t, tc.amountsKey, tc.amounts),
+					mapEntry(t, tc.dfKey, i128SCVal(big.NewInt(tc.df))),
+					mapEntry(t, tc.userKey, addrSCVal(tc.user)),
+				)),
+			}
+			flow, err := decodeVaultFlow(ev, tc.kind)
+			if err != nil {
+				t.Fatalf("decodeVaultFlow: %v", err)
+			}
+			if flow.Source != SourceName {
+				t.Errorf("Source = %q, want %q", flow.Source, SourceName)
+			}
+			if flow.Direction != tc.wantDir {
+				t.Errorf("Direction = %q, want %q", flow.Direction, tc.wantDir)
+			}
+			if flow.User == "" || flow.User[0] != tc.wantPrefix {
+				t.Errorf("User = %q, want prefix %q", flow.User, string(tc.wantPrefix))
+			}
+			if len(flow.Amounts) != len(tc.wantAmounts) {
+				t.Fatalf("len(Amounts) = %d, want %d", len(flow.Amounts), len(tc.wantAmounts))
+			}
+			for i, want := range tc.wantAmounts {
+				if got := flow.Amounts[i].String(); got != want {
+					t.Errorf("Amounts[%d] = %q, want %q", i, got, want)
+				}
+			}
+			if got := flow.DfTokens.String(); got != tc.wantDf {
+				t.Errorf("DfTokens = %q, want %q", got, tc.wantDf)
+			}
+			if flow.Ledger != 60_500_000 || flow.OpIndex != 1 || flow.TxHash != "vault-abc" {
+				t.Errorf("header fields not preserved: %+v", flow)
+			}
+		})
 	}
 }
 
-// TestDecodeVaultFlow_deposit covers the happy path for a vault
-// deposit event with the audit-doc body schema: a G-strkey
-// `depositor`, a single-element `amounts` Vec<i128>, and
-// `df_tokens_minted` i128. Verifies the User strkey round-trips,
-// amounts preserve precision (ADR-0003), and direction is set.
-func TestDecodeVaultFlow_deposit(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Type:           "contract",
-		Ledger:         60_500_000,
-		LedgerClosedAt: "2026-05-15T08:00:00Z",
-		ContractID:     "CCA2ZJP5BVRXYTQH4FAGHCAUMRYCXVC4CRYC2NXHWMR7TIVX36U7F5HR",
-		OperationIndex: 1,
-		TxHash:         "vault-dep-abc",
-		Topic:          []string{TopicPrefixVault, TopicSymbolDeposit},
-		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "amounts", vecSCVal(t, i128SCVal(big.NewInt(10_000_000)))),
-			mapEntry(t, "depositor", addrSCVal(makeAccountAddress(t, 0xCC))),
-			mapEntry(t, "df_tokens_minted", i128SCVal(big.NewInt(9_876_543))),
-		)),
-	}
-	flow, err := decodeVaultFlow(ev, EventDeposit)
-	if err != nil {
-		t.Fatalf("decodeVaultFlow: %v", err)
-	}
-	if flow.Source != SourceName {
-		t.Errorf("Source = %q, want %q", flow.Source, SourceName)
-	}
-	if flow.Direction != DirectionDeposit {
-		t.Errorf("Direction = %q, want deposit", flow.Direction)
-	}
-	if flow.User == "" || flow.User[0] != 'G' {
-		t.Errorf("User = %q, want a G-strkey depositor", flow.User)
-	}
-	if got, want := len(flow.Amounts), 1; got != want {
-		t.Fatalf("len(Amounts) = %d, want %d", got, want)
-	}
-	if got, want := flow.Amounts[0].String(), "10000000"; got != want {
-		t.Errorf("Amounts[0] = %q, want %q", got, want)
-	}
-	if got, want := flow.DfTokens.String(), "9876543"; got != want {
-		t.Errorf("DfTokens = %q, want %q", got, want)
-	}
-	if flow.Ledger != 60_500_000 || flow.OpIndex != 1 || flow.TxHash != "vault-dep-abc" {
-		t.Errorf("header fields not preserved: %+v", flow)
-	}
-}
-
-// TestDecodeVaultFlow_withdraw covers the withdraw branch and the
-// per-direction field-name swap (`withdrawer` / `amounts_withdrawn`
-// / `df_tokens_burned`). Body has a multi-asset amounts vec to
-// confirm the Vec-decode loop handles >1 element.
-func TestDecodeVaultFlow_withdraw(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Type:           "contract",
-		Ledger:         60_500_001,
-		LedgerClosedAt: "2026-05-15T08:01:00Z",
-		ContractID:     "CCA2ZJP5BVRXYTQH4FAGHCAUMRYCXVC4CRYC2NXHWMR7TIVX36U7F5HR",
-		Topic:          []string{TopicPrefixVault, TopicSymbolWithdraw},
-		Value: mustB64(t, mapSCVal(t,
-			// Two-asset basket exercises the Vec loop.
-			mapEntry(t, "amounts_withdrawn", vecSCVal(t,
-				i128SCVal(big.NewInt(5_000_000)),
-				i128SCVal(big.NewInt(2_500_000)),
-			)),
-			mapEntry(t, "df_tokens_burned", i128SCVal(big.NewInt(7_400_000))),
-			mapEntry(t, "withdrawer", addrSCVal(makeAccountAddress(t, 0xDD))),
-		)),
-	}
-	flow, err := decodeVaultFlow(ev, EventWithdraw)
-	if err != nil {
-		t.Fatalf("decodeVaultFlow: %v", err)
-	}
-	if flow.Direction != DirectionWithdraw {
-		t.Errorf("Direction = %q, want withdraw", flow.Direction)
-	}
-	if flow.User == "" || flow.User[0] != 'G' {
-		t.Errorf("User = %q, want a G-strkey withdrawer", flow.User)
-	}
-	if got, want := len(flow.Amounts), 2; got != want {
-		t.Fatalf("len(Amounts) = %d, want %d (multi-asset vec)", got, want)
-	}
-	if flow.Amounts[0].String() != "5000000" || flow.Amounts[1].String() != "2500000" {
-		t.Errorf("Amounts = [%s, %s], want [5000000, 2500000]",
-			flow.Amounts[0], flow.Amounts[1])
-	}
-	if got, want := flow.DfTokens.String(), "7400000"; got != want {
-		t.Errorf("DfTokens = %q, want %q", got, want)
-	}
-}
-
-// TestDecodeVaultFlow_routerDepositorContract confirms the
-// occasional case where the depositor is a router/aggregator
-// C-strkey (e.g. coming via a Soroswap-route into the vault) rather
-// than a direct user G-strkey. Both decode the same way; only the
-// User prefix differs.
-func TestDecodeVaultFlow_routerDepositorContract(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Ledger:         60_500_002,
-		LedgerClosedAt: "2026-05-15T08:02:00Z",
-		ContractID:     "CCA2ZJP5BVRXYTQH4FAGHCAUMRYCXVC4CRYC2NXHWMR7TIVX36U7F5HR",
-		Topic:          []string{TopicPrefixVault, TopicSymbolDeposit},
-		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "amounts", vecSCVal(t, i128SCVal(big.NewInt(1_111_111)))),
-			mapEntry(t, "depositor", addrSCVal(makeContractAddress(t, 0xEE))),
-			mapEntry(t, "df_tokens_minted", i128SCVal(big.NewInt(1_000_000))),
-		)),
-	}
-	flow, err := decodeVaultFlow(ev, EventDeposit)
-	if err != nil {
-		t.Fatalf("decodeVaultFlow: %v", err)
-	}
-	if flow.User == "" || flow.User[0] != 'C' {
-		t.Errorf("User = %q, want a C-strkey contract address", flow.User)
-	}
-}
-
-// TestDecodeVaultFlow_missingField defends the malformed-input
-// path. The vault body has more required fields than the strategy
-// body, so we explicitly verify the per-direction field names get
-// surfaced in the error.
 func TestDecodeVaultFlow_missingField(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
-		ContractID:     "CCA2ZJP5BVRXYTQH4FAGHCAUMRYCXVC4CRYC2NXHWMR7TIVX36U7F5HR",
+		ContractID:     vaultContract,
 		LedgerClosedAt: "2026-05-15T08:00:00Z",
 		Topic:          []string{TopicPrefixVault, TopicSymbolDeposit},
-		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "depositor", addrSCVal(makeAccountAddress(t, 0xCC))),
-			// no amounts, no df_tokens_minted
-		)),
+		Value:          mustB64(t, mapSCVal(t, mapEntry(t, "depositor", addrSCVal(makeAccountAddress(t, 0xCC))))),
 	}
-	_, err := decodeVaultFlow(ev, EventDeposit)
-	if !errors.Is(err, ErrMalformedPayload) {
+	if _, err := decodeVaultFlow(ev, EventDeposit); !errors.Is(err, ErrMalformedPayload) {
 		t.Errorf("err = %v, want ErrMalformedPayload", err)
 	}
 }
 
-// TestDecodeVaultFlow_emptyAmountsVec covers the degenerate but
-// valid case of a zero-asset deposit — the Vec is empty rather
-// than missing. Empty Vec is legal SCVal and the decoder accepts
-// it (downstream consumers can decide what to do with no flow).
-func TestDecodeVaultFlow_emptyAmountsVec(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		ContractID:     "CCA2ZJP5BVRXYTQH4FAGHCAUMRYCXVC4CRYC2NXHWMR7TIVX36U7F5HR",
-		LedgerClosedAt: "2026-05-15T08:00:00Z",
-		Topic:          []string{TopicPrefixVault, TopicSymbolDeposit},
-		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "amounts", vecSCVal(t)),
-			mapEntry(t, "depositor", addrSCVal(makeAccountAddress(t, 0xCC))),
-			mapEntry(t, "df_tokens_minted", i128SCVal(big.NewInt(0))),
-		)),
-	}
-	flow, err := decodeVaultFlow(ev, EventDeposit)
-	if err != nil {
-		t.Fatalf("decodeVaultFlow: %v", err)
-	}
-	if len(flow.Amounts) != 0 {
-		t.Errorf("len(Amounts) = %d, want 0", len(flow.Amounts))
-	}
-}
-
-// vecSCVal builds a Vec<ScVal>. Mirrors the helper in
-// internal/scval/scval_test.go (kept here rather than DRYed because
-// the production package doesn't export test builders).
 func vecSCVal(t *testing.T, elts ...sdkxdr.ScVal) sdkxdr.ScVal {
 	t.Helper()
 	vec := sdkxdr.ScVec(elts)
@@ -696,11 +372,7 @@ func vecSCVal(t *testing.T, elts ...sdkxdr.ScVal) sdkxdr.ScVal {
 	return sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvVec, Vec: &pv}
 }
 
-// ─── SCVal builders for tests ─────────────────────────────────
-// Mirrored from internal/sources/soroswap_router/decode_test.go —
-// keeping per-package builders rather than DRYing into a shared
-// test helper because the test-time graph stays small + the
-// builders are pure Go (no production dependencies to manage).
+// SCVal builders (per-package; the production package exports none).
 
 func i128SCVal(n *big.Int) sdkxdr.ScVal {
 	abs := new(big.Int).Set(n)
@@ -787,36 +459,25 @@ func mustB64(t *testing.T, sv sdkxdr.ScVal) string {
 func mustB64String(t *testing.T, s string) string {
 	t.Helper()
 	xs := sdkxdr.ScString(s)
-	sv := sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvString, Str: &xs}
-	return mustB64(t, sv)
+	return mustB64(t, sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvString, Str: &xs})
 }
 
 func mustB64Symbol(t *testing.T, s string) string {
 	t.Helper()
-	sym := sdkxdr.ScSymbol(s)
-	sv := sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvSymbol, Sym: &sym}
-	return mustB64(t, sv)
+	return mustB64(t, symSCVal(s))
 }
 
-// symSCVal builds a Symbol ScVal (the raw value, not base64) for use
-// as a map entry value — the sibling of mustB64Symbol which returns
-// the encoded topic string.
 func symSCVal(s string) sdkxdr.ScVal {
 	sym := sdkxdr.ScSymbol(s)
 	return sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvSymbol, Sym: &sym}
 }
 
-// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040:
-// the namespaced DeFindexVault/BlendStrategy topic strings are still
-// just strings any pubnet contract can emit — the r1 lake contains
-// emitters carrying the exact topic shape with NONE of the four
-// DeFindex-provenance proofs (docs/protocols/defindex.md, flagged
-// set). A perfect topic shape from an unregistered contract must NOT
-// be attributed to defindex; the same event from a curated vault /
-// strategy / factory must.
+// The namespaced topic strings are shared by every pubnet contract, so a
+// perfect topic shape from an unregistered contract must NOT be attributed
+// to defindex; the same event from a curated vault / strategy / factory must.
 func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	t.Parallel()
-	d := NewDecoder() // production gate: curated evidence-verified set only
+	d := NewDecoder()
 
 	vaultTopics := []string{TopicPrefixVault, TopicSymbolDeposit}
 	strategyTopics := []string{TopicPrefixStrategy, TopicSymbolDeposit}
@@ -833,9 +494,8 @@ func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 		}
 	}
 
-	// One flagged real-world example (docs/protocols/defindex.md):
-	// carries the DeFindexVault topic shape but none of the four
-	// provenance proofs — must stay excluded until verified.
+	// Real emitter with the DeFindexVault shape and none of the provenance
+	// proofs (docs/protocols/defindex.md): stays excluded until verified.
 	flagged := events.Event{
 		ContractID: "CBGCGVKHVA4TG6MGQ3XTOEHEJXK4DYLOKTMR4UT4PZFPTQKLYXYRF6KV",
 		Topic:      vaultTopics,
@@ -855,16 +515,13 @@ func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 			t.Fatalf("canonical factory %s failed to match", f)
 		}
 	}
-	// A factory is a trust root, not a child: vault-shaped events
-	// from a factory address are NOT flows.
+	// A factory is a trust root, not a child.
 	if d.Matches(events.Event{ContractID: MainnetFactories[0], Topic: vaultTopics}) {
 		t.Fatal("factory address matched a vault flow shape — factory and child sets must stay separate")
 	}
 }
 
-// TestDecoder_OperatorSeedAdmitsNewVault pins the operator unblock
-// path: a newly verified vault is admitted via the protocol_contracts
-// warm (contractid.WithSeed) with NO code change.
+// A newly verified vault is admitted via the protocol_contracts warm with no code change.
 func TestDecoder_OperatorSeedAdmitsNewVault(t *testing.T) {
 	t.Parallel()
 	newVault := "CNEWLYVERIFIEDVAULT0000000000000000000000000000000000000"
@@ -878,11 +535,8 @@ func TestDecoder_OperatorSeedAdmitsNewVault(t *testing.T) {
 	}
 }
 
-// TestDecoder_DuneRegistryVaultsGated pins the 19 Dune-registry vaults
-// that showed no DeFindexVault events in an early lake census. They do
-// emit deposit/withdraw (docs/protocols/defindex.md, "Vault enumeration");
-// the only way the decoder could drop them is the contract gate, and the
-// decoder has no per-WASM-hash branch, so gate membership is the whole fix.
+// The 19 Dune-registry vaults emit deposit/withdraw; gate membership is the
+// only thing that could drop them (docs/protocols/defindex.md).
 func TestDecoder_DuneRegistryVaultsGated(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
@@ -915,14 +569,8 @@ func TestDecoder_DuneRegistryVaultsGated(t *testing.T) {
 	}
 }
 
-// ─── Phase-B follow-up: harvest / rebalance / admin ──
-
-// TestDecode_strategyHarvestDecodes SUPERSEDES the old
-// recognised-but-drops-cleanly pin ("blocked on real
-// samples"): the lake disproved the no-samples premise
-// (1,018 harvests with a decodeFlow-compatible
-// body), so a registered strategy's harvest now emits one
-// DirectionHarvest StrategyFlow end to end through Decode.
+// A registered strategy's harvest emits one DirectionHarvest StrategyFlow
+// end to end through Decode (the real body also carries price_per_share).
 func TestDecode_strategyHarvestDecodes(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
@@ -953,25 +601,14 @@ func TestDecode_strategyHarvestDecodes(t *testing.T) {
 	}
 }
 
-// TestDecode_vaultUnmodelledRecognisedEmit0Events pins the vault-layer
-// clean-drop contract for the unmodelled topics: each is recognised
-// (Matches true) and emits nothing without erroring, so it never counts
-// as a decode error. `dfees` and the seven admin topics graduated OUT of
-// this set once their bodies were proven from real lake rows (see
-// TestDecode_dfees* and TestGolden_defindexVaultAdmin).
+// Unmodelled vault topics are recognised (Matches true) and emit nothing
+// without erroring. dfees and the admin topics graduated out of this set.
 func TestDecode_vaultUnmodelledRecognisedEmit0Events(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
-	symbols := map[string]string{
-		"rebalance": TopicSymbolRebalance,
-		"n_wasm":    TopicSymbolNWasm,
-	}
-	for name, sym := range symbols {
+	for name, sym := range map[string]string{"rebalance": TopicSymbolRebalance, "n_wasm": TopicSymbolNWasm} {
 		t.Run(name, func(t *testing.T) {
-			ev := events.Event{
-				ContractID: MainnetVaults[0],
-				Topic:      []string{TopicPrefixVault, sym},
-			}
+			ev := events.Event{ContractID: MainnetVaults[0], Topic: []string{TopicPrefixVault, sym}}
 			if !d.Matches(ev) {
 				t.Fatalf("Matches(vault %s) = false, want true", name)
 			}
@@ -986,187 +623,66 @@ func TestDecode_vaultUnmodelledRecognisedEmit0Events(t *testing.T) {
 	}
 }
 
-// TestDecodeRebalanceMethod exercises the four-way rebalance
-// discriminator scaffolding. It verifies the decoder
-// reads the `rebalance_method` Symbol verbatim and that Known()
-// classifies the four documented methods — WITHOUT asserting anything
-// about the (unmodelled) per-method payload. Wire spelling for the
-// four methods is unconfirmed on-chain; the decoder returns whatever
-// the body carries, so a real sample can validate the exact values.
+// The decoder reads `rebalance_method` verbatim; Known() classifies the four
+// documented methods. The per-method payload is unmodelled.
 func TestDecodeRebalanceMethod(t *testing.T) {
 	t.Parallel()
-
-	documented := []RebalanceMethod{
-		RebalanceUnwind, RebalanceInvest, RebalanceSwapExactIn, RebalanceSwapExactOut,
+	body := func(key string, v sdkxdr.ScVal) *events.Event {
+		return &events.Event{Value: mustB64(t, mapSCVal(t, mapEntry(t, key, v)))}
 	}
-	for _, want := range documented {
+
+	for _, want := range []RebalanceMethod{RebalanceUnwind, RebalanceInvest, RebalanceSwapExactIn, RebalanceSwapExactOut} {
 		t.Run("documented/"+string(want), func(t *testing.T) {
-			ev := &events.Event{
-				Topic: []string{TopicPrefixVault, TopicSymbolRebalance},
-				Value: mustB64(t, mapSCVal(t,
-					mapEntry(t, RebalanceMethodField, symSCVal(string(want))),
-				)),
-			}
-			got, err := DecodeRebalanceMethod(ev)
+			got, err := DecodeRebalanceMethod(body(RebalanceMethodField, symSCVal(string(want))))
 			if err != nil {
 				t.Fatalf("DecodeRebalanceMethod: %v", err)
 			}
-			if got != want {
-				t.Errorf("method = %q, want %q", got, want)
-			}
-			if !got.Known() {
-				t.Errorf("Known(%q) = false, want true", got)
+			if got != want || !got.Known() {
+				t.Errorf("method = %q (Known=%v), want %q known", got, got.Known(), want)
 			}
 		})
 	}
 
 	t.Run("unknown method is read verbatim but not Known", func(t *testing.T) {
-		ev := &events.Event{
-			Value: mustB64(t, mapSCVal(t,
-				mapEntry(t, RebalanceMethodField, symSCVal("some_future_method")),
-			)),
-		}
-		got, err := DecodeRebalanceMethod(ev)
+		got, err := DecodeRebalanceMethod(body(RebalanceMethodField, symSCVal("some_future_method")))
 		if err != nil {
 			t.Fatalf("DecodeRebalanceMethod: %v", err)
 		}
-		if got != RebalanceMethod("some_future_method") {
-			t.Errorf("method = %q, want verbatim %q", got, "some_future_method")
-		}
-		if got.Known() {
-			t.Errorf("Known(%q) = true, want false (unmodelled/renamed method)", got)
+		if got != RebalanceMethod("some_future_method") || got.Known() {
+			t.Errorf("method = %q (Known=%v), want verbatim and unknown", got, got.Known())
 		}
 	})
 
-	t.Run("missing discriminator field is ErrMalformedPayload", func(t *testing.T) {
-		ev := &events.Event{
-			Value: mustB64(t, mapSCVal(t,
-				mapEntry(t, "not_the_field", symSCVal("unwind")),
-			)),
-		}
-		if _, err := DecodeRebalanceMethod(ev); !errors.Is(err, ErrMalformedPayload) {
-			t.Errorf("err = %v, want ErrMalformedPayload", err)
-		}
-	})
-
-	t.Run("discriminator not a Symbol is ErrMalformedPayload", func(t *testing.T) {
-		ev := &events.Event{
-			Value: mustB64(t, mapSCVal(t,
-				mapEntry(t, RebalanceMethodField, i128SCVal(big.NewInt(7))),
-			)),
-		}
-		if _, err := DecodeRebalanceMethod(ev); !errors.Is(err, ErrMalformedPayload) {
-			t.Errorf("err = %v, want ErrMalformedPayload", err)
-		}
-	})
-}
-
-// TestDecodeFlow_harvest — regression: the
-// real on-chain harvest body (ledger 63,783,690 shape) is
-// {amount, from, price_per_share}; decodeFlow must produce a
-// DirectionHarvest StrategyFlow from it, ignoring the extra field
-// (decode-by-name), instead of the old recognise-and-drop.
-func TestDecodeFlow_harvest(t *testing.T) {
-	t.Parallel()
-	ev := &events.Event{
-		Type:           "contract",
-		Ledger:         63_783_690,
-		LedgerClosedAt: "2026-08-01T10:30:00Z",
-		ContractID:     "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
-		OperationIndex: 1,
-		TxHash:         "harvesttx",
-		Topic:          []string{TopicPrefixStrategy, TopicSymbolHarvest},
-		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "amount", i128SCVal(big.NewInt(915_806))),
-			mapEntry(t, "from", addrSCVal(makeAccountAddress(t, 0xBB))),
-			mapEntry(t, "price_per_share", i128SCVal(big.NewInt(1_002_345))),
-		)),
-	}
-	flow, err := decodeFlow(ev, EventHarvest)
-	if err != nil {
-		t.Fatalf("decodeFlow(harvest): %v", err)
-	}
-	if flow.Direction != DirectionHarvest {
-		t.Errorf("Direction = %q, want harvest", flow.Direction)
-	}
-	if got := flow.Amount.BigInt().Int64(); got != 915_806 {
-		t.Errorf("Amount = %d, want 915806", got)
-	}
-	if flow.From == "" || flow.From[0] != 'G' {
-		t.Errorf("From = %q, want a G-strkey", flow.From)
+	for name, ev := range map[string]*events.Event{
+		"missing discriminator field": body("not_the_field", symSCVal("unwind")),
+		"discriminator not a Symbol":  body(RebalanceMethodField, i128SCVal(big.NewInt(7))),
+	} {
+		t.Run(name+" is ErrMalformedPayload", func(t *testing.T) {
+			if _, err := DecodeRebalanceMethod(ev); !errors.Is(err, ErrMalformedPayload) {
+				t.Errorf("err = %v, want ErrMalformedPayload", err)
+			}
+		})
 	}
 }
 
-// TestDecoder_strategyHarvestEmitsFlow pins the adapter path: a
-// classified harvest event must emit one StrategyFlow consumer.Event
-// end to end (not recognised-and-dropped with (nil, nil)).
-func TestDecoder_strategyHarvestEmitsFlow(t *testing.T) {
-	t.Parallel()
-	d := &Decoder{}
-	ev := &events.Event{
-		Type:           "contract",
-		Ledger:         63_783_690,
-		LedgerClosedAt: "2026-08-01T10:30:00Z",
-		ContractID:     "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
-		OperationIndex: 1,
-		TxHash:         "harvesttx2",
-		Topic:          []string{TopicPrefixStrategy, TopicSymbolHarvest},
-		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "amount", i128SCVal(big.NewInt(42))),
-			mapEntry(t, "from", addrSCVal(makeAccountAddress(t, 0xCC))),
-			mapEntry(t, "price_per_share", i128SCVal(big.NewInt(7))),
-		)),
-	}
-	out, err := d.decodeStrategy(ev, EventHarvest)
-	if err != nil {
-		t.Fatalf("decodeStrategy(harvest): %v", err)
-	}
-	if len(out) != 1 {
-		t.Fatalf("emitted %d events, want 1", len(out))
-	}
-	fe, ok := out[0].(Event)
-	if !ok {
-		t.Fatalf("emitted %T, want defindex.Event", out[0])
-	}
-	if fe.Flow.Direction != DirectionHarvest {
-		t.Errorf("Direction = %q, want harvest", fe.Flow.Direction)
-	}
-}
-
-// ─── dfees — modelled ─────────────────────────────────────────────
-//
-// Real lake bytes: each dfeesBody* constant below is one full
-// ("DeFindexVault","dfees") event body (data XDR ScVal, base64 as the
-// r1 ClickHouse lake stores it), captured from live r1-lake blobs and
-// decoded with internal/scval — the proven shape this decoder was
-// blocked on (do-not-invent discipline; same path harvest went
-// through). Shape:
+// dfees bodies are real lake bytes (r1 ClickHouse, 12,785 events on 27 vaults):
 //
 //	Map{ distributed_fees: Vec[ (token Address<contract>, amount i128) ] }
 //
-// PER-ASSET (token contracts — dfeesBodyUSDC's token is USDC's SAC),
-// NOT per-recipient. Lake facts at capture: 12,785 events on 27 vault
-// contracts, ledgers 60,903,337 → tip; every sample fires in the same
-// op as the vault deposit/withdraw flow (op_index 0, event_index 5).
+// PER-ASSET, not per-recipient.
 const (
-	// One entry: (CD6M4R23…BCIS, 37).
+	// (CD6M4R23…BCIS, 37).
 	dfeesBodyOneEntry37 = "AAAAEQAAAAEAAAABAAAADwAAABBkaXN0cmlidXRlZF9mZWVzAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEgAAAAH8zkdb1oOBY0ttmf48gYAh7cgbHRK0bXzWu05molskIAAAAAoAAAAAAAAAAAAAAAAAAAAl"
-	// One entry: (CDTKPWPL…BQLV, 64).
+	// (CDTKPWPL…BQLV, 64).
 	dfeesBodyOneEntry64 = "AAAAEQAAAAEAAAABAAAADwAAABBkaXN0cmlidXRlZF9mZWVzAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEgAAAAHmp9nrdSMAakaap0g60RByR0Q8DYLmJ2PeZwhIxOl8kAAAAAoAAAAAAAAAAAAAAAAAAABA"
-	// One entry: (CCW67TSZ…MI75 — USDC's SAC, 7686).
+	// (CCW67TSZ…MI75, USDC's SAC, 7686).
 	dfeesBodyUSDC = "AAAAEQAAAAEAAAABAAAADwAAABBkaXN0cmlidXRlZF9mZWVzAAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEgAAAAGt785ZruUpaPdgYdSUwlJbdWWfpClqZfSZ7ynlZHfklgAAAAoAAAAAAAAAAAAAAAAAAB4G"
-	// EMPTY distributed_fees Vec — REAL observed shape: a distribution
-	// ran with nothing to distribute. Must decode to zero events with
-	// NO error (count-consistent with the completeness re-derive).
+	// EMPTY distributed_fees Vec: a real distribution with nothing to distribute.
 	dfeesBodyEmptyVec = "AAAAEQAAAAEAAAABAAAADwAAABBkaXN0cmlidXRlZF9mZWVzAAAAEAAAAAEAAAAA"
 )
 
-// TestDecode_dfeesRealLakeBytes drives the four REAL captured dfees
-// bodies through the production seams (Matches gate + Decode) and pins
-// the exact decoded values — token strkey, amount, kind, indices. This
-// is the redness proof: on a decoder that drops harvest every one of
-// these events clean-dropped to (nil, nil), so the len(out)=1
-// assertions fail there.
+// Real captured bodies through the production seams (Matches gate + Decode),
+// pinning token, amount, kind and indices.
 func TestDecode_dfeesRealLakeBytes(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -1184,15 +700,11 @@ func TestDecode_dfeesRealLakeBytes(t *testing.T) {
 			t.Parallel()
 			d := NewDecoder()
 			ev := events.Event{
-				Type:           "contract",
-				ContractID:     MainnetVaults[0],
-				Ledger:         60_903_337,
-				LedgerClosedAt: "2026-08-01T00:00:00Z",
-				TxHash:         "dfeestx",
-				OperationIndex: 0,
-				EventIndex:     5, // every captured sample: same-op as the vault flow
-				Topic:          []string{TopicPrefixVault, TopicSymbolDFees},
-				Value:          tc.body,
+				Type: "contract", ContractID: MainnetVaults[0], Ledger: 60_903_337,
+				LedgerClosedAt: "2026-08-01T00:00:00Z", TxHash: "dfeestx", OperationIndex: 0,
+				EventIndex: 5,
+				Topic:      []string{TopicPrefixVault, TopicSymbolDFees},
+				Value:      tc.body,
 			}
 			if !d.Matches(ev) {
 				t.Fatal("Matches(vault dfees) = false, want true (curated vault)")
@@ -1231,11 +743,9 @@ func TestDecode_dfeesRealLakeBytes(t *testing.T) {
 	}
 }
 
-// TestDecode_dfeesEmptyVecEmitsZeroEventsNoError pins the empty-Vec
-// contract on the REAL captured empty-vec bytes: recognised, zero
-// events, nil error — NOT ErrMalformedPayload. This keeps live decode
-// and the ADR-0033 completeness re-derive count-consistent (both emit
-// 0 outputs for this event).
+// The real empty-Vec body is recognised, emits 0 events and no error (not
+// ErrMalformedPayload), keeping live decode count-consistent with the
+// ADR-0033 completeness re-derive.
 func TestDecode_dfeesEmptyVecEmitsZeroEventsNoError(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
@@ -1260,122 +770,80 @@ func TestDecode_dfeesEmptyVecEmitsZeroEventsNoError(t *testing.T) {
 	}
 }
 
-// TestDecode_dfeesFeeIndexOrdering proves the per-entry fan-out order
-// with a synthetic TWO-entry Vec (built with the same SCVal builders
-// as the other synthetic tests): entry i becomes the event with
-// FeeIndex = i, tokens/amounts in Vec order.
-func TestDecode_dfeesFeeIndexOrdering(t *testing.T) {
+// Synthetic fan-out: entry i becomes the event with FeeIndex = i; a future
+// vault upgrade appending a tuple element must not error the event.
+func TestDecode_dfeesFanOut(t *testing.T) {
 	t.Parallel()
-	d := NewDecoder()
-	ev := events.Event{
-		ContractID:     MainnetVaults[0],
-		Ledger:         61_000_000,
-		LedgerClosedAt: "2026-08-02T00:00:00Z",
-		TxHash:         "dfeestx-two",
-		EventIndex:     5,
-		Topic:          []string{TopicPrefixVault, TopicSymbolDFees},
-		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "distributed_fees", vecSCVal(t,
-				vecSCVal(t, addrSCVal(makeContractAddress(t, 0xA1)), i128SCVal(big.NewInt(11))),
-				vecSCVal(t, addrSCVal(makeContractAddress(t, 0xB2)), i128SCVal(big.NewInt(22))),
-			)),
-		)),
+	pair := func(b byte, amount int64, extra ...sdkxdr.ScVal) sdkxdr.ScVal {
+		return vecSCVal(t, append([]sdkxdr.ScVal{addrSCVal(makeContractAddress(t, b)), i128SCVal(big.NewInt(amount))}, extra...)...)
 	}
-	out, err := d.Decode(ev)
-	if err != nil {
-		t.Fatalf("Decode(two-entry dfees): %v", err)
+	cases := []struct {
+		name    string
+		entries []sdkxdr.ScVal
+		want    []string
+	}{
+		{"two entries keep Vec order", []sdkxdr.ScVal{pair(0xA1, 11), pair(0xB2, 22)}, []string{"11", "22"}},
+		{"additive third tuple element is ignored", []sdkxdr.ScVal{pair(0xA1, 33, i128SCVal(big.NewInt(99)))}, []string{"33"}},
 	}
-	if len(out) != 2 {
-		t.Fatalf("emitted %d events, want 2 (one per entry)", len(out))
-	}
-	for i, want := range []string{"11", "22"} {
-		fe, ok := out[i].(DFeesEvent)
-		if !ok {
-			t.Fatalf("out[%d] is %T, want defindex.DFeesEvent", i, out[i])
-		}
-		if fe.Fee.FeeIndex != i {
-			t.Errorf("out[%d].FeeIndex = %d, want %d (Vec position)", i, fe.Fee.FeeIndex, i)
-		}
-		if got := fe.Fee.Amount.String(); got != want {
-			t.Errorf("out[%d].Amount = %q, want %q", i, got, want)
-		}
-		if fe.Fee.Token == "" || fe.Fee.Token[0] != 'C' {
-			t.Errorf("out[%d].Token = %q, want a C-strkey token contract", i, fe.Fee.Token)
-		}
-		if fe.Fee.EventIndex != 5 {
-			t.Errorf("out[%d].EventIndex = %d, want 5", i, fe.Fee.EventIndex)
-		}
-	}
-	// Distinct tokens must stay attached to their own amounts.
-	if a, b := out[0].(DFeesEvent).Fee.Token, out[1].(DFeesEvent).Fee.Token; a == b {
-		t.Errorf("both entries decoded the same token %q — per-entry pairing broken", a)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ev := events.Event{
+				ContractID: MainnetVaults[0], Ledger: 61_000_000, LedgerClosedAt: "2026-08-02T00:00:00Z",
+				TxHash: "dfeestx-two", EventIndex: 5,
+				Topic: []string{TopicPrefixVault, TopicSymbolDFees},
+				Value: mustB64(t, mapSCVal(t, mapEntry(t, "distributed_fees", vecSCVal(t, tc.entries...)))),
+			}
+			out, err := NewDecoder().Decode(ev)
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			if len(out) != len(tc.want) {
+				t.Fatalf("emitted %d events, want %d (one per entry)", len(out), len(tc.want))
+			}
+			tokens := map[string]bool{}
+			for i, want := range tc.want {
+				fe, ok := out[i].(DFeesEvent)
+				if !ok {
+					t.Fatalf("out[%d] is %T, want defindex.DFeesEvent", i, out[i])
+				}
+				if fe.Fee.FeeIndex != i {
+					t.Errorf("out[%d].FeeIndex = %d, want %d (Vec position)", i, fe.Fee.FeeIndex, i)
+				}
+				if got := fe.Fee.Amount.String(); got != want {
+					t.Errorf("out[%d].Amount = %q, want %q", i, got, want)
+				}
+				if fe.Fee.Token == "" || fe.Fee.Token[0] != 'C' {
+					t.Errorf("out[%d].Token = %q, want a C-strkey token contract", i, fe.Fee.Token)
+				}
+				if fe.Fee.EventIndex != 5 {
+					t.Errorf("out[%d].EventIndex = %d, want 5", i, fe.Fee.EventIndex)
+				}
+				tokens[fe.Fee.Token] = true
+			}
+			if len(tokens) != len(tc.want) {
+				t.Errorf("decoded %d distinct tokens for %d entries — per-entry pairing broken", len(tokens), len(tc.want))
+			}
+		})
 	}
 }
 
-// TestDecode_dfeesToleratesAdditiveTupleField pins forward-compat for
-// a future vault upgrade that appends a third element to each
-// distributed_fees tuple: token and amount (positions 0, 1) must
-// still decode, with the extra trailing element ignored rather than
-// erroring the whole event (Q068).
-func TestDecode_dfeesToleratesAdditiveTupleField(t *testing.T) {
-	t.Parallel()
-	d := NewDecoder()
-	ev := events.Event{
-		ContractID:     MainnetVaults[0],
-		Ledger:         61_000_001,
-		LedgerClosedAt: "2026-08-02T00:00:00Z",
-		TxHash:         "dfeestx-additive",
-		EventIndex:     5,
-		Topic:          []string{TopicPrefixVault, TopicSymbolDFees},
-		Value: mustB64(t, mapSCVal(t,
-			mapEntry(t, "distributed_fees", vecSCVal(t,
-				vecSCVal(t, addrSCVal(makeContractAddress(t, 0xA1)), i128SCVal(big.NewInt(33)), i128SCVal(big.NewInt(99))),
-			)),
-		)),
-	}
-	out, err := d.Decode(ev)
-	if err != nil {
-		t.Fatalf("Decode(additive-tuple dfees) err = %v, want nil (extra trailing field tolerated)", err)
-	}
-	if len(out) != 1 {
-		t.Fatalf("emitted %d events, want 1", len(out))
-	}
-	fe, ok := out[0].(DFeesEvent)
-	if !ok {
-		t.Fatalf("out[0] is %T, want defindex.DFeesEvent", out[0])
-	}
-	if got, want := fe.Fee.Amount.String(), "33"; got != want {
-		t.Errorf("Amount = %q, want %q (position 1, extra field ignored)", got, want)
-	}
-}
-
-// TestDecode_dfeesMalformedBodyErrors pins fail-loud (not silent-drop)
-// for a dfees body that doesn't match the PROVEN schema — unlike the
-// unmodelled admin topics, a broken dfees body is a genuine decode
-// error (the harvest/create policy).
+// A broken dfees body is a genuine decode error, not a silent drop.
 func TestDecode_dfeesMalformedBodyErrors(t *testing.T) {
 	t.Parallel()
+	fees := func(v ...sdkxdr.ScVal) sdkxdr.ScVal {
+		return mapSCVal(t, mapEntry(t, "distributed_fees", vecSCVal(t, v...)))
+	}
+	one, two := i128SCVal(big.NewInt(1)), i128SCVal(big.NewInt(2))
 	cases := []struct {
 		name string
-		body string
+		body sdkxdr.ScVal
 	}{
-		{"map missing distributed_fees", mustB64(t, mapSCVal(t,
-			mapEntry(t, "not_the_field", vecSCVal(t)),
-		))},
-		{"distributed_fees not a Vec", mustB64(t, mapSCVal(t,
-			mapEntry(t, "distributed_fees", i128SCVal(big.NewInt(7))),
-		))},
-		{"entry not a 2-tuple", mustB64(t, mapSCVal(t,
-			mapEntry(t, "distributed_fees", vecSCVal(t,
-				vecSCVal(t, i128SCVal(big.NewInt(1))),
-			)),
-		))},
-		{"entry token not an Address", mustB64(t, mapSCVal(t,
-			mapEntry(t, "distributed_fees", vecSCVal(t,
-				vecSCVal(t, i128SCVal(big.NewInt(1)), i128SCVal(big.NewInt(2))),
-			)),
-		))},
-		{"body not a Map at all", mustB64(t, i128SCVal(big.NewInt(1)))},
+		{"map missing distributed_fees", mapSCVal(t, mapEntry(t, "not_the_field", vecSCVal(t)))},
+		{"distributed_fees not a Vec", mapSCVal(t, mapEntry(t, "distributed_fees", i128SCVal(big.NewInt(7))))},
+		{"entry not a 2-tuple", fees(vecSCVal(t, one))},
+		{"entry token not an Address", fees(vecSCVal(t, one, two))},
+		{"body not a Map at all", one},
 	}
 	d := NewDecoder()
 	for _, tc := range cases {
@@ -1384,7 +852,7 @@ func TestDecode_dfeesMalformedBodyErrors(t *testing.T) {
 				ContractID:     MainnetVaults[0],
 				LedgerClosedAt: "2026-08-02T00:00:00Z",
 				Topic:          []string{TopicPrefixVault, TopicSymbolDFees},
-				Value:          tc.body,
+				Value:          mustB64(t, tc.body),
 			}
 			if _, err := d.Decode(ev); !errors.Is(err, ErrMalformedPayload) {
 				t.Errorf("err = %v, want ErrMalformedPayload", err)
