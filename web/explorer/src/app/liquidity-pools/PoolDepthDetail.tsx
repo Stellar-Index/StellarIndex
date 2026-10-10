@@ -2,6 +2,7 @@
 
 import { DonutChart } from '@/components/charts/DonutChart';
 import { HBarList } from '@/components/charts/Bars';
+import { normalizeColonForm, shortAssetText } from '@/lib/asset-label';
 import { formatCompact } from '@/lib/format';
 import { scaledUnits } from '../explorer-shared';
 
@@ -74,11 +75,22 @@ export function displayUnits(baseUnits: string, decimals: number): string {
   );
 }
 
-/** Short label for a canonical asset_id ("native" → XLM; "CODE-ISSUER" → CODE). */
-export function assetLabel(id: string): string {
-  if (id === 'native') return 'XLM';
-  const dash = id.indexOf('-');
-  return dash > 0 ? id.slice(0, dash) : id;
+/**
+ * Short labels for a pool's two sides. Codes alone are ambiguous when both
+ * sides share one (USDC from two issuers), so those get an issuer suffix.
+ */
+export function poolSideLabels(a: string, b: string): [string, string] {
+  const la = shortAssetText(a);
+  const lb = shortAssetText(b);
+  if (la !== lb) return [la, lb];
+  return [withIssuer(la, a), withIssuer(lb, b)];
+}
+
+function withIssuer(label: string, id: string): string {
+  const issuer = normalizeColonForm(id).split('-')[1];
+  return issuer
+    ? `${label} (${issuer.slice(0, 4)}…${issuer.slice(-4)})`
+    : label;
 }
 
 /**
@@ -90,8 +102,7 @@ export function assetLabel(id: string): string {
  * is float, displayed amounts come from the exact strings).
  */
 export function PoolDepthDetail({ row }: { row: PoolDepthRow }) {
-  const a = assetLabel(row.reserve_a.asset);
-  const b = assetLabel(row.reserve_b.asset);
+  const [a, b] = poolSideLabels(row.reserve_a.asset, row.reserve_b.asset);
 
   if (row.depth.length === 0) {
     return (

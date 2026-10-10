@@ -9,7 +9,7 @@ import { apiGet, asExample } from '@/api/client';
 import {
   PoolDepthDetail,
   type LiquidityPoolRow,
-  assetLabel,
+  poolSideLabels,
   displayUnits,
   midPriceLabel,
 } from './PoolDepthDetail';
@@ -124,8 +124,10 @@ export function NativePoolsPanel() {
             <tbody>
               {rows.map((row) => {
                 const open = expanded === row.pool;
-                const a = assetLabel(row.reserve_a.asset);
-                const b = assetLabel(row.reserve_b.asset);
+                const [a, b] = poolSideLabels(
+                  row.reserve_a.asset,
+                  row.reserve_b.asset,
+                );
                 return (
                   <Fragment key={row.pool}>
                     <tr
