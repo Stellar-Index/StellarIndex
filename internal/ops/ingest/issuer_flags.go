@@ -54,60 +54,33 @@ type issuerFlagsCounts struct {
 	chainMerged     int // of the agreed+corrected, rows answered by the last-known reader
 }
 
-// issuerFlagsCmd persists issuer AccountEntry auth flags into the
-// `issuers` table, so the API's read-time enrichment has a durable
-// fallback.
+// issuerFlagsCmd persists issuer AccountEntry auth flags into the `issuers` table
+// as a durable fallback for the API's read-time enrichment.
 //
-// The flags ALREADY resolve on the read path
-// (Server.enrichIssuerFromAccountState decodes them from the lake per
-// request). What that path
-// cannot survive is a cold account-state cache: under burst the refresh
-// gate degrades and an issuer page renders "not yet resolved". The
-// Postgres columns exist for exactly this fallback (migration 0023), and
-// this job is what populates them.
+// The flags already resolve on the read path
+// (Server.enrichIssuerFromAccountState decodes them from the lake per request), but
+// under burst the refresh gate degrades and an issuer page renders "not yet
+// resolved". The Postgres columns (migration 0023) exist for that fallback.
 //
-// So this is durability work, not a missing capability, and it is
-// deliberately incremental: -limit bounds a run, and the queue is
-// "auth_required IS NULL" ordered by primary key, so repeated bounded
-// runs make forward progress instead of re-walking the same head.
+// The run is incremental: -limit bounds it, and the queue is "auth_required IS
+// NULL" ordered by primary key, so repeated runs make forward progress.
 //
-// # MERGED ISSUERS
+// Merged issuers: most unresolved issuers have MERGED their account away. A miss
+// falls through to RemovedAccountsLastKnownAuthFlags, which recovers the pre-image
+// the account_merge left in the removing ledger. Such a reading is persisted with
+// its provenance (`last_known_before_removal` + the removal ledger) because it is
+// history, not current policy, and WITHOUT home_domain, which can no longer be
+// checked against SEP-1. A second pass re-checks rows labelled that way so an
+// account re-created at the same address flips back to `live`; the primary queue
+// cannot see them (auth_required is set).
 //
-// A live-entry read alone leaves every issuer that has MERGED ITS ACCOUNT
-// AWAY permanently unresolved, and most unresolved issuers are merged
-// accounts, not coverage gaps. Their flags ARE knowable, so a miss falls
-// through to
-// RemovedAccountsLastKnownAuthFlags, which recovers the pre-image the
-// account_merge left in the removing ledger. Such a reading is persisted
-// with its provenance (`last_known_before_removal` + the removal ledger)
-// because it is a historical record, not the issuer's current authorisation
-// policy, and WITHOUT the account's self-declared home_domain, which can no
-// longer be checked against SEP-1.
-//
-// A second pass then re-checks the rows already labelled that way, so an
-// account re-created at the same address flips back to `live`. Without it
-// the provenance column would be a one-way latch: those rows have
-// auth_required set, so the primary queue can never see them again.
-//
-// # FILLED ROWS GO STALE TOO
-//
-// The same latch closes on every OTHER filled row, and there it holds an
-// identity claim rather than a flag set: `issuers.home_domain` is written by
-// this job, and a row that has it is invisible to both queues above. So an
-// anchor that moves domain with SetOptions and lets the old name lapse keeps
-// the lapsed name indefinitely — the hourly SEP-1 refresh keeps fetching it,
-// and whoever registers it next can serve a stellar.toml listing the anchor's
-// issuer account back and inherit its verified org identity. An
-// overwritable column is necessary and not sufficient: `issuer-enrich`, the
-// job that syncs it, is a manual one-shot with no timer, so without a
-// scheduled pass nothing would re-read a filled row at all.
-//
-// A third pass therefore re-offers every filled, live-sourced row to the live
-// reader and writes back the ones the chain has moved past. It is ordered
-// last and bounded by its own -chain-recheck-limit so it cannot take budget
-// from the primary drain, and it writes only rows that actually DIFFER, so
-// re-reading the whole filled set costs bulk lake reads and, in the steady
-// state, no Postgres writes at all.
+// Filled rows go stale too: a row with home_domain is invisible to both queues, so
+// an anchor that moves domain keeps the lapsed name, the hourly SEP-1 refresh keeps
+// fetching it, and whoever registers it next can serve a stellar.toml listing the
+// issuer and inherit its verified org identity. `issuer-enrich` is a manual
+// one-shot, so a third pass re-offers every filled, live-sourced row to the live
+// reader and writes back only rows that DIFFER. It runs last, bounded by
+// -chain-recheck-limit so it cannot take budget from the primary drain.
 func issuerFlagsCmd(args []string) error {
 	fs := flag.NewFlagSet("issuer-flags", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

@@ -27,38 +27,22 @@ const replayGenerationNote = "note: the projector re-writes at derive_generation
 const replayNotReachedMsg = "projector cursor for source=%q is at ledger %d, which has not yet passed requested ledger %d — " +
 	"nothing to rewind; the live projector's forward pass will project it (%d ledgers still ahead of the cursor).\n"
 
-// projectorReplay rewinds the projector's per-source cursor so the
-// projector goroutine re-projects a historical range from
-// `soroban_events`. Replaces the family of `*-backfill` subcommands
-// (cctp-backfill, rozo-backfill, soroswap-skim-backfill,
-// comet-liquidity-backfill, phoenix-backfill, blend-backfill,
-// sep41-transfers-backfill, drain-cascade-window) per ADR-0032 Phase 5.
+// projectorReplay rewinds the projector's per-source cursor so the projector
+// goroutine re-projects a historical range from `soroban_events`. It replaces the
+// `*-backfill` subcommand family (ADR-0032 Phase 5).
 //
-// Mechanism:
-//   - Read the projector's per-source cursor: (projector, <name>).
-//   - If the requested `-from` is less than the current cursor,
-//     rewind it. The projector's next cycle picks up at that lower
-//     bound and tails forward to the live tip.
-//   - If `-from` is already at or below the cursor, no-op (operator
-//     is asking for ground that's already been re-walked).
-//   - Every per-source writer's generation-guarded upsert makes the
-//     re-walk idempotent in row count; it overwrites gen-0 rows only, so
-//     a row a re-derive stamped higher is not corrected by a replay.
+// The rewind is one SQL operation on (projector, <name>): if `-from` is below the
+// current cursor it is lowered, otherwise it is a no-op. The re-walk is idempotent
+// in row count (generation-guarded upsert), but it overwrites gen-0 rows only, so a
+// row a re-derive stamped higher is not corrected by a replay.
 //
-// The rewind itself is one SQL operation — the projector goroutine in
-// `stellarindex-indexer` does the re-walk. The command then STAYS to
-// finish the job: a replay writes trades (aquarius/soroswap/phoenix/
-// comet all persist trades through the projector) into a historical
-// time range, and every continuous aggregate over `trades` only ever
-// rolls its refresh policy FORWARD over its own start_offset window —
-// prices_1m's is five minutes. Rows re-projected into a range older
-// than that are durable in the hypertable and invisible to every read:
-// /v1/ohlc, /v1/chart, /v1/vwap and /v1/history/since-inception all
-// serve from the aggregates. So once the projector has re-walked past
-// the original cursor, this command re-materializes the price CAGGs
-// over the replayed range and fails loudly if it cannot — rather than
-// leaving that as a sentence in a runbook. `-refresh-caggs=false`
-// opts out explicitly and says what it costs. See
+// The command then STAYS to finish the job. A replay writes trades into a
+// historical range, but continuous aggregates only roll their refresh policy
+// FORWARD over their start_offset window (prices_1m: five minutes), so re-projected
+// rows older than that are durable yet invisible to /v1/ohlc, /v1/chart, /v1/vwap
+// and /v1/history/since-inception. Once the projector has re-walked past the
+// original cursor, this command re-materializes the price CAGGs over the replayed
+// range and fails loudly if it cannot. `-refresh-caggs=false` opts out. See
 // docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled.
 func projectorReplay(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("projector-replay", flag.ContinueOnError)
@@ -336,33 +320,22 @@ type sep41RollupResetter interface {
 	ResetSEP41SupplyRollupFold(ctx context.Context, contractIDs []string) (int64, error)
 }
 
-// resetSEP41RollupAfterReplay resets the sep41_supply_rollup fold
-// checkpoint whenever a replay rewinds and re-walks the sep41_supply
-// source itself.
+// resetSEP41RollupAfterReplay resets the sep41_supply_rollup fold checkpoint
+// whenever a replay rewinds and re-walks the sep41_supply source itself.
 //
-// [Store.AdvanceSEP41SupplyRollup] only ever folds `ledger >
-// last_ledger`, and [Store.SEP41KindTotalsAtOrBefore]'s fast path trusts
-// that checkpoint. A replay's whole point is to re-drive rows a held-row
-// retry gave up on (quarantined per [projector.quarantineCandidate]) or
-// to correct rows already written — exactly rows at-or-below the ledger
-// this command just rewound the cursor below. Without a reset those
-// corrected or newly-inserted rows sit beneath the rollup's checkpoint
-// forever: the fold never looks back down to find them, and served
-// supply stays wrong no matter how many times the replay runs. The
-// fold's own NOTE documents the requirement; `ch-rebuild -sep41 -write`
-// satisfies it for its own re-derive path (sep41RollupResetPlan in
-// internal/ops/chops/ch_rebuild.go) — this is the same requirement for
-// the projector's replay path.
+// [Store.AdvanceSEP41SupplyRollup] only folds `ledger > last_ledger` and
+// [Store.SEP41KindTotalsAtOrBefore]'s fast path trusts that checkpoint. A replay
+// re-drives quarantined rows (see [projector.quarantineCandidate]) or corrects
+// written ones, all at-or-below the rewound cursor. Without a reset they sit
+// beneath the checkpoint forever and served supply stays wrong. `ch-rebuild
+// -sep41 -write` does the same for its path (sep41RollupResetPlan in
+// internal/ops/chops/ch_rebuild.go).
 //
-// A FULL reset (nil contractIDs), not scoped: a source-level replay
-// re-walks every watched contract's events over the rewound range, not
-// just the one row that triggered it, and a reset is always safe —
-// [Store.ResetSEP41SupplyRollupFold] re-folds each row in place up to the
-// just-rewound cursor, and the worker folds the replayed range as it lands.
+// The reset is FULL (nil contractIDs): a source-level replay re-walks every
+// watched contract, and a reset is always safe since
+// [Store.ResetSEP41SupplyRollupFold] re-folds in place up to the rewound cursor.
 //
-// Returns reset=false (and does nothing) for every source other than
-// sep41_supply — a replay of trades/blend/phoenix/etc. never touches
-// sep41_supply_events, so there is nothing to re-fold.
+// Returns reset=false and does nothing for any source other than sep41_supply.
 func resetSEP41RollupAfterReplay(ctx context.Context, store sep41RollupResetter, source string) (reset bool, n int64, err error) {
 	if source != sep41supply.SourceName {
 		return false, 0, nil

@@ -236,37 +236,25 @@ func censusBucket(cfg config.Config, override string, from, to uint32) (string, 
 	return opsutil.ResolveStreamBucket(cfg, override, from, to)
 }
 
-// censusCoverage turns a census-backfill run that did not persist its whole
-// range into a hard error, naming the bucket it read.
+// censusCoverage turns a census-backfill run that did not persist its whole range
+// into a hard error, naming the bucket it read.
 //
-// Same defect class as ch-backfill's backfillCoverage, reachable here by
-// the same two roads:
+// Two roads lead to a silent exit 0:
+//   - the run read the WRONG BUCKET. The live bucket cannot hold a historic range,
+//     and because opsutil.NewBoundedLedgerStreamConfig opts into
+//     TolerateTrailingMissing, an entirely absent range looks like a clean walk.
+//   - the run persisted only PART of the range. Every non-persisting path in the
+//     callback logs and continues so one bad ledger doesn't abort a multi-day
+//     walk, and the watermark freezes the resume cursor at the first gap, but the
+//     process would still exit 0.
 //
-//   - the run read the WRONG BUCKET. The live bucket
-//     (cfg.Storage.S3BucketLive) cannot hold a historic range — and
-//     because opsutil.NewBoundedLedgerStreamConfig opts into
-//     TolerateTrailingMissing, an ENTIRELY absent range is indistinguishable
-//     from a clean walk at the ledgerstream layer. The command would
-//     print "done — 0 ledgers processed" and exit 0.
-//   - the run persisted only PART of the range. Every non-persisting path in
-//     the callback (census error, tx-read-error skip, upsert failure)
-//     deliberately logs and continues so one bad ledger doesn't abort a
-//     multi-day walk, and the contiguous watermark correctly freezes the
-//     resume cursor at the first gap — but without this check the process
-//     would still exit 0, so a wrapper or an operator reading only the exit
-//     code would see a hole as a success.
+// The bar is "[from,to] has a substrate row in ledger_ingest_log", which the
+// projection reconcile measures completeness against (ADR-0033). Re-running is
+// safe (UpsertLedgerIngestLog is ON CONFLICT DO UPDATE), so failing closed costs a
+// re-run and failing open costs a hole nobody looks for.
 //
-// The bar is the command's contract — "[from,to] now has a substrate row in
-// ledger_ingest_log". ledger_ingest_log is exactly what the projection
-// reconcile measures completeness against (ADR-0033), so a silent hole there
-// is a silent completeness lie later. Re-running is cheap and safe
-// (UpsertLedgerIngestLog is ON CONFLICT DO UPDATE, and the frozen cursor
-// resumes at the first gap), so failing closed costs a re-run while failing
-// open costs a hole nobody looks for.
-//
-// `from` is the ledger the run actually STARTED at (post-resume), not -from:
-// ledgers already banked by an earlier run are that run's business, and
-// re-charging them here would make every resumed run fail.
+// `from` is the ledger the run STARTED at (post-resume), not -from: ledgers banked
+// by an earlier run must not be re-charged, or every resumed run would fail.
 func censusCoverage(from, to uint32, persisted, skipped int, bucket string, interrupted bool) error {
 	want := int64(to) - int64(from) + 1
 	switch {

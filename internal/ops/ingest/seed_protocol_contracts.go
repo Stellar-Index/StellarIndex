@@ -19,29 +19,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// seedProtocolContracts is the genesis bootstrap for a factory-anchored
-// gated decoder's pool/vault registry (ADR-0035). It walks the source's
-// factory creation events (e.g. Blend pool-factory `deploy`) from the
-// factory genesis ledger forward in the ClickHouse lake's contract_events
-// and upserts every announced child contract into protocol_contracts.
+// seedProtocolContracts is the genesis bootstrap for a factory-anchored gated
+// decoder's pool/vault registry (ADR-0035). It walks the source's factory creation
+// events (e.g. Blend pool-factory `deploy`) from the factory genesis ledger forward
+// in the lake's contract_events and upserts every announced child into
+// protocol_contracts.
 //
-// Run once per FACTORY-anchored source as a DEPLOY PRECONDITION before
-// relying on the gate — like the migration 0057-0060 re-derive. Until it
-// runs, that decoder's registry holds no discovered children and
-// (correctly, per ADR-0035) drops their events; after it runs, the indexer
-// keeps the table current live and every consumer warms a complete
-// registry from it.
+// Run once per FACTORY-anchored source as a DEPLOY PRECONDITION: until it runs the
+// registry holds no discovered children and (per ADR-0035) drops their events.
+// CURATED-set sources (ADR-0040 §1 mechanism 3) do not need it, since the indexer
+// seeds their registry on every boot; it remains useful there as a repair step.
 //
-// CURATED-set sources (ADR-0040 §1 mechanism 3) no longer need it as a
-// precondition: their trust root is in code, and the indexer's gated
-// registry warm seeds it and reconciles it into protocol_contracts on
-// every boot. Running it for them stays useful as a repair step (e.g. to
-// re-stamp the table from a read-only host).
-//
-// Idempotent: the factory creation events are immutable history and
-// UpsertProtocolContract is ON CONFLICT DO UPDATE, so re-running re-walks
-// the same set harmlessly. Cheap: creation events are rare and the walk is
-// filtered on the factory ids and the creation topic.
+// Idempotent (UpsertProtocolContract is ON CONFLICT DO UPDATE) and cheap (creation
+// events are rare and the walk is filtered on factory ids and topic).
 //
 // Flags:
 //
@@ -53,8 +43,7 @@ import (
 //	-ch-addr H:P   ClickHouse native address.
 //	-timeout DUR   wall-clock budget. Default 15m.
 //	-write         apply. WITHOUT it the run is a fail-closed DRY RUN
-//	               (opsutil.WriteGate) that walks the creation events and
-//	               reports the children it WOULD upsert, writing none.
+//	               (opsutil.WriteGate) that reports the children it WOULD upsert.
 func seedProtocolContracts(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("seed-protocol-contracts")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")

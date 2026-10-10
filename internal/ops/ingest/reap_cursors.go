@@ -16,46 +16,30 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// reap-cursors — delete the ingestion_cursors rows left behind by
-// finished or abandoned one-shot jobs.
+// reap-cursors deletes the ingestion_cursors rows left behind by finished or
+// abandoned one-shot jobs.
 //
-// Why this exists. ingestion_cursors has one permanent row per
-// (source, sub_source) and no retention policy, and every sharded ops
-// job mints one row per shard. Nothing removes them when the job ends,
-// successfully or otherwise: on r1 the table once held 4,815 rows, of
-// which 4,703 had not been written to in over a week — 4,523
-// projected-rebuild shards, and 91 SDEX backfill shards from an abandoned
-// attempt whose lag had reached ~9.7M seconds. `list-cursors`, the
-// /diagnostics page and the public `/v1/diagnostics/cursors` endpoint all
-// list that table, so the dead rows were the bulk of what every consumer
-// saw. The API side defaults to the non-abandoned set; this is the other
-// half — the way to actually remove the records once an operator has
-// decided the work they describe is over.
+// ingestion_cursors has one permanent row per (source, sub_source), no retention
+// policy, and every sharded ops job mints one row per shard that nothing removes
+// when the job ends. The dead rows were the bulk of what `list-cursors`,
+// /diagnostics and `/v1/diagnostics/cursors` showed. The API defaults to the
+// non-abandoned set; this is the other half, removing the records once an operator
+// has decided the work is over.
 //
 // Posture:
+//   - Preview by default. Writes only under -write via [opsutil.WriteGate]; the
+//     preview prints per-source counts, the oldest row and a sample of the rows a
+//     -write run would delete.
+//   - -older-than has a hard floor of [reapMinAge], so a mistyped small threshold
+//     cannot sweep live positions.
+//   - The namespaces in [timescale.LiveCursorSources] are never reaped, with or
+//     without -write: deleting a stuck live cursor turns "the indexer is behind"
+//     into "restart from the configured start ledger". The same list keeps those
+//     rows out of the API's `abandoned` state.
 //
-//   - Preview by default. Writes only under -write, via the shared
-//     [opsutil.WriteGate], and the preview output IS the review step —
-//     it prints the per-source counts, the oldest row, and a sample of
-//     the exact rows a -write run would delete.
-//   - -older-than has a hard floor of [reapMinAge]. The failure mode
-//     worth designing against is a mistyped small threshold sweeping
-//     live positions; a day is far past any legitimate checkpoint
-//     interval, so nothing is lost by refusing below it.
-//   - The live namespaces in [timescale.LiveCursorSources] are never
-//     reaped, with or without -write. A stuck live cursor is an
-//     incident, and deleting it turns "the indexer is behind" into
-//     "the indexer restarts from its configured start ledger" — a
-//     recovery loss rather than a cleanup. The same list keeps those
-//     rows out of the API's `abandoned` state, so the two halves of
-//     this posture cannot drift apart.
-//
-// Deleting a row deletes a RECORD, never data: the ledgers a shard
-// walked stay in the lake and the served tier. What is lost is the
-// resume point, so reap only shards whose remaining range is either
-// finished or being abandoned deliberately — `resume-stalled -dry-run`
-// (or `/v1/diagnostics/cursors?status=abandoned`) is the check to run
-// first.
+// Deleting a row deletes a RECORD, never data; what is lost is the resume point.
+// Reap only shards that are finished or deliberately abandoned; check first with
+// `resume-stalled -dry-run` or `/v1/diagnostics/cursors?status=abandoned`.
 func reapCursors(args []string) error {
 	opts, err := parseReapCursorsFlags(args)
 	if err != nil {
