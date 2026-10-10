@@ -5,12 +5,19 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stellar/go-stellar-sdk/network"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/support/compressxdr"
@@ -18,19 +25,1173 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/chops"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
+	"github.com/Stellar-Index/StellarIndex/internal/projector"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/redstone"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
+	sep41_supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
+
+// TestProjectedRebuild_TwoWindowRunThenResume is the ADR-0048 D3 end-to-end
+// proof: seed a few Rozo v1 Payment events into the ClickHouse lake across
+// three ledger windows, run chops.RunProjectedRebuild against a real
+// Postgres, and assert
+//
+//  1. rows land through the SAME decoder + sink path the live projector
+//     uses (pipeline.HandleEvent — exercised indirectly via
+//     RunProjectedRebuild), and
+//  2. a second invocation with -resume (Resume: true) SKIPS the
+//     already-checkpointed windows entirely — not just idempotently
+//     re-writing them, but never re-streaming ClickHouse for that range —
+//     while still picking up a newly-extended window.
+//
+// Rozo is the fixture source of choice: its decoder gates on a fixed,
+// in-code contract-id set with no factory/child registry to warm and no
+// oracle config to supply, so the test needs no gated-registry seeding —
+// projector.BuildRegistry needs only an empty config.OracleConfig.
+func TestProjectedRebuild_TwoWindowRunThenResume(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	chAddr := clickhouseAddr(t)
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const contractID = rozo.MainnetPaymentContract
+
+	// Three PaymentEvents in three DIFFERENT 100-ledger windows:
+	//   window [1000,1099] -> ledger 1050
+	//   window [1100,1199] -> ledger 1150
+	//   window [1200,1299] -> ledger 1250 (seeded only for the second run)
+	seedRozoPayment(t, ctx, chAddr, contractID, 1050, "tx-a-1111111111111111111111111111111111111111111111111111111111", 1_000_0000000, "alice-memo")
+	seedRozoPayment(t, ctx, chAddr, contractID, 1150, "tx-b-2222222222222222222222222222222222222222222222222222222222", 2_000_0000000, "bob-memo")
+
+	registry, err := projector.BuildRegistry([]string{rozo.SourceName}, config.OracleConfig{}, nil, nil)
+	if err != nil {
+		t.Fatalf("build projector registry: %v", err)
+	}
+	if len(registry.Sources) != 1 {
+		t.Fatalf("expected exactly one registered source for %q, got %d", rozo.SourceName, len(registry.Sources))
+	}
+	src := registry.Sources[0]
+
+	// ─── Run 1: covers [1000,1199], both seeded events ───────────────────
+	result1, err := chops.RunProjectedRebuild(ctx, chops.ProjectedRebuildOptions{
+		Store:            store,
+		ChAddr:           chAddr,
+		Source:           src,
+		From:             1000,
+		To:               1199,
+		Window:           100,
+		Workers:          2,
+		Write:            true,
+		Resume:           true,
+		ProgressInterval: time.Hour, // never fires; keep test output quiet
+	})
+	if err != nil {
+		t.Fatalf("RunProjectedRebuild (run 1): %v", err)
+	}
+	if result1.WindowsPlanned != 2 || result1.WindowsProcessed != 2 || result1.WindowsSkipped != 0 {
+		t.Fatalf("run 1 windows: planned=%d processed=%d skipped=%d, want 2/2/0",
+			result1.WindowsPlanned, result1.WindowsProcessed, result1.WindowsSkipped)
+	}
+	if result1.EventsEmitted != 2 {
+		t.Fatalf("run 1 EventsEmitted = %d, want 2", result1.EventsEmitted)
+	}
+	if got := result1.KindCounts["rozo.event"]; got != 2 {
+		t.Fatalf("run 1 KindCounts[rozo.event] = %d, want 2", got)
+	}
+
+	assertRozoEventLedgers(t, ctx, store.DB(), []uint32{1050, 1150})
+
+	// ─── Seed a THIRD event in a not-yet-covered window ──────────────────
+	seedRozoPayment(t, ctx, chAddr, contractID, 1250, "tx-c-3333333333333333333333333333333333333333333333333333333333", 3_000_0000000, "carol-memo")
+
+	// ─── Run 2: extend To to 1299 with -resume — must SKIP windows 1 & 2 ──
+	result2, err := chops.RunProjectedRebuild(ctx, chops.ProjectedRebuildOptions{
+		Store:            store,
+		ChAddr:           chAddr,
+		Source:           src,
+		From:             1000,
+		To:               1299,
+		Window:           100,
+		Workers:          2,
+		Write:            true,
+		Resume:           true,
+		ProgressInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("RunProjectedRebuild (run 2): %v", err)
+	}
+	if result2.WindowsPlanned != 3 {
+		t.Fatalf("run 2 WindowsPlanned = %d, want 3", result2.WindowsPlanned)
+	}
+	if result2.WindowsSkipped != 2 {
+		t.Fatalf("run 2 WindowsSkipped = %d, want 2 (the two already-checkpointed windows from run 1)", result2.WindowsSkipped)
+	}
+	if result2.WindowsProcessed != 1 {
+		t.Fatalf("run 2 WindowsProcessed = %d, want 1 (only the newly-extended window)", result2.WindowsProcessed)
+	}
+	// The strongest resume assertion: run 2 must not have RE-STREAMED the
+	// already-done windows at all, so EventsRead/EventsEmitted reflect only
+	// the one new window's event — not idempotent re-processing of all 3.
+	if result2.EventsEmitted != 1 {
+		t.Fatalf("run 2 EventsEmitted = %d, want 1 (resume must skip re-streaming done windows entirely, not just no-op their writes)", result2.EventsEmitted)
+	}
+
+	// Final state: all three rows present, no duplicates from either run.
+	assertRozoEventLedgers(t, ctx, store.DB(), []uint32{1050, 1150, 1250})
+}
+
+// assertRozoEventLedgers queries rozo_events directly (no repo reader
+// exists for this narrow assertion) and checks the exact set of distinct
+// ledgers present — proving both "the rows landed" and "no duplicates /
+// no phantom rows from a resumed run re-touching already-done windows".
+func assertRozoEventLedgers(t *testing.T, ctx context.Context, db *sql.DB, want []uint32) {
+	t.Helper()
+	rows, err := db.QueryContext(ctx, `SELECT ledger FROM rozo_events ORDER BY ledger`)
+	if err != nil {
+		t.Fatalf("query rozo_events: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var got []uint32
+	for rows.Next() {
+		var l uint32
+		if err := rows.Scan(&l); err != nil {
+			t.Fatalf("scan rozo_events.ledger: %v", err)
+		}
+		got = append(got, l)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows err: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("rozo_events ledgers = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("rozo_events ledgers = %v, want %v", got, want)
+		}
+	}
+}
+
+// seedRozoPayment writes one ClickHouse contract_events row shaped exactly
+// like a real Rozo v1 PaymentEvent — the same on-wire ScMap shape
+// rozo.DecodePayment expects ({from, destination, amount, memo}) — plus its
+// minimal ledger header, through the production chstore.Sink so the
+// fixture goes through the same write path any other Tier-1 lake test
+// uses (TestClickHouseLakeRoundTrip).
+func seedRozoPayment(t *testing.T, ctx context.Context, chAddr, contractID string, ledger uint32, txHash string, amountStroops int64, memo string) {
+	t.Helper()
+	closeTime := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC).Add(time.Duration(ledger) * 5 * time.Second)
+
+	from := prMakeAccountStrkey(t, byte(ledger%251+1))
+	dest := prMakeAccountStrkey(t, byte((ledger+7)%251+1))
+	amount := big.NewInt(amountStroops)
+
+	body := prScMap(
+		xdr.ScMapEntry{Key: prSymbol("amount"), Val: prI128(amount)},
+		xdr.ScMapEntry{Key: prSymbol("destination"), Val: prAccountAddr(t, dest)},
+		xdr.ScMapEntry{Key: prSymbol("from"), Val: prAccountAddr(t, from)},
+		xdr.ScMapEntry{Key: prSymbol("memo"), Val: prScString(memo)},
+	)
+
+	sink, err := chstore.Open(ctx, chAddr, 100)
+	if err != nil {
+		t.Fatalf("open sink: %v", err)
+	}
+	defer func() { _ = sink.Close(ctx) }()
+
+	ext := chstore.LedgerExtract{
+		Ledger: chstore.LedgerRow{
+			LedgerSeq:       ledger,
+			CloseTime:       closeTime,
+			LedgerHash:      "aa",
+			PrevHash:        "bb",
+			ProtocolVersion: 22,
+			BucketListHash:  "cc",
+			TxCount:         1,
+			OpCount:         1,
+		},
+		Events: []chstore.ContractEventRow{{
+			LedgerSeq:        ledger,
+			CloseTime:        closeTime,
+			TxHash:           txHash,
+			OpIndex:          0,
+			EventIndex:       0,
+			ContractID:       contractID,
+			EventType:        "contract",
+			TopicCount:       1,
+			Topic0Sym:        "payment_event",
+			TopicsXDR:        []string{prB64(t, prSymbol("payment_event"))},
+			DataXDR:          prB64(t, body),
+			OpArgsXDR:        []string{},
+			InSuccessfulCall: 1,
+		}},
+	}
+	if err := sink.Add(ctx, withEventTxs(ext)); err != nil {
+		t.Fatalf("sink add (ledger %d): %v", ledger, err)
+	}
+	if err := sink.Flush(ctx); err != nil {
+		t.Fatalf("sink flush (ledger %d): %v", ledger, err)
+	}
+}
+
+// ─── small XDR-encode helpers (mirrors internal/sources/rozo/decode_test.go's
+// pattern — the canonical SDK-encode shape used across the source fleet's
+// own fixture-building tests) ────────────────────────────────────────────
+
+func prSymbol(s string) xdr.ScVal {
+	sym := xdr.ScSymbol(s)
+	return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym}
+}
+
+func prScString(s string) xdr.ScVal {
+	v := xdr.ScString(s)
+	return xdr.ScVal{Type: xdr.ScValTypeScvString, Str: &v}
+}
+
+func prI128(n *big.Int) xdr.ScVal {
+	twoTo64 := new(big.Int).Lsh(big.NewInt(1), 64)
+	mask64 := new(big.Int).Sub(twoTo64, big.NewInt(1))
+	loBig := new(big.Int).And(n, mask64)
+	hiBig := new(big.Int).Rsh(n, 64)
+	p := xdr.Int128Parts{Hi: xdr.Int64(hiBig.Int64()), Lo: xdr.Uint64(loBig.Uint64())}
+	return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &p}
+}
+
+func prScMap(entries ...xdr.ScMapEntry) xdr.ScVal {
+	m := xdr.ScMap(entries)
+	pm := &m
+	return xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &pm}
+}
+
+func prMakeAccountStrkey(t *testing.T, seedByte byte) string {
+	t.Helper()
+	var raw [32]byte
+	raw[0] = seedByte
+	s, err := strkey.Encode(strkey.VersionByteAccountID, raw[:])
+	if err != nil {
+		t.Fatalf("strkey.Encode: %v", err)
+	}
+	return s
+}
+
+func prAccountAddr(t *testing.T, strk string) xdr.ScVal {
+	t.Helper()
+	raw, err := strkey.Decode(strkey.VersionByteAccountID, strk)
+	if err != nil {
+		t.Fatalf("strkey.Decode(%q): %v", strk, err)
+	}
+	var ed xdr.Uint256
+	copy(ed[:], raw)
+	scAccount := xdr.AccountId{Type: xdr.PublicKeyTypePublicKeyTypeEd25519, Ed25519: &ed}
+	scAddr := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: &scAccount}
+	return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &scAddr}
+}
+
+func prB64(t *testing.T, sv xdr.ScVal) string {
+	t.Helper()
+	b, err := sv.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// TestProjectedRebuild_FailedInsertDoesNotCheckpoint is the proof, and
+// it is deliberately end-to-end (real ClickHouse + real Postgres) because the
+// bug lived in the seam between them.
+//
+// The old worker discarded pipeline.HandleEvent's error and checkpointed the
+// window unconditionally, justified in-comment by "the idempotent ON CONFLICT
+// write is retried by re-running the range". That justification was false in
+// the tool's DEFAULT mode: -resume=true SKIPS checkpointed windows, so the
+// range was never re-run and the row was gone permanently. A single transient
+// Postgres error during a multi-hour historical backfill silently dropped a
+// row with no unattended path to recovery.
+//
+// It has to be a NON-TRADE event to reproduce: trade events deliberately
+// return nil from HandleEvent (ADR-0041 block-and-retry owns their outcome),
+// so only non-trade inserts can surface an error at this seam. rozo.Event ->
+// persistRozoEvent returns its insert error, which is why this fixture uses
+// it.
+//
+// Nor can the completeness verdict be relied on as the backstop the code
+// pointed operators at: the reconciliation catalogue registers only `trades`
+// for some sources, so a dropped non-trade row is invisible to it.
+//
+// Failure is injected by renaming rozo_events out from under the insert —
+// a real, deterministic Postgres error, not a mock.
+//
+// Proven red: with the old `_ = pipeline.HandleEvent(...)`, run 1
+// checkpoints both windows, run 2 skips them, and the rows are never written.
+func TestProjectedRebuild_FailedInsertDoesNotCheckpoint(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	chAddr := clickhouseAddr(t)
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const contractID = rozo.MainnetPaymentContract
+	seedRozoPayment(t, ctx, chAddr, contractID, 3050, "tx-d-4444444444444444444444444444444444444444444444444444444444", 1_000_0000000, "dave-memo")
+	seedRozoPayment(t, ctx, chAddr, contractID, 3150, "tx-e-5555555555555555555555555555555555555555555555555555555555", 2_000_0000000, "erin-memo")
+
+	registry, err := projector.BuildRegistry([]string{rozo.SourceName}, config.OracleConfig{}, nil, nil)
+	if err != nil {
+		t.Fatalf("build projector registry: %v", err)
+	}
+	src := registry.Sources[0]
+
+	opts := func() chops.ProjectedRebuildOptions {
+		return chops.ProjectedRebuildOptions{
+			Store: store, ChAddr: chAddr, Source: src,
+			From: 3000, To: 3199, Window: 100, Workers: 2,
+			Write: true, Resume: true, ProgressInterval: time.Hour,
+		}
+	}
+
+	// ─── Break the insert target, then run ───────────────────────────────
+	if _, err := store.DB().ExecContext(ctx, `ALTER TABLE rozo_events RENAME TO rozo_events_hidden`); err != nil {
+		t.Fatalf("hide rozo_events: %v", err)
+	}
+
+	broken, err := chops.RunProjectedRebuild(ctx, opts())
+	if err != nil {
+		// The run itself still succeeds — the stream completed; only the
+		// inserts failed. That is the shape the bug hid inside.
+		t.Fatalf("RunProjectedRebuild (broken): %v", err)
+	}
+	if broken.InsertErrors == 0 {
+		t.Fatalf("InsertErrors = 0, want >0 — the failure injection did not take effect")
+	}
+	if broken.WindowsHeld == 0 {
+		t.Fatalf("WindowsHeld = 0 with InsertErrors = %d — the window was checkpointed despite "+
+			"losing rows, so a resumed run will skip it and the rows are gone permanently (COR-09)",
+			broken.InsertErrors)
+	}
+
+	// No checkpoint may exist for a window that lost rows.
+	var cursors int
+	if err := store.DB().QueryRowContext(ctx,
+		`SELECT count(*) FROM ingestion_cursors WHERE source = 'projected-rebuild'`).Scan(&cursors); err != nil {
+		t.Fatalf("count cursors: %v", err)
+	}
+	if cursors != 0 {
+		t.Fatalf("ingestion_cursors has %d projected-rebuild row(s) after a run that lost every "+
+			"insert, want 0 — a resumed run would skip those windows", cursors)
+	}
+
+	// ─── Repair, then resume: the held windows must be REDONE ────────────
+	if _, err := store.DB().ExecContext(ctx, `ALTER TABLE rozo_events_hidden RENAME TO rozo_events`); err != nil {
+		t.Fatalf("restore rozo_events: %v", err)
+	}
+
+	repaired, err := chops.RunProjectedRebuild(ctx, opts())
+	if err != nil {
+		t.Fatalf("RunProjectedRebuild (repaired): %v", err)
+	}
+	if repaired.WindowsSkipped != 0 {
+		t.Errorf("WindowsSkipped = %d, want 0 — the previously-held windows must be re-processed, "+
+			"not skipped", repaired.WindowsSkipped)
+	}
+	if repaired.WindowsProcessed != 2 {
+		t.Errorf("WindowsProcessed = %d, want 2", repaired.WindowsProcessed)
+	}
+	if repaired.InsertErrors != 0 || repaired.WindowsHeld != 0 {
+		t.Errorf("after repair: InsertErrors=%d WindowsHeld=%d, want 0/0",
+			repaired.InsertErrors, repaired.WindowsHeld)
+	}
+
+	// The whole point: the rows the first run lost are now actually present.
+	assertRozoEventLedgers(t, ctx, store.DB(), []uint32{3050, 3150})
+}
+
+// The projector's cycle is a read-modify-write up to PerSourceTimeout long,
+// and its commit is a never-regress UPSERT of a position derived from the
+// cycle-start read. A projector-replay RewindCursor landing inside that gap
+// writes a LOWER value, so the in-flight cycle's forward write would pass the
+// guard and put the cursor back at tip — the replay would print success and
+// re-project nothing.
+//
+// RED on the unfixed behaviour: make AdvanceCursorFrom delegate to
+// UpsertCursor (the old commit) and all three tests below fail.
+
+const casSource = "sep41_supply"
+
+func casCursor(t *testing.T, ctx context.Context, store *timescale.Store) timescale.Cursor { //nolint:revive // t-first matches the package's other helpers.
+	t.Helper()
+	c, err := store.GetCursor(ctx, "projector", casSource)
+	if err != nil {
+		t.Fatalf("read projector cursor: %v", err)
+	}
+	return c
+}
+
+// TestAdvanceCursorFrom_RewindHeldOpenWinsTheRace interleaves the two
+// writers on two connections, both ways round.
+func TestAdvanceCursorFrom_RewindHeldOpenWinsTheRace(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store := openVerdictStore(t, ctx, dsn)
+	racer := openVerdictStore(t, ctx, dsn) // second pool → second connection
+
+	const (
+		readAt   = uint32(63_700_000) // what the cycle read at its start
+		commitTo = uint32(63_700_500) // what it derived from that read
+		rewindTo = uint32(62_999_999) // projector-replay -from 63000000
+	)
+
+	// Seed plainly and go STRAIGHT to the interleave: the sequential contract
+	// lives in TestAdvanceCursorFrom_SequentialContract, so that a failure
+	// (or a pass) here is a statement about the race and nothing else.
+	if err := store.UpsertCursor(ctx, "projector", casSource, readAt); err != nil {
+		t.Fatalf("seed projector cursor: %v", err)
+	}
+
+	// ── Interleave 1: the rewind is in flight when the cycle commits ─────
+	tx, err := racer.DB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("racer begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Byte-for-byte RewindCursor's statement, held uncommitted.
+	if _, err := tx.ExecContext(ctx, `
+        UPDATE ingestion_cursors
+           SET last_ledger = $3, last_updated = now()
+         WHERE source = $1 AND sub_source = $2 AND last_ledger > $3`,
+		"projector", casSource, int64(rewindTo)); err != nil {
+		t.Fatalf("racer rewind: %v", err)
+	}
+
+	type result struct {
+		advanced bool
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() {
+		ok, aerr := store.AdvanceCursorFrom(ctx, "projector", casSource,
+			timescale.CursorRead{Exists: true, LastLedger: readAt}, commitTo)
+		done <- result{ok, aerr}
+	}()
+
+	// Non-vacuity: the advance must be parked in its cursor-row WRITE behind
+	// the rewind's row lock; anything else means the interleave never armed.
+	// Deliberately not pinned to the fix's exact statement text — the
+	// property is "the cycle's commit is waiting on the rewind", and pinning
+	// the text would make a reverted commit fail HERE instead of on the
+	// clobber below, which is the assertion that matters.
+	parked := waitForVerdictLockWait(t, ctx, racer.DB(), done2finished(done))
+	t.Logf("cycle commit parked behind the rewind in: %s", strings.Join(strings.Fields(parked), " "))
+	if !strings.Contains(parked, "ingestion_cursors") {
+		t.Fatalf("advance parked in the wrong statement — interleave not armed.\nparked in: %s", parked)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("racer commit: %v", err)
+	}
+	var res result
+	select {
+	case res = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatalf("advance did not return within 30s of the rewind's commit")
+	}
+	if res.err != nil {
+		t.Fatalf("advance: %v", res.err)
+	}
+	if res.advanced {
+		t.Errorf("advanced=true although the cursor was rewound under the cycle")
+	}
+	if c := casCursor(t, ctx, store); c.LastLedger != rewindTo {
+		t.Fatalf("cursor = %d, want the rewind point %d — the in-flight cycle's stale commit clobbered the rewind (F159)", c.LastLedger, rewindTo)
+	}
+
+	// ── Interleave 2: the cycle's commit is in flight when the rewind lands
+	// Re-arm: cursor back at readAt via a legitimate advance.
+	if ok, err := store.AdvanceCursorFrom(ctx, "projector", casSource, timescale.CursorRead{Exists: true, LastLedger: rewindTo}, readAt); err != nil || !ok {
+		t.Fatalf("re-arm advance: advanced=%v err=%v", ok, err)
+	}
+	tx2, err := racer.DB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("racer begin 2: %v", err)
+	}
+	defer func() { _ = tx2.Rollback() }()
+	if _, err := tx2.ExecContext(ctx, `
+        UPDATE ingestion_cursors SET last_ledger = $3, last_updated = now()
+         WHERE source = $1 AND sub_source = $2 AND last_ledger = $4`,
+		"projector", casSource, int64(commitTo), int64(readAt)); err != nil {
+		t.Fatalf("racer advance: %v", err)
+	}
+	type rewound struct {
+		prior uint32
+		err   error
+	}
+	rdone := make(chan rewound, 1)
+	go func() {
+		prior, err := store.RewindCursor(ctx, "projector", casSource, rewindTo)
+		rdone <- rewound{prior, err}
+	}()
+	parked = waitForVerdictLockWait(t, ctx, racer.DB(), done2finished(rdone))
+	if !strings.Contains(parked, "UPDATE ingestion_cursors") || !strings.Contains(parked, "last_ledger > $3") {
+		t.Fatalf("rewind parked in the wrong statement — interleave not armed.\nparked in: %s", parked)
+	}
+	if err := tx2.Commit(); err != nil {
+		t.Fatalf("racer commit 2: %v", err)
+	}
+	select {
+	case r := <-rdone:
+		if r.err != nil {
+			t.Fatalf("rewind behind an in-flight advance: %v", r.err)
+		}
+		// projector-replay widens its dirty window to this value; the
+		// snapshot's readAt would under-record the re-walked range.
+		if r.prior != commitTo {
+			t.Errorf("rewind reported prior ledger %d, want the advanced %d it actually rewound from", r.prior, commitTo)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("rewind did not return within 30s of the advance's commit")
+	}
+	if c := casCursor(t, ctx, store); c.LastLedger != rewindTo {
+		t.Fatalf("cursor = %d, want the rewind point %d — the rewind must win whichever writer holds the row first", c.LastLedger, rewindTo)
+	}
+}
+
+// TestAdvanceCursorFrom_SequentialContract pins the statement's contract
+// with no concurrency involved: the not-found seed (and its DO NOTHING arm),
+// the refusal of a non-advancing write, the refusal of a stale read, and
+// the half of UpsertCursor's contract the projector's cursor still relies
+// on — first_ledger is set on insert and never moved by an advance.
+func TestAdvanceCursorFrom_SequentialContract(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store := openVerdictStore(t, ctx, dsn)
+
+	if ok, err := store.AdvanceCursorFrom(ctx, "projector", casSource, timescale.CursorRead{}, 100); err != nil || !ok {
+		t.Fatalf("seed: advanced=%v err=%v", ok, err)
+	}
+	// A second not-found-read seed must leave the existing row alone.
+	if ok, err := store.AdvanceCursorFrom(ctx, "projector", casSource, timescale.CursorRead{}, 5); err != nil || ok {
+		t.Fatalf("seed over an existing row: advanced=%v err=%v, want false/nil", ok, err)
+	}
+	// A write that is not an advance is a caller bug, not a silent no-op.
+	if _, err := store.AdvanceCursorFrom(ctx, "projector", casSource, timescale.CursorRead{Exists: true, LastLedger: 100}, 100); err == nil {
+		t.Fatalf("a non-advancing write returned nil error")
+	}
+	if c := casCursor(t, ctx, store); c.LastLedger != 100 {
+		t.Fatalf("cursor = %d after the refused writes, want 100 untouched", c.LastLedger)
+	}
+	if ok, err := store.AdvanceCursorFrom(ctx, "projector", casSource, timescale.CursorRead{Exists: true, LastLedger: 100}, 250); err != nil || !ok {
+		t.Fatalf("advance: advanced=%v err=%v", ok, err)
+	}
+	var first, last int64
+	if err := store.DB().QueryRowContext(ctx,
+		`SELECT first_ledger, last_ledger FROM ingestion_cursors WHERE source = 'projector' AND sub_source = $1`,
+		casSource).Scan(&first, &last); err != nil {
+		t.Fatalf("read cursor row: %v", err)
+	}
+	if first != 100 || last != 250 {
+		t.Fatalf("first_ledger=%d last_ledger=%d, want 100/250", first, last)
+	}
+	// A stale read is refused and changes nothing.
+	if ok, err := store.AdvanceCursorFrom(ctx, "projector", casSource, timescale.CursorRead{Exists: true, LastLedger: 100}, 300); err != nil || ok {
+		t.Fatalf("stale read: advanced=%v err=%v, want false/nil", ok, err)
+	}
+	if c := casCursor(t, ctx, store); c.LastLedger != 250 {
+		t.Fatalf("cursor = %d after a refused stale advance, want 250", c.LastLedger)
+	}
+}
+
+// casSink records every ledger the projector sinks and parks the FIRST
+// call until released — holding a real cycle open mid-flight, after its
+// cursor read and before its commit.
+type casSink struct {
+	mu       sync.Mutex
+	sunk     []uint32
+	parkOnce sync.Once
+	inFlight chan uint32
+	release  chan struct{}
+}
+
+func (s *casSink) handle(ctx context.Context, ev consumer.Event) error {
+	se, ok := ev.(sep41_supply.Event)
+	if !ok {
+		return nil
+	}
+	s.mu.Lock()
+	s.sunk = append(s.sunk, se.Ledger)
+	s.mu.Unlock()
+	var park bool
+	s.parkOnce.Do(func() { park = true })
+	if park {
+		s.inFlight <- se.Ledger
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func (s *casSink) count(ledger uint32) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, l := range s.sunk {
+		if l == ledger {
+			n++
+		}
+	}
+	return n
+}
+
+// TestProjectorReplayRewind_SurvivesAnInFlightCycle is the finding end to
+// end: the REAL projector ([projector.New] + Run) over the REAL store, a
+// cycle held open mid-flight, and the REAL [timescale.Store.RewindCursor]
+// — the call projector-replay makes — landing from a second connection.
+// The repair must actually happen: the rewound ledger is sunk again.
+func TestProjectorReplayRewind_SurvivesAnInFlightCycle(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store := openVerdictStore(t, ctx, dsn)
+	replay := openVerdictStore(t, ctx, dsn) // the ops command's own connection
+
+	const (
+		rewoundLedger  = uint32(50_000_010) // already projected; the replay wants it re-driven
+		inFlightLedger = uint32(50_000_020) // what the live cycle is sinking when the rewind lands
+	)
+	rowA := mkReconstructableRow(t, rewoundLedger)
+	rowB := mkReconstructableRow(t, inFlightLedger)
+	if err := store.InsertSorobanEventsBatch(ctx, []sorobanevents.Row{rowA, rowB}); err != nil {
+		t.Fatalf("seed soroban_events: %v", err)
+	}
+	if err := store.UpsertCursor(ctx, "ledgerstream", "", inFlightLedger); err != nil {
+		t.Fatalf("seed ledgerstream cursor: %v", err)
+	}
+	// The projector has already walked past rewoundLedger.
+	if err := store.UpsertCursor(ctx, "projector", casSource, inFlightLedger-1); err != nil {
+		t.Fatalf("seed projector cursor: %v", err)
+	}
+
+	sink := &casSink{inFlight: make(chan uint32, 1), release: make(chan struct{})}
+	reg := projector.Registry{Sources: []projector.Source{{Name: casSource, Decoder: &fakeSupplyDecoder{contractID: rowA.ContractID}}}}
+	p := projector.New(store, reg, sink.handle, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	runCtx, runCancel := context.WithCancel(ctx)
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		_ = p.Run(runCtx)
+	}()
+	var releaseOnce sync.Once
+	releaseSink := func() { releaseOnce.Do(func() { close(sink.release) }) }
+	t.Cleanup(func() {
+		releaseSink()
+		runCancel()
+		select {
+		case <-runDone:
+		case <-time.After(30 * time.Second):
+			t.Error("projector Run did not exit within 30s of cancel")
+		}
+	})
+
+	// The cycle is now provably mid-flight: it read cursor = inFlight-1 and
+	// is inside its sink call for inFlightLedger.
+	select {
+	case got := <-sink.inFlight:
+		if got != inFlightLedger {
+			t.Fatalf("the parked cycle is sinking ledger %d, want %d — interleave not armed", got, inFlightLedger)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("projector never reached the sink")
+	}
+	if c := casCursor(t, ctx, store); c.LastLedger != inFlightLedger-1 {
+		t.Fatalf("cursor = %d while the cycle is parked, want %d (uncommitted)", c.LastLedger, inFlightLedger-1)
+	}
+
+	// projector-replay -from rewoundLedger.
+	if _, err := replay.RewindCursor(ctx, "projector", casSource, rewoundLedger-1); err != nil {
+		t.Fatalf("rewind: %v", err)
+	}
+	releaseSink() // the in-flight cycle now runs to its commit
+
+	// The re-projection must happen. In the fixed code the re-walk sinks
+	// rewoundLedger BEFORE the cursor can read inFlightLedger again, so a
+	// cursor at inFlightLedger with rewoundLedger never sunk is the clobber.
+	deadline := time.Now().Add(2*projectorSettle + 30*time.Second)
+	for sink.count(rewoundLedger) == 0 {
+		cur := casCursor(t, ctx, store).LastLedger
+		if cur == inFlightLedger && sink.count(rewoundLedger) == 0 {
+			t.Fatalf("the cursor is back at %d and ledger %d was never re-sunk — the in-flight cycle's stale commit reverted projector-replay's rewind, so the repair no-oped (F159)", cur, rewoundLedger)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("ledger %d was never re-projected after the rewind (cursor=%d)", rewoundLedger, cur)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	// And the projector then catches back up, re-driving the in-flight
+	// ledger too (idempotent downstream).
+	for casCursor(t, ctx, store).LastLedger != inFlightLedger {
+		if time.Now().After(deadline) {
+			t.Fatalf("cursor never returned to %d after the re-walk", inFlightLedger)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if n := sink.count(inFlightLedger); n < 2 {
+		t.Errorf("ledger %d sunk %d time(s), want ≥2 (once in flight, once in the re-walk)", inFlightLedger, n)
+	}
+}
+
+// seekCase is one filter shape the projector's first-event seek must answer
+// exactly as the matching stream would.
+type seekCase struct {
+	name                        string
+	from, to                    uint32
+	contracts, topics, excludes []string
+	want                        uint32
+	wantFound                   bool
+}
+
+// TestFirstSorobanEventLedger_MatchesStream executes the Postgres seek the
+// projector seeds a never-run source from, and pins it to StreamSorobanEvents'
+// row set for the same filters (the seed must never skip a row the scan would
+// have returned).
+func TestFirstSorobanEventLedger_MatchesStream(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	t0 := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	// mkSyntheticRow: the seed picks the contract; odd seeds carry a NULL
+	// topic_0_sym, even seeds "synthetic_event".
+	rows := []sorobanevents.Row{
+		mkSyntheticRow(t, 1000, t0, 1),
+		mkSyntheticRow(t, 1100, t0.Add(time.Second), 2),
+		mkSyntheticRow(t, 1200, t0.Add(2*time.Second), 4),
+		mkSyntheticRow(t, 1300, t0.Add(3*time.Second), 1),
+	}
+	if err := store.InsertSorobanEventsBatch(ctx, rows); err != nil {
+		t.Fatalf("InsertSorobanEventsBatch: %v", err)
+	}
+	c1, c2, c4 := rows[0].ContractID, rows[1].ContractID, rows[2].ContractID
+
+	for _, tc := range []seekCase{
+		{name: "unfiltered", to: 2000, want: 1000, wantFound: true},
+		{name: "contract", to: 2000, contracts: []string{c2}, want: 1100, wantFound: true},
+		{name: "contract above from", from: 1001, to: 2000, contracts: []string{c1}, want: 1300, wantFound: true},
+		{name: "topic", to: 2000, topics: []string{"synthetic_event"}, want: 1100, wantFound: true},
+		{name: "exclude keeps NULL topic", to: 2000, excludes: []string{"synthetic_event"}, want: 1000, wantFound: true},
+		{name: "exclude above from", from: 1001, to: 2000, excludes: []string{"synthetic_event"}, want: 1300, wantFound: true},
+		{name: "all filters", to: 2000, contracts: []string{c2, c4}, topics: []string{"synthetic_event"}, excludes: []string{"other"}, want: 1100, wantFound: true},
+		{name: "below first row", to: 999},
+		{name: "to bounds the seek", to: 1199, contracts: []string{c4}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, found, err := store.FirstSorobanEventLedger(ctx, tc.from, tc.to, tc.contracts, tc.topics, tc.excludes)
+			if err != nil {
+				t.Fatalf("FirstSorobanEventLedger: %v", err)
+			}
+			if found != tc.wantFound || got != tc.want {
+				t.Fatalf("FirstSorobanEventLedger = (%d, %v), want (%d, %v)", got, found, tc.want, tc.wantFound)
+			}
+			var streamFirst uint32
+			streamFound := false
+			if err := store.StreamSorobanEvents(ctx, tc.from, tc.to, tc.contracts, tc.topics, tc.excludes,
+				func(r sorobanevents.Row) error {
+					if !streamFound || r.Ledger < streamFirst {
+						streamFirst, streamFound = r.Ledger, true
+					}
+					return nil
+				}); err != nil {
+				t.Fatalf("StreamSorobanEvents: %v", err)
+			}
+			if streamFound != found || streamFirst != got {
+				t.Fatalf("seek (%d, %v) disagrees with stream's first row (%d, %v)", got, found, streamFirst, streamFound)
+			}
+		})
+	}
+}
+
+// TestFirstContractEventLedgerFiltered_MatchesStream is the ClickHouse
+// (feed-switch) twin of the Postgres seek test.
+func TestFirstContractEventLedgerFiltered_MatchesStream(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	chAddr := clickhouseAddr(t)
+
+	// A ledger range and contracts no other test writes, since the CH
+	// container is shared across the package.
+	const base = 7_340_000
+	contractA, contractB := seekContract(t, 0xA1), seekContract(t, 0xB2)
+	seekSeedEvent(t, ctx, chAddr, base+100, contractA, "swap")
+	seekSeedEvent(t, ctx, chAddr, base+200, contractB, "transfer")
+	seekSeedEvent(t, ctx, chAddr, base+300, contractB, "swap")
+
+	both := []string{contractA, contractB}
+	for _, tc := range []seekCase{
+		{name: "contract", from: base, to: base + 1000, contracts: []string{contractB}, want: base + 200, wantFound: true},
+		{name: "contract and topic", from: base, to: base + 1000, contracts: []string{contractB}, topics: []string{"swap"}, want: base + 300, wantFound: true},
+		{name: "exclude", from: base + 101, to: base + 1000, contracts: both, excludes: []string{"transfer"}, want: base + 300, wantFound: true},
+		{name: "above from", from: base + 101, to: base + 1000, contracts: both, want: base + 200, wantFound: true},
+		{name: "to bounds the seek", from: base, to: base + 199, contracts: []string{contractB}},
+		{name: "no match", from: base, to: base + 1000, contracts: []string{contractA}, topics: []string{"transfer"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, found, err := chstore.FirstContractEventLedgerFiltered(ctx, chAddr, tc.from, tc.to, tc.contracts, tc.topics, tc.excludes)
+			if err != nil {
+				t.Fatalf("FirstContractEventLedgerFiltered: %v", err)
+			}
+			if found != tc.wantFound || got != tc.want {
+				t.Fatalf("FirstContractEventLedgerFiltered = (%d, %v), want (%d, %v)", got, found, tc.want, tc.wantFound)
+			}
+			var streamFirst uint32
+			streamFound := false
+			if err := chstore.StreamContractEventsFiltered(ctx, chAddr, tc.from, tc.to, tc.contracts, tc.topics, tc.excludes,
+				false, false, false, func(ev events.Event) error {
+					if !streamFound || ev.Ledger < streamFirst {
+						streamFirst, streamFound = ev.Ledger, true
+					}
+					return nil
+				}); err != nil {
+				t.Fatalf("StreamContractEventsFiltered: %v", err)
+			}
+			if streamFound != found || streamFirst != got {
+				t.Fatalf("seek (%d, %v) disagrees with stream's first row (%d, %v)", got, found, streamFirst, streamFound)
+			}
+		})
+	}
+}
+
+func seekContract(t *testing.T, seed byte) string {
+	t.Helper()
+	var raw [32]byte
+	raw[0], raw[1] = seed, 0x5E
+	s, err := strkey.Encode(strkey.VersionByteContract, raw[:])
+	if err != nil {
+		t.Fatalf("strkey.Encode: %v", err)
+	}
+	return s
+}
+
+func seekSeedEvent(t *testing.T, ctx context.Context, chAddr string, ledger uint32, contract, topic string) {
+	t.Helper()
+	closeTime := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC).Add(time.Duration(ledger) * 5 * time.Second)
+	sink, err := chstore.Open(ctx, chAddr, 100)
+	if err != nil {
+		t.Fatalf("open sink: %v", err)
+	}
+	defer func() { _ = sink.Close(ctx) }()
+	ext := chstore.LedgerExtract{
+		Ledger: chstore.LedgerRow{
+			LedgerSeq: ledger, CloseTime: closeTime, LedgerHash: "aa", PrevHash: "bb",
+			ProtocolVersion: 22, BucketListHash: "cc", TxCount: 1, OpCount: 1,
+		},
+		Events: []chstore.ContractEventRow{{
+			LedgerSeq:        ledger,
+			CloseTime:        closeTime,
+			TxHash:           fmt.Sprintf("%064x", ledger),
+			ContractID:       contract,
+			EventType:        "contract",
+			TopicCount:       1,
+			Topic0Sym:        topic,
+			TopicsXDR:        []string{prB64(t, prSymbol(topic))},
+			DataXDR:          prB64(t, prSymbol("x")),
+			OpArgsXDR:        []string{},
+			InSuccessfulCall: 1,
+		}},
+	}
+	if err := sink.Add(ctx, withEventTxs(ext)); err != nil {
+		t.Fatalf("sink add (ledger %d): %v", ledger, err)
+	}
+	if err := sink.Flush(ctx); err != nil {
+		t.Fatalf("sink flush (ledger %d): %v", ledger, err)
+	}
+}
+
+// TestProjectorSinkDurability_TransientFailureDoesNotAdvanceCursor is the
+// proven-red test for the projector advancing
+// its cursor past a silently-swallowed SINK write failure, which permanently
+// drops the row for the sole-writer sep41 domain.
+//
+// It drives the REAL projector ([projector.New] + [projector.Run]) reading
+// one seeded soroban_events row, with a sink that:
+//   - FAILS the first cycle's write with a transient Postgres fault (a
+//     deadlock, SQLSTATE 40P01 — the transient class an old sink swallowed), then
+//   - SUCCEEDS on the retry, delegating to the production
+//     [pipeline.HandleEvent] so the row lands for real.
+//
+// It asserts the two properties the fix must guarantee:
+//
+//	(a) after the transient failure the projector cursor did NOT advance past
+//	    the failing ledger (so the event is not lost); and
+//	(b) the next cycle re-reads that ledger and the row LANDS.
+//
+// RED on the unfixed code: revert cycleOneSource to advance the cursor to
+// `toLedger` UNCONDITIONALLY (ignoring the sink error) — keeping the
+// SinkFunc/HandleEvent error signatures — and assertion (a) fails (the cursor
+// jumps past the failing ledger) and (b) fails (the idle next cycle never
+// re-reads it, so the row is permanently lost). This mirrors the silent-loss
+// path: `-resume` skips it, reconcile re-sums the equally-short table,
+// and obs reports it as `ok`.
+func TestProjectorSinkDurability_TransientFailureDoesNotAdvanceCursor(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		srcName = "sep41_supply"
+		ledger  = uint32(50_000_010)
+	)
+
+	// Seed one soroban_events row at `ledger`. The fake decoder below ignores
+	// its contents (it always emits one sep41 mint), so the row only needs to
+	// Reconstruct cleanly — hence OpArgsXDR is nil (random op-args would fail
+	// scval decode and soft-fail as a decode error instead of reaching the
+	// sink).
+	row := mkReconstructableRow(t, ledger)
+	if err := store.InsertSorobanEventsBatch(ctx, []sorobanevents.Row{row}); err != nil {
+		t.Fatalf("seed soroban_events: %v", err)
+	}
+
+	// Tip: the projector never scans past the live ledgerstream cursor. Set it
+	// AT `ledger` so [ledger, ledger] is the exact scan window.
+	if err := store.UpsertCursor(ctx, "ledgerstream", "", ledger); err != nil {
+		t.Fatalf("seed ledgerstream cursor: %v", err)
+	}
+	// Projector cursor starts one BELOW `ledger`, so fromLedger = ledger and
+	// the single row is in-window on the first cycle.
+	if err := store.UpsertCursor(ctx, "projector", srcName, ledger-1); err != nil {
+		t.Fatalf("seed projector cursor: %v", err)
+	}
+
+	// Decoder emits exactly one sep41 mint per matched row, keyed to the row's
+	// ledger/tx so the write is a real, valid sep41_supply_events row.
+	contractID := row.ContractID
+	dec := &fakeSupplyDecoder{contractID: contractID}
+
+	sink := &durabilitySink{
+		store:    store,
+		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		failNext: true, // fail the first write transiently
+		called:   make(chan struct{}, 8),
+	}
+
+	reg := projector.Registry{Sources: []projector.Source{{Name: srcName, Decoder: dec}}}
+	p := projector.New(store, reg, sink.handle, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	runCtx, runCancel := context.WithCancel(ctx)
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		_ = p.Run(runCtx)
+	}()
+	t.Cleanup(func() {
+		runCancel()
+		select {
+		case <-runDone:
+		case <-time.After(30 * time.Second):
+			t.Error("projector Run did not exit within 30s of cancel")
+		}
+	})
+
+	readCursor := func() uint32 {
+		c, err := store.GetCursor(ctx, "projector", srcName)
+		if err != nil {
+			t.Fatalf("read projector cursor: %v", err)
+		}
+		return c.LastLedger
+	}
+	countRows := func() int {
+		var n int
+		if err := store.DB().QueryRowContext(ctx,
+			`SELECT count(*) FROM sep41_supply_events WHERE contract_id = $1`, contractID).Scan(&n); err != nil {
+			t.Fatalf("count sep41_supply_events: %v", err)
+		}
+		return n
+	}
+
+	// ── Cycle 1: the transient sink failure ──────────────────────────────
+	select {
+	case <-sink.called:
+	case <-time.After(30 * time.Second):
+		t.Fatal("projector never invoked the sink on the first cycle")
+	}
+	// Let the cycle finish its post-sink cursor decision. On the UNFIXED code
+	// the unconditional UpsertCursor(toLedger) runs synchronously right after
+	// the sink returns, so a 500ms settle reliably catches the bad advance.
+	time.Sleep(500 * time.Millisecond)
+
+	if got := readCursor(); got != ledger-1 {
+		t.Fatalf("after a TRANSIENT sink failure the cursor advanced to %d, want %d "+
+			"(C2-1: the projector must NOT advance past a ledger whose write failed transiently — "+
+			"the unfixed code jumps to toLedger and permanently drops the sep41 row)", got, ledger-1)
+	}
+	if n := countRows(); n != 0 {
+		t.Fatalf("sep41_supply_events has %d rows after the failed write, want 0", n)
+	}
+
+	// ── Cycle 2+: the retry lands the row ────────────────────────────────
+	sink.mu.Lock()
+	sink.failNext = false // let the next write succeed
+	sink.mu.Unlock()
+
+	// The next cycle (Interval later) re-reads `ledger` and commits it.
+	deadline := time.Now().Add(2*projectorSettle + 30*time.Second)
+	for {
+		if readCursor() == ledger {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cursor never reached %d after the fault cleared — the row was NOT retried "+
+				"(C2-1: a held cursor must re-read the failing ledger next cycle)", ledger)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if n := countRows(); n != 1 {
+		t.Fatalf("sep41_supply_events has %d rows after the retry, want 1 (the dropped mint must land)", n)
+	}
+}
+
+// projectorSettle pads the retry deadline by more than one projector Interval
+// so the ticker-driven second cycle has time to run.
+const projectorSettle = 5 * time.Second
+
+// durabilitySink is the projector [projector.SinkFunc]: it fails the first
+// write transiently (a deadlock), then delegates real writes to the
+// production [pipeline.HandleEvent].
+type durabilitySink struct {
+	mu       sync.Mutex
+	failNext bool
+	store    *timescale.Store
+	logger   *slog.Logger
+	called   chan struct{}
+}
+
+func (s *durabilitySink) handle(ctx context.Context, ev consumer.Event) error {
+	s.mu.Lock()
+	fail := s.failNext
+	s.mu.Unlock()
+	select {
+	case s.called <- struct{}{}:
+	default:
+	}
+	if fail {
+		// A transient Postgres fault mid-cycle (deadlock_detected, SQLSTATE
+		// 40P01) — precisely the class a swallowing sink would lose.
+		// timescale.IsPermanentDataError classifies it as transient, so the
+		// projector must HOLD its cursor and retry rather than skip.
+		return &pgconn.PgError{Code: "40P01", Message: "deadlock detected (injected)"}
+	}
+	// Real production write path — exercises HandleEvent's new error return.
+	return pipeline.HandleEvent(ctx, s.logger, s.store, ev)
+}
+
+// fakeSupplyDecoder matches every reconstructed row and emits exactly one
+// sep41 mint keyed to the row, so the projector's sink writes a valid
+// sep41_supply_events row through the real HandleEvent path.
+type fakeSupplyDecoder struct{ contractID string }
+
+func (fakeSupplyDecoder) Name() string              { return "sep41_supply" }
+func (fakeSupplyDecoder) Matches(events.Event) bool { return true }
+func (d *fakeSupplyDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
+	return []consumer.Event{sep41_supply.Event{
+		ContractID:   d.contractID,
+		Ledger:       ev.Ledger,
+		TxHash:       ev.TxHash,
+		OpIndex:      uint32(ev.OperationIndex), //nolint:gosec // test data, small
+		EventIndex:   uint32(ev.EventIndex),     //nolint:gosec // test data, small
+		ObservedAt:   time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC),
+		Kind:         sep41_supply.SymbolMint,
+		Amount:       big.NewInt(1000),
+		Counterparty: "GCOUNTERPARTY00000000000000000000000000000000000000000000",
+	}}, nil
+}
+
+// mkReconstructableRow builds one soroban_events row that
+// sorobanevents.Reconstruct accepts (valid contract strkey, 32-byte tx hash,
+// non-empty topic-0 + body) and that carries NO op-args (so Reconstruct does
+// not attempt to scval-decode random bytes).
+func mkReconstructableRow(t *testing.T, ledger uint32) sorobanevents.Row {
+	t.Helper()
+	var cid [32]byte
+	cid[0] = 0x11
+	cid[1] = 0xAA
+	cstrk, err := strkey.Encode(strkey.VersionByteContract, cid[:])
+	if err != nil {
+		t.Fatalf("strkey.Encode: %v", err)
+	}
+	txh := make([]byte, 32)
+	for i := range txh {
+		txh[i] = 0x22
+	}
+	_ = hex.EncodeToString(txh) // Reconstruct hex-encodes TxHash into ev.TxHash
+	return sorobanevents.Row{
+		Ledger:          ledger,
+		LedgerCloseTime: time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC),
+		TxHash:          txh,
+		OpIndex:         0,
+		EventIndex:      0,
+		ContractID:      cstrk,
+		ContractIDHex:   cid[:],
+		TopicCount:      1,
+		Topic0Sym:       "mint",
+		Topic0XDR:       []byte{0x00, 0x01, 0x02, 0x03},
+		Topic1XDR:       nil,
+		Topic2XDR:       nil,
+		Topic3XDR:       nil,
+		BodyXDR:         []byte{0x04, 0x05, 0x06, 0x07},
+		OpArgsXDR:       nil,
+	}
+}
 
 const testPassphrase = "Test SDF Network ; September 2015"
 

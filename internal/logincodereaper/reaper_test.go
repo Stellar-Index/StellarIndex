@@ -26,7 +26,7 @@ import (
 //
 // These tests pin the worker's contract. The DELETE predicate itself —
 // including the rule that a LIVE lock is never reaped — is proven
-// against real Postgres in test/integration/login_code_lockout_test.go.
+// against real Postgres in test/integration/auth_test.go.
 
 type sweepCall struct{ olderThan time.Time }
 

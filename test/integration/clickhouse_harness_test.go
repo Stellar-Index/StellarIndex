@@ -32,7 +32,7 @@ import (
 const clickhouseImage = "clickhouse/clickhouse-server:26.5"
 
 // The shared ClickHouse container. Unlike the per-test Postgres containers
-// (storage_test.go), ClickHouse startup + schema apply is ~15-30s, so the whole
+// (explorer_test.go), ClickHouse startup + schema apply is ~15-30s, so the whole
 // integration binary shares ONE container (started lazily on first use). Tests
 // stay isolated by using unique keys (contract_id / tx_hash / ledger range) per
 // test rather than a container each — the lake tables are ReplacingMergeTree and

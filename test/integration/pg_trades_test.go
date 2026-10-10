@@ -2350,7 +2350,7 @@ func TestTradesInRangeAndMarkets(t *testing.T) {
 	// trades table — without this refresh the seeded rows are
 	// present in `trades` but absent from `prices_1m` until the
 	// 30 s policy fires (longer than the test window). Mirrors the
-	// pattern in test/integration/api_test.go:65-74.
+	// pattern in test/integration/auth_test.go:65-74.
 	// DistinctPairs enumerates pairs from prices_1d (the right-granularity
 	// rewrite) and reads 24h volume from prices_1m — refresh BOTH, or
 	// the pair list comes back empty even though prices_1m has the rows.

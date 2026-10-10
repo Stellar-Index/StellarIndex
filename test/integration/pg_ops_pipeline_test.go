@@ -256,7 +256,7 @@ func emittedDeleteSQL(t *testing.T, src string) string {
 		"psql": "#!/usr/bin/env bash\ncat >> \"$STUB_SQL\"\n",
 		"stellarindex-ops-ch": "#!/usr/bin/env bash\nfrom=; to=; srcs=; pre=0\n" +
 			"while [ $# -gt 0 ]; do case \"$1\" in -from) from=$2; shift;; -to) to=$2; shift;; -sources) srcs=$2; shift;; -preflight) pre=1;; esac; shift; done\n" +
-			// Byte-for-byte the line ch_rebuild_preflight_test.go pins on the real binary.
+			// Byte-for-byte the line lake_test.go pins on the real binary.
 			"[ \"$pre\" = 1 ] && echo \"ch-rebuild: preflight ok [$from,$to] rederive=$srcs\"\nexit 0\n",
 	}
 	for name, body := range stubs {

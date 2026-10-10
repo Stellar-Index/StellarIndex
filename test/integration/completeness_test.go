@@ -5,11 +5,20 @@ package integration_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/chops"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -427,4 +436,248 @@ func waitForVerdictLockWait(t *testing.T, ctx context.Context, db *sql.DB, finis
 	}
 	t.Fatalf("the racing writer never blocked on a row lock within 30s")
 	return ""
+}
+
+// TestComputeCompleteness_OneSourceErrorDoesNotWithholdTheRest drives the real
+// compute-completeness subcommand on real TimescaleDB.
+//
+// soroswap is the FIRST catalogue source. A trigger makes its verdict write
+// fail, standing in for any per-source error (an RPC seed gap, a lake
+// deadline, a served-floor read). The loop must not return at that first
+// error, or no later source gets a verdict and /v1/coverage keeps serving every
+// source's prior verdict while the run looks like one failed source. Every
+// other source is evaluated and published, soroswap publishes nothing,
+// and the run still fails. -skip-recognition only because an empty lake is
+// (rightly) refused as a vacuous recognition scan before the loop is reached.
+func TestComputeCompleteness_OneSourceErrorDoesNotWithholdTheRest(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	chAddr := clickhouseAddr(t)
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	cfgPath := filepath.Join(t.TempDir(), "stellarindex.toml")
+	if err := os.WriteFile(cfgPath, []byte(fmt.Sprintf("[storage]\npostgres_dsn = %q\n", dsn)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const failSoroswap = `
+CREATE FUNCTION fail_soroswap_verdict() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.source = 'soroswap' THEN
+        RAISE EXCEPTION 'injected soroswap verdict failure';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER fail_soroswap_verdict BEFORE INSERT OR UPDATE ON completeness_snapshots
+    FOR EACH ROW EXECUTE FUNCTION fail_soroswap_verdict();`
+	if _, err := store.DB().ExecContext(ctx, failSoroswap); err != nil {
+		t.Fatalf("install fault trigger: %v", err)
+	}
+
+	runErr := chops.Run([]string{"compute-completeness", "-config", cfgPath, "-ch", "-ch-addr", chAddr, "-to", "70000000", "-skip-recognition", "-write"})
+	if runErr == nil || !strings.Contains(runErr.Error(), "soroswap") {
+		t.Fatalf("run err = %v, want a non-nil error naming soroswap (a failed source must fail the run)", runErr)
+	}
+
+	published := map[string]bool{}
+	rows, err := store.DB().QueryContext(ctx, `SELECT source FROM completeness_snapshots`)
+	if err != nil {
+		t.Fatalf("read snapshots: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		published[s] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	if published["soroswap"] {
+		t.Error("soroswap has a verdict row despite its write failing")
+	}
+	for _, src := range []string{"aquarius", "phoenix", "blend"} {
+		if !published[src] {
+			t.Errorf("%s has no verdict: soroswap's error withheld every later source's verdict (published: %v)", src, published)
+		}
+	}
+}
+
+func mevSupersedeState(t *testing.T, ctx context.Context, store *timescale.Store, key string) (legs int, accounts string, detectedAt time.Time) {
+	t.Helper()
+	err := store.DB().QueryRowContext(ctx,
+		`SELECT jsonb_array_length(detail -> 'legs'), array_to_string(accounts, ','), detected_at
+		   FROM mev_events WHERE dedup_key = $1`, key).Scan(&legs, &accounts, &detectedAt)
+	if err != nil {
+		t.Fatalf("select %s: %v", key, err)
+	}
+	return legs, accounts, detectedAt
+}
+
+// TestStorage_MEVEventEvidenceSupersedes: a re-scan whose legs
+// contain the stored legs replaces the stored evidence (a later scan found
+// another victim), a re-scan that saw fewer legs never overwrites, and
+// neither counts as a new event or moves the first detection's time.
+func TestStorage_MEVEventEvidenceSupersedes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	store := openMEVStore(t, ctx)
+
+	const key = "sandwich:supersede:GATK"
+	first := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	legA := `{"tx_hash":"a","role":"bracket"}`
+	legV1 := `{"tx_hash":"v1","role":"victim"}`
+	legV2 := `{"tx_hash":"v2","role":"victim"}`
+	write := func(at time.Time, accounts []string, legs string) bool {
+		t.Helper()
+		ok, err := store.InsertMEVEvent(ctx, domain.MEVStoredEvent{
+			Kind: "sandwich", Ledger: 61_000_000, DetectedAtLedger: 61_000_000, Timestamp: at,
+			TxHashes: []string{"a"}, Accounts: accounts, DedupKey: key,
+			DetailJSON: []byte(`{"legs":[` + legs + `],"note":"n"}`),
+		})
+		if err != nil {
+			t.Fatalf("InsertMEVEvent: %v", err)
+		}
+		return ok
+	}
+
+	if !write(first, []string{"GATK", "GV1"}, legA+","+legV1) {
+		t.Fatal("first detection reported inserted=false")
+	}
+	if write(first.Add(5*time.Minute), []string{"GATK", "GV1", "GV2"}, legA+","+legV1+","+legV2) {
+		t.Error("a superseding re-scan reported inserted=true")
+	}
+	legs, accounts, at := mevSupersedeState(t, ctx, store, key)
+	if legs != 3 || accounts != "GATK,GV1,GV2" {
+		t.Errorf("after a containing re-scan: legs=%d accounts=%q, want 3 and GATK,GV1,GV2", legs, accounts)
+	}
+	if !at.Equal(first) {
+		t.Errorf("detected_at moved to %v; the first detection's time is the event's identity", at)
+	}
+
+	if write(first.Add(10*time.Minute), []string{"GATK", "GV2"}, legA+","+legV2) {
+		t.Error("a narrower re-scan reported inserted=true")
+	}
+	if legs, accounts, _ := mevSupersedeState(t, ctx, store, key); legs != 3 || accounts != "GATK,GV1,GV2" {
+		t.Errorf("a narrower re-scan overwrote the stored evidence: legs=%d accounts=%q", legs, accounts)
+	}
+}
+
+// TestOracleUpdates_ReingestIsIdempotent pins why ts in oracle_updates'
+// primary key is safe on re-ingest: ts is a pure function of the event
+// payload and the ledger header close time, never the wall clock, so a
+// live pass and a replay of the same mainnet event produce the same key
+// and the second pass lands no new row and no new entry tally.
+func TestOracleUpdates_ReingestIsIdempotent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	c.InstallAliasRegistry(nil)
+
+	raw, err := os.ReadFile(filepath.Join("..", "fixtures", "reflector", "v6-2026-04-23", "62251160_9322ba2f5c95.json"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var fx struct {
+		ContractID     string   `json:"contract_id"`
+		Ledger         uint32   `json:"ledger"`
+		TxHash         string   `json:"tx_hash"`
+		LedgerClosedAt string   `json:"ledger_closed_at"`
+		Topics         []string `json:"topics"`
+		Value          string   `json:"value"`
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("unmarshal fixture: %v", err)
+	}
+	closedAt, err := time.Parse(time.RFC3339, fx.LedgerClosedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dec := reflector.NewDecoder(reflector.VariantDEX, fx.ContractID)
+	decode := func(ledgerClosedAt string) []c.OracleUpdate {
+		t.Helper()
+		out, err := dec.Decode(events.Event{
+			Type: "contract", ContractID: fx.ContractID, Ledger: fx.Ledger, TxHash: fx.TxHash,
+			LedgerClosedAt: ledgerClosedAt, Topic: fx.Topics, Value: fx.Value,
+		})
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		us := make([]c.OracleUpdate, 0, len(out))
+		for _, ev := range out {
+			us = append(us, ev.(reflector.UpdateEvent).Update)
+		}
+		return us
+	}
+
+	// Live ingest stamps the close time from the ledger header; a replay
+	// reads it back from the ClickHouse lake in a non-UTC zone at worst.
+	live := decode(fx.LedgerClosedAt)
+	replay := decode(closedAt.In(time.FixedZone("UTC+3", 3*3600)).Format(time.RFC3339))
+	if len(live) == 0 || len(live) != len(replay) {
+		t.Fatalf("decoded %d live rows and %d replay rows, want the same non-zero count", len(live), len(replay))
+	}
+	for i := range live {
+		if !live[i].Timestamp.Equal(replay[i].Timestamp) {
+			t.Fatalf("row %d ts: live %s, replay %s; ts must not depend on when the event is ingested",
+				i, live[i].Timestamp, replay[i].Timestamp)
+		}
+		// The topic's publication time, distinct from the close time, proves
+		// the payload-derived arm ran rather than the close-time fallback.
+		if live[i].Timestamp.Equal(closedAt) {
+			t.Fatalf("row %d ts = ledger close %s, want the oracle's publication time from topic[2]", i, closedAt)
+		}
+	}
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	counts := func() (rows, tally int64) {
+		t.Helper()
+		if err := store.DB().QueryRowContext(ctx,
+			`SELECT count(*) FROM oracle_updates WHERE ledger = $1 AND tx_hash = $2`,
+			fx.Ledger, fx.TxHash).Scan(&rows); err != nil {
+			t.Fatalf("count rows: %v", err)
+		}
+		if err := store.DB().QueryRowContext(ctx,
+			`SELECT COALESCE(sum(entry_count), 0) FROM source_entry_counts WHERE source = $1`,
+			live[0].Source).Scan(&tally); err != nil {
+			t.Fatalf("read tally: %v", err)
+		}
+		return rows, tally
+	}
+
+	for _, u := range live {
+		if err := store.InsertOracleUpdate(ctx, u); err != nil {
+			t.Fatalf("live insert: %v", err)
+		}
+	}
+	rows, tally := counts()
+	if rows != int64(len(live)) || tally != int64(len(live)) {
+		t.Fatalf("after live pass: rows=%d tally=%d, want %d each", rows, tally, len(live))
+	}
+
+	for _, u := range replay {
+		if err := store.InsertOracleUpdate(ctx, u); err != nil {
+			t.Fatalf("replay insert: %v", err)
+		}
+	}
+	if r2, t2 := counts(); r2 != rows || t2 != tally {
+		t.Fatalf("after replay: rows=%d tally=%d, want unchanged %d/%d", r2, t2, rows, tally)
+	}
 }

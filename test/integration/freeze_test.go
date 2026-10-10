@@ -5,7 +5,9 @@ package integration_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/redis/go-redis/v9"
 
@@ -768,5 +771,421 @@ func TestFreezeWindowLadders_EscalationSurvivesSiblingWrite(t *testing.T) {
 			t.Errorf("window %s after the operator override = (%+v, ok=%v, err=%v), want absent — "+
 				"a human could not end an escalated freeze", window, got, ok, lerr)
 		}
+	}
+}
+
+// TestFreezeLadder_DurableAcrossRedisLoss is the DB-backed half of the
+// migration-0119 fix, run against real TimescaleDB.
+//
+// The unit test in internal/aggregate/freeze pins the Writer's policy
+// against a fake store. This pins the part only Postgres can answer:
+//
+//   - migration 0119 actually applies to a `freeze_events` hypertable with
+//     a COMPRESSED CHUNK in it. That is the risky bit and it is NOT
+//     exercised by simply running the migrations on a fresh database: a
+//     fresh DB has zero chunks, so ADD COLUMN touches nothing and the test
+//     would prove only that the SQL parses. The fixture below therefore
+//     inserts a row into an OLD chunk and calls compress_chunk() BEFORE
+//     migrating, so the ALTER really does run against compressed data. A
+//     failure here is a failed deploy, and the pipeline rolls back the
+//     binary but never the schema;
+//   - SaveLadder's UPDATE lands on the open row and LoadLadder reads back
+//     the EXACT ladder, through real timestamptz round-tripping;
+//   - LoadLadder honours `recovered_at IS NULL`, which is what makes
+//     `stellarindex-ops freeze-unfreeze`'s override still stick;
+//   - a pre-0119 row (NULL hold_until) reports "no durable ladder" rather
+//     than a zero one, so it degrades to marker-only behaviour instead of
+//     restoring a freeze that reads as "fired just now".
+func TestFreezeLadder_DurableAcrossRedisLoss(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	// Migrate to 0118 first, seed a row, COMPRESS its chunk, and only then
+	// apply 0119 — otherwise "ADD COLUMN on a compressed hypertable" is an
+	// untested claim, since a freshly-migrated database has no chunks at all.
+	applyMigrationsUpTo(t, dsn, 118)
+	seedAndCompressFreezeChunk(t, ctx, dsn)
+	applyMigrations(t, dsn)
+	assertFreezeChunkStillCompressed(t, ctx, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	sink := timescale.NewFreezeEventSink(store)
+
+	asset, _ := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	quote, _ := c.NewFiatAsset("USD")
+
+	decision := anomaly.Decision{
+		Action:       anomaly.ActionFreeze,
+		Class:        anomaly.ClassStablecoin,
+		DeviationPct: 14.2,
+		Reason:       "phase2:3_signal_AND confidence=0.121 z=8.44 sources=1",
+	}
+
+	// ── no row yet: SaveLadder must not create one, LoadLadder must
+	//    report absent. RecordFreeze owns row creation; a SaveLadder that
+	//    could insert would race it into two open rows for one pair.
+	// ErrNotFound, not a silent nil: "no open row matched" is exactly what
+	// "migration 0119 has not been applied while the new binary is running"
+	// looks like from the caller's side, and the Writer counts it on
+	// stellarindex_anomaly_freeze_ladder_write_failures_total. Swallowing it
+	// made that whole failure mode invisible.
+	if err := sink.SaveLadder(ctx, asset, quote, freeze.State{
+		FiredAt: time.Now().UTC(), HoldUntil: time.Now().UTC().Add(time.Hour),
+	}); !errors.Is(err, timescale.ErrNotFound) {
+		t.Fatalf("SaveLadder with no open row = %v, want ErrNotFound", err)
+	}
+	if _, ok, lerr := sink.LoadLadder(ctx, asset, quote); lerr != nil || ok {
+		t.Fatalf("LoadLadder before any freeze = (ok=%v, err=%v), want (false, nil)", ok, lerr)
+	}
+	if n := countFreezeRows(t, ctx, dsn, asset.String(), quote.String()); n != 0 {
+		t.Fatalf("SaveLadder created %d freeze_events row(s); it must only ever UPDATE", n)
+	}
+
+	// ── the freeze fires ────────────────────────────────────────────
+	if err := sink.RecordFreeze(ctx, asset, quote, "0.874500000000", decision); err != nil {
+		t.Fatalf("RecordFreeze: %v", err)
+	}
+
+	// A pre-0119 row shape: the ladder columns are still NULL. It must
+	// read as "no durable ladder" rather than a zero one — restoring
+	// {FiredAt: <frozen_at>, ExtensionsUsed: 0, Escalated: false} would
+	// silently reset the 2-hour escalation clock.
+	if _, ok, lerr := sink.LoadLadder(ctx, asset, quote); lerr != nil || ok {
+		t.Fatalf("LoadLadder on a NULL-ladder (pre-0119) row = (ok=%v, err=%v), want (false, nil)", ok, lerr)
+	}
+
+	// ── the pair climbs the whole ladder and escalates ──────────────
+	now := time.Now().UTC().Truncate(time.Microsecond) // pg timestamptz resolution
+	want := freeze.State{
+		FiredAt:        now.Add(-2*time.Hour - 5*time.Minute),
+		HoldUntil:      now.Add(25 * time.Minute),
+		ExtensionsUsed: freeze.DefaultMaxExtensions,
+		Escalated:      true,
+		Corroborated:   true,
+	}
+	if err := sink.SaveLadder(ctx, asset, quote, want); err != nil {
+		t.Fatalf("SaveLadder: %v", err)
+	}
+
+	got, ok, err := sink.LoadLadder(ctx, asset, quote)
+	if err != nil {
+		t.Fatalf("LoadLadder: %v", err)
+	}
+	if !ok {
+		t.Fatal("LoadLadder reported no durable ladder right after SaveLadder — " +
+			"a Redis flush would release this ESCALATED freeze")
+	}
+	if !got.Escalated {
+		t.Error("Escalated did not round-trip; an escalated freeze would resume auto-unfreezing")
+	}
+	if got.ExtensionsUsed != freeze.DefaultMaxExtensions {
+		t.Errorf("ExtensionsUsed = %d, want %d", got.ExtensionsUsed, freeze.DefaultMaxExtensions)
+	}
+	if !got.Corroborated {
+		t.Error("Corroborated did not round-trip")
+	}
+	if !got.HoldUntil.Equal(want.HoldUntil) {
+		t.Errorf("HoldUntil = %v, want %v", got.HoldUntil, want.HoldUntil)
+	}
+	// FiredAt comes from the row's own frozen_at (stamped by RecordFreeze),
+	// NOT from the State we saved — the column is deliberately not
+	// duplicated. Assert it is the freeze's real age, i.e. very recent.
+	if age := time.Since(got.FiredAt); age > time.Minute || age < 0 {
+		t.Errorf("FiredAt = %v (age %v); want the row's own frozen_at, not the saved State's", got.FiredAt, age)
+	}
+
+	// Only ONE row exists — repeated SaveLadder is an UPDATE, never an insert.
+	if n := countFreezeRows(t, ctx, dsn, asset.String(), quote.String()); n != 1 {
+		t.Fatalf("freeze_events holds %d row(s) for the pair, want 1", n)
+	}
+
+	// ── Clear's ladder retirement, on real SQL ─────────────────────
+	// freeze.Writer.Clear writes back a zero State on auto-release, which
+	// must NULL hold_until and so make LoadLadder report no ladder even
+	// though the ROW is still open (the recovery worker sweeps every 60s).
+	// Without this the pre-sweep window lets a restarting aggregator
+	// re-freeze a pair whose anomaly had already cleared.
+	if err := sink.SaveLadder(ctx, asset, quote, freeze.State{}); err != nil {
+		t.Fatalf("SaveLadder(zero): %v", err)
+	}
+	if _, ok, lerr := sink.LoadLadder(ctx, asset, quote); lerr != nil || ok {
+		t.Fatalf("LoadLadder after a retiring zero-State save = (ok=%v, err=%v), want (false, nil)", ok, lerr)
+	}
+	if n := countOpenFreezeRows(t, ctx, dsn, asset.String(), quote.String()); n != 1 {
+		t.Fatalf("retiring the ladder closed the row (%d open); recovered_at is the recovery worker's job", n)
+	}
+	// The retire must keep the escalation history the timeline reports.
+	rows, lerr := store.ListFreezeEvents(ctx, true, 10)
+	if lerr != nil || len(rows) != 1 {
+		t.Fatalf("ListFreezeEvents after retire = (%d rows, err=%v), want 1 row", len(rows), lerr)
+	}
+	if r := rows[0]; r.Escalated == nil || !*r.Escalated || r.ExtensionsUsed == nil ||
+		*r.ExtensionsUsed != freeze.DefaultMaxExtensions || r.Corroborated == nil || !*r.Corroborated {
+		t.Fatalf("retire erased the escalation history: escalated=%v extensions_used=%v corroborated=%v",
+			r.Escalated, r.ExtensionsUsed, r.Corroborated)
+	}
+	// Restore the escalated ladder for the override assertions below.
+	if err := sink.SaveLadder(ctx, asset, quote, want); err != nil {
+		t.Fatalf("SaveLadder(restore): %v", err)
+	}
+
+	// ── the operator override's durable half ───────────────────────
+	// `stellarindex-ops freeze-unfreeze` stamps recovered_at. After that
+	// the ladder must read absent, or a human could not end a freeze that
+	// by construction never ends on its own.
+	if err := sink.MarkRecovered(ctx, asset, quote, "operator:test"); err != nil {
+		t.Fatalf("MarkRecovered: %v", err)
+	}
+	if _, ok, lerr := sink.LoadLadder(ctx, asset, quote); lerr != nil || ok {
+		t.Fatalf("LoadLadder after MarkRecovered = (ok=%v, err=%v), want (false, nil) — "+
+			"the operator override must still stick", ok, lerr)
+	}
+	// And a save against a closed row must not resurrect it — reported as
+	// ErrNotFound for the same reason as above.
+	if err := sink.SaveLadder(ctx, asset, quote, want); !errors.Is(err, timescale.ErrNotFound) {
+		t.Fatalf("SaveLadder after recovery = %v, want ErrNotFound", err)
+	}
+	if _, ok, _ := sink.LoadLadder(ctx, asset, quote); ok {
+		t.Fatal("SaveLadder re-opened a recovered freeze")
+	}
+}
+
+func countFreezeRows(t *testing.T, ctx context.Context, dsn, assetID, quoteID string) int {
+	t.Helper()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM freeze_events WHERE asset_id = $1 AND quote_id = $2`,
+		assetID, quoteID).Scan(&n); err != nil {
+		t.Fatalf("count freeze_events: %v", err)
+	}
+	return n
+}
+
+func countOpenFreezeRows(t *testing.T, ctx context.Context, dsn, assetID, quoteID string) int {
+	t.Helper()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM freeze_events
+		  WHERE asset_id = $1 AND quote_id = $2 AND recovered_at IS NULL`,
+		assetID, quoteID).Scan(&n); err != nil {
+		t.Fatalf("count open freeze_events: %v", err)
+	}
+	return n
+}
+
+// seedAndCompressFreezeChunk inserts one historical freeze_events row and
+// compresses the chunk that holds it, so migration 0119's ALTER TABLE runs
+// against genuinely compressed data.
+//
+// TimescaleDB's chunk interval for this hypertable is 30 days (migration
+// 0018), so a row dated well in the past lands in its own chunk and cannot
+// collide with the rows the test writes later.
+func seedAndCompressFreezeChunk(t *testing.T, ctx context.Context, dsn string) {
+	t.Helper()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO freeze_events (asset_id, quote_id, frozen_at, frozen_at_ledger,
+		                           reason, frozen_value, recovered_at, recovered_at_ledger)
+		VALUES ('native', 'fiat:USD', TIMESTAMPTZ '2025-01-15 00:00:00Z', 1000,
+		        'outlier_storm', 0.5, TIMESTAMPTZ '2025-01-15 01:00:00Z', 1100)`); err != nil {
+		t.Fatalf("seed historical freeze row: %v", err)
+	}
+	var compressed int
+	if err := db.QueryRowContext(ctx, `
+		SELECT count(*) FROM (
+			SELECT compress_chunk(c) FROM show_chunks('freeze_events') c
+		) s`).Scan(&compressed); err != nil {
+		t.Fatalf("compress_chunk: %v", err)
+	}
+	if compressed == 0 {
+		t.Fatal("no freeze_events chunk was compressed — the ADD COLUMN-on-compressed claim would be vacuous")
+	}
+}
+
+// assertFreezeChunkStillCompressed proves the precondition held THROUGH the
+// migration: if 0119 had silently decompressed the chunk (or if the seed had
+// not compressed one), the test's headline claim would be false while every
+// other assertion still passed.
+func assertFreezeChunkStillCompressed(t *testing.T, ctx context.Context, dsn string) {
+	t.Helper()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	var n int
+	if err := db.QueryRowContext(ctx, `
+		SELECT count(*) FROM timescaledb_information.chunks
+		 WHERE hypertable_name = 'freeze_events' AND is_compressed`).Scan(&n); err != nil {
+		t.Fatalf("read chunk compression state: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("no compressed freeze_events chunk after migrating — 0119 was NOT exercised against compressed data")
+	}
+}
+
+// applyMigrationsUpTo runs migrations from the repo tree up to and including
+// `version`. Mirrors applyMigrations (explorer_test.go) but stops short, so a
+// test can act on the schema BEFORE a specific migration lands — here, to
+// create a compressed chunk that 0119's ALTER TABLE then has to survive.
+func applyMigrationsUpTo(t *testing.T, dsn string, version uint) {
+	t.Helper()
+	if err := applyMigrationsUpToErr(dsn, version); err != nil {
+		t.Fatalf("migrate to %d: %v", version, err)
+	}
+}
+
+// applyMigrationsUpToErr returns the migration's error instead of failing.
+func applyMigrationsUpToErr(dsn string, version uint) error {
+	_, thisFile, _, _ := runtime.Caller(0)
+	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
+	m, err := migrate.New("file://"+migrationsDir, dsn)
+	if err != nil {
+		return fmt.Errorf("migrate.New: %w", err)
+	}
+	defer func() { _, _ = m.Close() }()
+	return m.Migrate(version)
+}
+
+// TestFreezeReleaseWindow_RedisLossKeepsEscalatedSibling is the DB-backed
+// regression for a release that read a LOST marker as "no sibling is
+// frozen": freeze.Writer wired as cmd/stellarindex-aggregator wires it,
+// over the real timescale.FreezeEventSink.
+//
+// One pair, two windows frozen: 1h escalated (ADR-0019 holds it "until
+// manual unfreeze"), 5m about to recover. Redis loses the marker — the one
+// situation the 0163 per-window durable ladders exist for — and the 5m
+// window releases. The release must not fall through to Writer.Clear, whose
+// SaveLadder(State{}) NULLs hold_until AND window_ladders: the row would go
+// from `"3600": {escalated, extensions_used: 4}` to no ladder at all, and
+// the 1h window would rehydrate nothing.
+func TestFreezeReleaseWindow_RedisLossKeepsEscalatedSibling(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	sink := timescale.NewFreezeEventSink(store)
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithEventSink(sink), freeze.WithLadderStore(sink, 0))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+
+	asset, _ := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	quote, _ := c.NewFiatAsset("USD")
+	decision := anomaly.Decision{
+		Action: anomaly.ActionFreeze, Class: anomaly.ClassStablecoin, Reason: "phase2:3_signal_AND",
+	}
+	const (
+		short = 5 * time.Minute
+		long  = time.Hour
+	)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	escalated := freeze.State{
+		FiredAt: now.Add(-2*time.Hour - 5*time.Minute), HoldUntil: now.Add(25 * time.Minute),
+		ExtensionsUsed: freeze.DefaultMaxExtensions, Escalated: true, Corroborated: true,
+	}
+	recovering := freeze.State{FiredAt: now.Add(-11 * time.Minute), HoldUntil: now.Add(9 * time.Minute), UnfreezeStreak: 1}
+	if err := w.MarkHoldForWindow(ctx, asset, quote, long, "0.874500000000", decision, escalated, 30*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow(1h): %v", err)
+	}
+	if err := w.MarkHoldForWindow(ctx, asset, quote, short, "0.874500000000", decision, recovering, 14*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow(5m): %v", err)
+	}
+
+	mr.FlushAll() // Redis loses the marker while both windows are frozen.
+	kept, err := w.ReleaseWindow(ctx, asset, quote, short)
+	if err != nil {
+		t.Fatalf("ReleaseWindow(5m): %v", err)
+	}
+	if !kept {
+		t.Error("ReleaseWindow reported the freeze cleared while the durable record held the 1h window's escalated ladder")
+	}
+
+	// The row itself: still one open row, still carrying the pair-level
+	// escalation, and window_ladders holding the 1h entry and ONLY it.
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	var (
+		hold sql.NullTime
+		esc  sql.NullBool
+		ext  sql.NullInt64
+		raw  sql.NullString
+	)
+	if err := db.QueryRowContext(ctx, `
+		SELECT hold_until, escalated, extensions_used, window_ladders::text
+		  FROM freeze_events
+		 WHERE asset_id = $1 AND quote_id = $2 AND recovered_at IS NULL`,
+		asset.String(), quote.String()).Scan(&hold, &esc, &ext, &raw); err != nil {
+		t.Fatalf("read open freeze row: %v", err)
+	}
+	if !hold.Valid || !hold.Time.Equal(escalated.HoldUntil) || !esc.Bool || ext.Int64 != int64(freeze.DefaultMaxExtensions) {
+		t.Errorf("pair-level ladder after the 5m release = (hold_until=%v valid=%v, escalated=%v, extensions_used=%d), "+
+			"want the 1h window's (%v, true, %d): the release retired the whole durable record",
+			hold.Time.UTC(), hold.Valid, esc.Bool, ext.Int64, escalated.HoldUntil, freeze.DefaultMaxExtensions)
+	}
+	ladders := map[string]freeze.State{}
+	if raw.Valid {
+		if err := json.Unmarshal([]byte(raw.String), &ladders); err != nil {
+			t.Fatalf("decode window_ladders %q: %v", raw.String, err)
+		}
+	}
+	if got, held := ladders["3600"]; !held || !got.Escalated || len(ladders) != 1 {
+		t.Errorf("window_ladders after the 5m release = %s, want exactly the 1h window's escalated entry", raw.String)
+	}
+
+	// And what the 1h window's next cold read gets from it.
+	got, ok, err := w.LoadStateForWindow(ctx, asset, quote, long)
+	if err != nil || !ok || !got.Escalated || got.ExtensionsUsed != freeze.DefaultMaxExtensions ||
+		!got.HoldUntil.Equal(escalated.HoldUntil) {
+		t.Errorf("LoadStateForWindow(1h) = (%+v, ok=%v, err=%v), want its escalated ladder %+v",
+			got, ok, err, escalated)
+	}
+	if got, _, _ := w.LoadStateForWindow(ctx, asset, quote, short); got.Active() {
+		t.Errorf("the released 5m window's durable ladder survived: %+v", got)
+	}
+
+	// The last window's release is still a clear: nothing left to protect.
+	// (The operator override reaches the same end through Writer.Clear.)
+	kept, err = w.ReleaseWindow(ctx, asset, quote, long)
+	if err != nil || kept {
+		t.Errorf("ReleaseWindow(1h) with no sibling left = (kept=%v, err=%v), want (false, nil)", kept, err)
+	}
+	if _, ok, _ := w.LoadStateForWindow(ctx, asset, quote, long); ok {
+		t.Error("the durable ladder outlived the pair's last release")
 	}
 }
