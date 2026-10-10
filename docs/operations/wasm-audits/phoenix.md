@@ -403,7 +403,7 @@ Shipped (2026-09-19):
 - Tests: `TestPhoenixFactoryCreateEventIsAdmissible` and
   `…FromForeignEmitterIsNotAdmitted` GRADUATED out of `-tags k023evidence`
   into the default suite (`test/controlwiring/phoenix_factory_admission_test.go`);
-  `test/integration/contract_events_string_topic_prefilter_test.go` proves
+  `test/integration/completeness_test.go` proves
   lake → prefilter → decoder → gate against a real ClickHouse.
 
 Still owed:

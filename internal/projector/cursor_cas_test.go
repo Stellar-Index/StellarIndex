@@ -17,7 +17,7 @@ import (
 // happy-path fake would never produce: a row that moved since the read, a
 // row that appeared since a not-found read, and a non-advancing write. The
 // real statement is proven on TimescaleDB in
-// test/integration/projector_cursor_cas_test.go; this only has to be
+// test/integration/projector_test.go; this only has to be
 // faithful enough that the projector's use of it is what is under test.
 func (f *fakeStore) AdvanceCursorFrom(_ context.Context, _, _ string, expected timescale.CursorRead, newLast uint32) (bool, error) {
 	f.mu.Lock()

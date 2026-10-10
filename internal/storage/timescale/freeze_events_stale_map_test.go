@@ -11,7 +11,7 @@ import (
 //
 // No database: entries() is the pure rule that decides what a row MEANS.
 // The executing, real-Postgres half is
-// test/integration/freeze_window_test.go.
+// test/integration/freeze_test.go.
 
 func TestOpenLadderRowEntries_StaleMapFailsClosed(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)

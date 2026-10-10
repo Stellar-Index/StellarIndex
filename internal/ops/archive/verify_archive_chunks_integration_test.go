@@ -182,7 +182,7 @@ func TestRunVerifyChunks_CheckpointOnly_StillDetectsChainBreak(t *testing.T) {
 // ─── fixture helpers ────────────────────────────────────────────────
 
 // filesystemLedgerstreamConfig is a copy of the helper from
-// test/integration/ledgerstream_to_storage_test.go — duplicated so
+// test/integration/projector_test.go — duplicated so
 // the cmd/stellarindex-ops integration test doesn't have to import
 // across package boundaries.
 func filesystemLedgerstreamConfig(dir string) ledgerstream.Config {
@@ -202,7 +202,7 @@ func filesystemLedgerstreamConfig(dir string) ledgerstream.Config {
 // LedgerSeq + an empty TxSet; PreviousLedgerHash + Hash default to
 // zero — the chain check passes trivially because zero == zero.
 //
-// Mirrored from test/integration/ledgerstream_to_storage_test.go for
+// Mirrored from test/integration/projector_test.go for
 // the same reason filesystemLedgerstreamConfig is duplicated: keeps
 // this test file self-contained inside cmd/stellarindex-ops.
 func seedEmptyLedgers(t *testing.T, ctx context.Context, dir string, seqs []uint32) { //nolint:revive // ctx-second matches the test/integration helper signature

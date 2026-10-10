@@ -15,7 +15,7 @@ import (
 // TestTopic0Predicate_MatchesBothTopicEncodings is the fast default-suite
 // guard for the lake half of the string-topic prefilter (the executing proof against a real
 // ClickHouse is
-// test/integration/contract_events_string_topic_prefilter_test.go).
+// test/integration/completeness_test.go).
 //
 // extract.go fills topic_0_sym from Topics[0].GetSym() — Symbol only — so the
 // column is EMPTY for an ScvString topic[0]. A prefilter of

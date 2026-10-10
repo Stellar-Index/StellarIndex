@@ -7,7 +7,7 @@ import (
 
 // TestTrustlineAssetsPageQuery_PoolExclusionIsExact is the fast default-suite
 // guard for CA2-A14-correct-5 (the executing proof against real ClickHouse is
-// test/integration/trustline_pool_prefix_test.go).
+// test/integration/assets_test.go).
 //
 // The naive predicate `NOT startsWith(asset, 'pool')` matches any credit
 // asset string that merely starts with the substring "pool" (e.g.

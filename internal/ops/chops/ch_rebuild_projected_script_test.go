@@ -597,7 +597,7 @@ func TestCHRebuild_PreflightRunsTheNamedSourceGate(t *testing.T) {
 // chRebuild needs Postgres and ClickHouse past the config load, so — like
 // the BackfillSafe legs — the preflight's POSITION is pinned at the source:
 // after the last refusal, before the first lake read. (It is executed for
-// real in test/integration/ch_rebuild_preflight_test.go.)
+// real in test/integration/lake_test.go.)
 func TestCHRebuild_PreflightReturnsAfterEveryGuardAndBeforeTheLake(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("ch_rebuild.go")

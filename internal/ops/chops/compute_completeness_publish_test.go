@@ -12,7 +12,7 @@ import (
 // recordingPublisher captures what publishSourceVerdict hands the store.
 // It stands in for the store only to observe the ARGUMENTS — the
 // applied/cleared behaviour itself is proven on real TimescaleDB in
-// test/integration/completeness_verdict_publish_test.go.
+// test/integration/completeness_test.go.
 type recordingPublisher struct {
 	clear *timescale.DirtyWindowClear
 	calls int
