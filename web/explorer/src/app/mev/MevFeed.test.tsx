@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { MevFeed } from './MevFeed';
+import { MevFeed, mevCsvRow } from './MevFeed';
 
 vi.mock('@/api/client', async () => {
   const actual =
@@ -37,5 +37,33 @@ describe('MevFeed', () => {
     expect(
       await screen.findByText('$9,007,199,254,740,993'),
     ).toBeInTheDocument();
+  });
+});
+
+describe('mevCsvRow', () => {
+  it('keeps money as strings and joins the pair and lists', () => {
+    expect(
+      mevCsvRow({
+        event_id: 'e2',
+        detected_at: '2026-09-10T00:00:00Z',
+        detected_at_ledger: 7,
+        kind: 'sandwich',
+        tx_hashes: ['t1', 't2'],
+        accounts: ['GA'],
+        detail: { pair: 'native|USDC-GB', notional_usd: '9007199254740993' },
+        profit_usd: null,
+      }),
+    ).toEqual({
+      event_id: 'e2',
+      detected_at: '2026-09-10T00:00:00Z',
+      detected_at_ledger: 7,
+      kind: 'sandwich',
+      assets: 'native USDC-GB',
+      sources: '',
+      notional_usd: '9007199254740993',
+      profit_usd: '',
+      accounts: 'GA',
+      tx_hashes: 't1 t2',
+    });
   });
 });
