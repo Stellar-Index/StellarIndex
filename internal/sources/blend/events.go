@@ -1,28 +1,10 @@
-// Package blend ingests events from the Blend Capital Soroban
-// lending protocol on Stellar.
+// Package blend ingests events from the Blend Capital Soroban lending protocol.
 //
-// Per internal/sources/blend/README.md: Blend is **not** a spot
-// trading venue. We index it for:
-//
-//  1. Liquidation auctions — directional price signals during
-//     stress; collateral sold at a discount to cover bad debt.
-//  2. Money-market positions (supply / withdraw / borrow / repay /
-//     flash_loan) — supply-side metrics for asset detail pages.
-//  3. Credit-risk events (bad_debt, defaulted_debt) — protocol
-//     health.
-//  4. Admin / status (set_admin, update_pool, set_status) —
-//     operational state for degraded-source detection.
-//
-// **We do NOT emit Blend events as canonical.Trade.** Blend's
-// outputs are auctions and position changes, not spot trades. The
-// dispatcher routes Blend events through the [Decoder]; the
-// indexer-side sink writes them to per-protocol Blend storage
-// (auctions, positions, admin) rather than the trades hypertable.
-//
-// Blend is in the price-aggregation
-// scope but only as a "secondary validation source" — auction
-// stress-prices contribute as reference points
-// on the asset detail surface, not into VWAP.
+// Blend is not a spot venue: auctions and position changes are NOT emitted as
+// canonical.Trade. The sink writes auctions, money-market positions,
+// credit-risk and admin events to per-protocol Blend storage, not trades.
+// Auction stress-prices serve only as reference points on the asset detail
+// surface; they never enter VWAP.
 //
 // Verified against pool/src/events.rs + pool-factory/src/events.rs in
 // .discovery-repos/blend-contracts.

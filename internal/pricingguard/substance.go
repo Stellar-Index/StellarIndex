@@ -1,35 +1,20 @@
-// Substance gate — the serving-side thin-market floor.
+// Substance gate: the serving-side thin-market floor.
 //
-// The trailing-baseline guard in guard.go protects against a single
-// manipulated bucket in an otherwise-healthy market. It is structurally
-// blind to the other attack: a market whose ENTIRE history is
-// attacker-authored. On a permissionless DEX anyone can mint a token,
-// seed a "market" with a handful of dust trades, and the raw prices_1m
-// serving paths will then publish the attacker's rate as our price —
-// with a consistent baseline, so guard.go accepts it. In one measured
-// case a 21-minute-stale 1:1 seed rate valued a 5-XLM trade at $8.56M
-// and made the pair's served /v1/price attacker-authored both ways.
+// The trailing-baseline guard in guard.go is blind to a market whose ENTIRE
+// history is attacker-authored: anyone can mint a token and seed a "market" with
+// dust trades, and the baseline is then consistent with the lie. This gate
+// refuses to serve an AGGREGATED price claim for an on-chain pair whose trailing
+// activity is below an operator-set floor (USD volume, distinct 1-minute
+// buckets, wall-clock span). Raw surfaces (/v1/ohlc, /v1/observations,
+// /v1/history) stay visible, per the ADR-0018 surface model.
 //
-// The substance gate closes that class by refusing to serve an
-// AGGREGATED price claim for an on-chain pair whose trailing market
-// activity is below an operator-set floor: minimum USD volume, minimum
-// distinct 1-minute buckets, and minimum wall-clock span. Honest low
-// volume remains fully visible through the raw surfaces (/v1/ohlc,
-// /v1/observations, /v1/history) — the gate withholds only the "the
-// price of X is P" claim, per the ADR-0018 surface model: a consumer
-// who wants a price for a thin market makes a deliberate URL choice to
-// the raw data and computes it themselves.
+// Fail postures are deliberately asymmetric: below floor -> withhold
+// (fail-closed); the substance query ERRORS -> serve (fail-open), so a DB blip
+// cannot 404 the whole price surface (same as guard.go).
 //
-// Fail postures, deliberately asymmetric:
-//   - measurement says "below floor"  → withhold (fail-closed);
-//   - the substance query ERRORS      → serve (fail-open) — a DB blip
-//     must not 404 the whole price surface (same posture as guard.go).
-//
-// Pairs with NO on-chain leg (fiat/fiat crosses, CEX crypto:/fiat:
-// tickers) are exempt: their trades come from vendor APIs of listed
-// venues, not from permissionless on-chain markets, so the
-// mint-and-dust attack does not apply and the floors would only
-// blackout legitimate synthetic pairs.
+// Pairs with no on-chain leg (fiat/fiat, CEX crypto:/fiat: tickers) are exempt:
+// their trades come from vendor APIs, so mint-and-dust does not apply and the
+// floors would only blackout legitimate synthetic pairs.
 package pricingguard
 
 import (
@@ -640,32 +625,21 @@ func (g *SubstanceGate) policyAt(age time.Duration) (timescale.HistoryGranularit
 	return timescale.Granularity1h, hourGrainPolicy(g.policy)
 }
 
-// AllowedAt reports whether an aggregated price claim for (base, quote)
-// AS OF the instant `at` may be served — the point-in-time form of
-// [SubstanceGate.Allowed], for the reads that answer "what was the
-// price at ts" (/v1/price/at, and each /v1/price/changes horizon).
+// AllowedAt reports whether an aggregated price claim for (base, quote) AS OF
+// `at` may be served: the point-in-time form of [SubstanceGate.Allowed], for
+// /v1/price/at and each /v1/price/changes horizon.
 //
-// Asking [SubstanceGate.Allowed] would be wrong in both directions,
-// because a trailing window ending NOW decides nothing about a bucket
-// that closed at ts. A market that was deep and honest at ts but is
-// dormant today would have every historical price withheld — a
-// cost-basis read 404ing for data we hold and trust. And a market
-// that is thick today but was attacker-seeded dust at ts would PASS,
-// so the historical read would serve exactly the manipulated price
-// the gate exists to refuse. The safety property does not transfer
-// across time, so the window has to: substance is measured over
-// [policy.Window] ending at `at`, closed buckets only, alias union as
-// for the live gate. See [SubstanceGate.policyAt] for the grain.
+// Allowed would be wrong in both directions: a trailing window ending NOW would
+// withhold history of a market that was honest at `at` but is dormant today, and
+// would pass a market that is thick today but was attacker-seeded dust at `at`.
+// So substance is measured over [policy.Window] ending at `at`, closed buckets
+// only, alias union as for the live gate (see [SubstanceGate.policyAt]).
 //
-// An `at` in the future is measured as of now. The fail postures are
-// the live gate's: below floor → withhold; measurement error → serve,
-// uncached. Verdicts are cached per (pair, grain, truncated instant)
-// for [substanceCacheTTL] in a map of their own. Withheld verdicts
-// count on the same metric under `surface`; they are NOT logged — the
-// transition log is a statement about a pair's present, and a
-// caller-chosen instant has no transitions to report.
-//
-// Nil-receiver safe: a nil gate allows everything.
+// A future `at` is measured as of now. Fail postures match the live gate (below
+// floor withholds; error serves, uncached). Verdicts are cached per (pair, grain,
+// truncated instant) for [substanceCacheTTL]. Withheld verdicts count on the
+// metric under `surface` but are not logged: the transition log describes a
+// pair's present. Nil-receiver safe: a nil gate allows everything.
 func (g *SubstanceGate) AllowedAt(ctx context.Context, base, quote canonical.Asset, at time.Time, surface string) bool {
 	v := g.MeasureAt(ctx, base, quote, at)
 	countVerdict(surface, v.Allowed, v.Measured, v.Floor)

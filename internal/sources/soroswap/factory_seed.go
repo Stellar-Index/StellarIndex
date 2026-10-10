@@ -28,29 +28,17 @@ const seedThrottle = 300 * time.Millisecond
 
 // Per-call retry budget for the sweep's simulateTransaction round-trips.
 //
-// The sweep is 1+3N sequential calls (N ≈ 214 pairs on pubnet, so ~640
-// calls) against what is, on r1, a PUBLIC third-party endpoint — the
-// host runs no stellar-rpc of its own. compute-completeness and
-// verify-reconciliation fail CLOSED on a seed error, so without a retry
-// a single dropped connection or 429 anywhere in those ~640 calls
-// aborts the nightly pass for every source. Fail-closed is
-// the right outcome for an endpoint that is down; it must not be the
-// outcome of one blip.
+// The sweep is 1+3N sequential calls (~640 on pubnet) against a PUBLIC
+// third-party endpoint on r1. compute-completeness and verify-reconciliation
+// fail CLOSED on a seed error, so without a retry one dropped connection or 429
+// would abort the nightly pass for every source. Fail-closed is right for a down
+// endpoint, not for one blip.
 //
-// seedMaxAttempts is the TOTAL number of tries per call (1 + retries).
-// The wait before retry k (k = 1..seedMaxAttempts-1) is
-// seedBackoffBase << (k-1): 1s, 2s, 4s, 8s.
-//
-// Worst-case ADDED wall time, from these constants:
-//   - per call: 15s of backoff (1+2+4+8) plus up to four extra attempt
-//     durations, each bounded by the client's own HTTP timeout;
-//   - per sweep: a call that spends its budget ends the sweep, so the
-//     only unbounded shape is "every call recovers on its last try",
-//     and that is bounded by the CALLER's context (15 min in the recon
-//     and verify-decoders callers). The typical cost of one blip is 1s.
-//
-// The budget is per CALL, never per sweep: a retry re-issues the one
-// failed view call, it does not restart the factory walk.
+// seedMaxAttempts is the TOTAL tries per call (1 + retries); the wait before
+// retry k is seedBackoffBase << (k-1): 1s, 2s, 4s, 8s. The budget is per CALL, not
+// per sweep: a retry re-issues the one failed view call. Added wall time is 15s
+// of backoff per call plus up to four extra attempts, each bounded by the
+// client's HTTP timeout, and overall by the caller's context (15 min).
 const (
 	seedMaxAttempts = 5
 	seedBackoffBase = time.Second
@@ -73,45 +61,25 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// SeedFromFactoryRPC populates the Decoder's pair→(token0, token1)
-// registry by reading the Soroswap factory's on-chain state via
-// stellar-rpc simulateTransaction.
+// SeedFromFactoryRPC populates the Decoder's pair->(token0, token1) registry by
+// reading the Soroswap factory's on-chain state via stellar-rpc
+// simulateTransaction (read-only, no fee): all_pairs_length() -> N,
+// all_pairs(i) for each i, then token_0() / token_1() on each pair (~3N+1 calls).
 //
-// The flow is the three-step sweep the factory exposes via view
-// functions:
+// Cold-start use: the live path records every new_pair event (Decoder.SeedPair),
+// but pairs created BEFORE the dispatcher's first ledger are invisible to it.
+// Once seeded, the live path keeps the registry current.
 //
-//  1. factory.all_pairs_length() -> u32  → N
-//  2. factory.all_pairs(i) -> Address     → pair_i for i in [0, N)
-//  3. pair_i.token_0() + pair_i.token_1() -> Address → token identities
+// factoryContract is the factory C-strkey (mainnet
+// CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2).
 //
-// Each simulateTransaction round-trip runs the contract function
-// locally on the RPC node and returns the SCVal result; no ledger
-// state is changed, no fee is paid. Typical factory size on pubnet
-// is a few hundred pairs, so the full sweep is ~3N+1 RPC calls —
-// seconds of wall time at mild concurrency.
+// Transient RPC failures are retried per call within a bounded budget (see
+// seedMaxAttempts and [retryableSimulateErr]); once spent, or on any
+// deterministic failure, the sweep stops.
 //
-// Cold-start use case: the live dispatcher path records every future
-// new_pair event on the fly (see Decoder.SeedPair, fired from Decode
-// on each factory new_pair event), but pairs created BEFORE the
-// dispatcher's first ledger are invisible to live events. This method
-// fills that gap. Once seeded, the live path keeps the registry in
-// sync automatically.
-//
-// factoryContract is the C-strkey of the Soroswap factory. For
-// mainnet that's CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2.
-//
-// Transient RPC failures (transport, an HTTP 408/429/5xx with any body,
-// a JSON-RPC internal or server-range error, an undecodable response
-// body) are retried per call within a bounded budget — see
-// seedMaxAttempts and [retryableSimulateErr] for the exact classes.
-// Once a call's budget is spent, or on any deterministic failure, the
-// sweep stops.
-//
-// Returns the number of pairs seeded and a non-nil error on any
-// failure — the caller decides whether to fail-closed (refuse to
-// start the dispatcher) or fail-open (log and continue with an
-// empty registry, accept silent swaps). Idempotent: seeded entries
-// overwrite existing ones, so re-running is safe.
+// Returns the number of pairs seeded and a non-nil error on any failure; the
+// caller decides whether to fail-closed (refuse to start) or fail-open (empty
+// registry, silent swaps accepted). Idempotent: seeded entries overwrite.
 func (d *Decoder) SeedFromFactoryRPC(ctx context.Context, rpc *stellarrpc.Client, factoryContract string) (int, error) {
 	length, err := callU32(ctx, rpc, factoryContract, "all_pairs_length", nil)
 	if err != nil {
@@ -250,35 +218,25 @@ const (
 	jsonRPCServerErrorMax = -32000
 )
 
-// retryableSimulateErr reports whether a failed simulateTransaction
-// round-trip is worth re-issuing. It classifies on the TYPED errors the
-// stellarrpc client returns, never on message text. In order:
+// retryableSimulateErr reports whether a failed simulateTransaction round-trip
+// is worth re-issuing. It classifies on the TYPED errors the stellarrpc client
+// returns, never on message text. In order:
 //
-//  1. Any response with an HTTP status >= 400 is decided by the status
-//     alone, whatever its body was (empty, HTML, JSON that is not an
-//     envelope, or a JSON-RPC error envelope with any code): 408, 429
-//     and every 5xx are retried; every other 4xx (bad request, auth,
-//     not found) fails at once. The status outranks an envelope code
-//     because it is the proxy or rate limiter speaking, and a 401 whose
-//     body says -32000 is still a 401.
-//  2. A JSON-RPC error envelope on a status below 400 is retried for
-//     -32603 internal error, for the implementation-defined server
-//     range -32000..-32099, and for a provider that puts the HTTP-style
-//     code in the envelope (408, 429, 5xx). Every other code — notably
-//     -32600, -32601, -32602 and -32700 — fails at once.
-//  3. A body that does not decode as an envelope on a status below 400
-//     (empty, cut short, a proxy's HTML interstitial served with a 200)
-//     is retried: it is a property of that one response, and a
-//     genuinely deterministic one costs only the bounded budget.
-//  4. Transport: the request never completed (dial / reset / TLS /
-//     timeout — what http.Client.Do returns is always a net.Error) or
-//     the body was cut short while being read.
+//  1. HTTP status >= 400 decides alone, whatever the body: 408, 429 and every
+//     5xx retry; other 4xx fail at once. Status outranks an envelope code
+//     because it is the proxy or rate limiter speaking (a 401 whose body says
+//     -32000 is still a 401).
+//  2. A JSON-RPC error envelope on status < 400 retries for -32603, the server
+//     range -32000..-32099, and HTTP-style codes in the envelope (408, 429,
+//     5xx). Others (-32600, -32601, -32602, -32700) fail at once.
+//  3. A body that does not decode as an envelope on status < 400 (empty, cut
+//     short, a proxy interstitial served as 200) retries; a deterministic one
+//     costs only the bounded budget.
+//  4. Transport: the request never completed, or the body was cut short.
 //
-// Anything else fails at once: a result that decoded as an envelope but
-// does not fit the response type, a response over the size cap, a
-// request that could not be built. Contract-level rejections never
-// reach here — they arrive as a successful round-trip with
-// SimulationResponse.Error set.
+// Anything else fails at once (a result that does not fit the response type, an
+// oversize response, an unbuildable request). Contract-level rejections arrive as
+// a successful round-trip with SimulationResponse.Error set and never reach here.
 func retryableSimulateErr(err error) bool {
 	var statusErr *stellarrpc.HTTPStatusError
 	if errors.As(err, &statusErr) {

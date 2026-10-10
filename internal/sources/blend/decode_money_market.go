@@ -33,33 +33,16 @@ import (
 
 // ─── Decoded event types ───────────────────────────────────────
 
-// PositionEvent is the decoded shape of every money-market event
-// that changes a (user, asset, pool) position: supply / withdraw /
-// supply_collateral / withdraw_collateral / borrow / repay /
-// flash_loan. They share a body shape (two i128 amounts) so a
-// single struct handles all seven.
+// PositionEvent is the decoded shape of every money-market event that changes
+// a (user, asset, pool) position: supply / withdraw / supply_collateral /
+// withdraw_collateral / borrow / repay / flash_loan. EventKind discriminates.
+// TokenAmount + BOrDAmount are i128 *big.Int (ADR-0003).
 //
-// EventKind discriminates which of the seven — one of:
-// EventSupply, EventWithdraw, EventSupplyCollateral,
-// EventWithdrawCollateral, EventBorrow, EventRepay, EventFlashLoan.
-//
-// TokenAmount + BOrDAmount are *big.Int — i128 amounts per
-// ADR-0003; the storage layer writes them as NUMERIC, the JSON
-// wire shape as a decimal string.
-// Field-for-field identical to [domain.BlendPositionEvent] — the
-// canonical, persisted-shape definition (internal/storage/timescale
-// reads/writes this shape and must not import upward into this package
-// to do so). PositionEvent is declared as its OWN named type (not a
-// `= domain.BlendPositionEvent` alias) because it carries the
-// EventKind()/Source() methods (consumer.go) that satisfy
-// consumer.Event — Go permits methods on any type declared in this
-// package, even one whose underlying type comes from elsewhere, but
-// NOT on a type alias to a foreign type.
-// The one consequence: the call site that hands a PositionEvent
-// across the storage boundary (internal/pipeline/sink.go) converts
-// explicitly via domain.BlendPositionEvent(e) — legal because the
-// underlying struct shape is identical, and the compiler catches
-// every site.
+// Field-for-field identical to [domain.BlendPositionEvent], the persisted shape
+// (storage cannot import this package). It is a distinct named type, not an
+// alias, because it carries the EventKind()/Source() methods that satisfy
+// consumer.Event, and methods cannot be added to an alias of a foreign type.
+// internal/pipeline/sink.go converts explicitly via domain.BlendPositionEvent(e).
 type PositionEvent domain.BlendPositionEvent
 
 // EmissionEvent is the decoded shape of the four emission /
@@ -86,31 +69,17 @@ type PositionEvent domain.BlendPositionEvent
 // than an alias, and for the bridge-conversion consequence.
 type EmissionEvent domain.BlendEmissionEvent
 
-// AdminEvent is the decoded shape of every pool-config / admin /
-// pool-factory lifecycle event: set_admin, update_pool,
-// queue_set_reserve, cancel_set_reserve, set_reserve, set_status,
-// deploy.
+// AdminEvent is the decoded shape of every pool-config / admin / pool-factory
+// lifecycle event: set_admin, update_pool, queue_set_reserve,
+// cancel_set_reserve, set_reserve, set_status, deploy.
 //
-// ContractID is the EMITTING contract — pool C-strkey for the six
-// pool events, pool-factory C-strkey for `deploy`.
-// Promoted typed fields.
+// ContractID is the EMITTING contract: the pool for the six pool events, the
+// pool-factory for `deploy`. ByAdmin is true when set_status carried an admin
+// topic (set_status_admin in events.rs). ReserveConfig is nil unless the kind
+// carries one.
 //
-//	set_admin / update_pool / queue_set_reserve /
-//	cancel_set_reserve / set_status (admin variant):  Admin
-//	queue_set_reserve / cancel_set_reserve / set_reserve: Asset
-//	set_admin.new_admin / deploy.pool_address:           Target
-//
-// ByAdmin is true when the set_status variant included an admin
-// topic (set_status_admin in events.rs); false for the non-admin
-// `set_status(new_status)` variant. ReserveConfig
-// (queue_set_reserve.metadata, full ReserveConfig) is stored as a
-// map for round-trip parity with the on-wire struct; the storage
-// layer marshals it to jsonb. Nil when the event kind doesn't carry
-// a ReserveConfig.
-//
-// Field-for-field identical to [domain.BlendAdminEvent] — see the
-// [PositionEvent] doc for why this is a locally-declared type rather
-// than an alias, and for the bridge-conversion consequence.
+// Field-for-field identical to [domain.BlendAdminEvent]; see [PositionEvent]
+// for why this is a local type rather than an alias.
 type AdminEvent domain.BlendAdminEvent
 
 // ─── classify (extended) ───────────────────────────────────────
