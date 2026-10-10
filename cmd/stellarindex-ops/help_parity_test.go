@@ -6,73 +6,86 @@ import (
 	"testing"
 )
 
-// TestUsageBodyCoversEverySubcommand pins the parity invariant stated in the
-// [subcommands] doc: "The canonical subcommand list is this table + the
-// usageBody help text." Every dispatchable subcommand MUST have its OWN help
-// entry — a line whose first non-blank content is the subcommand name at the
-// two-space entry column — so `stellarindex-ops --help` never omits a command
-// an operator (or a migration follow-up, e.g. projector-replay) is told to run.
-//
-// A mention buried inside another command's description or example lines does
-// NOT count: those are indented far past the entry column. This test therefore
-// requires an entry line matching "^  <name>( |\t|[|$)".
-func TestUsageBodyCoversEverySubcommand(t *testing.T) {
-	lines := strings.Split(usageBody, "\n")
+// TestUsageBody holds the --help text invariants as subtests: every
+// dispatchable subcommand has its own entry, no entry is stale, and the
+// usage-rollup-backfill entry carries -write in its synopsis and example.
+func TestUsageBody(t *testing.T) {
+	t.Run("covers_every_subcommand", func(t *testing.T) {
+		lines := strings.Split(usageBody, "\n")
 
-	hasOwnEntry := func(name string) bool {
-		prefix := "  " + name
-		for _, ln := range lines {
-			// Own entry: exactly two leading spaces, then the name, then a
-			// token boundary. A three-plus-space continuation/example line
-			// fails the exact "  " prefix, and a longer command that merely
-			// starts with this name fails the boundary check.
-			if !strings.HasPrefix(ln, prefix) {
+		hasOwnEntry := func(name string) bool {
+			prefix := "  " + name
+			for _, ln := range lines {
+				// Own entry: exactly two leading spaces, then the name, then a
+				// token boundary. A three-plus-space continuation/example line
+				// fails the exact "  " prefix, and a longer command that merely
+				// starts with this name fails the boundary check.
+				if !strings.HasPrefix(ln, prefix) {
+					continue
+				}
+				rest := ln[len(prefix):]
+				if rest == "" || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '[' {
+					return true
+				}
+			}
+			return false
+		}
+
+		var missing []string
+		for name := range subcommands {
+			if !hasOwnEntry(name) {
+				missing = append(missing, name)
+			}
+		}
+		sort.Strings(missing)
+
+		if len(missing) > 0 {
+			t.Fatalf("%d dispatchable subcommand(s) have no own --help entry in usageBody "+
+				"(add one line each at the two-space entry column): %s",
+				len(missing), strings.Join(missing, ", "))
+		}
+	})
+
+	t.Run("lists_only_real_subcommands", func(t *testing.T) {
+		builtin := map[string]bool{"version": true, "help": true}
+		var stale []string
+		for _, ln := range strings.Split(usageBody, "\n") {
+			if len(ln) < 3 || ln[0] != ' ' || ln[1] != ' ' || ln[2] == ' ' {
 				continue
 			}
-			rest := ln[len(prefix):]
-			if rest == "" || rest[0] == ' ' || rest[0] == '\t' || rest[0] == '[' {
-				return true
+			name := strings.Fields(ln)[0]
+			if _, ok := subcommands[name]; ok || builtin[name] || name == "stellarindex-ops" || strings.HasSuffix(name, ":") {
+				continue
+			}
+			if !strings.HasPrefix(name, "-") && !strings.ContainsAny(name, "[](){}<>=") {
+				stale = append(stale, name)
 			}
 		}
-		return false
-	}
+		sort.Strings(stale)
+		if len(stale) > 0 {
+			t.Fatalf("usageBody advertises %d name(s) that are not dispatchable: %s", len(stale), strings.Join(stale, ", "))
+		}
+	})
 
-	var missing []string
-	for name := range subcommands {
-		if !hasOwnEntry(name) {
-			missing = append(missing, name)
+	t.Run("rollup_backfill_documents_write", func(t *testing.T) {
+		i := strings.Index(usageBody, "  usage-rollup-backfill ")
+		if i < 0 {
+			t.Fatal("usageBody has no usage-rollup-backfill entry")
 		}
-	}
-	sort.Strings(missing)
-
-	if len(missing) > 0 {
-		t.Fatalf("%d dispatchable subcommand(s) have no own --help entry in usageBody "+
-			"(add one line each at the two-space entry column): %s",
-			len(missing), strings.Join(missing, ", "))
-	}
-}
-
-// TestUsageBodyListsOnlyRealSubcommands is the other half of the parity
-// check: an entry-column line in usageBody naming a command that is neither
-// dispatchable nor a built-in is a stale help entry (a renamed or deleted
-// subcommand still advertised).
-func TestUsageBodyListsOnlyRealSubcommands(t *testing.T) {
-	builtin := map[string]bool{"version": true, "help": true}
-	var stale []string
-	for _, ln := range strings.Split(usageBody, "\n") {
-		if len(ln) < 3 || ln[0] != ' ' || ln[1] != ' ' || ln[2] == ' ' {
-			continue
+		// The entry runs until the next line indented like a synopsis
+		// ("  <name>"), i.e. the next subcommand.
+		synopsis, entry, _ := strings.Cut(usageBody[i:], "\n")
+		for n, line := range strings.Split(entry, "\n") {
+			if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") {
+				entry = strings.Join(strings.Split(entry, "\n")[:n], "\n")
+				break
+			}
 		}
-		name := strings.Fields(ln)[0]
-		if _, ok := subcommands[name]; ok || builtin[name] || name == "stellarindex-ops" || strings.HasSuffix(name, ":") {
-			continue
+		if !strings.Contains(synopsis, "[-write]") {
+			t.Errorf("usage-rollup-backfill synopsis lacks [-write]: %q", synopsis)
 		}
-		if !strings.HasPrefix(name, "-") && !strings.ContainsAny(name, "[](){}<>=") {
-			stale = append(stale, name)
+		if !strings.Contains(entry, "-to 2026-07-21 -write") {
+			t.Errorf("usage-rollup-backfill --help example does not pass -write:\n%s", entry)
 		}
-	}
-	sort.Strings(stale)
-	if len(stale) > 0 {
-		t.Fatalf("usageBody advertises %d name(s) that are not dispatchable: %s", len(stale), strings.Join(stale, ", "))
-	}
+	})
 }
