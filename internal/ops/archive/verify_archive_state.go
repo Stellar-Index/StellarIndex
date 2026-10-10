@@ -526,39 +526,24 @@ func allChunkIdxs(chunks []opsutil.RangeChunk) []int {
 	return idxs
 }
 
-// planResumedWalk is resumeChunks' verdict narrowed to what this run
-// can still PROVE. It never returns an empty plan.
+// planResumedWalk is resumeChunks' verdict narrowed to what this run can
+// still PROVE. It never returns an empty plan.
 //
-// "Which chunks did the prior run finish?" is not the same question as
-// "which chunks may this run skip?". A chunk's Done marker records
-// only that the chunk's OWN walk returned no error. Everything that
-// makes a run a VERIFICATION rather than a read — the cross-chunk
-// stitch, the checkpoint-anchor decision, the high-water advance —
-// happens after the walk, and none of it is recorded per chunk. So a
-// prior run that marked every chunk Done and still left InProgress
-// behind is, by construction, a run that failed at or after those
-// proofs: a real stitch break at a chunk boundary leaves exactly this
-// state.
+// A chunk's Done marker only records that its own walk returned no error.
+// The cross-chunk stitch, checkpoint-anchor decision and high-water advance
+// happen after the walk and are not recorded per chunk. So a prior run with
+// every chunk Done but InProgress left behind failed at or after those
+// proofs (a real stitch break looks exactly like this). Returning
+// (0, "", nil) there would have the caller's textfile defer write a clean
+// run, advancing stellarindex_verify_archive_last_success_unix and keeping
+// the stellarindex_verify_archive_run_stale page green for a run that
+// anchored nothing. The proofs cannot be rebuilt from Done markers, so
+// re-walk.
 //
-// Treating that as a no-op success would return (0, "", nil) from a
-// walk that verified ZERO ledgers, which the caller's textfile defer
-// would write out as a clean run — advancing
-// stellarindex_verify_archive_last_success_unix and holding the
-// stellarindex_verify_archive_run_stale page green for a run that
-// anchored nothing, while clearing the InProgress record that was the
-// only remaining trace of the failed one.
-//
-// The proofs cannot be reconstructed from the Done markers (the
-// checkpoint OK/missed tallies are not persisted at all), so the
-// conservative reading is the only defensible one: re-walk.
-//
-// Second narrowing: a chunk may only be skipped when the
-// prior run persisted its boundary evidence. A skipped chunk supplies
-// no live chunkResult, so without that record the boundaries either
-// side of it cannot be checked at all — and stitchChunks, handed only
-// the chunks that ran, would compare non-adjacent ones instead. A
-// chunk recorded without that evidence is re-walked, which is
-// self-healing: the next run records it and resume works again.
+// Second narrowing: a chunk is skipped only if the prior run persisted its
+// boundary evidence. A skipped chunk supplies no live chunkResult, so
+// without that record stitchChunks would compare non-adjacent chunks. A
+// chunk lacking it is re-walked, which self-heals on the next run.
 func planResumedWalk(st VerifyArchiveState, tier string, from, to uint32, workers int, chunks []opsutil.RangeChunk, doCheckpoint bool) ([]opsutil.RangeChunk, []int, string) {
 	keep, idxs, reason := resumeChunks(st, tier, from, to, workers, chunks)
 	if len(keep) == 0 {

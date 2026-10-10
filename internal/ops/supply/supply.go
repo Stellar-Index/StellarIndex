@@ -124,39 +124,29 @@ func supplyCmd(args []string) error {
 }
 
 // supplySnapshot computes a fresh supply snapshot and writes it to
-// asset_supply_history. The CLI is intentionally native-XLM-only —
-// the Algorithm 2 (classic) and Algorithm 3 (SEP-41) computers run on the
-// aggregator-resident goroutine path (`[supply] aggregator_refresh_enabled`),
-// not this subcommand. Per `docs/operations/supply-snapshot.md`
-// §"Asset-class scope": the two refresh paths are mutually
-// exclusive at the operator level, and the goroutine path is the
-// canonical surface for non-XLM assets.
+// asset_supply_history. The CLI is native-XLM-only: Algorithm 2 (classic) and
+// Algorithm 3 (SEP-41) run on the aggregator-resident goroutine path
+// (`[supply] aggregator_refresh_enabled`). Per
+// `docs/operations/supply-snapshot.md` §"Asset-class scope" the two refresh
+// paths are mutually exclusive and the goroutine path is canonical for
+// non-XLM assets.
 //
-// Reserve balances come from the chained-fallback reader
-// (live LCM AccountEntry observer wins when populated; operator-
-// static `[supply] reserve_balances_stroops` is the bring-up
-// fallback). The live observer runs in the indexer dispatcher.
+// Reserve balances come from the chained-fallback reader (live LCM
+// AccountEntry observer when populated; operator-static
+// `[supply] reserve_balances_stroops` as bring-up fallback).
 //
 // Flags:
 //
 //	-config PATH     Required. Operator TOML config.
-//	-asset <id>      Asset to snapshot. `native` only via this CLI;
-//	                 classic and SEP-41 are served by the
-//	                 aggregator-resident goroutine path
-//	                 (`[supply] aggregator_refresh_enabled`).
-//	                 Passing a non-native asset returns an error
-//	                 pointing at that path.
-//	-ledger N        Ledger sequence to attribute the snapshot to.
-//	                 Default: latest known ledger across all
-//	                 ingestion cursors (so the snapshot is dated
-//	                 against current chain state, not against the
-//	                 wall-clock).
-//	-ch-addr ADDR    ClickHouse native address (default
-//	                 127.0.0.1:9300). The snapshot's ObservedAt is
-//	                 stamped with the chosen ledger's REAL close time
-//	                 read from stellar.ledgers — NOT the wall-clock
-//	                 write-time — so a re-derived historical snapshot
-//	                 stays point-in-time correct.
+//	-asset <id>      Asset to snapshot; `native` only. A non-native asset
+//	                 returns an error pointing at the goroutine path.
+//	-ledger N        Ledger to attribute the snapshot to (default: see
+//	                 autoSnapshotLedger).
+//	-ch-addr ADDR    ClickHouse native address (default 127.0.0.1:9300).
+//	                 ObservedAt is stamped with the chosen ledger's REAL close
+//	                 time from stellar.ledgers, not the wall-clock, so a
+//	                 re-derived historical snapshot stays point-in-time
+//	                 correct.
 //	-dry-run         Compute + print but do not write.
 func supplySnapshot(args []string) error {
 	fs := flag.NewFlagSet("supply snapshot", flag.ContinueOnError)
@@ -414,40 +404,26 @@ func resolveSnapshotLedger(ctx context.Context, store cursorReader, closeTimes l
 }
 
 // autoSnapshotLedger picks the chain position a `-ledger`-less supply
-// snapshot is stamped at, and names the cursor it came from. Pure —
-// unit-testable without Postgres.
+// snapshot is stamped at, and names the cursor it came from. Pure, so it is
+// testable without Postgres.
 //
-// It must not be MAX(last_ledger) over every row of ingestion_cursors.
-// That table is not a table of chain positions — it is a table of JOB
-// positions. `ledgerstream` is the live indexer's walk of the chain and
-// is the only row that means "this is how far the data behind a supply
-// component has been ingested"; the rest (backfill/<from>-<to>,
-// projector/<source>, census-backfill, projected-rebuild, gap-detector
-// high-water) are each some ops job's own progress through a range an
-// operator chose.
+// It must not be MAX(last_ledger) over ingestion_cursors: that table holds
+// JOB positions, not chain positions. Only `ledgerstream` (the live indexer's
+// walk) means "how far the data behind a supply component has been ingested";
+// the rest (backfill/<from>-<to>, projector/<source>, census-backfill, ...)
+// are ops jobs' progress through operator-chosen ranges. With the indexer
+// stopped or behind while an operator backfills near the tip, MAX would pick
+// the backfill cursor and stamp the snapshot "as of ledger Y" while every
+// component balance was observed at the indexer's lower position: a real
+// number with a wrong ledger attribution, on the most-consumed number the
+// product serves.
 //
-// Taking the MAX would let ANY ops job decide what ledger the money
-// snapshot claims to be as-of. The concrete reachable case on r1: the
-// indexer is stopped or behind (a restart, a re-derive, a maintenance
-// window) while an operator backfills a range near the tip.
-// The backfill cursor then exceeds the ledgerstream cursor, `supply` with
-// no -ledger picks IT, and the snapshot is stamped
-// "circulating supply as of ledger Y" while every component balance it
-// summed was observed at the indexer's lower position. The published
-// number is real, its ledger attribution is not — and supply is the
-// single most-consumed number the product serves.
-//
-// The named cursor wins whenever it exists. The MAX fallback is kept —
-// with its source named in the returned string, which the caller prints —
-// for the pre-first-run case (an operator seeding supply on a host whose
-// indexer has not yet written a ledgerstream row) so this does not become
-// a hard dependency on one process having run. It is a fallback, not the
-// default: the caller's log line says which one was used, so an operator
-// reading the run output can see when a job cursor supplied the stamp.
+// The ledgerstream cursor wins whenever it exists. The MAX fallback covers a
+// host whose indexer has not yet written a ledgerstream row; its source is
+// named in the returned string, which the caller prints.
 //
 // This does not lift the KNOWN LIMIT on resolveSnapshotLedger (a stalled
-// per-component observer can still lag the chosen ledger); it removes the
-// separate, cruder failure of choosing the ledger from an unrelated job.
+// per-component observer can still lag the chosen ledger).
 func autoSnapshotLedger(cursors []timescale.Cursor) (ledger uint32, source string) {
 	for _, c := range cursors {
 		if c.Source == chainCursorSource {

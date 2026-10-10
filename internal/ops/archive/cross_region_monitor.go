@@ -166,31 +166,20 @@ func healthStaleAfter(interval, timeout time.Duration) time.Duration {
 	return 3*interval + timeout
 }
 
-// crossRegionHealth is the /healthz verdict, split out from the handler so
-// the staleness + reachability rules are unit-testable without a listener.
+// crossRegionHealth is the /healthz verdict, split out so the staleness and
+// reachability rules are testable without a listener.
 //
-// A `lastRunUnix != 0` verdict — "the loop has run at least once" — would
-// be a LATCH, not a health check: the first sweep sets it and nothing
-// clears it, so a monitor whose tick goroutine had died, or whose every
-// region had been unreachable for a week, would answer 200 forever.
-// This is a sidecar whose entire job is to notice cross-region divergence;
-// a frozen-healthy /healthz means the thing watching for silent breakage is
-// itself silently broken.
+// "The loop has run once" would be a latch: a dead tick goroutine, or every
+// region unreachable for a week, would still answer 200. Two recency-bounded
+// facts instead:
 //
-// Two independent liveness facts, both recency-bounded:
+//   - lastRunUnix: a sweep completed. Stale means the loop is stuck or
+//     resolveAnchor keeps failing (it returns before the store).
+//   - lastReachedUnix: a sweep reached at least one region. Stale means every
+//     fetch is failing while the loop still turns.
 //
-//   - lastRunUnix — a sweep COMPLETED. Stale ⇒ the tick loop is stuck or
-//     dead (or resolveAnchor keeps failing, which returns before the
-//     store and so shows up here as staleness).
-//   - lastReachedUnix — a sweep reached at least one region. Stale ⇒
-//     every fetch is failing and the comparison is producing nothing,
-//     even though the loop is still turning.
-//
-// "Reached" deliberately reuses allFailed()'s existing every-region-failed
-// notion rather than analyseRegionResults' not-compared signal: a PARTIAL region
-// failure keeps /healthz green and is reported through
-// stellarindex_cross_region_fetch_errors_total, exactly as runOneTick's
-// outcome labelling already draws that line.
+// "Reached" reuses allFailed(): a PARTIAL region failure stays green and is
+// reported via stellarindex_cross_region_fetch_errors_total.
 func crossRegionHealth(exp *crossRegionExporter, now time.Time, staleAfter time.Duration) (int, string) {
 	last := exp.lastRunUnix.Load()
 	if last == 0 {
