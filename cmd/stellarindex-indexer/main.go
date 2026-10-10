@@ -390,7 +390,7 @@ func run(cfgPath string, dryRun bool) error {
 	// ─── Starting ledger + dry-run exit ────────────────────────
 	// Dry-run exits before ANY background worker starts: the attribution
 	// taggers UPDATE trades on their first pass and the decoder-stats
-	// flusher writes on shutdown (TestDryRunExitsBeforeBackgroundWorkers).
+	// flusher writes on shutdown (TestMainWiringRules/dry_run_exits_before_background_workers).
 	from, err := resolveStartLedger(rootCtx, store, cfg.Ingestion.BackfillFromLedger)
 	if err != nil {
 		return fmt.Errorf("resolve start ledger: %w", err)

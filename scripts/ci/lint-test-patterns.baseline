@@ -6,29 +6,18 @@
 # SHRINK-ONLY: lint-test-patterns.sh fails on entries whose file no longer
 # matches; delete the line when you remove the test. Additions need a
 # Baseline-Growth: commit trailer (lint-baseline-growth.sh).
-go-ast cmd/stellarindex-aggregator/decimals_boot_guard_test.go
-go-ast cmd/stellarindex-aggregator/dryrun_supply_constructors_guard_test.go
 go-ast cmd/stellarindex-aggregator/freeze_wiring_guard_test.go
 go-ast cmd/stellarindex-aggregator/lake_dial_wiring_guard_test.go
-go-ast cmd/stellarindex-aggregator/main_test.go
+go-ast cmd/stellarindex-aggregator/main_wiring_rules_test.go
 go-ast cmd/stellarindex-aggregator/price_alert_scam_gate_test.go
 go-ast cmd/stellarindex-aggregator/webhook_withholding_test.go
-go-ast cmd/stellarindex-api/change24h_anchor_decimals_test.go
-go-ast cmd/stellarindex-api/clickhouse_boot_dial_test.go
-go-ast cmd/stellarindex-api/clickhouse_ready_wiring_test.go
-go-ast cmd/stellarindex-api/decimals_boot_guard_test.go
 go-ast cmd/stellarindex-api/dex_tvl_gate_wiring_test.go
 go-ast cmd/stellarindex-api/main_wiring_rules_test.go
-go-ast cmd/stellarindex-api/nonstandard_decimals_ready_test.go
 go-ast cmd/stellarindex-api/price_at_guard_wiring_test.go
 go-ast cmd/stellarindex-api/price_withholding_gate_test.go
-go-ast cmd/stellarindex-api/signup_reaper_wiring_test.go
 go-ast cmd/stellarindex-api/thin_admission_guard_test.go
-go-ast cmd/stellarindex-indexer/ch_live_sink_boot_test.go
-go-ast cmd/stellarindex-indexer/dry_run_order_test.go
+go-ast cmd/stellarindex-indexer/main_wiring_rules_test.go
 go-ast cmd/stellarindex-indexer/shutdown_drain_test.go
-go-ast cmd/stellarindex-indexer/sink_loss_rewind_test.go
-go-ast cmd/stellarindex-indexer/sole_writer_cagg_gate_test.go
 go-ast internal/aggregate/inplace_filter_test.go
 go-ast internal/aggregate/orchestrator/fixture_range_guard_test.go
 go-ast internal/api/v1/admin_route_guard_internal_test.go

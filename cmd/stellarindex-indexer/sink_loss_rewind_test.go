@@ -6,9 +6,6 @@ package main
 import (
 	"context"
 	"errors"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"io"
 	"log/slog"
 	"testing"
@@ -75,67 +72,5 @@ func TestRewindCursorForSinkLoss(t *testing.T) {
 				t.Errorf("RewindCursor(%q, %q, %d), want (%q, \"\", %d)", f.rewoundSrc, f.rewoundSub, f.rewoundTo, cursorSource, tc.wantTo)
 			}
 		})
-	}
-}
-
-// TestIndexerActsOnSinkShutdownLoss pins the wiring: PersistEvents'
-// ShutdownLoss must be kept and handed to the rewind once the sink is
-// done. Discarding it leaves an abandoned trade behind a cursor that
-// has already moved past it.
-func TestIndexerActsOnSinkShutdownLoss(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
-	isCall := func(e ast.Expr, name string) bool {
-		call, ok := e.(*ast.CallExpr)
-		if !ok {
-			return false
-		}
-		switch fn := call.Fun.(type) {
-		case *ast.SelectorExpr:
-			return fn.Sel.Name == name
-		case *ast.Ident:
-			return fn.Name == name
-		}
-		return false
-	}
-	var assigned, discarded, rewoundOnSinkDone bool
-	ast.Inspect(file, func(n ast.Node) bool {
-		switch s := n.(type) {
-		case *ast.AssignStmt:
-			if len(s.Rhs) == 1 && isCall(s.Rhs[0], "PersistEvents") {
-				assigned = true
-			}
-		case *ast.ExprStmt:
-			if isCall(s.X, "PersistEvents") {
-				discarded = true
-			}
-		case *ast.CommClause:
-			recv, ok := s.Comm.(*ast.ExprStmt)
-			if !ok {
-				return true
-			}
-			u, ok := recv.X.(*ast.UnaryExpr)
-			if !ok || u.Op != token.ARROW {
-				return true
-			}
-			if id, ok := u.X.(*ast.Ident); !ok || id.Name != "sinkDone" {
-				return true
-			}
-			for _, st := range s.Body {
-				if es, ok := st.(*ast.ExprStmt); ok && isCall(es.X, "rewindCursorForSinkLoss") {
-					rewoundOnSinkDone = true
-				}
-			}
-		}
-		return true
-	})
-	if discarded || !assigned {
-		t.Error("main.go discards pipeline.PersistEvents' ShutdownLoss — an abandoned on-chain trade is then only a counter and a log line")
-	}
-	if !rewoundOnSinkDone {
-		t.Error("the `case <-sinkDone:` arm does not call rewindCursorForSinkLoss — the cursor stays past trades the sink abandoned")
 	}
 }
