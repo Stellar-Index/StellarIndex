@@ -166,8 +166,9 @@ describe('AccountPositions price envelope', () => {
       }),
     });
     renderPanel();
-    expect(await screen.findAllByText('$675,005.23')).not.toHaveLength(0);
-    hides('$675,005.24');
+    expect(await screen.findByTitle('$675005.23')).toHaveTextContent(
+      '$675,005',
+    );
   });
 
   it('renders a total with an unpriced holding as a lower bound naming the exclusion', async () => {

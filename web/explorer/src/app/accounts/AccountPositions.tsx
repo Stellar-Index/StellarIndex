@@ -23,9 +23,11 @@ import type { components } from '@/api/types';
 import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import {
+  baseUnitsDecimal,
   compareDecimalStrings,
   formatCompactUnits,
   formatPriceSmall,
+  formatReadable,
   formatRelative,
   ratioPct,
 } from '@/lib/format';
@@ -274,7 +276,8 @@ export function AccountPositions({ id }: { id: string }) {
   ).length;
   const neverObservedCount = unpricedCount - withheldCount;
   const lowerBound = unpricedCount > 0;
-  const totalText = `${lowerBound ? '≥ ' : ''}${usdFmt.format(total)}`;
+  const totalExact = baseUnitsDecimal(String(totalCents), 2);
+  const totalText = `${lowerBound ? '≥ ' : ''}${formatReadable(totalExact, true)}`;
   const excludedParts: string[] = [];
   if (neverObservedCount > 0)
     excludedParts.push(`${neverObservedCount} unpriced`);
@@ -320,7 +323,13 @@ export function AccountPositions({ id }: { id: string }) {
         <StatCell>
           <Stat
             label="Portfolio value"
-            value={total > 0 ? totalText : '—'}
+            value={
+              total > 0 ? (
+                <span title={`$${totalExact}`}>{totalText}</span>
+              ) : (
+                '—'
+              )
+            }
             sub={lowerBound && total > 0 ? excludedText : undefined}
           />
         </StatCell>
@@ -364,7 +373,7 @@ export function AccountPositions({ id }: { id: string }) {
       {slices.length > 1 && total > 0 && (
         <DonutChart
           data={slices}
-          centerLabel={totalText.replace(/\.00$/, '')}
+          centerLabel={totalText}
           centerSub={lowerBound ? `value · ${excludedText}` : 'value'}
           formatValue={(n) => usdFmt.format(n)}
         />
@@ -415,7 +424,12 @@ export function AccountPositions({ id }: { id: string }) {
                   )}
                 </Td>
                 <Td align="right" className="font-mono">
-                  {h.valueUSD != null ? usdFmt.format(h.valueUSD) : '—'}
+                  {h.valueCents != null
+                    ? formatReadable(
+                        baseUnitsDecimal(String(h.valueCents), 2),
+                        true,
+                      )
+                    : '—'}
                 </Td>
                 <Td align="right" className="text-ink-muted font-mono">
                   {h.valueUSD != null && total > 0

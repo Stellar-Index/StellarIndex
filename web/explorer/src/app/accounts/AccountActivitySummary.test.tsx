@@ -99,7 +99,7 @@ describe('AccountTradesPanel', () => {
       expect(screen.getByText('10000000')).toBeInTheDocument(),
     );
     expect(screen.getByText('1234567')).toBeInTheDocument();
-    expect(screen.getByText('$0.12345600')).toBeInTheDocument();
+    expect(screen.getByText('$0.1235')).toBeInTheDocument();
     expect(screen.getByText('taker')).toBeInTheDocument();
     expect(screen.getByText('sdex')).toBeInTheDocument();
 
