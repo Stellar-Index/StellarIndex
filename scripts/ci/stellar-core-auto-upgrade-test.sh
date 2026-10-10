@@ -154,6 +154,8 @@ check "no tip skips without installing, galexie restarted" \
   '[[ $rc == 0 ]] && result_is skipped no_tip_metric && ! grep -q "apt-get install" "$ST/calls" && [[ -e "$ST/galexie_running" ]]'
 setup "$V28" "$V29" "$V29"; APT_UPDATE_RC=100 run
 check "apt update failure reports failed" '[[ $rc != 0 ]] && result_is failed apt_update'
+setup "$V28" "$V29" "$V29"; run
+check "apt update reads only the SDF list" 'grep -q "^apt-get update .*sourcelist=sources.list.d/sdf.list -o Dir::Etc::sourceparts=- " "$ST/calls"'
 
 echo
 echo "stellar-core-auto-upgrade-test: $pass passed, $fail failed"
