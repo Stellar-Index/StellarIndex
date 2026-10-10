@@ -23,14 +23,14 @@ func withBad(mut func(*config.Config)) config.Config {
 }
 
 // reflectorSourceWithout enables source with every reflector contract set,
-// then applies clear, so only the cleared contract is empty.
-func reflectorSourceWithout(source string, clear func(*config.Config)) func(*config.Config) {
+// then applies unset, so only the cleared contract is empty.
+func reflectorSourceWithout(source string, unset func(*config.Config)) func(*config.Config) {
 	return func(c *config.Config) {
 		c.Ingestion.EnabledSources = []string{source}
 		c.Oracle.Reflector.DEXContract = testReflectorC
 		c.Oracle.Reflector.CEXContract = testReflectorC
 		c.Oracle.Reflector.FXContract = testReflectorC
-		clear(c)
+		unset(c)
 	}
 }
 
