@@ -91,15 +91,6 @@ func doRevoke(t *testing.T, h *Handlers, sc dashboardauth.SessionContext, id str
 	return w
 }
 
-func findKey(store *fakeKeyStore, sc dashboardauth.SessionContext, name string) (platform.APIKey, bool) {
-	for _, k := range store.byID {
-		if k.AccountID == sc.Account.ID && k.Name == name {
-			return k, true
-		}
-	}
-	return platform.APIKey{}, false
-}
-
 func TestHandleCreate_HappyPath(t *testing.T) {
 	h, _, sc := newTestRig(t)
 	w := doCreate(t, h, sc, createRequest{
