@@ -34,6 +34,23 @@ export interface PoolDepthRow {
   depth: DepthLevel[];
 }
 
+export interface LiquidityPoolRow extends PoolDepthRow {
+  pool_hex: string;
+  model: string;
+  trustlines: number;
+  total_shares: string;
+  mid_price_a_in_b: string | null;
+}
+
+export function midPriceLabel(mid: string | null): string {
+  if (!mid) return '—';
+  const n = Number(mid);
+  if (!Number.isFinite(n) || n === 0) return mid;
+  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(
+    n,
+  );
+}
+
 /**
  * Scale an exact base-unit integer string by 10^decimals for DISPLAY.
  * The API keeps reserves as exact decimal strings (ADR-0003); floats

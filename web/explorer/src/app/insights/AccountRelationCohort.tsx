@@ -308,9 +308,19 @@ export function AccountRelationCohort({
               {holdings.map((h) => (
                 <TR key={h.asset}>
                   <Td>
-                    <span className="font-mono text-xs" title={h.asset}>
-                      {assetLabel(h.asset, h.kind)}
-                    </span>
+                    {h.kind === 'pool_share' ? (
+                      <Link
+                        href={`/liquidity-pools/${h.asset.slice(5)}/`}
+                        className="text-brand-600 font-mono text-xs hover:underline"
+                        title={h.asset}
+                      >
+                        {assetLabel(h.asset, h.kind)}
+                      </Link>
+                    ) : (
+                      <span className="font-mono text-xs" title={h.asset}>
+                        {assetLabel(h.asset, h.kind)}
+                      </span>
+                    )}
                     {h.kind === 'pool_share' && (
                       <span className="text-ink-faint ml-2 text-[11px]">
                         liquidity-pool share
