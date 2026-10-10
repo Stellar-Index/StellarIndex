@@ -9,6 +9,8 @@ import {
   InlineBar,
   ProtocolMixDonut,
   RegistryCharts,
+  protocolSlices,
+  UNATTRIBUTED,
 } from './ContractCharts';
 
 describe('ContractCharts', () => {
@@ -88,6 +90,38 @@ describe('ContractCharts', () => {
     );
     expect(screen.getByText('1,234')).toBeTruthy();
     expect(screen.getByText(/lower bounds/)).toBeTruthy();
+  });
+
+  it('protocolSlices sums per protocol and pools untagged rows', () => {
+    const slices = protocolSlices(
+      [
+        { protocol: 'blend', n: 2 },
+        { protocol: 'blend', n: 3 },
+        { protocol: null, n: 4 },
+        { protocol: '', n: 1 },
+      ],
+      (r) => r.n,
+    );
+    expect(slices.map(({ label, value }) => [label, value])).toEqual([
+      ['blend', 5],
+      [UNATTRIBUTED, 5],
+    ]);
+    expect(slices[0].color).toBeUndefined();
+    expect(slices[1].color).toBeDefined();
+  });
+
+  it('CounterpartyBars donuts shared txs by protocol', () => {
+    render(
+      <CounterpartyBars
+        edges={[
+          { contract_id: 'CAAAAAAAAAA', protocol: 'soroswap', shared_txs: 30 },
+          { contract_id: 'CBBBBBBBBBB', shared_txs: 10 },
+        ]}
+      />,
+    );
+    const label = screen.getByRole('img').getAttribute('aria-label') ?? '';
+    expect(label).toContain('soroswap 75.0%');
+    expect(label).toContain('Unattributed 25.0%');
   });
 
   it('ExportChips renders a chip per export with its signature', () => {
