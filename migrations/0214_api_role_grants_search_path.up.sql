@@ -12,6 +12,9 @@
 -- are pg_catalog; every table name it casts to regclass or grants on
 -- lives in public.
 --
+-- A later CREATE OR REPLACE of this function resets its settings, so it
+-- must re-declare this SET search_path or it silently undoes the pin.
+--
 -- Catalog only; old-binary-safe (rule 9).
 
 BEGIN;
