@@ -2,9 +2,11 @@ package clickhouse
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
@@ -212,5 +214,84 @@ func TestRecentOperations_ShortCursorPageFallsBackKeepingItsCursorClause(t *test
 		if fbArgs[i] != want[i] {
 			t.Errorf("fallback arg[%d] = %v, want %v", i, fbArgs[i], want[i])
 		}
+	}
+}
+
+func TestRecentOperations_DedupsPerPrimaryKey(t *testing.T) {
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		if !strings.Contains(q, "FROM stellar.operations") {
+			t.Fatalf("unexpected query: %s", q)
+		}
+		// The same operation twice: an un-merged re-ingest duplicate, adjacent
+		// in sort-key order.
+		return &stubRows{data: [][]any{opLightRowFor(100, 0, 0), opLightRowFor(100, 0, 0)}}, nil
+	}
+	r := &ExplorerReader{conn: conn}
+
+	rows, err := r.RecentOperations(context.Background(), 50, ExplorerCursor{})
+	if err != nil {
+		t.Fatalf("RecentOperations: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1 (the duplicate must collapse in Go)", len(rows))
+	}
+	// The stub answers a short page, so the tail-window pass is followed by
+	// the unbounded fallback; both are windowed reads.
+	if len(conn.queries) != 2 {
+		t.Fatalf("issued %d queries, want 2 (bounded pass + unbounded fallback on a short page)", len(conn.queries))
+	}
+	for _, q := range conn.queries {
+		// LIMIT 1 BY between ORDER BY and LIMIT disables the reverse
+		// read-in-order early exit; the windowed read must not carry it.
+		if strings.Contains(q, "LIMIT 1 BY") {
+			t.Fatalf("windowed query carries LIMIT 1 BY: %q", q)
+		}
+		// NOT FINAL: it would force a merge across every part in the scanned
+		// range, which on the fallback arm is still the whole table.
+		if strings.Contains(q, "stellar.operations FINAL") {
+			t.Fatalf("query = %q, must NOT use FINAL on the reverse directory scan", q)
+		}
+		if !strings.Contains(q, "ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?") {
+			t.Fatalf("query = %q, want a sort-key ORDER BY directly before LIMIT", q)
+		}
+	}
+}
+
+// A refused cursor must arrive as its OWN class. Without this it is
+// indistinguishable from a lake fault, and the route's error mapping cannot
+// tell "you asked for an unservable position" from "we broke".
+func TestRecentOperations_RefusedCursorIsItsOwnErrorClass(t *testing.T) {
+	conn := &stubConn{}
+	conn.respond = func(string) (driver.Rows, error) {
+		return nil, &clickhouse.Exception{
+			Code: 158, Name: "TOO_MANY_ROWS",
+			Message: "Limit for rows or bytes to read exceeded, max rows: 200.00 million, current rows: 233.82 million",
+		}
+	}
+	r := &ExplorerReader{conn: conn}
+
+	_, err := r.RecentOperations(context.Background(), 50, ExplorerCursor{Ledger: 64_200_000, A: 0, B: 0})
+	if err == nil {
+		t.Fatal("a refused cursor returned no error — the caller would serve an empty page as if history ended")
+	}
+	if !errors.Is(err, ErrOperationsCursorTooDeep) {
+		t.Fatalf("refused cursor error = %v, want it to wrap ErrOperationsCursorTooDeep", err)
+	}
+	// The offending cursor must be in the message: an operator reading the
+	// log has to know which position was refused.
+	if !strings.Contains(err.Error(), "64200000.0.0") {
+		t.Errorf("refused-cursor error does not name the cursor: %v", err)
+	}
+	// Every OTHER server error keeps its existing class — a refusal-shaped
+	// classifier that swallowed real faults would be worse than the defect.
+	conn2 := &stubConn{}
+	conn2.respond = func(string) (driver.Rows, error) {
+		return nil, &clickhouse.Exception{Code: 241, Name: "MEMORY_LIMIT_EXCEEDED"}
+	}
+	r2 := &ExplorerReader{conn: conn2}
+	_, err = r2.RecentOperations(context.Background(), 50, ExplorerCursor{Ledger: 64_200_000})
+	if err == nil || errors.Is(err, ErrOperationsCursorTooDeep) {
+		t.Errorf("a memory-limit failure was misclassified as a cursor refusal: %v", err)
 	}
 }

@@ -158,33 +158,3 @@ func TestEmitLiveSeeds_RemovalPassesThroughWithoutTTL(t *testing.T) {
 		t.Fatalf("got %+v, want the removal tombstone at its removal ledger %d", got, archLastWrite)
 	}
 }
-
-// The full-history reducer places an archived key's tombstone at the archival
-// ledger too, replacing the stale live winner.
-func TestSACSeedReducer_RetractArchivedAtArchivalLedger(t *testing.T) {
-	keyXDR := seedKeyFor(t)
-	r := newSACSeedReducer(seedWatched())
-	ct := time.Date(2024, 11, 1, 0, 0, 0, 0, time.UTC)
-	if err := r.offer(keyXDR, seedEntryFor(t, 100_000_000, archLastWrite), "updated", ct, seedOrd(archLastWrite, 3, "aa", 0, 1)); err != nil {
-		t.Fatalf("offer: %v", err)
-	}
-	conn := archivalConn(t, map[string]uint32{keyXDR: archLiveUntil}, map[uint32]time.Time{archLiveUntil + 1: archCloseTime})
-
-	n, err := r.retractArchived(context.Background(), conn, archAsOf)
-	if err != nil {
-		t.Fatalf("retractArchived: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("retracted %d keys, want 1", n)
-	}
-	got := collectSeeds(t, r)
-	if len(got) != 1 {
-		t.Fatalf("emitted %d seeds, want 1 tombstone: %+v", len(got), got)
-	}
-	if !got[0].IsRemoval || got[0].Balance.Sign() != 0 || got[0].Holder != seedHolder {
-		t.Errorf("emitted %+v, want an IsRemoval zero-balance tombstone for %s", got[0], seedHolder)
-	}
-	if got[0].LedgerSeq != archLiveUntil+1 || !got[0].CloseTime.Equal(archCloseTime) {
-		t.Errorf("tombstone at ledger %d / %v, want archival ledger %d / %v", got[0].LedgerSeq, got[0].CloseTime, archLiveUntil+1, archCloseTime)
-	}
-}

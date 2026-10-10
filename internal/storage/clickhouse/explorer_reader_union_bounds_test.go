@@ -60,28 +60,6 @@ func exactOpsArm(t *testing.T, base func(string) (driver.Rows, error), limit int
 	return "", nil
 }
 
-// The exact sourced arms must ORDER BY the full sort key and
-// dedupe on it BEFORE their own LIMIT, else an un-merged duplicate part eats a
-// slot or the account's whole history materialises.
-func TestAccountListings_ExactSourcedArmIsBounded(t *testing.T) {
-	for name, tc := range map[string]struct{ q, order, dedupe string }{
-		"transactions": {sourcedTxKeysExactQuery(true), "ORDER BY ledger_seq DESC, tx_index DESC", "LIMIT 1 BY ledger_seq, tx_index LIMIT ?"},
-		"operations": {
-			sourcedOpKeysExactQuery(true, true), "ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC",
-			"LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?",
-		},
-	} {
-		if !strings.Contains(tc.q, tc.order) || !strings.Contains(tc.q, tc.dedupe) {
-			t.Errorf("%s exact arm lost its ORDER BY / LIMIT 1 BY … LIMIT:\n%s", name, tc.q)
-		}
-	}
-	const limit = 37
-	_, args := exactOpsArm(t, withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil }), limit, ExplorerCursor{})
-	if got := args[len(args)-1]; got != limit {
-		t.Errorf("exact arm page size = %v, want %d — a smaller per-arm limit drops rows at the merge seam", got, limit)
-	}
-}
-
 // opKey is a row's sort key in the merged listing.
 type opKey struct{ ledger, txIndex, opIndex uint32 }
 

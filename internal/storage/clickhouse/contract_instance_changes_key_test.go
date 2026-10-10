@@ -108,24 +108,6 @@ func TestContractInstanceChangesTxKeyMigration_MirrorsCanonicalDDL(t *testing.T)
 	}
 }
 
-// TestContractInstanceBackfillQuery_TargetsOnlyKnownTables: the target name is
-// formatted into SQL, so anything but the two timeline tables is refused
-// before a connection is opened.
-func TestContractInstanceBackfillQuery_TargetsOnlyKnownTables(t *testing.T) {
-	const unreachable = "127.0.0.1:1"
-	noLog := func(string, ...any) {}
-	err := BackfillContractInstanceChangesInto(context.Background(), unreachable,
-		"contract_instance_changes; DROP TABLE stellar.ledgers", 2, 10, 5, noLog)
-	if err == nil || !strings.Contains(err.Error(), "is not contract_instance_changes") {
-		t.Fatalf("unknown target: err = %v, want the allow-list refusal", err)
-	}
-	for _, table := range []string{ContractInstanceChangesTable, ContractInstanceChangesV2Table} {
-		if q := contractInstanceBackfillQuery(table); !strings.Contains(q, "INSERT INTO stellar."+table+"\n") {
-			t.Errorf("backfill into %s targets the wrong table:\n%s", table, q)
-		}
-	}
-}
-
 // instanceIndexStub answers the two timeline probes (usable, and the
 // key-shape probe with keyShapeErr) and records the timeline reads.
 func instanceIndexStub(keyShapeErr error) *stubConn {
@@ -194,64 +176,6 @@ func TestContractInstanceIndexedReads_OrderSameLedgerWritesByWalkPosition(t *tes
 	}
 	if q := lastTimelineRead(t, conn); !strings.Contains(q, "ORDER BY ledger_seq DESC, intra_ledger_seq DESC, change_index DESC") {
 		t.Errorf("wasm-hash read does not rank by intra_ledger_seq:\n%s", q)
-	}
-}
-
-// TestContractCodeHistory_SACInIndexSkipsLegacyScan: a SAC's index rows are
-// all is_sac = 1, so its wasm timeline is empty although the index covers it.
-// That empty history is authoritative on both key shapes; the changes-log
-// scan it would otherwise fall into cannot finish within the read budget.
-func TestContractCodeHistory_SACInIndexSkipsLegacyScan(t *testing.T) {
-	noColumn := &clickhouse.Exception{
-		Code: 47, Name: "UNKNOWN_IDENTIFIER",
-		Message: "Missing columns: 'intra_ledger_seq' 'tx_hash'",
-	}
-	for name, keyShapeErr := range map[string]error{"tx-keyed": nil, "old-key": noColumn} {
-		t.Run(name, func(t *testing.T) {
-			var timelineArgs, presenceArgs []any
-			conn := &stubConn{}
-			conn.respond = func(q string) (driver.Rows, error) {
-				switch {
-				case strings.Contains(q, "FROM stellar.ledger_entry_changes"):
-					t.Fatalf("a contract present in the index fell through to the legacy scan: %s", q)
-					return nil, nil
-				case strings.Contains(q, "SELECT tx_hash, intra_ledger_seq FROM stellar.contract_instance_changes LIMIT 1"):
-					if keyShapeErr != nil {
-						return nil, keyShapeErr
-					}
-					return &stubRows{}, nil
-				case strings.Contains(q, "contract_instance_changes LIMIT 1"): // availability probe
-					return &stubRows{data: [][]any{{uint32(1)}}}, nil
-				case strings.Contains(q, "SELECT ledger_seq, close_time, wasm_hash FROM ("):
-					return &stubRows{}, nil // no wasm rows
-				default: // per-contract presence read: the SAC's rows exist
-					return &stubRows{data: [][]any{{uint8(1)}}}, nil
-				}
-			}
-			r := &ExplorerReader{conn: conn}
-
-			got, err := r.ContractCodeHistory(context.Background(), testContractID)
-			if err != nil {
-				t.Fatalf("ContractCodeHistory: %v", err)
-			}
-			if len(got) != 0 {
-				t.Fatalf("versions = %+v, want none for a SAC", got)
-			}
-			for i, q := range conn.queries {
-				switch {
-				case strings.Contains(q, "SELECT ledger_seq, close_time, wasm_hash FROM ("):
-					timelineArgs = conn.args[i]
-				case strings.Contains(q, "WHERE contract_hash = ?"):
-					presenceArgs = conn.args[i]
-					if strings.Contains(q, "is_sac") || strings.Contains(q, "intra_ledger_seq") {
-						t.Fatalf("presence read must name only contract_hash: %s", q)
-					}
-				}
-			}
-			if len(timelineArgs) == 0 || len(presenceArgs) != 1 || presenceArgs[0] != timelineArgs[0] {
-				t.Fatalf("presence read args = %v, want [%v]", presenceArgs, timelineArgs)
-			}
-		})
 	}
 }
 

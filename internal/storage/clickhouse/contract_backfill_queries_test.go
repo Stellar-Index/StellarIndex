@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -173,5 +174,23 @@ func TestContractInstanceBackfillQuery_MatchesTheMaterializedView(t *testing.T) 
 	const wantCols = "(contract_hash, ledger_seq, tx_hash, change_index, intra_ledger_seq, close_time, is_sac, wasm_hash)"
 	if !strings.Contains(strings.Join(strings.Fields(q), " "), wantCols) {
 		t.Errorf("contractInstanceBackfillQuery column list is not %s:\n%s", wantCols, q)
+	}
+}
+
+// TestContractInstanceBackfillQuery_TargetsOnlyKnownTables: the target name is
+// formatted into SQL, so anything but the two timeline tables is refused
+// before a connection is opened.
+func TestContractInstanceBackfillQuery_TargetsOnlyKnownTables(t *testing.T) {
+	const unreachable = "127.0.0.1:1"
+	noLog := func(string, ...any) {}
+	err := BackfillContractInstanceChangesInto(context.Background(), unreachable,
+		"contract_instance_changes; DROP TABLE stellar.ledgers", 2, 10, 5, noLog)
+	if err == nil || !strings.Contains(err.Error(), "is not contract_instance_changes") {
+		t.Fatalf("unknown target: err = %v, want the allow-list refusal", err)
+	}
+	for _, table := range []string{ContractInstanceChangesTable, ContractInstanceChangesV2Table} {
+		if q := contractInstanceBackfillQuery(table); !strings.Contains(q, "INSERT INTO stellar."+table+"\n") {
+			t.Errorf("backfill into %s targets the wrong table:\n%s", table, q)
+		}
 	}
 }

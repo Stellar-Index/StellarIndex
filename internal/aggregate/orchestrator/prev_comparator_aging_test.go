@@ -1,10 +1,13 @@
 package orchestrator
 
 import (
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
@@ -118,5 +121,39 @@ func TestFreeze_ReseedsHeldVWAPAfterCacheLoss(t *testing.T) {
 	f.tick(t, time.Minute)
 	if got := f.served(t); got != "0.5" {
 		t.Errorf("surviving value overwritten: %q", got)
+	}
+}
+
+// A move that lands in one batch is scored against the level before the
+// batch, not only between the batch's two newest (agreeing) minutes; and a
+// newest minute with no VWAP hands scoring to the newest priceable minute
+// instead of skipping it.
+func TestFreeze_BacklogBatchScoredAgainstLevelBeforeIt(t *testing.T) {
+	for _, unpriceable := range []bool{false, true} {
+		for _, window := range DefaultWindows {
+			name := fmt.Sprintf("%s/unpriceableNewest=%v", window, unpriceable)
+			t.Run("phase1/"+name, func(t *testing.T) {
+				checker, err := anomaly.NewChecker(anomaly.DefaultThresholds(), anomaly.NewClassifier(map[string]anomaly.AssetClass{
+					xlmUSDPair(t).Base.String(): anomaly.ClassCrypto,
+				}))
+				if err != nil {
+					t.Fatalf("NewChecker: %v", err)
+				}
+				published, frozen := backlogCase(t, window, Config{Anomaly: checker}, unpriceable)
+				if published || !frozen {
+					t.Errorf("a +100%% backlog batch published=%v frozen=%v, want held and frozen", published, frozen)
+				}
+			})
+			t.Run("phase2/"+name, func(t *testing.T) {
+				bsrc := stubBaselineSource{
+					multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: 1000}},
+					computedAt: time.Date(2026, 7, 25, 11, 0, 0, 0, time.UTC),
+				}
+				published, frozen := backlogCase(t, window, Config{Baselines: bsrc}, unpriceable)
+				if published || !frozen {
+					t.Errorf("a +100%% backlog batch published=%v frozen=%v, want held and frozen", published, frozen)
+				}
+			})
+		}
 	}
 }

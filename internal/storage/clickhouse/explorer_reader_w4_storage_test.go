@@ -408,3 +408,44 @@ func TestContractInteractions_QuietContractKeepsFullWindow(t *testing.T) {
 		t.Fatalf("effective floor = %d, want the requested 100 kept intact for a quiet contract", effective)
 	}
 }
+
+// TestContractInteractions_CapsDistinctTxsNotEventRows: the
+// subject-tx cap subquery needs DISTINCT, or the 50k LIMIT is consumed by
+// EVENT rows, not transactions — a contract emitting ~10-20 events/tx would
+// sample only ~2.5-5k txs from the newest handful of ledgers, undercounting
+// the shared-tx ranking. The inner (ledger_seq, tx_hash) collection must be
+// SELECT DISTINCT so the cap counts transactions, as its comment and the
+// shared_txs column name have always claimed.
+func TestContractInteractions_CapsDistinctTxsNotEventRows(t *testing.T) {
+	if !strings.Contains(contractInteractionsQuery,
+		"SELECT DISTINCT ledger_seq, tx_hash FROM stellar.contract_events") {
+		t.Fatalf("contractInteractionsQuery inner subquery must SELECT DISTINCT (ledger_seq, tx_hash) "+
+			"so the subjectTxCap caps transactions, not event rows; got:\n%s", contractInteractionsQuery)
+	}
+
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "contract_active_ledgers"):
+			if strings.Contains(q, "SELECT DISTINCT ledger_seq FROM") { // per-contract walk
+				return &stubRows{}, nil // quiet: keep the full requested window
+			}
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil // probe present
+		default:
+			// Outer interactions scan: the DISTINCT-capped IN set must be present.
+			if !strings.Contains(q, "SELECT DISTINCT ledger_seq, tx_hash") {
+				t.Fatalf("interactions query lost its DISTINCT tx cap: %s", q)
+			}
+			return &stubRows{data: [][]any{{"CPEER", int64(4)}}}, nil
+		}
+	}
+	r := &ExplorerReader{conn: conn}
+
+	edges, _, err := r.ContractInteractions(context.Background(), "CTESTCONTRACT", 50, 100)
+	if err != nil {
+		t.Fatalf("ContractInteractions: %v", err)
+	}
+	if len(edges) != 1 || edges[0].SharedTxs != 4 {
+		t.Fatalf("edges = %+v, want one peer with 4 shared txs", edges)
+	}
+}

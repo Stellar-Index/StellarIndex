@@ -3,11 +3,12 @@ package clickhouse
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
 // TestContractWasmHash_PartialIndexMissFallsBackToLegacy is the
@@ -83,114 +84,6 @@ func TestContractWasmHash_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 	}
 }
 
-// TestContractCodeHistory_PartialIndexMissFallsBackToLegacy is the
-// sibling gap: ContractCodeHistory trusted an EMPTY per-contract
-// result from contract_instance_changes as an authoritative "never
-// upgraded", even though instanceChangesIndexAvailable is the same
-// table-global LIMIT-1 emptiness probe that cannot see partial per-contract
-// backfill coverage. Only contractWasmHash guarded against this; this read
-// did not.
-//
-// Without the fallback, an applied-but-still-backfilling index would make ContractCodeHistory
-// return an empty timeline for any contract the backfill hadn't reached
-// yet, even though the changes log holds its real upgrade history. The
-// fallback mirrors contractWasmHash: only a NON-EMPTY indexed result is
-// trusted; an empty one falls through to the legacy changes-log scan.
-func TestContractCodeHistory_PartialIndexMissFallsBackToLegacy(t *testing.T) {
-	wantHash := wasmHashN(0xEF)
-
-	var legacyRead bool
-	conn := &stubConn{}
-	conn.respond = func(q string) (driver.Rows, error) {
-		switch {
-		case strings.Contains(q, "SELECT tx_hash, intra_ledger_seq FROM stellar.contract_instance_changes"):
-			// Key-shape probe: the tx-keyed table.
-			return &stubRows{}, nil
-		case strings.Contains(q, "contract_instance_changes") && strings.Contains(q, "SELECT ledger_seq FROM"):
-			// Availability probe: the index EXISTS and is non-empty
-			// (some other contract has been backfilled) -> "usable".
-			return &stubRows{data: [][]any{{uint32(1)}}}, nil
-		case strings.Contains(q, "SELECT ledger_seq, close_time, wasm_hash FROM ("):
-			// Per-contract lookup: THIS contract's instance history has not
-			// been backfilled yet -> zero rows (a PARTIAL-coverage miss,
-			// invisible to the probe).
-			return &stubRows{}, nil
-		case strings.Contains(q, "SELECT 1 FROM stellar.contract_instance_changes"):
-			// Per-contract presence read: no row, the backfill has not
-			// reached this contract.
-			return &stubRows{}, nil
-		case strings.Contains(q, "stellar.entry_history_watermark"):
-			// No genesis watermark: the miss is unproven.
-			return &stubRows{}, nil
-		case strings.Contains(q, "FROM stellar.ledger_entry_changes"):
-			// Legacy changes-log scan resolves the real upgrade history.
-			legacyRead = true
-			return &stubRows{data: [][]any{{uint32(1), time.Unix(0, 0).UTC(), instanceEntryB64(t, wantHash)}}}, nil
-		default:
-			t.Fatalf("unexpected query: %s", q)
-			return nil, nil
-		}
-	}
-	r := &ExplorerReader{conn: conn}
-
-	got, err := r.ContractCodeHistory(context.Background(), testContractID)
-	if err != nil {
-		t.Fatalf("ContractCodeHistory returned error: %v", err)
-	}
-	if !legacyRead {
-		t.Fatal("the legacy ledger_entry_changes read was never issued: the empty indexed " +
-			"result was served as an authoritative 'never upgraded' instead of falling back")
-	}
-	if len(got) != 1 || got[0].WasmHash != hex.EncodeToString(wantHash[:]) {
-		t.Fatalf("history = %+v, want one version with hash %x from the legacy scan", got, wantHash)
-	}
-}
-
-// TestContractCodeHistory_GenesisWatermark: an index miss skips the
-// ledger_entry_changes scan only when a genesis watermark covers ledger 1.
-func TestContractCodeHistory_GenesisWatermark(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		wm       [][]any
-		wantScan bool
-	}{
-		{"present and covering", [][]any{{uint32(500)}}, false},
-		{"absent", nil, true},
-		{"zero (below any ledger)", [][]any{{uint32(0)}}, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var scanned bool
-			conn := &stubConn{}
-			conn.respond = func(q string) (driver.Rows, error) {
-				switch {
-				case strings.Contains(q, "SELECT tx_hash, intra_ledger_seq FROM stellar.contract_instance_changes"):
-					return &stubRows{}, nil
-				case strings.Contains(q, "SELECT ledger_seq FROM"):
-					return &stubRows{data: [][]any{{uint32(1)}}}, nil
-				case strings.Contains(q, "SELECT ledger_seq, close_time, wasm_hash FROM ("),
-					strings.Contains(q, "SELECT 1 FROM stellar.contract_instance_changes"):
-					return &stubRows{}, nil
-				case strings.Contains(q, "stellar.entry_history_watermark"):
-					return &stubRows{data: tc.wm}, nil
-				case strings.Contains(q, "FROM stellar.ledger_entry_changes"):
-					scanned = true
-					return &stubRows{}, nil
-				default:
-					t.Fatalf("unexpected query: %s", q)
-					return nil, nil
-				}
-			}
-			r := newExplorerReader(conn)
-			if _, err := r.ContractCodeHistory(context.Background(), testContractID); err != nil {
-				t.Fatal(err)
-			}
-			if scanned != tc.wantScan {
-				t.Fatalf("legacy scan = %v, want %v", scanned, tc.wantScan)
-			}
-		})
-	}
-}
-
 func TestInstanceGenesisCovers_Below(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(string) (driver.Rows, error) { return &stubRows{data: [][]any{{uint32(100)}}}, nil }
@@ -200,5 +93,58 @@ func TestInstanceGenesisCovers_Below(t *testing.T) {
 	}
 	if r.instanceGenesisCovers(context.Background(), 101) {
 		t.Error("ledger above watermark must not be covered")
+	}
+}
+
+// TestContractWasmHash_IndexedResolvesPreCaptureContract pins the wasm
+// two-hop item's hop 1: a contract whose
+// instance entry predates live entry capture must resolve its current
+// executable from the genesis-complete contract_instance_changes index
+// — including the SAC verdict — without touching
+// ledger_entries_current.
+func TestContractWasmHash_IndexedResolvesPreCaptureContract(t *testing.T) {
+	wantHash := wasmHashN(0xCD)
+	wantHex := hex.EncodeToString(wantHash[:])
+
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "ledger_entries_current"):
+			t.Fatalf("indexed path must not read ledger_entries_current: %s", q)
+			return nil, nil
+		case strings.Contains(q, "contract_instance_changes LIMIT 1"): // probe
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		default: // indexed hash lookup
+			return &stubRows{data: [][]any{{uint8(0), wantHex}}}, nil
+		}
+	}
+	r := &ExplorerReader{conn: conn}
+
+	var cid xdr.Hash
+	copy(cid[:], []byte("contract-id-32-bytes-padding----"))
+	got, ok, err := r.contractWasmHash(context.Background(), cid)
+	if err != nil || !ok {
+		t.Fatalf("contractWasmHash: ok=%v err=%v", ok, err)
+	}
+	if got != wantHash {
+		t.Fatalf("hash = %x, want %x", got, wantHash)
+	}
+
+	// SAC verdict is authoritative from the index (no legacy fallback).
+	conn2 := &stubConn{}
+	conn2.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "ledger_entries_current"):
+			t.Fatalf("SAC verdict must not fall through to legacy: %s", q)
+			return nil, nil
+		case strings.Contains(q, "contract_instance_changes LIMIT 1"):
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		default:
+			return &stubRows{data: [][]any{{uint8(1), ""}}}, nil
+		}
+	}
+	r2 := &ExplorerReader{conn: conn2}
+	if _, _, err := r2.contractWasmHash(context.Background(), cid); !errors.Is(err, ErrContractIsSAC) {
+		t.Fatalf("SAC row: err = %v, want ErrContractIsSAC", err)
 	}
 }

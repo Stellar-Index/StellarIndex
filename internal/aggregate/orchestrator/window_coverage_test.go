@@ -201,26 +201,3 @@ func TestReseedFrozenVWAP_NeverStampsCoverageBesideComposite(t *testing.T) {
 		t.Errorf("served value = %q, want the composite %q untouched", got, composite)
 	}
 }
-
-// TestPublishComposite_DropsHeldDirectCoverage: once a composite serves the
-// target, the direct comparator's coverage no longer describes the served
-// value and must not survive for a later reseed to restore.
-func TestPublishComposite_DropsHeldDirectCoverage(t *testing.T) {
-	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
-	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
-	window := time.Minute
-	rdb, _ := newTestRedis(t)
-	o := New(&mockStore{}, rdb, Config{Windows: []time.Duration{window}})
-	stateKey := xlmEUR.String() + ":" + window.String()
-	o.prevVWAPCoverage[stateKey] = cachekeys.WindowCoverage{Truncated: true}
-
-	chain := TriangulationChain{Target: xlmEUR, Legs: []canonical.Pair{xlmUSD, usdEUR}}
-	if outcome := o.publishComposite(context.Background(), chain, window,
-		big.NewRat(72, 1000), 2, 2, 2, 0.9, false, false); outcome != "ok" {
-		t.Fatalf("publishComposite = %q, want ok", outcome)
-	}
-	if _, held := o.prevVWAPCoverage[stateKey]; held {
-		t.Error("direct coverage still held after a composite was published for the target")
-	}
-}

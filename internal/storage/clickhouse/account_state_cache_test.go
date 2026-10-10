@@ -161,3 +161,27 @@ func TestPerKeyFlight(t *testing.T) {
 		t.Error("begin after end did not get ownership")
 	}
 }
+
+// TestAccountStateCached_SaturationIsCounted drives the cold-miss path that
+// returns ErrRefreshSaturated and requires the skipped refresh to be counted
+// under its class; before, the only trace was the wrapped 503 error.
+func TestAccountStateCached_SaturationIsCounted(t *testing.T) {
+	r := &ExplorerReader{
+		stateCache:  newAccountStateCache(),
+		stateFlight: newPerKeyFlight(),
+		refreshGate: NewRefreshGate(1),
+	}
+	if !r.refreshGate.TryAcquire() {
+		t.Fatal("could not acquire the only gate slot to set up saturation")
+	}
+	before := gateSaturated("account_state", "global")
+
+	_, _, err := r.AccountStateCached(context.Background(),
+		"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if !errors.Is(err, ErrRefreshSaturated) {
+		t.Fatalf("saturated cold miss err = %v, want ErrRefreshSaturated", err)
+	}
+	if got := gateSaturated("account_state", "global") - before; got != 1 {
+		t.Fatalf("saturated account-state refresh counted %v, want 1", got)
+	}
+}

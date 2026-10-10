@@ -8,10 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // setLegVWAP pre-writes a leg's VWAP into the test Redis so the router's
@@ -779,4 +782,23 @@ func TestRouteTarget_FrozenLegRerouteRespectsFreeze(t *testing.T) {
 			t.Error("a withheld-for-target-freeze composite was recorded as corroboration")
 		}
 	})
+}
+
+// TestRecordComposite_PublishesRouteCorroborationGauge: the
+// router corroboration count behind the last published composite is
+// exported per (pair, window), not only held in the in-process
+// lastComposites map, so the audit trail has a series distinguishing it
+// from path_count or the venue source count.
+func TestRecordComposite_PublishesRouteCorroborationGauge(t *testing.T) {
+	cache, _ := newTestRedis(t)
+	o := New(nil, cache, Config{})
+	pair := mkPair(t, "crypto", "XLM", "fiat", "EUR")
+	window := 5 * time.Minute
+
+	o.recordComposite(pair, window, big.NewRat(72, 1000), 3, 0.8, false)
+
+	got := testutil.ToFloat64(obs.AggregatorRouteCorroborationCount.WithLabelValues(pair.String(), windowLabel(window)))
+	if got != 3 {
+		t.Errorf("AggregatorRouteCorroborationCount(%s, %s) = %v, want 3", pair.String(), windowLabel(window), got)
+	}
 }

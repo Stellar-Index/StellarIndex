@@ -5,13 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/testutil"
-
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
-	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // newWiredFreezeFixture is newFreezeFixture with the production writer — a
@@ -48,68 +44,4 @@ func (f *freezeFixture) advance(t *testing.T, d time.Duration) {
 	t.Helper()
 	f.mr.FastForward(d)
 	f.tick(t, d)
-}
-
-// TestFreezeLifecycle_UnpricedBucketsKeepTheFreezeAlive — a frozen window
-// whose buckets go empty or fall under MinUSDVolume must keep advancing its
-// lifecycle. If those buckets returned before the lifecycle step,
-// nothing would refresh the marker or the durable ladder; once hold + grace
-// lapsed, the next priced bucket would read the absence as the operator
-// override, release with mode="operator" and publish the manipulated
-// print the freeze was withholding.
-func TestFreezeLifecycle_UnpricedBucketsKeepTheFreezeAlive(t *testing.T) {
-	cases := []struct {
-		name         string
-		thin, priced func(t *testing.T, f *freezeFixture)
-	}{
-		{
-			name:   "empty",
-			thin:   func(_ *testing.T, f *freezeFixture) { f.store.trades = nil },
-			priced: func(t *testing.T, f *freezeFixture) { f.feed(t, manipQuoteAmount, "soroswap") },
-		},
-		{
-			name:   "below_min_usd_volume",
-			thin:   func(_ *testing.T, f *freezeFixture) { f.orch.cfg.MinUSDVolume = 1e9 },
-			priced: func(_ *testing.T, f *freezeFixture) { f.orch.cfg.MinUSDVolume = 0 },
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newWiredFreezeFixture(t)
-			operator := obs.AnomalyFreezeReleasedTotal.WithLabelValues("operator")
-			before := testutil.ToFloat64(operator)
-
-			f.feed(t, manipQuoteAmount, "soroswap")
-			f.advance(t, closedBucket)
-			if !f.state().Active() {
-				t.Fatal("setup: freeze did not fire")
-			}
-
-			// Twenty unpriced buckets: well past the 10-minute hold plus the
-			// 5-minute marker and ladder grace.
-			tc.thin(t, f)
-			for range 20 {
-				f.advance(t, closedBucket)
-			}
-			if !f.mr.Exists(cachekeys.Freeze(f.pair.Base, f.pair.Quote).String()) {
-				t.Error("freeze marker lapsed during unpriced buckets: flags.frozen is off for a live freeze")
-			}
-
-			tc.priced(t, f)
-			f.advance(t, closedBucket)
-			st := f.state()
-			if !st.Active() {
-				t.Fatalf("freeze ended after unpriced buckets: %+v", st)
-			}
-			if st.ExtensionsUsed != 0 {
-				t.Errorf("ExtensionsUsed = %d; unscored buckets must slide the hold, not climb the ladder", st.ExtensionsUsed)
-			}
-			if got := f.served(t); got != lkgFormatted {
-				t.Errorf("served %q, want the held LKG %q", got, lkgFormatted)
-			}
-			if d := testutil.ToFloat64(operator) - before; d != 0 {
-				t.Errorf("AnomalyFreezeReleasedTotal{operator} delta = %v with no operator action", d)
-			}
-		})
-	}
 }
