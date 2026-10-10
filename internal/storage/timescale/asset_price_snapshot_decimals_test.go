@@ -14,7 +14,7 @@ import (
 // same column. A reader that scaled aps.price_usd again would publish a
 // price off by the factor squared, and nothing else would notice — the
 // executing proof of the values is
-// test/integration/asset_price_snapshot_decimals_test.go.
+// test/integration/asset_price_test.go.
 func TestAssetPriceSnapshot_DecimalsNormalisedOnceAtTheWriter(t *testing.T) {
 	t.Parallel()
 

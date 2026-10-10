@@ -480,7 +480,7 @@ func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity
 	// planner-defined intra-bucket order. [combineDirVWAP] is commutative,
 	// so the served value is unchanged either way. With limit=0 and custom
 	// plans (the serving pool) that sort streams as Merge Append on bucket
-	// + Incremental Sort; history_points_unbounded_plan_test.go pins it.
+	// + Incremental Sort; history_points_test.go pins it.
 	args := []any{p.Base.String(), p.Quote.String()}
 	limitClause := ""
 	if rowCap := bucketRowCap(limit); rowCap > 0 {

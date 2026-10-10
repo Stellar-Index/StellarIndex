@@ -98,7 +98,7 @@ Wire the new observer into `cmd/stellarindex-indexer/main.go`
 alongside the existing supply observers and add an integration
 test under `test/integration/` if it touches NUMERIC arithmetic
 (see `test/integration/classic_supply_storage_test.go` /
-`sep41_supply_storage_test.go` for the testcontainers-go pattern).
+`sep41_supply_test.go` for the testcontainers-go pattern).
 
 ### "Audit a Soroban source's WASM history (flip BackfillSafe)"
 

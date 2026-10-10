@@ -92,7 +92,7 @@ func TestListAssetsBaseSelect_NoPerRequestPriceScan(t *testing.T) {
 // direction. And the arm is chosen by observation recency, not by a fixed
 // direct-then-XLM order, which let a days-old USD print outrank a live
 // XLM market. The executing proof is
-// test/integration/asset_price_arm_recency_test.go.
+// test/integration/asset_price_test.go.
 func TestPriceArms_UnionBothDirectionsAndPickByRecency(t *testing.T) {
 	t.Parallel()
 	usdList := strings.Join(strings.Fields(usdProxyQuotes), " ")
