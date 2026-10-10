@@ -1,5 +1,7 @@
 import Link from 'next/link';
 
+import { assetHref } from '@/lib/fiat-slugs';
+
 import type { VerifiedItem } from './verified-currencies';
 
 /** One chip per verified Stellar currency; fiat lives on /external/assets. */
@@ -11,7 +13,7 @@ export function VerifiedStrip({ items }: { items: VerifiedItem[] }) {
       {onChain.map((v) => (
         <Link
           key={v.slug}
-          href={`/assets/${v.slug}`}
+          href={assetHref(v.slug)}
           title={
             v.verified_issuer
               ? `${v.name} — verified by ${v.verified_issuer}`
