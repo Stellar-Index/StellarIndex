@@ -12,17 +12,8 @@ export const metadata: Metadata = {
 };
 
 /**
- * /sources — directory of every venue we ingest.
- *
- * Live-data pass: groups by class (exchange / aggregator / oracle /
- * authority_sanity) so the "only Class=exchange contributes to VWAP
- * by default" boundary is visible at a glance. Per-source health
- * (events seen 24h, trades, volume, markets) now lives on the
- * /sources/[name] detail page via `/v1/sources/{name}/health`
- * (board #33). Still honestly pending: decode-error / orphan-rate
- * counters (nothing serves them yet) and the WASM-history pane
- * (lands once decoder_stats + wasm_versions are joined into the
- * response).
+ * /sources — directory of every venue we ingest, grouped by class so the
+ * VWAP boundary is visible. Per-source health lives on /sources/[name].
  */
 export default function SourcesPage() {
   return (

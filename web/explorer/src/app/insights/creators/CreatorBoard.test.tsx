@@ -114,7 +114,7 @@ describe('CreatorBoard', () => {
     expect(table.getByText('52,297')).toBeInTheDocument();
     // 0 stroops must reach the table as 0 XLM, not as an em dash or a gap.
     expect(table.getByText('0')).toBeInTheDocument();
-    expect(screen.getByText(/CAP-33/)).toBeInTheDocument();
+    expect(table.getByTitle(/CAP-33/)).toHaveTextContent('Funded (XLM)');
   });
 
   it('falls back to a warming message rather than an empty board', async () => {

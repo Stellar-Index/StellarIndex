@@ -2206,15 +2206,12 @@ function BackfillCoverageTable({
       <details className="text-ink-faint mb-2 text-[11px]">
         <summary className="cursor-pointer">How to read coverage</summary>
         <p className="mt-1">
-          <strong>Coverage</strong> = verified completeness. A green % is{' '}
-          <strong>fully verified</strong>: the lake is hash-chained to the tip
-          (substrate), every event shape is recognized, AND the served tier
-          reconciles to the lake (Δ=0). <em>reconciling</em> (amber) = data is
-          captured in the lake but the served tier hasn&apos;t reconciled yet —{' '}
-          <em>captured, not yet verified</em>; the % shown is capture, not the
-          verdict. <em>unverified</em> = only a gap-free liveness signal exists
-          (the verifier hasn&apos;t run), which can read ~100% for sparse or
-          partially-indexed sources.
+          <strong>Green %</strong>: fully verified — lake hash-chained to the
+          tip, every event shape recognised, served tier reconciled (Δ=0).{' '}
+          <em>reconciling</em> (amber): captured in the lake, served tier not
+          yet reconciled; the % is capture, not a verdict. <em>unverified</em>:
+          only a gap-free liveness signal, which can read ~100% for sparse or
+          partially indexed sources.
         </p>
       </details>
       <div className="border-line overflow-x-auto rounded-lg border">
