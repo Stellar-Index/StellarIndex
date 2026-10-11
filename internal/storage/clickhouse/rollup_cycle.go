@@ -7,44 +7,29 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// rollupLedgerWindow is the ledger span ONE walked statement covers: a
-// single lake partition. Both archives a rollup cycle reads are
-// PARTITION BY intDiv(<their ledger column>, 1000000)
-// (deploy/clickhouse/tier1_schema.sql), so a window predicate prunes to
-// exactly one partition's parts. Same constant and same discipline as
-// the recognition shape scan (recognitionScanWindow).
+// rollupLedgerWindow is the ledger span ONE walked statement covers: a single lake partition.
+// Both archives a cycle reads are PARTITION BY intDiv(<ledger column>, 1000000)
+// (deploy/clickhouse/tier1_schema.sql), so a window predicate prunes to one partition's parts.
 const rollupLedgerWindow = 1_000_000
 
-// rollupWalkSettings is the per-statement settings clause for a walked
-// step. The memory shape is the house full-history scan class
-// (boundedScanSettings: two concurrent part streams, an 8 GiB tracked
-// ceiling, spill at 4 GiB) plus a per-WINDOW execution cap.
-//
-// The cap is per window, not per cycle: 600 s leaves >20x headroom over the
-// widest window measured, yet fails one wedged window fast instead of
-// spending the unit's whole TimeoutStartSec budget on it.
+// rollupWalkSettings is the per-statement settings clause for a walked step: the bounded
+// full-history scan class (boundedScanSettings) plus a per-WINDOW execution cap. The cap is per
+// window, not per cycle: 600 s leaves >20x headroom over the widest window, yet fails one wedged
+// window fast instead of spending the unit's whole TimeoutStartSec budget on it.
 const rollupWalkSettings = boundedScanSettings + ", max_execution_time = 600"
 
 // rollupStep is one statement of a recompute cycle.
 //
-// A step with walk set is a TEMPLATE rather than a statement: it carries
-// the inclusive ledger bounds of ONE window as bind parameters, and
-// runRollupCycle executes it once per window instead of once. Every
-// other step runs exactly once, in order.
+// A step with walk set is a TEMPLATE: it carries one window's inclusive ledger bounds as bind
+// parameters and runRollupCycle executes it once per window. Every other step runs once, in order.
 type rollupStep struct {
 	sql  string
 	walk bool
-	// windowBinds is how many `BETWEEN ? AND ?` pairs sql carries. One
-	// per SOURCE TABLE the step reads, not one per step: a join
-	// condition prunes neither side's partitions, so a step reading two
-	// lake archives has to bound each of them itself or the unbounded
-	// one costs the whole archive per window. The same window is bound
-	// into every pair, in placeholder order.
-	//
-	// Zero reads as one — the single pair a one-source walked step
-	// carries. TestRollupCyclesDeclareTheirWindowBinds pins the declared
-	// count against the placeholders actually present, so a template
-	// that grows a source cannot silently bind the wrong number.
+	// windowBinds is how many `BETWEEN ? AND ?` pairs sql carries: one per SOURCE TABLE, since a
+	// join condition prunes neither side's partitions and an unbounded side costs the whole
+	// archive per window. The same window is bound into every pair, in placeholder order.
+	// Zero reads as one. TestRollupCyclesDeclareTheirWindowBinds pins the count against the
+	// placeholders present, so a template that grows a source cannot bind the wrong number.
 	windowBinds int
 }
 
@@ -65,18 +50,14 @@ func windowBindArgs(lo, hi uint32, pairs int) []any {
 // steps repeated over consecutive rollupLedgerWindow-wide ledger windows
 // from ledger 1 up to the lake tip.
 //
-// A single statement over the whole archive holds a dedupe hash table
-// sized by ALL of history plus, where it joins, a build side sized by
-// every account; the pair outgrows any fixed ceiling as the chain grows.
-// Walking makes the first population per-window, and the account-population
-// join runs ONCE against the narrow working table the walk wrote. A join a
-// walked step keeps has a window-bounded build side and pins it rather
-// than trusting a planner estimate.
+// A single statement over the whole archive holds a dedupe hash table sized by ALL of history
+// plus, where it joins, a build side sized by every account; that outgrows any fixed ceiling as
+// the chain grows. Walking makes population per-window, and the account-population join runs
+// ONCE against the narrow working table the walk wrote. A join kept in a walked step has a
+// window-bounded build side, pinned rather than left to a planner estimate.
 //
-// The walk writes to a working table, not staging: nothing touches a
-// staging arm until the walk finishes, so an interrupted cycle leaves the
-// live board as it was, and the single EXCHANGE is the one moment anything
-// becomes visible.
+// The walk writes to a working table, not staging, so an interrupted cycle leaves the live
+// board untouched; the single EXCHANGE is the one moment anything becomes visible.
 func runRollupCycle(ctx context.Context, addr, label string, steps []rollupStep, logf func(format string, args ...any)) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -138,11 +119,9 @@ func runRollupSteps(ctx context.Context, conn rollupExecer, tip uint32, label st
 	return nil
 }
 
-// lakeTipLedger reads the highest ledger_seq in the lake's ledgers table
-// on an already-open connection. The walk's upper bound is the tip
-// itself rather than each source table's own max: a source that lags the
-// tip simply yields empty windows, which partition pruning answers
-// without reading a part.
+// lakeTipLedger reads the highest ledger_seq in the lake's ledgers table. The walk's upper bound
+// is the tip rather than each source table's own max: a lagging source just yields empty
+// windows, which partition pruning answers without reading a part.
 func lakeTipLedger(ctx context.Context, conn driver.Conn) (uint32, error) {
 	var hi uint64
 	if err := conn.QueryRow(ctx, `SELECT toUInt64(max(ledger_seq)) FROM stellar.ledgers`).Scan(&hi); err != nil {

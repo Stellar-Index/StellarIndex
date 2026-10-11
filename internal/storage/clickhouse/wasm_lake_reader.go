@@ -460,9 +460,8 @@ func (r *ExplorerReader) contractCodeHistoryLegacy(ctx context.Context, cidHash 
 // contractCodeHistoryIndexedQuery reads the keyed instance-executable timeline
 // (contract_instance_changes.sql); contract_hash is its primary-key prefix. Consecutive identical
 // executables collapse SERVER-side before the cap, so the cap bounds executable changes (A->B->A
-// kept) and preserves the newest.
-// Order by intra_ledger_seq first; change_index restarts per transaction and only breaks ties (and
-// legacy rows with intra_ledger_seq 0).
+// kept) and preserves the newest. Order by intra_ledger_seq first: change_index restarts per
+// transaction and only breaks ties (and legacy rows with intra_ledger_seq 0).
 const contractCodeHistoryIndexedQuery = `SELECT ledger_seq, close_time, wasm_hash FROM (
 			SELECT ledger_seq, close_time, wasm_hash, intra_ledger_seq, change_index FROM (
 				SELECT ledger_seq, close_time, wasm_hash, intra_ledger_seq, change_index,
@@ -619,13 +618,11 @@ func codeKeyXDR(hash xdr.Hash) (string, error) {
 
 // wasmCodeByHashQuery pins the lookup to the code entry's LedgerKey on ledger_entries_current, not
 // the changes log: (entry_type, key_xdr) is its full PK, so hit and miss are cheap mark-range
-// reads, whereas scanning ledger_entry_changes cannot finish inside explorerReadTimeout.
-// Every contract_code key in the change log exists in current-state and the Code payload is
-// content-addressed (sha256 == key hash), so any row yields the same bytes.
-// NO FINAL: a non-empty-entry_xdr filter applied after FINAL dedup lets a 'removed' row win and then vanish,
-// turning held code into a 404.
-// LIMIT 4, not 1: up to 3 pre-merge rows per key, so the cc.Hash guard can skip an undecodable one.
-// No explorerScanSettings: this is a keyed point read.
+// reads, whereas scanning ledger_entry_changes cannot finish inside explorerReadTimeout. The Code
+// payload is content-addressed (sha256 == key hash), so any row yields the same bytes.
+// NO FINAL: a non-empty-entry_xdr filter applied after FINAL dedup lets a 'removed' row win and
+// then vanish, turning held code into a 404. LIMIT 4, not 1: up to 3 pre-merge rows per key, so
+// the cc.Hash guard can skip an undecodable one. No explorerScanSettings: keyed point read.
 const wasmCodeByHashQuery = `SELECT entry_xdr FROM stellar.ledger_entries_current
 	WHERE entry_type = 'contract_code' AND key_xdr = ? AND entry_xdr != ''
 	LIMIT 4`
@@ -750,12 +747,11 @@ func (r *ExplorerReader) SACAssetFromEvents(ctx context.Context, contractID stri
 			const boundedQ = `SELECT topics_xdr[length(topics_xdr)] FROM stellar.contract_events
 		WHERE contract_id = ? AND ledger_seq IN (?) AND length(topics_xdr) >= 3
 		ORDER BY ledger_seq DESC LIMIT 1`
-			// A miss is an ANSWER, not a reason to fall back: the unbounded scan is the cost this
-			// path avoids and non-SACs would pay it every time.
-			// Accepted residual: a real SAC whose 8 newest active ledgers carry only <3-topic
-			// events reads as non-SAC. It affects only 404-branch labels, never a wrong positive
-			// (the caller re-derives and rejects mismatches). Widen the probe window rather than
-			// falling back to the unbounded scan.
+			// A miss is an ANSWER, not a reason to fall back: non-SACs would pay the unbounded scan
+			// every time. Accepted residual: a real SAC whose 8 newest active ledgers carry only
+			// <3-topic events reads as non-SAC; that affects only 404-branch labels, never a wrong
+			// positive (the caller re-derives and rejects mismatches). Widen the probe window rather
+			// than falling back.
 			if name, ok, qerr := r.sacAssetFromEventsQuery(ctx, boundedQ, contractID, ledgers); qerr == nil {
 				return name, ok, nil
 			}

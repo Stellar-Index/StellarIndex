@@ -137,12 +137,12 @@ var ErrCap67MovementsSkippedPrefix = errors.New("clickhouse: cap67 movements win
 // stellar.contract_events holds fewer rows than they declare. Delay, not failure.
 var ErrCap67MovementsEventShortfall = errors.New("clickhouse: cap67 movements window is missing contract events")
 
-// SetCap67MovementsWatermark records completion through `thru` for window [from, thru], only
-// if the advance is proven (see cap67AdvanceProven). Proof is required at the write: the
-// derive resumes at watermark+1, so an advance over a missing ledger would drop its
-// movements permanently and invisibly, and the range may be operator-supplied
-// (`-to N`). Fail-closed. Contiguity is keyed off stellar.ledgers, the commit marker
-// Sink.Flush writes last (present there implies contract_events are durable).
+// SetCap67MovementsWatermark records completion through `thru` for window [from, thru], only if
+// the advance is proven (see cap67AdvanceProven). Proof is required at the write: the derive
+// resumes at watermark+1, so an advance over a missing ledger would drop its movements permanently
+// and invisibly, and the range may be operator-supplied (`-to N`). Fail-closed. Contiguity is keyed
+// off stellar.ledgers, the commit marker Sink.Flush writes last (present there implies
+// contract_events are durable).
 func SetCap67MovementsWatermark(ctx context.Context, addr string, from, thru uint32) error {
 	if from == 0 || thru < from {
 		return fmt.Errorf("clickhouse: cap67 watermark window [%d,%d] is not a ledger range (genesis is ledger 1)", from, thru)
@@ -168,13 +168,13 @@ func SetCap67MovementsWatermark(ctx context.Context, addr string, from, thru uin
 
 // cap67AdvanceProven reports whether recording [from, thru] keeps the watermark the top of a
 // hole-free, fully-derived prefix, erroring (never skipping) when not. Unproven when:
-//   - `from` is above watermark+1 (a typo or operator jump would stamp undone ledgers);
-//     a first run (watermark 0) has no prefix, -floor-ledger is where coverage starts;
+//   - `from` is above watermark+1 (a typo or operator jump would stamp undone ledgers); a first
+//     run (watermark 0) has no prefix, -floor-ledger is where coverage starts;
 //   - the lake has a hole in the window (cap67WindowContiguous);
 //   - the events are missing (cap67WindowEventsPresent).
 //
-// A window at or below the watermark is an idempotent re-derive (ReplacingMergeTree):
-// neither refused nor written.
+// A window at or below the watermark is an idempotent re-derive (ReplacingMergeTree): neither
+// refused nor written.
 func cap67AdvanceProven(ctx context.Context, conn driver.Conn, from, thru uint32) (bool, error) {
 	wm, err := cap67WatermarkOn(ctx, conn)
 	if err != nil {

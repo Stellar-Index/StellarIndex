@@ -269,8 +269,7 @@ const holdersRollupMaxAge = 2 * time.Hour
 // the caller falls back to per-request scans, an honest slow answer over a fast stale one.
 //
 // The board and count tables are exchanged together but read in two round trips, so a swap
-// between them could pair different cycles. Both carry the same computed_at stamp; a
-// mismatch retries the pair once, as AccountsStats does.
+// between them could pair different cycles; a computed_at mismatch retries once.
 func (r *ExplorerReader) holdersRollupBoard(ctx context.Context, asset string, limit int) ([]AssetHolder, int64, bool, error) {
 	if !r.probeSchema(ctx, &r.holdersRollupProbe,
 		`SELECT rank FROM stellar.asset_holders_rollup LIMIT 1`, true) {

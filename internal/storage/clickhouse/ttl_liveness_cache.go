@@ -20,16 +20,13 @@ const TTLVerdictCacheTTL = 30 * time.Minute
 // under load): generous so it isn't abandoned, bounded so it can't pin the flight.
 const ttlVerdictRefreshTimeout = 5 * time.Minute
 
-// ttlLivenessCache is a stale-while-revalidate snapshot of per-key TTL
-// liveness verdicts, fronting [ClassifyTTLLiveness] for SoroswapPairReserves.
+// ttlLivenessCache is a stale-while-revalidate snapshot of per-key TTL liveness verdicts, fronting
+// [ClassifyTTLLiveness] for SoroswapPairReserves.
 //
-// Fresh: served from memory. Stale or new keys: served anyway (missing keys
-// read as TTLUnknown, which callers KEEP: fail-open) while ONE detached
-// recompute runs. Never filled: the caller waits on that detached compute,
-// bounded by its OWN deadline; the compute outlives a caller that gives up,
-// so the retry serves warm.
-//
-// compute is injected so the cache is unit-testable without ClickHouse.
+// Fresh: served from memory. Stale or new keys: served anyway (missing keys read as TTLUnknown,
+// which callers KEEP: fail-open) while ONE detached recompute runs. Never filled: the caller waits
+// on that compute, bounded by its OWN deadline; the compute outlives a caller that gives up, so the
+// retry serves warm. compute is injected so the cache is unit-testable without ClickHouse.
 type ttlLivenessCache struct {
 	mu        sync.Mutex
 	verdicts  map[string]TTLLiveness
@@ -137,11 +134,10 @@ func (c *ttlLivenessCache) store(verdicts map[string]TTLLiveness) {
 	c.mu.Unlock()
 }
 
-// kickRefresh starts ONE detached recompute (returning the existing flight
-// while one is up). It computes the UNION of the caller's keys and the
-// snapshot's: store() replaces the whole map, so a subset (?pool=) would evict
-// other pairs' verdicts and re-open the fail-open TTLUnknown->keep path.
-// Keys that leave the registry linger until restart; the registry is grow-only.
+// kickRefresh starts ONE detached recompute (returning the existing flight while one is up). It
+// computes the UNION of the caller's keys and the snapshot's: store() replaces the whole map, so a
+// subset (?pool=) would evict other pairs' verdicts and re-open the fail-open TTLUnknown->keep
+// path. Keys that leave the registry linger until restart; the registry is grow-only.
 func (c *ttlLivenessCache) kickRefresh(keys []string) *ttlFlight {
 	c.mu.Lock()
 	if c.flight != nil {

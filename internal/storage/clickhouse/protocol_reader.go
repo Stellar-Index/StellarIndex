@@ -16,24 +16,18 @@ import (
 // filter event_type='contract' and lean on the contract_id bloom skip-index. Windowed variants take
 // sinceLedger (0 = all-time); bounding by ledger_seq prunes partitions.
 // The raw readers are the FALLBACK; the serving path is contract_events_daily (*Fast), used when
-// that table is empty or a fast read errors. Raw cost is the skip index, not FINAL: contract_id is
-// a bloom over a (ledger_seq, tx_hash, op_index, event_index) key, so a BUSY contract (125M
-// events/90d) touches nearly every granule and FINAL re-expands nothing (breakdown 58 s, 1.09 B
-// rows). On a QUIET contract the bloom prunes 129x and FINAL re-expands it (the TxOutcomesByHash
-// trap), still 1.5 s.
-// Not fixed by an upper `ledger_seq <= tip` bound (the scan already ends at the tip), nor by
-// explorerScanSettings: max_threads = 4 measured ~2x SLOWER for identical I/O, since the fan-out it
-// targets is a ledger_entries_current part-layout effect. Do not add it. What is applied is
-// protocolRawScanRowCeiling.
+// that table is empty or a fast read errors. Raw cost is the skip index, not FINAL: a BUSY
+// contract touches nearly every granule, while a QUIET one is pruned by the bloom and FINAL then
+// re-expands it.
+// Do not add explorerScanSettings here: max_threads = 4 measured ~2x slower for identical I/O. The
+// bound that is applied is protocolRawScanRowCeiling.
 
 // protocolRawScanRowCeiling refuses a raw scan the ExplorerReader connection could not finish
-// anyway (max_execution_time 30 s; the breakdown reads ~18.6 M rows/s idle, so ~558 M rows fit, and
-// a busy protocol's window is 1.09 B). Without it the read decompresses ~190 GiB before the kill,
-// three at once per page build.
-// 600 M is that budget rounded up: a tripwire against the impossible, not a policy bound.
+// anyway (max_execution_time 30 s at ~18.6 M rows/s fits ~558 M rows; a busy protocol's window is
+// far larger). Without it the read decompresses a huge volume before the kill, three at once per
+// page build. 600 M is that budget rounded up: a tripwire, not a policy bound.
 // read_overflow_mode='throw' REFUSES rather than truncating; callers already degrade honestly on
-// error, whereas a LIMIT would serve a short answer as complete. Same posture as
-// recentOperationsCursorRowCeiling (explorer_reader.go).
+// error, whereas a LIMIT would serve a short answer as complete.
 const protocolRawScanRowCeiling = ` SETTINGS max_rows_to_read = 600000000, read_overflow_mode = 'throw'`
 
 // ProtocolEventTypeCount is one (event symbol → count) row of a protocol's
@@ -73,11 +67,10 @@ func (r *ExplorerReader) LakeTipLedger(ctx context.Context) (uint32, error) {
 const lakeWatermarkGapWindow = 10_000
 
 // LakeWatermark returns the lake's CONTIGUOUS captured tip (highest ledger with no hole within
-// lakeWatermarkGapWindow below the raw max) and its close time (ADR-0041 Decision 4). Handlers
-// surface it as `as_of_ledger` and compare the close time to now for `flags.stale`.
-// The raw max(ledger_seq) can point PAST a live-sink drop, and a consumer would read `as_of_ledger`
-// as "everything up to here is captured". contiguousWatermarkOn is the same query the projector
-// clamps to; the API caches the result (lakeWatermarkTTL).
+// lakeWatermarkGapWindow below the raw max) and its close time. Handlers surface it as
+// `as_of_ledger` and compare the close time to now for `flags.stale`.
+// The raw max(ledger_seq) can point PAST a live-sink drop, yet consumers read `as_of_ledger` as
+// "everything up to here is captured". contiguousWatermarkOn is the query the projector clamps to.
 func (r *ExplorerReader) LakeWatermark(ctx context.Context) (uint32, time.Time, error) {
 	var rawTip uint32
 	if err := r.conn.QueryRow(ctx, `SELECT max(ledger_seq) FROM stellar.ledgers`).Scan(&rawTip); err != nil {
@@ -113,9 +106,8 @@ func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs
 	}
 	// Group by topic[0]'s denormalized symbol. Where topic[0] is not a Symbol the lake leaves
 	// topic_0_sym empty, so also carry raw topic[1] and topic[0] XDR for scanEventBreakdown to
-	// recover the name: Soroswap puts it in topic[1] ([String("SoroswapPair"), Symbol(name)]);
-	// Phoenix emits topic[0] itself as a String and topic[1] is a per-field name we must not split
-	// on. The if() splits only the empty bucket.
+	// recover the name (Soroswap keeps it in topic[1]; Phoenix's topic[1] is a per-field name that
+	// must not be split on). The if() splits only the empty bucket.
 	args := []any{contractIDs}
 	if sinceLedger > 0 {
 		args = append(args, sinceLedger)
@@ -133,9 +125,8 @@ func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs
 // protocolEventBreakdownQuery builds the raw breakdown query, split out so the shape (FINAL, the
 // ledger bound, the row ceiling) is unit-testable; losing any is silent and expensive.
 // FINAL is REQUIRED: contract_events is ReplacingMergeTree(ingested_at) and unmerged duplicates are
-// large (busy contract 224.6 M vs 154.9 M with FINAL, +45%; quiet +94%), so dropping it overstates
-// every headline count. A LIMIT 1 BY rewrite would not help: ingested_at is DateTime (1 s), so it
-// cannot break a same-second tie.
+// large (+45% on a busy contract), so dropping it overstates every headline count. A LIMIT 1 BY
+// rewrite would not help: ingested_at is DateTime (1 s) and cannot break a same-second tie.
 func protocolEventBreakdownQuery(windowed bool) string {
 	q := `SELECT topic_0_sym,
 		       if(topic_0_sym = '', topics_xdr[2], '') AS t1,
@@ -300,16 +291,15 @@ func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractI
 }
 
 // contract_events_daily fast paths. The pre-aggregation (deploy/clickhouse/tier1_schema.sql)
-// replaces the ~15 s raw scans with per-day uniqCombined(17) states: uniqExact's unbounded hash set
-// blew the merge memory budget. uniqCombined still dedups the natural key (ledger_seq, tx_hash,
-// op_index, event_index), avoiding a Summing MV's retry/re-derive overcount, in bounded memory at
-// ~0.1-0.5% error. Callers probe DailyActivityAvailable and fall back to the raw readers.
+// replaces the raw scans with per-day uniqCombined(17) states: uniqExact's unbounded hash set blew
+// the merge memory budget. uniqCombined still dedups the natural key (ledger_seq, tx_hash,
+// op_index, event_index), avoiding a Summing MV's retry overcount, in bounded memory at ~0.1-0.5%
+// error. Callers probe DailyActivityAvailable and fall back to the raw readers.
 
 // DailyActivityAvailable reports whether the pre-aggregation exists with rows. definitive=true only
-// when the server ANSWERED: table missing (isSchemaAbsent) or rows found. A transport error,
-// deadline or blip is not an answer; callers must not cache it, or one hiccup would latch the raw
-// scans for the process lifetime (see schemaProbe). An empty table is non-definitive too: not
-// backfilled yet, and the LIMIT 1 probe is cheap to repeat.
+// when the server ANSWERED (table missing or rows found). A transport error or deadline is not an
+// answer and must not be cached, or one blip would latch the raw scans for the process lifetime.
+// An empty table is non-definitive too: not backfilled yet, and the LIMIT 1 probe is cheap.
 func (r *ExplorerReader) DailyActivityAvailable(ctx context.Context) (available, definitive bool) {
 	rows, err := r.conn.Query(ctx,
 		`SELECT 1 FROM stellar.contract_events_daily LIMIT 1`)

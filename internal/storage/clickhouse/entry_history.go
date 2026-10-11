@@ -10,11 +10,9 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Entry-change history: one decode pass of stellar.ledger_entry_changes
-// (`stellarindex-ops ch-entry-history`) writes two serving projections of the
-// same rows — stellar.account_entry_changes keyed by account and
-// stellar.asset_entry_changes keyed by asset (deploy/clickhouse/entry_history.sql).
-// The raw table is ORDER BY ledger, so neither read shape can use it directly.
+// Entry-change history: one decode pass of stellar.ledger_entry_changes (`ch-entry-history`)
+// writes two projections, account_entry_changes keyed by account and asset_entry_changes keyed
+// by asset. The raw table is ORDER BY ledger, so neither read shape can use it directly.
 
 // EntryHistorySourceRow is one stellar.ledger_entry_changes row as the
 // entry-history derive reads it.
@@ -48,11 +46,9 @@ type EntryChangeRef struct {
 	Fields         string
 }
 
-// AccountEntryChange is one stellar.account_entry_changes row: the change as
-// seen by one account in one role (owner / sponsor / claimant). Asset and
-// Balance are set for the owner of an account or trustline and for a
-// claimable balance's claimants; Balance is the post-change amount (0 once
-// the entry is removed).
+// AccountEntryChange is one account_entry_changes row: the change as seen by one account in one
+// role (owner / sponsor / claimant). Asset and Balance are set for account and trustline owners
+// and claimable-balance claimants; Balance is post-change (0 once the entry is removed).
 type AccountEntryChange struct {
 	EntryChangeRef
 	Account string
@@ -209,10 +205,10 @@ var ErrEntryHistorySkippedPrefix = errors.New("clickhouse: entry-history window 
 var ErrEntryHistoryEntryChangeShortfall = errors.New("clickhouse: entry-history window lacks ledger_entry_changes coverage")
 
 // entryHistoryWindowCovered compares the tx-bearing ledgers the derive READ
-// (non-empty tx_hash; snapshot seed rows carry none) with stellar.ledgers. A
-// lake-state check after the read would pass once a concurrent ch-backfill
-// filled the window, though the derive saw none of those rows. Only
-// tx-bearing ledgers hold tx-scoped rows, so the counts compare as sets.
+// (non-empty tx_hash; snapshot seed rows carry none) with stellar.ledgers. A lake-state check
+// after the read would pass once a concurrent ch-backfill filled the window, though the derive
+// saw none of those rows. Only tx-bearing ledgers hold tx-scoped rows, so the counts compare
+// as sets.
 func entryHistoryWindowCovered(ctx context.Context, conn driver.Conn, from, thru uint32, readTxLedgers uint64) error {
 	const q = `SELECT uniqExact(ledger_seq) FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ? AND tx_count > 0`
 	cov := ECWindowCoverage{From: from, To: thru, ECCoveredTxLedgers: readTxLedgers}
@@ -250,13 +246,11 @@ func entryHistoryWatermarkOn(ctx context.Context, conn driver.Conn) (uint32, err
 	return wm, nil
 }
 
-// SetEntryHistoryWatermark records completion through `thru` for the derive
-// window [from, thru], only when the window continues the derived prefix, the
-// lake holds every ledger in it and the derive read transaction-scoped entry
-// changes for readTxLedgers distinct ledgers, covering every tx-bearing one:
-// the derive resumes at watermark+1, so an unproven advance would lose those
-// ledgers' history for good. A window at or
-// below the watermark is an idempotent re-derive and records nothing.
+// SetEntryHistoryWatermark records completion through `thru` for the derive window [from, thru],
+// only when the window continues the derived prefix, the lake holds every ledger in it and the
+// derive read entry changes for readTxLedgers distinct ledgers covering every tx-bearing one:
+// the derive resumes at watermark+1, so an unproven advance would lose those ledgers' history
+// for good. A window at or below the watermark is an idempotent re-derive and records nothing.
 func SetEntryHistoryWatermark(ctx context.Context, addr string, from, thru uint32, readTxLedgers uint64) error {
 	if from == 0 || thru < from {
 		return fmt.Errorf("clickhouse: entry-history watermark window [%d,%d] is not a ledger range (genesis is ledger 1)", from, thru)

@@ -91,12 +91,11 @@ type TokenSupply struct {
 	Clawback   *big.Int
 	FlowCount  uint64
 
-	// Incomplete is true when Total < 0: burns+clawbacks exceed mints, impossible for a
-	// real token. It means this contract's supply_flows are INCOMPLETELY SEEDED (e.g.
-	// pre-Soroban SAC-wrapper mints not yet replayed), not that supply is negative.
-	// Consumers MUST treat it as UNAVAILABLE (omit or refuse), never serve it (ADR-0003;
-	// migration 0005 enforces supply >= 0) and never clamp it to 0, which would read as
-	// "fully burned". Mirrors [supply.SEP41Computer.Compute]'s ErrNegativeTotalSupply.
+	// Incomplete is true when Total < 0: burns+clawbacks exceed mints, impossible for a real
+	// token. It means this contract's supply_flows are INCOMPLETELY SEEDED, not that supply is
+	// negative. Consumers MUST treat it as UNAVAILABLE (omit or refuse), never serve it
+	// (ADR-0003; migration 0005 enforces supply >= 0) and never clamp it to 0, which would read
+	// as "fully burned". Mirrors [supply.SEP41Computer.Compute]'s ErrNegativeTotalSupply.
 	Incomplete bool
 }
 
@@ -205,11 +204,11 @@ func (r *SupplyReader) TokenSupply(ctx context.Context, contractID string) (Toke
 }
 
 // supplySumByContractsQuery is [supplySumQuery] for a SET of contracts in ONE read.
-// `contract_id` LEADS the ORDER BY, so the IN-list is a set of primary-key prefix
-// ranges and GROUP BY cardinality is bounded by the list; FINAL's setup cost is paid
-// once, not N times. Int256 and string projection as in [supplySumQuery] (ADR-0003).
-// Contracts with no flows are ABSENT; callers must not read a missing key as zero
-// supply (see [SupplyReader.TokenSupplyForContracts]).
+// `contract_id` LEADS the ORDER BY, so the IN-list is a set of primary-key prefix ranges and
+// GROUP BY cardinality is bounded by the list; FINAL's setup cost is paid once, not N times.
+// Int256 and string projection as in [supplySumQuery] (ADR-0003). Contracts with no flows are
+// ABSENT; callers must not read a missing key as zero supply (see
+// [SupplyReader.TokenSupplyForContracts]).
 const supplySumByContractsQuery = `
 	SELECT
 		contract_id,
@@ -224,10 +223,10 @@ const supplySumByContractsQuery = `
 // TokenSupplyForContracts sums [SupplyReader.TokenSupply] for many contracts in one
 // read, keyed by contract id.
 //
-// A contract with NO flows is OMITTED, not returned as a zero [TokenSupply]: zero
-// claims "no supply", absence claims nothing, and a caller treating a missing key as
-// zero would publish a fully-burned supply for every token the lake has not seen.
-// Incomplete carries through per contract; callers keep refusing those.
+// A contract with NO flows is OMITTED, not returned as a zero [TokenSupply]: zero claims "no
+// supply", absence claims nothing, and a caller treating a missing key as zero would publish a
+// fully-burned supply for every token the lake has not seen. Incomplete carries through per
+// contract; callers keep refusing those.
 func (r *SupplyReader) TokenSupplyForContracts(ctx context.Context, contractIDs []string) (map[string]TokenSupply, error) {
 	if len(contractIDs) == 0 {
 		return map[string]TokenSupply{}, nil
@@ -306,10 +305,10 @@ type SupplyFlowDay struct {
 
 // supplyFlowsDailyByContractsQuery buckets a contract set's flows by UTC close day.
 // `contract_id` leads the ORDER BY, so the IN-list is primary-key prefix ranges (as
-// [supplySumByContractsQuery]). The sign comes from an explicit multiIf over the three
-// DDL kinds, not `if(kind = 'mint', +, -)`: a fourth kind would silently SUBTRACT under
-// the two-armed form, whereas here it adds zero and `flows` still counts it. Int256,
-// stringified (ADR-0003).
+// [supplySumByContractsQuery]). The sign comes from an explicit multiIf over the three DDL
+// kinds, not `if(kind = 'mint', +, -)`: a fourth kind would silently SUBTRACT under the
+// two-armed form, whereas here it adds zero and `flows` still counts it. Int256, stringified
+// (ADR-0003).
 const supplyFlowsDailyByContractsQuery = `
 	SELECT
 		contract_id,
@@ -330,17 +329,16 @@ const supplyFlowsDailyByContractsQuery = `
 // DailySupplyFlowsForContracts returns every day on which any named contract had a
 // supply flow, with that day's net change, ascending by (contract, day).
 //
-// The WHOLE history, never a window: a supply LEVEL is the running total of every
-// flow, so callers cumulate from the first flow and window the CUMULATED series.
-// Cumulating from zero inside a window would publish its turnover as supply.
+// The WHOLE history, never a window: a supply LEVEL is the running total of every flow, so
+// callers cumulate from the first flow and window the CUMULATED series. Cumulating from zero
+// inside a window would publish its turnover as supply.
 //
-// A day with no flows has no row, and that means the supply did not change: the log
-// records every event that could move it. This is arithmetic, not the licence to carry
-// a PRICE forward across an oracle's silence.
+// A day with no flows has no row, and that means the supply did not change. This is
+// arithmetic, not licence to carry a PRICE forward across an oracle's silence.
 //
-// A contract with no flows is ABSENT, not zero ([SupplyReader.TokenSupplyForContracts]).
-// Callers must check the running total for a NEGATIVE excursion ([TokenSupply.Incomplete]):
-// refuse the series, never clamp it.
+// A contract with no flows is ABSENT, not zero ([SupplyReader.TokenSupplyForContracts]). Callers
+// must check the running total for a NEGATIVE excursion ([TokenSupply.Incomplete]): refuse the
+// series, never clamp it.
 func (r *SupplyReader) DailySupplyFlowsForContracts(ctx context.Context, contractIDs []string) ([]SupplyFlowDay, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil

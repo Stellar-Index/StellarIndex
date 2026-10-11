@@ -45,34 +45,31 @@ type AccountCreators struct {
 const opCreateAccount = "OperationTypeCreateAccount"
 
 // P23BoundaryLedger is the first Protocol 23 ledger, where the lake's record of account creation
-// changes representation. Below it a CreateAccount is a `create_account` movement (ADR-0047 D2;
-// classic-movements-backfill is clamped below this ledger by design); at or above it, a CAP-67
-// `transfer` movement flagged by an OperationTypeCreateAccount row in stellar.operations. Reading
-// only the classic arm under-ranks creators.
+// changes representation. Below it a CreateAccount is a `create_account` movement (ADR-0047 D2);
+// at or above it, a CAP-67 `transfer` movement flagged by an OperationTypeCreateAccount row in
+// stellar.operations. Reading only the classic arm under-ranks creators.
 // Same VALUE as classicmovements.P23StartLedger and timescale.SEP41MovementsFloorLedger, not the
 // same constant: internal/storage sits below internal/sources (lint-imports.sh
 // L/storage-below-compute). TestP23BoundaryConstantsAgree keeps all three equal.
 const P23BoundaryLedger uint32 = 58_762_517
 
 // creatorsBoardSettings is the board join's settings. query_plan_join_swap_table = 0 PINS the
-// hash-table build side to the live-account table; left to the planner, the built side would
-// silently switch populations as the archive grows. Peak is then ~313 bytes per live account
-// against the 8 GiB budget.
+// hash-table build side to the live-account table; left to the planner, the built side could
+// silently switch populations as the archive grows.
 const creatorsBoardSettings = boundedScanSettings +
 	", query_plan_join_swap_table = 0, max_execution_time = 1800"
 
 // creatorsP23ArmSettings is the post-P23 arm's join. It pins the build side to the window's
-// CreateAccount rows, since the movements side is two orders of magnitude larger. The 1800 s cap is
-// per window, sized for headroom over the widest measured window.
+// CreateAccount rows, since the movements side is two orders of magnitude larger. The 1800 s cap
+// is per window.
 const creatorsP23ArmSettings = boundedScanSettings +
 	", query_plan_join_swap_table = 0, max_execution_time = 1800"
 
-// creatorEdgesSettings is the graph arm's aggregation. Peak is ~150 bytes per distinct (creator,
-// created) pair, below the board join's peak. The per-edge `creations` inherits the post-P23 arm's
-// one-leg-per-op assumption.
+// creatorEdgesSettings is the graph arm's aggregation. The per-edge `creations` inherits the
+// post-P23 arm's one-leg-per-op assumption.
 // Deliberately NO optimize_aggregation_in_order: it cannot spill, so it cancels
-// max_bytes_before_external_group_by and turns a spilling aggregation into a memory-limit failure,
-// even though the sort order matches. Not walked: a pair can span lake partitions.
+// max_bytes_before_external_group_by and turns a spilling aggregation into a memory-limit failure.
+// Not walked: a pair can span lake partitions.
 const creatorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 
 // creatorsRollupStatements is the full recompute: WALK the archive one lake partition at a time
@@ -81,15 +78,13 @@ const creatorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // is visible until the swap, so an interrupted cycle leaves the previous board.
 // Two arms: P23 changed how a CreateAccount is recorded, not whether. They clamp on opposite sides
 // of `boundary`, so every ledger is covered exactly once. The post-P23 arm joins through the
-// transfer movement, which also gates on transaction success (stellar.operations keeps failed
+// transfer movement and also gates on transaction success (stellar.operations keeps failed
 // transactions' operations).
 // The boundary is a parameter: on a reset test net every ledger is post-P23, so a baked-in pubnet
-// constant would leave the classic arm owning everything and the board empty. Callers pass
-// movements_floor_ledger.
+// constant would leave the board empty. Callers pass movements_floor_ledger.
 // Walked, with the board join outside the walk: movement_kind is not in account_movements' ORDER
 // BY, so finding creations is scan-shaped, and one statement would hold the dedupe table and the
-// join's build side together, past the 8 GiB budget. A window wholly on the other side of the
-// boundary prunes to no parts.
+// join's build side together, past the 8 GiB budget.
 // Stats derive from the staging board so the served span describes exactly the rows ranked.
 // Dedup reproduces ReplacingMergeTree explicitly (argMax over ingested_at, grouped by the full
 // ORDER BY key) rather than FINAL, which would pay merge-on-read for the whole table. Per-window
@@ -150,8 +145,6 @@ func creatorsCreationArmSteps(boundary string) []rollupStep {
 		// op. leg_index is in the GROUP BY, so a second `sent` leg for one creation would emit two
 		// rows and silently double that creator's accounts_created. Re-check by counting (ledger,
 		// tx_hash, op_index) keys with uniqExact(leg_index) > 1 over the joined set.
-		// Dropping leg_index would make it robust but changes a query verified at partition scale,
-		// on money, with no fixture proving the collapse picks the right counterparty.
 	}
 }
 
@@ -288,11 +281,10 @@ func RunCreatorsRollup(ctx context.Context, addr string, boundary uint32, logf f
 }
 
 // AccountCreators reads the rollup snapshot: top `limit` board rows plus totals and span. ok=false
-// (not an error) when the rollup is unprovisioned or has no completed cycle: the handler 503s
-// rather than serve zeros.
-// A non-empty `account` narrows Board to that creator's row (rank is whole-aggregation, so paging
-// cannot answer "where does this address stand"); `limit` is ignored and totals stay
-// whole-aggregation.
+// (not an error) when the rollup is unprovisioned or has no completed cycle, so the handler 503s
+// rather than serves zeros. A non-empty `account` narrows Board to that creator's row (rank is
+// whole-aggregation, so paging cannot answer "where does this address stand"); `limit` is ignored
+// and totals stay whole-aggregation.
 func (r *ExplorerReader) AccountCreators(ctx context.Context, limit int, account string) (AccountCreators, bool, error) {
 	if !r.probeSchema(ctx, &r.accountCreatorsProbe,
 		`SELECT rank FROM stellar.account_creators_rollup LIMIT 1`, true) {

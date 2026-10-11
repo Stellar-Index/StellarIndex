@@ -5,12 +5,11 @@ import (
 	"strings"
 )
 
-// A per-arm `LIMIT 1 BY <key>` sits between the sort-key ORDER BY and the
-// LIMIT, which stops ClickHouse's read-in-order early exit: the read walks the
-// account's (or table's) whole range before the cut. The page readers instead
-// read a bounded WINDOW of rows in sort-key order, collapse adjacent
-// duplicate keys here, and fall back to the exact LIMIT 1 BY query only when
-// the window cannot prove it holds a full page of distinct keys.
+// A per-arm `LIMIT 1 BY <key>` between the sort-key ORDER BY and the LIMIT stops ClickHouse's
+// read-in-order early exit: the read walks the account's (or table's) whole range before the cut.
+// The page readers instead read a bounded WINDOW of rows in sort-key order, collapse adjacent
+// duplicate keys here, and fall back to the exact LIMIT 1 BY query only when the window cannot
+// prove it holds a full page of distinct keys.
 
 const (
 	// windowFactorKeys: row-per-key tables (operations, movements). Duplicates
@@ -25,11 +24,10 @@ const (
 // windowRows is the row budget one windowed read asks for.
 func windowRows(limit, factor int) int { return limit*factor + 8 }
 
-// dedupWindow collapses adjacent same-key rows of a sort-key-ordered window
-// read of `window` rows (newer picks the surviving duplicate; nil keeps the
-// first). ok is false when the window was filled and holds fewer than `limit`
-// complete key groups: the arm may have further keys the window never saw, so
-// the caller must use the exact query. When the window is filled the final
+// dedupWindow collapses adjacent same-key rows of a sort-key-ordered window read of `window` rows
+// (newer picks the surviving duplicate; nil keeps the first). ok is false when the window was
+// filled and holds fewer than `limit` complete key groups: the arm may have further keys the
+// window never saw, so the caller must use the exact query. When the window is filled the final
 // group is dropped, as its remaining duplicates may lie beyond the window.
 func dedupWindow[R any, K comparable](rows []R, window, limit int, key func(R) K, newer func(a, b R) bool) (out []R, ok bool) {
 	for i, r := range rows {

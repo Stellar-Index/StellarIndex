@@ -9,31 +9,29 @@ import (
 	"time"
 )
 
-// The account graph's activity history: one account's creation and sponsorship
-// activity resolved into calendar months.
+// The account graph's activity history: one account's creation and sponsorship activity resolved
+// into calendar months.
 //
-// The served tier stores EDGES, one row per distinct (creator, created) or
-// (sponsor, sponsored) pair, with only first_at and last_at. Per-event times exist
-// only in the rollups' working tables (account_creators_ops, account_sponsors_ops),
-// which each cycle TRUNCATEs and refills, so reading one mid-cycle serves a partial
-// archive (deploy/clickhouse/account_creators_rollup.sql). Two facts are derivable and kept apart:
+// The served tier stores EDGES, one row per distinct (creator, created) or (sponsor, sponsored)
+// pair, with only first_at and last_at. Per-event times exist only in the rollups' working tables
+// (account_creators_ops, account_sponsors_ops), which each cycle TRUNCATEs and refills, so reading
+// one mid-cycle serves a partial archive. Two facts are derivable and kept apart:
 //
-//   - NEW ACCOUNTS per month: counterparties first created/sponsored that month.
-//     COMPLETE: summed over all months it equals the distinct-counterparty total.
-//   - EVENTS per month: an edge with N > 1 events places exactly two (first_at,
-//     last_at); the other N-2 are counted as UNPLACED, never smeared into a month.
+//   - NEW ACCOUNTS per month: counterparties first created/sponsored that month. COMPLETE: summed
+//     over all months it equals the distinct-counterparty total.
+//   - EVENTS per month: an edge with N > 1 events places exactly two (first_at, last_at); the
+//     other N-2 are counted as UNPLACED, never smeared into a month.
 //
 // events == placed + unplaced (TestAccountGraphHistoryPlacementIdentity).
 //
 // A month with nothing in it emits no point and nothing is carried forward. Coverage is the span
-// the rollup aggregated (ADR-0031): an absent month inside it was quiet, one outside it was not
-// observed.
+// the rollup aggregated: an absent month inside it was quiet, one outside it was not observed.
 
-// accountGraphHistoryPeriodsQuery buckets both arms' edges by month in one trip.
-// Each sub-select is a PRIMARY-KEY RANGE READ (tables are ORDER BY (creator, created)
-// and (sponsor, sponsored)). The first-event arm has w=1 and the last-event arm w=0,
-// so new_accounts counts edges while events counts placed events. toDateTime(..., 'UTC')
-// pins the zone because toStartOfMonth yields a zone-less Date.
+// accountGraphHistoryPeriodsQuery buckets both arms' edges by month in one trip. Each sub-select
+// is a PRIMARY-KEY RANGE READ (ORDER BY (creator, created) and (sponsor, sponsored)). The
+// first-event arm has w=1 and the last-event arm w=0, so new_accounts counts edges while events
+// counts placed events. toDateTime(..., 'UTC') pins the zone because toStartOfMonth yields a
+// zone-less Date.
 const accountGraphHistoryPeriodsQuery = `
 	SELECT rel, bucket, toUInt64(sum(w)) AS new_accounts, toUInt64(sum(ev)) AS events
 	FROM (
@@ -118,12 +116,11 @@ type AccountGraphHistory struct {
 	Sponsored AccountGraphHistorySide
 }
 
-// AccountGraphHistory reads one account's monthly activity in both relations.
-// Every read is a primary-key range on (creator, ...) or (sponsor, ...), so cost is
-// that account's own edges (63 ms at max_threads=2 for the busiest creator's 1.57M
-// rows); an SWR cache would add an unbounded key space for nothing.
-// ok=false (not an error) when either arm is not exchanged live yet: a
-// half-provisioned graph would claim the account never created anything.
+// AccountGraphHistory reads one account's monthly activity in both relations. Every read is a
+// primary-key range on (creator, ...) or (sponsor, ...), so cost is that account's own edges (63 ms
+// at max_threads=2 for the busiest creator); an SWR cache would add an unbounded key space for
+// nothing. ok=false (not an error) when either arm is not exchanged live yet: a half-provisioned
+// graph would claim the account never created anything.
 func (r *ExplorerReader) AccountGraphHistory(ctx context.Context, account string) (AccountGraphHistory, bool, error) {
 	if !r.probeSchema(ctx, &r.accountCreatorEdgesProbe,
 		`SELECT creator FROM stellar.account_creator_edges LIMIT 1`, true) {

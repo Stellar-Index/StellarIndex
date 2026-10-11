@@ -15,11 +15,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sdexclaim"
 )
 
-// ExtractLedger structurally decodes one LedgerCloseMeta into Tier-1 rows. Decoder-
-// independent: it records shape and raw XDR, not protocol meaning.
-// ledger_entry_changes (extract_entry_changes.go) walk the tx-meta op-change and
-// fee-meta streams like dispatcher.walkEntryChanges (ADR-0038). A per-tx read error
-// is skipped and counted, not fatal, so one bad tx cannot lose a ledger.
+// ExtractLedger structurally decodes one LedgerCloseMeta into Tier-1 rows. Decoder-independent: it
+// records shape and raw XDR, not protocol meaning. ledger_entry_changes (extract_entry_changes.go)
+// walk the tx-meta op-change and fee-meta streams like dispatcher.walkEntryChanges. A per-tx read
+// error is skipped and counted, not fatal, so one bad tx cannot lose a ledger.
 func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, error) {
 	seq := lcm.LedgerSequence()
 	closeTime := lcm.ClosedAt().UTC()
@@ -363,14 +362,13 @@ func appendOpResult(ext *LedgerExtract, seq uint32, txHash string, opIndex uint3
 	})
 }
 
-// extractEvents appends one tx's eligible contract-event rows. An event of op i
-// carries opArgs[i].Args ONLY when its own contract is opArgs[i].ContractID (the
-// dispatcher's provenance gate): wrapper-reached events get empty op_args_xdr, so
-// args-requiring decoders (Redstone) refuse instead of reading attacker-chosen args.
-// A failed tx contributes nothing, as in dispatcher.ProcessLedger and CensusLedger, so
-// ledgers.soroban_event_count == COUNT(contract_events) == census (ch-gate) and
-// in_successful_call = 1 is true of every row; supply_flows never credits unapplied
-// mint/burn amounts.
+// extractEvents appends one tx's eligible contract-event rows. An event of op i carries
+// opArgs[i].Args ONLY when its own contract is opArgs[i].ContractID (the dispatcher's provenance
+// gate): wrapper-reached events get empty op_args_xdr, so args-requiring decoders (Redstone)
+// refuse instead of reading attacker-chosen args. A failed tx contributes nothing, as in
+// dispatcher.ProcessLedger and CensusLedger, so ledgers.soroban_event_count == COUNT(contract_events)
+// == census (ch-gate) and in_successful_call = 1 is true of every row; supply_flows never credits
+// unapplied mint/burn amounts.
 func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash string, opArgs []*opInvokeArgs, successful bool) {
 	if !successful {
 		return

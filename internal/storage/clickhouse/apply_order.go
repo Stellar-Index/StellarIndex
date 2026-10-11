@@ -27,14 +27,12 @@ type ledgerTx struct {
 // transaction in the given ledgers, keyed by (ledger, tx hash).
 type txIndexLookup func(ctx context.Context, ledgers []uint32) (map[ledgerTx]uint32, error)
 
-// applyOrderer re-sorts streamed contract events within each ledger into
-// transaction APPLY order. stellar.contract_events is sorted by
-// (ledger_seq, tx_hash, ...), a lexical order: a pool's first trade whose
-// tx hash sorts before its add_pool's would otherwise reach a live-grown
-// registry first and be dropped. The SQL keeps the table's sort key
-// so ClickHouse still streams in read order; the reorder is per ledger,
-// buffered, and stable, so exact duplicate rows stay adjacent for the
-// counting consumers that skip them by previous key.
+// applyOrderer re-sorts streamed contract events within each ledger into transaction APPLY
+// order. The table sorts by (ledger_seq, tx_hash, ...), a lexical order, so a pool's first trade
+// whose tx hash sorts before its add_pool's would reach a live-grown registry first and be
+// dropped. The SQL keeps the sort key so ClickHouse still streams in read order; the reorder is
+// per ledger, buffered and stable, so exact duplicates stay adjacent for consumers that skip
+// them by previous key.
 type applyOrderer struct {
 	ctx     context.Context
 	lookup  txIndexLookup

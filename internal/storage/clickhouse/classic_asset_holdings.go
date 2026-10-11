@@ -14,18 +14,13 @@ import (
 // TrustlineAssetSeed is one distinct classic asset the lake holds a
 // trustline for, with the ledger bracket the evidence spans.
 //
-// It answers exactly one question — does this (code, issuer) EXIST on
-// Stellar — and deliberately carries no balance, no holder count and no
-// supply. Those have an owner already (the asset_holders_* rollup and the
-// supply pipeline); duplicating them here, from a scan that runs on an
-// operator cadence, would create a second stale answer to a question that
-// already has a fresh one.
+// It answers one question, does this (code, issuer) EXIST on Stellar, and deliberately carries no
+// balance, holder count or supply: those are owned by the asset_holders_* rollup and the supply
+// pipeline, and duplicating them from an operator-cadence scan would add a second, stale answer.
 type TrustlineAssetSeed struct {
-	// Asset is the lake's asset string, which for a credit trustline is
-	// the canonical `CODE-GISSUER` form (internal/xdrjson.TrustLineAssetID)
-	// and therefore parses with canonical.ParseAsset unchanged. The caller
-	// parses it rather than splitting it: identity is (code, issuer), and a
-	// string split on the first dash is not that.
+	// Asset is the lake's asset string, the canonical `CODE-GISSUER` form for a credit trustline
+	// (internal/xdrjson.TrustLineAssetID). The caller parses it with canonical.ParseAsset rather
+	// than splitting it: identity is (code, issuer), and a split on the first dash is not that.
 	Asset string
 
 	// FirstLedger / LastLedger bracket the ledgers at which a trustline
@@ -41,10 +36,9 @@ type TrustlineAssetSeed struct {
 
 // HoldingsScanner pages the lake's distinct trustline-held classic assets.
 //
-// It holds one connection from the heavy-read class ([openRead]) for the
-// whole walk: unbounded execution time, a per-query memory ceiling, and
-// external spill for both the aggregation and the sort, so a walk that
-// outgrows memory costs time on the ZFS data pool instead of an OOM.
+// It holds one heavy-read connection ([openRead]) for the whole walk: unbounded execution time,
+// a per-query memory ceiling, and external spill for aggregation and sort, so a walk that
+// outgrows memory costs time instead of an OOM.
 type HoldingsScanner struct {
 	conn driver.Conn
 }
@@ -69,21 +63,17 @@ func (h *HoldingsScanner) Close() error {
 // trustlineAssetsPageQuery is one page of the walk, keyset-paginated on
 // the asset string.
 //
-// NO FINAL: the query groups on `asset` and takes min/max over `ledger_seq`,
-// so the duplicate versions FINAL would collapse are folded by the GROUP BY
-// anyway, and the read-time merge is the most expensive part of scanning this
-// table. The answer differs only toward MORE evidence: any row present,
-// superseded or not, is a ledger at which a trustline existed. max() is
-// merge-invariant; min() is not, but the writer takes LEAST across runs, so
-// first_seen can only move EARLIER, converging on the truth.
+// NO FINAL: the query groups on `asset` and takes min/max over `ledger_seq`, so the duplicate
+// versions FINAL would collapse are folded by the GROUP BY anyway, and the read-time merge is the
+// most expensive part of scanning this table. The answer differs only toward MORE evidence: any
+// row present is a ledger at which a trustline existed. max() is merge-invariant; min() is not,
+// but the writer takes LEAST across runs, so first_seen can only move EARLIER, toward the truth.
 //
-// NO change_type FILTER: this answers "does this asset exist", and a deleted
-// trustline is still proof it did (the holders rollup excludes `removed`
-// because it answers "who holds this now").
+// NO change_type FILTER: this answers "does this asset exist", and a deleted trustline is still
+// proof it did (the holders rollup excludes `removed` because it answers "who holds this now").
 //
-// Spill settings are inherited from [openRead]. Do NOT set
-// optimize_aggregation_in_order here: beside an external-group-by threshold
-// it CANCELS the spill valve and turns a spill into an OOM.
+// Spill settings are inherited from [openRead]. Do NOT set optimize_aggregation_in_order here:
+// beside an external-group-by threshold it CANCELS the spill valve and turns a spill into an OOM.
 const trustlineAssetsPageQuery = `
 	SELECT asset,
 	       min(ledger_seq) AS first_ledger,
@@ -125,19 +115,17 @@ func (h *HoldingsScanner) CountTrustlineAssets(ctx context.Context) (int64, erro
 // TrustlineAssetsAfter returns up to `limit` distinct classic assets whose
 // asset string sorts strictly after `after`, in ascending asset order.
 //
-// Keyset- rather than offset-paginated so a resumed run re-enters exactly
-// where the previous one stopped. Pass "" for the first page and the last
-// Asset of page N for page N+1; an empty result means the walk is complete.
+// Keyset- rather than offset-paginated so a resumed run re-enters exactly where the previous one
+// stopped. Pass "" for the first page and the last Asset of page N for page N+1; an empty result
+// means the walk is complete.
 //
-// entry_type is the FIRST sort-key column, so the `entry_type = 'trustline'`
-// predicate prunes granules. Each page still re-aggregates the trustline
-// range, so bigger pages mean fewer passes at more memory per pass.
+// entry_type is the FIRST sort-key column, so the `entry_type = 'trustline'` predicate prunes
+// granules. Each page still re-aggregates the trustline range, so bigger pages mean fewer passes
+// at more memory per pass.
 //
-// Native XLM and pool-share trustlines are excluded in SQL: they have no
-// (code, issuer) identity. The two exact-match predicates cover the
-// `pool:<hex>` form and the bare `pool` fallback without matching a real
-// credit asset code starting with "pool" (codes are case-sensitive).
-// (asset codes are case-sensitive and "poolX" etc. are valid).
+// Native XLM and pool-share trustlines are excluded in SQL: they have no (code, issuer)
+// identity. The two exact-match predicates cover the `pool:<hex>` form and the bare `pool`
+// fallback without matching a real credit asset code such as "poolX" (codes are case-sensitive).
 func (h *HoldingsScanner) TrustlineAssetsAfter(ctx context.Context, after string, limit int) ([]TrustlineAssetSeed, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("clickhouse: TrustlineAssetsAfter: limit must be positive, got %d", limit)

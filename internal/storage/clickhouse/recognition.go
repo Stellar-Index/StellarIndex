@@ -55,11 +55,9 @@ func MaxLedger(ctx context.Context, addr string) (uint32, error) {
 	return lakeTipLedger(ctx, conn)
 }
 
-// recognitionScanWindow is the per-query ledger span for the distinct-shape
-// scan: one lake partition (PARTITION BY intDiv(ledger_seq, 1000000)), so each
-// window query reads exactly one partition's parts. Windowing is what makes
-// the scan's peak memory independent of history size — the lake grows in
-// partitions, each of which is scanned by its own bounded query.
+// recognitionScanWindow is the per-query ledger span for the distinct-shape scan: one lake
+// partition (PARTITION BY intDiv(ledger_seq, 1000000)). Windowing keeps peak memory independent
+// of history size, since each partition is scanned by its own bounded query.
 const recognitionScanWindow = 1_000_000
 
 // exemplarBatchSize is how many shapes each representative-event fetch covers.
@@ -85,20 +83,16 @@ const nonSymbolShapeCols = `if(topic_0_sym = '', topics_xdr[1], '') AS t0,
 			if(topic_0_sym = '', topics_xdr[2], '') AS t1,
 			if(topic_0_sym = '', length(topics_xdr), 0) AS tn`
 
-// DistinctTopicShapes returns one representative event per distinct
-// (contract_id, topic_0_sym) in contract_events over [from,to]. Optionally
-// excludes topic[0] symbols (e.g. pass ClassicTokenTopic0Syms to drop the
-// CAP-67 classic-token firehose and focus on protocol shapes). Results are
-// ordered by Count descending.
+// DistinctTopicShapes returns one representative event per distinct (contract_id, topic_0_sym)
+// in contract_events over [from,to], ordered by Count descending. excludeTopic0 drops topic[0]
+// symbols (e.g. ClassicTokenTopic0Syms, the CAP-67 classic-token firehose).
 //
-// Two phases, so peak memory stays bounded regardless of history size:
+// Two phases keep peak memory bounded regardless of history size:
 //
 //  1. SCAN: per-partition windows GROUP BY only the NARROW identity columns
-//     (contract_id, topic_0_sym) + count/min/max, merged Go-side. No wide
-//     column is read.
-//  2. EXEMPLAR: for each distinct shape, fetch the representative event's
-//     bytes with a point read pinned to the shape's MaxLedger, batched
-//     exemplarBatchSize shapes per query (the newest event's encoding).
+//     (contract_id, topic_0_sym) + count/min/max, merged Go-side. No wide column is read.
+//  2. EXEMPLAR: fetch the newest event's bytes per shape with a point read pinned to the
+//     shape's MaxLedger, exemplarBatchSize shapes per query.
 //
 // Both phases carry boundedScanSettings: growth costs time, not failures.
 func DistinctTopicShapes(ctx context.Context, addr string, from, to uint32, excludeTopic0 []string) ([]TopicShape, error) {
@@ -125,17 +119,12 @@ func DistinctTopicShapes(ctx context.Context, addr string, from, to uint32, excl
 	return finishShapeScan(ctx, conn, acc)
 }
 
-// DistinctTopicShapesForWatchedContracts scopes the distinct-shape scan to a
-// specific topic[0] set AND a specific contract set. It exists for the
-// watched-SEP41 recognition census: FirehoseExcludeSyms drops the CAP-67
-// classic-token topics from the global scan (see DistinctTopicShapes) because
-// auditing them for every contract in the lake would re-scan the 447 M-row
-// firehose, but that means a watched SEP-41 source silently dropping its OWN
-// transfer/mint/burn/… events is invisible to the global census. Restricting
-// both topic[0] AND contract_id keeps that source's own kinds auditable at
-// the same bounded cost as the global scan (a handful of contracts, not the
-// whole firehose). Returns (nil, nil) if either input set is empty — no
-// watched contracts or nothing to look for means nothing to scan.
+// DistinctTopicShapesForWatchedContracts scopes the distinct-shape scan to a topic[0] set AND a
+// contract set, for the watched-SEP41 recognition census. The global scan drops the CAP-67
+// classic-token topics (re-scanning that firehose for every contract is too costly), so a watched
+// SEP-41 source silently dropping its OWN transfer/mint/burn events would be invisible to it.
+// Restricting both keeps those kinds auditable at bounded cost. Returns (nil, nil) if either
+// set is empty.
 func DistinctTopicShapesForWatchedContracts(ctx context.Context, addr string, from, to uint32, topic0, contractIDs []string) ([]TopicShape, error) {
 	if len(topic0) == 0 || len(contractIDs) == 0 {
 		return nil, nil
@@ -162,11 +151,9 @@ func DistinctTopicShapesForWatchedContracts(ctx context.Context, addr string, fr
 	return finishShapeScan(ctx, conn, acc)
 }
 
-// finishShapeScan sorts the accumulated distinct shapes (count-descending
-// like the old ORDER BY cnt DESC, identity tie-break for deterministic
-// output) and fills their exemplars. Shared by DistinctTopicShapes and
-// DistinctTopicShapesForWatchedContracts — only the phase-1 scan query
-// differs between them.
+// finishShapeScan sorts the accumulated shapes (count-descending, identity tie-break for
+// deterministic output) and fills their exemplars. Only the phase-1 scan query differs between
+// the two callers.
 func finishShapeScan(ctx context.Context, conn driver.Conn, acc map[shapeKey]*TopicShape) ([]TopicShape, error) {
 	out := make([]TopicShape, 0, len(acc))
 	for _, s := range acc {
@@ -219,12 +206,10 @@ func distinctShapesWindowQuery(excludeTopic0 []string) string {
 		%s`, nonSymbolShapeCols, where, boundedScanSettings)
 }
 
-// distinctShapesWatchedQuery is the phase-1 scan for
-// DistinctTopicShapesForWatchedContracts: same narrow-column shape as
-// distinctShapesWindowQuery, but INCLUDE (not exclude) on topic[0] and an
-// added contract_id restriction. contractIDs are lake-sourced strkeys, so
-// escaped like the exemplar query's identity literals rather than assumed
-// compile-time constants.
+// distinctShapesWatchedQuery is the phase-1 scan for DistinctTopicShapesForWatchedContracts:
+// the narrow-column shape of distinctShapesWindowQuery, but INCLUDE on topic[0] plus a
+// contract_id restriction. contractIDs are lake-sourced strkeys, so they are escaped rather than
+// assumed to be compile-time constants.
 func distinctShapesWatchedQuery(topic0, contractIDs []string) string {
 	where := fmt.Sprintf("WHERE ledger_seq BETWEEN ? AND ? AND topic_0_sym IN (%s) AND contract_id IN (%s)",
 		sqlQuoteList(topic0), sqlQuoteEscapedList(contractIDs))
@@ -275,12 +260,10 @@ func mergeShapeWindow(rows driver.Rows, acc map[shapeKey]*TopicShape) error {
 	return rows.Err()
 }
 
-// shapeExemplarQuery is the phase-2 representative fetch for one batch of
-// shapes: every shape's exemplar is read at its own MaxLedger, so the ledger
-// IN-set prunes to |batch| single-ledger primary-key ranges, and the GROUP BY
-// holds at most |batch| wide exemplar states. argMax over the matched rows
-// picks each shape's max-ledger event — its own MaxLedger is always in the
-// IN-set, so the result matches the old whole-range argMax semantics.
+// shapeExemplarQuery is the phase-2 representative fetch for one batch of shapes: each exemplar
+// is read at its own MaxLedger, so the ledger IN-set prunes to |batch| single-ledger
+// primary-key ranges and the GROUP BY holds at most |batch| wide states. argMax over the matched
+// rows picks each shape's max-ledger event, since its MaxLedger is always in the IN-set.
 func shapeExemplarQuery(shapes []TopicShape) string {
 	ledgers := make([]string, 0, len(shapes))
 	pairs := make([]string, 0, len(shapes))

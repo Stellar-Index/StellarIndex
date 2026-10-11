@@ -24,11 +24,11 @@ import (
 //     entries and TTL keys: persistent entries and contract code are archived and restorable,
 //     so they stay live. Skipped keys still take their walk position.
 //
-// Within each block changes follow entrywalk.Canonical order (core's block order is
-// hash-map order and differs between exports). change_index is a per-TRANSACTION counter (stable across re-ingest, so idempotent under the
-// ReplacingMergeTree). A change that won't marshal is skipped and counted, never fatal, and still
-// takes its intra_ledger_seq, the per-LEDGER position folded into the RMT version so the last
-// intra-ledger change to a key wins FINAL dedup deterministically.
+// Within each block changes follow entrywalk.Canonical order (core's block order is hash-map order
+// and differs between exports). change_index is a per-TRANSACTION counter (stable across
+// re-ingest, so idempotent under the ReplacingMergeTree). A change that won't marshal is skipped
+// and counted, never fatal, and still takes its intra_ledger_seq, the per-LEDGER position folded
+// into the RMT version so the last intra-ledger change to a key wins FINAL dedup deterministically.
 func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransaction, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time) {
 	var entryChangeSeq uint32
 	// change_index is per-transaction, so it must survive the gap between the two
@@ -191,12 +191,11 @@ func entryChangeRow(seq uint32, closeTime time.Time, txHash string, opIndex int3
 // "pool:<hex>") from a ledger key. Both empty for entry types with no single owner (claimable
 // balances, pools, contract data/code, ttl, config); asset is empty for all but trustlines.
 //
-// The empty asset on other holding types is structural, not a gap: the key does not name the
-// asset (a claimable balance's key is a hash, a pool holds two assets, a SAC Balance entry
-// names only its contract, derivable only forward via canonical.Asset.SacContractID). Any
-// per-asset supply summed off this column is a trustline-only LOWER BOUND; the lake-flows
-// total over the SAC contract (stellar.supply_flows) sees all four domains. See
-// asset_supply_reader.go's ClassicCirculatingSupply.
+// The empty asset on other holding types is structural, not a gap: the key does not name the asset
+// (a claimable balance's key is a hash, a pool holds two assets, a SAC Balance entry names only its
+// contract, derivable only forward via canonical.Asset.SacContractID). Any per-asset supply summed
+// off this column is a trustline-only LOWER BOUND; the lake-flows total over the SAC contract
+// (stellar.supply_flows) sees all four domains. See ClassicCirculatingSupply.
 func ownerAndAsset(key xdr.LedgerKey) (accountID, asset string) {
 	switch key.Type {
 	case xdr.LedgerEntryTypeAccount:

@@ -27,12 +27,11 @@ type censusExecConn interface {
 // the live partition holds; the partition is left untouched.
 var ErrCensusShrink = errors.New("census day recompute is smaller than the live partition")
 
-// censusDayInsert computes one day's census into the given PRIVATE staging
-// table. A day is not expressible in ledger_seq (the sort key), so the filter
-// rides on close_time and pruning depends on contract_events' idx_ce_close_time
-// minmax index (deploy/clickhouse/tier1_schema.sql); without it the answer is
-// still right, from a full scan. The staging name is crypto-random per run
-// (privateStagingTable), never user input, so the Format-built identifier is safe.
+// censusDayInsert computes one day's census into the given PRIVATE staging table. A day is not
+// expressible in ledger_seq (the sort key), so the filter rides on close_time and pruning
+// depends on contract_events' idx_ce_close_time minmax index; without it the answer is still
+// right, from a full scan. The staging name is crypto-random per run, never user input, so the
+// Format-built identifier is safe.
 func censusDayInsert(staging string) string {
 	return fmt.Sprintf(`
 	INSERT INTO stellar.%s (day, contract_id, events, last_ledger, last_seen)
@@ -84,11 +83,10 @@ func CensusMaxDay(ctx context.Context, addr string) (time.Time, bool, error) {
 	return maxDay, n > 0, rows.Err()
 }
 
-// ContiguousThroughDay returns the UTC day holding the highest ledger the
-// lake has with no hole from the start of fromDay: the last day a census
-// recompute may read (that day only up to its hole, so it stays the resume
-// point). ok is false when fromDay's own first ledger is missing or the
-// lake has not reached fromDay.
+// ContiguousThroughDay returns the UTC day holding the highest ledger the lake has with no hole
+// from the start of fromDay: the last day a census recompute may read (only up to its hole, so
+// it stays the resume point). ok is false when fromDay's first ledger is missing or the lake has
+// not reached fromDay.
 func ContiguousThroughDay(ctx context.Context, addr string, fromDay time.Time) (time.Time, bool, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -124,13 +122,11 @@ func ContiguousThroughDay(ctx context.Context, addr string, fromDay time.Time) (
 	return closeTime.UTC().Truncate(24 * time.Hour), true, nil
 }
 
-// RunCensusDay recomputes exactly one UTC day of the census and swaps it in
-// atomically. Idempotent, and safe to run concurrently with another run on
-// the same day: each computes into its OWN private staging table.
+// RunCensusDay recomputes exactly one UTC day of the census and swaps it in atomically.
+// Idempotent, and safe concurrently on the same day: each run uses its OWN private staging table.
 //
-// A recompute smaller than the live partition (fewer contracts or fewer
-// events) is refused with ErrCensusShrink unless shrinkOK: the lake only
-// grows for a past day, so a shrink means it lost data under the read.
+// A recompute smaller than the live partition is refused with ErrCensusShrink unless shrinkOK:
+// the lake only grows for a past day, so a shrink means it lost data under the read.
 func RunCensusDay(ctx context.Context, addr string, day time.Time, shrinkOK bool, logf func(format string, args ...any)) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -168,10 +164,9 @@ func runCensusDayConn(ctx context.Context, conn censusExecConn, day time.Time, s
 	start := time.Now()
 
 	// Compute into a fresh PRIVATE staging table, then swap the day in.
-	// REPLACE PARTITION is atomic (per-table alter lock), so concurrent runs of
-	// the same day each swap in a COMPLETE partition. DDL takes no bound
-	// parameters on the native protocol; every literal below is a
-	// Format-produced date or a crypto-random staging name.
+	// REPLACE PARTITION is atomic (per-table alter lock), so concurrent runs of the same day
+	// each swap in a COMPLETE partition. DDL takes no bound parameters on the native protocol;
+	// every literal below is a Format-produced date or a crypto-random staging name.
 	partition := dayUTC.Format("2006-01-02")
 	staging, err := privateStagingTable()
 	if err != nil {

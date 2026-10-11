@@ -9,12 +9,11 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// GateCounts is the read-back of a ledger range's Tier-1 counts from
-// ClickHouse — both the per-ledger STORED counts (the ledgers row the
-// extractor wrote) and the ACTUAL row counts of the child tables. The
-// completeness gate (chGate gate 2, internal/ops/chops/ch_gate.go) asserts these agree with
-// each other AND with the decoder-independent census oracle. All reads use
-// FINAL so concurrent/duplicate ReplacingMergeTree parts dedup at read time.
+// GateCounts is the read-back of a ledger range's Tier-1 counts: the per-ledger STORED counts
+// (the ledgers row the extractor wrote) and the ACTUAL row counts of the child tables. The
+// completeness gate (internal/ops/chops/ch_gate.go) asserts these agree with each other AND
+// with the decoder-independent census oracle. All reads use FINAL so duplicate
+// ReplacingMergeTree parts dedup at read time.
 type GateCounts struct {
 	LedgerRows   uint64 // count() of stellar.ledgers in range (deduped)
 	TotalLedgers uint64 // count() of ALL stellar.ledgers (whole DB) — footprint denominator
@@ -52,19 +51,17 @@ func openRead(ctx context.Context, addr string) (driver.Conn, error) {
 		Addr: []string{addr},
 		Auth: auth,
 		Settings: clickhouse.Settings{
-			// Heavy-FINAL gate/reconcile read class. `max_execution_time` stays
-			// UNLIMITED: a legitimate FINAL stream over a full-history window
-			// runs for many minutes (see the ReadTimeout note below). What wedged
-			// CH was MEMORY, so the guard is a per-query memory ceiling, low
-			// enough to fail a pathological query before it starves Postgres on
-			// the shared host (ADR-0034). max_threads bounds how many wide part
-			// streams hold buffers concurrently, which drives this class's peak.
+			// Heavy-FINAL gate/reconcile read class. `max_execution_time` stays UNLIMITED: a
+			// legitimate FINAL stream over a full-history window runs for many minutes (see
+			// ReadTimeout below). The real hazard is memory, so the guard is a per-query ceiling
+			// low enough to fail a pathological query before it starves Postgres on the shared
+			// host (ADR-0034). max_threads bounds how many wide part streams hold buffers at once,
+			// which drives this class's peak.
 			"max_execution_time": 0,
-			// Streaming the CAP-67 firehose's wide columns InOrder drove CH's
-			// SERVER-WIDE OvercommitTracker cap on its own (per-query tracking
-			// undercounts the read-pool buffers of many wide part streams), so
-			// threads are low: fewer concurrent wide-part buffers bounds the
-			// true footprint. Growth costs time, not failures.
+			// Streaming the CAP-67 firehose's wide columns InOrder can hit CH's SERVER-WIDE
+			// OvercommitTracker cap on its own (per-query tracking undercounts read-pool buffers
+			// of many wide part streams), so threads are low: fewer concurrent buffers bound the
+			// true footprint. Fewer threads cost time, not failures.
 			"max_memory_usage": 10 * 1024 * 1024 * 1024,
 			"max_threads":      3,
 			// Spill instead of OOM: raising the ceiling is the wrong game for a
@@ -74,11 +71,10 @@ func openRead(ctx context.Context, addr string) (driver.Conn, error) {
 			"max_bytes_before_external_group_by": 8 * 1024 * 1024 * 1024,
 		},
 		DialTimeout: 10 * time.Second,
-		// ReadTimeout is per network read, not per query. A FINAL stream over a
-		// whole 1M-ledger partition can stall between blocks (merge compute) or
-		// while the consumer is busy writing each event to Postgres; the default
-		// (~5 min) trips with "i/o timeout" mid-stream. 1h tolerates the longest
-		// inter-block gap for full-history reprojection windows.
+		// ReadTimeout is per network read, not per query. A FINAL stream over a whole
+		// 1M-ledger partition can stall between blocks (merge compute) or while the consumer
+		// writes each event to Postgres; the ~5 min default trips with "i/o timeout" mid-stream.
+		// 1h tolerates the longest inter-block gap in full-history reprojection.
 		ReadTimeout: time.Hour,
 		// DO NOT lower MaxOpenConns below 2. The state-write-key enricher
 		// (state_write_keys.go) issues its batched ledger_entry_changes lookups

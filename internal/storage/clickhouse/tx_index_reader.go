@@ -12,14 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TxIndexReader resolves tx hashes to their intra-ledger application
-// order (tx_index) from the lake's stellar.tx_hash_index — the
-// hash-ordered lookup table kept current by a materialized view over
-// stellar.transactions (ADR-0034). This is the
-// ordering signal the Postgres served tier does not carry; the MEV
-// worker's sandwich detectors consume it (mev.TxOrderResolver).
-//
-// Construct once at startup, reuse, Close at shutdown.
+// TxIndexReader resolves tx hashes to their intra-ledger application order (tx_index) from the
+// lake's stellar.tx_hash_index, kept current by a materialized view over stellar.transactions. The
+// Postgres served tier does not carry this ordering; the MEV sandwich detectors consume it
+// (mev.TxOrderResolver). Construct once at startup, reuse, Close at shutdown.
 type TxIndexReader struct {
 	conn driver.Conn
 }
@@ -55,15 +51,13 @@ func NewTxIndexReader(ctx context.Context, addr string) (*TxIndexReader, error) 
 // list reads a granule per unmerged part per key and trips MEMORY_LIMIT.
 const txIndexChunk = 500
 
-// TxIndexes returns tx_hash → tx_index for every hash the lake knows.
-// Missing hashes (not yet indexed — the tx_hash_index historical
-// backfill is windowed) are simply absent from the map; callers
-// degrade rather than guess. max() collapses ReplacingMergeTree
-// duplicates that haven't merged yet (tx_index is identical across
+// TxIndexes returns tx_hash -> tx_index for every hash the lake knows. Missing hashes (not yet
+// indexed; the historical backfill is windowed) are absent from the map and callers degrade rather
+// than guess. max() collapses un-merged ReplacingMergeTree duplicates (tx_index is identical across
 // duplicates of one hash).
 //
-// A failed chunk aborts the call: a partial map would read as "legitimately
-// unindexed" to the MEV worker. MEVLakeOrderLookupSkippedTotal counts it.
+// A failed chunk aborts the call: a partial map would read as "legitimately unindexed" to the MEV
+// worker. MEVLakeOrderLookupSkippedTotal counts it.
 func (r *TxIndexReader) TxIndexes(ctx context.Context, hashes []string) (map[string]uint32, error) {
 	out := make(map[string]uint32, len(hashes))
 	err := forEachTxHashChunk(ctx, hashes, obs.MEVLakeOrderLookupSkippedTotal, func(chunk []string) error {

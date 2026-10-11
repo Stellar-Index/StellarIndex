@@ -16,19 +16,15 @@ const (
 	ContractInstanceChangesV2Table = "contract_instance_changes_v2"
 )
 
-// contractInstanceBackfillQuery fills one ledger window of the named
-// instance-timeline table from ledger_entry_changes history — the same
-// fixed-offset extraction as contract_instance_changes_mv
-// (deploy/clickhouse/contract_instance_changes.sql; keep the two in
-// lockstep). Windowed on ledger_seq (the source's primary-key prefix); the
-// target RMT collapses re-runs of overlapping windows, so it is idempotent
-// and resumable. table is one of the two constants above, never caller text
-// (BackfillContractInstanceChangesInto checks).
+// contractInstanceBackfillQuery fills one ledger window of the named instance-timeline table from
+// ledger_entry_changes history, with the same fixed-offset extraction as
+// contract_instance_changes_mv (deploy/clickhouse/contract_instance_changes.sql; keep the two in
+// lockstep). Windowed on ledger_seq (the source's primary-key prefix); the target RMT collapses
+// re-runs of overlapping windows. table is one of the two constants above, never caller text.
 //
-// FINAL on the source read, for txHashIndexBackfillQuery's reason: a window a
-// corrected re-ingest touched can hold the stale part beside the fix, and both
-// would tie on their DEFAULT now() ingested_at in the target, letting the
-// stale wasm_hash survive the collapse. FINAL is bounded by the window.
+// FINAL on the source read, for txHashIndexBackfillQuery's reason: a corrected re-ingest can leave
+// the stale part beside the fix, and both would tie on the target's DEFAULT now() ingested_at,
+// letting the stale wasm_hash survive the collapse. FINAL is bounded by the window.
 func contractInstanceBackfillQuery(table string) string {
 	return fmt.Sprintf(`
 	INSERT INTO stellar.%s
@@ -54,12 +50,10 @@ func contractInstanceBackfillQuery(table string) string {
 	SETTINGS max_threads = 4, max_memory_usage = 8589934592, max_execution_time = 1800`, table)
 }
 
-// BackfillContractInstanceChanges fills stellar.contract_instance_changes
-// (the per-contract instance-executable timeline behind the explorer's
-// code-history + wasm-hash reads) from ledger_entry_changes history in
-// windowed, resumable INSERT…SELECT chunks. Same operator contract as
-// BackfillContractActiveLedgers: serialize on r1, run under
-// run-heavy-job.sh, resume with the printed -from on interrupt.
+// BackfillContractInstanceChanges fills stellar.contract_instance_changes (the per-contract
+// instance-executable timeline behind the explorer's code-history + wasm-hash reads) from
+// ledger_entry_changes history in windowed, resumable INSERT...SELECT chunks. Same operator
+// contract as BackfillContractActiveLedgers: serialize on r1, run under run-heavy-job.sh.
 func BackfillContractInstanceChanges(ctx context.Context, addr string, from, to, window uint32, logf func(format string, args ...any)) error {
 	return BackfillContractInstanceChangesInto(ctx, addr, ContractInstanceChangesTable, from, to, window, logf)
 }
@@ -132,13 +126,11 @@ func ReadInstanceBackfillStart(ctx context.Context, addr, table string) (Instanc
 	return st, nil
 }
 
-// SetContractInstanceChangesGenesisWatermark records that the named
-// instance-timeline table is complete from the lake's first ledger through
-// `thru`, in the shared name-keyed entry_history_watermark table. Readers use
-// it to trust a per-contract miss instead of scanning ledger_entry_changes.
-// Call only after a backfill proven complete (see chops.runInstanceBackfill).
-// A thru at or below the stored mark records nothing: the table is a
-// ReplacingMergeTree, so a later, lower row would win after a merge.
+// SetContractInstanceChangesGenesisWatermark records that the named instance-timeline table is
+// complete from the lake's first ledger through `thru`, in the shared entry_history_watermark
+// table. Readers trust a per-contract miss instead of scanning ledger_entry_changes, so call only
+// after a backfill proven complete. A thru at or below the stored mark records nothing: the table
+// is a ReplacingMergeTree, so a later, lower row would win after a merge.
 func SetContractInstanceChangesGenesisWatermark(ctx context.Context, addr, table string, thru uint32) error {
 	if table != ContractInstanceChangesTable && table != ContractInstanceChangesV2Table {
 		return fmt.Errorf("clickhouse: instance-changes watermark: table %q is not %s or %s",

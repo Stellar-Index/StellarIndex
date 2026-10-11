@@ -10,11 +10,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// AccountStateCacheTTL bounds how long a cached account state is served. Deliberately short:
-// the cache exists to break contention, not for freshness. AccountState FINAL-scans
-// ledger_entries_current (4.2B rows; ~0.4s alone) but balloons to the 8s handler ceiling when
-// many detail requests run concurrently under the 2-thread api_serving profile. Cache hits
-// also cut concurrent scans.
+// AccountStateCacheTTL bounds how long a cached account state is served. Deliberately short: the
+// cache breaks contention, not for freshness. AccountState FINAL-scans ledger_entries_current
+// (~0.4s alone) but balloons to the 8s handler ceiling when many detail requests run concurrently
+// under the 2-thread api_serving profile; cache hits also cut concurrent scans.
 const AccountStateCacheTTL = 30 * time.Second
 
 // accountStateCacheMax bounds resident entries: a few hot accounts plus one-off churn. On
@@ -81,11 +80,10 @@ const accountStateRefreshTimeout = 3 * time.Minute
 var errAccountStateRefreshFailed = errors.New(
 	"clickhouse: detached account-state refresh produced no entry")
 
-// AccountStateCached serves account state from the TTL cache; on a miss it kicks one detached
-// scan per account and waits bounded by the caller's deadline only. Detached because a whale
-// account's scan would otherwise die with the request, the cache never fill, and every retry
-// pay the timeout. The scan runs on its own budget; a timed-out request 503s and the retry
-// lands warm.
+// AccountStateCached serves account state from the TTL cache; on a miss it kicks one detached scan
+// per account and waits bounded by the caller's deadline only. Detached because a whale account's
+// scan would otherwise die with the request, the cache never fill, and every retry pay the
+// timeout. The scan runs on its own budget; a timed-out request 503s and the retry lands warm.
 func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string) (AccountState, bool, error) {
 	if st, ok, fresh := r.stateCache.get(account); ok {
 		if !fresh {
@@ -115,13 +113,13 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 	}
 }
 
-// refreshAccountState kicks one detached scan for account (returning the existing flight's
-// channel while one is up), outliving the request that noticed the miss.
+// refreshAccountState kicks one detached scan for account (returning the existing flight's channel
+// while one is up), outliving the request that noticed the miss.
 //
-// saturated is true only when this call owned the flight and the shared refresh gate was
-// full. Non-owners learn it from the entry's saturated flag, set by the owner before end()
-// closes done (the close is the happens-before edge, as ttlFlight.err), so every waiter reads
-// a skipped flight as retryable backpressure.
+// saturated is true only when this call owned the flight and the shared refresh gate was full.
+// Non-owners read the entry's saturated flag, set by the owner before end() closes done (the close
+// is the happens-before edge, as ttlFlight.err), so every waiter sees a skipped flight as
+// retryable backpressure.
 func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEntry, saturated bool) {
 	fl, owner := r.stateFlight.begin(account)
 	if !owner {

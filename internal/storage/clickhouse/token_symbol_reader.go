@@ -11,31 +11,24 @@ import (
 )
 
 // maxTokenSymbolRunes bounds the accepted on-chain `symbol` declaration.
-// The value is self-declared by the token contract, so a hostile or
-// broken token can put anything in it. SEP-41 and the classic asset code
-// space both top out at 12 characters; 32 is generous headroom that
-// still refuses a kilobyte of text arriving where a ticker belongs.
+// The value is self-declared by the token contract, so a hostile or broken token can put
+// anything in it. SEP-41 and classic asset codes top out at 12 characters; 32 leaves headroom
+// while refusing a kilobyte of text where a ticker belongs.
 const maxTokenSymbolRunes = 32
 
-// TokenSymbol resolves a token contract's `symbol()` from the certified
-// lake, by the same route as [TokenDecimals]: the soroban-token-sdk persists
-// TokenMetadata in the contract INSTANCE storage under Symbol "METADATA" as
-// Map{decimal: U32, name: String, symbol: String}, so reading the instance
-// entry gives what calling the contract would, without executing WASM.
+// TokenSymbol resolves a token contract's `symbol()` from the lake, by the route [TokenDecimals]
+// uses: the token-sdk METADATA map in contract instance storage, with no WASM execution.
 //
-// found=false (nil error) when the instance is not captured, the contract
-// stores no METADATA map or symbol, or the value is not a plausible ticker.
-// Callers treat that as "no usable metadata", never as an empty symbol.
+// found=false (nil error) when the instance is not captured, has no METADATA symbol, or the
+// value is not a plausible ticker; callers treat that as "no usable metadata", not an empty symbol.
 //
 // # What this value may and may not be used for
 //
-// It is CONTRACT-AUTHORED text, exactly as trustworthy as a classic asset
-// code: any contract may call itself BENJI. The RWA definition reads it only
-// under requirement C4, AFTER C2 and C3 established that an independent third
-// party named that exact contract address; it answers WHICH instrument an
-// already-vouched-for address holds. It must never answer WHETHER an address
-// is vouched for — a join on this value alone is the code-only identity the
-// definition refuses.
+// It is contract-authored text, as trustworthy as a classic asset code: any contract may call
+// itself BENJI. The RWA definition reads it only under C4, after C2 and C3 established that an
+// independent third party named that exact contract address. It answers WHICH instrument a
+// vouched-for address holds, never WHETHER an address is vouched for; a join on this value
+// alone is the code-only identity the definition refuses.
 func (r *ExplorerReader) TokenSymbol(ctx context.Context, contractID string) (string, bool, error) {
 	raw, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {
@@ -71,10 +64,9 @@ func (r *ExplorerReader) TokenSymbol(ctx context.Context, contractID string) (st
 // symbolFromInstanceEntry decodes one contract-instance LedgerEntry and
 // returns the token-sdk METADATA map's `symbol` string.
 //
-// The token-sdk writes symbol as an ScString; some tokens write an
-// ScSymbol instead, which is the same text in a different ScVal variant.
-// Both are accepted — refusing the second would report "no metadata" for
-// a token that plainly has some — and nothing else is.
+// The token-sdk writes symbol as an ScString; some tokens write an ScSymbol, the same text in
+// another ScVal variant. Both are accepted, since refusing the second would report "no
+// metadata" for a token that has some; nothing else is.
 func symbolFromInstanceEntry(b64 string) (string, bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
@@ -119,12 +111,10 @@ func scValText(v xdr.ScVal) string {
 // sanitiseTokenSymbol trims a declared symbol and refuses one that is
 // not a plausible ticker.
 //
-// The refusal is deliberate rather than a best-effort clean-up. This
-// value is compared against an allow-list of instrument codes, and a
-// declaration carrying control characters, newlines or an essay is not a
-// ticker that happens to need tidying — it is a token doing something
-// other than declaring a symbol. Reporting it as absent is both true and
-// safe; silently trimming it toward a match is neither.
+// The refusal is deliberate, not best-effort clean-up. The value is compared against an
+// allow-list of instrument codes, and control characters, newlines or an essay mean the token
+// is not declaring a symbol at all. Reporting it absent is true and safe; trimming it toward
+// a match is neither.
 func sanitiseTokenSymbol(s string) (string, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {

@@ -118,15 +118,13 @@ func (c *accountsWealthCache) endFlight(ch chan struct{}) {
 }
 
 // AccountsByWealthCached serves the ranking from cache, refreshing in the background when
-// stale. It never runs the slow scan on the caller's deadline:
+// stale; the slow scan never runs on the caller's deadline.
 //
 //   - fresh: served as-is; handlers stamp the snapshot's AsOf/AsOfLedger, never a serve-time
 //     watermark read (a torn read).
-//   - stale: served with its real asOf and a detached single-flight refresh is kicked; the
-//     handler compares asOf to AccountsWealthCacheTTL to set the `stale` flag.
+//   - stale: served with its real asOf while a detached single-flight refresh runs; the handler
+//     compares asOf to AccountsWealthCacheTTL to set `stale`.
 //   - empty: ok=false immediately (honest warming state) and the refresh is kicked.
-//
-// PrewarmAccountsByWealth keeps the cold state out of sight in practice.
 func (r *ExplorerReader) AccountsByWealthCached(
 	ctx context.Context, assets, prices []string, limit int,
 ) (AccountWealthSnapshot, bool) {

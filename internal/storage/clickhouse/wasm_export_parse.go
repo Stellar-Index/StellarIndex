@@ -6,14 +6,10 @@ import (
 	"fmt"
 )
 
-// wasm_parse.go — a tiny, dependency-free reader for the parts of the
-// WebAssembly binary format we surface on the contract-wasm explorer endpoint:
-// the export table and (to give each export a signature) the type + function +
-// import sections. This is NOT a full validator or disassembler — it walks
-// section headers and extracts exactly the four sections needed to answer
-// "what functions does this contract export, and what are their wasm ABI
-// types?" Everything else is length-skipped. Pure Go, no wabt, no cgo — so the
-// metadata + exports layer of the endpoint always works regardless of tooling.
+// A dependency-free reader for the WebAssembly sections the contract-wasm endpoint surfaces: the
+// export table plus the type, function and import sections that give each export a signature.
+// It is not a validator; every other section is length-skipped. Pure Go (no wabt, no cgo) so
+// the exports layer works regardless of tooling.
 //
 // Binary format reference: https://webassembly.github.io/spec/core/binary/
 
@@ -63,13 +59,10 @@ type reader struct {
 func (r *reader) eof() bool { return r.i >= len(r.b) }
 
 // safeCap bounds a make() prealloc hint by the reader's remaining bytes. A
-// LEB128 count is attacker-influenced — a ~5-byte field encodes ~5e9 — so
-// `make([]T, 0, count)` would attempt a multi-GB allocation (or panic in
-// makeslice) BEFORE the read loop ever reaches errTruncated.
-// Every element consumes at least one byte of input, so no section can
-// legitimately declare more entries than the bytes remaining; cap the hint
-// there. This only sizes the prealloc — a genuinely oversized count still
-// errors out normally when the loop runs past the end of the input.
+// LEB128 count is attacker-influenced (a ~5-byte field encodes ~5e9), so an uncapped
+// make([]T, 0, count) could allocate gigabytes or panic before the loop reaches errTruncated.
+// Every element takes at least one byte, so the remaining bytes bound the hint; an oversized
+// count still errors normally when the loop runs off the end.
 func (r *reader) safeCap(count uint64) int {
 	rem := len(r.b) - r.i
 	if rem < 0 {
@@ -112,14 +105,10 @@ func (r *reader) uvarint() (uint64, error) {
 
 // bytes reads n raw bytes.
 //
-// The bound is written as `n > len(r.b)-r.i` rather than the natural
-// `r.i+n > len(r.b)`: n comes from an attacker-authored LEB128, and a
-// 9-byte varint yields values near MaxInt64, for which `r.i+n` OVERFLOWS
-// to a negative number, passes the check, and panics in the slice
-// expression below (a section size or a name length).
-//
-// `len(r.b)-r.i` cannot overflow: both are non-negative and r.i <= len(r.b)
-// is an invariant of every mutation in this file.
+// The bound is `n > len(r.b)-r.i`, not `r.i+n > len(r.b)`: n comes from an attacker-authored
+// LEB128 and can be near MaxInt64, where r.i+n overflows negative, passes the check and panics
+// in the slice expression. The subtraction cannot overflow because r.i <= len(r.b) holds after
+// every mutation in this file.
 func (r *reader) bytes(n int) ([]byte, error) {
 	if n < 0 || n > len(r.b)-r.i {
 		return nil, errTruncated
@@ -359,10 +348,9 @@ func parseExportSection(r *reader) ([]rawExport, error) {
 }
 
 // resolveExports turns the raw function exports into typed WasmExports by
-// chasing func index → (minus imports) local index → type index → signature.
-// An export whose index can't be resolved (e.g. a re-exported import, or an
-// out-of-range index from a malformed module) is kept with empty signatures
-// rather than dropped — the NAME is the load-bearing field for the explorer.
+// chasing func index, minus imports, to local index, type index and signature. An export that
+// cannot be resolved (a re-exported import or an out-of-range index) is kept with empty
+// signatures, not dropped: the name is the load-bearing field.
 func resolveExports(raw []rawExport, types []funcType, funcTypeIdx []uint32, importedFuncs int) []WasmExport {
 	out := make([]WasmExport, 0, len(raw))
 	for _, e := range raw {
