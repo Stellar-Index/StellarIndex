@@ -8,19 +8,14 @@
 //     the operator's enabled-sources list + the oracle contract IDs.
 //   - ProcessLedger: runs the dispatcher over one LCM and forwards
 //     emitted events to a sink channel. Does NOT touch cursors or
-//     emit cursor metrics — that's a long-running-indexer concern,
-//     not a pipeline concern.
+//     emit cursor metrics (a long-running-indexer concern).
 //   - PersistEvents: drains a sink channel and writes each event to
 //     its hypertable. Type-switch covers every event kind any
 //     registered source can emit.
 //   - LedgerstreamConfig: builds a ledgerstream.Config from a global
-//     config + bucket name. Trivial but kept here so both binaries
-//     share the same datastore wiring.
+//     config + bucket name, so both binaries share the datastore wiring.
 //
-// What stays in the binaries: cursor management, signal handling,
-// flag parsing, metrics-server lifecycle. Those differ between live
-// tail and bounded replay; trying to share them produces the wrong
-// abstraction.
+// Cursors, signals, flags and metrics-server lifecycle stay in the binaries.
 package pipeline
 
 import (
@@ -50,17 +45,11 @@ import (
 // in `names`. The indexer + backfill chunks pass:
 //
 //   - WithSeededPairTokensDecoder seeded from
-//     timescale.LoadSoroswapPairRegistry, so the decoder boots with
-//     every persisted pair already in its registry — a parallel chunk
-//     that doesn't happen to cover the original new_pair event emits
-//     no "skipped_unknown_pair" noise.
+//     timescale.LoadSoroswapPairRegistry, so a parallel chunk that
+//     doesn't cover the original new_pair event emits no
+//     "skipped_unknown_pair" noise.
 //   - WithPairUpsertHook bound to timescale.UpsertSoroswapPair, so
-//     newly-discovered pairs are persisted as live new_pair events
-//     stream in.
-//
-// Empty soroswapOpts is fine for tests / contexts that don't need
-// persistence (the verify-decoders subcommand uses SeedFromFactoryRPC
-// instead and ignores postgres entirely).
+//     newly-discovered pairs are persisted as live new_pair events.
 func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) {
 	// Oracle-staleness policy is installed BEFORE any
 	// decoder is built, so the first update a source persists already
@@ -148,11 +137,9 @@ func AccountObserverWatchSet(sup config.SupplyConfig, meta config.MetadataConfig
 //   - sac_balances.Observer: [supply.SACWrappers] (SAC C-strkey ->
 //     asset_key map); covers SAC-wrapped classics and pure SEP-41.
 //
-// Persistence is the type-switch in internal/pipeline/sink.go; this
-// function only fills the registration gap. The watched-set is the
-// on/off switch, so there is no separate `[supply] enabled` flag to
-// forget. The event-stream sep41_supply observer registers in
-// [RegisterSupplyEventDecoders]; call both for the full pipeline.
+// Persistence is the type-switch in internal/pipeline/sink.go. The
+// event-stream sep41_supply observer registers in
+// [RegisterSupplyEventDecoders]; call both.
 func RegisterSupplyEntryDecoders(disp *dispatcher.Dispatcher, sup config.SupplyConfig, meta config.MetadataConfig) ([]string, error) {
 	var registered []string
 	if watched := AccountObserverWatchSet(sup, meta); len(watched) > 0 {

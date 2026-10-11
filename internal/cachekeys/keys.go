@@ -78,19 +78,14 @@ func VWAP(base, quote canonical.Asset, window time.Duration) VWAPKey {
 // `observed_at` at request time, so a stopped aggregator would be served as
 // current with no age field to reveal it.
 //
-// 5 minutes = 10 missed ticks, the same reasoning as [FreezeTTL].
-//
 // No page precedes the expiry: customers see 404s first. The page for a dead
 // publisher is `stellarindex_aggregator_silent`, which fires about 10 minutes
 // after the last write while the process is still scraped and about 15 minutes
 // after it when the process is gone, so the 404 window opens 5 to 10 minutes
 // before anyone is paged. The freshness alert, `stellarindex_api_price_stale`, is
 // a ticket and reads a gauge this same aggregator emits, so it is silent here.
-// Raising this constant to meet the page would serve a dead publisher's value as
-// current; tighten the alert, not this grace.
-//
-// Expiry is the fail-closed answer for a rolling window: a missing key is an
-// honest 404, never a substituted window. A freeze is the one exception.
+// Raising this constant would serve a dead publisher's value as current;
+// tighten the alert, not this grace.
 const VWAPMaxAge = 5 * time.Minute
 
 // VWAPTTL is the TTL for a VWAP key — its window, bounded by
@@ -274,10 +269,7 @@ func ParseVWAPCoverage(raw string) (WindowCoverage, error) {
 //
 // Writer: aggregator's triangulation pass writes a JSON blob
 // ({path_count, combined_confidence, low_confidence, diverged,
-// rerouted}) when it prices a target through the graph router. Sibling
-// to the value + provenance keys; carries the router corroboration
-// count and quality flags so downstream (Step 3: market-cap gating,
-// /v1/price flags) can respect them without recomputing. Absent = the
+// rerouted}) when it prices a target through the graph router. Absent = the
 // pair was not priced through the router this cycle. A low_confidence
 // marker is written even when the composite is NOT published over the
 // direct price, so a consumer can distinguish "served direct because
@@ -285,8 +277,8 @@ func ParseVWAPCoverage(raw string) (WindowCoverage, error) {
 //
 // Reader: internal/api/v1's /v1/price handler decodes it via
 // [DecodeCompositeMeta] on the TRIANGULATED serve path to set
-// flags.diverged / flags.rerouted (best-effort — a miss / malformed
-// blob leaves those flags unset). Consumed through the optional
+// flags.diverged / flags.rerouted (best-effort: a miss / malformed
+// blob leaves those flags unset), through the optional
 // v1.CompositeMetaLooker capability on the wired triangulated looker.
 
 // VWAPCompositeMetaKey is the typed Redis key for the
@@ -588,22 +580,17 @@ const FreezeTTL = 5 * time.Minute
 //
 // Wire shape: `apikey:<sha256-hex>`
 // Value: JSON record `{identifier, tier, scopes, expires_at?, revoked_at?}`.
-// Writer: `/v1/account/keys` POST handler (self-service key
-//         issuance) plus operator seeding scripts.
+// Writer: `/v1/account/keys` POST handler plus operator seeding scripts.
 // Reader: `internal/auth/RedisAPIKeyValidator` on every authenticated
 //         request when auth_mode=apikey.
 //
-// Plaintext keys are NEVER stored — the lookup hashes the
-// caller-supplied bytes with SHA-256 (32-byte high-entropy keys are
-// preimage-safe; HMAC with a server pepper is a future hardening if
-// keys are ever shorter or operator-set). A Redis dump leaks
+// Plaintext keys are NEVER stored: the lookup hashes the caller-supplied bytes
+// with SHA-256 (32-byte high-entropy keys are preimage-safe). A Redis dump leaks
 // metadata but not the keys themselves.
 //
-// No TTL: API keys are long-lived; expiry + revocation are encoded
-// in the JSON record, not at the Redis layer. An operator rotating
-// keys deletes the record explicitly. No TTL does NOT protect a record
-// from an allkeys-* eviction policy, and the plaintext cannot be
-// re-issued.
+// No TTL: expiry + revocation are encoded in the JSON record. An operator
+// rotating keys deletes the record explicitly. No TTL does NOT protect a record
+// from an allkeys-* eviction policy, and the plaintext cannot be re-issued.
 
 // APIKeyRecordKey is the typed Redis key for the
 // `apikey:<sha256-hex>` family. Named distinctly from the [APIKey]
@@ -668,21 +655,16 @@ func APIKeyCacheEvicted(keyHash string) APIKeyCacheKey {
 //	o:<identifier>   → space-separated <sha256-hex> list of the records that owner holds
 //
 // Writer and reader: `internal/auth.RedisAPIKeyStore`, atomically with the record
-// at issuance and by the one sanctioned keyspace walk that indexes older
-// records. No TTL: the index lives as long as the records.
+// at issuance and by the one sanctioned keyspace walk. No TTL.
 //
 // Why ONE hash: under an allkeys-* policy every Redis key is independently
 // evictable, and a per-owner set evicted while its records survive would make
-// live credentials invisible to list, revoke and the tier clamp (a revocation
-// that silently no-ops). With entries and the `ready` marker in one key,
-// eviction takes the marker too, readers see "not ready" and fall back to the
-// walk, which is always correct.
+// live credentials invisible to list, revoke and the tier clamp. Eviction of the
+// one key takes the `ready` marker too, so readers fall back to the walk.
 //
-// The family is deliberately NOT under `apikey:`: a HASH there would be matched
-// by the `apikey:*` walk, whose GET would fail WRONGTYPE. It is therefore a NEW
-// pattern for the Redis ACL allow-list (redis-sentinel users.acl.j2,
-// `~apikey-index:*`); until a lockdown deployment applies it, every access is
-// NOPERM and the store keeps using the walk.
+// NOT under `apikey:`: a HASH there would be matched by the `apikey:*` walk, whose
+// GET would fail WRONGTYPE. It is a NEW pattern for the Redis ACL allow-list
+// (`~apikey-index:*`); until applied, every access is NOPERM and the store walks.
 
 // APIKeyIndexKey is the typed Redis key for the `apikey-index:*`
 // family.

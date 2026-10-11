@@ -12,16 +12,11 @@
 // leave /healthz answering with a frozen cursor. Crashing lets systemd
 // restart from the last cursor.
 //
-// Flags:
+// Flags: -config PATH (required), -dry-run (load config, open connections,
+// validate, exit), -verify-hashdb-from N / -verify-hashdb-to N (one hashdb
+// verify pass over [from,to], both required, then exit).
 //
-//	-config PATH             TOML config file (required)
-//	-dry-run                 Load config, open connections, validate, exit.
-//	-verify-hashdb-from N    Run one hashdb verify pass over an
-//	-verify-hashdb-to N      explicit [from,to] ledger range against the
-//	                         archive bucket and exit. Both required together.
-//
-// SIGINT + SIGTERM cancel the root context; the binary waits up to 30 s for
-// in-flight work before hard-exiting.
+// SIGINT + SIGTERM cancel the root context; the binary waits up to 30 s.
 package main
 
 import (
@@ -861,24 +856,20 @@ func run(cfgPath string, dryRun bool) error {
 		// This goroutine IS the ingest pipeline: ledgerstream invokes the
 		// closure below synchronously, so a panic anywhere in the walk
 		// (hashdb append, ClickHouse extract, the cursor write) arrives
-		// here. Recovering it in place is the worst option available —
-		// nothing would ever send on streamErr, main would sit in its
-		// select until SIGTERM, and the process would keep answering
-		// /metrics and /healthz with the cursor frozen at the poison
-		// ledger. So the fault stays FATAL: the process exits non-zero
-		// and systemd restarts it from the last durable cursor.
+		// here. Recovering it in place is the worst option: nothing would
+		// ever send on streamErr, main would sit in its select until
+		// SIGTERM, and the process would keep answering /metrics and
+		// /healthz with the cursor frozen at the poison ledger. So the
+		// fault stays FATAL: the process exits non-zero and systemd
+		// restarts it from the last durable cursor.
 		//
-		// What it must not stay is silent, and it must not skip the
-		// drain. A panic in a non-main goroutine tears the process down
-		// without running main's defers, discarding the up-to-256 events
-		// already buffered for ledgers the cursor has passed — precisely
-		// the silent hole the error path's drain closes. So the panic
-		// is converted exactly once into that same fatal error: counted
-		// on stellarindex_worker_panics_total, logged with its stack by
-		// worker.Report, and handed to main, which drains the sink and
-		// then returns it. Decoder panics do not reach here at all —
-		// internal/dispatcher guards Matches+Decode per decoder — so
-		// anything that does is a fault in the walk itself.
+		// It must not skip the drain. A panic in a non-main goroutine
+		// tears the process down without running main's defers,
+		// discarding the buffered events for ledgers the cursor has
+		// passed. So the panic is converted once into the same fatal
+		// error: counted on stellarindex_worker_panics_total, logged with
+		// its stack by worker.Report, and handed to main, which drains
+		// the sink and returns it.
 		var err error
 		defer func() {
 			if r := recover(); r != nil {
@@ -956,27 +947,19 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}
 
-	// The process-level drain budget is [pipeline.ShutdownDeadline], and
-	// the sink DERIVES its own drain budgets from that same constant. With
-	// a 30s literal here and 90s per sink drain phase, the deadline arm
-	// that logs the exact undrained ledger range — the one artifact
-	// telling an operator what to re-derive — could never fire before
-	// this function returned and the process died. Do not replace it with
-	// a literal: TestShutdownDeadline_MainUsesConstant fails if the two drift apart.
 	// Cancel rootCtx BEFORE draining. On the signal path it is already
 	// cancelled; on the producer-error path it is NOT, because `cancel` is
-	// only deferred and therefore fires after run() returns.
+	// only deferred and fires after run() returns.
 	//
 	// Without this cancel, the producer-error path would defeat the drain:
 	// externalWait() is a WaitGroup over the external connectors, and those
-	// are bound to rootCtx (startExternalConnectors(rootCtx, ...)), as is the
-	// sink. With rootCtx still live, nothing would tell them to stop, so the
-	// bounded wait below would spend the whole shutdown budget, leave events
-	// open, and drop the very buffer the drain exists to persist.
+	// are bound to rootCtx, as is the sink. With rootCtx still live, nothing
+	// would tell them to stop, so the bounded wait below would spend the whole
+	// shutdown budget, leave events open, and drop the buffer the drain exists
+	// to persist.
 	//
 	// Cancelling here makes both paths identical: connectors unwind, the
-	// sink drains via its ctx.Done() arm (the same arm the signal path
-	// uses, which runs the shutdown drain), and no events are lost.
+	// sink drains via its ctx.Done() arm, and no events are lost.
 	cancel()
 
 	shutdownCtx, stopDrain := context.WithTimeout(context.Background(), pipeline.ShutdownDeadline)

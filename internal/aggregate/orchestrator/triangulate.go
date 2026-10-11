@@ -253,24 +253,19 @@ func (o *Orchestrator) resolveChainLegs(
 // The direct base→quote edge is excluded so the router must go through
 // hub assets: a 1-hop "route" equal to the direct price would corroborate
 // nothing. Outcomes: a single-route target publishes "ok" (or "missing_leg"
-// when its leg is dry, which the triangulation-chains-dry alert reads); an
-// unreachable target whose leg was frozen inherits the freeze
-// ("frozen_leg"). "low_confidence" covers both "no route clears
+// when its leg is dry); an unreachable target whose leg was frozen inherits
+// the freeze ("frozen_leg"). "low_confidence" covers both "no route clears
 // min_route_confidence" AND "a leg-substitution reroute did not clear
 // [aggregate.RouteTrustFloor]": the composite is flagged but NOT published
 // over the direct price. "proxy_pivot" does the same when a priced leg's
-// stablecoin-proxy prints disagree with its own-quote prints
-// ([Orchestrator.refuseProxyPivot]).
+// stablecoin-proxy prints disagree with its own-quote prints.
 //
-// A leg that is DRY (st.legDry) or FROZEN this tick (st.frozen), with the
-// target still reachable AROUND it, yields a SUBSTITUTE-path composite
-// (rerouted := st.legDry || st.frozen). The reroute is kept for multi-path
-// robustness but gated on [aggregate.RouteTrustFloor] (in addition to
-// min_route_confidence, reroutes only; it sits at the bootstrap cap so a
-// substitute with an unscored, cache-only or bootstrapping weakest leg
-// cannot displace a direct market) and flagged (compositeMeta.Rerouted). A
-// target frozen on its OWN direct market keeps serving its frozen
-// last-known-good: a fresh composite must not overwrite it.
+// A leg that is DRY (st.legDry) or FROZEN (st.frozen), with the target still
+// reachable AROUND it, yields a SUBSTITUTE-path composite gated on
+// [aggregate.RouteTrustFloor] (reroutes only; at the bootstrap cap, so an
+// unscored weakest leg cannot displace a direct market) and flagged
+// (compositeMeta.Rerouted). A target frozen on its OWN direct market keeps
+// serving its frozen last-known-good.
 func (o *Orchestrator) routeTarget(
 	ctx context.Context,
 	chain TriangulationChain,
@@ -761,22 +756,17 @@ func legConfidence(leg canonical.Pair) float64 {
 // metric label the caller bubbles up via [obs.AggregatorTriangulationsTotal].
 //
 // FX legs (both sides fiat) attempt the X2.5 snap path via
-// [Config.FXStore]. Snap misses (no FX quote at-or-before bucketEnd) and
-// snaps refused by [fxSnapRejection] (stale, or not from the FX source
-// class) fall back to the cached-VWAP path and increment
-// [obs.AggregatorFXSnapFallbackTotal]; this keeps the chain publishing
-// during fresh deploys / FX-source outages instead of black-holing.
-// Snap DB errors propagate up as "redis_error"-class outcomes — the
-// FX-store error means we can't trust ANY chained-fiat output this
+// [Config.FXStore]. Snap misses and snaps refused by [fxSnapRejection] (stale,
+// or not from the FX source class) fall back to the cached-VWAP path and
+// increment [obs.AggregatorFXSnapFallbackTotal], so the chain keeps publishing
+// through fresh deploys / FX-source outages. Snap DB errors propagate as
+// "redis_error"-class outcomes: we can't trust ANY chained-fiat output this
 // tick, so the chain skips publish.
 //
-// Non-FX legs (and FX legs when FXStore is nil, and a snap-miss
-// fallback) read the cached VWAP the per-pair refresh wrote earlier
-// this tick and carry no FX provenance — only a genuine snap hit does
-// (two different fiat crosses can snap the same underlying
-// fx_quotes row, e.g. USD/GBP and EUR/GBP both reading the GBP row, and
-// the router needs that identity to refuse counting them as
-// independent corroboration).
+// Non-FX legs (and FX legs when FXStore is nil, or on a snap miss) read the
+// cached VWAP and carry no FX provenance; only a genuine snap hit does (USD/GBP
+// and EUR/GBP can snap the same GBP fx_quotes row, and the router needs that
+// identity to refuse counting them as independent corroboration).
 func (o *Orchestrator) legPrice(
 	ctx context.Context,
 	chain TriangulationChain,
@@ -928,26 +918,19 @@ func (o *Orchestrator) legPriceFromCache(
 // triangulated TARGET whose chain could not publish because a leg was
 // frozen this tick.
 //
-// It mirrors [Orchestrator.engageFreeze] deliberately, because the
-// consumer-visible situation is the same one: we are declining to
-// publish a new value and continuing to serve the prior one, so the
-// prior one's TTL must be kept alive and the pair must carry
-// flags.frozen=true. Without the marker the target would serve a stale
-// derived price with no indication that anything is wrong — worse than
-// the frozen leg it descends from, which at least tells the truth.
+// It mirrors [Orchestrator.engageFreeze]: we serve the prior value, so its
+// TTL must be kept alive and the pair must carry flags.frozen=true. Without
+// the marker the target would serve a stale derived price with no indication
+// anything is wrong, worse than the frozen leg it descends from.
 //
-// It deliberately does NOT enter the ADR-0019 freeze lifecycle (no
-// hold, no extension ladder, flat [cachekeys.FreezeTTL] marker). This
-// refusal is not a judgement about the target pair's own price — it
-// is inherited, per tick, from whichever leg is frozen, and the LEG's
-// lifecycle already owns the hold. Giving the derived pair a second,
-// independent 30-minute ladder would keep a target frozen long after
-// its leg was released, and would page twice for one event.
+// It deliberately does NOT enter the ADR-0019 freeze lifecycle (no hold, no
+// extension ladder, flat [cachekeys.FreezeTTL] marker). The refusal is
+// inherited per tick from the frozen leg, whose lifecycle already owns the
+// hold. A second ladder would keep a target frozen long after its leg was
+// released, and would page twice for one event.
 //
-// Best-effort throughout: the target's LKG is read from cache to stamp
-// the freeze_events row, and both the read and the marker write log
-// rather than propagate — a failure here must not cost the rest of the
-// triangulation pass.
+// Best-effort: the LKG read (to stamp the freeze_events row) and the marker
+// write log rather than propagate; a failure must not cost the rest of the pass.
 func (o *Orchestrator) inheritLegFreeze(
 	ctx context.Context,
 	chain TriangulationChain,

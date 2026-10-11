@@ -40,16 +40,13 @@ const (
 	// 1-minute bucket for XLM (return_mad ~2%), i.e. the control was
 	// decorative. 0.45 puts the trigger just past z=5 (~5.4 mature,
 	// ~4.2 sparse), which is what ADR-0019 §"Freeze fires only when all
-	// three of the following hold" actually specifies.
+	// three of the following hold" specifies.
 	//
-	// On the false-fire history: markPhase2Freeze's comment records
-	// "Phase 2 false-fires across many pairs" from the era when
-	// approxUSDVolume returned 0 for non-USD-quoted pairs. That is NOT
-	// evidence against this number — those pairs froze on (z>5 AND
-	// source_count<=1) with the confidence leg pinned permanently true,
-	// so the documented 3-signal AND was really a 2-signal one. With
-	// the unmeasured-liquidity sentinel, confidence is a genuine third gate and this is
-	// strictly stricter than the configuration that false-fired.
+	// The old "Phase 2 false-fires" recorded in markPhase2Freeze came from
+	// approxUSDVolume returning 0 for non-USD-quoted pairs, which pinned the
+	// confidence leg true so the 3-signal AND was really a 2-signal one. With
+	// the unmeasured-liquidity sentinel, confidence is a genuine third gate
+	// and this is strictly stricter than the configuration that false-fired.
 	DefaultPhase2ConfidenceMaxFreeze  = 0.45 // freeze when confidence < this
 	DefaultPhase2ZScoreMinFreeze      = 5.0  // freeze when z > this
 	DefaultPhase2SourceCountMaxFreeze = 1    // freeze when source_count <= this
@@ -144,27 +141,23 @@ const releaseAgreementMaxPct = 5.0
 
 // releaseCorroborated reports whether a corroborating lens produced a
 // reading THIS bucket that agrees with the bucket's own fresh price:
-//   - the triangulation composite (computed against the fresh VWAP by
-//     construction). The PRIOR-TICK chain sample cannot fire mid-freeze:
-//     routeTarget records no composite for a target frozen this tick and
-//     samples go stale in ~2 ticks, far shorter than any hold. So for a
-//     pair WITHOUT a resolved current-bucket reference, the cross-oracle
-//     median below is the operative release lens.
+//   - the triangulation composite (computed against the fresh VWAP). The
+//     PRIOR-TICK chain sample cannot fire mid-freeze: routeTarget records no
+//     composite for a target frozen this tick and samples go stale in ~2
+//     ticks. So for a pair WITHOUT a resolved current-bucket reference, the
+//     cross-oracle median below is the operative release lens.
 //   - the CURRENT-BUCKET composite reference (composite_reference.go), for
 //     allow-listed single-venue targets whose reference RESOLVED this
-//     bucket. It replaces the triangulation lens (same sample) but is read
-//     against its OWN, tighter band ([CompositeReferenceConfig.ReleaseBandPct],
-//     default 2 %): the shared 5 % band would release a held +4 %
-//     venue-specific offset that the 75-bps fire band had refused to
-//     corroborate. A reference that resolved and disagrees holds the streak
-//     at zero; the cross-oracle lens may still release on its own reading.
+//     bucket. It replaces the triangulation lens but is read against its
+//     OWN, tighter band ([CompositeReferenceConfig.ReleaseBandPct], default
+//     2 %): the shared 5 % band would release a held +4 % venue-specific
+//     offset that the 75-bps fire band had refused to corroborate. A
+//     reference that resolved and disagrees holds the streak at zero.
 //   - the cross-oracle reference median, compared against the fresh
-//     candidate HERE, deliberately not the cached DivergencePct, which
-//     mid-freeze was computed against the pinned served price and so
-//     certifies the LKG, not the candidate.
+//     candidate HERE, not the cached DivergencePct, which mid-freeze was
+//     computed against the pinned served price and so certifies the LKG.
 //
-// No lens reading ⇒ false ⇒ the streak holds at zero and the ladder
-// escalates to an operator.
+// No lens reading ⇒ false ⇒ the streak holds at zero; the ladder escalates.
 func releaseCorroborated(c confidenceComputation, candidate *big.Rat, ref compositeReference, compositeBandPct float64) bool {
 	switch {
 	case ref.resolved():
@@ -380,9 +373,8 @@ func (o *Orchestrator) stepFreezeLifecycle(
 	return true
 }
 
-// loadFreezeState returns the working lifecycle state for a
-// (pair, window) key, plus whether the operator has force-unfrozen it
-// out of band.
+// loadFreezeState returns the working lifecycle state for a (pair, window) key,
+// plus whether the operator has force-unfrozen it out of band.
 //
 // Two cheap Redis reads, both deliberate:
 //
@@ -390,18 +382,16 @@ func (o *Orchestrator) stepFreezeLifecycle(
 //     window's ladder from the marker ([Orchestrator.loadMarkerState]).
 //     Without it, every deploy restarts the 2-hour escalation clock, so
 //     restarts more often than every 2 hours could hold a pair frozen
-//     forever without paging anyone; and a restart leaves no prev-VWAP
-//     comparator, so the window would publish the very bucket the freeze
-//     was withholding.
-//   - Live freeze: confirm the marker still exists. ADR-0019 requires
-//     "operator override always available: force unfreeze", and deleting
+//     Without it, every deploy restarts the 2-hour escalation clock, so
+//     frequent restarts could hold a pair frozen forever without paging;
+//     and a restart leaves no prev-VWAP comparator, so the window would
+//     publish the bucket the freeze was withholding.
 //     the marker is that override; without this check the in-memory
-//     ladder would re-write the marker next tick. This read is
-//     window-AGNOSTIC: the marker is pair-scoped, so its absence is the
-//     override for every window of the pair.
+//     ladder would re-write the marker next tick. The read is
+//     window-AGNOSTIC: the marker is pair-scoped.
 //
 // A cold-key read error returns err and caches nothing, so the next tick
-// retries the rehydrate; the caller must withhold the bucket.
+// retries; the caller must withhold the bucket.
 func (o *Orchestrator) loadFreezeState(
 	ctx context.Context,
 	pair canonical.Pair,

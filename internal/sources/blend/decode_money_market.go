@@ -23,10 +23,8 @@ import (
 //	gulp_emissions:                1 topic   [Symbol]
 //	bad_debt:                      3 topics  [Symbol, user, asset]
 //	defaulted_debt:                2 topics  [Symbol, asset]
-//	set_admin:                     2 topics  [Symbol, admin]
-//	update_pool:                   2 topics  [Symbol, admin]
-//	queue_set_reserve:             2 topics  [Symbol, admin]
-//	cancel_set_reserve:            2 topics  [Symbol, admin]
+//	set_admin / update_pool /
+//	queue_set_reserve / cancel_set_reserve: 2 topics [Symbol, admin]
 //	set_reserve:                   1 topic   [Symbol]
 //	set_status:                    1 or 2    [Symbol] (auto) | [Symbol, admin]
 //	deploy (pool-factory):         1 topic   [Symbol]
@@ -45,15 +43,13 @@ import (
 // internal/pipeline/sink.go converts explicitly via domain.BlendPositionEvent(e).
 type PositionEvent domain.BlendPositionEvent
 
-// EmissionEvent is the decoded shape of the four emission /
-// credit-risk events (gulp / claim / reserve_emission_update /
-// gulp_emissions / bad_debt / defaulted_debt). Heterogeneous
-// bodies, so individual fields are nullable (zero value = absent
-// for the string fields, nil for *big.Int).
+// EmissionEvent is the decoded shape of the emission / credit-risk events
+// (gulp / claim / reserve_emission_update / gulp_emissions / bad_debt /
+// defaulted_debt). Heterogeneous bodies, so individual fields are nullable
+// (zero value = absent for strings, nil for *big.Int).
 //
-// EventKind discriminates which — one of: EventGulp, EventClaim,
-// EventReserveEmissions, EventGulpEmissions, EventBadDebt,
-// EventDefaultedDebt.
+// EventKind discriminates which: EventGulp, EventClaim, EventReserveEmissions,
+// EventGulpEmissions, EventBadDebt, EventDefaultedDebt.
 // Promoted typed fields. Populated per event kind:
 //
 //	gulp:                    Asset, Amount(=token_delta)
@@ -64,9 +60,8 @@ type PositionEvent domain.BlendPositionEvent
 //	bad_debt:                User, Asset, Amount(=d_tokens)
 //	defaulted_debt:          Asset, Amount(=d_tokens_burnt)
 //
-// Field-for-field identical to [domain.BlendEmissionEvent] — see the
-// [PositionEvent] doc for why this is a locally-declared type rather
-// than an alias, and for the bridge-conversion consequence.
+// Field-for-field identical to [domain.BlendEmissionEvent]; see the
+// [PositionEvent] doc for why this is a locally-declared type, not an alias.
 type EmissionEvent domain.BlendEmissionEvent
 
 // AdminEvent is the decoded shape of every pool-config / admin / pool-factory
@@ -728,25 +723,21 @@ func decodeDeploy(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 // ─── V1 pool-factory decoders ────────────────────────────────
 //
 // The V1 pool-factory (CCZD6ESM…) emits three topics not present in
-// blend-contracts-v2's pool/src/events.rs — verified against real
+// blend-contracts-v2's pool/src/events.rs, verified against real
 // ClickHouse-lake bytes (see README.md "Known gap"):
 //
 //	update_emissions:           1 topic  [Symbol]           body i128 (bare)
 //	new_liquidation_auction:    2 topics [Symbol, Address]   body Map{bid,lot,block}
 //	delete_liquidation_auction: 2 topics [Symbol, Address]   body ScvVoid
 //
-// update_emissions lands in blend_emissions (a pool-wide emissions
-// total, distinct from V2's per-reserve reserve_emission_update). The
-// two liquidation-auction events land in blend_admin, NOT
-// blend_auctions — the V1 body carries the identical {bid, lot,
-// block} Map shape decodeAuctionData already parses for V2, but there
-// is no auction_type topic to classify it against blend_auctions'
-// UserLiquidation/BadDebt/Interest taxonomy (auction_type is NOT NULL
-// there), so inventing one would attach unverified provenance to a
-// verified-data table. blend_admin already models heterogeneous
-// per-kind extras via its jsonb attributes column (queue_set_reserve
-// does the same for ReserveConfig), so bid/lot/block ride there
-// instead.
+// update_emissions lands in blend_emissions (a pool-wide total, distinct from
+// V2's per-reserve reserve_emission_update). The two liquidation-auction events
+// land in blend_admin, NOT blend_auctions: the V1 body carries the same
+// {bid, lot, block} Map decodeAuctionData parses for V2, but there is no
+// auction_type topic to classify it against blend_auctions' taxonomy
+// (auction_type is NOT NULL there), so inventing one would attach unverified
+// provenance to a verified-data table. bid/lot/block ride in blend_admin's
+// jsonb attributes column instead.
 
 // decodeUpdateEmissions parses a V1 `update_emissions` event.
 //

@@ -22,24 +22,21 @@ import (
 //
 // The membership rule is `internal/rwa` and is documented for readers
 // at docs/methodology/rwa-definition.md; this file is the read path and
-// the wire shape. Two properties of the design are load-bearing and
-// easy to erode:
+// the wire shape. Two properties of the design are load-bearing:
 //
 //  1. MEMBERSHIP IS DECIDED BEFORE VALUATION. The set is built from
 //     identity and attestation only. No number can move an asset in or
 //     out, so a withheld price cannot silently shrink the set and a
 //     large market cap cannot buy a place in it.
 //
-//  2. VALUATION COMES FROM THE EXISTING LISTING PIPELINE, UNCHANGED.
-//     The same store query, the same substance gate, the same
-//     supply-derived market cap, the same dust guard and the same
-//     scam-issuer payload suppression that /v1/assets runs. This
-//     surface adds no price path of its own, so it cannot publish a
-//     figure /v1/assets would have withheld.
+//  2. VALUATION COMES FROM THE EXISTING LISTING PIPELINE, UNCHANGED:
+//     the same store query, substance gate, supply-derived market cap,
+//     dust guard and scam-issuer payload suppression that /v1/assets
+//     runs. This surface adds no price path of its own, so it cannot
+//     publish a figure /v1/assets would have withheld.
 //
-// Where a valuation is unavailable the row says so in
-// `valuation.status` and carries no number. Nothing here renders a
-// withheld or missing figure as zero.
+// Where a valuation is unavailable the row says so in `valuation.status` and
+// carries no number. Nothing here renders a withheld figure as zero.
 
 // rwaMembershipTTL bounds how long the membership set is reused before
 // a rebuild. Its inputs move on daily cadences — the SEP-1 refresh cron
@@ -477,24 +474,21 @@ type RWADefinition struct {
 	AnchorClasses []string `json:"anchor_classes"`
 	// ContractAnchorClasses is the vocabulary a CURATED CONTRACT BINDING
 	// may use, which is a superset of the one above. The two arms do not
-	// answer with the same words, and the difference is not an oversight.
+	// answer with the same words, and the difference is deliberate.
 	//
 	// The classic arm READS an issuer's free-text anchor_asset_type, so
 	// it can only accept terms SEP-1 defines: anything else is an
 	// invented spelling, and the served population carries dozens
 	// (`equity`, `etf`, `metal`, `rwa`, `sovereign`). The contract arm
-	// reads no declaration at all — a binding's class is this index's own
+	// reads no declaration: a binding's class is this index's own
 	// statement, made in code from a primary source and reviewed as a
-	// change — so it may use a term SEP-1 lacks, and `fund` is there
-	// because SEP-1 has no word for a share in a pooled vehicle whose
-	// exposure is the vehicle's objective rather than any asset type it
-	// holds.
+	// change, so it may use a term SEP-1 lacks. `fund` is there because
+	// SEP-1 has no word for a share in a pooled vehicle.
 	//
-	// A wider vocabulary widens what a binding may SAY. It does not widen
-	// what is admitted: the identity, recognition and scam requirements
-	// are untouched, and a contract's class is never read until its
-	// address has already been named by two independent parties or by the
-	// curated directory.
+	// A wider vocabulary widens what a binding may SAY, not what is
+	// admitted: the identity, recognition and scam requirements are
+	// untouched, and a contract's class is never read until its address
+	// has been named by two independent parties or the curated directory.
 	ContractAnchorClasses []string `json:"contract_anchor_classes"`
 	// RecognitionTags is the curated-directory vocabulary that counts
 	// as independent recognition of the issuer account.
@@ -764,19 +758,17 @@ const (
 	// a SAC inherits that; a SEP-41 token declares its own, and when
 	// that declaration cannot be read the catalogue's default of 7 is a
 	// convention rather than a reading. Multiplying by it would publish
-	// a figure wrong by a factor of ten to the something — one hundredth
-	// for the 5-decimal funds in the measured population, eleven orders
-	// of magnitude the other way for the 18-decimal one.
+	// a figure wrong by a factor of ten to the something (one hundredth
+	// for the 5-decimal funds, eleven orders of magnitude the other way
+	// for the 18-decimal one).
 	//
 	// Also reported when the scale WAS read but disagrees with the one
-	// the DEX price was normalised with (the nonstandard-decimals
-	// projection has not caught up with the lake): the supply and the
-	// price are then on different scales and no single exponent is right.
+	// the DEX price was normalised with: the supply and the price are then
+	// on different scales and no single exponent is right.
 	//
 	// Refused rather than defaulted because the error is silent and
-	// unbounded, and because this is the one surface where the exponent
-	// IS the number. The circulating supply is still served beside it:
-	// that is a raw chain fact and needs no scale to be true.
+	// unbounded: here the exponent IS the number. The circulating supply is
+	// still served beside it; it is a raw chain fact and needs no scale.
 	RWAValuationDecimalsUnknown = "decimals_unavailable"
 )
 
@@ -2276,25 +2268,18 @@ func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
 //
 // The provenances are different claims about different subjects:
 //
-//   - an ORACLE NAV values the INSTRUMENT, and the step from there to
-//     the token rests on the issuer's own domain-bound declaration that
-//     one token is one unit of it;
-//   - a LISTING PRICE values the TOKEN directly, and makes no claim
-//     about the backing at all — which is weaker in one way (nobody
-//     independent has said what is behind the token) and stronger in
-//     another (no unstated one-for-one assumption sits inside it);
-//   - a FUND NAV is a registered fund's own published daily value per
-//     share, for a token that is one share of it;
-//   - a PROSPECTUS CONSTANT NAV is the issuer's own statement of a
-//     value its fund rules prescribe, which nobody independent measured.
+//   - an ORACLE NAV values the INSTRUMENT; the step to the token rests on the
+//     issuer's own domain-bound declaration that one token is one unit of it;
+//   - a LISTING PRICE values the TOKEN directly and makes no claim about the
+//     backing: weaker (nobody independent says what is behind the token) and
+//     stronger (no unstated one-for-one assumption);
+//   - a FUND NAV is a registered fund's own published daily value per share;
+//   - a PROSPECTUS CONSTANT NAV is the issuer's own statement of a value its
+//     fund rules prescribe, which nobody independent measured.
 //
-// The sentence is derived from the rows rather than written once for
-// all cases, because a total that is entirely oracle-priced today must
-// not carry a paragraph about listing prices, and a total that gains
-// its first listing-priced row must not keep describing itself as
-// resting on an issuer's declaration. A basis string that describes a
-// provenance the total does not contain is exactly as wrong as one that
-// omits a provenance it does.
+// The sentence is derived from the rows rather than written once, because a
+// basis string that describes a provenance the total does not contain is
+// exactly as wrong as one that omits a provenance it does.
 func rwaReferenceProvenanceProse(provenances []string) string {
 	present := make(map[string]bool, len(provenances))
 	for _, p := range provenances {
