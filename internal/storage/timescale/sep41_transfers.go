@@ -60,11 +60,9 @@ func (s *Store) InsertSEP41TransferBatch(ctx context.Context, rows []SEP41Transf
 		return err
 	}
 
-	// The batch upsert below is ON CONFLICT DO UPDATE (migration 0110), and
-	// Postgres rejects a single statement that presents the same conflict
-	// key twice ("cannot affect row a second time"), which DO NOTHING would
-	// silently absorb. Collapse intra-batch conflict-key duplicates
-	// (last-wins) before building the statement.
+	// The upsert is ON CONFLICT DO UPDATE, and Postgres rejects one statement presenting the same
+	// conflict key twice ("cannot affect row a second time"), which DO NOTHING would absorb.
+	// Collapse intra-batch duplicates (last-wins) first.
 	insertRows := dedupeSEP41TransferRows(rows)
 
 	const ncols = 13
@@ -155,11 +153,9 @@ func validateSEP41TransferRows(op string, rows []SEP41TransferRow) error {
 	return nil
 }
 
-// sep41TransferConflictKey is the sep41_transfers ON CONFLICT identity
-// (ledger_close_time, contract_id, ledger, tx_hash, op_index, event_index).
-// The timestamp is normalised to a UTC UnixNano so two instants that differ
-// only in monotonic-clock reading / location still collapse to one key (they
-// land in the same timestamptz).
+// sep41TransferConflictKey is the sep41_transfers ON CONFLICT identity (ledger_close_time,
+// contract_id, ledger, tx_hash, op_index, event_index). The timestamp is normalised to UTC
+// UnixNano so instants differing only in monotonic reading or location collapse to one key.
 type sep41TransferConflictKey struct {
 	observedAtNanos int64
 	contractID      string
@@ -180,14 +176,11 @@ func sep41TransferKeyOf(r *SEP41TransferRow) sep41TransferConflictKey {
 	}
 }
 
-// dedupeSEP41TransferRows collapses rows that collide on the sep41_transfers
-// conflict key, keeping the LAST copy of each key (the latest redelivery) in
-// first-seen order. Required because the batch upsert (migration 0110) uses
-// ON CONFLICT DO UPDATE, which Postgres rejects when one statement presents
-// the same conflict key twice (DO NOTHING would tolerate it).
+// dedupeSEP41TransferRows collapses rows colliding on the conflict key, keeping the LAST copy
+// (the latest redelivery) in first-seen order. Required because ON CONFLICT DO UPDATE is rejected
+// when one statement presents the same key twice.
 //
-// Copy-on-write: the common case (no intra-batch duplicate) returns the input
-// slice untouched and allocates nothing.
+// Copy-on-write: with no duplicate it returns the input slice and allocates nothing.
 func dedupeSEP41TransferRows(rows []SEP41TransferRow) []SEP41TransferRow {
 	firstDup := -1
 	seen := make(map[sep41TransferConflictKey]int, len(rows))
@@ -221,24 +214,20 @@ func (s *Store) InsertSEP41Transfer(ctx context.Context, r SEP41TransferRow) err
 	return s.InsertSEP41TransferBatch(ctx, []SEP41TransferRow{r})
 }
 
-// sep41TransferLookbackLadder is the trailing-window ladder
-// [Store.ListSEP41Transfers] walks before it falls back to the full-history
-// read. Each rung is a `ledger_close_time >= now-D` floor; the first rung
+// sep41TransferLookbackLadder is the trailing-window ladder [Store.ListSEP41Transfers] walks
+// before the full-history read. Each rung is a `ledger_close_time >= now-D` floor; the first rung
 // that fills the caller's page wins.
 //
-// No index yields one contract's rows in ledger_close_time DESC order
-// (sep41_transfers_contract_{from,to}_idx put the address before the time,
-// the primary key leads with time), so an unbounded read sorts every row a
-// busy contract owns before the LIMIT (Seq Scan + Sort over ~17M rows for the
-// USDC SAC). A floor inside the recent data gives an Incremental Sort over
-// the time index so the LIMIT stops early. Rungs must stay narrow enough for
-// chunk exclusion to leave only the newest chunks: 7d is the widest measured
-// to keep the index plan; 90d falls back to per-chunk Seq Scan + Sort.
+// No index yields one contract's rows in ledger_close_time DESC order (the contract_{from,to}
+// indexes put the address before the time, the primary key leads with time), so an unbounded read
+// sorts every row a busy contract owns before the LIMIT (~17M rows for the USDC SAC). A floor
+// inside recent data gives an Incremental Sort over the time index so the LIMIT stops early.
+// Rungs must stay narrow enough for chunk exclusion to leave only the newest chunks: 7d is the
+// widest measured to keep the index plan; 90d falls back to per-chunk Seq Scan + Sort.
 //
-// Short-circuiting is safe because every row a rung's floor excludes is
-// strictly older than every row it keeps, so a full page is the newest page.
-// A rung that cannot fill its page walks its whole window (on r1: 36ms at
-// 1h, 2.2s at 24h, past a 9s timeout at 7d), so the ladder is bounded by
+// Short-circuiting is safe because every row a floor excludes is older than every row it keeps,
+// so a full page is the newest page. A rung that cannot fill its page walks its whole window
+// (r1: 36ms at 1h, 2.2s at 24h, past 9s at 7d), so the ladder is bounded by
 // [SEP41TransferLadderBudget]; see [Store.walkSEP41TransferLadder].
 var sep41TransferLookbackLadder = []time.Duration{
 	time.Hour,
@@ -246,39 +235,29 @@ var sep41TransferLookbackLadder = []time.Duration{
 	7 * 24 * time.Hour,
 }
 
-// SEP41TransferLadderBudget bounds the WHOLE lookback ladder — every
-// rung of [sep41TransferLookbackLadder] together — so the ladder can
-// never spend the caller's budget on the way to the fallback that has
-// the rows. A rung still running when the budget runs out is abandoned,
-// no wider rung is tried (a wider window is a superset scan of the one
-// that just failed to finish), and the full-history read goes out on
-// the caller's OWN remaining budget.
+// SEP41TransferLadderBudget bounds the WHOLE lookback ladder so it can never spend the caller's
+// budget on the way to the fallback that has the rows. A rung still running when it expires is
+// abandoned, no wider rung is tried (a wider window is a superset of the one that failed to
+// finish), and the full-history read goes out on the caller's OWN remaining budget.
 //
-// Sized against the handler's 8s deadline
-// (internal/api/v1/sep41_transfers.go, sep41TransfersReadTimeout — a
-// test there pins this constant at no more than half of it) and the r1
-// measurements in the ladder's doc comment: 3s lets the 1h and 24h
-// rungs complete even under the pathological walk (36ms + 2.2s), cuts
-// the 7d rung before it can reach the shape that ran past 9s, and
-// leaves the fallback 5s — nearly four times the 1.3s a low-volume
-// contract's fallback measured at limit=100 through
-// sep41_transfers_contract_from_idx. The example contract fills its
-// page at the first rung in 0.34ms, four orders of magnitude inside it.
+// Sized against the handler's 8s deadline (sep41TransfersReadTimeout in
+// internal/api/v1/sep41_transfers.go; a test there pins this at no more than half of it) and the
+// r1 measurements above: 3s lets the 1h and 24h rungs finish even on the pathological walk, cuts
+// the 7d rung before it reaches the shape that ran past 9s, and leaves the fallback 5s, nearly
+// four times the 1.3s a low-volume contract's fallback measured at limit=100.
 const SEP41TransferLadderBudget = 3 * time.Second
 
 // ListSEP41Transfers returns the most-recent N rows for a contract,
 // optionally filtered by from_addr / to_addr. Powers GET
 // /v1/contracts/{id}/transfers.
 //
-// A contract whose page no [sep41TransferLookbackLadder] rung fills falls
-// through to an unbounded read: cheap for a low-volume contract, but a large
-// history with fewer than `limit` rows in the widest rung still takes the
-// per-chunk sort that times out, so that fallback runs on the caller's
-// remaining time (at least 5s of the 8s handler deadline).
+// A contract whose page no [sep41TransferLookbackLadder] rung fills falls through to an unbounded
+// read: cheap for a low-volume contract, but a large history with fewer than `limit` rows in the
+// widest rung still takes the per-chunk sort that times out, so it runs on the caller's remaining
+// time (at least 5s of the 8s handler deadline).
 //
-// The fix is a (contract_id, ledger_close_time DESC) index plus an ORDER BY
-// compressed chunks can serve (op_index is not in compress_orderby): heavy
-// DDL that needs its own migration with the by-hand CONCURRENTLY step.
+// The real fix is a (contract_id, ledger_close_time DESC) index plus an ORDER BY compressed chunks
+// can serve (op_index is not in compress_orderby): heavy DDL needing its own migration.
 func (s *Store) ListSEP41Transfers(ctx context.Context, contractID, fromAddr, toAddr string, limit int) ([]SEP41TransferRow, error) {
 	return s.listSEP41TransfersAt(ctx, contractID, fromAddr, toAddr, limit, time.Now(), SEP41TransferLadderBudget)
 }
@@ -310,14 +289,11 @@ func (s *Store) listSEP41TransfersAt(ctx context.Context, contractID, fromAddr, 
 	return s.listSEP41TransfersSince(ctx, contractID, fromAddr, toAddr, limit, time.Time{})
 }
 
-// walkSEP41TransferLadder runs the rungs of [sep41TransferLookbackLadder]
-// under one shared budget and reports (rows, true, nil) for the first
-// rung that fills the page. (nil, false, nil) tells the caller to fall
-// back to the unbounded read: either every rung came back short, or the
-// budget ran out — a rung the database had not answered by then is
-// abandoned, and no wider rung is tried. An error comes back only for a
-// real storage failure or for the CALLER's own deadline or cancellation,
-// which leaves nothing to fall back with.
+// walkSEP41TransferLadder runs the rungs of [sep41TransferLookbackLadder] under one shared budget
+// and reports (rows, true, nil) for the first rung that fills the page. (nil, false, nil) tells
+// the caller to fall back to the unbounded read: every rung came back short, or the budget ran
+// out and the pending rung was abandoned. An error comes back only for a real storage failure or
+// the CALLER's own deadline or cancellation, which leaves nothing to fall back with.
 func (s *Store) walkSEP41TransferLadder(ctx context.Context, contractID, fromAddr, toAddr string, limit int, now time.Time, budget time.Duration) ([]SEP41TransferRow, bool, error) {
 	ladderCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
@@ -443,33 +419,21 @@ func (s *Store) listSEP41TransfersSince(ctx context.Context, contractID, fromAdd
 	return out, rows.Err()
 }
 
-// SEP41MovementsFloorLedger is ADR-0048 D5's non-overlap boundary for
-// the /v1/accounts/{g}/movements merge: ClickHouse's
-// stellar.account_movements (the pre-P23 classic-movement archive,
-// internal/storage/clickhouse/account_movements.go) is hard-clamped
-// BELOW this ledger by its only writer
-// (`stellarindex-ops classic-movements-backfill`); ListSEP41TransfersByAddress
-// floors its own query at-or-above it, so the two stores' contributions
-// to the merged feed can never overlap.
+// SEP41MovementsFloorLedger is ADR-0048 D5's non-overlap boundary for the
+// /v1/accounts/{g}/movements merge: ClickHouse's stellar.account_movements (the pre-P23 archive)
+// is hard-clamped BELOW this ledger by its only writer (`stellarindex-ops
+// classic-movements-backfill`), and ListSEP41TransfersByAddress floors its query at-or-above it,
+// so the two stores' contributions can never overlap.
 //
-// Same VALUE as internal/sources/classicmovements.P23StartLedger, not
-// the same CONSTANT: internal/storage sits below internal/sources in
-// the repo's import direction (scripts/ci/lint-imports.sh's
-// L/storage-below-compute rule forbids a storage->sources edge, test
-// files included), so this package can't import that one to avoid
-// duplicating the literal. internal/api/v1/explorer/movements_test.go's
-// TestP23BoundaryConstantsAgree is the executable assertion that keeps
-// the two from silently drifting — it CAN import both (api sits above
-// both layers).
+// Same VALUE as internal/sources/classicmovements.P23StartLedger, not the same CONSTANT:
+// internal/storage sits below internal/sources (lint-imports.sh L/storage-below-compute forbids
+// the edge, test files included). TestP23BoundaryConstantsAgree in
+// internal/api/v1/explorer/movements_test.go, which can import both, keeps them from drifting.
 const SEP41MovementsFloorLedger uint32 = 58_762_517
 
-// SEP41TransferCursor is the keyset position for
-// ListSEP41TransfersByAddress pagination (ADR-0048 D5) — descending
-// (ledger, tx_hash, op_index, event_index), generalizing
-// ListSEP41Transfers' per-contract natural-key order across contracts
-// for the address-scoped read. Zero value (Ledger==0) means "from the
-// newest" (first page) — same IsSet/Ledger==0 sentinel convention as
-// clickhouse.ExplorerCursor / clickhouse.AccountMovementCursor.
+// SEP41TransferCursor is the keyset position for ListSEP41TransfersByAddress pagination
+// (ADR-0048 D5), descending (ledger, tx_hash, op_index, event_index). The zero value (Ledger==0)
+// means the first page, the same sentinel as clickhouse.ExplorerCursor.
 type SEP41TransferCursor struct {
 	Ledger     uint32
 	TxHash     string
@@ -491,21 +455,16 @@ func cursorIndex16(v uint32) int16 {
 	return int16(v)
 }
 
-// ListSEP41TransfersByAddress returns one address's SEP-41 'transfer'
-// history, both sides, newest first, keyset-paged by (ledger, tx_hash,
-// op_index, event_index). It is the Postgres recent tail of GET
-// /v1/accounts/{g}/movements (ADR-0048 D5), merged in explorer/movements.go
-// with ClickHouse's stellar.account_movements; SEP41MovementsFloorLedger's
-// doc comment has the non-overlap argument.
+// ListSEP41TransfersByAddress returns one address's SEP-41 'transfer' history, both sides, newest
+// first, keyset-paged by (ledger, tx_hash, op_index, event_index). It is the Postgres recent tail
+// of GET /v1/accounts/{g}/movements (ADR-0048 D5), merged in explorer/movements.go with
+// ClickHouse's stellar.account_movements; see SEP41MovementsFloorLedger for non-overlap.
 //
-// Scope: event_kind = 'transfer' only, and ledger >= SEP41MovementsFloorLedger
-// (below P23 a classic transfer is already in account_movements; a pure
-// Soroban-native one is a documented gap).
+// Scope: event_kind = 'transfer' and ledger >= SEP41MovementsFloorLedger (below P23 a classic
+// transfer is already in account_movements; a pure Soroban-native one is a documented gap).
 //
-// direction, when non-empty, is "sent"/"received"/"self" (mirroring
-// clickhouse.AccountMovementDirection) relative to `address`. contractID,
-// when non-empty, filters every arm BEFORE the LIMIT, so an ?asset= page is
-// filled from matching rows.
+// direction, when non-empty, is "sent"/"received"/"self" relative to `address`. contractID, when
+// non-empty, filters every arm BEFORE the LIMIT so an ?asset= page is filled from matching rows.
 
 // sep41TransfersByAddressQuery assembles the UNION arm set for one
 // direction filter (see ListSEP41TransfersByAddress's shape comment).
@@ -578,25 +537,18 @@ func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string,
 		limit = 200
 	}
 
-	// QUERY SHAPE: two index-friendly arms UNION'd, not
-	// `from_addr = $2 OR to_addr = $2` — the same OR disease
-	// account_trades.go documents. The OR can't ride either
-	// address-leading partial index in output order, so on the COMPRESSED
-	// sep41_transfers chunks (no btrees) the
-	// planner decompress-scanned every chunk and blew the statement
-	// timeout, and the movements handler soft-failed the tail, silently
-	// stopping busy accounts' /movements at the P23 boundary. Each arm
-	// walks its own partial index (from_addr/to_addr, ledger DESC)
-	// newest-first and stops after one page; the outer merge picks the
-	// page. Direction filters collapse to arm selection: sent = the
-	// from-arm alone, received = the to-arm alone, self = one from-arm
-	// with to = from.
-	// floorLedger is the DYNAMIC lower bound (exclusive semantics via
-	// >=): the cap67 movements watermark + 1 once the lake-derived
-	// archive is following — the archive serves everything at/below the
-	// watermark for ALL assets, so this tail only needs (watermark,
-	// tip]. Never below the P23 boundary: the classic_derived archive
-	// owns everything before it.
+	// QUERY SHAPE: two index-friendly arms UNION'd, not `from_addr = $2 OR to_addr = $2` (the OR
+	// problem account_trades.go documents). The OR cannot ride either address-leading partial
+	// index in output order, so on COMPRESSED chunks (no btrees) the planner decompress-scanned
+	// every chunk and hit the statement timeout, silently stopping busy accounts' /movements at
+	// the P23 boundary. Each arm walks its own partial index (from_addr/to_addr, ledger DESC)
+	// and stops after one page; the outer merge picks the page. Direction filters collapse to arm
+	// selection: sent = from-arm, received = to-arm, self = one from-arm with to = from.
+	//
+	// floorLedger is the DYNAMIC lower bound (>=): the cap67 movements watermark + 1 once the
+	// lake-derived archive is following, since the archive serves everything at/below the
+	// watermark for ALL assets. Never below the P23 boundary: the classic_derived archive owns
+	// everything before it.
 	if fl := MovementsFloor(); floorLedger < fl {
 		floorLedger = fl
 	}

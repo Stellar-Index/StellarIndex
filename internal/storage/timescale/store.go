@@ -25,159 +25,89 @@ type Store struct {
 	// lockClock times the bounded chunk-lock retry loop; zero is the wall clock.
 	lockClock lockClock
 
-	// usdVolumeQuoteSpec, when non-nil, lets [InsertTrade] populate
-	// `trades.usd_volume` for on-chain trades whose quote asset is
-	// on the operator's USD-pegged list. Set via
-	// [SetUSDVolumeQuoteSpec] after [Open] — keeps the no-config
-	// path (tests, ops binary) on the existing off-chain-only
-	// behaviour.
+	// usdVolumeQuoteSpec, when non-nil, lets [InsertTrade] populate `trades.usd_volume` for
+	// on-chain trades whose quote asset is on the operator's USD-pegged list. Nil keeps the
+	// off-chain-only behaviour (tests, ops binary).
 	usdVolumeQuoteSpec *USDVolumeQuoteSpec
 
-	// usdVolumeFXResolver, when non-nil, is consulted by
-	// [InsertTrade] AFTER [usdVolumeQuoteSpec] has rejected the
-	// trade — i.e. the on-chain quote isn't on the operator's
-	// USD-pegged list, so the quote-spec tier returns NULL.
-	// [InsertTrade] first asks the resolver for the QUOTE asset's USD
-	// rate (typically sourced from the aggregator's `<asset>/<USD>`
-	// VWAP) and multiplies through quote_amount to land a non-NULL
-	// `usd_volume`; when that also declines (the quote is a
-	// pure-Soroban SEP-41 token with no USD-pegged market), it asks the
-	// SAME resolver for XLM's own USD rate and multiplies through
-	// base_amount instead — the XLM-base anchor, for pools that store
-	// TOKEN-in-XLM as base=XLM, quote=TOKEN. See [tradeUSDVolumeViaFX]
-	// / [usdVolumeViaXLMBaseAnchor].
-	//
-	// Nil keeps the quote-spec tier's behaviour exactly: only off-chain
-	// CEX/FX + operator-allow-listed on-chain DEX trades get a
-	// non-NULL `usd_volume`. Set via [SetUSDVolumeFXResolver] after
-	// [Open]; safe to leave unset for tests, ops binary, and any
-	// deployment that hasn't enabled the FX resolver.
+	// usdVolumeFXResolver, when non-nil, is consulted by [InsertTrade] only after
+	// [usdVolumeQuoteSpec] declined the trade. It prices the QUOTE asset in USD and multiplies
+	// quote_amount; if that also declines (a pure-Soroban SEP-41 quote with no USD market), the
+	// same resolver prices XLM and multiplies base_amount (the XLM-base anchor for pools stored
+	// as base=XLM, quote=TOKEN). See [tradeUSDVolumeViaFX] and [usdVolumeViaXLMBaseAnchor].
+	// Nil leaves only off-chain and operator-allow-listed trades with a non-NULL `usd_volume`.
 	usdVolumeFXResolver USDVolumeFXResolver
 
-	// deriveGeneration is the re-derive generation stamped into the
-	// `derive_generation` column (migration 0109) by every row the
-	// derived-value writers — [InsertTrade], [BatchInsertTrades],
-	// [InsertOracleUpdate], [InsertSupply] — write. It is the schema
-	// half of the re-derive guard: those writers DO UPDATE the value
-	// columns in place on conflict (guarded by `derive_generation <=
-	// EXCLUDED.derive_generation`) rather than DO NOTHING, so a corrected
-	// re-derive lands without a destructive DELETE + re-backfill.
-	//
-	// It defaults to 0 — the LIVE-ingest generation. A re-derive entry
-	// point (stellarindex-ops backfill / ch-rebuild / projected-rebuild /
-	// supply snapshot) calls [SetDeriveGeneration] with a POSITIVE value
-	// so its corrected value wins the guard and can never be reverted by
-	// a subsequent live gen-0 replay. Set via [SetDeriveGeneration] after
-	// [Open]; leaving it 0 keeps live ingest unchanged.
+	// deriveGeneration is stamped into `derive_generation` by the derived-value writers
+	// ([InsertTrade], [BatchInsertTrades], [InsertOracleUpdate], [InsertSupply]). They DO UPDATE
+	// in place on conflict, guarded by `derive_generation <= EXCLUDED.derive_generation`, so a
+	// corrected re-derive lands without a destructive DELETE + re-backfill. 0 is live ingest; a
+	// re-derive entry point sets a POSITIVE value so a later live gen-0 replay can never revert it.
 	deriveGeneration int64
 
-	// usdVolumeResolutionInstalled records that InstallUSDVolumeResolution was
-	// CALLED on this store (regardless of whether it then wired resolvers — a
-	// no-pegs deployment installs none but still counts). It is the signal
-	// [Store.reDeriveNullVolumeGuard] uses to fail trade writes closed when a re-derive
-	// entry point stamps a generation but forgets to enter USD-volume-resolution
-	// mode. Set only by InstallUSDVolumeResolution.
+	// usdVolumeResolutionInstalled records that InstallUSDVolumeResolution was CALLED, even if
+	// it wired no resolvers (a no-pegs deployment). [Store.reDeriveNullVolumeGuard] uses it to
+	// fail trade writes closed when a re-derive entry point forgets resolution mode.
 	usdVolumeResolutionInstalled bool
 
-	// assetRegistryDedupe is this Store's cache of (asset_id →
-	// last successful classic_assets upsert time). The next trade
-	// for the same asset within `assetRegistryDedupeTTL` skips the
-	// DB round-trip; trades outside the window upsert again so
-	// `last_seen_*` + `observation_count` advance.
-	//
-	// Per-Store (one DB), not per-process: asset_id is only unique
-	// within a database, and a process-wide map would let a second Store
-	// over a different DB inherit "already upserted" for rows that DB
-	// never received. Store-lifetime is otherwise intentional: the
-	// indexer restarts often enough to re-touch rows, the upsert is
-	// idempotent, and the TTL bounds the worst-case load — a
-	// cross-process cache would be over-engineering.
+	// assetRegistryDedupe caches asset_id -> last successful classic_assets upsert time; a repeat
+	// trade inside `assetRegistryDedupeTTL` skips the round-trip so `last_seen_*` and
+	// `observation_count` still advance on later ones. Per-Store, not per-process: asset_id is
+	// only unique within one database, so a shared map would let a second Store over another DB
+	// inherit "already upserted" for rows that DB never received.
 	assetRegistryDedupe sync.Map // key: asset_id (string) → time.Time (last upsert)
 
 	// assetRegistryMinLedger is the lowest first ledger upserted per asset
 	// (asset_id → uint32); a lower one bypasses the TTL above.
 	assetRegistryMinLedger sync.Map
 
-	// issuerRegistryDedupe is this Store's sentinel cache of issuer
-	// G-strkeys already INSERTed into `issuers`. No TTL: the issuers
-	// table has no `last_seen` columns so there's nothing to advance
-	// after the first INSERT (migration 0022 vs 0023).
+	// issuerRegistryDedupe holds issuer G-strkeys already INSERTed into `issuers`. No TTL: the
+	// table has no `last_seen` column to advance after the first INSERT.
 	issuerRegistryDedupe sync.Map // key: g_strkey (string) → struct{}
 
-	// classicWatermark memoizes the classic-supply observer watermark
-	// read by [Store.MinClassicComponentLedger]. The watermark is a
-	// property of the four OBSERVERS, not of any one asset, so it is
-	// identical for every asset in a refresh tick — recomputing it per
-	// asset made a 48-asset tick take minutes (four MAX(ledger) scans
-	// across every hypertable chunk, 48 times over).
-	//
-	// Cached for [classicWatermarkTTL], which is far shorter than the
-	// 1000-ledger (~85 min) staleness threshold it feeds, so the cache
-	// can never be the reason a stall goes unnoticed.
+	// classicWatermark memoizes the watermark read by [Store.MinClassicComponentLedger]. It belongs
+	// to the four OBSERVERS, not to an asset, so it is identical for every asset in a refresh tick;
+	// recomputing per asset repeats four MAX(ledger) scans across every hypertable chunk. The TTL
+	// ([classicWatermarkTTL]) is far shorter than the 1000-ledger staleness threshold it feeds, so
+	// the cache cannot hide a stall.
 	classicWatermark classicWatermarkCache
 
-	// sep41Watermark is the [classicWatermark] counterpart for the SEP-41
-	// supply-event producer, read by [Store.MinSEP41ComponentLedger].
-	// Separate cache because the two producers advance independently — one
-	// stalling must not be hidden behind the other's progress.
+	// sep41Watermark is the [classicWatermark] counterpart for the SEP-41 producer. It is a
+	// separate cache because the producers advance independently; one stalling must not be hidden
+	// behind the other's progress.
 	sep41Watermark classicWatermarkCache
 }
 
-// SetUSDVolumeQuoteSpec installs the operator-configured quote-asset
-// spec used by [InsertTrade] to populate `trades.usd_volume` for
-// on-chain trades. Safe to call once at startup; not safe to call
-// concurrently with InsertTrade.
-//
-// nil clears the spec — InsertTrade reverts to off-chain-only behaviour.
+// SetUSDVolumeQuoteSpec installs the quote-asset spec [InsertTrade] uses for on-chain
+// `trades.usd_volume`; nil reverts to off-chain-only. Call once at startup, not concurrently
+// with InsertTrade.
 func (s *Store) SetUSDVolumeQuoteSpec(spec *USDVolumeQuoteSpec) {
 	s.usdVolumeQuoteSpec = spec
 }
 
-// SetUSDVolumeFXResolver installs the FX-resolver path for on-chain
-// USD-volume coverage. nil clears it.
-//
-// Safe to call once at startup; not safe to call concurrently with
-// InsertTrade. The resolver is consulted only when the quote-spec tier
-// (USDVolumeQuoteSpec) declines the trade — see [tradeUSDVolume].
+// SetUSDVolumeFXResolver installs the FX-resolver tier for on-chain USD volume; nil clears it. It
+// is consulted only when the quote-spec tier declines (see [tradeUSDVolume]). Call once at
+// startup, not concurrently with InsertTrade.
 func (s *Store) SetUSDVolumeFXResolver(r USDVolumeFXResolver) {
 	s.usdVolumeFXResolver = r
 }
 
-// SetDeriveGeneration sets the re-derive generation the derived-value
-// writers stamp into the `derive_generation` column (migration 0109).
+// SetDeriveGeneration sets the generation the derived-value writers stamp into `derive_generation`.
 //
-// The default (0) is the LIVE-ingest generation; a re-derive tool sets a
-// POSITIVE value so its corrected value wins the writers' ON CONFLICT
-// guard (`derive_generation <= EXCLUDED.derive_generation`) and can never
-// be reverted by a live gen-0 replay. The ops re-derive entry points pass
-// time.Now().Unix() — always positive and monotonic across runs, so a
-// later re-derive supersedes an earlier one.
-//
-// Safe to call once at startup; not safe to call concurrently with the
-// writers.
+// A re-derive tool passes a POSITIVE value so its rows win the ON CONFLICT guard
+// (`derive_generation <= EXCLUDED.derive_generation`); time.Now().Unix() is positive and monotonic,
+// so a later re-derive supersedes an earlier one. Call once at startup, not concurrently with writers.
 func (s *Store) SetDeriveGeneration(gen int64) {
 	s.deriveGeneration = gen
 }
 
-// reDeriveNullVolumeGuard fails the trade-write choke point CLOSED when the store
-// is in re-derive mode (deriveGeneration > 0) but the USD-volume resolvers were
-// never installed. A positive generation makes every written trade WIN the ON
-// CONFLICT guard, so InsertTrade/BatchInsertTrades assign `usd_volume =
-// EXCLUDED.usd_volume`; with no resolver installed, tradeUSDVolume returns nil
-// for every on-chain DEX / FX-priced trade, silently overwriting the correct
-// stored usd_volume with NULL — and because the row now carries a high
-// generation, a later live gen-0 replay can NEVER restore it. Rather than trust
-// every re-derive tool, present and future, to call InstallUSDVolumeResolution,
-// this makes the combination unrepresentable: any trade write in re-derive mode
-// without resolvers fails loudly at the first row. Live ingest (generation == 0)
-// and non-trade re-derives (no InsertTrade/BatchInsertTrades call) are unaffected.
-// It is deliberately PRECISE rather than blanket: it fires only when this trade's
-// usd_volume actually resolved to NULL *and* resolution was never wired. Tier 1
-// prices CEX USD-quoted trades from the quote decimals alone (no resolver
-// needed), so a blanket guard would refuse writes that compute a correct
-// usd_volume. Firing only on (computed == nil && !installed) targets the
-// destructive case — writing NULL over a value resolution might have priced —
-// while a genuinely-unpriceable trade in a wired re-derive writes its honest NULL.
+// reDeriveNullVolumeGuard fails a trade write CLOSED in re-derive mode (deriveGeneration > 0) when
+// the USD-volume resolvers were never installed. A positive generation wins the ON CONFLICT guard
+// and assigns `usd_volume = EXCLUDED.usd_volume`; with no resolver, tradeUSDVolume returns nil for
+// on-chain DEX / FX-priced trades, overwriting a correct value with NULL that a live gen-0 replay
+// can never restore. It fires only when computed == nil and resolution was never wired: tier 1
+// prices USD-quoted CEX trades without a resolver, and an unpriceable trade in a wired re-derive
+// legitimately writes NULL. Live ingest (generation 0) is unaffected.
 func (s *Store) reDeriveNullVolumeGuard(t canonical.Trade, computed *string) error {
 	if s.deriveGeneration > 0 && computed == nil && !s.usdVolumeResolutionInstalled {
 		return fmt.Errorf("timescale: refusing to write trade %s/%s (source=%s ledger=%d) "+
@@ -190,11 +120,9 @@ func (s *Store) reDeriveNullVolumeGuard(t canonical.Trade, computed *string) err
 	return nil
 }
 
-// resolveUSDVolume is the one place a trade write computes its usd_volume. A
-// resolver read error stores NULL on the live path (generation 0, where a
-// later re-derive can repair it) but fails the write in re-derive mode, where
-// the row would win the generation guard and overwrite a correct stored value
-// with NULL beyond live replay's reach.
+// resolveUSDVolume is the one place a trade write computes its usd_volume. A resolver read error
+// stores NULL on the live path (a later re-derive can repair it) but fails the write in re-derive
+// mode, where the NULL would win the generation guard over a correct stored value.
 func (s *Store) resolveUSDVolume(ctx context.Context, t canonical.Trade) (*string, error) {
 	v, err := tradeUSDVolumeChecked(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
 	if err != nil {
@@ -211,43 +139,23 @@ func (s *Store) resolveUSDVolume(ctx context.Context, t canonical.Trade) (*strin
 	return v, nil
 }
 
-// Pool-tuning constants. Exposed so [store_test.go] can assert
-// configurePool actually set them, and so operators can see the live
-// values without grepping the function body.
-//
-// See [configurePool] for the rationale on each value.
+// Pool-tuning constants, exported so store_test.go can assert configurePool set them.
 const (
-	// PoolMaxOpenConns caps total conns held by one indexer/api/
-	// aggregator binary. 25 is conservative; tune per deployment.
+	// PoolMaxOpenConns caps total conns held by one indexer/api/aggregator binary.
 	PoolMaxOpenConns = 25
-	// PoolMaxIdleConns caps idle conns kept in the pool between
-	// uses. Keeping a small idle floor avoids the connect-storm
-	// pattern on a cold cache.
+	// PoolMaxIdleConns keeps a small idle floor to avoid a connect storm on a cold cache.
 	PoolMaxIdleConns = 5
-	// PoolConnMaxLifetime is the full re-dial ceiling — every conn
-	// is retired this often regardless of liveness. This is the
-	// resilience net: without it, dead conns stayed in the pool for
-	// ~14 h after the underlying postgres@15-main crashed and
-	// recovered, because nothing forced them to refresh. 30 min beats
-	// Patroni's typical rolling-restart interval AND bounds the longest
-	// cascade-gap to that interval.
+	// PoolConnMaxLifetime retires every conn this often regardless of liveness, so dead conns
+	// cannot linger after a postgres crash and recovery. 30 min beats a rolling-restart interval
+	// and bounds the longest cascade-gap to it.
 	PoolConnMaxLifetime = 30 * time.Minute
-	// PoolConnMaxIdleTime bounds the window where an idle conn the
-	// DB-side has already killed (pg_terminate_backend, firewall
-	// tcp-timeout, Patroni failover) might still be handed out.
-	// Without this, an idle conn can live until ConnMaxLifetime,
-	// forcing a retry at serve-time.
+	// PoolConnMaxIdleTime bounds how long an idle conn the DB side already killed (terminate,
+	// firewall timeout, failover) can be handed out, which would force a serve-time retry.
 	PoolConnMaxIdleTime = 5 * time.Minute
 )
 
-// configurePool applies the standard pool tunings to a freshly-
-// opened *sql.DB. Extracted so [store_test.go] can verify the
-// settings without booting a real postgres.
-//
-// The constants are named and extracted because inline magic numbers
-// are invisible to anything except a reader of this file, so a future
-// refactor could silently drop them and the connection-pool
-// resilience would regress unnoticed.
+// configurePool applies the standard pool tunings to a freshly opened *sql.DB. It is extracted so
+// store_test.go can verify the settings without a real postgres.
 func configurePool(db *sql.DB) {
 	db.SetMaxOpenConns(PoolMaxOpenConns)
 	db.SetMaxIdleConns(PoolMaxIdleConns)
@@ -255,13 +163,8 @@ func configurePool(db *sql.DB) {
 	db.SetConnMaxIdleTime(PoolConnMaxIdleTime)
 }
 
-// Open initialises a connection pool. Ping'd before returning so a
-// bad DSN fails fast.
-//
-// Pool tuning is applied via [configurePool] — see those constants
-// for the per-setting rationale. Net effect: every conn is retired
-// at most every [PoolConnMaxLifetime], the safety net against dead
-// conns lingering in the pool after postgres crashes and recovers.
+// Open initialises a connection pool and pings it so a bad DSN fails fast. Pool tuning comes from
+// [configurePool].
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	cfg, err := sessionConnConfig(dsn)
 	if err != nil {
@@ -279,12 +182,10 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
-// sessionConnConfig parses dsn for every pool this package opens and pins
-// the session TimeZone to UTC, overriding the server default, PGTZ and any
-// DSN setting. Calendar interval arithmetic on a timestamptz (`now() -
-// INTERVAL '1 day'`, `'1 month'`) is evaluated in the session zone, so the
-// sargable closed-bucket guards only agree with the UTC time_bucket grid
-// when the session is UTC; elsewhere a DST transition shifts them an hour.
+// sessionConnConfig parses dsn for every pool and pins the session TimeZone to UTC, overriding the
+// server default, PGTZ and any DSN setting. Calendar interval arithmetic on a timestamptz
+// (`now() - INTERVAL '1 day'`) runs in the session zone, so the sargable closed-bucket guards
+// only match the UTC time_bucket grid when the session is UTC; a DST transition shifts them an hour.
 func sessionConnConfig(dsn string) (*pgx.ConnConfig, error) {
 	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
@@ -301,16 +202,11 @@ func sessionConnConfig(dsn string) (*pgx.ConnConfig, error) {
 	return cfg, nil
 }
 
-// dsnParseError renders pgx's rejection of dsn in this package's words.
-// pgx's own text quotes the DSN through a best-effort redactor that
-// stops at the first `/` or `@`, printing the rest of a password holding
-// both; the error is not wrapped so no caller can unwrap to
-// ParseConfigError.ConnString. The branch is pgx's own URL-prefix test:
-// anything else is keyword/value, which net/url also accepts as a bare
-// path, so it is never rendered as a URL and none of pgx's text for it
-// is kept (its syntax errors quote a password's tail as a key). A URL's
-// inner reason is kept only when it parses, since only then is it about
-// an option, not the password's syntax.
+// dsnParseError renders pgx's rejection of dsn without leaking the password. pgx's own text uses a
+// redactor that stops at the first `/` or `@`, and the error is left unwrapped so no caller can
+// reach ParseConfigError.ConnString. The branch mirrors pgx's URL-prefix test: anything else is
+// keyword/value, whose syntax errors quote a password's tail as a key, so none of pgx's text is
+// kept. A URL's inner reason is kept only when it parses, since only then it is about an option.
 func dsnParseError(dsn string, err error) error {
 	const prefix = "timescale: pgx.ParseConfig: "
 	if !strings.HasPrefix(dsn, "postgres://") && !strings.HasPrefix(dsn, "postgresql://") {
@@ -326,10 +222,8 @@ func dsnParseError(dsn string, err error) error {
 	return errors.New(msg)
 }
 
-// keywordDSNKinds maps a phrase of pgx's rejection to this package's
-// description of it, most specific first. The phrase is matched, never
-// printed, so a password that happens to hold one misnames the failure
-// and leaks nothing.
+// keywordDSNKinds maps a phrase of pgx's rejection to our description, most specific first. The
+// phrase is matched, never printed, so a password holding one misnames the failure and leaks nothing.
 var keywordDSNKinds = []struct{ phrase, kind string }{
 	{"failed to parse as keyword/value", `a syntax error (quote a value holding a space or quote as '...', escaping \ and ')`},
 	{"not in ConnStringAllowedKeys", "an unrecognised keyword"},
@@ -356,16 +250,9 @@ func keywordDSNFailure(err error) string {
 	return "an invalid keyword/value connection string"
 }
 
-// PingContext exercises the underlying *sql.DB pool. Used by the
-// indexer's periodic resilience probe (see watchPostgresPing in
-// cmd/stellarindex-indexer/main.go) to surface dead-pool conditions
-// as a metric / alert signal. The actual reconnect path is handled
-// automatically by database/sql + ConnMaxLifetime — this method is
-// the OBSERVABILITY hook, not the reconnect mechanism.
-//
-// Returns nil on a nil receiver so callers can poll a Store that
-// hasn't been wired yet during shutdown / test teardown without
-// special-casing.
+// PingContext exercises the pool for the indexer's resilience probe. It is an observability hook;
+// reconnection is database/sql plus ConnMaxLifetime. A nil receiver returns nil so shutdown and
+// test teardown can poll an unwired Store.
 func (s *Store) PingContext(ctx context.Context) error {
 	if s == nil || s.db == nil {
 		return nil
@@ -385,11 +272,8 @@ func (s *Store) Close() error {
 // access (e.g. the migrate binary). Prefer the typed methods.
 func (s *Store) DB() *sql.DB { return s.db }
 
-// DeriveGeneration returns the re-derive generation the derived-value
-// writers currently stamp (see [SetDeriveGeneration]). 0 is the live-ingest
-// generation; a positive value means an ops re-derive / correction tool has
-// entered corrective mode. Exposed so an ops entry point (and its test) can
-// confirm it stamped a POSITIVE generation before writing corrections.
+// DeriveGeneration returns the generation the derived-value writers stamp (see
+// [SetDeriveGeneration]); 0 is live ingest. Ops entry points assert it is positive before writing.
 func (s *Store) DeriveGeneration() int64 { return s.deriveGeneration }
 
 // ─── Error helpers ─────────────────────────────────────────────────

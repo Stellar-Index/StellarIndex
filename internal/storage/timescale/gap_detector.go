@@ -9,118 +9,64 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// GapDetectorInterval is the cadence at which [RunGapDetector]
-// re-scans every registered per-source hypertable for contiguous
-// data-coverage gaps.
-//
-// Why 30 minutes:
-//   - The expensive part is the LAG()-over-DISTINCT scan. Clocked
-//     4m51s against ~50M distinct
-//     ledgers in soroban_events alone; the per-source tables add
-//     a smaller per-target cost (<30s each) but the sum
-//     across 13 targets is ~7-10 min worst-case.
-//   - The metric feeds a paging alert on a >threshold gap held
-//     for 15 min; 30 min cadence keeps the alert latency in the
-//     ~45-60 min envelope, which is appropriate for an "ingest
-//     halt" page (not a sub-minute fast-failure signal).
-//   - Future optimisation may incrementally refresh a
-//     soroban_event_ledgers materialised view to bring the
-//     dominant scan cost back under a second.
+// GapDetectorInterval is how often [RunGapDetector] re-scans every per-source hypertable for gaps.
+// The LAG()-over-DISTINCT scan is expensive (soroban_events alone takes minutes), and the metric
+// feeds a paging alert held for 15 min, so 30 min keeps alert latency in the 45-60 min envelope
+// that suits an ingest-halt page.
 const GapDetectorInterval = 30 * time.Minute
 
-// GapDetectorMinGapSize is the threshold below which a contiguous
-// gap is treated as expected no-activity noise rather than an
-// ingest gap. Matches `stellarindex-ops find-data-gaps`'s default
-// of 1000 ledgers (~1.5 h of network time) — see the godoc on
-// that subcommand for the rationale.
+// GapDetectorMinGapSize is the threshold below which a gap is treated as no-activity noise rather
+// than an ingest gap. It matches `stellarindex-ops find-data-gaps` (1000 ledgers, ~1.5 h).
 const GapDetectorMinGapSize = int64(1000)
 
-// gapDetectorPerTargetTimeout caps one per-target scan. Sized for
-// soroban_events's 5-min measurement with 3x headroom; the per-
-// source tables complete in <30s typically so this is the upper
-// bound, not the median. Per-target timeout means one slow table
-// doesn't poison the rest of the cycle — each target runs in
-// isolation.
+// gapDetectorPerTargetTimeout caps one per-target scan at 3x soroban_events's measured 5 min; the
+// other tables finish far sooner. Per-target isolation keeps one slow table from poisoning the cycle.
 const gapDetectorPerTargetTimeout = 15 * time.Minute
 
-// gapDetectorStatementTimeoutMS is the PG-side `SET LOCAL statement_timeout`
-// applied to BOTH per-target scan queries — the LAG-over-DISTINCT gap scan in
-// [Store.FindPerSourceLedgerGaps] and the density count in
-// [Store.CountDistinctLedgers]. It is the backstop for the case where the
-// Go-side cancel does not reach PG.
+// gapDetectorStatementTimeoutMS is the PG-side `SET LOCAL statement_timeout` for BOTH per-target
+// scans ([Store.FindPerSourceLedgerGaps] and [Store.CountDistinctLedgers]), the backstop for when
+// the Go-side cancel does not reach PG.
 //
-// INVARIANT: MUST be <= gapDetectorPerTargetTimeout, and the two queries share
-// ONE constant. Bounded instead by opsVerifyStatementTimeoutMS (2h) under the
-// 15-min Go context, every soroban_events count that overran 15 min would be
-// abandoned by Go but keep running in PG for up to 2h, and the next 6h cycle
-// (or every restart) would stack another. Pinned by
-// TestGapDetectorStatementTimeoutWithinGoBudget.
+// INVARIANT: MUST be <= gapDetectorPerTargetTimeout, one constant for both queries. A longer PG
+// bound would let a query Go abandoned keep running for hours while each later cycle stacks
+// another. Pinned by TestGapDetectorStatementTimeoutWithinGoBudget.
 const gapDetectorStatementTimeoutMS = 780_000 // 13 min, in ms
 
-// GapDetectorSafetyLookback bounds how far below tip a single steady-
-// state detector cycle re-scans. In steady state the scanned window is
-// just [previous-scan high-water, tip] — a few hundred ledgers per
-// 30-min cycle; this constant only binds after the detector has been
-// down for a target long enough that its high-water fell more than
-// SafetyLookback below tip, at which point it caps the catch-up so one
-// cycle can never walk back further than ~200k ledgers (~11.5 days of
-// network time).
+// GapDetectorSafetyLookback bounds how far below tip one cycle re-scans (~200k ledgers, ~11.5
+// days). Steady state scans only [previous high-water, tip]; this binds only after the detector
+// was down long enough that the high-water fell further behind, capping the catch-up.
 //
-// DIVISION OF LABOR (ADR-0033): the gap detector's snapshots are a SUPPORTING
-// signal for the RECENT ingest frontier. The authoritative deep-history
-// verdict is completeness_snapshots (substrate continuity + hash chain +
-// projection reconcile, from genesis, no sparsity threshold), which covers all
-// 17 sources. Re-walking [genesis, tip] every 30 min buys nothing and — at
-// sep41_transfers' ~13M distinct ledgers (~700M rows) costs two ~13-min
-// scans per cycle. Trailing-window
-// scanning keeps the detector cheap; deep history is the verdict system's job.
+// The detector is a SUPPORTING signal for the recent ingest frontier (ADR-0033). The authoritative
+// deep-history verdict is completeness_snapshots, from genesis. Re-walking [genesis, tip] every
+// 30 min buys nothing and at sep41_transfers' size costs two ~13-min scans per cycle.
 const GapDetectorSafetyLookback = int64(200_000)
 
-// GapDetectorFirstScanCap bounds the FIRST-ever scan of a target (no
-// persisted scan high-water yet). Generous — 2M ledgers (~115 days) so
-// the initial coverage snapshot has a meaningful recent-history window
-// — but finite, so a brand-new target (or a fresh deploy that lost its
-// high-water cursor) never triggers the full-history walk the trailing
-// window exists to eliminate. Deep history below the cap is the ADR-0033
-// completeness verdict's domain, not the detector's.
+// GapDetectorFirstScanCap bounds the FIRST-ever scan of a target (no high-water yet): 2M ledgers
+// (~115 days) is a meaningful window yet finite, so a new target or a lost cursor never triggers
+// the full-history walk. Deeper history is the ADR-0033 completeness verdict's domain.
 const GapDetectorFirstScanCap = int64(2_000_000)
 
-// gapDetectorHighWaterSource is the ingestion_cursors `source` under
-// which the detector persists each target's per-cycle scan high-water
-// (the tip it last scanned to; Sub is the target's key). Reading it
-// lets the next cycle scan only [high-water, tip] instead of re-walking
-// [genesis, tip]. Deliberately kept out of the "backfill" /
-// "ledgerstream" cursor namespaces so the diagnostics cursor
-// aggregation (aggregateBackfill / ledgerStreamLagSeconds) ignores it.
+// gapDetectorHighWaterSource is the ingestion_cursors `source` holding each target's scan
+// high-water (the tip last scanned; Sub is the target key), so the next cycle scans only
+// [high-water, tip]. It is kept out of the "backfill" and "ledgerstream" namespaces so the
+// diagnostics cursor aggregation (aggregateBackfill / ledgerStreamLagSeconds) ignores it.
 const gapDetectorHighWaterSource = "gap-detector-scan"
 
-// gapDetectorLastPresentSource is the ingestion_cursors `source` under
-// which the detector persists, per target, the highest ledger it
-// observed PRESENT in the last window it scanned (not the scan
-// high-water itself, which advances every cycle regardless of whether
-// any row existed). Read back as the seed for
-// [Store.FindPerSourceLedgerGaps] so a gap that spans a scan-window
-// boundary — the dominant steady-state failure mode once the
-// incremental window is narrower than every gap threshold — still
-// pairs with the row that follows it after the writer resumes, instead
-// of being silently dropped because the preceding row fell in an
-// earlier, already-scanned window.
+// gapDetectorLastPresentSource is the ingestion_cursors `source` holding, per target, the highest
+// ledger observed PRESENT in the last scanned window (unlike the high-water, which advances even
+// when no row existed). It seeds [Store.FindPerSourceLedgerGaps] so a gap spanning a window
+// boundary still pairs with the row after it once the writer resumes, instead of being dropped
+// because the preceding row sat in an earlier window.
 const gapDetectorLastPresentSource = "gap-detector-last-present"
 
-// computeGapScanWindow returns the lower bound `from` of the trailing
-// window a detector cycle scans for a target, given the live `tip`,
-// the source `genesis`, the persisted scan `prevHighWater`
-// (0 when unknown), and whether this is the target's `firstRun`:
+// computeGapScanWindow returns the lower bound `from` of the trailing window a cycle scans:
 //
-//   - firstRun            → from = max(genesis, tip - FirstScanCap)
-//   - steady / post-error → from = max(genesis, prevHighWater, tip - SafetyLookback)
+//   - firstRun            -> from = max(genesis, tip - FirstScanCap)
+//   - steady / post-error -> from = max(genesis, prevHighWater, tip - SafetyLookback)
 //
-// The result is clamped to be non-negative; callers pass it straight
-// into FindPerSourceLedgerGaps, which still rejects from > tip (e.g. a
-// source whose genesis sits above the current tip) exactly as before.
-// Both the gap scan AND the distinct/expected coverage math use this
-// same `from`, so density (= distinct / (tip - from + 1)) stays
-// coherent — numerator and denominator both scoped to the window.
+// The result is clamped non-negative; FindPerSourceLedgerGaps still rejects from > tip. The gap
+// scan and the coverage math share this `from`, so density (distinct / (tip - from + 1)) has
+// numerator and denominator scoped to the same window.
 func computeGapScanWindow(genesis, tip, prevHighWater int64, firstRun bool) int64 {
 	var from int64
 	if firstRun {
@@ -140,13 +86,9 @@ func computeGapScanWindow(genesis, tip, prevHighWater int64, firstRun bool) int6
 	return from
 }
 
-// gapScanHighWater reads the per-target scan high-water persisted by
-// the previous cycle. Returns (highWater, firstRun): firstRun is true
-// ONLY when no high-water has ever been written for this target (the
-// generous FirstScanCap applies). A transient read error is treated as
-// "not first run, no usable high-water" (highWater 0) so the window
-// falls back to the bounded SafetyLookback trailing window rather than
-// the wider FirstScanCap.
+// gapScanHighWater reads the high-water the previous cycle persisted. firstRun is true ONLY when
+// none was ever written. A transient read error returns (0, false) so the window falls back to the
+// bounded SafetyLookback rather than the wider FirstScanCap.
 func gapScanHighWater(ctx context.Context, store *Store, logger *slog.Logger, target GapDetectorTarget) (highWater int64, firstRun bool) {
 	c, err := store.GetCursor(ctx, gapDetectorHighWaterSource, targetKey(target))
 	switch {
@@ -161,14 +103,10 @@ func gapScanHighWater(ctx context.Context, store *Store, logger *slog.Logger, ta
 	}
 }
 
-// gapScanSeed reads the last-present-ledger cursor persisted by the
-// previous cycle's scan (see [gapDetectorLastPresentSource]). Returns 0
-// ("no seed") when none is persisted yet or the read fails — the scan
-// falls back to today's un-seeded, interior-only behaviour rather than
-// blocking on the read. Targets carrying a DistinctLedgerCountSQL
-// override (soroban-events) never get a seed: the MAX(ledger) probe
-// this seed depends on is the same full-scan cost that override exists
-// to avoid (see [maxLedgerInWindowQuery]).
+// gapScanSeed reads the last-present-ledger cursor (see [gapDetectorLastPresentSource]). It returns
+// 0 ("no seed") when none exists or the read fails, so the scan falls back to interior-only gaps.
+// DistinctLedgerCountSQL-override targets (soroban-events) never get a seed: the MAX(ledger) probe
+// costs the same full scan the override exists to avoid (see [maxLedgerInWindowQuery]).
 func gapScanSeed(ctx context.Context, store *Store, target GapDetectorTarget) int64 {
 	if target.DistinctLedgerCountSQL != "" {
 		return 0
@@ -180,13 +118,9 @@ func gapScanSeed(ctx context.Context, store *Store, target GapDetectorTarget) in
 	return int64(c.LastLedger)
 }
 
-// persistGapScanSeed records this window's highest present ledger as
-// the seed the NEXT cycle's scan reads (see [gapScanSeed]).
-// UpsertCursor's monotonic-forward guard means a quiet window (max <=
-// the already-persisted value) is a safe no-op; skipped entirely for
-// the DistinctLedgerCountSQL-override targets, same reasoning as
-// [gapScanSeed]. Failures are non-fatal: the next cycle just falls back
-// to an un-seeded scan.
+// persistGapScanSeed records this window's highest present ledger as the next cycle's seed (see
+// [gapScanSeed]). UpsertCursor only moves forward, so a quiet window is a safe no-op. Failures are
+// non-fatal: the next cycle falls back to an un-seeded scan.
 func persistGapScanSeed(ctx context.Context, store *Store, logger *slog.Logger, target GapDetectorTarget, from, tip int64) {
 	if target.DistinctLedgerCountSQL != "" {
 		return
@@ -206,26 +140,17 @@ func persistGapScanSeed(ctx context.Context, store *Store, logger *slog.Logger, 
 	}
 }
 
-// RunGapDetector blocks until ctx is cancelled, periodically scanning every
-// target in [DefaultGapDetectorTargets] that exists on `network` (see
-// [ApplicableGapDetectorTargets]) for contiguous ledger-coverage gaps,
-// emitting per-(source, table) gauges + meta-metrics.
+// RunGapDetector blocks until ctx is cancelled, periodically scanning every applicable target in
+// [DefaultGapDetectorTargets] (see [ApplicableGapDetectorTargets]) for ledger-coverage gaps and
+// emitting per-(source, table) gauges.
 //
-// Data-derived complement to the cursor-derived density projection in
-// /v1/diagnostics/ingestion. Cursor coverage measures process state ("did we
-// walk this ledger") and can read 100% while data is missing; this worker
-// scans every per-source data table directly.
+// It complements the cursor-derived density in /v1/diagnostics/ingestion: cursor coverage measures
+// process state and can read 100% while data is missing, so this scans the data tables directly.
 //
-// Failure semantics: a transient Postgres error on one target's scan does NOT
-// clear its gauges and does NOT halt the remaining targets — the last-known
-// value stays and the loop continues. Operators rely on the paired
-// `stellarindex_ingest_gap_detector_runs_total{outcome=error}` counter to
-// detect a sustained per-target outage.
-//
-// The first cycle runs immediately so the gauges are populated before the
-// first interval tick. Targets whose cadence has NOT elapsed since their last
-// persisted scan are skipped by that cycle (see [seedGapDetectorState]); their
-// gauges are re-emitted from persisted state instead.
+// A transient Postgres error on one target neither clears its gauges nor halts the others; the
+// paired `stellarindex_ingest_gap_detector_runs_total{outcome=error}` counter exposes a sustained
+// outage. The first cycle runs immediately; targets whose cadence has not elapsed since their last
+// persisted scan are skipped and re-emitted from persisted state (see [seedGapDetectorState]).
 func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger, network string) error {
 	if store == nil {
 		return nil
@@ -235,17 +160,10 @@ func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger, netw
 	}
 	targets := ApplicableGapDetectorTargets(DefaultGapDetectorTargets, network, logger)
 
-	// Per-target last-scan timestamps drive the per-target cadence
-	// gate. Without per-target tracking, every target either scans
-	// every cycle (so SDEX + soroban-events stack concurrent queries
-	// on postgres) or all targets stretch to the longest cadence. Per-target
-	// tracking lets us run light targets every 30 min while
-	// throttling huge-table targets (SDEX, soroban-events) to 6h.
-	//
-	// Seeded from the persisted scan high-water cursors so a RESTART honours
-	// the cadence: an empty map would make every deploy / crash-loop iteration
-	// re-run the 6h-cadence soroban_events + sdex scans immediately —
-	// regardless of when they last ran.
+	// Per-target last-scan times gate each target's own cadence, so light targets run every 30 min
+	// while huge tables (SDEX, soroban-events) run every 6h instead of stacking concurrent queries.
+	// Seeded from the persisted high-water cursors so a RESTART honours the cadence; an empty map
+	// would re-run the 6h scans on every deploy or crash-loop iteration.
 	preregisterGapDetectorSeries(targets)
 	snapshots, err := store.ListSourceCoverage(ctx)
 	if err != nil {
@@ -276,20 +194,12 @@ func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger, netw
 // `outcome` label of stellarindex_ingest_gap_detector_runs_total.
 var gapDetectorRunOutcomes = []string{"ok", "error"}
 
-// preregisterGapDetectorSeries materialises the runs_total counter at 0
-// for every (source, table, outcome) the detector can emit, so a live
-// process ALWAYS exposes the series. Same always-present-series contract
-// as obs.seedBoundedLabelSeries, applied here because the (source, table)
-// label set is owned by DefaultGapDetectorTargets, not the obs package.
-//
-// Why it matters: a CounterVec only creates a series on first Inc(), and since
-// the schedule is seeded from the persisted scan cursor (see
-// [seedGapDetectorState]) a restart can legitimately run NO scan for hours.
-// Without pre-registration the whole family is absent for that window and the
-// `stellarindex_ingest_gap_detector_silent` alert's
-// `absent_over_time(runs_total[15m])` clause reads "no scan due yet" as
-// "detector dead". With the series present at 0 that clause is reserved for
-// the process-dead case it was written for; the staleness clause on
+// preregisterGapDetectorSeries materialises runs_total at 0 for every (source, table, outcome) so
+// a live process ALWAYS exposes the series (the label set is owned by DefaultGapDetectorTargets,
+// not obs). A CounterVec creates a series on first Inc(), and since the schedule is seeded from
+// persisted cursors (see [seedGapDetectorState]) a restart can run NO scan for hours. Without
+// this, the `stellarindex_ingest_gap_detector_silent` alert's `absent_over_time(runs_total[15m])`
+// clause would read "no scan due yet" as "detector dead"; the staleness clause on
 // last_success_unix still covers a wedged target.
 func preregisterGapDetectorSeries(targets []GapDetectorTarget) {
 	for _, t := range targets {
@@ -318,11 +228,9 @@ func runOneGapDetectorCycleScheduled(ctx context.Context, store *Store, logger *
 	runOneGapDetectorCycle(ctx, store, logger, due)
 }
 
-// dueGapDetectorTargets returns the targets whose EffectiveScanCadence
-// has elapsed since lastScan[key] (or that have no entry at all), and
-// stamps each returned target's lastScan to `now`. The stamp is taken
-// at dispatch, not on success, so a failing heavy scan is retried on
-// its cadence rather than every 30-min tick.
+// dueGapDetectorTargets returns targets whose EffectiveScanCadence has elapsed (or that have no
+// entry) and stamps their lastScan to `now`. The stamp is taken at dispatch, not on success, so a
+// failing heavy scan retries on its cadence rather than every 30-min tick.
 func dueGapDetectorTargets(targets []GapDetectorTarget, lastScan map[string]time.Time, now time.Time) []GapDetectorTarget {
 	due := make([]GapDetectorTarget, 0, len(targets))
 	for _, t := range targets {
@@ -336,31 +244,22 @@ func dueGapDetectorTargets(targets []GapDetectorTarget, lastScan map[string]time
 	return due
 }
 
-// gapDetectorCursorReader is the one Store method the boot-time seed
-// needs, as a func so [seedGapDetectorState] is unit-testable without
-// a database. Satisfied by (*Store).GetCursor.
+// gapDetectorCursorReader is the one Store method the boot seed needs, as a func so
+// [seedGapDetectorState] is testable without a database. (*Store).GetCursor satisfies it.
 type gapDetectorCursorReader func(ctx context.Context, source, sub string) (Cursor, error)
 
-// seedGapDetectorState builds the initial per-target lastScan map from
-// persisted state so a process restart continues the schedule the
-// previous process left instead of restarting it:
+// seedGapDetectorState builds the initial lastScan map from persisted state so a restart continues
+// the previous schedule:
 //
-//   - The "gap-detector-scan" high-water cursor a target wrote after its
-//     last SUCCESSFUL gap scan carries last_updated; that becomes the
-//     target's lastScan, so the first cycle skips it while
-//     now - last_updated < EffectiveScanCadence. (Clamped to `now` so a
-//     future-dated row from clock skew cannot suppress a scan past one
-//     cadence.)
-//   - The same stamp re-emits stellarindex_ingest_gap_detector_last_
-//     success_unix, so the `_silent` alert's staleness clock keeps running
-//     across the restart.
-//   - The target's source_coverage_snapshots row (written in the same
-//     scan) re-emits the last-known gap max/count + distinct gauges, so
-//     `stellarindex_ingest_gap_detected` is not blind for up to a full
-//     cadence after every deploy.
+//   - The "gap-detector-scan" cursor's last_updated becomes the target's lastScan, so the first
+//     cycle skips it until a cadence has elapsed. It is clamped to `now` so a future-dated row from
+//     clock skew cannot suppress a scan past one cadence.
+//   - The same stamp re-emits the last_success_unix gauge, so the `_silent` alert's staleness
+//     clock survives the restart.
+//   - The target's source_coverage_snapshots row re-emits the last-known gap and distinct gauges,
+//     so `stellarindex_ingest_gap_detected` is not blind for a cadence after each deploy.
 //
-// A target with no cursor (never scanned, or ErrNotFound) or a cursor read
-// error (logged) gets no entry, so the first cycle scans it; never "skip".
+// A target with no cursor or a cursor read error (logged) gets no entry, so the first cycle scans it.
 func seedGapDetectorState(ctx context.Context, targets []GapDetectorTarget, getCursor gapDetectorCursorReader, snapshots []SourceCoverage, logger *slog.Logger, now time.Time) map[string]time.Time {
 	byKey := make(map[string]SourceCoverage, len(snapshots))
 	for _, cov := range snapshots {
@@ -396,20 +295,13 @@ func seedGapDetectorState(ctx context.Context, targets []GapDetectorTarget, getC
 	return lastScan
 }
 
-// runOneGapDetectorCycle is one full pass over every target.
-// Separated from RunGapDetector so the cycle is unit-testable
-// (the integration test wires a real Store via testcontainers +
-// asserts gauges directly).
-//
-// Each target runs in its own bounded sub-context so one slow
-// scan can't starve the rest of the cycle.
+// runOneGapDetectorCycle is one full pass over every target, split out of RunGapDetector so it is
+// unit-testable. Each target runs in its own bounded sub-context so a slow scan cannot starve the rest.
 func runOneGapDetectorCycle(ctx context.Context, store *Store, logger *slog.Logger, targets []GapDetectorTarget) {
 	tip, err := resolveGapDetectorTip(ctx, store)
 	if err != nil {
-		// Tip resolution failure is global — every target is blocked
-		// because they all need the tip as the upper scan bound.
-		// Record one error per target so the per-target outcome
-		// counter stays coherent.
+		// A tip failure blocks every target (the tip is the upper scan bound), so record one error
+		// per target to keep the per-target outcome counter coherent.
 		for _, target := range targets {
 			obs.IngestGapDetectorRunsTotal.WithLabelValues(target.Source, target.Table, "error").Inc()
 		}
@@ -417,11 +309,8 @@ func runOneGapDetectorCycle(ctx context.Context, store *Store, logger *slog.Logg
 		return
 	}
 
-	// ADR-0031: emit tip as a gauge so the consumer (diagnostics
-	// handler) can compute density denominator without a DB hit.
-	// Set once per cycle BEFORE the per-target scans so the
-	// consumer always reads a tip consistent with the
-	// distinct-ledger gauges that follow.
+	// Emit tip as a gauge so diagnostics can compute the density denominator without a DB hit. It is
+	// set BEFORE the per-target scans so readers see a tip consistent with the distinct-ledger gauges.
 	obs.IngestGapDetectorTip.Set(float64(tip))
 
 	for _, target := range targets {
@@ -429,22 +318,13 @@ func runOneGapDetectorCycle(ctx context.Context, store *Store, logger *slog.Logg
 	}
 }
 
-// gapScanFrom computes this cycle's trailing-window lower bound for
-// target (see [computeGapScanWindow]) and logs the first-ever scan.
+// gapScanFrom computes this cycle's trailing-window lower bound (see [computeGapScanWindow]) and
+// logs a first-ever scan. It scans only [from, tip] because re-walking [genesis, tip] is two
+// ~13-min scans per cycle at sep41_transfers' size; the detector only needs the frontier.
 //
-// INCREMENTAL TRAILING WINDOW: scan only [from, tip], not [genesis, tip].
-// Re-walking the whole [genesis, tip] LAG-over-DISTINCT every 30 min costs two
-// ~13-min scans per cycle at sep41_transfers' ~13M distinct ledgers (~700M
-// rows). Deep history is the ADR-0033 completeness verdict's domain (all 17
-// sources); the detector only needs the frontier.
-//
-// `from` is still floored at target.Genesis: below it live
-// pre-genesis "gaps" (ranges where the protocol didn't exist) that
-// would deflate gap_free_pct — unfloored, aquarius read 94.5% from a
-// 551,779-ledger pre-genesis gap. The SAME `from`
-// feeds the distinct/expected coverage math the caller runs after so
-// density stays coherent (numerator + denominator both scoped to the
-// window).
+// `from` is floored at target.Genesis: below it lie pre-genesis "gaps" (the protocol did not
+// exist) that would deflate gap_free_pct. The same `from` feeds the caller's distinct/expected
+// math so density stays coherent.
 func gapScanFrom(ctx context.Context, store *Store, logger *slog.Logger, target GapDetectorTarget, tip int64) int64 {
 	prevHighWater, firstRun := gapScanHighWater(ctx, store, logger, target)
 	from := computeGapScanWindow(target.Genesis, tip, prevHighWater, firstRun)
@@ -455,14 +335,8 @@ func gapScanFrom(ctx context.Context, store *Store, logger *slog.Logger, target 
 	return from
 }
 
-// scanOneGapDetectorTarget runs one target's scan + metric
-// emission under its own timeout. Separated from
-// runOneGapDetectorCycle so the cycle loop reads as "for each
-// target, scan it" and the failure-mode boilerplate (timeout,
-// error counter, gauge non-clear) lives in one place.
-//
-// Gauges are NOT cleared on error — last-known value persists so
-// an alert that was firing stays firing through a transient blip.
+// scanOneGapDetectorTarget runs one target's scan and metric emission under its own timeout.
+// Gauges are NOT cleared on error, so an alert that was firing stays firing through a transient blip.
 //
 //nolint:gocognit // linear pipeline; the metric fan-out reads cleanly inline.
 func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Logger, target GapDetectorTarget, tip int64) {
@@ -474,14 +348,9 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 	seed := gapScanSeed(scanCtx, store, target)
 	gaps, err := store.FindPerSourceLedgerGaps(scanCtx, target, from, tip, target.EffectiveMinGapSize(), seed)
 	if err != nil {
-		// A non-ok outcome MUST be loud: this is the only signal that a
-		// heavy scan is timing out (Go ctx deadline / SQL statement_timeout)
-		// rather than succeeding, and it is what advances the silent-detector
-		// alert toward firing (the last-success gauge stops updating). A
-		// healthy detector must never read as "silent", and the inverse — a
-		// genuinely failing scan — must never be quiet.
-		// `elapsed_s` makes a timeout obvious: a deadline hit reads ~780s
-		// (statement_timeout) / ~900s (Go timeout), a fast error reads <1s.
+		// A failure MUST be loud: it is the only signal that a heavy scan is timing out, and the
+		// stalled last-success gauge is what advances the silent-detector alert. `elapsed_s` tells
+		// a deadline hit (~780s statement_timeout, ~900s Go timeout) from a fast error.
 		elapsed := time.Since(start).Seconds()
 		obs.IngestGapDetectorRunsTotal.WithLabelValues(target.Source, target.Table, "error").Inc()
 		obs.IngestGapDetectorDurationSeconds.WithLabelValues(target.Source, target.Table, "error").
@@ -492,12 +361,8 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 		return
 	}
 
-	// Window scanned cleanly — advance the per-target scan high-water so
-	// the next cycle starts here instead of re-walking from genesis.
-	// UpsertCursor's monotonic-forward guard means the high-water only
-	// ever grows. Non-fatal on failure: the next cycle re-reads the
-	// stale (or absent) high-water and scans a slightly wider, still
-	// SafetyLookback-bounded window.
+	// The window scanned cleanly, so advance the high-water (UpsertCursor only moves forward).
+	// Non-fatal on failure: the next cycle scans a slightly wider, still SafetyLookback-bounded window.
 	if tip > 0 {
 		if err := store.UpsertCursor(scanCtx, gapDetectorHighWaterSource, targetKey(target), uint32(tip)); err != nil { //nolint:gosec // tip is the ledgerstream cursor's uint32 last_ledger widened to int64 upstream; always in range
 			logger.Warn("gap-detector: persist scan high-water failed",
@@ -507,14 +372,9 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 
 	persistGapScanSeed(scanCtx, store, logger, target, from, tip)
 
-	// ADR-0031: alongside the gap scan, count distinct ledgers over the
-	// SAME trailing [from, tip] window so the data-derived density
-	// signal has its numerator + denominator both aligned to what was
-	// scanned. One extra SELECT per target per cycle — cheap relative
-	// to the LAG scan. If this query fails we don't poison the gap
-	// signal: emit the gap gauges anyway and skip the distinct/expected
-	// emission so the data-derived projection just reads as "stale"
-	// until the next cycle.
+	// Count distinct ledgers over the SAME [from, tip] window so density's numerator and denominator
+	// match what was scanned. If this fails, still emit the gap gauges and skip the distinct/expected
+	// emission so the projection reads as stale rather than wrong.
 	distinct, distinctErr := store.CountDistinctLedgers(scanCtx, target, from, tip)
 	if distinctErr != nil {
 		logger.Warn("gap-detector: count-distinct failed (gap signal unaffected)",
@@ -534,11 +394,8 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 	obs.IngestGapMaxSize.WithLabelValues(target.Source, target.Table).Set(float64(largest))
 	if distinctErr == nil {
 		obs.IngestSourceDistinctLedgers.WithLabelValues(target.Source, target.Table).Set(float64(distinct))
-		// ADR-0031 Phase 1: also persist the projection to
-		// source_coverage_snapshots so the API binary (separate
-		// process) can read fresh density numbers without re-running
-		// the heavy LAG-over-DISTINCT query at HTTP request time.
-		// One UPSERT per target per cycle.
+		// Persist the projection to source_coverage_snapshots so the API process reads density
+		// without re-running the heavy LAG-over-DISTINCT query at request time.
 		expected := ExpectedLedgersFor(from, tip)
 		cov := SourceCoverageFromCounts(
 			target.Source, target.Table,
@@ -563,13 +420,9 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 			"max_gap_size", largest,
 		)
 	case !gapVerdictTrustworthy(target.DistinctLedgerCountSQL != "", distinctErr, distinct):
-		// A zero-gap result from a table whose own census also saw nothing is
-		// NOT evidence of completeness — it's the shape a TRUNCATE of the
-		// underlying table produces (FindPerSourceLedgerGaps has no present
-		// row left to bracket a gap with, so it reports none) for a target
-		// whose density comes from a separate log (ledger_ingest_log for
-		// soroban-events, see sorobanEventsDistinctLedgerCountSQL). Loud, not
-		// Debug, so it isn't read as healthy.
+		// Zero gaps from a table whose own census also saw nothing is NOT evidence of completeness:
+		// a TRUNCATE leaves FindPerSourceLedgerGaps no present row to bracket a gap, for targets whose
+		// density comes from a separate log (see sorobanEventsDistinctLedgerCountSQL). Loud, not Debug.
 		logger.Warn("gap-detector: zero-gap verdict has no positive census corroboration — not trusted as clean",
 			"source", target.Source, "table", target.Table, "tip", tip, "from", from, "distinct", distinct)
 	default:
@@ -578,12 +431,9 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 	}
 }
 
-// gapVerdictTrustworthy reports whether a zero-missing-ledger verdict from
-// FindPerSourceLedgerGaps is backed by positive evidence for a target whose
-// density is computed by a [GapDetectorTarget.DistinctLedgerCountSQL]
-// override rather than the table FindPerSourceLedgerGaps itself scanned.
-// Targets with no override are always trustworthy — their own zero-gap
-// result and their density come from the same table.
+// gapVerdictTrustworthy reports whether a zero-gap verdict is backed by positive evidence when
+// density comes from a [GapDetectorTarget.DistinctLedgerCountSQL] override. Targets without one
+// are always trustworthy: gaps and density come from the same table.
 func gapVerdictTrustworthy(hasCensusOverride bool, distinctErr error, distinct int64) bool {
 	if !hasCensusOverride {
 		return true
@@ -591,17 +441,10 @@ func gapVerdictTrustworthy(hasCensusOverride bool, distinctErr error, distinct i
 	return distinctErr == nil && distinct > 0
 }
 
-// markGapDetectorScanSuccess records a clean per-target scan: the ok
-// counter, the duration histogram, AND — critically — the wall-clock
-// last-success gauge the `stellarindex_ingest_gap_detector_silent`
-// alert keys off.
-//
-// `now` is threaded in (rather than read inside) so tests can assert the exact
-// stamp. The gauge is the reset-proof liveness primitive: a
-// rarely-incrementing counter reset to the same value (1) across a restart is
-// invisible to rate(), so a rate()-keyed silent alert false-fired for >7h on
-// the 6h-cadence heavy targets (sdex/trades, soroban-events). A wall-clock
-// stamp re-set on every successful scan is not invisible.
+// markGapDetectorScanSuccess records a clean scan: the ok counter, the duration histogram, and the
+// wall-clock last-success gauge the `stellarindex_ingest_gap_detector_silent` alert keys off.
+// The gauge is the reset-proof liveness primitive: a rarely-incrementing counter that resets to the
+// same value across a restart is invisible to rate(). `now` is passed in so tests can assert the stamp.
 func markGapDetectorScanSuccess(target GapDetectorTarget, start, now time.Time) {
 	obs.IngestGapDetectorRunsTotal.WithLabelValues(target.Source, target.Table, "ok").Inc()
 	obs.IngestGapDetectorDurationSeconds.WithLabelValues(target.Source, target.Table, "ok").
@@ -610,19 +453,10 @@ func markGapDetectorScanSuccess(target GapDetectorTarget, start, now time.Time) 
 		Set(float64(now.Unix()))
 }
 
-// resolveGapDetectorTip reads the live ledgerstream cursor's
-// last_ledger as the scan's upper bound. Used in lieu of
-// "scan to MAX(ledger) in each table" because that would silently
-// scan ABOVE tip if any table has stale rows from a previous test
-// fixture; using the cursor is the authoritative "what's the live
-// tip right now" answer.
-//
-// Returns 0 if no live cursor row exists (test fixture / region
-// without live ingest); the callers' [FindPerSourceLedgerGaps] is
-// safe at to=0 (returns nil with no error). The detector still
-// emits per-target runs_total increments via the cycle loop so
-// operators can tell the worker is alive and just has nothing to
-// scan.
+// resolveGapDetectorTip reads the live ledgerstream cursor's last_ledger as the scan's upper bound.
+// The cursor, not MAX(ledger) per table, is the authoritative tip: a table with stale rows would
+// otherwise be scanned ABOVE tip. It returns 0 when no live cursor exists; [FindPerSourceLedgerGaps]
+// is safe at to=0, and runs_total still increments so operators see the worker is alive.
 func resolveGapDetectorTip(ctx context.Context, store *Store) (int64, error) {
 	c, err := store.GetCursor(ctx, "ledgerstream", "")
 	if err != nil {

@@ -13,11 +13,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The ESTIMATED tiers' shared row-list re-derive. [usd_volume_restamp.go] repairs
-// the EXACT tiers (a SQL identity); an estimated tier's value is a function of a
-// RATE at the row's timestamp, so each candidate row is rebuilt into the
-// [canonical.Trade] the decoder produced and handed to the function
-// [Store.InsertTrade] calls. Only these vary per tier:
+// The ESTIMATED tiers' shared row-list re-derive. [usd_volume_restamp.go] repairs the EXACT tiers
+// (a SQL identity); an estimated tier's value depends on a RATE at the row's timestamp, so each
+// candidate row is rebuilt into the [canonical.Trade] the decoder produced and handed to the
+// function [Store.InsertTrade] calls. Only these vary per tier:
 //
 // 	tier       source scope   scanned leg        value function
 // 	xlm-base   DEX            base_asset = XLM   tradeUSDVolumeViaXLMBaseAnchorFor
@@ -26,12 +25,11 @@ import (
 //
 // # The substance gate
 //
-// Every tier prices off a leg whose USD rate nobody trading the pair can author:
-// native XLM or a vendor fiat feed (`fx_quotes`). A token/token pair has NO tier
-// here and must stay unpriced: valuing it would read the tier-3b `<token>/XLM`
-// bridge, which is whatever the last counterparty wrote. Both scans are bounded
-// ALLOW-LIST on the tier's own leg and the Go gate ([restampScope]) re-asserts
-// the tier, so a widened scan fails CLOSED.
+// Every tier prices off a leg whose USD rate nobody trading the pair can author: native XLM or a
+// vendor fiat feed (`fx_quotes`). A token/token pair has NO tier here and must stay unpriced:
+// valuing it would read the tier-3b `<token>/XLM` bridge, which is whatever the last counterparty
+// wrote. Scans are an ALLOW-LIST on the tier's own leg and the Go gate ([restampScope])
+// re-asserts the tier, so a widened scan fails CLOSED.
 
 type (
 	// RestampScanParams scopes one window of an estimated-tier re-derive.
@@ -66,15 +64,12 @@ func (l restampLeg) column() string {
 
 // The candidate scan, in two halves so the two leg variants cannot drift.
 //
-// The SQL filters only on things whose SQL spelling is exactly their Go
-// spelling — the source name, the leg's admissible asset ids, the time
-// window and the generation guard. Everything that requires the
-// operator's peg configuration (whether a leg is USD-pegged, which is
-// keyed on code+issuer plus the SAC-wrapper map) is decided in Go by
-// [usdVolumeDecimals], through each tier's gate. `base_asset = ANY(...)`
-// rides `trades_pair_source_ts_idx` / `trades_base_ts_idx` and
-// `quote_asset = ANY(...)` rides `trades_quote_ts_idx`, so the scan is an
-// index walk over one chunk rather than a chunk seq-scan.
+// The SQL filters only on things whose SQL spelling is exactly their Go spelling: the source
+// name, the leg's admissible asset ids, the time window and the generation guard. Anything needing
+// the operator's peg configuration (keyed on code+issuer plus the SAC-wrapper map) is decided in
+// Go by [usdVolumeDecimals] through each tier's gate. `base_asset = ANY(...)` rides
+// `trades_pair_source_ts_idx` / `trades_base_ts_idx` and `quote_asset = ANY(...)` rides
+// `trades_quote_ts_idx`, so the scan is an index walk over one chunk, not a seq-scan.
 const (
 	restampScanSelectHead = `
 	SELECT source, ledger, tx_hash, op_index, ts,
@@ -91,32 +86,26 @@ const (
 `
 )
 
-// restampScanSelect assembles one tier's candidate scan. The only
-// variable part is the leg's column name, which comes from the closed
-// [restampLeg] set above.
+// restampScanSelect assembles one tier's candidate scan; only the leg's column name varies, and
+// it comes from the closed [restampLeg] set.
 //
 //nolint:gosec // no caller-supplied text reaches the statement: the column comes from a two-valued enum, every value is a placeholder
 func restampScanSelect(leg restampLeg) string {
 	return restampScanSelectHead + leg.column() + restampScanSelectTail
 }
 
-// restampGate answers which usd_volume tier owns one rebuilt trade, from
-// one tier's point of view: [xlmBaseTierFor], [xlmQuoteTierFor],
-// [cexFiatTierFor]. Every one of them is spelled beside [tradeUSDVolume]
-// so the tier's definition and the waterfall's branch order stay in one
-// file (the LOCKSTEP discipline in that function's header).
+// restampGate answers which usd_volume tier owns one rebuilt trade, from one tier's point of
+// view: [xlmBaseTierFor], [xlmQuoteTierFor], [cexFiatTierFor]. Each is spelled beside
+// [tradeUSDVolume] so tier definitions and waterfall branch order stay in one file (LOCKSTEP).
 type restampGate func(canonical.Trade, *USDVolumeQuoteSpec) restampTierVerdict
 
-// restampValuer is a tier's value for one rebuilt trade — always the
-// function the live insert path calls for the same row, never a second
-// spelling of it. A nil value means the tier DECLINED to price the row,
-// which is reported and never guessed at.
+// restampValuer is a tier's value for one rebuilt trade: always the function the live insert path
+// calls for the same row, never a second spelling. A nil value means the tier DECLINED to price
+// the row, which is reported and never guessed at.
 //
-// The error is for the OTHER kind of failure: a rate source that could
-// not be read at all. The live insert path swallows that (the trade still
-// lands, with usd_volume NULL); a backfill must not, or a broken read
-// would report a whole population as unpriceable and the operator would
-// read a configuration failure as a finding.
+// The error is for a rate source that could not be read at all. The live insert path swallows
+// that (the trade lands with usd_volume NULL); a backfill must not, or a broken read would report
+// a whole population as unpriceable and a configuration failure would read as a finding.
 type restampValuer func(canonical.Trade) (*string, error)
 
 // restampTierScan is one tier's half of the shared walk: what to scan and
@@ -134,11 +123,9 @@ type restampTierScan struct {
 	Value restampValuer
 }
 
-// restampScanSources filters a tier's registered source list by the
-// caller's allow-list; an empty allow-list means every source the tier
-// owns. Names outside the tier's own registry slice are dropped — the
-// tier's value function declines them anyway, and scanning them would
-// only widen the read.
+// restampScanSources filters a tier's registered source list by the caller's allow-list; empty
+// means every source the tier owns. Names outside the tier's registry slice are dropped, since
+// its value function declines them anyway and scanning them only widens the read.
 func restampScanSources(all []string, allow map[string]bool) []string {
 	if len(allow) == 0 {
 		return all
@@ -152,19 +139,15 @@ func restampScanSources(all []string, allow map[string]bool) []string {
 	return out
 }
 
-// planRestampTier scans one bounded window for one tier and returns the
-// rows it would rewrite, plus the disposition of every row it would not.
+// planRestampTier scans one bounded window for one tier and returns the rows it would rewrite,
+// plus the disposition of every row it would not.
 //
-// READ-ONLY. This is the whole of a dry run;
-// [Store.ApplyUSDVolumeRestampPlan] consumes the plan verbatim, which is
-// what makes "-write writes exactly the rows the dry run reported" true
-// by construction rather than by two predicates happening to agree.
+// READ-ONLY: this is the whole dry run. [Store.ApplyUSDVolumeRestampPlan] consumes the plan
+// verbatim, so "-write writes exactly the rows the dry run reported" holds by construction.
 //
-// Requires the store's USD-volume resolution to be installed
-// ([InstallUSDVolumeResolution]) — without a resolver every tier here
-// declines every row and the run would report a fleet-wide "cannot
-// price", which is a configuration error dressed as a finding. Refused up
-// front, in the same spirit as [Store.reDeriveNullVolumeGuard].
+// Requires the USD-volume resolution to be installed ([InstallUSDVolumeResolution]); without a
+// resolver every tier declines every row, a configuration error dressed as a finding. Refused up
+// front, like [Store.reDeriveNullVolumeGuard].
 func (s *Store) planRestampTier(ctx context.Context, p RestampScanParams, t restampTierScan) (*RestampPlan, error) {
 	if !p.To.After(p.From) {
 		return nil, fmt.Errorf("timescale: %s restamp: empty window [%s, %s)", t.Tier, p.From, p.To)
@@ -222,10 +205,9 @@ func (s *Store) planRestampTier(ctx context.Context, p RestampScanParams, t rest
 
 // restampDecide judges ONE scanned row for ONE tier.
 //
-// `value` is injected so the decision rules are testable without a live
-// prices_1m / fx_quotes; production passes a closure over the insert path's own
-// function, so the number that reaches the column is the one the insert path
-// computes for the same row.
+// `value` is injected so the rules are testable without a live prices_1m / fx_quotes; production
+// passes a closure over the insert path's own function, so the stored number is the one the
+// insert path computes for the same row.
 //
 // Three rules make this a re-derive rather than a guess, for every tier:
 //
@@ -298,15 +280,11 @@ func restampDecide(
 	return out, xlmBaseWrite, nil
 }
 
-// restampScope decides whether one scanned row is IN the tier `gate`
-// describes, and rebuilds it into the [canonical.Trade] the decoder
-// produced so the tier's value function can be asked about the same
-// object the insert path was.
-//
-// The tier decision itself lives beside [tradeUSDVolume] so the branch
-// order and the population it selects cannot drift apart. What is left
-// here is the row-shaped part: parsing the two asset ids and the two
-// amounts, with [tradeUSDVolume]'s own positive-amount bail-outs.
+// restampScope decides whether one scanned row is IN the tier `gate` describes, and rebuilds it
+// into the [canonical.Trade] the decoder produced so the value function sees the same object as
+// the insert path. The tier decision lives beside [tradeUSDVolume] so branch order and selected
+// population cannot drift; here is only the row-shaped part: parsing the two asset ids and
+// amounts, with [tradeUSDVolume]'s positive-amount bail-outs.
 func restampScope(row restampScanRow, spec *USDVolumeQuoteSpec, gate restampGate) (canonical.Trade, xlmBaseDisposition, bool) {
 	base, err := canonical.ParseAsset(row.BaseAsset)
 	if err != nil {
@@ -349,13 +327,11 @@ func restampScope(row restampScanRow, spec *USDVolumeQuoteSpec, gate restampGate
 	}
 }
 
-// ApplyUSDVolumeRestampPlan writes an estimated-tier plan's rows and
-// returns how many rows the database actually changed. The write set is
-// the PLAN — no second predicate is evaluated against the table — and
-// each row is written only while `trades.derive_generation <=
-// generation` and is stamped with it. Shared by every tier: the
-// statement is keyed on the primary key and carries the batch's own `ts`
-// bounds, neither of which knows which tier decided the value.
+// ApplyUSDVolumeRestampPlan writes an estimated-tier plan's rows and returns how many the
+// database actually changed. The write set is the PLAN (no second predicate is evaluated), and
+// each row is written only while `trades.derive_generation <= generation` and stamped with it.
+// Shared by every tier: the statement is keyed on the primary key and the batch's own `ts`
+// bounds, neither of which depends on the tier.
 func (s *Store) ApplyUSDVolumeRestampPlan(ctx context.Context, plan *RestampPlan, generation int64, batch int) (int64, error) {
 	return s.applyXLMBaseRestampBatches(ctx, plan, generation, batch, nil)
 }

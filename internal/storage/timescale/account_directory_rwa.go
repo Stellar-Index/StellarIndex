@@ -11,31 +11,20 @@ import (
 // Directory-driven candidate discovery for the contract arm of the RWA
 // definition.
 //
-// WHY THE DIRECTORY IS THE POPULATION. The classic arm walks issuers,
-// which only the classic-asset registry writes (registerIssuerSeen,
-// insertIssuersBatch). An entity whose Stellar presence is
-// contract-issued therefore has no row there, gets no SEP-1 fetch, and
-// never becomes a candidate. It is not refused by a requirement; it is
-// absent before any requirement runs, which is the silent-discard shape
-// the funnel exists to make impossible.
+// WHY THE DIRECTORY IS THE POPULATION. The classic arm walks issuers, which only the
+// classic-asset registry writes. A contract-issued entity has no row there, gets no SEP-1 fetch
+// and never becomes a candidate: it is absent before any requirement runs, the silent-discard
+// shape the funnel exists to prevent.
 //
-// account_directory is the only table that ties a real-world entity to a
-// Stellar address without going through classic issuance, and its CHECK
-// has always accepted both strkey forms (migration 0136 —
-// `^[GC][A-Z2-7]{55}$`, because the upstream set tags contract addresses
-// too). So the contract arm walks it.
-// Unlike the classic arm, which keys on the issuer G-address, the contract arm
-// keys on the contract address itself, under the same scam vocabulary and a
-// NARROWER recognition vocabulary.
+// account_directory is the only table tying a real-world entity to a Stellar address without
+// classic issuance, and its CHECK accepts both strkey forms (`^[GC][A-Z2-7]{55}$`). So the
+// contract arm walks it, keyed on the contract address itself (the classic arm keys on the
+// issuer G-address), under the same scam vocabulary and a NARROWER recognition vocabulary.
 
-// DirectoryRWACensus accounts for every curated directory row the
-// contract-arm scan walked: the population it started from, and a named
-// bucket for each way a row stopped short of becoming a candidate.
-//
-// It exists for the reason [Sep1BoundCensus] does. Returning only the
-// survivors makes the two questions that matter unanswerable from
-// outside the scan: how large was the population, and which stage
-// removed it.
+// DirectoryRWACensus accounts for every curated directory row the contract-arm scan walked: the
+// starting population and a named bucket for each way a row stopped short of becoming a
+// candidate. Like [Sep1BoundCensus], it makes the population size and the removing stage
+// answerable from outside the scan, which survivors alone would not.
 //
 // The arithmetic closes, and [DirectoryRWACensus.Check] proves it:
 //
@@ -55,12 +44,10 @@ type DirectoryRWACensus struct {
 	// ContractsScamFlagged counts contract rows carrying a scam-class
 	// tag. Refused under C3 and reported, never merely ranked low.
 	ContractsScamFlagged int
-	// ContractsWithoutIssuingTag counts contract rows carrying no tag
-	// from the caller's issuing vocabulary. This is the largest bucket
-	// by construction — the upstream set tags AMM pools, routers and
-	// protocol infrastructure, none of which issues a real-world
-	// instrument — and it is the number to watch if the vocabulary
-	// turns out to be too narrow.
+	// ContractsWithoutIssuingTag counts contract rows carrying no tag from the caller's issuing
+	// vocabulary. It is the largest bucket by construction (AMM pools, routers and protocol
+	// infrastructure issue no real-world instrument) and the number to watch if the vocabulary
+	// proves too narrow.
 	ContractsWithoutIssuingTag int
 	// ContractsRecognised counts contract rows that passed C2 and C3,
 	// i.e. the candidates the definition then evaluates.
@@ -73,26 +60,19 @@ type DirectoryRWACensus struct {
 	// AccountsIssuingWithoutAsset counts the subset of those that issue
 	// no classic asset this index has ever observed.
 	//
-	// This is the Franklin Templeton row, and it is the single most
-	// useful number on the contract arm. Such an entity is recognised,
-	// unflagged and real, and this index holds NO Stellar token for it
-	// at all: no classic asset to evaluate, and no directory entry
-	// naming a contract of theirs either. Without this count the
-	// entity would be invisible — not refused by any requirement, just never
-	// collected — and a reader of the response could not tell it apart
-	// from an entity that does not exist.
+	// Such an entity is recognised, unflagged and real, yet this index holds NO Stellar token for
+	// it: no classic asset and no directory entry naming a contract. Without this count it would
+	// be invisible (never collected, not refused) and indistinguishable from a nonexistent
+	// entity.
 	//
-	// It admits nothing. It is a coverage statement, and the action it
-	// implies is an operator one: get the entity's contract address into
-	// the curated directory, or into the in-repo curated set.
+	// It admits nothing; it is a coverage statement whose action is an operator one: get the
+	// entity's contract address into the curated directory or the in-repo curated set.
 	AccountsIssuingWithoutAsset int
 }
 
-// Check returns the reason the census does not balance, or "" when it
-// does. Exported for the same reason [Sep1BoundCensus.Check] is: the
-// surface publishing these counts declares its accounting UNBALANCED on
-// the wire rather than serving figures a reader would try, and fail, to
-// reconcile.
+// Check returns the reason the census does not balance, or "" when it does. Exported like
+// [Sep1BoundCensus.Check] so the publishing surface can declare its accounting UNBALANCED on the
+// wire rather than serve figures a reader cannot reconcile.
 func (c DirectoryRWACensus) Check() string {
 	if got := c.Accounts + c.Contracts; got != c.Entries {
 		return fmt.Sprintf("address forms sum to %d, not Entries %d", got, c.Entries)
@@ -110,31 +90,23 @@ func (c DirectoryRWACensus) Check() string {
 	return ""
 }
 
-// directoryRecognisedScanCap bounds the candidate rows one scan
-// materialises. The recognised-contract set is small by construction —
-// it requires a third party to have named the exact address with an
-// issuing tag — so the cap is a guard against a directory sync that
-// suddenly tags thousands of contracts, not an expected condition. When
-// it binds, the census says so and the surface reports the set as
-// truncated rather than serving a silently short one.
+// directoryRecognisedScanCap bounds the candidate rows one scan materialises. The recognised set
+// is small by construction (a third party must have tagged the exact address), so the cap only
+// guards against a directory sync that suddenly tags thousands of contracts. When it binds, the
+// census says so and the surface reports the set as truncated, never silently short.
 const directoryRecognisedScanCap = 512
 
 // DirectoryRecognisedContracts returns the curated directory rows whose
 // address is a CONTRACT carrying at least one of `issuingTags` and no
 // scam-class tag, together with the census of the whole directory.
 //
-// The tag vocabulary is a PARAMETER rather than a constant here. It
-// belongs to internal/rwa, which already imports this package for
-// [DirectoryScamFlagTags]; owning it here too would either duplicate the
-// vocabulary or invert the dependency. The scam vocabulary is the
-// exception and is read locally, because it is this package's own list
-// and every other consumer already reads it from here — a second
-// spelling of it is precisely the drift its doc comment warns about.
+// The issuing tag vocabulary is a PARAMETER because it belongs to internal/rwa, which already
+// imports this package; owning it here would duplicate it or invert the dependency. The scam
+// vocabulary is read locally because it is this package's own list, and a second spelling of it
+// is the drift [DirectoryScamFlagTags] warns about.
 //
-// Rows come back ordered by address so a truncated scan is at least
-// deterministic. Matching is case-insensitive on trimmed tags, the same
-// rule pricingguard and the listing rank expression apply to the same
-// column.
+// Rows are ordered by address so a truncated scan is deterministic. Matching is case-insensitive
+// on trimmed tags, as in pricingguard and the listing rank expression.
 func (s *Store) DirectoryRecognisedContracts(
 	ctx context.Context, issuingTags []string,
 ) ([]DirectoryEntry, DirectoryRWACensus, error) {
@@ -143,11 +115,9 @@ func (s *Store) DirectoryRecognisedContracts(
 	if err != nil {
 		return nil, DirectoryRWACensus{}, err
 	}
-	// The census counted the recognised contracts; this reads them. Both
-	// run the SAME predicate text (directoryContractRecognisedSQL) so the
-	// count and the rows can never disagree about who qualified — a
-	// mismatch between them would show up as an unbalanced funnel rather
-	// than as a set quietly missing a member.
+	// The census counted the recognised contracts; this reads them. Both run the SAME predicate
+	// text (directoryContractRecognisedSQL) so a mismatch surfaces as an unbalanced funnel rather
+	// than a set quietly missing a member.
 	q := `
 		SELECT address, name, domain, tags, source
 		  FROM account_directory
@@ -173,12 +143,9 @@ func (s *Store) DirectoryRecognisedContracts(
 	return out, census, nil
 }
 
-// lowerTrimAll normalises a tag vocabulary before it is bound into a
-// query whose predicate lowercases the COLUMN side. Without it a caller
-// passing `Issuer` would match nothing and the refusal would look like a
-// directory that named no issuers — a silent empty set produced by a
-// spelling, which is the failure mode this whole surface is built to
-// avoid.
+// lowerTrimAll normalises a tag vocabulary before it is bound into a query whose predicate
+// lowercases the COLUMN side. Without it a caller passing `Issuer` would match nothing, a silent
+// empty set produced by a spelling.
 func lowerTrimAll(vals []string) []string {
 	out := make([]string, 0, len(vals))
 	for _, v := range vals {
@@ -220,11 +187,9 @@ var directoryContractRecognisedSQL = directoryIsContractSQL +
 // directoryRWACensus counts the whole curated directory in one pass,
 // bucketed the way the contract arm narrows it.
 //
-// One query with FILTER aggregates rather than six round trips: the
-// table is ~18.5k rows with a GIN index on tags, and the funnel needs
-// every bucket from the same snapshot — counts taken across separate
-// statements could straddle a directory sync and fail to reconcile
-// through no fault of the arithmetic.
+// One query with FILTER aggregates rather than six round trips: the funnel needs every bucket
+// from the same snapshot, since counts from separate statements could straddle a directory sync
+// and fail to reconcile through no fault of the arithmetic.
 func (s *Store) directoryRWACensus(ctx context.Context, issuingTags []string) (DirectoryRWACensus, error) {
 	q := `
 		SELECT
@@ -270,16 +235,11 @@ func (s *Store) directoryRWACensus(ctx context.Context, issuingTags []string) (D
 // index holds no classic asset — the entities behind
 // [DirectoryRWACensus.AccountsIssuingWithoutAsset], named.
 //
-// It exists so an operator reading the RWA response can see that a
-// specific real-world issuer is recognised and still absent, rather than
-// reading a bare count and having to open a database session to learn
-// which entity it stands for. That was the whole defect the funnel work
-// closed on the classic side, and a count with no names reintroduces it
-// one level down.
+// It exists so an operator reading the RWA response can see which real-world issuer is
+// recognised yet absent, instead of a bare count that needs a database session to decode.
 //
-// It admits nothing and feeds no valuation. The names are the curated
-// third party's own display labels, already served on every asset row as
-// issuer_directory_name.
+// It admits nothing and feeds no valuation. The names are the curated third party's own display
+// labels, already served on every asset row as issuer_directory_name.
 func (s *Store) DirectoryRecognisedIssuersWithoutAsset(
 	ctx context.Context, issuingTags []string, limit int,
 ) ([]DirectoryEntry, error) {

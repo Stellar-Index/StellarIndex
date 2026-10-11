@@ -9,63 +9,42 @@ import (
 	"time"
 )
 
-// Sep1AttestationMaxAge bounds how old a cached SEP-1 payload may be and
-// still count as an issuer's attestation. A healthy domain is re-fetched
-// daily; a failing one keeps its last payload, so without a bound a dead
-// domain would attest for as long as the row exists. Thirty days is the
-// retry ladder's cap ([Sep1BackoffCap]): past it, even the monthly retry
-// a dead domain settles at has not renewed the claim.
+// Sep1AttestationMaxAge bounds how old a cached SEP-1 payload may be and still count as an
+// attestation. A failing domain keeps its last payload, so without a bound a dead domain would
+// attest forever. Thirty days is the retry ladder's cap ([Sep1BackoffCap]).
 const Sep1AttestationMaxAge = 30 * 24 * time.Hour
 
-// Issuer-bound SEP-1 [[CURRENCIES]] entries: what an issuer DECLARED about
-// one of its own assets, not what some account declared about someone else.
+// Issuer-bound SEP-1 [[CURRENCIES]] entries: what an issuer DECLARED about its own assets.
 //
-// The provenance rule, as in [Store.AllSep1Images]: an entry counts only when
-// its declared Issuer names the G-address whose stellar.toml carried it.
-// Otherwise any account could publish
+// Provenance rule, as in [Store.AllSep1Images]: an entry counts only when its declared Issuer
+// names the G-address whose stellar.toml carried it. Otherwise any account could publish an entry
+// naming another issuer's (code, issuer) and have its claim read as that issuer's.
 //
-//	[[CURRENCIES]] code = "USTRY" issuer = "<Etherfuse G-key>"
-//	               anchor_asset_type = "bond"
-//
-// and have its claim read as that of the account it named.
-//
-// Every entry NOT kept is COUNTED in a bucket naming why ([Sep1BoundCensus]):
-// a scan reporting only survivors cannot be told apart from one that found
-// almost nothing.
+// Every entry NOT kept is COUNTED in a bucket naming why ([Sep1BoundCensus]), so a scan that
+// found almost nothing is distinguishable from one that only reports survivors.
 
-// Sep1BoundCurrency is one [[CURRENCIES]] entry that passed the
-// provenance rule, carried alongside the issuer-account context a
-// caller needs to attribute it.
+// Sep1BoundCurrency is one [[CURRENCIES]] entry that passed the provenance rule, with the
+// issuer-account context a caller needs to attribute it.
 type Sep1BoundCurrency struct {
-	// Code and Issuer are the (code, issuer) identity the entry binds
-	// to. Issuer is the account that served the toml — the CANONICAL
-	// database spelling of it, never the toml's — so the two are the
-	// same value by construction. Code is the declared code with
-	// surrounding space removed; nothing else about it is folded,
+	// Code and Issuer are the (code, issuer) identity the entry binds to. Issuer is the canonical
+	// database spelling of the serving account, never the toml's. Code is trimmed but not folded,
 	// because Stellar asset codes are case-significant.
 	Code   string
 	Issuer string
-	// HomeDomain is the domain the issuer account set ON CHAIN, i.e.
-	// the domain the toml was fetched from. Empty when the account has
-	// no home_domain (in which case there is no payload either).
+	// HomeDomain is the on-chain home_domain the toml was fetched from.
 	HomeDomain string
-	// OrgName is DOCUMENTATION.ORG_NAME from the same toml. Advisory
-	// display text authored by the issuer, never an identity.
+	// OrgName is DOCUMENTATION.ORG_NAME: advisory display text, never an identity.
 	OrgName string
-	// Name, AnchorAsset and AnchorAssetType are the entry fields
-	// verbatim. AnchorAssetType is free text on the wire; callers
-	// normalise it against their own closed vocabulary rather than
-	// trusting the spelling.
+	// Name, AnchorAsset and AnchorAssetType are the entry fields verbatim. AnchorAssetType is free
+	// text on the wire; callers normalise it against their own closed vocabulary.
 	Name            string
 	AnchorAsset     string
 	AnchorAssetType string
 }
 
-// Sep1BoundCensus accounts for every issuer row and every [[CURRENCIES]]
-// entry one scan walked: the starting population and a named bucket for each
-// way an entry stopped short, including the two silent stages
-// ([Sep1BoundCensus.IssuersPayloadUnreadable],
-// [Sep1BoundCensus.IssuersDeclaringNothing]).
+// Sep1BoundCensus accounts for every issuer row and [[CURRENCIES]] entry one scan walked: the
+// starting population and a named bucket for each way an entry stopped short, including the two
+// silent stages (IssuersPayloadUnreadable, IssuersDeclaringNothing).
 //
 // The arithmetic closes, and [Sep1BoundCensus.Check] proves it:
 //
@@ -75,41 +54,28 @@ type Sep1BoundCurrency struct {
 //	                     EntriesNamingAnotherIssuer + EntriesBound
 //	EntriesBound       = EntriesFiltered + EntriesKept
 //
-// The domain-bearing population is bounded, not equated, because the two
-// halves are read by different queries:
+// The domain-bearing population is bounded, not equated, because the two halves come from
+// different queries:
 //
 //	IssuersWithHomeDomain >= IssuersWithPayload +
 //	                         IssuersFetchedWithoutPayload
 type Sep1BoundCensus struct {
-	// IssuersWithHomeDomain is every issuer account carrying an
-	// on-chain home_domain — the population a SEP-1 attestation could
-	// exist for at all. It splits three ways: the issuers holding a
-	// payload (IssuersWithPayload), the issuers a fetch has reached
-	// that hold none (IssuersFetchedWithoutPayload), and the remainder
-	// — the ones nothing has ever tried to fetch.
+	// IssuersWithHomeDomain is every issuer with an on-chain home_domain, the population a SEP-1
+	// attestation could exist for. It splits into issuers holding a payload, issuers a fetch
+	// reached that hold none (IssuersFetchedWithoutPayload), and the never-attempted remainder.
 	IssuersWithHomeDomain int
-	// IssuersWithPayload is the rows this scan actually read: issuers
-	// whose stellar.toml was fetched and parsed at least once.
+	// IssuersWithPayload is the rows this scan read: stellar.toml fetched and parsed at least once.
 	IssuersWithPayload int
-	// IssuersFetchedWithoutPayload counts issuers whose domain a fetch
-	// has REACHED and which hold no payload all the same: a live failure
-	// streak (sep1_consecutive_failures > 0) and a NULL sep1_payload —
-	// the predicate [Store.IssuerSep1Unreachable] serves per asset.
+	// IssuersFetchedWithoutPayload counts issuers whose domain a fetch REACHED yet hold no
+	// payload: a live failure streak (sep1_consecutive_failures > 0) and a NULL sep1_payload, the
+	// predicate [Store.IssuerSep1Unreachable] serves per asset.
 	//
-	// It exists because the difference IssuersWithHomeDomain -
-	// IssuersWithPayload reads as "never fetched", an operator's
-	// backlog, and it is not. Measured on production, that difference
-	// was 40,838 issuers, of which exactly ONE had never been attempted:
-	// the rest were dead, parked or non-SEP-1 domains that an overnight
-	// drain had already reached. Nothing here records WHY a reached
-	// domain served nothing — 404, dead DNS, a TLS failure and an
-	// undecodable document are one bucket — so the count says only that
-	// the fetch ran and produced no payload.
+	// It exists because IssuersWithHomeDomain - IssuersWithPayload reads as an unfetched backlog
+	// when nearly all of it is dead, parked or non-SEP-1 domains already tried. The reason a
+	// reached domain served nothing (404, DNS, TLS, undecodable) is not recorded.
 	IssuersFetchedWithoutPayload int
-	// IssuersPayloadStale counts payloads not fetched within
-	// [Sep1AttestationMaxAge], or of unknown fetch time. They are not
-	// read: a domain that has served nothing for that long no longer
-	// attests to what its last document said.
+	// IssuersPayloadStale counts payloads not fetched within [Sep1AttestationMaxAge], or of unknown
+	// fetch time. They are not read: a long-silent domain no longer attests to its last document.
 	IssuersPayloadStale int
 	// IssuersPayloadUnreadable counts payloads that would not decode.
 	IssuersPayloadUnreadable int
@@ -122,17 +88,13 @@ type Sep1BoundCensus struct {
 	// Entries is every [[CURRENCIES]] entry across every payload read.
 	Entries int
 	// EntriesMissingCode and EntriesMissingIssuer count entries that
-	// name no asset code, or no issuer, once surrounding space is
-	// removed. A SEP-1 entry may legitimately carry neither — the
-	// linked-toml and code_template forms do — but neither identifies a
-	// (code, issuer) pair, so neither can be bound to one.
+	// name no asset code, or no issuer, once trimmed. The linked-toml and code_template forms
+	// legitimately carry neither, but neither identifies a (code, issuer) pair.
 	EntriesMissingCode   int
 	EntriesMissingIssuer int
-	// EntriesNamingAnotherIssuer counts entries whose declared issuer is
-	// not the account that served the file. This is the provenance rule
-	// doing its job and is expected to be the largest bucket by far: a
-	// scam domain's toml routinely declares hundreds of other issuers'
-	// assets.
+	// EntriesNamingAnotherIssuer counts entries whose declared issuer is not the serving account.
+	// This is the provenance rule at work and by far the largest bucket: scam tomls routinely
+	// declare hundreds of other issuers' assets.
 	EntriesNamingAnotherIssuer int
 	// EntriesBound counts entries that passed the provenance rule.
 	EntriesBound int
@@ -159,15 +121,11 @@ func (c *Sep1BoundCensus) add(o Sep1BoundCensus) {
 	c.EntriesKept += o.EntriesKept
 }
 
-// Check returns the reason the census does not balance, or "" when it
-// does.
+// Check returns the reason the census does not balance, or "" when it does.
 //
-// Exported because the API surface that publishes these counts declares
-// its accounting UNBALANCED on the wire when this fails, rather than
-// serving numbers a reader would try, and fail, to reconcile. It catches
-// what the published stage-by-stage arithmetic cannot: a stage clamped
-// to zero for presentation would otherwise let an inconsistent census
-// read as sound.
+// Exported because the API declares its accounting UNBALANCED on the wire when this fails, rather
+// than serve numbers that cannot be reconciled. It catches what stage-by-stage published
+// arithmetic cannot: a stage clamped to zero for presentation would hide an inconsistent census.
 func (c Sep1BoundCensus) Check() string {
 	if got := c.IssuersPayloadStale + c.IssuersPayloadUnreadable + c.IssuersDeclaringNothing + c.IssuersDeclaring; got != c.IssuersWithPayload {
 		return fmt.Sprintf("issuer stages sum to %d, not IssuersWithPayload %d", got, c.IssuersWithPayload)
@@ -181,11 +139,8 @@ func (c Sep1BoundCensus) Check() string {
 	if c.IssuersWithPayload > c.IssuersWithHomeDomain {
 		return fmt.Sprintf("IssuersWithPayload %d exceeds IssuersWithHomeDomain %d", c.IssuersWithPayload, c.IssuersWithHomeDomain)
 	}
-	// The domain-bearing population splits into the issuers holding a
-	// payload, the issuers a fetch reached that hold none, and the ones
-	// nothing has tried yet. The third is a REMAINDER, so an oversized
-	// second term would silently eat it and publish a backlog of zero
-	// where one exists.
+	// The never-tried third part is a REMAINDER, so an oversized second term would silently eat it
+	// and publish a backlog of zero where one exists.
 	if got := c.IssuersWithPayload + c.IssuersFetchedWithoutPayload; got > c.IssuersWithHomeDomain {
 		return fmt.Sprintf("IssuersWithPayload %d plus IssuersFetchedWithoutPayload %d exceed IssuersWithHomeDomain %d",
 			c.IssuersWithPayload, c.IssuersFetchedWithoutPayload, c.IssuersWithHomeDomain)
@@ -193,46 +148,31 @@ func (c Sep1BoundCensus) Check() string {
 	return ""
 }
 
-// Sep1CurrencyFilter decides which bound entries a scan keeps. It runs
-// per entry during the row walk, so a caller narrowing to a handful of
-// declarations never materialises the rest — the production payload set
-// holds tens of thousands of bound entries, most of them from accounts
-// that declare thousands each.
+// Sep1CurrencyFilter decides which bound entries a scan keeps. It runs per entry during the row
+// walk, so a caller narrowing to a few declarations never materialises the tens of thousands of
+// bound entries, many from accounts declaring thousands each.
 //
 // A nil filter keeps every bound entry.
 type Sep1CurrencyFilter func(Sep1BoundCurrency) bool
 
-// BoundSep1Currencies walks every issuer carrying a cached SEP-1
-// payload and returns the entries that pass the provenance rule and the
-// filter, plus the census of everything it walked. A payload not
-// fetched within [Sep1AttestationMaxAge] is counted and not read.
+// BoundSep1Currencies walks every issuer carrying a cached SEP-1 payload and returns the entries
+// that pass the provenance rule and the filter, plus the census of everything walked. A payload
+// older than [Sep1AttestationMaxAge] is counted and not read.
 //
-// The census is returned rather than discarded so a caller can report
-// the size of the population it narrowed from, per stage. Without it a
-// filtered read is indistinguishable from an unfiltered one that found
-// little, which is the same defect a silently-ignored query filter has.
+// The census is returned so a caller can report the population it narrowed from; otherwise a
+// filtered read looks like an unfiltered one that found little.
 //
-// Two indexed reads: one aggregate over `issuers` for the population the
-// scan could have covered, and one SELECT over the issuers that have a
-// payload (~14.6k rows on the production deployment). Intended to run
-// off the request path behind a TTL cache, the same way the logo map
-// does. A single corrupt payload is skipped, never fatal: one malformed
-// toml must not empty the whole result — but it IS counted, because an
-// unreadable payload and an issuer that declares nothing are different
-// findings.
+// Two indexed reads: one aggregate over `issuers` and one SELECT over issuers with a payload
+// (~14.6k rows). Intended to run off the request path behind a TTL cache. A corrupt payload is
+// skipped, never fatal, but counted: unreadable and declaring-nothing are different findings.
 func (s *Store) BoundSep1Currencies(ctx context.Context, keep Sep1CurrencyFilter) ([]Sep1BoundCurrency, Sep1BoundCensus, error) {
 	var census Sep1BoundCensus
 
-	// The population upstream of this scan. An issuer with no
-	// home_domain can serve no stellar.toml at all and is out of scope.
+	// The population upstream of this scan; an issuer with no home_domain can serve no toml.
 	//
-	// The second count separates the two ways an in-scope issuer can
-	// hold no payload, which the difference from IssuersWithPayload
-	// cannot: our backlog from a domain that WAS reached and served
-	// nothing storable (the issuer's own publication). The second
-	// predicate reads the failure streak rather than sep1_resolved_at,
-	// which a systemic-outage unwind leaves stamped on rows that never
-	// failed on their side — see [Store.IssuerSep1Unreachable].
+	// The second count separates our backlog from a domain that WAS reached and served nothing
+	// storable. It reads the failure streak rather than sep1_resolved_at, which a systemic-outage
+	// unwind leaves stamped on rows that never failed (see [Store.IssuerSep1Unreachable]).
 	// Both counts come off one aggregate so they describe one moment.
 	const popQ = `SELECT count(*) FILTER (WHERE home_domain IS NOT NULL AND btrim(home_domain) <> ''),
 	                     count(*) FILTER (WHERE home_domain IS NOT NULL AND btrim(home_domain) <> ''
@@ -363,25 +303,18 @@ func boundSep1CurrenciesFromPayload(
 	return out, census
 }
 
-// Sep1EntryBindsTo reports whether a [[CURRENCIES]] entry's DECLARED
-// issuer names the account that served the file.
+// Sep1EntryBindsTo reports whether a [[CURRENCIES]] entry's DECLARED issuer names the account that
+// served the file.
 //
-// The comparison is on the canonical strkey, not on the bytes the toml
-// happened to carry: a declaration is either the same account or a
-// different one, and neither surrounding whitespace nor the case an
-// issuer typed its own key in changes which account it is. A strkey is
-// uppercase base32 (RFC 4648 alphabet, no padding), so two spellings
-// that differ only in case decode to the same 32 bytes — folding them
-// cannot admit a different account, which is the property that makes
-// this a canonicalisation and not a relaxation of the rule.
+// The comparison is on the canonical strkey: whitespace or the case an issuer typed its key in
+// does not change which account it is. Strkeys are uppercase base32, so case-only variants decode
+// to the same 32 bytes and folding cannot admit a different account.
 //
-// Anything that is not shaped like a G-account strkey binds to nothing.
-// That is deliberate: the rule's whole value is that it names ONE
-// account, and a value that cannot be an account names none.
+// Anything not shaped like a G-account strkey binds to nothing, since the rule's value is that
+// it names ONE account.
 //
-// Exported so every issuer-binding check (bound-currency scan, image
-// overlay, org-verification) shares the one canonicalisation instead of
-// each keeping its own copy to drift out of sync.
+// Exported so every issuer-binding check (bound-currency scan, image overlay, org-verification)
+// shares one canonicalisation.
 func Sep1EntryBindsTo(declared, serving string) bool {
 	d := canonicalAccountStrkey(declared)
 	return d != "" && d == canonicalAccountStrkey(serving)
