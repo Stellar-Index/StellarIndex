@@ -31,13 +31,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
 
-// TestUsageReaderOrNil_RedisAbsent — when the usage counter is
-// nil (Redis-less deployment), the helper must return a
-// typed-nil v1.UsageReader rather than wrapping the nil counter
-// in a non-nil adapter. The /v1/account/usage handler treats
-// `usageReader == nil` as "no backend wired" and short-circuits
-// to `[]`; a non-nil adapter would
-// nil-deref on `Read`.
+// TestUsageReaderOrNil_RedisAbsent pins that a nil usage counter yields a nil v1.UsageReader, not a
+// non-nil adapter, because the handler short-circuits on nil and the adapter would nil-deref.
 func TestUsageReaderOrNil_RedisAbsent(t *testing.T) {
 	if r := wiring.UsageReaderOrNil(nil); r != nil {
 		t.Errorf("wiring.UsageReaderOrNil(nil) = %v (non-nil), want nil — handler short-circuits on nil; non-nil wrapper would deref the inner nil counter on Read", r)
@@ -66,14 +61,8 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// TestDivergenceServiceHasNoReferences guards that the API
-// binary must never construct divergence.References — it only calls
-// Service.LookupCached (reading the aggregator's Redis cache), never
-// RefreshPair, so a reference list here is inert at best and
-// misleading at worst (the startup log would claim a capability the
-// binary doesn't exercise). Source-scans main.go for the symbols a
-// reintroduced reference builder would need, rather than exercising
-// main() itself (which requires a live Postgres/Redis).
+// TestDivergenceServiceHasNoReferences guards that the API binary never builds divergence.References,
+// since it only calls Service.LookupCached. It source-scans main.go because main() needs live Postgres.
 func TestDivergenceServiceHasNoReferences(t *testing.T) {
 	src, err := os.ReadFile("main.go")
 	if err != nil {
@@ -142,12 +131,9 @@ func (stubAccountsForBuild) Update(context.Context, platform.Account) error   { 
 func (stubAccountsForBuild) Suspend(context.Context, uuid.UUID, string) error { panic("unused") }
 func (stubAccountsForBuild) Unsuspend(context.Context, uuid.UUID) error       { panic("unused") }
 
-// TestBuildAPIKeyValidator_BothFlagStates pins the auth_backend cutover
-// knob: the default/"redis" backend keeps the CURRENT behaviour (legacy
-// RedisAPIKeyValidator), and "postgres" selects the read-through
-// validator — falling loud to the Noop (every request 503s) when a
-// required dependency is missing rather than silently demoting to
-// anonymous.
+// TestBuildAPIKeyValidator_BothFlagStates pins auth_backend: "redis" or default keeps the legacy
+// validator, and "postgres" selects the read-through one, failing loud to Noop (503s) when a
+// dependency is missing rather than demoting to anonymous.
 func TestBuildAPIKeyValidator_BothFlagStates(t *testing.T) {
 	logger := discardLogger()
 	mr, err := miniredis.Run()
@@ -206,13 +192,8 @@ func TestBuildAPIKeyValidator_BothFlagStates(t *testing.T) {
 	})
 }
 
-// TestResolveSEP10Validator_WiringByConfiguration pins the SEP-10
-// wiring. A two-phase dance (build with a nil Redis
-// client at phase 1, "rebuild" behind an `if !isNoop` guard that was never
-// true at phase 2) would mean a CONFIGURED SEP-10 deployment NEVER got the guarded
-// (replay-protected) validator — it would either refuse to boot
-// (auth_mode=sep10) or silently 404 every SEP-10 endpoint (Noop), and the
-// rebuild's failure branch would be a latent fail-open. This asserts:
+// TestResolveSEP10Validator_WiringByConfiguration pins that a configured SEP-10 deployment always
+// gets the replay-guarded validator, never a guard-free one:
 //
 //   - configured (seed+jwt env) + Redis      → *sep10.Validator (GUARDED),
 //     in every auth_mode. (Noop here would be the red case.)
@@ -380,17 +361,9 @@ func TestWarnUnsafeBind(t *testing.T) {
 	}
 }
 
-// TestWarnCollapsedAnonThrottle pins the boot warning for the
-// anonymous-throttle collapse:
-// with trusted_proxy_cidrs empty behind a reverse proxy every
-// anonymous caller keys on the proxy's single address, collapsing the
-// whole anon tier into ONE shared bucket (an availability self-DoS).
-//
-// The warning must fire when the anon tier is BOTH capped
-// (anon_rate_limit_per_min > 0) AND reachable (auth_mode admits
-// anonymous: none / apikey_optional) AND trusted_proxy_cidrs is empty —
-// and must NOT fire when a proxy CIDR is set (the R1 shape), when the
-// anon tier is disabled (0), or under a credential-required auth mode.
+// TestWarnCollapsedAnonThrottle pins the boot warning for an empty trusted_proxy_cidrs, which
+// collapses every anonymous caller into one shared bucket. It fires only when the anon tier is
+// capped, reachable (auth_mode none or apikey_optional) and no proxy CIDR is set.
 func TestWarnCollapsedAnonThrottle(t *testing.T) {
 	warnLogged := func(authMode string, anonPerMin int, cidrs []string) bool {
 		var buf bytes.Buffer
@@ -434,12 +407,8 @@ func TestWarnCollapsedAnonThrottle(t *testing.T) {
 	}
 }
 
-// fakeSubscriberRunner implements subscriberRunner for
-// TestRunSubscriberSupervisedWithBackoff_RestartsPastFailures. The
-// first failN calls to Run return failErr immediately (mimicking
-// redispub.Subscriber.Run's "subscribe channel closed unexpectedly"
-// error); every call after that blocks until ctx is cancelled, like
-// the real Subscriber.Run does while the connection stays healthy.
+// fakeSubscriberRunner implements subscriberRunner: the first failN calls return failErr at once,
+// and later calls block until ctx is cancelled like a healthy subscriber.
 type fakeSubscriberRunner struct {
 	mu      sync.Mutex
 	calls   int
@@ -467,17 +436,9 @@ func (f *fakeSubscriberRunner) callCount() int {
 	return f.calls
 }
 
-// TestRunSubscriberSupervisedWithBackoff_RestartsPastFailures.
-// redispub.Subscriber.Run's doc
-// says an unexpected stream-end error lets "the caller decide
-// whether to retry"; if the caller (main.go) never
-// does, a single Run failure logs and the goroutine exits for
-// good, leaving /v1/price/stream's closed-bucket feed permanently
-// silent for the rest of the process. This asserts the supervised
-// loop actually restarts past MULTIPLE consecutive failures (not
-// just tolerates one) and reaches a long-lived run. Against a
-// single-shot call site this times out: calls never exceeds
-// 1.
+// TestRunSubscriberSupervisedWithBackoff_RestartsPastFailures asserts the supervisor restarts past
+// several consecutive failures, since a single-shot caller would leave /v1/price/stream silent for
+// the rest of the process.
 func TestRunSubscriberSupervisedWithBackoff_RestartsPastFailures(t *testing.T) {
 	fake := &fakeSubscriberRunner{
 		failN:   3,
@@ -581,13 +542,8 @@ func TestInProcessLoginThrottle_EnforcesPerIPCap(t *testing.T) {
 	}
 }
 
-// TestInProcessLoginThrottle_ExhaustedIPDoesNotSpendEmailBudget —
-// Allow must not spend the per-email budget on a call already denied by an
-// exhausted per-IP bucket. An attacker who repeatedly hits their own exhausted
-// IP against a victim address could drain that victim's per-email
-// budget for free, denying the victim's own legitimate send from a
-// different IP for the rest of the window. Asserts that once the calling
-// IP's bucket is exhausted, further calls must not touch a distinct email's per-email budget at all.
+// TestInProcessLoginThrottle_ExhaustedIPDoesNotSpendEmailBudget pins that a call denied by an
+// exhausted per-IP bucket never spends the per-email budget, or an attacker could lock a victim out.
 func TestInProcessLoginThrottle_ExhaustedIPDoesNotSpendEmailBudget(t *testing.T) {
 	th := newInProcessLoginThrottle()
 	ctx := context.Background()
@@ -631,12 +587,8 @@ func TestInProcessLoginThrottle_ExhaustedIPDoesNotSpendEmailBudget(t *testing.T)
 	}
 }
 
-// TestInProcessLoginThrottle_MasksIPv6ToSlash64. Keying the
-// in-process fallback's per-IP bucket on the raw address would let a
-// caller with one routable IPv6 /64 allocation mint a fresh /128 —
-// and therefore a fresh, empty throttle bucket — on every request,
-// bypassing the cap entirely. Asserts two /128s
-// inside the same /64 share one budget.
+// TestInProcessLoginThrottle_MasksIPv6ToSlash64 asserts two /128s in one /64 share a budget, or a
+// caller could mint a fresh bucket per request and bypass the cap.
 func TestInProcessLoginThrottle_MasksIPv6ToSlash64(t *testing.T) {
 	th := newInProcessLoginThrottle()
 	ctx := context.Background()
@@ -740,11 +692,8 @@ func TestInProcessSignupIPThrottle_EnforcesPerIPCap(t *testing.T) {
 	}
 }
 
-// TestRecoverBackgroundWorker_CountsThePanic pins that the helper
-// counts the panic. Logging alone leaves a dead background worker as one
-// journal line with no metric — invisible to alerting. It must move the
-// same counter the indexer's workers move, because one page rule reads
-// it for every binary.
+// TestRecoverBackgroundWorker_CountsThePanic pins that the panic moves the same counter the
+// indexer's workers move, because one page rule reads it for every binary.
 func TestRecoverBackgroundWorker_CountsThePanic(t *testing.T) {
 	const name = "test-api-worker"
 	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(name))

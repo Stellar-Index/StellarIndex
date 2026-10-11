@@ -23,39 +23,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestPriceServingSeamsAreGated is a guard-coverage test for the price
-// WITHHOLDING decision.
-//
-// The product rule is fail-closed on trust: when the substance gate judges a
-// market too thin to aggregate, or the scam gate finds the issuer
-// directory-flagged, we do not publish a price. Implementing that rule at
-// ONE reader seam (wiring.StorePriceReader, behind /v1/price) leaks it at every
-// other seam reading the same closed VWAP buckets — /v1/price/at and
-// /v1/price/changes would re-serve the exact number /v1/price withheld, so
-// one extra path segment would defeat both gates.
-//
-// Fixing those two seams by hand is not the deliverable; the leak happened
-// BECAUSE the decision lived at a seam instead of a chokepoint, so the same
-// thing recurs the next time someone adds a reader. This test derives the
-// price-serving seam set from the source and fails when one of them does not
-// route through wiring.PriceWithheld() — i.e. it fails for the seam that does not
-// exist yet.
-//
-// Why an AST guard rather than a behavioural test: a behavioural test can only
-// cover the endpoints someone remembered to write a case for, which is the same
-// weakness that produced the leak.
-//
-// The subject set is derived by finding every method that CALLS a closed-VWAP
-// store read, not by listing seam names, so a brand-new ungated reader fails.
-//
-// SCOPE — stated because it was read as wider than it is. This scan parses
-// main.go and the binary's internal/wiring package and nothing else, so its
-// subject set is the READER seams wired in this binary. Every HTTP handler lives in internal/api/v1, which this scan
-// structurally cannot see: so `/v1/price?window=N` could serve
-// a directory-flagged issuer's aggregated price straight out of the VWAP
-// cache while a guard named "price serving seams are gated" passed.
-// The handler package's own cache seams are covered by
-// [TestV1VWAPCacheSeamsAreGated] below.
+// TestPriceServingSeamsAreGated fails when any reader seam calling a closed-VWAP store read does
+// not route through wiring.PriceWithheld(), so a withheld price cannot leak via a second path
+// such as /v1/price/at. It derives the seam set from the source so a new ungated reader fails.
+// It scans main.go and internal/wiring only; the handler package is covered by
+// [TestV1VWAPCacheSeamsAreGated].
 func TestPriceServingSeamsAreGated(t *testing.T) {
 	fset := token.NewFileSet()
 
@@ -114,13 +86,8 @@ func TestPriceServingSeamsAreGated(t *testing.T) {
 	}
 }
 
-// readsClosedVWAP reports whether fn calls one of the store reads that
-// return a closed 1m VWAP bucket — the value the withholding decision
-// governs. Matching on the STORE CALL rather than a hand-listed set of
-// method names is what makes this guard cover a seam that does not exist
-// yet: a new reader has to call one of these to serve a price at all.
-// Any reference counts, not only a call: a method value
-// (f := r.S.LatestClosedVWAP1mForPair; f(...)) reads the same bucket.
+// readsClosedVWAP reports whether fn references a store read returning a closed 1m VWAP bucket.
+// Matching the store call covers future readers, and a method value counts as a reference.
 func readsClosedVWAP(fn *ast.FuncDecl) bool {
 	found := false
 	ast.Inspect(fn, func(n ast.Node) bool {
@@ -184,11 +151,8 @@ func callsPriceWithheld(fn *ast.FuncDecl, dir string) bool {
 	return found
 }
 
-// TestPriceWithheldChokepointHonoursBothGates pins the chokepoint's own
-// semantics: withhold when the substance gate refuses OR the scam gate flags.
-// Nil gates mean "operator disabled [pricing_guard]" and must allow — the
-// gates are nil-receiver safe and this test keeps that contract explicit, so a
-// future refactor cannot turn a disabled gate into a deny-everything outage.
+// TestPriceWithheldChokepointHonoursBothGates pins withholding when either gate refuses. Nil gates
+// mean the operator disabled [pricing_guard] and must allow, not deny everything.
 func TestPriceWithheldChokepointHonoursBothGates(t *testing.T) {
 	usd := mustUSD(t)
 	// Nil gates: allow (disabled guard keeps prior behaviour).
@@ -197,29 +161,12 @@ func TestPriceWithheldChokepointHonoursBothGates(t *testing.T) {
 	}
 }
 
-// TestWithholdingGatesAreSpelledOnlyAtTheChokepoint pins the SECOND
-// property of the MSP cluster: drift WITHIN a seam.
-//
-// TestPriceServingSeamsAreGated above answers "does every serving seam
-// consult the gates AT ALL". It cannot answer "does each seam consult
-// BOTH gates on EVERY branch", because a method with two arms satisfies
-// it as soon as ONE arm calls wiring.PriceWithheld().
-//
-// That is exactly the bypass shape. wiring.StorePriceReader.LatestPrice has a
-// closed-VWAP arm and a last-trade arm; a last-trade arm that spells out
-// `!r.substance.Allowed(...)` and never consults the SCAM gate lets an
-// operator setting disable_substance_gate=true to diagnose a coverage
-// complaint silently publish a directory-flagged issuer's last trade as
-// its price — reversing an owner-level trust decision they never touched.
-//
-// The rule: a gate HALF's decision method may be named only inside a
-// chokepoint — wiring.PriceWithheld() here, and in the handler package
-// withheldBy() (the fold) and scamWithheld() (the pair question it
-// asks). Every other call site is a second spelling that can drift out
-// of step. The scan covers main.go, the wiring package AND every non-test
-// file under internal/api: a guard bound to main.go could not see the handler
-// package, so a hand-written gate in /v1/price/stream would be invisible
-// to the very test its comment cites as its drift guard.
+// TestWithholdingGatesAreSpelledOnlyAtTheChokepoint pins that a gate half's decision method is
+// named only inside a chokepoint (wiring.PriceWithheld, and the handler's withheldBy and
+// scamWithheld). A seam with two arms passes the coverage test when one arm consults the gates,
+// so a hand-spelled substance check on the last-trade arm would skip the scam gate and publish a
+// flagged issuer's price once disable_substance_gate is set. The scan covers main.go, wiring and
+// every non-test file under internal/api.
 func TestWithholdingGatesAreSpelledOnlyAtTheChokepoint(t *testing.T) {
 	fset := token.NewFileSet()
 	files := readerSeamFiles(t)
@@ -392,11 +339,9 @@ func apiSourceFiles(t *testing.T, root string) []gateSpellingFile {
 // under in the scanned packages.
 var gateHolderNames = map[string]bool{"substance": true, "Substance": true, "scam": true, "Scam": true}
 
-// gateSpellingViolations reports every gate-half call in f outside a
-// chokepoint, and counts the ones inside. A method value taken from a gate
-// (f := s.substance.Allowed; f(...)) is a call deferred, so it counts too.
-// Non-call references are matched only on a gate holder because the half
-// names are generic: rate-limit results carry a plain Allowed field.
+// gateSpellingViolations reports every gate-half call in f outside a chokepoint and counts those
+// inside. A method value counts as a deferred call, but non-call references match only on a gate
+// holder because rate-limit results also carry an Allowed field.
 func gateSpellingViolations(fset *token.FileSet, dir string, f *ast.File) (violations []string, permitted int) {
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -520,20 +465,10 @@ func (d *flaggingScamDirectory) DirectoryEntryByAddress(_ context.Context, addre
 	return timescale.DirectoryEntry{}, false, nil
 }
 
-// TestPriceWithheldChokepointResolvesSACSpelling pins the /v1/price
-// family (plus /v1/price/batch, /v1/price/at, the SEP-40 oracle and the
-// asset headline, which all route through this one function) for the
-// SAC-spelling bypass.
-//
-// The scam directory is keyed by the issuer G-address only a CLASSIC
-// asset carries, and every caller hands the chokepoint the RAW requested
-// base. A Stellar Asset Contract wrapper is the same asset as the
-// classic issuance it wraps, so a request naming the wrapper reached a
-// gate that had already decided it had nothing to say — and the flagged
-// issuer's price was served (R8). The gate now resolves the base to its
-// canonical family form first, so both spellings reach the same verdict.
-//
-// NOT parallel: the alias registry is process-global.
+// TestPriceWithheldChokepointResolvesSACSpelling pins that a SAC wrapper and its classic issuance
+// reach the same scam verdict. The directory is keyed by the classic issuer G-address, so the
+// chokepoint resolves the raw base to its canonical form first. Not parallel: the alias registry
+// is process-global.
 func TestPriceWithheldChokepointResolvesSACSpelling(t *testing.T) {
 	const (
 		code   = "RIO"
@@ -587,53 +522,17 @@ func TestPriceWithheldChokepointResolvesSACSpelling(t *testing.T) {
 // directory (a `go test` binary runs with its own package dir as cwd).
 const v1PackageDir = "../../internal/api/v1"
 
-// v1LookerInterface is the handler package's declared seam onto the
-// aggregator's published VWAP cache. Its methods are derived from the
-// source rather than hand-listed: a second method added to it is a
-// second ungated cache read, and this guard covers it the day it
-// appears.
+// v1LookerInterface is the handler package's seam onto the aggregator's VWAP cache. Its methods
+// are derived from the source, so a method added later is covered at once.
 const v1LookerInterface = "TriangulatedPriceLooker"
 
-// TestV1VWAPCacheSeamsAreGated is the missing half of the chokepoint
-// guard above: it covers internal/api/v1, where the HTTP handlers live.
-//
-// Why a second guard rather than a wider first one. The withholding
-// decision is spelled once per package because the two packages hold
-// different halves of it: cmd/stellarindex-api owns the READER
-// chokepoint (wiring.PriceWithheld, consulted inside the store readers), and
-// internal/api/v1 owns the HANDLER chokepoint (scamWithheld, plus the
-// ErrPriceWithheld verdict those readers propagate). A handler that
-// answers out of the aggregator's VWAP cache passes through neither
-// reader — the production looker reads Redis unconditionally — so that
-// cache is the one price source with no gate underneath it, and the
-// handler has to ask for itself.
-//
-// The rule enforced here:
-//
-//   - every function reading the cache must consult the withholding
-//     decision BEFORE the read — position-checked, because the original
-//     bypass was a caller that consulted AFTER dispatching;
-//   - an HTTP handler must consult it itself, with no credit from its
-//     callers: handlePrice consults the decision and still dispatched to
-//     the ungated windowed handler first, so "my caller checks" is
-//     exactly the reasoning that shipped the leak;
-//   - a non-handler helper may inherit the decision from its callers,
-//     checked transitively and position-wise, or from a caller that
-//     discards the price — an existence probe serving a bool is not a
-//     price surface, the same exemption the main.go scan grants
-//     wiring.StorePriceReader.RecentClosedVWAP1mExists, except PROVEN here from
-//     the call site's blank assignment instead of asserted in a list.
-//
-// What this guard does NOT prove, said plainly so it is not read as
-// wider than it is: it is a structural reachability check, not a proof
-// that the consultation it found was a verdict about THIS pair. A caller
-// that honours ErrPriceWithheld on its primary read and then falls
-// through to the cache on not-found earns credit here, so the fallback
-// chain's own entry gate is pinned behaviourally instead — see
-// TestPriceFallbackWithholdsScamFlaggedBase and
-// TestCachedVWAPSurfacesWithholdScamFlaggedMarket in the handler
-// package. What this guard owns is the class those cannot: the seam
-// nobody remembered to write a case for.
+// TestV1VWAPCacheSeamsAreGated covers internal/api/v1, where a handler answering from the VWAP
+// cache passes through no reader gate and must ask for itself. Every cache read needs a withholding
+// consultation positioned before it. An HTTP handler consults it itself, with no credit from its
+// callers; a helper may inherit it transitively or from a caller that discards the price. This is
+// a structural reachability check, not proof the verdict was about this pair; the fallback chain
+// is pinned behaviourally by TestPriceFallbackWithholdsScamFlaggedBase and
+// TestCachedVWAPSurfacesWithholdScamFlaggedMarket.
 func TestV1VWAPCacheSeamsAreGated(t *testing.T) {
 	sc := loadV1Scan(t)
 	seams := sc.cacheSeams()
@@ -903,14 +802,9 @@ func (sc *v1Scan) covered(fn *v1Func, before token.Pos, seen map[*v1Func]bool) (
 	return "every caller reaches the decision before calling it", true
 }
 
-// consultBefore finds a withholding consultation positioned before
-// `before`. The package spells the decision three ways: scamWithheld()
-// (the handler chokepoint), withheldBy() (its fold with the substance
-// gate, which calls scamWithheld), writeIfScamWithheld() (scamWithheld
-// plus the scam-worded problem, for handlers that answer the verdict
-// themselves) and the ErrPriceWithheld verdict the store readers
-// propagate. A hand-rolled s.scam.Withheld() is none of them, and the
-// handler package's own TestScamGateIsAskedThePairQuestion fails on it.
+// consultBefore finds a withholding consultation positioned before `before`: scamWithheld,
+// withheldBy, writeIfScamWithheld, or the ErrPriceWithheld verdict from the readers. A hand-rolled
+// s.scam.Withheld() is none of them, and TestScamGateIsAskedThePairQuestion fails on it.
 func (sc *v1Scan) consultBefore(fn *v1Func, before token.Pos) (token.Pos, bool) {
 	found := token.NoPos
 	ast.Inspect(fn.decl.Body, func(n ast.Node) bool {
@@ -982,11 +876,8 @@ func (r errPriceReader) RecentClosedSnapshots(context.Context, canonical.Asset, 
 	return nil, r.err
 }
 
-// TestReaderChokepointNamesTheScamGate pins that a store reader withholding
-// for a directory-flagged issuer says so on the wire. The reader seams
-// returned the bare sentinel, so /v1/price described a flagged issuer's
-// market as too thin and told the client to recompute the price from the
-// raw trades — the price the gate exists to refuse.
+// TestReaderChokepointNamesTheScamGate pins that a reader withholding for a flagged issuer says so
+// on the wire, not "too thin", which would tell clients to recompute from the raw trades.
 func TestReaderChokepointNamesTheScamGate(t *testing.T) {
 	const issuer = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 	flagged := mustClassic(t, "RIO", issuer)
