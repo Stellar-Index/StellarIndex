@@ -32,14 +32,14 @@ func TestHAPlanFileLineCitationsResolve(t *testing.T) {
 		{
 			name:     "sla-probe base URL",
 			file:     "configs/healthchecks/sla-probe.sh",
-			line:     27,
+			line:     23,
 			contains: "http://localhost:3000/v1",
 		},
 		{
 			name:     "restore-drill timer enable task",
 			file:     "configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml",
-			line:     691,
-			lineEnd:  703,
+			line:     689,
+			lineEnd:  699,
 			contains: "name: Enable + start the restore-drill timer",
 		},
 		{
@@ -51,7 +51,7 @@ func TestHAPlanFileLineCitationsResolve(t *testing.T) {
 		{
 			name:     "repo2 render gate condition",
 			file:     "configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml",
-			line:     130,
+			line:     129,
 			contains: "pgbackrest_repo2_s3_bucket | default('') != ''",
 		},
 	}

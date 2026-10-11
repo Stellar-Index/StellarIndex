@@ -16,6 +16,7 @@ import (
 )
 
 // AuditStore implements [platform.AuditStore] against `audit_log`; Append is fire-and-forget, so audit unavailability never blocks customer or staff workflows (the caller logs and continues).
+// List has no non-test caller: no dashboard or API route calls it yet.
 type AuditStore struct{ s *Store }
 
 // NewAuditStore returns the Postgres-backed implementation.
