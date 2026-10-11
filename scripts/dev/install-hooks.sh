@@ -25,7 +25,6 @@
 #   make hooks / make hooks-remove
 #
 # Exit 0 when the requested state holds; 1 when it refused; 2 on usage.
-# Exit 0 when the requested state holds; 1 when it refused; 2 on usage.
 set -uo pipefail
 
 marker="stellarindex-lint-changed-hook"

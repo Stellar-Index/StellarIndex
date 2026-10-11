@@ -17,8 +17,6 @@
 # Exit code is the number of violations (consumed like lint-doc-links.sh).
 #
 # Env overrides (used by the self-test): CHANNELS_MANIFEST.
-#
-# Env overrides (used by the self-test): CHANNELS_MANIFEST.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
@@ -34,7 +32,7 @@ if [ ! -f "$MANIFEST" ]; then
 fi
 
 TMP=$(mktemp -d)
-# shellcheck disable=SC2329  # invoked indirectly by the EXIT trap
+# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
