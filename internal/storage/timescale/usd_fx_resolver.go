@@ -17,25 +17,20 @@ import (
 // VWAPUSDFXResolver implements [USDVolumeFXResolver] against the
 // `prices_1m` continuous-aggregate. For an on-chain quote asset + timestamp
 // it returns the asset's most-recent VWAP against any operator-declared
-// USD-pegged classic (typically Circle USDC, Stellar USDT, AnchorUSD),
-// treating the peg as exactly $1. Without it, trades whose quote asset
-// isn't in the USD-pegged list contribute 0 to volume_24h_usd.
+// USD-pegged classic, treating the peg as exactly $1. Without it, trades
+// whose quote asset isn't in the USD-pegged list contribute 0 to volume_24h_usd.
 //
-// Cache: per (asset, 1-minute bucket) → resolved rate string, TTL default 5
-// minutes. The insert hot path stamps hundreds of trades per second; the
-// minute key matches the CAGG's resolution, so finer keys only add misses.
+// Cache: per (asset, 1-minute bucket), TTL default 5 minutes. The minute key
+// matches the CAGG's resolution, so finer keys only add misses.
 //
-// Three resolution routes, tried in order (measurements in
-// docs/operations/usd-volume-coverage-plan.md):
+// Three routes, tried in order (docs/operations/usd-volume-coverage-plan.md):
 //
-//  1. FIAT assets → `fx_quotes`: prices_1m holds crypto markets only, so a
-//     fiat:EUR quote never resolves there. [VWAPUSDFXResolver.usdPriceForFiat].
-//  2. Direct `<asset>/<peg>` VWAP in prices_1m, looping the asset's
-//     canonical alias forms against the alias-complete peg set.
-//     [VWAPUSDFXResolver.queryDB].
+//  1. FIAT assets → `fx_quotes`: prices_1m holds crypto markets only.
+//     [VWAPUSDFXResolver.usdPriceForFiat].
+//  2. Direct `<asset>/<peg>` VWAP in prices_1m over the asset's alias forms
+//     and the alias-complete peg set. [VWAPUSDFXResolver.queryDB].
 //  3. The XLM bridge, `<asset>/XLM x XLM/USD`: most Stellar tokens have an
-//     XLM market but no stablecoin one.
-//     [VWAPUSDFXResolver.bridgeViaXLM].
+//     XLM market but no stablecoin one. [VWAPUSDFXResolver.bridgeViaXLM].
 type VWAPUSDFXResolver struct {
 	store *Store
 
@@ -248,24 +243,17 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 // asset FORMS a prices_1m `quote_asset` may carry for that peg: each
 // declared classic peg, plus the SAC contract that wraps it where declared.
 //
-// The inputs and membership rule match [NewUSDVolumeQuoteSpec] and
-// [USDVolumeQuoteSpec.QuoteUSDPegInfo]'s Soroban arm (a SAC is a peg iff it
-// resolves to a declared classic). Keep one shape across both tiers: a peg
-// the exact tier honours but the FX tier cannot see is a silent coverage
-// hole.
+// The membership rule matches [NewUSDVolumeQuoteSpec] and
+// [USDVolumeQuoteSpec.QuoteUSDPegInfo]'s Soroban arm: a peg the exact tier
+// honours but the FX tier cannot see is a silent coverage hole.
 //
-// Strict on a malformed WRAPPER, like [NewUSDVolumeQuoteSpec]: a dropped
-// wrapper is invisible under-counted volume. The declared pegs themselves
-// are bound verbatim, not re-validated here; [NewUSDVolumeQuoteSpec]
-// rejects an unparseable peg on the production wiring path.
-//
-// A parseable classic peg goes through [classicKey] so a "CODE:ISSUER"
-// spelling binds the "CODE-ISSUER" form prices_1m stores. An unparseable
-// one passes through verbatim.
+// Strict on a malformed WRAPPER: a dropped wrapper is invisible under-counted
+// volume. Declared pegs are bound verbatim; [NewUSDVolumeQuoteSpec] rejects
+// an unparseable one on the production wiring path. A parseable peg goes
+// through [classicKey] so "CODE:ISSUER" binds the stored "CODE-ISSUER" form.
 //
 // Order is deterministic (declared pegs first, then wrappers by contract id)
-// so the bound array and query plan are stable; within the array order
-// carries no meaning, since every member is the same declared dollar.
+// so the bound array and query plan are stable; it carries no other meaning.
 func usdPegForms(classicPegs []string, sacWrappers map[string]string) ([]string, error) {
 	forms := make([]string, 0, len(classicPegs))
 	seen := make(map[string]struct{}, len(classicPegs))
@@ -510,28 +498,23 @@ func (r *VWAPUSDFXResolver) substanceAllows(
 const fiatUSDRateScale = 18
 
 // usdPriceForFiat resolves the USD price of one unit of a fiat asset from
-// `fx_quotes`; it is what lets non-USD-quoted external-exchange trades be
-// priced at all.
+// `fx_quotes`, so non-USD-quoted external-exchange trades can be priced.
 //
 // A fiat asset can NEVER resolve through [VWAPUSDFXResolver.queryDB]:
 // prices_1m holds crypto markets only. Without this branch every CEX pair
-// quoted in a non-USD currency (BTC/EUR, ETH/GBP, ...) would insert with
-// `usd_volume` NULL, silently deflating every aggregate built on it. See
-// docs/operations/usd-volume-coverage-plan.md.
+// quoted in a non-USD currency would insert with `usd_volume` NULL,
+// silently deflating every aggregate built on it.
 //
-// The rate is an exact *big.Rat from [fxSnapFromRows]
-// (rate_usd(USD)/rate_usd(TICKER), USD leg exactly 1). The float-derived
+// The rate is an exact *big.Rat from [fxSnapFromRows]; the float-derived
 // `inverse_usd` column is deliberately NOT used (ADR-0003).
 //
 // Two deliberate deviations from the prices_1m path:
 //
 //   - **Freshness is NOT applied.** fx_quotes buckets are daily and
-//     weekday-only, so the default 1h freshness would reject 100% of fiat
-//     rates. [fxQuotesSnapAtOrBefore]'s own [fxQuotesSnapLookback] (7 days,
-//     the longest routine weekend/holiday gap) is the bound instead.
+//     weekday-only, so a 1h freshness would reject every fiat rate;
+//     [fxQuotesSnapLookback] (7 days) is the bound instead.
 //   - **The cache key floors to the UTC day, not the minute.** Buckets sit
-//     at exactly UTC midnight, one per (date, ticker); a minute key would
-//     multiply misses by 1440 during a backfill.
+//     at UTC midnight; a minute key would multiply misses by 1440.
 func (r *VWAPUSDFXResolver) usdPriceForFiat(ctx context.Context, asset canonical.Asset, at time.Time) (string, bool, error) {
 	// USD is the anchor rate_usd is expressed against — exactly 1 by
 	// definition, and fx_quotes holds no USD row to look up.
@@ -679,24 +662,19 @@ const bridgeRateMaxScale = 80
 //
 //	USD per asset = (XLM per asset) x (USD per XLM)
 //
-// This is what takes on-chain coverage past the USD-pegged markets. Most
-// Stellar tokens have no stablecoin pair at all but do have an XLM one.
-//
-// Returns ("", zero, nil) on a miss — a token with no XLM market
-// either, which is the documented end of the waterfall.
+// Most Stellar tokens have no stablecoin pair but do have an XLM one.
+// Returns ("", zero, nil) when there is no XLM market either: the end of
+// the waterfall.
 //
 // The XLM/USD leg goes back through USDPriceAt rather than straight to
-// the DB, which both shares its cache — XLM/USD is identical for every
-// asset bridging in the same minute, so this collapses one query per
-// bridged asset into one per minute — and applies the freshness check
-// to that leg independently.
+// the DB, so it shares that cache (one XLM/USD query per minute, not per
+// bridged asset) and gets its own freshness check.
 //
-// That recursion is bounded at depth 2 and provably terminates: the
-// only call is with native XLM, and the isXLMAsset guard above returns
-// before any further bridging. A bridged rate is therefore fresh iff
-// BOTH legs are fresh — the XLM leg by USDPriceAt's own check, the
-// asset leg by the caller applying freshness to the bucket returned
-// here.
+// The recursion is bounded at depth 2: the only call is with native XLM,
+// and the isXLMAsset guard returns before any further bridging. A bridged
+// rate is therefore fresh iff BOTH legs are fresh — the XLM leg by
+// USDPriceAt's own check, the asset leg by the caller applying freshness
+// to the bucket returned here.
 func (r *VWAPUSDFXResolver) bridgeViaXLM(ctx context.Context, asset canonical.Asset, at time.Time) (string, error) {
 	if isXLMAsset(asset) {
 		// Base case. XLM resolves directly against a peg or not at
@@ -885,26 +863,20 @@ func xlmLegQuery(lowerBound string) string {
 // bucket must clear before its VWAP may value another trade, in QUOTE units
 // (units of the USD peg, treated as exactly $1).
 //
-// Same defence and same $0.01 as [bridgeLegMinUSDVolume] and the OHLC
-// extremes (migration 0115), so the three dust defences agree. The direct
-// market is if anything MORE exposed than the bridge: it needs no second
-// leg to go wrong.
+// Same $0.01 as [bridgeLegMinUSDVolume] and the OHLC extremes (migration
+// 0115), so the three dust defences agree.
 //
 // WHY NOT `volume_usd` (the bridge leg's discriminator): on this leg it is
 // CIRCULAR. A bucket's `volume_usd` sums its trades' `usd_volume`, which
-// this very resolver writes, so a pair it has never priced can never clear
-// a USD-volume floor and tier 3a could not bootstrap (prices_1m coalesces
-// NULL `usd_volume` to 0, so "not yet valued" and "worth nothing" are
-// indistinguishable).
+// this very resolver writes, so a pair it has never priced could never clear
+// a USD-volume floor (prices_1m coalesces NULL `usd_volume` to 0).
 //
-// The quote-side notional depends only on the bucket's own stored amounts.
 // `vwap * volume_priced` is Σ(quote_amount) over the trades the vwap was
-// computed from (both legs > 0, migration 0187), up to NUMERIC's ~16
-// significant digits of division rounding (immaterial against one cent).
-// Not `volume_quote`: that also counts zero-base trades, letting a
-// quote-only row carry a dust fill's price over the floor. The query only
-// matches rows whose `quote_asset` IS an operator peg, so the sum is
-// already dollars modulo the resolver's peg assumption.
+// computed from (both legs > 0, migration 0187), up to NUMERIC division
+// rounding immaterial against one cent. Not `volume_quote`: that also counts
+// zero-base trades, letting a quote-only row carry a dust fill's price over
+// the floor. The query only matches rows whose `quote_asset` IS an operator
+// peg, so the sum is already dollars.
 const directLegMinQuoteVolume = "0.01"
 
 // pegQuoteScaleDenominator converts a prices_1m `vwap * volume_priced` product
@@ -921,21 +893,15 @@ const pegQuoteScaleDenominator = 10_000_000
 // string + the row's bucket timestamp on the first form that hits, or
 // ("", zero, nil) when no form does.
 //
-// # Why this is a loop and not one query
+// XLM's USD markets are split by venue across its three identities
+// (`native`, `crypto:XLM`, its SAC), so the asset and peg sides both loop
+// their forms ([VWAPUSDFXResolver.pegForms]). The CEX `crypto:XLM/fiat:USD`
+// series is out of scope: `fiat:USD` is not a declared peg.
 //
-// AGENTS.md's dual-form rule applies to the tier-3/4 USD anchor. XLM's USD
-// markets are split by venue across its three identities (`native`,
-// `crypto:XLM`, its SAC), so the asset and peg sides both loop their forms
-// ([VWAPUSDFXResolver.pegForms]). The CEX `crypto:XLM/fiat:USD` series is
-// out of scope: `fiat:USD` is not a declared peg.
-//
-// # Order is load-bearing
-//
-// [canonical.AssetAliases] returns forms in priority order with the SAC
-// LAST, so a thin Soroban pool cannot outrank a deep SDEX/CEX book. Taking
-// the first form that yields a row keeps that contract; a set-shaped
-// `base_asset = ANY(forms)` would take the freshest bucket and hand the SAC
-// pool the rate whenever it printed last.
+// Order is load-bearing: [canonical.AssetAliases] returns the SAC LAST, so a
+// thin Soroban pool cannot outrank a deep SDEX/CEX book. Taking the first
+// form that yields a row keeps that; a set-shaped `base_asset = ANY(forms)`
+// would hand the SAC pool the rate whenever it printed last.
 //
 // Freshness, when enforced, is a lower bucket bound inside the SQL (see
 // [VWAPUSDFXResolver.queryDirectLeg]), so the first form that returns a row
@@ -956,20 +922,14 @@ func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, 
 // queryDirectLeg does one prices_1m read for `<form>/<peg>` for any peg
 // form in [VWAPUSDFXResolver.pegForms], at-or-before `at`. Returns the
 // VWAP string + the row's bucket timestamp on hit, or ("", zero, nil) on
-// miss. [VWAPUSDFXResolver.queryDB] is the alias-looping caller.
-//
-// One round-trip with `quote_asset = ANY(...)`. Set semantics are right on
-// THIS side (unlike the base side's ordered loop): every member is the same
-// operator-declared dollar, so there is no priority to preserve.
+// miss. Set semantics (`quote_asset = ANY(...)`) are right on THIS side:
+// every peg form is the same declared dollar, so there is no priority.
 //
 // Dust floor: buckets whose whole minute moved less than
 // [directLegMinQuoteVolume] of the peg are excluded. This query takes the
 // FRESHEST qualifying bucket, so without the floor a 2-stroop remainder in
-// the newest minute outranks every real bucket behind it and prices every
-// trade quoted in this asset until it ages out (see
-// docs/operations/finding-dust-trades-set-chart-extremes.md). See
-// [directLegMinQuoteVolume] for why the discriminator is the QUOTE-side
-// notional and not `volume_usd`.
+// the newest minute would price every trade quoted in this asset until it
+// ages out (docs/operations/finding-dust-trades-set-chart-extremes.md).
 //
 // Lower bucket bound: when freshness is enforced (>0), USDPriceAt rejects
 // any row older than `at - freshness`, so without a bound the index scan
