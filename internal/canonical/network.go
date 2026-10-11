@@ -8,29 +8,19 @@ import (
 	"sync/atomic"
 )
 
-// installedPassphrase overrides [PubnetPassphrase] as the network the
-// canonical model derives network-dependent values against (today: the
-// Stellar Asset Contract address a classic/native asset resolves to via
-// [Asset.SacContractID]). A nil pointer means "not installed" → the
-// pubnet default is used. Written at most once, at binary start-up,
-// before any read/derive path runs (see [InstallNetworkPassphrase]); the
-// atomic pointer makes that publish race-free and lets tests swap it.
+// installedPassphrase overrides [PubnetPassphrase] as the network that [Asset.SacContractID]
+// derives against; nil means pubnet. Written once at start-up (see [InstallNetworkPassphrase]);
+// the atomic pointer keeps that publish race-free and lets tests swap it.
 //
-// Same idiom as [InstallAliasRegistry]: a network-derived value is needed
-// in leaf positions with no config.Config in scope, so it is published
-// once at start-up rather than threaded through every SacContractID
-// caller.
+// Same idiom as [InstallAliasRegistry]: leaf callers have no config.Config in scope, so the
+// value is published once rather than threaded through every SacContractID caller.
 var installedPassphrase atomic.Pointer[string]
 
-// InstallNetworkPassphrase publishes p as the process-wide network
-// passphrase [Asset.SacContractID] derives against. Call it ONCE, at
-// binary start-up, from cfg.Stellar.Passphrase(), after config load and
-// before serving. Until installed (unit tests, or a binary that never
-// serves canonical SAC addresses) the pubnet passphrase is used, so
-// pubnet behaviour is invariant.
+// InstallNetworkPassphrase publishes p as the process-wide passphrase [Asset.SacContractID]
+// derives against. Call it ONCE at start-up from cfg.Stellar.Passphrase(), before serving;
+// until then pubnet is used, so pubnet behaviour is invariant.
 //
-// An empty p RESETS to the pubnet default (the safe fallback, and the
-// reset path unit tests use in t.Cleanup) so a mis-wired config never
+// An empty p RESETS to pubnet (also the test t.Cleanup path), so a mis-wired config never
 // derives SAC addresses against "".
 func InstallNetworkPassphrase(p string) {
 	if p == "" {

@@ -4,33 +4,18 @@ import "sort"
 
 // Off-chain fiat asset helpers — see ADR-0010.
 //
-// The Asset type carries an AssetFiat variant for off-chain fiat
-// currencies (USD, EUR, …). These are NOT Stellar assets; they're
-// abstract reference currencies used by oracle prices + FX feeds.
-//
-// Wire form: `fiat:<ISO4217>` (e.g. `fiat:USD`). The `fiat:` prefix
-// is unambiguous, so ParseAsset dispatches in O(1).
+// AssetFiat carries off-chain fiat currencies (USD, EUR, …) used by oracle prices and FX feeds;
+// they are not Stellar assets. Wire form `fiat:<ISO4217>`.
 
-// knownFiatCodes is the allow-list of 3-letter fiat codes. Extending
-// it is a one-line change here (ADR-0010 needs no amendment).
-// Codes chosen from ISO-4217 plus currencies the spec explicitly
-// names or that our CEX/FX connectors will price against.
+// knownFiatCodes is the allow-list of 3-letter fiat codes: Reflector FX oracle traffic, wider
+// ISO-4217, and the FULL set the massive.com FX feed (internal/sources/external/forex)
+// publishes into fx_quotes. The batch price endpoint rejects the whole request on the first
+// unparseable code, so the /assets converter can only offer the intersection of this list and
+// the feed. Obsolete codes (CYP/EEK/LTL/LVL/MTL/ROL/SIT/SKK/TRL) never resolve to a price.
+// Crypto tickers are NOT here (see asset_crypto.go).
 //
-// It covers the codes seen in Reflector FX oracle traffic plus wider ISO-4217
-// codes. Crypto tickers (BTC, ETH, SOL …) are NOT on this list; they have
-// their own canonical type (asset_crypto.go).
-//
-// It also carries the FULL set the massive.com FX feed
-// (internal/sources/external/forex) publishes into fx_quotes. The batch price
-// endpoint rejects the whole request on the first code it can't parse, so the
-// /assets converter can only offer the intersection of this list and the feed.
-// Obsolete codes (CYP/EEK/LTL/LVL/MTL/ROL/SIT/SKK/TRL) are inert without a
-// fresh rate and never resolve to a price.
-//
-// VES is listed because the Reflector FX oracle publishes a VES slot on every
-// event; the massive.com feed does not carry it, so it exists only so the
-// reflector-fx row is typed fiat:VES. XAU (gold) deliberately stays OFF this
-// list: it is a commodity and maps to rwa:XAU (ADR-0028).
+// VES is listed only so the reflector-fx row, whose oracle publishes a VES slot every event,
+// types as fiat:VES. XAU (gold) stays OFF: it is a commodity and maps to rwa:XAU (ADR-0028).
 var knownFiatCodes = map[string]struct{}{
 	"AED": {}, "ALL": {}, "ARS": {}, "AUD": {}, "AWG": {}, "BAM": {},
 	"BBD": {}, "BDT": {}, "BGN": {}, "BHD": {}, "BIF": {}, "BND": {},
@@ -65,14 +50,9 @@ func IsKnownFiat(code string) bool {
 	return ok
 }
 
-// KnownFiatCodes returns the ADR-0010 allow-list, sorted. A COPY: the
-// map above is the single source of truth and callers must not be able
-// to widen it.
-//
-// It exists for the readers that need the closed set rather than a
-// membership test — a query that has to bound itself to fiat-quoted rows
-// cannot ask [IsKnownFiat] per row, and hard-coding a second list beside
-// this one is how the two drift.
+// KnownFiatCodes returns the ADR-0010 allow-list, sorted, as a COPY so callers cannot widen the
+// map. It serves readers needing the closed set (a query bounding itself to fiat-quoted rows
+// cannot call [IsKnownFiat] per row); a second hard-coded list would drift.
 func KnownFiatCodes() []string {
 	out := make([]string, 0, len(knownFiatCodes))
 	for code := range knownFiatCodes {

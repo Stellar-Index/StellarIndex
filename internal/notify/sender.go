@@ -8,12 +8,9 @@ import (
 	"strings"
 )
 
-// Message is the transactional-email envelope every Sender
-// accepts. From may carry a display name ("Name <addr@example>");
-// each To element must be a bare [CanonicalRecipient] address,
-// which validate enforces. HTML and Text are both honoured by
-// Resend (multipart) — when only one is set the other is
-// auto-derived where supported.
+// Message is the transactional-email envelope every Sender accepts. From may carry a display
+// name ("Name <addr@example>"); each To element must be a bare [CanonicalRecipient] address,
+// which validate enforces. Resend sends HTML and Text as multipart.
 type Message struct {
 	From    string
 	To      []string
@@ -48,20 +45,14 @@ var ErrProviderRejected = errors.New("notify: provider rejected")
 // provider. [ResendSender] has already spent its bounded retries.
 var ErrTransient = errors.New("notify: transient provider failure")
 
-// ErrNotConfigured is returned by a transport that holds no provider
-// credential and therefore cannot deliver anything. It is a FAILURE,
-// never a success: a caller that counts sends must count it as
-// failed, and a caller that reports delivery must not report "sent"
-// (a transport whose Send returned nil for an empty Resend key would
-// count and report undeliverable sign-in mail as sent, and the
-// failure-ratio alert would read 0).
+// ErrNotConfigured is returned by a transport with no provider credential. It is a FAILURE,
+// never a success: counting it as sent would hide undeliverable sign-in mail from the
+// failure-ratio alert.
 var ErrNotConfigured = errors.New("notify: mail transport is not configured")
 
-// UnconfiguredSender is the transport a deployment gets when it has
-// no provider credential. Every Send fails with ErrNotConfigured, so
-// the absence of mail is an error at every call site rather than a
-// silent drop. Wire this — not [NoopSender], which records and
-// reports success — whenever production config lacks the credential.
+// UnconfiguredSender is the transport for a deployment with no provider credential. Every Send
+// fails with ErrNotConfigured, so missing mail is an error at each call site. Wire this, not
+// [NoopSender] (which reports success), whenever production config lacks the credential.
 type UnconfiguredSender struct {
 	// Reason names WHAT is missing, for the operator (e.g. the env
 	// var that is unset). It is appended to the error, so it must
@@ -80,13 +71,10 @@ func (u UnconfiguredSender) Send(context.Context, Message) error {
 // MailConfigured reports false: there is no credential to send with.
 func (UnconfiguredSender) MailConfigured() bool { return false }
 
-// IsUnconfigured reports whether s is known, before any Send, to be
-// unable to deliver: nil, or a transport that declares (through an
-// optional `MailConfigured() bool` method) that it holds no
-// credential. Call sites use it to refuse up front — before minting
-// a token or promising an email — instead of discovering the failure
-// after the side effects. A Sender without the method is taken at its
-// word; its Send error is the signal.
+// IsUnconfigured reports whether s is known, before any Send, to be unable to deliver: nil, or
+// a transport whose optional `MailConfigured() bool` method returns false. Call sites refuse up
+// front, before minting a token or promising an email. A Sender without the method is taken at
+// its word; its Send error is the signal.
 func IsUnconfigured(s Sender) bool {
 	if s == nil {
 		return true
@@ -105,11 +93,9 @@ const maxRecipientLen = 254
 // that is not exactly one deliverable mailbox.
 var ErrInvalidRecipient = errors.New("notify: invalid recipient address")
 
-// CanonicalRecipient reduces raw user input to the one spelling of a
-// single mailbox that every mail-keyed store and every Message.To uses:
-// the lowercased RFC 5322 addr-spec, stripped of any display name or
-// angle brackets. Without it `"x" <a@b.com>` and `a@b.com` are distinct
-// accounts, signup identities and throttle keys for one inbox.
+// CanonicalRecipient reduces raw input to the one spelling of a mailbox that every mail-keyed
+// store and Message.To uses: the lowercased RFC 5322 addr-spec without display name or angle
+// brackets. Otherwise `"x" <a@b.com>` and `a@b.com` become distinct accounts and throttle keys.
 func CanonicalRecipient(raw string) (string, error) {
 	addr, err := mail.ParseAddress(strings.ToLower(strings.TrimSpace(raw)))
 	if err != nil {
@@ -131,12 +117,9 @@ func CanonicalRecipient(raw string) (string, error) {
 	return out, nil
 }
 
-// validate runs the common checks every concrete Sender does
-// before hitting the wire. Centralised so the four error
-// shapes (missing To, missing Subject, empty body, malformed
-// From) stay consistent across drivers. Every To element must
-// already be in [CanonicalRecipient] form, so no caller can store
-// one spelling of an inbox and mail another.
+// validate runs the checks every Sender does before the wire, keeping the four error shapes
+// (missing To, missing Subject, empty body, malformed From) consistent across drivers. Every To
+// must already be in [CanonicalRecipient] form, so no caller stores one spelling and mails another.
 func validate(m Message) error {
 	if len(m.To) == 0 {
 		return errors.Join(ErrInvalidMessage, errors.New("recipient list is empty"))

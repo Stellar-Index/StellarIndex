@@ -10,21 +10,15 @@ import (
 )
 
 // This file turns the raw XDR result-code integers the lake stores
-// (stellar.transactions.result_code and stellar.operation_results.result_code)
-// into stable, human-readable slugs, so a FAILED transaction is self-explaining
-// on the API and in the explorer UI — never a bare, unexplained integer.
+// (stellar.transactions.result_code and stellar.operation_results.result_code) into stable
+// slugs, so a failed transaction is self-explaining on the API, never a bare integer.
 //
-// Design note (transparency, not suppression): failed transactions ARE indexed
-// and ARE served (an on-chain, fee-charged, permanent record — many explorers
-// show them). The honest contract is to mark them clearly. The authoritative
-// "why" is the TRANSACTION-level result code: successful=false + the tx result
-// (e.g. "tx_failed", "tx_insufficient_fee") states, unambiguously, that the
-// whole transaction did not apply and why. The per-operation code is structural
-// detail: for a txFAILED, an operation that itself failed structurally carries
-// op_bad_auth / op_no_source_account / …; an operation whose outcome is in its
-// inner (op-type-specific) result carries op_inner, and OpInnerResultName
-// names that inner outcome (e.g. payment_underfunded) — tx_failed alone does
-// not say which operation failed or why.
+// Failed transactions are indexed and served (an on-chain, fee-charged record) and marked clearly.
+// The authoritative "why" is the transaction-level code (successful=false plus e.g. "tx_failed"
+// or "tx_insufficient_fee"). The per-operation code is structural detail: a structurally failed
+// op carries op_bad_auth / op_no_source_account / ..., while one whose outcome is in its
+// op-type-specific result carries op_inner, and OpInnerResultName names that outcome (e.g.
+// payment_underfunded), which tx_failed alone does not say.
 
 // txResultNames maps every transaction result code to its slug. Keyed by the
 // xdr typed constant so the compiler pins each entry to a real enum member;
@@ -87,13 +81,10 @@ func OpResultName(code int32) string {
 }
 
 // OpInnerResultName returns the slug of an op_inner operation's
-// op-type-specific result code, decoded from the stored base64
-// OperationResult (stellar.operation_results.result_xdr): e.g.
-// "payment_underfunded", "invoke_host_function_trapped". ok=false when the
-// outer code is not op_inner (there is no inner result) or the XDR does not
-// decode. The slug is the SDK enum name minus its type prefix, snake_cased,
-// so every op type's codes are covered without a hand-kept table; an unnamed
-// (newer) code falls back to "<result type>_unknown(<n>)".
+// op-type-specific result code, decoded from the stored base64 OperationResult (e.g.
+// "payment_underfunded"). ok=false when the outer code is not op_inner or the XDR does not decode.
+// The slug is the SDK enum name minus its type prefix, snake_cased, so every op type is covered
+// without a hand-kept table; an unnamed (newer) code falls back to "<result type>_unknown(<n>)".
 func OpInnerResultName(resultXDR string) (string, bool) {
 	var res xdr.OperationResult
 	if err := xdr.SafeUnmarshalBase64(resultXDR, &res); err != nil {

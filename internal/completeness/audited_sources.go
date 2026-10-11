@@ -15,13 +15,10 @@ var staticAuditedSources = []string{
 	"sushiswap_v3", "upshift",
 }
 
-// AuditedSources returns, sorted, every source compute-completeness publishes a
-// verdict for under cfg, before network scoping. It is the denominator of
-// /v1/coverage: a source listed here with no completeness_snapshots row (its
-// first audit failed, or the row was cleared) must still count as a source
-// without a verdict. The catalogue lives in internal/ops/chops, which the API
-// must not import; a chops test holds the two in lockstep for every
-// config-gated entry.
+// AuditedSources returns, sorted, every source compute-completeness publishes a verdict for under
+// cfg, before network scoping. It is the /v1/coverage denominator: a source listed here with no
+// completeness_snapshots row must still count as a source without a verdict. The catalogue lives
+// in internal/ops/chops, which the API must not import; a chops test keeps the two in lockstep.
 func AuditedSources(cfg config.Config) []string {
 	out := append([]string(nil), staticAuditedSources...)
 	gated := []struct {

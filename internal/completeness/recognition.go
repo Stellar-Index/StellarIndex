@@ -1,15 +1,12 @@
-// Package completeness implements the ADR-0033 verification model —
-// the data-derived checks that turn "100% coverage" from an assertion
-// into three independently-provable claims:
+// Package completeness implements the ADR-0033 verification model: data-derived checks that turn
+// "100% coverage" into three independently provable claims.
 //
 //   - Substrate continuity (ledger_ingest_log: contiguity + hash chain).
-//   - Recognition (this file): every event shape on-chain is one a
-//     decoder handles.
-//   - Projection reconciliation (reconcile.go): every captured event
-//     became a row.
+//   - Recognition (this file): every on-chain event shape is one a decoder handles.
+//   - Projection reconciliation (reconcile.go): every captured event became a row.
 //
-// The package is a pure consumer of internal/storage/timescale +
-// internal/dispatcher (via narrow interfaces); nothing imports it back.
+// It is a pure consumer of internal/storage/timescale and internal/dispatcher via narrow
+// interfaces; nothing imports it back.
 package completeness
 
 import (
@@ -24,11 +21,9 @@ type Recognizer interface {
 	Recognize(events.Event) (string, bool)
 }
 
-// RecognitionGap is a distinct on-chain event shape that NO decoder
-// recognizes — an event we observe in soroban_events but would
-// silently drop on decode. This is what a WASM upgrade that adds a new
-// topic looks like (project_schema_evolution), surfaced loudly instead
-// of vanishing.
+// RecognitionGap is a distinct on-chain event shape that NO decoder recognizes: seen in
+// soroban_events but silently dropped on decode. A WASM upgrade adding a new topic looks like this,
+// and it is surfaced loudly instead of vanishing.
 type RecognitionGap struct {
 	ContractID string
 	Topic0Sym  string // "" when topic[0] is not a Symbol/String
@@ -38,14 +33,11 @@ type RecognitionGap struct {
 	Reason     string // "no decoder matches" | "unreconstructable: <err>"
 }
 
-// AuditRecognition reconstructs a representative event for each
-// distinct (contract, topic) shape and returns those the Recognizer
-// rejects. An empty result means every event shape present in the
-// audited range is handled by some decoder — Claim 2a holds.
+// AuditRecognition reconstructs a representative event per distinct (contract, topic) shape and
+// returns those the Recognizer rejects; empty means Claim 2a holds for the audited range.
 //
-// A sample that cannot be reconstructed is itself reported as a gap:
-// if we can't even rebuild the event from its stored bytes, we
-// certainly can't claim to decode it.
+// A sample that cannot be reconstructed is itself a gap: if the event cannot be rebuilt from its
+// stored bytes, we cannot claim to decode it.
 func AuditRecognition(samples []timescale.TopicSample, r Recognizer) []RecognitionGap {
 	var gaps []RecognitionGap
 	for i := range samples {

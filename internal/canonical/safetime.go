@@ -8,52 +8,29 @@ import (
 	"time"
 )
 
-// SafeUnixFutureWindow bounds how far past the ledger close a decoded
-// on-chain timestamp may sit before [SafeUnixSeconds] /
-// [SafeUnixMillis] treat it as garbage and fall back to the ledger
-// close time. Absorbs relayer/oracle clock skew without admitting
-// sentinel / overflow values that error the timestamptz INSERT
-// (cf. the soroswap-router deadline_ts guard).
+// SafeUnixFutureWindow bounds how far past the ledger close a decoded timestamp may sit before
+// [SafeUnixSeconds] / [SafeUnixMillis] fall back to the close time. It absorbs clock skew without
+// admitting sentinel or overflow values that error the timestamptz INSERT.
 const SafeUnixFutureWindow = 24 * time.Hour
 
-// safeUnixEpochFloorSeconds is the lower sanity bound for a decoded
-// raw timestamp: 1_000_000_000 s, in September 2001. Anything before it
-// (0 / sentinel / pre-epoch garbage) falls back to the ledger close —
-// every oracle/DeFi source we ingest launched well after 2001.
+// safeUnixEpochFloorSeconds (1e9 s, September 2001) is the lower sanity bound: every ingested
+// source launched later, so anything earlier is a 0 or sentinel and falls back to the close.
 const safeUnixEpochFloorSeconds = 1_000_000_000
 
-// SafeUnixSeconds converts a raw u64 UNIX-seconds timestamp (as
-// decoded from contract events / op args) to a UTC time, falling back
-// to closedAt when the value is outside the sane window
-// [1e9 s, closedAt+SafeUnixFutureWindow].
+// SafeUnixSeconds converts a raw u64 UNIX-seconds timestamp to UTC, falling back to closedAt
+// outside [1e9 s, closedAt+SafeUnixFutureWindow].
 //
-// The bound check happens on the RAW u64, BEFORE the int64 cast:
-//   - too small (0 / before 2001) → bogus old timestamp.
-//   - too large (> close+24h) → far-future sentinel; and crucially
-//     anything > math.MaxInt64 (~9.2e18) WRAPS NEGATIVE in an int64()
-//     cast and would stamp a far-PAST time that a cast-first
-//     future-only After() guard misses in both directions — the same
-//     overflow class as an unguarded router deadline_ts cast.
-//     Bound-checking the raw u64 first catches both ends and keeps the
-//     cast provably in range. The ceiling itself is int64-checked before
-//     its own uint64 cast — a pre-1970 closedAt would otherwise wrap it
-//     and disable the whole guard.
-//
-// The decoders share this guard rather than each hand-rolling one: band
-// and sorocredit call it, reflector and redstone its sibling
+// The bound check runs on the RAW u64, BEFORE the int64 cast: a value above math.MaxInt64 wraps
+// negative and would stamp a far-PAST time that a cast-first future-only guard misses. The
+// ceiling is int64-checked before its own uint64 cast, since a pre-1970 closedAt would wrap it
+// and disable the guard. Decoders share this rather than hand-rolling one; see
 // [SafeUnixMillis].
 func SafeUnixSeconds(raw uint64, closedAt time.Time) time.Time {
 	ceil := closedAt.Add(SafeUnixFutureWindow).Unix()
 	if ceil < 0 {
-		// closedAt is pre-1970, so the ceiling is negative and an
-		// unchecked uint64() cast would wrap it to ~1.8e19 — silently
-		// disabling the guard this function exists to be. Every raw value
-		// including 2^63 would then pass and int64(raw) would stamp a
-		// far-PAST time, the overflow class of an unguarded router
-		// deadline_ts cast. No production caller can reach it (all three
-		// LedgerClosedAt producers are >=1970 and all three call sites
-		// fail closed on a missing close time), but the guard must not
-		// depend on that.
+		// A pre-1970 closedAt makes the ceiling negative; an unchecked uint64() cast would wrap
+		// it to ~1.8e19, letting every raw value through to stamp a far-PAST time. No production
+		// caller reaches this, but the guard must not depend on that.
 		return closedAt.UTC()
 	}
 	if raw < safeUnixEpochFloorSeconds || raw > uint64(ceil) {
@@ -62,20 +39,13 @@ func SafeUnixSeconds(raw uint64, closedAt time.Time) time.Time {
 	return time.Unix(int64(raw), 0).UTC()
 }
 
-// UnboundedUnixSeconds converts a raw u64 UNIX-seconds value to a UTC
-// time WITHOUT clamping it to a close-time window, for fields that are
-// legitimately far in the future relative to the ledger they were
-// observed on — a swap/router deadline or a timelock unlock time — where
-// [SafeUnixSeconds]'s tight ceiling would wrongly clamp a real value.
+// UnboundedUnixSeconds converts a raw u64 UNIX-seconds value to UTC WITHOUT a close-time window,
+// for fields legitimately far in the future (a swap deadline, a timelock unlock) that
+// [SafeUnixSeconds]'s ceiling would wrongly clamp.
 //
-// It only guards the int64 cast itself: a raw value above math.MaxInt64
-// wraps NEGATIVE and, for raw values near math.MaxUint64 specifically,
-// wraps to a small negative number — a bogus time near the 1970 epoch
-// that reads as perfectly plausible downstream and is NOT caught by a
-// postgres-timestamptz-range check (unlike a wrap deep into the past,
-// which lands billions of years before 4713 BC and is caught that way).
-// ok is false for any raw value that would wrap; callers should treat
-// that the same as an already-absent value (leave the field unset).
+// It only guards the int64 cast: a value near math.MaxUint64 wraps to a small negative, a bogus
+// time near 1970 that looks plausible and that the timestamptz range check does not catch.
+// ok is false for any value that would wrap; treat it as absent and leave the field unset.
 func UnboundedUnixSeconds(raw uint64) (t time.Time, ok bool) {
 	if raw > uint64(math.MaxInt64) {
 		return time.Time{}, false

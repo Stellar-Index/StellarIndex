@@ -1,19 +1,17 @@
 // Package decimalsguard is the served-price decimals-assumption guard.
 //
-// The served price is Σ(quote_amount)/Σ(base_amount) on RAW smallest-unit
-// integers (the prices_* CAGGs, aggregate.VWAP). Per-asset decimals cancel ONLY
-// when base and quote share a scale. Every DEX-traded Stellar token to date is
-// 7-decimal, and decoders store faithful native-decimal amounts (ADR-0003). The
-// latent risk: the first non-7-decimal SEP-41 token to gain liquidity skews its
-// pairs' served prices by 10^(7-decimals), with no other alarm.
+// The served price is Σ(quote_amount)/Σ(base_amount) on RAW smallest-unit integers (the
+// prices_* CAGGs, aggregate.VWAP), so per-asset decimals cancel ONLY when base and quote share
+// a scale. Decoders store faithful native-decimal amounts (ADR-0003), so the first non-7-decimal
+// SEP-41 token to gain liquidity would skew its pairs' served prices by 10^(7-decimals) with
+// no other alarm.
 //
-// This package is the DETECTION half: a periodic sweep resolves the on-chain
-// decimals() of every recently-DEX-traded Soroban token from the certified lake
-// and raises obs.DEXTradeNonstandardDecimalsTotal when one is != 7. Via
-// Writer/UpsertNonstandardDecimalsAsset it is the sole writer of
-// nonstandard_decimals_assets; normalization (internal/aggregate.AdjustPrice, a
-// read-time 10^(dec_base-dec_quote) scalar) is a pure consumer. What it covers
-// and the two CAGG-backed gaps (/v1/price, /v1/ohlc series mode) are in
+// This package is the DETECTION half: a periodic sweep resolves the on-chain decimals() of
+// every recently-DEX-traded Soroban token from the certified lake and raises
+// obs.DEXTradeNonstandardDecimalsTotal when one is != 7. It is the sole writer of
+// nonstandard_decimals_assets (via Writer/UpsertNonstandardDecimalsAsset); normalization
+// (internal/aggregate.AdjustPrice, a read-time 10^(dec_base-dec_quote) scalar) only consumes
+// it. Coverage and the two CAGG-backed gaps (/v1/price, /v1/ohlc series mode) are in
 // docs/operations/runbooks/dex.md.
 //
 // The sweep's 20m window misses dormant tokens; Guard.Backfill covers 90d at startup.
@@ -32,49 +30,35 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// StandardDecimals is the decimals scale every DEX-traded Stellar token
-// carries today: SACs are always 7, classic credits are uniformly 7, and
-// every pure-SEP-41 token observed on-chain so far declares 7. A resolved
-// value other than this is exactly the assumption-violation this guard
-// exists to catch.
+// StandardDecimals is the scale every DEX-traded Stellar token carries today (SACs and classic
+// credits are always 7). A resolved value other than this is the assumption-violation this
+// guard exists to catch.
 const StandardDecimals = 7
 
-// Default sweep cadence. The window is >= the interval so consecutive
-// sweeps overlap and no trade falls between them: any Soroban token that
-// trades even once is enumerated by at least one sweep. The former
-// all-time informational alert (stellarindex_dex_nonstandard_decimals_detected)
-// that latched permanently on a single detection is gone;
-// the action item today is stellarindex_nonstandard_decimals_correction_failing,
-// which fires only while the correction itself is failing (see
-// configs/prometheus/rules.r1/aggregator.yml).
+// Default sweep cadence. The window is >= the interval so consecutive sweeps overlap and no
+// trade falls between them: any Soroban token that trades even once is enumerated by at least
+// one sweep. The action alert is stellarindex_nonstandard_decimals_correction_failing, which
+// fires only while the correction itself fails (configs/prometheus/rules.r1/aggregator.yml).
 const (
 	DefaultInterval = 15 * time.Minute
 	DefaultWindow   = 20 * time.Minute
 )
 
-// DefaultBackfillWindow bounds the one-time startup self-seed pass
-// (Backfill): how far back it looks for distinct Soroban-legged
-// (source, asset) trade pairs. The periodic sweep's short Window (20m)
-// only catches a token that is STILL trading — a token that traded once
-// and went dormant before the guard ever ran (or before it traded again
-// inside a 20-minute window) is invisible to Sweep forever.
+// DefaultBackfillWindow bounds the one-time startup self-seed pass (Backfill): how far back
+// it looks for distinct Soroban-legged (source, asset) trade pairs. The sweep's short Window
+// only catches a token that is STILL trading, so one that went dormant before the guard ran is
+// invisible to Sweep forever.
 //
-// 90 days is a judgment call, not a derived constant: long enough to
-// catch a token that traded a handful of times and then went quiet,
-// short enough that RecentSorobanDEXTrades stays a sargable index-range
-// scan (see soroban_dex_assets.go) rather than drifting toward "full
-// history". A token dormant for longer than this window is NOT caught by
-// Backfill; the runbook's manual hand-seed step remains the fallback for
-// that residual, long-dormant case. Config-surfaced via
+// 90 days is a judgment call: long enough to catch a token that traded a few times and went
+// quiet, short enough that RecentSorobanDEXTrades stays a sargable index-range scan (see
+// soroban_dex_assets.go) rather than drifting toward full history. Tokens dormant longer are
+// NOT caught; the runbook's manual hand-seed step is the fallback. Config-surfaced via
 // internal/config.DecimalsGuardConfig.BackfillWindowDays.
 const DefaultBackfillWindow = 90 * 24 * time.Hour
 
-// DefaultBackfillThrottle paces Backfill's per-asset ClickHouse
-// decimals() lookups so a large distinct-asset set doesn't hammer the
-// lake in a tight loop at process start. Only applied between resolver
-// calls that actually reach ClickHouse — a resolved-cache hit (the same
-// asset seen twice, e.g. traded against two different quote assets)
-// never queries the lake, so it isn't throttled.
+// DefaultBackfillThrottle paces Backfill's per-asset ClickHouse decimals() lookups so a large
+// asset set doesn't hammer the lake at process start. It applies only between calls that reach
+// ClickHouse; a resolved-cache hit never queries the lake and isn't throttled.
 const DefaultBackfillThrottle = 100 * time.Millisecond
 
 // TradeReader enumerates the distinct (source, Soroban-contract-asset)
@@ -84,48 +68,36 @@ type TradeReader interface {
 	RecentSorobanDEXTrades(ctx context.Context, since time.Time) ([]timescale.SorobanDEXTradeRef, error)
 }
 
-// DecimalsResolver resolves a token contract's on-chain decimals() from the
-// certified lake (contract-instance METADATA, no WASM execution). Satisfied
-// structurally by *clickhouse.ExplorerReader. found=false means the
-// declaration isn't derivable (instance not captured, or a non-token-sdk
-// contract) — the guard treats that as "cannot confirm" and never alarms on
-// it.
+// DecimalsResolver resolves a token contract's on-chain decimals() from the certified lake
+// (contract-instance METADATA, no WASM execution). Satisfied by *clickhouse.ExplorerReader.
+// found=false means the declaration isn't derivable (instance not captured, or a non-token-sdk
+// contract); the guard treats that as "cannot confirm" and never alarms on it.
 type DecimalsResolver interface {
 	TokenDecimals(ctx context.Context, contractID string) (uint32, bool, error)
 }
 
-// DecimalsAssetWriter persists a CONFIRMED non-7 decimals() declaration so
-// the API-side READ-TIME path (internal/api/v1) can NORMALIZE /v1/price,
-// /v1/vwap, /v1/history, /v1/ohlc, /v1/price/at and the chart surfaces for
-// any pair touching the asset — turning this package's detection-only
-// signal into a served-value correction
-// (docs/operations/runbooks/dex.md). Satisfied by
-// *timescale.Store via UpsertNonstandardDecimalsAsset.
+// DecimalsAssetWriter persists a CONFIRMED non-7 decimals() declaration so the API read-time
+// path (internal/api/v1) can normalize /v1/price, /v1/vwap, /v1/history, /v1/ohlc,
+// /v1/price/at and the chart surfaces for any pair touching the asset via
+// aggregate.AdjustPrice (docs/operations/runbooks/dex.md). Satisfied by *timescale.Store.
 //
-// The surfaces apply aggregate.AdjustPrice rather than declining to serve.
-//
-// Optional: a nil Writer disables persistence — the guard still fires the
-// metric + ERROR log unconditionally, it just leaves the serving-side
-// correction unfed, so those pairs serve an uncorrected raw ratio.
+// Optional: a nil Writer disables persistence. The guard still fires the metric and ERROR log,
+// but the serving-side correction goes unfed, so those pairs serve an uncorrected raw ratio.
 type DecimalsAssetWriter interface {
 	UpsertNonstandardDecimalsAsset(ctx context.Context, asset string, decimals uint32, source string) error
 }
 
-// DecimalsAssetReconciler is the read + delete half the LOCKSTEP reconcile
-// needs on top of DecimalsAssetWriter. `nonstandard_decimals_assets` is a
-// materialised projection of the lake's on-chain decimals() for the non-7
-// subset, and two independent resolvers read the two sides of it: every
-// price-shaped serving path and the aggregator's VWAP normalise through the
-// projection (aggregate.ResolveDecimals), while GET /v1/assets/{id} scales
-// supply by the lake reading directly (clickhouse.TokenDecimals). The
-// projection can drift from the lake (hand-seeded row, instance captured after
-// the resolved cache latched, token now reading 7), so Guard.Reconcile
-// re-reads every persisted row each tick and repairs it toward the lake
+// DecimalsAssetReconciler is the read + delete half the lockstep reconcile needs on top of
+// DecimalsAssetWriter. `nonstandard_decimals_assets` projects the lake's non-7 decimals(), and
+// two resolvers read its two sides: price-shaped serving paths and the aggregator's VWAP
+// normalise through the projection (aggregate.ResolveDecimals), while GET /v1/assets/{id}
+// scales supply by the lake reading directly (clickhouse.TokenDecimals). The projection can
+// drift (hand-seeded row, instance captured after the resolved cache latched, token now
+// reading 7), so Guard.Reconcile re-reads every row each tick and repairs it toward the lake
 // (upsert; delete when the lake confirms 7, since the CHECK forbids 7).
 //
-// Satisfied by *timescale.Store; the Writer option is type-asserted in New. A
-// decorator that does not forward this interface disarms Reconcile, and New
-// logs that at ERROR (see resolveReconciler).
+// Satisfied by *timescale.Store; the Writer option is type-asserted in New. A decorator that
+// does not forward this interface disarms Reconcile, and New logs that at ERROR.
 type DecimalsAssetReconciler interface {
 	DecimalsAssetWriter
 	LoadNonstandardDecimalsAssets(ctx context.Context) ([]timescale.NonstandardDecimalsAsset, error)
@@ -159,23 +131,19 @@ type Guard struct {
 	backfillThrottle time.Duration
 
 	mu sync.Mutex
-	// resolved caches CONFIRMED decimals per contract id (both standard and
-	// non-standard), so repeated sweeps of the same steady token set issue no
-	// further lake queries. A contract's decimals() is effectively immutable.
-	// Resolution errors and not-derivable declarations are deliberately NOT
-	// cached, so a token whose instance is captured later is still checked.
+	// resolved caches CONFIRMED decimals per contract id so repeated sweeps of a steady token
+	// set issue no lake queries; decimals() is effectively immutable. Resolution errors and
+	// not-derivable declarations are deliberately NOT cached, so a token whose instance is
+	// captured later is still checked.
 	resolved map[string]uint32
-	// alarmed dedups the OBSERVABILITY alarm (metric increment + ERROR log)
-	// to one per (source, asset) per process — the signal is "this landmine
-	// exists", latched, not a per-trade rate. The alarm is a pure in-memory
-	// emit that cannot fail, so it latches on first observation.
+	// alarmed dedups the observability alarm (metric + ERROR log) to one per (source, asset)
+	// per process: the signal is "this landmine exists", not a per-trade rate. The emit is
+	// in-memory and cannot fail, so it latches on first observation.
 	alarmed map[string]struct{}
-	// persisted dedups the DURABLE write (UpsertNonstandardDecimalsAsset)
-	// that feeds the API read-time correction. Unlike alarmed it latches
-	// ONLY after the write SUCCEEDS: a transient write failure leaves the key
-	// UNSET so the next Sweep/Backfill observation RETRIES it, rather than
-	// stranding a non-7-decimal token on a 10^(7-decimals)-skewed served
-	// price until process restart (the latch-before-fallible-write class).
+	// persisted dedups the durable write that feeds the API read-time correction. Unlike
+	// alarmed it latches ONLY after the write succeeds, so a transient failure is retried by
+	// the next observation instead of stranding a non-7-decimal token on a
+	// 10^(7-decimals)-skewed served price until restart.
 	persisted map[string]struct{}
 }
 
@@ -187,10 +155,9 @@ type Options struct {
 	Window time.Duration
 	// Logger; nil => slog.Default().
 	Logger *slog.Logger
-	// Writer, when non-nil, persists each confirmed non-7-decimals asset
-	// into `nonstandard_decimals_assets` (migration 0093) so the API's
-	// read-time serving guard can decline pricing for it. Nil disables
-	// persistence — detection (metric + log) is unaffected.
+	// Writer, when non-nil, persists each confirmed non-7-decimals asset into
+	// `nonstandard_decimals_assets` for the API's read-time correction. Nil disables
+	// persistence; detection (metric + log) is unaffected.
 	Writer DecimalsAssetWriter
 	// BackfillWindow is the trailing lookback for the one-time startup
 	// self-seed pass (Backfill). Zero => DefaultBackfillWindow (90 days).
@@ -201,10 +168,9 @@ type Options struct {
 }
 
 // resolveReconciler returns w as a DecimalsAssetReconciler when it is one.
-// A non-nil Writer that is not one leaves Reconcile disarmed, so the
-// projection can drift from the lake unchecked; that is logged at ERROR
-// rather than left silent, because the likeliest cause is a wrapper that
-// forgot to forward the interface.
+// A non-nil Writer that is not one leaves Reconcile disarmed, so the projection can drift
+// from the lake unchecked; that is logged at ERROR because the likeliest cause is a wrapper
+// that forgot to forward the interface.
 func resolveReconciler(w DecimalsAssetWriter, logger *slog.Logger) DecimalsAssetReconciler {
 	if w == nil {
 		return nil
@@ -282,11 +248,9 @@ func (g *Guard) Run(ctx context.Context, interval time.Duration) error {
 	}
 }
 
-// tick is one Run iteration: the freshness Sweep, then the lockstep
-// Reconcile of every persisted row against the lake. The two are
-// independent — a failed Sweep (trade enumeration) must not skip the
-// reconcile, and vice versa — and both are logged-and-retried-next-tick,
-// never fatal.
+// tick is one Run iteration: Sweep, then the lockstep Reconcile against the lake. They are
+// independent (a failed Sweep must not skip the reconcile, nor vice versa) and both are
+// logged and retried next tick, never fatal.
 func (g *Guard) tick(ctx context.Context, phase string) {
 	if err := g.Sweep(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		g.logger.Warn("decimals-guard: sweep failed", "phase", phase, "err", err)
@@ -296,17 +260,14 @@ func (g *Guard) tick(ctx context.Context, phase string) {
 	}
 }
 
-// Sweep enumerates recently-DEX-traded Soroban tokens, resolves each one's
-// decimals, and raises the metric (once per source+asset) for any confirmed
-// non-7 value. Returns an error only when the trade enumeration itself fails
-// — per-asset resolution failures are swallowed (retried next sweep).
+// Sweep enumerates recently-DEX-traded Soroban tokens, resolves each one's decimals, and raises
+// the metric (once per source+asset) for any confirmed non-7 value. It errors only when trade
+// enumeration fails; per-asset resolution failures are swallowed and retried next sweep.
 //
-// On every pass that completes its enumeration — whether or not it finds an
-// offender — it stamps obs.DecimalsGuardSweepLastSuccessUnix. Without that,
-// "the guard swept and found nothing" and "the guard never armed" both read
-// as the offender counters sitting at zero, and a ClickHouse that fails to
-// answer at aggregator boot would disable the guard for the whole process
-// lifetime with no metric surfacing it.
+// Every pass that completes enumeration stamps obs.DecimalsGuardSweepLastSuccessUnix, whether
+// or not it finds an offender. Without it, "swept and found nothing" and "never armed" both
+// read as zero offender counters, so a ClickHouse that failed at boot would silently disable
+// the guard for the process lifetime.
 func (g *Guard) Sweep(ctx context.Context) error {
 	refs, err := g.reader.RecentSorobanDEXTrades(ctx, time.Now().Add(-g.window))
 	if err != nil {
@@ -323,20 +284,18 @@ func (g *Guard) Sweep(ctx context.Context) error {
 	return nil
 }
 
-// Backfill is the ONE-TIME startup self-seed pass. It runs every distinct
-// Soroban-legged (source, asset) pair that traded within BackfillWindow (default
-// DefaultBackfillWindow, 90 days) through the SAME classify+report path Sweep
-// uses, so a token that went dormant before Sweep's short Window ever saw it is
-// still upserted into nonstandard_decimals_assets.
+// Backfill is the ONE-TIME startup self-seed pass. It runs every distinct Soroban-legged
+// (source, asset) pair that traded within BackfillWindow through the same classify+report path
+// as Sweep, so a token that went dormant before Sweep's short Window is still upserted into
+// nonstandard_decimals_assets.
 //
-// Bounded by design: RecentSorobanDEXTrades is a time-windowed, index-sargable
-// scan (see soroban_dex_assets.go); widening to 90 days keeps the shape and does
-// not become the forbidden unbounded DISTINCT. A token dormant longer than the
-// window is still left to the runbook's manual hand-seed.
+// Bounded by design: RecentSorobanDEXTrades is a time-windowed, index-sargable scan (see
+// soroban_dex_assets.go), never an unbounded DISTINCT. Tokens dormant longer are left to the
+// runbook's manual hand-seed.
 //
-// Call once per process before Run starts its loop. Resolution errors and
-// not-yet-confirmable declarations are swallowed like Sweep (a later-captured
-// instance is checked next time); it errors only if the enumeration query fails.
+// Call once per process before Run starts its loop. Resolution errors and not-yet-confirmable
+// declarations are swallowed like Sweep (a later-captured instance is checked next time); it
+// errors only if the enumeration query fails.
 func (g *Guard) Backfill(ctx context.Context) error {
 	since := time.Now().Add(-g.backfillWindow)
 	refs, err := g.reader.RecentSorobanDEXTrades(ctx, since)
@@ -346,10 +305,7 @@ func (g *Guard) Backfill(ctx context.Context) error {
 
 	confirmed := 0
 	for _, ref := range refs {
-		// Throttle only calls that will actually reach the resolver — a
-		// cache hit (the same asset already resolved earlier in this
-		// pass, or by a Sweep tick that ran first) never queries
-		// ClickHouse, so it doesn't need pacing.
+		// Throttle only calls that reach the resolver; a cache hit never queries ClickHouse.
 		if g.backfillThrottle > 0 && !g.isCached(ref.Asset) {
 			select {
 			case <-ctx.Done():
@@ -411,19 +367,15 @@ func (g *Guard) classify(ctx context.Context, asset string) (decimals uint32, co
 	return d, true
 }
 
-// report raises the landmine alarm (metric increment + ERROR log, once per
-// source+asset per process) and — when a Writer is wired — persists the
-// confirmation so the API's read-time serving guard picks it up on its next
-// cache refresh (~60s) and normalizes pricing for pairs touching this asset.
+// report raises the alarm (metric + ERROR log, once per source+asset per process) and, when a
+// Writer is wired, persists the confirmation so the API's read-time guard picks it up on its
+// next cache refresh (~60s).
 //
-// The two effects latch INDEPENDENTLY. The alarm is a pure in-memory emit
-// that cannot fail, so it latches on first observation. The durable write CAN
-// fail transiently, so it latches ONLY after a successful upsert: a failed
-// write leaves the asset unlatched so the next sweep RETRIES it, rather than
-// marking it handled while the corrective row was never written — which would
-// strand a non-7-decimal token on a 10^(7-decimals)-skewed served price until
-// process restart. The upsert is idempotent (INSERT … ON CONFLICT (asset) DO
-// UPDATE), so a retry — or a benign concurrent double-fire — is safe.
+// The two effects latch independently. The alarm cannot fail, so it latches on first
+// observation. The durable write can fail transiently, so it latches ONLY after a successful
+// upsert; otherwise the asset would be marked handled with no corrective row, stranding a
+// non-7-decimal token on a skewed served price until restart. The upsert is idempotent
+// (INSERT … ON CONFLICT (asset) DO UPDATE), so a retry or concurrent double-fire is safe.
 func (g *Guard) report(ctx context.Context, ref timescale.SorobanDEXTradeRef, decimals uint32) {
 	key := ref.Source + "\x00" + ref.Asset
 
@@ -467,23 +419,20 @@ func (g *Guard) report(ctx context.Context, ref timescale.SorobanDEXTradeRef, de
 	g.mu.Unlock()
 }
 
-// Reconcile is the LOCKSTEP pass: it re-reads every persisted
-// `nonstandard_decimals_assets` row against the lake and repairs rows that
-// disagree with the on-chain decimals(), so the normalisation projection cannot
-// drift from the reading GET /v1/assets/{id} scales supply by. Runs after every
-// Sweep (see tick).
+// Reconcile is the lockstep pass: it re-reads every persisted `nonstandard_decimals_assets` row
+// against the lake and repairs disagreements, so the normalisation projection cannot drift from
+// the reading GET /v1/assets/{id} scales supply by. Runs after every Sweep (see tick).
 //
-// The resolved cache is deliberately BYPASSED: a fresh lake read is the point.
-// Per row:
+// The resolved cache is deliberately BYPASSED: a fresh lake read is the point. Per row:
 //
-//   - lake read error or found=false: leave the row, no metric. An operator
-//     hand-seeded row for an uncaptured instance (runbook "Mitigation") must survive.
+//   - lake read error or found=false: leave the row, no metric. An operator hand-seeded row
+//     for an uncaptured instance (runbook "Mitigation") must survive.
 //   - lake == row.Decimals: in lockstep; refresh the resolved cache.
 //   - lake != row.Decimals: count it
-//     (obs.NonstandardDecimalsLockstepMismatchTotal{site="guard_reconcile"}), log
-//     at ERROR with both values, and repair toward the lake: upsert when non-7,
-//     DELETE when the lake confirms 7. The counter increments on OBSERVATION, so
-//     a failed repair re-counts next tick and feeds the correction_failing alert.
+//     (obs.NonstandardDecimalsLockstepMismatchTotal{site="guard_reconcile"}), log at ERROR
+//     with both values, and repair toward the lake: upsert when non-7, DELETE when the lake
+//     confirms 7. The counter increments on OBSERVATION, so a failed repair re-counts next
+//     tick and feeds the correction_failing alert.
 //
 // Errors only when the row load fails.
 func (g *Guard) Reconcile(ctx context.Context) error {
@@ -510,12 +459,10 @@ func (g *Guard) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-// reconcileRowReadTimeout bounds a single lake decimals() read inside
-// reconcileRow. Without a per-row budget on the aggregator's root tick
-// context, one hung ClickHouse query stalls the whole tick (Reconcile runs serially after Sweep). The table is
-// bounded by construction (confirmed offenders only, single digits in
-// production — see [Guard.Reconcile]), so this is defence in depth, not a
-// throughput fix.
+// reconcileRowReadTimeout bounds a single lake decimals() read inside reconcileRow. Without a
+// per-row budget, one hung ClickHouse query would stall the whole tick (Reconcile runs serially
+// after Sweep). The table holds confirmed offenders only (see [Guard.Reconcile]), so this is
+// defence in depth, not a throughput fix.
 const reconcileRowReadTimeout = 5 * time.Second
 
 // reconcileRow checks one persisted row against a fresh lake read and

@@ -4,24 +4,14 @@ import "sort"
 
 // Off-chain tokenized real-world-asset helpers — see ADR-0028.
 //
-// The Asset type carries an AssetRWA variant for tokenized
-// real-world assets (tokenized treasuries, money-market funds,
-// equity ETFs — BENJI, GILTS, SPXU, …). Like AssetCrypto these are
-// NOT Stellar assets — they're bare-ticker references published by
-// an oracle (RedStone's RWA push feeds). They are deliberately a
-// separate variant from AssetCrypto: a tokenized T-bill is not a
-// cryptocurrency, and a shared variant would mis-feed every
-// crypto-scoped surface (explorer views, crypto aggregations).
-//
-// Wire form: `rwa:<CODE>` (e.g. `rwa:BENJI`). The `rwa:` prefix is
-// unambiguous, so ParseAsset dispatches in O(1).
+// AssetRWA carries tokenized real-world assets (treasuries, money-market funds, ETFs) as bare
+// oracle tickers from RedStone's RWA push feeds; they are not Stellar assets. A separate variant
+// from AssetCrypto, since sharing one would mis-feed every crypto-scoped surface. Wire form
+// `rwa:<CODE>`.
 
-// knownRWACodes is the allow-list of recognized RWA codes. Extension
-// is a one-line amendment to ADR-0028 (never a superseding ADR).
-// Codes chosen from RedStone's Stellar mainnet RWA push feeds
-// (see ADR-0028 §Decision). The code is the human-meaningful identifier; the
-// decoder's feed registry maps the raw on-chain feed_id (which may
-// carry suffixes like `_ETHEREUM_FUNDAMENTAL`) onto it.
+// knownRWACodes is the allow-list of RWA codes from RedStone's Stellar mainnet RWA push feeds
+// (ADR-0028). The code is the human-meaningful identifier; the decoder's feed registry maps the
+// raw on-chain feed_id (which may carry suffixes like `_ETHEREUM_FUNDAMENTAL`) onto it.
 var knownRWACodes = map[string]struct{}{
 	"BENJI":   {}, // Franklin Templeton OnChain US Government Money Fund
 	"iBENJI":  {}, // BENJI index variant
@@ -31,31 +21,25 @@ var knownRWACodes = map[string]struct{}{
 	"TESOURO": {}, // tokenized Brazilian treasury (Tesouro)
 	"USTRY":   {}, // tokenized US treasury
 	"SPXU":    {}, // ProShares UltraPro Short S&P 500 (inverse ETF)
-	// RedStone relayer expansion (ledger 63624934; see ADR-0028). Per
-	// the convention above the code strips the feed-id suffix
-	// (`_FUNDAMENTAL`, `/USD`) — the decoder's feed registry maps the
+	// The code strips the feed-id suffix (`_FUNDAMENTAL`, `/USD`); the feed registry maps the
 	// raw feed_id onto it.
 	"USDY":    {}, // Ondo US Dollar Yield — tokenized note backed by short-term US Treasuries + bank deposits
 	"USST":    {}, // STBL treasury-backed stablecoin (feed_id USST_FUNDAMENTAL)
 	"XAUm":    {}, // Matrixdock tokenized gold (1 token ≈ 1 troy oz)
 	"deJAAA":  {}, // Centrifuge deRWA token of the Janus Henderson AAA CLO ETF (JAAA)
 	"deJTRSY": {}, // Centrifuge deRWA token of the Janus Henderson treasury fund (JTRSY)
-	// The Reflector FX oracle's spot-gold slot (ISO-4217 X-code, 1 troy
-	// oz in USD). A commodity reference, not a currency — kept OFF the
-	// fiat list (ADR-0010) and OFF crypto; it shares the rwa: namespace
-	// with XAUm but is a DISTINCT asset (spot vs the Matrixdock token).
-	// See ADR-0028.
+	// Reflector FX oracle's spot-gold slot (1 troy oz in USD): a commodity, kept OFF the fiat
+	// list and OFF crypto. It shares the rwa: namespace with XAUm but is a DISTINCT asset
+	// (spot vs the Matrixdock token).
 	"XAU": {}, // spot gold, troy ounce (Reflector FX slot)
 }
 
-// IsKnownRWA reports whether code is in the ADR-0028 allow-list.
-// The RedStone decoder uses this to gate feed-registry entries —
-// an unrecognized code is a decoder bug, not silent coercion.
+// IsKnownRWA reports whether code is in the ADR-0028 allow-list; the RedStone decoder gates
+// feed-registry entries on it, so an unknown code is a decoder bug, not silent coercion.
 //
-// EXACT match, deliberately: the decoder maps a feed_id onto one
-// allow-listed code and a near-miss there is a bug. A caller matching
-// an on-chain asset code (whose case its issuer chose) against these
-// instrument tickers wants [KnownRWACodes] and its own comparison.
+// Match is EXACT on purpose: a near-miss there is a bug. A caller matching an on-chain asset
+// code (case chosen by its issuer) against these tickers wants [KnownRWACodes] and its own
+// comparison.
 func IsKnownRWA(code string) bool {
 	_, ok := knownRWACodes[code]
 	return ok

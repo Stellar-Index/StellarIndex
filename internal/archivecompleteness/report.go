@@ -6,14 +6,11 @@ import (
 	"time"
 )
 
-// Report is the JSON wire shape produced by the `check` mode and
-// consumed by the future `fix` mode. Per ADR-0017 PR A this carries
-// the read-only enumeration; PR B's `fix` mode reads a Report and
-// fetches the missing files via the multi-source fallback chain.
+// Report is the JSON wire shape produced by `check` and consumed by `fix`, which fetches the
+// missing files via the multi-source fallback chain.
 //
-// Versioning: the Schema field locks the wire shape. PR B/C may
-// add new optional fields; removing or repurposing a field bumps
-// Schema and goes through an ADR amendment.
+// The Schema field locks the wire shape: new optional fields are fine, but removing or
+// repurposing one bumps Schema and goes through an ADR amendment.
 type Report struct {
 	// Schema is the report's wire-format version. Stable per PR.
 	// Pinned to "1" for PR A.
@@ -124,22 +121,14 @@ func (r *Report) AnyMissing() bool {
 	return false
 }
 
-// Vacuous reports whether every POPULATED section scanned ZERO
-// expected checkpoint positions. A requested [from, to]
-// range that contains no checkpoint position at all produces
-// Expected=0, Found=0, MissingCount=0 — AnyMissing() reads that as
-// "clean", but nothing was actually verified. Callers must treat a
-// vacuous report as a distinct failure, not a clean pass, and must
-// NOT stamp a "last success" watermark on it.
+// Vacuous reports whether every POPULATED section scanned ZERO expected checkpoint positions. A
+// range containing no checkpoint yields Expected=0, Found=0, MissingCount=0, which AnyMissing()
+// reads as clean though nothing was verified. Callers must treat a vacuous report as a distinct
+// failure and must NOT stamp a "last success" watermark on it.
 //
-// Returns false when a populated section scanned something
-// (Expected > 0) — one non-vacuous section is enough to call the
-// whole report non-vacuous, since at least SOMETHING was checked.
-// Returns false (not vacuous) when NO section is populated at all —
-// that's the "the caller never ran a scan" case, already the
-// pre-existing empty-report shape AnyMissing() also treats as
-// (uninterestingly) clean; Vacuous only exists to catch the "we DID
-// scan, but there was nothing to scan" case.
+// One section with Expected > 0 makes the report non-vacuous. A report with no populated section
+// is also non-vacuous (no scan ran); Vacuous only catches "we scanned, but there was nothing to
+// scan".
 func (r *Report) Vacuous() bool {
 	populated := false
 	if r.CrossAnchor != nil {

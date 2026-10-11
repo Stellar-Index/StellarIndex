@@ -120,11 +120,8 @@ func renderMagicLink(in MagicLinkInput) (htmlBody, textBody string, err error) {
 	return hb.String(), tb.String(), nil
 }
 
-// MagicLinkMessage is the high-level helper most callers want:
-// pass the input + From, get a fully-formed Message back.
-//
-// Tags `{template: "magic-link"}` get attached so the Resend
-// dashboard can break per-template metrics out cleanly.
+// MagicLinkMessage builds a fully-formed Message from the input and From. It attaches the tag
+// `{template: "magic-link"}` so the Resend dashboard can break out per-template metrics.
 func MagicLinkMessage(from, recipient string, in MagicLinkInput) (Message, error) {
 	htmlBody, textBody, err := renderMagicLink(in)
 	if err != nil {

@@ -8,24 +8,14 @@ import (
 )
 
 // InvokeContractTxEnvelope builds a base64-encoded TransactionEnvelope
-// suitable for passing to [Client.SimulateTransaction]. No signing is
-// performed — simulation ignores signatures — so the source account
-// can be any well-formed G-strkey.
+// suitable for [Client.SimulateTransaction]. Nothing is signed because simulation ignores
+// signatures, so the source account can be any well-formed G-strkey.
 //
-// Use cases:
+// Fee and SeqNum are placeholders (100 and 0) that the simulate endpoint ignores; real submission
+// would need genuine values and signatures.
 //
-//   - Soroswap factory all_pairs()/all_pairs_length() probes at boot
-//     (internal/sources/soroswap bootstrap) so the decoder knows
-//     every pair that exists before our first ledger.
-//   - Any future "read current contract state" diagnostic.
-//
-// The envelope's Fee/SeqNum are set to placeholder values (100 and 0);
-// stellar-rpc's simulate endpoint ignores them. Real tx submission
-// would need genuine values + signatures.
-//
-// contractID is a C-strkey; functionName is the Symbol the caller
-// targets; args are pre-built SCVals (typically empty for no-arg
-// view functions like all_pairs_length).
+// contractID is a C-strkey, functionName the Symbol to call, and args pre-built SCVals (typically
+// empty for no-arg view functions).
 func InvokeContractTxEnvelope(sourceAccount, contractID, functionName string, args []xdr.ScVal) (string, error) {
 	if sourceAccount == "" {
 		// Any valid G-strkey works — simulation ignores the source.

@@ -1,11 +1,9 @@
-// Package usage provides per-subject request counters backed by Redis, plus
-// the rollup worker that persists them into `usage_daily`. Increments come
-// from middleware.UsageTracker.
+// Package usage provides per-subject request counters backed by Redis, plus the rollup worker
+// that persists them into `usage_daily`. Increments come from middleware.UsageTracker.
 //
-// `subject` is the OWNER-ACCOUNT key from middleware.UsageKeyForSubject
-// ("id:acct:<slug>"; "key:<KeyID>" only when the store stamped no owner), so
-// an account's credentials share one counter; per-credential keying let a
-// customer multiply the monthly ceiling by minting keys.
+// `subject` is the OWNER-ACCOUNT key from middleware.UsageKeyForSubject ("id:acct:<slug>";
+// "key:<KeyID>" only when the store stamped no owner), so an account's credentials share one
+// counter. Per-credential keying would let a customer multiply the monthly ceiling by minting keys.
 //
 // Two key families per (subject, day):
 //
@@ -46,22 +44,13 @@ const (
 	ClassOK = "ok"
 	// ClassClientError — 4xx except 429.
 	ClassClientError = "4xx"
-	// ClassThrottled — 429 rejections (rate-limit and monthly
-	// quota). Kept out of the legacy per-day total, along with
-	// ClassServerError, so `requests` keeps meaning BILLABLE
-	// traffic — outcomes the CALLER caused (MonthlyQuota reads the
-	// legacy keys). A 429 is our throttle firing and a 5xx is our
-	// failure; charging either against a paid monthly cap means an
-	// outage or a rate-limit storm eats the customer's allowance.
-	// The one billable 5xx is a read that timed out
-	// on its server-side budget, which the request itself spent (see
-	// middleware.billableClass). Both are still counted in full in the
-	// per-endpoint detail hash, so neither becomes invisible — only
-	// unbillable. Caveat on the ENDPOINT dimension: both 429
-	// producers reject before the router resolves a route pattern,
-	// so throttled counts land under the "unmatched" endpoint
-	// rather than the caller's target route (documented on
-	// /v1/account/usage in the spec).
+	// ClassThrottled is a 429 rejection (rate-limit or monthly quota). With ClassServerError it
+	// is kept out of the per-day total so `requests` stays BILLABLE traffic, i.e. outcomes the
+	// CALLER caused (MonthlyQuota reads it): an outage or rate-limit storm must not eat a paid
+	// allowance. The one billable 5xx is a read that timed out on its own server-side budget
+	// (middleware.billableClass). Both still count in full in the per-endpoint detail hash.
+	// Both 429 producers reject before route resolution, so throttled counts land under the
+	// "unmatched" endpoint (documented on /v1/account/usage in the spec).
 	ClassThrottled = "429"
 	// ClassServerError — 5xx.
 	ClassServerError = "5xx"
@@ -113,11 +102,9 @@ func New(rdb redis.Cmdable, opts ...Option) *Counter {
 	return c
 }
 
-// Increment bumps the counter for (subject, today) by one unit. Errors
-// are returned but callers should treat usage tracking as best-effort
-// — failing to increment must NEVER block a request. Hot-path
-// callers typically `_ = counter.Increment(...)` and let the
-// metric tell them if Redis is misbehaving.
+// Increment bumps the counter for (subject, today) by one unit. Usage tracking is best-effort:
+// a failed increment must NEVER block a request, so hot-path callers drop the error and let the
+// metric show Redis misbehaving.
 func (c *Counter) Increment(ctx context.Context, subject string) error {
 	return c.IncrementBy(ctx, subject, 1)
 }
@@ -153,11 +140,9 @@ func (c *Counter) detailKey(subject, day string) string {
 	return c.keyPrefix + detailKeyInfix + url.QueryEscape(subject) + ":" + day
 }
 
-// IncrementDetail bumps the per-endpoint outcome counter for
-// (subject, today). endpoint MUST be a bounded-cardinality route
-// pattern (e.g. "/v1/assets/{asset_id}"), never a raw URL path;
-// class is one of the Class* constants. Best-effort like
-// [Counter.Increment] — callers drop the error after logging.
+// IncrementDetail bumps the per-endpoint outcome counter for (subject, today). endpoint MUST be
+// a bounded-cardinality route pattern (e.g. "/v1/assets/{asset_id}"), never a raw URL path;
+// class is one of the Class* constants. Best-effort like [Counter.Increment].
 func (c *Counter) IncrementDetail(ctx context.Context, subject, endpoint, class string) error {
 	return c.IncrementDetailBy(ctx, subject, endpoint, class, 1)
 }
@@ -191,22 +176,16 @@ type DetailRow struct {
 	Count    int64
 }
 
-// ScanDetail walks every per-endpoint detail hash for the given
-// dates (YYYY-MM-DD) and returns the decoded counters, materialized
-// into one slice. SCAN-based so it never blocks Redis; the key
-// population is bounded by (#active subjects × len(dates)). Kept for
-// callers that want the whole batch (tests, one-off ops reads); a
-// production sweep should use [Counter.ScanDetailFunc] so it never
-// buffers a whole day's rows in memory.
+// ScanDetail walks every per-endpoint detail hash for the given dates (YYYY-MM-DD) and returns
+// the decoded counters in one slice. SCAN-based so it never blocks Redis; the key population is
+// bounded by (#active subjects x len(dates)). Production sweeps should use
+// [Counter.ScanDetailFunc] to avoid buffering a whole day's rows.
 //
-// Keys are de-duplicated per date. Redis SCAN guarantees only that
-// every key present for the whole iteration is returned AT LEAST once,
-// and this Redis is shared with the rate limiter's high-churn keys, so
-// rehash repeats are routine. Without the seen-set, a duplicate re-read
-// became a second DetailRow, the rollup's groupDetails SUMMED both, and
-// usage_daily's GREATEST() merge made the inflated count PERMANENT for a
-// closed day. A repeat key is always a re-read of the same (subject, day)
-// hash, so keeping the first read is exact.
+// Keys are de-duplicated per date. SCAN only guarantees AT LEAST once, and this Redis is shared
+// with the rate limiter's high-churn keys, so rehash repeats are routine. A duplicate would
+// become a second DetailRow that the rollup SUMS, and usage_daily's GREATEST() merge would make
+// the inflated count PERMANENT for a closed day. A repeat is a re-read of the same
+// (subject, day) hash, so keeping the first read is exact.
 func (c *Counter) ScanDetail(ctx context.Context, dates []string) ([]DetailRow, error) {
 	if c == nil {
 		return nil, nil
@@ -222,13 +201,10 @@ func (c *Counter) ScanDetail(ctx context.Context, dates []string) ([]DetailRow, 
 	return out, nil
 }
 
-// ScanDetailFunc walks every per-endpoint detail hash for the given
-// dates and invokes fn once per decoded row, in the same
-// deduplicated order [ScanDetail] would return them. A caller that
-// aggregates as it goes (e.g. [Rollup.Sweep]'s grouping) never holds
-// a whole day's rows in memory at once — only the current SCAN page
-// (<=200 keys) and the hash currently being decoded. fn's error
-// aborts the walk.
+// ScanDetailFunc walks every per-endpoint detail hash for the given dates and calls fn once per
+// decoded row, deduplicated as in [ScanDetail]. A caller that aggregates as it goes (e.g.
+// [Rollup.Sweep]) holds only the current SCAN page (<=200 keys) and the hash being decoded, not
+// a whole day. fn's error aborts the walk.
 func (c *Counter) ScanDetailFunc(ctx context.Context, dates []string, fn func(DetailRow) error) error {
 	if c == nil {
 		return nil
@@ -332,22 +308,17 @@ type Day struct {
 	Requests int64
 }
 
-// MonthToDate returns the sum of `subject`'s per-day counters
-// from the 1st of the current UTC month through (and including)
-// today. Used by [middleware.MonthlyQuota] to enforce monthly
-// request ceilings; `subject` is the owner-account key (see the
-// package doc), so the sum spans every credential the account
-// holds.
+// MonthToDate returns the sum of `subject`'s per-day counters from the 1st of the current UTC
+// month through today. [middleware.MonthlyQuota] uses it to enforce monthly ceilings; subject is
+// the owner-account key, so the sum spans every credential the account holds.
 //
-// Each day counts max(Redis, usage_daily) when [WithDurableDays] is
-// set. The day keys carry a TTL on an evicting Redis, and a missing
-// key reads as zero, so Redis alone under-bills a month whose cold
-// early days were evicted. Both sources are lower bounds of
-// the true billable count, so their max never over-bills.
+// Each day counts max(Redis, usage_daily) when [WithDurableDays] is set. Day keys carry a TTL on
+// an evicting Redis and a missing key reads as zero, so Redis alone under-bills a month whose
+// cold early days were evicted. Both sources are lower bounds of the true billable count, so
+// their max never over-bills.
 //
-// A read failure on either side returns (0, err); the caller fails
-// open inside its dwell window and closed after it. Returns (0, nil)
-// for the first day of the month before any counter has been written.
+// A read failure on either side returns (0, err); the caller fails open inside its dwell window
+// and closed after it. Returns (0, nil) before any counter has been written this month.
 func (c *Counter) MonthToDate(ctx context.Context, subject string) (int64, error) {
 	if c == nil || subject == "" {
 		return 0, nil

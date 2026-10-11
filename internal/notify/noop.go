@@ -5,21 +5,14 @@ import (
 	"sync"
 )
 
-// NoopSender records every Send call without dispatching to a
-// real provider, and reports SUCCESS. It is a test double: for
-// tests that want to assert "an email was sent" (and read it back
-// through Sent / Last) without pretending to be Resend.
+// NoopSender is a test double: it records every Send (readable through Sent / Last) without
+// dispatching, and reports success.
 //
-// It must never be what a running binary falls back to when the
-// provider credential is missing. Nothing outside the process can
-// read the Sent slice, so there the mail is simply lost — while the
-// nil return is counted as result="sent" and reported to the caller
-// as delivered. A deployment with no credential wires
-// [UnconfiguredSender], whose Send is an error.
+// A running binary must never fall back to it when the provider credential is missing: nothing
+// outside the process can read Sent, so the mail is lost while the nil return is counted as
+// result="sent". A deployment with no credential wires [UnconfiguredSender], whose Send errors.
 //
-// Validation still runs — a NoopSender that accepts a
-// missing-Subject Message would let test harnesses ship broken
-// templates that pass tests but fail at first send in prod.
+// Validation still runs, so tests cannot pass with a template that would fail at first real send.
 type NoopSender struct {
 	mu   sync.Mutex
 	Sent []Message

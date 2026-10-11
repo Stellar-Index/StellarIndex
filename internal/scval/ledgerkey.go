@@ -8,16 +8,11 @@ import (
 )
 
 // ParseContractDataKey base64-decodes an XDR LedgerKey and, when it is a
-// CONTRACT_DATA key, returns the owning contract's C-strkey and the entry's
-// key ScVal. This is the decoder-side reader for
-// [events.Event.StateWriteKeys]: sources that attribute event bodies via
-// the entries their operation wrote (Redstone's accepted-feed subset —
-// each written key is ScString(feed_id)) parse the plumbed keys here and
-// then apply the usual typed accessors ([AsString], [AsSymbol], …).
+// CONTRACT_DATA key, returns the owning contract's C-strkey and the entry's key ScVal. It is the
+// decoder-side reader for [events.Event.StateWriteKeys].
 //
-// Returns [ErrScValDecode]-wrapped errors for wire-level failures and an
-// [ErrScValType]-wrapped error when the LedgerKey is not contract-data —
-// callers filtering a mixed key list should skip that class, not fail.
+// Wire-level failures wrap [ErrScValDecode]; a non-contract-data key wraps [ErrScValType], which
+// callers filtering a mixed key list should skip rather than fail on.
 func ParseContractDataKey(b64 string) (contractID string, key xdr.ScVal, err error) {
 	var lk xdr.LedgerKey
 	if uerr := UnmarshalBase64(b64, &lk); uerr != nil {

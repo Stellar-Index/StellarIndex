@@ -9,25 +9,16 @@ import (
 	"sync/atomic"
 )
 
-// XLMSacContractID is the PUBNET Stellar Asset Contract address that
-// wraps native XLM — XLM's third canonical identity, alongside `native`
-// (the per-network strkey-less form SDEX writes) and `crypto:XLM` (the
-// cross-network ticker form every CEX writes).
+// XLMSacContractID is the PUBNET Stellar Asset Contract address wrapping native XLM, XLM's third
+// identity alongside `native` (SDEX) and `crypto:XLM` (CEX tickers).
 //
-// It is NOT a fixture: it is the deterministic derivation of
-// `NativeAsset().SacContractID()` against [PubnetPassphrase], pinned
-// both by TestSacContractID_Golden (sac_test.go) and by
-// TestXLMSacContractID_MatchesDerivation here, so the literal can never
-// drift from the derivation. It is the pubnet default only; Go code that
-// must follow the configured network calls [NativeSACContractID], never this.
+// It is the derivation of `NativeAsset().SacContractID()` against [PubnetPassphrase], pinned by
+// TestSacContractID_Golden and TestXLMSacContractID_MatchesDerivation. Pubnet default only; code
+// that must follow the configured network calls [NativeSACContractID].
 const XLMSacContractID = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 
-// xlmAliasFamily is the XLM equivalence class in CANONICAL PRIORITY
-// ORDER: the two established forms first, the SAC wrapper last. See
-// [AssetAliases] for why the order is load-bearing.
-//
-// Constructed as struct literals rather than through the New* helpers
-// because those return errors and this must be a package-level var;
+// xlmAliasFamily is the XLM equivalence class in canonical priority order: established forms
+// first, SAC last (see [AssetAliases]). Struct literals, because the New* helpers return errors;
 // TestXLMAliasFamily_IsValid pins that every member passes Validate().
 var xlmAliasFamily = xlmAliasFamilyFor(XLMSacContractID)
 
@@ -48,13 +39,9 @@ var eurcAliasFamily = []Asset{
 	{Type: AssetCrypto, Code: "EUROC"},
 }
 
-// baseAliasFamilies maps every canonical asset_id that belongs to a
-// COMPILE-TIME-KNOWN multi-form equivalence class to that class: XLM's
-// three-way split (`native` / `crypto:XLM` / SAC) and the EURC/EUROC
-// rename. Both are live on the served price path regardless of operator
-// config, so they are unified here unconditionally and form the
-// baseline every [AliasRegistry] starts from. Config-declared
-// classic↔SAC pairs are layered on top by [NewAliasRegistry].
+// baseAliasFamilies maps every asset_id in a compile-time-known equivalence class (XLM's three
+// forms, EURC/EUROC) to its class. They apply regardless of operator config, so every
+// [AliasRegistry] starts from them; [NewAliasRegistry] layers config-declared pairs on top.
 var baseAliasFamilies = baseAliasFamiliesFor(XLMSacContractID)
 
 // baseAliasFamiliesFor is [baseAliasFamilies] with the XLM family's SAC
@@ -70,18 +57,13 @@ func baseAliasFamiliesFor(xlmSAC string) map[string][]Asset {
 	return m
 }
 
-// AliasRegistry is an immutable asset equivalence-class table: it maps
-// every canonical FORM that belongs to a multi-form asset to that
-// asset's family, in the CANONICAL PRIORITY ORDER the read paths must
-// try (SAC form LAST — see [AssetAliases] for why that ordering is a
-// money-safety invariant, not a style choice).
+// AliasRegistry is an immutable asset equivalence-class table mapping every form of a multi-form
+// asset to its family, in the priority order read paths must try (SAC LAST, a money-safety
+// invariant; see [AssetAliases]).
 //
-// It is the explicit value alias.go's history called for: the
-// compile-time baseline plus every classic↔SAC pair declared in the operator's
-// `[supply].sac_wrappers`, resolved ONCE at binary start-up and then
-// read-only. A nil *AliasRegistry is valid and behaves as the baseline
-// for the installed network (pubnet when none is), so leaf-package callers
-// with no config in scope still get correct (if compile-time-limited) behaviour.
+// It is the compile-time baseline plus every classic↔SAC pair in `[supply].sac_wrappers`,
+// resolved once at start-up. A nil *AliasRegistry behaves as the installed network's baseline
+// (pubnet when none), so leaf callers without config stay correct.
 type AliasRegistry struct {
 	families map[string][]Asset
 }
@@ -92,20 +74,14 @@ type AliasRegistry struct {
 // never call InstallAliasRegistry.
 var defaultAliasRegistry = &AliasRegistry{families: baseAliasFamilies}
 
-// activeRegistry holds the process-wide registry [AssetAliases] reads.
-// It is written at most once, at binary start-up, before any read path
-// runs; the atomic pointer makes that publish race-free (go test -race)
-// and lets tests swap a config-derived registry in and out without a
-// lock. A nil load means "not yet installed" → the default is used.
+// activeRegistry holds the process-wide registry [AssetAliases] reads. It is written once at
+// start-up; the atomic pointer keeps that publish race-free and lets tests swap registries
+// without a lock. A nil load means "not installed", so the baseline is used.
 var activeRegistry atomic.Pointer[AliasRegistry]
 
-// InstallAliasRegistry publishes r as the process-wide registry that
-// [AssetAliases] and [AssetAliasStrings] resolve against. Call it ONCE,
-// at binary start-up, after config load and before serving — this is the
-// seam that turns the ~11 alias-looping read paths (and the handlers
-// that adopt the same loop) alias-complete for every configured
-// classic↔SAC pair, with no change to AssetAliases's signature or to any
-// call site. A nil r resets to the compile-time default (used by tests).
+// InstallAliasRegistry publishes r as the process-wide registry behind [AssetAliases] and
+// [AssetAliasStrings]. Call it once at start-up, after config load and before serving, so every
+// alias-looping read path covers each configured classic↔SAC pair. A nil r resets to the baseline.
 func InstallAliasRegistry(r *AliasRegistry) {
 	activeRegistry.Store(r)
 }
@@ -140,23 +116,19 @@ func (r *AliasRegistry) familyMap() map[string][]Asset {
 	return r.families
 }
 
-// NewAliasRegistry builds the process registry from the operator's SAC wrapper
-// map (`[supply].sac_wrappers`: SAC contract C-strkey → classic `CODE:ISSUER`) on
-// the network identified by passphrase. The result is the compile-time baseline
-// PLUS one two-form family per wrapper, with the SAC form ordered LAST so a thin
-// Soroban pool can never outrank the classic asset's depth on a classic-keyed
-// read (the invariant [AssetAliases] documents).
+// NewAliasRegistry builds the registry from `[supply].sac_wrappers` (SAC C-strkey → classic
+// `CODE:ISSUER`) on the network named by passphrase: the baseline plus one two-form family per
+// wrapper, SAC LAST so a thin Soroban pool cannot outrank the classic asset's depth.
 //
-// It is strict: every rejection is returned as an error rather than silently
-// dropped, because a dropped wrapper is invisible under-counted volume and a
-// wrong one merges an arbitrary contract into a classic asset's identity:
+// It is strict, returning an error instead of dropping an entry: a dropped wrapper is invisible
+// under-counted volume, and a wrong one merges an arbitrary contract into a classic identity.
+// It rejects:
 //   - a malformed contract id or asset key;
-//   - a SAC id that is not the deterministic SAC derivation of its classic asset
-//     on this network (e.g. a scam token aliased onto the classic asset);
-//   - a wrapper that would claim a form already in another family.
+//   - a SAC id that is not the deterministic SAC derivation of its classic asset on this
+//     network (e.g. a scam token aliased onto the classic asset);
+//   - a wrapper claiming a form already in another family.
 //
-// Entries whose asset key equals their contract id (the pure-SEP-41 convention)
-// and a verified XLM SAC → `native` entry (already in the baseline) are no-ops.
+// Self-mapped entries (pure SEP-41) and a verified XLM SAC → `native` entry are no-ops.
 func NewAliasRegistry(passphrase string, sacWrappers map[string]string) (*AliasRegistry, error) {
 	if passphrase == "" {
 		return nil, fmt.Errorf("alias registry: empty network passphrase")
@@ -251,19 +223,13 @@ func (r *AliasRegistry) Aliases(asset Asset) []Asset {
 	return out
 }
 
-// Canonical returns the PRIORITY-FIRST form of asset's equivalence class:
-// the classic asset for a configured classic↔SAC pair, `native` for any
-// XLM form (native / crypto:XLM / the XLM SAC). Unlike [AliasRegistry.Aliases],
-// which leads with the caller's own spelling, Canonical always returns the
-// family's FIRST member — the established form the SAC is deliberately
-// ordered behind (see [AssetAliases]) — so it is a STABLE group key
-// independent of which form a row arrived as.
+// Canonical returns the priority-first form of asset's family: the classic asset for a
+// classic↔SAC pair, `native` for any XLM form. Unlike [AliasRegistry.Aliases] it ignores the
+// caller's spelling, so it is a stable group key.
 //
-// It is the directory fold key: two listing rows whose Canonical forms are
-// Equal are the same asset and must collapse to one row (the SAC twin that
-// leaks past literal-asset_id catalogue SQL — the "USDC shows twice"
-// defect). An asset in no family is its own canonical form, so callers fold
-// unconditionally.
+// It is the directory fold key: listing rows with Equal Canonical forms are one asset and must
+// collapse to one row (else a SAC twin shows twice). An asset in no family is its own
+// canonical form, so callers fold unconditionally.
 func (r *AliasRegistry) Canonical(asset Asset) Asset {
 	fams := r.familyMap()
 	if family, ok := fams[asset.String()]; ok && len(family) > 0 {
@@ -272,15 +238,10 @@ func (r *AliasRegistry) Canonical(asset Asset) Asset {
 	return asset
 }
 
-// AliasForms returns every alias FORM this registry knows that is NOT its
-// own family-canonical form, mapped to that canonical form's string. It is
-// the SQL-translation projection of the registry: a rollup that folds
-// trades onto their canonical asset — the same fold [AssetAliasStrings]
-// applies per-asset through the alias array — GROUP BYs on
-// COALESCE(map[form], form), so a SAC twin and its classic agree. A form
-// that is already its family's canonical (native; the classic side of a
-// classic↔SAC pair) is omitted: it maps to itself, which the COALESCE
-// fallback already covers. A nil registry projects the compile-time baseline.
+// AliasForms maps every non-canonical alias form to its family's canonical form. It is the SQL
+// projection: a rollup GROUP BYs on COALESCE(map[form], form) so a SAC twin and its classic
+// agree, matching the per-asset fold of [AssetAliasStrings]. Canonical forms are omitted (the
+// COALESCE covers them). A nil registry projects the baseline.
 func (r *AliasRegistry) AliasForms() map[string]string {
 	fams := r.familyMap()
 	out := make(map[string]string, len(fams))
@@ -307,24 +268,21 @@ func (r *AliasRegistry) AliasStrings(asset Asset) []string {
 	return out
 }
 
-// AssetAliases returns every canonical FORM equivalent to `asset` that a read path
-// should try: the literal input first, then the rest of its class in canonical
-// order. An asset with no known second form returns just itself.
+// AssetAliases returns every form equivalent to asset that a read path should try: the literal
+// input first, then the rest of its class in canonical order. No second form returns just itself.
 //
-// XLM has three identities, all the SAME asset: `native` (per-network classic
-// form; SDEX rows, prices_1m, the CAGGs), `crypto:XLM` (global-ticker form,
-// ADR-0014; CEX venues and Reflector's CEX oracle) and the SAC wrapping native
-// XLM (`CAS3J7GY…`; Soroban AMMs). A read keyed by one form that does not try
-// the others silently omits every venue publishing under an alias.
+// XLM has three identities, all the same asset: `native` (SDEX rows, prices_1m, the CAGGs),
+// `crypto:XLM` (CEX venues, Reflector's CEX oracle) and the SAC wrapping native XLM (Soroban
+// AMMs). A read keyed by one form that skips the others silently omits every venue publishing
+// under an alias.
 //
-// The SAC form is LAST, deliberately: read paths take the FIRST form that
-// answers, and Soroban XLM pools are far thinner than SDEX and the CEX feeds, so
-// one small pool could become THE served XLM price. A caller naming the
-// C-address still gets it first; set-shaped callers need COMPLETENESS, not order.
+// The SAC form is LAST on purpose: read paths take the FIRST form that answers, and Soroban XLM
+// pools are far thinner than SDEX and CEX feeds, so one small pool could become THE served XLM
+// price. A caller naming the C-address still gets it first; set-shaped callers need
+// completeness, not order.
 //
-// Other SAC-wrapped classic assets come from operator `[supply].sac_wrappers`
-// via [NewAliasRegistry] and [InstallAliasRegistry]; until one is installed the
-// baseline for [InstallNetworkPassphrase]'s network applies.
+// Other SAC-wrapped classic assets come from [NewAliasRegistry] and [InstallAliasRegistry];
+// until one installs, the baseline for [InstallNetworkPassphrase]'s network applies.
 func AssetAliases(asset Asset) []Asset {
 	return activeAliasRegistry().Aliases(asset)
 }
@@ -337,22 +295,16 @@ func AssetAliasStrings(asset Asset) []string {
 	return activeAliasRegistry().AliasStrings(asset)
 }
 
-// AllAliasForms is the process-registry projection of
-// [AliasRegistry.AliasForms] — every non-canonical alias form mapped to its
-// canonical form's string, resolved against the installed registry (the
-// compile-time baseline until one installs). It is what a SQL rollup binds to
-// fold each raw trades asset side onto its canonical asset, keeping the
-// fold consistent with the per-asset [AssetAliasStrings] read.
+// AllAliasForms is the process-registry projection of [AliasRegistry.AliasForms]. A SQL rollup
+// binds it to fold each raw trades asset side onto its canonical asset, consistent with the
+// per-asset [AssetAliasStrings] read.
 func AllAliasForms() map[string]string {
 	return activeAliasRegistry().AliasForms()
 }
 
-// CanonicalAsset resolves asset to the priority-first form of its
-// equivalence class against the process-wide registry — the directory
-// fold key the listing paths group non-canonical (SAC / crypto:XLM) twins
-// onto, and the per-asset detail path collapses a SAC-form request onto.
-// See [AliasRegistry.Canonical]; mirrors [AssetAliases]'s process-registry
-// resolution and its compile-time fallback before a config registry installs.
+// CanonicalAsset resolves asset to its family's priority-first form against the process-wide
+// registry: the directory fold key for listing twins (SAC / crypto:XLM). See
+// [AliasRegistry.Canonical]; falls back to the baseline like [AssetAliases].
 func CanonicalAsset(asset Asset) Asset {
 	return activeAliasRegistry().Canonical(asset)
 }

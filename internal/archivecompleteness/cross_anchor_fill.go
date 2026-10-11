@@ -51,14 +51,10 @@ func DefaultCrossAnchorSources() []Source {
 	}
 }
 
-// CrossAnchorFiller fetches missing checkpoint files from the
-// multi-source fallback chain and writes them into the local
-// archive at the SDF history-archive layout.
+// CrossAnchorFiller fetches missing checkpoint files from the multi-source fallback chain and
+// writes them into the local archive in the SDF history-archive layout.
 //
-// Concurrency: Fill spawns Workers goroutines internally. Concurrent
-// Fill calls on the same Filler are safe but each grabs the same
-// worker pool size — typically you call Fill once per check cycle
-// and let it drain.
+// Fill spawns Workers goroutines itself; concurrent Fill calls are safe but each gets a full pool.
 type CrossAnchorFiller struct {
 	archiveRoot  string
 	sources      []Source
@@ -80,32 +76,22 @@ type FillerOptions struct {
 	// back to [DefaultCrossAnchorSources].
 	Sources []Source
 
-	// Network is the Stellar network this archive belongs to. When it is
-	// a non-pubnet value ("testnet"/"futurenet") AND Sources is empty,
-	// NewCrossAnchorFiller REFUSES: [DefaultCrossAnchorSources] are all
-	// PUBNET archives, so filling a test-net archive from them writes
-	// pubnet checkpoints into a test-net store — silent cross-network
-	// corruption. Test nets self-heal archive gaps from their own
-	// galexie/captive-core; cross-anchor fill is a pubnet-only recovery
-	// tool. Empty == pubnet (back-compat with existing callers).
+	// Network is the Stellar network this archive belongs to; empty means pubnet. A non-pubnet
+	// value with empty Sources makes NewCrossAnchorFiller refuse: [DefaultCrossAnchorSources] are
+	// all pubnet archives, so filling a test-net store from them would silently write pubnet
+	// checkpoints into it. Test nets self-heal from their own galexie/captive-core.
 	Network string
 
-	// HTTPClient is the transport for source fetches. Nil falls
-	// back to a client with a 30s per-request timeout. Operators
-	// can pass a tuned client for tighter timeouts or for
-	// mocking in tests.
+	// HTTPClient is the transport for source fetches; nil falls back to a 30s per-request
+	// timeout client.
 	HTTPClient *http.Client
 
-	// Workers controls fetch parallelism. 0 falls back to 8
-	// (matches the bash script's PARALLEL default that empirically
-	// avoided Cloudflare rate-limiting during the bootstrap).
+	// Workers controls fetch parallelism; 0 falls back to 8, which avoided Cloudflare
+	// rate-limiting in practice.
 	Workers int
 
-	// OwnerUser / OwnerGroup are the local user / group that
-	// should own each placed file. Empty strings disable chown
-	// (placed files own to the running process). Use
-	// stellar:stellar in production so subsequent reads by
-	// stellar-archivist see the right ownership.
+	// OwnerUser / OwnerGroup own each placed file; empty disables chown. Production uses
+	// stellar:stellar so stellar-archivist reads the right ownership.
 	OwnerUser  string
 	OwnerGroup string
 }
@@ -198,22 +184,16 @@ type FillResult struct {
 	// Helps operators see which upstream is healthy vs degraded.
 	PerSourceSuccess map[string]int
 
-	// PerSourceAttempt counts EVERY try by source name — the winning
-	// fetch plus each source that was tried and failed before it.
-	// This is the denominator of the per-source repair failure ratio
-	// (`archive_completeness_repair_attempts_total`); PerSourceSuccess
-	// is not, because a source that fails every time would otherwise
-	// never appear in it at all.
+	// PerSourceAttempt counts every try by source name, the winning fetch plus each source that
+	// failed before it. It is the denominator of the per-source repair failure ratio
+	// (`archive_completeness_repair_attempts_total`); PerSourceSuccess cannot be, because a
+	// source that always fails would never appear in it.
 	PerSourceAttempt map[string]int
 
-	// PerSourceFailure counts failed tries by source name — the
-	// numerator of that same ratio.
-	//
-	// Without it the metrics layer would have no per-source failure
-	// data and would file the whole failed-checkpoint count under a
-	// synthetic `multi-source-exhausted` label that never intersects
-	// the real-source attempt labels, which leaves the alert
-	// `stellarindex_archive_repair_source_degraded` unfireable.
+	// PerSourceFailure counts failed tries by source name, the numerator of that ratio. Without
+	// real per-source labels, failures would land under a synthetic `multi-source-exhausted`
+	// label that never meets the attempt labels, leaving the
+	// `stellarindex_archive_repair_source_degraded` alert unfireable.
 	PerSourceFailure map[string]int
 }
 
@@ -224,23 +204,15 @@ type FillFailure struct {
 	Reason string
 }
 
-// Fill iterates the supplied missing-checkpoint list and places
-// each via the multi-source fallback chain. Returns when every
-// entry has either succeeded or exhausted the chain.
+// Fill places each missing checkpoint via the multi-source fallback chain and returns once every
+// entry has succeeded or exhausted the chain.
 //
-// For each checkpoint:
+// Source order is shuffled per checkpoint to spread burst load instead of hammering source[0].
+// The first source returning 200 with a non-empty, valid gzip body wins and is placed atomically
+// via `<final>.new` then rename; if all fail, a [FillFailure] records the last error.
 //
-//  1. Shuffle the source order (spreads burst load across SDF /
-//     tier-1 validators rather than hammering source[0] first).
-//  2. Walk the shuffled chain. The first source returning 200 +
-//     non-empty body + valid gzip wins; place it atomically via
-//     `<final>.new` → `<final>` rename.
-//  3. If every source fails, record a [FillFailure] with the last
-//     error message.
-//
-// Cancellation: Fill respects ctx.Done() between checkpoints — a
-// cancellation mid-walk leaves placed files intact (idempotent
-// next run will skip them) but stops fetching new ones.
+// ctx is checked between checkpoints: cancellation keeps already-placed files (the next run skips
+// them) and stops fetching new ones.
 func (f *CrossAnchorFiller) Fill(ctx context.Context, missing []uint32) FillResult {
 	acc := newFillAccumulator()
 	if len(missing) == 0 {
@@ -302,13 +274,9 @@ func newFillAccumulator() *fillAccumulator {
 	}
 }
 
-// record folds one fetchOne walk into the totals.
-//
-// EVERY source the walk touched counts as an attempt under its real
-// name — including sources that failed before a later one in the
-// chain succeeded. A source that fails 100% of the time would
-// otherwise never appear in the denominator at all, leaving the
-// per-source failure ratio unfireable.
+// record folds one fetchOne walk into the totals. Every source the walk touched counts as an
+// attempt under its real name, including ones that failed before a later source succeeded;
+// otherwise an always-failing source would never enter the failure-ratio denominator.
 func (a *fillAccumulator) record(seq uint32, tries fetchTries, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -360,22 +328,17 @@ func (f *CrossAnchorFiller) fetchOne(ctx context.Context, seq uint32, rng *rand.
 	finalPath := filepath.Join(f.archiveRoot, relPath)
 	tmpPath := finalPath + ".new"
 
-	// Ensure the parent directory exists BEFORE the first GET: a write into a
-	// non-existent dir fails fast even when the HTTP source is healthy.
+	// Create the parent directory BEFORE the first GET so a bad destination fails fast even when
+	// the HTTP source is healthy.
 	//
-	// 0755, not 0750: the daemon runs as root but the archive exists to
-	// be READ by the verifier (stellar-archivist / verify-archive -tier
-	// checkpoint), which runs as a non-root service user. A 0750 root:root
-	// directory makes every file placed unreadable by it, even the files chowned
-	// to stellar:stellar, since the chown never covers the parent. The ADR-0017
-	// anchor check would fail with EACCES, which the verifier treats as a hard
-	// mismatch, not a missing file.
+	// 0755, not 0750: the daemon runs as root but the verifier (stellar-archivist / verify-archive
+	// -tier checkpoint) runs as a non-root service user. A 0750 root:root parent makes every placed
+	// file unreadable to it, since the chown never covers the parent, and the ADR-0017 anchor check
+	// then fails with EACCES, which the verifier treats as a hard mismatch rather than a missing file.
 	//
-	// nolint:gosec // G301 wants <=0750. Deliberate: this is public
-	// blockchain history read back by a verifier running as a DIFFERENT service
-	// user than the chown target (r1: stellar vs stellarindex), so 0750 locks out
-	// the only consumer. No secret is exposed: every byte is fetched from public
-	// unauthenticated mirrors.
+	// nolint:gosec // G301 wants <=0750. Deliberate: this is public blockchain history read by a
+	// verifier running as a different user than the chown target, and every byte comes from public
+	// unauthenticated mirrors, so no secret is exposed.
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil { //nolint:gosec // see note above
 		return tries, fmt.Errorf("mkdir parent: %w", err)
 	}
@@ -416,13 +379,9 @@ func (f *CrossAnchorFiller) fetchOne(ctx context.Context, seq uint32, rng *rand.
 	return tries, lastErr
 }
 
-// fetchAndValidate performs one source GET and writes the response
-// to tmpPath atomically. Validates gzip integrity AND checkpoint CONTENT
-// (a valid-gzip-but-wrong-content body — a stale mirror serving a
-// different checkpoint, or a truncated write that happens to still
-// gzip-decompress — must not be placed) before returning nil. On any
-// failure leaves tmpPath in an unspecified state; the caller is
-// responsible for cleanup.
+// fetchAndValidate performs one source GET into tmpPath, validating gzip integrity AND checkpoint
+// content: a stale mirror serving a different checkpoint must not be placed. On failure tmpPath
+// is left in an unspecified state and the caller cleans it up.
 func (f *CrossAnchorFiller) fetchAndValidate(ctx context.Context, src Source, relPath, tmpPath string, seq uint32) error {
 	url := src.URL + "/" + relPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -441,9 +400,8 @@ func (f *CrossAnchorFiller) fetchAndValidate(ctx context.Context, src Source, re
 		return fmt.Errorf("http %d", resp.StatusCode)
 	}
 
-	// Write to tmpPath. Cap size at 16 MiB — checkpoint files are
-	// ~5–250 KiB per the bootstrap data; anything bigger is
-	// suspicious and we'd rather fail than fill the disk.
+	// Cap the download at 16 MiB: checkpoint files are ~5-250 KiB, so anything larger is
+	// suspicious and failing beats filling the disk.
 	const maxSize = 16 << 20
 	out, err := os.Create(tmpPath) //nolint:gosec // path constructed from validated archiveRoot + checkpoint hex
 	if err != nil {
@@ -476,35 +434,24 @@ func (f *CrossAnchorFiller) fetchAndValidate(ctx context.Context, src Source, re
 		return errors.New("gzip validate: decompressed to 0 bytes")
 	}
 
-	// Gzip validity alone doesn't prove this is checkpoint
-	// `seq` — decode the XDR content and confirm an entry with the
-	// expected LedgerSeq is actually present. A source serving the
-	// wrong file (misconfigured mirror, stale cache) or a corrupt
-	// body that happens to still gzip-decompress must fall through
-	// to the next source, not get placed.
+	// Valid gzip does not prove this is checkpoint seq: confirm the XDR holds an entry with that
+	// LedgerSeq so a wrong or corrupt-but-decompressible body falls through to the next source.
 	if err := validateCheckpointContent(tmpPath, seq); err != nil {
 		return fmt.Errorf("checkpoint content validate: %w", err)
 	}
 	return nil
 }
 
-// maxDecompressedBytes caps the decompressed size we accept during
-// gzip validation. Stellar history-archive ledger checkpoint files
-// hold 64 LedgerHeaderHistoryEntry records (~250 bytes each) → ~16 KB
-// decompressed in practice. 4 MiB is generous for the legitimate
-// case while preventing zip-bomb DoS.
+// maxDecompressedBytes caps decompressed size during gzip validation. A checkpoint holds 64
+// LedgerHeaderHistoryEntry records (~16 KB decompressed), so 4 MiB is generous yet stops zip bombs.
 const maxDecompressedBytes = 4 << 20
 
-// validateGzip reads the file, attempts to decompress it, and
-// confirms the gzip footer is intact. Returns the decompressed byte
-// count and nil on success — callers that need to reject an
-// empty-but-technically-valid gzip stream (a present, valid-gzip, EMPTY
-// file must not count as a real checkpoint) check the returned size
-// themselves.
+// validateGzip decompresses the file, confirms the gzip footer is intact, and returns the
+// decompressed byte count. Callers must reject an empty-but-valid stream themselves (an empty
+// file must not count as a checkpoint).
 //
-// Decompression is bounded to [maxDecompressedBytes] to prevent
-// a malicious source from sending a tiny compressed payload that
-// decompresses to gigabytes (G110 zip-bomb DoS).
+// Decompression is bounded to [maxDecompressedBytes] so a tiny malicious payload cannot expand to
+// gigabytes (G110 zip-bomb DoS).
 func validateGzip(path string) (int64, error) {
 	f, err := os.Open(path) //nolint:gosec // path constructed from validated archiveRoot
 	if err != nil {
@@ -516,8 +463,7 @@ func validateGzip(path string) (int64, error) {
 		return 0, err
 	}
 	defer func() { _ = gz.Close() }()
-	// Cap the decompressed read; +1 so we can detect when the
-	// limit was exceeded vs hit exactly.
+	// Read one byte past the cap so exceeding it is distinguishable from hitting it exactly.
 	limited := io.LimitReader(gz, maxDecompressedBytes+1)
 	n, err := io.Copy(io.Discard, limited)
 	if err != nil {
@@ -529,20 +475,15 @@ func validateGzip(path string) (int64, error) {
 	return n, nil
 }
 
-// maxCheckpointEntries bounds how many LedgerHeaderHistoryEntry
-// records validateCheckpointContent will read before giving up. A
-// real checkpoint file holds exactly 64 (one per ledger in the
-// window); a hostile or corrupt stream that never contains the
-// target seq must not spin forever.
+// maxCheckpointEntries bounds how many LedgerHeaderHistoryEntry records validateCheckpointContent
+// reads. A real checkpoint holds exactly 64, so a hostile or corrupt stream never containing the
+// target seq cannot spin forever.
 const maxCheckpointEntries = 64
 
-// validateCheckpointContent opens the gzip'd XDR checkpoint file at
-// path and confirms it decodes to a stream of LedgerHeaderHistoryEntry
-// records containing an entry whose LedgerSeq equals wantSeq. Presence +
-// valid gzip alone don't prove a fetched body is the RIGHT checkpoint — a
-// misconfigured/stale mirror can serve 200 + valid-gzip content for the
-// wrong ledger range, or a corrupted stream can still happen to
-// decompress cleanly.
+// validateCheckpointContent confirms the gzip'd XDR file at path decodes to
+// LedgerHeaderHistoryEntry records including one whose LedgerSeq equals wantSeq. Valid gzip alone
+// does not prove the RIGHT checkpoint: a stale mirror can serve 200 plus valid gzip for the wrong
+// ledger range.
 func validateCheckpointContent(path string, wantSeq uint32) error {
 	f, err := os.Open(path) //nolint:gosec // path constructed from validated archiveRoot + checkpoint hex
 	if err != nil {
@@ -570,10 +511,8 @@ func validateCheckpointContent(path string, wantSeq uint32) error {
 	return fmt.Errorf("exceeded %d entries without finding ledger %d", maxCheckpointEntries, wantSeq)
 }
 
-// applyOwnership chowns the placed file when chown is enabled.
-// Best-effort — a failure here logs but doesn't fail the fetch
-// (the bytes are correct; ownership can be fixed by a follow-up
-// chown -R).
+// applyOwnership chowns the placed file when chown is enabled. Best-effort: the bytes are correct,
+// so a failure must not fail the fetch (a follow-up chown -R can fix ownership).
 func (f *CrossAnchorFiller) applyOwnership(path string) {
 	if !f.chownEnabled {
 		return
@@ -581,14 +520,9 @@ func (f *CrossAnchorFiller) applyOwnership(path string) {
 	_ = os.Chown(path, f.ownerUID, f.ownerGID)
 }
 
-// applyDirOwnership chowns the checkpoint's parent directories the same
-// way applyOwnership chowns the file.
-//
-// Chowning the file alone is not enough: a reader needs +x on every
-// directory on the path to reach it. Walks up to the archive root so a
-// freshly-created 2-level prefix (ledger/XX/YY/ZZ) is fully traversable.
-// Best-effort, same contract as applyOwnership — a pre-existing
-// correctly-owned directory simply no-ops.
+// applyDirOwnership chowns the checkpoint's parent directories up to the archive root. Chowning
+// the file alone is not enough: a reader needs +x on every directory on the path, including a
+// freshly created ledger/XX/YY/ZZ prefix. Best-effort, like applyOwnership.
 func (f *CrossAnchorFiller) applyDirOwnership(dir string) {
 	if !f.chownEnabled {
 		return

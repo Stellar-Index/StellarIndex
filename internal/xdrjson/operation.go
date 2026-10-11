@@ -1,11 +1,9 @@
-// Package xdrjson decodes raw Stellar XDR (base64, as stored in the ClickHouse
-// Tier-1 lake) into clean, human-readable JSON maps for the network-explorer
-// API (ADR-0038). One decoder per operation type / memo / asset, reused by
-// every explorer endpoint — handlers never touch XDR directly.
+// Package xdrjson decodes raw Stellar XDR (base64, as stored in the ClickHouse lake) into
+// human-readable JSON maps for the explorer API. One decoder per operation type, memo and asset
+// serves every endpoint, so handlers never touch XDR directly.
 //
-// Invariant (ADR-0003): every amount is rendered as a decimal STRING in the
-// asset's smallest unit (stroops for classic), never a JSON number — classic
-// Int64 amounts can exceed 2^53.
+// Invariant (ADR-0003): every amount is a decimal string in the asset's smallest unit (stroops
+// for classic), never a JSON number, because classic Int64 amounts can exceed 2^53.
 package xdrjson
 
 import (
@@ -61,11 +59,9 @@ func OpTypeName(t xdr.OperationType) string {
 	return fmt.Sprintf("unknown_%d", int(t))
 }
 
-// opTypeNameByEnumString is opTypeName reindexed by the SDK's CamelCase enum
-// string (xdr.OperationType.String(), e.g. "OperationTypeManageSellOffer") —
-// the form the ClickHouse lake stores in stellar.operations.op_type. Built
-// once from the same source map as OpTypeName so the two vocabularies can
-// never drift.
+// opTypeNameByEnumString is opTypeName reindexed by the SDK's CamelCase enum string (e.g.
+// "OperationTypeManageSellOffer"), the form stellar.operations.op_type stores. It is built from
+// the same map as OpTypeName so the two vocabularies cannot drift.
 var opTypeNameByEnumString = func() map[string]string {
 	m := make(map[string]string, len(opTypeName))
 	for t, name := range opTypeName {
@@ -89,14 +85,10 @@ func OpTypeEnumString(name string) (string, bool) {
 	return s, ok
 }
 
-// OpTypeNameFromEnumString returns the same snake_case wire name OpTypeName
-// gives its enum, but from the lake's stored CamelCase enum string
-// (a naive lowercase-and-strip-prefix fallback would serve
-// invokehostfunction/manageselloffer where every other read path serves
-// invoke_host_function/manage_sell_offer). Falls back to a
-// lowercased, "OperationType"-stripped best effort for a string the map
-// doesn't cover (forward-compat for a future protocol op decoded before
-// this package's map is updated).
+// OpTypeNameFromEnumString returns the snake_case wire name OpTypeName gives its enum, from the
+// lake's CamelCase enum string, so every read path serves invoke_host_function rather than
+// invokehostfunction. A string the map doesn't cover falls back to a lowercased,
+// "OperationType"-stripped best effort, for a new protocol op decoded before the map is updated.
 func OpTypeNameFromEnumString(s string) string {
 	if name, ok := opTypeNameByEnumString[s]; ok {
 		return name
@@ -257,11 +249,8 @@ func fillOpFields(b xdr.OperationBody, f map[string]any) { //nolint:gocyclo,funl
 		op := b.MustExtendFootprintTtlOp()
 		f["extend_to"] = uint32(op.ExtendTo)
 	case xdr.OperationTypeRestoreFootprint:
-		// The op body carries only the (currently always-void) extension
-		// point — the restored read-write footprint lives in the envelope's
-		// SorobanTransactionData, outside DecodeOperationBody's scope. Real,
-		// not fabricated: a future protocol version that adds data here
-		// extends this arm rather than needing a new one.
+		// The op body carries only the always-void extension point; the restored footprint lives in
+		// the envelope's SorobanTransactionData, outside this decoder's scope.
 		op := b.MustRestoreFootprintOp()
 		f["ext"] = int32(op.Ext.V)
 	}
@@ -370,11 +359,9 @@ func fillRevokeSponsorshipFields(op xdr.RevokeSponsorshipOp, f map[string]any) {
 	}
 }
 
-// fillLedgerKeyFields identifies the sponsored ledger entry for the six
-// classic entry types (account/trustline/offer/data/claimable-balance/
-// liquidity-pool). The three Soroban-only key types (contract data/code,
-// config setting, TTL) are sponsorable but rendered by type name only — their
-// identifying fields are contract-storage keys, not accounts.
+// fillLedgerKeyFields identifies the sponsored ledger entry for the six classic entry types. The
+// Soroban-only key types are rendered by type name only, since their identifying fields are
+// contract-storage keys, not accounts.
 func fillLedgerKeyFields(lk xdr.LedgerKey, f map[string]any) {
 	switch lk.Type {
 	case xdr.LedgerEntryTypeAccount:
@@ -419,12 +406,9 @@ func ledgerEntryTypeName(t xdr.LedgerEntryType) string {
 }
 
 // fillInvokeHostFunction decodes a Soroban host-function op: the kind, and for
-// InvokeContract the target contract + function name + the full argument list.
-// `args` are rendered through scval.Display — the compact human-readable form the
-// explorer's contract-event rows already use — so i128 amounts stay decimal
-// strings (ADR-0003) and addresses render as strkeys; `args_xdr` carries each
-// arg exactly (see renderArgs). `arg_count` predates the full decode and is
-// kept for wire back-compat.
+// InvokeContract the target contract, function name and full argument list. `args` render through
+// scval.Display so i128 amounts stay decimal strings (ADR-0003) and addresses render as strkeys;
+// `args_xdr` carries each arg exactly (see renderArgs). `arg_count` is kept for wire back-compat.
 func fillInvokeHostFunction(op xdr.InvokeHostFunctionOp, f map[string]any) {
 	switch op.HostFunction.Type {
 	case xdr.HostFunctionTypeHostFunctionTypeInvokeContract:
@@ -443,23 +427,18 @@ func fillInvokeHostFunction(op xdr.InvokeHostFunctionOp, f map[string]any) {
 	default:
 		f["function"] = fmt.Sprintf("host_function_%d", int(op.HostFunction.Type))
 	}
-	// The nested AUTHORIZATION tree carried in op.Auth. This is the subtree of
-	// contract calls that required authorization — NOT the full execution/call
-	// tree (that lives in the tx meta's diagnostic events, which the lake does
-	// not store). For a contract-heavy tx it still surfaces the nested call
-	// structure the /tx view otherwise omits (the piece stellar.expert shows
-	// and we did not). Empty for a simple single-call invoke with no sub-auth.
+	// The nested authorization tree in op.Auth: only the calls that required authorization, not the
+	// full call tree (that is in diagnostic events, which the lake does not store). Empty for a
+	// single-call invoke with no sub-auth.
 	if tree := authInvocationTree(op.Auth); len(tree) > 0 {
 		f["authorizations"] = tree
 	}
 }
 
-// AuthInvocation is one node of a Soroban AUTHORIZATION tree — the nested
-// SorobanAuthorizedInvocation structure carried in an InvokeHostFunction op's
-// auth entries. Exported so the API view can type it; a create-contract
-// authorization has Kind "create_contract" and no function/args. Credentials
-// is set only on the root of each tree — a sub-invocation's authorization is
-// implied by its parent's, the XDR carries none of its own.
+// AuthInvocation is one node of a Soroban authorization tree (the nested
+// SorobanAuthorizedInvocation in an InvokeHostFunction op's auth entries). A create-contract
+// authorization has Kind "create_contract" and no function/args. Credentials is set only on each
+// tree's root, since a sub-invocation's authorization is implied by its parent's.
 type AuthInvocation struct {
 	Kind           string           `json:"kind"` // invoke_contract | create_contract
 	ContractID     string           `json:"contract_id,omitempty"`

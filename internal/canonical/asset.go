@@ -19,36 +19,28 @@ const (
 	// 5-12 chars (AssetTypeCreditAlphanum12).
 	AssetClassic AssetType = "classic"
 
-	// AssetSoroban is a Soroban contract-based asset. The identity
-	// is a single C-address; code/issuer may be resolvable via
-	// SEP-41 symbol()/decimals() but are not part of canonical identity.
+	// AssetSoroban is a Soroban contract asset. Identity is the single C-address; any SEP-41
+	// symbol()/decimals() is metadata, not identity.
 	AssetSoroban AssetType = "soroban"
 
 	// AssetFiat is an off-chain reference currency (USD, EUR, …).
 	// NOT a Stellar asset. Wire form: `fiat:<ISO4217>`. See ADR-0010.
 	AssetFiat AssetType = "fiat"
 
-	// AssetCrypto is an off-chain crypto-ticker reference (BTC, ETH,
-	// USDT, …). NOT a Stellar asset — distinct from AssetSoroban
-	// (which requires a real on-chain C-address). Used by
-	// Reflector's CEX oracle, which publishes prices keyed on bare
-	// global tickers. Wire form: `crypto:<TICKER>`. See ADR-0014.
+	// AssetCrypto is an off-chain crypto-ticker reference (BTC, ETH, USDT, …), keyed on a bare
+	// global ticker as Reflector's CEX oracle publishes. NOT a Stellar asset. Wire form:
+	// `crypto:<TICKER>`. See ADR-0014.
 	AssetCrypto AssetType = "crypto"
 
-	// AssetRWA is an off-chain tokenized real-world asset (tokenized
-	// treasuries, money-market funds, equity ETFs — BENJI, GILTS,
-	// SPXU, …). NOT a Stellar asset, and deliberately NOT AssetCrypto:
-	// a tokenized T-bill is not a cryptocurrency, and lumping it into
-	// `crypto` would mis-feed every crypto-scoped surface. Used by
-	// RedStone's RWA push feeds. Wire form: `rwa:<CODE>`. See ADR-0028.
+	// AssetRWA is an off-chain tokenized real-world asset (treasuries, money-market funds, ETFs)
+	// from RedStone's RWA push feeds. NOT a Stellar asset, and deliberately not AssetCrypto:
+	// that would mis-feed every crypto-scoped surface. Wire form: `rwa:<CODE>`. See ADR-0028.
 	AssetRWA AssetType = "rwa"
 
-	// AssetOracleRaw is an oracle-published symbol recorded VERBATIM
-	// because it maps to no canonical asset. Wire form: `raw:<symbol>`.
-	// Record-layer only: never a Pair leg, never a VWAP input, never
-	// compared by the interpretation layer (see [Asset.IsMapped]).
-	// Source scoping comes from oracle_updates.source, not the code.
-	// See docs/design/oracle-capture-totality-design.md.
+	// AssetOracleRaw is an oracle symbol recorded VERBATIM because it maps to no canonical asset.
+	// Wire form: `raw:<symbol>`. Record-layer only: never a Pair leg, VWAP input or compared by
+	// the interpretation layer (see [Asset.IsMapped]). Source scoping comes from
+	// oracle_updates.source, not the code.
 	AssetOracleRaw AssetType = "raw"
 )
 
@@ -64,13 +56,8 @@ const (
 //   - RWA:     {Type: AssetRWA,    Code: "BENJI"}          ADR-0028
 //   - Raw:     {Type: AssetOracleRaw, Code: "NOTACOIN"}    record-layer only
 //
-// A SAC-wrapped classic asset can be represented either way —
-// canonical form is the **classic** representation; the SAC contract
-// address is metadata, accessed via [Asset.SacContractID] (to land
-// later alongside the Stellar Asset Contract bridge in
-// `internal/sources/sdex`).
-//
-// Zero value is **not** a valid Asset; use [NativeAsset],
+// A SAC-wrapped classic asset's canonical form is the classic one; the SAC address is metadata
+// via [Asset.SacContractID]. The zero value is not a valid Asset; use [NativeAsset],
 // [NewClassicAsset], or [NewSorobanAsset].
 type Asset struct {
 	Type AssetType `json:"type"`
@@ -106,21 +93,15 @@ func NewClassicAsset(code, issuer string) (Asset, error) {
 	return Asset{Type: AssetClassic, Code: code, Issuer: issuer}, nil
 }
 
-// ValidateAssetCode reports whether code is a valid classic Stellar
-// asset code — the same rule [AssetFromXDR] enforces via
-// [NewClassicAsset]. Exported so callers that render an XDR asset code
-// outside the NewClassicAsset path (e.g. internal/xdrjson, which must
-// not mint a canonical-looking id for a code AssetFromXDR would
-// reject) can share the contract instead of diverging on it.
+// ValidateAssetCode reports whether code is a valid classic asset code, the rule [AssetFromXDR]
+// enforces. Exported so callers outside NewClassicAsset (e.g. internal/xdrjson) never mint a
+// canonical-looking id for a code AssetFromXDR would reject.
 func ValidateAssetCode(code string) error {
 	return validateClassicAssetCode(code)
 }
 
-// validateClassicAssetCode enforces Stellar's alphanum4/alphanum12
-// asset-code rules: length 1–12, chars [a-zA-Z0-9] only. Rejected
-// inputs include empty, over-length, and non-ASCII-alphanumeric
-// characters (emoji, spaces, punctuation). Matches XDR
-// ASSET_TYPE_CREDIT_ALPHANUM4 / ALPHANUM12 validity.
+// validateClassicAssetCode enforces Stellar's alphanum4/alphanum12 rules (length 1–12, chars
+// [a-zA-Z0-9] only), matching XDR ASSET_TYPE_CREDIT_ALPHANUM4 / ALPHANUM12 validity.
 func validateClassicAssetCode(code string) error {
 	l := len(code)
 	if l == 0 || l > 12 {
@@ -148,15 +129,9 @@ func NewSorobanAsset(contractID string) (Asset, error) {
 	return Asset{Type: AssetSoroban, ContractID: contractID}, nil
 }
 
-// String returns the canonical wire identifier as specified in
-// docs/reference/api-design.md §3:
-//
-//   - "native"                                       (native)
-//   - "<code>-<issuer>"                              (classic)
-//   - "<contract_id>"                                (soroban)
-//
-// The `<code>:<issuer>` alias is accepted on input by [ParseAsset]
-// but output is always dash-separated for consistency.
+// String returns the canonical wire identifier (docs/reference/api-design.md §3): "native",
+// "<code>-<issuer>" (classic) or "<contract_id>" (soroban). [ParseAsset] also accepts
+// `<code>:<issuer>` on input, but output is always dash-separated.
 func (a Asset) String() string {
 	switch a.Type {
 	case AssetNative:
@@ -264,12 +239,8 @@ func ParseAsset(s string) (Asset, error) {
 	if s == "native" {
 		return NativeAsset(), nil
 	}
-	// Shorthand for native. CG/CMC users type "XLM" and expect the
-	// native Stellar asset. Accept case-insensitive XLM + any case
-	// variant of "native" as aliases. Broader slug -> asset_id
-	// resolution (USDC -> Circle, AQUA -> AQUA-G... etc) lives at the
-	// API layer via the verified-currency catalogue, not here —
-	// keeping ParseAsset pure of catalogue state.
+	// "XLM" and any-case "native" are shorthand for native. Slug -> asset_id resolution
+	// (USDC -> Circle) lives in the API's verified-currency catalogue, keeping ParseAsset pure.
 	if strings.EqualFold(s, "XLM") || strings.EqualFold(s, "native") {
 		return NativeAsset(), nil
 	}
@@ -287,12 +258,9 @@ func ParseAsset(s string) (Asset, error) {
 		}
 	}
 
-	// Raw oracle symbol — prefix dispatch. MUST sit before the classic
-	// `<code>:<issuer>` split below, which would otherwise read `raw:BTC`
-	// as classic code "raw" + issuer "BTC" and fail. Unlike the prefixes
-	// above, any G-strkey is also a valid raw symbol and `raw:<symbol>` is
-	// the raw asset's String form, so `raw:G…` stays raw; a classic "raw"
-	// token round-trips through its `raw-G…` form.
+	// Raw oracle symbol prefix. MUST sit before the classic `<code>:<issuer>` split, which would
+	// read `raw:BTC` as classic code "raw" + issuer "BTC". `raw:G…` stays raw (a G-strkey is a
+	// valid raw symbol); a classic "raw" token round-trips through its `raw-G…` form.
 	if rest, ok := strings.CutPrefix(s, "raw:"); ok {
 		return NewOracleRawAsset(rest)
 	}
@@ -361,19 +329,13 @@ func (a Asset) Value() (driver.Value, error) {
 
 // Scan implements sql.Scanner.
 //
-// A SQL NULL is an ERROR, not a zero Asset.
-// [Value] refuses to write anything that fails [Validate], so a NULL in
-// an asset column never came from this type — it is a schema/query
-// defect (a LEFT JOIN that missed, a column that should be NOT NULL).
-// Returning nil and leaving `*a = Asset{}` would produce an Asset with
-// `Type == ""`: it survives every ==/Equal comparison, formats as the
-// empty string, and only fails if a caller happens to call Validate —
-// i.e. exactly the "invalid data that reads as valid" shape this
-// codebase fails closed on everywhere else.
+// A SQL NULL is an ERROR, not a zero Asset. [Value] refuses anything failing [Validate], so a
+// NULL never came from this type; it is a schema/query defect (a missed LEFT JOIN). A zero
+// Asset with Type == "" would survive every Equal comparison and only fail if Validate is
+// called, the invalid-data-reads-as-valid shape this codebase fails closed on.
 //
-// A column that is legitimately nullable must be scanned through a
-// *string / sql.NullString and converted with [ParseAsset] on the
-// non-NULL branch, so the caller states what the absent case means.
+// A legitimately nullable column must scan through *string / sql.NullString and convert with
+// [ParseAsset] on the non-NULL branch, so the caller states what absent means.
 func (a *Asset) Scan(src any) error {
 	if src == nil {
 		return fmt.Errorf("%w: cannot scan SQL NULL into an Asset "+

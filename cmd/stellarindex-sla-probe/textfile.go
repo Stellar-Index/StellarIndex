@@ -21,10 +21,8 @@ import (
 //	stellarindex_sla_probe_unit_failed                         gauge (1 on fail, 0 on pass)
 //	stellarindex_sla_probe_samples{endpoint=}                  gauge
 //
-// Operator wiring per docs/operations/sla-probe.md: systemd timer
-// runs the probe with -textfile-output pointing at node_exporter's
-// textfile_collector dir; node_exporter scrapes the dir; Prometheus
-// scrapes node_exporter.
+// Wiring is in docs/operations/sla-probe.md: a systemd timer runs the probe with
+// -textfile-output pointing at node_exporter's textfile_collector dir.
 func writeTextfile(w io.Writer, rep *report) error {
 	if rep == nil {
 		return nil
@@ -60,12 +58,10 @@ func writeTextfile(w io.Writer, rep *report) error {
 	return writeVerdict(w, rep)
 }
 
-// promLabels renders st's endpoint identity as a braced Prometheus label
-// set (braces included so lint-textfile-exposition reads `name%s` as a
-// runtime label set), adding a `pair` label only when st.Pair is set —
-// so a single-pair run's series stay unchanged and a multi-pair run's
-// don't collide under one endpoint name. extra, when non-empty, is
-// appended verbatim (e.g. `quantile="0.95"`).
+// promLabels renders st's endpoint identity as a braced Prometheus label set (braces included
+// so lint-textfile-exposition reads `name%s` as a runtime label set). A `pair` label is added
+// only when st.Pair is set, so multi-pair series do not collide under one endpoint name.
+// extra, when non-empty, is appended verbatim (e.g. `quantile="0.95"`).
 func promLabels(st stats, extra string) string {
 	labels := fmt.Sprintf("endpoint=%q", st.Endpoint)
 	if st.Pair != "" {
@@ -208,12 +204,9 @@ func writeVerdict(w io.Writer, rep *report) error {
 	return nil
 }
 
-// writeTextfileAtomic writes rep to path via the standard
-// node_exporter textfile-collector atomic-write protocol —
-// `<path>.tmp` first, rename into place. Mirror of
-// internal/archivecompleteness/metrics.go::WriteTextfileAtomic
-// (didn't import that package because the metric set is
-// probe-specific and a separate file makes future evolution easier).
+// writeTextfileAtomic writes rep to `<path>.tmp` and renames it into place, so node_exporter
+// never scrapes a partial file. It mirrors archivecompleteness.WriteTextfileAtomic without
+// importing it because the metric set is probe-specific.
 func writeTextfileAtomic(path string, rep *report) error {
 	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644) //nolint:gosec // operator-supplied path; collector reads world-readable files

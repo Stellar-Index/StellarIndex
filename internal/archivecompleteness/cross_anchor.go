@@ -8,16 +8,12 @@ import (
 	"path/filepath"
 )
 
-// CrossAnchorChecker scans a Stellar history-archive layout under
-// archiveRoot and reports missing per-checkpoint files.
-//
-// File path scheme matches what `verify-archive -tier checkpoint`
-// reads:
+// CrossAnchorChecker scans a history-archive layout under archiveRoot and reports missing
+// per-checkpoint files. Paths match what `verify-archive -tier checkpoint` reads:
 //
 //	<archiveRoot>/ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz
 //
-// where XXYYZZWW is the 8-char hex-encoded checkpoint sequence
-// (every 64 ledgers; seq % 64 == 63).
+// where XXYYZZWW is the 8-char hex checkpoint sequence (seq % 64 == 63).
 type CrossAnchorChecker struct {
 	archiveRoot string
 }
@@ -45,40 +41,24 @@ type CrossAnchorResult struct {
 	// disk. Equal to Expected when the archive is complete.
 	Found int
 
-	// Missing lists the checkpoint ledger sequences whose file is
-	// absent. Sorted ascending. Empty when the archive is complete.
-	// Bounded by MaxMissingReported to keep payloads sane on
-	// disaster scenarios — the count always reflects the true gap
-	// even when the list is truncated (use Truncated to detect).
+	// Missing lists absent (or structurally broken) checkpoint sequences, ascending, capped at
+	// MaxMissingReported. Expected and Found stay true counts even when the list is truncated.
 	Missing []uint32
 
-	// Truncated is true when the actual missing-count exceeds
-	// MaxMissingReported. The list above is partial in that case;
-	// the Found / Expected counts are still authoritative.
+	// Truncated is true when more than MaxMissingReported checkpoints are missing, so Missing
+	// is partial.
 	Truncated bool
 }
 
-// MaxMissingReported caps the size of CrossAnchorResult.Missing
-// so a catastrophic gap doesn't produce a multi-megabyte report.
-// 65,536 = one full partition's worth of checkpoints — large
-// enough that any realistic gap fits, small enough that the JSON
-// stays under a few MB.
+// MaxMissingReported caps CrossAnchorResult.Missing so a catastrophic gap cannot produce a
+// multi-megabyte report; 65,536 is one partition of checkpoints.
 const MaxMissingReported = 65536
 
-// Check walks the expected checkpoint positions in [from, to] and
-// returns a [CrossAnchorResult] describing what's present vs
-// missing. Read-only — never mutates the archive.
+// Check walks the checkpoint positions (seq % 64 == 63) inside the inclusive range [from, to]
+// and reports what is present vs missing. Read-only.
 //
-// from and to are inclusive ledger sequences. The check enumerates
-// `seq` such that `from <= seq <= to AND seq % 64 == 63`. If from
-// or to don't align to a checkpoint boundary the check uses the
-// nearest enclosing checkpoint pair (seq=63 is the first checkpoint;
-// the last is `(to/64)*64 + 63` if that's still <= to, else the one
-// before it).
-//
-// Returns an error only when archiveRoot itself is unreadable; a
-// missing individual checkpoint file is recorded in Missing, not
-// returned as an error.
+// An error is returned only when archiveRoot itself is unreadable; a missing checkpoint file is
+// recorded in Missing instead.
 func (c *CrossAnchorChecker) Check(from, to uint32) (CrossAnchorResult, error) {
 	if c.archiveRoot == "" {
 		return CrossAnchorResult{}, errors.New("archivecompleteness: archiveRoot is required")
@@ -135,22 +115,13 @@ func (c *CrossAnchorChecker) Check(from, to uint32) (CrossAnchorResult, error) {
 	return res, nil
 }
 
-// probeCheckpointFile reports whether a PRESENT checkpoint file at
-// path passes a cheap structural probe: non-empty on disk, and a
-// valid gzip stream that decompresses to non-empty content.
-// Existence alone would let a
-// truncated, corrupt, or zero-byte file be certified "Found" and
-// never repaired — the fill path only re-fetches entries in
-// Missing, so a present-but-broken file was invisible to it.
+// probeCheckpointFile reports whether a present checkpoint file is non-empty and a valid gzip
+// stream with non-empty content. Existence alone would certify a truncated or zero-byte file as
+// Found, and the fill path only re-fetches entries in Missing, so it would never be repaired.
 //
-// Deliberately does NOT decode the checkpoint XDR content or check
-// its ledger sequence — that full validation runs once, on the
-// small number of freshly-FETCHED candidates, in
-// validateCheckpointContent (called from fetchAndValidate). Doing
-// the same full decode for every EXISTING file on every scan would
-// turn a Stat-bound walk over a potentially six-figure checkpoint
-// count into a gzip-decode-bound one; the cheap probe here is the
-// right cost/benefit trade for the steady-state scan.
+// It deliberately does not decode the XDR or check the ledger sequence: that full validation runs
+// only on freshly fetched candidates (validateCheckpointContent). Doing it for every existing file
+// would turn a Stat-bound walk over six-figure checkpoint counts into a gzip-decode-bound one.
 func probeCheckpointFile(path string, st os.FileInfo) bool {
 	if st.Size() == 0 {
 		return false

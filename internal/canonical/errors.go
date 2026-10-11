@@ -11,12 +11,8 @@ func errorf(sentinel error, format string, args ...any) error {
 	return fmt.Errorf("%w: "+format, append([]any{sentinel}, args...)...)
 }
 
-// Error taxonomy for the canonical package.
-//
-// Every error returned from canonical either IS one of these
-// sentinels or wraps one. Callers classify via errors.Is.
-//
-// See docs/engineering-standards.md §4.5.
+// Error taxonomy: every error from canonical is, or wraps, one of these sentinels, so callers
+// classify via errors.Is (docs/engineering-standards.md §4.5).
 var (
 	// ErrInvalidAmount — a value could not be interpreted as a
 	// valid Amount (bad string format, wrong Scan type, etc.).

@@ -1,24 +1,18 @@
 package canonical
 
-// Oracle-published raw symbol helpers; see
-// docs/design/oracle-capture-totality-design.md.
+// Oracle-published raw symbol helpers; see docs/design/oracle-capture-totality-design.md.
 //
-// The Asset type carries an AssetOracleRaw variant for a symbol an
-// indexed on-chain oracle (Reflector / RedStone / Band) published
-// that maps to NO canonical asset. The record layer must be total while
-// only the interpretation layer is selective: a symbol dropped at decode time
-// would need a code change AND a lake replay to recover.
+// AssetOracleRaw holds a symbol an indexed oracle (Reflector / RedStone / Band) published that
+// maps to NO canonical asset. The record layer must be total and only the interpretation layer
+// selective: a symbol dropped at decode time needs a code change AND a lake replay to recover.
 //
-// Wire form: `raw:<symbol>` (e.g. `raw:NOTACOIN`). The symbol is stored
-// VERBATIM; source scoping comes from oracle_updates.source. There is
-// deliberately no allow-list.
+// Wire form `raw:<symbol>`, stored VERBATIM (source scoping comes from oracle_updates.source),
+// with deliberately no allow-list.
 //
-// Record-layer ONLY. A raw asset is never a Pair leg (Pair.Validate
-// refuses it), never a VWAP input, never compared by the
-// interpretation layer, and never a supply key. Consumers that scan
-// oracle_updates without keying by canonical asset must exclude it
-// via [Asset.IsMapped] or `asset NOT LIKE 'raw:%'`. An unmapped feed's
-// orientation is unknown, so a raw row carries no Invert.
+// Record-layer ONLY: never a Pair leg (Pair.Validate refuses it), VWAP input or supply key.
+// Consumers scanning oracle_updates without keying by canonical asset must exclude it via
+// [Asset.IsMapped] or `asset NOT LIKE 'raw:%'`. An unmapped feed's orientation is unknown, so
+// a raw row carries no Invert.
 
 // rawSymbolMaxLen caps the verbatim symbol. Reflector/Band symbols
 // are ScSymbol (≤ 32 bytes); RedStone feed_ids are ScString and the
@@ -63,20 +57,14 @@ func (a Asset) IsMapped() bool {
 	return a.Type != AssetOracleRaw
 }
 
-// MapOracleSymbol resolves a bare oracle-published symbol (Reflector
-// `Asset::Other(Symbol)`, Band `symbol_rates` key) to its canonical
-// asset, falling back to a verbatim [AssetOracleRaw] when the symbol
-// is on none of the allow-lists. Precedence is fiat (ADR-0010) →
-// crypto (ADR-0014) → RWA (ADR-0028) → raw; the lists are disjoint
-// today (pinned by TestMapOracleSymbol_allowListsDisjoint), so the
-// order only matters if that ever changes. The single shared order
-// replaces the pre-totality inconsistency where Reflector tried
-// fiat→crypto and Band tried crypto→fiat.
+// MapOracleSymbol resolves a bare oracle symbol (Reflector `Asset::Other(Symbol)`, Band
+// `symbol_rates` key) to its canonical asset, else a verbatim [AssetOracleRaw]. Precedence is
+// fiat (ADR-0010) → crypto (ADR-0014) → RWA (ADR-0028) → raw, one shared order for every
+// source; the lists are disjoint (TestMapOracleSymbol_allowListsDisjoint), so order only
+// matters if that changes.
 //
-// The returned asset is raw iff !IsMapped(). The only error is a
-// symbol that fails [validateRawSymbol] (empty / >64 bytes / non
-// printable ASCII) — impossible for an ScSymbol, but the record layer
-// refuses rather than persists what it cannot represent.
+// The result is raw iff !IsMapped(). The only error is a symbol failing [validateRawSymbol]
+// (empty / >64 bytes / non-printable ASCII); the record layer refuses what it cannot represent.
 func MapOracleSymbol(sym string) (Asset, error) {
 	switch {
 	case IsKnownFiat(sym):

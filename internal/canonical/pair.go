@@ -6,14 +6,9 @@ import (
 	"strings"
 )
 
-// Pair is a directed (base, quote) market. The direction is
-// semantically significant: `XLM/USD` means "price of XLM in USD",
-// which is the inverse of `USD/XLM`. Aggregation across venues with
-// flipped pair orientations MUST be normalised through [Pair.Flip]
-// before combining.
-//
-// Two Pairs with the same asset on both sides are invalid — see
-// [Pair.Validate].
+// Pair is a directed (base, quote) market: `XLM/USD` is the inverse of `USD/XLM`. Aggregation
+// across venues with flipped orientations MUST normalise through [Pair.Flip] before combining.
+// A Pair with the same asset on both sides is invalid ([Pair.Validate]).
 type Pair struct {
 	Base  Asset `json:"base"`
 	Quote Asset `json:"quote"`
@@ -30,9 +25,8 @@ func NewPair(base, quote Asset) (Pair, error) {
 
 // Validate returns nil if both assets are valid, mapped, and distinct.
 //
-// A raw oracle symbol ([AssetOracleRaw]) is a valid Asset for the
-// record layer but never a pair leg — it names nothing the
-// interpretation layer may price, compare, or aggregate.
+// A raw oracle symbol ([AssetOracleRaw]) is valid at the record layer but never a pair leg: the
+// interpretation layer may not price, compare or aggregate it.
 func (p Pair) Validate() error {
 	if err := p.Base.Validate(); err != nil {
 		return fmt.Errorf("base: %w", err)
@@ -81,19 +75,10 @@ func (p Pair) EqualEitherWay(q Pair) bool {
 
 // ParsePair inverts String. Input: `<base-asset-id>/<quote-asset-id>`.
 func ParsePair(s string) (Pair, error) {
-	// Splitting on "/" is subtle: classic assets use "-" internally,
-	// Soroban contracts have no separator, and native is literal.
-	// Every mapped asset form (native / classic / soroban / fiat: /
-	// crypto: / rwa:) is "/"-free per docs/reference/api-design.md
-	// §3, but AssetOracleRaw ([validateRawSymbol]) is deliberately
-	// permissive and does allow "/" (real RedStone feed_ids like
-	// "SolvBTC.BBN_FUNDAMENTAL/USD" carry one). A raw asset can never
-	// be a valid pair leg — [Pair.Validate] rejects any unmapped
-	// asset — so splitting from the right is still correct: it finds
-	// the separator between a "/"-bearing base and its quote, and any
-	// string where the quote side itself contains "/" fails to parse
-	// as an asset and is rejected downstream regardless.
-	// strings.LastIndex is used for clarity.
+	// Every mapped asset form is "/"-free (api-design.md §3), but AssetOracleRaw
+	// ([validateRawSymbol]) allows "/" (RedStone feed_ids like "SolvBTC.BBN_FUNDAMENTAL/USD").
+	// A raw asset is never a valid pair leg ([Pair.Validate]), so splitting from the right is
+	// still correct, and a quote side containing "/" fails to parse as an asset downstream.
 	idx := strings.LastIndex(s, "/")
 	if idx <= 0 || idx == len(s)-1 {
 		return Pair{}, fmt.Errorf("%w: %q is not a valid pair (expected BASE/QUOTE)",

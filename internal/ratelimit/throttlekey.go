@@ -9,19 +9,14 @@ import "net/netip"
 // actually controls: the exact (unmapped) address for IPv4, the /64 prefix
 // for IPv6. Returns ip unchanged when it doesn't parse.
 //
-// SECURITY: keying a per-IP throttle on a full IPv6 /128 is NOT the
-// analogue of keying an IPv4 throttle on its /32. Providers hand a single
-// customer an entire /64 (often a /56 or /48), so an attacker with one
-// routable IPv6 allocation mints a fresh /128 — and a fresh, empty
-// throttle bucket — per request. Aggregating to /64 (the smallest block an
-// ISP delegates, RFC 7421 §2.1) matches the unit an attacker can cheaply
-// rotate within. IPv4 has no equivalent problem.
+// SECURITY: keying on a full IPv6 /128 is NOT the analogue of an IPv4 /32. Providers hand one
+// customer a whole /64 (often /56 or /48), so an attacker mints a fresh /128, and an empty
+// throttle bucket, per request. Aggregating to /64, the smallest block an ISP delegates
+// (RFC 7421 section 2.1), matches the unit an attacker can cheaply rotate within.
 //
-// This is the ONE definition of the throttle identity: every per-IP cap
-// (API rate limiter, signup and login throttles, streaming and
-// tip-producer caps) keys through it, so a request cannot hold two budgets
-// by spelling one address two ways. TestThrottleIPMaskHasOneDefinition
-// fails on a second copy.
+// This is the ONE definition of the throttle identity: every per-IP cap (API limiter, signup and
+// login throttles, streaming and tip-producer caps) keys through it, so one address cannot hold
+// two budgets. TestThrottleIPMaskHasOneDefinition fails on a second copy.
 //
 // NEVER use this for audit logging, admin display, or an IP allowlist
 // check — those want the caller's precise address.
