@@ -2,23 +2,19 @@
 # lint-changed.sh — run the lints that apply to the files you changed, in
 # seconds, before a commit exists.
 #
-# This is a DISPATCHER over lints that already exist, not a new lint. It
-# looks at the diff — staged files, or origin/main...HEAD — picks the
-# scripts/ci gates and formatters that apply to each changed file's type,
-# scopes each one to the changed files where the gate accepts a file list,
-# and runs the cheapest first. Nothing here asserts anything the full gate
-# does not; it only moves the moment a failure surfaces.
+# A DISPATCHER over existing lints, not a new lint. It reads the diff (staged
+# files, or origin/main...HEAD), picks the scripts/ci gates and formatters that
+# apply to each changed file's type, scopes each to the changed files where the
+# gate accepts a file list, and runs the cheapest first. It asserts nothing the
+# full gate does not; it only moves the moment a failure surfaces.
 #
-# Why, in numbers: `lint-shell-sigpipe.sh` runs in 2.7 s on
-# its own and fired at line 632 of a 637-line `make prepush` log, after about
-# ten minutes of Go build, doc lints and web typechecks that had nothing to
-# do with the one-line shell edit under test. Four prepush attempts on one
-# patch that day were the gate correctly catching the operator's own edits —
-# each at minute ten instead of second three.
+# Why: `lint-shell-sigpipe.sh` takes 2.7 s alone yet fired at line 632 of a
+# 637-line `make prepush` log, after ten minutes of Go build, doc lints and web
+# typechecks unrelated to the one-line shell edit under test.
 #
-# What runs, by changed-file type (in cost order, measured on an M-series
-# laptop with warm caches; the whole run on a diff touching one .sh, one .go
-# and one .md file is recorded in docs/contributing/local-verification.md):
+# What runs, by changed-file type (cost order, measured on an M-series laptop
+# with warm caches; the whole run on a diff touching one .sh, one .go and one .md
+# is recorded in docs/contributing/local-verification.md):
 #
 #   *.sh                     bash -n (0.02 s/file); lint-shell-sigpipe over
 #                            the pipefail subset (0.05 s — ONE invocation,
@@ -66,22 +62,19 @@
 #                            scripts/dev/verify.sh (64 s over the tree).
 #
 # Two adoption notes, both visible in the plan output rather than silent:
-#   - actionlint runs with its embedded shellcheck pass OFF (-shellcheck=).
-#     The workflow tree carries 15 pre-existing findings from that pass, one
-#     of them SC2260:error in deploy.yml; a Tier-0 gate cannot be the thing
-#     that adopts them. actionlint's own checks (syntax, expressions, action
-#     inputs, runner labels) are all on and green over the tree.
-#   - zizmor runs --offline. CI runs the online audits too, which include
+#   - actionlint runs with its embedded shellcheck pass OFF (-shellcheck=): the
+#     workflow tree has 15 pre-existing findings from it (one SC2260:error in
+#     deploy.yml) and a Tier-0 gate cannot be what adopts them. Its own checks
+#     (syntax, expressions, action inputs, runner labels) are all on and green.
+#   - zizmor runs --offline. CI also runs the online audits, including
 #     ref-version-mismatch (a pin whose version comment lies); see
 #     .github/zizmor.yml for the exact CI invocation.
 #
 # A missing tool (shellcheck, actionlint, zizmor) DEFERS its step, loudly and
-# counted in the summary line, and does not fail the run: this is the loop
-# before a commit, and scripts/dev/verify.sh remains the gate. gofumpt and
-# goimports are different — `make fmt` calls them by absolute path from
-# $(go env GOPATH)/bin, so their absence is a broken checkout (`make deps`)
-# and the step fails.
-#
+# counted in the summary line, and does not fail the run: this is the loop before
+# a commit, and scripts/dev/verify.sh remains the gate. gofumpt and goimports
+# differ: `make fmt` calls them by absolute path from $(go env GOPATH)/bin, so
+# their absence is a broken checkout (`make deps`) and the step fails.
 # Usage:
 #   scripts/dev/lint-changed.sh                 staged files; if none are
 #                                               staged, origin/main...HEAD
@@ -94,15 +87,15 @@
 #   make hooks                                  install it as a pre-commit hook
 #
 # Exit 0 when every selected lint passed (deferred steps are reported, not
-# failed); 1 when any lint failed; 2 on a usage or discovery error. Every
-# run ends with a self-accounting line naming how many lints ran over how
-# many files, so an empty selection cannot read as a pass over something.
+# failed); 1 when any lint failed; 2 on a usage or discovery error. Every run
+# ends with a self-accounting line naming how many lints ran over how many
+# files, so an empty selection cannot read as a pass over something.
 #
-# Lints are resolved from the checkout this script lives in; the changed
-# files come from the git work tree the caller is standing in. In every real
-# invocation those are the same directory — the split exists so the
-# self-test (scripts/dev/lint-changed-test.sh) can drive discovery from a
-# fixture repository while dispatching to the real gates.
+# Lints are resolved from the checkout this script lives in; the changed files
+# come from the git work tree the caller stands in. These are the same directory
+# in every real invocation; the split lets the self-test
+# (scripts/dev/lint-changed-test.sh) drive discovery from a fixture repository
+# while dispatching to the real gates.
 set -uo pipefail
 
 self_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -134,10 +127,9 @@ done
 
 # ── Discovery ───────────────────────────────────────────────────────────────
 #
-# Added, copied, modified and renamed files only (--diff-filter=ACMR): a
-# deleted file has nothing to lint, and its removal is judged by the
-# whole-tree gates in verify.sh. Paths are NUL-separated so a name with a
-# space cannot split into two.
+# Added, copied, modified and renamed files only (--diff-filter=ACMR): a deleted
+# file has nothing to lint, and verify.sh's whole-tree gates judge its removal.
+# Paths are NUL-separated so a name with a space cannot split in two.
 changed=()
 how=""
 if [ "$mode" = files ]; then
@@ -169,9 +161,8 @@ else
     esac
 fi
 
-# In every real invocation the lints and the files share a root; name the
-# gates by their tracked path then, and only fall back to absolute paths
-# when the self-test drives discovery from a fixture repository.
+# Name the gates by their tracked path when lints and files share a root (every
+# real invocation); absolute paths only when the self-test uses a fixture repo.
 [ "$PWD" = "$lint_root" ] && ci_dir="scripts/ci"
 
 echo "lint-changed: ${#changed[@]} changed file(s), ${how}"
@@ -192,8 +183,8 @@ add_unique() { # add_unique <value> — appends to go_dirs if absent
 }
 
 for f in "${changed[@]}"; do
-    # A path that is staged but gone from the work tree cannot be linted;
-    # the deletion is judged by verify.sh like any other.
+    # A path staged but gone from the work tree cannot be linted; verify.sh
+    # judges the deletion.
     [ -e "$f" ] || { echo "lint-changed: skipping ${f} (not in the work tree)"; continue; }
     hit=0
     case "$f" in
@@ -292,23 +283,18 @@ go_bin=""
 
 # 1. Shell: syntax, then the sigpipe class, then shellcheck.
 for f in ${sh_files[@]+"${sh_files[@]}"}; do add_step "bash -n" "" bash -n "$f"; done
-# lint-shell-sigpipe takes ROOTS, and a root is a file OR a directory, so one
-# invocation covers both halves of the gate: the changed pipefail scripts go
-# in as files, and a changed workflow puts its WORKFLOWS DIRECTORY in.
+# lint-shell-sigpipe takes ROOTS (a file or a directory), so one invocation
+# covers both halves of the gate: changed pipefail scripts go in as files, and a
+# changed workflow puts its WORKFLOWS DIRECTORY in.
 #
-# The directory and not the changed workflow files, deliberately. Handed a
-# single workflow that has no pipefail `run:` block the gate exits 1 with
-# "the workflow half of the gate would be vacuous" — the right answer for a
-# whole-tree run, and a false red on an innocent pre-commit edit to
-# api-docs.yml, which is exactly such a file today. A directory root cannot
-# go vacuous here (22 workflows, 84 pipefail blocks), costs 0.44 s measured,
-# and if it ever did the red would be the same invariant CI
-# asserts.
-#
-# Until this row the pre-commit path was blind to the workflow half: a commit
-# touching six workflow files ran the gate as "0 pipefail run: block(s) in 0
-# workflow file(s)" — no dispatch row sent .yml here — for exactly the class
-# that failed the v0.69.0 deploy.
+# The directory, not the changed workflow files: handed a single workflow with no
+# pipefail `run:` block the gate exits 1 with "the workflow half of the gate
+# would be vacuous", right for a whole-tree run and a false red on an innocent
+# pre-commit edit to api-docs.yml, which is such a file. A directory root cannot
+# go vacuous here (22 workflows, 84 pipefail blocks), costs 0.44 s, and if it
+# ever did the red would be the invariant CI asserts. Without a dispatch row
+# sending .yml here the pre-commit path was blind to the workflow half, the
+# class that failed the v0.69.0 deploy.
 sigpipe_roots=()
 for f in ${sh_files[@]+"${sh_files[@]}"}; do
     if grep -qE '^set .*(pipefail|-e)' "$f"; then sigpipe_roots+=("$f"); fi
@@ -355,13 +341,11 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     add_step "goimports" "" format_clean goimports "$go_bin/goimports" -l -local "$go_module" "${go_files[@]}"
 fi
 
-# 2b. Markdown: lint-doc-links takes a file list (a full rescan of every
-#     file costs ~22 s). Scoping narrows what gets SCANNED as a
-#     link SOURCE; link TARGETS — existence, the gitignore check, anchor
-#     lookups — still resolve against the whole tree exactly as in the
-#     no-argument form, so this catches the same defects on the changed
-#     files as the full scan would. lint-docs takes no file list and is
-#     still deferred to verify.sh.
+# 2b. Markdown: lint-doc-links takes a file list (a full rescan costs ~22 s).
+#     Scoping narrows what is SCANNED as a link SOURCE; link TARGETS (existence,
+#     the gitignore check, anchor lookups) still resolve against the whole tree
+#     as in the no-argument form, so it catches the same defects on the changed
+#     files. lint-docs takes no file list and stays deferred to verify.sh.
 if [ "${#md_files[@]}" -gt 0 ]; then
     add_step "lint-doc-links" "scoped to ${#md_files[@]} file(s)" "$ci_dir/lint-doc-links.sh" "${md_files[@]}"
     add_step "doc-pinned-tests" "Go tests naming a changed .md" bash "$ci_dir/doc-pinned-tests.sh" --files "${md_files[@]}"
@@ -375,17 +359,14 @@ done
 
 # 3. Workflows: the pinning policy, actionlint, zizmor — all scoped.
 if [ "${#wf_files[@]}" -gt 0 ]; then
-    # The workflows DIRECTORY, not the changed files — the same reasoning as
-    # lint-shell-sigpipe above, and the same live false red. Handed a single
-    # workflow with no `uses:` lines the gate exits 1 with "the gate would be
-    # vacuous", which is right for a whole-tree run and wrong for an innocent
+    # The workflows DIRECTORY, not the changed files, for the reason given at
+    # lint-shell-sigpipe above. Handed a single workflow with no `uses:` lines
+    # the gate exits 1 with "the gate would be vacuous", wrong for an innocent
     # pre-commit edit. Reproduced on main:
     #   $ scripts/dev/lint-changed.sh -- .github/workflows/orphan-branches.yml
     #   lint-actions-pinning: FAIL — no `uses:` lines across 1 workflow file(s)
-    # orphan-branches.yml has zero `uses:`, so committing a change to it was
-    # blocked by a gate that had found nothing wrong. A directory root cannot
-    # go vacuous here, and if it ever did the red would be the invariant CI
-    # asserts anyway.
+    # orphan-branches.yml has zero `uses:`. A directory root cannot go vacuous
+    # here, and if it ever did the red would be the invariant CI asserts.
     add_step "lint-actions-pinning" "workflows dir" "$ci_dir/lint-actions-pinning.sh" ${wf_roots[@]+"${wf_roots[@]}"}
     if command -v actionlint >/dev/null 2>&1; then
         add_step "actionlint" "embedded shellcheck off: 15 pre-existing findings in .github/workflows" \
@@ -454,11 +435,10 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     add_step "lint-i128" "whole tree (takes no file list)" "$ci_dir/lint-i128.sh"
     add_step "lint-imports" "whole tree (takes no file list)" "$ci_dir/lint-imports.sh"
     add_step "lint-comments" "whole tree (takes no file list)" "$ci_dir/lint-comments.sh"
-    # The typographic-quote scan, whole tree even though it ACCEPTS a file
-    # list: scoped to the changed files it would exit 2 ("refusing to pass
-    # vacuously") on a diff that only touches generated or vendored Go —
-    # the same false-red shape the lint-actions-pinning note above records.
-    # Whole-tree costs 0.55 s over 2,058 files, measured.
+    # The typographic-quote scan runs whole tree even though it ACCEPTS a file
+    # list: scoped, it exits 2 ("refusing to pass vacuously") on a diff touching
+    # only generated or vendored Go, the false-red shape recorded at
+    # lint-actions-pinning above. Whole-tree costs 0.55 s over 2,058 files.
     add_step "lint-go-typographic-quotes" "whole tree (0.55 s; scoping it could go vacuous on a generated-only diff)" \
         python3 "$ci_dir/lint-go-typographic-quotes.py"
     add_step "lint-unbounded-latest-row" "whole tree (takes no file list)" \
@@ -498,12 +478,12 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     fi
 fi
 
-# 7b. Prometheus alert rules. Without this block an alert-rule diff selects
-#     none of the six gates that judge it, and the first thing to grade it
-#     is verify.sh. The four below cost about 2.1 s together, measured:
-#     lint-rule-equivalence 0.11 s, lint-alerts-catalog 0.40 s,
-#     lint-runbook-annotations 0.41 s, lint-rule-structure 1.18 s.
-#     The other two are deferred by cost, not by relevance — see below.
+# 7b. Prometheus alert rules. Without this block an alert-rule diff selects none
+#     of the six gates that judge it and verify.sh is the first to grade it. The
+#     four below cost about 2.1 s together (lint-rule-equivalence 0.11 s,
+#     lint-alerts-catalog 0.40 s, lint-runbook-annotations 0.41 s,
+#     lint-rule-structure 1.18 s). The other two are deferred by cost, not
+#     relevance, see below.
 if [ "${#rules_files[@]}" -gt 0 ]; then
     add_step "lint-rule-equivalence" "whole tree; ${#rules_files[@]} rule file(s) changed" \
         go run ./scripts/ci/lint-rule-equivalence deploy/monitoring/rules configs/prometheus/rules.r1 scripts/ci/rule-equivalence.baseline
@@ -513,23 +493,21 @@ if [ "${#rules_files[@]}" -gt 0 ]; then
     # Deferred on measured cost. Both are relevant to every rule change and
     # both run in verify.sh; neither belongs in a pre-commit hook.
     defer "lint-metric-refs" "${#rules_files[@]} rule file(s) changed; lint-metric-refs (90 s, whole tree) runs in scripts/dev/verify.sh"
-    # promtool is what catches a fixture still asserting an old severity —
-    # exactly the omission made in 132d8f8b0 — so the deferral is a real gap
-    # in this gate's reach, not a redundancy. Named so it is visible.
+    # promtool is what catches a fixture still asserting an old severity, so the
+    # deferral is a real gap in this gate's reach, not a redundancy. Named so it
+    # is visible.
     defer "monitoring-check" "${#rules_files[@]} rule file(s) changed; promtool rule tests (56 s alone, 146 s via make monitoring-check) run in scripts/dev/verify.sh — this is the gate that catches a stale exp_labels severity"
 fi
 
 # 7c. Ansible tasks and Jinja templates. Same gap as 7b: a change under
-#     configs/ansible/ selected NO ansible gate, and both are under half a
-#     second whole-tree.
+#     configs/ansible/ selected NO ansible gate; both are under half a second.
 if [ "${#ansible_files[@]}" -gt 0 ]; then
     add_step "lint-ansible-tasks" "whole tree; ${#ansible_files[@]} ansible/alertmanager file(s) changed" "$ci_dir/lint-ansible-tasks.sh"
     add_step "lint-jinja-templates" "" "$ci_dir/lint-jinja-templates.sh"
-    # Duplicate mapping keys. Cheap (<1 s whole-tree) and it catches a class
-    # no other gate here can see: YAML keeps the LAST occurrence of a key, so
-    # a second `pre_tasks:` reads in review as an added block while silently
-    # deleting the first. That once removed a
-    # playbook's OS guard for days, through several applies.
+    # Duplicate mapping keys. Cheap (<1 s whole-tree) and catches a class no other
+    # gate here sees: YAML keeps the LAST occurrence of a key, so a second
+    # `pre_tasks:` reads in review as an added block while silently deleting the
+    # first (that once removed a playbook's OS guard for days).
     add_step "lint-yaml-duplicate-keys" "" python3 "$ci_dir/lint-yaml-duplicate-keys.py"
 fi
 

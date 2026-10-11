@@ -1,82 +1,71 @@
 #!/usr/bin/env bash
-# Migration lint: money-column (ADR-0003) + file integrity
-# + register completeness + ClickHouse money-column
-# + hypertable index builds + CAGG re-materialization + atomicity
-# + priceable leg division.
+# Migration lint: money-column (ADR-0003), file integrity, register
+# completeness, ClickHouse money-column, hypertable index builds, CAGG
+# re-materialization, atomicity, priceable leg division.
 #
 # Ten passes, all gating (exit non-zero on any violation):
 #   1. money-column — monetary columns must be NUMERIC (ADR-0003).
 #   2. file integrity — every NNNN_*.up.sql has a matching NON-EMPTY
-#      *.down.sql (and no orphan downs), no duplicate NNNN prefixes, and
-#      no empty files. Numbering GAPS ALREADY in the tree are a
-#      non-fatal WARNING (this repo legitimately skips numbers when a
-#      migration is squashed/removed) — but a NEW migration numbered
-#      below the comparison base's head (i.e. filed INTO a gap) is
-#      FATAL: such a file is invisible to `migrate up` on any
-#      deployment already past that number and silently divergent on a
-#      fresh one.
+#      *.down.sql (and no orphan downs), no duplicate NNNN prefixes, no empty
+#      files. Numbering GAPS ALREADY in the tree are a non-fatal WARNING (the
+#      repo legitimately skips numbers when a migration is squashed/removed),
+#      but a NEW migration numbered below the comparison base's head (filed
+#      INTO a gap) is FATAL: it is invisible to `migrate up` on any deployment
+#      already past that number and silently divergent on a fresh one.
 #   3. register completeness — every NNNN_*.up.sql has a row in
-#      migrations/README.md's register, no row names a file that does
-#      not exist, and every row's description is a whole sentence.
-#   4. ClickHouse money-column — the lake DDL under deploy/clickhouse/
-#      must never hold a monetary column in Float32/Float64 (ADR-0003
-#      applied to the substrate; see the pass for the type rule).
+#      migrations/README.md's register, no row names a missing file, and every
+#      row's description is a whole sentence.
+#   4. ClickHouse money-column — the lake DDL under deploy/clickhouse/ must
+#      never hold a monetary column in Float32/Float64 (ADR-0003 applied to the
+#      substrate; see the pass for the type rule).
 #   5. down-delete — no *.down.sql DELETEs/TRUNCATEs rows silently; a
 #      narrowing down refuses with a RAISE EXCEPTION guard instead.
 #   6. hypertable index — a CREATE INDEX on an existing hypertable uses
 #      IF NOT EXISTS under SET LOCAL lock_timeout (see the pass).
 #   7. CAGG re-materialization — a file that recreates a continuous
 #      aggregate WITH NO DATA names its refresh (see the pass).
-#   8. atomicity — no SQL after a file's first COMMIT/ROLLBACK (see the
-#      pass).
-#   9. priceable division — an up.sql statement that divides by
-#      base_amount or quote_amount carries the priceable filter (see the
-#      pass).
-#  10. follow-up marker — an up.sql that blanks data names each rebuild
-#      in a `-- REQUIRED-FOLLOWUP:` header line (see the pass).
+#   8. atomicity — no SQL after a file's first COMMIT/ROLLBACK (see the pass).
+#   9. priceable division — an up.sql statement that divides by base_amount or
+#      quote_amount carries the priceable filter (see the pass).
+#  10. follow-up marker — an up.sql that blanks data names each rebuild in a
+#      `-- REQUIRED-FOLLOWUP:` header line (see the pass).
 #
 # ── register-completeness detail ──
 #
-# migrations/README.md mandates a register row per migration, and the
-# register can drift. The reader who pays for a missing row is the
-# one the register exists for — someone bringing up a FRESH database
-# (docs/operations/archival-node-bringup.md), for whom the row is where
-# an "⚠ operator must re-materialize" warning lives. 0147 is exactly
-# that case: it leaves nine CAGGs empty, and the fact that r1 already ran
-# it in v0.40.0 does nothing for a new node.
+# The reader who pays for a missing register row is someone bringing up a FRESH
+# database (docs/operations/archival-node-bringup.md), for whom the row is where
+# an "⚠ operator must re-materialize" warning lives: 0147 leaves nine CAGGs
+# empty, and r1 having run it does nothing for a new node.
 #
-# The register is prose, so this pass checks PRESENCE, in both
-# directions, and SHAPE: a description starts with a capital, digit,
-# backtick or `**` and ends with a full stop (optionally inside `**`).
-# A row lifted from one wrapped header line stops mid-sentence or keeps
-# only a tail; presence alone passes it. Shape cannot check that a row is true.
+# The register is prose, so this pass checks PRESENCE, in both directions, and
+# SHAPE: a description starts with a capital, digit, backtick or `**` and ends
+# with a full stop (optionally inside `**`). A row lifted from one wrapped
+# header line stops mid-sentence or keeps only a tail, which presence alone
+# passes. Shape cannot check that a row is true.
 #
 # ── money-column detail ──
 #
-# Money is NUMERIC — never BIGINT / INTEGER / SMALLINT / INT8 / INT4 /
-# INT2 / INT / MONEY / DOUBLE PRECISION / FLOAT[n] / REAL (JSON numbers
-# are IEEE-754 doubles; i128 amounts overflow both int64 and 2^53, and a
-# narrower integer/money type loses even more). For every
-# migrations/*.up.sql this flags a column definition whose name looks
+# Money is NUMERIC — never BIGINT / INTEGER / SMALLINT / INT8 / INT4 / INT2 /
+# INT / MONEY / DOUBLE PRECISION / FLOAT[n] / REAL (JSON numbers are IEEE-754
+# doubles; i128 amounts overflow int64 and 2^53, narrower types lose more). For
+# every migrations/*.up.sql this flags a column definition whose name looks
 # monetary next to a non-NUMERIC numeric type.
 #
-# This pass covers single-line `name type` DDL only: a view/CAGG column
-# typed by its expression (`… ::double precision AS volume_usd`), a type
-# on the next line or a float DOMAIN pass it. The authoritative check is
-# TestMoneyColumnsAreNumeric (test/integration/pg_migrations_test.go),
-# which reads the resolved type of every column from pg_catalog
-# (domains and array elements resolved) and reuses the `name` stem
-# pattern below.
+# Single-line `name type` DDL only: a view/CAGG column typed by its expression
+# (`… ::double precision AS volume_usd`), a type on the next line or a float
+# DOMAIN pass it. The authoritative check is TestMoneyColumnsAreNumeric
+# (test/integration/pg_migrations_test.go), which reads every column's resolved
+# type from pg_catalog (domains and array elements resolved) and reuses the
+# `name` stem pattern below.
 #
-# Escape hatch: append `-- lint-money:ok <reason>` on the flagged
-# line, and list the column in the test's moneyColumnExceptions.
-# Reasons are mandatory — every escape is a design decision
-# (e.g. SDEX price_n/price_d, a protocol-defined int32 rational pair
-# whose money value lives in the sibling NUMERIC `price` column).
+# Escape hatch: append `-- lint-money:ok <reason>` on the flagged line and list
+# the column in the test's moneyColumnExceptions. Reasons are mandatory (e.g.
+# SDEX price_n/price_d, a protocol-defined int32 rational pair whose money value
+# lives in the sibling NUMERIC `price` column).
 #
-# This supersedes the SQL half of scripts/ci/lint-i128.sh (which now
-# guards the Go side only); the deep Go-side guard is the go/types
-# walk in internal/canonical/i128_truncation_guard_test.go.
+# Supersedes the SQL half of scripts/ci/lint-i128.sh (Go side only now); the
+# deep Go-side guard is the go/types walk in
+# internal/canonical/i128_truncation_guard_test.go.
 #
 # Exit 0 clean, non-zero on any violation. Wired into verify.sh + CI.
 set -euo pipefail
@@ -85,30 +74,25 @@ fail=0
 
 indent() { printf '  %s\n' "${1//$'\n'/$'\n'  }"; }
 
-# Monetary column-name stems. `_usd` matches only as a suffix of the
-# column name (value_usd, volume_usd, …) so `usda`-style codes don't
-# trip it. twap/vwap/tvl/wealth are included
-# (a time/volume-weighted-average PRICE and total-value-locked / net-
-# worth aggregate are money — must be NUMERIC, never float).
+# Monetary column-name stems. `_usd` matches only as a column-name suffix
+# (value_usd, volume_usd, …) so `usda`-style codes don't trip it. twap/vwap/tvl/
+# wealth are included: a weighted-average PRICE and total-value-locked/net-worth
+# aggregate are money.
 #
-# Deliberately NOT in the stem set (each would false-positive on
-# legitimate existing NON-money columns, and a stem that flags real
-# code is worse than the gap it closes):
-#   - median / mad — the volatility_baseline columns hold a *median
-#     bucket-to-bucket VWAP percent-change return* + its MAD (0007/
-#     0008): dimensionless statistics, correctly DOUBLE PRECISION, not
-#     amounts. There is no genuine money-median column in the tree.
-#   - rate — money rates already match via the `_usd` suffix rule
-#     (rate_usd); bare `rate` would flag rate_limit_per_min (a request
-#     count, 0027).
-#   - cap — market cap already matches via `market_cap`; bare `cap`
-#     would flag capacity/capture/…-style names.
+# Deliberately NOT in the stem set (each would false-positive on existing
+# NON-money columns, and a stem that flags real code is worse than the gap):
+#   - median / mad — the volatility_baseline columns hold a median VWAP
+#     percent-change return + its MAD (0007/0008): dimensionless statistics,
+#     correctly DOUBLE PRECISION. No genuine money-median column exists.
+#   - rate — money rates already match via `_usd` (rate_usd); bare `rate` would
+#     flag rate_limit_per_min (a request count, 0027).
+#   - cap — market cap already matches via `market_cap`; bare `cap` would flag
+#     capacity/capture/…-style names.
 name='[a-z0-9_]*(amount|price|supply|balance|volume|reserve|fee|stroop|wei|circulating|market_cap|twap|vwap|tvl|wealth)[a-z0-9_]*|[a-z0-9_]*_usd'
-# Non-NUMERIC numeric types that must never hold money. Both the
-# 128-bit-overflowing wide ints (bigint/int8) AND the narrower ints
-# (integer/smallint/int4/int2/int) AND floats (double precision/float[n]
-# /real) AND `money` (a fixed 2-decimal locale-dependent type — never
-# correct for an i128 amount). NUMERIC is the only allowed home.
+# Non-NUMERIC types that must never hold money: wide ints (bigint/int8), narrower
+# ints (integer/smallint/int4/int2/int), floats (double precision/float[n]/real)
+# and `money` (fixed 2-decimal, locale-dependent, never right for an i128
+# amount). NUMERIC is the only allowed home.
 type='bigint|integer|smallint|int8|int4|int2|int|money|double precision|float[0-9]*|real'
 
 for f in migrations/*.up.sql; do
@@ -120,8 +104,8 @@ for f in migrations/*.up.sql; do
     indent "$hits" >&2
     fail=1
   fi
-  # Stale escapes: a lint-money:ok marker on a line the pattern does
-  # not flag is dead weight — the allowlist only shrinks.
+  # Stale escapes: a lint-money:ok marker on a line the pattern does not flag is
+  # dead weight; the allowlist only shrinks.
   stale=$(grep -nEi -- '-- *lint-money:ok' "$f" \
     | grep -vEi "(^|[[:space:](,])\"?(${name})\"?[[:space:]]+(${type})\b" || true)
   if [ -n "$stale" ]; then
@@ -136,14 +120,11 @@ if [ "$fail" -eq 0 ]; then
 fi
 
 # ─── Pass 2: pairing / numbering / non-empty ───
-# A missing or empty .down.sql means a migration can't be rolled back —
-# a silent operational trap discovered only during an incident. This
-# pass makes it a CI failure. EXISTING gaps are WARN-only (see header):
-# the tree legitimately skips numbers (e.g. 0075, 0077-0079, 0084 today)
-# when a migration is squashed out, so a hard no-gap rule on the whole
-# tree would false-positive. A NEW migration filed INTO a gap is a
-# different, fatal shape (below): the warning names why gaps
-# already in the tree are fine, never why it would be fine to add one.
+# A missing or empty .down.sql means a migration can't be rolled back, a silent
+# trap found only during an incident. EXISTING gaps are WARN-only (see header):
+# the tree legitimately skips numbers (e.g. 0075, 0077-0079, 0084), so a hard
+# no-gap rule would false-positive. A NEW migration filed INTO a gap is a
+# different, fatal shape (below).
 
 # Non-empty: every migration file must have content.
 for f in migrations/*.sql; do
@@ -195,24 +176,19 @@ if [ -n "$gaps" ]; then
 fi
 
 # ── back-numbering guard ──
-# Nothing asserted a NEW migration's number exceeds the head that
-# existed when it was added, so a file back-numbered into a gap (a
-# historical one, or a fresh one from this same change) sails through
-# every other check: it's new, so immutability just appends it; it
-# doesn't collide with an existing NNNN, so the duplicate check above
-# is silent; and TestExpectedSchemaVersionMatchesMigrationsHead takes a
-# MAX over the tree, so the constant doesn't move. A deployment already
-# past that number never runs it (`migrate up` only walks numbers
-# greater than applied); a fresh database does — permanent, silent
-# schema divergence with no signal anywhere.
+# Nothing else asserted a NEW migration's number exceeds the head at the time it
+# was added, so a file back-numbered into a gap sails through: immutability just
+# appends it, the duplicate check is silent (no collision), and
+# TestExpectedSchemaVersionMatchesMigrationsHead takes a MAX over the tree so the
+# constant doesn't move. A deployment already past that number never runs it
+# (`migrate up` only walks numbers above the applied one); a fresh database does:
+# permanent, silent schema divergence.
 #
-# Compare against a comparison base (same BASE_SHA convention as
-# lint-baseline-growth.sh, with a local origin/main merge-base fallback
-# so this also works outside CI) to find *.up.sql files that are NEW in
-# this change, and require each one's number to exceed every number
-# that already existed at that base. Silently skips when no usable base
-# is resolvable (shallow clone, no configured remote) — same tradeoff
-# lint-baseline-growth.sh already makes.
+# Compares against a base (BASE_SHA as in lint-baseline-growth.sh, with a local
+# origin/main merge-base fallback) to find *.up.sql files NEW in this change, and
+# requires each number to exceed every number existing at that base. Silently
+# skips when no usable base resolves (shallow clone, no remote), the same
+# tradeoff lint-baseline-growth.sh makes.
 base_sha="${BASE_SHA:-}"
 if [ -z "$base_sha" ] && git rev-parse -q --verify origin/main >/dev/null 2>&1; then
   base_sha="$(git merge-base origin/main HEAD 2>/dev/null || true)"
@@ -241,9 +217,8 @@ if [ ! -f "$REGISTER" ]; then
   echo "lint-migrations: $REGISTER is missing — the register cannot be checked." >&2
   fail=1
 else
-  # `|| true` is load-bearing: under `set -euo pipefail` a no-match grep
-  # exits 1 and kills the script mid-assignment, so the vacuity check
-  # below would never run — the exact way a guard goes quietly missing.
+  # `|| true` is load-bearing: under `set -euo pipefail` a no-match grep exits 1
+  # and kills the script mid-assignment, so the vacuity check below never runs.
   register_rows="$(grep -oE '^\| (0[0-9]{3}) \|' "$REGISTER" 2>/dev/null | grep -oE '0[0-9]{3}' | sort -u || true)"
   if [ -z "$register_rows" ]; then
     echo "lint-migrations: no register rows found in $REGISTER — the row shape changed" >&2
@@ -288,28 +263,26 @@ else
 fi
 
 # ── pass 4: ClickHouse money columns (ADR-0003) ────────────────────
-# The lake DDL is money too, and ClickHouse has no NUMERIC. An on-chain
-# amount is exact in Int64 (classic stroops are an XDR int64) or in
-# Int128/Int256 (Soroban i128/u256); a USD figure belongs in
-# Decimal(38, n) or the decimal String the aggregator already writes.
-# Float32/Float64 are never a home for money — 53 bits of mantissa is
-# the same 2^53 cliff ADR-0003 forbids in JSON. Same name stems as
-# pass 1. Flagged columns are keyed table.column (a name alone would
-# exempt every later column of that name in the file).
+# The lake DDL is money too, and ClickHouse has no NUMERIC. An on-chain amount is
+# exact in Int64 (classic stroops are an XDR int64) or Int128/Int256 (Soroban
+# i128/u256); a USD figure belongs in Decimal(38, n) or the decimal String the
+# aggregator writes. Float32/Float64 are never a home for money: 53 bits of
+# mantissa is the 2^53 cliff ADR-0003 forbids in JSON. Same name stems as pass 1.
+# Flagged columns are keyed table.column (a name alone would exempt every later
+# column of that name in the file).
 #
 # Escape hatch: the same inline `-- lint-money:ok <reason>` as pass 1.
 #
-# ch_float_baseline lists the Float64 money columns that predate this
-# pass, keyed file:table.column, one per line of CH_FLOAT_BASELINE. Each
-# is a documented display magnitude (its DDL header says so) mirrored
-# between the operator file and tier1_schema.sql, and the fix belongs with
-# that DDL: retype, or carry the inline escape with its reason. An entry
-# that no longer matches is stale and FAILS, so this list only shrinks.
-# It lives in a *.baseline file rather than here because CI runs the base
-# ref's copy of this script (CID-03): an inline list could never shrink,
-# as the base copy would call the entry a retype retires stale. Growth of
-# the file is lint-baseline-growth.sh's to catch; a missing file is an
-# empty baseline, the strictest reading.
+# ch_float_baseline lists the Float64 money columns that predate this pass, keyed
+# file:table.column, one per line of CH_FLOAT_BASELINE. Each is a documented
+# display magnitude (its DDL header says so) mirrored between the operator file
+# and tier1_schema.sql; the fix belongs with that DDL: retype, or carry the
+# inline escape with its reason. An entry that no longer matches is stale and
+# FAILS, so the list only shrinks. It lives in a *.baseline file because CI runs
+# the base ref's copy of this script: an inline list could never shrink, as the
+# base copy would call the entry a retype retires stale. Growth of the file is
+# lint-baseline-growth.sh's to catch; a missing file is an empty baseline, the
+# strictest reading.
 CH_DIR="${CH_DIR:-deploy/clickhouse}"
 CH_FLOAT_BASELINE="${CH_FLOAT_BASELINE:-scripts/ci/lint-migrations-ch-float.baseline}"
 ch_float_baseline=''
@@ -317,10 +290,10 @@ if [ -f "$CH_FLOAT_BASELINE" ]; then
   ch_float_baseline="$(grep -vE '^[[:space:]]*(#|$)' "$CH_FLOAT_BASELINE" || true)"
 fi
 
-# ch_money_floats prints one `line<TAB>table.column<TAB>raw` per money
-# column typed Float32/Float64 (Nullable or not) in $1. Table context
-# comes from the enclosing CREATE TABLE / ALTER TABLE; a line that is a
-# comment or carries a reasoned lint-money:ok escape is skipped.
+# ch_money_floats prints one `line<TAB>table.column<TAB>raw` per money column
+# typed Float32/Float64 (Nullable or not) in $1. Table context comes from the
+# enclosing CREATE TABLE / ALTER TABLE; a comment line or one carrying a reasoned
+# lint-money:ok escape is skipped.
 ch_money_floats() {
   awk -v name="$name" '
     {
@@ -380,11 +353,11 @@ echo "lint-migrations: ClickHouse money pass inspected ${ch_files} file(s) under
 
 # ── pass 5: downs never delete rows silently ───────
 # A down that narrows a CHECK must REFUSE while offending rows exist
-# (`DO $$ … IF EXISTS … RAISE EXCEPTION … $$`, see 0070's down), not
-# DELETE them: a rollback past it would otherwise discard production
-# rows and report success. Any executable DELETE/TRUNCATE in a down is a
-# violation unless its line carries `-- lint-down-delete:ok <reason>`
-# (e.g. removing only the seed row the matching up inserted).
+# (`DO $$ … IF EXISTS … RAISE EXCEPTION … $$`, see 0070's down), not DELETE
+# them: a rollback would otherwise discard production rows and report success.
+# Any executable DELETE/TRUNCATE in a down is a violation unless its line carries
+# `-- lint-down-delete:ok <reason>` (e.g. removing only the seed row the matching
+# up inserted).
 del_re='^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE)\b'
 down_files=0
 for f in migrations/*.down.sql; do
@@ -444,16 +417,15 @@ hyper_indexes() {
 }
 
 # Pass 6 — CREATE INDEX on an existing hypertable. The in-transaction
-# build holds a SHARE lock that blocks every write to the table for the
-# whole build, and a partial index still scans every row. 0037's header
-# is the recipe: `IF NOT EXISTS`, so an operator's per-chunk pre-build
-# (timescaledb.transaction_per_chunk; hypertables reject CREATE INDEX
-# CONCURRENTLY, see 0123) turns the migration into a no-op, and
-# `SET LOCAL lock_timeout`, so the build cannot queue every writer behind
-# an open transaction. Shipped migrations are immutable, so the ones that
-# predate this pass are listed below (0150's operator
-# note is in the README register); an entry that no longer matches is
-# stale and fails (the list only shrinks).
+# Pass 6 — CREATE INDEX on an existing hypertable. The in-transaction build
+# holds a SHARE lock that blocks every write for the whole build, and a partial
+# index still scans every row. 0037's header is the recipe: `IF NOT EXISTS`, so
+# an operator's per-chunk pre-build (timescaledb.transaction_per_chunk;
+# hypertables reject CREATE INDEX CONCURRENTLY, see 0123) turns the migration
+# into a no-op, and `SET LOCAL lock_timeout`, so the build cannot queue every
+# writer behind an open transaction. Shipped migrations are immutable, so those
+# predating this pass are listed below (0150's operator note is in the README
+# register); an entry that no longer matches is stale and fails.
 hyper_index_baseline='0025_create_routers_and_attribution.up.sql:trades_routed_via_idx
 0037_trades_pair_source_ts_index.up.sql:trades_pair_source_ts_idx
 0083_sep41_transfers_ledger_idx.up.sql:sep41_transfers_ledger_idx
@@ -506,12 +478,12 @@ done <<<"$hyper_index_baseline"
 echo "lint-migrations: hypertable-index pass checked ${hi_checked} index build(s) on existing hypertables under ${MIG_DIR}."
 
 # Pass 7 — a continuous aggregate dropped and recreated WITH NO DATA is
-# EMPTY until someone refreshes it, and a migration cannot do that:
-# refresh_continuous_aggregate refuses a transaction block, and
-# golang-migrate runs each file as one. So the file must NAME the
-# refresh (`refresh_continuous_aggregate('<view>'`, in its operator
-# header) for every view it recreates — a down included, because a
-# rollback empties the views exactly as the up did.
+# Pass 7 — a continuous aggregate dropped and recreated WITH NO DATA is EMPTY
+# until refreshed, and a migration cannot do that: refresh_continuous_aggregate
+# refuses a transaction block, and golang-migrate runs each file as one. So the
+# file must NAME the refresh (`refresh_continuous_aggregate('<view>'`, in its
+# operator header) for every view it recreates, a down included (a rollback
+# empties the views as the up did).
 cagg_files=0
 for f in "$MIG_DIR"/*.sql; do
   grep -qi 'with no data' "$f" || continue
@@ -534,16 +506,15 @@ done
 echo "lint-migrations: CAGG re-materialization pass inspected ${cagg_files} WITH NO DATA file(s) under ${MIG_DIR}."
 
 # ── pass 8: atomicity ───────────────────────────────────────────────
-# golang-migrate sends a whole file as ONE simple-protocol query, which
-# Postgres runs as one implicit transaction. An explicit COMMIT/ROLLBACK
-# ends it, so every statement after the first one runs in a fresh
-# transaction: a failure there leaves the earlier half durable and the
-# version dirty. BEGIN; … COMMIT; around the whole body is
-# fine; anything but comments after the COMMIT is not. TXN_DIR is the
-# fixture seam for scripts/ci/lint-migrations-test.sh.
+# golang-migrate sends a whole file as ONE simple-protocol query, which Postgres
+# runs as one implicit transaction. An explicit COMMIT/ROLLBACK ends it, so every
+# later statement runs in a fresh transaction: a failure there leaves the earlier
+# half durable and the version dirty. BEGIN; … COMMIT; around the whole body is
+# fine; anything but comments after the COMMIT is not. TXN_DIR is the fixture
+# seam for scripts/ci/lint-migrations-test.sh.
 #
-# 0030's up is the one shipped instance. Its up body is immutable, so it
-# is exempted here and 0168 restores what a failed tail would lose.
+# 0030's up is the one shipped instance; its body is immutable, so it is
+# exempted and 0168 restores what a failed tail would lose.
 TXN_DIR="${TXN_DIR:-migrations}"
 txn_exempt="0030_asset_supply_history_unique_constraint.up.sql"
 txn_files=0
@@ -570,14 +541,14 @@ echo "lint-migrations: atomicity pass inspected ${txn_files} file(s) under ${TXN
 
 # ── pass 9: priceable leg division ──────────────────────────────────
 # trades admits one zero leg (an SDEX rounding fill) with no CHECK, so a
-# statement dividing by base_amount/quote_amount without the priceable
-# filter `base_amount > 0 AND quote_amount > 0` either raises
-# division_by_zero (aborting a cagg refresh) or publishes a zero price.
-# Escape: `-- lint-priceable:ok <reason>` on any line of the statement;
-# a marker on a statement with no leg division is stale and fails.
-# Shipped files are immutable, so the pre-admission ones are listed
-# below (0187 injects its filter through format(), which this pass cannot
-# see); an entry that no longer has an unguarded division fails.
+# statement dividing by base_amount/quote_amount without the priceable filter
+# `base_amount > 0 AND quote_amount > 0` either raises division_by_zero
+# (aborting a cagg refresh) or publishes a zero price.
+# Escape: `-- lint-priceable:ok <reason>` on any line of the statement; a marker
+# on a statement with no leg division is stale and fails.
+# Shipped files are immutable, so the pre-admission ones are listed below (0187
+# injects its filter through format(), which this pass cannot see); an entry with
+# no unguarded division fails.
 priceable_baseline='0002_create_price_aggregates.up.sql
 0036_create_pools_per_source_cagg.up.sql
 0115_ohlc_extremes_notional_floor.up.sql
@@ -647,15 +618,15 @@ fi
 echo "lint-migrations: priceable-division pass inspected ${pr_files} file(s) under ${MIG_DIR}."
 
 # ── pass 10: required follow-up marker ──────────────────────────────
-# An up.sql that blanks data — an unqualified DELETE, a TRUNCATE, or a
-# continuous aggregate dropped and recreated WITH NO DATA — serves empty
-# until an operator runs the rebuild the migration cannot run itself.
-# deploy.yml's scripts/ci/migration-followup-gate.sh lists every
-# `-- REQUIRED-FOLLOWUP: <command>` line in the migrations a deploy adds
-# and refuses to start until they are acknowledged, so such a file must
-# carry at least one. A marker line in any other spelling, or with no
-# command, is invisible to that gate and fails here. Shipped files that
-# predate the marker are listed below; the list only shrinks.
+# An up.sql that blanks data (an unqualified DELETE, a TRUNCATE, or a continuous
+# aggregate dropped and recreated WITH NO DATA) serves empty until an operator
+# runs the rebuild the migration cannot run itself. deploy.yml's
+# scripts/ci/migration-followup-gate.sh lists every
+# `-- REQUIRED-FOLLOWUP: <command>` line in the migrations a deploy adds and
+# refuses to start until they are acknowledged, so such a file must carry at
+# least one. A marker in any other spelling, or with no command, is invisible to
+# that gate and fails here. Shipped files predating the marker are listed below;
+# the list only shrinks.
 followup_baseline='0115_ohlc_extremes_notional_floor.up.sql
 0126_twap_sample_count.up.sql
 0137_disarm_comet_replay_doublecount.up.sql
@@ -666,11 +637,11 @@ followup_baseline='0115_ohlc_extremes_notional_floor.up.sql
 
 # A follow-up that rebuilds a projected source (projector-replay or
 # projected-rebuild -source X) must sit in a file that also deletes X's
-# projected-rebuild checkpoints (ingestion_cursors, source =
-# 'projected-rebuild', sub_source LIKE 'X:%'). projected-rebuild -resume
-# skips every checkpointed window without looking at the table, so a
-# checkpoint written before the migration keeps those windows empty
-# (0137, 0164, 0203; cleared by 0206). Shipped files that predate the rule:
+# projected-rebuild checkpoints (ingestion_cursors, source = 'projected-rebuild',
+# sub_source LIKE 'X:%'). projected-rebuild -resume skips every checkpointed
+# window without looking at the table, so a checkpoint written before the
+# migration keeps those windows empty (0137, 0164, 0203). Shipped files that
+# predate the rule:
 rebuild_ckpt_baseline='0203_create_sushiswap_v3_position_events.up.sql'
 
 # rebuild_ckpt_missing <file>: each source a rebuild follow-up names whose

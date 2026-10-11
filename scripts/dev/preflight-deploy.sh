@@ -2,39 +2,32 @@
 # preflight-deploy.sh — answer, on this machine and in one run, every
 # question .github/workflows/deploy.yml is about to ask.
 #
-# Four failed deploys in one day were all knowable before the dispatch:
-# two config-apply-gate reds whose surface diffs turned out to be
-# comment-only (learned twice at the cost of a failed run each; the gate
-# now answers that case itself), one six-binary set dispatched at
-# a region that runs five (futurenet has no aggregator unit; the health
-# probe failed and the binary rolled back), and one four-of-six set that
-# left `stellarindex-migrate` and `stellarindex-sla-probe` behind and
-# tripped the `stellarindex_binary_version_skew` probe.
+# Every failure it prevents was knowable before the dispatch: config-apply-gate
+# reds on comment-only surface diffs, a six-binary set sent to a region that
+# runs five (no aggregator unit; health probe failed, binary rolled back), and a
+# partial set that left `stellarindex-migrate` and `stellarindex-sla-probe`
+# behind and tripped the `stellarindex_binary_version_skew` probe.
 #
-# Reported here, before any of that costs a round trip:
+# Reported:
 #
 #   1. Config surfaces changed since the version LIVE ON THE TARGET, each
-#      classified comment-only, already-applied, or substantive. Both the
-#      surface list and the classifier are READ from
-#      scripts/ci/config-apply-gate.sh (--payload / --ddl-objects) so there
-#      is one copy of each, and that gate is then executed for its own
-#      verdict rather than re-implemented. "Already applied" is not
-#      assumed: for a ClickHouse DDL diff that adds only whole new
-#      statements, the target is asked whether every object it creates is
-#      present in system.tables.
+#      classified comment-only, already-applied, or substantive. The surface
+#      list and the classifier are READ from scripts/ci/config-apply-gate.sh
+#      (--payload / --ddl-objects) so there is one copy of each, and that gate
+#      is then executed for its own verdict. "Already applied" is not assumed:
+#      for a ClickHouse DDL diff that adds only whole new statements, the target
+#      is asked whether every created object is present in system.tables.
 #   2. The binary set the target region actually runs, from a checked-in
 #      manifest derived from the hosts (scripts/dev/region-binaries.tsv).
-#      There is no per-region manifest anywhere else — deploy.yml carries
-#      one default list for three regions.
+#      deploy.yml carries one default list for three regions.
 #   3. Per-binary skew: the version live on the target against the release.
 #   4. Migrations in the range, with the forward-only-schema caveat.
 #
 # The last line of output is the exact `gh workflow run deploy.yml` command
-# for that region. It never carries `-f config_acknowledged=true`: both
-# cases that flag covered are cleared by machine, so what is left
-# is an operator asserting something no checker can read, which this script
-# has no basis to assert for them. Exit is non-zero whenever an operator
-# decision is outstanding.
+# for that region. It never carries `-f config_acknowledged=true`: both cases
+# that flag covered are cleared by machine, so what is left is an operator
+# asserting something no checker can read, which this script cannot assert.
+# Exit is non-zero whenever an operator decision is outstanding.
 #
 # Usage:
 #   scripts/dev/preflight-deploy.sh --region r1 --version v0.63.0
@@ -51,9 +44,8 @@
 #                       `-- REQUIRED-FOLLOWUP:` commands straight after the
 #                       deploy; the dispatch then carries followups_acknowledged.
 #
-# Everything this reads from a host is read-only: `cat` of the deploy
-# sidecars, `systemctl is-enabled` / `is-active`, and a `test -x`. Nothing
-# is written, restarted or deployed.
+# Host reads are read-only: `cat` of the deploy sidecars, `systemctl
+# is-enabled` / `is-active`, and `test -x`. Nothing is written or restarted.
 #
 # See docs/operations/local-preflight.md.
 
@@ -159,10 +151,8 @@ if command -v gh >/dev/null 2>&1; then
     fi
 else
     echo "  gh is not installed — release existence unverified"
-    # A note here left this whole script exit 0 with the release
-    # unverified: nothing else checks that a release exists before
-    # dispatch, so "unverified" must read as a decision outstanding, not
-    # a soft warning.
+    # "unverified" must read as a decision outstanding, not a soft warning:
+    # nothing else checks that a release exists before dispatch.
     block "gh is not installed"
 fi
 
@@ -263,19 +253,15 @@ REMOTE
 
 # Deployability of a daemon, from its <is-enabled>/<is-active> pair.
 #
-# deploy-one-binary.yml restarts <binary>.service and then requires
-# `systemctl is-active` to report active, so a unit systemd does not have —
-# or refuses to start — is a failed deploy and a rolled-back binary. That is
-# futurenet's aggregator: no unit at all, and the residue of the attempt is
-# still on the host as stellarindex-aggregator.failed-v0.62.0.
+# deploy-one-binary.yml restarts <binary>.service and requires `systemctl
+# is-active`, so a unit that is absent or refuses to start is a failed deploy
+# and a rolled-back binary (futurenet's aggregator has no unit at all).
 #
-# Enablement alone is the wrong test, and testnet is the counter-example:
-# its aggregator is UnitFileState=disabled and ActiveState=active — off at
-# boot, running now, and deployed there at v0.62.0 by this very workflow.
-# Excluding it would leave it behind and re-create the skew this script
-# exists to prevent. What is refused is a unit that is absent or masked, or
-# one that is switched off AND not running: restarting that starts a daemon
-# somebody deliberately stopped.
+# Enablement alone is the wrong test: testnet's aggregator is disabled but
+# active (off at boot, running now) and is deployed by this workflow, so
+# excluding it would re-create the skew this script exists to prevent. Refused:
+# absent, masked, or switched off AND not running, since restarting that starts
+# a daemon somebody deliberately stopped.
 unit_deployable() { # unit_deployable <is-enabled>/<is-active>
     local enabled="${1%%/*}" active="${1##*/}"
     case "$enabled" in
@@ -388,16 +374,12 @@ done"
         block "could not read the deployed-versions sidecars on ${HOST}; deploy.yml FAILS CLOSED on exactly this read rather than falling back"
     fi
 
-    # The config-apply baseline itself, byte-for-byte deploy.yml's "Capture
-    # the host's live version" step: EVERY deployed-versions sidecar FILE
-    # PRESENT on the host, not just the binaries ${manifest_set} currently
-    # deploys there. deploy-one-binary.yml writes the sidecar before the
-    # restart, so a binary excluded from this region's deployable set (a
-    # unit disabled, masked, or off) can still have a sidecar from an
-    # earlier deploy, and deploy.yml's baseline still counts it. Scoping
-    # this read to manifest_set — as section 2's per-binary table correctly
-    # does for ITS purpose — silently dropped that sidecar and could report
-    # "nothing outstanding" on a range the gate itself fails.
+    # The config-apply baseline, byte-for-byte deploy.yml's "Capture the host's
+    # live version" step: EVERY deployed-versions sidecar FILE PRESENT, not just
+    # ${manifest_set}. deploy-one-binary.yml writes the sidecar before the
+    # restart, so an excluded binary can still have one that deploy.yml's
+    # baseline counts; scoping to manifest_set would report "nothing
+    # outstanding" on a range the gate itself fails.
     # shellcheck disable=SC2016  # single-quoted on purpose: this is
     # evaluated by the REMOTE shell, byte-for-byte deploy.yml's own
     # baseline snippet, and must not expand locally.
@@ -499,15 +481,10 @@ fi
 changed="$(git diff --name-only "$BASELINE" "$VERSION" -- "${SURFACES[@]}")"
 
 # Comment-only classification, and — for ClickHouse DDL — whether the
-# substantive half is ALREADY APPLIED on this host.
-#
-# Both judgements come from the gate (--payload / --ddl-objects) rather
-# than from a second implementation here: the gate PASSES
-# a comment-only surface itself, so a local classifier that disagreed with
-# it would mispredict the verdict this section exists to preview.
-#
-# The three cases the gate distinguishes are reported here with the same
-# names it uses.
+# substantive half is ALREADY APPLIED on this host. Both come from the gate
+# (--payload / --ddl-objects), not a second implementation: the gate PASSES a
+# comment-only surface itself, so a disagreeing local classifier would
+# mispredict the verdict this section previews. Case names match the gate's.
 substantive=0
 comment_only=0
 applied_verified=0
@@ -522,15 +499,11 @@ else
     while IFS= read -r f; do
         [ -n "$f" ] || continue
         # deploy.yml's "Apply Prometheus rules (r1)" step is region-gated
-        # (`if: inputs.region == 'r1'`), continue-on-error, and applies
-        # AND polls this surface on every r1 dispatch regardless of what
-        # changed. Everywhere else that step never runs, so the surface
-        # must stay SUBSTANTIVE there — treating it as applied on a
-        # region where nothing applies it is a false green.
-        # This is a scheduling fact about deploy.yml, not a
-        # host-verified object check, so it does not count toward
-        # applied_verified (that counter's message names ClickHouse
-        # objects proven present in system.tables).
+        # (`if: inputs.region == 'r1'`), continue-on-error, and applies AND
+        # polls this surface on every r1 dispatch. Elsewhere it never runs, so
+        # the surface must stay SUBSTANTIVE there: treating it as applied is a
+        # false green. A scheduling fact, not a host-verified object check, so
+        # it does not count toward applied_verified.
         if [ "$REGION" = r1 ]; then
             case "$f" in
                 configs/prometheus/rules.r1/*)
@@ -547,12 +520,10 @@ else
             comment_only=$((comment_only + 1))
             continue
         fi
-        # Substantive. For a ClickHouse DDL diff that adds only whole new
-        # statements the host can be ASKED whether the objects exist —
-        # which is the difference between "already applied" and
-        # "unapplied", and the difference a manual acknowledgement
-        # can get right only by luck. Nothing equivalent exists for a systemd
-        # unit or an ansible template: those stay substantive.
+        # Substantive. For a ClickHouse DDL diff adding only whole new
+        # statements the host can be ASKED whether the objects exist, which
+        # separates "already applied" from "unapplied". Nothing equivalent
+        # exists for a systemd unit or an ansible template: those stay substantive.
         if objects="$(bash "$GATE" --ddl-objects "$BASELINE" "$VERSION" "$f")" && [ -n "$objects" ]; then
             if [ "$NO_HOST" -eq 0 ] && present="$(ch_objects_present "$objects")"; then
                 if [ "$present" = "all" ]; then
@@ -588,14 +559,11 @@ printf '  gate verdict: %s (exit %d)\n' \
 printf '%s\n' "$gate_out" | sed 's/^/      | /'
 
 # The dispatch printed at the end NEVER carries -f config_acknowledged=true.
-# Both cases where an acknowledgement is warranted by evidence are now
-# cleared by machine — comment-only by the gate, applied ClickHouse DDL by
-# the object check above — so the flag has exactly one remaining meaning:
-# an operator asserting, from their own knowledge, that a surface no
-# checker can read is applied. This script has no basis to assert that on
-# their behalf, and the obvious rule ("all comment-only, so
-# acknowledge") is the rule that would have acknowledged v0.61.1..v0.62.0's
-# unapplied CREATE TABLE.
+# Both evidence-backed cases are cleared by machine (comment-only by the gate,
+# applied ClickHouse DDL by the object check above), so the flag only means an
+# operator asserting that a surface no checker can read is applied. The rule
+# "all comment-only, so acknowledge" would have acknowledged an unapplied
+# CREATE TABLE.
 if [ "$comment_only" -gt 0 ]; then
     note "the ${comment_only} comment-only surface file(s) still differ TEXTUALLY from the host copies until applied; the weekly ansible-drift job will report them"
 fi
@@ -654,14 +622,12 @@ else
     fi
     rm -rf "$compat_dir"
 
-    # deploy.yml's migration gate now also runs numbering,
-    # immutability and commands (not just compat). Mirror that here so
-    # this preflight can't report clean while the real gate would fail.
-    # Those three scripts cd to their OWN script directory's repo root
-    # (see their `cd "$(dirname "$0")/../.."`), so they need to run from
-    # a full checkout of ${VERSION} — its own README register, checksum
-    # baseline and commands baseline — not the migrations-only extract
-    # the compat gate above uses.
+    # deploy.yml's migration gate also runs numbering, immutability and
+    # commands (not just compat); mirror that so this preflight cannot report
+    # clean while the real gate fails. Those scripts cd to their OWN repo root
+    # (`cd "$(dirname "$0")/../.."`), so they need a full checkout of
+    # ${VERSION} (its README register and checksum/commands baselines), not
+    # the migrations-only extract the compat gate uses.
     tree_dir="$(mktemp -d)"
     if git archive "$VERSION" | tar -x -C "$tree_dir" 2>/dev/null; then
         for gate in lint-migrations lint-migration-immutability lint-migration-commands; do

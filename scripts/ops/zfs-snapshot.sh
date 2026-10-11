@@ -2,101 +2,78 @@
 # zfs-snapshot.sh — rolling ZFS snapshots of the ClickHouse lake, the
 # Postgres datasets and the MinIO Galexie archive on r1.
 #
-# WHAT THIS PROTECTS AGAINST. pgBackRest (ADR-0043) covers Postgres
-# off-host with PITR, and the lake is re-derivable from the Galexie
-# archive — but both paths are HOURS-TO-DAYS. The failure this closes is
-# the fast logical fault: a bad migration, a `DROP TABLE` / `ALTER ...
-# DELETE` with the wrong predicate, a re-derive that wrote garbage. A
-# dataset snapshot taken minutes or hours earlier turns that into a
-# `zfs clone` + copy-a-table-back (or `zfs rollback`) instead of a
-# multi-day rebuild. See docs/operations/runbooks/zfs-snapshots.md for
-# the recovery procedures and the HONEST consistency semantics (a ZFS
-# snapshot is crash-consistent for both engines, nothing more).
+# PROTECTS AGAINST the fast logical fault (bad migration, wrong-predicate
+# `DROP TABLE` / `ALTER ... DELETE`, a re-derive that wrote garbage). pgBackRest
+# (ADR-0043) and the Galexie re-derive both take HOURS-TO-DAYS; a snapshot from
+# minutes earlier makes it a `zfs clone` + copy-a-table-back or `zfs rollback`.
+# Recovery and the HONEST consistency semantics (crash-consistent for both
+# engines, nothing more): docs/operations/runbooks/zfs-snapshots.md.
 #
-# THE ARCHIVE IS IN THE LIST, and it is the reason the list is not just
-# "the two databases" (NS03). data/minio holds the Galexie LCM archive —
-# the CDP source of truth the ClickHouse lake and the served Postgres
-# tier are RE-DERIVED FROM. Protecting the derivatives while leaving the
-# thing they derive from with no snapshot and no off-host copy is the
-# wrong way round: an `mc rm --recursive` against the wrong prefix had
-# nothing to roll back to, and the only remaining recovery was a
-# re-ingest from the public Stellar history archives (a very long
-# recovery, not an unrecoverable loss — but measured in days to weeks,
-# with no SLA from a third party). The archive is APPEND-MOSTLY, so a
-# retained day pins only what was deleted or overwritten that day: the
-# carrying cost on the happy path is ~0, and the day it is not ~0 is
-# exactly the day the snapshot is worth having.
+# THE ARCHIVE IS IN THE LIST (NS03): data/minio holds the Galexie LCM archive,
+# the CDP source of truth the lake and the served Postgres tier are RE-DERIVED
+# FROM. Snapshotting only the derivatives is the wrong way round: an
+# `mc rm --recursive` on the wrong prefix had nothing to roll back to, and the
+# fallback (re-ingest from public Stellar history archives) takes days to weeks
+# with no third-party SLA. The archive is APPEND-MOSTLY, so a retained day pins
+# only what was deleted or overwritten that day: ~0 carrying cost on the happy
+# path, and the snapshot is worth having on the day it is not.
+# This is the LOCAL half only; there is no off-host archive copy yet (see
+# docs/operations/off-site-backup-plan.md §1, docs/architecture/ha-plan.md §8).
 #
-# This is the LOCAL half only. There is still no off-host copy of the
-# archive — see docs/operations/off-site-backup-plan.md §1 and
-# docs/architecture/ha-plan.md §8 for what that needs.
+# Per run (`rotate`, the timer's mode):
 #
-# WHAT IT DOES, per run (`rotate`, the timer's mode):
-#
-#   1. RETENTION: for every managed dataset, destroy `auto-*` snapshots
-#      older than that dataset's retention window.
-#   2. MIN-FREE GUARD (hard): if the pool's free space is below
-#      $ZFS_SNAPSHOT_MIN_FREE_BYTES, destroy `auto-*` snapshots
-#      oldest-first across all managed datasets, re-reading free after
-#      each, until the floor is met or every dataset is down to its
-#      NEWEST auto snapshot (the newest is never pruned by the guard —
-#      it is the last line of defence and pruning it gains ~one day's
-#      churn at most).
+#   1. RETENTION: destroy `auto-*` snapshots older than each dataset's window.
+#   2. MIN-FREE GUARD (hard): if pool free is below $ZFS_SNAPSHOT_MIN_FREE_BYTES,
+#      destroy `auto-*` snapshots oldest-first across all managed datasets,
+#      re-reading free after each, until the floor is met or every dataset is
+#      down to its NEWEST auto snapshot (never pruned by the guard: the last
+#      line of defence, and pruning it gains ~one day's churn at most).
 #   3. SNAPSHOT: if free is (now) at or above the floor, take
-#      `<dataset>@auto-YYYYMMDD-HHMM` on each managed dataset. If it is
-#      still below, SKIP — a snapshot on a starving pool pins ~250 GB/day
-#      of merged ClickHouse parts that the pool cannot afford — and say
-#      so via `stellarindex_zfs_snapshot_guard_skipped{dataset}=1`.
-#   4. METRICS: write node_exporter textfile gauges (pool free, latest
-#      snapshot time / count / bytes per dataset) so the alert rules in
-#      deploy/monitoring/rules/zfs-snapshots.yml have a producer.
+#      `<dataset>@auto-YYYYMMDD-HHMM` on each managed dataset. Otherwise SKIP (a
+#      snapshot on a starving pool pins ~250 GB/day of merged ClickHouse parts)
+#      and say so via `stellarindex_zfs_snapshot_guard_skipped{dataset}=1`.
+#   4. METRICS: node_exporter textfile gauges (pool free, latest snapshot
+#      time / count / bytes per dataset) for deploy/monitoring/rules/zfs-snapshots.yml.
 #
-# `now <dataset>` (scripts/ops/zfs-snapshot-now.sh) runs the guard and
-# takes ONE fresh auto-snapshot of that dataset — what the ClickHouse
-# destructive-DDL runbook (docs/operations/clickhouse-destructive-ddl.md)
-# requires before any DROP / irreversible ALTER. `--keep <label>` names
-# it `manual-<label>` instead, which this script will NEVER destroy.
+# `now <dataset>` (scripts/ops/zfs-snapshot-now.sh) runs the guard and takes ONE
+# fresh auto-snapshot, as the destructive-DDL runbook
+# (docs/operations/clickhouse-destructive-ddl.md) requires before any DROP /
+# irreversible ALTER. `--keep <label>` names it `manual-<label>`, which this
+# script NEVER destroys.
 #
 # INVARIANTS (pinned by scripts/ci/zfs-snapshot-test.sh):
-#   - Only snapshots named `auto-YYYYMMDD-HHMM` are ever destroyed.
-#     Anything else (`manual-*`, `pre-migration`, an operator's
-#     hand-made snapshot) is invisible to retention AND to the guard.
-#   - Only datasets in $ZFS_SNAPSHOT_DATASETS, and their descendants, are
-#     touched at all. Snapshot and destroy are recursive (-r) so a child
-#     dataset is captured in the same atomic instant as its parent:
-#     data/postgres/wal holds pg_wal, and a data-directory snapshot without
-#     the WAL of the same instant is not crash-consistent.
+#   - Only `auto-YYYYMMDD-HHMM` snapshots are ever destroyed; anything else
+#     (`manual-*`, `pre-migration`, hand-made) is invisible to retention AND guard.
+#   - Only datasets in $ZFS_SNAPSHOT_DATASETS and their descendants are touched.
+#     Snapshot and destroy are recursive (-r) so a child is captured at the same
+#     instant as its parent: data/postgres/wal holds pg_wal, and a data-directory
+#     snapshot without the same-instant WAL is not crash-consistent.
 #   - The guard never prunes a dataset's newest auto snapshot.
-#   - Every `zfs` call is idempotent from the caller's view: taking an
-#     already-existing snapshot name is a no-op success, destroying an
-#     already-gone one is a no-op success.
+#   - Every `zfs` call is idempotent: taking an existing snapshot or destroying
+#     a gone one is a no-op success.
 #
-# Configuration (environment; /etc/default/zfs-snapshot is rendered by
-# the archival-node role, tag `zfs-snapshots`):
+# Configuration (environment; /etc/default/zfs-snapshot is rendered by the
+# archival-node role, tag `zfs-snapshots`):
 #
 #   ZFS_SNAPSHOT_POOL            pool to read free space from   (data)
 #   ZFS_SNAPSHOT_DATASETS        space-separated `<dataset>:<retention_days>`
-#                                (data/clickhouse:1 data/postgres:1
-#                                 data/minio:7). MUST stay in step with
-#                                 the role's zfs_snapshot_datasets —
-#                                 scripts/ci/zfs-snapshot-coverage-test.sh
-#                                 renders the template and compares.
+#                                (data/clickhouse:1 data/postgres:1 data/minio:7).
+#                                MUST match the role's zfs_snapshot_datasets;
+#                                scripts/ci/zfs-snapshot-coverage-test.sh compares.
 #   ZFS_SNAPSHOT_MIN_FREE_BYTES  guard floor in bytes           (2 TiB)
 #   TEXTFILE_DIR                 node_exporter textfile dir; /dev/null
 #                                disables the metric write.
 #
-# Logging: stderr, which is the journal under systemd. Outside systemd
-# (operator shell) the same lines are also sent to the journal via
-# logger(1) so a hand-run snapshot leaves the same audit trail.
+# Logging: stderr (the journal under systemd); from an operator shell the lines
+# are also sent to the journal via logger(1) for the same audit trail.
 #
 # Usage:
 #   zfs-snapshot.sh rotate
 #   zfs-snapshot.sh now <dataset> [--keep <label>]
 #   zfs-snapshot.sh metrics            # refresh the textfile only
 #
-# Exit: 0 ok (including a guard-skip in `rotate`: the skip is a metric,
-#       not a crash); 1 a zfs/zpool call failed or `now` was refused by
-#       the guard; 2 usage / configuration error.
+# Exit: 0 ok (a guard-skip in `rotate` is a metric, not a crash); 1 a
+#       zfs/zpool call failed or `now` was refused by the guard; 2 usage/config.
 set -euo pipefail
 
 ZFS_SNAPSHOT_POOL="${ZFS_SNAPSHOT_POOL:-data}"
@@ -104,8 +81,8 @@ ZFS_SNAPSHOT_DATASETS="${ZFS_SNAPSHOT_DATASETS:-data/clickhouse:1 data/postgres:
 ZFS_SNAPSHOT_MIN_FREE_BYTES="${ZFS_SNAPSHOT_MIN_FREE_BYTES:-2199023255552}"  # 2 TiB
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 
-# The ONLY name shape this script will ever destroy. Anchored on both
-# ends on purpose: `auto-20260829-0215-copy` or `xauto-...` must not match.
+# The ONLY name shape this script will ever destroy. Anchored on both ends:
+# `auto-20260829-0215-copy` or `xauto-...` must not match.
 AUTO_RE='^auto-[0-9]{8}-[0-9]{4}$'
 
 log() {
@@ -117,20 +94,18 @@ log() {
 }
 die() { log "ERROR: $1"; exit "${2:-1}"; }
 
-# write_metrics builds the textfile in a temp file and only then renames it
-# into place. A `die` INSIDE that brace group (e.g. `zfs get usedbysnapshots`
-# failing for one dataset) exits straight past the mv/rm, so every timer run
-# left a `zfs_snapshot.prom.tmp.<pid>` behind — node_exporter ignores
-# non-.prom files, so no metric corrupts, but the textfile directory fills
-# one file per run until somebody notices. METRICS_TMP holds the in-flight
-# name; the trap removes it on ANY exit path and write_metrics clears it
-# once the rename has happened.
+# write_metrics builds the textfile in a temp file and renames it into place. A
+# `die` INSIDE that brace group (e.g. `zfs get usedbysnapshots` failing) exits
+# past the mv/rm and would leave one `zfs_snapshot.prom.tmp.<pid>` per timer run
+# (node_exporter ignores non-.prom files, but the directory fills). METRICS_TMP
+# holds the in-flight name; the trap removes it on ANY exit path and
+# write_metrics clears it after the rename.
 METRICS_TMP=""
 trap 'rm -f "${METRICS_TMP:-}"' EXIT
 
 # ─── configuration parsing ──────────────────────────────────────────
-# Parallel indexed arrays (no `declare -A`: bash 3.2 on an operator's
-# macOS must still be able to run scripts/ci/zfs-snapshot-test.sh).
+# Parallel indexed arrays, no `declare -A`: bash 3.2 on an operator's macOS must
+# still run scripts/ci/zfs-snapshot-test.sh.
 DATASETS=()
 RETENTION_DAYS=()
 GUARD_SKIPPED=()
@@ -169,13 +144,12 @@ retention_days() {
 }
 
 # ─── zfs wrappers (every zfs/zpool call goes through here) ──────────
-# Sets the global POOL_FREE. Deliberately NOT `free="$(...)"`: a die()
-# inside a command substitution only exits the subshell, and in condition
-# context (`if enforce_min_free`, `... || die`) set -e is inert — so an
-# unreadable pool would have left free="" (= 0 < floor) and the guard
-# would have destroyed every prunable snapshot with rc=0 (verifier
-# finding on 69204ee). Called in the parent shell, die() aborts the run:
-# no destroy, no snapshot, non-zero exit, error textfile.
+# Sets the global POOL_FREE. Deliberately NOT `free="$(...)"`: a die() inside a
+# command substitution only exits the subshell, and in condition context
+# (`if enforce_min_free`, `... || die`) set -e is inert, so an unreadable pool
+# would leave free="" (= 0 < floor) and the guard would destroy every prunable
+# snapshot with rc=0. In the parent shell, die() aborts the run: no destroy, no
+# snapshot, non-zero exit, error textfile.
 POOL_FREE=""
 read_pool_free() {
   local v
@@ -191,9 +165,9 @@ read_pool_free() {
   POOL_FREE="$v"
 }
 
-# Written INSTEAD of the main textfile when free space is unreadable, so
-# the last good gauges stay visible (and go stale → the stale alert) and
-# the failure has its own series. Removed again by a successful run.
+# Written INSTEAD of the main textfile when free space is unreadable, so the
+# last good gauges go stale (stale alert) and the failure has its own series.
+# Removed by the next successful run.
 write_error_metric() {
   [[ "$TEXTFILE_DIR" == "/dev/null" ]] && return 0
   local out tmp
@@ -230,10 +204,8 @@ list_auto_snapshots() {
   done < <(list_snapshots "$1")
 }
 
-# The single destroy path. Refuses anything that is not
-# <managed-dataset>@auto-YYYYMMDD-HHMM — this is the invariant, not a
-# convenience check, so it lives at the choke point rather than at each
-# caller.
+# The single destroy path. Refuses anything but <managed-dataset>@auto-YYYYMMDD-HHMM;
+# the invariant lives at this choke point, not at each caller.
 destroy_auto_snapshot() {
   local full="$1" why="$2" ds snap
   ds="${full%%@*}"
@@ -291,11 +263,10 @@ enforce_min_free() {
     for ds in "${DATASETS[@]}"; do
       candidates+="$(list_auto_snapshots "$ds" | sed '$d')"$'\n'
     done
-    # Oldest across datasets first (creation is column 2).
-    # $candidates is every prunable auto snapshot across all datasets —
+    # Oldest across datasets first (creation is column 2). $candidates is
     # unbounded on a long-lived pool, so `| head` could EPIPE `sort` under
-    # pipefail and abort the prune loop exactly when the pool is filling
-    # Sort to completion in a substitution, then slice in the shell.
+    # pipefail and abort the prune loop just as the pool fills: sort to
+    # completion in a substitution, then slice in the shell.
     sorted_candidates="$(printf '%s' "$candidates" | awk -F'\t' 'NF==2' | sort -t $'\t' -k2,2n)"
     name="${sorted_candidates%%$'\n'*}"
     name="${name%%$'\t'*}"
@@ -303,17 +274,14 @@ enforce_min_free() {
       log "guard: nothing left to prune (each dataset is down to its newest auto snapshot); free ${free} still < ${ZFS_SNAPSHOT_MIN_FREE_BYTES}"
       return 1
     fi
-    # Same EPIPE class as the sort above: `awk ... exit` stops
-    # reading, `printf` is still writing an unbounded $candidates, and
-    # under `set -euo pipefail` the write error takes down the prune loop
-    # exactly when the pool is filling. `exit` is not `head`, which is why
-    # the lint did not see it — the lint now looks for early-exit awk too.
-    # Read from the already-sorted list instead of re-piping.
+    # Same EPIPE class: `awk ... exit` stops reading while `printf` is still
+    # writing an unbounded $candidates, which kills the prune loop under
+    # `set -euo pipefail`. Read the already-sorted list instead of re-piping.
     created="$(awk -F'\t' -v n="$name" '$1==n{print $2; exit}' <<<"$sorted_candidates")"
     destroy_auto_snapshot "$name" "min-free guard, created $created"
-    # ZFS reclaims space asynchronously; a re-read right after destroy
-    # can lag by a txg. Worst case this over-prunes by one snapshot,
-    # never below the newest-per-dataset floor.
+    # ZFS reclaims space asynchronously; a re-read right after destroy can lag by
+    # a txg. Worst case this over-prunes by one snapshot, never below the
+    # newest-per-dataset floor.
     read_pool_free; free="$POOL_FREE"
     [[ -n "$free" && "$free" =~ ^[0-9]+$ ]] || die "internal: pool free unreadable ('$free')"
   done
@@ -422,9 +390,8 @@ main() {
       fi
       if [[ -n "$label" ]]; then
         dataset_exists "$ds" || die "dataset $ds does not exist"
-        # A kept snapshot is exempt from retention/guard pruning, so the
-        # guard is still applied before taking it: pinning churn on a
-        # starving pool is the failure the guard exists to prevent.
+        # A kept snapshot is exempt from pruning, so the guard still applies
+        # before taking it: pinning churn on a starving pool is what it prevents.
         enforce_min_free || die "pool below ZFS_SNAPSHOT_MIN_FREE_BYTES even after pruning; free space first"
         take_snapshot "${ds}@manual-${label}"
         log "manual-${label} is exempt from auto-pruning: destroy it by hand when done"

@@ -1,112 +1,97 @@
 #!/usr/bin/env bash
-# ch-rebuild-projected.sh — clean-slate rebuild of the
-# PROJECTED (soroban_events-derived) sources from the ClickHouse lake.
+# ch-rebuild-projected.sh — clean-slate rebuild of the PROJECTED
+# (soroban_events-derived) sources from the ClickHouse lake.
 #
-# Why clean-slate (not additive upsert): the live AMM/projected trades were
-# written through the collision-era event_index=0 bug, so their op_index — and
-# thus the trades PK (source,ledger,tx_hash,op_index,ts) — differs from the
-# correct CH re-derivation. An additive -write DOUBLES rows (ON CONFLICT can't
-# dedup mismatched keys). So per 1M-ledger window: DELETE the window's rows,
-# then ch-rebuild -write re-derives them from CH with correct keys.
+# Why clean-slate, not additive upsert: the live projected trades were written
+# with event_index=0, so their op_index (and the trades PK source,ledger,
+# tx_hash,op_index,ts) differs from the correct CH re-derivation. An additive
+# -write DOUBLES rows (ON CONFLICT cannot dedup mismatched keys). So per
+# 1M-ledger window: DELETE the window's rows, then `ch-rebuild -write`
+# re-derives them from CH with correct keys.
 #
 # Scoped to <=62.894M (the CH backfill tip) so the live tail the indexer is
-# still writing stays untouched; the delete/rebuild range never overlaps the
-# indexer's current writes, so ingestion keeps running. Append-logged.
+# writing stays untouched and ingestion keeps running. Append-logged.
 #
 # The DELETE is destructive, so five rules bound it:
 #
 #   1. Ask first. Each window runs `ch-rebuild -write -preflight` BEFORE its
-#      DELETE: the same BackfillSafe / live-cursor / buffered-range refusals
-#      the real run would hit, for the same range and sources. Anything short
-#      of the verdict line — a refusal, a binary that predates -preflight,
-#      silence — deletes nothing.
-#   2. Delete only what that verdict says will be re-derived. The DELETE is
-#      built per source from the verdict's `rederive=` list (see
-#      window_delete_sql), in ONE transaction, and the SAME list is what
-#      -write is then given. SRC narrows the run and the DELETE with it. A
-#      source this script has no DELETE map for is refused outright: it can
-#      only be upserted additively, which is `ch-rebuild` run directly, not
-#      this script. sushiswap_v3 is not here because it has no DELETE map:
-#      an un-mapped source must never be deleted.
+#      DELETE (same BackfillSafe / live-cursor / buffered-range refusals as the
+#      real run, same range and sources). Anything short of the verdict line (a
+#      refusal, a binary without -preflight, silence) deletes nothing.
+#   2. Delete only what the verdict says will be re-derived. The DELETE is built
+#      per source from the verdict's `rederive=` list (window_delete_sql) in ONE
+#      transaction, and the SAME list is given to -write. SRC narrows both. A
+#      source with no DELETE map (e.g. sushiswap_v3) is refused outright: it can
+#      only be upserted additively via `ch-rebuild` directly, never deleted.
 #   3. Never forget an emptied window. $DIRTY gets `lo hi sources` before the
-#      DELETE and loses it only after the re-derive succeeds — and a run that
-#      cannot write that record deletes nothing. If the re-derive dies in
-#      between, the window IS emptied until this script runs again: the next
-#      run — whatever its SRC/FROM/TO — rebuilds every dirty window first, for
-#      exactly the sources that were deleted, and refuses to go on if it
-#      cannot.
-#   4. Never let an emptied window be certified complete. $DIRTY is a file on
-#      this box; the ADR-0033 completeness verdict cannot see it. So every
-#      state that leaves a window emptied — a failed re-derive, an ambiguous
-#      DELETE, a window still pending in $DIRTY at the start of a run —
-#      FILES the range as a projection dirty window per deleted source, by
-#      running the command it also prints:
+#      DELETE and loses it only after the re-derive succeeds; a run that cannot
+#      write that record deletes nothing. If the re-derive dies in between, the
+#      window IS emptied until the next run (whatever its SRC/FROM/TO), which
+#      rebuilds every dirty window first, for exactly the sources deleted, and
+#      refuses to go on if it cannot.
+#   4. Never let an emptied window be certified complete. $DIRTY is a local file
+#      the ADR-0033 completeness verdict cannot see. So every state that leaves
+#      a window emptied (failed re-derive, ambiguous DELETE, a window still
+#      pending in $DIRTY at start) FILES the range as a projection dirty window
+#      per deleted source, by running the command it also prints:
 #        ch-rebuild -from LO -to HI -sources <deleted> -record-dirty-window
 #      compute-completeness then re-reconciles that range instead of carrying
-#      its prior clean claim over it, and clears the obligation only with the
-#      verdict that discharges it. Nothing here ever retracts one: this
-#      script's own re-derive is the CAUSE of the dirtiness, not evidence
-#      against it, so one re-reconcile per incident is the price of the claim.
-#      The command is printed as well as run, because the filing can itself
-#      fail (no binary, PG down): the run then says COULD NOT FILE and the
-#      printed line is what the operator re-runs.
+#      its prior clean claim, and clears the obligation only with the verdict
+#      that discharges it. Nothing here retracts one: this script's re-derive is
+#      the CAUSE of the dirtiness, so one re-reconcile per incident is the price.
+#      The command is printed as well because the filing can fail (no binary, PG
+#      down): the run then says COULD NOT FILE and the printed line is the
+#      operator's re-run.
 #   5. Never leave the aggregates on the old rows. Every continuous aggregate
-#      over `trades` (prices_*, twap_*, the volume rollups) has a refresh
-#      policy that looks back minutes to months, never this far, so once a
-#      window's trades are rewritten this script refreshes them over it with
-#      `trades-cagg-refresh`, which also fails if prices_1m then disagrees
-#      with `trades` over sampled windows. $STALE gets `lo hi` before a DELETE that
-#      touches trades and loses it only after that refresh succeeds; the
-#      next run — whatever its SRC/FROM/TO — refreshes every $STALE line
-#      (after rebuilding its dirty windows) before anything else.
+#      over `trades` (prices_*, twap_*, volume rollups) has a refresh policy
+#      looking back minutes to months, never this far, so after a window's
+#      trades are rewritten this script runs `trades-cagg-refresh` over it, which
+#      also fails if prices_1m then disagrees with `trades` over sampled windows.
+#      $STALE gets `lo hi` before a DELETE touching trades and loses it only
+#      after that refresh succeeds; the next run refreshes every $STALE line
+#      (after rebuilding dirty windows) before anything else.
 #
-# Done-state ($STATE) is per source: `source lo hi`. A bare window start is
-# the pre-per-source format, written by the full-SRC run, and still reads as
-# "done for every source" — skipping is the non-destructive reading of it.
+# Done-state ($STATE) is per source: `source lo hi`. A bare window start is the
+# older full-SRC format and reads as "done for every source" (the
+# non-destructive reading).
 #
-# A SUCCESSFUL window files no projection dirty window, on purpose:
-# filing one per window for 8 sources over [50M,62.894M] would force the next
-# nightly compute-completeness to re-reconcile ~12.9M ledgers × 8
-# un-prefiltered sources — a likely timeout that takes out EVERY source's
-# verdict, which is worse than the stale claim it fixes. Rule 4 buys the claim
-# back only where the served tier is certainly wrong rather than merely
-# un-re-verified: the window is EMPTY.
+# A SUCCESSFUL window files no projection dirty window, on purpose: one per
+# window for 8 sources over [50M,62.894M] would force the next nightly
+# compute-completeness to re-reconcile ~12.9M ledgers × 8 un-prefiltered
+# sources, a likely timeout that takes out EVERY source's verdict. Rule 4 buys
+# the claim back only where the served tier is certainly wrong: the window is EMPTY.
 #
-# The one gap no in-process handler can close: a kill -9 or power loss
-# between the DELETE and the filing. The emptied window survives only in
-# $DIRTY, which no verdict reads — so the NEXT run of this script files every
-# $DIRTY line before it recovers anything. Until a run happens, /v1/coverage
-# still carries its prior clean claim over that range; if the box stays down,
-# file each $DIRTY line by hand:
+# The one gap no in-process handler closes: kill -9 or power loss between the
+# DELETE and the filing. The emptied window survives only in $DIRTY, which no
+# verdict reads, so the NEXT run files every $DIRTY line before recovering. Until
+# then /v1/coverage carries its prior clean claim over that range; if the box
+# stays down, file each $DIRTY line by hand:
 #   stellarindex-ops-ch ch-rebuild -config CFG -from LO -to HI \
 #     -sources <the $DIRTY line's sources> -record-dirty-window
 #
 # NOT in scope: sdex (op-derived, correctly keyed), external/band (not
-# CH-event-derived), reflector/redstone (exact, no collision — nothing to
-# clean-slate; re-derive them with ch-rebuild directly if ever needed).
+# CH-event-derived), reflector/redstone (exact, no collision; use ch-rebuild
+# directly if ever needed).
 #
 # This is the ONE sanctioned ch-rebuild over projected domains (the replay
-# decision rule in docs/architecture/ingest-pipeline.md points here):
-# additive upserts cannot repair a wrong PK, so the window is DELETEd first.
-# `ch-rebuild -write` reads the live projector's cursor per
-# source and refuses a range the live tail is still inside — the TO<=62.894M
-# scoping above already satisfies it, EXCEPT for a source whose own
-# projector cursor is lagging behind TO (e.g. a held blend_backstop catch-up).
-# Fix the lag (projector-replay / projected-rebuild) rather than reaching for
-# -allow-live-overlap.
+# decision rule in docs/architecture/ingest-pipeline.md points here): additive
+# upserts cannot repair a wrong PK, so the window is DELETEd first.
+# `ch-rebuild -write` reads each source's live projector cursor and refuses a
+# range the live tail is still inside; the TO<=62.894M scoping satisfies that
+# EXCEPT for a source whose own cursor lags behind TO (e.g. a held
+# blend_backstop catch-up). Fix the lag (projector-replay / projected-rebuild)
+# rather than using -allow-live-overlap.
 #
-# Exit: 0 complete · 1 a window was refused or failed, or a CAGG refresh
-# failed (read the log) · 2 bad SRC/FROM/TO/WIN (nothing touched), or a
-# corrupt line in $DIRTY or $STALE (lines listed before it may already have
-# been handled).
+# Exit: 0 complete · 1 a window was refused or failed, or a CAGG refresh failed
+# (read the log) · 2 bad SRC/FROM/TO/WIN (nothing touched), or a corrupt line in
+# $DIRTY or $STALE (lines listed before it may already have been handled).
 #
 # Run on r1: nohup setsid bash scripts/ops/ch-rebuild-projected.sh >/dev/null 2>&1 &
 set -uo pipefail
-# Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
-# values are unquoted (that is what systemd wants), so the shell would
-# expand `$`, split on `;`/`&`/`|`/whitespace and eat quotes inside a
-# secret: the services keep working while this path gets a mangled DSN
-# (deploy-ansible-secrets-5). Same reader as run-heavy-job.sh.
+# Read a systemd EnvironmentFile VERBATIM, never `.`/source it: its unquoted
+# values would be expanded, split on `;`/`&`/`|`/whitespace and stripped of
+# quotes inside a secret, so the services keep working while this path gets a
+# mangled DSN. Same reader as run-heavy-job.sh.
 # usage: load_env_file FILE [export]
 load_env_file() {
   local line
@@ -138,9 +123,9 @@ exec >>"$LOG" 2>&1
 
 # The sources window_delete_sql has a DELETE map for. Pinned against the
 # reconciliation catalogue's table ownership by
-# internal/ops/chops/ch_rebuild_projected_script_scope_test.go, and against the
-# projector registry by TestScriptKnownSources_Golden: a projected source left
-# out must be named, with its reason, in that test's knownScriptOmitsProjected.
+# internal/ops/chops/ch_rebuild_projected_script_scope_test.go and the projector
+# registry by TestScriptKnownSources_Golden: a projected source left out must be
+# named, with its reason, in that test's knownScriptOmitsProjected.
 KNOWN_SOURCES="aquarius soroswap phoenix comet blend cctp rozo defindex blend_backstop sorocredit upshift"
 TRADE_SOURCES="aquarius soroswap phoenix comet"
 
@@ -206,11 +191,11 @@ source_delete_sql() {
 }
 
 # window_delete_sql CSV LO HI → the DELETE batch for exactly those sources.
-# Every argument has been validated (is_source_csv + KNOWN_SOURCES, is_ledger)
-# before it gets here. The trades IN list is the ceiling of what this script
-# may ever delete from trades; the ANY list narrows it to this run.
-# Ahead of each DELETE, a probe prints `occupied=SRC` when the window holds
-# that source's rows, so the re-derive can be required to put rows back.
+# Every argument is validated (is_source_csv + KNOWN_SOURCES, is_ledger) before
+# it gets here. The trades IN list is the ceiling of what this script may ever
+# delete from trades; the ANY list narrows it to this run. A probe ahead of each
+# DELETE prints `occupied=SRC` when the window holds that source's rows, so the
+# re-derive can be required to put rows back.
 window_delete_sql() {
   local csv="$1" lo="$2" hi="$3" s names tsrcs trade_csv="" dels probe
   IFS=, read -r -a names <<<"$csv"
@@ -249,23 +234,20 @@ pending_sources() {
 
 mark_dirty() { grep -qxF "$1 $2 $3" "$DIRTY" || echo "$1 $2 $3" >> "$DIRTY"; }  # LO HI CSV
 
-# dirty_window_note LO HI CSV — rule 4. $DIRTY is a file on this box and the
-# ADR-0033 completeness verdict cannot see it, so an emptied window needs a
-# SECOND record: a projection dirty window, which makes the next
-# compute-completeness re-reconcile the range instead of carrying its prior
-# clean claim over it. Printed by file_dirty_window, which then runs it.
+# dirty_window_note LO HI CSV — rule 4. $DIRTY is local and the ADR-0033 verdict
+# cannot see it, so an emptied window needs a SECOND record, a projection dirty
+# window, that makes compute-completeness re-reconcile the range instead of
+# carrying its prior clean claim. Printed by file_dirty_window, which then runs it.
 dirty_window_note() {
   printf '%s\n' "TELL THE VERDICT [$1,$2] sources=$3 — until this is filed, /v1/coverage keeps carrying its prior clean claim over an EMPTY window. File it with:" \
     "  $OPS ch-rebuild -config $CFG -from $1 -to $2 -sources $3 -record-dirty-window" \
     "compute-completeness clears it only with the verdict that discharges it; this script never retracts one."
 }
-# file_dirty_window LO HI CSV — rule 4, carried out rather than suggested.
-# Printing the command left the obligation on an operator reading this log,
-# so between a failed re-derive and someone's attention /v1/coverage kept
-# certifying an EMPTY window complete. The note still goes to the log
-# first: it is the fallback when the filing below cannot be made, and what an
-# operator greps for. Non-fatal by itself — every caller either exits
-# non-zero anyway or is on its way to the recovery that removes the hole.
+# file_dirty_window LO HI CSV — rule 4, carried out rather than suggested:
+# merely printing left the obligation on an operator, and /v1/coverage kept
+# certifying an EMPTY window complete meanwhile. The note is logged first as the
+# fallback when filing fails. Non-fatal by itself: every caller exits non-zero
+# anyway or is heading into the recovery that removes the hole.
 file_dirty_window() {
   dirty_window_note "$1" "$2" "$3"
   $OPS ch-rebuild -config "$CFG" -from "$1" -to "$2" -sources "$3" -record-dirty-window && return 0
@@ -282,9 +264,9 @@ drop_line() {  # FILE LINE
 }
 clear_dirty() { drop_line "$DIRTY" "$1 $2 $3"; }  # LO HI CSV
 
-# $REQUIRED holds `LO HI CSV REQ` for an emptied window: REQ is what its
-# DELETE found occupied. A recovery's own probe sees the emptied window, so
-# only this record holds its re-derive to putting those rows back.
+# $REQUIRED holds `LO HI CSV REQ` for an emptied window: REQ is what its DELETE
+# found occupied. A recovery's own probe sees the emptied window, so only this
+# record holds its re-derive to putting those rows back.
 sorted_csv() { tr , '\n' <<<"$1" | sort -u | paste -sd, -; }
 required_rows() { awk -v k="$1 $2 $(sorted_csv "$3")" '$1" "$2" "$3 == k {print $4}' "$REQUIRED"; }  # LO HI CSV
 set_required_rows() {  # LO HI CSV REQ — an empty REQ drops the record
@@ -320,8 +302,8 @@ run_window() {
   echo "$verdict"
   rederive=${verdict##* rederive=}
 
-  # The verdict is the DELETE set, so it is held to the same rules as SRC —
-  # and it may only ever be NARROWER than what was asked.
+  # The verdict is the DELETE set, so it gets the SRC rules and may only be
+  # NARROWER than what was asked.
   if [ -n "$rederive" ]; then
     is_source_csv "$rederive" || { echo "PREFLIGHT verdict carries a malformed rederive list '$rederive' — nothing was deleted"; exit 1; }
     bad=$(unknown_in "$rederive")
@@ -347,9 +329,8 @@ run_window() {
     return 0
   fi
 
-  # Rule 3 is only a rule if the record is CHECKED: an unwritable state dir
-  # or a full disk would otherwise lose the marker and delete anyway, and
-  # nothing would rebuild the window.
+  # Rule 3 only holds if the record is CHECKED: an unwritable state dir or full
+  # disk would lose the marker and delete anyway.
   mark_dirty "$lo" "$hi" "$rederive" \
     || { echo "CANNOT RECORD [$lo,$hi] sources=$rederive in $DIRTY — nothing was deleted for this window. Fix the state directory (space, permissions) and re-run."; exit 1; }
   if has_trade_source "$rederive"; then
@@ -359,15 +340,15 @@ run_window() {
   sql=$(window_delete_sql "$rederive" "$lo" "$hi")
   echo "--- window [$lo,$hi] DELETE sources=$rederive $(date -u) ---"
   echo "$sql"
-  # One transaction: psql autocommits per statement otherwise, and a failure
-  # part-way would leave the earlier tables emptied. ON_ERROR_STOP quits at
-  # the first error, before COMMIT, and the open transaction rolls back. The
-  # dirty marker stays regardless: a failure ON the COMMIT is ambiguous, and
-  # redoing a window that turned out intact costs only time.
+  # One transaction: psql autocommits per statement otherwise and a mid-way
+  # failure would leave earlier tables emptied. ON_ERROR_STOP quits before
+  # COMMIT and the open transaction rolls back. The dirty marker stays
+  # regardless: a failure ON the COMMIT is ambiguous, and redoing an intact
+  # window costs only time.
   out=$(psql "$DSN" -v ON_ERROR_STOP=1 -At <<<"$sql") || rc=$?
   printf '%s\n' "$out"
-  # A source whose window held rows must get rows back: a re-derive that
-  # yields none for it (empty registry, lake gap) is a loss, not a quiet window.
+  # A source whose window held rows must get rows back: none (empty registry,
+  # lake gap) is a loss, not a quiet window.
   occupied=$({ sed -n 's/^occupied=//p' <<<"$out"; required_rows "$lo" "$hi" "$rederive" | tr , '\n'; } \
     | sed '/^$/d' | sort -u | paste -sd, -)
   set_required_rows "$lo" "$hi" "$rederive" "$occupied" \
@@ -376,10 +357,9 @@ run_window() {
          exit 1; }
   if [ "$rc" -ne 0 ]; then
     echo "DELETE FAILED [$lo,$hi] — one transaction, so rolled back unless the failure was the COMMIT itself. Recorded in $DIRTY; the next run redoes this window first."
-    # Ambiguous by construction: a failure ON the COMMIT deleted the
-    # rows. So the verdict is told the range may be emptied — a
-    # spurious window costs one re-reconcile, the other way round
-    # costs a certified hole.
+    # Ambiguous by construction: a failure ON the COMMIT deleted the rows. Tell
+    # the verdict the range may be emptied: a spurious window costs one
+    # re-reconcile, the other way round a certified hole.
     file_dirty_window "$lo" "$hi" "$rederive"
     exit 1
   fi
@@ -408,9 +388,8 @@ bad=$(unknown_in "$SRC")
 [ -z "$bad" ] || refuse "SRC names '$bad', which this script has no DELETE map for (it knows: $KNOWN_SOURCES). It would be upserted additively with nothing deleted — run ch-rebuild directly for that"
 
 # $DIRTY is the only local record that a window was emptied, so a run that
-# cannot both read it and append to it may not delete anything (rule 3). The
-# probe is the real operation — an append — because the state directory may
-# be missing, full, read-only, or occupied by something that is not a file.
+# cannot both read and append to it may not delete anything (rule 3). The probe
+# is a real append: the state dir may be missing, full, read-only or not a file.
 if ! { : >> "$DIRTY" && [ -f "$DIRTY" ] && [ -r "$DIRTY" ]; }; then
   refuse "\$DIRTY ($DIRTY) is not a readable, appendable file — it is the only record that a window was emptied, and without it a DELETE could be forgotten"
 fi

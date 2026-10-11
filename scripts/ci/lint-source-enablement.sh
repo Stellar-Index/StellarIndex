@@ -1,86 +1,56 @@
 #!/usr/bin/env bash
 # lint-source-enablement.sh — "registered, tracked, and never actually run".
 #
-# THE BUG CLASS, observed TWICE on production:
+# BUG CLASS (seen twice in production): a decoder is merged and registered at
+# every site /v1/coverage reads (projector registry, sink, gated registry,
+# completeness catalogue, gap-detector targets, sourcenet, source metadata) but
+# never added to `stellarindex_enabled_sources` in
+# configs/ansible/roles/archival-node/defaults/main.yml. That list is the only
+# path to `[ingestion] enabled_sources` in /etc/stellarindex.toml, so no
+# projector ever runs for the source.
+# Silent by construction: the lake holds the events, /v1/coverage reports the
+# source INCOMPLETE forever (no projector cursor, recognition_ok:false,
+# lake_complete:false, coverage_pct 0, watermark == genesis-1, standing
+# stellarindex_completeness_incomplete) and the served tier stays EMPTY.
+# A CHANGELOG line saying "not yet enabled" is a declaration, not a mechanism.
 #
-#   A protocol decoder is written, merged and deployed. It is registered at
-#   every site the completeness verdict reads — projector registry, sink,
-#   gated registry, the compute-completeness reconciliation catalogue,
-#   gap-detector targets, sourcenet, the source metadata registry — so
-#   /v1/coverage starts asserting a verdict about it. But the source is never
-#   added to `stellarindex_enabled_sources` in
-#   configs/ansible/roles/archival-node/defaults/main.yml, which is the only
-#   path to `[ingestion] enabled_sources` in /etc/stellarindex.toml and
-#   therefore the only thing that makes a projector run for it.
+# INVARIANT, in seven parts. KNOWN is internal/config/validate.go KnownSources
+# (what config.Validate accepts at boot). ENABLED is the pubnet ansible default.
+# WAIVED is the declared not-yet-enabled set. CATALOGUE is the
+# compute-completeness reconciliation catalogue (the set /v1/coverage publishes
+# a verdict for). ALWAYS_ON is what the projector registers with no
+# enabled_sources entry (the sep41 domain, SKIP-SOLE-WRITER).
 #
-#   The result is silent by construction: the archive is complete, the lake
-#   holds the events, /v1/coverage reports the source INCOMPLETE forever with
-#   watermark_ledger stuck one below genesis, and the served tier is
-#   permanently EMPTY. Nothing crashes, no unit fails, no alert names a cause.
-#
-#   The symptom: no projector cursor, recognition_ok:false,
-#   lake_complete:false, coverage_pct 0, watermark == genesis - 1, and a
-#   standing stellarindex_completeness_incomplete. A CHANGELOG line saying
-#   "not yet enabled" is a declaration, not a mechanism.
-#
-# THE INVARIANT this gate enforces, in six parts. `KNOWN` is
-# internal/config/validate.go's KnownSources — the authoritative whitelist of
-# names `[ingestion] enabled_sources` accepts (docs/operations/self-hosting.md
-# §5 says so, and config.Validate rejects anything else at boot). `ENABLED` is
-# the pubnet ansible default. `WAIVED` is the declared not-yet-enabled set.
-# `CATALOGUE` is the compute-completeness reconciliation catalogue, i.e. the
-# set /v1/coverage publishes a verdict for. `ALWAYS_ON` is the set the
-# projector registers WITHOUT an enabled_sources entry (the sep41 domain,
-# SKIP-SOLE-WRITER).
-#
-#   §1  KNOWN ⊆ ENABLED ∪ WAIVED   a runnable source is run, or declared not
-#                                  to be. THIS is the two production defects.
-#   §2  ENABLED ⊆ KNOWN            an enabled name config.Validate would
-#                                  reject is a boot failure on the next apply
-#   §3  WAIVED ∩ ENABLED = ∅       a name cannot be both run and declared unrun
-#   §4  WAIVED ∩ CATALOGUE = ∅     THE TEETH. Waiving a source the completeness
-#                                  machinery tracks re-creates the exact
-#                                  defect: a permanently-red /v1/coverage row
-#                                  nobody can act on. If we are not running it,
-#                                  we must not publish a verdict about it.
+#   §1  KNOWN ⊆ ENABLED ∪ WAIVED   a runnable source is run, or declared not to
+#                                  be (the two production defects)
+#   §2  ENABLED ⊆ KNOWN            else config.Validate fails boot on next apply
+#   §3  WAIVED ∩ ENABLED = ∅       not both run and declared unrun
+#   §4  WAIVED ∩ CATALOGUE = ∅     THE TEETH: a waived source with a published
+#                                  verdict is a permanently red /v1/coverage row
+#                                  nobody can act on
 #   §5  CATALOGUE ⊆ KNOWN ∪ ALWAYS_ON
-#                                  a source tracked for completeness that no
-#                                  operator can even name in enabled_sources is
-#                                  §1 evaded — same permanent red
-#   §6  WAIVED ⊆ KNOWN             a stale waiver for a source that no longer
-#                                  exists hides the next one
+#                                  a tracked source no operator can name in
+#                                  enabled_sources is §1 evaded
+#   §6  WAIVED ⊆ KNOWN             a stale waiver hides the next one
 #   §7  no PUBNET inventory sets stellarindex_enabled_sources
-#                                  r1/r2/r3 take the list from the role
-#                                  default, which is the only reason checking
-#                                  that default says anything about what
-#                                  pubnet runs. An inventory-level override
-#                                  would shadow it and make §1 a verdict about
-#                                  a list nobody applies.
+#                                  r1/r2/r3 inherit the role default; an
+#                                  override would make §1 a verdict about a
+#                                  list nobody applies
 #
-# THE ESCAPE HATCH is deliberate, greppable, and lives on the ANSIBLE side:
+# ESCAPE HATCH: `stellarindex_sources_not_yet_enabled: {<source>: "<why>"}`,
+# in the same ansible file directly below the list it exempts, so enabling is a
+# one-line move. It lives on the ansible side on purpose: the bug is editing six
+# Go files and never opening the deployment default. §4 stops the hatch
+# becoming the bug: defer RUNNING a decoder, never while CLAIMING a verdict.
 #
-#   stellarindex_sources_not_yet_enabled:
-#     <source>: "<why it is written but not run>"
+# SCOPE: only the PUBNET default. testnet/futurenet carry `[sdex]` alone and
+# sourcenet.Applicable() reports contract-anchored sources not-applicable
+# there, so their verdicts exclude them. The gate asserts the defaults file
+# still declares stellar_network: pubnet so that reasoning cannot rot.
 #
-# — in the same file, immediately below the list it exempts, so enabling a
-# source is a one-line move from one block to the other. It is on the ansible
-# side ON PURPOSE: the whole bug is that someone edits six Go files and never
-# opens the deployment default. This gate makes that file unavoidable,
-# whichever answer is given. And §4 stops the hatch becoming the bug: you may
-# defer RUNNING a decoder, you may not defer it while still CLAIMING a verdict.
-#
-# SCOPE. Only the PUBNET default is checked. The testnet/futurenet inventories
-# deliberately carry `[sdex]` alone, and sourcenet.Applicable() reports every
-# contract-anchored source as not-applicable there, so their coverage verdicts
-# EXCLUDE those sources rather than reading permanently red. The gate asserts
-# the defaults file still declares stellar_network: pubnet, so that reasoning
-# cannot silently stop holding.
-#
-# NON-VACUITY. Every extracted set has a floor and every parse is strict: an
-# unrecognised line inside any of the five blocks is a hard failure, not a
-# skipped entry. A gate whose subject set silently emptied would report OK
-# while checking nothing — this repo has been bitten by that shape more than
-# once, so each extraction fails loudly instead.
+# NON-VACUITY: every extracted set has a floor and every parse is strict (an
+# unrecognised line in any block is a hard failure), so a silently emptied
+# subject set cannot report OK while checking nothing.
 #
 # Run: bash scripts/ci/lint-source-enablement.sh
 set -euo pipefail
@@ -97,9 +67,8 @@ SOURCES_DIR=internal/sources
 ENABLED_KEY=stellarindex_enabled_sources
 WAIVER_KEY=stellarindex_sources_not_yet_enabled
 
-# Floors for the non-vacuity guards. Deliberately well below today's counts
-# (20 known / 19 enabled / 22 catalogue) — they exist to catch an extraction
-# that has stopped matching, not to freeze the registry size.
+# Non-vacuity floors, well below today's counts (20 known / 19 enabled / 22
+# catalogue): they catch an extraction that stopped matching, not registry size.
 MIN_KNOWN=10
 MIN_ENABLED=10
 MIN_CATALOGUE=10
@@ -120,8 +89,8 @@ bullets() {
 
 count() { printf '%s\n' "$1" | grep -c . || true; }
 
-# set_minus A B — lines in A that are not in B. Blank-tolerant: an empty set
-# is the empty string, which comm would otherwise read as one empty line.
+# set_minus A B — lines in A not in B. Blank-tolerant: an empty set is "", which
+# comm would read as one empty line.
 set_minus() {
 	comm -23 <(printf '%s\n' "$1" | grep -v '^$' | sort -u) \
 		<(printf '%s\n' "$2" | grep -v '^$' | sort -u) || true
@@ -149,10 +118,9 @@ fi
 
 # ─── 2. ENABLED — the pubnet enabled-sources list ───────────────────
 #
-# Strict reader: inside the block every line must be blank, a comment, or a
-# scalar list item. Anything else (a nested mapping, a Jinja expression, a
-# quoted string with a space) is REPORTED rather than skipped, because a
-# skipped entry is exactly how this gate would go quietly vacuous.
+# Strict reader: every line in the block must be blank, a comment or a scalar
+# list item. Anything else is REPORTED, not skipped (a skipped entry is how
+# this gate would go quietly vacuous).
 read_yaml_list() { # <file> <key>
 	awk -v key="$2" '
 		$0 == key ":" { inb = 1; next }
@@ -195,9 +163,8 @@ fi
 
 # ─── 3. WAIVED — the declared not-yet-enabled set ───────────────────
 #
-# Two legal shapes: `key: {}` (nothing waived) or a block mapping of
-# `  <source>: "<reason>"`. The reason is MANDATORY — a bare name is a
-# silence with extra steps, which is the thing this gate exists to end.
+# Legal shapes: `key: {}` (nothing waived) or a mapping of `  <source>: "<reason>"`.
+# The reason is MANDATORY; a bare name is silence with extra steps.
 read_yaml_reason_map() { # <file> <key>
 	awk -v key="$2" '
 		$0 == key ": {}" { found = 1; next }
@@ -268,16 +235,14 @@ n_known=$(count "$KNOWN")
 
 # ─── 5. CATALOGUE — what compute-completeness publishes a verdict for ──
 #
-# Entries spell their name either as a literal or as <pkg>.SourceName.
-# Resolving the symbolic form matters: four of the twenty-two use it, and a
-# grep that quietly dropped them would take the sep41 domain and two others
-# out of §4/§5 with no visible change.
+# Names are a literal or <pkg>.SourceName. Resolve the symbolic form: four of
+# 22 use it, and dropping them would silently take sep41 and two others out of
+# §4/§5.
 resolve_source_name() { # <go-file> <package-ident>
 	local file="$1" ident="$2" path dir gf vals
 	# `|| true` on every no-match-able grep: under `set -e` + pipefail an
-	# unmatched grep aborts the assignment, and the caller's own
-	# "extracted nothing" guard never runs — the gate would exit 1 with an
-	# EMPTY message instead of naming what it could not read.
+	# unmatched grep aborts the assignment before the caller's "extracted
+	# nothing" guard runs, exiting 1 with an EMPTY message.
 	path=$(grep -oE "^[[:space:]]*${ident} \"github\.com/[^\"]+\"" "$file" |
 		grep -oE '"[^"]+"' | tr -d '"' | sort -u || true)
 	if [ -z "$path" ]; then
@@ -298,9 +263,8 @@ resolve_source_name() { # <go-file> <package-ident>
 	printf '%s\n' "$vals"
 }
 
-# The `({|<space>)name:` anchor keeps a field like `a_name:` out of the
-# capture; both spellings the catalogue uses (`{name: "x"` at the head of an
-# inline literal, and a tab-indented `name:` on its own line) are covered.
+# The `({|<space>)name:` anchor keeps a field like `a_name:` out of the capture;
+# covers `{name: "x"` in inline literals and tab-indented `name:` lines.
 CATALOGUE=""
 cat_tokens=$(grep -oE '(\{|[[:space:]])name:[[:space:]]+("[a-z0-9_-]+"|[a-z0-9_]+\.SourceName)' "$CATALOGUE_GO" |
 	sed -E 's/^.*name:[[:space:]]+//' | sort -u || true)
@@ -330,11 +294,10 @@ n_catalogue=$(count "$CATALOGUE")
 
 # ─── 6. ALWAYS_ON — projector sources with no enabled_sources entry ──
 #
-# BuildRegistry registers every Watched spec unconditionally
-# (SKIP-SOLE-WRITER: the dispatcher cedes the sep41 domain to the projector, and
-# the sep41 names are not in KnownSources so they can never legally appear in
-# enabled_sources). Those are the only catalogue entries §5 may excuse, and the
-# excuse is read from the code that grants it rather than hardcoded here.
+# BuildRegistry registers every Watched spec unconditionally (SKIP-SOLE-WRITER:
+# the dispatcher cedes sep41 to the projector, and sep41 names are not in
+# KnownSources so can never appear in enabled_sources). These are the only
+# catalogue entries §5 may excuse, read from the granting code, not hardcoded.
 ALWAYS_ON=""
 always_tokens=$(awk '/^[[:space:]]*Name:[[:space:]]*[a-z0-9_]+\.SourceName/ { n = $2; sub(/,$/, "", n) }
 	/^[[:space:]]*Watched:[[:space:]]*true/ { print n }' "$PROJECTOR_GO" | sort -u || true)
@@ -447,13 +410,10 @@ fi
 
 # ─── §7 no pubnet inventory shadows the role default ────────────────
 #
-# The whole gate is a statement about one list, and it is only a statement
-# about what PUBNET runs because r1/r2/r3 inherit that list from the role
-# default rather than setting their own. testnet/futurenet DO override it
-# (they run `[sdex]` alone, and sourcenet reports every contract-anchored
-# source as not-applicable there, so their coverage verdicts EXCLUDE those
-# sources instead of reading permanently red) — which is why the discriminator
-# here is the inventory's own stellar_network and not its filename.
+# The gate is only about what PUBNET runs because r1/r2/r3 inherit the role
+# default. testnet/futurenet DO override it (`[sdex]` alone; their verdicts
+# exclude contract-anchored sources), so the discriminator is the inventory's
+# own stellar_network, not its filename.
 shadowed=""
 n_pubnet_inv=0
 for inv in "$INVENTORY_DIR"/*.yml; do

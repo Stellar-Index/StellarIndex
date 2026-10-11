@@ -2,126 +2,96 @@
 # lint-migration-commands.sh — a SQL command written into a migration
 # header is a CLAIM, and claims get tested.
 #
-# WHY THIS EXISTS. A migration header handed the operator its only
-# abort mechanism — a `SELECT alter_job(job_id, scheduled => false)`
-# with a predicate resolved from the continuous-aggregates catalogue's
-# materialization-hypertable-name column. `timescaledb_information.jobs`
-# renders that column as COALESCE(ca.user_view_name, ht.table_name), so
-# for a continuous aggregate the predicate matched ZERO rows. `alter_job`
-# over an empty set is not an error: no output, exit 0 — a disarm that
-# matched nothing reads exactly like a disarm that worked. Had the
-# policy shipped armed, 66 GB would have dropped 24 hours later while
-# the operator believed it was disabled.
+# WHY. A migration header handed the operator its only abort mechanism: a
+# `SELECT alter_job(job_id, scheduled => false)` whose predicate used the
+# continuous-aggregates catalogue's materialization-hypertable-name column.
+# `timescaledb_information.jobs` renders that column as
+# COALESCE(ca.user_view_name, ht.table_name), so for a continuous aggregate the
+# predicate matched ZERO rows, and `alter_job` over an empty set is no error
+# (no output, exit 0): a disarm that matched nothing reads like one that worked.
+# Had the policy shipped armed, 66 GB would have dropped 24 hours later while the
+# operator believed it disabled. CI could not see it: the migration BODY is run
+# by the integration suite, but the HEADER, where every operator procedure
+# lives, was prose to every gate.
 #
-# Nothing in CI could see that, because nothing in CI had any opinion
-# about the SQL above `BEGIN;`. The migration's BODY is executed by the
-# integration suite; its HEADER — which is where every operator
-# procedure in this repo lives — was prose to every gate in the tree.
-#
-# migrations/0156_prices_1m_retention.up.sql is the worked example of
-# the shape this gate generalises:
-# internal/storage/timescale/retention_policy_test.go pins that file's
-# arm and disarm commands, its `force => true` requirement, and the
-# `DO NOT RUN:` marker convention for a form quoted as a warning rather
-# than offered as a recipe.
+# migrations/0156_prices_1m_retention.up.sql is the worked example:
+# internal/storage/timescale/retention_policy_test.go pins its arm and disarm
+# commands, its `force => true` requirement, and the `DO NOT RUN:` marker for a
+# form quoted as a warning rather than offered as a recipe.
 #
 # ── WHAT COUNTS AS AN EXECUTABLE COMMAND ─────────────────────────────
 #
-# Migration headers in this tree are mostly prose, and prose is full of
-# SQL words ("DROP TABLE removes the hypertable, its chunks and its
-# compression settings in one statement"). A candidate is an executable
-# command only when ALL FOUR hold:
+# Headers are mostly prose full of SQL words ("DROP TABLE removes the
+# hypertable, its chunks and its compression settings in one statement"). A
+# candidate is an executable command only when ALL FOUR hold:
 #
-#   1. it starts at an UPPERCASE statement verb — SELECT INSERT UPDATE
-#      DELETE CALL CREATE ALTER DROP TRUNCATE REFRESH GRANT REVOKE
-#      VACUUM ANALYZE CLUSTER REINDEX COPY SET COMMENT EXPLAIN WITH —
-#      anywhere in the comment paragraph, not only at its start (a
-#      recipe is often introduced mid-sentence with "e.g.");
-#   2. it TERMINATES with a semicolon inside the same paragraph. A
-#      statement an operator is meant to paste ends in `;`; a fragment
-#      quoted to name a shape does not;
-#   3. it carries a STRUCTURAL SQL marker — a second uppercase keyword
-#      (FROM WHERE INTO TABLE INDEX VIEW VALUES SET ON AS JOIN NULL AND
-#      OR ADD COLUMN CONSTRAINT EXISTS CASCADE POLICY JOB MATERIALIZED
-#      CONCURRENTLY USING WITH ORDER GROUP LIMIT) or a `name(` function
-#      call. "one INSERT per swap (low volume, sparse hot path);" has
-#      neither;
-#   4. it contains NO lowercase English function word outside quoted
-#      literals. SQL keywords in this tree are uppercase and English
-#      ones are not, which is the discriminator that keeps this gate
-#      off the prose it is surrounded by.
+#   1. it starts at an UPPERCASE statement verb — SELECT INSERT UPDATE DELETE
+#      CALL CREATE ALTER DROP TRUNCATE REFRESH GRANT REVOKE VACUUM ANALYZE
+#      CLUSTER REINDEX COPY SET COMMENT EXPLAIN WITH — anywhere in the comment
+#      paragraph (a recipe is often introduced mid-sentence with "e.g.");
+#   2. it TERMINATES with a semicolon in the same paragraph (a pasteable
+#      statement ends in `;`; a fragment quoted to name a shape does not);
+#   3. it carries a STRUCTURAL SQL marker: a second uppercase keyword (FROM
+#      WHERE INTO TABLE INDEX VIEW VALUES SET ON AS JOIN NULL AND OR ADD COLUMN
+#      CONSTRAINT EXISTS CASCADE POLICY JOB MATERIALIZED CONCURRENTLY USING WITH
+#      ORDER GROUP LIMIT) or a `name(` call. "one INSERT per swap (low volume,
+#      sparse hot path);" has neither;
+#   4. it contains NO lowercase English function word outside quoted literals
+#      (SQL keywords here are uppercase, English ones are not: the discriminator
+#      that keeps this gate off the surrounding prose).
 #
-# Three classes come out of that, and only one is held to the rule:
+# Three classes come out, and only one is held to the rule:
 #
 #   RECIPE   — a runnable command. MUST be covered by a test.
-#   WARNING  — carries the `DO NOT RUN` marker. Exempt: it is quoted
-#              precisely so an operator RECOGNISES the destructive form,
-#              and a test that pinned it would be pinning something
-#              nobody should ever type. (0081 / 0126 / 0147 all document
-#              `CALL refresh_continuous_aggregate('twap_1h', NULL,
-#              now());`, which post-0156 deletes nine years of TWAP
-#              history — 0156 quotes it under the marker for exactly
-#              this reason.)
-#   SKETCH   — contains a literal `...` ellipsis. Exempt: it cannot be
-#              pasted and run, so there is no claim to execute. Reported
-#              in the summary so the class stays visible rather than
-#              becoming a hiding place.
+#   WARNING  — carries the `DO NOT RUN` marker. Exempt: quoted so an operator
+#              RECOGNISES the destructive form; pinning it with a test would pin
+#              something nobody should type. (0081 / 0126 / 0147 document
+#              `CALL refresh_continuous_aggregate('twap_1h', NULL, now());`,
+#              which post-0156 deletes nine years of TWAP history; 0156 quotes it
+#              under the marker.)
+#   SKETCH   — contains a literal `...` ellipsis. Exempt: it cannot be pasted
+#              and run. Reported in the summary so the class stays visible.
 #
 # ── HOW A TEST PROVES IT COVERS A COMMAND ────────────────────────────
 #
-# A RECIPE is covered when some `*_test.go` in the tree BOTH names the
-# migration file AND contains a verbatim 16-character-or-longer slice of
-# the command (both sides whitespace-normalised first). Naming the file
-# alone is not enough — a test that reads a migration for some unrelated
-# reason would blanket-cover every command in it. The shared slice is
-# what makes the link specific: `scheduled => false`, `SELECT job_id,
-# scheduled, next_start`, `hypertable_name = 'prices_1m'` and
-# `refresh_continuous_aggregate` are each the assertion that would have
-# caught the zero-row predicate, and each is a slice the covering test
-# holds verbatim.
+# A RECIPE is covered when some `*_test.go` BOTH names the migration file AND
+# contains a verbatim slice of the command of 16+ characters (both sides
+# whitespace-normalised). Naming the file alone would let a test that reads a
+# migration for another reason blanket-cover every command in it. Slices such as
+# `scheduled => false`, `SELECT job_id, scheduled, next_start`,
+# `hypertable_name = 'prices_1m'` and `refresh_continuous_aggregate` are each
+# the assertion that would have caught the zero-row predicate.
 #
-# This is a TEXT gate, not an execution gate — a shell lint cannot run
-# SQL. What it enforces is that somebody wrote an assertion ABOUT the
-# command, which is the step whose absence shipped the defect. It is a
-# LINK requirement and it is stated as one: a slice as generic as the
-# catalogue view the command reads
-# (`timescaledb_information.jobs`, 28 characters) satisfies it, so the
-# gate cannot judge whether the assertion is the RIGHT one. It can only
-# refuse a command that nothing anywhere asserts on, and refuse a test
-# that claims a whole header by naming its file. Judging the assertion
-# is the reviewer's job, and 0156's test is what that looks like when it
-# is done properly.
+# This is a TEXT gate, not an execution gate. It enforces that somebody wrote an
+# assertion ABOUT the command, the step whose absence shipped the defect. It is a
+# LINK requirement: a slice as generic as the catalogue view the command reads
+# (`timescaledb_information.jobs`, 28 chars) satisfies it, so the gate cannot
+# judge whether the assertion is the RIGHT one; it only refuses a command nothing
+# asserts on, and a test that claims a whole header by naming its file. Judging
+# the assertion is the reviewer's job (0156's test is the model).
 #
 # ── GRANDFATHERING ───────────────────────────────────────────────────
 #
-# 151 migrations predate this rule and 10 of them carry header commands.
-# A gate that failed on all of them would ship disabled, which is worse
-# than not shipping it. Pre-existing commands are listed in
+# 151 migrations predate this rule, 10 with header commands; failing them all
+# would ship the gate disabled. They are listed in
 # scripts/ci/lint-migration-commands.baseline, one
-# `<migration-path>#<despaced-command>  <reason>` entry each, reason
-# REQUIRED. It is a scripts/ci/*.baseline, so growing it needs a
-# `Baseline-Growth:` commit trailer naming it (lint-baseline-growth.sh),
-# and an entry whose command is gone or has since been covered is STALE
-# and fails until the line is deleted. The debt shrinks monotonically
-# and a NEW migration cannot join it quietly.
+# `<migration-path>#<despaced-command>  <reason>` entry each, reason REQUIRED.
+# Growing it needs a `Baseline-Growth:` commit trailer (lint-baseline-growth.sh),
+# and an entry whose command is gone or since covered is STALE and fails until
+# deleted. The debt shrinks monotonically; a NEW migration cannot join quietly.
 #
 # ── DOCS FENCED SQL ──────────────────────────────────────────
 #
-# The same failure mode lives outside migrations/: a runbook's fenced
-# ```sql block is copy-pasted straight into psql, and a DELETE/UPDATE
-# against a hypertable with no time-bound predicate is a full-table
-# scan of `trades` waiting to happen. This gate additionally
-# walks every fenced ```sql block under docs/, and for every DELETE or
-# UPDATE statement in one, requires a time-bound predicate: a
-# comparison against a `*_at`/`*_time`/`ts`/`ledger*` column, a
-# `BETWEEN`, or an `interval` literal. A block containing `DO NOT RUN`
-# anywhere is exempt, same rationale as the migration-header WARNING
-# class above.
+# A runbook's fenced ```sql block is pasted straight into psql, and a
+# DELETE/UPDATE on a hypertable with no time-bound predicate is a full-table
+# scan of `trades`. So this gate also walks every fenced ```sql block under
+# docs/ and requires every DELETE or UPDATE to carry a time-bound predicate: a
+# comparison on a `*_at`/`*_time`/`ts`/`ledger*` column, a `BETWEEN`, or an
+# `interval` literal. A block containing `DO NOT RUN` is exempt (as the WARNING
+# class above).
 #
 # Usage: lint-migration-commands.sh [repo-root]
-#   The optional root exists for
-#   scripts/ci/lint-migration-commands-test.sh, which runs this gate
-#   against fixture trees.
+#   The optional root is for scripts/ci/lint-migration-commands-test.sh (fixtures).
 #
 # Exit 0 clean, non-zero on any violation.
 set -euo pipefail
@@ -145,10 +115,9 @@ if [ "${#migs[@]}" -eq 0 ]; then
 fi
 
 # ── extraction ───────────────────────────────────────────────────────
-#
-# Emits `<file>\t<line>\t<class>\t<normalised command>` per candidate,
-# then a `#counts <paragraphs> <recipes> <warnings> <sketches>` line so
-# an extractor that silently stopped matching reads as a fault.
+# Emits `<file>\t<line>\t<class>\t<normalised command>` per candidate, then a
+# `#counts <paragraphs> <recipes> <warnings> <sketches>` line so an extractor
+# that stopped matching reads as a fault.
 commands="$(
   awk '
     function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
@@ -246,12 +215,12 @@ in_baseline() {
   return 1
 }
 
-# The Go test corpus, enumerated ONCE. Re-walking the tree per command
-# turned a sub-second gate into a multi-minute one.
+# The Go test corpus, enumerated ONCE (re-walking per command made the gate
+# multi-minute).
 TESTLIST="$(mktemp)"
 trap 'rm -f "$TESTLIST"' EXIT
-# Hidden dirs hold no module tests but can hold whole checkouts (.claude
-# agent worktrees: 25 GB, ~15 s per grep).
+# Hidden dirs hold no module tests but can hold whole checkouts (.claude agent
+# worktrees: 25 GB, ~15 s per grep).
 find . \( -name '.?*' -o -name vendor -o -name node_modules \) -prune -o \
      -type f -name '*_test.go' -print 2>/dev/null \
   | sed 's#^\./##' | sort > "$TESTLIST"
@@ -269,8 +238,8 @@ covering_tests() {
 covered() {
   local cmd="$1"; shift
   [ "$#" -gt 0 ] || return 1
-  # The command rides in the environment rather than through `awk -v`,
-  # which expands backslash escapes in the value it is handed.
+  # The command rides in the environment, not `awk -v`, which expands backslash
+  # escapes in the value.
   LINT_CMD="$cmd" awk '
     BEGIN { window = 16; cmd = ENVIRON["LINT_CMD"] }
     { line = $0; gsub(/[ \t]+/, " ", line); T = T " " line }
@@ -300,8 +269,7 @@ while IFS=$'\t' read -r file line class cmd; do
   key="${file}#${key_cmd:0:80}"
   observed="${observed}|${key}|"
 
-  # Commands arrive grouped by file (awk walks the sorted migration
-  # list), so the test lookup runs once per migration, not per command.
+  # Commands arrive grouped by file, so the test lookup runs once per migration.
   if [ "$file" != "$cur_file" ]; then
     cur_file="$file"
     tests=()
@@ -340,33 +308,29 @@ done
 
 # ── the operator corpus: destructive forms outside migration headers ──
 #
-# A header is not the only place an operator is handed SQL. Runbooks,
-# alert annotations and ops scripts hand it over too, and no gate read
-# them: both rule trees and the data-freshness runbook prescribed
-# the NULL-start TWAP refresh 0156 marks DO NOT RUN, and an ops script ran
-# an unbounded UPDATE on trades. The rules below are about DESTRUCTION,
-# not coverage, so they hold for every file in scope with no baseline and
+# A header is not the only place an operator is handed SQL: runbooks, alert
+# annotations and ops scripts do too, and no gate read them (both rule trees and
+# the data-freshness runbook prescribed the NULL-start TWAP refresh 0156 marks
+# DO NOT RUN; an ops script ran an unbounded UPDATE on trades). These rules are
+# about DESTRUCTION, so they hold for every file in scope with no baseline and
 # no test escape:
 #
-#   NULL-START REFRESH — `refresh_continuous_aggregate(<view>, NULL, …)`
-#   on a view built directly FROM a relation that carries a retention
-#   policy processes every invalidation the drops wrote, against a
-#   source whose old chunks are gone, and deletes that history. The
-#   retained relations and the views over them are derived from the
-#   migrations in order, so arming a new policy extends the rule. A view
-#   name the gate cannot resolve (`{{ $labels.view }}`, `<view>`) counts,
-#   since it may be one. Exempt only under a `DO NOT RUN` marker in the
-#   80 characters before the call. Migrations are held to it from 0156,
-#   the file that created the hazard; earlier ones are immutable and
-#   their forms are baselined above.
+#   NULL-START REFRESH — `refresh_continuous_aggregate(<view>, NULL, …)` on a
+#   view built directly FROM a relation with a retention policy processes every
+#   invalidation the drops wrote against a source whose old chunks are gone, and
+#   deletes that history. Retained relations and their views are derived from
+#   the migrations in order, so arming a new policy extends the rule. A view name
+#   the gate cannot resolve (`{{ $labels.view }}`, `<view>`) counts, since it may
+#   be one. Exempt only under a `DO NOT RUN` marker in the 80 characters before
+#   the call. Migrations are held to it from 0156 (which created the hazard);
+#   earlier ones are immutable and baselined above.
 #
-#   UNBOUNDED DML — an UPDATE or DELETE on a compressed hypertable in
-#   an ops or dev SQL script must name the table's time column after
-#   WHERE. Without it the plan cannot prune chunks: the Go restamp path
-#   measured such a `trades` UPDATE at 260 result relations and ~270 GB
-#   of WAL, on a host whose pg_wal sits on a 49 GB root filesystem
-#   (internal/storage/timescale/usd_volume_restamp.go). The compressed
-#   tables and their time columns are derived from the migrations
+#   UNBOUNDED DML — an UPDATE or DELETE on a compressed hypertable in an ops or
+#   dev SQL script must name the table's time column after WHERE, or the plan
+#   cannot prune chunks: the Go restamp path measured such a `trades` UPDATE at
+#   260 result relations and ~270 GB of WAL, on a host whose pg_wal sits on a
+#   49 GB root filesystem (internal/storage/timescale/usd_volume_restamp.go).
+#   Compressed tables and time columns are derived from the migrations
 #   (add/remove_compression_policy, create_hypertable).
 op_dirs=()
 for d in docs deploy configs scripts/ops scripts/dev; do
@@ -406,13 +370,11 @@ retained_views="$(
 )"
 
 op_files=()
-# A command substitution ($( )), checkable by `set -e` — not a process
-# substitution (`<( )`), whose subshell's exit status never reaches the
-# reader loop, so a crash inside it (e.g. a parser bug) is silently
-# swallowed and this gate reports ok over a truncated file list. See bash
-# 3.2's rejection of a bare `case` pattern written inside `<( )`: the
-# pattern needs a leading `(` there, which is why one appears below even
-# though it changes nothing under a case statement outside a substitution.
+# A command substitution ($( )), not a process substitution (`<( )`): the
+# latter's exit status never reaches the reader loop, so a crash inside it (a
+# parser bug) is swallowed and the gate reports ok over a truncated file list.
+# bash 3.2 rejects a bare `case` pattern inside `<( )` (it needs a leading `(`),
+# hence the one below even though it changes nothing outside a substitution.
 op_files_raw="$(
   {
     if [ "${#op_dirs[@]}" -gt 0 ]; then
