@@ -1,47 +1,40 @@
 ---
-# Sync the release's migrations/ tree from the controller to the host as
-# ONE transfer, with explicit delete semantics. Imported by
-# playbooks/deploy-binary.yml (pre_tasks) and exercised for real, against
-# temp dirs, by scripts/ci/deploy-sync-test.sh.
+# Sync the release's migrations/ tree from the controller to the host as ONE
+# transfer, with explicit delete semantics. Imported by
+# playbooks/deploy-binary.yml (pre_tasks) and exercised against temp dirs by
+# scripts/ci/deploy-sync-test.sh.
 #
-# Rejected alternatives (each breaks an invariant):
-#   - ansible.posix.synchronize: one rsync, `delete: true` — but rsync
-#     runs on the CONTROLLER and never sees deploy.yml's
-#     `--ssh-common-args "-o ProxyJump=…"`, so the NAT-only test-net VMs
-#     are unreachable.
-#   - ansible.builtin.copy with a DIRECTORY src: connection-
-#     agnostic, but O(files): one SFTP round-trip + remote checksum per
-#     file, and the GH runner gets no ControlPersist across module
-#     invocations. On an r1 deploy that single task ran > 16 minutes for
-#     291 already-identical files (the whole deploy otherwise takes ~7).
-#     It also silently drops `delete`.
+# Rejected alternatives:
+#   - ansible.posix.synchronize: rsync runs on the CONTROLLER and never sees
+#     deploy.yml's `--ssh-common-args "-o ProxyJump=..."`, so the NAT-only
+#     test-net VMs are unreachable.
+#   - ansible.builtin.copy with a DIRECTORY src: O(files), one SFTP round-trip
+#     plus remote checksum per file with no ControlPersist on the GH runner
+#     (> 16 minutes for 291 identical files on r1), and it drops `delete`.
 #
-# This step is O(1) AND connection-agnostic.
+# This step is O(1) AND connection-agnostic:
 #   1. Controller builds a DETERMINISTIC tar.gz of {{ local_dist_dir }}/
-#      migrations/ (sorted entries, mtime 0, uid/gid 0, modes normalised
-#      to 0644/0755, gzip mtime 0) and prints the manifest. Determinism
-#      matters: unarchive decides "changed" with `tar --diff`, which
-#      compares mtime/size/content, so a stable archive → changed=false
-#      on an identical re-run (the weekly drift job reads that).
-#   2. ansible.builtin.unarchive ships the archive over the SAME
-#      connection every other module uses (jump-safe) — one transfer.
-#   3. A fail-closed prune reproduces synchronize's `delete: true`: any
-#      file under the dest that is NOT in the manifest is removed. It
-#      only ever deletes paths that `find` enumerated INSIDE the dest,
-#      refuses an empty manifest (which would wipe the dir), and refuses
-#      a dest that is not an absolute path. Migrations are append-only
-#      today, but golang-migrate walks the dir: a stale file left from a
-#      reverted/renumbered migration is exactly what you do not want it
-#      to find.
+#      migrations/ (sorted entries, mtime 0, uid/gid 0, modes normalised to
+#      0644/0755, gzip mtime 0) and prints the manifest. unarchive decides
+#      "changed" with `tar --diff` (mtime/size/content), so a stable archive
+#      gives changed=false on an identical re-run (the weekly drift job reads
+#      that).
+#   2. ansible.builtin.unarchive ships it over the SAME connection every other
+#      module uses (jump-safe).
+#   3. A fail-closed prune reproduces `delete: true`: files under the dest not
+#      in the manifest are removed. It deletes only paths `find` enumerated
+#      INSIDE the dest, refuses an empty manifest (would wipe the dir) and a
+#      non-absolute dest. golang-migrate walks the dir, so a stale file from a
+#      reverted/renumbered migration must not survive.
 #
 # Vars (the test overrides all three; deploy.yml sets none):
-#   migrations_dest   — defaults to /usr/local/share/stellarindex/migrations
-#   migrations_owner  — defaults to root
-#   migrations_group  — defaults to root
+#   migrations_dest   - defaults to /usr/local/share/stellarindex/migrations
+#   migrations_owner  - defaults to root
+#   migrations_group  - defaults to root
 
 - name: Build deterministic migrations archive on the controller
-  # `run_once` + `delegate_to: localhost`: built ONCE on the runner, and
-  # the registered result (manifest on stdout) is visible to every host.
+  # `run_once` + `delegate_to: localhost`: built ONCE on the runner; the
+  # registered manifest is visible to every host.
   ansible.builtin.shell:
     executable: /bin/bash
     cmd: |
@@ -97,26 +90,20 @@
       PY
   register: migrations_archive
   changed_when: false
-  # MUST run under --check. ansible.builtin.shell is skipped in check mode,
-  # which would leave the archive unbuilt and the unarchive below failing on
-  # a missing file — turning the weekly ansible-drift preview red for a
-  # reason that has nothing to do with the host. deploy-binary.yml never
-  # runs --check so this was invisible there; the archival-node role does,
-  # every week.
+  # MUST run under --check: shell is skipped in check mode, which would leave
+  # the archive unbuilt and the unarchive below failing on a missing file,
+  # turning the weekly ansible-drift preview red for an unrelated reason
+  # (deploy-binary.yml never runs --check; the archival-node role does).
   #
-  # Safe to force: the task writes ONE file into the controller's own dist
-  # directory, touches no host, and is already changed_when: false. It is a
-  # preparatory read, not a change.
+  # Safe to force: it writes ONE file into the controller's own dist directory,
+  # touches no host, and is changed_when: false.
   check_mode: false
   delegate_to: localhost
-  # NEVER escalate on the controller. deploy-binary.yml runs `become:
-  # false` at play level so this was invisible there, but archival-node.yml
-  # sets `become: true` for the remote host and a delegated task inherits
-  # it — which makes ansible try sudo on the OPERATOR'S LAPTOP and die
-  # with "Premature end of stream waiting for become success: sudo: a
-  # password is required", 213 tasks into an apply. The same note sits on
-  # the controller-side `go build` in the archival-node role, for the same
-  # reason.
+  # NEVER escalate on the controller. archival-node.yml sets `become: true` for
+  # the remote host and a delegated task inherits it, so ansible would try sudo
+  # on the OPERATOR'S LAPTOP and die ("sudo: a password is required").
+  # deploy-binary.yml sets `become: false`. The controller-side `go build` in the
+  # archival-node role carries the same note.
   become: false
   run_once: true
 
@@ -130,8 +117,8 @@
 
 - name: Sync migrations dir from controller
   # The ONE transfer. Modes/mtimes come from the archive; owner/group are
-  # applied post-extract by the module (tar --diff ignores uid/gid lines
-  # when owner/group are given, so a re-run stays changed=false).
+  # applied post-extract (tar --diff ignores uid/gid when owner/group are given,
+  # so a re-run stays changed=false).
   ansible.builtin.unarchive:
     src: "{{ local_dist_dir }}/migrations.deploy.tar.gz"
     dest: "{{ migrations_dest | default('/usr/local/share/stellarindex/migrations') }}"

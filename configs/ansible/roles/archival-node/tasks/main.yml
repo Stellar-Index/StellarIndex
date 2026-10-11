@@ -1,86 +1,61 @@
 ---
-# Orchestrates the archival-node bootstrap. Each included task file
-# carries a tag matching its file name so operators can run a subset:
+# Orchestrates the archival-node bootstrap. Each included task file carries a
+# tag matching its file name so operators can run a subset:
 #
 #   ansible-playbook ... --tags zfs,postgres
 #   ansible-playbook ... --skip-tags minio
 #
 # ── CHECK-MODE UNIT GUARD ────────────────────────────────────────────
-# `--check` never really writes a file, so a task that enables or starts
-# a unit THIS ROLE installs fails outright ("Could not find the requested
-# service X") whenever that unit is new in the repo and not yet on the
-# host. The module error is fatal, so one such task ABORTS THE PREVIEW
-# for every task after it — which is how a weekly ansible-drift run
-# can lose its verdict many tasks early (a new timer unit is enough). The abort hides the very drift the
-# run exists to report.
+# `--check` never writes files, so a task that enables or starts a unit THIS
+# ROLE installs fails fatally ("Could not find the requested service X") while
+# the unit is new and not yet on the host. That aborts the preview for every
+# later task, hiding the drift a weekly ansible-drift run exists to report.
 #
-# THE RULE, and it is narrow:
+# ROLE-INSTALLED unit (templates/systemd/*.j2, or copied into
+# /etc/systemd/system by a task here): register the install task and guard the
+# enable/start with
 #
-#   ROLE-INSTALLED unit (rendered from templates/systemd/*.j2, or copied
-#   into /etc/systemd/system by a task in this role) — register the
-#   install task and guard the enable/start with
+#     when: not (ansible_check_mode and <register> is changed)
 #
-#       when: not (ansible_check_mode and <register> is changed)
+# It fires only when the unit file itself would change, which is exactly when
+# the enable cannot be evaluated honestly; otherwise the preview still reports
+# "would start stellarindex-indexer".
 #
-#   The guard fires ONLY when the unit file itself would change on this
-#   run, which in check mode is exactly the case where the enable cannot
-#   be evaluated honestly. When the unit file is in step the preview
-#   still runs, so "would start stellarindex-indexer" is still reported.
+# PACKAGED unit (postgres, redis, clickhouse-server, nftables, caddy, the
+# prometheus exporters, fail2ban, ssh, rsyslog...): DO NOT GUARD. The package
+# put the unit on the host, so check mode can evaluate it, and a guard would
+# hide a real "would start postgres" finding.
 #
-#   PACKAGED unit (postgres, redis, clickhouse-server, nftables, caddy,
-#   the prometheus exporters, fail2ban, ssh, rsyslog…) — DO NOT GUARD.
-#   The unit is on the host because the package put it there, so check
-#   mode can evaluate it, and a guard would suppress a real
-#   "would start postgres" finding: a stopped database is drift.
-#
-#   HANDLERS on role-installed units use the blunter `not
-#   ansible_check_mode` (see handlers/main.yml) — a handler's register
-#   may belong to a task file the current --tags selection skipped, and
-#   `state: restarted` asserts no state to preview anyway.
+# HANDLERS on role-installed units use the blunter `not ansible_check_mode`
+# (see handlers/main.yml): a handler's register may belong to a task file the
+# current --tags skipped, and `state: restarted` has no state to preview.
 
 - name: "Preflight checks"
   ansible.builtin.import_tasks: 01-preflight.yml
   tags: [preflight, always]
 
-# ── DOES THIS HOST HAVE A CLICKHOUSE TO CONFIGURE? (F128) ────────────
-# Several task files in this role do not INSTALL ClickHouse — they
-# CONFIGURE one: they drop XML into /etc/clickhouse-server/{config.d,
-# users.d}, chown paths to the `clickhouse` user (created by the
-# clickhouse-server package, not by 04-users.yml) and shell out to
-# clickhouse-client. 20-clickhouse-serving-profile.yml,
-# 21-clickhouse-drop-guard.yml and 22-clickhouse-exporter.yml were
-# imported UNCONDITIONALLY because the one host that needed them (r1)
-# has run_clickhouse FALSE by design: 08-clickhouse.yml must never
-# rebuild r1's hand-tended lake. The cost was that any host WITHOUT
-# ClickHouse — the DR bring-up, a fresh r2/r3, a no-lake test box —
-# hard-failed the whole role on the first of them (the serving-profile
-# vault assert), aborting every task after it.
+# ── DOES THIS HOST HAVE A CLICKHOUSE TO CONFIGURE? ──────────────────
+# Several task files CONFIGURE a ClickHouse rather than install one: they drop
+# XML into /etc/clickhouse-server/{config.d,users.d}, chown to the `clickhouse`
+# user (created by the package, not 04-users.yml) and run clickhouse-client.
+# `run_clickhouse` alone is the wrong gate: r1 has it FALSE by design
+# (08-clickhouse.yml must never rebuild r1's hand-tended lake) yet needs the
+# drop guard, serving profile and metrics endpoint. A host with no ClickHouse
+# (DR bring-up, fresh r2/r3, no-lake test box) must skip them or the role fails
+# at the serving-profile vault assert.
 #
-# `run_clickhouse` alone is therefore the WRONG gate: it would take the
-# drop guard, the serving profile and the metrics endpoint away from
-# r1. Gate on the FACT instead — the server's own config directory,
-# which the clickhouse-server package creates — OR'd with
-# run_clickhouse so a fresh host that installs ClickHouse later in this
-# same run (08-clickhouse.yml) still gets configured.
+# So gate on the FACT, the server's own config directory, OR'd with
+# run_clickhouse so a host that installs ClickHouse later in this run still
+# gets configured.
 #
-# Resolved HERE, right after preflight, rather than beside the three
-# imports below: 15-log-discipline.yml is imported EARLIER (it also
-# carries the rsyslog/journald/logrotate/Redis guards every host needs,
-# so it cannot itself be gated) and its EIGHT ClickHouse-config tasks
-# now carry this same fact — which they can only do if the fact already
-# exists by then.
+# Resolved HERE, right after preflight: 15-log-discipline.yml is imported
+# earlier (it carries guards every host needs, so it cannot be gated) and its
+# eight ClickHouse-config tasks use this same fact.
+# scripts/ci/ansible-clickhouse-host-gate-test.sh re-derives that set from the
+# file on every run, so a ninth cannot be added ungated.
 #
-# EIGHT, derived from that file and not from any prose: the
-# /var/lib/clickhouse/logs dir, zzz-logpath.xml, zz-ratesengine.xml, the
-# clickhouse-client port drop-in, zz-merge-memory-guard.xml,
-# zz-max-query-size.xml, zz-system-log-ttl.xml — and the
-# `clickhouse-client -q "SELECT 1"` assert, which earlier counts of six
-# and seven missed because it carries `failed_when`, not `when`.
-# scripts/ci/ansible-clickhouse-host-gate-test.sh re-derives the set from
-# the file on every run, so a ninth cannot be added ungated.
-#
-# Tagged `always` so a targeted apply (`--tags clickhouse-drop-guard`)
-# still resolves it.
+# Tagged `always` so a targeted apply (`--tags clickhouse-drop-guard`) still
+# resolves it.
 - name: "Detect an installed ClickHouse server (gates the CH-config tasks)"
   ansible.builtin.stat:
     path: "{{ clickhouse_server_config_dir }}"
@@ -104,24 +79,20 @@
   tags: [zfs]
 
 # No-ZFS hosts (r2/r3 on EBS/Object-Storage, or a libvirt VM whose host owns
-# the ZFS/RAID): 03-zfs is skipped, so the per-workload mountpoint dirs the ZFS
-# datasets would have created must be made as plain directories on the root
-# filesystem instead — the service tasks below assume they exist.
+# the ZFS/RAID) skip 03-zfs, so the per-workload mountpoint dirs the datasets
+# would have created are made as plain directories; service tasks assume them.
 - name: "Create data dirs as plain directories (no-ZFS hosts)"
   ansible.builtin.file:
     path: "{{ item.mountpoint }}"
     state: directory
     mode: "{{ item.dir_mode | default('0755') }}"
-    # Mirror 03-zfs.yml's "Ensure dataset mount points exist with correct
-    # perms": default(omit) leaves root:root for datasets whose writer is
-    # root; only restore-drill (postgres-owned) needs it set.
+    # Mirrors 03-zfs.yml's mount-point task: default(omit) leaves root:root for
+    # root-written datasets; only restore-drill (postgres-owned) sets it.
     owner: "{{ item.dir_owner | default(omit) }}"
     group: "{{ item.dir_group | default(omit) }}"
-  # Root-owned with the dataset's mode; the service tasks below chown their
-  # own data dirs to the service user (04-users for stellarindex/galexie/minio).
-  # postgres + clickhouse dirs are EXCLUDED — their package installers create
-  # and own /var/lib/postgresql and /var/lib/clickhouse; pre-creating them
-  # root-owned would break the cluster/server init.
+  # Root-owned with the dataset's mode; service tasks chown their own data dirs
+  # (04-users). postgres + clickhouse dirs are EXCLUDED: their package installers
+  # create and own them, and pre-creating them root-owned breaks cluster init.
   loop: "{{ zfs_datasets | rejectattr('name', 'in', ['postgres', 'postgres/wal', 'clickhouse']) | list }}"
   loop_control:
     label: "{{ item.mountpoint }}"
@@ -137,11 +108,9 @@
   when: run_postgres | bool
   tags: [postgres]
 
-# Redis + ClickHouse were hand-installed on r1 (out-of-band). Codified so a
-# fresh host gets them reproducibly. run_clickhouse defaults FALSE so r1's
-# hand-tended lake is never touched by this role (test nets set it true).
-# Ordered BEFORE pgbackrest — its ClickHouse schema-snapshot/drift tasks
-# need ClickHouse present on a fresh build.
+# run_clickhouse defaults FALSE so r1's hand-tended lake is never touched by
+# this role (test nets set it true). Ordered BEFORE pgbackrest, whose ClickHouse
+# schema-snapshot/drift tasks need ClickHouse present on a fresh build.
 - name: "Redis (API cache / replay guard / rate-limit)"
   ansible.builtin.import_tasks: 08-redis.yml
   when: run_redis | default(true) | bool
@@ -157,10 +126,9 @@
   when: run_postgres | bool
   tags: [postgres, pgbackrest, backup]
 
-# Rolling ZFS snapshots of data/clickhouse + data/postgres: the
-# minutes-scale answer to a logical fault, alongside
-# pgBackRest's hours-scale PITR. ZFS-owning hosts only (same gate as
-# 03-zfs). Its own tag so it can be applied alone:
+# Rolling ZFS snapshots of data/clickhouse + data/postgres: the minutes-scale
+# answer to a logical fault, beside pgBackRest's hours-scale PITR. ZFS-owning
+# hosts only (same gate as 03-zfs). Own tag so it can be applied alone:
 #   ansible-playbook ... --tags zfs-snapshots --check --diff
 - name: "Rolling ZFS snapshots (clickhouse + postgres)"
   ansible.builtin.import_tasks: 21-zfs-snapshots.yml
@@ -190,11 +158,9 @@
   tags: [observability, monitoring]
 
 - name: "Prometheus exporters (redis + postgres + pgbackrest)"
-  # Installs the three exporters whose scrape jobs are configured in
-  # configs/prometheus/prometheus.r1.yml. Ordered AFTER
-  # 10-observability.yml so node_exporter's textfile-collector dir is
-  # already present and the `prometheus` group (created by the
-  # Debian exporter packages) is available for env-file ACLs.
+  # Exporters whose scrape jobs live in configs/prometheus/prometheus.r1.yml.
+  # After 10-observability.yml: needs node_exporter's textfile dir and the
+  # `prometheus` group the Debian exporter packages create.
   ansible.builtin.import_tasks: 16-prometheus-exporters.yml
   when: run_observability | bool
   tags: [observability, monitoring, exporters]
@@ -217,13 +183,9 @@
   tags: [stellarindex, indexer]
 
 - name: "Stellar Index Healthchecks.io stack (heartbeat + smoke + sla-probe)"
-  # Replaces the manual configs/healthchecks/install.sh re-run. Ordered AFTER
-  # 14-stellarindex-services.yml because the sla-probe wrapper
-  # invokes /usr/local/bin/stellarindex-sla-probe (built + installed
-  # by 14) and the smoke wrapper hits the API surface that 14 brings
-  # up; the wrappers degrade gracefully if either is missing
-  # (ping /fail + journalctl) so the dependency is soft rather than
-  # blocking.
+  # After 14-stellarindex-services.yml, which installs the sla-probe binary and
+  # the API surface the smoke wrapper hits. The wrappers degrade gracefully
+  # (ping /fail + journalctl) if either is missing, so the dependency is soft.
   ansible.builtin.import_tasks: 17-stellarindex-healthchecks.yml
   tags: [healthchecks, monitoring]
 
@@ -247,23 +209,20 @@
   tags: [clickhouse, clickhouse-drop-guard]
 
 - name: "ClickHouse Prometheus endpoint (2026-09-03 r1 observability gap)"
-  # Same gate as the two above: reaches r1 (which has ClickHouse but
-  # run_clickhouse false) and skips a host that has no lake at all.
+  # Same gate as the two above: reaches r1 (ClickHouse present, run_clickhouse
+  # false) and skips a host with no lake.
   ansible.builtin.import_tasks: 22-clickhouse-exporter.yml
   when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [clickhouse, clickhouse-exporter, observability]
 
 - name: "Local single-host Prometheus (ASH-8 — the /v1/status scrape layer)"
-  # LAST on purpose. Its scrape list is derived from the run_* switches,
-  # so every target it declares has already been installed by the tasks
-  # above (exporters at 10/16/22, the stellarindex units at 14) — the
-  # verify at the end of the file can then assert real scrapes on a
-  # from-scratch build instead of racing the services it monitors.
+  # LAST on purpose: its scrape list derives from the run_* switches, so every
+  # target is already installed (exporters at 10/16/22, units at 14) and the
+  # final verify can assert real scrapes on a from-scratch build.
   #
-  # Default OFF (run_local_prometheus, defaults/main.yml): r1's
-  # Prometheus + Alertmanager stay managed out-of-band, and
-  # playbooks/monitoring.yml + roles/prometheus stay the multi-host
-  # shape. The test-net inventories turn it on.
+  # Default OFF (run_local_prometheus, defaults/main.yml): r1's Prometheus +
+  # Alertmanager stay out-of-band and playbooks/monitoring.yml + roles/prometheus
+  # stay the multi-host shape. Test-net inventories turn it on.
   ansible.builtin.import_tasks: 23-local-prometheus.yml
   when: run_local_prometheus | bool
   tags: [local-prometheus, monitoring, observability]

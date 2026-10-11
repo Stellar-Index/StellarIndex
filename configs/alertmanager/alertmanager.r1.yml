@@ -1,50 +1,38 @@
-# Single-host Alertmanager config for R1.
+# Single-host Alertmanager config for R1, companion to
+# configs/prometheus/prometheus.r1.yml + configs/prometheus/rules.r1/. Maps OUR
+# severity vocabulary (page / ticket / informational), shared with the
+# multi-host template configs/ansible/roles/prometheus/templates/alertmanager.yml.j2;
+# the two differ only in config shape.
 #
-# Companion to configs/prometheus/prometheus.r1.yml +
-# configs/prometheus/rules.r1/. This config maps OUR severity
-# vocabulary (page / ticket / informational) — the same
-# vocabulary used by the multi-host Ansible template at
-# configs/ansible/roles/prometheus/templates/alertmanager.yml.j2
-# (the template shares this severity ladder). The remaining difference between
-# the two is config shape, not severity vocabulary.
+# Apply via configs/alertmanager/apply.sh, which env-substitutes the
+# placeholder URLs from a sourced env file (kept out of git per the
+# deadmansswitch runbook).
 #
-# Apply via configs/alertmanager/apply.sh — it env-substitutes the
-# placeholder URLs from a sourced env file (kept off-disk in git per
-# the deadmansswitch runbook).
-#
-# Chat fanout is Discord (Alertmanager-native discord_configs,
-# v0.25+). Discord incoming webhooks are locked to one channel each,
-# so pages and alerts use two separate webhook URLs
-# (DISCORD_WEBHOOK_URL_PAGES, DISCORD_WEBHOOK_URL_ALERTS) — point both
-# at the same webhook if you only want one channel.
+# Chat fanout is Discord (native discord_configs, v0.25+). Webhooks are locked
+# to one channel each, so pages and alerts use separate URLs
+# (DISCORD_WEBHOOK_URL_PAGES, DISCORD_WEBHOOK_URL_ALERTS); point both at the
+# same webhook for one channel.
 #
 # ─── The Discord message templates are BOUNDED. Keep them that way. ──
 #
-# A Discord embed is rejected whole if its description exceeds 4096
-# characters, its title exceeds 256, or the two together exceed 6000.
-# Alertmanager 0.26 (the version on r1) does not truncate either field,
-# and it treats the resulting HTTP 400 as UNRECOVERABLE — one oversized
-# notification kills the receiver for every alert routed to it, not just
-# the one that overflowed.
+# Discord rejects an embed whose description exceeds 4096 characters, title 256,
+# or both together 6000. Alertmanager 0.26 (r1) does not truncate and treats the
+# HTTP 400 as UNRECOVERABLE, so one oversized notification kills the receiver
+# for every alert routed to it (visible as
+# alertmanager_notifications_failed_total{integration="discord"}). An unbounded
+# `range .Alerts` over a 22-alert group renders ~9300 characters.
 #
-# That is not hypothetical: an unbounded `range .Alerts` over a 22-alert
-# group renders a ~9300-character description, and the receiver then
-# returns 400 on every attempt, silently dropping every other ticket alert
-# routed to it (alertmanager_notifications_failed_total{integration="discord"}).
-#
-# So both message templates render AT MOST `$max` alerts, state the
-# remainder, and cap every interpolated field with `printf "%.Ns"`. The
-# bound is therefore hard, not an estimate: no annotation, label or URL
-# can grow the payload. Measured worst case is 2257 characters (55% of
-# the 4096 limit) at any group size; the real 22-alert group renders at
-# 1378. If you edit a template here, re-measure — apply.sh's
-# `--check-only` validates syntax, not size.
+# So both templates render AT MOST `$max` alerts, state the remainder, and cap
+# every interpolated field with `printf "%.Ns"`: the bound is hard, not an
+# estimate. Worst case is 2257 characters (55% of the limit) at any group size.
+# If you edit a template, re-measure: apply.sh's `--check-only` validates
+# syntax, not size.
 
 global:
   resolve_timeout: 5m
 
 # ─── Templating ──────────────────────────────────────────────────
-# Inline templating only — no separate templates dir on R1.
+# Inline templating only; no separate templates dir on R1.
 
 # ─── Routing tree ────────────────────────────────────────────────
 route:
@@ -55,90 +43,79 @@ route:
   repeat_interval: 12h
 
   routes:
-    # Deadmansswitch — fires constantly. Routed to healthchecks.io.
-    # When the heartbeat stops (Prometheus or Alertmanager itself
-    # is broken), healthchecks.io pages us via a separate channel.
-    # See docs/operations/runbooks/meta.md#stellarindex_deadmansswitch.
+    # Deadmansswitch: fires constantly, routed to healthchecks.io. When the
+    # heartbeat stops (Prometheus or Alertmanager is broken) healthchecks.io pages
+    # us via a separate channel. See
+    # docs/operations/runbooks/meta.md#stellarindex_deadmansswitch.
     - matchers: [alertname = "stellarindex_deadmansswitch"]
       receiver: deadmansswitch
       group_interval: 60s
       repeat_interval: 60s
       continue: false
 
-    # Delivery failure — reported OUT OF BAND, on purpose.
+    # Delivery failure is reported OUT OF BAND, on purpose:
+    # stellarindex_alertmanager_notifications_failing means a receiver is being
+    # refused, but routed by severity it lands in chat-default, the very
+    # integration that is failing, so in a Discord outage nobody sees it.
     #
-    # stellarindex_alertmanager_notifications_failing is the alert that
-    # says "a receiver is being refused by the far end". Routed by
-    # severity alone it is a ticket, so it lands in chat-default — i.e.
-    # it is delivered through the very integration whose failure it is
-    # reporting. In a Discord outage it fires into the dead channel and
-    # nobody sees it: the only signal of
-    # a delivery failure travels the failing path.
-    #
-    # `continue: true` — this route ADDS a transport, it does not take
-    # one away. The alert still falls through to the severity routes
-    # below and reaches chat exactly as before whenever chat works.
+    # `continue: true`: this route ADDS a transport. The alert still falls through
+    # to the severity routes below and reaches chat whenever chat works.
     - matchers: [alertname = "stellarindex_alertmanager_notifications_failing"]
       receiver: alert-delivery-failure
       group_interval: 5m
       repeat_interval: 1h
       continue: true
 
-    # SEV-1 — page operators, Discord only. That is the R1 design, not
-    # a pending TODO: the ansible template's chat-page receiver also
-    # renders an optional PagerDuty leg (alertmanager_pagerduty_key),
-    # but scripts/ci/check-alertmanager-parity.sh renders that variable
-    # empty on purpose and documents it as a deliberate multi-host-only
-    # extra — R1 is single-host, so Discord is the whole escalation
-    # path. Wire a pagerduty_configs block here (and update that gate's
-    # expected value) only if R1 itself needs PagerDuty paging.
+    # SEV-1: page operators, Discord only. That is the R1 design, not a TODO: the
+    # ansible template's chat-page receiver also renders an optional PagerDuty leg
+    # (alertmanager_pagerduty_key), but scripts/ci/check-alertmanager-parity.sh
+    # renders it empty on purpose as a multi-host-only extra. Wire a
+    # pagerduty_configs block here (and update that gate's expected value) only if
+    # R1 itself needs PagerDuty paging.
     - matchers: [severity = "page"]
       receiver: chat-page
       continue: false
 
-    # Ticket — actionable but not urgent. Same chat fanout, lower
-    # repeat cadence.
+    # Ticket: actionable but not urgent. Same chat fanout, lower repeat cadence.
     - matchers: [severity = "ticket"]
       receiver: chat-default
       repeat_interval: 24h
       continue: false
 
-    # Informational — a low-traffic Discord channel of its own, kept
-    # separate from `alerts` so a routine notice (an oracle publishing a
-    # ticker we do not map yet) can never bury a ticket in the same feed.
-    # If DISCORD_WEBHOOK_URL_INFORMATIONAL is unset the renderer strips
-    # the block and this receiver degrades to a stub — identical to the
-    # `silent` it replaced, so an unset URL is a no-op, not a config error.
+    # Informational: a low-traffic channel of its own, separate from `alerts` so a
+    # routine notice (e.g. an unmapped oracle ticker) cannot bury a ticket. If
+    # DISCORD_WEBHOOK_URL_INFORMATIONAL is unset the renderer strips the block and
+    # the receiver degrades to a stub, so an unset URL is a no-op, not an error.
     - matchers: [severity = "informational"]
       receiver: chat-informational
       continue: false
 
 # ─── Inhibit rules ───────────────────────────────────────────────
 inhibit_rules:
-  # A page mutes only the ticket/informational alerts in its own
-  # `alert_family` (the same signal at a milder threshold) on the same
-  # component. `alert_family != ""` is load-bearing: Alertmanager equates a
-  # missing label with an empty one, so without it an unlabelled page would
-  # mute every unlabelled ticket in its component. The family map lives in
-  # the rule files and is pinned by configs/alertmanager/inhibit-rules-test.sh.
+  # A page mutes only the ticket/informational alerts in its own `alert_family`
+  # (the same signal at a milder threshold) on the same component.
+  # `alert_family != ""` is load-bearing: Alertmanager equates a missing label
+  # with an empty one, so without it an unlabelled page would mute every
+  # unlabelled ticket in its component. The family map lives in the rule files
+  # and is pinned by configs/alertmanager/inhibit-rules-test.sh.
   #
-  # The deadmansswitch has no family, so it is already never a target; the
-  # explicit exclusion keeps the heartbeat safe if a family is ever added.
+  # The deadmansswitch has no family so is never a target; the explicit
+  # exclusion keeps the heartbeat safe if a family is ever added.
   - source_matchers: [severity = "page", alert_family != ""]
     target_matchers: [severity =~ "ticket|informational", alertname != "stellarindex_deadmansswitch"]
     equal: [component, alert_family]
 
 # ─── Receivers ───────────────────────────────────────────────────
 receivers:
-  # Deadmansswitch heartbeat URL — env-substituted at apply time.
+  # Deadmansswitch heartbeat URL, env-substituted at apply time.
   - name: deadmansswitch
     webhook_configs:
       - url: ${HEALTHCHECKS_DEADMANSSWITCH_URL}
         send_resolved: false
 
-  # Page-severity fanout → Discord #stellarindex-pages webhook.
-  # An unset URL still RENDERS as a stub (that keeps this file valid),
-  # but apply.sh refuses to install it — see its header for why.
+  # Page fanout to the Discord #stellarindex-pages webhook. An unset URL still
+  # RENDERS as a stub (keeping this file valid), but apply.sh refuses to install
+  # it; see its header.
   - name: chat-page
     discord_configs:
       - webhook_url: ${DISCORD_WEBHOOK_URL_PAGES}
@@ -153,8 +130,8 @@ receivers:
           … and {{ len (slice .Alerts $max) }} more in this group — see {{ printf "%.120s" .ExternalURL }}
           {{ end }}
 
-  # Ticket-severity + default → Discord #stellarindex-alerts webhook,
-  # less urgent text.
+  # Ticket-severity + default: Discord #stellarindex-alerts webhook, less urgent
+  # text.
   - name: chat-default
     discord_configs:
       - webhook_url: ${DISCORD_WEBHOOK_URL_ALERTS}
@@ -169,30 +146,26 @@ receivers:
           … and {{ len (slice .Alerts $max) }} more in this group — see {{ printf "%.120s" .ExternalURL }}
           {{ end }}
 
-  # Delivery-failure escape hatch — a SECOND Healthchecks.io check,
-  # deliberately NOT the deadmansswitch one. Pinging the deadman check's
-  # /fail endpoint would work mechanically, but it would make one signal
-  # carry two meanings ("Prometheus or Alertmanager is dead" and "chat
-  # delivery is being refused") and send the operator to the wrong
-  # runbook. Provision a separate check — see
+  # Delivery-failure escape hatch: a SECOND Healthchecks.io check, deliberately
+  # NOT the deadmansswitch one, which would make one signal mean both "Prometheus
+  # or Alertmanager is dead" and "chat delivery is refused" and send the operator
+  # to the wrong runbook. Provision a separate check; see
   # docs/operations/runbooks/meta.md#stellarindex_alertmanager_notifications_failing.
   #
-  # Dark until that check exists: with the URL unset the renderer drops
-  # this block and the receiver becomes a stub. That is why the route
-  # above carries `continue: true` — chat delivery is identical either
-  # way, and apply.sh names this receiver on every run so the gap cannot
-  # go unnoticed. max_alerts bounds the webhook body for the same reason
-  # the Discord templates are bounded.
+  # Dark until that check exists: with the URL unset the renderer drops the block
+  # and the receiver is a stub. Hence `continue: true` on the route above: chat
+  # delivery is identical either way, and apply.sh names this receiver on every
+  # run so the gap is visible. max_alerts bounds the webhook body, as the Discord
+  # templates are bounded.
   - name: alert-delivery-failure
     webhook_configs:
       - url: ${HEALTHCHECKS_ALERT_DELIVERY_URL}
         send_resolved: true
         max_alerts: 5
 
-  # Informational fanout → a dedicated Discord channel. Same bounded
-  # template as chat-default: every interpolated field is capped and at
-  # most $max alerts render, because an unbounded body is what returned
-  # 400 for eleven hours and silently dropped every other alert with it.
+  # Informational fanout to a dedicated Discord channel. Same bounded template
+  # as chat-default (every field capped, at most $max alerts): an unbounded body
+  # returns 400 and silently drops every other alert with it.
   - name: chat-informational
     discord_configs:
       - webhook_url: ${DISCORD_WEBHOOK_URL_INFORMATIONAL}
@@ -207,33 +180,25 @@ receivers:
           … and {{ len (slice .Alerts $max) }} more in this group — see {{ printf "%.120s" .ExternalURL }}
           {{ end }}
 
-  # ─── silent — A BLACK HOLE, ON PURPOSE ─────────────────────────
+  # ─── silent: A BLACK HOLE, ON PURPOSE ─────────────────────────
   #
   # READ THIS BEFORE ASSUMING THE EMPTY STANZA IS AN OVERSIGHT.
   #
-  # `- name: silent` has no webhook_configs, no discord_configs and
-  # no pagerduty_configs, and that is DELIBERATE: an Alertmanager
-  # receiver with no *_configs block accepts the alert and delivers it
-  # to NOBODY.
+  # `- name: silent` has no *_configs block, and that is DELIBERATE: such a
+  # receiver accepts the alert and delivers it to NOBODY. Nothing routes here
+  # (`severity: informational` goes to chat-informational). It stays because it
+  # is the shape chat-informational degrades to when
+  # DISCORD_WEBHOOK_URL_INFORMATIONAL is unset, keeping the stub a named state,
+  # and removing it would diverge this file from the Ansible template, which
+  # scripts/ci/check-alertmanager-parity.sh forbids. There is no PagerDuty leg
+  # anywhere in this file, for any severity.
   #
-  # Nothing routes here: `severity: informational` goes to
-  # chat-informational above. It is kept because that is
-  # exactly the shape chat-informational degrades to when
-  # DISCORD_WEBHOOK_URL_INFORMATIONAL is unset, so the stub stays a
-  # named, documented state rather than an accident. Removing it would
-  # also diverge this file from the Ansible template that renders the
-  # same config, which scripts/ci/check-alertmanager-parity.sh forbids.
-  # There is no PagerDuty leg anywhere in this file, for any severity.
+  # Do NOT route anything here to quiet it. Which alerts may be informational is
+  # a POLICY decision recorded per alert in docs/operations/alerts-catalog.md
+  # ("Informational alerts - delivery register"); scripts/ci/lint-alerts-catalog.py
+  # requires a register row for every informational rule.
   #
-  # Do NOT route anything here to quiet it. Which alerts may be
-  # informational at all is a POLICY decision recorded per-alert in
-  # docs/operations/alerts-catalog.md, section "Informational alerts
-  # — delivery register"; `scripts/ci/lint-alerts-catalog.py` requires
-  # a register row for every informational rule so a new one cannot
-  # land in that bucket by accident.
-  #
-  # stellarindex_deadmansswitch also carries severity=informational,
-  # but the alertname-matched route above fires first
-  # (`continue: false`), so it reaches Healthchecks.io and never the
-  # severity route.
+  # stellarindex_deadmansswitch also carries severity=informational, but the
+  # alertname-matched route above fires first (`continue: false`), so it reaches
+  # Healthchecks.io and never the severity route.
   - name: silent

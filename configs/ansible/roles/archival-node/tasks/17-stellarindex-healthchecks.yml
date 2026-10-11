@@ -1,25 +1,13 @@
 ---
-# `configs/healthchecks/install.sh` is the deploy
-# mechanism for the smoke + heartbeat + sla-probe stack — but it's
-# a MANUAL operator script. Every change to a
-# wrapper script or systemd unit under `configs/healthchecks/`
-# would otherwise need a manual re-run on r1, and the deployed copy
-# drifts behind the repo until someone re-syncs it.
+# Idempotent Ansible mirror of `configs/healthchecks/install.sh` (a MANUAL
+# operator script, which would otherwise leave the deployed wrappers and units
+# drifting behind the repo). Three wrapper-script + unit groups, each with its
+# own handler so touching `smoke.sh` restarts only the smoke timer.
+# install.sh stays as the ad-hoc bring-up path for hosts not yet in inventory.
 #
-# This task mirrors what `install.sh` does, but in idempotent
-# Ansible. Three wrapper-script + unit groups, each with its own
-# handler so a touch on `smoke.sh` restarts only `stellarindex-
-# smoke.timer` (not all five timers). The env-file at
-# /etc/default/stellarindex-healthchecks is operator-populated;
-# we provision a placeholder ONLY on first install (`force: false`)
-# so subsequent applies preserve the Healthchecks.io URLs the
-# operator pasted in.
-#
-# After this task lands, every healthchecks/ edit deploys via the
-# regular `ansible-playbook archival-node.yml --tags healthchecks`
-# loop; install.sh stays as the ad-hoc bring-up path for new hosts
-# before they're in inventory (see the deprecation note at the top
-# of that script).
+# The env-file /etc/default/stellarindex-healthchecks is operator-populated: a
+# placeholder is written ONLY on first install (`force: false`) so applies keep
+# the pasted Healthchecks.io URLs.
 
 - name: Ensure /opt/stellarindex/healthchecks/ exists
   ansible.builtin.file:
@@ -31,17 +19,15 @@
 
 # ── Wrapper scripts ────────────────────────────────────────────
 #
-# Four shell scripts — three from configs/healthchecks/ plus
-# r1-smoke.sh from scripts/dev/ which the smoke timer's wrapper
-# invokes. Sourcing each via `{{ playbook_dir }}/../../../` keeps
-# a single source of truth (no file duplication under role
-# files/); the same convention 14-stellarindex-services.yml uses
-# to pull binaries from bin/ and migrations from migrations/.
+# Four scripts: three from configs/healthchecks/ plus r1-smoke.sh from
+# scripts/dev/, which the smoke wrapper invokes. Sourced via
+# `{{ playbook_dir }}/../../../` for a single source of truth, as
+# 14-stellarindex-services.yml does for bin/ and migrations/.
 
 - name: Install hc-ping.sh
-  # Sourced by all three wrappers, not run on its own. It has to land
-  # before them: a wrapper whose `. hc-ping.sh` cannot resolve exits
-  # immediately, which would take out the very checks it instruments.
+  # Sourced by all three wrappers. Must land first: a wrapper whose
+  # `. hc-ping.sh` cannot resolve exits immediately, taking out the checks it
+  # instruments.
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../../configs/healthchecks/hc-ping.sh"
     dest: /opt/stellarindex/healthchecks/hc-ping.sh
@@ -72,10 +58,9 @@
   notify: Restart stellarindex-smoke timer
 
 - name: Install r1-smoke.sh
-  # The smoke wrapper invokes /opt/stellarindex/healthchecks/r1-smoke.sh
-  # (see SMOKE_SCRIPT default in smoke.sh) — copying the script
-  # alongside the wrapper means the unit doesn't depend on a repo
-  # checkout being present on r1.
+  # The smoke wrapper invokes /opt/stellarindex/healthchecks/r1-smoke.sh (see
+  # SMOKE_SCRIPT in smoke.sh); copying it alongside means no repo checkout is
+  # needed on the host.
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../../scripts/dev/r1-smoke.sh"
     dest: /opt/stellarindex/healthchecks/r1-smoke.sh
@@ -95,12 +80,10 @@
 
 # ── systemd units ─────────────────────────────────────────────
 #
-# Six units total: heartbeat (template service + timer), smoke
-# (service + timer), sla-probe (service + timer). Static — no
-# Jinja templating needed — so copied verbatim from the repo
-# rather than rendered. Each notify routes the timer-restart
-# handler matching the unit group so a heartbeat-only edit
-# doesn't churn the smoke or sla-probe timers.
+# Heartbeat (template service + timer), smoke and sla-probe (service + timer).
+# Static, so copied verbatim rather than rendered. Each notify routes the
+# matching timer-restart handler so a heartbeat-only edit doesn't churn the
+# others.
 
 - name: Install stellarindex-heartbeat@.service
   ansible.builtin.copy:
@@ -173,12 +156,9 @@
 
 # ── Env-file (operator-populated) ─────────────────────────────
 #
-# /etc/default/stellarindex-healthchecks holds the five
-# Healthchecks.io URLs (3 heartbeats + 1 smoke + 1 sla-probe).
-# Operator pastes them in on first install; subsequent applies
-# preserve the populated file. `force: false` is the key
-# idempotency knob — without it Ansible would overwrite the
-# populated file with the placeholder every run.
+# Holds the five Healthchecks.io URLs (3 heartbeats, 1 smoke, 1 sla-probe).
+# `force: false` is the idempotency knob: without it every run would overwrite
+# the populated file with the placeholder.
 
 - name: Provision placeholder /etc/default/stellarindex-healthchecks if missing
   ansible.builtin.copy:
@@ -211,11 +191,8 @@
 
 # ── Enable timers ─────────────────────────────────────────────
 #
-# `enabled: true` makes them survive a reboot; `state: started`
-# brings them up if they aren't already. daemon_reload here is
-# defence-in-depth — the Reload-systemd handler runs at the END
-# of the play; we want the timers usable mid-play if a later
-# task happens to depend on a probe firing.
+# daemon_reload here is defence-in-depth: the Reload-systemd handler runs at
+# the end of the play, but timers should be usable mid-play.
 
 - name: Enable + start stellarindex-heartbeat timers
   ansible.builtin.systemd:
@@ -258,7 +235,5 @@
     enabled: true
     daemon_reload: true
   when:
-    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml. The
-    # GO sla-probe.timer this one supersedes is what aborted a
-    # weekly drift run.
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
     - not (ansible_check_mode and stellarindex_sla_probe_timer_unit is changed)
