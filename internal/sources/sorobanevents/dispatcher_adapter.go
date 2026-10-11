@@ -428,7 +428,7 @@ func (s *AsyncSink) run() {
 	// SYNCHRONOUSLY on its hot path. A swallowed panic here leaves the
 	// channel undrained forever, so every source's PushEvent blocks on
 	// the full buffer with no restart and no operator signal beyond the
-	// panic page — CA2-A30-harden-2. Report (keeps the existing
+	// panic page. Report (keeps the existing
 	// stellarindex_worker_panics_total page) then re-panic: registered
 	// after close(s.done) so that defer still runs on the way out, and
 	// the re-panic crashes the process so its supervisor restarts it

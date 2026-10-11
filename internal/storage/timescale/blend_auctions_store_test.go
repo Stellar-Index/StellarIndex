@@ -364,7 +364,7 @@ func TestBlendReserveConfigs_ParsesAndSkipsUnparseable(t *testing.T) {
 		"DISTINCT ON (asset)",
 		"event_kind = 'queue_set_reserve'",
 		"ORDER BY asset, ledger_close_time DESC",
-		// CA2-A10-correct-2: a queue_set_reserve alone is a proposal —
+		// A queue_set_reserve alone is a proposal —
 		// only one immediately followed (same asset) by set_reserve
 		// is applied. A cancel_set_reserve, a superseding queue, or
 		// nothing yet must all be excluded (see the executing
