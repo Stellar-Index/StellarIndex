@@ -65,6 +65,7 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 chain_file="$STATE_DIR/chain"
 chains_file="$STATE_DIR/chains"
 swept_file="$STATE_DIR/swept"
+started_file="$STATE_DIR/started" # fulls begun and not yet in $chains_file
 backup_ok=0
 bytes=0
 chain_len=0
@@ -203,13 +204,13 @@ prune_chains() {
   return "$failed"
 }
 
-# Deletes the chain directories under $CH_DATABASE/ that are not on record:
-# a failed full's partial upload never reaches $chains_file, so prune_chains
-# cannot see it. Deletes NOTHING unless the listing contains the chain just
-# written (an empty or wrong listing exits 0 too) and no backup is running.
-# Only names this script mints, older than the current chain, are candidates.
+# Deletes the partial uploads of fulls this script started but never recorded:
+# a failed full never reaches $chains_file, so prune_chains cannot see it.
+# Candidates come from $started_file, not a listing of $CH_DATABASE/: on a
+# plain-metadata S3 disk that listing comes back empty. Deletes NOTHING unless
+# the chain just written is visible on the disk and no backup is running.
 sweep_orphans() {
-  local current="$1" listing busy id failed=0
+  local current="$1" listing busy id failed=0 keep=""
   orphans_removed=0
   [[ "$CH_DATABASE" =~ ^[A-Za-z0-9_]+$ ]] || { note "SWEEP SKIPPED: unsafe CH_DATABASE '$CH_DATABASE'"; return 1; }
   if ! grep -qxF "$current" "$chains_file" 2>/dev/null; then
@@ -217,12 +218,12 @@ sweep_orphans() {
     return 1
   fi
   # shellcheck disable=SC2086 # CH_DISKS_CMD is a command line by design
-  if ! listing="$($CH_DISKS_CMD --disk "$BACKUP_DISK" --query "ls $CH_DATABASE")"; then
-    note "SWEEP SKIPPED: cannot list $CH_DATABASE/ on $BACKUP_DISK — nothing deleted"
+  if ! listing="$($CH_DISKS_CMD --disk "$BACKUP_DISK" --query "ls $CH_DATABASE/$current")"; then
+    note "SWEEP SKIPPED: cannot list $CH_DATABASE/$current on $BACKUP_DISK — nothing deleted"
     return 1
   fi
-  if ! grep -qxF "$current" <<<"$listing"; then
-    note "SWEEP SKIPPED: the listing of $CH_DATABASE/ lacks chain $current — nothing deleted"
+  if [[ -z "$listing" ]]; then
+    note "SWEEP SKIPPED: chain $current is not visible on $BACKUP_DISK — nothing deleted"
     return 1
   fi
   if ! busy="$(running_backups)"; then
@@ -234,17 +235,28 @@ sweep_orphans() {
     return 1
   fi
   while IFS= read -r id; do
-    [[ "$id" =~ ^[0-9]{8}T[0-9]{6}Z$ && "$id" < "$current" ]] || continue
-    grep -qxF "$id" "$chains_file" && continue
-    # shellcheck disable=SC2086
-    if $CH_DISKS_CMD --disk "$BACKUP_DISK" --query "remove -r $CH_DATABASE/$id"; then
+    [[ -n "$id" ]] || continue
+    if ! [[ "$id" =~ ^[0-9]{8}T[0-9]{6}Z$ && "$id" < "$current" ]] || grep -qxF "$id" "$chains_file"; then
+      keep="$keep$id"$'\n'
+      continue
+    fi
+    # shellcheck disable=SC2086 # covers every branch of this if
+    if ! listing="$($CH_DISKS_CMD --disk "$BACKUP_DISK" --query "ls $CH_DATABASE/$id")"; then
+      note "ORPHAN CHECK FAILED for $id — the next sweep retries it"
+      keep="$keep$id"$'\n'
+      failed=1
+    elif [[ -z "$listing" ]]; then
+      note "orphan chain $id left nothing on the disk"
+    elif $CH_DISKS_CMD --disk "$BACKUP_DISK" --query "remove -r $CH_DATABASE/$id"; then
       note "removed orphan chain $id"
       orphans_removed=$((orphans_removed + 1))
     else
       note "ORPHAN REMOVAL FAILED for $id — the next sweep retries it"
+      keep="$keep$id"$'\n'
       failed=1
     fi
-  done <<<"$listing"
+  done < <(cat "$started_file" 2>/dev/null)
+  printf '%s' "$keep" > "$started_file.tmp" && mv "$started_file.tmp" "$started_file"
   [[ "$failed" -eq 0 ]] && date -u +%s > "$swept_file"
   return "$failed"
 }
@@ -299,6 +311,7 @@ main() {
     chain_id="$stamp"
     path="$CH_DATABASE/$chain_id/$stamp-full"
     base=""
+    echo "$chain_id" >> "$started_file"
   else
     base="${plan#incremental }"
     chain_id="$(cut -d/ -f2 <<<"$base")"
@@ -319,6 +332,7 @@ main() {
   if [[ "$plan" == full ]]; then
     printf '%s\t%s\n' "$now" "$path" > "$chain_file"
     echo "$chain_id" >> "$chains_file"
+    grep -vxF "$chain_id" "$started_file" > "$started_file.tmp"; mv "$started_file.tmp" "$started_file"
     prune_chains || rc=2
   else
     printf '%s\t%s\n' "$now" "$path" >> "$chain_file"

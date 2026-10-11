@@ -15,7 +15,8 @@
 #   6. a failed full's partial upload is swept as an orphan, but never the
 #      current chain, a retained one, a newer one, a foreign name, anything
 #      outside the database directory, or anything at all when the listing
-#      or the running-backup check cannot be trusted.
+#      or the running-backup check cannot be trusted. Candidates come from the
+#      started record: the stub lists the database directory empty, as r1 does.
 #
 # ClickHouse is a fake `curl` on PATH and clickhouse-disks a stub over a
 # directory standing in for the backup disk;
@@ -80,6 +81,7 @@ case "$q" in
     printf '%s\n' "$*" >> "$MOCK_LS_LOG"
     [[ -n "${MOCK_LS_RC:-}" ]] && exit "$MOCK_LS_RC"
     if [[ -n "${MOCK_LS+set}" ]]; then printf '%s' "$MOCK_LS"; exit 0; fi
+    [[ "${q#ls }" == */* ]] || exit 0  # r1's plain-metadata S3 disk lists the database directory empty
     ls "$MOCK_DISK/${q#ls }" 2>/dev/null; exit 0 ;;  # like clickhouse-disks: a missing dir lists empty
   "remove -r "*)
     printf '%s\n' "$*" >> "$MOCK_PRUNE_LOG"
@@ -225,10 +227,15 @@ sleep 1
 run
 last_is_full "malformed state takes a full"
 
+orphan() { # plants a chain directory as a started-but-unrecorded full
+  local id
+  for id in "$@"; do mkdir -p "$TMP/disk/stellar/$id/$id-full" "$TMP/state"; echo "$id" >> "$TMP/state/started"; done
+}
+
 echo "8. the orphan sweep deletes only unrecorded older chains, and only when it can trust what it sees"
 reset
-mkdir -p "$TMP/disk/stellar/20200101T000000Z/20200101T000000Z-full" "$TMP/disk/stellar/29990101T000000Z" \
-  "$TMP/disk/stellar/not-a-chain" "$TMP/disk/elsewhere/20200101T000000Z"
+mkdir -p "$TMP/disk/stellar/20200101T000000Z/20200101T000000Z-full" "$TMP/disk/elsewhere/20200101T000000Z"
+orphan 20200101T000000Z 29990101T000000Z not-a-chain
 run; rc=$?
 expect_rc 0 "first full with orphans present exits 0"
 cur="$(cat "$TMP/state/chains")"
@@ -240,9 +247,10 @@ on_disk "elsewhere/20200101T000000Z" "nothing outside the database directory is 
 prom_has "stellarindex_ch_lake_backup_orphans_removed 1" "one orphan removed"
 prom_full "last_full_unix emitted"
 prom_has "stellarindex_ch_lake_backup_full_interval_days 28" "full interval emitted"
+lists_before="$(grep -c . "$TMP/lists")"
 sleep 1
 run
-if [[ "$(grep -c . "$TMP/lists")" -eq 1 ]]; then ok "an incremental after a clean sweep does not list the disk"; else bad "an incremental after a clean sweep does not list the disk"; fi
+if [[ "$(grep -c . "$TMP/lists")" -eq "$lists_before" ]]; then ok "an incremental after a clean sweep does not list the disk"; else bad "an incremental after a clean sweep does not list the disk"; fi
 age_chain 30
 sleep 1
 RETAIN_CHAINS=2 run; rc=$?
@@ -252,7 +260,7 @@ chains_count 2 "both chains on record"
 cur="$(tail -n1 "$TMP/state/chains")"
 MOCK_STATUS='BACKUP_FAILED\t0\t0\tboom' run
 prom_full "a failed run still reports the recorded full"
-mkdir -p "$TMP/disk/stellar/20200102T000000Z"
+orphan 20200102T000000Z
 sweep_case() { # $1 label; env set by caller; forces a sweep via a missing sweep record
   rm -f "$TMP/state/swept"; sleep 1
   run; rc=$?
@@ -262,7 +270,6 @@ sweep_case() { # $1 label; env set by caller; forces a sweep via a missing sweep
 }
 MOCK_LS_RC=1 sweep_case "listing error"
 MOCK_LS="" sweep_case "empty listing"
-MOCK_LS="20200102T000000Z" sweep_case "listing without the current chain"
 MOCK_SWEEP_RUNNING=op-9 sweep_case "a backup in flight at sweep time"
 MOCK_SWEEP_RUNNING=fail sweep_case "running-backup check unreachable"
 MOCK_PRUNE_RC=1 sweep_case "removal failure"
@@ -296,11 +303,11 @@ if grep -q "cannot read system.backups" "$TMP/stderr"; then ok "the refusal is l
 
 echo "10. the sweep refuses when the current chain is not on record"
 reset
-mkdir -p "$TMP/disk/stellar/20200101T000000Z"
+orphan 20200101T000000Z
 run
 cur="$(cat "$TMP/state/chains")"
 off_disk "stellar/20200101T000000Z" "setup: the sweep removed the orphan on a trusted record"
-mkdir -p "$TMP/disk/stellar/20200102T000000Z"
+orphan 20200102T000000Z
 rm -f "$TMP/state/swept"
 echo "20190101T000000Z" > "$TMP/state/chains"
 sleep 1
@@ -309,9 +316,9 @@ expect_rc 2 "an untrusted record exits 2"
 on_disk "stellar/20200102T000000Z" "nothing deleted when the current chain is not on record"
 on_disk "stellar/$cur" "the current chain is kept"
 
-echo "11. only timestamp-named folders under the database directory are deletable"
+echo "11. only timestamp-named started ids are deletable"
 reset
-mkdir -p "$TMP/disk/stellar/20200101T000000Z" "$TMP/disk/stellar/lake-manual-copy"   "$TMP/disk/stellar/20200101T000000" "$TMP/disk/stellar/x20200101T000000Zx"
+orphan 20200101T000000Z lake-manual-copy 20200101T000000 x20200101T000000Zx
 run
 off_disk "stellar/20200101T000000Z" "the timestamp-named orphan is removed"
 on_disk "stellar/lake-manual-copy" "a non-timestamp folder is never deleted"
