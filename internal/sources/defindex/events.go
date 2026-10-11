@@ -5,23 +5,17 @@
 //     ScvString("BlendStrategy"); body { from: Address, amount: i128 } where
 //     `from` is the VAULT contract, not the end user.
 //  2. VAULT layer: wrapper contracts users call directly. Topic[0] =
-//     ScvString("DeFindexVault"); the body carries the end-user G-strkey
-//     (`depositor` / `withdrawer`), multi-asset `amounts` /
-//     `amounts_withdrawn` (Vec<i128>) and share deltas `df_tokens_minted` /
-//     `df_tokens_burned` (i128).
+//     ScvString("DeFindexVault"); the body carries the end-user G-strkey,
+//     multi-asset `amounts` (Vec<i128>) and share deltas (i128).
 //
-// Both layers are needed: the 100+ factory-deployed wrappers are where end-user
-// attribution lives, and a strategy-only decoder covered ~27% of events in a
-// 12-hour sample cross-checked against Soroban RPC.
+// Both layers are needed: end-user attribution lives in the 100+
+// factory-deployed wrappers. Topic only classifies an event; a match also
+// requires contract identity (ADR-0035/0040): flows only from a registered
+// vault or strategy (MainnetGatedSet + protocol_contracts), factory events only
+// from MainnetFactories. An unregistered emitter fails closed.
 //
-// Topic only classifies an event; a match additionally requires contract
-// identity (ADR-0035/0040): flows only from a registered vault or strategy
-// (MainnetGatedSet + protocol_contracts), factory events only from
-// MainnetFactories. An unregistered emitter fails closed.
-//
-// Flows are for attribution only: not price-discovery events, never in VWAP.
-// Out of scope: factory `create`/`n_fee` bodies, vault `rebalance` and `n_wasm`
-// (docs/operations/wasm-audits/defindex.md). See README.md for scope.
+// Flows are attribution only: never price-discovery, never in VWAP. Out of scope:
+// factory `create`/`n_fee`, vault `rebalance` and `n_wasm` (docs/operations/wasm-audits/defindex.md).
 package defindex
 
 import (
@@ -403,27 +397,22 @@ var MainnetFactories = []string{
 // (ADR-0031) and gap-detector floor; a later value hides early-history gaps.
 const GenesisLedger uint32 = 55_484_403
 
-// MainnetVaults is the curated gated vault-wrapper set (ADR-0040
-// §1 mechanism 2 — curated-set registry). The factory `create`
-// event does NOT carry the new vault's address (verified: 0 of the
-// lake's vault emitters appear in any create body), so unlike
-// blend/soroswap the deploy-graph cannot self-register vaults —
-// this in-code seed is the trust root. Every entry carries at
-// least one of four independent proofs, recorded per-contract in
-// docs/protocols/defindex.md (its gate-evidence "Verification" section):
+// MainnetVaults is the curated gated vault-wrapper set (ADR-0040 §1 mechanism
+// 2). The factory `create` event does NOT carry the new vault's address, so the
+// deploy-graph cannot self-register vaults and this in-code seed is the trust
+// root. Every entry carries at least one of four independent proofs, recorded
+// per-contract in docs/protocols/defindex.md ("Verification" section):
 //
-//	A. first event inside a factory create transaction (71/110);
+//	A. first event inside a factory create transaction;
 //	B. listed in a factory create event body (strategies);
 //	C. runs the team-published vault WASM ae3409a4…468b
 //	   (mainnet.contracts.json "hashes".defindex_vault);
 //	D. listed in the team's own Dune vault registry.
 //
-// 9 lake emitters with NONE of the four proofs are deliberately
-// EXCLUDED + flagged on the protocol page (155 events, 0.13% of
-// the source's lake activity). A real vault missing here
-// fail-closes into an ADR-0033 recognition gap (visible, never
-// silently mis-attributed); the unblock is an operator INSERT
-// into protocol_contracts (DB warm) or extending this seed.
+// Emitters with none of the four proofs are deliberately EXCLUDED. A real vault
+// missing here fail-closes into an ADR-0033 recognition gap (visible, never
+// silently mis-attributed); the unblock is an operator INSERT into
+// protocol_contracts (DB warm) or extending this seed.
 var MainnetVaults = []string{
 	"CA25XTGHKQ6PUMFJ4SDNRFMUABIFX46U7VAZBFDZKAOX5C3KZXUAR2KQ",
 	"CA2FIPJ7U6BG3N7EOZFI74XPJZOEOD4TYWXFVCIO5VDCHTVAGS6F4UKK",

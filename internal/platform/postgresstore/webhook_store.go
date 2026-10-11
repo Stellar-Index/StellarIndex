@@ -58,26 +58,19 @@ func webhookURLConflict(err error) error {
 }
 
 // CreateWebhook inserts the registry row, enforcing the per-account
-// `maxPerAccount` cap atomically. A handler pre-check (`SELECT … then
-// INSERT`) is raceable: N parallel HandleCreate requests for an
-// account at 9 webhooks could all pass the precheck and each insert
-// one row, taking the account to 9+N.
+// `maxPerAccount` cap atomically. A handler pre-check (SELECT then INSERT) is
+// raceable: N parallel creates at 9 webhooks could all pass and take the
+// account to 9+N.
 //
-// Closure shape: the create runs inside a transaction guarded by
-// a per-account advisory lock ([lockAccount]). The
-// advisory lock serialises every concurrent caller for the same
-// account through one critical section, so the count + insert
-// observes a stable view: at most ONE statement appends a row at
-// a time, and the loser's count-CTE sees the winner's INSERT and
-// short-circuits via WHERE n < $7. The lock auto-releases at
-// COMMIT/ROLLBACK so a crashing client can't strand it. Keyed
-// by account_id, so two different accounts creating concurrently
-// don't serialise against each other.
+// The create runs in a transaction guarded by a per-account advisory lock
+// ([lockAccount]), so the count + insert observes a stable view: the loser's
+// count-CTE sees the winner's INSERT and short-circuits via WHERE n < $7. The
+// lock auto-releases at COMMIT/ROLLBACK and is keyed by account_id, so
+// different accounts don't serialise.
 //
-// `maxPerAccount` is the handler's tier ceiling; a value <= 0 admits
-// nothing (TierAnon), never a default. Tests can pass a smaller value
-// to drive the race deterministically. A second registration of the
-// same URL on one account returns [platform.ErrConflict].
+// `maxPerAccount` is the handler's tier ceiling; a value <= 0 admits nothing
+// (TierAnon), never a default. A second registration of the same URL on one
+// account returns [platform.ErrConflict].
 func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWebhook, maxPerAccount int) (platform.CustomerWebhook, error) {
 	if w.AccountID == uuid.Nil {
 		return platform.CustomerWebhook{}, errors.New("postgresstore: CreateWebhook: AccountID is empty")
@@ -545,28 +538,23 @@ const maxClaimPerWebhook = 5
 
 // ListPendingDeliveries atomically claims up to `limit` due deliveries,
 // fair-shared across endpoints. The claim is one UPDATE...RETURNING with
-// `FOR UPDATE SKIP LOCKED`, so concurrent workers (scale-out or
-// blue/green overlap) never hand the same row to two HTTP-POST paths.
+// `FOR UPDATE SKIP LOCKED`, so concurrent workers never hand the same row to
+// two HTTP-POST paths.
 //
-// The lease pushes `next_attempt_at` 5 minutes out as part of the claim.
-// [MarkDelivered] sets `delivered_at`; [MarkAttemptFailed] writes the
-// real backoff. If a worker crashes after claiming, the lease expires
-// and another worker re-POSTs; that is idempotent because the receiver
-// dedupes on X-StellarIndex-Delivery-Id (the row id, so the re-POST
-// repeats it), authenticated by X-StellarIndex-Signature-V2.
+// The lease pushes `next_attempt_at` 5 minutes out as part of the claim. A
+// crashed worker's lease expires and another re-POSTs; that is idempotent
+// because the receiver dedupes on X-StellarIndex-Delivery-Id (the row id),
+// authenticated by X-StellarIndex-Signature-V2.
 //
-// Fair share: each endpoint's due rows are ranked FIFO and every
-// endpoint's first row is taken before any second, capped at
-// maxClaimPerWebhook per endpoint per claim. One black-holing endpoint's
-// backlog therefore cannot fill a batch and starve other customers, and
-// the cap bounds how long its serial lane holds a poll.
+// Fair share: each endpoint's due rows are ranked FIFO and every endpoint's
+// first row is taken before any second, capped at maxClaimPerWebhook per
+// endpoint, so one black-holing endpoint cannot starve other customers.
 //
-// The claim skips deliveries whose owning account is not ACTIVE. Rows
-// queued before a suspension are PARKED, not destroyed (AccountStore has
-// Unsuspend). The EXISTS deliberately does not join `accounts` into the
-// FROM list: a join would extend the `FOR UPDATE ... SKIP LOCKED` row
-// lock to accounts and customer_webhooks, so an admin PATCH holding an
-// account row would make the worker silently skip that customer.
+// The claim skips deliveries whose owning account is not ACTIVE; rows queued
+// before a suspension are PARKED, not destroyed. The EXISTS deliberately does
+// not join `accounts` into the FROM list: a join would extend the `FOR UPDATE
+// ... SKIP LOCKED` row lock to accounts, so an admin PATCH holding an account
+// row would make the worker silently skip that customer.
 func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]platform.WebhookDelivery, error) {
 	if limit <= 0 {
 		limit = 100

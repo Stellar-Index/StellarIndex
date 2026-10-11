@@ -191,12 +191,9 @@ func decodeFlow(e *events.Event, kind string) (StrategyFlow, error) {
 	return flow, nil
 }
 
-// decodeVaultFlow converts one classified DeFindexVault event into
-// a VaultFlow.
+// decodeVaultFlow converts one classified DeFindexVault event into a VaultFlow.
 //
-// Body shape (per docs/operations/wasm-audits/defindex.md "Body
-// shapes", confirmed on-chain via Soroban-RPC getEvents against an
-// active wrapper):
+// Body shape (docs/operations/wasm-audits/defindex.md "Body shapes"):
 //
 //	deposit:  { depositor:  Address,
 //	            amounts:           Vec<i128>,
@@ -207,13 +204,10 @@ func decodeFlow(e *events.Event, kind string) (StrategyFlow, error) {
 //	            df_tokens_burned:  i128,
 //	            total_managed_funds_before, total_supply_before }
 //
-// We ignore the `total_*_before` NAV-snapshot fields —
-// they're useful for NAV reconstruction but not for flow
-// attribution. Fields are pulled by name (decode-by-name per
-// ingest-pipeline.md#contract-schema-evolution), so the decoder is robust against
-// the vault contract's known mid-life WASM upgrade
-// (`ae3409a4…468b` → `07097f83…84b0`) provided the field names
-// don't change — and they haven't.
+// The `total_*_before` NAV-snapshot fields are ignored: not needed for flow
+// attribution. Fields are pulled by name
+// (ingest-pipeline.md#contract-schema-evolution), so the decoder survives the
+// vault's mid-life WASM upgrade as long as the field names hold.
 func decodeVaultFlow(e *events.Event, kind string) (VaultFlow, error) {
 	closedAt, err := e.EventClosedAt()
 	if err != nil {
@@ -296,28 +290,21 @@ func decodeVaultFlow(e *events.Event, kind string) (VaultFlow, error) {
 	return flow, nil
 }
 
-// decodeDFees converts one classified ("DeFindexVault","dfees") event
-// into its per-asset [DFee] entries — one per distributed_fees Vec
-// element, FeeIndex = position.
+// decodeDFees converts one classified ("DeFindexVault","dfees") event into its
+// per-asset [DFee] entries: one per distributed_fees Vec element, FeeIndex =
+// position.
 //
-// Body shape (PROVEN from live r1-lake blobs — decoded with
-// internal/scval, never invented; see [DFee] for the lake facts):
+// Body shape (proven from lake blobs, see [DFee]):
 //
 //	Map{ distributed_fees: Vec[ (token Address<contract>, amount i128) ] }
 //
-// The tuple is Soroban's Vec-encoded tuple. We read positions 0
-// (token) and 1 (amount) and tolerate any trailing elements beyond
-// those two — an additive per-entry field added by a future vault
-// upgrade must not error the whole event decode, mirroring the
-// decode-by-name tolerance for Map fields elsewhere in this file. A
-// Vec of FEWER than 2 elements is still ErrMalformedPayload: token
-// and amount are the documented minimum shape. An EMPTY
-// distributed_fees Vec is a real observed shape — a distribution ran
-// with nothing to distribute — and yields ZERO entries with NO error,
-// keeping live-decode and the completeness re-derive count-consistent
-// (both emit 0 outputs). Field pulled by name (decode-by-name per
-// ingest-pipeline.md#contract-schema-evolution). A body that doesn't match this
-// proven schema is ErrMalformedPayload — fail loud, never silent-drop.
+// The tuple is Vec-encoded. Positions 0 (token) and 1 (amount) are read and
+// trailing elements tolerated, so an additive per-entry field from a future
+// vault upgrade does not error the event. FEWER than 2 elements is
+// ErrMalformedPayload. An EMPTY distributed_fees Vec is a real shape (a
+// distribution with nothing to distribute): ZERO entries, NO error, keeping
+// live-decode and the completeness re-derive count-consistent. Any other body
+// is ErrMalformedPayload: fail loud, never silent-drop.
 func decodeDFees(e *events.Event) ([]DFee, error) {
 	closedAt, err := e.EventClosedAt()
 	if err != nil {

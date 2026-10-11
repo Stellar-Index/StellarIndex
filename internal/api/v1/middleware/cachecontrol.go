@@ -157,21 +157,17 @@ var (
 //     hash are IMMUTABLE once the ledger closes, but the band is deliberately
 //     modest (1 min client / 5 min CDN): policyForPath knows nothing about the
 //     tip, and a ledger a few seconds old can be served before every downstream
-//     projection for it has landed, so a long TTL could pin a partial view.
-//
+//     projection has landed, so a long TTL could pin a partial view.
 //   - /v1/ledgers moves every ~5 s and /v1/network/throughput has a server-side
 //     cache; both get the status-like short band.
-//
-//   - /v1/operations sits behind opsDirCache (10 s TTL + stale-while-revalidate).
-//     It is NOT given the 60 s/300 s band: opsDirCache refreshes only ON a
-//     request, so at a low arrival rate an entry's age is bounded by the
-//     inter-arrival gap rather than the TTL, and a 300 s edge TTL would compound it.
-//
+//   - /v1/operations sits behind opsDirCache (10 s TTL + stale-while-revalidate)
+//     which refreshes only ON a request, so at a low arrival rate an entry's age
+//     is bounded by the inter-arrival gap, not the TTL; a 60 s/300 s band would
+//     compound it.
 //   - /v1/contracts (EXACT path) is the directory behind the same cache
 //     (recentContractsCached); /v1/contracts/{id}, /interactions and
-//     /code-history (contractDetailCached) take the same band. /transfers is a
-//     latest-N listing with no cursor whose first page moves with every
-//     transfer, so it gets the short band.
+//     /code-history take the same band. /transfers is a cursorless latest-N
+//     listing whose first page moves with every transfer: short band.
 func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	switch {
 	// Operator endpoints — probed by systemd/Prometheus/uptime checks; a
@@ -203,26 +199,20 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 // ─── Closed-bucket price surfaces: VERY short shared cache ──
 // ADR-0015/0018 is a DETERMINISM contract (byte-identical for the same (pair,
 // window, from_ts)), not a freshness bound. A shared cache serving a previous
-// closed bucket keeps determinism but breaks the "MOST RECENT closed bucket"
-// clause, which the SLA probe measures (150 s target: 60 s bucket + 30 s CAGG
-// end_offset + <=30 s schedule + runtime).
+// closed bucket breaks the "MOST RECENT closed bucket" clause the SLA probe
+// measures (150 s target: 60 s bucket + 30 s CAGG end_offset + <=30 s schedule
+// + runtime).
 //
 // A shared TTL of d adds d to the worst-case age of `observed_at`, makes `as_of`
 // lie by up to d, and extends by d the window in which a pre-freeze price is
 // served with `frozen=false`. s-maxage 60 can serve a bucket a full bucket behind
 // origin (past the probe bound); 5 s stays inside it. `max-age` stays 30 s:
-// private client reuse is the client's own copy. (The only PROVABLE alternative
-// is a per-response s-maxage = secondsUntil(bucketEnd + 30 s), which needs bucket
-// phase this layer does not have.)
+// private client reuse is the client's own copy.
 //
 // /v1/oracle/latest, /lastprice and /x_last_price are "last observed price"
-// surfaces with no closed-bucket contract, and /v1/oracle/prices is itself a
-// closed-bucket surface, so none belong in the 300 s catalogue band of the
-// `/v1/oracle/` prefix arm.
-//
-// SLOPriceRoutes names every route above so
-// TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe iterates the actual set
-// instead of a hand-typed copy, which can silently omit a carved-out route.
+// surfaces and /v1/oracle/prices is closed-bucket: none belong in the 300 s
+// `/v1/oracle/` band. SLOPriceRoutes names every route above so
+// TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe iterates the real set.
 var SLOPriceRoutes = []string{
 	"/v1/price",
 	"/v1/price/batch",

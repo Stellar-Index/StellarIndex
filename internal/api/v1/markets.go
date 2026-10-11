@@ -166,7 +166,6 @@ type Pool struct {
 // registry). CEX pairs go through /v1/markets; "pool" misnames centralised
 // venues.
 //
-// Query params:
 // Query params (all optional): cursor (opaque, from pagination.next); limit
 // (1-500, default 100); order_by ("volume_24h_usd_desc" default, or "pair");
 // source (single DEX name; unknown / non-DEX names return an empty list);
@@ -174,14 +173,10 @@ type Pool struct {
 // asset_id on either side, mutually exclusive with `base`/`quote`: AND vs OR
 // has no well-defined combination).
 //
-// canonicaliseAssetFilter documents why every ?asset=/?base=/?quote= filter on
-// this file's handlers re-spells the caller's input through canonical.ParseAsset
-// before it reaches SQL or a cache key. ParseAsset deliberately ACCEPTS spellings
-// whose Asset.String() differs from the input (bare "XLM" and "NATIVE", the
-// Horizon-style "CODE:ISSUER") while the stores hold only the canonical form and
-// the SQL compares with `=`. Discarding the parsed value would make those aliases
-// produce an authoritative HTTP 200 with an EMPTY list, cached under their own
-// key for 60s.
+// Every ?asset=/?base=/?quote= filter in this file's handlers re-spells the input
+// through canonical.ParseAsset (see canonicaliseAssetFilter): aliases such as bare
+// "XLM" parse but differ from the stored form, and the SQL `=` would return an
+// authoritative empty 200, cached for 60s.
 //
 // Residual: `native` and `crypto:XLM` are stored as distinct rows, so
 // canonicalising does not merge them (the XLM dual-form class).
@@ -892,27 +887,18 @@ func compareVolumeUSD(a, b *string) int {
 }
 
 // adjustListingPrice is the ONE path a listing row's last_price takes to
-// the wire: the scam-issuer withholding decision first, then the
-// dex-nonstandard-decimals forward normalization — see handleMarkets /
-// handlePools / pairs.go's handlePairs call sites for the full
-// rationale (docs/operations/runbooks/dex.md).
+// the wire: scam-issuer withholding first, then dex-nonstandard-decimals
+// normalization (docs/operations/runbooks/dex.md).
 //
-// Withholding returns nil, so the row still lists (the market exists;
-// its trade count and volume are activity, not a price) but carries no
-// last_price — the listing analogue of the 404 /v1/price, /v1/vwap and
-// /v1/twap answer for the same pair. Gating here rather than per handler
-// is what keeps /v1/markets, /v1/pools and /v1/pairs from drifting apart
-// the way /v1/vwap and /v1/twap once did (see scamWithheld). `surface`
-// labels the withheld metric.
+// Withholding returns nil: the row still lists (trades and volume are activity,
+// not a price) but carries no last_price, matching the 404 from /v1/price,
+// /v1/vwap and /v1/twap. Gating here keeps /v1/markets, /v1/pools and /v1/pairs
+// from drifting apart (see scamWithheld). `surface` labels the withheld metric.
 //
-// nil / empty lastPrice passes through unchanged (no bucket to correct).
-// Returns lastPrice UNCHANGED (same pointer) when baseDecimals ==
-// quoteDecimals — every pair without a confirmed non-7-decimals leg.
-// This matters for byte-identical wire output: the CAGG's raw
-// NUMERIC::text formatting doesn't match [ratToDecimal]'s fixed
-// 10-digit rendering, so reformatting unconditionally would change the
-// wire bytes for every already-correct 7dp pair — the overwhelming
-// common case on a listing endpoint with thousands of pairs.
+// nil / empty lastPrice passes through. Returns lastPrice UNCHANGED (same
+// pointer) when baseDecimals == quoteDecimals: the CAGG's NUMERIC::text format
+// differs from [ratToDecimal]'s fixed 10-digit rendering, so reformatting would
+// change wire bytes for every correct 7dp pair.
 func (s *Server) adjustListingPrice(ctx context.Context, base, quote canonical.Asset, lastPrice *string, surface string) *string {
 	if lastPrice == nil || *lastPrice == "" {
 		return lastPrice

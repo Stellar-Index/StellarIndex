@@ -67,30 +67,24 @@ const tipStreamDivergenceBudget = time.Second
 // so the volume stays visible instead of hidden.
 const tipStreamDivergenceStallInterval = time.Minute
 
-// handlePriceTipStream serves GET /v1/price/tip/stream — the SSE
-// counterpart to /v1/price/tip per ADR-0018 §"SSE stream wires onto
-// the tip surface".
+// handlePriceTipStream serves GET /v1/price/tip/stream: the SSE counterpart to
+// /v1/price/tip (ADR-0018 §"SSE stream wires onto the tip surface").
 //
 // Wire shape per connection:
 //
-//   - Headers: Content-Type: text/event-stream + X-Accel-Buffering: no
-//     (set by the streaming writer); Cache-Control is the route policy
-//     from the CacheControl middleware, which the writer keeps.
-//   - Initial event: a tip_update emitted as soon as the first
-//     compute completes (so the client doesn't sit on a heartbeat-only
-//     stream when data is already available).
-//   - Recurring events: every window_seconds (default 5, clamp 1–60),
-//     a fresh tip computation runs and a tip_update event fires when
-//     it succeeds. Failures (transient hypertable error, no data) are
-//     logged and silently skipped — the client sees heartbeats keep
-//     the connection alive until data returns.
-//   - Heartbeats: every streaming.DefaultHeartbeatInterval (15 s) when
-//     no real event has flowed.
+//   - Headers: Content-Type: text/event-stream + X-Accel-Buffering: no (set by
+//     the streaming writer); Cache-Control is the route policy from the
+//     CacheControl middleware, which the writer keeps.
+//   - Initial event: a tip_update as soon as the first compute completes.
+//   - Recurring events: every window_seconds (default 5, clamp 1–60) a fresh tip
+//     is computed and a tip_update fires on success. Failures are logged and
+//     skipped; heartbeats keep the connection alive until data returns.
+//   - Heartbeats: every streaming.DefaultHeartbeatInterval (15 s) when no real
+//     event has flowed.
 //
-// Pre-stream errors (param validation, "no data ever" 404) are
-// returned as standard problem+json with the right HTTP status —
-// after the stream body starts there's no way to set status, so
-// failures must be detected pre-flight.
+// Pre-stream errors (param validation, "no data ever" 404) are returned as
+// problem+json: once the stream body starts the status can't be set, so failures
+// must be detected pre-flight.
 func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	// Admit against the concurrency caps FIRST, before the
 	// synchronous pre-flight compute below (computeTip) runs. Without
@@ -293,27 +287,19 @@ func (s *Server) writeTipProducerRefused(
 		detail)
 }
 
-// forwardTipStream bridges a Hub subscription onto the SSE writer
-// channel, prepending the connection's own pre-flight snapshot so the
-// first frame never waits for the shared producer's next tick. Returns
-// (closing ch so the SSE writer ends cleanly) when the request context
-// cancels or the Hub subscription closes (hub shutdown / topic evict —
-// the client's EventSource auto-reconnects and lands on a fresh
-// subscription).
+// forwardTipStream bridges a Hub subscription onto the SSE writer channel,
+// prepending the connection's own pre-flight snapshot so the first frame never
+// waits for the shared producer's next tick. Returns (closing ch so the SSE
+// writer ends cleanly) when the request context cancels or the Hub subscription
+// closes (hub shutdown / topic evict; the client's EventSource auto-reconnects).
 //
-// isResume is whether this connection supplied a Last-Event-ID: on a
-// fresh connect the Hub has nothing to replay (an empty lastEventID
-// makes [streaming.Hub.Subscribe] skip replay entirely), so the
-// pre-flight snapshot is the only way the first frame doesn't wait for
-// the shared producer's next tick. On a RESUME, `sub` already replays
-// the buffered backlog after the client's cursor, in ID order — but
-// firstEv was computed fresh, under its own [streaming.Generator], at
-// reconnect time, so its ID is newer than anything already buffered.
-// Prepending it ahead of the replay then sends a newer id: first and
-// older ones after, so the SSE cursor (and whatever the client renders
-// as "current") walks backwards through the reconnect. The
-// backlog itself already carries the pair's current state, so firstEv
-// adds nothing a resuming client needs — skip it.
+// isResume is whether this connection supplied a Last-Event-ID. On a fresh
+// connect the Hub has nothing to replay, so the snapshot is the only early
+// frame. On a RESUME, `sub` already replays the buffered backlog after the
+// client's cursor in ID order, but firstEv was computed fresh under its own
+// [streaming.Generator], so its ID is newer than anything buffered; sending it
+// ahead of the replay walks the SSE cursor backwards. The backlog already
+// carries the pair's current state, so skip firstEv.
 func (s *Server) forwardTipStream(
 	ctx context.Context,
 	ch chan<- streaming.Event,

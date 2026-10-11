@@ -58,29 +58,21 @@ const (
 	DefaultOracleMaxAgeBand      = 26 * time.Hour
 )
 
-// OracleReference is a [Reference] backed by our OWN ingested
-// on-chain oracle rows (the `oracle_updates` served tier) rather
-// than an outbound HTTP call. One instance per oracle source label
-// ("reflector-dex", "reflector-cex", "reflector-fx", "redstone",
-// "band").
+// OracleReference is a [Reference] backed by our OWN ingested on-chain oracle
+// rows (the `oracle_updates` served tier) rather than an outbound HTTP call.
+// One instance per oracle source label ("reflector-dex", "reflector-cex",
+// "reflector-fx", "redstone", "band").
 //
-// Unlike CoinGecko / Chainlink this closes the loop against data we
-// already captured from the chain: the comparison answers "does the
-// value the on-chain consumer (e.g. Blend) sees agree with our
-// VWAP?". That is an independent check only where the oracle's
-// upstream price discovery is not ours: reflector-cex/-fx, redstone
-// and band price off-chain markets, but reflector-dex prices the same
-// Stellar DEX book our on-chain VWAP aggregates, so it moves with an
-// SDEX manipulation instead of contradicting it. [NewService] drops it
-// (see [CorrelatedWithOurVWAP]).
+// Unlike CoinGecko / Chainlink this checks the value an on-chain consumer (e.g.
+// Blend) sees against our VWAP. That is independent only where the oracle's
+// upstream price discovery is not ours: reflector-dex prices the same Stellar
+// DEX book our VWAP aggregates, so it moves with an SDEX manipulation instead
+// of contradicting it. [NewService] drops it (see [CorrelatedWithOurVWAP]).
 //
-// Scale discipline (ADR-0003): oracle_updates stores the RAW integer
-// price + a per-row decimals column (Reflector 14, Redstone 8, Band
-// single-asset 9; Band's E18 pair rates are computed on-read
-// upstream and never stored, so they never reach this path). The
-// price is scaled via big.Rat — never int64 truncation — and only
-// collapses to float64 at the [Reference] interface boundary, same
-// as the Chainlink reference.
+// Scale discipline (ADR-0003): oracle_updates stores the RAW integer price + a
+// per-row decimals column (Reflector 14, Redstone 8, Band single-asset 9). The
+// price is scaled via big.Rat, never int64 truncation, and collapses to float64
+// only at the [Reference] interface boundary, as in the Chainlink reference.
 type OracleReference struct {
 	source string
 	reader OracleReader
@@ -147,28 +139,24 @@ func defaultOracleMaxAge(source string) time.Duration {
 // Name implements [Reference].
 func (r *OracleReference) Name() string { return r.source }
 
-// LookupQuote implements [Reference]; AsOf is the observation's ledger
-// close time.
+// LookupQuote implements [Reference]; AsOf is the observation's ledger close time.
 //
-// Pair mapping: both sides of the pair are expanded through the alias
-// registry ([canonical.AssetAliasStrings]) — XLM's three forms (`native`,
-// the `crypto:XLM` ticker the CEX-class oracles publish under, and the
-// SAC C-address reflector-dex publishes under) plus every configured
-// classic↔SAC pair; any other asset must match its canonical string
-// exactly. Which pairs each oracle actually covers falls out of the
-// stored rows:
+// Pair mapping: both sides are expanded through the alias registry
+// ([canonical.AssetAliasStrings]) — XLM's three forms (`native`, the
+// `crypto:XLM` ticker the CEX-class oracles publish under, and the SAC
+// C-address reflector-dex publishes under) plus every configured classic↔SAC
+// pair; any other asset must match its canonical string exactly. Coverage per
+// oracle falls out of the stored rows:
 //
-//   - reflector-dex   — Soroban token assets quoted in the USDC SAC
-//     (the DEX oracle's base; see reflector.quoteForVariant), so it
-//     never answers a fiat:USD pair — no USDC→USD mapping here
+//   - reflector-dex   — Soroban token assets quoted in the USDC SAC (see
+//     reflector.quoteForVariant), so no USDC→USD mapping here
 //   - reflector-cex   — crypto tickers quoted in fiat:USD
 //   - reflector-fx    — fiat codes quoted in fiat:USD
 //   - redstone        — per-feed base quoted in fiat:USD (EUROC→EUR)
 //   - band            — crypto/fiat symbols quoted in fiat:USD
 //
-// No inversion or cross-quote triangulation is attempted — a pair
-// the oracle doesn't publish directly returns [ErrAssetUnsupported]
-// (information for the operator, not a degradation).
+// No inversion or cross-quote triangulation: a pair the oracle doesn't publish
+// directly returns [ErrAssetUnsupported] (information, not a degradation).
 func (r *OracleReference) LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	u, err := r.reader.LatestOracleObservation(ctx,
 		r.source, canonical.AssetAliasStrings(pair.Base), canonical.AssetAliasStrings(pair.Quote))

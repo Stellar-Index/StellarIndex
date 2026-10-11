@@ -1,22 +1,17 @@
-// Package blend_backstop decodes Blend's Backstop contract events on Soroban,
-// a SEPARATE event surface from the Blend pool decoder (internal/sources/blend).
-// Do NOT fold it into that package; they share neither contract addresses nor
-// event vocabulary.
+// Package blend_backstop decodes Blend's Backstop contract events on Soroban, a
+// SEPARATE surface from the Blend pool decoder (internal/sources/blend): do NOT
+// fold it into that package; they share neither contract addresses nor events.
 //
-// The backstop is the insurance module (BLND:USDC LP stakers earn emissions and
-// absorb bad debt). 12 event types (topic[0] = Symbol); `rw_zone` is the V1
-// spelling of rw_zone_add and rw_zone_remove is V2 only. Field layouts come from
-// mainnet lake samples (golden frames in decode_test.go). Easy to get wrong:
+// 12 event types (topic[0] = Symbol); `rw_zone` is the V1 spelling of
+// rw_zone_add and rw_zone_remove is V2 only. Layouts come from mainnet lake
+// samples (golden frames in decode_test.go). Easy to get wrong:
 //
-//  1. V1 gulp_emissions has 1 topic (no pool) and a BARE i128 body; requiring
-//     the V2 shape would error all 209 V1 rows. V2 has the pool topic and a
-//     2-i128 body.
-//  2. The V1 reward-zone topic is literally `rw_zone` with no Option wrapper;
-//     knowing only `rw_zone_add` drops its 5 real events.
+//  1. V1 gulp_emissions has 1 topic (no pool) and a BARE i128 body; V2 has the
+//     pool topic and a 2-i128 body. Requiring the V2 shape errors every V1 row.
+//  2. The V1 reward-zone topic is literally `rw_zone` with no Option wrapper.
 //  3. V2 rw_zone_add's body is Vec[to_add: Address, to_remove: Option<Address>];
 //     the second element is not a u32 index.
-//  4. gulp_emissions' topic[1] is the POOL address; it lands in the Pool column.
-//  5. withdraw's body is (shares_burned, tokens_out), the OPPOSITE of deposit's
+//  4. withdraw's body is (shares_burned, tokens_out), the OPPOSITE of deposit's
 //     (tokens_in, shares_minted), so Amount cannot uniformly promote vec[0].
 //
 // Applying these to stored rows takes
@@ -445,25 +440,21 @@ func decodeRwZone(e *events.Event) (decoded, error) {
 	return decoded{Pool: pool, Attributes: attrs}, nil
 }
 
-// decodeRwZoneRemove: topics=[sym]; data=Address (the pool removed
-// from the reward zone, promoted to Pool).
+// decodeRwZoneRemove: topics=[sym]; data=Address (the pool removed from the
+// reward zone, promoted to Pool).
 //
-// SOURCE NOTE: the Rust doc comment directly above this function in
-// blend-contracts-v2 claims `topics - ["rw_zone_remove", pool_address:
-// Address]`, but the actual `let topics = (...)` + `publish()` call one
-// line below it is a ONE-element topic tuple with the pool passed as
-// bare DATA, not a second topic — a doc-comment/code mismatch in
-// Blend's own source. We trust the code (what actually serializes
-// on-chain), not the comment:
+// SOURCE NOTE: the Rust doc comment above this function in blend-contracts-v2
+// claims `topics - ["rw_zone_remove", pool_address: Address]`, but the actual
+// `publish()` call is a ONE-element topic tuple with the pool passed as bare
+// DATA. We trust the code (what serializes on-chain), not the comment:
 //
 //	pub fn rw_zone_remove(e: &Env, to_remove: Address) {
 //	    let topics = (Symbol::new(e, "rw_zone_remove"),);
 //	    e.events().publish(topics, to_remove);
 //	}
 //
-// The lake held zero occurrences at the last census (this event had
-// never fired on mainnet) — this decoder is SYNTHETIC-FROM-SOURCE,
-// unverified against real bytes. See decode_test.go
+// This event had never fired on mainnet at the last census, so this decoder is
+// SYNTHETIC-FROM-SOURCE, unverified against real bytes. See decode_test.go
 // TestDecodeRwZoneRemove_SyntheticFromSource.
 func decodeRwZoneRemove(e *events.Event) (decoded, error) {
 	body, err := scval.Parse(e.Value)

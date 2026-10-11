@@ -185,27 +185,21 @@ var gatedSources = map[string]GatedMeta{
 		},
 	},
 	defindex.SourceName: {
-		// Curated-set gate (ADR-0035/0040). Neither vaults NOR
-		// strategies self-register from factory `create` events: the
-		// create body's strategy addresses are attacker-controlled
-		// bytes (anyone can call the public factory naming arbitrary
-		// addresses), so auto-seeding them would be a permissionless
-		// registry-poisoning vector — a named contract would then decode
-		// as a recognised DeFindex flow, contaminating TVL/flow
-		// attribution. The decoder's in-code evidence-verified seed
-		// (MainnetStrategies + MainnetVaults, lake-proven complete —
-		// the curated strategy set is byte-identical to the full
-		// create-body extraction, 16/16) is the sole trust root, and
-		// the protocol_contracts warm is the operator seam for admitting
-		// a newly-verified vault OR strategy without a redeploy. A new
-		// strategy first appearing after the curated freeze fail-closes
+		// Curated-set gate (ADR-0035/0040). Neither vaults NOR strategies
+		// self-register from factory `create` events: the create body's strategy
+		// addresses are attacker-controlled (anyone can call the public factory),
+		// so auto-seeding would be a permissionless registry-poisoning vector. The
+		// decoder's in-code evidence-verified seed (MainnetStrategies +
+		// MainnetVaults) is the sole trust root; the protocol_contracts warm is the
+		// operator seam for admitting a newly-verified vault OR strategy without a
+		// redeploy. A new strategy appearing after the curated freeze fail-closes
 		// into an ADR-0033 recognition gap until an operator seeds it.
 		//
-		// Because the decoder never calls reg.Seed, CuratedSet is the
-		// ONLY writer of defindex's protocol_contracts rows: the warm
-		// reconcile and seed-protocol-contracts both upsert it. Factories
-		// stay declared — they gate the factory's own create/n_fee events.
-		// Their topic[0] is the String prefix; "create" sits in topic[1].
+		// Because the decoder never calls reg.Seed, CuratedSet is the ONLY writer of
+		// defindex's protocol_contracts rows: the warm reconcile and
+		// seed-protocol-contracts both upsert it. Factories stay declared: they gate
+		// the factory's own create/n_fee events (topic[0] is the String prefix;
+		// "create" sits in topic[1]).
 		Factories:   defindex.MainnetFactories,
 		CreationSym: defindex.PrefixFactory,
 		Genesis:     defindex.GenesisLedger,
@@ -327,23 +321,18 @@ func seedCuratedContracts(
 //
 // The warm has two inputs:
 //
-//   - the protocol_contracts table, where a factory-anchored source's children
-//     live (discovered from creation events; nothing in code seeds them), and
-//   - meta.CuratedSet, the in-code trust root of a curated-set source
-//     (ADR-0040 §1 mechanism 3: comet, blend_emitter, upshift), which has no
-//     creation events, so nothing else writes its contracts to the table.
+//   - the protocol_contracts table: a factory-anchored source's children,
+//     discovered from creation events; and
+//   - meta.CuratedSet, the in-code trust root of a curated-set source (ADR-0040:
+//     comet, blend_emitter, upshift), which has no creation events.
 //
 // Seeding it here keeps the table populated; otherwise GET /v1/protocols/{name}
 // serves an empty roster that reads like a protocol with no pools yet.
 //
-// withHook installs the live-upsert persistence callback (indexer path): a NEW
-// factory creation event upserts the child into protocol_contracts, and it arms
-// the curated reconcile that writes any curated contract the table is missing.
-// Read-only consumers (recognition / completeness audits) pass withHook=false:
-// they still gate on the curated set but write nothing, since an audit that
-// registered contracts would manufacture its own evidence.
-//
-// hookCtx scopes the live upserts; unused when withHook is false.
+// withHook installs the live-upsert persistence callback (indexer path) and arms
+// the curated reconcile. Read-only consumers (audits) pass withHook=false: they
+// still gate on the curated set but write nothing, since an audit that registered
+// contracts would manufacture its own evidence. hookCtx scopes the live upserts.
 func GatedRegistryOptions(
 	ctx context.Context,
 	store *timescale.Store,
