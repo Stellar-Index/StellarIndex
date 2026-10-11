@@ -13,24 +13,19 @@ import (
 )
 
 // TokenSupplyReader is the seam GET /v1/assets/{asset_id}/supply reads through: the ClickHouse
-// supply_flows lake, whose decoded per-event mint/burn/clawback amounts make supply a live SQL sum
-// with no rollup. Nil disables the endpoint (503). Distinct from [SupplyLooker] (circulating-vs-max
-// policy): this is the raw on-chain sum(mint)-sum(burn)-sum(clawback) for EVERY token.
+// supply_flows lake, a live SQL sum of decoded mint/burn/clawback with no rollup. Nil disables the
+// endpoint (503). Distinct from [SupplyLooker]: this is the raw on-chain net for EVERY token.
 type TokenSupplyReader interface {
 	TokenSupply(ctx context.Context, contractID string) (clickhouse.TokenSupply, error)
 	NativeTotalCoins(ctx context.Context) (totalCoins int64, ledger uint32, err error)
 }
 
-// isNativeSupplyAlias reports whether a raw {asset_id} path segment names
-// XLM in any of its canonical spellings.
-//
-// It parses rather than string-matching: a literal comparison is case-SENSITIVE, so
-// /v1/assets/xlm/supply would 404 while every other asset route accepts `xlm`, and a client reads
-// that 404 as "no supply data".
-//
-// The XLM SAC contract address is deliberately NOT routed here even though canonical.AssetAliases
-// lists it: the SAC's supply is the amount currently WRAPPED, a different quantity from the ledger
-// header's total_coins, and is served by the contract branch below.
+// isNativeSupplyAlias reports whether a raw {asset_id} segment names XLM in any canonical spelling.
+// It parses rather than string-matching, because a literal comparison is case-sensitive and
+// /v1/assets/xlm/supply would 404 as "no supply data". The XLM SAC address is deliberately NOT
+// routed here even though canonical.AssetAliases lists it: the SAC's supply is the amount
+// currently WRAPPED, a different quantity from the header's total_coins, served by the contract
+// branch.
 func isNativeSupplyAlias(assetID string) bool {
 	parsed, err := canonical.ParseAsset(assetID)
 	if err != nil {
@@ -40,9 +35,8 @@ func isNativeSupplyAlias(assetID string) bool {
 		(parsed.Type == canonical.AssetCrypto && strings.EqualFold(parsed.Code, "XLM"))
 }
 
-// AssetSupply is the wire response for GET /v1/assets/{asset_id}/supply.
-// Amounts are decimal strings in the asset's smallest unit (ADR-0003: an i128
-// is never a JSON number); the client applies per-asset decimals for display.
+// AssetSupply is the wire response for GET /v1/assets/{asset_id}/supply. Amounts are decimal
+// strings in the asset's smallest unit (an i128 is never a JSON number); clients apply decimals.
 type AssetSupply struct {
 	AssetID       string  `json:"asset_id"`
 	ContractID    string  `json:"contract_id,omitempty"`
@@ -51,56 +45,45 @@ type AssetSupply struct {
 	BurnTotal     *string `json:"burn_total,omitempty"`
 	ClawbackTotal *string `json:"clawback_total,omitempty"`
 	FlowCount     uint64  `json:"flow_count"`
-	// Source is how TotalSupply was derived: "mint_burn_flows" (from supply_flows),
-	// "ledger_total_coins" (XLM, from the ledger header, as it has no SAC mint/burn events), or
-	// "contract_storage_balances" (sum of the token's own contract-storage balances, a DIFFERENT
-	// BASIS, see supply.BasisContractStorageBalances, served only for tokens emitting no supply
-	// events).
+	// Source is how TotalSupply was derived: "mint_burn_flows" (supply_flows), "ledger_total_coins"
+	// (XLM, from the ledger header; it has no SAC mint/burn events), or "contract_storage_balances"
+	// (the token's own storage balances, a DIFFERENT BASIS, served only for tokens emitting no
+	// supply events).
 	Source string `json:"source"`
 
-	// SupplyBasis names the reading behind a "mint_burn_flows" TotalSupply, in
-	// the supply.Basis vocabulary the listings use. A classic asset's figure
-	// is classic_lake_flows: its derived SAC's event net, not a figure the
-	// issuer publishes, and an upper reading rather than a certified one.
+	// SupplyBasis names the reading behind a "mint_burn_flows" TotalSupply in the supply.Basis
+	// vocabulary. A classic asset's classic_lake_flows is its derived SAC's event net: an upper
+	// reading, not a figure the issuer publishes.
 	SupplyBasis string `json:"supply_basis,omitempty"`
 
-	// CirculatingSupplyLowerBound is true when TotalSupply is a PROVABLE FLOOR, not the figure
-	// itself, and must not be presented as an exact supply.
-	//
-	// Set for "contract_storage_balances": that reading sees only entries the current-state
-	// projection captured, so one dormant since before coverage began is absent. Where the contract
-	// publishes a holder count, SupplyConsistent disagreeing is what a missing entry looks like.
+	// CirculatingSupplyLowerBound is true when TotalSupply is a PROVABLE FLOOR and must not be
+	// presented as exact. Set for "contract_storage_balances": that reading sees only entries the
+	// current-state projection captured, so one dormant since before coverage is absent.
 	CirculatingSupplyLowerBound bool `json:"circulating_supply_lower_bound,omitempty"`
 
-	// BalanceEntries is how many per-holder balance entries were summed.
-	// Only set for "contract_storage_balances".
+	// BalanceEntries is how many per-holder entries were summed ("contract_storage_balances" only).
 	BalanceEntries int `json:"balance_entries,omitempty"`
 
-	// ArchivedBalanceEntries and ArchivedBalanceTotal are the part of
-	// BalanceEntries and TotalSupply held in persistent entries whose TTL had
-	// lapsed at the lake tip: archived, still owned and restorable, so counted.
-	// Only set for "contract_storage_balances", and only when non-zero.
+	// ArchivedBalanceEntries and ArchivedBalanceTotal are the part of BalanceEntries and TotalSupply
+	// in persistent entries whose TTL lapsed at the lake tip: still owned and restorable, so
+	// counted. Set only for "contract_storage_balances", and only when non-zero.
 	ArchivedBalanceEntries int     `json:"archived_balance_entries,omitempty"`
 	ArchivedBalanceTotal   *string `json:"archived_balance_total,omitempty"`
 
-	// SupplyConsistent, when non-nil, reports whether the contract's own `TotalSupply` and
-	// `HolderCount` agreed with what we summed and saw. Only set for "contract_storage_balances";
-	// nil means no cross-checks were offered, which is not a failed one.
+	// SupplyConsistent, when non-nil, reports whether the contract's own TotalSupply and
+	// HolderCount agreed with what we summed. Nil means no cross-check was offered, not a failed one.
 	SupplyConsistent *bool `json:"supply_consistent,omitempty"`
 
-	// Decimals is the scale the CONTRACT ITSELF declares, set only for "contract_storage_balances".
-	// Omitted when the chain declares none, in which case a consumer MUST NOT invent one.
+	// Decimals is the scale the CONTRACT ITSELF declares ("contract_storage_balances" only). When
+	// omitted the chain declares none and a consumer MUST NOT invent one.
 	Decimals *uint32 `json:"decimals,omitempty"`
-	// AsOfLedger is the lake watermark this read is fresh to: the highest ledger captured in the
-	// ClickHouse lake at serve time (for native, the ledger the total_coins row came from). Omitted
-	// without a watermark reader. Pairs with `flags.stale`, set when its close time trails now
-	// beyond the staleness threshold.
+	// AsOfLedger is the lake watermark this read is fresh to (for native, the ledger the
+	// total_coins row came from). Omitted without a watermark reader; pairs with flags.stale.
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
-// handleAssetSupply serves GET /v1/assets/{asset_id}/supply — a token's live
-// supply from the decode-at-ingest supply_flows lake. The literal "supply"
-// segment takes precedence over the {asset_id}/{network} wildcard route.
+// handleAssetSupply serves GET /v1/assets/{asset_id}/supply from the supply_flows lake. The literal
+// "supply" segment takes precedence over the {asset_id}/{network} wildcard route.
 func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	if s.TokenSupply == nil {
 		writeProblem(w, r,
@@ -116,14 +99,12 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-request DB ceiling: the supply_flows sum and native header read share the explorer pool,
-	// so a bounded context releases the connection on a slow scan. 8s matches the sibling raw-scan
-	// endpoints and fires before the blanket request-timeout middleware.
+	// Per-request DB ceiling: the reads share the explorer pool, so a bounded context releases the
+	// connection on a slow scan. 8s fires before the blanket request-timeout middleware.
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	// XLM: supply is the ledger header's total_coins (XLM is not minted/burned
-	// via SAC mint/burn events, so it has no supply_flows). Handle every alias.
+	// XLM supply is the ledger header's total_coins (no SAC mint/burn events); handle every alias.
 	if isNativeSupplyAlias(assetID) {
 		coins, ledger, err := s.TokenSupply.NativeTotalCoins(ctx)
 		if err != nil {
@@ -137,8 +118,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 			AssetID:     assetID,
 			TotalSupply: strconv.FormatInt(coins, 10),
 			Source:      "ledger_total_coins",
-			// The native read already carries its exact source ledger —
-			// more precise than the cached watermark, and free.
+			// The native read carries its exact source ledger, more precise than the watermark.
 			AsOfLedger: ledger,
 		}, Flags{Stale: stale})
 		return
@@ -160,22 +140,19 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sup.Incomplete {
-		// A negative net total (burn+clawback > mint) means supply_flows is incompletely seeded
-		// (e.g. pre-Soroban SAC-wrapper mints not yet replayed), NOT that supply is negative.
-		// TotalSupply is a non-nullable wire string, so REFUSE the snapshot (404 "Supply not
-		// available") rather than publish an impossible negative; total_supply >= 0 is also enforced
-		// in the schema. Seed the baseline with `stellarindex-ops supply seed-sep41-genesis`.
+		// A negative net (burn+clawback > mint) means supply_flows is incompletely seeded (e.g.
+		// pre-Soroban SAC-wrapper mints not replayed), not that supply is negative. TotalSupply is
+		// a non-nullable string, so refuse with 404 rather than publish an impossible negative.
+		// Seed with `stellarindex-ops supply seed-sep41-genesis`.
 		writeProblem(w, r, "https://api.stellarindex.io/errors/supply-incomplete",
 			"Supply not available", http.StatusNotFound,
 			"This token's on-chain supply flows are incompletely seeded (recorded burns exceed recorded mints), so a total supply isn't available for it yet.")
 		return
 	}
-	// A token with NO flows is the one case the event log cannot speak to: supply_flows scans an
-	// unseen contract to zeros, and zero is a claim ("fully burned"), not an absence. Ask the
-	// contract's own storage; if it declines too, there is nothing to publish.
-	//
-	// Gated on FlowCount == 0, not a magnitude comparison, so the two readings never both feed one
-	// figure: they measure the same tokens from opposite ends and summing would double-count.
+	// A token with NO flows is the one case the event log cannot speak to: an unseen contract scans
+	// to zeros, and zero claims "fully burned" rather than absence. Ask the contract's storage; if
+	// it declines too, publish nothing. Gated on FlowCount == 0, not a magnitude comparison, so the
+	// two readings never feed one figure (they measure from opposite ends; summing double-counts).
 	if sup.FlowCount == 0 {
 		if resp, storageStale, ok := s.storageSupplyResponse(ctx, assetID, contractID); ok {
 			writeJSON(w, resp, Flags{Stale: storageStale})
@@ -207,38 +184,30 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	}, Flags{Stale: stale})
 }
 
-// ContractStorageSupplyReader is the seam the storage-derived supply reading is
-// read through. Declared HERE rather than added to [TokenSupplyReader] so every
-// existing stub implementing that interface keeps compiling, and so a
-// deployment can wire one source without the other.
+// ContractStorageSupplyReader is the seam for the storage-derived supply reading. It is separate
+// from [TokenSupplyReader] so a deployment can wire one source without the other.
 type ContractStorageSupplyReader interface {
 	ContractStorageSupply(ctx context.Context, contractID string) (clickhouse.ContractStorageSupply, error)
 }
 
-// storageSupplyResponse builds the storage-derived answer for a token the event log has nothing to
-// say about. ok=false means no defensible answer and the caller answers 404, since a flowless
-// token's event reading is an unfounded zero.
-//
-// Every refusal below is silent to the client by design: a fallback that turned a 200 into a 502
-// because its own optional source declined would be worse than the gap it closes.
+// storageSupplyResponse builds the storage-derived answer for a token the event log cannot speak
+// to. ok=false means no defensible answer (404), since a flowless token's event reading is an
+// unfounded zero. Every refusal is silent to the client: a fallback must not turn a 200 into a 502
+// because its own optional source declined.
 func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID string) (AssetSupply, bool, bool) {
 	if s.ContractStorageSupply == nil {
 		return AssetSupply{}, false, false
 	}
 	st, err := s.ContractStorageSupply.ContractStorageSupply(ctx, contractID)
 	if err != nil {
-		// Both refusals (a SAC, an oversized holder set) and genuine read
-		// errors land here. A SAC is the expected case — every classic asset
-		// routed through resolveSupplyContractID derives one — so this is
-		// logged at debug volume, not warned.
+		// Refusals (a SAC, an oversized holder set) and read errors land here. A SAC is the expected
+		// case for every classic asset, so log at debug, not warn.
 		s.logger.Debug("supply: contract storage fallback declined",
 			"contract_id", contractID, "err", err)
 		return AssetSupply{}, false, false
 	}
 	if st.BalanceEntries == 0 || st.Total == nil || st.Total.Sign() == 0 {
-		// No balances is not a supply of zero — it is the absence of a
-		// reading. Publishing it would replace one unfounded zero with
-		// another.
+		// No balances is the absence of a reading, not a supply of zero.
 		return AssetSupply{}, false, false
 	}
 
@@ -262,19 +231,16 @@ func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID 
 		d := st.Decimals
 		resp.Decimals = &d
 	}
-	// The same watermark stamps as_of_ledger and decides flags.stale, as on
-	// the mint/burn arm: a reading fresh to the lake tip is fresh to that
-	// ledger, not to the last ledger any one balance entry happened to move.
+	// The lake watermark stamps as_of_ledger and decides flags.stale, as on the mint/burn arm.
 	wmLedger, stale, _ := s.lakeWatermark(ctx)
 	resp.AsOfLedger = wmLedger
 	return resp, stale, true
 }
 
-// resolveSupplyContractID maps an asset_id to the contract_id supply_flows is keyed by: a Soroban
-// C-strkey is itself; a classic asset ("CODE-ISSUER") resolves to its SAC by deterministic
-// derivation, a pure function of (asset, passphrase) valid even before deployment. sac_wrappers is
-// deliberately NOT consulted: an entry can only equal the derived SAC or point supply at another
-// contract. Only unparseable ids and shapes with no SAC (fiat:*) fail to resolve.
+// resolveSupplyContractID maps an asset_id to the contract_id supply_flows is keyed by: a C-strkey
+// is itself; a classic (CODE-ISSUER) derives its SAC, a pure function of (asset, passphrase) valid
+// even before deployment. sac_wrappers is deliberately NOT consulted: an entry can only equal the
+// derived SAC or point supply at another contract.
 func (s *Server) resolveSupplyContractID(assetID string) (string, bool) {
 	if canonical.IsContractID(assetID) {
 		return assetID, true

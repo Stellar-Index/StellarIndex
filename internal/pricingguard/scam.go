@@ -29,13 +29,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// scamFlagTagSet is the lookup form of the directory tag vocabulary that withholds an issuer's
-// price. The list lives in timescale.DirectoryScamFlagTags, next to the account_directory
-// table, because the /v1/assets ranking SQL uses the same set and a storage package cannot
-// import this one. It MUST mirror the frontend set in web/explorer/src/lib/directory-tags.ts
-// (DIRECTORY_SCAM_FLAG_TAGS) so every asset showing a scam banner also has its price withheld
-// and is demoted in ranking. Matched on timescale.CanonicalDirectoryTag, the form every
-// directory writer stores; scam_test.go and directory-tags.test.ts pin each side.
+// scamFlagTagSet is the lookup form of timescale.DirectoryScamFlagTags, which lives next to the
+// account_directory table because the /v1/assets ranking SQL uses it and storage cannot import
+// this package. It MUST mirror web/explorer/src/lib/directory-tags.ts (DIRECTORY_SCAM_FLAG_TAGS)
+// so every asset with a scam banner also has its price withheld and is demoted. Matched on
+// timescale.CanonicalDirectoryTag; scam_test.go and directory-tags.test.ts pin each side.
 var scamFlagTagSet = func() map[string]struct{} {
 	m := make(map[string]struct{}, len(timescale.DirectoryScamFlagTags))
 	for _, t := range timescale.DirectoryScamFlagTags {
@@ -108,10 +106,8 @@ type ScamGateOptions struct {
 	Logger *slog.Logger
 }
 
-// NewScamGate builds a gate over the directory reader. A nil reader
-// yields a nil gate (withholds nothing) so deployments without the
-// directory table stay unguarded transparently — same shape as the
-// directory overlay's nil handling.
+// NewScamGate builds a gate over the directory reader. A nil reader yields a nil gate (withholds
+// nothing) so deployments without the directory table stay unguarded.
 func NewScamGate(dir ScamDirectoryReader, opts ScamGateOptions) *ScamGate {
 	if dir == nil {
 		return nil
@@ -121,19 +117,16 @@ func NewScamGate(dir ScamDirectoryReader, opts ScamGateOptions) *ScamGate {
 	return g
 }
 
-// Gate is the ONE withholding decision every binary consults before it
-// publishes an aggregated price: withhold when the thin-market substance
-// gate refuses the pair, OR when either leg's issuer is
-// directory-scam-flagged.
+// Gate is the ONE withholding decision every binary consults before publishing an aggregated
+// price: withhold when the thin-market substance gate refuses the pair, OR when either leg's
+// issuer is directory-scam-flagged.
 //
-// It lives here rather than in a binary because a decision spelled once per binary drifts once
-// per binary (an alert could name a price /v1/price refuses to publish). Its methods are the
-// only exported expression that folds the two halves; the AST guard in gate_guard_test.go fails
-// on any cmd/* file that consults a half directly or reads a closed VWAP bucket without asking
-// a Gate.
+// It lives here because a decision spelled once per binary drifts per binary (an alert could name
+// a price /v1/price refuses). The AST guard in gate_guard_test.go fails on any cmd/* file that
+// consults a half directly or reads a closed VWAP bucket without asking a Gate.
 //
-// Both halves are nil-receiver safe (nil == allow everything), so a disabled [pricing_guard]
-// withholds nothing, and so does the zero Gate.
+// Both halves are nil-receiver safe (nil allows everything), so a disabled [pricing_guard] and the
+// zero Gate withhold nothing.
 type Gate struct {
 	Substance *SubstanceGate // nil → no thin-market floor
 	Scam      *ScamGate      // nil → no scam-issuer gate
@@ -222,28 +215,24 @@ const (
 	WithheldFlaggedIssuer Withholding = "flagged_issuer"
 )
 
-// PriceWithholding is [Gate.PriceWithheld] reporting WHICH gate fired.
-// The scam gate is asked FIRST: when both would withhold, the flag is the
-// true reason, and reporting the pair as merely thin would hand the
-// client the recompute-it-yourself advice the flag exists to refuse.
+// PriceWithholding is [Gate.PriceWithheld] reporting WHICH gate fired. The scam gate is asked
+// FIRST: reporting a flagged pair as merely thin would hand the client the recompute-it-yourself
+// advice the flag exists to refuse.
 func (g Gate) PriceWithholding(ctx context.Context, base, quote canonical.Asset, surface string) Withholding {
 	return g.Judge(ctx, base, quote, surface, Query{}).Withholding
 }
 
-// PriceWithholdingAt is [Gate.PriceWithholding] for a point-in-time read:
-// the substance half is asked about the instant being served instead of about now. The scam
-// half is deliberately NOT moved in time: a directory flag is an owner-level trust decision
-// about the issuer, so it withholds that issuer's history along with its present.
+// PriceWithholdingAt is [Gate.PriceWithholding] for a point-in-time read: the substance half is
+// asked about the instant served. The scam half is deliberately NOT moved in time: a directory
+// flag is an issuer-level trust decision, so it withholds that issuer's history too.
 func (g Gate) PriceWithholdingAt(ctx context.Context, base, quote canonical.Asset, at time.Time, surface string) Withholding {
 	return g.Judge(ctx, base, quote, surface, Query{PointInTime: true, At: at}).Withholding
 }
 
-// AssetValueWithholding is the gate's answer for an ASSET's USD value
-// rather than one pair: withheld when its issuer is flagged, or when no
-// backing quote ([AssetSubstanceVerdict]) clears the substance floor on
-// evidence. An unmeasured asset is served, the pair gate's fail-open.
-// Each half counts the asset once, however many quotes it probes; the
-// flag short-circuits the substance probes.
+// AssetValueWithholding is the gate's answer for an ASSET's USD value rather than one pair:
+// withheld when its issuer is flagged, or when no backing quote ([AssetSubstanceVerdict]) clears
+// the substance floor. An unmeasured asset is served (the pair gate's fail-open). Each half counts
+// the asset once, and the flag short-circuits the substance probes.
 func (g Gate) AssetValueWithholding(ctx context.Context, asset canonical.Asset, usdPegs []canonical.Asset, surface string) Withholding {
 	if g.Scam.withheldLeg(ctx, asset, surface) {
 		return WithheldFlaggedIssuer
@@ -252,8 +241,7 @@ func (g Gate) AssetValueWithholding(ctx context.Context, asset canonical.Asset, 
 	return WithholdingFor(false, allowed || !measured)
 }
 
-// WithholdingFor folds the two gates' verdicts into one; a flagged issuer
-// takes precedence. Callers holding their own gate seams fold through here.
+// WithholdingFor folds the two gates' verdicts into one; a flagged issuer takes precedence.
 func WithholdingFor(scamFlagged, substanceAllowed bool) Withholding {
 	switch {
 	case scamFlagged:
@@ -277,13 +265,9 @@ func (g *ScamGate) WithheldPair(ctx context.Context, base, quote canonical.Asset
 }
 
 // Withheld is the BASE-ONLY spelling of the decision: it answers half the question and no
-// price-serving path asks it. Every surface uses [ScamGate.WithheldPair] via internal/api/v1's
-// scamWithheld (TestScamGateIsAskedThePairQuestion fails on any other selector).
-//
-// It survives only because the v1.PriceScamGate interface declares it and
-// v1.PriceScamPairGate embeds that. Production wires *ScamGate, which satisfies the pair form
-// (TestProductionScamGateIsPairAware), so scamWithheld's base-only fallback is unreachable
-// there. It shares withheldLeg with the pair form, so it is not a second policy.
+// price-serving path asks it (TestScamGateIsAskedThePairQuestion fails on any other selector; use
+// [ScamGate.WithheldPair]). It survives because v1.PriceScamGate declares it and
+// v1.PriceScamPairGate embeds that; production wires the pair form (TestProductionScamGateIsPairAware).
 //
 // `surface` labels obs.PriceServeScamWithheldTotal: a low-cardinality constant ("price_read",
 // "tip", ...), never a pair string. Nil-receiver safe. Fail-open on directory error.
@@ -294,19 +278,17 @@ func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface s
 // withheldLeg is the single-asset predicate both exported forms fold over: "is THIS asset's
 // issuer directory-scam-flagged?". Nil-receiver safe; fail-open on directory error.
 //
-// A CLASSIC asset is judged on its issuer G-address and a contract token on its own C-address.
-// Native / fiat / crypto-CEX assets have no address to flag.
+// A CLASSIC asset is judged on its issuer G-address and a contract token on its own C-address;
+// native / fiat / crypto-CEX assets have no address to flag.
 //
 // The asset is first resolved to its CANONICAL family form (canonical.CanonicalAsset): a SAC
-// wrapper has no G-address of its own, so without resolution a flagged issuer's price would stay
-// servable via the wrapper's C-address. Resolution is one-way and classic-first; XLM's SAC
-// canonicalises to `native`, which has no issuer and returns false.
+// wrapper has no G-address, so without resolution a flagged issuer's price would stay servable via
+// the wrapper's C-address. XLM's SAC canonicalises to `native`, which has no issuer.
 //
-// A SAC with no `[supply].sac_wrappers` entry resolves to itself (a C-address cannot be
-// inverted without that table), so a contract leg is matched against [ScamGate.flaggedSAC]:
-// the derived SAC ids of every registered classic asset whose issuer is flagged. Derivation,
-// not metadata, is the trust anchor, so a genuine SEP-41 token can never match. A SAC whose
-// classic asset is absent from classic_assets stays unrecognised.
+// A SAC with no `[supply].sac_wrappers` entry resolves to itself (a C-address cannot be inverted),
+// so a contract leg is matched against [ScamGate.flaggedSAC]: the derived SAC ids of every
+// registered classic asset whose issuer is flagged. Derivation, not metadata, is the trust anchor,
+// so a genuine SEP-41 token can never match.
 func (g *ScamGate) withheldLeg(ctx context.Context, asset canonical.Asset, surface string) bool {
 	if g == nil {
 		return false

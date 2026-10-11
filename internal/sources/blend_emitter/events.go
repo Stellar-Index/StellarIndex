@@ -24,9 +24,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// SourceName is the canonical string stamped on every event this
-// package emits, and the registry key used across config /
-// dispatcher / projector / gated-registry wiring.
+// SourceName is stamped on every emitted event and is the registry key for config, dispatcher,
+// projector and gated-registry wiring.
 const SourceName = "blend_emitter"
 
 // MainnetEmitter is the single mainnet Blend Emitter contract, spanning Blend V1 to V2 with no
@@ -40,15 +39,11 @@ const MainnetEmitter = "CCOQM6S7ICIUWA225O5PSJWUBEMXGFSSW2PQFO6FP4DQEKMS5DASRGRR
 // events attribute; it fails closed and surfaces as an ADR-0033 recognition gap.
 func MainnetGatedSet() []string { return []string{MainnetEmitter} }
 
-// emitterTopicArity is the topic count on every Emitter event: just
-// [Symbol("<event_name>")] — confirmed against all 469 lake events
-// (topic_count = 1 uniformly). Anything shorter is not an Emitter
-// event.
+// emitterTopicArity is the topic count on every Emitter event (just the event Symbol, uniform
+// across the lake); anything shorter is not an Emitter event.
 const emitterTopicArity = 1
 
-// Event-topic constants — the four topic[0] symbols the Emitter
-// contract has ever emitted on mainnet (full-topic census of the
-// ClickHouse lake).
+// Event-topic constants: the only four topic[0] symbols the Emitter has emitted on mainnet.
 const (
 	EventDistribute = "distribute"
 	EventDrop       = "drop"
@@ -56,10 +51,9 @@ const (
 	EventSwap       = "swap"
 )
 
-// Pre-encoded base64 SCVal::Symbol blobs for topic[0]. All four names
-// are <= 9 chars so the Soroban SDK emits them via the compact
-// `symbol_short!` form; scval.MustEncodeSymbol matches the wire form
-// byte-for-byte (pinned by internal/scval/scval_test.go).
+// Pre-encoded base64 SCVal::Symbol blobs for topic[0]. The names are short enough for the SDK's
+// compact symbol form; MustEncodeSymbol matches that wire form byte-for-byte
+// (pinned by internal/scval/scval_test.go).
 var (
 	TopicSymbolDistribute = scval.MustEncodeSymbol(EventDistribute)
 	TopicSymbolDrop       = scval.MustEncodeSymbol(EventDrop)
@@ -79,14 +73,11 @@ var (
 	// for the matched event kind.
 	ErrMalformedPayload = errors.New("blend_emitter: malformed event payload")
 
-	// ErrNonPositiveAmount — a distribute/drop amount is zero or
-	// negative. A genuine emission/airdrop always moves a positive
-	// BLND amount; zero-or-negative is either a contract bug or an
-	// edge case we'd rather skip+count than emit.
+	// ErrNonPositiveAmount means a distribute/drop amount is zero or negative; a genuine emission
+	// always moves a positive amount, so it is skipped and counted rather than emitted.
 	ErrNonPositiveAmount = errors.New("blend_emitter: amount must be positive")
 
-	// ErrEmptyRecipients — a drop event's outer Vec has zero entries.
-	// A drop with no recipients is not a meaningful airdrop; treated
-	// as malformed rather than silently emitting zero rows.
+	// ErrEmptyRecipients means a drop's outer Vec is empty; treated as malformed rather than
+	// silently emitting zero rows.
 	ErrEmptyRecipients = errors.New("blend_emitter: drop event has no recipients")
 )

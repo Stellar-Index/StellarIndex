@@ -13,23 +13,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// BackupsDiagnostics is the wire shape of GET /v1/diagnostics/backups, the
-// status page's "Backups" panel: a snapshot of backup and DR-evidence freshness
-// for the region, judged against the SLO thresholds echoed in `slo`.
+// BackupsDiagnostics is the wire shape of GET /v1/diagnostics/backups: backup and DR-evidence
+// freshness for the region, judged against the SLO thresholds echoed in `slo`.
 //
-// The source of truth is Prometheus via the same [PrometheusStatusBackend] as /v1/status; the API
-// never shells out to pgbackrest. Series come from pgbackrest_exporter (`pgbackrest_backup_*`) and
-// the node_exporter textfile collector (`stellarindex_restore_drill_*`,
-// `stellarindex_ch_schema_snapshot_*`). The drill's last_success is stamped only on a clean run,
-// so `node_textfile_mtime_seconds` is the only "it ran at all" signal.
+// Prometheus (via the same [PrometheusStatusBackend] as /v1/status) is the source of truth; the API
+// never shells out to pgbackrest. The drill's last_success is stamped only on a clean run, so
+// `node_textfile_mtime_seconds` is the only "it ran at all" signal.
 //
-// Every timestamp / age is a pointer: nil means "no data" and the freshness verdict is
-// "unknown", never a fresh zero. No secrets, paths or hostnames.
+// Every timestamp / age is a pointer: nil means "no data" and the verdict is "unknown", never a
+// fresh zero. No secrets, paths or hostnames.
 type BackupsDiagnostics struct {
-	// SourceStatus is the tri-state trust signal for the whole document (as
-	// StatusResponse.IncidentsStatus): "ok" when every Prometheus query succeeded; "degraded" when
-	// some failed, so the items they feed are nil / "unknown"; "unknown" when all failed and
-	// nothing below is trustworthy.
+	// SourceStatus is the tri-state trust signal (as StatusResponse.IncidentsStatus): "ok" when
+	// every Prometheus query succeeded; "degraded" when some failed, leaving their items nil /
+	// "unknown"; "unknown" when all failed.
 	SourceStatus string `json:"source_status"`
 
 	Postgres     BackupPostgres     `json:"postgres"`
@@ -53,16 +49,12 @@ type BackupPostgres struct {
 	LastFull *BackupRun `json:"last_full"`
 	LastDiff *BackupRun `json:"last_diff"`
 
-	// WALArchiveMaxAgeSeconds is the age of the newest archived WAL
-	// segment (`pg_stat_archiver_last_archive_age`, postgres_exporter).
-	// Nil when the collector isn't enabled on the host — rendered
-	// "no data", never 0.
+	// WALArchiveMaxAgeSeconds is the age of the newest archived WAL segment
+	// (`pg_stat_archiver_last_archive_age`). Nil when the collector is not enabled: "no data", never 0.
 	WALArchiveMaxAgeSeconds *float64 `json:"wal_archive_max_age_seconds"`
 
-	// Repos lists every pgBackRest repository the exporter reports,
-	// sorted by key. repo1 is the on-host copy, repo2 the encrypted
-	// S3 offsite copy (configs/ansible/.../pgbackrest.conf.j2 — the
-	// key→kind mapping is that template's convention, not a metric).
+	// Repos lists every pgBackRest repository, sorted by key. repo1 is the on-host copy, repo2 the
+	// encrypted S3 offsite copy (the key→kind mapping is pgbackrest.conf.j2's convention, not a metric).
 	Repos []BackupRepo `json:"repos"`
 }
 
@@ -70,13 +62,10 @@ type BackupPostgres struct {
 type BackupRun struct {
 	// TS is the backup's completion time (UTC).
 	TS WireTime `json:"ts"`
-	// SizeBytes is the database size the backup captured
-	// (`pgbackrest_backup_size_bytes`). Nil when the exporter has no
-	// per-backup row for it (e.g. the full aged out of `info` but the
-	// since-last-completion gauge still reports it).
+	// SizeBytes is the database size captured (`pgbackrest_backup_size_bytes`). Nil when the
+	// exporter has no per-backup row (e.g. the full aged out of `info` but the gauge still reports it).
 	SizeBytes *int64 `json:"size_bytes"`
-	// Repo is the repository key the backup landed in ("1", "2");
-	// empty when unknown.
+	// Repo is the repository key the backup landed in ("1", "2"); empty when unknown.
 	Repo string `json:"repo,omitempty"`
 }
 
@@ -86,10 +75,9 @@ type BackupRepo struct {
 	Repo string `json:"repo"`
 	// Kind is "local" (repo1), "offsite" (repo2) or "unknown".
 	Kind string `json:"kind"`
-	// LastBackupTS is the start time of the newest backup of any
-	// type in this repo, parsed from pgBackRest's backup label
-	// (`YYYYMMDD-HHMMSS`, host-local clock — UTC on every host this
-	// role provisions). Nil when the repo has no backups.
+	// LastBackupTS is the start time of the newest backup of any type in this repo, parsed from
+	// pgBackRest's label (`YYYYMMDD-HHMMSS`, host-local clock, UTC on provisioned hosts). Nil when
+	// the repo has no backups.
 	LastBackupTS *WireTime `json:"last_backup_ts"`
 	// Retention is the repo's retention policy when known. The
 	// exporter does not publish pgBackRest's retention settings, so
@@ -149,10 +137,8 @@ type BackupFreshness struct {
 	Drill    FreshnessVerdict `json:"drill"`
 	Snapshot FreshnessVerdict `json:"snapshot"`
 
-	// Overall is the worst verdict across the items above, with
-	// "unknown" ranking between "ok" and "stale": a panel that can't
-	// see its sources is degraded, not green — but a definite SLO
-	// breach outranks a blind spot.
+	// Overall is the worst verdict above, with "unknown" ranking between "ok" and "stale": a panel
+	// that cannot see its sources is degraded, not green, but a definite SLO breach outranks a blind spot.
 	Overall string `json:"overall"`
 }
 
@@ -202,36 +188,27 @@ const (
 // backupClockSkewTolerance bounds how far a stamp may sit in the FUTURE of the API's own clock
 // and still be judged on its face.
 //
-// Ages cross clocks (API host `now` vs the backup host's stamps), so a sub-minute negative age is
-// ordinary NTP divergence on a fresh item: it floors to 0 and keeps its verdict. A minute is far
-// past what a disciplined host shows and still 15x inside the tightest SLO (WAL, 15 min), so it
-// cannot mask a breach.
-//
-// Beyond it the reading bounds nothing (a skewed clock or corrupt future-dated label says nothing
-// about when the backup ran), so the verdict is "unknown", which degrades the roll-up, never a
-// green zero. Same shape as canonical.SafeUnixFutureWindow, tighter because these are our hosts.
+// Ages cross clocks (API host vs the backup host's stamps), so a sub-minute negative age is NTP
+// divergence on a fresh item: it floors to 0 and keeps its verdict. A minute is 15x inside the
+// tightest SLO (WAL, 15 min), so it cannot mask a breach. Beyond it the reading bounds nothing, so
+// the verdict is "unknown" (degrading the roll-up), never a green zero. Same shape as
+// canonical.SafeUnixFutureWindow, tighter because these are our hosts.
 const backupClockSkewTolerance = time.Minute
 
-// backupsCacheTTL bounds how often the handler re-queries Prometheus.
-// The freshest signal here moves on a 5-min WAL cadence; 60 s keeps
-// a status page polling every 30 s from doubling the query load.
+// backupsCacheTTL bounds how often the handler re-queries Prometheus; the freshest signal moves on
+// a 5-min WAL cadence, and 60 s keeps a status page polling every 30 s from doubling the load.
 const backupsCacheTTL = 60 * time.Second
 
-// backupsQueryBudget bounds a rebuild's Prometheus fan-out. It runs on
-// its own detached context (see handleDiagnosticsBackups), never on
-// the ctx of whichever request happened to trigger it — a rebuild is
-// shared, via s.backups.buildMu, with every request queued behind it.
+// backupsQueryBudget bounds a rebuild's Prometheus fan-out. It runs on its own detached context
+// (see handleDiagnosticsBackups), not the triggering request's, because the rebuild is shared via
+// s.backups.buildMu with every request queued behind it.
 const backupsQueryBudget = 3 * time.Second
 
-// errBackupsQueryPanicked is recorded in a query's error slot when its
-// goroutine panicked, so it counts toward `failed` like any other
-// query error. See buildBackupsSnapshot's fan-out.
+// errBackupsQueryPanicked is recorded when a query goroutine panicked, so it counts toward `failed`.
 var errBackupsQueryPanicked = errors.New("backups snapshot: query panicked")
 
-// backupMetricsSource is the seam the backups diagnostics reads
-// Prometheus through. *PrometheusStatusBackend satisfies it; New()
-// derives it from Options.StatusBackend so production needs no extra
-// wiring, and Options.BackupMetrics overrides it for tests.
+// backupMetricsSource is the seam the diagnostics read Prometheus through; New() derives it from
+// Options.StatusBackend, and Options.BackupMetrics overrides it for tests.
 type backupMetricsSource interface {
 	queryVector(ctx context.Context, expr string) ([]promSample, error)
 }
@@ -336,10 +313,8 @@ func repoKind(key string) string {
 	}
 }
 
-// PromQL for every series the snapshot reads. The `all-stanzas*`
-// pseudo-stanza exclusion mirrors storage.yml's backup alerts: the
-// exporter's aggregate row must not mask (or stand in for) the real
-// stanza.
+// PromQL for every series the snapshot reads. The `all-stanzas*` exclusion mirrors storage.yml's
+// backup alerts: the exporter's aggregate row must not mask the real stanza.
 const (
 	promBackupSinceLast = `pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}`
 	promBackupInfo      = `pgbackrest_backup_info{stanza!~"all-stanzas.*"}`
@@ -352,10 +327,8 @@ const (
 	promSnapshotOffsite = `stellarindex_ch_schema_snapshot_offsite_last_success_unix`
 )
 
-// buildBackupsSnapshot assembles one BackupsDiagnostics from the
-// metrics source. Every query runs concurrently under ctx; a failed
-// query leaves its item nil (→ "unknown") and degrades SourceStatus
-// rather than failing the whole document.
+// buildBackupsSnapshot assembles one BackupsDiagnostics. Queries run concurrently under ctx; a
+// failed query leaves its item nil (→ "unknown") and degrades SourceStatus, not the whole document.
 func buildBackupsSnapshot(ctx context.Context, logger *slog.Logger, src backupMetricsSource, now time.Time) BackupsDiagnostics {
 	now = now.UTC()
 	exprs := []string{
@@ -429,10 +402,9 @@ func buildBackupsSnapshot(ctx context.Context, logger *slog.Logger, src backupMe
 	return out
 }
 
-// postgresProjection is projectPostgres's result: the wire section
-// plus the ages the verdicts are judged on (kept as durations so the
-// exporter-computed ages are used verbatim, not re-derived from a
-// rounded timestamp).
+// postgresProjection is projectPostgres's result: the wire section plus the ages the verdicts are
+// judged on (durations, so exporter-computed ages are used verbatim, not re-derived from a rounded
+// timestamp).
 type postgresProjection struct {
 	section   BackupPostgres
 	fullAge   *time.Duration
@@ -624,10 +596,8 @@ func (s *Server) rebuildBackups() BackupsDiagnostics {
 	ctx, cancel := context.WithTimeout(context.Background(), backupsQueryBudget)
 	fresh := buildBackupsSnapshot(ctx, s.logger, s.backupMetrics, now)
 	cancel()
-	// builtAt is stamped from the clock AFTER the build, not the
-	// one taken before the (up-to-backupsQueryBudget) fan-out —
-	// otherwise the cache is treated as fresh for up to
-	// backupsQueryBudget longer than it actually is.
+	// builtAt is stamped AFTER the build, else the cache would count as fresh for up to
+	// backupsQueryBudget longer than it is.
 	builtAt := time.Now().UTC()
 	s.backups.mu.Lock()
 	defer s.backups.mu.Unlock()
@@ -643,13 +613,12 @@ func (s *Server) rebuildBackups() BackupsDiagnostics {
 	return s.backups.snap
 }
 
-// handleDiagnosticsBackups serves GET /v1/diagnostics/backups.
-// Anonymous-friendly; 503 when no metrics backend is wired, otherwise always 200 with the trust
-// state in the body.
+// handleDiagnosticsBackups serves GET /v1/diagnostics/backups: 503 when no metrics backend is
+// wired, otherwise 200 with the trust state in the body.
 //
-// Cached 60 s in-process (backupsCacheTTL) plus an explicit `public, max-age=60`, overriding the
-// `/v1/diagnostics/` private/no-cache prefix rule in middleware/cachecontrol.go because the
-// document is not per-caller and moves on a minutes-to-days cadence.
+// Cached in-process (backupsCacheTTL) plus an explicit `public, max-age=60`, overriding the
+// `/v1/diagnostics/` no-cache rule in middleware/cachecontrol.go because the document is not
+// per-caller.
 func (s *Server) handleDiagnosticsBackups(w http.ResponseWriter, r *http.Request) {
 	if s.backupMetrics == nil {
 		writeProblem(w, r,

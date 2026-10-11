@@ -12,87 +12,65 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// GET /v1/liquidity-pools: CURRENT two-sided reserves plus a constant-product
-// depth approximation for protocol-native (CAP-38) liquidity pools, read from
-// the `liquidity_pool` LedgerEntry in the lake's current-state table (ADR-0039
-// read-time-decode, like /v1/pools/reserves).
+// GET /v1/liquidity-pools: CURRENT two-sided reserves plus a constant-product depth approximation
+// for native (CAP-38) liquidity pools, read from the `liquidity_pool` LedgerEntry in the lake's
+// current-state table (read-time decode, like /v1/pools/reserves). Native pools carry both
+// reserves on-chain, unlike Soroban AMMs whose reserves are consumed at trade decode.
 //
-// Native pools carry both reserves on-chain (ReserveA + ReserveB), unlike the
-// Soroban AMM path where reserves are consumed at trade decode and persisted
-// nowhere; `lp_reserve_observations` only records the watched side of
-// watched-asset pools.
-//
-// Query params:
-//   - limit (optional, listing only): 1-100, default 25. Ranked by pool-share
-//     trustline count, the only cross-pool-comparable size signal without USD
-//     pricing of arbitrary pool assets.
-//
-// Consistency: current ledger-entry state (tip-adjacent; per-pool
-// `as_of_ledger` stamps the state ledger), not closed-bucket. ADR-0041
-// Decision 4: `flags.stale` reflects lake freshness.
+// The listing's limit (1-100, default 25) ranks by pool-share trustline count, the only
+// cross-pool-comparable size signal without USD pricing of arbitrary pool assets. Data is current
+// ledger-entry state (per-pool as_of_ledger), not closed-bucket; flags.stale reflects lake freshness.
 
-// classicAssetDecimals is the fixed decimal scale of every classic
-// Stellar asset (7 = stroops). Native-pool reserves are always at this
-// scale, so there is no per-token decimals lookup as on the Soroban AMM
-// path (Soroban tokens self-declare varying decimals).
+// classicAssetDecimals is the fixed scale of every classic asset (7 = stroops); native-pool
+// reserves need no per-token decimals lookup, unlike Soroban tokens that self-declare.
 const classicAssetDecimals = 7
 
 const (
 	nativeLPListingDefault = 25
 	nativeLPListingMax     = 100
-	// nativeLPListingCap is how many ranked rows the cache holds — the
-	// endpoint's max page size, so any in-range ?limit slices the cache.
+	// nativeLPListingCap is how many ranked rows the cache holds: the max page size, so any
+	// in-range ?limit slices the cache.
 	nativeLPListingCap = 100
-	// nativeLPListingTTL bounds how often the whole-prefix ranked scan
-	// runs. 60s ≫ the ~5s ledger cadence — pool membership + the top-N
-	// ranking drift slowly — and turns a burst of listing requests into
-	// at most one lake scan a minute.
+	// nativeLPListingTTL bounds how often the whole-prefix ranked scan runs. Pool membership and
+	// the top-N drift slowly against the ~5s ledger cadence, so a burst costs one scan a minute.
 	nativeLPListingTTL = 60 * time.Second
-	// nativeLPListingRefreshTimeout bounds ONE detached rescan (and the
-	// prewarm call). The scan measured ~0.07s at the lake plus a Go decode
-	// of ~40k entries; 30s is contention headroom, and it is deliberately
-	// well under the handler's own 12s-per-request ceiling being irrelevant
-	// here — this budget belongs to the background goroutine, not a caller.
+	// nativeLPListingRefreshTimeout bounds ONE detached rescan (and the prewarm call), which
+	// belongs to a background goroutine, not a request. The scan is ~0.07s plus a Go decode of
+	// ~40k entries; 30s is contention headroom.
 	nativeLPListingRefreshTimeout = 30 * time.Second
 )
 
-// LiquidityPoolReservesRow is the wire shape for one native (CAP-38)
-// constant-product pool's current reserve state. All token quantities
-// are base-unit (stroop) decimal strings (ADR-0003).
+// LiquidityPoolReservesRow is the wire shape for one native (CAP-38) constant-product pool's
+// current reserve state. All quantities are base-unit (stroop) decimal strings.
 type LiquidityPoolReservesRow struct {
 	Pool    string `json:"pool"`     // L-strkey (SEP-23)
 	PoolHex string `json:"pool_hex"` // 32-byte LiquidityPoolId, hex (Horizon/SDEX form)
-	// Model labels the AMM depth approximation: "constant_product"
-	// (x·y=k, fee on input) — a model-derived estimate from current
-	// reserves, not an order book.
+	// Model labels the depth approximation: "constant_product" (x·y=k, fee on input), an estimate
+	// from current reserves, not an order book.
 	Model      string `json:"model"`
 	FeeBps     int    `json:"fee_bps"`      // pool's on-chain fee (30 for every constant-product pool today)
 	AsOfLedger uint32 `json:"as_of_ledger"` // ledger of the pool's last state change
-	// Trustlines is the number of pool-share trustlines — how many
-	// distinct liquidity providers hold a stake. The listing rank key.
+	// Trustlines is the number of pool-share trustlines (distinct providers); the listing rank key.
 	Trustlines int64 `json:"trustlines"`
 	// TotalShares is the pool's total issued share supply (base units).
 	TotalShares string                   `json:"total_shares"`
 	ReserveA    LiquidityPoolReserveSide `json:"reserve_a"`
 	ReserveB    LiquidityPoolReserveSide `json:"reserve_b"`
-	// Mid prices are decimals-adjusted display ratios (B per A and the
-	// inverse); null when either side is empty.
+	// Mid prices are decimals-adjusted ratios (B per A and the inverse); null when a side is empty.
 	MidPriceAInB *string                   `json:"mid_price_a_in_b"`
 	MidPriceBInA *string                   `json:"mid_price_b_in_a"`
 	Depth        []LiquidityPoolDepthLevel `json:"depth"` // empty when either reserve is zero
 }
 
-// LiquidityPoolReserveSide is one side of a native pool: the classic
-// asset's canonical id + its reserve.
+// LiquidityPoolReserveSide is one side of a native pool: the classic asset's id and its reserve.
 type LiquidityPoolReserveSide struct {
 	Asset    string `json:"asset"`    // canonical asset_id ("native" | "CODE-ISSUER")
 	Decimals uint32 `json:"decimals"` // always 7 for classic assets
 	Reserve  string `json:"reserve"`  // base units (stroops), decimal string
 }
 
-// LiquidityPoolDepthLevel is the depth estimate at one slippage tier
-// (the same constant-product-with-fee-on-input model the Soroban AMM
-// depth table uses, reusing its exact-integer helpers).
+// LiquidityPoolDepthLevel is the depth estimate at one slippage tier, using the Soroban AMM depth
+// table's exact-integer constant-product model.
 type LiquidityPoolDepthLevel struct {
 	SlippagePct string        `json:"slippage_pct"`
 	AssetAIn    PoolDepthSide `json:"asset_a_in"` // selling asset A for asset B
@@ -106,9 +84,7 @@ func (s *Server) handleLiquidityPools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 12s ceiling: a single-pool PK lookup is ~ms; the listing's
-	// whole-`liquidity_pool`-prefix scan is ~0.07s on r1 + a Go decode
-	// of ~40k entries — generous margin, and the result is cached.
+	// 12s ceiling: a single-pool lookup is ~ms and the cached listing scan ~0.07s plus a decode.
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
 
@@ -145,9 +121,8 @@ func (s *Server) handleLiquidityPools(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, rows, Flags{Stale: stale, Degraded: degraded})
 }
 
-// serveOneLiquidityPool handles the ?pool= single-pool path: validate
-// the id, look it up in the lake, 404 when absent, else return the one
-// row with its full depth table.
+// serveOneLiquidityPool handles the ?pool= path: validate the id, look it up in the lake (404 when
+// absent) and return the one row with its full depth table.
 func (s *Server) serveOneLiquidityPool(ctx context.Context, w http.ResponseWriter, r *http.Request, poolFilter string) {
 	if !canonical.IsLiquidityPool(poolFilter) && !isHex64(poolFilter) {
 		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-pool",
@@ -181,30 +156,22 @@ func (s *Server) serveOneLiquidityPool(ctx context.Context, w http.ResponseWrite
 
 // nativeLPListing returns the cached top-N ranked native-pool listing.
 //
-// STALE-SERVE. An existing entry is ALWAYS returned immediately; a lapsed
-// one additionally kicks ONE detached refresh. Holding nativeLPMu across the
-// refresh would make the first caller after every 60s TTL lapse pay the
-// whole `liquidity_pool`-prefix lake scan on its request deadline (measured
-// live: 0.825 s on /v1/liquidity-pools) with every concurrent caller queued
-// behind it. Only a never-computed process fills inline,
-// and PrewarmNativeLiquidityPools removes even that from the request path.
+// STALE-SERVE: an existing entry is ALWAYS returned immediately and a lapsed one kicks ONE detached
+// refresh. Holding nativeLPMu across the refresh would make the first caller after each TTL lapse
+// pay the whole-prefix lake scan with every concurrent caller queued behind it. Only a
+// never-computed process fills inline, and PrewarmNativeLiquidityPools removes even that.
 //
-// The listing's `flags.stale` is NOT set from the cache's age: on this
-// endpoint that flag means lake freshness (ADR-0041 Decision 4) and
-// overloading it would make a 61-second-old ranking indistinguishable from
-// a lagging ingest. Cache health is observable instead through
-// stellarindex_explorer_swr_refresh_total{cache="native_lp_listing"} — and
-// every row carries its own per-pool as_of_ledger regardless.
+// flags.stale is NOT set from cache age: here it means lake freshness, and overloading it would
+// make a 61-second-old ranking look like a lagging ingest. Cache health is observable through
+// stellarindex_explorer_swr_refresh_total{cache="native_lp_listing"}.
 func (s *Server) nativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRow, error) {
 	rows, _, _, err := s.nativeLPSnapshot(ctx)
 	return rows, err
 }
 
-// nativeLPSnapshot is [Server.nativeLPListing] plus every captured pool's
-// state in the same ranked order, which the ?asset= filter reads (an
-// asset's pools are not confined to the global top N), and whether the
-// rows are a carried-forward entry: past the TTL, or last-good after a
-// failed scan.
+// nativeLPSnapshot is [Server.nativeLPListing] plus every captured pool's state in ranked order
+// (the ?asset= filter needs pools beyond the global top N), and whether the rows are carried
+// forward: past the TTL, or last-good after a failed scan.
 func (s *Server) nativeLPSnapshot(ctx context.Context) ([]LiquidityPoolReservesRow, []clickhouse.NativeLiquidityPoolState, bool, error) {
 	s.nativeLPMu.Lock()
 	rows, all, fetched := s.nativeLPCached, s.nativeLPAll, s.nativeLPFetched
@@ -235,16 +202,13 @@ func nativeLPRowsForAsset(all []clickhouse.NativeLiquidityPoolState, f *poolAsse
 	return out
 }
 
-// fillNativeLPListing runs the ranked scan and stores the result. The fill
-// mutex collapses a burst of concurrent COLD callers onto one scan (the
-// posture the old TTL branch had for every caller); it is never held while
-// a warm entry is being served.
+// fillNativeLPListing runs the ranked scan and stores the result. The fill mutex collapses a
+// burst of concurrent COLD callers onto one scan and is never held while a warm entry is served.
 func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRow, []clickhouse.NativeLiquidityPoolState, bool, error) {
 	s.nativeLPFillMu.Lock()
 	defer s.nativeLPFillMu.Unlock()
 
-	// Double-check: a caller that queued behind another's fill must serve
-	// that result rather than rescan.
+	// Double-check: a caller queued behind another's fill serves that result, not a rescan.
 	s.nativeLPMu.Lock()
 	rows, all, fetched := s.nativeLPCached, s.nativeLPAll, s.nativeLPFetched
 	s.nativeLPMu.Unlock()
@@ -252,8 +216,7 @@ func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReserv
 		return rows, all, false, nil
 	}
 
-	// Uncapped: the scan reads and ranks every pool anyway, and the
-	// ?asset= filter needs the tail beyond the top-N rows.
+	// Uncapped: the scan ranks every pool anyway and ?asset= needs the tail beyond the top N.
 	start := time.Now()
 	states, err := s.Explorer.NativeLiquidityPoolsRanked(ctx, 0)
 	obs.ObserveExplorerSWRRefresh("native_lp_listing", start, err)
@@ -277,40 +240,30 @@ func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReserv
 	return out, states, false, nil
 }
 
-// refreshNativeLPListing kicks ONE detached rescan (a no-op while one is
-// already running). Detached because the point is that no visitor waits on
-// it: bound to a request deadline, a slow scan dies with the request and
-// the next visitor pays the same wait again.
+// refreshNativeLPListing kicks ONE detached rescan (a no-op while one runs). Detached so no
+// visitor waits: bound to a request deadline, a slow scan would die with the request and the next
+// visitor would pay the same wait again.
 func (s *Server) refreshNativeLPListing() {
 	if !s.nativeLPRefreshing.CompareAndSwap(false, true) {
 		return
 	}
 	go func() {
-		// The CAS gate is released by the deferred Store below on every
-		// path including a panic, so a recovered panic leaves the
-		// listing on its last-good entry and the NEXT visitor kicks a
-		// fresh rescan — no wedge. Only the process death needs fixing.
+		// The deferred Store releases the CAS gate on every path including a recovered panic,
+		// which leaves the last-good entry served and lets the NEXT visitor kick a fresh rescan.
 		defer s.nativeLPRefreshing.Store(false)
 		defer worker.Recover(s.logger, "api-native-lp-listing-refresh")
 		ctx, cancel := context.WithTimeout(context.Background(), nativeLPListingRefreshTimeout)
 		defer cancel()
 		if _, _, _, err := s.fillNativeLPListing(ctx); err != nil {
-			// The previous entry is retained and still served; the
-			// refresh metric above is where a dying refresher shows up.
+			// The previous entry is still served; the refresh metric shows a dying refresher.
 			s.logger.Warn("native liquidity-pool listing detached refresh failed (serving last good)", "err", err)
 		}
 	}()
 }
 
-// PrewarmNativeLiquidityPools primes the /v1/liquidity-pools ranked
-// listing. Exposed on the Server so cmd/stellarindex-api can drive it from
-// the same prewarm loop as the other snapshot caches — the listing had NO
-// prewarm at all, so every process started cold and the first visitor after
-// boot paid the whole-prefix scan inline.
-//
-// Drift-safe by construction: it calls the EXACT function the handler calls,
-// with the same (only) argument, so there is no prewarmed-key-vs-requested-key
-// gap to get wrong (the /v1/pools lesson).
+// PrewarmNativeLiquidityPools primes the ranked listing from cmd/stellarindex-api's prewarm loop
+// so the first visitor after boot does not pay the whole-prefix scan inline. It calls the EXACT
+// function the handler calls, so there is no prewarmed-key-vs-requested-key drift.
 func (s *Server) PrewarmNativeLiquidityPools(ctx context.Context) {
 	if s.Explorer == nil || ctx.Err() != nil {
 		return
@@ -322,10 +275,8 @@ func (s *Server) PrewarmNativeLiquidityPools(ctx context.Context) {
 	}
 }
 
-// buildLiquidityPoolRow assembles one wire row from a decoded native
-// pool state, computing mid prices + the depth table with the shared
-// exact-integer constant-product helpers (pools_reserves.go). The pool
-// fee is per-pool (Params.Fee), not the Soroswap venue constant.
+// buildLiquidityPoolRow assembles one wire row, computing mid prices and depth with the shared
+// exact-integer helpers (pools_reserves.go). The fee is per-pool (Params.Fee), not Soroswap's constant.
 func buildLiquidityPoolRow(st clickhouse.NativeLiquidityPoolState) LiquidityPoolReservesRow {
 	row := LiquidityPoolReservesRow{
 		Pool:        st.PoolStrkey,

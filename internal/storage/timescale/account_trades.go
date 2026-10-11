@@ -75,10 +75,9 @@ func (c AccountTradesCursor) IsSet() bool { return !c.Ts.IsZero() }
 // accountTradesInnerCols is the per-arm column list. base/quote amounts and usd_volume are cast to
 // text server-side so the driver never sees a float.
 //
-// The two COALESCE expressions MUST carry explicit aliases. Without them PostgreSQL names both
-// output columns `coalesce`, so the outer SELECT's reference to `usd_volume` fails at PLAN time
-// (42703) and every account's trades read returns 500. A test asserting substrings of the query
-// STRING cannot see this; it needs real SQL execution.
+// The COALESCE expressions MUST carry explicit aliases: otherwise PostgreSQL names both output
+// columns `coalesce` and the outer SELECT's `usd_volume` fails at PLAN time (42703). Only real SQL
+// execution catches that; a substring test on the query string cannot.
 const accountTradesInnerCols = `source, ledger, tx_hash, op_index, ts,
 	       base_asset, quote_asset,
 	       base_amount::text AS base_amount, quote_amount::text AS quote_amount,
@@ -99,11 +98,10 @@ const accountTradesOuterCols = `source, ledger, tx_hash, op_index, ts,
 // reuse the same numbered placeholders, so the caller passes each value once. Without a cursor
 // the limit moves to $3.
 func accountTradesQuery(hasCursor bool) string {
-	// $2 is always the compression-horizon ts floor from tradesUncompressedHorizon: the per-account
-	// partial indexes exist only on UNCOMPRESSED chunks, and an arm descending into a compressed
-	// one decompress-scans it. The floor is the END of the newest COMPRESSED chunk, so ts >= floor
-	// never resolves to a compressed chunk and ChunkAppend excludes them. The caller surfaces the
-	// floor as a coverage note rather than serving a silently-partial "all time" answer.
+	// $2 is the compression-horizon ts floor from tradesUncompressedHorizon: the per-account partial
+	// indexes exist only on UNCOMPRESSED chunks, and an arm reaching a compressed one decompress-scans
+	// it. ts >= floor lets ChunkAppend exclude compressed chunks; the caller surfaces the floor as a
+	// coverage note rather than a silently-partial "all time" answer.
 	cursorClause := ""
 	limitPh := "$3"
 	if hasCursor {
@@ -120,25 +118,19 @@ func accountTradesQuery(hasCursor bool) string {
 	) u` + orderBy
 }
 
-// tradesHorizonFailClosedWindow is the fail-CLOSED floor served on a catalog lookup error: always
-// inside the compression policy's compress_after window (15 days on `trades`, see
-// TradesCompressionPolicy) with margin, so it never claims a possibly compressed chunk as
-// index-safe.
+// tradesHorizonFailClosedWindow is the fail-CLOSED floor served on a catalog lookup error: well
+// inside the compress_after window (see TradesCompressionPolicy), so it never claims a possibly
+// compressed chunk as index-safe.
 const tradesHorizonFailClosedWindow = 24 * time.Hour
 
 // tradesUncompressedHorizon returns the floor below which per-account trades reads have no usable
 // index (see accountTradesQuery): the END of the NEWEST COMPRESSED chunk, not the start of the
-// oldest uncompressed one.
+// oldest uncompressed one, because compression is not a time prefix (a straggler chunk can stay
+// uncompressed while later ones compress).
 //
-// Compression is not a time prefix: an old chunk can sit uncompressed (a stuck compression job, a
-// late-arriving backfill) while everything after it has compressed, and min(range_start) over
-// uncompressed chunks would pick that straggler as the "floor".
-//
-// Cached for 10 minutes; the horizon only moves when the compression policy compresses another
-// chunk. Fails CLOSED to a short recent window (tradesHorizonFailClosedWindow), NOT epoch.
-// AccountTrades and computeAccountActivity render any non-zero, post-1971 horizon as an honest
-// "showing trades since <date>" / trades_total_since coverage note, so failing closed degrades
-// into that channel instead of silently serving as if all history were indexed.
+// Cached for 10 minutes. Fails CLOSED to a short recent window (tradesHorizonFailClosedWindow),
+// NOT epoch: callers render any non-zero horizon as a "trades since <date>" coverage note, so a
+// failure degrades into that channel instead of implying all history is indexed.
 func (s *Store) tradesUncompressedHorizon(ctx context.Context) time.Time {
 	tradesHorizonMu.Lock()
 	defer tradesHorizonMu.Unlock()

@@ -15,10 +15,8 @@ import (
 // cadence and ~21 minutes at the 5s tip cadence, about 1 MiB per topic at 4 KiB per Event.
 const DefaultBufferSize = 256
 
-// subscriberQueueDepth is the per-subscriber channel capacity. Once
-// the channel fills up the subscription is dropped (see Hub.Publish).
-// 32 events is enough for short bursts but small enough that a stuck
-// subscriber gets evicted quickly rather than ballooning memory.
+// subscriberQueueDepth is the per-subscriber channel capacity; a full channel drops the
+// subscription (see Hub.Publish). 32 absorbs bursts yet evicts a stuck subscriber quickly.
 const subscriberQueueDepth = 32
 
 // maxSplitReplayTopics is the widest subscription at which Hub.Subscribe still splits the replay
@@ -42,9 +40,8 @@ const DefaultTopicIdleTTL = 15 * time.Minute
 // [Hub.BufferedTopicCount] reports the count that carries the memory.
 const DefaultMaxTopics = 4096
 
-// ErrTopicCapacity is returned by [Hub.Subscribe] when a topic it would
-// create cannot fit under the ceiling because every held topic has a
-// live subscriber. The caller should refuse the stream (503).
+// ErrTopicCapacity is returned by [Hub.Subscribe] when a new topic cannot fit under the ceiling
+// because every held topic has a live subscriber. The caller should refuse the stream (503).
 var ErrTopicCapacity = errors.New("streaming: hub topic capacity exhausted")
 
 const (
@@ -102,9 +99,8 @@ type topicState struct {
 	evicted  bool
 }
 
-// replayAfter is [ring.snapshotAfter] over a topic whose ring may not
-// exist yet: a topic that has never been published to has nothing to
-// replay. Caller holds t.mu.
+// replayAfter is [ring.snapshotAfter] over a ring that may not exist yet (nothing to replay).
+// Caller holds t.mu.
 func (t *topicState) replayAfter(lastEventID string) []Event {
 	if t.buffer == nil {
 		return nil
@@ -112,9 +108,8 @@ func (t *topicState) replayAfter(lastEventID string) []Event {
 	return t.buffer.snapshotAfter(lastEventID)
 }
 
-// bufferEmpty reports whether the topic holds nothing a reconnecting
-// client could replay — true both for a never-published topic (no ring)
-// and for one whose ring is empty. Caller holds t.mu.
+// bufferEmpty reports whether nothing is replayable: a never-published topic (no ring) or an empty
+// ring. Caller holds t.mu.
 func (t *topicState) bufferEmpty() bool {
 	return t.buffer == nil || t.buffer.empty()
 }
@@ -150,9 +145,8 @@ func NewHub(bufferSize int) *Hub {
 	}
 }
 
-// SetTopicIdleTTL overrides how long a subscriber-less topic keeps its
-// replay buffer before the reaper drops it. Pass <= 0 to restore
-// [DefaultTopicIdleTTL]. Call at startup (or from tests).
+// SetTopicIdleTTL overrides how long a subscriber-less topic keeps its replay buffer; <= 0
+// restores [DefaultTopicIdleTTL]. Call at startup or from tests.
 func (h *Hub) SetTopicIdleTTL(d time.Duration) {
 	if d <= 0 {
 		d = DefaultTopicIdleTTL
@@ -204,10 +198,8 @@ func (h *Hub) BufferedTopicCount() int {
 	return n
 }
 
-// TopicsReaped reports the cumulative number of topics the reaper has
-// dropped since the Hub was created — the counter that shows the bound
-// doing work (a flat zero next to a high [Hub.TopicCount] means the
-// retention policy is mistuned).
+// TopicsReaped reports the cumulative topics the reaper has dropped; a flat zero next to a high
+// [Hub.TopicCount] means the retention policy is mistuned.
 func (h *Hub) TopicsReaped() uint64 { return h.reaped.Load() }
 
 // Publish broadcasts a fresh Event on the given topic and returns the assigned ID; the Hub
@@ -226,11 +218,10 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 	// Publish is never refused: its topics are server-chosen, and one it
 	// creates has no subscriber, so the reaper can reclaim it.
 	_ = h.withTopic(topic, false, func(t *topicState) {
-		// Draw the ID INSIDE the topic lock: if ID assignment and ring insertion were not atomic,
-		// concurrent publishes could enter the ring out of ID order, breaking the ascending-ID
-		// invariant that snapshotAfter's strict `>` filter and ring.push eviction rely on. The
-		// failures would be silent (B delivered before A, or A never replayed to a client
-		// tracking the max id).
+		// Draw the ID INSIDE the topic lock: otherwise concurrent publishes could enter the ring
+		// out of ID order, breaking the ascending-ID invariant that snapshotAfter's strict `>`
+		// filter and ring.push eviction rely on, silently (A never replayed to a client tracking
+		// the max id).
 		ev.ID = h.gen.Next()
 		// The ring is allocated on first publish, never on subscribe (see [topicState.buffer]).
 		if t.buffer == nil {
@@ -255,11 +246,9 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 	return ev.ID
 }
 
-// Subscribe registers a subscriber across one or more topics, with
-// an optional Last-Event-ID resume cursor. The returned chan receives
-// any [EventTypeStreamGap] markers first, then buffered-replay events
-// in ID order ACROSS every subscribed topic (not just within one),
-// then live events. Unsubscribe by calling cancel().
+// Subscribe registers a subscriber across one or more topics with an optional Last-Event-ID resume
+// cursor. The returned chan yields any [EventTypeStreamGap] markers, then replay in ID order
+// ACROSS every subscribed topic, then live events. Unsubscribe by calling cancel().
 //
 // An empty lastEventID means no replay. If the backlog exceeds the subscriber queue, the OLDEST
 // events are dropped (see the loop below) and a stream_gap marker precedes the replay only when
@@ -293,18 +282,15 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 			share = (remaining + topicsLeft - 1) / topicsLeft // ceil(remaining/topicsLeft)
 		}
 
-		// Replay snapshot and live registration happen in ONE topic-locked section. Publish takes
-		// the same lock to push and to snapshot subscribers, so an event landing between two
-		// separate steps would be in neither the replay nor the fanout. This way every event is in
-		// exactly one of them. The send to sub.ch is deferred until all topics are processed so
-		// replay can be merge-sorted by ID; queuing topic-by-topic would walk the wire `id:` line
-		// backwards at a topic boundary.
+		// Replay snapshot and live registration happen in ONE topic-locked section, so an event
+		// landing between two steps cannot miss both the replay and the fanout. The send to sub.ch
+		// is deferred until all topics are processed so replay can be merge-sorted by ID; queuing
+		// topic-by-topic would walk the wire `id:` line backwards at a topic boundary.
 		err := h.withTopic(topic, true, func(t *topicState) {
-			// Replay the NEWEST events that fit, then register for live. Replaying oldest-first and
-			// closing when the queue fills hands the client the stalest prices and disconnects it,
-			// so a lagging client would reconnect repeatedly and render stale prices as live
-			// (nothing on the wire distinguishes replay from live). Dropping the oldest lands it on
-			// the CURRENT price immediately and keeps it connected.
+			// Replay the NEWEST events that fit, then register for live. Oldest-first with a close
+			// on a full queue would hand a lagging client the stalest prices, as live (nothing on
+			// the wire distinguishes replay from live), and loop it through reconnects. Dropping
+			// the oldest lands it on the CURRENT price and keeps it connected.
 			oldestHeld := t.oldestBufferedID()
 			full := t.replayAfter(lastEventID)
 			trimmed := full
@@ -344,9 +330,8 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 	return sub.ch, cancel, nil
 }
 
-// resumeGap reports whether a resume at lastEventID lost events on t:
-// the ring evicted past the cursor, or the cursor is from a foreign ID
-// space. Caller holds t.mu.
+// resumeGap reports whether a resume at lastEventID lost events on t: the ring evicted past the
+// cursor, or the cursor is from a foreign ID space. Caller holds t.mu.
 func (h *Hub) resumeGap(t *topicState, lastEventID, oldestHeld string) bool {
 	if lastEventID == "" {
 		return false
@@ -355,9 +340,8 @@ func (h *Hub) resumeGap(t *topicState, lastEventID, oldestHeld string) bool {
 	return evictedPast || h.gen.Ahead(lastEventID)
 }
 
-// newStreamGapEvent builds the diagnostic marker Subscribe sends ahead
-// of a replay that could not cover the requested cursor. No ID of its
-// own — it must not perturb the client's Last-Event-ID tracking.
+// newStreamGapEvent builds the marker Subscribe sends ahead of a replay that could not cover the
+// cursor. It has no ID, so it cannot perturb the client's Last-Event-ID tracking.
 func newStreamGapEvent(topic, requestedAfter, resumedFrom string) Event {
 	data, err := json.Marshal(struct {
 		Topic          string `json:"topic"`
@@ -372,10 +356,8 @@ func newStreamGapEvent(topic, requestedAfter, resumedFrom string) Event {
 	return Event{Type: EventTypeStreamGap, Data: data, Timestamp: time.Now()}
 }
 
-// dropSubscriber removes sub from the named topic's subscriber set
-// and closes its channel exactly once. Called when a subscription
-// is cancelled or its queue fills up. Reports whether THIS call closed
-// the subscription, so a multi-topic subscriber is counted once.
+// dropSubscriber removes sub from the topic and closes its channel exactly once, on cancel or a
+// full queue. It reports whether THIS call closed it, so a multi-topic subscriber counts once.
 func (h *Hub) dropSubscriber(topic string, sub *subscription) bool {
 	h.mu.RLock()
 	t, ok := h.topics[topic]
@@ -391,9 +373,8 @@ func (h *Hub) dropSubscriber(topic string, sub *subscription) bool {
 			h.unsubscribed.Store(true)
 		}
 	}
-	// Unsubscribing is activity: it starts the idle clock the reaper
-	// measures against, so a topic that just lost its last listener
-	// keeps its replay buffer for the full idle TTL.
+	// Unsubscribing starts the idle clock, so a topic that just lost its last listener keeps its
+	// replay buffer for the full idle TTL.
 	t.lastUsed = time.Now()
 	t.mu.Unlock()
 	// Close outside the topic lock; sub.close() is idempotent and
@@ -442,9 +423,8 @@ func (h *Hub) getOrCreateTopic(name string, bounded bool) (*topicState, error) {
 		return t, nil
 	}
 	now := time.Now()
-	// Bound the map BEFORE inserting: the key is caller-supplied and,
-	// on the /v1/price/stream path, client-supplied — without this a
-	// stream of made-up pairs grows h.topics forever.
+	// Bound the map BEFORE inserting: keys are client-supplied on /v1/price/stream, so made-up
+	// pairs would otherwise grow h.topics forever.
 	h.maybeReapLocked(now)
 	if bounded && len(h.topics) >= h.maxTopics {
 		return nil, ErrTopicCapacity
@@ -460,9 +440,8 @@ func (h *Hub) getOrCreateTopic(name string, bounded bool) (*topicState, error) {
 	return t, nil
 }
 
-// maybeReapLocked runs a reap pass when enough topics have been
-// created (or enough time has passed) since the last one, or when the
-// map is at its ceiling. Caller holds h.mu for writing.
+// maybeReapLocked runs a reap pass after enough topic creations or time since the last one, or at
+// the ceiling. Caller holds h.mu for writing.
 func (h *Hub) maybeReapLocked(now time.Time) {
 	h.sinceSweep++
 	// A futile ceiling waits for an unsubscribe or the growth/interval
@@ -514,10 +493,8 @@ func (h *Hub) reapLocked(now time.Time) {
 		return
 	}
 
-	// Still at the ceiling: give up replay buffers oldest-first until
-	// there's room. A topic evicted here is recreated (empty) on its
-	// next publish, so the cost is a lost replay window, never a lost
-	// live event.
+	// Still at the ceiling: give up replay buffers oldest-first. An evicted topic is recreated
+	// empty on its next publish, so the cost is a lost replay window, never a live event.
 	sort.Slice(idle, func(i, j int) bool { return idle[i].lastUsed.Before(idle[j].lastUsed) })
 	for _, c := range idle {
 		if len(h.topics) < h.maxTopics {
@@ -558,9 +535,8 @@ type subscription struct {
 	closed bool
 }
 
-// trySend delivers ev to the subscriber without blocking. It returns
-// full=true when the subscriber's queue is full (caller should drop it).
-// A closed subscription is a no-op (returns full=false) — never a panic.
+// trySend delivers ev without blocking, returning full=true when the queue is full (caller should
+// drop it). A closed subscription is a no-op (full=false), never a panic.
 func (s *subscription) trySend(ev Event) (full bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -593,9 +569,8 @@ func (s *subscription) sendReplay(ev Event) bool {
 	}
 }
 
-// close closes the subscriber channel exactly once, reporting whether
-// this call was the one that closed it. Idempotent and mutually
-// exclusive with trySend.
+// close closes the subscriber channel exactly once, reporting whether this call did. It is
+// idempotent and mutually exclusive with trySend.
 func (s *subscription) close() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

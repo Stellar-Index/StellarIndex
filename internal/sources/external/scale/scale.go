@@ -74,12 +74,9 @@ func isDigits(s string) bool {
 	return true
 }
 
-// FloatToScaledInt converts a non-negative float to an integer scaled to
-// decimals. Rejects negatives + NaN.
-//
-// It formats to EXACTLY `decimals` places so FormatFloat rounds to nearest; formatting more and
-// truncating in DecimalStringToScaledInt would bias every value downward (ADR-0003: no biased
-// estimator in the money path).
+// FloatToScaledInt converts a non-negative float to an integer scaled to decimals; negatives and
+// NaN are rejected. It formats to EXACTLY decimals places so FormatFloat rounds to nearest;
+// formatting more and truncating would bias every value downward.
 func FloatToScaledInt(v float64, decimals int) (*big.Int, error) {
 	if v < 0 || v != v {
 		return nil, fmt.Errorf("bad value %v", v)
@@ -109,24 +106,18 @@ func SciDecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error)
 	return DecimalStringToScaledInt(s, targetDecimals)
 }
 
-// InvertScaled returns the inverse of a positive scaled integer at the same scale:
-// 10^(2*decimals) / v, ROUNDED HALF-UP. The FX pollers use it to flip a vendor's "1 base = X
-// quote" rate into the canonical "price of quote-currency in base units". v must be > 0.
-//
-// The rounding is the point: a plain Div truncates toward zero, a one-signed bias on every poll
-// (ADR-0003). The formula mirrors [redstone.reciprocalAtScale]; the two must not disagree. It is
-// the srcDecimals == dstDecimals case of [InvertScaledToDecimals].
+// InvertScaled returns 10^(2*decimals) / v, ROUNDED HALF-UP, for a positive v. FX pollers use it
+// to flip a vendor's "1 base = X quote" rate into the price of quote-currency in base units.
+// A plain Div would truncate toward zero, a one-signed bias on every poll. It mirrors
+// [redstone.reciprocalAtScale], and the two must not disagree.
 func InvertScaled(v *big.Int, decimals int) *big.Int {
 	return InvertScaledToDecimals(v, decimals, decimals)
 }
 
-// InvertScaledToDecimals returns the multiplicative inverse of a
-// positive integer scaled at srcDecimals, re-expressed at dstDecimals:
-// round_half_up(10^(srcDecimals+dstDecimals) / v).
-//
-// A weak-currency rate (1 EUR = 25335 VND at 6dp) inverts to a tiny magnitude, so re-emitting it
-// at the SAME scale leaves one or two significant digits, a ~1.2% error that exceeds the 50bps
-// divergence threshold this feed polices. dstDecimals widens the output scale.
+// InvertScaledToDecimals returns round_half_up(10^(srcDecimals+dstDecimals) / v) for a positive v
+// scaled at srcDecimals, re-expressed at dstDecimals. A weak-currency rate (1 EUR = 25335 VND at
+// 6dp) inverts to a tiny magnitude; at the SAME scale it keeps one or two significant digits, a
+// ~1.2% error above the 50bps divergence threshold, so dstDecimals widens the output.
 func InvertScaledToDecimals(v *big.Int, srcDecimals, dstDecimals int) *big.Int {
 	num := Pow10(srcDecimals + dstDecimals)
 	// round half-up = floor((2*num + v) / (2*v)) for v > 0.
@@ -136,13 +127,10 @@ func InvertScaledToDecimals(v *big.Int, srcDecimals, dstDecimals int) *big.Int {
 	return twoNum.Quo(twoNum, twoV)
 }
 
-// SyntheticTxHash derives a stable 64-char lowercase-hex pseudo tx hash from a seed string: the
-// seed's bytes hex-encoded, truncated to 64 chars and right-padded with '0'. Validate() requires
-// a 64-char hex tx_hash and off-chain venues have none, so reruns at the same vendor timestamp
-// collide on purpose and the idempotent insert path dedupes repeat polls.
-//
-// It is deliberately NOT a digest: tx_hash is the dedup identity of persisted rows, so changing
-// the derivation re-inserts history. Distinct venue prefixes keep seeds from colliding.
+// SyntheticTxHash derives a stable 64-char hex pseudo tx hash: the seed's bytes hex-encoded,
+// truncated to 64 chars and right-padded with '0'. Reruns at the same vendor timestamp collide on
+// purpose so the idempotent insert dedupes repeat polls. It is deliberately NOT a digest: tx_hash
+// is the dedup identity of persisted rows, so changing the derivation re-inserts history.
 func SyntheticTxHash(seed string) string {
 	h := hex.EncodeToString([]byte(seed))
 	if len(h) >= 64 {
@@ -151,17 +139,15 @@ func SyntheticTxHash(seed string) string {
 	return h + strings.Repeat("0", 64-len(h))
 }
 
-// MaxSyntheticSeedBytes is the longest seed SyntheticTxHash encodes
-// whole: 64 hex chars carry 32 seed bytes and the rest is dropped.
+// MaxSyntheticSeedBytes is the longest seed SyntheticTxHash encodes whole (64 hex chars).
 const MaxSyntheticSeedBytes = 32
 
 // ErrSyntheticSeedTooLong is returned by StrictSyntheticTxHash for a
 // seed SyntheticTxHash would truncate.
 var ErrSyntheticSeedTooLong = errors.New("synthetic tx_hash seed exceeds 32 bytes")
 
-// StrictSyntheticTxHash is SyntheticTxHash for a seed whose tail is part of the identity (a trade
-// id, a candle close time). Truncation would merge distinct rows on the trades PK, so an over-long
-// seed is refused; a seed that fits hashes byte-identically to SyntheticTxHash.
+// StrictSyntheticTxHash is SyntheticTxHash for seeds whose tail is identity (trade id, candle
+// close time). Truncation would merge distinct trades-PK rows, so an over-long seed is refused.
 func StrictSyntheticTxHash(seed string) (string, error) {
 	if len(seed) > MaxSyntheticSeedBytes {
 		return "", fmt.Errorf("%w: %q is %d bytes", ErrSyntheticSeedTooLong, seed, len(seed))
@@ -169,19 +155,14 @@ func StrictSyntheticTxHash(seed string) (string, error) {
 	return SyntheticTxHash(seed), nil
 }
 
-// LegacyCandleGranularity is backfill-external's default granularity.
-// Its candles keep the pre-granularity identity, so re-running the
-// default over history upserts the rows already written.
+// LegacyCandleGranularity is backfill-external's default; its candles keep the original seed
+// identity, so re-running the default upserts the rows already written.
 const LegacyCandleGranularity = time.Hour
 
-// CandleTxHash is the synthetic tx_hash of one backfilled CEX candle:
-// symbol is the venue-normalised symbol, closeTs the bucket's close time
-// in the venue's native unit (the value its Trade.Timestamp carries).
-//
-// Candles of different granularities close at the same instant and tx_hash is the only trades PK
-// column that can tell them apart, so granularity is part of the identity. The legacy granularity
+// CandleTxHash is the synthetic tx_hash of one backfilled CEX candle (closeTs in the venue's
+// native unit). Candles of different granularities close at the same instant and tx_hash is the
+// only trades PK column that tells them apart, so granularity is identity. The legacy granularity
 // keeps the "<SYM>-BF-<close>" seed byte-for-byte; others are a SHA-256 over a seed naming it.
-// A symbol whose legacy seed would truncate is refused at every granularity.
 func CandleTxHash(symbol string, closeTs int64, granularity time.Duration) (string, error) {
 	legacy, err := StrictSyntheticTxHash(fmt.Sprintf("%s-BF-%020d", symbol, closeTs))
 	if err != nil || granularity == LegacyCandleGranularity {
@@ -194,10 +175,8 @@ func CandleTxHash(symbol string, closeTs int64, granularity time.Duration) (stri
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// CandleClosed reports whether a backfilled candle whose bucket ends
-// (exclusive) at end may be emitted for a window ending at to. A candle
-// still open at now carries partial volume, and one ending past to would
-// be stamped outside the window the caller checks for overlap.
+// CandleClosed reports whether a candle whose bucket ends (exclusive) at end may be emitted for a
+// window ending at to. One still open at now has partial volume; one past to falls outside the window.
 func CandleClosed(end, to, now time.Time) bool {
 	return !end.After(to) && !end.After(now)
 }

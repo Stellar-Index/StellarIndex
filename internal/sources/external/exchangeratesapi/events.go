@@ -24,22 +24,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// SourceName is stamped on every canonical.OracleUpdate this
-// package emits. Must match the registry key.
+// SourceName is stamped on every canonical.OracleUpdate and must match the registry key.
 const SourceName = "exchangeratesapi"
 
-// DefaultEndpoint is the exchangeratesapi.io REST base. Includes
-// the `/v1` version prefix.
+// DefaultEndpoint is the REST base, including the /v1 prefix.
 const DefaultEndpoint = "https://api.exchangeratesapi.io/v1"
 
-// LatestPath is the endpoint for current rates. Combined with the
-// `?base=...&symbols=...` query we build in poller.go.
+// LatestPath is the current-rates endpoint, combined with the query built in poller.go.
 const LatestPath = "/latest"
 
-// DefaultPollInterval is the minimum cadence we run at when
-// operator doesn't override — matches the Professional tier's
-// 1-min refresh. Setting lower would waste quota without gaining
-// resolution.
+// DefaultPollInterval matches the Professional tier's 1-minute refresh; polling faster only
+// burns quota.
 const DefaultPollInterval = 60 * time.Second
 
 // DefaultDecimals is the scale applied to the incoming float64 rates: 6dp covers G10 crosses
@@ -62,15 +57,12 @@ var _ = external.ClassExchange
 
 // Errors surfaced by the poller.
 var (
-	// ErrAPIKeyRequired — operator enabled the source without
-	// providing an API key. Surfaced at NewPoller time so the
-	// indexer fails at startup, not at first poll.
+	// ErrAPIKeyRequired is raised at NewPoller time so a missing key fails at startup, not at
+	// first poll.
 	ErrAPIKeyRequired = errors.New("exchangeratesapi: API key required (see config.External.ExchangeRatesApi.APIKey)")
 
-	// ErrAPIRejected — venue returned {"success": false, "error": {...}}.
-	// Common causes: invalid key (401), rate limit exhausted (429
-	// implicit via the success=false shape), base not available on
-	// current tier (free tier rejects base!=EUR).
+	// ErrAPIRejected means the venue returned success=false: invalid key, exhausted rate limit,
+	// or a base the tier does not allow (free tier rejects base!=EUR).
 	ErrAPIRejected = errors.New("exchangeratesapi: API returned success=false")
 
 	// ErrMalformedResponse — JSON didn't decode to the documented

@@ -39,18 +39,14 @@ type Config struct {
 // rewrite of already-fetched ledger bytes that chain-link and signed-history checks cannot.
 // One Enabled flag covers append and verify: either alone detects nothing.
 type HashDBConfig struct {
-	// Enabled starts hashdb.Append in the indexer's live LCM read
-	// loop AND the indexer's periodic verify sweep. Off by default;
-	// operators opt in per region.
+	// Enabled starts hashdb.Append in the live LCM read loop AND the periodic verify sweep. Off by default.
 	Enabled bool `toml:"enabled" doc:"Start the hashdb append-on-ingest + periodic verify sweep in the indexer. Off by default — opt in per region once proven." default:"false"`
 
 	// Path default matches the indexer's existing ReadWritePaths mount (/var/lib/stellarindex).
 	Path string `toml:"path" doc:"Filesystem path of the hashdb file (ledger_seq -> sha256(LCM)). Created on first run if missing." default:"/var/lib/stellarindex/hashdb.bin"`
 }
 
-// validate enforces HashDBConfig's constraints only when Enabled —
-// a disabled block with zero-value fields is fine (nothing consumes
-// them).
+// validate enforces HashDBConfig's constraints only when Enabled; a disabled zero-value block is fine.
 func (hc HashDBConfig) validate() error {
 	if !hc.Enabled {
 		return nil
@@ -77,10 +73,8 @@ type PriceAlertsConfig struct {
 	Enabled bool `toml:"enabled" doc:"Start the price-alert evaluator loop in the aggregator. Off by default." default:"false"`
 }
 
-// TradesConfig configures policy that runs at trade-insert time
-// (`internal/storage/timescale.Store.InsertTrade`). All fields are
-// optional — empty config preserves the off-chain-only `usd_volume`
-// behaviour.
+// TradesConfig configures policy run at trade-insert time (timescale.Store.InsertTrade). Empty
+// config keeps the off-chain-only `usd_volume` behaviour.
 type TradesConfig struct {
 	// USDPeggedClassicAssets is the allow-list of classic "CODE-ISSUER" assets trusted as
 	// 1.0-USD-pegged. On-chain trades quoted in one, or in its SAC (via [SupplyConfig.SACWrappers]),
@@ -140,10 +134,8 @@ func (tc TradesConfig) USDPeggedClassics(logger *slog.Logger) []canonical.Asset 
 // prices_1m serving paths withhold a pair with an on-chain leg unless its trailing market clears
 // a volume + persistence floor. Zero values use the defaults in internal/pricingguard/substance.go.
 type PricingGuardConfig struct {
-	// DisableSubstanceGate switches the gate off entirely (every pair
-	// serves). An operator escape hatch for
-	// diagnosing a suspected false-withhold — not a tuning knob; to
-	// loosen the gate, lower the floors instead.
+	// DisableSubstanceGate switches the gate off (every pair serves): an escape hatch for
+	// diagnosing a suspected false-withhold, not a tuning knob; lower the floors to loosen it.
 	DisableSubstanceGate bool `toml:"disable_substance_gate" doc:"Disable the thin-market substance gate entirely (serve every pair, pre-2026-08 behaviour). Diagnostic escape hatch, not a tuning knob." default:"false"`
 
 	// SubstanceMinVolumeUSD is the minimum trailing-window USD volume.
@@ -153,9 +145,8 @@ type PricingGuardConfig struct {
 	// 1-minute buckets with a trade in the window.
 	SubstanceMinBuckets int `toml:"substance_min_buckets" doc:"Minimum distinct closed 1-minute buckets with at least one trade in the trailing window. 0 = pricingguard default (20)." default:"20"`
 
-	// SubstanceMinSpanMinutes is the minimum wall-clock spread between
-	// the oldest and newest active bucket in the window — the
-	// cross-timeframe persistence floor.
+	// SubstanceMinSpanMinutes is the minimum spread between the oldest and newest active bucket
+	// in the window: the cross-timeframe persistence floor.
 	SubstanceMinSpanMinutes int `toml:"substance_min_span_minutes" doc:"Minimum minutes between the oldest and newest active 1m bucket in the trailing window (persistence floor — a one-burst market never clears it). 0 = pricingguard default (360)." default:"360"`
 
 	// SubstanceWindowHours is the trailing measurement window.
@@ -166,9 +157,8 @@ type PricingGuardConfig struct {
 	// answer forever with a fresh-looking observed_at.
 	FXCrossMaxAgeHours int `toml:"fx_cross_max_age_hours" doc:"Staleness budget in hours for the forex snapshot rate backing /v1/price's fiat-cross-rate and USD-anchored-fiat-cross fallbacks; older than this is refused rather than served. Mirrors aggregate.composite_reference.fx_max_age_hours (same fx_quotes staleness profile — daily buckets that pause over market closes). 0 = pricingguard default (76)." default:"76"`
 
-	// DisableFiatBasis switches off the ADR-0053 basis rule, so a
-	// single-venue fiat book is served even where a multi-venue USD
-	// leg could anchor the price. Kill switch, not a tuning knob.
+	// DisableFiatBasis switches off the ADR-0053 basis rule, so a single-venue fiat book is
+	// served even where a multi-venue USD leg could anchor the price. Kill switch only.
 	DisableFiatBasis bool `toml:"disable_fiat_basis" doc:"Disable the ADR-0053 fiat basis rule: /v1/price and /v1/price/batch serve a single-venue direct fiat book as-is instead of the USD-anchored derivation (multi-venue USD leg × bound FX fixing). Kill switch, not a tuning knob." default:"false"`
 
 	// FiatPeggedClassicAssets maps a classic asset_key (CODE-ISSUER) to the ISO-4217 ticker the
@@ -177,9 +167,7 @@ type PricingGuardConfig struct {
 	FiatPeggedClassicAssets map[string]string `toml:"fiat_pegged_classic_assets" doc:"Maps classic credit asset_keys (CODE-ISSUER) to the ISO-4217 fiat ticker the operator declares them 1:1-pegged to (e.g. AUDD-G… = \"AUD\"). The API fills the asset's listing/detail price_usd from the declared peg × current fiat→USD FX rate when no market-derived price survives the substance gate, stamped price_basis=\"declared_peg\" on the wire. Never overwrites a market-derived price. Empty disables the fill." default:"{}"`
 }
 
-// validate rejects negative floors — a negative value is always a
-// typo, and silently treating it as "use default" (the 0 convention)
-// would hide it.
+// validate rejects negative floors: always a typo, and treating it as "use default" would hide it.
 func (pg PricingGuardConfig) validate() error {
 	if pg.SubstanceMinVolumeUSD < 0 {
 		return fmt.Errorf("%w: pricing_guard: substance_min_volume_usd must be >= 0", ErrInvalidConfig)
@@ -219,9 +207,8 @@ func (pg PricingGuardConfig) validate() error {
 	return nil
 }
 
-// maxSubstanceWindowHours caps substance_window_hours at 400 days: far
-// above any sane trailing window, far below the ~2,562,047 h at which
-// time.Duration(h)*time.Hour wraps negative and the gate fails open.
+// maxSubstanceWindowHours caps substance_window_hours at 400 days, far below the ~2,562,047 h at
+// which time.Duration(h)*time.Hour wraps negative and the gate fails open.
 const maxSubstanceWindowHours = 400 * 24
 
 // validateSubstanceSatisfiable rejects floors no market can clear (every pair withheld) and
@@ -250,10 +237,9 @@ func (pg PricingGuardConfig) validateSubstanceSatisfiable() error {
 	return nil
 }
 
-// defaultPricingGuardConfig mirrors the pricingguard.DefaultSubstance*
-// constants (config cannot import pricingguard — it depends on this
-// package); TestDefaultPricingGuard_MatchesPricingguardConstants pins the
-// lockstep, TestDefault_MatchesStructTags pins the `default:` doc tags.
+// defaultPricingGuardConfig mirrors the pricingguard.DefaultSubstance* constants (config cannot
+// import pricingguard); TestDefaultPricingGuard_MatchesPricingguardConstants pins the lockstep,
+// TestDefault_MatchesStructTags the `default:` doc tags.
 func defaultPricingGuardConfig() PricingGuardConfig {
 	return PricingGuardConfig{
 		SubstanceMinVolumeUSD:   1000,
@@ -268,23 +254,18 @@ func defaultPricingGuardConfig() PricingGuardConfig {
 // refreshes them into Redis; the API only reads that cache and sets `divergence_warning` past
 // [Threshold]. Default() enables CoinGecko (no auth).
 type DivergenceConfig struct {
-	// Threshold is the divergence percentage above which
-	// WarningFired is true on the cached result. Forwarded to
-	// divergence.ServiceOptions.Threshold. Default 5.0 (5%).
+	// Threshold is the divergence percentage above which WarningFired is true. Default 5.0.
 	Threshold float64 `toml:"threshold_pct" doc:"Divergence percentage above which the warning flag fires." default:"5.0"`
 
-	// MinSourcesForWarning is the minimum number of successful
-	// references required before WarningFired can be true.
-	// Default 2 — a single dissenting source isn't enough.
+	// MinSourcesForWarning is the minimum successful references before WarningFired can be true.
+	// Default 2: one dissenting source is not enough.
 	MinSourcesForWarning int `toml:"min_sources_for_warning" doc:"Minimum successful references before warning_fired can be true." default:"2"`
 
 	// CoinGecko config. Always-on by default (free tier, no
 	// auth). Set Enabled=false to skip.
 	CoinGecko DivergenceCoinGeckoConfig `toml:"coingecko" doc:"CoinGecko reference (free tier, no auth required)."`
 
-	// Chainlink config. Off by default (operator must provide
-	// FeedMap with mainnet feed addresses). When enabled, queries
-	// public Ethereum RPC for AggregatorV3 latestAnswer().
+	// Chainlink reads AggregatorV3 latestAnswer() over public Ethereum RPC. Off by default; needs a FeedMap.
 	Chainlink DivergenceChainlinkConfig `toml:"chainlink" doc:"Chainlink reference (HTTP cross-check only; not a VWAP contributor)."`
 
 	// On-chain oracle references read our OWN ingested oracle_updates rows. On by default: no
@@ -305,38 +286,30 @@ type DivergenceConfig struct {
 // calls; when enabled it needs at least one enabled reference or the worker refuses to start.
 type DivergenceSupplyConfig struct {
 	Enabled bool `toml:"enabled" doc:"Whether the supply cross-check worker runs. Off by default (makes outbound HTTP calls). The archival-node ansible role renders it from the stellarindex_divergence_supply_enabled inventory variable, itself default false." default:"false"`
-	// ThresholdPct is the relative-divergence percentage above which
-	// the ratio gauge reads `divergent` and the supply-divergence alert
-	// fires. Default 1.0 — two-plus orders of magnitude above the
-	// ~0.03% XLM Fee-Pool noise floor, so it fires only on a REAL drift.
+	// ThresholdPct is the divergence percentage above which the ratio gauge reads `divergent` and
+	// the alert fires. Default 1.0, far above the ~0.03% XLM Fee-Pool noise floor, so only REAL drift fires.
 	ThresholdPct float64 `toml:"threshold_pct" doc:"Relative-divergence percentage above which a supply cross-check reads 'divergent' and the alert fires. Default 1.0 (well above the ~0.03% XLM noise floor)." default:"1.0"`
-	// Dashboard is the Stellar Network Dashboard reference (XLM only).
-	// On by default WITHIN this block (free, no auth, authoritative) —
-	// but the block itself is Enabled=false, so it only runs once the
-	// operator flips the parent gate.
+	// Dashboard is the Stellar Network Dashboard reference (XLM only). On by default within this
+	// block, which is itself Enabled=false, so it runs only once the parent gate is flipped.
 	Dashboard DivergenceSupplyDashboardConfig `toml:"dashboard" doc:"Stellar Network Dashboard reference (dashboard.stellar.org) — authoritative XLM circulating supply, free, no auth. On by default within this block."`
-	// CoinGecko is the CoinGecko `/coins/{id}` circulating-supply
-	// reference. Off by default — the free tier is 429-throttled;
-	// enable it once a Pro key is set.
+	// CoinGecko is the `/coins/{id}` circulating-supply reference. Off by default: the free tier
+	// is 429-throttled, so enable it once a Pro key is set.
 	CoinGecko DivergenceSupplyCoinGeckoConfig `toml:"coingecko" doc:"CoinGecko /coins/{id} market_data.circulating_supply reference. Off by default (free tier 429-throttled since 2026-06-19; enable with a Pro key)."`
 }
 
-// DivergenceSupplyDashboardConfig configures the Stellar Dashboard
-// supply reference. Covers XLM only; every other asset is
-// asset_unsupported for this reference.
+// DivergenceSupplyDashboardConfig configures the Stellar Dashboard supply reference. XLM only;
+// every other asset is asset_unsupported.
 type DivergenceSupplyDashboardConfig struct {
 	Enabled bool   `toml:"enabled" doc:"Whether the Stellar Dashboard supply reference is consulted. On by default within [divergence.supply]." default:"true"`
 	BaseURL string `toml:"base_url" doc:"Dashboard API base. Empty defaults to https://dashboard.stellar.org/api/v3. The reference GETs base_url + /lumens." default:""`
 }
 
-// DivergenceSupplyCoinGeckoConfig configures the CoinGecko supply
-// reference. Distinct from [DivergenceCoinGeckoConfig] (the price
-// reference): supply reads `/coins/{id}` not `/simple/price`.
+// DivergenceSupplyCoinGeckoConfig configures the CoinGecko supply reference, distinct from
+// [DivergenceCoinGeckoConfig]: supply reads `/coins/{id}`, not `/simple/price`.
 type DivergenceSupplyCoinGeckoConfig struct {
 	Enabled bool `toml:"enabled" doc:"Whether the CoinGecko supply reference is consulted. Off by default (free tier 429-throttled)." default:"false"`
-	// APIKey follows the secret-field convention: prefer the env var;
-	// TOML fallback for local-dev only. Sent as the x-cg-pro-api-key
-	// header (Pro-tier auth that lifts the 429 ceiling).
+	// APIKey follows the secret-field convention (env var; TOML for local dev only). Sent as the
+	// x-cg-pro-api-key header, which lifts the 429 ceiling.
 	APIKey  string            `toml:"api_key" doc:"CoinGecko Pro API key, sent as x-cg-pro-api-key. Prefer env var COINGECKO_API_KEY." env:"COINGECKO_API_KEY" default:""`
 	BaseURL string            `toml:"base_url" doc:"CoinGecko API base. Empty defaults to https://api.coingecko.com/api/v3, or https://pro-api.coingecko.com/api/v3 when api_key is set (a Pro key 404s the public host)." default:""`
 	IDMap   map[string]string `toml:"id_map" doc:"Maps canonical asset_id → CoinGecko coin id for the supply lookup. Empty falls back to the built-in default (native/crypto:XLM → stellar)." default:"{}"`
@@ -348,26 +321,21 @@ type DivergenceOracleConfig struct {
 	Enabled bool `toml:"enabled" doc:"Whether this on-chain oracle reference is wired into the divergence service." default:"true"`
 }
 
-// DivergenceCoinGeckoConfig configures the CoinGecko reference.
-// IDMap is operator-overridable but defaults to the small built-in
-// set covering XLM + the major stablecoins we curate.
+// DivergenceCoinGeckoConfig configures the CoinGecko reference. IDMap is overridable and defaults
+// to a small built-in set (XLM plus major stablecoins).
 type DivergenceCoinGeckoConfig struct {
 	Enabled bool              `toml:"enabled" doc:"Whether the CoinGecko reference is wired into the divergence service." default:"true"`
 	BaseURL string            `toml:"base_url" doc:"CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3, or https://pro-api.coingecko.com/api/v3 when external.coingecko.api_key is set. The reference authenticates with the external.coingecko keys." default:""`
 	IDMap   map[string]string `toml:"id_map" doc:"Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM + major stables." default:"{}"`
 }
 
-// DivergenceChainlinkConfig configures the Chainlink reference.
-// Off by default — operator opts in by setting RPCURL + FeedMap
-// to mainnet AggregatorV3 feed addresses for the pairs they want
-// cross-checked.
+// DivergenceChainlinkConfig configures the Chainlink reference. Off by default; opt in by setting
+// RPCURL and a FeedMap of mainnet AggregatorV3 addresses.
 type DivergenceChainlinkConfig struct {
 	Enabled bool   `toml:"enabled" doc:"Whether the Chainlink reference is wired into the divergence service." default:"false"`
 	RPCURL  string `toml:"rpc_url" doc:"Ethereum JSON-RPC endpoint. Shares the CHAINLINK_RPC_URL env var with the ingest poller (env overrides TOML). Empty defaults to https://cloudflare-eth.com." env:"CHAINLINK_RPC_URL" default:""`
-	// FeedMap maps canonical pair string → mainnet feed address.
-	// Pair string format: "<base>/<quote>" e.g. "fiat:EUR/fiat:USD".
-	// Decimals omitted → the feed's on-chain decimals() is adopted; set →
-	// verified against decimals(), refused on disagreement.
+	// FeedMap maps a "<base>/<quote>" pair (e.g. "fiat:EUR/fiat:USD") to a mainnet feed address.
+	// Omitted decimals adopt the feed's on-chain decimals(); a set value is verified against it.
 	FeedMap map[string]ChainlinkFeedConfig `toml:"feeds" doc:"Maps pair strings to {address, decimals, invert}. Empty disables Chainlink in practice." default:"{}"`
 }
 
@@ -376,16 +344,13 @@ type ChainlinkFeedConfig struct {
 	Address  string `toml:"address" doc:"0x-prefixed mainnet feed contract address." default:""`
 	Decimals int    `toml:"decimals" doc:"Power-of-10 divisor for the raw int256. Omit to adopt the feed's on-chain decimals() (8 on every Chainlink USD feed). When set it is verified against decimals() on first use and daily; on disagreement the feed's readings are refused (ERROR log + stellarindex_chainlink_feed_decimals_mismatch_total) until they agree." default:"0"`
 	Invert   bool   `toml:"invert" doc:"Set true when canonical pair is reciprocal of the feed's natural quote." default:"false"`
-	// MaxAgeHours is the staleness ceiling: a latestRoundData
-	// round older than this is rejected as reference-unavailable.
-	// 0 = the default budget for the pair (see the doc tag).
+	// MaxAgeHours is the staleness ceiling: an older latestRoundData is rejected as
+	// reference-unavailable. 0 = the pair's default budget (see the doc tag).
 	MaxAgeHours int `toml:"max_age_hours" doc:"Staleness ceiling in hours for the feed's latestRoundData updatedAt; rounds older than this are rejected as reference-unavailable (CS-089). 0 = the default: the built-in feed's budget for a built-in pair, 76h for any other fiat/fiat pair (FX feeds pause over market closes), else 3h. Must be >= 0." default:"0"`
 }
 
-// defaultDivergenceConfig returns the Default()-shape divergence
-// settings: CoinGecko on (free tier, no auth required) so
-// divergence_warning fires out of the box; Chainlink off by
-// default (operator opts in via FeedMap).
+// defaultDivergenceConfig returns the Default() divergence settings: CoinGecko on (free, no auth)
+// so divergence_warning works out of the box; Chainlink off until a FeedMap is set.
 func defaultDivergenceConfig() DivergenceConfig {
 	return DivergenceConfig{
 		Threshold:            5.0,
@@ -398,16 +363,13 @@ func defaultDivergenceConfig() DivergenceConfig {
 			Enabled: false,
 			FeedMap: map[string]ChainlinkFeedConfig{},
 		},
-		// On-chain oracle references default ON — they read our own
-		// served oracle_updates rows (no external quota) and are a
-		// per-pair no-op until the feed tables have data.
+		// On-chain oracle references default ON: they read our own oracle_updates rows (no external
+		// quota) and no-op per pair until the feed tables have data.
 		Reflector: DivergenceOracleConfig{Enabled: true},
 		Redstone:  DivergenceOracleConfig{Enabled: true},
 		Band:      DivergenceOracleConfig{Enabled: true},
-		// Supply cross-check OFF by default (outbound HTTP; opt in on
-		// r1). The Dashboard sub-reference is on WITHIN the block —
-		// enabling the parent gate gives XLM-vs-Dashboard out of the
-		// box — while CoinGecko stays off (free tier 429-throttled).
+		// Supply cross-check OFF by default (outbound HTTP). Within the block Dashboard is on, so
+		// enabling the parent gives XLM-vs-Dashboard; CoinGecko stays off (free tier 429-throttled).
 		Supply: DivergenceSupplyConfig{
 			Enabled:      false,
 			ThresholdPct: 1.0,
@@ -426,10 +388,8 @@ type MetadataConfig struct {
 	// An empty value equals an absent key.
 	IssuerHomeDomains map[string]string `toml:"issuer_home_domains" doc:"Static curated map of issuer-account G-strkey → home-domain. Fallback for issuers with no AccountEntry observation; an observed on-chain home_domain, or an observed absence of one, always wins." default:"{}"`
 
-	// WatchedIssuerAccounts are the issuer G-strkeys whose AccountEntry
-	// the indexer observes for home_domain. Kept apart from
-	// [SupplyConfig.SDFReserveAccounts], whose members are subtracted
-	// from XLM circulating supply.
+	// WatchedIssuerAccounts are the issuer G-strkeys whose AccountEntry the indexer observes for
+	// home_domain. Kept apart from [SupplyConfig.SDFReserveAccounts], which is subtracted from XLM supply.
 	WatchedIssuerAccounts []string `toml:"watched_issuer_accounts" doc:"Issuer-account G-strkeys whose AccountEntry the indexer observes so the API serves their on-chain home_domain. Independent of [supply].sdf_reserve_accounts: watching an issuer here does not change circulating supply." default:"[]"`
 }
 
@@ -442,9 +402,7 @@ func (m MetadataConfig) validate() error {
 	return nil
 }
 
-// HomeDomainFor returns the home-domain registered for the issuer,
-// or ("", false) if the issuer isn't curated. Falsy entries (empty
-// strings) are treated as "not curated."
+// HomeDomainFor returns the issuer's curated home domain, or ("", false) if absent or empty.
 func (m MetadataConfig) HomeDomainFor(issuer string) (string, bool) {
 	if len(m.IssuerHomeDomains) == 0 {
 		return "", false
@@ -483,16 +441,11 @@ type ExternalStreamerConfig struct {
 	Enabled bool `toml:"enabled" doc:"Whether this connector runs. Off by default — no network egress until operator opts in." default:"false"`
 }
 
-// ExternalVenueConfig is the toggle shape for credential-less public
-// venues that DO poll on a cadence (currently ECB). Paid-tier venues
-// with API keys use their own struct (e.g.
-// [ExchangeRatesApiVenueConfig]) that embeds the same Enabled field.
+// ExternalVenueConfig is the toggle for credential-less public venues that poll on a cadence
+// (currently ECB). Keyed venues use their own struct, e.g. [ExchangeRatesApiVenueConfig].
 type ExternalVenueConfig struct {
 	Enabled bool `toml:"enabled" doc:"Whether this connector runs. Off by default — no network egress until operator opts in." default:"false"`
-	// PollInterval overrides the connector's built-in default poll
-	// cadence. Empty/zero falls back to whatever the connector
-	// itself defines (e.g. ECB's 6h). Useful for tightening or
-	// loosening a free-tier connector's cadence.
+	// PollInterval overrides the connector's default cadence; empty/zero keeps it (e.g. ECB's 6h).
 	PollInterval time.Duration `toml:"poll_interval" doc:"Override the connector's built-in default poll cadence (e.g. \"12h\"). Empty/zero uses the connector default." default:""`
 }
 
@@ -528,9 +481,8 @@ type MassiveConfig struct {
 	RefreshInterval time.Duration `toml:"refresh_interval" doc:"Forex worker poll cadence. One poll is one request to massive, plus one to each standby it falls through to. Zero uses 1h; values under 10m are raised to 10m and logged. Budget a metered feed against it: the Open Exchange Rates Free plan (1,000 requests/month, hourly updates) spends 720-744/month at 1h." default:"1h"`
 }
 
-// MinMassiveRefreshInterval floors [MassiveConfig.RefreshInterval]: every
-// board in the chain updates at most hourly, so a faster poll only spends
-// metered quota.
+// MinMassiveRefreshInterval floors [MassiveConfig.RefreshInterval]: every board updates at most
+// hourly, so a faster poll only spends metered quota.
 const MinMassiveRefreshInterval = 10 * time.Minute
 
 // EffectiveRefreshInterval returns the forex worker's cadence: 1h when
@@ -582,10 +534,8 @@ type ChainlinkVenueConfig struct {
 	FeedMap      map[string]ChainlinkFeedSetting `toml:"feed_map"      doc:"Maps canonical pair string ('crypto:BTC/fiat:USD' etc.) to the AggregatorV3 contract address + decimals + invert + max_age_hours. Empty falls back to the built-in default covering BTC/ETH/LINK/EUR/GBP/JPY vs USD." default:"{}"`
 }
 
-// ChainlinkFeedSetting is one entry in [ChainlinkVenueConfig.FeedMap].
-// Mirrors [DivergenceChainlinkConfig]'s ChainlinkFeed but kept on its
-// own type so the operator-facing TOML schemas of the two consumers
-// (divergence cross-check vs ingest source) can evolve independently.
+// ChainlinkFeedSetting is one entry in [ChainlinkVenueConfig.FeedMap]. It mirrors
+// [DivergenceChainlinkConfig]'s feed but is its own type so the two TOML schemas can evolve apart.
 type ChainlinkFeedSetting struct {
 	Address  string `toml:"address"  doc:"0x-prefixed AggregatorV3 contract address on Ethereum mainnet."`
 	Decimals uint8  `toml:"decimals" doc:"Power-of-10 divisor for the raw int256 answer. Omit to adopt the feed's on-chain decimals() (8 on every Chainlink USD feed). When set it is verified against decimals() on the first poll and daily; on disagreement the feed is refused (ERROR log + stellarindex_chainlink_feed_decimals_mismatch_total) until they agree." default:"0"`
@@ -615,10 +565,8 @@ type OracleStalenessOverrideConfig struct {
 	Reason        string `toml:"reason" doc:"Why this pair's publication rhythm differs from its source's cadence, with the observation behind the number. Required — an override without a stated reason is indistinguishable from a silenced alert."`
 }
 
-// ReflectorOracleConfig carries the three Reflector contract
-// addresses. Leave any variant empty to disable it; the indexer's
-// buildSources will reject an enabled source whose address is
-// unset rather than silently no-op.
+// ReflectorOracleConfig carries the three Reflector contract addresses. An empty variant is
+// disabled; buildSources rejects an enabled source with no address rather than silently no-op.
 type ReflectorOracleConfig struct {
 	DEXContract string `toml:"dex_contract" doc:"Reflector DEX contract (C-prefix) on mainnet."`
 	CEXContract string `toml:"cex_contract" doc:"Reflector CEX contract (C-prefix) on mainnet."`
@@ -657,9 +605,7 @@ type RegionConfig struct {
 	Deployment string `toml:"deployment" doc:"Deployment tier this node reports in /v1/status's region block (production / testnet / futurenet / staging). Purely a label — nothing keys behaviour off it." default:"production"`
 }
 
-// StellarConfig points a Stellar Index binary at the stellar-core +
-// stellar-rpc endpoints it reads from. Empty values disable the
-// corresponding client.
+// StellarConfig points a binary at the stellar-core and stellar-rpc endpoints it reads; empty disables the client.
 type StellarConfig struct {
 	Network           string   `toml:"network" doc:"Network passphrase name — pubnet / testnet / futurenet." default:"pubnet"`
 	RPCEndpoints      []string `toml:"rpc_endpoints" doc:"stellar-rpc endpoints for getEvents/getLedgers. Tried in order on failover. Default is a local, unkeyed node; a hosted third-party endpoint may embed an API key in the URL path/query — treat that value as a secret, same as chainlink's rpc_url." default:"[\"http://127.0.0.1:8000\"]"`
@@ -700,9 +646,8 @@ func (s StellarConfig) Passphrase() string {
 	return ""
 }
 
-// StorageConfig captures every persistent-store connection. DSN
-// strings NEVER include passwords directly — use the `env:` tag
-// pattern to reference a secret store.
+// StorageConfig captures every persistent-store connection. DSNs NEVER embed passwords; use the
+// `env:` tag to reference a secret.
 type StorageConfig struct {
 	PostgresDSN string `toml:"postgres_dsn" doc:"Postgres DSN; password resolved via env: prefix." env:"STELLARINDEX_POSTGRES_DSN" default:"postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable"`
 	// BackgroundStatementTimeout is the session statement_timeout for INDEXER and AGGREGATOR pools
@@ -753,10 +698,8 @@ type StorageConfig struct {
 	// authenticate as this user under the bounded `api_serving` profile
 	// (configs/ansible/roles/archival-node/tasks/20-clickhouse-serving-profile.yml). Both empty is safe before the profile exists.
 	ClickHouseServingUser string `toml:"clickhouse_serving_user" doc:"ClickHouse username the API's serving reads (explorer endpoints, incl. GET /v1/accounts/{g}/movements) authenticate as (ADR-0048 D4). Empty (default) uses the environment's identity: STELLARINDEX_CLICKHOUSE_LIVE_USER when set, else ClickHouse's default user." default:""`
-	// ClickHouseServingPassword holds the resolved password, not an
-	// env-var NAME (the direct-value `env:` convention, same as
-	// RedisPassword — see that field's doc comment — NOT the
-	// name-of-env-var convention S3AccessKeyEnv uses).
+	// ClickHouseServingPassword holds the resolved password (direct-value `env:` convention, as
+	// RedisPassword), NOT an env-var NAME like S3AccessKeyEnv.
 	ClickHouseServingPassword string `toml:"clickhouse_serving_password" doc:"The ClickHouse serving user's password itself, NOT an env-var NAME to dereference — inject it via the STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD env override rather than writing it to this file. The old key clickhouse_serving_password_env is a deprecated alias (accepted with a boot warning). Empty (default) uses no password, matching an empty clickhouse_serving_user." env:"STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD" default:""`
 }
 
@@ -776,10 +719,8 @@ type IngestionConfig struct {
 	// galexie.service run (r1: check the process args). 0 = no seam; indexer reads only galexie-live.
 	LiveSeamLedger uint32 `toml:"live_seam_ledger" doc:"First ledger in the live bucket. Below this, indexer reads from galexie-archive. 0 disables the archive bucket entirely." default:"0"`
 
-	// Projector is the ADR-0032 projection loop. When enabled it
-	// runs in parallel with the dispatcher's per-source sinks
-	// (Phase 3 mode) unless PersistPerSource=false makes it the
-	// sole writer (Phase 4). Off by default.
+	// Projector is the ADR-0032 projection loop. Enabled, it runs beside the dispatcher's
+	// per-source sinks (Phase 3) unless PersistPerSource=false makes it sole writer (Phase 4).
 	Projector ProjectorConfig `toml:"projector" doc:"ADR-0032 projector — tails soroban_events and writes per-source rows. Phase 3 runs in parallel with the dispatcher's existing per-source sinks; Phase 4 will flip it primary."`
 }
 
@@ -809,10 +750,8 @@ type AnomalyConfig struct {
 	// all of them; two spellings of one asset with different classes fail aggregator boot.
 	Classifications map[string]string `toml:"classifications" doc:"Operator-curated map of canonical asset_id → asset class (stablecoin/treasury/crypto/governance). Anything absent falls through to the default class." default:"{}"`
 
-	// Phase2 holds the operator-tunable thresholds for the ADR-0019
-	// Phase 2 freeze policy (3-signal AND on confidence + z + source
-	// count). Defaults match the package-level hardcoded values; an
-	// operator override merges atop those.
+	// Phase2 holds the tunable thresholds for the ADR-0019 Phase 2 freeze (3-signal AND on
+	// confidence, z and source count). Overrides merge atop the package defaults.
 	Phase2 Phase2FreezeConfig `toml:"phase2" doc:"Phase 2 (per-asset baseline) freeze thresholds. All three conditions must hold for a freeze: confidence < 0.45 AND z > 5.0 AND sources <= 1. The confidence bound is 0.45 rather than ADR-0019's original 0.10 because confidence decays gently in z — at 0.10 the freeze needed z ~= 15 (a ~30% single-bucket move for XLM) and was effectively dormant. 0.45 puts the trigger just past the ADR's own z > 5. See DefaultPhase2ConfidenceMaxFreeze for the measured curve."`
 }
 
@@ -846,9 +785,7 @@ type Phase2FreezeConfig struct {
 // internal/aggregate/freeze (freeze → obs → config: a cycle). cmd/stellarindex-aggregator/main.go
 // maps them onto orchestrator.Phase2Thresholds.Lifecycle.
 
-// AnomalyThreshold is one row of the anomaly threshold table.
-// Mirrors `anomaly.Thresholds` but uses TOML-friendly types so the
-// loader doesn't need a custom unmarshaller.
+// AnomalyThreshold is one row of the anomaly threshold table, mirroring `anomaly.Thresholds` in TOML-friendly types.
 type AnomalyThreshold struct {
 	WarnPct   float64 `toml:"warn_pct" doc:"Deviation above this percentage triggers ActionWarn: the bucket is still published, and the warning is recorded operator-side via stellarindex_anomaly_warn_total plus a Warn log. It does NOT set the divergence_warning wire flag, which belongs to the cross-reference divergence service." default:"30.0"`
 	FreezePct float64 `toml:"freeze_pct" doc:"Deviation above this percentage triggers ActionFreeze when source_count<=1 (don't publish; serve last-known-good)." default:"75.0"`
@@ -877,10 +814,8 @@ type AggregateConfig struct {
 	CompositeReference           CompositeReferenceConfig   `toml:"composite_reference" doc:"Current-bucket composite-reference corroboration of the phase-2 freeze for structurally single-venue targets (2026-08-29 product decision; design doc §10 amendment). For an allow-listed target whose bucket is single-venue, the aggregator rebuilds the target's [[aggregate.triangulations]] chain on the CURRENT bucket (this tick's crypto/USD leg publish × a fresh FX snap) and compares it with the direct print: agreement within tolerance_bps means the move is market-wide and the phase-2 fire is suppressed (corroboration_basis=composite); disagreement or an unavailable reference freezes exactly as before (corroboration_basis=venue, reason names why). The composite NEVER enters VWAP and NEVER raises source_count."`
 }
 
-// CompositeReferenceConfig is the `[aggregate.composite_reference]`
-// block. Mirrors orchestrator.CompositeReferenceConfig; the binary
-// boundary (cmd/stellarindex-aggregator) maps it, the same way it maps
-// the triangulation table.
+// CompositeReferenceConfig is the `[aggregate.composite_reference]` block, mirroring
+// orchestrator.CompositeReferenceConfig; cmd/stellarindex-aggregator maps it.
 type CompositeReferenceConfig struct {
 	Enabled          bool     `toml:"enabled" doc:"Master switch. Default ON for the targets allow-list below; set false to restore the pre-2026-08-29 freeze-and-auto-release posture for every pair without editing the list." default:"true"`
 	Targets          []string `toml:"targets" doc:"Allow-list of structurally single-venue target pairs (canonical wire form) the composite reference may corroborate. Each must also have an [[aggregate.triangulations]] row — its legs ARE the reference. A target with >= 2 real venues on a bucket is never evaluated regardless of this list." default:"[\"crypto:XLM/fiat:GBP\",\"crypto:XLM/fiat:EUR\"]"`
@@ -947,10 +882,9 @@ type APIConfig struct {
 	SEP10                          SEP10Config     `toml:"sep10" doc:"SEP-10 Web Auth — server signing seed, JWT secret, TTLs. Active when auth_mode=sep10 OR when /v1/auth/sep10/* endpoints are exposed."`
 	Streaming                      StreamingConfig `toml:"streaming" doc:"Closed-bucket SSE fanout — pairs the API binary republishes to the streaming Hub on every new closed prices_1m bucket. Empty Pairs leaves /v1/price/stream returning 503; Hub still constructs so subscribers can connect (and immediately drop) without a panic."`
 	PrometheusURL                  string          `toml:"prometheus_url" doc:"Prometheus HTTP API root (e.g. http://localhost:9090) backing /v1/status. Empty leaves /v1/status serving an in-process surface (uptime + region only)." default:""`
-	// StatusServices names the BACKGROUND services this deployment runs, which
-	// /v1/status reports and rolls `overall` up from ("api" is always reported).
-	// Test nets run no aggregator; listing it would pin overall at "degraded"
-	// forever. The default (indexer + aggregator) is pubnet's set.
+	// StatusServices names the BACKGROUND services /v1/status reports and rolls `overall` up from
+	// ("api" is always reported). Test nets run no aggregator; listing it would pin overall at
+	// "degraded". The default (indexer + aggregator) is pubnet's set.
 	StatusServices    []string        `toml:"status_services" doc:"Background services whose heartbeats /v1/status reports and rolls up (subset of: indexer, aggregator). Drop one only on a deployment that genuinely does not run it — a service omitted here can never be reported down." default:"[\"indexer\",\"aggregator\"]"`
 	ArchiveReportPath string          `toml:"archive_report_path" doc:"Filesystem path of the archive-completeness daemon's latest JSON report (the -output-file of 'stellarindex-ops archive-completeness verify'; the systemd unit writes /var/lib/galexie/last-completeness-report.json). Backs GET /v1/diagnostics/archive. The endpoint 404s while the file doesn't exist yet and 503s when this is empty." default:"/var/lib/galexie/last-completeness-report.json"`
 	Dashboard         DashboardConfig `toml:"dashboard" doc:"Customer dashboard auth flow — passwordless email login (6-digit code + magic link) + cookie sessions backing the in-site dashboard at stellarindex.io/account. Empty leaves /v1/auth/{login,callback,verify-code,logout} returning 503."`
@@ -989,10 +923,8 @@ type StreamingConfig struct {
 	// ["native","fiat:USD"]. Empty disables the producer while still letting the Hub construct.
 	Pairs [][]string `toml:"pairs" doc:"Operator-declared closed-bucket fanout pair list. Each entry is a two-element [base, quote] array of canonical asset strings (e.g. [[\"native\", \"fiat:USD\"], [\"credit:USDC:GA5Z…\", \"fiat:USD\"]]). Empty disables the producer; clients that connect see SSE open + heartbeats but no price_update events." default:"[]"`
 
-	// PollInterval is the per-pair poll cadence. Sub-second values
-	// are clamped to 1 s by the publisher; zero falls back to 5 s.
-	// 5 s detects a new 1-minute closed bucket within 5 s of its
-	// end — well inside Freighter's 30 s freshness target.
+	// PollInterval is the per-pair poll cadence. Sub-second values clamp to 1 s; zero means 5 s,
+	// which sees a new 1-minute closed bucket within 5 s, inside Freighter's 30 s freshness target.
 	PollInterval time.Duration `toml:"poll_interval" doc:"Per-pair poll cadence for the closed-bucket producer. Default 5s; clamped to 1s minimum." default:"5s"`
 
 	// MaxStreamsPerIP caps concurrently-held SSE connections per client IP across every stream endpoint;
@@ -1017,9 +949,8 @@ type StreamingConfig struct {
 	// closed-bucket Hub. <= 0 keeps streaming.DefaultBufferSize (256).
 	BufferSize int `toml:"buffer_size" doc:"Per-topic ring-buffer capacity for the streaming Hub — how many recent closed-bucket events a late-subscribing client can replay. <= 0 keeps the built-in default (256)." default:"256"`
 
-	// TopicIdleTTL overrides how long a subscriber-less Hub topic
-	// keeps its buffer before the reaper drops it. <= 0 keeps
-	// streaming.DefaultTopicIdleTTL (15m).
+	// TopicIdleTTL overrides how long a subscriber-less Hub topic keeps its buffer before the
+	// reaper drops it. <= 0 keeps streaming.DefaultTopicIdleTTL (15m).
 	TopicIdleTTL time.Duration `toml:"topic_idle_ttl" doc:"How long a Hub topic with no subscribers keeps its replay buffer before the reaper drops it. <= 0 keeps the built-in default (15m)." default:"15m"`
 
 	// MaxTopics overrides the Hub's topic-map ceiling. <= 0 keeps
@@ -1053,10 +984,9 @@ type SupplyConfig struct {
 	// in SDFReserveAccounts MUST appear here; a missing key is a config error caught at writer-start.
 	ReserveBalancesStroops map[string]string `toml:"reserve_balances_stroops" doc:"Operator-managed snapshot of each SDF reserve account's XLM balance in stroops (decimal string). Updated manually on SDF reserve-move announcements. Used as the fallback source when the LCM AccountEntry observer (Task #54) hasn't yet populated account_observations for the watched reserve set; the live observer takes over once those rows land." default:"{}"`
 
-	// ReserveBalancesAsOf dates the ReserveBalancesStroops snapshot
-	// (YYYY-MM-DD, UTC). The static fallback refuses to answer when it
-	// is unset or older than ReserveBalancesMaxAge, so a forgotten map
-	// fails closed instead of being republished as the current reserve.
+	// ReserveBalancesAsOf dates the ReserveBalancesStroops snapshot (YYYY-MM-DD, UTC). The static
+	// fallback refuses to answer when it is unset or older than ReserveBalancesMaxAge, so a
+	// forgotten map fails closed instead of being republished as the current reserve.
 	ReserveBalancesAsOf string `toml:"reserve_balances_as_of" doc:"Date (YYYY-MM-DD, UTC) the reserve_balances_stroops snapshot was taken. The static fallback refuses to answer when this is unset or older than reserve_balances_max_age; a snapshot it does serve is published with supply basis xlm_sdf_reserve_exclusion_static." default:""`
 
 	// ReserveBalancesMaxAge bounds how old the dated static snapshot may
@@ -1172,9 +1102,8 @@ func (sc SupplyConfig) Validate() error {
 	return sc.validatePolicyOverrideKeys()
 }
 
-// DefaultReserveBalancesMaxAge is the reserve_balances_max_age default:
-// one week, a conservative bound for balances SDF moves in
-// multi-billion-XLM tranches.
+// DefaultReserveBalancesMaxAge is the reserve_balances_max_age default: one week, conservative for
+// balances SDF moves in multi-billion-XLM tranches.
 const DefaultReserveBalancesMaxAge = 7 * 24 * time.Hour
 
 // EffectiveReserveBalancesMaxAge is ReserveBalancesMaxAge, or the
@@ -1186,9 +1115,8 @@ func (sc SupplyConfig) EffectiveReserveBalancesMaxAge() time.Duration {
 	return sc.ReserveBalancesMaxAge
 }
 
-// NewStaticReserveReader builds the dated static reserve-balance reader
-// from reserve_balances_stroops / _as_of / _max_age — the one
-// construction path for every XLM supply writer.
+// NewStaticReserveReader builds the dated static reserve-balance reader from
+// reserve_balances_stroops / _as_of / _max_age, the one construction path for XLM supply writers.
 func (sc SupplyConfig) NewStaticReserveReader() (*supply.ConfigReserveBalanceReader, error) {
 	asOf, err := sc.ReserveBalancesAsOfTime()
 	if err != nil {
@@ -1210,9 +1138,8 @@ func (sc SupplyConfig) ReserveBalancesAsOfTime() (time.Time, error) {
 	return t, nil
 }
 
-// validateStaleComponentLedgersByAsset is check 6 of
-// [SupplyConfig.Validate]. XLM is always watched; the aggregator
-// builds its refresher unconditionally.
+// validateStaleComponentLedgersByAsset is check 6 of [SupplyConfig.Validate]. XLM is always
+// watched: the aggregator builds its refresher unconditionally.
 func (sc SupplyConfig) validateStaleComponentLedgersByAsset() error {
 	byAsset, err := supply.CanonicalizeStaleComponentLedgers(sc.StaleComponentLedgersByAsset)
 	if err != nil {
@@ -1226,9 +1153,8 @@ func (sc SupplyConfig) validateStaleComponentLedgersByAsset() error {
 		"'XLM', a watched_classic_assets entry, or a watched_sep41_contracts id")
 }
 
-// validatePolicyOverrideKeys is check 7 of [SupplyConfig.Validate].
-// Only the classic and SEP-41 computers read these two maps, so XLM
-// is not a watched key here (CanonicalizePolicyKeys rejects it).
+// validatePolicyOverrideKeys is check 7 of [SupplyConfig.Validate]. Only the classic and SEP-41
+// computers read these maps, so XLM is not a valid key (CanonicalizePolicyKeys rejects it).
 func (sc SupplyConfig) validatePolicyOverrideKeys() error {
 	lockedSets, err := supply.CanonicalizePolicyKeys(sc.PerAssetLockedSets)
 	if err != nil {
@@ -1345,9 +1271,7 @@ func requireWatchedSupplyKeys[V any](field string, byAsset map[string]V, watched
 	return nil
 }
 
-// validateFullyWrappedSACs is check 5 of [SupplyConfig.Validate],
-// split out to keep Validate's cognitive complexity under the
-// gocognit ceiling.
+// validateFullyWrappedSACs is check 5 of [SupplyConfig.Validate], split out for gocognit.
 func (sc SupplyConfig) validateFullyWrappedSACs() error {
 	for i, sacID := range sc.FullyWrappedSACs {
 		if sacID == "" {
@@ -1405,10 +1329,8 @@ func defaultAnomalyConfig() AnomalyConfig {
 	}
 }
 
-// defaultAPIConfig is split out of Default() to keep that function under
-// the funlen ceiling; it holds the public-API / auth / dashboard defaults
-// (kept in lockstep with the `default:` struct tags — see
-// TestDefault_MatchesStructTags).
+// defaultAPIConfig holds the public-API / auth / dashboard defaults, split out of Default() for
+// funlen and kept in lockstep with the `default:` tags (TestDefault_MatchesStructTags).
 func defaultAPIConfig() APIConfig {
 	return APIConfig{
 		ListenAddr:                "0.0.0.0:3000",
@@ -1420,26 +1342,22 @@ func defaultAPIConfig() APIConfig {
 		FailedAuthRateLimitPerMin: 20,
 		RateLimitDwell:            30 * time.Second,
 		MonthlyQuotaDwell:         30 * time.Second,
-		// Unauthenticated-DoS chokepoint: the app-layer request
-		// deadline (15s) is the primary bound; the serving-pool
-		// statement_timeout (30s) is the SQL-side backstop, kept longer so
-		// the app deadline fires first.
+		// DoS chokepoint: the 15s app deadline is the primary bound; the 30s serving-pool
+		// statement_timeout is the backstop, longer so the app deadline fires first.
 		RequestTimeout:          15 * time.Second,
 		ServingStatementTimeout: 30 * time.Second,
 		CDNEnabled:              true,
 		AllowedOrigins:          []string{},
 		CredentialedOrigins:     []string{},
 		TrustedProxyCIDRs:       []string{},
-		// Probe the public TLS leaf certs by default so silent
-		// Let's Encrypt renewal failures surface before expiry (the alert
-		// series only exists when this is populated).
+		// Probe the public TLS leaf certs so silent renewal failures surface before expiry (the
+		// alert series only exists when this is populated).
 		TLSCertProbeHosts: []string{"api.stellarindex.io", "status.stellarindex.io", "stellarindex.io"},
 		// The safe default is to require email-ownership
 		// proof on signup-minted keys; operators opt out explicitly.
 		SignupRequireEmailVerification: true,
-		// Matches the archive-completeness.service REPORT_OUTPUT path;
-		// the handler degrades to 404 while the file doesn't exist, so
-		// the default is harmless on hosts without the daemon.
+		// Matches archive-completeness.service REPORT_OUTPUT; the handler 404s while the file is
+		// absent, so this is harmless on hosts without the daemon.
 		ArchiveReportPath: "/var/lib/galexie/last-completeness-report.json",
 		// Pubnet runs both; the lean test-net inventories drop
 		// "aggregator".
@@ -1525,9 +1443,7 @@ func Default() Config {
 			PostgresDSN:                "postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable",
 			BackgroundStatementTimeout: 30 * time.Minute,
 			RedisAddr:                  "127.0.0.1:6379",
-			// RedisSentinelAddrs / RedisMasterName left empty — Default()
-			// targets dev / single-node. Production inventories override
-			// to enable Sentinel mode (ADR-0024).
+			// Sentinel fields stay empty (dev / single-node); production inventories set them (ADR-0024).
 			RedisSentinelAddrs: []string{},
 			RedisMasterName:    "",
 			S3Endpoint:         "http://127.0.0.1:9000",
@@ -1537,9 +1453,8 @@ func Default() Config {
 			S3AccessKeyEnv:     "STELLARINDEX_S3_ACCESS_KEY",
 			S3SecretKeyEnv:     "STELLARINDEX_S3_SECRET_KEY",
 			ClickHouseAddr:     "127.0.0.1:9300",
-			// ADR-0041: the certified-lake substrate is on by
-			// default — it backs the coverage claim, the CH
-			// completeness path, and lake-derived supply.
+			// ADR-0041: the lake substrate is on by default; it backs the coverage claim, the CH
+			// completeness path and lake-derived supply.
 			ClickHouseLiveSink:        true,
 			ClickHouseProjectorSource: true,
 		},
@@ -1556,17 +1471,13 @@ func Default() Config {
 			},
 		},
 		Oracle: OracleConfig{
-			// Reflector mainnet addresses are operator-supplied
-			// (see docs/protocols/reflector.md). Empty by
-			// default — enabling a reflector-* source without
-			// setting its address is a startup error.
+			// Reflector addresses are operator-supplied (docs/protocols/reflector.md); enabling a
+			// reflector-* source without one is a startup error.
 			Reflector: ReflectorOracleConfig{},
 			Redstone:  RedstoneOracleConfig{},
 			Band:      BandOracleConfig{},
 			Soroswap:  SoroswapConfig{},
-			// No shipped overrides: the default budget (10 × declared
-			// resolution) is what every asset gets until an operator
-			// writes down a per-asset exception.
+			// No shipped overrides: every asset gets the default 10 x resolution budget.
 			StalenessOverrides: []OracleStalenessOverrideConfig{},
 		},
 		External:     defaultExternalConfig(),
@@ -1584,10 +1495,7 @@ func Default() Config {
 			Enabled: true,
 		},
 		Supply: SupplyConfig{
-			// Cadence is only consumed when AggregatorRefreshEnabled is
-			// flipped on; a non-zero default avoids time.NewTicker(0)
-			// panicking if an operator enables the worker without setting
-			// it.
+			// Used only when AggregatorRefreshEnabled is on; non-zero so time.NewTicker(0) cannot panic.
 			AggregatorRefreshCadence:   5 * time.Minute,
 			ReserveBalancesMaxAge:      DefaultReserveBalancesMaxAge,
 			StaleComponentLedgers:      supply.DefaultStaleComponentLedgers,
@@ -1602,9 +1510,7 @@ func Default() Config {
 	}
 }
 
-// defaultAggregateConfig returns the price-aggregator defaults, including
-// the composite-reference cross-check. Split out of Default() to keep it
-// under funlen.
+// defaultAggregateConfig returns the price-aggregator defaults, including the composite-reference cross-check.
 func defaultAggregateConfig() AggregateConfig {
 	return AggregateConfig{
 		MinUSDVolume:                 10_000,
@@ -1631,9 +1537,7 @@ func defaultAggregateConfig() AggregateConfig {
 	}
 }
 
-// defaultExternalConfig returns the off-chain-connector defaults. All venues
-// are disabled by default; an operator opts in per-venue once they've confirmed
-// network egress / credentials. Split out of Default() to keep it under funlen.
+// defaultExternalConfig returns the off-chain-connector defaults: every venue is disabled until opted in.
 func defaultExternalConfig() ExternalConfig {
 	return ExternalConfig{
 		Binance:          ExternalStreamerConfig{Enabled: false},

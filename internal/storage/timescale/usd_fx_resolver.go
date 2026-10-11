@@ -34,10 +34,10 @@ type VWAPUSDFXResolver struct {
 	usdPegs []string
 
 	// pegForms is [usdPegs] made alias-complete: each classic peg plus its SAC wrapper, bound to
-	// `quote_asset = ANY(...)` by [VWAPUSDFXResolver.queryDirectLeg]. A Soroban pool quoting in the
-	// USDC SAC is the same declared dollar, so the exact and FX tiers must agree on the set.
+	// `quote_asset = ANY(...)` by [VWAPUSDFXResolver.queryDirectLeg]. A pool quoting in the USDC SAC
+	// is the same declared dollar, so the exact and FX tiers must agree on the set.
 	//
-	// Built by [usdPegForms] from `[supply].sac_wrappers`, not [canonical.AssetAliases]: the alias
+	// Built by [usdPegForms] from `[supply].sac_wrappers`, not [canonical.AssetAliases]: that
 	// registry is installed only by the api and aggregator binaries, so the indexer and
 	// `stellarindex-ops` (which write `usd_volume`) would silently collapse to the classic form.
 	pegForms []string
@@ -57,22 +57,20 @@ type VWAPUSDFXResolver struct {
 	freshness time.Duration
 
 	// bridgeFreshness is the staleness bound for the tier-3b XLM bridge leg, deliberately much wider
-	// than `freshness`: the bridge exists to price thin-market tokens that trade only a few dollars
-	// a day, and the alternative to a stale rate is NULL, which drops the trade from every
-	// usd_volume aggregate. The error admitted is bounded because these are sub-cent valuations.
+	// than `freshness`: it prices thin tokens trading a few dollars a day, and the alternative to a
+	// stale rate is NULL, which drops the trade from every usd_volume aggregate. The error admitted
+	// is bounded because these are sub-cent valuations.
 	bridgeFreshness time.Duration
 
-	// cacheTTL caps how long a cached rate is valid before
-	// re-querying. Default 5 min.
+	// cacheTTL caps how long a cached rate is valid before re-querying. Default 5 min.
 	cacheTTL time.Duration
 
 	clock func() time.Time
 
 	mu    sync.RWMutex
 	cache map[fxCacheKey]fxCacheEntry
-	// sweepAt is the cache size that triggers the next sweep; it doubles
-	// past the survivors so a resident set of fresh entries is not rescanned
-	// on every insert.
+	// sweepAt is the cache size that triggers the next sweep; it doubles past the survivors so a
+	// resident set of fresh entries is not rescanned on every insert.
 	sweepAt int
 }
 
@@ -196,12 +194,10 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 
 // usdPegForms expands the classic USD-peg list into the asset FORMS a prices_1m `quote_asset` may
 // carry for that peg: each declared peg plus its declared SAC wrapper. The membership rule matches
-// [NewUSDVolumeQuoteSpec] and [USDVolumeQuoteSpec.QuoteUSDPegInfo]; a peg the exact tier honours
-// but this tier cannot see is a silent coverage hole.
-//
-// A malformed WRAPPER is an error because dropping it would silently under-count volume. Pegs
-// bind verbatim, except that [classicKey] maps "CODE:ISSUER" to the stored "CODE-ISSUER" form.
-// Order is deterministic so the bound array and query plan are stable.
+// [NewUSDVolumeQuoteSpec]; a peg the exact tier honours but this tier cannot see is a silent
+// coverage hole. A malformed WRAPPER is an error because dropping it would under-count volume.
+// [classicKey] maps "CODE:ISSUER" to the stored "CODE-ISSUER" form; order is deterministic so the
+// bound array and query plan are stable.
 func usdPegForms(classicPegs []string, sacWrappers map[string]string) ([]string, error) {
 	forms := make([]string, 0, len(classicPegs))
 	seen := make(map[string]struct{}, len(classicPegs))
@@ -424,10 +420,8 @@ func (r *VWAPUSDFXResolver) substanceAllows(
 // weakest currency, well beyond the 8 decimals of `usd_volume`. [trimNumericText] drops the padding.
 const fiatUSDRateScale = 18
 
-// usdPriceForFiat resolves the USD price of one fiat unit from `fx_quotes`. A fiat asset can never
-// resolve through [VWAPUSDFXResolver.queryDB] (prices_1m holds crypto only), so without this every
-// CEX pair quoted in a non-USD currency would get `usd_volume` NULL.
-//
+// usdPriceForFiat resolves the USD price of one fiat unit from `fx_quotes`; prices_1m holds crypto
+// only, so without this every CEX pair quoted in a non-USD currency would get `usd_volume` NULL.
 // The rate is an exact *big.Rat from [fxSnapFromRows]; the float-derived `inverse_usd` column is
 // NOT used (ADR-0003). Two deviations from the prices_1m path:
 //
@@ -554,10 +548,10 @@ const bridgeRateMaxScale = 80
 // USD per asset = (XLM per asset) x (USD per XLM). It returns "" when there is no XLM market
 // either, the end of the waterfall.
 //
-// The XLM/USD leg goes back through USDPriceAt so it shares that cache (one query per minute, not
-// per bridged asset) and its own freshness check. Recursion is bounded at depth 2: the only
-// recursive call is with native XLM, which the isXLMAsset guard returns on. A bridged rate is fresh
-// iff BOTH legs are: the XLM leg by USDPriceAt, the asset leg by the SQL bound in queryXLMLeg.
+// The XLM/USD leg goes back through USDPriceAt to share its cache (one query per minute, not per
+// bridged asset) and freshness check; recursion stops at depth 2 via the isXLMAsset guard. A
+// bridged rate is fresh iff BOTH legs are: the XLM leg by USDPriceAt, the asset leg by the SQL
+// bound in queryXLMLeg.
 func (r *VWAPUSDFXResolver) bridgeViaXLM(ctx context.Context, asset canonical.Asset, at time.Time) (string, error) {
 	if isXLMAsset(asset) {
 		// Base case. XLM resolves directly against a peg or not at

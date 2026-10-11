@@ -106,22 +106,16 @@ const (
 	// PriceWithheldScamIssuer: a directory-flagged issuer sits on
 	// either leg of the pair.
 	PriceWithheldScamIssuer PriceWithheldReason = "scam_issuer"
-	// PriceWithheldUpstreamLeg: a derived cross-rate's upstream leg
-	// (e.g. the USD leg an FX cross is composed from) was itself
-	// withheld, and the verdict propagated to the derived pair.
+	// PriceWithheldUpstreamLeg: a derived cross-rate's upstream leg was itself withheld.
 	PriceWithheldUpstreamLeg PriceWithheldReason = "upstream_leg"
-	// PriceWithheldUnattributed: a withholding verdict that arrived
-	// without its cause (a folded bool, or a bare ErrPriceWithheld).
-	// Its wording claims neither cause.
+	// PriceWithheldUnattributed: a verdict that arrived without its cause; its wording claims
+	// neither cause.
 	PriceWithheldUnattributed PriceWithheldReason = "unattributed"
-	// PriceWithheldManipulationGuard: the serving-sanity guard could not
-	// validate the bucket at a requested instant — it was a gross outlier
-	// with no clean bucket inside the caller's staleness bound, or it had
-	// no prior bucket to be judged against ([ErrPriceAtGuarded]).
+	// PriceWithheldManipulationGuard: the serving-sanity guard could not validate the bucket at
+	// the requested instant ([ErrPriceAtGuarded]).
 	PriceWithheldManipulationGuard PriceWithheldReason = "manipulation_guard"
-	// PriceWithheldFXLeg: a closed-bucket fiat cross found no vendor FX
-	// fixing inside the lookback at its bucket end. The live rate is not a
-	// substitute: it would make the closed answer depend on when it was read.
+	// PriceWithheldFXLeg: a closed-bucket fiat cross found no vendor FX fixing in the lookback.
+	// The live rate is no substitute: the closed answer would depend on when it was read.
 	PriceWithheldFXLeg PriceWithheldReason = "fx_leg_unavailable"
 )
 
@@ -226,28 +220,20 @@ type PriceScamGate interface {
 }
 
 // PriceScamPairGate is the pair-aware form of [PriceScamGate]: it withholds when EITHER leg's
-// issuer is flagged.
+// issuer is flagged. Withholding is a property of the MARKET: a base-only gate would serve
+// `?base=native&quote=<FLAGGED>` at 200 as the reciprocal of the number withheld for the opposite
+// orientation.
 //
-// Withholding is a property of the MARKET, not of whichever leg the client named first: the price
-// of X in a flagged issuer's asset IS the flagged market's price, inverted. A base-only gate would
-// serve `?base=native&quote=<FLAGGED>` at 200 as the reciprocal of the number withheld for the
-// opposite orientation.
-//
-// A separate interface (not a second method) so a deployment wiring a base-only gate keeps its
-// base-only behaviour instead of silently satisfying a widened contract. The production gate
-// implements this form, pinned by TestProductionScamGateIsPairAware so the fallback can never
-// become the live path.
+// A separate interface so a base-only deployment keeps its behaviour; production implements this
+// form (TestProductionScamGateIsPairAware) so the fallback is never the live path.
 type PriceScamPairGate interface {
 	PriceScamGate
 	WithheldPair(ctx context.Context, base, quote canonical.Asset, surface string) bool
 }
 
-// scamWithheld is the ONE spelling of the scam decision in this package: every handler asks it
-// with BOTH legs and the fold over legs happens inside pricingguard. A hand-written
-// `gate.Withheld(base) || gate.Withheld(quote)` per handler drifts per site (it once let /v1/vwap
-// and /v1/twap serve a flagged issuer's price that /v1/price withheld).
-//
-// The type assertion is a migration seam: gates without the pair form answer base-only.
+// scamWithheld is the ONE spelling of the scam decision: every handler asks it with BOTH legs and
+// the fold happens inside pricingguard, since per-handler `Withheld(base) || Withheld(quote)`
+// drifts per site. Gates without the pair form answer base-only.
 func scamWithheld(ctx context.Context, gate PriceScamGate, base, quote canonical.Asset, surface string) bool {
 	if gate == nil {
 		return false
@@ -359,9 +345,8 @@ type PriceSnapshot struct {
 	Price string `json:"price"`
 
 	// PriceType is one of "vwap", "twap", "last_trade", "peg"; the reader picks the best available
-	// (VWAP > TWAP > last_trade). "peg" (tryStablecoinFiatProxy) is the ONLY value that is not an
-	// observation: the direct fiat:USD read AND the XLM cross both missed, and the answer is the
-	// operator's standing 1:1 declaration.
+	// (VWAP > TWAP > last_trade). "peg" is the ONLY non-observation: the operator's standing 1:1
+	// declaration, served when the direct fiat:USD read AND the XLM cross both missed.
 	PriceType string `json:"price_type"`
 
 	// ObservedAt is when the underlying trade closed (last_trade) or the aggregation-window end
@@ -416,11 +401,10 @@ type PriceSnapshot struct {
 	// from under `include_thin=true`; absent on every other serve.
 	Substance *SubstanceEvidence `json:"substance,omitempty"`
 
-	// Substituted is true when the serving-sanity guard rejected the latest closed bucket as an
-	// outlier and served an older last-known-good one. Internal (not on the wire): it tells the
-	// handler NOT to staple confidence/composite enrichment read under the CURRENT tick's Redis
-	// keys, which carry no as-of and would misattribute a live read to a stale value. See
-	// [Server.attachConfidence] / [Server.attachCompositeFlags].
+	// Substituted: the serving-sanity guard rejected the latest closed bucket and served an older
+	// last-known-good one. Internal: the handler must NOT attach confidence/composite enrichment
+	// read under the CURRENT tick's Redis keys (no as-of; it would misattribute a live read to a
+	// stale value). See [Server.attachConfidence] / [Server.attachCompositeFlags].
 	Substituted bool `json:"-"`
 
 	// usdLeg is set only on an ADR-0051 cross
@@ -482,11 +466,10 @@ type ConfidenceFactors struct {
 	// inside the measured curve's range, so it is otherwise indistinguishable from mid-liquidity.
 	LiquidityMeasured bool `json:"liquidity_measured"`
 
-	// TriangulationAgreement is the seventh confidence factor (ADR-0019): agreement between the
-	// DIRECT price and the COMPOSITE its triangulation chain implies, shaped like cross_oracle
-	// (1.0 = agrees, halving per 4pp beyond a 2% tolerance, 0.7 no-data neutral).
-	// TriangulationChecked=false means no chain or no fresh composite, NOT "the composite
-	// agrees"; the factor then carries weight 0, so the score is as if it did not exist.
+	// TriangulationAgreement is the seventh confidence factor: agreement between the DIRECT price
+	// and the COMPOSITE its triangulation chain implies (1.0 = agrees, halving per 4pp beyond a 2%
+	// tolerance, 0.7 no-data neutral). TriangulationChecked=false means no chain or no fresh
+	// composite, NOT "agrees"; the factor then has weight 0.
 	TriangulationAgreement float64 `json:"triangulation_agreement"`
 	TriangulationChecked   bool    `json:"triangulation_checked"`
 
@@ -521,12 +504,9 @@ type PriceSnapshotConfidence struct {
 // provenance sibling set to "triangulated"; this reads both (via [cachekeys.VWAP],
 // [cachekeys.VWAPProvenance], [cachekeys.VWAPObservedAt]). Nil leaves triangulated-only pairs 404.
 type TriangulatedPriceLooker interface {
-	// LookupTriangulatedVWAP returns the cached VWAP for the pair +
-	// window. found is true when a value AND its observed-at stamp
-	// were in the cache; a value without a readable stamp is a miss,
-	// since nothing else can say how old it is. Cache misses are NOT
-	// errors (found=false, err=nil); err propagates Redis errors so
-	// the handler can log them.
+	// LookupTriangulatedVWAP returns the cached VWAP for the pair + window. found needs a value AND
+	// its observed-at stamp: without one nothing says how old it is, so it is a miss. A miss is
+	// not an error; err carries Redis errors for logging.
 	LookupTriangulatedVWAP(ctx context.Context, base, quote canonical.Asset, window time.Duration) (vwap CachedVWAP, found bool, err error)
 }
 
@@ -576,10 +556,8 @@ func (s *Server) lookupCachedVWAPAliased(ctx context.Context, bases, quotes []ca
 // flags are enrichment on an already-served price. Best-effort: a miss, malformed blob or read
 // error leaves them unset and NEVER fails the request.
 type CompositeMetaLooker interface {
-	// LookupCompositeMeta returns the raw JSON meta blob the aggregator
-	// wrote under [cachekeys.VWAPCompositeMeta] for the (base, quote,
-	// window) composite. found=false on a cache miss (not an error);
-	// err carries a real read failure for logging only.
+	// LookupCompositeMeta returns the raw JSON blob under [cachekeys.VWAPCompositeMeta]; a miss is
+	// found=false, and err is a real read failure for logging only.
 	LookupCompositeMeta(ctx context.Context, base, quote canonical.Asset, window time.Duration) (raw []byte, found bool, err error)
 }
 
@@ -654,19 +632,13 @@ func (s *Server) parsePricePairParams(w http.ResponseWriter, r *http.Request) (a
 // handlePrice serves GET /v1/price?asset=<id>&quote=<id>; `quote` defaults to "fiat:USD".
 //
 // It serves the last CLOSED 1-minute VWAP bucket, never an in-progress one (ADR-0015), so the
-// answer is byte-identical across regions with the same ledgers, at ~30-120 s staleness by
-// construction. `?window=` is rejected (ADR-0018): a query parameter must not select between
-// consistency surfaces. Rolling windows belong on /v1/price/tip, history on /v1/history.
+// answer is byte-identical across regions with the same ledgers. `?window=` is rejected
+// (ADR-0018): a query parameter must not select between consistency surfaces.
 //
-// `flags.stale` means the closed bucket was unavailable and this degraded to a last-trade
-// fallback, or the pair is frozen and the held value is served (see [Server.resolveFrozenServe]),
-// or the sanity guard held an older bucket in place of an outlier. This surface deliberately
-// differs from /v1/price/tip and /v1/assets price_usd (see "Current-price surfaces" in the
-// package doc).
+// `flags.stale` means a last-trade fallback, a frozen pair's held value (see
+// [Server.resolveFrozenServe]), or an older bucket held in place of an outlier was served.
 func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
-	// ?window= would select between the closed-bucket surface and the rolling VWAP, which ADR-0018
-	// prohibits. Rejected before the reader-nil check so a misconfigured deployment 400s like a
-	// healthy one instead of leaking its failure mode.
+	// Rejected before the reader-nil check so a misconfigured deployment 400s like a healthy one.
 	if rawWindow := r.URL.Query().Get("window"); rawWindow != "" && rawWindow != "60" {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/window-not-supported",
@@ -689,13 +661,9 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try the literal (asset, quote) first, then known aliases: the aggregator writes VWAP under
-	// whichever XLM form its pair set names, so without this loop /v1/price?asset=native misses a
-	// fresh `crypto:XLM/fiat:USD` VWAP and falls to triangulation (ADR-0010).
 	ps, adm := s.resolvePriceServeThin(r, reader, asset, quote)
-	// Withheld beats every fallback: the fallback chain (Redis VWAP / stablecoin proxy /
-	// cross-rate) would re-serve the same substanceless market through a side door. Distinct 404
-	// type so integrators can branch (see ErrPriceWithheld).
+	// Withheld beats every fallback, which would re-serve the same substanceless market (see
+	// ErrPriceWithheld).
 	if errors.Is(ps.err, ErrPriceWithheld) {
 		reason := priceWithheldReason(ps.err)
 		writePriceWithheldProblemEvidence(w, r, asset, quote, reason, thinEvidenceFor(adm, reason))
@@ -726,10 +694,8 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// A frozen pair serves the value the freeze is HOLDING, never the one just read (see
-	// [Server.resolveFrozenServe]). It comes from the aggregator's VWAP cache, so it takes the
-	// viaFallback treatment: already normalized upstream, and below this surface's closed-bucket
-	// baseline (so stale).
+	// A frozen pair serves the value the freeze is HOLDING (see [Server.resolveFrozenServe]). It
+	// comes from the VWAP cache, so it is viaFallback: already normalized, and stale.
 	held := s.resolveFrozenServeFor(r, snapshot, asset, served, quote)
 	if held.outcome == frozenServeNothingHeld {
 		writeFrozenNothingHeldProblem(w, r, asset, quote)
@@ -747,9 +713,8 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	s.handlePriceTail(w, r, asset, quote, served, snapshot, sources, stale, triangulated, viaFallback, frozen, frozenChecked, adm)
 }
 
-// priceServe is one pass of /v1/price's read: the closed-bucket read,
-// then the fallback chain on a not-found. Exactly one of a price, miss or
-// err (an ErrPriceWithheld when the direct read was withheld) is set.
+// priceServe is one pass of /v1/price's read: closed-bucket read, then the fallback chain on a
+// not-found. Exactly one of a price, miss or err (ErrPriceWithheld if withheld) is set.
 type priceServe struct {
 	snap         PriceSnapshot
 	sources      []string
@@ -779,21 +744,18 @@ func (p priceServe) priced() bool {
 	return p.miss == nil && p.err == nil
 }
 
-// resolvePriceServe runs one pass under whatever [ThinAdmission] ctx
-// carries.
+// resolvePriceServe runs one pass under whatever [ThinAdmission] ctx carries.
 func (s *Server) resolvePriceServe(ctx context.Context, reader PriceReader, asset, quote canonical.Asset) priceServe {
-	// Try the literal (asset, quote) first, then known aliases: the aggregator writes VWAP under
-	// whichever XLM form its pair set names, so without this loop /v1/price?asset=native misses a
-	// fresh `crypto:XLM/fiat:USD` VWAP and falls to triangulation (ADR-0010).
+	// Aliases are tried because the aggregator writes VWAP under whichever XLM form its pair set
+	// names (ADR-0010).
 	snapshot, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, reader, asset, quote)
 	if errors.Is(err, ErrPriceNotFound) {
 		fb := s.priceFallback(ctx, asset, quote)
 		if !fb.ok {
 			return priceServe{miss: &fb}
 		}
-		// Every fallback sits below the surface's closed-bucket contract,
-		// so flags.stale is the chain's own verdict, except a
-		// closed fiat cross, which reports its own legs' staleness.
+		// Fallbacks sit below the closed-bucket contract, so stale is the chain's own verdict
+		// (a closed fiat cross reports its own legs').
 		return priceServe{
 			snap: fb.snap, sources: fb.sources, stale: fb.stale, served: fb.served,
 			triangulated: fb.triangulated, viaFallback: true,
@@ -830,54 +792,45 @@ func (s *Server) resolvePriceServeThin(r *http.Request, reader PriceReader, asse
 	return ps, off
 }
 
-// handlePriceTail continues handlePrice — normalization, confidence/flags
-// assembly and the response write — split out purely to keep handlePrice
-// under the funlen ceiling as its flag set has grown (same reason
-// [registerAppMetricsTail] was peeled off registerAppMetrics).
+// handlePriceTail continues handlePrice (normalization, confidence/flags, response write), split
+// out for the funlen ceiling.
 func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, quote, served canonical.Asset, snapshot PriceSnapshot, sources []string, stale, triangulated, viaFallback, frozen, frozenChecked bool, adm *ThinAdmission) {
-	// Nonstandard-decimals forward normalization (docs/operations/runbooks/dex.md): only for a
-	// snapshot from the RAW closed-1m prices_1m read (or its last-trade fallback inside
-	// LatestPrice), not priceFallback, whose Redis-VWAP branch is already normalized upstream
-	// (orchestrator computeNormalizedVWAP) and whose peg/cross-rate branches never touch a
-	// flagged Soroban leg.
+	// Nonstandard-decimals normalization applies only to the RAW prices_1m read, not priceFallback,
+	// whose Redis-VWAP branch is already normalized upstream and whose peg/cross branches never
+	// touch a flagged Soroban leg (docs/operations/runbooks/dex.md).
 	if !viaFallback {
 		s.normalizeRawPriceSnapshot(&snapshot, asset, quote)
 	}
 
-	// Do NOT emit obs.PriceStalenessSeconds here: one series per queried asset is a cardinality
-	// blowup on Stellar. The aggregator owns it (orchestrator emitStalenessGauges, bounded VWAP set).
+	// No obs.PriceStalenessSeconds here: one series per queried asset is a cardinality blowup; the
+	// aggregator owns it.
 
-	// Confidence is best-effort enrichment (ADR-0019), looked up only on `/v1/price`: misses and
-	// read errors leave Confidence/ConfidenceFactors nil. Skipped on a substituted snapshot, see
-	// [Server.attachConfidence], and on a displaced book, whose pair keys describe the replaced value.
+	// Confidence is best-effort (ADR-0019). Skipped on a substituted snapshot ([Server.attachConfidence])
+	// and a displaced book, whose pair keys describe the replaced value.
 	pairKeyed := !snapshot.Substituted && !snapshot.displacedBook
 	if pairKeyed {
 		s.attachConfidence(r, &snapshot, asset, quote, heldWindow(frozen, snapshot, confidenceLookupWindow))
 	}
 
-	// Every per-pair marker below is asked for the spelling the price was
-	// served from (frozenPairBase's resolution), not the one the client
-	// used: the aggregator keys each on the literal pair it priced.
+	// Per-pair markers are asked under the spelling the price was served from, not the client's:
+	// the aggregator keys each on the literal pair it priced.
 	governing := served
 	if governing.IsZero() {
 		governing = asset
 	}
 	flags := Flags{Stale: stale, Triangulated: triangulated, ProxyDeviation: triangulated && s.proxyDeviation(r.Context(), time.Now().UTC())}
-	// Surface the router's composite-quality signals (diverged / rerouted) from
-	// cachekeys.VWAPCompositeMeta. Runs whichever arm served, since the router tracks the chain
-	// even when a real closed bucket wins; a cache miss is a no-op. Best-effort. Skipped on a
-	// substituted snapshot, see [Server.attachCompositeFlags].
+	// Composite-quality signals (diverged / rerouted) run whichever arm served, since the router
+	// tracks the chain even when a closed bucket wins. Best-effort; skipped on a substituted
+	// snapshot, see [Server.attachCompositeFlags].
 	if pairKeyed {
 		s.attachCompositeFlags(r, &flags, governing, quote, heldWindow(frozen, snapshot, triangulationLookupWindow), false)
 	}
 	flags.Frozen = frozen
 	flags.FrozenChecked = frozenChecked
 	flags.Degraded = frozen
-	// SingleSource is forced true on the LKG fallback (ActionFreeze: a multi-source bucket
-	// couldn't have been frozen). Otherwise it derives from the source count, except when a
-	// WIRED freeze looker's read failed: freeze status is then UNKNOWN, not confirmed-false, so
-	// deriving it would assert a fact the read never established. With no looker wired there is
-	// no verdict to be wrong about.
+	// SingleSource is forced true on the LKG fallback (a multi-source bucket couldn't have been
+	// frozen). If a WIRED freeze looker's read failed, freeze status is UNKNOWN, so deriving it
+	// would assert a fact the read never established.
 	freezeReadFailed := s.Freeze != nil && !frozenChecked
 	switch {
 	case frozen:
@@ -902,25 +855,21 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 // `orchestrator.DefaultWindows` (5m), the freshest cached score, so a stale one TTLs out unread.
 const confidenceLookupWindow = 5 * time.Minute
 
-// triangulationLookupWindow is the Redis VWAP window the API reads: 5m is the orchestrator's
-// smallest default window ([orchestrator.DefaultWindows]), the one both the direct refresh and
-// the triangulator write on every tick. No writer emits a 1m key.
+// triangulationLookupWindow is the Redis VWAP window the API reads: 5m is the smallest
+// ([orchestrator.DefaultWindows]) and no writer emits a 1m key.
 //
-// The served `observed_at` is the aggregator's own stamp ([cachekeys.VWAPObservedAt]), not the
-// read time: a freeze keeps a value in the cache for its whole hold without rewriting it.
+// The served `observed_at` is the aggregator's stamp ([cachekeys.VWAPObservedAt]), not read time:
+// a freeze keeps a value cached for its whole hold without rewriting it.
 const triangulationLookupWindow = 5 * time.Minute
 
-// tryRedisVWAPFallback consults the [TriangulatedPriceLooker] after a Timescale miss on
-// /v1/price. It covers triangulated values AND stablecoin-fiat-proxy rewrites, neither of which
-// appears in `prices_1m` (the CAGG groups by literal trade pair, not the rewritten target).
+// tryRedisVWAPFallback consults the [TriangulatedPriceLooker] after a Timescale miss. It covers
+// triangulated values AND stablecoin-fiat-proxy rewrites, neither of which is in `prices_1m` (the
+// CAGG groups by literal trade pair).
 //
 // The provenance marker sets `flags.triangulated`; marker-absent hits are accepted because
-// Timescale is the source of truth only for LITERAL pairs.
-//
-// ObservedAt is the aggregator's stamp, never the read time; Sources is empty (Redis VWAP keys
-// carry no provenance). Staleness is the caller's call (ADR-0018). The read walks the BASE's
-// [assetAliases] against the literal quote like [Server.readPriceWithAliases]; served is the
-// base alias the value was read under.
+// Timescale is the source of truth only for LITERAL pairs. ObservedAt is the aggregator's stamp;
+// Sources is empty (Redis VWAP keys carry no provenance). Staleness is the caller's call
+// (ADR-0018). served is the base alias the value was read under.
 func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonical.Asset) (snap PriceSnapshot, sources []string, served canonical.Asset, triangulated, ok bool) {
 	if s.Triangulated == nil {
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false
@@ -940,23 +889,17 @@ func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonica
 	return snap, []string{}, served, v.Triangulated, true
 }
 
-// assetAliases is the api/v1 spelling of [canonical.AssetAliases], the single primitive that knows
-// XLM's three identities (`native`, `crypto:XLM`, the XLM SAC C-address) and the priority order
-// read paths must try them in. The SAC form is last so a thin Soroban pool cannot outrank SDEX +
-// CEX depth; see that godoc, which also covers the classic-to-SAC registry this does NOT attempt.
+// assetAliases is the api/v1 spelling of [canonical.AssetAliases]: XLM's three identities
+// (`native`, `crypto:XLM`, its SAC) in read priority. SAC is last so a thin Soroban pool cannot
+// outrank SDEX + CEX depth.
 func assetAliases(asset canonical.Asset) []canonical.Asset {
 	return canonical.AssetAliases(asset)
 }
 
 // distinctMarkets drops any pair whose flip already appeared, keeping the first spelling of each
-// market and its position.
-//
-// [timescale.Store.TradesInRange] and [timescale.Store.OHLCSeries] read a market in BOTH stored
-// directions, so merging a pair with its flip would count every trade twice. This is reachable:
-// `?asset=native&quote=crypto:XLM` makes [tipMergePairs] emit both orientations.
-//
-// Dropping rather than reordering keeps the classic-before-SAC priority: the survivor is the
-// spelling the caller's own walk reached first.
+// market. [timescale.Store.TradesInRange] and [timescale.Store.OHLCSeries] read a market in BOTH
+// stored directions, so a pair merged with its flip would count every trade twice (reachable via
+// `?asset=native&quote=crypto:XLM` in [tipMergePairs]). Dropping keeps classic-before-SAC priority.
 func distinctMarkets(pairs []canonical.Pair) []canonical.Pair {
 	if len(pairs) < 2 {
 		return pairs
@@ -977,26 +920,21 @@ func distinctMarkets(pairs []canonical.Pair) []canonical.Pair {
 	return out
 }
 
-// sameAsset reports whether two canonical forms name the SAME asset: an identical spelling or two
-// members of one alias family (`native`, `crypto:XLM`, the XLM SAC; a classic and its configured
-// SAC wrapper), compared on the stable [canonical.CanonicalAsset] fold key.
-//
-// The proxy walks build one pair per (base, proxy-quote) combination, and a self-pair is not a
-// market: it has no rows and would spend a slot of the shared deadline.
+// sameAsset reports whether two forms name the SAME asset (one alias family, compared on the
+// [canonical.CanonicalAsset] fold key). A proxy walk's self-pair has no rows and would spend a
+// slot of the shared deadline.
 func sameAsset(a, b canonical.Asset) bool {
 	return canonical.CanonicalAsset(a).Equal(canonical.CanonicalAsset(b))
 }
 
-// usdPegProxyQuotes is the operator's `[trades].usd_pegged_classic_assets` walk order with every
-// canonical form of each peg folded in, in two passes: the classic form of EVERY declared peg in
-// config order, then the remaining forms (SAC wrappers) in that order. Duplicates are dropped.
+// usdPegProxyQuotes is the `[trades].usd_pegged_classic_assets` walk order with every canonical
+// form of each peg folded in, deduplicated.
 //
 // A declared peg is an ASSET, not a spelling: Soroban AMMs trade the SAC wrapper, so a token whose
 // USD depth is a Soroban pool is quoted in the USDC SAC, never `USDC-GA5Z...`.
 //
-// Two passes because walks take the first form that answers: every classic peg must stay ahead of
-// every SAC form, or peg A's thin Soroban pool would be read before peg B's deep classic book (the
-// SAC-LAST ordering of [canonical.AssetAliases], applied across the whole peg list).
+// Two passes because walks take the first form that answers: every classic peg stays ahead of
+// every SAC form, or peg A's thin Soroban pool would be read before peg B's deep classic book.
 func (s *Server) usdPegProxyQuotes() []canonical.Asset {
 	out := make([]canonical.Asset, 0, 2*len(s.USDPeggedClassics))
 	seen := make(map[string]struct{}, 2*len(s.USDPeggedClassics))
@@ -1008,12 +946,10 @@ func (s *Server) usdPegProxyQuotes() []canonical.Asset {
 		seen[k] = struct{}{}
 		out = append(out, form)
 	}
-	// Pass 1: the family's priority-first form of each peg — the classic
-	// spelling however the operator wrote the entry.
+	// Pass 1: each peg's priority-first (classic) form; pass 2: the rest, SAC last.
 	for _, peg := range s.USDPeggedClassics {
 		add(canonical.CanonicalAsset(peg))
 	}
-	// Pass 2: the rest of each family, SAC wrapper last within it.
 	for _, peg := range s.USDPeggedClassics {
 		for _, form := range assetAliases(peg) {
 			add(form)
@@ -1022,23 +958,17 @@ func (s *Server) usdPegProxyQuotes() []canonical.Asset {
 	return out
 }
 
-// echoRequestedAsset restamps a snapshot's AssetID with the asset the CLIENT asked for, not
-// whichever alias ([canonical.AssetAliases]) the store was keyed under.
-//
-// /v1/price/batch omits misses, so clients key the response by `asset_id`; without the restamp,
-// asking for both `native` and `crypto:XLM` returns two rows with an IDENTICAL asset_id and
-// `native` vanishes from the client's map. This is the contract [VWAP1mToSnapshot] states.
+// echoRequestedAsset restamps AssetID with the asset the CLIENT asked for, not the alias the store
+// was keyed under: batch clients key the response by `asset_id`, and asking for both `native` and
+// `crypto:XLM` would otherwise return two identical ids ([VWAP1mToSnapshot]'s contract).
 func echoRequestedAsset(snap PriceSnapshot, requested canonical.Asset) PriceSnapshot {
 	snap.AssetID = requested.String()
 	return snap
 }
 
-// readPriceWithAliases is the alias-aware read of reader.LatestPrice, coalesced through
-// [Server.readPriceWithAliasesServed], without the served alias. It tries each [assetAliases] form
-// against quote in order and returns the first fresh hit; if every hit is stale, the first stale
-// one with stale=true; if every alias errors, the first withheld error, else the first error. The
-// snapshot echoes the requested asset id. A bare LatestPrice(native, fiat:USD) would miss the
-// `crypto:XLM` VWAP that CEX trades populate.
+// readPriceWithAliases is [Server.readPriceWithAliasesServed] without the served alias. It returns
+// the first fresh alias hit, else the first stale one, else the first withheld error, else the
+// first error; a bare LatestPrice(native, ...) would miss the `crypto:XLM` VWAP CEX trades fill.
 func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, error) {
 	snap, srcs, stale, _, err := s.readPriceWithAliasesServed(ctx, reader, asset, quote)
 	return snap, srcs, stale, err
@@ -1058,16 +988,14 @@ type priceReadResult struct {
 }
 
 // priceReadFlightTimeout bounds a coalesced price read. It runs on a context detached from any
-// single caller (as lakeWMFlight in server.go does), so one caller's cancellation can't cut the
-// read short for every other request waiting on the same (asset, quote) key.
+// caller so one caller's cancellation can't cut the read short for the others sharing the key.
 const priceReadFlightTimeout = 8 * time.Second
 
 // readPriceWithAliasesServed is [Server.readPriceWithAliasesServedOnce] coalesced via singleflight
 // per (asset, quote), so a burst for a hot pair drives ONE upstream read.
 //
 // ctx is read only for the caller's [ThinAdmission]: the opt-in bit is part of the flight key, so a
-// default caller never shares a flight that released a thin market, and each flight records into its
-// own record.
+// default caller never shares a flight that released a thin market.
 func (s *Server) readPriceWithAliasesServed(ctx context.Context, reader PriceReader, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, canonical.Asset, error) {
 	adm := ThinAdmissionFrom(ctx)
 	admit := adm.Requested() && adm.Covers(asset, quote)
@@ -1094,10 +1022,9 @@ func (s *Server) readPriceWithAliasesServed(ctx context.Context, reader PriceRea
 	return r.snap, r.srcs, r.stale, r.served, nil
 }
 
-// readPriceWithAliasesServedOnce is [Server.readPriceWithAliases] plus WHICH alias's market the
-// snapshot was read from (the snapshot still echoes the requested id). The freeze marker is keyed
-// on the literal pair the aggregator prices, so "is the pair I am about to serve frozen?" needs the
-// pair actually read; see [Server.resolveFrozenServe]. The served alias is zero when err != nil.
+// readPriceWithAliasesServedOnce is [Server.readPriceWithAliases] plus WHICH alias was read. The
+// freeze marker is keyed on the literal pair the aggregator prices, so the frozen check needs the
+// pair actually read ([Server.resolveFrozenServe]). The served alias is zero when err != nil.
 func (s *Server) readPriceWithAliasesServedOnce(ctx context.Context, reader PriceReader, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, canonical.Asset, error) {
 	aliases := assetAliases(asset)
 	var firstSnap PriceSnapshot
@@ -1110,10 +1037,7 @@ func (s *Server) readPriceWithAliasesServedOnce(ctx context.Context, reader Pric
 		snap, srcs, stale, err := reader.LatestPrice(ctx, a, quote)
 		if err != nil {
 			if errors.Is(err, ErrPriceWithheld) && firstWithheldErr == nil {
-				// Keep the reader's own error rather than manufacturing
-				// a bare ErrPriceWithheld: if the reader has adopted
-				// newPriceWithheld its reason survives to the response;
-				// otherwise this is the same bare sentinel as before.
+				// Keep the reader's own error so its withheld reason survives to the response.
 				firstWithheldErr = err
 			}
 			if firstErr == nil {
@@ -1125,70 +1049,51 @@ func (s *Server) readPriceWithAliasesServedOnce(ctx context.Context, reader Pric
 			// Fresh hit — return immediately.
 			return echoRequestedAsset(snap, asset), srcs, false, a, nil
 		}
-		// Stale — remember the first stale result as a fallback
-		// in case every alias is stale.
+		// Remember the first stale result in case every alias is stale.
 		if !freshFound {
 			firstSnap, firstSrcs, firstServed = echoRequestedAsset(snap, asset), srcs, a
 			freshFound = true
 		}
 	}
 	if freshFound {
-		// Every alias was stale; return the first stale result so
-		// the caller still surfaces flags.stale=true rather than
-		// falling all the way through to priceFallback.
+		// All stale: still surface flags.stale=true rather than fall through to priceFallback.
 		return firstSnap, firstSrcs, true, firstServed, nil
 	}
-	// Every alias errored. A withheld verdict on ANY alias wins over not-found: surfacing
-	// not-found would send the caller into priceFallback, re-serving the withheld market through
-	// the Redis/proxy side doors. (The gate measures the ALIAS UNION, so a pair healthy under a
-	// sibling alias was already allowed above.)
+	// A withheld verdict on ANY alias wins over not-found, which would send the caller into
+	// priceFallback and re-serve the withheld market through the Redis/proxy side doors.
 	if firstWithheldErr != nil {
 		return PriceSnapshot{}, nil, false, canonical.Asset{}, firstWithheldErr
 	}
-	// Otherwise return the first error so the caller's
-	// errors.Is(err, ErrPriceNotFound) branch still triggers
-	// priceFallback as before.
+	// Otherwise the first error keeps the ErrPriceNotFound -> priceFallback branch working.
 	return PriceSnapshot{}, nil, false, canonical.Asset{}, firstErr
 }
 
-// normalizeRawPriceSnapshot applies the nonstandard-decimals forward normalization
-// (aggregate.AdjustPrice) to a [PriceSnapshot] sourced from a RAW quote/base ratio: the closed-1m
-// prices_1m read or its last-trade fallback. A post-hoc scalar multiply on the finished ratio is
-// exact (docs/operations/runbooks/dex.md "Root cause analysis").
+// normalizeRawPriceSnapshot applies the nonstandard-decimals normalization (aggregate.AdjustPrice)
+// to a snapshot from a RAW prices_1m ratio; a scalar multiply on the finished ratio is exact.
+// Callers MUST NOT use it on a priceFallback snapshot, already normalized at its source.
 //
-// Callers MUST NOT invoke this on a priceFallback snapshot: every branch is ALREADY normalized at
-// its own source, so it would double-correct.
-//
-// No-op (price byte-identical, no parse/reformat round-trip) when baseDecimals == quoteDecimals:
-// the CAGG's NUMERIC::text rendering differs from [ratToDecimal]'s fixed 10 digits, so reformatting
-// unconditionally would change wire bytes for every already-correct 7dp pair.
+// Byte-identical no-op when baseDecimals == quoteDecimals: the CAGG's NUMERIC::text differs from
+// [ratToDecimal]'s fixed 10 digits, so reformatting would change wire bytes for every 7dp pair.
 func (s *Server) normalizeRawPriceSnapshot(snap *PriceSnapshot, base, quote canonical.Asset) {
 	snap.Price = s.normalizeRawRatioString(snap.Price, base, quote)
 }
 
-// NormalizeRawPriceSnapshot is [Server.normalizeRawPriceSnapshot] for a caller with no *Server:
-// streampublish's SSE bridge reads the same raw LatestPrice source but lives in its own package
-// (no import cycle into v1). decimals may be nil (fails open at aggregate.StandardDecimals, like
-// every ResolveDecimals caller).
+// NormalizeRawPriceSnapshot is [Server.normalizeRawPriceSnapshot] for a caller with no *Server
+// (streampublish's SSE bridge). decimals may be nil: fails open at aggregate.StandardDecimals.
 func NormalizeRawPriceSnapshot(snap *PriceSnapshot, base, quote canonical.Asset, decimals *NonstandardDecimalsCache) {
 	snap.Price = normalizeRawRatioStringWithLookup(snap.Price, base, quote, decimals)
 }
 
-// normalizeRawRatioString is the string-level primitive under [Server.normalizeRawPriceSnapshot],
-// for raw-ratio paths that carry a bare price string (/v1/price/at, /v1/price/changes).
-//
-// base/quote MUST be the ACTUAL legs the ratio is priced in: for a stablecoin-proxy read that is
-// asset/<peg>, NOT the requested fiat:USD.
-//
-// Returns value BYTE-IDENTICAL when the decimals match or value doesn't parse, so already-correct
-// 7dp prices keep their wire bytes.
+// normalizeRawRatioString is the string-level primitive for raw-ratio paths carrying a bare price
+// (/v1/price/at, /v1/price/changes). base/quote MUST be the ACTUAL legs priced: for a
+// stablecoin-proxy read that is asset/<peg>, NOT the requested fiat:USD. Returns value
+// byte-identical when decimals match or value doesn't parse.
 func (s *Server) normalizeRawRatioString(value string, base, quote canonical.Asset) string {
 	return normalizeRawRatioStringWithLookup(value, base, quote, s.NonstandardDecimals)
 }
 
-// normalizeRawRatioStringWithLookup is the lookup-parameterized primitive
-// under [Server.normalizeRawRatioString] and [NormalizeRawPriceSnapshot] —
-// the single implementation both share.
+// normalizeRawRatioStringWithLookup is the one implementation under [Server.normalizeRawRatioString]
+// and [NormalizeRawPriceSnapshot].
 func normalizeRawRatioStringWithLookup(value string, base, quote canonical.Asset, decimals *NonstandardDecimalsCache) string {
 	baseDec := aggregate.ResolveDecimals(decimals, base)
 	quoteDec := aggregate.ResolveDecimals(decimals, quote)
@@ -1208,21 +1113,19 @@ func normalizeRawRatioStringWithLookup(value string, base, quote canonical.Asset
 //  2. Read-time stablecoin -> fiat:USD rewrite against the operator-declared classic USD-pegs.
 //  3. Fiat-vs-fiat cross-rate from the forex snapshot (always triangulated=true).
 //
-// Returns ok=false when every layer misses (the caller 404s). served is the base alias layer 1
-// read under (the pair a freeze-aware caller asks its markers about), zero otherwise.
+// Returns ok=false when every layer misses. served is the base alias layer 1 read under (the pair
+// a freeze-aware caller asks its markers about), zero otherwise.
 //
-// The chain is entered on ErrPriceNotFound, whose exits are UNGATED (the priceWithheld chokepoint
-// only runs on LatestPrice arms that produced a value), so the scam decision is asked HERE.
+// The chain is entered on ErrPriceNotFound, whose exits are UNGATED, so the scam decision is asked
+// HERE.
 func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset) fallbackResult {
-	// Scam-issuer gate, before layer 1: the cached VWAP is written without directory
-	// consultation, so a flagged issuer's stablecoin-only market would be served at 200 here
-	// while the reader gate withholds it. Layers 2-4 read through the GATED LatestPrice, so one
-	// ask at the entry covers every layer and caller.
+	// Scam gate before layer 1: the cached VWAP is written without directory consultation, so a
+	// flagged issuer's market would be served at 200 while the reader gate withholds it. Later
+	// layers read through the GATED LatestPrice, so one ask here covers all.
 	//
-	// SCAM ONLY, not the substance gate (as /v1/twap and /v1/vwap): the substance floor is
-	// measured on the alias union, and a triangulated pair has zero literal rows BY CONSTRUCTION,
-	// so asking it here would withhold the whole triangulated long tail. Both legs are asked via
-	// [scamWithheld]: the market is the subject.
+	// SCAM ONLY, not the substance gate: that floor is measured on the alias union, and a
+	// triangulated pair has zero literal rows BY CONSTRUCTION, so it would withhold the whole
+	// triangulated long tail. Both legs are asked via [scamWithheld].
 	if scamWithheld(ctx, s.Scam, asset, quote, "price_read") {
 		return fallbackResult{withheld: PriceWithheldUnattributed}
 	}
@@ -1233,9 +1136,8 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 	if ok {
 		return fallbackResult{snap: snap, sources: srcs, triangulated: true, ok: true, stale: true}
 	}
-	// Last, the fiat crosses: fiat/fiat, or the USD-anchored cross for a
-	// NON-fiat asset quoted in a fiat we have no market for (ADR-0051). A
-	// direct book that exists is weighed by [Server.preferUSDAnchoredBasis].
+	// Last, fiat crosses: fiat/fiat, or USD-anchored for a non-fiat asset quoted in a fiat with no
+	// market (ADR-0051). A direct book is weighed by [Server.preferUSDAnchoredBasis].
 	var cross fallbackResult
 	if asset.Type == canonical.AssetFiat {
 		cross = s.closedFiatCross(ctx, asset, quote)
@@ -1245,9 +1147,7 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 	if cross.ok || cross.err != nil || cross.withheld != "" {
 		return cross
 	}
-	// Nothing served. `withheld` distinguishes "we have no price" from
-	// "we have one and decline to publish it" — the caller emits
-	// errors/price-withheld rather than errors/price-not-found.
+	// `withheld` separates "no price" from "one we decline to publish" (price-withheld vs not-found).
 	if withheld {
 		return fallbackResult{withheld: PriceWithheldUnattributed}
 	}
@@ -1261,9 +1161,8 @@ type fallbackResult struct {
 	served       canonical.Asset
 	triangulated bool
 	ok           bool
-	// stale is flags.stale for the value: every fallback sits below the
-	// closed-bucket contract except a closed fiat cross, which carries its
-	// legs' own staleness.
+	// stale is flags.stale: fallbacks sit below the closed-bucket contract, except a closed fiat
+	// cross, which carries its legs' own staleness.
 	stale    bool
 	withheld PriceWithheldReason // non-empty: a leg declined to publish
 	err      error               // the FX store failed: not a miss
@@ -1300,10 +1199,8 @@ func fxBindFailure(err error) (fallbackResult, bool) {
 
 // closedUSDAnchoredFiatCross prices a NON-fiat asset in a fiat for the closed surfaces:
 // price(asset, USD) x the fixing binding at the USD leg's bucket end (ADR-0051, ADR-0018), so the
-// answer never depends on when or where it is read.
-//
-// The USD leg resolves first so a withheld leg propagates before any FX read; multiplying a
-// withheld price by a rate would publish it through an ungated door.
+// answer never depends on when or where it is read. The USD leg resolves first so a withheld leg
+// propagates; multiplying a withheld price by a rate would publish it through an ungated door.
 func (s *Server) closedUSDAnchoredFiatCross(ctx context.Context, asset, quote canonical.Asset) fallbackResult {
 	if asset.Type == canonical.AssetFiat || quote.Type != canonical.AssetFiat || quote.Code == "USD" {
 		return fallbackResult{}
@@ -1353,9 +1250,8 @@ func (s *Server) preferUSDAnchoredBasis(ctx context.Context, asset, quote canoni
 	return cross, true
 }
 
-// convertAtFixing composes a USD price with a bound fixing in exact
-// rationals (invariant 1) and stamps the fixing on the wire. observed_at
-// stays the USD leg's: the fixing's own time is fx_as_of.
+// convertAtFixing composes a USD price with a bound fixing in exact rationals (invariant 1).
+// observed_at stays the USD leg's; the fixing's own time is fx_as_of.
 func convertAtFixing(usd PriceSnapshot, usdSources []string, quote canonical.Asset, b timescale.FXFixingBinding) (PriceSnapshot, bool) {
 	usdRat, okU := new(big.Rat).SetString(usd.Price)
 	rate, okR := fixingRate(b)
@@ -1374,9 +1270,8 @@ func convertAtFixing(usd PriceSnapshot, usdSources []string, quote canonical.Ass
 	return out, true
 }
 
-// closedFiatCross is [Server.tryFiatCrossRate] for the closed surfaces:
-// both legs bind to fixings at the current minute, so every region serves
-// the same answer until a bound bar changes.
+// closedFiatCross is [Server.tryFiatCrossRate] for the closed surfaces: both legs bind to fixings
+// at the current minute, so every region agrees until a bound bar changes.
 func (s *Server) closedFiatCross(ctx context.Context, asset, quote canonical.Asset) fallbackResult {
 	if asset.Type != canonical.AssetFiat || quote.Type != canonical.AssetFiat || s.fxFixings == nil {
 		return fallbackResult{}
@@ -1433,17 +1328,15 @@ func (s *Server) closedFiatCross(ctx context.Context, asset, quote canonical.Ass
 }
 
 // tryUSDAnchoredFiatCross prices a NON-fiat asset in any fiat we carry an FX rate for:
-// price(asset, CCY) = price(asset, USD) x rate_usd[CCY] (ADR-0051). [tryFiatCrossRate] needs BOTH
-// sides fiat. This is the tip's arm; closed surfaces use [Server.closedUSDAnchoredFiatCross].
+// price(asset, CCY) = price(asset, USD) x rate_usd[CCY] (ADR-0051). This is the tip's arm; closed
+// surfaces use [Server.closedUSDAnchoredFiatCross].
 //
-// ok=false when: asset is fiat; quote is not fiat or is fiat:USD (crossing would loop); the
-// currencies reader isn't wired or warmed; the rate is missing or non-positive; the FX leg is
-// older than [Server.fxCrossMaxAge], so a wedged forex worker can't keep serving ever-older
-// prices; or the asset has no USD price.
+// ok=false when asset is fiat, quote is not fiat or is USD (would loop), the rate is missing or
+// non-positive, the FX leg is older than [Server.fxCrossMaxAge] (a wedged forex worker must not
+// keep serving ever-older prices), or the asset has no USD price.
 //
-// The second return is `withheld`, and it is load-bearing: every withholding decision (scam
-// issuer, decimals guard) is made on the USD leg, so multiplying an FX rate onto a withheld leg
-// would publish the declined price through an ungated side door. It propagates and serves NOTHING.
+// The second return, `withheld`, is load-bearing: withholding decisions are made on the USD leg,
+// so an FX rate multiplied onto a withheld leg would publish it through an ungated side door.
 func (s *Server) tryUSDAnchoredFiatCross(
 	ctx context.Context, asset, quote canonical.Asset,
 ) (PriceSnapshot, []string, bool, bool) {
@@ -1474,9 +1367,8 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	if rate <= 0 {
 		return PriceSnapshot{}, nil, false, false
 	}
-	// fxObservedAt is the FX leg's own freshness: the older of the snapshot's publication time and
-	// this ticker's UpdatedAt (the held-rate rule of [tryFiatCrossRate]). [Cache.Latest] never
-	// expires on its own, so without this bound an fx worker outage would serve the last fetch forever.
+	// fxObservedAt: the older of snapshot publication and this ticker's UpdatedAt. [Cache.Latest]
+	// never expires, so without this bound an fx worker outage would serve the last fetch forever.
 	fxObservedAt := olderNonZero(fx.PublishedAt, rateUpdatedAt)
 	if fxCrossStale(fxObservedAt, s.fxCrossMaxAge) {
 		return PriceSnapshot{}, nil, false, false
@@ -1486,15 +1378,12 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	if withheld {
 		return PriceSnapshot{}, nil, false, true
 	}
-	// A declared peg is 1:1 against USD only; multiplying it by a rate is
-	// neither the declaration nor an observation, so no cross is served.
+	// A declared peg is 1:1 against USD only; times a rate it is neither declaration nor observation.
 	if !ok || isDeclaredPeg(usdSnap) {
 		return PriceSnapshot{}, nil, false, false
 	}
 
-	// Exact rational arithmetic on a served price (ADR-0003). The float64 feed rate is converted
-	// via its shortest round-trip decimal, so the product adds no rounding beyond the source
-	// rate's own precision (as [tryFiatCrossRate] does).
+	// Exact rationals (ADR-0003); the float64 rate goes via its shortest round-trip decimal.
 	usdRat, okU := new(big.Rat).SetString(usdSnap.Price)
 	rateRat, okR := new(big.Rat).SetString(strconv.FormatFloat(rate, 'f', -1, 64))
 	if !okU || !okR {
@@ -1505,23 +1394,17 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	out.AssetID = asset.String()
 	out.Quote = quote.String()
 	out.Price = formatCrossRate(new(big.Rat).Mul(usdRat, rateRat))
-	// observed_at is the OLDER of the two legs (as [tryFiatCrossRate]): the USD leg's market
-	// observation or the FX rate's freshness, whichever is coarser. The fresh USD leg's stamp alone
-	// would hide a stale FX component.
+	// observed_at is the OLDER leg: the USD stamp alone would hide a stale FX component.
 	out.ObservedAt = WireTime(olderNonZero(time.Time(usdSnap.ObservedAt), fxObservedAt))
 	out.usdLeg = &usdLegFacts{sources: usdSources, served: usdServed}
 	return out, appendFXSource(usdSources, rateSource), true, false
 }
 
-// defaultFXCrossMaxAge is the staleness budget for [Server.fxCrossMaxAge] when config leaves it
-// unset. It mirrors [orchestrator.DefaultCompositeReferenceFXMaxAge] (76h): same fx_quotes source,
-// daily buckets that pause over market closes. Duplicated to avoid a cross-binary import for one number.
+// defaultFXCrossMaxAge is the default [Server.fxCrossMaxAge]. It mirrors
+// orchestrator.DefaultCompositeReferenceFXMaxAge (76h): daily buckets that pause over market closes.
 const defaultFXCrossMaxAge = 76 * time.Hour
 
-// fxCrossMaxAgeOrDefault resolves the configured
-// pricing_guard.fx_cross_max_age_hours to a duration, falling back to
-// [defaultFXCrossMaxAge] when unset. A negative value never reaches
-// here — config.Validate rejects it at load.
+// fxCrossMaxAgeOrDefault resolves pricing_guard.fx_cross_max_age_hours, defaulting when unset.
 func fxCrossMaxAgeOrDefault(hours int) time.Duration {
 	if hours <= 0 {
 		return defaultFXCrossMaxAge
@@ -1539,17 +1422,13 @@ func fxCrossStale(observedAt time.Time, maxAge time.Duration) bool {
 	return time.Since(observedAt) > maxAge
 }
 
-// resolveUSDLeg resolves asset/fiat:USD through the same layers /v1/price uses, so the derived
-// local-currency price rests on exactly the number the USD endpoint would serve.
+// resolveUSDLeg resolves asset/fiat:USD through the layers /v1/price uses, so the derived price
+// rests on exactly the number the USD endpoint would serve. It does NOT re-enter
+// [Server.priceFallback], which would recurse into [tryUSDAnchoredFiatCross].
 //
-// It deliberately does NOT re-enter [Server.priceFallback], which would recurse into
-// [tryUSDAnchoredFiatCross]; the Redis VWAP and stablecoin-proxy layers are the only ones that can
-// produce a USD price for a non-fiat asset.
-//
-// Returns (ok, withheld): a withheld USD leg must neither be served nor reported as absent.
-// served is the alias the closed bucket was read under, zero when a fallback layer answered.
-// It reads no freeze marker (the tip is freeze-agnostic); freeze-aware surfaces apply it through
-// [Server.resolveFrozenServeFor].
+// A withheld USD leg must neither be served nor reported as absent. served is the alias the closed
+// bucket was read under, zero when a fallback layer answered. It reads no freeze marker;
+// freeze-aware surfaces apply it through [Server.resolveFrozenServeFor].
 func (s *Server) resolveUSDLeg(
 	ctx context.Context, asset canonical.Asset,
 ) (snap PriceSnapshot, sources []string, served canonical.Asset, stale, ok, withheld bool) {
@@ -1604,10 +1483,8 @@ func appendFXSource(sources []string, fxSource string) []string {
 	return out
 }
 
-// proxyPairGate is OPTIONALLY implemented by the wired [PriceReader] so
-// [Server.tryStablecoinFiatProxy] can cheaply skip empty proxy pairs. storePriceReader does it with
-// a bounded both-directions recent-existence probe over prices_1m; readers without it give every
-// peg a full LatestPrice. See timescale.Store.RecentClosedVWAP1mExists.
+// proxyPairGate is OPTIONALLY implemented by the [PriceReader] so [Server.tryStablecoinFiatProxy]
+// can skip empty proxy pairs with a bounded recent-existence probe over prices_1m.
 type proxyPairGate interface {
 	// RecentClosedVWAP1mExists reports whether base/quote has a closed 1-minute VWAP bucket (either
 	// stored direction) inside the price surface's freshness horizon. False means no live proxy
@@ -1631,19 +1508,14 @@ type proxyPairGate interface {
 // sticky but does not stop the walk. A refused declared-peg cross is withheld, not replaced by
 // the declaration (a flat 1.0 would hide the refusal).
 func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, bool) {
-	// Self-peg: a `crypto:<STABLE>` ticker priced in the fiat it tracks (crypto:USDC/fiat:USD,
-	// crypto:EURC/fiat:EUR). The aggregator treats these tickers as that fiat
-	// (aggregate.FiatProxy), so ~1.0 follows the same convention as every VWAP; a depeg surfaces
-	// via the divergence subsystem, not here. The classic-issued form takes the declared-peg
-	// route below. Runs ahead of the fiat:USD guard so it also serves the EUR/MXN pegs, and only
-	// after the caller's literal read missed, so an observed bucket (the CEX tier quotes that
-	// pair directly) still wins over the declaration.
+	// Self-peg: a `crypto:<STABLE>` ticker priced in the fiat it tracks. The aggregator treats
+	// these as that fiat (aggregate.FiatProxy); a depeg surfaces via divergence, not here. Runs
+	// ahead of the fiat:USD guard (EUR/MXN pegs) and only after the literal read missed, so an
+	// observed bucket still wins over the declaration.
 	if proxy, isStable := aggregate.FiatProxy(asset); isStable && proxy.Equal(quote) {
 		return s.declaredPegSnapshot(asset, quote), nil, true, false
 	}
-	// Everything returned before the walk carries withheld=false: no peg
-	// leg has been read yet, so no withholding verdict can exist. The walk
-	// is what makes that verdict sticky — see [Server.walkUSDPegs].
+	// Returns before the walk carry withheld=false: no peg leg has been read yet.
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
 		return PriceSnapshot{}, nil, false, false
 	}
@@ -1659,10 +1531,8 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 			return PriceSnapshot{}, nil, false, true
 		case pegXLMLegNoMarket, pegXLMLegReadFailed, pegXLMLegFlagged:
 		}
-		// No market priced this peg and none was refused on substance, so publish the declaration
-		// itself with nil sources: an empty set is not "single-sourced" (the handler's
-		// len(sources)==1 rule leaves SingleSource=false), and flagging it would need a synthetic
-		// entry in the wire `sources[]`.
+		// No market priced this peg and none was refused: publish the declaration with nil sources
+		// (empty is not "single-sourced"; flagging it would need a synthetic sources[] entry).
 		return s.declaredPegSnapshot(asset, quote), nil, true, false
 	}
 	snap, srcs, ok, withheld := s.walkUSDPegs(ctx, asset, quote)
@@ -1672,12 +1542,9 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 	return PriceSnapshot{}, nil, false, withheld
 }
 
-// isDeclaredUSDPeg reports whether asset is one of the operator's
-// [trades].usd_pegged_classic_assets under ANY of its spellings. A declared peg is an asset, not a
-// spelling ([Server.usdPegProxyQuotes]): the SAC wrapping the classic id (`[supply].sac_wrappers`,
-// folded by [sameAsset]) is the same asset. Matching the declared spelling alone sends the SAC
-// down the sibling walk, whose only pair is itself against its classic form (not a market), so
-// the two spellings would answer differently.
+// isDeclaredUSDPeg reports whether asset is a [trades].usd_pegged_classic_assets entry under ANY
+// spelling ([sameAsset] folds the SAC into the classic id). Matching the declared spelling alone
+// would send the SAC down the sibling walk, so the two spellings would answer differently.
 func (s *Server) isDeclaredUSDPeg(asset canonical.Asset) bool {
 	for _, peg := range s.USDPeggedClassics {
 		if sameAsset(peg, asset) {
@@ -1690,53 +1557,36 @@ func (s *Server) isDeclaredUSDPeg(asset canonical.Asset) bool {
 // walkUSDPegs is [Server.tryStablecoinFiatProxy]'s allow-list walk: it tries asset/<peg> for each
 // declared USD peg in priority order and returns the first observed price, re-quoted to fiat:USD.
 //
-// A declared peg never reaches this walk (the caller routes it through
-// [Server.crossDeclaredPegThroughXLM] first), so each pair read here has a peg on exactly one
-// side. Answering a flat $1 before reading any market would hide a depeg behind the declaration.
-//
-// withheld carries the sticky ErrPriceWithheld verdict described on
-// [Server.tryStablecoinFiatProxy].
+// A declared peg never reaches this walk, so each pair has a peg on exactly one side. withheld
+// carries the sticky ErrPriceWithheld verdict described on [Server.tryStablecoinFiatProxy].
 func (s *Server) walkUSDPegs(
 	ctx context.Context, asset, quote canonical.Asset,
 ) (snapshot PriceSnapshot, sources []string, ok, withheld bool) {
-	// Empty-proxy-pair gate. A <peg> quote is a CLASSIC asset, so on a VWAP miss LatestPrice
-	// falls through to an UNBOUNDED last-trade scan; a pure-Soroban token that only trades vs XLM
-	// has zero rows for every <token>/<peg> and would pay that full-history walk once PER PEG.
-	// When the reader exposes the cheap bounded recent-existence probe, skip any peg with no
-	// closed 1m bucket in the freshness horizon. A gate ERROR falls through to LatestPrice so a
-	// probe blip can never suppress a real price.
+	// Empty-proxy-pair gate. On a VWAP miss LatestPrice falls through to an UNBOUNDED last-trade
+	// scan, and a Soroban token that only trades vs XLM would pay it once PER PEG. Skip any peg
+	// with no closed 1m bucket in the freshness horizon; a probe ERROR falls through to LatestPrice
+	// so a blip never suppresses a real price.
 	gate, _ := s.Prices.(proxyPairGate)
 	for _, peg := range s.USDPeggedClassics {
 		if gate != nil {
 			exists, gerr := gate.RecentClosedVWAP1mExists(ctx, asset, peg)
 			if gerr == nil && !exists {
-				// No closed 1m bucket for asset/<peg> in the freshness
-				// horizon — skip before the unbounded last-trade walk.
 				continue
 			}
-			// gerr != nil: fall through to LatestPrice (best-effort — a
-			// probe error must not hide a price the walk could still find).
 		}
 		snap, srcs, _, err := s.Prices.LatestPrice(ctx, asset, peg)
 		if err != nil {
-			// A WITHHELD verdict is not a miss: the asset HAS a price on this peg leg that policy
-			// declines to publish. Record it and keep walking (a later peg may serve); if none
-			// does, the caller reports withheld rather than not-found.
+			// A WITHHELD verdict is not a miss: record it and keep walking (a later peg may serve);
+			// if none does, the caller reports withheld rather than not-found.
 			if errors.Is(err, ErrPriceWithheld) {
 				withheld = true
 			}
-			// ErrPriceNotFound is the common case (peg not active for
-			// this asset); any other error gets the same treatment as
-			// the chart fallback — silent skip, try the next peg.
 			continue
 		}
-		// Nonstandard-decimals forward normalization. LatestPrice returns the RAW asset/<peg>
-		// ratio and `asset` may be a non-7-decimals Soroban leg (the <peg> is always 7dp). This is
-		// the SINGLE place the proxy tier is corrected, so no caller re-normalizes. It resolves
-		// against the ACTUAL traded legs (asset, peg), NOT the requested fiat:USD.
+		// LatestPrice returns the RAW asset/<peg> ratio; this is the SINGLE place the proxy tier
+		// is decimals-corrected, against the ACTUAL legs (asset, peg), NOT the requested fiat:USD.
 		s.normalizeRawPriceSnapshot(&snap, asset, peg)
-		// Rewrite the snapshot's Quote field so the wire response
-		// reflects what the user asked for, not the proxy peg.
+		// The wire response reflects what the user asked for, not the proxy peg.
 		snap.Quote = quote.String()
 		return snap, srcs, true, withheld
 	}
@@ -1744,20 +1594,17 @@ func (s *Server) walkUSDPegs(
 }
 
 // crossDeclaredPegThroughXLM prices a declared USD peg in fiat:USD through its XLM book:
-// price(peg/fiat:USD) = price(peg/XLM) x price(XLM/fiat:USD).
-//
-// The point twin of [Server.fiatSeriesThroughXLM], sharing [crossThroughPivot]: exact big.Rat
-// (ADR-0003), a zero, negative or missing leg is a miss. No venue quotes a classic peg in
-// fiat:USD, so this is what makes a depeg visible instead of the flat $1 declaration. The pivot
-// is read direct (XLM/fiat:USD), never via the Redis composite or stablecoin proxy: a pivot
-// priced through the peg under test would cancel to 1.
+// price(peg/fiat:USD) = price(peg/XLM) x price(XLM/fiat:USD), in exact big.Rat (ADR-0003) via
+// [crossThroughPivot]; a zero, negative or missing leg is a miss. This makes a depeg visible
+// instead of the flat $1 declaration. The pivot is read direct, never via the Redis composite or
+// stablecoin proxy: a pivot priced through the peg under test would cancel to 1.
 //
 // Cost: [Server.readDeclaredPegXLMLeg] tries up to six spelling x XLM-form combinations; each
 // `native`- or SAC-quoted miss is an unbounded last-trade scan, so each sits behind a
-// [proxyPairGate] probe (a probe error falls through to the read).
+// [proxyPairGate] probe.
 //
 // A withheld leg stops the spelling walk: the scam gate can't fire on a SAC base, so moving to the
-// SAC book would publish the market the gate declined. observed_at is the older leg's.
+// SAC book would publish the declined market. observed_at is the older leg's.
 func (s *Server) crossDeclaredPegThroughXLM(
 	ctx context.Context, asset, quote canonical.Asset,
 ) (PriceSnapshot, []string, pegXLMLegVerdict) {
@@ -1778,9 +1625,7 @@ func (s *Server) crossDeclaredPegThroughXLM(
 	case err != nil:
 		return PriceSnapshot{}, nil, pegXLMLegReadFailed
 	}
-	// Both legs are RAW ratios off the reader; each is decimals-corrected
-	// (M2) against the legs it actually traded before the product is
-	// taken. Byte-identical no-op for 7dp legs.
+	// Both legs are RAW ratios; decimals-correct each before taking the product.
 	s.normalizeRawPriceSnapshot(&xlmLeg, xlm, quote)
 	price, ok := crossThroughPivot(pegLeg.Price, xlmLeg.Price)
 	if !ok {
@@ -1790,9 +1635,7 @@ func (s *Server) crossDeclaredPegThroughXLM(
 	if xlmLeg.ObservedAt.Time().Before(observedAt.Time()) {
 		observedAt = xlmLeg.ObservedAt
 	}
-	// The product spans the wider of the two windows. A leg served off
-	// the reader's last-trade tail carries none, so the other leg's
-	// window governs.
+	// The wider window governs; a last-trade-tail leg carries none.
 	windowSeconds := pegLeg.WindowSeconds
 	if xlmLeg.WindowSeconds > windowSeconds {
 		windowSeconds = xlmLeg.WindowSeconds
@@ -1811,18 +1654,16 @@ func (s *Server) crossDeclaredPegThroughXLM(
 // spelling as base against each XLM alias as quote. The walk advances only on pegXLMLegNoMarket.
 //
 //   - pegXLMLegPriced ends it. Fresh beats stale only within a spelling, so a dormant SDEX book
-//     outranks a fresh thin Soroban pool (as [tipMergePairs]). A zero, negative or unparsable
-//     price also counts as answered: one degenerate print on the deep book must not hand it to a
-//     thin pool.
+//     outranks a fresh thin Soroban pool. A zero or unparsable price also counts as answered: one
+//     degenerate print on the deep book must not hand it to a thin pool.
 //   - pegXLMLegRefused / pegXLMLegFlagged end it: the scam gate never fires on a non-classic
 //     base, so advancing to the SAC book would republish the refused market.
 //   - pegXLMLegReadFailed ends it and the declaration answers: a broken read is not evidence of
 //     no classic book.
 //
-// Order is canonical-first ([canonical.CanonicalAsset], SAC last), not the literal-first order of
-// [Server.readPriceWithAliases], so the classic id and the C-address price one asset from one
-// book. This departs from [canonical.AssetAliases]' contract; the residual is accepted in §7 of
-// the thin-pool third-alias VWAP review (docs/methodology/).
+// Order is canonical-first (SAC last), not the literal-first order of
+// [Server.readPriceWithAliases], so the classic id and the C-address price from one book. This
+// departs from [canonical.AssetAliases]' contract (docs/methodology/ thin-pool third-alias review).
 func (s *Server) readDeclaredPegXLMLeg(
 	ctx context.Context, asset canonical.Asset,
 ) (PriceSnapshot, []string, pegXLMLegVerdict) {
@@ -1830,44 +1671,36 @@ func (s *Server) readDeclaredPegXLMLeg(
 	for _, base := range assetAliases(canonical.CanonicalAsset(asset)) {
 		snap, srcs, verdict := s.readPegXLMLegForSpelling(ctx, base, xlmForms)
 		if verdict != pegXLMLegNoMarket {
-			// Priced, refused or failed — this spelling settles the
-			// leg. Only "found nothing" reaches the next spelling.
+			// Only "found nothing" reaches the next spelling.
 			return snap, srcs, verdict
 		}
 	}
 	return PriceSnapshot{}, nil, pegXLMLegNoMarket
 }
 
-// pegXLMLegVerdict is what one read on the declared peg's XLM leg SAID, as distinct from whether it
-// yielded a price: the spelling walk advances on one value and stops on the others, so collapsing
-// them into ok=false would turn a refusal or broken read into "no market, try the next spelling"
-// and ultimately into the declaration.
+// pegXLMLegVerdict is what one read on the declared peg's XLM leg SAID, not just whether it yielded
+// a price: collapsing to ok=false would turn a refusal or broken read into "no market, try the next
+// spelling" and ultimately into the declaration.
 //
-// Values ascend by how much a read SAYS, so a spelling's verdict is the maximum of its
-// combinations', the precedence [Server.readPriceWithAliases] gives a withheld verdict over
-// not-found.
+// Values ascend by how much a read SAYS, so a spelling's verdict is the maximum of its combinations'.
 type pegXLMLegVerdict int
 
 const (
-	// pegXLMLegNoMarket — the [proxyPairGate] probe reported no recent
-	// closed bucket, or the read reported ErrPriceNotFound. The ONLY
-	// verdict that lets the walk move to the peg's next spelling.
+	// pegXLMLegNoMarket: the probe saw no recent closed bucket, or the read was ErrPriceNotFound.
+	// The ONLY verdict that lets the walk move to the next spelling.
 	pegXLMLegNoMarket pegXLMLegVerdict = iota
-	// pegXLMLegReadFailed — the read returned an error that is neither
-	// not-found nor withheld: transport, query planning, timeout. Says
-	// nothing about whether a market exists, so the walk stops.
+	// pegXLMLegReadFailed: an error that is neither not-found nor withheld (transport, timeout).
+	// Says nothing about whether a market exists, so the walk stops.
 	pegXLMLegReadFailed
 	// pegXLMLegFlagged: ErrPriceWithheld for a directory-flagged issuer. The walk stops and the
 	// declaration still answers: the scam gate keys on the classic issuer, so its verdict is what
 	// stops a SAC spelling republishing that issuer's refused market.
 	pegXLMLegFlagged
 	// pegXLMLegRefused: any other ErrPriceWithheld (the substance gate, measured on the alias
-	// union, or a refusal that did not say why). The walk stops (see
-	// [Server.readDeclaredPegXLMLeg]) and the route withholds rather than print the declaration
-	// over it. Ranked above pegXLMLegFlagged so a mix fails closed.
+	// union, or a refusal that did not say why). The walk stops and the route withholds rather than
+	// print the declaration over it. Ranked above pegXLMLegFlagged so a mix fails closed.
 	pegXLMLegRefused
-	// pegXLMLegPriced — a snapshot was read. Freshness is carried
-	// separately; a stale snapshot is still priced.
+	// pegXLMLegPriced: a snapshot was read; a stale snapshot is still priced.
 	pegXLMLegPriced
 )
 
@@ -1876,13 +1709,12 @@ const (
 // not-found, the one condition under which the caller moves to the next spelling.
 //
 // Among answering forms a fresh one wins over a stale one, and a stale one still serves when it is
-// all this spelling has (as [Server.readPriceWithAliases]). Alias order alone would take `native`
-// however old over a fresh SAC-quoted book: XLM's forms are disjoint venue populations and the
-// book that traded last prices the peg now. The preference is confined to one spelling; across
-// spellings it would rank a thin pool over a dormant deep book.
+// all this spelling has. Alias order alone would take `native` however old over a fresh SAC-quoted
+// book: XLM's forms are disjoint venue populations. Confined to one spelling; across spellings it
+// would rank a thin pool over a dormant deep book.
 //
-// A refusal or read failure on one XLM form does NOT stop this spelling, since a later form may
-// still price the peg; only when none priced does it decide the verdict.
+// A refusal or read failure on one XLM form does NOT stop this spelling; only when none priced
+// does it decide the verdict.
 func (s *Server) readPegXLMLegForSpelling(
 	ctx context.Context, base canonical.Asset, xlmForms []canonical.Asset,
 ) (PriceSnapshot, []string, pegXLMLegVerdict) {
@@ -1893,15 +1725,13 @@ func (s *Server) readPegXLMLegForSpelling(
 	for _, xlm := range xlmForms {
 		snap, srcs, stale, verdict := s.readPegXLMLegPair(ctx, base, xlm)
 		if verdict != pegXLMLegPriced {
-			// Keep the loudest thing any form said, so a refusal or a
-			// failure outranks a plain not-found (see the type).
+			// Keep the loudest verdict: a refusal or failure outranks not-found.
 			spelling = max(spelling, verdict)
 			continue
 		}
 		if !stale {
 			return snap, srcs, pegXLMLegPriced
 		}
-		// Stale — keep the first one in case no form answers fresh.
 		if !staleFound {
 			staleSnap, staleSources, staleFound = snap, srcs, true
 		}
@@ -1913,17 +1743,11 @@ func (s *Server) readPegXLMLegForSpelling(
 }
 
 // readPegXLMLegPair is one (peg spelling, XLM form) combination of [Server.readDeclaredPegXLMLeg]'s
-// walk. It reports which of five [pegXLMLegVerdict] outcomes was reached, a distinction the
-// spelling walk turns on and so must not collapse into a bare miss:
+// walk. It reports which [pegXLMLegVerdict] was reached; the walk turns on the distinction, so it
+// must not collapse into a bare miss. A flagged issuer ([PriceWithheldScamIssuer]) is
+// pegXLMLegFlagged, any other ErrPriceWithheld is pegXLMLegRefused.
 //
-//   - pegXLMLegNoMarket: the [proxyPairGate] probe saw no recent closed bucket, or LatestPrice
-//     returned ErrPriceNotFound.
-//   - pegXLMLegFlagged: ErrPriceWithheld for a flagged issuer ([PriceWithheldScamIssuer]).
-//   - pegXLMLegRefused: any other ErrPriceWithheld.
-//   - pegXLMLegReadFailed: any other LatestPrice error.
-//   - pegXLMLegPriced: a snapshot, with `stale` alongside it.
-//
-// A gate ERROR falls through to the read, so a probe blip can never hide a price. The snapshot is
+// A probe ERROR falls through to the read, so a blip can never hide a price. The snapshot is
 // decimals-normalized against the legs actually traded.
 func (s *Server) readPegXLMLegPair(
 	ctx context.Context, base, xlm canonical.Asset,
@@ -1948,9 +1772,8 @@ func (s *Server) readPegXLMLegPair(
 	return snap, srcs, stale, pegXLMLegPriced
 }
 
-// unionSources merges two legs' source sets — deduplicated, sorted — the
-// way [appendFXSource] credits the FX feed beside the USD leg's venues:
-// a consumer auditing a crossed price needs every venue behind it.
+// unionSources merges two legs' source sets (deduplicated, sorted): an audit of a crossed price
+// needs every venue behind it.
 func unionSources(a, b []string) []string {
 	seen := make(map[string]struct{}, len(a)+len(b))
 	out := make([]string, 0, len(a)+len(b))
@@ -1967,23 +1790,16 @@ func unionSources(a, b []string) []string {
 	return out
 }
 
-// declaredPegPrice is the operator's standing 1:1 declaration, rendered
-// at the 12 fractional digits this surface publishes for it — the bytes
-// are part of the contract, so they stay put.
+// declaredPegPrice is the operator's standing 1:1 declaration at 12 fractional digits; the bytes
+// are part of the wire contract.
 const declaredPegPrice = "1.000000000000"
 
-// declaredPegSnapshot renders the operator's peg declaration as a snapshot: what /v1/price serves
-// for a declared peg when NO market observation exists (direct read missed and
-// [Server.crossDeclaredPegThroughXLM] found no XLM book), and for a `crypto:<STABLE>` ticker in
-// its own fiat.
+// declaredPegSnapshot renders the peg declaration as a snapshot: what /v1/price serves for a
+// declared peg when NO market observation exists, and for a `crypto:<STABLE>` ticker in its own fiat.
 //
-// ObservedAt is the declaration's adoption time ([Server.pegDeclaredAt]), never time.Now(): the
-// constant is not an observation, and a clock stamp would make it indistinguishable from one on
-// the wire. The adoption instant lets the answer AGE, so staleness reads "nothing observed since
-// the declaration was adopted", which is true.
-//
-// The stamp is per process (the construction time unless [Options.PegDeclaredAt] is set) and
-// resets on restart; price_type "peg" is the durable signal that nothing was observed.
+// ObservedAt is the adoption time ([Server.pegDeclaredAt]), never time.Now(): the constant is not
+// an observation, and a clock stamp would be indistinguishable from one. Per process (resets on
+// restart unless [Options.PegDeclaredAt] is set); price_type "peg" is the durable signal.
 func (s *Server) declaredPegSnapshot(asset, quote canonical.Asset) PriceSnapshot {
 	return PriceSnapshot{
 		AssetID:    asset.String(),
@@ -2014,17 +1830,12 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 		return PriceSnapshot{}, nil, false
 	}
 
-	// Build a lookup from ticker → rate_usd. The slice is small
-	// (~110 entries) and called rarely (last-resort fallback), so
-	// linear scan is fine; the alternative — a per-request map
-	// allocation — would not pay off.
+	// Linear scan: the slice is small (~110) and this is a last-resort fallback.
 	var rateAsset, rateQuote float64
 	var foundAsset, foundQuote bool
 	var sources []string
-	// observedAt starts at the snapshot's publication time and is pulled BACK to the older leg's
-	// own UpdatedAt. They differ when the forex worker is HOLDING a leg's last guarded rate (the
-	// sanity band refused the upstream's new one, or the standby feed lacks the currency);
-	// stamping that with the publication time would claim freshness it does not have.
+	// observedAt is pulled BACK to the older leg's UpdatedAt: the forex worker may be HOLDING a
+	// leg's last guarded rate, and the publication time would claim freshness it lacks.
 	observedAt := snap.PublishedAt
 	for _, c := range snap.Currencies {
 		if c.Ticker == asset.Code {
@@ -2046,25 +1857,19 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 	if !foundAsset || rateAsset <= 0 {
 		return PriceSnapshot{}, nil, false
 	}
-	// rate_usd[USD] is implicitly 1 — handle that without requiring
-	// the snapshot to carry an explicit USD entry. foundQuote is
-	// not read after this branch; the implicit-USD path just
-	// supplies rateQuote.
+	// rate_usd[USD] is implicitly 1; the snapshot needn't carry a USD entry.
 	if !foundQuote {
 		if quote.Code != "USD" {
 			return PriceSnapshot{}, nil, false
 		}
 		rateQuote = 1
 	}
-	// [Cache.Latest] never expires on its own, so without this bound a forex worker outage would
-	// serve the last fetch forever. observedAt is the older leg's, so one check covers both a dead
-	// worker (stale PublishedAt) and a held ticker past its bound (stale per-leg UpdatedAt).
+	// [Cache.Latest] never expires, so without this bound a forex outage would serve the last fetch
+	// forever. observedAt is the older leg's, so one check covers a dead worker and a held ticker.
 	if fxCrossStale(observedAt, s.fxCrossMaxAge) {
 		return PriceSnapshot{}, nil, false
 	}
-	// Cross-rate = rate_usd[Y] / rate_usd[X] as exact big.Rat, not float64 (ADR-0003). Each float64
-	// feed rate is converted via its shortest round-trip decimal, so the division adds no rounding
-	// beyond the source rates' own precision.
+	// Exact big.Rat, not float64 (ADR-0003); each float64 rate goes via its shortest round-trip decimal.
 	rateQuoteRat, okQ := new(big.Rat).SetString(strconv.FormatFloat(rateQuote, 'f', -1, 64))
 	rateAssetRat, okA := new(big.Rat).SetString(strconv.FormatFloat(rateAsset, 'f', -1, 64))
 	if !okQ || !okA || rateAssetRat.Sign() == 0 {
@@ -2080,8 +1885,7 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 	}, sources, true
 }
 
-// olderNonZero returns the earlier of a and b, ignoring a zero b (a
-// snapshot entry that carries no per-currency timestamp).
+// olderNonZero returns the earlier of a and b, ignoring a zero b.
 func olderNonZero(a, b time.Time) time.Time {
 	if !b.IsZero() && b.Before(a) {
 		return b
@@ -2111,17 +1915,14 @@ func heldWindow(frozen bool, snap PriceSnapshot, def time.Duration) time.Duratio
 	return def
 }
 
-// attachConfidence consults the wired ConfidenceLooker (when set)
-// and populates snap.Confidence + snap.ConfidenceFactors. Best-
-// effort: cache misses + read errors leave the fields nil so the
-// response still ships cleanly without confidence enrichment.
+// attachConfidence populates snap.Confidence and its factors from the wired ConfidenceLooker.
+// Best-effort: misses and read errors leave them nil.
 func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, quote canonical.Asset, window time.Duration) {
 	if s.Confidence == nil {
 		return
 	}
-	// Loop the alias set as readPriceWithAliases does for the price: the price read resolves
-	// `native` to crypto:XLM, but a confidence key built from the raw request asset finds
-	// nothing, and clients read an absent confidence as "unknown".
+	// Loop the alias set as the price read does: a key built from the raw request asset (`native`)
+	// finds nothing, and clients read absent confidence as "unknown".
 	for _, a := range assetAliases(asset) {
 		got, ok, err := s.Confidence.LookupConfidence(r.Context(), a, quote, window)
 		if err != nil {
@@ -2143,18 +1944,15 @@ func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, q
 }
 
 // lookupDivergenceFlag is the shared best-effort divergence lookup for every surface serving a
-// value the cross-reference verdict speaks to (/v1/price, its windowed variant, /v1/price/tip and
-// its stream, per event from the producer goroutine, hence a context). Returns (false, false) when
-// no looker is wired, there is no verdict, it does not speak to the served window, or the lookup
-// errors: better a fresh price without a verdict than a 5xx on a Redis blip.
+// value the verdict speaks to. Returns (false, false) when unwired, no verdict, a different window,
+// or on error: better a price without a verdict than a 5xx on a Redis blip.
 //
 // asset and quote are the spelling the value was SERVED from, and only that pair is asked: verdicts
-// are keyed on the literal pair priced and XLM's spellings are disjoint venue populations, so
-// walking aliases would attach crypto:XLM's CEX-checked verdict to native's SDEX price.
+// are keyed on the literal pair and XLM's spellings are disjoint venue populations, so walking
+// aliases would attach crypto:XLM's CEX-checked verdict to native's SDEX price.
 //
-// window is the served value's aggregation window, or 0 for the current price; a verdict over
-// another window says nothing about a windowed value. A context-caused error is not logged; the
-// test is on the ERROR, not ctx.Err(), so a genuine store failure is still logged.
+// window is the served aggregation window, or 0 for the current price. A context-caused error is
+// not logged; the test is on the ERROR, not ctx.Err(), so a genuine store failure still is.
 func (s *Server) lookupDivergenceFlag(ctx context.Context, asset, quote canonical.Asset, window time.Duration) (firing, checked bool) {
 	if s.Divergence == nil {
 		return false, false
@@ -2177,15 +1975,13 @@ func (s *Server) lookupDivergenceFlag(ctx context.Context, asset, quote canonica
 // persisted at [cachekeys.VWAPCompositeMeta] for every router-priced target.
 //
 // requireTriangulated controls whether flags.Triangulated must already be true to look up:
-//   - The ?window= surface reads one per-(pair,window) key owned by the composite or a direct
-//     writer; when the direct writer served it, meta from a DIFFERENT window/tick does not
-//     describe the value. Pass true.
+//   - The ?window= surface reads one per-(pair,window) key that a direct writer may own; meta from
+//     a DIFFERENT window/tick does not describe that value. Pass true.
 //   - The headline surface reads prices_1m FIRST, so a router target with a real closed bucket
-//     never sets flags.Triangulated though its chain ran and wrote meta. Pass false.
+//     never sets flags.Triangulated though its chain wrote meta. Pass false.
 //
-// Gated on the looker also implementing the OPTIONAL [CompositeMetaLooker]. Best-effort: a miss,
-// malformed blob or read error leaves the flags unset. pair and window must be the ones the
-// served value was read under.
+// Needs the OPTIONAL [CompositeMetaLooker]. Best-effort: a miss, malformed blob or read error
+// leaves the flags unset. pair and window must be the ones the value was read under.
 func (s *Server) attachCompositeFlags(r *http.Request, flags *Flags, asset, quote canonical.Asset, window time.Duration, requireTriangulated bool) {
 	if requireTriangulated && !flags.Triangulated {
 		return
@@ -2207,8 +2003,7 @@ func (s *Server) attachCompositeFlags(r *http.Request, flags *Flags, asset, quot
 	}
 	meta, err := cachekeys.DecodeCompositeMeta(raw)
 	if err != nil {
-		// A malformed blob is enrichment noise, not a serving failure —
-		// the price is already computed. Log and leave the flags unset.
+		// Enrichment noise, not a serving failure: the price is already computed.
 		s.logger.Warn("composite meta decode failed",
 			"err", err, "asset", asset.String(), "quote", quote.String())
 		return
@@ -2245,51 +2040,46 @@ func (s *Server) lookupFrozen(r *http.Request, asset, quote canonical.Asset) (fr
 type frozenServe int
 
 const (
-	// frozenServeNotFrozen — no live freeze; serve what was read.
+	// frozenServeNotFrozen: no live freeze; serve what was read.
 	frozenServeNotFrozen frozenServe = iota
-	// frozenServeHeld — frozen, and resolution.snapshot is the held value.
+	// frozenServeHeld: frozen, and resolution.snapshot is the held value.
 	frozenServeHeld
-	// frozenServeNothingHeld — frozen, and no held value is readable.
-	// The caller serves NOTHING for the pair.
+	// frozenServeNothingHeld: frozen, no held value readable; the caller serves NOTHING.
 	frozenServeNothingHeld
 )
 
 // frozenResolution carries [Server.resolveFrozenServe]'s verdict; snapshot, sources and
 // triangulated are meaningful only for frozenServeHeld. checked=false means the marker could not
-// be read (looker unwired or read failed): outcome is then frozenServeNotFrozen by construction but
-// means "unknown", so a caller must not derive other facts (e.g. single_source) from it.
+// be read: outcome is then frozenServeNotFrozen but means "unknown", so derive no other facts
+// (e.g. single_source) from it.
 type frozenResolution struct {
 	outcome      frozenServe
 	checked      bool
 	snapshot     PriceSnapshot
 	sources      []string
 	triangulated bool
-	// pairBase is the spelling whose marker fired and whose held value was
-	// read; the composite-meta lookup must ask for the same pair.
+	// pairBase is the spelling whose marker fired; composite-meta must ask for the same pair.
 	pairBase canonical.Asset
 }
 
-// frozenHeldWindows are the aggregator windows a freeze can hold a value for
-// ([orchestrator.DefaultWindows]), smallest first. Freeze runs per (pair, window) but the marker
-// is per pair (ADR-0019), so it can't say which window holds the value; smallest-first stays
-// closest to the 1-minute bucket and matches [triangulationLookupWindow].
+// frozenHeldWindows are the aggregator windows a freeze can hold a value for, smallest first. The
+// marker is per pair (ADR-0019), so it can't say which window holds the value; smallest-first stays
+// closest to the 1-minute bucket.
 var frozenHeldWindows = []time.Duration{5 * time.Minute, time.Hour, 24 * time.Hour}
 
 // resolveFrozenServe makes `flags.frozen` true in the only honest way: by making the VALUE the one
 // the freeze is holding (ADR-0019).
 //
-// The closed-bucket read can't deliver the last-known-good value: prices_1m is a raw
-// sum(quote)/sum(base) the anomaly checker never gates, so its newest bucket on a frozen pair is
-// the very bucket the freeze refused, and stamping `frozen` on it would mislead. What a freeze
-// holds lives in the aggregator's VWAP cache, kept alive while the window skips its publish
-// (keepFrozenVWAPAlive).
+// The closed-bucket read can't deliver the last-known-good value: prices_1m is a raw ratio the
+// anomaly checker never gates, so its newest bucket on a frozen pair is the very bucket the freeze
+// refused. What a freeze holds lives in the aggregator's VWAP cache (keepFrozenVWAPAlive).
 //
-// `served` is the alias whose market the closed-bucket read came from (zero on a miss). Markers
-// are keyed on the literal pair the aggregator prices, so a `native` request answered from
-// crypto:XLM's bucket is governed by crypto:XLM's freeze only (see [Server.frozenPairBase]).
+// `served` is the alias the closed-bucket read came from (zero on a miss). Markers are keyed on the
+// literal pair the aggregator prices, so a `native` request answered from crypto:XLM's bucket is
+// governed by crypto:XLM's freeze only ([Server.frozenPairBase]).
 //
-// No readable held value (first-bucket freeze, expired key, cache error) is
-// frozenServeNothingHeld and the caller refuses: the only other value is the one withheld.
+// No readable held value is frozenServeNothingHeld and the caller refuses: the only other value is
+// the one withheld.
 func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote canonical.Asset) frozenResolution {
 	pairBase, frozen, checked := s.frozenPairBase(r, requested, served, quote)
 	if !frozen {
@@ -2321,8 +2111,7 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 				Quote:     quote.String(),
 				Price:     v.Value,
 				PriceType: "vwap",
-				// When the held value was observed, not when it was read:
-				// the hold is what makes those differ by tens of minutes.
+				// When the held value was observed, not read: a hold makes them differ.
 				ObservedAt:    WireTime(v.ObservedAt),
 				WindowSeconds: int(window / time.Second),
 			}, v.Coverage),
@@ -2344,8 +2133,7 @@ func (s *Server) resolveFrozenServeFor(r *http.Request, snap PriceSnapshot, requ
 	if held.outcome != frozenServeHeld {
 		return held
 	}
-	// The held value converts at the fixing bound to its own bucket end, so
-	// the hold serves one answer however long it lasts.
+	// Converting at the fixing bound to its own bucket end keeps the hold one answer.
 	bound, err := s.bindFXFixings(r.Context(), []string{quote.Code}, time.Time(held.snapshot.ObservedAt))
 	if err != nil {
 		return frozenResolution{outcome: frozenServeNothingHeld, checked: held.checked}
@@ -2361,18 +2149,15 @@ func (s *Server) resolveFrozenServeFor(r *http.Request, snap PriceSnapshot, requ
 }
 
 // frozenPairBase reports which spelling of the pair carries the freeze marker that GOVERNS this
-// response: one marker read when a bucket was served, one per spelling of the requested asset
-// when none was.
+// response.
 //
-// When a closed bucket was read, only the marker of the alias it was read from counts: the
-// requested literal's marker is a verdict on a DIFFERENT venue population (`native/fiat:GBP` is
-// not the market `crypto:XLM/fiat:GBP` is), and letting it fire would discard a healthy bucket.
-// A healthy alias wins, as [Server.readPriceWithAliasesServed] does for a withheld alias.
+// When a closed bucket was read, only the marker of the alias it came from counts: the requested
+// literal's marker is a verdict on a DIFFERENT venue population (`native/fiat:GBP` is not the
+// market `crypto:XLM/fiat:GBP` is), and letting it fire would discard a healthy bucket.
 //
-// When no bucket was read (`served` is zero, the fallback chain answered) every spelling's marker
-// governs: the chain resolves across the alias set without reporting which leg it served, so a
-// freeze on `crypto:XLM/fiat:GBP` must not go unseen for `native/fiat:GBP`. See
-// [Server.frozenAnyAlias].
+// When none was read (`served` is zero, the fallback chain answered) every spelling's marker
+// governs, since the chain doesn't report which leg it served: a freeze on `crypto:XLM/fiat:GBP`
+// must not go unseen for `native/fiat:GBP`. See [Server.frozenAnyAlias].
 func (s *Server) frozenPairBase(r *http.Request, requested, served, quote canonical.Asset) (asset canonical.Asset, frozen, checked bool) {
 	if served.IsZero() {
 		return s.frozenAnyAlias(r, requested, quote)
@@ -2472,10 +2257,7 @@ func (s *Server) handlePriceBatch(w http.ResponseWriter, r *http.Request) {
 // "..."}. Same semantics as GET with the ceiling raised to 1000; the body exists because a
 // 1000-entry query string exceeds most reverse-proxies' default 8 KiB header limit.
 func (s *Server) handlePriceBatchPost(w http.ResponseWriter, r *http.Request) {
-	// Cap the request body so a malicious client can't make us spend
-	// memory parsing a 100 MiB JSON object. 1 MiB is plenty for 1000
-	// canonical asset ids — the largest realistic ones (contract
-	// strkeys at 56 bytes + quotes/commas) are well under 100 KiB.
+	// 1 MiB is plenty for 1000 asset ids (well under 100 KiB) and bounds parse memory.
 	const maxBody = 1 << 20
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 
@@ -2527,16 +2309,14 @@ func (s *Server) runPriceBatch(w http.ResponseWriter, r *http.Request, rawIDs []
 	if !middleware.ChargeRateLimit(w, r, len(ids)) {
 		return
 	}
-	// The monthly meter counts the same de-duplicated ids: one request
-	// unit per price looked up, as a GET /v1/price per id would cost.
-	// After the rate-limit charge, so a 429 above meters one unit.
+	// The monthly meter counts the same ids, one unit per price; after the rate-limit charge so a
+	// 429 meters one unit.
 	middleware.ChargeUsage(r, len(ids))
 	s.lookupPriceBatch(w, r, ids, quote)
 }
 
-// parsePriceBatchIDs trims, de-duplicates, and length-checks the
-// requested asset_ids. ok=false means a problem+json has already
-// been written.
+// parsePriceBatchIDs trims, de-duplicates and length-checks asset_ids; ok=false means a problem
+// was written.
 func (s *Server) parsePriceBatchIDs(w http.ResponseWriter, r *http.Request, rawIDs []string, limit int) ([]string, bool) {
 	ids := make([]string, 0, len(rawIDs))
 	seen := make(map[string]struct{}, len(rawIDs))
@@ -2568,8 +2348,7 @@ func (s *Server) parsePriceBatchIDs(w http.ResponseWriter, r *http.Request, rawI
 	return ids, true
 }
 
-// parsePriceBatchQuote parses the optional quote, defaulting to
-// fiat:USD. ok=false means a 400 has already been written.
+// parsePriceBatchQuote parses the optional quote (default fiat:USD); ok=false means a 400 was written.
 func (s *Server) parsePriceBatchQuote(w http.ResponseWriter, r *http.Request, raw string) (canonical.Asset, bool) {
 	if raw == "" {
 		return defaultPriceQuote, true
@@ -2585,15 +2364,12 @@ func (s *Server) parsePriceBatchQuote(w http.ResponseWriter, r *http.Request, ra
 	return q, true
 }
 
-// priceBatchConcurrency bounds the per-request fan-out in lookupPriceBatch. Each of up to 100 (GET)
-// / 1000 (POST) ids is a LatestPrice + fallback-chain DB round-trip; serial resolution put p99 at
-// the 10s handler ceiling.
+// priceBatchConcurrency bounds the per-request fan-out in lookupPriceBatch. Each id is a
+// LatestPrice + fallback-chain DB round-trip; serial resolution put p99 at the 10s handler ceiling.
 //
-// The value is MEASURED; do not lower it as a throughput control. Narrowing removes no database
-// work, only lengthens how long each request holds its connections.
-//
-// 16-wide can exceed the DB pool's headroom for a 1000-id POST (~2 round-trips per id). The real
-// bound there is the rate limiter, charged PER ID (runPriceBatch via middleware.ChargeRateLimit).
+// MEASURED; do not lower it as a throughput control: narrowing removes no database work, only
+// lengthens how long each request holds its connections. 16-wide can exceed the DB pool's headroom
+// for a 1000-id POST; the real bound there is the rate limiter, charged PER ID.
 const priceBatchConcurrency = 16
 
 // batchRowResult is the per-id outcome computed by resolveBatchRow.
@@ -2608,18 +2384,14 @@ type batchRowResult struct {
 
 	ok   bool // a real price row — include in the envelope
 	skip bool // per-asset miss — omit, do NOT 404 the batch
-	// withheld qualifies a skip: a serving gate declined to publish a
-	// price the server holds, so the id goes on the envelope's
-	// `withheld` list rather than reading as "no data".
+	// withheld qualifies a skip: a gate declined to publish a price the server holds, so the id
+	// goes on the envelope's `withheld` list rather than reading as "no data".
 	withheld bool
-	// withheldReason is the gate's reason behind withheld, the key of the
-	// include_thin second pass.
+	// withheldReason keys the include_thin second pass.
 	withheldReason PriceWithheldReason
-	// thin: served under include_thin from a market below the substance
-	// floor; such a row carries no change_24h_pct.
+	// thin: served under include_thin from a market below the substance floor; no change_24h_pct.
 	thin bool
-	// readFailed qualifies a skip: the row was dropped because a read
-	// failed, not because the asset has no price.
+	// readFailed qualifies a skip: dropped because a read failed, not because there is no price.
 	readFailed bool
 	fail       *batchRowFailure
 }
@@ -2665,39 +2437,31 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 			row = thin
 		}
 	}
-	// No derived change from a thin price (ADR-0018). Computed on the
-	// final snapshot, so a frozen row's change is the held value's.
+	// No derived change from a thin price (ADR-0018); computed on the final (possibly held) snapshot.
 	if row.ok && !row.thin {
 		row.snap.Change24hPct = s.batchChange24h(ctx, asset, quote, row.snap.Price)
 	}
 	return row
 }
 
-// readBatchRow is one pass of a batch row's read under the
-// [ThinAdmission] ctx carries.
+// readBatchRow is one pass of a batch row's read under ctx's [ThinAdmission].
 func (s *Server) readBatchRow(ctx context.Context, r *http.Request, asset, quote canonical.Asset) batchRowResult {
-	// Route the primary read through the XLM alias loop, as handlePrice does: the literal form
-	// alone would return stale/empty for asset_ids=native while /v1/price?asset=native serves the
-	// fresh CEX VWAP published under crypto:XLM.
+	// Alias loop, as handlePrice: the literal `native` alone would return stale/empty while
+	// /v1/price serves the fresh VWAP published under crypto:XLM.
 	snap, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, s.Prices, asset, quote)
 	if errors.Is(err, ErrPriceWithheld) {
-		// Gated pair: omit the row and name it on the envelope's
-		// `withheld` list, and do NOT run priceFallback — the fallback
-		// chain would re-serve the withheld market via the Redis/proxy
-		// side doors.
+		// Omit and name it on `withheld`; do NOT run priceFallback, which would re-serve the
+		// withheld market via the Redis/proxy side doors.
 		return batchRowResult{skip: true, withheld: true, withheldReason: priceWithheldReason(err)}
 	}
 	if errors.Is(err, ErrPriceNotFound) {
-		// Share /v1/price's full fallback chain (priceFallback): skipping the stablecoin proxy would
-		// silently drop ids that return 200 on /v1/price. A withheld verdict from any leg goes on
-		// the envelope's `withheld` list, never folded into "no data".
+		// Share /v1/price's fallback chain: skipping the stablecoin proxy would drop ids that return
+		// 200 there. A withheld verdict from any leg goes on `withheld`, never into "no data".
 		fb := s.priceFallback(ctx, asset, quote)
 		fs, fsrc, fserved, ftri := fb.snap, fb.sources, fb.served, fb.triangulated
 		if fb.ok {
-			// Fallback responses are below the closed-bucket VWAP contract, so mark stale. Carry
-			// triangulated through too, for parity with single-asset /v1/price. fserved is the
-			// alias the cached VWAP was read under (zero when a later layer answered), the
-			// governing pair for the freeze check.
+			// Fallbacks sit below the closed-bucket contract, so stale; triangulated carries through
+			// for parity with /v1/price. fserved is the freeze check's governing pair.
 			return s.holdFrozenBatchRow(r, batchRowResult{
 				snap: fs, sources: fsrc, stale: fb.stale, triangulated: ftri,
 				asset: asset, ok: true,
@@ -2712,9 +2476,7 @@ func (s *Server) readBatchRow(ctx context.Context, r *http.Request, asset, quote
 	}
 	if err != nil {
 		if clientAborted(r, err) {
-			// Client disconnected — the orchestrator detects the
-			// cancelled context after join and returns without
-			// writing. Surface as a skip so no failure is reported.
+			// Client gone: the orchestrator sees the cancelled context after join and writes nothing.
 			return batchRowResult{skip: true}
 		}
 		s.logger.Error("LatestPrice (batch) failed",
@@ -2732,12 +2494,9 @@ func (s *Server) readBatchRow(ctx context.Context, r *http.Request, asset, quote
 			asset: asset, ok: true,
 		}, basis.served, quote)
 	}
-	// Nonstandard-decimals normalization: this is the raw closed-1m-bucket read, the same raw-ratio
-	// shape as /v1/price's primary path. The priceFallback branch above is already normalized and
-	// must NOT be corrected twice; see normalizeRawPriceSnapshot.
+	// Raw closed-1m read: normalize here; the priceFallback branch above is already normalized.
 	s.normalizeRawPriceSnapshot(&snap, asset, quote)
-	// A frozen row carries the value the freeze is holding, not
-	// the raw bucket just read — see [Server.resolveFrozenServe].
+	// A frozen row carries the held value, not the raw bucket just read.
 	return s.holdFrozenBatchRow(r, batchRowResult{
 		snap: snap, sources: sources, stale: stale, asset: asset, ok: true,
 	}, served, quote)
@@ -2769,22 +2528,16 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 	ctx := r.Context()
 	results := make([]batchRowResult, len(ids))
 
-	// Bounded fan-out: each worker writes its own results[i] slot
-	// (disjoint memory — no lock needed) and the semaphore caps how
-	// many DB round-trips run at once.
+	// Each worker writes its own results[i] slot (no lock); the semaphore caps concurrent round-trips.
 	sem := make(chan struct{}, priceBatchConcurrency)
 	var wg sync.WaitGroup
 	for i, raw := range ids {
 		wg.Add(1)
 		go func(i int, raw string) {
-			// Registered first so it unwinds LAST — the semaphore
-			// release below must run before the panic is swallowed, and
-			// wg.Done must run or wg.Wait() deadlocks.
+			// Registered first so it unwinds LAST: wg.Done must run or wg.Wait() deadlocks.
 			defer wg.Done()
-			// Detached goroutine → middleware.Recoverer does not cover
-			// it. results[i] is left at its ZERO value on a panic, whose
-			// fail is nil and snap unset, so the id is DROPPED from the
-			// response rather than served with a fabricated price.
+			// middleware.Recoverer doesn't cover this goroutine. On panic results[i] stays ZERO, so
+			// the id is DROPPED rather than served with a fabricated price.
 			defer worker.Recover(s.logger, "api-price-batch-row")
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -2799,8 +2552,7 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 	if clientAborted(r, nil) {
 		return
 	}
-	// First failure in INPUT order aborts the batch — deterministic
-	// regardless of worker completion order.
+	// First failure in INPUT order aborts: deterministic whatever the completion order.
 	for i := range results {
 		if f := results[i].fail; f != nil {
 			writeProblem(w, r, f.typ, f.title, f.status, f.detail)
@@ -2814,8 +2566,7 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 	writeEnvelope(w, env)
 }
 
-// batchDegraded reports a row dropped by a failed read or a recovered
-// worker panic (a zero result) rather than by a genuine miss.
+// batchDegraded reports a row dropped by a failed read or recovered panic, not a genuine miss.
 func batchDegraded(results []batchRowResult) bool {
 	for i := range results {
 		r := &results[i]
@@ -2826,9 +2577,8 @@ func batchDegraded(results []batchRowResult) bool {
 	return false
 }
 
-// batchEnvelope folds the per-id results (index-aligned with ids) into
-// the response envelope: price rows in input order, withheld ids named,
-// and each flag the OR over the served rows.
+// batchEnvelope folds the per-id results (index-aligned with ids) into the envelope; each flag is
+// the OR over served rows.
 func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 	out := make([]PriceSnapshot, 0, len(ids))
 	var withheld, thin []string
@@ -2857,9 +2607,6 @@ func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 		for _, src := range row.sources {
 			allSources[src] = struct{}{}
 		}
-		// Per-row freeze (resolved by resolveBatchRow) → OR into the
-		// envelope flag. Best-effort: an absent freeze marker means
-		// "not frozen".
 		if row.frozen {
 			anyFrozen = true
 			anySingleSource = true // freeze implies single-source
@@ -2872,9 +2619,7 @@ func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 	for src := range allSources {
 		srcs = append(srcs, src)
 	}
-	// Sort for the ADR-0015 byte-identical cross-region property: single-asset reads sort sources
-	// at the storage boundary (timescale.normalizeVwapSources), but the batch unions per-row
-	// sources through a map whose iteration order would break it.
+	// Sort for ADR-0015 byte-identical cross-region output: map iteration order would break it.
 	sort.Strings(srcs)
 	return Envelope{
 		Data:     out,
@@ -2911,11 +2656,9 @@ func LastTradeToSnapshot(t canonical.Trade, decimals int) (PriceSnapshot, bool) 
 	}, true
 }
 
-// VWAP1mToSnapshot is the CAGG-served counterpart to [LastTradeToSnapshot]: it maps a 1-minute
-// prices_1m row to a [PriceSnapshot]. `assetID` and `quote` are the request's strings, passed in
-// rather than re-derived from the row so the echo stays as the client sent it. `vwap` is the
-// NUMERIC column's decimal text, passed through unparsed. `observed_at` is the END of the closed
-// window (`bucketStart + 1m`), since the price covers trades that closed during it.
+// VWAP1mToSnapshot maps a 1-minute prices_1m row to a [PriceSnapshot]. `assetID` and `quote` are the
+// request's strings so the echo stays as sent; `vwap` is the NUMERIC text, unparsed. `observed_at`
+// is the END of the closed window (`bucketStart + 1m`).
 func VWAP1mToSnapshot(assetID, quote, vwap string, bucketStart time.Time) PriceSnapshot {
 	return PriceSnapshot{
 		AssetID:       assetID,
@@ -2930,13 +2673,9 @@ func VWAP1mToSnapshot(assetID, quote, vwap string, bucketStart time.Time) PriceS
 // priceRatioDecimal returns QuoteAmount / BaseAmount as a decimal string with `decimals` digits
 // after the point, via big.Rat with no float (ADR-0003).
 //
-// Never panics; ok is false when either leg is not positive. It truncates (floors), never rounds,
-// and extends a ratio too small for `decimals` rather than serving zero ([ratToDecimal] renders
-// it, so /v1/history and the bucketed surfaces agree digit for digit).
-//
-// The ratio is in raw stroop units: QuoteAmount=12,420,000 over BaseAmount=1,000,000,000 at
-// decimals=7 gives "0.0001242". Callers pick decimals for display; VWAP/OHLC paths store
-// pre-scaled prices instead.
+// ok is false when either leg is not positive. It truncates, never rounds, and extends a ratio too
+// small for `decimals` rather than serving zero ([ratToDecimal] renders it, so /v1/history and the
+// bucketed surfaces agree digit for digit). The ratio is in raw stroop units.
 func priceRatioDecimal(t canonical.Trade, decimals int) (string, bool) {
 	base, quote := t.BaseAmount.BigInt(), t.QuoteAmount.BigInt()
 	if base.Sign() <= 0 || quote.Sign() <= 0 {
@@ -2954,8 +2693,7 @@ func leftPad(s string, n int, c byte) string {
 	return string(buf)
 }
 
-// parsePriceQuoteParam parses the optional ?quote= (default
-// fiat:USD). ok=false means a 400 problem+json was written.
+// parsePriceQuoteParam parses the optional ?quote= (default fiat:USD); ok=false means a 400 was written.
 func parsePriceQuoteParam(w http.ResponseWriter, r *http.Request) (canonical.Asset, bool) {
 	rawQuote := r.URL.Query().Get("quote")
 	if rawQuote == "" {

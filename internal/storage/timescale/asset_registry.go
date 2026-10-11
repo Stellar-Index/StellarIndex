@@ -37,13 +37,12 @@ const assetRegistryDedupeTTL = 60 * time.Second
 // "dedupe" the second DB's first trade for an asset so its classic_assets row is never written.
 // The zero value is ready to use. See the field docs on [Store].
 
-// registerClassicAssetSeen ensures a `classic_assets` row exists for the supplied classic asset,
-// with last_seen_* bumped to the trade's ledger + timestamp and observation_count incremented.
-// Hooked into InsertTrade after the trades INSERT succeeds.
+// registerClassicAssetSeen ensures a `classic_assets` row exists for the classic asset, bumping
+// last_seen_* to the trade's ledger and timestamp and incrementing observation_count. InsertTrade
+// calls it after the trades INSERT succeeds.
 //
-// This is the trade-side half; the holdings half is [Store.RegisterClassicAssetsHeld]. A held but
-// never-traded asset (a money-market fund, say) would otherwise have no row, no issuers row, no
-// SEP-1 fetch and no RWA candidacy.
+// This is the trade-side half; [Store.RegisterClassicAssetsHeld] covers held-but-never-traded
+// assets, which would otherwise have no row, no issuers row, no SEP-1 fetch and no RWA candidacy.
 //
 // Returns nil on success, no-op (non-classic asset) or already-deduped within this process.
 // Callers log and swallow errors so a registry write failure cannot sink the trade insert.
@@ -83,10 +82,9 @@ const upsertClassicAssetSQL = `
 			observation_count  = classic_assets.observation_count + 1
 	`
 
-// registerClassicAssetRange is [Store.registerClassicAssetSeen] for a
-// lowest..highest observation: the LEAST arms take the minimum, the GREATEST
-// arms the maximum. A lower minimum than the last one this Store upserted
-// bypasses the dedupe TTL so backward backfill still reaches first_seen_*.
+// registerClassicAssetRange is [Store.registerClassicAssetSeen] for a lowest..highest observation.
+// A lower minimum than the last one this Store upserted bypasses the dedupe TTL so backward
+// backfill still reaches first_seen_*.
 func (s *Store) registerClassicAssetRange(
 	ctx context.Context,
 	asset canonical.Asset,
@@ -96,18 +94,14 @@ func (s *Store) registerClassicAssetRange(
 		return nil
 	}
 	assetID := asset.String()
-	// TTL-based dedupe: skip the upsert only when the last
-	// successful one was within `assetRegistryDedupeTTL`, so the row
-	// is never frozen at first observation. Out-of-window trades fire
-	// the upsert so `last_seen_*` and `observation_count` advance.
+	// Skip the upsert only within `assetRegistryDedupeTTL` of the last successful one, so the row
+	// never freezes at first observation.
 	if s.shouldSkipAssetRegistryUpsert(assetID, time.Now()) && !s.lowersCachedMinLedger(assetID, o.minLedger) {
 		return nil
 	}
 
-	// Issuer first — issuers row has no FK from classic_assets but
-	// keeping the order consistent makes it easier to reason about
-	// race-free reads from the API: every classic_assets row has a
-	// matching issuers row by the time it's queryable.
+	// Issuer first: there is no FK, but this order guarantees every queryable classic_assets row
+	// has a matching issuers row.
 	if err := s.registerIssuerSeen(ctx, asset.Issuer); err != nil {
 		return err
 	}
@@ -115,10 +109,9 @@ func (s *Store) registerClassicAssetRange(
 	// first_seen_* uses LEAST so chunked / parallel backfill that processes ledgers out of order
 	// cannot leave a higher value behind.
 	//
-	// slug: the fully-qualified asset_id verbatim, not an abbreviated lower(code)-issuer8 form,
-	// since an 8-char issuer prefix is a ~2^32 vanity-grind (address mimicry). The full form is
-	// unique by construction (it IS the primary key), so no collision-retry is needed. ON CONFLICT
-	// keeps the existing slug (a slug is a public URL and never silently changes).
+	// slug: the fully-qualified asset_id verbatim, since an 8-char issuer prefix is a ~2^32
+	// vanity-grind (address mimicry). It IS the primary key, so it is unique by construction.
+	// ON CONFLICT keeps the existing slug (a public URL never silently changes).
 	//
 	// first_trade_* / last_trade_* carry the *_seen_* values on THIS path only, because the
 	// *_seen_* pair also moves for a trustline-only observation and a "last traded" surface needs a
@@ -137,9 +130,8 @@ func (s *Store) registerClassicAssetRange(
 	return nil
 }
 
-// lowersCachedMinLedger reports whether minLedger is below the lowest first
-// ledger this Store has upserted for assetID. False when nothing is cached:
-// the TTL gate alone decides then.
+// lowersCachedMinLedger reports whether minLedger is below the lowest first ledger this Store has
+// upserted for assetID; false when nothing is cached, leaving the TTL gate to decide.
 func (s *Store) lowersCachedMinLedger(assetID string, minLedger uint32) bool {
 	cached, ok := s.assetRegistryMinLedger.Load(assetID)
 	if !ok {
@@ -243,9 +235,8 @@ const classicAssetHoldingBatchMax = 2000
 // ledger: a trustline entry carries its last-modified ledger, so First is only an upper bound on
 // genesis that improves as later scans meet older trustlines.
 type ClassicAssetHolding struct {
-	// Asset must be canonical.AssetClassic. Anything else is skipped:
-	// the registry is keyed on (code, issuer) and native / pool-share
-	// trustlines have no such identity.
+	// Asset must be canonical.AssetClassic; native and pool-share trustlines are skipped since the
+	// registry is keyed on (code, issuer).
 	Asset canonical.Asset
 
 	FirstLedger uint32
@@ -294,10 +285,8 @@ func (s *Store) registerClassicAssetsHeldBatch(ctx context.Context, obs []Classi
 			continue
 		}
 		if o.FirstAt.IsZero() || o.LastAt.IsZero() {
-			// A registry row cannot carry a NULL first_seen_at, and
-			// fabricating one would put a lie in a timestamp column. An
-			// observation with no close time is dropped, and the caller
-			// counts the drop.
+			// first_seen_at cannot be NULL and must not be fabricated, so an observation with no
+			// close time is dropped and the caller counts the drop.
 			continue
 		}
 		rows = append(rows, normaliseHoldingBracket(o))
@@ -385,10 +374,8 @@ func (s *Store) upsertHeldAssetsBatch(ctx context.Context, rows []ClassicAssetHo
 			b.WriteString(", ")
 		}
 		p := i * 7
-		// slug reuses the row's asset_id parameter, per migration 0135:
-		// the slug IS the fully-qualified asset_id, self-certifying and
-		// unique by construction. observation_count is the literal 0 —
-		// no trade has been observed for a row this statement creates.
+		// slug reuses the asset_id parameter (self-certifying, unique). observation_count is the
+		// literal 0: no trade has been observed for a row this statement creates.
 		fmt.Fprintf(&b, "($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, 0)",
 			p+1, p+2, p+3, p+1, p+4, p+5, p+6, p+7, p+4, p+5, p+6, p+7)
 		args = append(args,
@@ -415,9 +402,8 @@ func (s *Store) upsertHeldAssetsBatch(ctx context.Context, rows []ClassicAssetHo
 	return n, nil
 }
 
-// ClassicAssetRegistryStats is the registry coverage the backfill reports
-// so an operator reads the population rather than inferring it from a
-// row count that mixes both sources.
+// ClassicAssetRegistryStats is the registry coverage the backfill reports, split by source so a
+// row count that mixes both is not misread.
 type ClassicAssetRegistryStats struct {
 	// Total is every row in classic_assets.
 	Total int64
@@ -434,9 +420,8 @@ type ClassicAssetRegistryStats struct {
 	TradeOnly int64
 }
 
-// ClassicAssetRegistryStats counts the registry by observation source.
-// One sequential scan of a plain table; the backfill calls it twice (once
-// before, once after) so its summary can show the delta it caused.
+// ClassicAssetRegistryStats counts the registry by observation source with one sequential scan of a
+// plain table; the backfill calls it before and after to show its delta.
 func (s *Store) ClassicAssetRegistryStats(ctx context.Context) (ClassicAssetRegistryStats, error) {
 	const q = `
 		SELECT count(*)::bigint,

@@ -6,26 +6,17 @@ import (
 	"strings"
 )
 
-// cacheKey is the typed builder for the in-process read caches' (CachedMarketsReader,
-// CachedIssuersReader and sibling listing caches) map keys. It exists to kill the
-// "prewarm-vs-handler key drift" bug class, where a warmed entry never matched
-// the user request.
+// cacheKey is the typed builder for the in-process read caches' map keys (CachedMarketsReader,
+// CachedIssuersReader and sibling listing caches). It prevents prewarm-vs-handler key drift: every
+// result-changing dimension goes through one typed method (str / int / order / strSet), and
+// set-valued dimensions are ORDER-NORMALISED by [cacheKey.strSet].
 //
-// Two structural guarantees remove that class:
+// Grammar: length-prefixed fields, `<len>:<bytes>`, concatenated (netstring-style), so content
+// cannot forge a separator. A `|`-delimited grammar rendered str("a|b").str("c") and
+// str("a").str("b|c") identically, serving one caller another caller's cached page.
 //
-//  1. Every dimension that changes the result set is appended through an explicit
-//     typed method (str / int / order / strSet), with its grammar defined once.
-//  2. Set-valued dimensions (the Sources filter, an asset_id batch) go through
-//     [cacheKey.strSet], which ORDER-NORMALISES the slice.
-//
-// Grammar: each field is length-prefixed, `<len>:<bytes>`, and fields are
-// concatenated (netstring-style), so there is no separator byte for content to
-// forge. A `|`-delimited grammar was unsafe: str("a|b").str("c") and
-// str("a").str("b|c") rendered identically, serving one caller another caller's
-// cached page.
-//
-// In-process analogue of internal/cachekeys (the Redis key grammar, ADR-0007);
-// local to package v1 because cachekeys must not depend on the storage layer.
+// In-process analogue of internal/cachekeys (ADR-0007); local to package v1 because cachekeys must
+// not depend on the storage layer.
 type cacheKey struct {
 	b strings.Builder
 }
@@ -38,12 +29,8 @@ func newCacheKey(op string) *cacheKey {
 	return k
 }
 
-// field appends s as one length-prefixed segment: "<len(s)>:<s>". The
-// length prefix is the sole boundary marker — s itself is written
-// verbatim, so no character in s (including ':' or a digit sequence
-// that could be mistaken for a length) can ever shift a field
-// boundary: the decoder (if there were one) always reads exactly
-// len(s) bytes after the ':', full stop.
+// field appends s as one length-prefixed segment: "<len(s)>:<s>". The length prefix is the sole
+// boundary marker and s is written verbatim, so no character in s can shift a field boundary.
 func (k *cacheKey) field(s string) *cacheKey {
 	k.b.WriteString(strconv.Itoa(len(s)))
 	k.b.WriteByte(':')
@@ -62,29 +49,20 @@ func (k *cacheKey) int(n int) *cacheKey {
 	return k.field(strconv.Itoa(n))
 }
 
-// order appends a sort-order enum (a markets or asset-listing sort
-// order) as its integer discriminator — the same value
-// the SQL layer switches on, so the key partitions exactly where the
-// result set does. Callers pass int(order); the builder stays free of
-// the storage-layer enum types.
+// order appends a sort-order enum as the integer discriminator the SQL layer switches on, so the
+// key partitions exactly where the result set does. Callers pass int(order) to keep the builder
+// free of storage-layer enum types.
 func (k *cacheKey) order(o int) *cacheKey {
 	return k.int(o)
 }
 
-// strSet appends a SET-valued dimension (a Sources filter, an
-// asset_id batch). The slice is defensively copied and SORTED so
-// element order can never drift between call sites — the structural
-// half of the Sources-order fix. nil and empty both render as a
-// zero-length set (both mean "no filter"). Callers pass the original
-// unsorted slice to the upstream query; only the key is normalised,
-// which is sound because every consumer of these sets treats them as
-// order-independent (an IN-filter / a map keyed by asset_id).
+// strSet appends a SET-valued dimension (a Sources filter, an asset_id batch). The slice is copied
+// and SORTED so element order cannot drift between call sites; nil and empty both mean "no
+// filter". Only the key is normalised (the upstream query gets the original slice), which is sound
+// because every consumer treats these sets as order-independent.
 //
-// Each member is its own length-prefixed field (preceded by the
-// member count), rather than a ','-joined string — the same
-// content-cannot-forge-a-boundary property [field] gives str/int, now
-// applied to set members too (a member containing ',' could otherwise
-// collide two different sets, e.g. {"a,b"} vs {"a","b"}).
+// Each member is its own length-prefixed field after the member count, not a ','-joined string,
+// so {"a,b"} and {"a","b"} cannot collide.
 func (k *cacheKey) strSet(ss []string) *cacheKey {
 	sorted := append([]string(nil), ss...)
 	sort.Strings(sorted)

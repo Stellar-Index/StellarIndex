@@ -11,8 +11,7 @@ import (
 
 // GapDetectorInterval is how often [RunGapDetector] re-scans every per-source hypertable for gaps.
 // The LAG()-over-DISTINCT scan is expensive (soroban_events alone takes minutes), and the metric
-// feeds a paging alert held for 15 min, so 30 min keeps alert latency in the 45-60 min envelope
-// that suits an ingest-halt page.
+// feeds a paging alert held for 15 min, so 30 min keeps alert latency at 45-60 min.
 const GapDetectorInterval = 30 * time.Minute
 
 // GapDetectorMinGapSize is the threshold below which a gap is treated as no-activity noise rather
@@ -36,9 +35,8 @@ const gapDetectorStatementTimeoutMS = 780_000 // 13 min, in ms
 // days). Steady state scans only [previous high-water, tip]; this binds only after the detector
 // was down long enough that the high-water fell further behind, capping the catch-up.
 //
-// The detector is a SUPPORTING signal for the recent ingest frontier (ADR-0033); the authoritative
-// deep-history verdict is completeness_snapshots. Re-walking [genesis, tip] each cycle would cost
-// two ~13-min scans at sep41_transfers' size.
+// The detector is a supporting signal for the recent frontier (ADR-0033); the deep-history verdict
+// is completeness_snapshots. Re-walking [genesis, tip] each cycle would cost two ~13-min scans.
 const GapDetectorSafetyLookback = int64(200_000)
 
 // GapDetectorFirstScanCap bounds the FIRST-ever scan of a target (no high-water yet): 2M ledgers
@@ -47,9 +45,8 @@ const GapDetectorSafetyLookback = int64(200_000)
 const GapDetectorFirstScanCap = int64(2_000_000)
 
 // gapDetectorHighWaterSource is the ingestion_cursors `source` holding each target's scan
-// high-water (the tip last scanned; Sub is the target key), so the next cycle scans only
-// [high-water, tip]. It is kept out of the "backfill" and "ledgerstream" namespaces so the
-// diagnostics cursor aggregation (aggregateBackfill / ledgerStreamLagSeconds) ignores it.
+// high-water (the tip last scanned; Sub is the target key). It stays out of the "backfill" and
+// "ledgerstream" namespaces so the diagnostics cursor aggregation ignores it.
 const gapDetectorHighWaterSource = "gap-detector-scan"
 
 // gapDetectorLastPresentSource is the ingestion_cursors `source` holding, per target, the highest

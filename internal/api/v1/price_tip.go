@@ -45,10 +45,8 @@ const (
 // trailing-24 h overlay behind /v1/assets' price_usd, so on a moving pair they legitimately differ
 // by ~0.1-0.2 %. See "Current-price surfaces and their windows" in the package doc.
 func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
-	// PriceReader is the fallback path; without it the tip surface
-	// can't degrade and there's nothing meaningful to serve. The
-	// rolling-window path needs HistoryReader but we'll degrade
-	// gracefully when only one of them is wired.
+	// PriceReader is the fallback path; without it the tip cannot degrade. The rolling-window path
+	// needs HistoryReader, but either one alone still serves.
 	if s.Prices == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-unavailable",
@@ -57,9 +55,8 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reject URL-discipline violations BEFORE asset/quote parsing —
-	// a request that mixes tip + closed-bucket semantics is malformed
-	// regardless of whether the asset/quote happen to parse.
+	// Reject URL-discipline violations BEFORE asset/quote parsing: mixing tip and closed-bucket
+	// semantics is malformed whether or not the asset/quote parse.
 	if r.URL.Query().Get("granularity") != "" {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-tip-param",
@@ -129,19 +126,17 @@ func (s *Server) tipFlags(ctx context.Context, snap PriceSnapshot, asset, quote 
 // prices_1m. ErrPriceNotFound means no branch produced a snapshot (404 on the endpoint, "stream
 // cannot start" on the stream); any other error is surfaced as-is for 500 mapping.
 func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, windowSeconds int) (PriceSnapshot, []string, error) {
-	// Withholding gates run before any read. The tip promises freshness, not provability, but it is
-	// still an aggregated price claim computed from raw trades, so without this a dust-authored
-	// market would serve its attacker-written rate here after /v1/price withheld it. One gate call
-	// covers every branch; the reader-level gates inside LatestPrice cover only one.
+	// Withholding gates run before any read: the tip is still an aggregated price claim from raw
+	// trades, so without them a dust-authored market would serve its attacker-written rate here
+	// after /v1/price withheld it. One gate call covers every branch.
 	//
-	// Deliberately NOT given a best-effort sub-budget like the divergence lookup
-	// ([tipStreamDivergenceBudget]): that needs a safe unknown to degrade to. A withholding gate
-	// decides whether to serve AT ALL, and timing it out would republish the rate it withholds, so a
-	// slow gate correctly costs the emission. The scam-issuer gate has the same posture.
+	// Deliberately no best-effort sub-budget like the divergence lookup
+	// ([tipStreamDivergenceBudget]), which has a safe unknown to degrade to. Timing out a gate
+	// would republish the rate it withholds, so a slow gate correctly costs the emission.
 	//
-	// [withheldBy] folds both gates, scam asked first, so a pair both refuse is reported as flagged
-	// rather than thin. It asks about BOTH legs via [scamWithheld]: withholding is a property of the
-	// market, and the tip of `?asset=native&quote=<FLAGGED>` is the flagged market's own price inverted.
+	// [withheldBy] folds both gates, scam first, so a pair both refuse reports as flagged rather
+	// than thin. It asks about BOTH legs via [scamWithheld]: withholding is a property of the
+	// market, and `?asset=native&quote=<FLAGGED>` is the flagged market's own price inverted.
 	if w := withheldBy(ctx, s.Substance, s.Scam, asset, quote, "tip"); w != pricingguard.NotWithheld {
 		return PriceSnapshot{}, nil, PriceWithheldError(w)
 	}
@@ -156,9 +151,8 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 		return PriceSnapshot{}, nil, err
 	}
 	if ok {
-		// window_seconds on this surface names the caller's rolling window
-		// ([1,60]); a fallback carries its source's resolution instead (60s
-		// bucket, 300s cache), so it reports none.
+		// window_seconds names the caller's rolling window ([1,60]); a fallback has its source's
+		// resolution instead (60s bucket, 300s cache), so it reports none.
 		snap.WindowSeconds = 0
 		return snap, sources, nil
 	}
@@ -171,10 +165,9 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	return PriceSnapshot{}, nil, ErrPriceNotFound
 }
 
-// tipFallback is every non-window read of [Server.computeTip], in
-// precedence order: the closed bucket, the Redis VWAP cache, the
-// stablecoin-fiat proxy, the fiat cross-rate and the USD-anchored fiat
-// cross. (_, _, false, nil) is a miss; an error is a verdict to surface.
+// tipFallback is every non-window read of [Server.computeTip], in precedence order: closed bucket,
+// Redis VWAP cache, stablecoin-fiat proxy, fiat cross-rate, USD-anchored fiat cross.
+// (_, _, false, nil) is a miss; an error is a verdict to surface.
 func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, error) {
 	// Fallback: most-recent known observation; price_type "last_trade" and "vwap" are both
 	// in-contract. Route through the XLM alias loop exactly as handlePrice does, so ?asset=native
@@ -266,10 +259,9 @@ func (s *Server) parseTipAssetQuote(w http.ResponseWriter, r *http.Request) (can
 	return asset, quote, true
 }
 
-// parseTipWindowSeconds reads the optional window_seconds query param,
-// defaulting to defaultTipWindowSeconds and rejecting values outside
-// [minTipWindowSeconds, maxTipWindowSeconds]. Returns (seconds, true)
-// on success or (0, false) after writing a 400.
+// parseTipWindowSeconds reads the optional window_seconds param (default defaultTipWindowSeconds),
+// rejecting values outside [minTipWindowSeconds, maxTipWindowSeconds]. It returns (0, false)
+// after writing a 400.
 func parseTipWindowSeconds(w http.ResponseWriter, r *http.Request) (int, bool) {
 	raw := r.URL.Query().Get("window_seconds")
 	if raw == "" {
@@ -322,9 +314,7 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 	for _, pair := range pairs {
 		tr, err := s.History.TradesInRange(ctx, pair, from, now, tipWindowMaxTrades)
 		if err != nil {
-			// Don't log under a cancelled ctx — that's just the client
-			// disconnecting (or, on the stream path, the per-tick scope
-			// completing).
+			// No log under a cancelled ctx: that is the client leaving or a stream tick ending.
 			if ctx.Err() == nil {
 				s.logger.Warn("TradesInRange failed (tip window) — falling back to LatestPrice",
 					"err", err, "asset", pair.Base.String(), "quote", pair.Quote.String(),
@@ -371,12 +361,11 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 // alias (XLM is a quote too, AQUA/XLM); the merge is what lets ?asset=native reach CEX prints
 // stored under crypto:XLM.
 //
-// A SAC-wrapped classic's Soroban SAC/SAC pool is routinely orders of magnitude thinner than its
-// SDEX book, and merging it unasked would let ONE trade on a tiny pool be the served tip. That is
-// the thin-pool shape the SAC-last ordering of canonical.AssetAliases exists to stop; a merge has
-// no "last", so an unnamed SAC-form combination goes in `last`, which computeTip reads only after
-// every other fallback missed. A caller who names a SAC form keeps the full cross in `merge`.
-// Identity combinations are dropped.
+// A SAC-wrapped classic's Soroban SAC/SAC pool is routinely far thinner than its SDEX book, and
+// merging it unasked would let ONE trade on a tiny pool be the served tip (the thin-pool shape the
+// SAC-last ordering of canonical.AssetAliases stops). A merge has no "last", so an unnamed
+// SAC-form combination goes in `last`, read only after every other fallback missed. A caller who
+// names a SAC form keeps the full cross in `merge`. Identity combinations are dropped.
 func tipMergePairs(asset, quote canonical.Asset) (merge, last []canonical.Pair) {
 	sacNamed := asset.Type == canonical.AssetSoroban || quote.Type == canonical.AssetSoroban
 	for _, a := range assetAliases(asset) {
@@ -398,8 +387,7 @@ func tipMergePairs(asset, quote canonical.Asset) (merge, last []canonical.Pair) 
 	return distinctMarkets(merge), distinctMarkets(last)
 }
 
-// distinctTradeSources returns the unique source names from a slice
-// of trades, preserving first-occurrence order. Used to populate the
+// distinctTradeSources returns the unique source names of trades in first-occurrence order, for the
 // envelope's sources array on the tip-window path.
 func distinctTradeSources(trades []canonical.Trade) []string {
 	if len(trades) == 0 {

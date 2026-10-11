@@ -1110,14 +1110,13 @@ func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDe
 	}
 }
 
-// applySubstanceGateToListing extends the thin-market substance gate to listing prices. The
-// catalogue SQL computes price_usd from a 7-day prices_1m window outside /v1/price's read path, so
-// without this a dust-authored market would keep a listed price /v1/price withholds.
+// applySubstanceGateToListing extends the thin-market substance gate to listing prices: the
+// catalogue SQL computes price_usd outside /v1/price's read path, so without this a dust-authored
+// market would keep a listed price /v1/price withholds.
 //
-// A price is allowed when any plausible backing pair clears the substance floor: vs XLM, vs
-// fiat:USD (alias union covers crypto:X/fiat:USD), or vs an operator-declared USD peg. Withheld
-// rows lose price_usd and its change pills; raw facts (volume, supply, sparklines) stay. Verdicts
-// are cached ~60s per pair.
+// A price is allowed when any plausible backing pair (vs XLM, fiat:USD, or a declared USD peg)
+// clears the substance floor. Withheld rows lose price_usd and its change pills; raw facts stay.
+// Verdicts are cached ~60s per pair.
 //
 // Runs before fillMarketCapsFromSupply so a withheld price cannot back a market cap. A row the
 // gate could not measure (store error, deadline) is withheld too, and unmeasured lets the caller
@@ -1632,13 +1631,10 @@ var _ sep1ImagesReader = (*timescale.Store)(nil)
 // every verified issuer's cached payload.
 //
 // It is stale-while-revalidate: the caller gets the cached map immediately and a refresh runs
-// behind it on a detached context once past [sep1ImagesTTL]. A cold cache serves no logos for
-// that request. Both properties are load-bearing: an inline refresh makes one request wait for the
-// whole scan at every TTL expiry, and a cancelled scan discards its work without advancing
-// sep1ImagesAt, so the next request restarts it.
-//
-// Logos are decoration, so every failure degrades to "no logo", never an error or a wait. It
-// returns nil when no reader exposing AllSep1Images is wired.
+// behind it on a detached context once past [sep1ImagesTTL]. Inline refresh would make one request
+// wait for the whole scan at every expiry, and a cancelled scan would not advance sep1ImagesAt.
+// Logos are decoration, so every failure degrades to "no logo". It returns nil when no reader
+// exposing AllSep1Images is wired.
 func (s *Server) cachedSep1Images(ctx context.Context) map[string]string {
 	reader, ok := s.Sep1Cache.(sep1ImagesReader)
 	if !ok {
@@ -1865,14 +1861,13 @@ func normaliseAssetClass(raw string) string {
 // verified-currency catalogue: cross-chain identities (USDC the currency, GBP the fiat), distinct
 // from classic_assets' per-issuer rows.
 //
-// Rows have asset_id = slug, which /v1/assets/{slug} routes to GlobalAssetView; type = "global"
-// and no issuer / contract_id / home_domain / sep1_status (consumers discriminate wire shape on
-// that absence). market_cap_usd is filled for fiat via fxHistory; crypto and stablecoin rows have
-// no catalogue supply data, so theirs stays null.
+// Rows have asset_id = slug (routed by /v1/assets/{slug} to GlobalAssetView) and type = "global",
+// with no issuer / contract_id / home_domain / sep1_status; consumers discriminate wire shape on
+// that absence. market_cap_usd is filled for fiat via fxHistory, null otherwise (no supply data).
 //
-// The class is the query: no row filter narrows it. `filters` is taken only to name the ones the
-// caller sent in `flags.filters_ignored`, because the explorer sends them on every keystroke and
-// a 400 would break it.
+// The class is the query: no row filter narrows it. `filters` only names the ignored ones in
+// `flags.filters_ignored`, because the explorer sends them on every keystroke and a 400 would
+// break it.
 func (s *Server) handleAssetListFromCatalogue(
 	w http.ResponseWriter, r *http.Request,
 	class string, filters assetListFilters, limit int, cursor string,
@@ -2258,8 +2253,7 @@ func bigFloatFromOptionalString(s *string) *big.Float {
 //
 // A page never spans phases (mixed pages would break the single ordering predicate); a catalogue
 // tail shorter than `limit` is returned alone with a "classic:" next cursor. `filters` narrows
-// BOTH phases: the catalogue phase suppresses the classic twins of the rows it serves, so filtering
-// only the classic phase would still return rows the caller excluded.
+// BOTH phases, since the catalogue suppresses the classic twins of rows it serves.
 func (s *Server) handleAssetListUnified(
 	w http.ResponseWriter, r *http.Request,
 	filters assetListFilters, limit int, cursor string,

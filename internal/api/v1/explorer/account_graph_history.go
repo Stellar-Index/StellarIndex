@@ -21,10 +21,8 @@ import (
 // absent from the other.
 type AccountGraphHistoryView struct {
 	Account string `json:"account"`
-	// Granularity is the bucket width, always "1M". Fixed rather than a
-	// parameter: the served tier keeps two timestamps per edge, so a
-	// finer bucket would place no additional event — it would only
-	// scatter the same ones. See the reader's file comment.
+	// Granularity is the bucket width, always "1M". The served tier keeps only two timestamps per
+	// edge, so a finer bucket would place no additional event.
 	Granularity string `json:"granularity"`
 	Series      struct {
 		Created   AccountGraphHistorySeriesV `json:"created"`
@@ -41,18 +39,15 @@ type AccountGraphHistorySeriesV struct {
 	// nothing happened, outside it nothing was observed.
 	Points []AccountGraphHistoryPointV `json:"points"`
 	Totals AccountGraphHistoryTotalsV  `json:"totals"`
-	// LowerBound is true when the points cannot account for every event
-	// — i.e. `totals.events_unplaced` is non-zero. Each point's `events`
-	// is then a lower bound on that month, and `new_accounts` is exact
-	// either way.
+	// LowerBound is true when `totals.events_unplaced` is non-zero: each point's `events` is then
+	// a lower bound on that month, while `new_accounts` is exact either way.
 	LowerBound bool `json:"lower_bound"`
 	// Unplaced names what the series could not place, tallied by reason (like `excluded` on
 	// /v1/rwa/assets), so a figure that dropped rows is not passed off as the full one. Absent
 	// when nothing was refused.
 	Unplaced []AccountGraphHistoryUnplacedV `json:"unplaced,omitempty"`
-	// Coverage is the span the rollup cycle behind this arm actually
-	// aggregated (ADR-0031, data-derived — never a constant, never the
-	// tip by assumption). It is what makes an absent month readable.
+	// Coverage is the span the rollup cycle actually aggregated (ADR-0031): data-derived, never a
+	// constant or the tip by assumption. It is what makes an absent month readable.
 	Coverage AccountGraphCoverageV `json:"coverage"`
 }
 
@@ -103,10 +98,8 @@ const unplacedRepeatEventsDetail = "an edge stores first_at and last_at only, so
 	"the first and the last of a repeated relationship have no recorded month; they are counted " +
 	"here rather than spread across the interval or dropped"
 
-// accountGraphHistoryNote is served on every response. The graph
-// endpoint's note states what the figures mean; this one additionally
-// states how to read an absent month, because that is the judgment a
-// series forces and a snapshot does not.
+// accountGraphHistoryNote is served on every response. Beyond what the figures mean, it states
+// how to read an absent month, which a series forces and a snapshot does not.
 const accountGraphHistoryNote = "History, not live state: creations are immutable and sponsorship " +
 	"figures count arrangements STARTED, never arrangements in force. Buckets are calendar months " +
 	"in UTC. A month with no activity emits NO POINT — never a zero and never a carried-forward " +
@@ -161,10 +154,8 @@ func (h *Handler) AccountGraphHistory(w http.ResponseWriter, r *http.Request) {
 	h.WriteJSON(w, accountGraphHistoryView(g, hist), stale)
 }
 
-// accountGraphHistoryView renders the reader snapshot onto the wire
-// contract. Split out for the reason accountGraphView is: the shaping is
-// where the honesty rules live, and they are worth testing without an
-// HTTP round-trip.
+// accountGraphHistoryView renders the reader snapshot onto the wire contract. It is split out so
+// the honesty rules in the shaping can be tested without an HTTP round-trip.
 func accountGraphHistoryView(account string, h clickhouse.AccountGraphHistory) AccountGraphHistoryView {
 	out := AccountGraphHistoryView{
 		Account:     account,
@@ -178,9 +169,7 @@ func accountGraphHistoryView(account string, h clickhouse.AccountGraphHistory) A
 
 func historySeriesView(s clickhouse.AccountGraphHistorySide) AccountGraphHistorySeriesV {
 	v := AccountGraphHistorySeriesV{
-		// Never `null` on the wire: an account with no relationship in
-		// this direction serves an empty series, which is a readable
-		// answer, where null is a question.
+		// Never `null` on the wire: no relationship in this direction is an empty series.
 		Points:   make([]AccountGraphHistoryPointV, 0, len(s.Points)),
 		Coverage: coverageView(s.Coverage),
 	}
@@ -191,10 +180,8 @@ func historySeriesView(s clickhouse.AccountGraphHistorySide) AccountGraphHistory
 		EventsUnplaced: s.EventsUnplaced,
 	}
 	for _, p := range s.Points {
-		// A bucket that survived the group-by with nothing in it would
-		// be a zero wearing a measurement's clothes. Drop it rather than
-		// serve it; the coverage span is what makes its absence
-		// readable.
+		// An empty bucket would be a zero posing as a measurement; drop it, since the coverage
+		// span makes its absence readable.
 		if p.NewAccounts == 0 && p.Events == 0 {
 			continue
 		}

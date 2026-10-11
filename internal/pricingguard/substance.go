@@ -1,19 +1,16 @@
 // Substance gate: the serving-side thin-market floor.
 //
 // The trailing-baseline guard in guard.go is blind to a market whose ENTIRE history is
-// attacker-authored: anyone can mint a token and seed a "market" with dust trades, and the
-// baseline is then consistent with the lie. This gate refuses to serve an AGGREGATED price claim
-// for an on-chain pair whose trailing activity is below an operator-set floor (USD volume,
-// distinct 1-minute buckets, wall-clock span). Raw surfaces (/v1/ohlc, /v1/observations,
-// /v1/history) stay visible, per the ADR-0018 surface model.
+// attacker-authored: anyone can mint a token and seed a "market" with dust trades. This gate
+// refuses an AGGREGATED price claim for an on-chain pair whose trailing activity is below an
+// operator-set floor (USD volume, distinct 1-minute buckets, wall-clock span). Raw surfaces
+// (/v1/ohlc, /v1/observations, /v1/history) stay visible (ADR-0018).
 //
-// Fail postures are deliberately asymmetric: below floor -> withhold (fail-closed); the
-// substance query ERRORS -> serve (fail-open), so a DB blip cannot 404 the whole price surface
-// (same as guard.go).
+// Fail postures are asymmetric: below floor withholds (fail-closed); a substance query ERROR
+// serves (fail-open), so a DB blip cannot 404 the price surface.
 //
-// Pairs with no on-chain leg (fiat/fiat, CEX crypto:/fiat: tickers) are exempt: their trades
-// come from vendor APIs, so mint-and-dust does not apply and the floors would only blackout
-// legitimate synthetic pairs.
+// Pairs with no on-chain leg (fiat/fiat, CEX tickers) are exempt: their trades come from vendor
+// APIs, so mint-and-dust does not apply and the floors would only blackout synthetic pairs.
 package pricingguard
 
 import (
@@ -54,29 +51,23 @@ type SubstanceStore interface {
 
 var _ SubstanceStore = (*timescale.Store)(nil)
 
-// SubstancePolicy is the serve floor. Zero-valued fields are replaced by the defaults below at
-// gate construction; the binaries map config.PricingGuardConfig onto this at the boundary (this
-// package must stay config-free, as for the freeze thresholds).
+// SubstancePolicy is the serve floor. Zero-valued fields take the defaults below; binaries map
+// config.PricingGuardConfig onto this (this package stays config-free).
 type SubstancePolicy struct {
-	// MinVolumeUSD is the minimum trailing-window USD volume (exact-rational compare,
-	// ADR-0003). Default $1,000: far above dust-seeding volumes, while low enough that
-	// genuinely-traded small classic assets clear it.
+	// MinVolumeUSD is the minimum trailing-window USD volume (exact-rational compare, ADR-0003).
+	// Default $1,000: above dust-seeding volumes, low enough for genuinely-traded small assets.
 	MinVolumeUSD *big.Rat
-	// MinBuckets is the minimum number of distinct closed 1-minute buckets with at least one
-	// trade in the window. Default 20: a single-burst wash session produces few buckets
-	// however large it is.
+	// MinBuckets is the minimum count of distinct closed 1-minute buckets with a trade. Default
+	// 20: a single-burst wash session produces few buckets however large it is.
 	MinBuckets int64
-	// MinSpan is the minimum wall-clock spread (max bucket - min bucket). Default 6h: a market
-	// must have existed at more than one point in time for its price to be publishable, which
-	// forces an attacker to sustain a consistent fake market for hours under the
-	// trailing-baseline guard, not minutes.
+	// MinSpan is the minimum wall-clock spread (max bucket - min bucket). Default 6h: it forces an
+	// attacker to sustain a consistent fake market for hours, not minutes.
 	MinSpan time.Duration
 	// Window is the trailing measurement window. Default 24h.
 	Window time.Duration
 }
 
-// Default substance floors. See the field comments on [SubstancePolicy]
-// for the rationale behind each number.
+// Default substance floors; rationale is on the [SubstancePolicy] fields.
 const (
 	DefaultSubstanceMinVolumeUSD = 1000
 	DefaultSubstanceMinBuckets   = 20
@@ -101,10 +92,8 @@ func (p SubstancePolicy) withDefaults() SubstancePolicy {
 	return p
 }
 
-// SubstancePolicyFromValues maps the raw [pricing_guard] config values onto a policy, shared by
-// every binary so the conversion can't drift between them. Zero values keep the package
-// defaults; a NaN/Inf volume (SetFloat64 returns nil) and a span/window too large for
-// time.Duration also fall back to the default floor, never zero or a wrapped negative.
+// SubstancePolicyFromValues maps raw [pricing_guard] config values onto a policy. Zero, a NaN/Inf
+// volume and an overflowing span/window all fall back to the defaults, never zero or negative.
 func SubstancePolicyFromValues(minVolumeUSD float64, minBuckets, minSpanMinutes, windowHours int) SubstancePolicy {
 	pol := SubstancePolicy{
 		MinBuckets: int64(minBuckets),
@@ -117,8 +106,7 @@ func SubstancePolicyFromValues(minVolumeUSD float64, minBuckets, minSpanMinutes,
 	return pol
 }
 
-// durationOrZero is n*unit, or 0 (the "use the default" value) when the
-// product overflows time.Duration — a wrapped window would fail the gate open.
+// durationOrZero is n*unit, or 0 (use the default) on overflow; a wrapped window would fail open.
 func durationOrZero(n int, unit time.Duration) time.Duration {
 	if int64(n) > math.MaxInt64/int64(unit) || int64(n) < math.MinInt64/int64(unit) {
 		return 0
@@ -126,15 +114,12 @@ func durationOrZero(n int, unit time.Duration) time.Duration {
 	return time.Duration(n) * unit
 }
 
-// substanceCacheTTL bounds how stale a cached verdict may be. 60s keeps
-// the gate at ~1 substance query per pair per minute regardless of
-// request rate, while a pair crossing the floor flips within a minute.
+// substanceCacheTTL caps verdict staleness: ~1 substance query per pair per minute regardless of
+// request rate, and a pair crossing the floor flips within a minute.
 const substanceCacheTTL = 60 * time.Second
 
-// substanceCacheMax bounds the verdict cache. Stellar has tens of
-// thousands of assets; 8192 pairs is far above any realistic hot set.
-// On overflow the whole map is dropped (crude, but bounded and simple —
-// the cost of a reset is one substance query per hot pair).
+// substanceCacheMax bounds the verdict cache, far above any realistic hot set. Overflow drops the
+// whole map; a reset costs one substance query per hot pair.
 const substanceCacheMax = 8192
 
 type substanceVerdict struct {
@@ -151,10 +136,8 @@ func (e substanceVerdict) verdict() SubstanceVerdict {
 	return SubstanceVerdict{Allowed: e.allowed, Measured: true, Floor: e.floor, Evidence: &ev}
 }
 
-// SubstanceEvidence is the measurement a substance verdict was reached
-// on: the market measured (the alias union of Base and Quote), its
-// figures, and the policy they were held to. It lives in the same cache
-// entry as the verdict, so the two cannot disagree.
+// SubstanceEvidence is the measurement a verdict was reached on (the alias union of Base and
+// Quote, its figures, the policy applied). It shares the verdict's cache entry, so they agree.
 type SubstanceEvidence struct {
 	Base, Quote canonical.Asset
 	// Window is the trailing measurement window (Policy.Window).
@@ -174,10 +157,9 @@ type SubstanceEvidence struct {
 	Floor  SubstanceFloor
 }
 
-// SubstanceVerdict is one pair's substance answer with its evidence.
-// Measured=false means no verdict was reached (store error or deadline):
-// Allowed is then false and Evidence nil. A nil gate and an ungated pair
-// are Allowed and Measured with nil Evidence, because nothing was measured.
+// SubstanceVerdict is one pair's substance answer with its evidence. Measured=false means no
+// verdict (store error or deadline): Allowed is false and Evidence nil. A nil gate and an ungated
+// pair are Allowed and Measured with nil Evidence.
 type SubstanceVerdict struct {
 	Allowed  bool
 	Measured bool
@@ -185,9 +167,8 @@ type SubstanceVerdict struct {
 	Evidence *SubstanceEvidence
 }
 
-// SubstanceGate is the serving-side thin-market gate. Construct with
-// [NewSubstanceGate]; a nil *SubstanceGate is a valid no-op gate that
-// allows everything (so callers don't need their own nil checks).
+// SubstanceGate is the serving-side thin-market gate. Build with [NewSubstanceGate]; a nil
+// *SubstanceGate is a valid no-op gate that allows everything.
 type SubstanceGate struct {
 	store  SubstanceStore
 	policy SubstancePolicy
@@ -202,18 +183,14 @@ type SubstanceGate struct {
 	atCache map[string]substanceVerdict
 }
 
-// SubstanceGateOptions configures [NewSubstanceGate]. Zero-valued
-// policy fields fall back to the package defaults; a nil Logger
-// disables warn logging (decisions are unaffected).
+// SubstanceGateOptions configures [NewSubstanceGate]; a nil Logger disables logging only.
 type SubstanceGateOptions struct {
 	Policy SubstancePolicy
 	Logger *slog.Logger
 }
 
-// Policy returns the resolved (defaults-applied) policy this gate
-// serves against, for a caller that needs to derive a RELATED policy
-// from the same operator-configured floor rather than duplicating the
-// [DefaultSubstance*] constants.
+// Policy returns the resolved (defaults-applied) policy, for deriving a RELATED policy from the
+// same operator-configured floor.
 func (g *SubstanceGate) Policy() SubstancePolicy {
 	if g == nil {
 		return SubstancePolicy{}.withDefaults()
@@ -221,9 +198,8 @@ func (g *SubstanceGate) Policy() SubstancePolicy {
 	return g.policy
 }
 
-// NewSubstanceGate builds a gate over the store and logs the floors it
-// enforces, defaults resolved: an unset key runs at a value no config
-// file shows.
+// NewSubstanceGate builds a gate and logs the floors it enforces, defaults resolved, since an
+// unset key runs at a value no config file shows.
 func NewSubstanceGate(store SubstanceStore, opts SubstanceGateOptions) *SubstanceGate {
 	g := &SubstanceGate{
 		store:   store,
@@ -240,10 +216,8 @@ func NewSubstanceGate(store SubstanceStore, opts SubstanceGateOptions) *Substanc
 	return g
 }
 
-// SubstanceGated reports whether the pair is in scope for the gate: at least one leg is an
-// on-chain asset class (native / classic / soroban), a leg anyone can author trades for on a
-// permissionless market. Off-chain synthetic pairs (fiat:EUR/fiat:USD, crypto:BTC/fiat:USD)
-// are out of scope. Exported for the pure decision tests.
+// SubstanceGated reports whether the pair is in scope: at least one leg is on-chain (native /
+// classic / soroban), which anyone can author trades for. Off-chain synthetic pairs are out.
 func SubstanceGated(base, quote canonical.Asset) bool {
 	onChain := func(a canonical.Asset) bool {
 		switch a.Type {
@@ -256,9 +230,8 @@ func SubstanceGated(base, quote canonical.Asset) bool {
 	return onChain(base) || onChain(quote)
 }
 
-// SubstanceVerdicter is the per-pair verdict seam [AssetSubstanceVerdict]
-// folds over; *SubstanceGate satisfies it. Probe is uncounted, so the
-// asset-level decision can count once however many quotes it tries.
+// SubstanceVerdicter is the per-pair seam [AssetSubstanceVerdict] folds over. Probe is uncounted,
+// so the asset-level decision counts once however many quotes it tries.
 type SubstanceVerdicter interface {
 	Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor SubstanceFloor)
 }
@@ -272,17 +245,13 @@ var fiatUSD = func() canonical.Asset {
 	return a
 }()
 
-// AssetSubstanceVerdict is the substance gate's answer for a single asset's USD price rather
-// than one pair. The backing quotes are XLM, fiat:USD (the alias union covers the CEX series)
-// and each operator-declared USD peg in usdPegs; the degenerate identity pair is skipped.
-// Allowed when the asset is out of scope (no on-chain identity), is native (definitionally
-// liquid; its identity pairs degenerate under the alias union), or when ANY backing quote
-// clears the floor. measured is false when no quote cleared and at least one could not be
-// measured. The /v1/assets listing and the priceless-popular tripwire both ask this, so
-// "withheld" means one thing on the surface and on the alert. A nil gate allows.
+// AssetSubstanceVerdict is the gate's answer for one asset's USD price rather than one pair. The
+// backing quotes are XLM, fiat:USD and each USD peg in usdPegs; the identity pair is skipped.
+// Allowed when the asset is out of scope, is native (definitionally liquid), or ANY quote clears
+// the floor. measured is false when none cleared and at least one could not be measured. A nil
+// gate allows.
 //
-// The quotes are probes of ONE decision, so the withheld/unmeasured metrics count the asset
-// once under `surface`, not once per quote.
+// The quotes are probes of ONE decision, so the metrics count the asset once under `surface`.
 func AssetSubstanceVerdict(
 	ctx context.Context, gate SubstanceVerdicter, asset canonical.Asset,
 	usdPegs []canonical.Asset, surface string,
@@ -294,10 +263,9 @@ func AssetSubstanceVerdict(
 	return allowed, measured
 }
 
-// AssetSubstanceVerdictThinServed is [AssetSubstanceVerdict] for a caller that serves a
-// measured-thin asset flagged under the include_thin opt-in. An unmeasured verdict counts as
-// usual; a thin one counts nothing here, because whether the row is finally served thin is
-// known only after later overlays, and the caller counts it then.
+// AssetSubstanceVerdictThinServed is [AssetSubstanceVerdict] for include_thin callers. A thin
+// verdict is not counted here: whether the row is finally served thin is known only after later
+// overlays, and the caller counts it then.
 func AssetSubstanceVerdictThinServed(
 	ctx context.Context, gate SubstanceVerdicter, asset canonical.Asset,
 	usdPegs []canonical.Asset, surface string,
@@ -341,10 +309,9 @@ func assetSubstance(
 	return false, measured, floor
 }
 
-// SubstanceFloor names the floor a withheld market failed; it is the
-// `floor` label on obs.PriceServeSubstanceWithheldTotal. The floors are
-// checked in the order below, so a market that fails on volume cleared
-// both persistence floors.
+// SubstanceFloor names the floor a withheld market failed (the `floor` label on
+// obs.PriceServeSubstanceWithheldTotal). Floors are checked in the order below, so a volume
+// failure cleared both persistence floors.
 type SubstanceFloor string
 
 const (
@@ -354,14 +321,12 @@ const (
 	FloorBuckets SubstanceFloor = "buckets"
 	// FloorSpan: the active buckets span too little wall-clock.
 	FloorSpan SubstanceFloor = "span"
-	// FloorVolume: USD volume below the floor, measured over a market
-	// most of whose active buckets carried a USD valuation.
+	// FloorVolume: USD volume below the floor over a mostly USD-valued market.
 	FloorVolume SubstanceFloor = "volume"
-	// FloorVolumeUnvalued: USD volume below the floor AND fewer than half the active buckets
-	// carried a USD valuation (a SEP-41/SEP-41 pair, or an XLM anchor outage), so the dollar
-	// floor failed for want of a dollar figure rather than on evidence of thinness. Still
-	// withheld: an unvaluable market's volume cannot be verified, and waiving the floor would
-	// admit exactly the self-minted pair the gate exists for.
+	// FloorVolumeUnvalued: volume below the floor AND under half the active buckets carried a USD
+	// valuation (a SEP-41/SEP-41 pair, or an XLM anchor outage). Still withheld: an unvaluable
+	// market's volume cannot be verified, and waiving the floor would admit exactly the
+	// self-minted pair the gate exists for.
 	FloorVolumeUnvalued SubstanceFloor = "volume_unvalued"
 )
 
@@ -370,8 +335,7 @@ var floorRank = map[SubstanceFloor]int{
 	FloorNone: 0, FloorBuckets: 1, FloorSpan: 2, FloorVolume: 3, FloorVolumeUnvalued: 4,
 }
 
-// furthestFloor is the floor of whichever of two refused quotes got
-// further — the asset's best market names why the asset was withheld.
+// furthestFloor picks the floor of the refused quote that got further; the best market names why.
 func furthestFloor(a, b SubstanceFloor) SubstanceFloor {
 	if floorRank[b] > floorRank[a] {
 		return b
@@ -379,8 +343,7 @@ func furthestFloor(a, b SubstanceFloor) SubstanceFloor {
 	return a
 }
 
-// countVerdict records one gate decision on the withheld/unmeasured
-// metrics; an allowed decision is not counted.
+// countVerdict records a withheld/unmeasured decision; an allowed one is not counted.
 func countVerdict(surface string, allowed, measured bool, floor SubstanceFloor) {
 	switch {
 	case !measured:
@@ -397,9 +360,8 @@ func SubstanceOK(volumeUSD *big.Rat, buckets, spanSeconds int64, policy Substanc
 	return FailedFloor(volumeUSD, buckets, buckets, spanSeconds, policy) == FloorNone
 }
 
-// FailedFloor is [SubstanceOK] naming the first floor the measurement
-// fails, or [FloorNone]. valuedBuckets (active buckets carrying a USD
-// valuation) only labels a volume failure; it never changes the verdict.
+// FailedFloor is [SubstanceOK] naming the first failed floor, or [FloorNone]. valuedBuckets only
+// labels a volume failure; it never changes the verdict.
 func FailedFloor(volumeUSD *big.Rat, buckets, valuedBuckets, spanSeconds int64, policy SubstancePolicy) SubstanceFloor {
 	if volumeUSD == nil {
 		volumeUSD = new(big.Rat)
@@ -422,45 +384,38 @@ func FailedFloor(volumeUSD *big.Rat, buckets, valuedBuckets, spanSeconds int64, 
 // labels the withheld metric (obs.PriceServeSubstanceWithheldTotal) so operators can see WHICH
 // serving path is withholding: a low-cardinality constant, never a pair string.
 //
-// The measurement is the ALIAS UNION of the pair: XLM's three canonical spellings (native /
-// crypto:XLM / the SAC) hold disjoint venue populations, and the pair's real market is their
-// union; volumes add, and a minute active under two spellings is one bucket. Without the
-// union, /v1/price?asset=native&quote=fiat:USD would measure only the literal native/fiat:USD
-// pair (zero rows by construction) and withhold XLM itself.
+// The measurement is the ALIAS UNION of the pair: XLM's three spellings (native / crypto:XLM / the
+// SAC) hold disjoint venue populations; volumes add, and a minute active under two spellings is
+// one bucket. Without it, native/fiat:USD would measure zero rows and withhold XLM itself.
 //
-// Verdicts are cached for [substanceCacheTTL] per direction-insensitive pair key.
-// Nil-receiver safe: a nil gate allows everything.
+// Verdicts are cached for [substanceCacheTTL] per direction-insensitive pair key. A nil gate
+// allows everything.
 //
-// Allowed FAILS OPEN when the pair could not be measured, so a store blip does not 404 a price
-// lookup. A surface that must not publish an unverified claim (listings, market caps, ADR-0018)
-// asks [SubstanceGate.Verdict].
+// Allowed FAILS OPEN when the pair could not be measured. A surface that must not publish an
+// unverified claim (listings, market caps, ADR-0018) asks [SubstanceGate.Verdict].
 func (g *SubstanceGate) Allowed(ctx context.Context, base, quote canonical.Asset, surface string) bool {
 	allowed, measured := g.Verdict(ctx, base, quote, surface)
 	return allowed || !measured
 }
 
-// Verdict is [SubstanceGate.Allowed] without the fail-open: measured is false when a store
-// error or the request deadline prevented a verdict, and then allowed is false too, so the
-// caller decides what an unmeasured pair means on its surface. Every unmeasured verdict is
-// counted in obs.PriceServeSubstanceUnmeasuredTotal. A nil gate and an out-of-scope pair are
-// measured-and-allowed.
+// Verdict is [SubstanceGate.Allowed] without the fail-open: measured is false (and allowed false)
+// when a store error or deadline prevented a verdict, so the caller decides what that means on
+// its surface. Unmeasured verdicts count in obs.PriceServeSubstanceUnmeasuredTotal.
 func (g *SubstanceGate) Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool) {
 	allowed, measured, floor := g.Probe(ctx, base, quote)
 	countVerdict(surface, allowed, measured, floor)
 	return allowed, measured
 }
 
-// Probe is [SubstanceGate.Verdict] without the metrics, also naming the
-// floor a withheld pair failed. It is for a caller that folds several
-// pairs into one decision and counts that decision itself.
+// Probe is [SubstanceGate.Verdict] without the metrics, also naming the failed floor, for a
+// caller that folds several pairs into one decision and counts it itself.
 func (g *SubstanceGate) Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor SubstanceFloor) {
 	v := g.Measure(ctx, base, quote)
 	return v.Allowed, v.Measured, v.Floor
 }
 
-// Measure is the live verdict with the evidence behind it, uncounted:
-// whoever decides from it counts the decision. Allowed, Verdict and Probe
-// are projections of it, so every live read shares one cache entry.
+// Measure is the live verdict with its evidence, uncounted. Allowed, Verdict and Probe project
+// it, so every live read shares one cache entry.
 func (g *SubstanceGate) Measure(ctx context.Context, base, quote canonical.Asset) SubstanceVerdict {
 	if g == nil || !SubstanceGated(base, quote) {
 		return SubstanceVerdict{Allowed: true, Measured: true}
@@ -494,10 +449,9 @@ func (g *SubstanceGate) Measure(ctx context.Context, base, quote canonical.Asset
 	return entry.verdict()
 }
 
-// logTransition logs a pair's verdict on TRANSITIONS only — first
-// observation, or a flip. Logging the steady state (hundreds of thin
-// long-tail pairs re-measured every TTL expiry) produced 6,000 WARNs/hour on
-// r1; the metric is the volume signal, the log is the change signal.
+// logTransition logs a verdict on TRANSITIONS only (first observation, or a flip): the steady
+// state of hundreds of thin pairs re-measured every TTL is too noisy. The metric is the volume
+// signal, the log the change signal.
 func (g *SubstanceGate) logTransition(base, quote canonical.Asset, allowed bool, floor SubstanceFloor, hadPrior, priorAllowed bool) {
 	if g.logger == nil {
 		return
@@ -511,11 +465,10 @@ func (g *SubstanceGate) logTransition(base, quote canonical.Asset, allowed bool,
 	}
 }
 
-// measureUnion is the alias-union measurement shared by the live and point-in-time gates:
-// `read` measures every spelling of base against every spelling of quote as ONE market, held to
-// `policy`. One read, not a per-spelling fold: XLM's SDEX and CEX legs trade in the same
-// minutes, so summing per-spelling bucket counts would count a shared minute repeatedly.
-// measured=false means an infrastructure error prevented a verdict; the entry's expiry is unset.
+// measureUnion is the alias-union measurement shared by the live and point-in-time gates: `read`
+// measures all spellings of base against all of quote as ONE market. One read, not a per-spelling
+// fold, since legs trading in the same minutes would be counted repeatedly. measured=false means
+// an infrastructure error; the entry's expiry is unset.
 func (g *SubstanceGate) measureUnion(
 	ctx context.Context, base, quote canonical.Asset, policy SubstancePolicy, measuredAt, windowEnd time.Time,
 	read func(ctx context.Context, bases, quotes []canonical.Asset) (timescale.MarketSubstance, error),
@@ -546,15 +499,13 @@ func (g *SubstanceGate) measureUnion(
 	}, true
 }
 
-// hourGrainPolicy is the floor a market is held to when its legs are counted at HOUR grain (a
-// historical instant, see [SubstanceGate.AllowedAt]): the strictest floor that never refuses a
-// market the minute-grain policy p admits, so history and live agree under every legal policy.
+// hourGrainPolicy is the floor for legs counted at HOUR grain (a historical instant, see
+// [SubstanceGate.AllowedAt]): the strictest floor that never refuses a market the minute-grain
+// policy p admits, so history and live agree under every legal policy.
 //
-// Buckets: n distinct minutes fill at least ceil(n/60) hours, and a minute span of an hour or
-// more puts the first and last minute in two different hours; both bounds are reachable. Span:
-// two minutes S apart sit at least floor(S/1h) whole hours apart, exactly that when the first
-// is on the hour. At the defaults (20 buckets, 6h) this is two hour buckets over six hours.
-// Volume is grain-independent and carries over.
+// Buckets: n distinct minutes fill at least ceil(n/60) hours, and a span of an hour or more
+// puts the first and last minute in different hours. Span: minutes S apart sit at least
+// floor(S/1h) whole hours apart. Volume is grain-independent.
 func hourGrainPolicy(p SubstancePolicy) SubstancePolicy {
 	const minutesPerHour = int64(time.Hour / time.Minute)
 	h := p
@@ -569,14 +520,11 @@ func hourGrainPolicy(p SubstancePolicy) SubstancePolicy {
 // policyAt returns the grain a point-in-time measurement is counted at and the floor that grain
 // is held to, for an instant `age` behind now.
 //
-// The boundary is the point-in-time READER's own ([timescale.PriceAtMinuteRungMaxAge]): inside
-// it the served number can be a raw prices_1m bucket, the attacker-authorable minute this gate
-// exists for, so the measurement is the live gate's, grain and floor, with only the window
-// moved. prices_1m's reach through history is a deployment setting (its retention policy ships
-// disarmed), but 48h + one window is inside every retention the schema has carried. Past the
-// boundary the reader serves hour and day bars, so the legs are counted on prices_1h, which is
-// indefinite by design and re-materialised by the backfill tool in the same pass as the
-// prices_1d bars the reader serves from.
+// The boundary is the point-in-time READER's own ([timescale.PriceAtMinuteRungMaxAge]): inside it
+// the served number can be a raw prices_1m bucket, the attacker-authorable minute this gate is
+// for, so the live grain and floor apply with only the window moved. 48h + one window is inside
+// every prices_1m retention the schema has carried. Past it the reader serves hour and day bars,
+// so legs are counted on prices_1h, which is indefinite and re-materialised with prices_1d.
 func (g *SubstanceGate) policyAt(age time.Duration) (timescale.HistoryGranularity, SubstancePolicy) {
 	if age <= timescale.PriceAtMinuteRungMaxAge {
 		return timescale.Granularity1m, g.policy
@@ -588,24 +536,21 @@ func (g *SubstanceGate) policyAt(age time.Duration) (timescale.HistoryGranularit
 // served: the point-in-time form of [SubstanceGate.Allowed], for /v1/price/at and each
 // /v1/price/changes horizon.
 //
-// Allowed would be wrong in both directions: a trailing window ending NOW would withhold history
-// of a market that was honest at `at` but is dormant today, and would pass a market that is
-// thick today but was attacker-seeded dust at `at`. So substance is measured over
-// [policy.Window] ending at `at`, closed buckets only, alias union as for the live gate (see
-// [SubstanceGate.policyAt]).
+// Allowed would be wrong both ways: a window ending NOW would withhold history of a market honest
+// at `at` but dormant today, and pass one thick today but attacker-seeded dust at `at`. So
+// substance is measured over [policy.Window] ending at `at`, closed buckets only, alias union as
+// live (see [SubstanceGate.policyAt]).
 //
-// A future `at` is measured as of now. Fail postures match the live gate (below floor withholds;
-// error serves, uncached). Verdicts are cached per (pair, grain, truncated instant) for
-// [substanceCacheTTL]. Withheld verdicts count on the metric under `surface` but are not logged:
-// the transition log describes a pair's present. Nil-receiver safe: a nil gate allows everything.
+// A future `at` is measured as of now. Fail postures match the live gate. Verdicts are cached per
+// (pair, grain, truncated instant) for [substanceCacheTTL]; withheld ones are counted under
+// `surface` but not logged, since the transition log describes a pair's present.
 func (g *SubstanceGate) AllowedAt(ctx context.Context, base, quote canonical.Asset, at time.Time, surface string) bool {
 	v := g.MeasureAt(ctx, base, quote, at)
 	countVerdict(surface, v.Allowed, v.Measured, v.Floor)
 	return v.Allowed || !v.Measured
 }
 
-// MeasureAt is [SubstanceGate.AllowedAt]'s verdict with its evidence,
-// uncounted.
+// MeasureAt is [SubstanceGate.AllowedAt]'s verdict with its evidence, uncounted.
 func (g *SubstanceGate) MeasureAt(ctx context.Context, base, quote canonical.Asset, at time.Time) SubstanceVerdict {
 	if g == nil || !SubstanceGated(base, quote) {
 		return SubstanceVerdict{Allowed: true, Measured: true}
@@ -616,9 +561,7 @@ func (g *SubstanceGate) MeasureAt(ctx context.Context, base, quote canonical.Ass
 		asOf = now.UTC()
 	}
 	grain, policy := g.policyAt(now.Sub(asOf))
-	// Truncating to the grain changes no verdict's upper edge (a bucket
-	// closed at the truncated instant iff it closed at the raw one) and
-	// makes the window a whole number of buckets and the key shareable.
+	// Truncating changes no verdict's upper edge, makes the window whole buckets and the key shareable.
 	asOf = asOf.Truncate(grain.BucketDuration())
 	key := pairCacheKey(base, quote) + "\x00" + string(grain) + "\x00" + strconv.FormatInt(asOf.Unix(), 10)
 
@@ -653,8 +596,7 @@ func (g *SubstanceGate) clock() time.Time {
 	return time.Now()
 }
 
-// pairCacheKey is direction-insensitive: (A,B) and (B,A) share a
-// verdict, matching the both-directions measurement.
+// pairCacheKey is direction-insensitive: (A,B) and (B,A) share a verdict.
 func pairCacheKey(base, quote canonical.Asset) string {
 	b, q := base.String(), quote.String()
 	if b > q {

@@ -20,34 +20,23 @@ type SEP41SupplyComponents struct {
 	// BurnTotal is Σ burn.amount over the contract's lifetime.
 	BurnTotal *big.Int
 
-	// ClawbackTotal is Σ clawback.amount over the contract's
-	// lifetime. Distinct from BurnTotal even though both reduce
-	// total — operators want to see them separately for
-	// compliance / forensic dashboards.
+	// ClawbackTotal is Σ clawback.amount over the contract's lifetime, kept apart from BurnTotal
+	// for compliance dashboards.
 	ClawbackTotal *big.Int
 
-	// AdminBalance is the token's admin account/contract balance
-	// as observed at this ledger. The default locked-set member
-	// per Algorithm 3; subtracted from circulating without operator
-	// configuration.
+	// AdminBalance is the admin account/contract balance at this ledger, the default locked-set
+	// member subtracted from circulating without operator configuration.
 	AdminBalance *big.Int
 
-	// LockedAccountBalances is Σ token-balance across the
-	// per-asset locked-set Accounts configured in
-	// [Policy.PerAsset]. Returned by the reader so the computer
-	// doesn't need a separate per-account query path.
+	// LockedAccountBalances is Σ balance across the [Policy.PerAsset] locked Accounts, summed by
+	// the reader so the computer needs no per-account query path.
 	LockedAccountBalances *big.Int
 
-	// LockedContractBalances is Σ token-balance across the
-	// per-asset locked-set Contracts configured in
-	// [Policy.PerAsset]. Same single-query rationale as
-	// LockedAccountBalances.
+	// LockedContractBalances is the same sum across the locked Contracts.
 	LockedContractBalances *big.Int
 
-	// MinComponentLedger is the lowest ledger any contributing
-	// observation was last updated at. Threaded into Supply for
-	// the refresher freshness
-	// gate. Zero = "reader didn't populate" — the gate skips.
+	// MinComponentLedger is the lowest ledger any contributing observation was last updated at,
+	// threaded into Supply for the refresher freshness gate. Zero means unpopulated: the gate skips.
 	MinComponentLedger uint32
 
 	// GenesisBaselineSeeded reports whether a pre-Soroban genesis baseline is seeded (migration
@@ -80,32 +69,27 @@ func NewSEP41Computer(policy Policy, reader SEP41SupplyReader) (*SEP41Computer, 
 	return &SEP41Computer{policy: policy, reader: reader}, nil
 }
 
-// ErrNotSoroban is returned by [SEP41Computer.Compute] when the
-// supplied asset isn't a [canonical.AssetSoroban]. Routing bug
-// safety net.
+// ErrNotSoroban is returned by [SEP41Computer.Compute] for a non-Soroban asset (routing safety net).
 var ErrNotSoroban = errors.New("supply: asset is not a SEP-41 Soroban token")
 
 // ErrNegativeTotalSupply is returned when Mint - Burn - Clawback is negative AND the genesis
-// baseline HAS been seeded. That is physically impossible, so the running totals mis-summed
-// upstream; surface it (the refresher maps it to the paging `compute_error`) rather than emit a
-// negative supply.
+// baseline is seeded. That is impossible, so the totals mis-summed upstream; the refresher maps
+// it to the paging `compute_error` rather than emit a negative supply.
 var ErrNegativeTotalSupply = errors.New("supply: SEP-41 mint − burn − clawback went negative")
 
 // ErrNegativeTotalMissingBaseline is returned when the total is negative and the genesis baseline
-// is NOT seeded (migration 0088): a pre-Soroban SAC wrapper legitimately reads sum(burn) >
-// sum(mint) until `stellarindex-ops supply seed-sep41-genesis` runs. Not corruption; the
-// refresher maps it to the benign `missing_baseline` outcome.
+// is NOT seeded: a pre-Soroban SAC wrapper legitimately reads sum(burn) > sum(mint) until
+// `stellarindex-ops supply seed-sep41-genesis` runs. Benign `missing_baseline`, not corruption.
 var ErrNegativeTotalMissingBaseline = errors.New("supply: SEP-41 total negative and pre-Soroban genesis baseline not seeded — run `stellarindex-ops supply seed-sep41-genesis`")
 
-// ErrGenesisBaselineNotSeeded is returned for a classic asset's SAC wrapper with no seeded
-// pre-Soroban baseline, whatever the sign: the Soroban-era-only sum omits pre-Soroban mints and
-// burns and would misstate lifetime supply. Benign like [ErrNegativeTotalMissingBaseline]
-// (`missing_baseline`).
+// ErrGenesisBaselineNotSeeded is returned for a classic asset's SAC wrapper with no seeded baseline,
+// whatever the sign: the Soroban-era-only sum omits earlier mints and burns. Benign (`missing_baseline`).
 var ErrGenesisBaselineNotSeeded = errors.New("supply: SEP-41 SAC wrapper's pre-Soroban genesis baseline not seeded — run `stellarindex-ops supply seed-sep41-genesis`")
 
 // Compute returns the [Supply] for a SEP-41 token (Algorithm 3): total = Mint - Burn - Clawback;
-// circulating = total - AdminBalance - locked-set balances; max is the Policy override or nil. Basis is
-// BasisOverride, else BasisAdminExclusion only if a non-zero AdminBalance was subtracted, else BasisSEP41TotalOnly.
+// circulating = total - AdminBalance - locked-set balances; max is the Policy override or nil.
+// Basis is BasisOverride, else BasisAdminExclusion only if a non-zero AdminBalance was subtracted,
+// else BasisSEP41TotalOnly.
 func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledger uint32, observedAt time.Time) (Supply, error) {
 	if asset.Type != canonical.AssetSoroban {
 		return Supply{}, fmt.Errorf("%w: got type %q", ErrNotSoroban, asset.Type)
@@ -132,9 +116,8 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 	total.Sub(total, comps.ClawbackTotal)
 
 	if total.Sign() < 0 {
-		// A negative Soroban-era-only total with no seeded baseline is EXPECTED (benign
-		// `missing_baseline`); a negative total with the baseline seeded is a genuine inconsistency
-		// (`compute_error`, pages). See migration 0088.
+		// Negative with no seeded baseline is expected (`missing_baseline`); with the baseline
+		// seeded it is a real inconsistency (`compute_error`, pages).
 		sentinel := ErrNegativeTotalSupply
 		if !comps.GenesisBaselineSeeded {
 			sentinel = ErrNegativeTotalMissingBaseline
@@ -144,8 +127,7 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 			comps.MintTotal, comps.BurnTotal, comps.ClawbackTotal,
 			key, ledger)
 	}
-	// A native SEP-41 token has no pre-Soroban history and native XLM has no
-	// issuer mints; only a classic credit asset's SAC needs the seeded baseline.
+	// Only a classic credit asset's SAC has pre-Soroban history that needs the seeded baseline.
 	if wraps := canonical.CanonicalAsset(asset); !comps.GenesisBaselineSeeded && wraps.Type == canonical.AssetClassic {
 		return Supply{}, fmt.Errorf("%w: %s wraps %s at ledger %d",
 			ErrGenesisBaselineNotSeeded, key, wraps, ledger)
@@ -156,9 +138,8 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 	circulating.Sub(circulating, comps.AdminBalance)
 	circulating.Sub(circulating, comps.LockedAccountBalances)
 	circulating.Sub(circulating, comps.LockedContractBalances)
-	// Clamp at zero. A locked-set exceeding total (operator
-	// misconfig, or a locked-holder snapshot fresher than total's) would
-	// otherwise publish a negative circulating supply → negative market cap.
+	// Clamp at zero: a locked set exceeding total (misconfig, or a fresher locked snapshot) would
+	// otherwise publish a negative circulating supply and market cap.
 	if circulating.Sign() < 0 {
 		circulating.SetInt64(0)
 	}
@@ -178,10 +159,9 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 		basis = BasisOverride
 	}
 
-	// As in xlm.go: claim an admin exclusion only when one happened. Here the only possible
-	// subtraction is AdminBalance, which [StorageSEP41SupplyReader] hardcodes to zero (set_admin is
-	// untracked), so "admin_exclusion" would tell consumers the admin's holdings were netted out
-	// and overstate circulating supply and market cap.
+	// Claim an admin exclusion only when one happened: [StorageSEP41SupplyReader] hardcodes
+	// AdminBalance to zero (set_admin is untracked), so "admin_exclusion" would falsely say the
+	// admin's holdings were netted out.
 	if basis == BasisAdminExclusion && comps.AdminBalance.Sign() == 0 {
 		basis = BasisSEP41TotalOnly
 	}

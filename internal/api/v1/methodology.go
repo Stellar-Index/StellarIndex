@@ -14,14 +14,11 @@ import (
 // display. pkg/client mirrors this shape: adding optional fields is compatible, removing or
 // renaming needs an SDK minor bump.
 type Methodology struct {
-	// Version is the on-disk shape version of the response. Bump
-	// on any breaking change.
+	// Version is the shape version of the response; bump on any breaking change.
 	Version string `json:"version"`
 
-	// Aggregation describes the VWAP method, outlier filter,
-	// stablecoin proxy, and closed-bucket contract that govern
-	// the served price. ADR-0007 / ADR-0015 / ADR-0019 are the
-	// authoritative narratives.
+	// Aggregation describes the VWAP method, outlier filter, stablecoin proxy and closed-bucket
+	// contract that govern the served price.
 	Aggregation MethodologyAggregation `json:"aggregation"`
 
 	// SourceClasses enumerates EVERY class a row in Sources can carry, and which contribute to the
@@ -33,21 +30,17 @@ type Methodology struct {
 	// trade-count stats, so the policy can be verified in one round trip.
 	Sources []MethodologySource `json:"sources"`
 
-	// References point at the long-form ADRs that govern each
-	// section. URLs are repo-relative paths; consumers can resolve
-	// them against the public source tree.
+	// References point at the ADRs governing each section, as repo-relative paths.
 	References []MethodologyReference `json:"references"`
 }
 
 // MethodologyAggregation is the price-derivation policy slice.
 type MethodologyAggregation struct {
-	// PriceMethod is the formula for the headline served price.
-	// Currently only "vwap" — TWAP is reserved per ADR-0020.
+	// PriceMethod is the formula for the headline served price; only "vwap" today (TWAP is reserved).
 	PriceMethod string `json:"price_method"`
 
-	// OutlierFilter describes the σ-trim applied before
-	// aggregation. `default_sigma=0` means "no filter by default
-	// on this surface"; the field is per-endpoint.
+	// OutlierFilter describes the per-endpoint σ-trim applied before aggregation; `default_sigma=0`
+	// means no filter by default.
 	OutlierFilter MethodologyOutlierFilter `json:"outlier_filter"`
 
 	// StablecoinFiatProxy is the operator's allow-list of classic USD-pegged tokens that the
@@ -55,26 +48,20 @@ type MethodologyAggregation struct {
 	// pegs are declared (only direct quotes are served).
 	StablecoinFiatProxy []MethodologyStablecoinPeg `json:"stablecoin_fiat_proxy"`
 
-	// ClosedBucketWindowSeconds is the boundary granularity that
-	// rate endpoints snap "now" to. Per ADR-0015 this is what
-	// makes "all 3 regions return the same rate" a real property.
+	// ClosedBucketWindowSeconds is the granularity rate endpoints snap "now" to, which makes
+	// "all regions return the same rate" hold.
 	ClosedBucketWindowSeconds int `json:"closed_bucket_window_seconds"`
 }
 
 // MethodologyOutlierFilter captures one filter rule.
 type MethodologyOutlierFilter struct {
-	// Endpoint is the API surface this rule applies to (e.g.
-	// "/v1/ohlc"). Empty = global default across all surfaces.
+	// Endpoint is the API surface the rule applies to (e.g. "/v1/ohlc"); empty means global.
 	Endpoint string `json:"endpoint,omitempty"`
 
-	// DefaultSigma is the σ threshold applied when the caller
-	// doesn't override via `?outlier_sigma=`. 0 = filter
-	// disabled by default.
+	// DefaultSigma is the σ threshold when the caller sets no `?outlier_sigma=`; 0 disables it.
 	DefaultSigma float64 `json:"default_sigma"`
 
-	// Note is free-form context (e.g. "VWAP volume-weighting
-	// already dampens dust trades; OHLC's High/Low needs an
-	// explicit filter").
+	// Note is free-form context, e.g. why a surface needs an explicit filter.
 	Note string `json:"note,omitempty"`
 }
 
@@ -84,9 +71,7 @@ type MethodologyStablecoinPeg struct {
 	PegsTo  string `json:"pegs_to"`
 }
 
-// MethodologySourceClass describes one registry class (exchange /
-// aggregator / oracle / authority_sanity / lending / router /
-// bridge).
+// MethodologySourceClass describes one registry class (exchange, aggregator, oracle, lending, ...).
 type MethodologySourceClass struct {
 	Name              string `json:"name"`
 	ContributesToVWAP bool   `json:"contributes_to_vwap"`
@@ -104,9 +89,7 @@ type MethodologySource struct {
 	Paid              bool   `json:"paid"`
 	BackfillAvailable bool   `json:"backfill_available"`
 	BackfillSafe      bool   `json:"backfill_safe"`
-	// OnChain mirrors Source.OnChain (sources.go) — true when the
-	// source observes the Stellar network directly rather than an
-	// off-chain vendor API. See external.IsOnChain.
+	// OnChain mirrors Source.OnChain: the source observes Stellar directly, not an off-chain vendor API.
 	OnChain bool `json:"on_chain"`
 }
 
@@ -118,9 +101,7 @@ type MethodologyReference struct {
 	URL   string `json:"url"`
 }
 
-// methodologyVersion is the on-disk shape version. Bump on
-// breaking changes to the response. Additive field changes
-// (new optional fields) keep the version stable.
+// methodologyVersion is the shape version; bump on breaking changes only, not new optional fields.
 const methodologyVersion = "1.0"
 
 // handleMethodology serves GET /v1/methodology from constants, the in-memory registry and
@@ -135,10 +116,8 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// One entry per class the registry can stamp on a source, including those with no price
-	// signal: `sources` below is the WHOLE registry, so a consumer reading `class: "router"` must
-	// be able to look it up here. The class godoc in internal/sources/external/framework.go is
-	// authoritative for why each is excluded.
+	// One entry per class the registry can stamp, including those with no price signal: `sources` is
+	// the whole registry, so every `class` value must be defined here. framework.go explains each exclusion.
 	classes := []MethodologySourceClass{
 		{Name: string(external.ClassExchange), ContributesToVWAP: true, Description: "Real trading venues — DEXes (Soroswap, Phoenix, Aquarius, Comet, sdex), CEXes (Coinbase, Binance, Kraken, Bitstamp), FX vendors. The only sources that contribute to the VWAP."},
 		{Name: string(external.ClassAggregator), ContributesToVWAP: false, Description: "Third-party aggregators (CoinGecko, CoinMarketCap) that already aggregate the same upstream venues. Including them in our VWAP would double-count; surfaced separately for divergence checks."},
@@ -178,9 +157,8 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 			OutlierFilter: MethodologyOutlierFilter{
 				Endpoint:     "/v1/ohlc",
 				DefaultSigma: ohlcDefaultOutlierSigma,
-				// Neither volume- nor time-weighting dampens outliers: VWAP is Σquote/Σbase, so an
-				// attacker supplying the QUOTE asset dominates the numerator for free, and TWAP
-				// has no volume term, so one print alone in its hour carries that hour.
+				// Weighting does not dampen outliers: VWAP is Σquote/Σbase, so an attacker supplying the
+				// QUOTE asset dominates the numerator, and a lone print carries its whole TWAP hour.
 				Note: "OHLC's High/Low have no statistical robustness; a single dust trade can pin them. The same default sigma applies to /v1/twap, whose time weight is unrelated to trade size. /v1/vwap defaults to 0, i.e. UNFILTERED. Neither volume-weighting nor time-weighting is an outlier defence: on a sparse window a single print can carry the whole result, and on VWAP an attacker supplying the quote asset dominates the sum. Pass outlier_sigma explicitly on /v1/vwap if you need filtering; pass outlier_sigma=0 on /v1/ohlc or /v1/twap to disable it.",
 			},
 			StablecoinFiatProxy:       pegs,
