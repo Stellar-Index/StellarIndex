@@ -12,26 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The /v1/pools prewarm shared one limit set with /v1/markets, so the pools
-// slots that got warmed were the ones chosen for a different route. The
-// explorer's /network page renders its "Top Stellar markets" panel from
-// usePools(8, 'volume_24h_usd_desc') — i.e.
-// GET /v1/pools?limit=8&order_by=volume_24h_usd_desc — and 8 was not in the
-// set, so that slot had never been computed and the first visitor blocked on
-// the full trades-hypertable scan.
-//
-// Measured on r1, same process, back to back:
-//
-//	?limit=8    2.197 s   (unwarmed — what /network actually sends)
-//	?limit=5    0.0018 s  (warmed)
-//	?limit=25   0.0008 s  (warmed)
-//	?limit=100  0.0010 s  (warmed)
-//	?limit=200  0.0026 s  (warmed)
-//
-// The origin's own slow-request log names the shape:
-//
-//	{"path":"/v1/pools","latency_ms":2197.052,
-//	 "query_shape":"limit=8&order_by=volume_24h_usd_desc","slow":true}
+// The /v1/pools prewarm limit set is separate from /v1/markets and must include 8, which the
+// explorer's /network page requests (limit=8&order_by=volume_24h_usd_desc). An unwarmed slot makes
+// the first visitor wait on the full trades scan (about 2 s against about 1 ms warm).
 
 // recordingPoolsReader records the AllPools arguments it is asked for. Every
 // other MarketsReader method is an unused stub — prewarmPools calls only
@@ -150,21 +133,10 @@ func TestPrewarmPoolsWarmsTheLimitTheExplorerSends(t *testing.T) {
 	}
 }
 
-// TestPrewarmPoolsUsesTheHandlersExactCacheKeyArgs is the other half, and the
-// half that has actually broken three times: a warmed slot only helps when
-// EVERY key dimension matches what handlePools looks up. The cache key is
-// newCacheKey("AllPools").strSet(Sources).str(Base).str(Quote).str(Asset)
-// .str(cursor).int(limit).order(order), so a drifted Sources slice, a
-// non-empty cursor or the wrong order each warm a phantom slot that costs a
-// query and leaves every user request on the cold path.
-//
-//   - Sources: handlePools builds PoolsFilter{Sources: v1.DexSourceNames()},
-//     NOT nil. Passing PoolsFilter{} warms key fragment `[]` while users land
-//     on `[aquarius comet phoenix sdex soroswap]`.
-//   - Order: handlePools maps ""|"volume_24h_usd_desc" to
-//     MarketsOrderVolume24hDesc. Prewarming with MarketsOrderPair (0) made
-//     /v1/pools?source=sdex take 27s against a cache that looked warm.
-//   - Cursor: the warmed page is page one; a cursor makes it someone else's.
+// TestPrewarmPoolsUsesTheHandlersExactCacheKeyArgs pins that every cache key dimension matches
+// what handlePools looks up, or the warmed slot is a phantom. Sources must be
+// v1.DexSourceNames(), not nil; the order must be MarketsOrderVolume24hDesc, not
+// MarketsOrderPair (0); and the cursor must be empty, since the warmed page is page one.
 func TestPrewarmPoolsUsesTheHandlersExactCacheKeyArgs(t *testing.T) {
 	rec := &recordingPoolsReader{}
 	cached := v1.NewCachedMarketsReader(rec, 2*time.Minute)
@@ -205,11 +177,8 @@ func TestPrewarmPoolsUsesTheHandlersExactCacheKeyArgs(t *testing.T) {
 	}
 }
 
-// TestPoolsAndMarketsPrewarmLimitsAreIndependent pins the split itself. The
-// two sets were one literal, which is how /v1/pools ended up warming limits
-// picked for /v1/markets. If a later edit collapses them back, /v1/markets
-// starts paying for a limit=8 slot nobody requests (the phantom-slot cost
-// this file warns about twice) or /v1/pools loses limit=8 again.
+// TestPoolsAndMarketsPrewarmLimitsAreIndependent pins the split. Merging the sets would make
+// /v1/markets warm a limit=8 slot nobody requests, or /v1/pools lose limit=8.
 func TestPoolsAndMarketsPrewarmLimitsAreIndependent(t *testing.T) {
 	for _, l := range marketsPrewarmLimits {
 		if l == 8 {

@@ -20,12 +20,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// closedBucketReader stands in for the prices_1m read — the one piece
-// of this path that needs a live Timescale ([storePriceReader] has no
-// seam below the store). Everything the freeze contract depends on is
-// the REAL thing here: the marker is written by freeze.Writer in its
-// production per-window shape, read by freeze.Looker, and the held value
-// is read by redisTriangulatedLooker from the real cachekeys.VWAP key.
+// closedBucketReader stands in for the prices_1m read, the only piece needing a live Timescale.
+// The freeze marker (freeze.Writer, freeze.Looker) and the held value (redisTriangulatedLooker
+// on the real cachekeys.VWAP key) are the real production pieces.
 type closedBucketReader struct {
 	price   string
 	sources []string
@@ -42,16 +39,9 @@ func (closedBucketReader) RecentClosedSnapshots(context.Context, canonical.Asset
 	return []v1.PriceSnapshot{}, nil
 }
 
-// TestFrozenPairServesHeldValueThroughProductionAdapters pins
-// end to end through the adapters this binary wires: with the
-// aggregator's freeze marker live for XLM/GBP and its 5m value held in
-// the VWAP cache, /v1/price must serve the HELD value, not the newer
-// prices_1m bucket the freeze refused — and must go back to the closed
-// bucket, byte for byte, the moment the freeze is released.
-//
-// Against the un-fixed handler the first request returns
-// `"price":"0.3199"` with `"frozen":true`: the rejected bucket under a
-// flag that promises the protected one.
+// TestFrozenPairServesHeldValueThroughProductionAdapters pins, through the adapters this binary
+// wires, that with a live freeze marker for XLM/GBP /v1/price serves the held VWAP value rather
+// than the newer refused prices_1m bucket, and returns to the closed bucket once released.
 func TestFrozenPairServesHeldValueThroughProductionAdapters(t *testing.T) {
 	const held, moved = "0.251100000000", "0.3199"
 

@@ -11,21 +11,9 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick covers the outer
-// loop, whose one startup-critical behaviour is that BOTH passes run
-// immediately rather than waiting for their tickers (5 min / 60 s).
-//
-// A heavy pass that runs FIRST and SEQUENTIALLY is a startup defect: its
-// sources_stats query alone takes ~8s, so for tens of seconds after every
-// restart the user-facing listing keys stay cold behind it. Measured on r1,
-// API up at 05:10:16:
-//
-//	05:10:37  10025 ms  /v1/assets?include=sparkline&limit=10&order_by=…
-//	05:10:37  10026 ms  /v1/assets?limit=50
-//
-// Real users, 21s after boot, paying a cold fill for a key the prewarm
-// had not reached yet. Steady state is healthy, so this is purely a
-// startup-window defect, and it recurs on every deploy.
+// TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick pins that both passes run immediately rather
+// than waiting for their tickers. A heavy pass running first and sequentially (sources_stats alone
+// takes about 8 s) would keep the user-facing listing keys cold for tens of seconds after restart.
 func TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick(t *testing.T) {
 	t.Parallel()
 

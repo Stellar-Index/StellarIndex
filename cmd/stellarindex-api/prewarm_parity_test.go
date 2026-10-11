@@ -21,36 +21,11 @@ import (
 
 // Arg-parity between prewarmCaches and the handlers.
 //
-// The prewarm loop and the request handlers are two independent callers
-// of the SAME cached readers. A cache slot is selected by the exact
-// argument tuple — [v1.CachedMarketsReader.AllPools] keys on
-// (Sources, Base, Quote, Asset, cursor, limit, order), sorting Sources
-// (cachekey.go strSet) — so the prewarm only warms a handler's slot if
-// it passes byte-identical arguments.
-//
-// When they drift, NOTHING fails. The cache reports healthy, the
-// prewarm logs success, and every user request still pays the full cold
-// read against the trades hypertable. It is a phantom slot: it costs a
-// query per cycle and warms a key nothing looks up. Three separate
-// production incidents were this exact shape, all recorded in
-// prewarmLight's own comments:
-//
-//   - ORDER. /v1/pools defaults to MarketsOrderVolume24hDesc; the
-//     prewarm passed MarketsOrderPair. A cold slot made
-//     /v1/pools?source=sdex take 27s, soroswap 16s, phoenix 12s, comet 11s.
-//   - SOURCES. The unfiltered /v1/pools handler builds
-//     `PoolsFilter{Sources: DexSourceNames()}`, not `Sources: nil`. The
-//     prewarm passed the zero filter, whose key fragment is `[]` rather
-//     than `[aquarius comet phoenix sdex soroswap]`.
-//   - LIMIT. /v1/markets?source=… is fired by the explorer at
-//     limit=200; the prewarm covered only the unfiltered pair list, so
-//     every /exchanges/{name} visit paid the 8s ceiling.
-//
-// A test that re-states the prewarm's own constants cannot catch any of
-// these — it would agree with the prewarm and be wrong in the same
-// direction. So this test derives the expected set from the REAL
-// HANDLERS: it drives actual HTTP requests through v1.Server and asserts
-// every reader call they make was also made by prewarmLight.
+// A cache slot is selected by the exact argument tuple (AllPools keys on Sources, Base, Quote,
+// Asset, cursor, limit and order), so the prewarm only warms a handler's slot if it passes
+// byte-identical arguments. When they drift nothing fails: the prewarm logs success and every
+// user request still pays the cold read. The expected set is therefore derived from the real
+// handlers, by driving HTTP requests through v1.Server, never from the prewarm's own constants.
 
 // ─── recording readers ───────────────────────────────────────────
 
@@ -152,13 +127,8 @@ func newRecordingMarkets() (*v1.CachedMarketsReader, *callLog) {
 
 // ─── the parity assertion ────────────────────────────────────────
 
-// hotRequests are the request shapes production actually serves, taken
-// from the incident notes in prewarmLight and from the explorer's own
-// fetches. Each one must land on a slot the prewarm warmed.
-//
-// Adding a shape here that the prewarm does not cover is a legitimate
-// way to fail this test: it means the explorer fires a request nothing
-// warms, which is that class of failure.
+// hotRequests are the request shapes production serves; each must land on a slot the prewarm
+// warmed. Adding a shape the prewarm does not cover legitimately fails the test.
 var hotRequests = []struct {
 	name string
 	path string
@@ -197,13 +167,8 @@ var hotRequests = []struct {
 	},
 }
 
-// TestPrewarmLight_WarmsEveryKeyTheHotHandlersLookUp is the drift guard.
-//
-// It runs the two callers of CachedMarketsReader against separate
-// recorders and asserts containment: every argument tuple a hot handler
-// produces must also have been produced by prewarmLight. The expected
-// set is never written down — it is READ OFF THE HANDLERS — so the test
-// cannot agree with a prewarm that has drifted.
+// TestPrewarmLight_WarmsEveryKeyTheHotHandlersLookUp is the drift guard: every argument tuple a
+// hot handler passes to CachedMarketsReader must also have been passed by prewarmLight.
 func TestPrewarmLight_WarmsEveryKeyTheHotHandlersLookUp(t *testing.T) {
 	t.Parallel()
 
@@ -275,17 +240,9 @@ func handlerCallsForParity(t *testing.T, path string) []string {
 	return log.signatures()
 }
 
-// TestPrewarmLight_AssetListingWarmsAreHandlerReachable is the assets
-// half of the same parity property, derived from the REAL handler
-// rather than from the prewarm's own arithmetic.
-//
-// prewarm_assets_test.go already pins the `+1` and the limit set, by
-// recomputing them. That catches a change to one side of the
-// arithmetic, but it cannot catch a change to the HANDLER — if
-// handleAssetListFromAssets stopped overfetching, or parseAssetsOrder's
-// default moved off AssetsOrderObservationCountDesc, the prewarm and
-// that test would still agree with each other and both be wrong. This
-// test asks the handler instead.
+// TestPrewarmLight_AssetListingWarmsAreHandlerReachable is the assets half of the parity
+// property. prewarm_assets_test.go recomputes the prewarm's arithmetic and would stay green if
+// the handler changed its overfetch or default order, so this test asks the real handler.
 func TestPrewarmLight_AssetListingWarmsAreHandlerReachable(t *testing.T) {
 	t.Parallel()
 
@@ -359,22 +316,10 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
-// TestPrewarmLight_StandaloneListingWarmIsTheLimit198Slot documents what
-// prewarmLight's ONE hardcoded ListAssetsExt call actually warms.
-//
-// The call is `ListAssetsOptions{Limit: 199}` with every other field at
-// its zero value, so Order is AssetsOrderObservationCountDesc. Its
-// comment explained 199 as "/v1/coins?limit=200, minus the row
-// prependNative splices in". BOTH of those are gone: the /v1/coins route
-// does not exist (see the AssetsReader field comment in
-// internal/api/v1/server.go) and `prependNative` is not in the tree. The slot the call warms TODAY is
-// /v1/assets?limit=198 with no order_by — a limit that is not in
-// assetListingPrewarmLimits and that no known caller sends.
-//
-// This test states that correspondence so the constant is not
-// mysterious, and so whoever next touches it can see what it buys. It
-// deliberately does NOT assert that warming 198 is worthwhile: that is a
-// product call, not an invariant.
+// TestPrewarmLight_StandaloneListingWarmIsTheLimit198Slot documents what prewarmLight's one
+// hardcoded ListAssetsExt call (Limit 199, zero Order) warms: /v1/assets?limit=198 with no
+// order_by. That limit is not in assetListingPrewarmLimits. It does not assert the warm is
+// worthwhile, which is a product call.
 func TestPrewarmLight_StandaloneListingWarmIsTheLimit198Slot(t *testing.T) {
 	t.Parallel()
 
@@ -416,11 +361,8 @@ func listAssetsSigs(l *callLog) []string {
 	return out
 }
 
-// slowListingAssetsReader wraps stubAssetsReader, sleeping on every
-// ListAssetsExt call — the call prewarmLight's /v1/coins warm and
-// prewarmAssetListings (via assetListingPrewarmOptions, 12 variants)
-// both make under assetsReaderCtx — and recording ctx.Err() at the
-// moment GetNativeAssetRow runs.
+// slowListingAssetsReader wraps stubAssetsReader, sleeping on every ListAssetsExt call and
+// recording ctx.Err() at the moment GetNativeAssetRow runs.
 type slowListingAssetsReader struct {
 	stubAssetsReader
 	delay        time.Duration
@@ -437,20 +379,10 @@ func (r *slowListingAssetsReader) GetNativeAssetRow(ctx context.Context) (timesc
 	return timescale.AssetRow{}, nil
 }
 
-// TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm pins the following.
-//
-// prewarmLight's native/verified-asset prewarm batch must run under its
-// OWN fresh deadline, not the assetsReaderCtx whose 20s budget started
-// ticking at the /v1/coins warm and keeps ticking through the 13
-// ListAssetsExt calls prewarmAssetListings makes (assetListingPrewarmOptions:
-// 2 orders x 6 limits, plus the initial /v1/coins call). On a cold
-// cache those calls are exactly the kind of work that can burn a
-// meaningful chunk of a shared 20s deadline; if GetNativeAssetRow and
-// the verified-asset fan-out reuse that same context, a sufficiently
-// slow listing warm leaves them with an already-expired one, so every
-// call silently no-ops on context deadline exceeded (swallowed at
-// Debug) — the cache reports healthy and the next /v1/assets/native or
-// verified-asset request still pays the cold read.
+// TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm pins that the native/verified-asset
+// batch runs under its own fresh deadline, not the shared assetsReaderCtx budget. A slow
+// listing warm would otherwise leave it an expired context, so every call would silently no-op
+// and the next /v1/assets/native request would still pay the cold read.
 func TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm(t *testing.T) {
 	orig := assetsPrewarmBatchTimeout
 	assetsPrewarmBatchTimeout = 30 * time.Millisecond
@@ -538,17 +470,9 @@ func (r *orderedMarketsReader) SourceMarkets(ctx context.Context, source, cursor
 	return r.recordingMarketsReader.SourceMarkets(ctx, source, cursor, limit, ord)
 }
 
-// TestPrewarmLight_NativeAndVerifiedAssetWarmsRunBeforeMarketsLoops is
-// the regression guard for that ordering.
-//
-// assetsReaderCtx carries a 20s budget, wholly separate from the
-// markets/pools/per-DEX/per-CEX work's 5-minute mkCtx. If the
-// native-asset and verified-asset-detail prewarm calls run AFTER that
-// ~95-line block of markets-reader calls (the wrong order), most or
-// all of the 20s budget is gone by the time they run on a cold cache —
-// so on a real cold start they lose the race against assetsReaderCtx's
-// deadline. This asserts they instead run before any markets-reader
-// call fires, alongside the other assetsReaderCtx-scoped work.
+// TestPrewarmLight_NativeAndVerifiedAssetWarmsRunBeforeMarketsLoops pins the ordering: the
+// native and verified-asset warms share the 20s assetsReaderCtx budget, which a cold start
+// would exhaust if they ran after the markets-reader calls.
 func TestPrewarmLight_NativeAndVerifiedAssetWarmsRunBeforeMarketsLoops(t *testing.T) {
 	order := &orderLog{}
 
