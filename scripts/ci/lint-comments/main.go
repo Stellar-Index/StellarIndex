@@ -1,13 +1,14 @@
 // lint-comments fails on a history citation in a product Go comment: a date,
 // a review/inventory ticket id, a commit hash, a #nnn or "PR n" reference.
-// History belongs in the commit message; a comment keeps only the why.
+// History belongs in the commit message; a comment keeps only the why. It also
+// fails on a comment block longer than maxBlock lines; package docs are exempt.
 //
 // Scope: every .go file under the root except _test.go files, pkg/ (its godoc
 // is the public SDK reference), generated files, and vendor/testdata/
 // node_modules/dot dirs. lint-repo-budget.sh still checks added test comments.
 //
 // The baseline lists today's citations as "<path>\t<first match on the line>",
-// one line per comment line. A citation not covered by the baseline fails, and
+// one line per comment line, and each over-long block as "<path>\tlong-block". A citation not covered by the baseline fails, and
 // so does a baseline line the tree no longer needs, so the file only shrinks.
 //
 // Usage:
@@ -44,6 +45,12 @@ var hard = regexp.MustCompile(`(?i)\b20\d\d-\d\d-\d\d\b|\b202[4-9]-[01]\d\b|` +
 var (
 	commitHash = regexp.MustCompile(`\b[0-9a-f]{9,12}\b`)
 	floatExp   = regexp.MustCompile(`^\d+e\d+$`)
+)
+
+// maxBlock is the 99th percentile of product comment block length.
+const (
+	maxBlock  = 20
+	longBlock = "long-block"
 )
 
 // goLayout is Go's reference time; a comment showing a time.Format layout is not history.
@@ -107,16 +114,20 @@ func check(hits []hit, want map[string]int, baseline string) int {
 	}
 	sort.Strings(stale)
 	for _, h := range fresh {
+		if h.match == longBlock {
+			fmt.Printf("%s:%d: comment block is %s lines (max %d); cut what restates the code\n", h.path, h.line, h.text, maxBlock)
+			continue
+		}
 		fmt.Printf("%s:%d: comment cites %q; put history and ids in the commit message and keep the comment to the why: %s\n", h.path, h.line, h.match, h.text)
 	}
 	for _, s := range stale {
 		fmt.Printf("stale baseline entry %s: delete the line from %s (or run -write)\n", s, baseline)
 	}
 	if len(fresh)+len(stale) > 0 {
-		fmt.Printf("lint-comments: FAIL — %d new citation(s), %d stale baseline entr(y/ies)\n", len(fresh), len(stale))
+		fmt.Printf("lint-comments: FAIL — %d new finding(s), %d stale baseline entr(y/ies)\n", len(fresh), len(stale))
 		return 1
 	}
-	fmt.Printf("lint-comments: OK — %d baselined history citation(s) in product Go comments, 0 new\n", len(hits))
+	fmt.Printf("lint-comments: OK — %d baselined finding(s) in product Go comments, 0 new\n", len(hits))
 	return 0
 }
 
@@ -160,6 +171,10 @@ func scanFile(fset *token.FileSet, p, rel string) ([]hit, error) {
 	}
 	var hits []hit
 	for _, cg := range f.Comments {
+		start, end := fset.Position(cg.Pos()).Line, fset.Position(cg.End()).Line
+		if n := end - start + 1; n > maxBlock && cg != f.Doc {
+			hits = append(hits, hit{path: rel, line: start, match: longBlock, text: fmt.Sprint(n)})
+		}
 		for _, c := range cg.List {
 			line := fset.Position(c.Slash).Line
 			for i, text := range strings.Split(c.Text, "\n") {
@@ -215,7 +230,8 @@ func writeBaseline(path string, hits []hit) error {
 	}
 	sort.Strings(lines)
 	var b strings.Builder
-	b.WriteString("# History citations in product Go comments, one per comment line: <path>\\t<first match>.\n")
+	b.WriteString("# History citations in product Go comments, one per comment line: <path>\\t<first match>;\n")
+	b.WriteString("# comment blocks over the length cap, one per block: <path>\\tlong-block.\n")
 	b.WriteString("# Shrink-only: delete a line when its citation goes; scripts/ci/lint-comments fails on new or stale entries.\n")
 	for _, l := range lines {
 		b.WriteString(l + "\n")
