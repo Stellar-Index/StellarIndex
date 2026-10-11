@@ -493,7 +493,7 @@
   failed_when: false   # mc returns non-zero if policy already attached
 
 # ──── stellarindex-archive-trimmer (list+delete, galexie-archive only) ──
-# CA2-A37-harden-6: galexie-archive-trim.service's only prior credential
+# galexie-archive-trim.service's only prior credential
 # source was stellarindex-reader (read-only — every DeleteObject came
 # back AccessDenied, so a run "deleted 0/N" every time). Root and
 # galexie-archive-writer both have delete authority on this bucket but

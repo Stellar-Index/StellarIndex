@@ -1073,8 +1073,8 @@
   when: (vault_dune_api_key | default('')) | length == 0
 
 # /etc/default/galexie-archive-trim — the ONLY place the delete-capable
-# stellarindex-archive-trimmer identity's secret lands on disk
-# (CA2-A37-harden-6). galexie-archive-trim.service loads this AFTER
+# stellarindex-archive-trimmer identity's secret lands on disk.
+# galexie-archive-trim.service loads this AFTER
 # /etc/default/stellarindex-ops, so it overrides only STELLARINDEX_S3_*
 # (the raw client trim_galexie_archive.go uses for ListObjectsV2 /
 # DeleteObject); AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY stay
