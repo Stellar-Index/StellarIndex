@@ -3,7 +3,7 @@
 #
 # WHY A MANIFEST AND NOT JUST A GREP.  node_exporter parses each .prom file
 # whole: one unparseable line and it rejects THE ENTIRE FILE, so every family
-# sharing that file dies together. On r1 2026-09-10 a psql command tag landed
+# sharing that file dies together. On r1 a psql command tag landed
 # as `stellarindex_pg_lock_convoy_backends SET` in timescale_jobs.prom, and
 # the collateral was 127 pre-existing stellarindex_timescale_* series — the
 # TimescaleDB job and CAGG health monitoring — dark for ~20 minutes, with
@@ -48,7 +48,7 @@ scripts/ops/zfs-snapshot.sh                                               zfs_sn
 # ── inline `content:` probes shipped by ansible tasks ──────────────────────
 # 10-observability.yml ships FOUR probes in one file; the two with self-tests
 # are the two that have had an incident. timescale-jobs-probe-test.sh is the
-# one that drives the convoy/CAGG probe whose 2026-09-10 defect this gate
+# one that drives the convoy/CAGG probe whose defect this gate
 # exists for.
 configs/ansible/roles/archival-node/tasks/10-observability.yml            galexie_catchup.prom,timescale_jobs.prom,stellar_stack_version.prom,stellarindex_binary_version.prom  scripts/ci/timescale-jobs-probe-test.sh
 configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml        operator-supplied                  scripts/ci/run-heavy-job-test.sh
@@ -58,7 +58,7 @@ configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml              redis_
 
 # ── Go producers ──────────────────────────────────────────────────────────
 # These render every value through a typed formatter (%d/%.3f over an int64 or
-# a float64), so the 2026-09-10 shape — an arbitrary captured STRING reaching
+# a float64), so that shape — an arbitrary captured STRING reaching
 # a value field — is unrepresentable in them by construction. They are swept
 # for structure all the same: a label quoted with %s instead of %q, or a
 # second `# TYPE` for one family, rejects the file exactly as hard.

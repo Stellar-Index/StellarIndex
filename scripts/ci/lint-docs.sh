@@ -689,7 +689,7 @@ done
 
 # ─── 16b. The explorer runbook must describe the _headers that ship ────────
 #
-# The runbook once documented a CSP and connect-src origins that _headers no longer matched.
+# The runbook's CSP and connect-src origins must match the _headers that ship.
 
 EXPLORER_HEADERS="web/explorer/public/_headers"
 EXPLORER_RUNBOOK="docs/operations/explorer-deployment.md"
