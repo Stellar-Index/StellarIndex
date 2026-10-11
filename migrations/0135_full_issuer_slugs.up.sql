@@ -1,7 +1,7 @@
 -- 0135 up — classic-asset slugs become the fully-qualified asset_id.
 --
--- Supersedes 0134's abbreviated form ONE DAY after it shipped, on the
--- operator's call (2026-08-05): an 8-character issuer prefix is a
+-- Supersedes 0134's abbreviated form, on the
+-- operator's call: an 8-character issuer prefix is a
 -- ~2^32 vanity-grind for an attacker (minutes-to-hours on consumer
 -- GPUs — the dust-attack address-mimicry economy does exactly this),
 -- and the ONLY thing the abbreviation bought was a shorter URL. The

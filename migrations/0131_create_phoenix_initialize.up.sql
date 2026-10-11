@@ -2,8 +2,8 @@
 --
 -- Phoenix pool contracts emit two `initialize` events at deploy — one
 -- per pool token — that were classify()'d (actionInitialize) but
--- dropped at dispatcher_adapter.go (case actionInitialize → nil) until
--- 2026-08-03. The raw events sat in the ClickHouse lake unserved. This
+-- dropped at dispatcher_adapter.go (case actionInitialize → nil) until this
+-- table. The raw events sat in the ClickHouse lake unserved. This
 -- table + the decoder arm close that every-event gap.
 --
 -- Wire shape (lake-verified, 40 events / 19 pools):
@@ -17,7 +17,7 @@
 --
 -- Storage shape: per-protocol table, pool-gated (ADR-0035 — the same
 -- curated phoenix set as trades). No amounts, no VWAP. derive_generation
--- is the INV-3 generation-guarded corrective-upsert column (0110).
+-- is the generation-guarded corrective-upsert column (0110).
 --
 -- Retention: NONE — granular-coverage mission keeps the history forever.
 --

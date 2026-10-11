@@ -1,11 +1,10 @@
 -- 0121 up — a durable CLAIM on stripe_event_log, so two concurrent
--- deliveries of the same Stripe event cannot both be told to process it
--- (audit-2026-07-23 C3-039).
+-- deliveries of the same Stripe event cannot both be told to process it.
 --
 -- The race, precisely:
 --
---   F-1322 made a row with processed_at IS NULL REPROCESSABLE. That was
---   the right call — a first delivery that failed mid-flight used to be
+--   A row with processed_at IS NULL is REPROCESSABLE. That was
+--   the right call — a first delivery that failed mid-flight was
 --   dup-acked forever, so a paying customer was silently never upgraded
 --   — but it turned "the row exists" from a claim into a no-op. The
 --   claim CTE now reads:
@@ -32,9 +31,9 @@
 -- default because it is a property of how long the HANDLER can run, not
 -- of the data.
 --
--- This does NOT weaken F-1322: an unfinished row is still reprocessable.
+-- This does NOT weaken reprocessability: an unfinished row is still reprocessable.
 -- It only makes "unfinished" mean "no live claim" instead of "processed_at
--- is NULL", which is what F-1322 meant in the first place.
+-- is NULL", which is what reprocessable always meant.
 --
 -- Additive: one nullable column + one partial index, no existing column
 -- touched, so the previous released binary (which never writes or reads

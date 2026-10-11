@@ -1,13 +1,11 @@
 -- 0125 up — remember the ledger window a projector-replay rewound over, so
--- the completeness verifier is forced to re-reconcile it (the 2026-07-31
+-- the completeness verifier is forced to re-reconcile it (the
 -- carried-claim invalidation gap).
--- (Header said "0124 up" from the day it shipped — corrected 2026-09-02
---  under migrations/README.md "Amending a shipped migration"; #357 F3.
---  0124 is freeze_reason_other, an unrelated migration.)
+-- (0124 is freeze_reason_other, an unrelated migration.)
 --
 -- The daily compute-completeness driver reconciles each source only from
 -- its prior watermark to tip and CARRIES the prior clean projection claim
--- for the older prefix (projectionClaim rule 3, INV-5). That carry is
+-- for the older prefix (projectionClaim rule 3). That carry is
 -- sound only while the served tier below the watermark is IMMUTABLE. A
 -- `stellarindex-ops projector-replay` rewind breaks that premise: it
 -- rewrites served rows BELOW the watermark, and nothing forced the next

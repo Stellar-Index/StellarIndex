@@ -46,7 +46,7 @@
 --      for the value to appear waits forever.
 --
 --   5. oracle_updates.contract_id (0003:55-56) names `coinmarketcap`
---      and `chainlink-http`. Measured on r1 2026-09-02, the sources
+--      and `chainlink-http`. Measured on r1, the sources
 --      that actually write a NULL contract_id are chainlink, coingecko
 --      and ecb; the CMC connector writes no oracle_updates row, and
 --      `chainlink-http` is the retired name the code deliberately does

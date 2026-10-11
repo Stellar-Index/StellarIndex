@@ -1,5 +1,5 @@
 -- 0109 down — drop `derive_generation` from the three core tables,
--- reverting the schema half of the INV-3 generation-guarded upsert.
+-- reverting the schema half of the generation-guarded upsert.
 --
 -- The post-0109 binary references derive_generation in its writers, so a
 -- rollback of this migration must be paired with a rollback of the binary

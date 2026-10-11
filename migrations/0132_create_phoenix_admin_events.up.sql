@@ -5,7 +5,7 @@
 -- but the decoder dropped (case actionAdmin → nil). This table + the
 -- decoder arm close that every-event gap.
 --
--- ZERO occurrences on mainnet to date (lake count 2026-08-03, ledger
+-- ZERO occurrences on mainnet to date (lake count, ledger
 -- 50M–tip: 0) — no admin rotation has happened yet. Built defensively
 -- so the FIRST rotation lands rather than being silently dropped.
 --
@@ -21,7 +21,7 @@
 --   "Accepted new admin: "                        → accepted
 --
 -- Storage shape: per-protocol table, pool-gated (ADR-0035). No amounts,
--- no VWAP. derive_generation is the INV-3 corrective-upsert column (0110).
+-- no VWAP. derive_generation is the corrective-upsert column (0110).
 --
 -- Retention: NONE — granular-coverage mission keeps the history forever.
 --

@@ -5,8 +5,8 @@
 -- derivation (internal/storage/timescale/protocol_stats.go's
 -- `countRecentEventsQuery`) is a UNION ALL count(*) over ~17 served
 -- protocol hypertables (trades grouped by source + every projected
--- event table) each filtered to the trailing 24h. The 2026-07-06
--- latency incident measured the whole handler at ~5s cold — this
+-- event table) each filtered to the trailing 24h. Measured, the
+-- whole handler takes ~5s cold — this
 -- census is the dominant Postgres leg (the ClickHouse event-breakdown
 -- scans have their own contract_events_daily fast path).
 --

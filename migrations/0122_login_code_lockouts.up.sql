@@ -1,7 +1,6 @@
 -- 0122 up — a DURABLE per-email failed-verify lockout for the dashboard
 -- email-code sign-in, so brute-forcing the 6-digit code is bounded by
--- something a token re-mint (or a Redis flush) cannot reset
--- (audit-2026-07-23 C3-032).
+-- something a token re-mint (or a Redis flush) cannot reset.
 --
 -- What was already bounded, and what wasn't:
 --

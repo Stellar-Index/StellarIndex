@@ -10,7 +10,7 @@
 -- impose continuous write-amplification on every blend-auction
 -- INSERT for read paths that don't exist.
 --
--- F-1238 (audit-2026-05-12). Index-only drop, no schema change;
+-- Index-only drop, no schema change;
 -- safe to apply concurrently in production. Rollback re-creates
 -- the indexes if the asset-centric query path materialises in
 -- a future iteration.

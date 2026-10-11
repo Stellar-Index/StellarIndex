@@ -1,4 +1,4 @@
--- 0039 up — `rozo_events` hypertable (#41).
+-- 0039 up — `rozo_events` hypertable.
 --
 -- One row per observed Rozo intent-bridge contract event on
 -- Stellar. Scoped to v1 Payment — the only mainnet-live Rozo
@@ -15,7 +15,7 @@
 -- (registry entry is Class=ClassBridge, IncludeInVWAP=false).
 --
 -- Storage shape: per-protocol table, the same decision taken for
--- cctp_events (0038) — operator-confirmed 2026-05-22. v1 Payment is
+-- cctp_events (0038) — operator-confirmed. v1 Payment is
 -- simple enough to fully type; there is no jsonb attributes blob.
 -- v2 Forwarder / IntentBridge are pre-mainnet — when they deploy,
 -- their richer schema gets its own migration rather than widening

@@ -1,4 +1,4 @@
--- 0039 down — drop the rozo_events hypertable (#41).
+-- 0039 down — drop the rozo_events hypertable.
 --
 -- DROP TABLE removes the hypertable, its chunks, indexes and
 -- compression settings in one statement. No CASCADE needed —

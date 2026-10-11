@@ -2,7 +2,7 @@
 -- event types into cctp_events.event_type, completing the full topic
 -- census.
 --
--- ROADMAP #89c (2026-07-09): the #89b pass (migration 0092) added 5
+-- Migration 0092 added 5
 -- governance events but docs/protocols/cctp.md flagged a "known gap"
 -- of further lower-signal admin topics still undecoded. A full
 -- topic_0_sym census against the ClickHouse raw lake (every event the

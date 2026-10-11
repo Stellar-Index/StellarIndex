@@ -9,8 +9,8 @@
 -- PUBLICATION timestamp, decoder-derived — not the ledger close time —
 -- and is explicitly excluded from canonical.OracleUpdate.ID().
 --
--- The gap the old comment hid: if a decoder's `ts` derivation is later
--- corrected (as happened for Band's resolution timestamp on 2026-08-03)
+-- The gap: if a decoder's `ts` derivation is later
+-- corrected (e.g. Band's resolution timestamp)
 -- and the affected ledgers are replayed, the corrected row's PK differs
 -- from the original's (only `ts` changed), so INSERT ... ON CONFLICT on
 -- this PK does not match the stale row — the replay ADDS a second row

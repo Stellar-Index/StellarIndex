@@ -1,4 +1,4 @@
--- 0038 down — drop the cctp_events hypertable (#40).
+-- 0038 down — drop the cctp_events hypertable.
 --
 -- DROP TABLE removes the hypertable, its chunks, indexes and
 -- compression settings in one statement. CASCADE is not needed —

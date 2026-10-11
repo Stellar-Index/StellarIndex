@@ -7,7 +7,7 @@
 --   until an operator arms it deliberately (command below). The
 --   migration REFUSES to commit if the policy is left armed.
 --
---   Measured on r1 2026-09-07, arming it drops 77 of the view's 86
+--   Measured on r1, arming it drops 77 of the view's 86
 --   chunks — 22 GB spanning 2017-01-12..2026-05-07 — on the first
 --   run, and thereafter everything that ages past 90 days, so the
 --   view converges on the trailing window and the 69 GB becomes a
@@ -50,7 +50,7 @@
 --   view reports `prices_1m` and NEVER the underlying
 --   `_materialized_hypertable_142`. A predicate resolved from the
 --   continuous-aggregates catalogue's materialization-hypertable-name
---   column therefore selects NOTHING. Verified on r1 2026-09-07
+--   column therefore selects NOTHING. Verified on r1
 --   against the structurally identical refresh job: that predicate
 --   returns 0 rows, `hypertable_name = 'prices_1m'` returns job 1088.
 --   The broken form is deliberately not written out here — a header
@@ -63,8 +63,8 @@
 -- re-materialisation as a manual operator step, and it is still open
 -- whether that destroyed history nobody rebuilt. The difference is
 -- NOT that raw `trades` is permanent here and was not there: 0031
--- removed the retention on `trades` on 2026-05-14, before 0115
--- (2026-07-24) and 0147 (2026-08-22), so `trades` was already
+-- removed the retention on `trades`, before 0115
+-- and 0147, so `trades` was already
 -- permanent for both of them.
 --
 -- The difference runs the other way, and it is the reason this file
@@ -110,7 +110,7 @@
 --
 -- `_materialized_hypertable_142` is prices_1m's materialization
 -- hypertable AND the RAW hypertable of both TWAP views. Measured on
--- r1 2026-09-07 in `_timescaledb_catalog.continuous_agg`: `twap_1h`
+-- r1 in `_timescaledb_catalog.continuous_agg`: `twap_1h`
 -- (mat 149) and `twap_1d` (mat 150) each carry
 -- raw_hypertable_id = 142 AND parent_mat_hypertable_id = 142, and
 -- `continuous_aggs_invalidation_threshold` holds a row for 142.
@@ -168,7 +168,7 @@
 --
 -- But `prices_1m` is ALREADY unmaterialised in places, and a rebuild
 -- would restore MORE than was dropped rather than exactly it.
--- Measured on r1 2026-09-07: over 2021-11-09 12:00-13:00 UTC,
+-- Measured on r1: over 2021-11-09 12:00-13:00 UTC,
 -- `trades` holds 244 rows and `prices_1m` holds 0 (while
 -- `prices_15m` holds 4); over 2024-03-05 12:00-13:00 UTC, `trades`
 -- holds 83 and `prices_1m` holds 0. So the view's present contents

@@ -1,11 +1,11 @@
--- 0036 up — per-source pools continuous aggregate (#25).
+-- 0036 up — per-source pools continuous aggregate.
 --
--- The durable backing for /v1/pools. Pre-#25 the handler's
--- buildPoolsQuery scanned the full trades hypertable for
+-- The durable backing for /v1/pools. Without it the handler's
+-- buildPoolsQuery scans the full trades hypertable for
 -- `ts >= NOW() - INTERVAL '24 hours'` GROUP BY (source, base, quote)
--- — measured 8-30s on a populated 2.7B-row hypertable. #23 wrapped
--- it in stale-while-revalidate (sub-ms warm, ~8s cold first hit);
--- this CAGG eliminates the cold path too. Bucket grain is 1 hour:
+-- — measured 8-30s on a populated 2.7B-row hypertable. Caching in
+-- stale-while-revalidate (sub-ms warm, ~8s cold first hit) hides but
+-- does not remove the cold path; this CAGG does. Bucket grain is 1 hour:
 -- coarse enough that the 24h-window query reads only ~24 rows per
 -- (source, base, quote), fine enough that the post-CAGG vol_24h
 -- recomputation has the right resolution.

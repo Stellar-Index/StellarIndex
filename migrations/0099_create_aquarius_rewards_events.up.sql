@@ -1,12 +1,12 @@
 -- 0099 up — Aquarius rewards-gauge event surface.
 --
--- ROADMAP #89 (2026-07-10 topic census): a read-only ClickHouse-lake
+-- A read-only ClickHouse-lake
 -- topic census against the full gated set (332 pools + router) found
 -- 11 real, distinct rewards-gauge topics `classify()` did not
 -- recognize — a per-pool liquidity-mining subsystem layered on top of
 -- the swap/liquidity surface migration 0089 already covers. None
 -- error loudly; they simply never reached a decoder. Lifetime counts
--- (raw `stellar.contract_events`, 2026-07-10):
+-- (raw `stellar.contract_events`):
 --
 --   pool_state                     339,712  gauge global-state snapshot
 --                                            (fires on every reward-
@@ -85,7 +85,7 @@ CREATE TABLE aquarius_rewards_events (
     op_index           integer      NOT NULL CHECK (op_index >= 0),
     -- Per-event discriminator within the op — same role as
     -- aquarius_reserves.event_index / aquarius_liquidity.event_index
-    -- (F-1324 class: without this, two rewards events in one op
+    -- (without this, two rewards events in one op
     -- collide on ON CONFLICT DO NOTHING and one is silently dropped).
     event_index        integer      NOT NULL CHECK (event_index >= 0),
 

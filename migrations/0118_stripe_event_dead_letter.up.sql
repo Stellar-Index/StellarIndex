@@ -1,6 +1,6 @@
 -- 0118 up — a durable dead-letter state on stripe_event_log, so
 -- "customer paid, nothing provisioned" is a queryable, alertable row
--- instead of a WARN line nobody reads (audit-2026-07-23 C3-016).
+-- instead of a WARN line nobody reads.
 --
 -- The webhook has two terminal outcomes where money has landed at Stripe
 -- and this system provisioned NOTHING:

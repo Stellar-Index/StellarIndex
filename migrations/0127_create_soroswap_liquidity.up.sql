@@ -3,7 +3,7 @@
 -- One row per observed Soroswap pair-contract `deposit` | `withdraw`
 -- event — the two liquidity-mutating events a Soroswap pair emits
 -- alongside the already-projected `swap` (→ trades) and `skim`
--- (→ soroswap_skim_events). Until audit 2026-08-03 these were
+-- (→ soroswap_skim_events). Before this table these were
 -- classified + Matched but dropped at dispatcher_adapter.go with no
 -- table — the raw events sat in the ClickHouse lake unserved,
 -- violating the every-event mission. This table + the decoder arm
@@ -54,7 +54,7 @@
 -- in because TimescaleDB requires the partition column in every unique
 -- index on a hypertable (TS103).
 --
--- derive_generation: the INV-3 generation-guarded corrective-upsert
+-- derive_generation: the generation-guarded corrective-upsert
 -- column (migration 0110), same as trades / soroswap_skim_events — a
 -- corrected projector re-derive lands in place when its generation is
 -- >= the stored one; a live gen-0 replay can never revert it.

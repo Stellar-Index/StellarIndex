@@ -1,4 +1,4 @@
--- 0037 up — composite index for LatestTradePerSource (#30).
+-- 0037 up — composite index for LatestTradePerSource.
 --
 -- Store.LatestTradePerSource (internal/storage/timescale/trades.go)
 -- powers /v1/observations. Its query is

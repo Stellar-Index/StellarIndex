@@ -1,6 +1,4 @@
 -- 0096 up — `blend_emitter_events` hypertable.
--- (Header said "0095 up" from the day it shipped — corrected 2026-09-02
---  under migrations/README.md "Amending a shipped migration"; #357 F2.)
 --
 -- One row per observed event from the Blend **Emitter** contract —
 -- the protocol-emissions plumbing that mints/distributes BLND to the
@@ -9,7 +7,7 @@
 -- see internal/sources/blend_emitter/README.md.
 --
 -- Verified directly against the certified ClickHouse raw lake
--- (2026-07-09, ADR-0034): the Emitter's single canonical mainnet
+-- (ADR-0034): the Emitter's single canonical mainnet
 -- contract (CCOQM6S7ICIUWA225O5PSJWUBEMXGFSSW2PQFO6FP4DQEKMS5DASRGRR)
 -- has emitted exactly 469 events across its whole history, 4 distinct
 -- topics, ALL single-topic:

@@ -12,8 +12,8 @@
 -- recompression can silently flip a bar that already served. For a
 -- showcase product whose bars must be reproducible bit-for-bit, "depends
 -- on scan order" is a correctness bug even when both candidate prices
--- are individually real (determinism sweep 2026-08-21; the serve-layer
--- sibling fix — raw-trades ORDER BY tie-break — landed in v0.39.1).
+-- are individually real (the serve-layer sibling is the raw-trades
+-- ORDER BY tie-break).
 --
 -- ─── The fix ───────────────────────────────────────────────────────────
 -- first()/last() accept ANY comparable type as their ordering argument,
@@ -56,7 +56,7 @@
 -- switch "as a free rider IF another full re-materialization is ever
 -- scheduled". This migration IS that re-materialization, so the exact
 -- form lands here. No served number changes beyond the 12-decimal wire
--- truncation (measured r1 2026-07-02, 40,565 bucket comparisons).
+-- truncation (measured on r1, 40,565 bucket comparisons).
 --
 -- Everything else is preserved exactly from 0115/0126: column lists and
 -- order, the dust-floor FILTER + COALESCE fallback on all four extremes

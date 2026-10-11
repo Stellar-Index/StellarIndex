@@ -1,5 +1,5 @@
 -- 0115 up — notional floor on the OHLC extremes in the price CAGGs
--- (audit finding B11-F1; docs/operations/finding-dust-trades-set-chart-extremes.md).
+-- (see docs/operations/finding-dust-trades-set-chart-extremes.md).
 --
 -- ─── The defect ────────────────────────────────────────────────────────
 -- Migration 0002 computed open/high/low/close over EVERY trade in the
@@ -9,7 +9,7 @@
 -- "price" is an artifact of dividing two tiny integers, not an
 -- observation of the market.
 --
--- Measured on production (2026-07-17 06:00 UTC, XLM/USD 1h bar): the
+-- Measured on production (XLM/USD 1h bar): the
 -- served low was 0.1333333333. That is 1 / 7.5, and the 7.5 came from a
 -- SINGLE `USDC-GA5Z…/native` fill of 2 stroops for 15 stroops —
 -- usd_volume $0.00000027. The real market low that hour was 0.1822
@@ -42,14 +42,14 @@
 -- is false for an equal-weight mean; migration 0166 floors it.
 --
 -- ─── Why $0.01, and why a size floor rather than a price band ──────────
--- Operator DECISION, 2026-07-22 (see the finding, "DECISION"): filter on
+-- Operator DECISION (see the finding, "DECISION"): filter on
 -- trade SIZE, never on price divergence. A genuine fat-finger — a
 -- $100,000 sale at a terrible price — is a real market event and MUST
 -- still show; suppressing it because it sits far from VWAP is editing
 -- reality. What must go is dust: fills whose total value is below the
 -- point where price carries information.
 --
--- $0.01 on the 2026-07-17 distribution (6,018,245 trades):
+-- $0.01 on the measured distribution (6,018,245 trades):
 --
 --   usd_volume < $0.01    1,448,695 trades   24.1% by COUNT
 --                                            ~0%   by VALUE

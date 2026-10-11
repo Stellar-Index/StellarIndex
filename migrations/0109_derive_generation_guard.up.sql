@@ -1,7 +1,7 @@
 -- 0109 up — add `derive_generation` to the three core served-tier
 -- derived-value tables (trades, oracle_updates, asset_supply_history)
 -- so a corrected re-derive can UPDATE a wrong value in place instead of
--- silently no-op'ing (audit-2026-07-16 M1 / INV-3 — the re-derive trap,
+-- silently no-op'ing (the re-derive trap,
 -- the keystone fix for the re-backfill treadmill).
 --
 -- Before this migration the writers used `ON CONFLICT (...) DO NOTHING`

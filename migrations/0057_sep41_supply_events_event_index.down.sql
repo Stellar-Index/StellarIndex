@@ -5,7 +5,7 @@
 -- distinct). Decompress first.
 
 -- Refuse before decompressing anything: up added the wider key because
--- events share the old one, so ADD PRIMARY KEY would fail mid-down (#1161).
+-- events share the old one, so ADD PRIMARY KEY would fail mid-down.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM sep41_supply_events GROUP BY contract_id, ledger, tx_hash, op_index, observed_at HAVING count(*) > 1) THEN

@@ -27,7 +27,7 @@
 -- entry; empty vecs emit zero events and zero rows — count-consistent
 -- by construction, no fan-out waiver needed).
 --
--- derive_generation is the INV-3 generation-guarded corrective-upsert
+-- derive_generation is the generation-guarded corrective-upsert
 -- column (migration 0110 convention; bigint per 0142 — it carries
 -- time.Now().Unix(), int4 overflows 2038-01-19).
 --

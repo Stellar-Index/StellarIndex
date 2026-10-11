@@ -1,7 +1,7 @@
 -- 0093 up — `nonstandard_decimals_assets`: the READ-SIDE table backing the
 -- dex-nonstandard-decimals serving guard.
 --
--- Context (CONFIRMED production bug, 2026-07-08): the served price is
+-- Context (CONFIRMED production bug): the served price is
 -- Σ(quote_amount)/Σ(base_amount) on RAW smallest-unit integers — both in
 -- the `prices_*` continuous aggregates (0002) and in `aggregate.VWAP`. The
 -- per-asset decimals cancel in that ratio ONLY when base and quote share a
@@ -9,7 +9,7 @@
 -- CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO declares
 -- decimals()=9, not the assumed 7, so every served price for its pairs
 -- (aquarius CC2RB/USDC observed) is skewed exactly 100x — served 41.32 vs
--- true ~4132, live since 2026-06-22 (35 trades).
+-- true ~4132 (35 trades).
 --
 -- `internal/decimalsguard` (aggregator) already SWEEPS + CONFIRMS a
 -- token's on-chain decimals() != 7 and raises

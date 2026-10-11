@@ -7,7 +7,7 @@
 -- 62,029,020, tx da2ffe5a8651e2289408631a180cc8f6fe26247c6558bfc80dbf6
 -- d9527849cc7 — internal/sources/soroswap_router/real_bytes_test.go,
 -- testdata/router_subinvocation_op_ledger62029020.b64, captured from
--- the certified ClickHouse lake on r1, 2026-07-10) show the router
+-- the certified ClickHouse lake on r1) show the router
 -- wrapped two levels deep: an AGGREGATOR contract calls `exec()`,
 -- which calls an adapter's `swap_exact_tokens_for_tokens()`, which
 -- calls the router.

@@ -10,7 +10,7 @@
 -- 0164 emptied cctp_events and rozo_events without deleting those rows, so
 -- a rebuild of comet, cctp or rozo over a window checkpointed before the
 -- migration skips it and the table stays empty there. r1 hit this for
--- cctp/rozo on 2026-09-29 and the rows were deleted by hand. 0203 added
+-- cctp/rozo and the rows were deleted by hand. 0203 added
 -- sushiswap_v3_position_events to a source that already projected swaps,
 -- so a sushiswap_v3 window checkpointed before 0203 is skipped the same way.
 --

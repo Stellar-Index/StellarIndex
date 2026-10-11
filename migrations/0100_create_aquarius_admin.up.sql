@@ -1,10 +1,8 @@
 -- 0100 up — Aquarius governance / upgrade admin event surface.
 --
--- ROADMAP #89 (2026-07-10 topic census): the same census that found
--- the rewards-gauge gap (migration 0099) found 8 real, distinct
+-- A topic census (as for the rewards-gauge gap, migration 0099) found 8 real, distinct
 -- governance/admin topics with no decoder — router + pool lifecycle
--- actions. Lifetime counts (raw `stellar.contract_events`,
--- 2026-07-10):
+-- actions. Lifetime counts (raw `stellar.contract_events`):
 --
 --   apply_upgrade (router)          706  contract-code upgrade applied
 --   commit_upgrade (router)         705  contract-code upgrade queued
@@ -20,8 +18,8 @@
 -- target) + a jsonb `attributes` remainder for kind-specific fields,
 -- rather than one table per kind. Unlike the original blend_admin
 -- migration, event_index is in the PK from the start (blend_admin
--- needed a follow-up migration, 0054-adjacent, to add it — F-1324
--- class bug: without it, two admin events in one op collide under
+-- needed a follow-up migration, 0054-adjacent, to add it — without it,
+-- two admin events in one op collide under
 -- ON CONFLICT DO NOTHING).
 --
 -- These are governance-layer events, not pricing/liquidity signals;

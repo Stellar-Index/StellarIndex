@@ -7,7 +7,7 @@
 -- CLOSED buckets and nothing else; most readers of these views (catalogue
 -- snapshot, /v1/markets, the DEX pages, FX resolution, RWA daily history
 -- via oracle_prices_1d) carry no `bucket <= now() - INTERVAL` guard of
--- their own and depend on it. Until now nothing asserted it: each view
+-- their own and depend on it. Nothing else asserts it: each view
 -- got whatever the TimescaleDB default was at CREATE time (false before
 -- 2.13), and 0115/0126/0147/0166 captured and restored the prior value, so a
 -- view that was ever real-time stayed real-time and served the open

@@ -7,5 +7,5 @@
 -- `stellarindex-migrate down` crossing version 40 would silently schedule —
 -- the same data-loss class as the trades-retention drift (see 0031 down).
 -- Forward-only: a deliberate return to retained storage must be a NEW reviewed
--- migration, never this `down`. (audit-2026-06-14 A15)
+-- migration, never this `down`.
 SELECT 1;

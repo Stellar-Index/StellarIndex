@@ -1,14 +1,14 @@
 -- 0085 up — `sep41_supply_rollup`: incremental per-contract running
 -- mint/burn/clawback checkpoint for the SEP-41 Algorithm-3 supply read.
 --
--- Why this exists (incident 2026-07-06). The reader that feeds the
+-- Why this exists. The reader that feeds the
 -- aggregator's SEP-41 supply refresher — timescale.Store
 -- .SEP41KindTotalsAtOrBefore — computed
 --     Σ amount FILTER (WHERE event_kind='mint') / 'burn' / 'clawback'
 -- over ALL of a contract's `sep41_supply_events` rows on EVERY tick.
 -- That table's original design assumption ("watched-set restricted →
--- grows slowly", migration 0015) was broken by the 2026-07-05
--- full-history re-derive, which grew it to hundreds of millions of
+-- grows slowly", migration 0015) was broken by a full-history
+-- re-derive, which grew it to hundreds of millions of
 -- rows. `sep41_supply_events` is a hypertable chunked by `observed_at`,
 -- but the query bounds only `contract_id` + `ledger` — so it can prune
 -- NO chunks and index-scans every 7-day chunk, aggregating the whole

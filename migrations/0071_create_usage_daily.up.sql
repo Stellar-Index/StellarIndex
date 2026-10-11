@@ -36,8 +36,7 @@
 --
 -- Hypertable on `day` with 90-day chunks: the table is tiny
 -- (subjects × endpoints × days), so wide chunks keep the chunk
--- count irrelevant (see the trades-chunk perf incident,
--- 2026-06-01). PK leads with `day` to satisfy TimescaleDB's TS103
+-- count irrelevant (see the trades-chunk perf incident). PK leads with `day` to satisfy TimescaleDB's TS103
 -- (partitioning column must appear in every unique index).
 -- No retention, no compression — rollups are the durable record.
 

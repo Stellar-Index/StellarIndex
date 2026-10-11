@@ -1,12 +1,12 @@
 -- 0092 up — admit the 5 CCTP governance/admin event types into
 -- cctp_events.event_type.
 --
--- ROADMAP #89b (2026-07 decoder topic-match audit): the cctp source
+-- The cctp source
 -- was matching transfer-flow topics only (deposit_for_burn,
 -- mint_and_withdraw, message_sent, message_received, mint_and_forward
 -- — the last admitted by migration 0070). Five governance/admin
 -- topics real mainnet events (verified against the ClickHouse raw
--- lake 2026-07-08 across all three CCTP contracts) were falling
+-- lake across all three CCTP contracts) were falling
 -- through Classify() unhandled:
 --
 --   ownership_transfer            — 2-step ownership transfer initiated

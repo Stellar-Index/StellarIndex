@@ -1,7 +1,7 @@
 -- 0203 up — `sushiswap_v3_position_events` hypertable.
 --
 -- One row per observed SushiSwap V3 pool `mint` | `burn` | `collect` event:
--- the concentrated-liquidity position lifecycle. Until now these were
+-- the concentrated-liquidity position lifecycle. Before this table these were
 -- recognised and gated but projected zero rows, so the raw events sat in
 -- the ClickHouse lake unserved. A V3 position is (owner, tick_lower,
 -- tick_upper); it does not fit the reserve-shaped soroswap_liquidity row,

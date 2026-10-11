@@ -1,4 +1,4 @@
--- 0044 down — drop the Phoenix liquidity + stake hypertables (#27).
+-- 0044 down — drop the Phoenix liquidity + stake hypertables.
 --
 -- DROP TABLE removes the hypertable, chunks, indexes and compression
 -- settings in one statement. CASCADE not needed; nothing references

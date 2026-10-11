@@ -7,7 +7,7 @@
 --
 -- Identity: (account_id, asset_key, ledger). Multiple changes
 -- to the same trustline in one ledger collapse last-writer-wins.
--- The observer (Task #63) only fires on assets present in
+-- The observer only fires on assets present in
 -- [supply] watched_classic_assets so the table is bounded by
 -- operator config, not by network-wide trustline volume
 -- (which is ~100M).

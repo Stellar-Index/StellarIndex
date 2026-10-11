@@ -1,4 +1,4 @@
--- 0184 up — audit trail for `supply seed-claimable-balances` (GH #714).
+-- 0184 up — audit trail for `supply seed-claimable-balances`.
 --
 -- The claimable seed wrote claimable_observations and left nothing behind
 -- but a console summary, so nobody could tell whether an asset's claimable

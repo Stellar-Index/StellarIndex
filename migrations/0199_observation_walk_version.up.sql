@@ -7,7 +7,7 @@
 -- compares positions across binaries, so after a walk-order change a row
 -- written under the old numbering can carry a HIGHER position than the
 -- corrected row for the same (key, ledger) and silently reject it, on every
--- re-run (migration 0120). Until now nothing recorded which numbering a row
+-- re-run (migration 0120). Nothing recorded which numbering a row
 -- came from, so the guard could not tell the two apart.
 --
 -- WHAT THIS MIGRATION CHANGES

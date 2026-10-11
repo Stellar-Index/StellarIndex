@@ -1,4 +1,4 @@
--- 0042 down — drop the comet_liquidity hypertable (#26).
+-- 0042 down — drop the comet_liquidity hypertable.
 --
 -- DROP TABLE removes the hypertable, its chunks, indexes and
 -- compression policy in one statement. CASCADE is not needed —

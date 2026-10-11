@@ -1,8 +1,8 @@
 -- 0129 up — `aquarius_protocol_fee` hypertable.
 --
 -- Aquarius pools emit two treasury/governance events that were
--- classify()'d but Matches()-dropped (recognized-only) until
--- 2026-08-03 — the raw events sat in the ClickHouse lake unserved.
+-- classify()'d but Matches()-dropped (recognized-only) until this
+-- table — the raw events sat in the ClickHouse lake unserved.
 -- This table + the decoder arms close that every-event gap.
 --
 -- Two events, ONE table with a `kind` discriminator (the field sets
@@ -23,7 +23,7 @@
 --
 -- Storage shape: per-protocol table, pool-gated (ADR-0035, same trust
 -- root as trade/reserves). Aquarius has no published price; these rows
--- never reach VWAP. derive_generation is the INV-3 generation-guarded
+-- never reach VWAP. derive_generation is the generation-guarded
 -- corrective-upsert column (migration 0110).
 --
 -- Retention: NONE — granular-coverage mission keeps the history forever.

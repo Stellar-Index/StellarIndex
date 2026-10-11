@@ -1,6 +1,6 @@
 -- 0088 up — pre-Soroban GENESIS BASELINE columns on `sep41_supply_rollup`.
 --
--- Why this exists (incident 2026-07-06 follow-up). The SEP-41 Algorithm-3
+-- Why this exists. The SEP-41 Algorithm-3
 -- supply refresher derives per-contract total as
 --     Σ mint − Σ burn − Σ clawback
 -- from `sep41_supply_events` (Postgres). That table is filled by the SEP-41

@@ -1,5 +1,5 @@
 -- 0209 — oracle_updates.published_price: the publisher's own integer when
--- `price` was derived from it by inversion (INV-2590).
+-- `price` was derived from it by inversion.
 --
 -- RedStone MXNe and chainlink Invert feeds store the 8-dp reciprocal as
 -- `price`. 1/x at fixed scale is lossy (r=1740000000 and r=1740000001 both

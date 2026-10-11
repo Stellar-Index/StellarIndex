@@ -10,7 +10,7 @@
 -- either a G-strkey (account-controlled) or a C-strkey (contract-
 -- controlled).
 --
--- Clarified 2026-08-04: for a CLASSIC-asset SAC, account-address
+-- For a CLASSIC-asset SAC, account-address
 -- balances live in the TRUSTLINE, not in ContractData — so G-strkey
 -- holders appear here only for pure SEP-41 tokens. That is precisely
 -- why the Algorithm-2 decomposition (trustline + claimable + LP +

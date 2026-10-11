@@ -1,4 +1,4 @@
--- 0037 down — drop the LatestTradePerSource composite index (#30).
+-- 0037 down — drop the LatestTradePerSource composite index.
 --
 -- On a live node prefer DROP INDEX CONCURRENTLY by hand; the
 -- in-transaction DROP INDEX below takes a brief AccessExclusive lock

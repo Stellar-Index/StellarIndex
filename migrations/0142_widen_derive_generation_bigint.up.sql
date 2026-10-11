@@ -1,6 +1,5 @@
 -- 0142 up — widen `derive_generation` from int4 to bigint on the six
--- protocol tables migrations 0127-0132 created (audit-2026-08-14
--- W1-migrations-3).
+-- protocol tables migrations 0127-0132 created.
 --
 -- Every OTHER derive_generation column in the tree is bigint: the three
 -- core tables (0109) and the 25 protocol tables (0110), and fx_quotes

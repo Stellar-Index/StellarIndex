@@ -5,7 +5,7 @@
 -- aged out at 90 days; minute-grain aggregates at 30 days; only
 -- the long-lived hourly+ CAGGs were kept forever.
 --
--- Revision (2026-05-14): operator wants every raw trade preserved
+-- Revised design: operator wants every raw trade preserved
 -- forever, not just the rolled-up aggregates. Justification:
 --   1. Storage was the original concern — 90d × ~1.3M rows/day for
 --      SDEX = 40 GB. Forever × 11y = ~1.8 TB raw / ~360 GB

@@ -1,8 +1,7 @@
 -- 0102 up — `sac_balance_seed_provenance`: one row per watched SAC-wrapper
 -- contract recording the most recent bootstrap seed run.
 --
--- Why this exists (PHO/BLND VERDICT follow-up, incident 2026-07-06 /
--- ROADMAP #14 residual). Algorithm 2's `SACWrapped` component
+-- Why this exists. Algorithm 2's `SACWrapped` component
 -- (migration 0014 `sac_balance_observations`) is bootstrapped by
 -- `stellarindex-ops supply seed-sac-balances`, which reads current SAC
 -- Balance(Address) entries from the ClickHouse lake. Two sources now
@@ -17,7 +16,7 @@
 --     certified append-log; complete back to genesis per ADR-0034, but a
 --     much heavier scan — MUST run under run-heavy-job.sh).
 --
--- The final 2026-07-06 investigation traced PHO/BLND's Algorithm-2
+-- Investigation traced PHO/BLND's Algorithm-2
 -- under-count to exactly this floor: their largest holders are
 -- Phoenix/Blend pool contracts whose SAC Balance entry has been dormant
 -- since before ~62M, so `current_state` seeding recovers only a sliver
@@ -35,11 +34,8 @@
 -- against a source with a coverage floor should be visibly
 -- distinguishable from one that scanned full history, so an operator
 -- (or a future decision on the supply_cross_check_divergence downgrade —
--- this cited notes/ROADMAP.md §2, and notes/ is gitignored
--- (.gitignore:148) so the pointer resolves to nothing for anyone who did
--- not write it; the in-repo equivalents are ADR-0011 §"cross-check" and
--- docs/operations/runbooks/supply-cross-check-divergence.md — corrected
--- 2026-09-02, #357 F12) can tell, per
+-- see ADR-0011 §"cross-check" and
+-- docs/operations/runbooks/supply-cross-check-divergence.md) can tell, per
 -- contract, whether a residual divergence is expected (never
 -- full-history seeded) or actually anomalous (full-history seeded, still
 -- diverging).

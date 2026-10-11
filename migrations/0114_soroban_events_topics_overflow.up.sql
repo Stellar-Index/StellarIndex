@@ -1,5 +1,5 @@
 -- 0114 up — store the COMPLETE ordered topic list for soroban_events
--- (audit-2026-07-16 C2-11 — the >4-topic decode-loss).
+-- (the >4-topic decode-loss).
 --
 -- The 0041 schema pins topics into FOUR fixed columns
 -- (topic_0_xdr .. topic_3_xdr). The capture path (internal/sources/
@@ -48,8 +48,8 @@
 -- to genesis (ADR-0034), so the BYTES still exist and history is
 -- recoverable in principle.
 --
--- ⚠ THERE IS NO TOOL THAT DOES IT (audit DAT-03, verified 2026-07-25).
--- This comment previously named:
+-- ⚠ THERE IS NO TOOL THAT DOES IT.
+-- Do not use:
 --
 --     stellarindex-ops projector-replay -ch -from <x> -to <y>
 --

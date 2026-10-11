@@ -5,9 +5,9 @@
 -- the bucket, i.e. exactly migration 0002's definitions, plus the
 -- twap_1h / twap_1d dependents from migration 0081.
 --
--- ⚠ This re-opens the B11-F1 dust-wick defect: a single 2-stroop
+-- ⚠ This re-opens the dust-wick defect: a single 2-stroop
 -- path-payment remainder can again set the served high or low for a
--- whole bar (production: XLM/USD 2026-07-17 06:00 served low 0.1333
+-- whole bar (production: XLM/USD served low 0.1333
 -- against a real 0.1822). Roll back only to unblock an incident, and
 -- prefer a NEW forward migration to any lasting change.
 --

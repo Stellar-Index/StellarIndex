@@ -6,7 +6,7 @@
 -- isn't materialized until the hour CLOSES (+ the 5-min end_offset).
 -- So the in-progress hour was invisible: the source activity chart
 -- showed "no data" for the current hour until ~5 min past the top of
--- the next hour (observed on /dexes/sdex, 2026-06-19).
+-- the next hour (observed on /dexes/sdex).
 --
 -- materialized_only=false turns on real-time aggregation: a query
 -- UNIONs the materialized history with a live aggregate of the raw
@@ -15,8 +15,8 @@
 -- read query's read-time XLM/USD multiply works identically on the
 -- live-computed rows (same columns).
 --
--- Idempotent: r1 already had this applied via a live ALTER on
--- 2026-06-19; re-running is a no-op.
+-- Idempotent (r1 already had this applied via a live ALTER):
+-- re-running is a no-op.
 
 BEGIN;
 

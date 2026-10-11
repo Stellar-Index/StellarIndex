@@ -8,10 +8,7 @@
 --
 -- Identity: (contract_id, ledger, tx_hash, op_index, observed_at).
 -- Same Soroban-event shape the trades + blend_auctions hypertables
--- use. Per F-0010 of the 2026-04-29 audit (docs/audit-2026-04-29/ was
--- removed from the tree and has no in-repo successor; the finding is
--- restated in full here — corrected 2026-09-02, #358), observed_at
--- drags into
+-- use. observed_at drags into
 -- the PK because Timescale requires the partition column there;
 -- the natural identity is the (contract_id, ledger, tx_hash,
 -- op_index) tuple.

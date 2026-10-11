@@ -32,7 +32,7 @@
 -- per (pair, window) changes what a `freeze_events` row MEANS. One row is
 -- one freeze event: it is what /v1/anomalies lists, what fires the
 -- `anomaly.freeze` customer webhook, what RecordFreeze de-duplicates on
--- (F-1250), what the recovery worker closes and what
+-- (its key), what the recovery worker closes and what
 -- `stellarindex-ops freeze-unfreeze` stamps. Keying rows by window would
 -- triple every one of those for a single market event — three timeline
 -- entries, three webhook deliveries — to carry state none of those readers

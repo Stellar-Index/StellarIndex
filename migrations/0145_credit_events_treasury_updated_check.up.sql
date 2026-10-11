@@ -1,9 +1,9 @@
 -- 0145 up — admit `treasury_updated` into credit_events.event_type.
 --
--- 2026-08-18 ADR-0033 recognition audit (ch-recognition) found one
+-- The ADR-0033 recognition audit (ch-recognition) found one
 -- sorocredit event shape classify() never matched: the main contract's
 -- `TreasuryUpdated` config event (topic-0 Symbol) — 1 real lake event at
--- ledger 63,847,367, previously dropped end-to-end, tripping
+-- ledger 63,847,367, dropped end-to-end, tripping
 -- recognition_ok=FALSE for the source. Body is Vec[Address old, Address
 -- new] (the protocol treasury pointer rotation); it is captured verbatim
 -- into credit_events.attributes["body"] exactly like BeaconUpdated /

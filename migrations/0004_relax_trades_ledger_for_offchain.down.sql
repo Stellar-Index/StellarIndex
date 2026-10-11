@@ -2,7 +2,7 @@
 --
 -- Decompress existing chunks so the constraint swap is allowed
 -- (Timescale blocks DROP/ADD CONSTRAINT on a compressed hypertable),
--- then restore the 0001 compression settings (GH-1162). Naming "the
+-- then restore the 0001 compression settings. Naming "the
 -- compression policy" as the recovery was wrong: add_compression_policy
 -- (0001) only SCHEDULES a job against a table with timescaledb.compress
 -- enabled, and this down just set that to false — the job fails on every

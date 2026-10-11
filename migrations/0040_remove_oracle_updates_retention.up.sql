@@ -6,7 +6,7 @@
 -- aged out at 90 days; the long-lived hourly+ CAGGs from migration
 -- 0034 kept rolled-up history forever.
 --
--- Revision (#14, 2026-05-22): operator wants every raw oracle
+-- Revised design: operator wants every raw oracle
 -- observation preserved indefinitely, not just the rolled-up
 -- aggregates. Same reasoning as 0031:
 --   1. Storage. r1's postgres data dir is on the same 1.5 TB ZFS

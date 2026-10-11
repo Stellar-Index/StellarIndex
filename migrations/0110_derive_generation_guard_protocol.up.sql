@@ -1,8 +1,8 @@
--- 0110 up — extend the INV-3 generation guard (migration 0109) from the
+-- 0110 up — extend the generation guard (migration 0109) from the
 -- 3 CORE served-tier tables to the PROTOCOL projector tables. Adds
 -- `derive_generation bigint NOT NULL DEFAULT 0` to every protocol-specific
 -- projector-output table so a corrected re-derive can UPDATE a wrong value
--- in place instead of silently no-op'ing (audit-2026-07-16 INV-3 — the
+-- in place instead of silently no-op'ing (the
 -- re-backfill treadmill, wave 2).
 --
 -- Before this migration these writers used `ON CONFLICT (natural key) DO

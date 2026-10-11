@@ -3,8 +3,7 @@
 -- `ON CONFLICT (asset_key, ledger_sequence, time) DO NOTHING` can
 -- match it on Timescale hypertables.
 --
--- F-1205 follow-up (codex audit-2026-05-12): the supply-snapshot
--- timer test-fire on R1 surfaced
+-- The supply-snapshot timer fails with
 -- `there is no unique or exclusion constraint matching the
 --  ON CONFLICT specification`. The unique INDEX migration 0005
 -- created works for SELECT-side queries but column-inference
@@ -26,7 +25,7 @@
 -- `(asset_key, ledger_sequence, time)` does include time, so
 -- the constraint creates cleanly.
 --
--- T439 (audit-reverif-2026-09-18): the inner BEGIN/COMMIT below ends
+-- The inner BEGIN/COMMIT below ends
 -- the single implicit transaction golang-migrate's Run() would
 -- otherwise wrap this whole file in, so step 2 (the constraint swap)
 -- commits independently of steps 1 and 3. If step 3 then fails for
@@ -43,7 +42,7 @@
 --      back to the settings step 3 sets — a manual retry after a
 --      dropped constraint still needs step 3 re-applied.
 --
--- F-1261 (codex audit-2026-05-12): migration 0005 enabled
+-- Migration 0005 enabled
 -- Timescale compression on this table, and Timescale rejects
 -- index/constraint mutations on compressed hypertables with
 -- "operation not supported on hypertables that have compression

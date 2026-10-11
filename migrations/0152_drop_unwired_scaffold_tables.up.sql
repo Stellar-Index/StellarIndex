@@ -22,7 +22,7 @@
 --                                   this table.
 --   classic_asset_stats_5m  0024  — the /v1/coins reader was moved to
 --                                   the prices_1m UNION CTE in 2f06533a
---                                   (2026-05-06) precisely BECAUSE this
+--                                   precisely BECAUSE this
 --                                   table is empty; asset_catalogue.go
 --                                   :464 records that. No writer ever
 --                                   existed.
@@ -38,7 +38,7 @@
 -- tombstoned with a comment so the next reader does not go looking for
 -- the reconciliation worker.
 --
--- Evidence this is safe (re-derived at HEAD 14626cd7, 2026-09-02):
+-- Evidence this is safe:
 --
 --   * ZERO Go readers and ZERO Go writers, at HEAD and in the RELEASED
 --     v0.57.0 tree. `git grep -E '<the five table names>' v0.57.0 --
@@ -48,7 +48,7 @@
 --     the four column names return NOTHING in either tree. So the
 --     previous released binary cannot be affected — that is the rule-9
 --     `migration-compat:ok` justification on each statement below.
---   * r1 read-only pre-flight, 2026-09-02: all seven tables present,
+--   * r1 read-only pre-flight: all seven tables present,
 --     `count(*) = 0` on every one; stripe_event_log has 0 rows and 0
 --     non-NULL values in all four columns.
 --
@@ -61,7 +61,7 @@
 -- ⚠ RECOVERY IS TWO STEPS, not one. The exception rolls the migration
 -- back (nothing is dropped), but golang-migrate marks version 152
 -- DIRTY, and it will not run anything else until that is cleared —
--- verified against TimescaleDB 2.26.4-pg15 on 2026-09-02:
+-- verified against TimescaleDB 2.26.4-pg15:
 --
 --     stellarindex-migrate force 151       # clear the dirty flag
 --     <inspect the named table; keep what matters; empty it>

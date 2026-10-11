@@ -1,4 +1,4 @@
--- 0189 up — audit trail for `supply seed-observations` (GH #1201).
+-- 0189 up — audit trail for `supply seed-observations`.
 --
 -- The reserve-account seed wrote account_observations and left nothing
 -- behind but a console summary, so a pass run weeks ago is

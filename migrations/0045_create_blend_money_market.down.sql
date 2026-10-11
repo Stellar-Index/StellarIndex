@@ -1,4 +1,4 @@
--- 0045 down — drop the Blend money-market hypertables (#25).
+-- 0045 down — drop the Blend money-market hypertables.
 --
 -- DROP TABLE removes each hypertable, its chunks, indexes and
 -- compression settings in one statement. CASCADE is not needed —

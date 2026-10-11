@@ -6,7 +6,7 @@
 -- safe we explicitly re-create the unique index after dropping the
 -- constraint so the schema settles in the pre-0030 state.
 --
--- F-1261 (codex audit-2026-05-13): the up migration decompresses
+-- The up migration decompresses
 -- chunks + disables compression before the DDL; mirror that here
 -- so the down migration is also runnable against a compressed
 -- hypertable. Compression is re-enabled at the end with the same

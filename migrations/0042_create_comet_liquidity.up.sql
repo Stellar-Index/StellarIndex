@@ -1,4 +1,4 @@
--- 0042 up — `comet_liquidity` hypertable (#26).
+-- 0042 up — `comet_liquidity` hypertable.
 --
 -- One row per observed (POOL, join_pool | exit_pool | deposit |
 -- withdraw) Comet event. These are the four liquidity-mutating
@@ -34,8 +34,8 @@
 --     re-decoding it here would double-count.
 --
 -- Storage shape: per-protocol table, same decision taken for
--- cctp_events (0038) / rozo_events (0039) — operator-confirmed
--- 2026-05-22. Comet has no published prices, so these rows never
+-- cctp_events (0038) / rozo_events (0039) — operator-confirmed.
+-- Comet has no published prices, so these rows never
 -- reach the trades hypertable or VWAP.
 --
 -- Identity: (contract_id, ledger, tx_hash, op_index, event_kind,

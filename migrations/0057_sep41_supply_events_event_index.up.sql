@@ -1,4 +1,4 @@
--- 0057: sep41_supply_events — add event_index to the PK (F-1324).
+-- 0057: sep41_supply_events — add event_index to the PK.
 --
 -- The PK was (contract_id, ledger, tx_hash, op_index, observed_at) — no
 -- per-event discriminator. A single Soroban operation can emit MORE THAN ONE
@@ -13,11 +13,9 @@
 -- can't collide.
 --
 -- Existing rows get event_index=0 (column default). The watched-set was
--- restricted when this shipped (2026-05) so the table was effectively empty and
--- the ADD-PK succeeded directly. (This cited AGENTS.md for the "SEP-41 observer
--- not enabled on r1" claim; AGENTS.md no longer says that, and the live source
--- of truth is the deployment's `supply.watched_sep41_contracts` — empty leaves
--- the pipeline off. Corrected 2026-09-02, #358.) On a populated host, DELETE
+-- restricted when this shipped so the table was effectively empty and
+-- the ADD-PK succeeded directly. (The live source of truth is the deployment's
+-- `supply.watched_sep41_contracts` — empty leaves the pipeline off.) On a populated host, DELETE
 -- the rows before the ADD-PK and re-derive with the event_index-aware sink (the
 -- same operator order as 0055 — see the rollout runbook). STOP the indexer
 -- before this migration and deploy the event_index sink before restarting, so

@@ -21,7 +21,7 @@
 --   rw_zone_add         — add a pool to the reward zone
 --
 -- SCHEMA PROVENANCE: the per-event field layouts were
--- REVERSE-ENGINEERED from real mainnet lake samples (2026-06-15),
+-- REVERSE-ENGINEERED from real mainnet lake samples,
 -- pending Blend-team confirmation. This source is LIVE-CAPTURE ONLY
 -- until then — no BackfillSafe flip, no historical re-derive against
 -- these schemas.

@@ -16,7 +16,7 @@
 -- (nullable actor, per-kind columns) fits neither defindex_flows nor
 -- defindex_fees, hence its own table in the phoenix_admin_events style.
 --
--- derive_generation is the INV-3 generation-guarded upsert column,
+-- derive_generation is the generation-guarded upsert column,
 -- bigint per 0142. Retention: NONE.
 --
 -- Historical fill: `stellarindex-ops projector-replay -source defindex`.

@@ -1,7 +1,7 @@
 -- 0095 up — admit `rw_zone` + `rw_zone_remove` into
 -- blend_backstop_events.event_kind.
 --
--- 2026-07-09 read-only lake audit (real event bytes vs
+-- A read-only lake audit (real event bytes vs
 -- .discovery-repos/blend-contracts backstop/src/events.rs) found six
 -- blend_backstop decode bugs (see internal/sources/blend_backstop's
 -- decode.go package doc + CHANGELOG.md). Two of them are new event
@@ -9,7 +9,7 @@
 --
 --   rw_zone        — the V1 backstop's reward-zone-update topic (V2
 --                    renamed this to rw_zone_add); 5 real lake events,
---                    ledgers 51.50M-55.18M, previously dropped
+--                    ledgers 51.50M-55.18M, dropped
 --                    end-to-end.
 --   rw_zone_remove — the V2-only pool-removal counterpart to
 --                    rw_zone_add; zero lake occurrences ever, added
