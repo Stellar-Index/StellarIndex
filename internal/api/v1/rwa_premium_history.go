@@ -60,20 +60,19 @@ var rwaPremiumHistoryQuote = canonical.Asset{Type: canonical.AssetFiat, Code: "U
 
 // rwaPremiumDayFloorFor derives the per-day market-substance floor from the SAME operator-configured
 // policy /v1/price serves against (s.RWAPremiumSubstance, wired from the live
-// [pricingguard.SubstanceGate] in main.go) rather than the pricingguard defaults: an operator who
-// moves the live floor must move this one, or the premium history silently measures against a floor
-// /v1/price does not enforce.
+// [pricingguard.SubstanceGate]) rather than the pricingguard defaults: an operator who moves the
+// live floor must move this one, or the premium history measures against a floor /v1/price does
+// not enforce.
 //
-// It is [pricingguard.SubstancePolicy], the same three legs evaluated by the same pure decision
+// It is a [pricingguard.SubstancePolicy] evaluated by the same pure decision
 // ([pricingguard.SubstanceOK]):
 //
 //   - MinVolumeUSD is the serving value, UNCHANGED (both windows are 24 hours).
 //   - MinSpan is the serving value, UNCHANGED (grain-independent).
-//   - MinBuckets is NOT the serving value and must not be. The serving gate counts distinct MINUTE
-//     buckets (1440/day); this counts distinct HOUR buckets (24/day), the coarsest grain that still
-//     says WHEN inside a past day trading happened (see [timescale.Store.DailyMarketDays]).
-//     Inheriting the serving value would blank every series. Two hours is the weakest form of the
-//     property the span leg already carries, kept explicit so the policy has all three legs.
+//   - MinBuckets is NOT the serving value. The serving gate counts distinct MINUTE buckets
+//     (1440/day); this counts distinct HOUR buckets (24/day), the coarsest grain that still says
+//     WHEN inside a past day trading happened (see [timescale.Store.DailyMarketDays]). Inheriting
+//     the serving value would blank every series.
 func (s *Server) rwaPremiumDayFloorFor() pricingguard.SubstancePolicy {
 	minVolumeUSD := s.RWAPremiumSubstance.MinVolumeUSD
 	if minVolumeUSD == nil {
@@ -169,17 +168,13 @@ type RWAPremiumSeries struct {
 	// trades" are opposite findings that an absent point renders
 	// identically.
 	MarketWithheldDays int `json:"market_withheld_days,omitempty"`
-	// ReferenceOnlyDays is how many days inside the window carried a
-	// published NAV and no market at all. On this asset class that is
-	// the ordinary case, not a defect — the instruments are bought and
-	// held.
+	// ReferenceOnlyDays is how many days inside the window carried a published NAV and no market
+	// at all; on this asset class that is the ordinary case, as the instruments are held.
 	//
-	// Counted only from this member's FIRST observed market day onward,
-	// and never on a day already counted in MarketWithheldDays. Before
-	// the first observed day "did not trade", "did not exist yet" and
-	// "the aggregate does not reach back that far" are one thing from
-	// here, and a tally that conflated them would report an
-	// infrastructure gap as a fact about the market.
+	// Counted only from this member's FIRST observed market day onward, and never on a day already
+	// counted in MarketWithheldDays. Before that day "did not trade", "did not exist yet" and "the
+	// aggregate does not reach back that far" are indistinguishable, and conflating them would
+	// report an infrastructure gap as a fact about the market.
 	ReferenceOnlyDays int `json:"reference_only_days,omitempty"`
 }
 
@@ -259,17 +254,15 @@ const rwaPremiumBasisUnavailable = "No premium series is published: membership c
 
 // ─── readers ────────────────────────────────────────────────────────
 
-// RWAMarketHistoryReader reads the observed daily dollar market. Backs
-// the market leg of GET /v1/rwa/premium.
+// RWAMarketHistoryReader reads the observed daily dollar market, the market leg of
+// GET /v1/rwa/premium.
 //
-// Declared apart from the other price seams for [RWAOracleHistoryReader]'s
-// reason: this is a history capability, and putting it on a live-read
-// interface would make it a nil-returning stub in every implementation
-// that does not need it.
+// Declared apart from the live price seams for [RWAOracleHistoryReader]'s reason: putting a
+// history capability on a live-read interface would force nil-returning stubs on every
+// implementation that does not need it.
 //
-// Production wiring is *timescale.Store directly. Nil disables the
-// endpoint — a premium with the market leg missing is not a shorter
-// series, it is no series.
+// Production wiring is *timescale.Store. Nil disables the endpoint, since a premium with the
+// market leg missing is not a shorter series, it is no series.
 type RWAMarketHistoryReader interface {
 	DailyMarketDays(ctx context.Context, assets, quotes []canonical.Asset, from, to time.Time) ([]timescale.MarketDay, error)
 }
@@ -522,16 +515,13 @@ func rwaPremiumExcludedRows(tally map[string]int) []RWAHistoryExcluded {
 
 // ─── assembly ───────────────────────────────────────────────────────
 
-// cachedRWAPremiumHistory returns the assembled series, rebuilt at most
-// once per TTL and shared across concurrent requests by a single-flight
-// gate — the shape [Server.cachedRWAValueHistory] uses, for the same
-// reason: both legs are scans.
+// cachedRWAPremiumHistory returns the assembled series, rebuilt at most once per TTL and shared
+// across concurrent requests by a single-flight gate, as [Server.cachedRWAValueHistory] does,
+// because both legs are scans.
 //
-// On a failed assembly the last good series is served when there is
-// one, and an UNAVAILABLE one when there is not. Unavailable is not
-// empty: an empty series would say no token has ever traded away from
-// its instrument's value, which a read that did not answer may not
-// claim.
+// On a failed assembly the last good series is served when there is one, else an UNAVAILABLE one.
+// Unavailable is not empty: an empty series would claim no token has ever traded away from its
+// instrument's value, which a read that did not answer may not claim.
 func (s *Server) cachedRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 	s.rwaPremMu.Lock()
 	if s.rwaPremCache != nil && time.Since(s.rwaPremAt) < rwaPremiumHistoryTTL {
@@ -661,18 +651,15 @@ func (s *Server) buildRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 	return out
 }
 
-// rwaPremiumCandidates applies the gates that need no read: the
-// scam-flag suppression FIRST, then the curated (code, issuer) → feed
-// binding. Every refusal is tallied rather than dropped.
+// rwaPremiumCandidates applies the gates that need no read: scam-flag suppression FIRST, then the
+// curated (code, issuer) to feed binding. Every refusal is tallied rather than dropped.
 //
-// The scam flag is checked before the binding is consulted, and the
-// order is deliberate: a flagged issuer must be suppressed whether or
-// not anything would have priced it, so that adding a binding later can
-// never turn a suppression into a published claim. It is the same order
-// [rwaHistoryCandidates] applies, and the same reason.
+// The order is deliberate, as in [rwaHistoryCandidates]: a flagged issuer must be suppressed
+// whether or not anything would have priced it, so adding a binding later can never turn a
+// suppression into a published claim.
 //
-// Unlike the value series this needs no Stellar Asset Contract address:
-// a premium compares two prices and reads no supply at all.
+// Unlike the value series this needs no Stellar Asset Contract address: a premium compares two
+// prices and reads no supply.
 func rwaPremiumCandidates(m rwaMembership, excluded map[string]int) []rwaHistoryCandidate {
 	out := make([]rwaHistoryCandidate, 0, len(m.members))
 	for _, mem := range m.members {
@@ -700,16 +687,13 @@ func rwaPremiumCandidates(m rwaMembership, excluded map[string]int) []rwaHistory
 
 // ─── reference leg ──────────────────────────────────────────────────
 
-// rwaPremiumReferenceDays reads the oracle day buckets for the
-// candidates' bound feeds and reduces each feed to ONE publisher's
-// series.
+// rwaPremiumReferenceDays reads the oracle day buckets for the candidates' bound feeds and reduces
+// each feed to ONE publisher's series.
 //
-// The reduction is [rwaReduceFeedSeries] verbatim — the same
-// oracle-class gate, the same non-positive refusal, the same
-// pick-one-source-for-the-whole-series rule that keeps a publisher
-// switch from rendering as a price move. Two reductions of one quantity
-// is how the value series and this one would come to disagree about
-// what an instrument was worth on a day.
+// The reduction is [rwaReduceFeedSeries] verbatim (oracle-class gate, non-positive refusal, one
+// source for the whole series so a publisher switch never renders as a price move). Two
+// reductions of one quantity would let the value series and this one disagree about what an
+// instrument was worth on a day.
 func (s *Server) rwaPremiumReferenceDays(
 	ctx context.Context, cands []rwaHistoryCandidate, to time.Time,
 ) (map[string]*rwaFeedSeries, bool) {
@@ -763,16 +747,12 @@ func (s *Server) rwaPremiumMarketDays(
 // rwaPremiumUSDQuotes is the set of spellings a dollar may be written
 // as on the quote side of a market this surface will read.
 //
-// Deliberately the NARROW set — the operator's verified USD-pegged
-// classic assets in every canonical form, plus the synthetic `fiat:USD`
-// an off-chain venue quotes in — and NOT the wider proxy set the chart
-// walks. That wider set includes abstract stablecoin tickers, and
-// [timescale.AssetATH] records what a token wearing one of them did the
-// last time a surface trusted the ticker rather than the issuer: an
-// unpegged asset calling itself USDT put XLM's all-time high at $1.03.
-// A premium divides by an oracle's NAV, so a quote leg that is not
-// actually a dollar does not produce a noisy number, it produces a
-// false financial claim about a real instrument.
+// Deliberately the NARROW set: the operator's verified USD-pegged classic assets in every
+// canonical form, plus the synthetic `fiat:USD` an off-chain venue quotes in. It excludes the
+// wider proxy set the chart walks, which includes abstract stablecoin tickers; trusting a ticker
+// rather than the issuer let an unpegged asset calling itself USDT set XLM's all-time high (see
+// [timescale.AssetATH]). A premium divides by an oracle's NAV, so a quote leg that is not really a
+// dollar yields a false financial claim about a real instrument, not a noisy number.
 func (s *Server) rwaPremiumUSDQuotes() []canonical.Asset {
 	seen := map[string]struct{}{}
 	out := make([]canonical.Asset, 0, 4)
@@ -798,13 +778,11 @@ func (s *Server) rwaPremiumUSDQuotes() []canonical.Asset {
 // rwaPremiumJoin measures one member's premium on every day BOTH legs
 // were observed, and accounts for the days only one of them was.
 //
-// The market days drive the walk because they are the scarcer leg by a
-// wide margin on this asset class, but the rule is symmetric and stated
-// as such: a day enters the series only if the day is present in BOTH
-// maps. Nothing is carried in either direction. A day whose market did
-// not clear [Server.rwaPremiumDayFloorFor] is recorded as WITHHELD rather than
-// simply skipped, because "the market was too thin to publish" and
-// "there was no market" are different findings.
+// The market days drive the walk because they are the scarcer leg, but the rule is symmetric: a
+// day enters the series only if present in BOTH maps, and nothing is carried in either direction.
+// A day whose market did not clear [Server.rwaPremiumDayFloorFor] is recorded as WITHHELD rather
+// than skipped, because "the market was too thin to publish" and "there was no market" are
+// different findings.
 func rwaPremiumJoin(
 	c rwaHistoryCandidate, ref *rwaFeedSeries, market []timescale.MarketDay,
 	floor pricingguard.SubstancePolicy,
@@ -868,15 +846,12 @@ func rwaPremiumDayClears(d timescale.MarketDay, floor pricingguard.SubstancePoli
 // rwaPremiumDayOf measures one day's premium against that day's
 // published value, or reports that there is none to measure.
 //
-// ok=false covers three refusals that are all the same statement — this
-// day carries no comparison — and none of which is an error: the oracle
-// published nothing, it published a non-positive value (bad data, never
-// a valuation of zero, and nothing is divided by it), or the market
-// figure is not a positive number.
+// ok=false covers three refusals, none an error, all meaning this day carries no comparison: the
+// oracle published nothing, it published a non-positive value (bad data, never a valuation of
+// zero, and never divided by), or the market figure is not positive.
 //
-// Exact rational arithmetic throughout (ADR-0003); the 4-dp scale is
-// `premium.pct`'s on /v1/rwa/assets, so the two surfaces cannot round
-// one quantity two ways.
+// Exact rational arithmetic throughout (ADR-0003); the 4-dp scale is `premium.pct`'s on
+// /v1/rwa/assets, so the two surfaces cannot round one quantity two ways.
 func rwaPremiumDayOf(d timescale.MarketDay, refPrice *big.Rat) (rwaPremiumDay, bool) {
 	if refPrice == nil || refPrice.Sign() <= 0 {
 		return rwaPremiumDay{}, false
@@ -917,23 +892,17 @@ func rwaPremiumFirstObserved(market []timescale.MarketDay) time.Time {
 	return first
 }
 
-// rwaPremiumReferenceOnlyDays lists the days the oracle published on
-// and no premium came out of BECAUSE THERE WAS NO MARKET.
+// rwaPremiumReferenceOnlyDays lists the days the oracle published on and no premium came out
+// BECAUSE THERE WAS NO MARKET.
 //
-// Two bounds, each closing a way the count could state something it
-// does not know:
+// Two bounds keep the count from stating something it does not know:
 //
-//   - A day already counted as WITHHELD is a day the market existed and
-//     was refused, which is the opposite finding. Counting it in both
-//     would let a reader add the two tallies and get more days than the
-//     window holds.
-//   - Only days from `firstObserved` onward are counted. Before it,
-//     "the token did not trade", "the token did not exist yet" and "the
-//     hour aggregate is not materialised that far back" are
-//     indistinguishable from here, and a count that conflates them
-//     would report a materialisation gap as a fact about the market.
-//     After it the market read has demonstrably answered for the span,
-//     so a silent day inside it is a silent market.
+//   - A day already counted as WITHHELD had a market that was refused, the opposite finding.
+//     Counting it in both would let the two tallies sum to more days than the window holds.
+//   - Only days from `firstObserved` onward are counted. Before it, "did not trade", "did not
+//     exist yet" and "the hour aggregate is not materialised that far back" are indistinguishable,
+//     so a count conflating them would report a materialisation gap as a fact about the market.
+//     After it the market read has demonstrably answered, so a silent day is a silent market.
 func rwaPremiumReferenceOnlyDays(
 	ref *rwaFeedSeries,
 	published map[time.Time]struct{},

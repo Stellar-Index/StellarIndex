@@ -22,23 +22,19 @@ import (
 // GET /v1/rwa/history — the tokenized-real-world-asset set valued over
 // time, on the reference basis.
 //
-// It is the reference valuation of /v1/rwa/assets over time, not its
-// market cap: most of the set is held to maturity and never trades.
-// Per-asset market-cap history is /v1/chart?price_type=market_cap.
+// It is the reference valuation of /v1/rwa/assets over time, not its market cap: most of the set
+// is held to maturity and never trades. Per-asset market-cap history is
+// /v1/chart?price_type=market_cap.
 //
-// A member's daily value is circulating supply × the day's closing oracle
-// value. Supply is cumulated from the lake's append-only mint/burn/
-// clawback log (`stellar.supply_flows`, keyed on the SAC address). Price
-// comes from `oracle_prices_1d` (`rwa:<CODE>` / `fiat:USD`) and is never
-// carried: a silent oracle day drops that member and shows in
-// `assets_valued`. A day with no valued member has no point, because a
-// zero cannot say whether it means worthless or unseen.
+// A member's daily value is circulating supply x the day's closing oracle value. Supply is
+// cumulated from the lake's append-only mint/burn/clawback log (`stellar.supply_flows`, keyed on
+// the SAC address), not `supply_1d`, which rolls up only `watched_classic_assets` and holds no RWA
+// issuer. Price comes from `oracle_prices_1d` (`rwa:<CODE>` / `fiat:USD`) and is never carried: a
+// silent oracle day drops that member and shows in `assets_valued`. A day with no valued member
+// has no point, because a zero cannot say whether it means worthless or unseen.
 //
-// Supply is not read from `supply_1d`: it rolls up only
-// `watched_classic_assets`, which holds no RWA issuer.
-//
-// Membership is today's SEP-1 attestations and curated directory, applied
-// to the whole window (see `membership_as_of` and `basis`).
+// Membership is today's SEP-1 attestations and curated directory, applied to the whole window
+// (see `membership_as_of` and `basis`).
 
 // rwaHistoryTTL bounds the reuse of one assembled history.
 //
@@ -233,14 +229,11 @@ const rwaHistoryBasisUnavailable = "No series is published: membership could not
 // RWAOracleHistoryReader reads daily oracle observation buckets. Backs
 // the price leg of GET /v1/rwa/history.
 //
-// Declared apart from [OracleReader] rather than added to it: that seam
-// is the live-snapshot one and has many implementations, and a history
-// method on it would be a nil-returning stub in nearly all of them.
+// Declared apart from [OracleReader], the live-snapshot seam with many implementations, where a
+// history method would be a nil-returning stub in nearly all of them.
 //
-// Production wiring is *timescale.Store directly. Nil disables the
-// endpoint (503) — the endpoint has nothing to degrade to, because a
-// series with the price leg missing is not a shorter series, it is no
-// series.
+// Nil disables the endpoint (503): a series with the price leg missing is not a shorter series,
+// it is no series.
 type RWAOracleHistoryReader interface {
 	DailyOraclePrices(ctx context.Context, assets []canonical.Asset, quote canonical.Asset, from, to time.Time) ([]timescale.OracleDayPoint, error)
 }
@@ -842,13 +835,10 @@ func (s *Server) rwaHistorySupplyLevels(
 // rwaCumulateSupply turns a contract's daily net flows into its supply
 // level from each flow day onward.
 //
-// Reports complete=false the moment the running total goes NEGATIVE. A
-// token cannot have burned more than was ever minted, so a negative
-// level is proof that the contract's flows are incompletely seeded in
-// the lake — the same reading [clickhouse.TokenSupply.Incomplete] makes
-// point-in-time. The whole series is refused rather than the offending
-// days, because an incompletely seeded log understates every level after
-// the missing mint, not only the ones that went below zero.
+// Reports complete=false the moment the running total goes NEGATIVE. A token cannot burn more than
+// was minted, so a negative level proves the flows are incompletely seeded (the reading
+// [clickhouse.TokenSupply.Incomplete] makes point-in-time). The whole series is refused, because
+// a missing mint understates every later level, not only the ones below zero.
 //
 // Input must be ascending by day; the query orders it so.
 func rwaCumulateSupply(days []clickhouse.SupplyFlowDay) ([]rwaSupplyLevel, bool) {
@@ -919,19 +909,14 @@ func rwaClosedDayCeiling(now time.Time) time.Time {
 // rwaReduceFeedSeries keeps only oracle-class publishers and reduces
 // each feed to ONE source's series.
 //
-// WHICH SOURCE, AND WHY IT IS CHOSEN ONCE. Several oracles may price the
-// same instrument. The live snapshot picks the most recent observation,
-// which a day bucket cannot reproduce — `last(price, ts)` keeps the
-// value but not its timestamp, so two sources' closings within one day
-// are unordered. Picking per day would let the line switch publisher
-// between adjacent points and render the switch as a price move. So the
-// choice is made ONCE for the whole series — the source with the most
-// day buckets, ties broken on the source name so the pick never depends
-// on scan order — and the chosen source is named on the wire.
+// The source is chosen ONCE per series. Several oracles may price one instrument, and a day
+// bucket cannot order two sources' closings (`last(price, ts)` keeps the value, not its
+// timestamp). Picking per day would let the line switch publisher between adjacent points and
+// render the switch as a price move. The pick is the source with the most day buckets, ties
+// broken on source name so it never depends on scan order, and it is named on the wire.
 //
-// The oracle-class gate is R-C from rwa_reference.go: an aggregator
-// writing into the same table for divergence comparison is not an
-// independent valuation of the instrument.
+// The oracle-class gate is R-C from rwa_reference.go: an aggregator writing into the same table
+// for divergence comparison is not an independent valuation of the instrument.
 func rwaReduceFeedSeries(rows []timescale.OracleDayPoint) map[string]*rwaFeedSeries {
 	feeds := rwaFeedDaysBySource(rows)
 	out := make(map[string]*rwaFeedSeries, len(feeds))
@@ -1026,17 +1011,13 @@ func rwaHistorySources(members []rwaHistoryMember) []string {
 // rwaHistoryMemberDays multiplies one member's supply levels by its
 // feed's day buckets.
 //
-// The PRICE drives the series: a day is produced only where the oracle
-// published. The supply level is then the running total as of that day —
-// looked up in the level list, which changes only on a flow, so a day
-// between two flows takes the earlier one's level. That is the
-// asymmetry the file comment argues for, and it is the whole honesty of
-// this function: the leg that is a complete log may be carried, the leg
-// that is a sampled observation may not.
+// The PRICE drives the series: a day is produced only where the oracle published. The supply
+// level is the running total as of that day, so a day between two flows takes the earlier flow's
+// level. That asymmetry is the honesty of this function: the leg that is a complete log may be
+// carried, the leg that is a sampled observation may not.
 //
-// A price day BEFORE the member's first flow yields nothing: the token
-// did not exist yet, and a supply of zero times a real NAV is a
-// perfectly computable dollar figure that means nothing at all.
+// A price day BEFORE the member's first flow yields nothing: the token did not exist yet, and a
+// zero supply times a real NAV is computable but meaningless.
 func rwaHistoryMemberDays(levels []rwaSupplyLevel, prices map[time.Time]*big.Rat, decimals int) []rwaHistoryDay {
 	if len(levels) == 0 || len(prices) == 0 {
 		return nil

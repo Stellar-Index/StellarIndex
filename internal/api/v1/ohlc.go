@@ -15,36 +15,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// ohlcDefaultOutlierSigma is the default σ threshold for the outlier
-// filter applied before ComputeOHLC. Unlike VWAP — which is volume-
-// weighted and naturally dampens dust trades — OHLC's High/Low have
-// no statistical robustness: a single 1-stroop ↔ 1-stroop SDEX dust
-// trade lands at price=1 and pegs the High of an entire bar.
-//
-// 4.0 matches the aggregator orchestrator's default
-// (cfg.OutlierSigmaThreshold). Caller can override via
-// ?outlier_sigma=N, including 0 to disable for raw inspection.
+// ohlcDefaultOutlierSigma is the default sigma threshold for the outlier filter before ComputeOHLC.
+// Unlike volume-weighted VWAP, High/Low have no robustness: one 1-stroop SDEX dust trade lands at
+// price=1 and pegs the High of an entire bar. It matches the aggregator's default; callers may
+// override via ?outlier_sigma=N, including 0 for raw inspection.
 const ohlcDefaultOutlierSigma = 4.0
 
 // OHLCBar is the wire shape for /v1/ohlc entries. All prices are
 // decimal strings (ADR-0003).
 //
-// The volume fields are RAW smallest-unit sums, and the smallest unit is a
-// per-SOURCE scale, NOT a fixed stroop: on-chain DEX legs are 7-decimal, CEX 8
-// (external.externalAmountDecimals), FX 6, as resolved by
-// [amountScaleDecimalsFor]. A consumer dividing by a fixed 1e7 overstates a
-// CEX-fed pair tenfold.
+// The volume fields are RAW smallest-unit sums, and the unit is a per-SOURCE scale, not a fixed
+// stroop: on-chain DEX legs are 7-decimal, CEX 8, FX 6 ([amountScaleDecimalsFor]). A consumer
+// dividing by a fixed 1e7 overstates a CEX-fed pair tenfold.
 //
-// BaseVolumeDecimals / QuoteVolumeDecimals state that scale on the wire: the
-// lift target of [aggregate.NormalizeAmountScale], resolved by
-// [commonAmountScaleDecimals] over the PRE-outlier-filter population.
+// BaseVolumeDecimals / QuoteVolumeDecimals state that scale on the wire: the lift target of
+// [aggregate.NormalizeAmountScale], resolved by [commonAmountScaleDecimals] over the pre-outlier-
+// filter population. It is the per-source axis only; a leg in `nonstandard_decimals_assets` is
+// stamped at the asset's own decimals, which NormalizeAmountScale does not model.
 //
-// This is the per-SOURCE axis only: a leg in `nonstandard_decimals_assets`
-// is stamped at the ASSET's own decimals, which NormalizeAmountScale does not model.
-//
-// Truncated signals the window hit the per-request trade cap: Open/High/Low
-// reflect only the chronologically-LAST N trades (the reader drops the OLDEST
-// under the LIMIT). Close is unaffected. See VWAPResult.Truncated.
+// Truncated signals the window hit the per-request trade cap: Open/High/Low reflect only the
+// chronologically-last N trades (the reader drops the oldest under the LIMIT). Close is unaffected.
 type OHLCBar struct {
 	From        WireTime `json:"from"`
 	To          WireTime `json:"to"`
@@ -54,12 +44,9 @@ type OHLCBar struct {
 	Close       string   `json:"close"`
 	BaseVolume  string   `json:"base_volume"`
 	QuoteVolume string   `json:"quote_volume"`
-	// BaseVolumeDecimals / QuoteVolumeDecimals are the smallest-unit
-	// scale of the two sums above — see this type's doc comment. `null`
-	// when a contributing trade's source has no [external.Registry]
-	// entry: the sums are not convertible to asset units and must not
-	// be divided by a guessed scale. Mirrors
-	// OHLCSeriesBar.v_base_decimals / v_quote_decimals.
+	// BaseVolumeDecimals / QuoteVolumeDecimals are the scale of the sums above. `null` when a
+	// contributing source has no [external.Registry] entry: the sums are then not convertible
+	// and must not be divided by a guessed scale.
 	BaseVolumeDecimals  *int `json:"base_volume_decimals"`
 	QuoteVolumeDecimals *int `json:"quote_volume_decimals"`
 	TradeCount          int  `json:"trade_count"`
@@ -76,22 +63,17 @@ type OHLCBar struct {
 // price field. It is a floor, not a cap: see [priceRenderScale].
 const ohlcPriceDigits = 10
 
-// priceRenderSigDigits is how many significant digits [ratToDecimal]
-// keeps when a price is too small for its requested scale;
-// priceRenderMaxScale bounds the extension. Both mirror the
-// aggregator's formatRatFixed so the served string and the stored one
-// agree digit for digit.
+// priceRenderSigDigits is how many significant digits [ratToDecimal] keeps when a price is too small
+// for its scale; priceRenderMaxScale bounds the extension. Both mirror the aggregator's
+// formatRatFixed so the served and stored strings agree digit for digit.
 const (
 	priceRenderSigDigits = 12
 	priceRenderMaxScale  = 60
 )
 
-// priceRenderScale returns the fractional places a wire price needs.
-// The fixed `digits` render of a non-zero rational is all zeros — and
-// reparses as price 0 — exactly when its first significant digit lies
-// beyond the last rendered place; only then is the scale extended,
-// magnitude-relatively, so no positive price ever serves as zero.
-// Every other value keeps the requested scale, byte-identical.
+// priceRenderScale returns the fractional places a wire price needs. A fixed `digits` render of a
+// non-zero rational reparses as price 0 exactly when its first significant digit lies beyond the
+// last rendered place; only then is the scale extended, so no positive price ever serves as zero.
 func priceRenderScale(r *big.Rat, digits int) int {
 	if r == nil || r.Sign() == 0 {
 		return digits
@@ -157,13 +139,8 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		// dex-nonstandard-decimals: series mode reads the prices_<n>
-		// continuous aggregates (migration 0002), a raw (unnormalized)
-		// quote/base ratio for a confirmed non-7-decimals leg — same as
-		// the single-bar branch below, normalized via aggregate.AdjustPrice
-		// inside handleOHLCSeries rather than declined. See
-		// docs/operations/runbooks/dex.md "Root
-		// cause analysis".
+		// Series mode reads the prices_<n> CAGGs, a raw quote/base ratio for a non-7-decimals leg;
+		// handleOHLCSeries normalizes it via aggregate.AdjustPrice rather than declining.
 		s.handleOHLCSeries(w, r, pair, interval)
 		return
 	}
@@ -180,12 +157,9 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The single-bar path scans raw `trades` on every query, capped at
-	// maxTradesForOHLC; a window with more trades than that yields a
-	// partial bar with Truncated set. The multi-bar series path above
-	// reads CAGGs and sets its own timeout in handleOHLCSeries.
-	// 8s matches the sibling raw-scan endpoints and fires before the
-	// blanket request-timeout middleware.
+	// The single-bar path scans raw `trades` per query, capped at maxTradesForOHLC (a larger window
+	// yields a partial bar with Truncated set). The series path reads CAGGs with its own timeout.
+	// 8s matches the sibling raw-scan endpoints and fires before the blanket request timeout.
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
@@ -208,18 +182,13 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The volume sums below are only meaningful with a scale attached, and
-	// the scale is per-SOURCE (7dp on-chain, 8 CEX, 6 FX). It is
-	// resolved over the window as fetched: the window carries its lift
-	// target through the outlier filter, and an unregistered source the
-	// filter drops still set the scale its survivors were lifted to.
+	// The volume sums are only meaningful with a per-source scale attached. It is resolved over the
+	// window as fetched: an unregistered source the filter drops still set the scale its survivors
+	// were lifted to.
 	volumeDecimals := commonAmountScaleDecimals(window)
 
-	// Capture the pre-filter length so Truncated reflects whether the
-	// WINDOW hit the cap — not whether the post-outlier-filter slice
-	// happens to equal it. Mirrors vwap.go; computing it after
-	// FilterOutliers would yield false negatives whenever the filter
-	// dropped any trade.
+	// Capture the pre-filter length so Truncated reflects whether the window hit the cap; computed
+	// after FilterOutliers it would be a false negative whenever the filter dropped a trade.
 	preFilter := window.Len()
 	if window, ok = filterOHLCOutliers(w, r, window, sigma); !ok {
 		return
@@ -247,10 +216,8 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	}, Flags{Triangulated: triangulated, ProxyDeviation: triangulated && s.proxyDeviation(ctx, to)})
 }
 
-// filterOHLCOutliers applies the single-bar outlier filter. A window
-// that had trades but kept none is a 422, not "no trades": the filter
-// withheld them — including a contested window whose trim would have
-// discarded most of its base volume. Returns ok=false when it has
+// filterOHLCOutliers applies the single-bar outlier filter. A window that had trades but kept none
+// is a 422, not "no trades", because the filter withheld them. Returns ok=false when it has
 // already written the response.
 func filterOHLCOutliers(w http.ResponseWriter, r *http.Request, window aggregate.ScaledWindow, sigma float64) (aggregate.ScaledWindow, bool) {
 	if sigma <= 0 {
@@ -269,16 +236,11 @@ func filterOHLCOutliers(w http.ResponseWriter, r *http.Request, window aggregate
 	return window, true
 }
 
-// computeOHLCSingleBar folds the single-bar path's compute-and-normalize
-// tail into one seam: it derives the bar, answers the caller directly on
-// the two failure shapes, and applies the dex-nonstandard-decimals
-// forward normalization before handing the bar back.
+// computeOHLCSingleBar derives the single-bar OHLC, answers the caller directly on the two failure
+// shapes, and applies the dex-nonstandard-decimals forward normalization.
 //
-// Normalization lives here rather than at the call site because
-// ComputeOHLC derives every one of Open/High/Low/Close from the same raw
-// quote/base ratio VWAP uses, so the SAME per-pair scalar factor corrects
-// all four — see [aggregate.AdjustPrice] for why a post-hoc multiply is
-// exact. No-op for a pair with no confirmed non-7-decimals leg.
+// Open/High/Low/Close all derive from the same raw quote/base ratio, so one per-pair scalar corrects
+// all four (see [aggregate.AdjustPrice] for why a post-hoc multiply is exact).
 //
 // Returns ok=false when it has already written the response.
 func (s *Server) computeOHLCSingleBar(
@@ -312,23 +274,17 @@ func (s *Server) computeOHLCSingleBar(
 	return bar, true
 }
 
-// commonAmountScaleDecimals is the smallest-unit scale a window's volume
-// sums are in: the lift target [aggregate.NormalizeAmountScale] chose, the
-// MAXIMUM per-source scale present (max, so every lift is an exact integer
-// multiply and nothing is divided — ADR-0003).
+// commonAmountScaleDecimals is the scale a window's volume sums are in: the lift target
+// [aggregate.NormalizeAmountScale] chose, the MAXIMUM per-source scale present, so every lift is an
+// exact integer multiply and nothing is divided (ADR-0003).
 //
-// Call it over the window as fetched, not after the outlier filter: the
-// registry check below must see every source the lift was resolved over.
+// Call it over the window as fetched, not after the outlier filter: the registry check must see
+// every source the lift was resolved over. Zero for an empty window, which 404s before the wire.
 //
-// Zero for an empty window, which never reaches the wire — ComputeOHLC
-// 404s on ErrNoTrades first.
-//
-// [barScaleDecimals] is the series arm's bar-level twin, over a CAGG row's
-// `sources` column; both resolve a venue through [amountScaleDecimalsFor]
-// so the point and series paths cannot disagree about a source's scale.
-// Returns [ohlcBarScaleUnknown] if any contributing source has no
-// [external.Registry] entry: [external.Lookup] would answer with the CEX-flavoured
-// 8-decimal default, misstating an unregistered 7-decimal DEX tenfold.
+// [barScaleDecimals] is the series twin over a CAGG row's `sources`; both resolve a venue through
+// [amountScaleDecimalsFor] so point and series cannot disagree about a source's scale. Returns
+// [ohlcBarScaleUnknown] if any source has no [external.Registry] entry, because [external.Lookup]
+// would answer with the CEX 8-decimal default and misstate an unregistered 7-decimal DEX tenfold.
 func commonAmountScaleDecimals(window aggregate.ScaledWindow) int {
 	trades := window.Trades()
 	for i := range trades {
@@ -339,16 +295,10 @@ func commonAmountScaleDecimals(window aggregate.ScaledWindow) int {
 	return window.Decimals()
 }
 
-// parseOHLCOutlierSigma parses the optional ?outlier_sigma=N query
-// parameter, defaulting to [ohlcDefaultOutlierSigma]. Mirrors
-// /v1/vwap's parser but with a non-zero default — see the constant
-// docs for why OHLC needs the floor.
-//
-// `outlier_sigma=0` is the explicit opt-out: callers who want raw
-// per-trade extremes (e.g. the explorer's "show every print" view)
-// pass it to disable filtering entirely.
-//
-// Reports ok=false after writing a problem+json on parse failure.
+// parseOHLCOutlierSigma parses the optional ?outlier_sigma=N, defaulting to
+// [ohlcDefaultOutlierSigma] (non-zero, unlike /v1/vwap, because High/Low need the floor).
+// `outlier_sigma=0` is the explicit opt-out for raw per-trade extremes. Reports ok=false after
+// writing a problem+json on parse failure.
 func parseOHLCOutlierSigma(w http.ResponseWriter, r *http.Request) (float64, bool) {
 	raw := r.URL.Query().Get("outlier_sigma")
 	if raw == "" {
@@ -365,25 +315,15 @@ func parseOHLCOutlierSigma(w http.ResponseWriter, r *http.Request) (float64, boo
 	return v, true
 }
 
-// parseFromTo parses the from/to query params, applying the same
-// 1-hour default as /v1/history. Writes problem + returns ok=false
-// on failure.
+// parseFromTo parses the from/to query params with a 1-hour default, writing a problem and
+// returning ok=false on failure.
 //
-// `to` defaults to the request's wall-clock now. Use this for
-// /v1/history where the client wants exactly the trades in the
-// stated range — the API mustn't quietly snap their range to a
-// boundary. For aggregated rate endpoints (VWAP/TWAP/OHLC) use
-// [parseFromToClamped] instead, per ADR-0015.
+// `to` defaults to wall-clock now. Use this where the client wants exactly the stated range
+// (/v1/history); aggregated rate endpoints use [parseFromToClamped] per ADR-0015.
 //
-// `window` is an optional convenience for CG-style customers who
-// don't want to compute `from = now - duration` themselves. Accepted
-// formats follow [time.ParseDuration] (ns/us/ms/s/m/h) plus a
-// trailing-`d` shortcut for days (e.g. `7d`). When supplied, `from`
-// is set to `to - window`. Combining `window` with an explicit
-// `from` is a 400 — they're conflicting controls for the same value;
-// rejecting it loudly catches the "I asked for 24h and got a
-// 1h default" surprise. Combining `window` with an explicit `to` is
-// fine — gives an arbitrary-anchored window of the requested length.
+// `window` (a [time.ParseDuration] string plus a `d` days shortcut) sets `from = to - window`.
+// Combining it with an explicit `from` is a 400, which catches the "asked for 24h, got the 1h
+// default" surprise; combining it with an explicit `to` is fine.
 func parseFromTo(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok bool) {
 	to = time.Now().UTC()
 	if raw := r.URL.Query().Get("to"); raw != "" {
@@ -444,12 +384,8 @@ func parseFromTo(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok
 	return from, to, true
 }
 
-// parseWindowDuration accepts the same units as [time.ParseDuration]
-// (ns/us/ms/s/m/h) and additionally a trailing-`d` shortcut for days
-// (e.g. `7d` = 168h). Multiple units in one string are NOT supported
-// for the `d` shortcut (`1d12h` is rejected) — that ambiguity is
-// best avoided in user-facing query params; clients wanting odd
-// durations can express them in hours.
+// parseWindowDuration accepts [time.ParseDuration] units plus a trailing-`d` days shortcut (`7d`).
+// Mixed units with `d` (`1d12h`) are rejected as ambiguous; clients can express them in hours.
 func parseWindowDuration(s string) (time.Duration, error) {
 	if s == "" {
 		return 0, fmt.Errorf("empty duration")
@@ -468,56 +404,35 @@ func parseWindowDuration(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
-// closedBucketWindow is the boundary granularity used by
-// [parseFromToClamped] when `to` defaults to "now". 30 s sits inside the
-// smallest bucket of the aggregator's CAGG ladder (`prices_1m`) and
-// matches the Freighter ≤30 s freshness SLA.
+// closedBucketWindow is the boundary granularity [parseFromToClamped] snaps "now" to. 30 s sits
+// inside the smallest CAGG bucket (`prices_1m`) and matches the 30 s freshness SLA.
 //
-// Per ADR-0015, snapping the implicit "now" to this boundary is what
-// makes "every region returns the same rate" a real property: a
-// request landing at 12:00:01.234 in two regions clamps to
-// 12:00:00.000 in both and answers over the identical
-// [from, 12:00:00.000) window — same trades, same result, same JSON
-// bytes once both regions have ingested those trades.
+// Per ADR-0015, snapping makes "every region returns the same rate" real: requests landing at
+// different instants in two regions clamp to the same boundary and answer over the identical
+// window, so the JSON is byte-identical once both have ingested those trades.
 const closedBucketWindow = 30 * time.Second
 
-// parseFromToClamped is the rate-endpoint flavour of [parseFromTo]:
-// the effective right edge is always min(to, now.Truncate
-// ([closedBucketWindow])), whether `to` came from the client or from
-// parseFromTo's default — ADR-0015 says the served window's right
-// edge is always closed, not just the defaulted one. A `to` that
-// already precedes the boundary (a genuinely historical range) is
-// left verbatim and is not reported as clamped.
-//
-// Sets the *clamped flag so callers can surface "this response
-// reflects a closed-bucket window, not the range you asked for" in
-// their wire output — see VWAPResult.Clamped / TWAPResult.Clamped /
-// OHLCBar.Clamped.
+// parseFromToClamped is the rate-endpoint flavour of [parseFromTo]: the right edge is always
+// min(to, now.Truncate([closedBucketWindow])), whether `to` was explicit or defaulted (ADR-0015).
+// A `to` already before the boundary (a historical range) is left verbatim and not reported as
+// clamped. The clamped flag lets callers surface that the response is a closed-bucket window.
 func parseFromToClamped(w http.ResponseWriter, r *http.Request) (from, to time.Time, clamped, ok bool) {
 	toExplicit := r.URL.Query().Get("to") != ""
 	from, to, ok = parseFromTo(w, r)
 	if !ok {
 		return time.Time{}, time.Time{}, false, false
 	}
-	// ADR-0015: the most-recent row served for any window is always
-	// closed — the rule is about the right edge of the DATA, not about
-	// what a defaulted `to` means. Clamping only the implicit-`to` case
-	// let `?to=<now>` (or any `to` inside the still-filling bucket) walk
-	// out of the closed-bucket contract by asking explicitly instead of
-	// omitting the param. `nowRef` is `to` itself in the implicit case
-	// (already the instant parseFromTo defaulted to) so behaviour there
-	// is unchanged; an explicit `to` is compared against a fresh reading
-	// of wall-clock now.
+	// ADR-0015: the right edge of the DATA is always closed, so an explicit `to` inside the
+	// still-filling bucket must clamp too, or asking explicitly would escape the contract. `nowRef`
+	// is `to` itself when defaulted; an explicit `to` is compared against a fresh wall-clock now.
 	nowRef := to
 	if toExplicit {
 		nowRef = time.Now().UTC()
 	}
 	closedTo := nowRef.Truncate(closedBucketWindow)
 	if to.After(closedTo) {
-		// If `from` was also defaulted (= to - 1h), shift it by the
-		// same delta so the window length stays 1h. If `from` was
-		// explicit, leave it alone — the client's range is preserved
-		// up to the new (closed) right edge.
+		// A defaulted `from` shifts by the same delta so the window stays 1h; an explicit one is
+		// kept, preserving the client's range up to the new closed edge.
 		fromExplicit := r.URL.Query().Get("from") != ""
 		if !toExplicit && !fromExplicit {
 			from = from.Add(closedTo.Sub(to))
@@ -536,13 +451,9 @@ func parseFromToClamped(w http.ResponseWriter, r *http.Request) (from, to time.T
 	return from, to, clamped, true
 }
 
-// ratToDecimal renders a *big.Rat as a fixed-width decimal string
-// with at least `digits` fractional places, truncating (floors) —
-// the rounding choice shared by every price surface, /v1/price and
-// /v1/history included, which render through it. A price too small
-// for `digits` gets more places rather than zeros ([priceRenderScale]).
-//
-// Returns "0" for nil input.
+// ratToDecimal renders a *big.Rat as a decimal string with at least `digits` fractional places,
+// truncating (flooring), the rounding shared by every price surface. A price too small for `digits`
+// gets more places rather than zeros ([priceRenderScale]). Returns "0" for nil.
 func ratToDecimal(r *big.Rat, digits int) string {
 	if r == nil {
 		return "0"

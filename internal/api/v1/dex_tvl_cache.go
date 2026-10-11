@@ -16,15 +16,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ProtocolTVLView is the additive per-protocol TVL summary attached to
-// GET /v1/protocols rows and /v1/protocols/{name} when the DEX TVL
-// snapshot cache is wired and has data for the protocol. Phoenix and
-// Comet events carry flow deltas, not post-state reserves, so their
-// figures come from the pools' STORAGE entries in the lake (absolute
-// current state — a window net-flow is NOT TVL and is deliberately
-// not dressed up as one). Absent for protocols without any absolute
-// reserve source (SDEX is an order book) and on cold start before
-// the first background refresh completes.
+// ProtocolTVLView is the additive per-protocol TVL summary on GET /v1/protocols rows and
+// /v1/protocols/{name}. Phoenix and Comet events carry flow deltas, not post-state reserves, so
+// their figures come from the pools' STORAGE entries in the lake; a window net-flow is NOT TVL.
+// Absent for protocols with no absolute reserve source (SDEX is an order book) and on cold start.
 type ProtocolTVLView struct {
 	// TVLUSD is the summed USD value of every PRICED reserve leg across
 	// the protocol's pools, as a decimal string (ADR-0003). Unpriced
@@ -44,13 +39,9 @@ type ProtocolTVLView struct {
 	// shape was unrecognised; their priceable legs (if any) still
 	// contribute to TVLUSD (honest lower bound, never silent).
 	UnpricedPools int `json:"unpriced_pools"`
-	// AsOfLedger is the highest ledger at which any contributing pool's
-	// reserves changed — this protocol's chain high-water, the same
-	// convention /v1/liquidity-pools stamps per pool and SDEXOrderBook
-	// stamps for its book. A pool untouched since an earlier ledger is
-	// EQUALLY current: every reserve reader's contract is "current as of
-	// this ledger and unchanged since". 0 (field omitted) when no
-	// contributing pool carried a ledger — never a guess.
+	// AsOfLedger is the highest ledger at which any contributing pool's reserves changed. A pool
+	// untouched since an earlier ledger is EQUALLY current: the reserve readers' contract is
+	// "current as of this ledger and unchanged since". 0 (omitted) when no pool carried a ledger.
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 	// AsOf is when the snapshot was computed (RFC3339).
 	AsOf string `json:"as_of"`
@@ -59,13 +50,9 @@ type ProtocolTVLView struct {
 	Basis string `json:"basis"`
 }
 
-// DEXTVLRefreshInterval is the cadence the background goroutine in
-// cmd/stellarindex-api/main.go calls DEXTVLCache.Refresh at. The
-// underlying reads are three batched lake lookups (soroswap pair
-// instance entries; phoenix pool persistent entries; comet record
-// entries) + one served-tier query (aquarius reserve snapshots) + a
-// handful of prices_1m lookups — cheap enough for 10 minutes,
-// slow-moving enough that anything faster adds no signal.
+// DEXTVLRefreshInterval is the cadence at which the API's background goroutine calls Refresh.
+// The reads are three batched lake lookups, one served-tier query and a few prices_1m lookups;
+// TVL moves slowly enough that anything faster adds no signal.
 const DEXTVLRefreshInterval = 10 * time.Minute
 
 // aquariusTVLWindowDays bounds the aquarius_reserves recency scan —
@@ -87,13 +74,10 @@ type AquariusTVLReserveReader interface {
 	LatestAquariusReserves(ctx context.Context, windowDays int) ([]timescale.AquariusPoolReserve, error)
 }
 
-// PhoenixTVLReserveReader reads current Phoenix pool reserves +
-// token identities from the pools' persistent storage in the
-// certified lake. Production wiring is *clickhouse.ExplorerReader.
-// The second return lists pools whose captured storage did not
-// decode to the recognised shape — counted, never guessed; pools
-// absent from BOTH returns have no current state (archived or
-// uncaptured), which is honest "unavailable", NEVER zero TVL.
+// PhoenixTVLReserveReader reads current Phoenix pool reserves and token identities from the
+// pools' persistent storage in the lake (production: *clickhouse.ExplorerReader). The second
+// return lists pools whose storage did not decode to the recognised shape: counted, never
+// guessed. Pools absent from BOTH returns are "unavailable", NEVER zero TVL.
 type PhoenixTVLReserveReader interface {
 	PhoenixPoolReserves(ctx context.Context, pools []string) (map[string]clickhouse.PhoenixPoolState, []string, error)
 }
@@ -106,22 +90,17 @@ type CometTVLReserveReader interface {
 	CometPoolReserves(ctx context.Context, pools []string) (map[string]clickhouse.CometPoolState, []string, error)
 }
 
-// TVLUSDPricer resolves an on-chain asset's USD price at a point in
-// time. Production wiring is *timescale.VWAPUSDFXResolver — the same
-// tier system (peg → direct VWAP → XLM bridge) that stamps
-// trades.usd_volume, so TVL and volume on the same page share one
-// pricing methodology. The returned rate is a RAW prices_1m ratio
-// whose scale is anchored at the 7-decimal classic scale; see
-// tvlLegUSD for the exact identity.
+// TVLUSDPricer resolves an on-chain asset's USD price at a point in time. Production wiring is
+// *timescale.VWAPUSDFXResolver, the same tier system that stamps trades.usd_volume, so TVL and
+// volume share one methodology. The rate is a RAW prices_1m ratio anchored at the 7-decimal
+// classic scale; see tvlLegUSD.
 type TVLUSDPricer interface {
 	USDPriceAt(ctx context.Context, asset canonical.Asset, at time.Time) (string, bool, error)
 }
 
-// TVLUSDPegInfo reports whether an asset is an operator-declared
-// USD-pegged classic (or its SAC wrapper) and at what decimal scale.
-// Production wiring is *timescale.USDVolumeQuoteSpec. Nil-safe: no
-// spec means no peg shortcut — pegged tokens then price through the
-// resolver like any other asset (or count unpriced).
+// TVLUSDPegInfo reports whether an asset is an operator-declared USD-pegged classic (or its SAC
+// wrapper) and at what decimal scale. Nil means no peg shortcut: pegged tokens then price
+// through the resolver like any other asset, or count unpriced.
 type TVLUSDPegInfo interface {
 	QuoteUSDPegInfo(asset canonical.Asset) (decimals int, ok bool)
 }
@@ -129,35 +108,21 @@ type TVLUSDPegInfo interface {
 // TVLValueGate is the serving-side TRUST gate on a reserve leg: may this
 // platform publish a USD valuation of this asset at all?
 //
-// In production it is the decision function every other served price
-// surface asks. Without it `rateFor` consults only the resolver, whose
-// sole floor is one cent of quote notional, so a scam-flagged issuer's token
-// with one self-traded $0.01 minute would be valued into a pool's TVL and summed
-// into the protocol headline. An attacker-authored number is not a lower bound,
-// it is a lie with a "≥" in front.
+// Without it `rateFor` consults only the resolver, whose sole floor is one cent of quote
+// notional, so a scam-flagged issuer's token with one self-traded $0.01 minute would be valued
+// into a pool's TVL and the protocol headline. An attacker-authored number is not a lower bound.
 //
-// Production wiring routes to cmd/stellarindex-api's priceWithheld chokepoint
-// (substance gate OR scam gate; never consulted separately). Nil is a valid
-// allow-everything gate ([pricing_guard] disabled). buildDEXTVLValueGate must
-// return a nil INTERFACE when neither guard is wired: an interface holding a
+// Production routes to cmd/stellarindex-api's priceWithheld chokepoint (substance gate OR scam
+// gate, never consulted separately). Nil is a valid allow-everything gate; buildDEXTVLValueGate
+// must return a nil INTERFACE when neither guard is wired, since an interface holding a
 // non-pointer struct is never == nil.
-//
-// The quote set behind "does this asset have a publishable USD price" (vs XLM /
-// fiat:USD / a declared peg, as [Server.listingPriceAllowed] tries) and the
-// metric label (obs.PriceServe{Scam,Substance}WithheldTotal) belong to that
-// adapter, where the gates and the operator's peg list live.
 type TVLValueGate interface {
 	ValueWithheld(ctx context.Context, asset canonical.Asset) bool
 
-	// Screens names the withholding screens this gate ACTUALLY applies,
-	// in the Basis prose the [TVLScreenScamDirectory] /
-	// [TVLScreenSubstanceFloor] constants spell. Empty means the gate
-	// withholds nothing, and Basis then claims nothing.
-	//
-	// It is a required method, not an optional companion interface, on
-	// purpose: the gate is the only thing that knows which of its
-	// sub-guards the operator left wired, and a gate that cannot answer
-	// must not be describable as having screened anything.
+	// Screens names the withholding screens this gate ACTUALLY applies, in the Basis prose of the
+	// [TVLScreenScamDirectory] / [TVLScreenSubstanceFloor] constants. Empty means Basis claims
+	// nothing. It is required, not an optional interface: only the gate knows which sub-guards
+	// the operator left wired, and one that cannot answer must not claim to have screened.
 	Screens() []string
 }
 
@@ -204,11 +169,9 @@ type DEXTVLSources struct {
 	Logger Logger
 }
 
-// DEXTVLCache is a read-mostly snapshot of per-protocol TVL, refreshed
-// by a background goroutine (CoverageCache pattern — the explorer read
-// budget cannot afford per-request aggregation over reserve tables).
-// Cold start (no refresh yet) serves an empty snapshot: handlers omit
-// the tvl field, never 503.
+// DEXTVLCache is a read-mostly per-protocol TVL snapshot refreshed by a background goroutine,
+// because the explorer read budget cannot afford per-request aggregation over reserve tables.
+// Cold start serves an empty snapshot: handlers omit the tvl field, never 503.
 type DEXTVLCache struct {
 	mu       sync.RWMutex
 	snapshot map[string]ProtocolTVLView
@@ -238,25 +201,18 @@ func (c *DEXTVLCache) Snapshot() (map[string]ProtocolTVLView, time.Time) {
 	return c.snapshot, c.fetchedAt
 }
 
-// SnapshotAndTotal returns the per-protocol snapshot together with the
-// headline total from the SAME refresh cycle. Snapshot() and
-// Total() each take their own critical section, so a caller reading
-// both separately can straddle a Refresh() and pair one cycle's
-// per-protocol figures with a different cycle's total — the two are
-// written atomically under one Lock() in Refresh but were readable
-// non-atomically. Callers that publish both fields on the same response
-// (e.g. GET /v1/protocols) must use this instead of the two accessors.
+// SnapshotAndTotal returns the per-protocol snapshot with the headline total from the SAME
+// refresh cycle. Reading Snapshot() and Total() separately can straddle a Refresh() and pair one
+// cycle's figures with another's total, so callers publishing both (GET /v1/protocols) use this.
 func (c *DEXTVLCache) SnapshotAndTotal() (map[string]ProtocolTVLView, *DEXTVLTotalView, time.Time) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.snapshot, c.total, c.fetchedAt
 }
 
-// Protocol returns one protocol's published view together with the
-// per-pool breakdown it was summed from, and whether the entry is a
-// carried-forward figure from an earlier cycle. ok=false when the
-// protocol has no entry (no derivation wired, or cold start). Callers
-// must treat the pools slice as read-only.
+// Protocol returns one protocol's published view with the per-pool breakdown it was summed from
+// and whether it is carried forward from an earlier cycle. ok=false when the protocol has no
+// entry. Callers must treat the pools slice as read-only.
 func (c *DEXTVLCache) Protocol(name string) (DEXTVLProtocolSnapshot, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -302,15 +258,10 @@ type dexTVLDerivation struct {
 	refresh func(context.Context, *tvlValuer, time.Time) (*tvlProtocolResult, error)
 }
 
-// derivations is the CLOSED set of protocols the snapshot derives a TVL
-// figure for. Refresh walks it; nothing else may add to the snapshot.
-//
-// It is a method rather than an anonymous slice inside Refresh so the
-// scope guard (TestDEXTVLScope_PooledProtocolIsDerivedOrExplicitlyExcluded)
-// can ask which protocols HAVE a derivation without the list being
-// re-typed into a second place that rots. A pooled protocol that is not
-// in here must name itself in dexTVLScopeExclusions instead — the
-// headline may omit a protocol, never silently.
+// derivations is the CLOSED set of protocols the snapshot derives a TVL figure for. It is a
+// method so the scope guard (TestDEXTVLScope_PooledProtocolIsDerivedOrExplicitlyExcluded) can
+// read the list without a second copy. A pooled protocol not in here must name itself in
+// dexTVLScopeExclusions: the headline may omit a protocol, never silently.
 func (c *DEXTVLCache) derivations() []dexTVLDerivation {
 	return []dexTVLDerivation{
 		{"soroswap", c.refreshSoroswap},
@@ -320,11 +271,9 @@ func (c *DEXTVLCache) derivations() []dexTVLDerivation {
 	}
 }
 
-// Refresh recomputes the snapshot. Per-protocol failures keep that
-// protocol's previous entry (a transient read hiccup shouldn't blank
-// a healthy figure) and are joined into the returned error for the
-// refresher goroutine to log; protocols that compute successfully
-// swap in atomically.
+// Refresh recomputes the snapshot. A per-protocol failure keeps that protocol's previous entry,
+// so a transient read error does not blank a healthy figure, and is joined into the returned
+// error; protocols that compute successfully swap in atomically.
 func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	now := time.Now().UTC()
 	valuer := newTVLValuer(c.src.Pricer, c.src.PegInfo, c.src.Gate, now)
@@ -333,16 +282,13 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	nextPools := make(map[string][]DEXTVLPoolView, 4)
 	prev, _ := c.Snapshot()
 	var errs []error
-	// carried names the protocols serving a PREVIOUS cycle's figure
-	// because this cycle's read failed. Tracked explicitly rather than
-	// inferred from the entry's as_of: RFC3339 is second-resolution and
-	// two refreshes can share a stamp, so a value that merely LOOKS
-	// current would silently pass an equality test.
+	// carried names protocols serving a PREVIOUS cycle's figure after a failed read. It is tracked
+	// explicitly, not inferred from as_of: RFC3339 is second-resolution, so two refreshes can
+	// share a stamp and a stale value would pass an equality test.
 	var carried []string
 	carriedSet := map[string]bool{}
-	// unavailable names each derived protocol publishing no figure at
-	// all this cycle. Without it such a protocol would simply vanish from
-	// the snapshot, and the headline would drop it unnamed.
+	// unavailable names each derived protocol publishing no figure this cycle, so the headline
+	// never drops one unnamed.
 	var unavailable []DEXTVLExclusion
 
 	for _, p := range c.derivations() {
@@ -368,11 +314,9 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 		}
 	}
 
-	// Reconcile the headline total from the figures we are about to
-	// publish, not from the rationals they were rounded out of — see
-	// reconcileDEXTVLTotal. It runs here, once per refresh, so the
-	// divergence verdict is computed against the refresh instant that
-	// produced the parts rather than re-derived per request.
+	// Reconcile the headline from the figures about to be published, not the rationals they were
+	// rounded from (see reconcileDEXTVLTotal). Once per refresh, so the divergence verdict matches
+	// the instant that produced the parts.
 	total := reconcileDEXTVLTotal(next, now, carried, unavailable)
 	unavailableSet := make(map[string]string, len(unavailable))
 	for _, u := range unavailable {
@@ -401,38 +345,27 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	return err
 }
 
-// tvlBasisUnpricedTail is the clause every protocol's Basis ends with:
-// the honest lower-bound contract. An unpriced leg contributes exactly
-// 0 and its pool counts in UnpricedPools, which is what the explorer's
-// "≥" prefix and hatched bar tail render.
+// tvlBasisUnpricedTail ends every protocol's Basis with the lower-bound contract: an unpriced leg
+// contributes exactly 0 and its pool counts in UnpricedPools.
 const tvlBasisUnpricedTail = "; unpriced legs contribute 0"
 
-// tvlBasisIdentityClause states the identity screen every leg passes
-// before any price is consulted. It is unconditional: the screen
-// has no off switch, and a nil catalogue narrows it rather than lifting it.
+// tvlBasisIdentityClause states the identity screen every leg passes before any price is
+// consulted. It has no off switch; a nil catalogue narrows it rather than lifting it.
 const tvlBasisIdentityClause = "; only native XLM, a declared USD peg or an asset in the " +
 	"verified currency catalogue is valued, and any other token's leg is counted unpriced"
 
-// TVLScreenScamDirectory / TVLScreenSubstanceFloor are the Basis
-// phrases naming each withholding screen a [TVLValueGate] can apply.
-// They live here, beside the sentence they are spliced into, so the
-// production adapter that knows WHICH screens are wired
-// (cmd/stellarindex-api's dexTVLValueGate) names them by constant
-// instead of re-typing the prose into a second copy.
+// TVLScreenScamDirectory / TVLScreenSubstanceFloor are the Basis phrases naming each screen a
+// [TVLValueGate] can apply. They live beside the sentence they are spliced into so the adapter
+// that knows which screens are wired names them by constant, not a second copy of the prose.
 const (
 	TVLScreenScamDirectory  = "directory-flagged issuer"
 	TVLScreenSubstanceFloor = "a market below the substance floor"
 )
 
-// basisTail returns the lower-bound clause matching THIS cache's wiring
-// — naming the screens the gate says it actually ran, never the full
-// set. Written from what ships, not from intent.
-//
-// A fixed sentence naming BOTH screens whenever a gate is non-nil would
-// lie to an operator running [pricing_guard] disable_substance_gate =
-// true, which makes buildSubstanceGate return nil: every /v1/protocols
-// response, and the explorer tooltip that renders Basis verbatim, would
-// claim each leg had been screened against the substance floor.
+// basisTail returns the lower-bound clause for THIS cache's wiring, naming only the screens the
+// gate says it ran. A fixed sentence naming both whenever a gate is non-nil would misreport an
+// operator running [pricing_guard] disable_substance_gate = true (buildSubstanceGate returns
+// nil), claiming every leg was screened against the substance floor.
 func (c *DEXTVLCache) basisTail() string {
 	if c.src.Gate == nil {
 		return tvlBasisIdentityClause + tvlBasisUnpricedTail
@@ -459,23 +392,17 @@ func carryPrev(next, prev map[string]ProtocolTVLView, name string) bool {
 	return ok
 }
 
-// prevPools returns the pools published for name on the previous cycle,
-// so a carried-forward figure travels with the breakdown it was summed
-// from — the drill-down for a carried protocol shows the pools that
-// produced the carried number, not an empty list beside a non-zero
-// figure.
+// prevPools returns the pools published for name on the previous cycle, so a carried-forward
+// figure keeps the breakdown it was summed from, not an empty list beside a non-zero figure.
 func (c *DEXTVLCache) prevPools(name string) []DEXTVLPoolView {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.pools[name]
 }
 
-// refreshSoroswap computes Soroswap TVL from CURRENT pair reserves in
-// the certified lake (pair instance storage), scoped to the
-// soroswap_pairs registry. Pairs absent from the lake read (archived
-// pairs, uncaptured entries) are excluded entirely — that absence is
-// the reader's honest signal, not a zero. Returns (nil, nil) when the
-// readers aren't wired.
+// refreshSoroswap computes Soroswap TVL from CURRENT pair reserves in the lake, scoped to the
+// soroswap_pairs registry. Pairs absent from the lake read are excluded: absence is the
+// reader's honest signal, not a zero. Returns (nil, nil) when the readers aren't wired.
 func (c *DEXTVLCache) refreshSoroswap(ctx context.Context, valuer *tvlValuer, now time.Time) (*tvlProtocolResult, error) {
 	if c.src.SoroswapPairs == nil || c.src.SoroswapReserves == nil {
 		return nil, nil
@@ -510,17 +437,11 @@ func (c *DEXTVLCache) refreshSoroswap(ctx context.Context, valuer *tvlValuer, no
 // protocol unavailable, without counting a refresh failure.
 var errTVLNoObservedPools = errors.New("reserve read returned no pools")
 
-// finishTVLProtocol renders an accumulator into the result Refresh
-// publishes — or refuses to, when valuing the protocol met a price read
-// that ERRORED. Such a figure is short by every leg of the unreadable
-// token and says so nowhere, so it is returned as the protocol's refresh
-// error and Refresh carries the previous figure forward, marked carried,
-// exactly as it does when the reserve read fails. It is the one
-// place a result is built, so no protocol can publish around it.
-//
-// A pass that observed no pool at all is refused too, with
-// errTVLNoObservedPools: the reader contract makes absence "unavailable",
-// never zero, so a "0.00" over zero pools is a fabricated figure.
+// finishTVLProtocol renders an accumulator into the result Refresh publishes, or refuses when a
+// price read ERRORED: such a figure is short by every leg of the unreadable token and says so
+// nowhere, so it becomes the refresh error and Refresh carries the previous figure forward. It is
+// the one place a result is built, so no protocol can publish around it. A pass that observed no
+// pool is refused with errTVLNoObservedPools: absence is "unavailable", never a fabricated "0.00".
 func finishTVLProtocol(acc *tvlProtocolAccumulator) (*tvlProtocolResult, error) {
 	if err := acc.valuer.passFailure(); err != nil {
 		return nil, err
@@ -532,12 +453,10 @@ func finishTVLProtocol(acc *tvlProtocolAccumulator) (*tvlProtocolResult, error) 
 	return &tvlProtocolResult{view: view, pools: pools}, nil
 }
 
-// refreshAquarius computes Aquarius TVL from the latest per-pool
-// POST-STATE reserve snapshot (aquarius_reserves) within the trailing
-// window. A leg whose token address never resolved (update_reserves
-// carries positions, not addresses — migration 0089) is unpriceable
-// and counts its pool in UnpricedPools. Returns (nil, nil) when the
-// reader isn't wired.
+// refreshAquarius computes Aquarius TVL from the latest per-pool POST-STATE reserve snapshot
+// within the trailing window. A leg whose token address never resolved (update_reserves carries
+// positions, not addresses) is unpriceable and counts its pool in UnpricedPools. Returns
+// (nil, nil) when the reader isn't wired.
 func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, now time.Time) (*tvlProtocolResult, error) {
 	if c.src.AquariusReserves == nil {
 		return nil, nil
@@ -565,15 +484,10 @@ func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, no
 	return finishTVLProtocol(acc)
 }
 
-// refreshPhoenix computes Phoenix TVL from CURRENT pool reserves in
-// the certified lake (persistent ReserveA/ReserveB entries + the
-// CONFIG entry's token identities), scoped to the curated ADR-0035
-// pool set. Pools absent from the lake read (archived pools,
-// uncaptured entries) are excluded entirely — that absence is the
-// reader's honest signal, not a zero. Pools whose captured storage
-// shape was unrecognised contribute 0 and are counted (see
-// countUndecodablePools). Returns (nil, nil) when the readers aren't
-// wired.
+// refreshPhoenix computes Phoenix TVL from CURRENT pool reserves in the lake, scoped to the
+// curated pool set. Pools absent from the lake read are excluded: absence is not a zero. Pools
+// with an unrecognised storage shape contribute 0 and are counted (see countUndecodablePools).
+// Returns (nil, nil) when the readers aren't wired.
 func (c *DEXTVLCache) refreshPhoenix(ctx context.Context, valuer *tvlValuer, now time.Time) (*tvlProtocolResult, error) {
 	if c.src.PhoenixReserves == nil || len(c.src.PhoenixPools) == 0 {
 		return nil, nil
@@ -627,12 +541,9 @@ func (c *DEXTVLCache) refreshComet(ctx context.Context, valuer *tvlValuer, now t
 	return finishTVLProtocol(acc)
 }
 
-// warnUndecodablePools emits one metric-friendly warn line for pools
-// whose captured storage shape the reader refused to decode (the
-// accumulator has already counted them: contributing 0, in both
-// PoolsTotal and UnpricedPools, published with the pool-level
-// exclusion) so a contract upgrade that changes the storage layout is
-// operator-visible rather than a silent TVL shrink.
+// warnUndecodablePools warns once for pools whose storage shape the reader refused to decode
+// (already counted as 0 in PoolsTotal and UnpricedPools), so a contract upgrade that changes the
+// storage layout is operator-visible rather than a silent TVL shrink.
 func (c *DEXTVLCache) warnUndecodablePools(protocol string, pools []string) {
 	if len(pools) == 0 || c.src.Logger == nil {
 		return
@@ -651,11 +562,9 @@ type tvlValuer struct {
 	memo     map[string]*big.Rat // token strkey → raw-ratio USD rate; nil = unpriceable
 	gateMemo map[string]bool     // token strkey → "the trust gates withhold this asset"
 	verified map[string]bool     // canonical asset id or SAC strkey → catalogue-verified; nil = none
-	// failed is NOT memo's nil. memo[token] == nil says nobody prices the
-	// token — a fact about the token, honestly published as
-	// no_served_price. failed[token] says the price READ errored — a fact
-	// about this refresh, under which the token is exactly as priced as it
-	// was last cycle. See [tvlValuer.rateFor].
+	// failed is NOT memo's nil: memo[token] == nil says nobody prices the token (published as
+	// no_served_price), failed[token] says the price READ errored, a fact about this refresh only.
+	// See [tvlValuer.rateFor].
 	failed map[string]error
 	// passErr is the first price-read failure met since [tvlValuer.beginPass]:
 	// the protocol being valued touched a token whose price could not be
@@ -675,9 +584,8 @@ func newTVLValuer(pricer TVLUSDPricer, pegInfo TVLUSDPegInfo, gate TVLValueGate,
 	}
 }
 
-// beginPass opens one protocol's valuation. The memos are shared across
-// the refresh — that is their point — but whether a price read failed is
-// a per-protocol verdict: a protocol that never held the failing token
+// beginPass opens one protocol's valuation. Memos are shared across the refresh, but whether a
+// price read failed is a per-protocol verdict: a protocol that never held the failing token still
 // publishes this cycle's figure.
 func (v *tvlValuer) beginPass() { v.passErr = nil }
 
@@ -689,39 +597,30 @@ func (v *tvlValuer) passFailure() error { return v.passErr }
 // raw-ratio rate is anchored against (see tvlLegUSD).
 const classicScaleDecimals = 7
 
-// tvlLegPriceReadFailed marks a leg whose price read ERRORED. It is
-// deliberately unexported and deliberately not a DEXTVLLeg* reason: it
-// is never published. A pass that produced one is refused whole by
-// [finishTVLProtocol] and the protocol serves its previous figure, so
-// the value only exists to keep a failed read from borrowing
-// DEXTVLLegNoServedPrice — the borrowing that was the defect.
+// tvlLegPriceReadFailed marks a leg whose price read ERRORED. It is never published: a pass that
+// produced one is refused whole by [finishTVLProtocol]. It exists so a failed read cannot be
+// reported as DEXTVLLegNoServedPrice.
 const tvlLegPriceReadFailed = "price_read_failed"
 
 // legUSD values `raw` base units of `token` (a C-strkey) in USD.
 // ok=false when the leg cannot be priced honestly.
 //
-// The math mirrors the trades.usd_volume insert path exactly
-// (timescale.usdVolumeViaXLMBaseAnchor / baseAnchorEligible):
-// USDPriceAt returns a RAW prices_1m ratio chain anchored against a
-// 7-decimal asset (native XLM or a classic USD peg), so for A raw
-// units at raw rate R the identity
+// The math mirrors the trades.usd_volume insert path (timescale.usdVolumeViaXLMBaseAnchor).
+// USDPriceAt returns a RAW prices_1m ratio chain anchored against a 7-decimal asset, so for A raw
+// units at raw rate R
 //
 //	usd = (A / 1e7) × R
 //
-// holds for ANY token — the token's own decimals cancel through the
-// raw ratio; the 1e7 belongs to the anchor. The one boundary that
-// does need real decimals is a per-WHOLE-UNIT price: a declared USD
-// peg is valued at $1 × (A / 10^declaredDecimals) via PegInfo, whose
-// scope is deliberately classic + SAC (7-decimal invariant).
+// holds for ANY token: its own decimals cancel through the raw ratio and the 1e7 belongs to the
+// anchor. A declared USD peg is the exception, valued at $1 × (A / 10^declaredDecimals) via
+// PegInfo, whose scope is deliberately classic + SAC (7-decimal invariant).
 func (v *tvlValuer) legUSD(ctx context.Context, token string, raw *big.Int) (*big.Rat, bool) {
 	val := v.value(ctx, token, raw)
 	return val.usd, val.usd != nil
 }
 
-// tvlLegValue is one leg's valuation verdict: usd is nil exactly when
-// excluded is set. asset is the canonical identity the served price
-// path was asked about (empty when the token resolved to no asset),
-// and basis says how usd was derived.
+// tvlLegValue is one leg's valuation verdict: usd is nil exactly when excluded is set. asset is
+// the canonical identity the price path was asked about (empty if none), basis how usd was derived.
 type tvlLegValue struct {
 	usd      *big.Rat
 	asset    string
@@ -751,13 +650,9 @@ func (v *tvlValuer) value(ctx context.Context, token string, raw *big.Int) tvlLe
 	if !ok {
 		return tvlLegValue{excluded: DEXTVLLegMalformedToken}
 	}
-	// Serving trust gates FIRST — before the declared-peg shortcut, not
-	// after it. The asset detail path orders it the same way:
-	// suppressScamIssuerPricing runs AFTER fillDeclaredPegPrice precisely
-	// so a re-fill cannot resurrect a withheld value. A token
-	// an operator declared 1:1-USD is still a token whose issuer the
-	// curated directory may since have flagged, and the flag is the
-	// later, narrower, owner-level decision.
+	// Trust gates run BEFORE the declared-peg shortcut, as on the asset detail path
+	// (suppressScamIssuerPricing after fillDeclaredPegPrice, so a re-fill cannot resurrect a
+	// withheld value): a declared 1:1-USD token may have an issuer the directory flagged later.
 	if v.withheld(ctx, token, asset) {
 		return tvlLegValue{asset: id, excluded: DEXTVLLegWithheld}
 	}
@@ -795,12 +690,10 @@ func (v *tvlValuer) pegDecimals(asset canonical.Asset) (int, bool) {
 	return decimals, pegged && decimals >= 0
 }
 
-// identified reports whether a pool leg's asset is one this platform
-// vouches for: native XLM, or a verified-catalogue asset reached
-// by its canonical id or by its SAC. Every other token is permissionless
-// to deploy and to pair, so both its reserve and its VWAP are authored by
-// its creator — the served price tiers' one-cent floor and the substance
-// floor are both a few dollars of self-trading away.
+// identified reports whether a pool leg's asset is one this platform vouches for: native XLM, or
+// a verified-catalogue asset reached by canonical id or SAC. Any other token is permissionless
+// to deploy and pair, so its reserve and VWAP are creator-authored; the one-cent and substance
+// floors are a few dollars of self-trading away.
 func (v *tvlValuer) identified(token string, asset canonical.Asset, id string) bool {
 	if asset.Type == canonical.AssetNative {
 		return true
@@ -808,11 +701,9 @@ func (v *tvlValuer) identified(token string, asset canonical.Asset, id string) b
 	return v.verified[id] || v.verified[token]
 }
 
-// tvlVerifiedIdentities indexes the catalogue's Stellar entries by
-// canonical asset id AND by SAC contract id on the configured network:
-// pool legs carry C-strkeys, and a SAC the operator never declared in
-// [supply].sac_wrappers stays a Soroban asset under
-// canonical.CanonicalAsset while still BEING the verified asset. A nil
+// tvlVerifiedIdentities indexes the catalogue's Stellar entries by canonical asset id AND SAC
+// contract id: pool legs carry C-strkeys, and a SAC not declared in [supply].sac_wrappers stays
+// a Soroban asset under canonical.CanonicalAsset while still being the verified asset. A nil
 // catalogue yields an empty set (fail closed).
 func tvlVerifiedIdentities(cat *currency.Catalogue) map[string]bool {
 	out := map[string]bool{}
@@ -837,17 +728,11 @@ func tvlVerifiedIdentities(cat *currency.Catalogue) map[string]bool {
 
 // withheld memoises the trust verdict per token per refresh.
 //
-// The gate is asked about the token's CANONICAL identity, not its raw
-// pool form. Pool legs are C-strkeys by construction (tvlAssetForToken
-// yields a Soroban asset for everything but the XLM SAC), and the scam
-// directory is keyed by the ISSUER G-address that only a classic asset
-// carries — so a configured classic↔SAC wrapper must be collapsed to
-// its classic twin first or the gate answers about the wrong identity.
-// canonical.CanonicalAsset is the same [supply].sac_wrappers-fed
-// collapse /v1/assets/{sac} applies (assets.go, "Configured classic↔SAC
-// wrappers"); a SAC the operator has NOT declared stays Soroban, which
-// the substance gate still measures (SubstanceGated covers
-// AssetSoroban) but the scam gate cannot speak about.
+// The gate is asked about the token's CANONICAL identity, not its raw pool form. Pool legs are
+// C-strkeys, but the scam directory is keyed by the ISSUER G-address only a classic asset
+// carries, so a configured classic-SAC wrapper must collapse to its classic twin first
+// (canonical.CanonicalAsset, as /v1/assets/{sac} does). An undeclared SAC stays Soroban: the
+// substance gate still measures it, the scam gate cannot speak about it.
 func (v *tvlValuer) withheld(ctx context.Context, token string, asset canonical.Asset) bool {
 	if v.gate == nil {
 		return false
@@ -862,15 +747,12 @@ func (v *tvlValuer) withheld(ctx context.Context, token string, asset canonical.
 
 // rateFor memoises the resolver lookup per token per refresh.
 //
-// It has THREE outcomes. Folding a read that ERRORED into "unpriceable"
-// would publish the leg as no_served_price with no error, so the
-// protocol's refresh would succeed and Refresh's carry-forward, which
-// runs only on a refresh error, could not fire: one transient Postgres
-// error on the XLM rate would remove every XLM leg from the published
-// DEX TVL and admit the shrunken total as fresh. An error is its own
-// outcome (err != nil), remembered in v.failed rather than v.memo so the
-// failing store is asked once per refresh, and recorded against the
-// current pass so [finishTVLProtocol] refuses to publish the figure.
+// It has THREE outcomes. Folding an ERRORED read into "unpriceable" would publish the leg as
+// no_served_price with no error, so carry-forward (which fires only on a refresh error) could not
+// run: one transient Postgres error on the XLM rate would drop every XLM leg and publish the
+// shrunken total as fresh. An error is its own outcome, kept in v.failed rather than v.memo so
+// the failing store is asked once per refresh, and recorded against the current pass so
+// [finishTVLProtocol] refuses to publish the figure.
 func (v *tvlValuer) rateFor(ctx context.Context, asset canonical.Asset, token string) (*big.Rat, bool, error) {
 	if err, bad := v.failed[token]; bad {
 		return nil, false, v.notePassFailure(err)

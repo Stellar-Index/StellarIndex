@@ -33,19 +33,13 @@ type AccountStore interface {
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
 }
 
-// Account is the wire shape for /v1/account/me responses. Mirrors
-// the OpenAPI Account schema; the field set is the public-safe
-// projection of [auth.APIKeyRecord] (no expires_at / scopes
-// surfaced — those are implementation detail until /v1/account/keys
-// list returns them).
+// Account is the wire shape for /v1/account/me responses. Mirrors the OpenAPI Account schema; the
+// field set is the public-safe projection of [auth.APIKeyRecord].
 //
-// The shape is a union: API-key callers populate the top-level
-// key_* / tier / rate_limit_per_min / created_at fields and leave
-// `user` + `account` null. Magic-link session callers populate the
-// nested `user` + `account` objects (and leave the API-key fields
-// empty). Clients can detect which mode by checking which slice is
-// populated. Both shapes coexist forever — bumping a major version
-// for an additive field would be silly.
+// The shape is a union: API-key callers populate the top-level key_* / tier / rate_limit_per_min /
+// created_at fields and leave `user` + `account` null; magic-link session callers populate the
+// nested `user` + `account` objects and leave the API-key fields empty. Both shapes coexist, so
+// clients detect the mode by which is populated.
 type Account struct {
 	KeyID           string       `json:"key_id,omitempty"`
 	Label           string       `json:"label,omitempty"`
@@ -118,23 +112,17 @@ type SessionPeeker interface {
 
 // UsageRow is the wire shape for /v1/account/usage entries.
 //
-// When the `usage_daily` rollups are wired (production), the list
-// carries one row per (day, endpoint family) with Endpoint set to
-// the route pattern (e.g. "/v1/assets/{asset_id}") and the
-// errors / throttled columns filled: errors = 4xx (excluding 429)
-// + 5xx responses, throttled = 429 rate-limit rejections, and
-// `requests` = every non-429 outcome, 5xx included.
+// With the `usage_daily` rollups wired, the list carries one row per (day, endpoint family) with
+// Endpoint set to the route pattern (e.g. "/v1/assets/{asset_id}"). errors = 4xx (excluding 429)
+// + 5xx, throttled = 429 rejections, and `requests` = every non-429 outcome, 5xx included.
 //
-// On the fallback path (rollup reader unwired or not yet swept)
-// rows degrade to the legacy shape: one row per day, Endpoint
-// empty, errors/throttled zero. The legacy store only holds the
-// billable total, so there `requests` excludes 5xx as well.
+// On the fallback path (rollup reader unwired or not yet swept) rows degrade to one row per day
+// with Endpoint empty and errors/throttled zero. The legacy store only holds the billable total,
+// so there `requests` excludes 5xx as well.
 //
-// `billable` is the one column with the same meaning on both paths:
-// the request units the monthly quota counts (ok + 4xx; never 429 or
-// platform-caused 5xx, though not a timed-out read — see
-// middleware.billableClass). Sum it by `date` to reconcile against a
-// quota 429's `month_to_date`.
+// `billable` is the one column with the same meaning on both paths: the request units the monthly
+// quota counts (ok + 4xx; never 429 or platform-caused 5xx, though not a timed-out read; see
+// middleware.billableClass). Sum it by `date` to reconcile against a quota 429's `month_to_date`.
 type UsageRow struct {
 	Date      string `json:"date"`               // YYYY-MM-DD
 	Endpoint  string `json:"endpoint,omitempty"` // route pattern; empty on the legacy fallback
@@ -193,24 +181,18 @@ type KeyCreated struct {
 	Scopes    []string `json:"scopes,omitempty"`
 }
 
-// createKeyRequest is the inbound POST body. The server adopts the
-// caller's Identifier (so callers can only mint keys that share
-// their owner reference) and ignores Tier — the new key inherits
-// the caller's tier verbatim. Operator callers mint for other
-// identifiers/tiers via POST /v1/admin/keys; an operator rotating
-// its OWN credential here is held to the same audit contract as
-// that path (X-Reason header + persisted key.mint row).
+// createKeyRequest is the inbound POST body. The server adopts the caller's Identifier (callers
+// can only mint keys sharing their owner reference) and ignores Tier: the new key inherits the
+// caller's tier verbatim. Operators mint for other identifiers/tiers via POST /v1/admin/keys; an
+// operator rotating its OWN credential here is held to the same audit contract (X-Reason header
+// + persisted key.mint row).
 //
-// Scopes is optional: for a full-access caller (empty scope list),
-// absent/empty mints a full-access key (the pre-scopes posture);
-// non-empty confines the key to the listed route families
-// (platform.KnownKeyScopes vocabulary). A SCOPED caller can only
-// delegate a subset of its own scopes — an empty request inherits the
-// caller's scopes rather than granting full access, and any scope the
-// caller does not itself hold is rejected (see middleware.ClampMintScopes).
-// A caller can only NARROW — scopes never grant anything the key's tier
-// wouldn't already reach, and the child inherits the caller's expiry,
-// quota and rate limit (see auth.ChildKeyRequest).
+// Scopes is optional: for a full-access caller, absent/empty mints a full-access key and
+// non-empty confines it to the listed route families (platform.KnownKeyScopes). A SCOPED caller
+// can only delegate a subset of its own scopes: an empty request inherits them rather than
+// granting full access, and a scope the caller lacks is rejected (see middleware.ClampMintScopes).
+// A caller can only NARROW, and the child inherits the caller's expiry, quota and rate limit (see
+// auth.ChildKeyRequest).
 type createKeyRequest struct {
 	Label  string   `json:"label"`
 	Scopes []string `json:"scopes,omitempty"`
@@ -241,15 +223,10 @@ func validateScopes(raw []string) ([]string, string) {
 
 // handleAccountMe serves GET /v1/account/me.
 //
-// Returns the authenticated caller's account info. Magic-link
-// session callers populate the nested user/account objects;
-// API-key callers populate the top-level key_* fields. Both
-// flows can coexist on a request — session takes precedence
-// because it identifies a real user, while a key only
-// identifies a credential.
-//
-// Anonymous callers receive 401 — /me is meaningless without
-// any credential.
+// Returns the authenticated caller's account info. Session callers populate the nested
+// user/account objects; API-key callers populate the top-level key_* fields. When both are
+// present the session wins, because it identifies a real user while a key only identifies a
+// credential. Anonymous callers receive 401.
 func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 	// Magic-link session takes precedence when both are present.
 	if s.SessionPeeker != nil {
@@ -301,23 +278,19 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 
 // handleAccountUsage serves GET /v1/account/usage.
 //
-// Preferred path: the [UsageRollupReader] over the `usage_daily` hypertable
-// (one row per day and endpoint family, trailing 30 days). Fallback: the
-// legacy [UsageReader] per-day Redis totals when the rollup reader is
-// unwired, errors, or has no rows yet for this subject. A day missing from the
-// rollup (a worker-outage gap, not zero traffic) is backfilled from the legacy
-// reader rather than dropped.
+// Preferred path: the [UsageRollupReader] over the `usage_daily` hypertable (one row per day and
+// endpoint family, trailing 30 days). Fallback: the legacy [UsageReader] per-day Redis totals when
+// the rollup reader is unwired, errors, or has no rows for this subject. A day missing from the
+// rollup (a worker-outage gap, not zero traffic) is backfilled from the legacy reader.
 //
-// Keying goes through [middleware.UsageKeyForSubject] so the writer and both
-// readers stay in lock-step: `id:<Identifier>` (the OWNER ACCOUNT), with
-// `key:<KeyID>` only for credentials with no owner. Rows therefore cover
-// every key the account holds and survive key rotation. A magic-link session
-// reads under `id:acct:<slug>` via [usageKeyForSession]; anonymous callers
-// get 401. `?from=` / `?to=` are reserved in the OpenAPI spec but ignored.
+// Keying goes through [middleware.UsageKeyForSubject] so the writer and both readers stay in
+// lock-step: `id:<Identifier>` (the OWNER ACCOUNT), with `key:<KeyID>` only for credentials with
+// no owner, so rows cover every key the account holds and survive rotation. A magic-link session
+// reads under `id:acct:<slug>` via [usageKeyForSession]; anonymous callers get 401. `?from=` /
+// `?to=` are reserved in the OpenAPI spec but ignored.
 //
-// Backend absent: 200 with an empty data array. Callers who must tell "no
-// usage" from "backend not wired" probe `/v1/readyz` (its per-dependency
-// `checks` field is not on `/healthz`).
+// Backend absent: 200 with an empty data array. Callers who must tell "no usage" from "backend
+// not wired" probe `/v1/readyz`.
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	key := ""
 	if s.SessionPeeker != nil {
@@ -463,22 +436,16 @@ func legacyUsageRow(d UsageDay) UsageRow {
 
 // handleAccountKeysCreate serves POST /v1/account/keys.
 //
-// Issues a fresh API key for the authenticated caller. The new key
-// inherits the caller's Identifier and Tier — a paid customer
-// rotates their own credentials without escalating; an operator
-// uses a separate admin path (not yet shipped) to mint keys for
-// other identifiers.
+// Issues a fresh API key for the authenticated caller, inheriting the caller's Identifier and
+// Tier, so a paid customer rotates credentials without escalating.
 //
-// Anonymous → 401. Any tier but apikey/operator (i.e. sep10) → 403.
-// Missing/empty body → 400. Store unavailable → 503 (the binary didn't
-// wire one because Redis was missing).
+// Anonymous → 401. Any tier but apikey/operator (i.e. sep10) → 403. Missing/empty body → 400.
+// Store unavailable → 503 (no Redis wired).
 //
-// Operator-tier callers keep tier inheritance (this is the staff
-// rotation path) but pay the admin-write price for it: X-Reason is
-// required (400 without) and the mint lands a "key.mint" audit row
-// naming the actor, exactly as POST /v1/admin/keys does. Without that,
-// an operator credential could spawn further operator credentials here
-// with no reason and no audit trail.
+// Operator-tier callers keep tier inheritance (the staff rotation path) but pay the admin-write
+// price: X-Reason is required (400 without) and the mint lands a "key.mint" audit row naming the
+// actor, as POST /v1/admin/keys does. Otherwise an operator credential could spawn further
+// operator credentials with no reason and no audit trail.
 func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -756,16 +723,14 @@ const defaultAccountKeyQuota = 25
 // mintAccountKey issues a self-service key under the per-identifier
 // active-key cap. Returns false when it has already written the response.
 //
-// Without a count check one authenticated caller could mint keys in a
-// loop, each a live credential and a permanent Redis record. The cap is
-// enforced by the store in the same critical section as the write
-// ([auth.RedisAPIKeyStore.CreateCapped]), mirroring the dashboard path's
-// atomic maxKeys gate: a handler-side count followed by a separate
-// Create would let a concurrent burst all read the same count below the
+// Without a cap one caller could mint keys in a loop, each a live credential and a permanent Redis
+// record. The store enforces it in the same critical section as the write
+// ([auth.RedisAPIKeyStore.CreateCapped]), like the dashboard path's atomic maxKeys gate: a
+// handler-side count then Create would let a concurrent burst all read the same count below the
 // cap.
 //
-// An unverifiable count fails CLOSED (503, no mint): the cap exists
-// precisely because an unbounded mint is the abuse.
+// An unverifiable count fails CLOSED (503, no mint): unbounded minting is the abuse the cap exists
+// to stop.
 func (s *Server) mintAccountKey(w http.ResponseWriter, r *http.Request, req auth.CreateAPIKeyRequest) (auth.APIKeyRecord, string, bool) {
 	quota := s.AccountKeyQuota
 	if quota == 0 {
@@ -813,16 +778,11 @@ func (s *Server) mintAccountKey(w http.ResponseWriter, r *http.Request, req auth
 
 // handleAccountKeysList serves GET /v1/account/keys.
 //
-// Returns every API key whose Identifier matches the authenticated
-// caller's. Mirrors the /v1/account/me wire shape but as a list —
-// each entry is a public-safe APIKeyRecord projection (no plaintext
-// — that's only retrievable at Create time, by design).
+// Returns every API key whose Identifier matches the authenticated caller's, as public-safe
+// APIKeyRecord projections (plaintext is retrievable only at Create time).
 //
-// Anonymous → 401. Store unavailable → 503. Authenticated callers
-// always get a list, possibly empty.
-//
-// Sorted by CreatedAt ascending so customers see their original
-// signup key first and rotated keys later.
+// Anonymous → 401. Store unavailable → 503. Authenticated callers always get a list, possibly
+// empty, sorted by CreatedAt ascending so the original signup key comes first.
 func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -873,16 +833,13 @@ func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 
 // handleAccountKeysRevoke serves DELETE /v1/account/keys/{keyID}.
 //
-// Revokes the API key whose KeyID matches the path parameter,
-// scoped to the authenticated caller's Identifier. Anonymous → 401;
-// missing keyID → 400; store unwired → 503; everything else → 204
-// (including "key not found" — we don't leak whether a keyID
-// exists for a different account). An operator's audit row is written
-// only when a key was actually revoked.
+// Revokes the API key whose KeyID matches the path parameter, scoped to the caller's Identifier.
+// Anonymous → 401; missing keyID → 400; store unwired → 503; everything else → 204, including
+// "key not found", so a keyID's existence on another account does not leak. An operator's audit
+// row is written only when a key was actually revoked.
 //
-// Caller cannot revoke the key they're authenticated with — that
-// would orphan the connection mid-request. We return 409 in that
-// case so the UI can prompt for an alternate key + retry.
+// Revoking the key the request authenticated with would orphan it mid-request, so that returns
+// 409 and the UI can prompt for an alternate key.
 func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {

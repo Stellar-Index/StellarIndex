@@ -13,14 +13,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// OHLCSeriesBar is one bar in the multi-bar /v1/ohlc?interval=...
-// response. Wire field names are short (`t/o/h/l/c/v_base/v_quote/n`)
-// to keep payloads compact at the 1000-bar maximum — CG/CMC use the
-// same convention.
+// OHLCSeriesBar is one bar in the multi-bar /v1/ohlc?interval=... response. Field names are short
+// to keep payloads compact at the 1000-bar maximum, as CG/CMC do.
 //
-// `T` is the bucket-start timestamp aligned to UTC interval
-// boundaries (1m → :00, 1h → top of hour, 1d → 00:00 UTC, 1w →
-// Monday 00:00 UTC). Bucket end = `T + interval`.
+// `T` is the bucket start, aligned to UTC interval boundaries (1w starts Monday 00:00 UTC); the
+// bucket end is `T + interval`.
 type OHLCSeriesBar struct {
 	T      WireTime `json:"t"`
 	O      string   `json:"o"`
@@ -29,28 +26,20 @@ type OHLCSeriesBar struct {
 	C      string   `json:"c"`
 	VBase  string   `json:"v_base"`
 	VQuote string   `json:"v_quote"`
-	// VBaseDecimals / VQuoteDecimals state the smallest-unit scale of
-	// VBase/VQuote — the per-source scale [barScaleDecimals] resolves
-	// from the bucket's contributing venues (7dp on-chain, 8 CEX, 6
-	// FX), NOT a fixed stroop. Mirrors [OHLCBar.QuoteVolumeDecimals]:
-	// a consumer that divides v_quote by a hardcoded 1e7 overstates a
-	// CEX-fed bucket tenfold. Equal to each other
-	// today (a source stamps both legs of a trade at one scale, and a
-	// combined bucket's lift target — [ohlcBucketAcc.commonScale] — is
-	// per bucket, not per leg). Null when the scale is unknown
-	// ([ohlcBarScaleUnknown]); see [wireScaleDecimals].
+	// VBaseDecimals / VQuoteDecimals state the scale of VBase/VQuote: the per-source scale
+	// [barScaleDecimals] resolves from the bucket's venues (7dp on-chain, 8 CEX, 6 FX), not a fixed
+	// stroop, so dividing v_quote by 1e7 overstates a CEX-fed bucket tenfold. They are equal because
+	// a source stamps both legs at one scale and a combined bucket's lift target
+	// ([ohlcBucketAcc.commonScale]) is per bucket. Null when unknown ([ohlcBarScaleUnknown]).
 	VBaseDecimals  *int  `json:"v_base_decimals"`
 	VQuoteDecimals *int  `json:"v_quote_decimals"`
 	N              int64 `json:"n"`
 	Truncated      bool  `json:"truncated,omitempty"`
 
-	// Sources is the set of venues that contributed to the bucket,
-	// carried from the CAGG's own `sources` column. It is the per-bar
-	// provenance: a derived or vendor bar names its source here, so it
-	// never reads as a fill-derived VWAP. It also lets a caller that
-	// COMBINES bars across markets lift them to a common smallest-unit
-	// scale first — see [Server.ohlcSeriesFiatCombined] — and resolves
-	// VBaseDecimals/VQuoteDecimals via [annotateOHLCSeriesBarScale].
+	// Sources is the set of venues that contributed to the bucket, from the CAGG's `sources`
+	// column. It is the per-bar provenance (a derived or vendor bar names its source, so it never
+	// reads as a fill-derived VWAP) and lets a caller combining bars across markets lift them to a
+	// common scale first ([Server.ohlcSeriesFiatCombined], [annotateOHLCSeriesBarScale]).
 	Sources []string `json:"sources,omitempty"`
 }
 
@@ -67,23 +56,17 @@ type OHLCSeriesResponse struct {
 	Intervals []OHLCSeriesBar `json:"intervals"`
 }
 
-// ohlcSeriesDefaultLimit / ohlcSeriesMaxLimit are the bar-count
-// envelope on a single /v1/ohlc?interval= request. The max matches
-// CoinGecko's `/ohlc` cap (1000 bars). The default is large enough
-// to cover a day of 1m bars (1440 capped to 100 → callers explicitly
-// opt in to the larger window) without being absurd.
+// ohlcSeriesDefaultLimit / ohlcSeriesMaxLimit bound the bar count of one /v1/ohlc?interval=
+// request. The max matches CoinGecko's `/ohlc` cap; larger windows are an explicit opt-in.
 const (
 	ohlcSeriesDefaultLimit = 100
 	ohlcSeriesMaxLimit     = 1000
 )
 
-// ohlcInterval is a validated interval for the multi-bar /v1/ohlc
-// mode. The accepted set is [timescale.OHLCRoutes] — the same table
-// the serving reader routes from and the store's fold allow-list
-// checks against — so [parseOHLCInterval] ranges over it rather than
-// re-listing it. The constants below exist for the places that need
-// a named width ([ohlcInterval.duration], the fiat point gate);
-// TestOHLCIntervals_EveryRouteHasADuration keeps them in step.
+// ohlcInterval is a validated interval for the multi-bar mode. The accepted set is
+// [timescale.OHLCRoutes], the table the reader routes from, so [parseOHLCInterval] ranges over it.
+// The constants exist for places needing a named width; TestOHLCIntervals_EveryRouteHasADuration
+// keeps them in step.
 type ohlcInterval string
 
 const (
@@ -102,11 +85,8 @@ const (
 	ohlcInterval1mo ohlcInterval = "1mo"
 )
 
-// duration returns the Go [time.Duration] equivalent of an
-// interval. Used for default-window sizing (defaults to N × interval
-// when neither `from` nor `to` are supplied).
-//
-// 1w is approximated as 7*24h — DST is irrelevant for UTC alignment.
+// duration returns the [time.Duration] of an interval, used for default-window sizing. 1w is
+// 7*24h; DST is irrelevant for UTC alignment.
 func (i ohlcInterval) duration() time.Duration {
 	switch i {
 	case ohlcInterval1m:
@@ -142,11 +122,9 @@ func (i ohlcInterval) duration() time.Duration {
 	return 0
 }
 
-// parseOHLCInterval validates the `interval` query param against
-// [timescale.OHLCRoutes]. Returns ok=true with the parsed enum when
-// valid; ok=false (after writing a problem+json) when invalid. Empty
-// raw → ok=false + zero-value: caller distinguishes "no interval
-// supplied" from "interval was supplied but invalid" via raw != "".
+// parseOHLCInterval validates the `interval` query param against [timescale.OHLCRoutes], writing a
+// problem+json when invalid. An empty raw yields ok=false with no response, so callers tell "no
+// interval" from "invalid interval" via raw != "".
 func parseOHLCInterval(w http.ResponseWriter, r *http.Request, raw string) (ohlcInterval, bool) {
 	if _, ok := timescale.OHLCRouteFor(raw); ok {
 		return ohlcInterval(raw), true
@@ -178,18 +156,10 @@ func parseOHLCSeriesLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return n, true
 }
 
-// handleOHLCSeries serves the multi-bar branch of /v1/ohlc when
-// `interval` is present. Closed-bucket only (ADR-0015): the
-// in-progress bucket is excluded by the storage layer's
-// `bucket + interval <= now()` guard. When `from` is unset the
-// handler defaults to `to - limit*interval`; when `to` is unset it
-// defaults to "now" snapped to the previous interval boundary so
-// the same response is byte-identical across regions within the same
-// closed window.
-//
-// Single-bar callers (no `interval` query param) are routed at
-// [Server.handleOHLC] BEFORE this function is reached — this
-// function assumes interval is non-empty and validated.
+// handleOHLCSeries serves the multi-bar branch of /v1/ohlc. Closed-bucket only (ADR-0015): the
+// storage layer's `bucket + interval <= now()` guard excludes the in-progress bucket, and a
+// defaulted `to` snaps to the previous interval boundary so regions answer byte-identically.
+// [Server.handleOHLC] routes here only with a non-empty, validated interval.
 func (s *Server) handleOHLCSeries(
 	w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair,
@@ -245,27 +215,18 @@ func (s *Server) handleOHLCSeries(
 
 	bars = capOHLCSeriesNewest(bars, limit)
 
-	// dex-nonstandard-decimals forward normalization: the SAME per-pair scalar factor that corrects
-	// a single-bar OHLC's open/high/low/close corrects every bar here too — K = 10^(baseDec-quoteDec)
-	// is constant for the requested pair, so applying it once to the FINISHED series (rather than to
-	// each underlying prices_<n> CAGG row) is exact, including across ohlcSeriesFiatCombined's
-	// combined bars (every constituent shares the same base token and a 7dp quote peg, so K is
-	// identical for each). No-op (bars returned untouched) for a pair without a confirmed
-	// non-7-decimals leg.
+	// dex-nonstandard-decimals forward normalization: K = 10^(baseDec-quoteDec) is constant for the
+	// requested pair, so applying it once to the finished series (not per CAGG row) is exact, also
+	// across ohlcSeriesFiatCombined's bars (all constituents share the base token and a 7dp peg).
 	//
-	// v_base/v_quote are NOT touched: they are raw smallest-unit sums at the per-SOURCE scale — 7dp
-	// on-chain, 8 CEX, 6 FX — which [barScaleDecimals] reads off the CAGG's own `sources` column. A
-	// series bar states that scale on the wire ([OHLCSeriesBar.VBaseDecimals] /
-	// [OHLCSeriesBar.VQuoteDecimals]), so a consumer must not divide v_quote by a fixed 1e7.
+	// v_base/v_quote are NOT touched: they are raw sums at the per-source scale that
+	// [barScaleDecimals] reads from `sources` and the bar states on the wire.
 	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base)
 	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Quote)
 	bars = adjustOHLCSeriesBars(bars, baseDec, quoteDec)
 
-	// Series mode returns 200 + empty `intervals: []` when there are
-	// no closed buckets — distinct from the single-bar /v1/ohlc which
-	// 404s. Series clients (charts, dashboards) expect a stable shape
-	// across pairs/windows. Non-nil slice required so the wire shape
-	// is byte-stable.
+	// Series mode returns 200 with empty `intervals: []` for no closed buckets, unlike the 404 of
+	// single-bar, because charts expect a stable shape. The slice must be non-nil for byte-stability.
 	if bars == nil {
 		bars = []OHLCSeriesBar{}
 	}
@@ -277,41 +238,33 @@ func (s *Server) handleOHLCSeries(
 		To:        WireTime(to),
 		Intervals: bars,
 	}
-	// Triangulated fires only when a bar that actually contributed came
-	// through a proxy constituent (a peg's classic/SAC form or a
-	// stablecoin backer) — mirroring the single-bar /v1/ohlc
-	// stablecoin-fallback path. A fiat series served entirely by a
-	// directly-quoted market (e.g. crypto:XLM/fiat:USD itself) is not
-	// triangulated just because the quote asset is fiat.
+	// Triangulated fires only when a contributing bar came through a proxy constituent (a peg's
+	// classic/SAC form or a stablecoin backer); a fiat series served by a directly-quoted market is
+	// not triangulated just because the quote is fiat.
 	flags := Flags{Triangulated: proxied}
-	// An empty series is the ambiguous answer — "quiet market" and
-	// "before anything held for this pair" are the same bytes — and
-	// `to` is the window's exclusive end, so a window that ends at or
-	// before the floor is provably the second reading. The floor is
-	// measured over what ohlcSeriesWithAliases read: the pair, or for
-	// a fiat quote the whole constituent set the combine drew on.
+	// An empty series is ambiguous ("quiet market" and "before anything held" are the same bytes),
+	// and `to` is exclusive, so a window ending at or before the floor is provably the second
+	// reading. The floor covers what ohlcSeriesWithAliases read: the pair, or a fiat quote's whole
+	// constituent set.
 	coverageFrom, outside := s.coverageAnnotationIfEmpty(
 		r.Context(), s.ohlcCoverageSet(pair), to, len(bars) == 0)
 	flags.OutsideCoverage = outside
 	writeJSONCoverage(w, resp, flags, coverageFrom)
 }
 
-// capOHLCSeriesNewest trims an ascending series read with a `limit+1` probe down to the NEWEST
-// `limit` bars, and marks every surviving bar `truncated` when — and only when — the probe row
-// came back, i.e. the window really held a bucket the response does not carry.
+// capOHLCSeriesNewest trims an ascending `limit+1` probe read to the NEWEST `limit` bars, marking
+// every survivor `truncated` only when the probe row came back, i.e. the window really held a
+// bucket the response does not carry.
 //
-// The probe is what makes the flag exact. `len(bars) == limit` is not evidence of a cut: a request
-// with no `from` is sized to exactly `limit` intervals by [parseOHLCSeriesFromTo], so on any
-// liquid pair the default request returns `limit` bars with nothing dropped. Nor is the window's
-// width: a wide window over a sparse market can hold exactly `limit` populated buckets.
+// The probe makes the flag exact: `len(bars) == limit` is not evidence of a cut, since a request
+// with no `from` is sized to exactly `limit` intervals, and a wide window over a sparse market can
+// hold exactly `limit` populated buckets.
 //
 // Newest, because both capped readers keep the newest rows ([timescale.Store.OHLCSeries] orders
-// DESC-then-reverses, and [Server.ohlcSeriesFiatCombined] keeps the newest of its merge), so the
-// row past the cap is the OLDEST one and is the one dropped. A caller pages further back by
-// re-asking with `to` = the first bar's `t`.
+// DESC then reverses; [Server.ohlcSeriesFiatCombined] keeps the newest of its merge), so the
+// dropped row is the oldest. A caller pages back by re-asking with `to` = the first bar's `t`.
 //
-// The truncated result is a fresh slice: a reader may hand out bars it still owns, and the flag is
-// this response's, not the reader's.
+// The truncated result is a fresh slice: a reader may hand out bars it still owns.
 func capOHLCSeriesNewest(bars []OHLCSeriesBar, limit int) []OHLCSeriesBar {
 	if limit <= 0 || len(bars) <= limit {
 		return bars
@@ -324,23 +277,15 @@ func capOHLCSeriesNewest(bars []OHLCSeriesBar, limit int) []OHLCSeriesBar {
 	return out
 }
 
-// pgTimeBucketOrigin is the default origin Postgres/TimescaleDB's
-// `time_bucket()` snaps a fixed-width interval to when no explicit
-// origin is given (see [timescale.Store.OHLCSeriesReBucketed]).
-// [time.Time.Truncate] snaps from a DIFFERENT origin (Go's zero
-// time), which agrees with time_bucket only for widths that evenly
-// divide the offset between the two origins — true for 1h/4h/12h/1d
-// (whole-day widths) but false for 3d and 2w, whose default `to`
-// then lands on a boundary [Store.OHLCSeriesReBucketed]'s folded
-// rows never do.
+// pgTimeBucketOrigin is the origin TimescaleDB's `time_bucket()` snaps to by default (see
+// [timescale.Store.OHLCSeriesReBucketed]). [time.Time.Truncate] snaps from Go's zero time, which
+// agrees only for widths that evenly divide the offset between origins (1h/4h/12h/1d, not 3d or
+// 2w), so a default `to` would land on a boundary the folded rows never do.
 var pgTimeBucketOrigin = time.Date(2000, 1, 3, 0, 0, 0, 0, time.UTC)
 
-// truncateToBucketOrigin rounds t DOWN to the nearest multiple of d
-// counted from [pgTimeBucketOrigin], reproducing time_bucket's own
-// floor rather than [time.Time.Truncate]'s (which floors from Go's
-// zero time instead). d <= 0 is a no-op — duration() only returns 0
-// for an interval outside the validated enum, and it composes
-// straight into an Add of an empty duration either way.
+// truncateToBucketOrigin rounds t DOWN to a multiple of d counted from [pgTimeBucketOrigin],
+// reproducing time_bucket's floor. d <= 0 is a no-op (duration() is 0 only outside the validated
+// enum).
 func truncateToBucketOrigin(t time.Time, d time.Duration) time.Time {
 	if d <= 0 {
 		return t
@@ -352,17 +297,10 @@ func truncateToBucketOrigin(t time.Time, d time.Duration) time.Time {
 	return t.Add(-rem)
 }
 
-// parseOHLCSeriesFromTo parses from/to for the series mode with
-// interval-aware defaults:
-//
-//   - `to` unset      → now snapped DOWN to interval boundary
-//     (ADR-0015 cross-region stability).
-//   - `from` unset    → to - limit*interval (sized to fit `limit`
-//     intervals).
-//   - both supplied   → used verbatim (UTC).
-//
-// Returns ok=false (after writing problem+json) on parse error or
-// from >= to.
+// parseOHLCSeriesFromTo parses from/to with interval-aware defaults: `to` snaps DOWN to an
+// interval boundary (ADR-0015 cross-region stability), `from` is to - limit*interval, and
+// explicit values are used verbatim (UTC). Returns ok=false after writing a problem+json on a
+// parse error or from >= to.
 func parseOHLCSeriesFromTo(
 	w http.ResponseWriter, r *http.Request,
 	interval ohlcInterval, limit int,
@@ -406,18 +344,12 @@ func parseOHLCSeriesFromTo(
 	return from, to, true
 }
 
-// ohlcSeriesWithAliases reads the bar series trying each XLM dual-form
-// alias pair and returns the FIRST non-empty series.
-// The continuous aggregates key bars by the canonical id the
-// contributing trades carried — CEX-driven bars live under
-// `crypto:XLM`, so `?base=native` read zero bars while
-// `?base=crypto:XLM` served a full series. Bars are aggregates;
-// cross-alias bar FUSION is a separate design decision — first-hit
-// matches the single-bar endpoint's semantics.
-// The bool return is `proxied` (drives `flags.triangulated`) — see
-// [Server.ohlcSeriesFiatCombined]. The non-fiat first-hit path always
-// returns false: it serves one directly-stored spelling of the pair,
-// never a chain-priced pivot.
+// ohlcSeriesWithAliases tries each XLM dual-form alias pair and returns the FIRST non-empty series.
+// The CAGGs key bars by the canonical id the trades carried (CEX bars live under `crypto:XLM`), so
+// a single spelling would miss them. Cross-alias bar fusion is a separate design decision;
+// first-hit matches the single-bar endpoint.
+// The bool is `proxied` (drives `flags.triangulated`, see [Server.ohlcSeriesFiatCombined]); the
+// non-fiat path always returns false since it serves one stored spelling, never a pivot.
 func (s *Server) ohlcSeriesWithAliases(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -425,11 +357,9 @@ func (s *Server) ohlcSeriesWithAliases(
 	from, to time.Time,
 	limit int,
 ) ([]OHLCSeriesBar, bool, error) {
-	// Fiat-denominated quotes (fiat:USD, fiat:EUR, …) have no deep
-	// trade stream of their own — the multi-year history lives under the
-	// USD/EUR-pegged stablecoin pairs. Combine those constituents per
-	// bucket (matching the live aggregator's VWAP source set) instead of
-	// first-hit, which would serve only the recent direct CEX feed.
+	// Fiat quotes have no deep trade stream; the history lives under the pegged stablecoin pairs.
+	// Combine those constituents per bucket (the live aggregator's source set) instead of first-hit,
+	// which would serve only the recent direct CEX feed.
 	if pair.Quote.Type == canonical.AssetFiat {
 		return s.ohlcSeriesFiatCombined(ctx, pair, interval, from, to, limit)
 	}
@@ -450,12 +380,9 @@ func (s *Server) ohlcSeriesWithAliases(
 	return nil, false, nil
 }
 
-// annotateOHLCSeriesBarScale fills VBaseDecimals/VQuoteDecimals from each
-// bar's own Sources via [barScaleDecimals] — the non-combined path's
-// counterpart to [ohlcBucketAcc.finalize], which sets the combined path's
-// equivalent directly from its per-bucket commonScale (the two must not
-// share one code path: a combined bucket's scale is the lift target of
-// its constituents, not a lookup on the union of their venues).
+// annotateOHLCSeriesBarScale fills VBaseDecimals/VQuoteDecimals from each bar's Sources via
+// [barScaleDecimals]. It must not share a path with [ohlcBucketAcc.finalize]: a combined bucket's
+// scale is the lift target of its constituents, not a lookup on the union of their venues.
 func annotateOHLCSeriesBarScale(bars []OHLCSeriesBar) {
 	for i := range bars {
 		d := barScaleDecimals(bars[i].Sources)
@@ -474,17 +401,10 @@ func wireScaleDecimals(scale int) *int {
 	return &scale
 }
 
-// adjustOHLCSeriesBars applies the dex-nonstandard-decimals forward
-// normalization to every bar's open/high/low/close — see the call site
-// in [Server.handleOHLCSeries] for the full rationale.
-//
-// Returns bars UNCHANGED (same slice, no allocation) when
-// baseDecimals == quoteDecimals — every pair without a confirmed
-// non-7-decimals leg. This matters for byte-identical wire output: the
-// prices_<n> CAGG's raw NUMERIC::text formatting doesn't match
-// [ratToDecimal]'s fixed 10-digit rendering, so reformatting
-// unconditionally would change the wire bytes for every already-correct
-// 7dp pair — the overwhelming common case.
+// adjustOHLCSeriesBars applies the dex-nonstandard-decimals normalization to every bar's OHLC (see
+// [Server.handleOHLCSeries]). It returns bars UNCHANGED when baseDecimals == quoteDecimals,
+// because the CAGG's raw NUMERIC::text does not match [ratToDecimal]'s fixed rendering, so
+// reformatting would change the wire bytes of every already-correct 7dp pair.
 func adjustOHLCSeriesBars(bars []OHLCSeriesBar, baseDecimals, quoteDecimals int) []OHLCSeriesBar {
 	if baseDecimals == quoteDecimals || len(bars) == 0 {
 		return bars
@@ -496,10 +416,7 @@ func adjustOHLCSeriesBars(bars []OHLCSeriesBar, baseDecimals, quoteDecimals int)
 		out[i].H = adjustOHLCPriceString(b.H, baseDecimals, quoteDecimals)
 		out[i].L = adjustOHLCPriceString(b.L, baseDecimals, quoteDecimals)
 		out[i].C = adjustOHLCPriceString(b.C, baseDecimals, quoteDecimals)
-		// VBase / VQuote intentionally untouched — raw smallest-unit
-		// sums of the asset's own decimals, correct regardless of the
-		// decimals value (same precedent as aggregate.ComputeOHLC's
-		// BaseVolume/QuoteVolume in the single-bar path).
+		// VBase / VQuote stay untouched: raw sums at the asset's own decimals are correct regardless.
 	}
 	return out
 }
