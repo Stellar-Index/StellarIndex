@@ -69,9 +69,8 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 	return d
 }
 
-// seedPersistedPools restores the token map for pools admitted from the
-// durable pool table, without overriding a curated entry. A row that no
-// longer parses is skipped: the pool stays gated and fails closed.
+// seedPersistedPools restores the token map for pools from the durable pool table without
+// overriding a curated entry. An unparsable row is skipped: the pool stays gated and fails closed.
 func (d *Decoder) seedPersistedPools() {
 	for pool, a := range d.reg.AllAttrs() {
 		if _, ok := d.poolTokens[pool]; ok {
@@ -120,11 +119,9 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return d.reg.Has(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder].
-//
-// `swap` produces a trade; `mint` / `burn` / `collect` produce a PositionEvent. The pool
-// lifecycle (`init` / `upgraded` / `migrated`) is recognized, gated and deliberately projected
-// as zero rows, so the ADR-0033 re-derive counts it as expected-zero rather than going blind.
+// Decode implements [dispatcher.Decoder]: `swap` yields a trade, `mint` / `burn` / `collect` a
+// PositionEvent. Pool lifecycle events (`init` / `upgraded` / `migrated`) are gated and projected
+// as zero rows so the ADR-0033 re-derive counts them as expected-zero.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	switch kind := classify(&ev); kind {
 	case EventPoolCreated:
@@ -190,11 +187,9 @@ func (d *Decoder) emitTrade(ev events.Event) ([]consumer.Event, error) {
 
 	tokens, known := d.poolTokensFor(ev.ContractID)
 	if !known {
-		// Gated in (the DB warm admitted this pool) but no token mapping yet: the creation
-		// event hasn't been replayed since restart. Fail closed (no invented assets), but
-		// unlike ErrNonDirectionalSwap this gap must be visible: return the sentinel so
-		// obs.SourceDecodeErrorsTotal surfaces it. Returning nil would make a swap-coverage
-		// gap indistinguishable from a protocol with nothing left to decode.
+		// Gated in by the DB warm but no token mapping yet (creation not replayed since restart).
+		// Fail closed, and return the sentinel so obs.SourceDecodeErrorsTotal surfaces the gap;
+		// nil would make it indistinguishable from a protocol with nothing left to decode.
 		d.bumpUnknownPool()
 		return nil, ErrUnknownPool
 	}
@@ -204,10 +199,8 @@ func (d *Decoder) emitTrade(ev events.Event) ([]consumer.Event, error) {
 		tokens.Token0, tokens.Token1,
 	)
 	if err != nil {
-		// A swap with no cross-token exchange decoded cleanly but is not a
-		// trade. Project zero rows and report no error, so the ADR-0033
-		// re-derive counts the ledger as expected-zero instead of going
-		// blind on a matched-but-undecodable event.
+		// A swap with no cross-token exchange is not a trade: project zero rows with no error so
+		// the ADR-0033 re-derive counts it as expected-zero, not a matched-but-undecodable event.
 		if errors.Is(err, ErrNonDirectionalSwap) {
 			d.bumpNonDirectional()
 			return nil, nil
@@ -291,9 +284,8 @@ func (d *Decoder) bumpNonDirectional() {
 	d.skippedNonDirectional++
 }
 
-// SkippedUnknownPool counts gated swaps dropped for want of a token
-// mapping. Non-zero means the curated table and the protocol_contracts
-// warm have drifted apart and a `pool_created` replay is owed.
+// SkippedUnknownPool counts gated swaps dropped for want of a token mapping; non-zero means the
+// curated table and the protocol_contracts warm drifted and a `pool_created` replay is owed.
 func (d *Decoder) SkippedUnknownPool() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

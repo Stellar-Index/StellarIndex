@@ -17,9 +17,7 @@ type Message struct {
 	Subject string
 	HTML    string
 	Text    string
-	// Tags surface in the provider dashboard for filtering and
-	// per-template metric breakdowns. Resend supports up to 10
-	// key/value tags per send; keep the keys short.
+	// Tags feed provider-dashboard filtering and per-template metrics. Resend allows 10 per send.
 	Tags map[string]string
 }
 
@@ -29,16 +27,12 @@ type Sender interface {
 	Send(ctx context.Context, msg Message) error
 }
 
-// ErrInvalidMessage is returned when the message fails
-// pre-send validation (missing To, missing Subject, both HTML
-// and Text empty). Wraps with %w so handler-side error mapping
-// can errors.Is.
+// ErrInvalidMessage is returned when a message fails pre-send validation. It is wrapped with %w
+// so callers can map it with errors.Is.
 var ErrInvalidMessage = errors.New("notify: invalid message")
 
-// ErrProviderRejected is returned when the upstream provider
-// rejected the message — bad From, bad recipient, unverified
-// domain. Distinguishable from transient delivery failures so
-// the caller can choose between "log + drop" and "retry".
+// ErrProviderRejected is returned when the provider rejected the message (bad From, bad recipient,
+// unverified domain). It is distinct from ErrTransient so callers can drop rather than retry.
 var ErrProviderRejected = errors.New("notify: provider rejected")
 
 // ErrTransient indicates a 429 / 5xx / network error from the
@@ -54,9 +48,8 @@ var ErrNotConfigured = errors.New("notify: mail transport is not configured")
 // fails with ErrNotConfigured, so missing mail is an error at each call site. Wire this, not
 // [NoopSender] (which reports success), whenever production config lacks the credential.
 type UnconfiguredSender struct {
-	// Reason names WHAT is missing, for the operator (e.g. the env
-	// var that is unset). It is appended to the error, so it must
-	// never carry a credential value or any part of one.
+	// Reason names WHAT is missing (e.g. the unset env var). It is appended to the error, so it
+	// must never carry a credential value or any part of one.
 	Reason string
 }
 
@@ -85,8 +78,7 @@ func IsUnconfigured(s Sender) bool {
 	return false
 }
 
-// maxRecipientLen is the RFC 5321 §4.5.3.1.3 path limit less the
-// angle brackets.
+// maxRecipientLen is the RFC 5321 §4.5.3.1.3 path limit less the angle brackets.
 const maxRecipientLen = 254
 
 // ErrInvalidRecipient is returned by [CanonicalRecipient] for input
@@ -109,8 +101,7 @@ func CanonicalRecipient(raw string) (string, error) {
 	if at <= 0 || !strings.Contains(out[at+1:], ".") {
 		return "", fmt.Errorf("%w: domain has no dot", ErrInvalidRecipient)
 	}
-	// A quoted local part (`"a b"@c.com`) unquotes to a string that no
-	// longer parses; refuse it rather than store an unsendable spelling.
+	// A quoted local part (`"a b"@c.com`) unquotes to a string that no longer parses; refuse it.
 	if again, err := mail.ParseAddress(out); err != nil || again.Address != out {
 		return "", fmt.Errorf("%w: address does not round-trip", ErrInvalidRecipient)
 	}

@@ -29,23 +29,17 @@ const WSEndpoint = "wss://stream.binance.com:9443/stream"
 // Compile-time assertion: the constant matches external.ClassExchange.
 var _ = external.ClassExchange
 
-// Errors surfaced by parse path. Transient connection errors live in
-// streamer.go and never escape as package-level sentinels — they're
-// logged + metered + retried inside Start.
+// Parse-path errors. Transient connection errors stay inside Start (logged, metered, retried).
 var (
-	// ErrDustTrade — base × price floor-divided to a 0 quote amount.
-	// Real binance trade below our 10^8 integer-scale precision
-	// floor. Drop silently rather than logging at ERROR.
+	// ErrDustTrade means base x price floor-divided to a zero quote amount, below the 10^8 scale
+	// floor. It is dropped silently rather than logged at ERROR.
 	ErrDustTrade = errors.New("binance: dust trade (quote_amount underflow)")
 
-	// ErrMalformedFrame — frame didn't decode to the aggTrade shape
-	// we expect. Single-frame skip; logged and counted, doesn't
-	// abort the stream.
+	// ErrMalformedFrame means the frame did not decode to the aggTrade shape; the frame is skipped
+	// and counted without aborting the stream.
 	ErrMalformedFrame = errors.New("binance: malformed aggTrade frame")
 
-	// ErrUnknownSymbol — frame's symbol isn't in our pair map.
-	// Happens if Binance adds a new listing we haven't configured,
-	// or if we subscribe to a stream the exchange later renames.
-	// Per-frame skip.
+	// ErrUnknownSymbol means the symbol is not in the pair map (a new listing or a renamed
+	// stream); the frame is skipped.
 	ErrUnknownSymbol = errors.New("binance: symbol not in configured pair map")
 )

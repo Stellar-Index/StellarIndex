@@ -27,18 +27,14 @@ func NewCrossAnchorChecker(archiveRoot string) *CrossAnchorChecker {
 
 // CrossAnchorResult is the output of [CrossAnchorChecker.Check].
 type CrossAnchorResult struct {
-	// Range that was scanned. For the typical case this is
-	// `[2, network_head]`.
+	// From and To are the scanned range, typically `[2, network_head]`.
 	From uint32
 	To   uint32
 
-	// Expected is the count of checkpoint positions in the range.
-	// One per `seq % 64 == 63` slot, so `(To - From) / 64 + 1` for
-	// a properly-aligned range.
+	// Expected counts the `seq % 64 == 63` slots in the range.
 	Expected int
 
-	// Found is the count of checkpoint files actually present on
-	// disk. Equal to Expected when the archive is complete.
+	// Found counts checkpoint files present and valid; equal to Expected when complete.
 	Found int
 
 	// Missing lists absent (or structurally broken) checkpoint sequences, ascending, capped at
@@ -80,8 +76,7 @@ func (c *CrossAnchorChecker) Check(from, to uint32) (CrossAnchorResult, error) {
 	lastCP := alignLastCheckpoint(to)
 
 	if firstCP > lastCP {
-		// The supplied range contains no checkpoint position. Empty
-		// result, no error — the caller's range was just too narrow.
+		// The range holds no checkpoint position: empty result, not an error.
 		return CrossAnchorResult{From: from, To: to}, nil
 	}
 
@@ -107,21 +102,20 @@ func (c *CrossAnchorChecker) Check(from, to uint32) (CrossAnchorResult, error) {
 				res.Truncated = true
 			}
 		default:
-			// Unexpected I/O error mid-walk — abort and surface;
-			// we can't trust counts past this point.
+			// Counts past an unexpected I/O error can't be trusted, so abort.
 			return res, fmt.Errorf("archivecompleteness: stat %q: %w", path, err)
 		}
 	}
 	return res, nil
 }
 
-// probeCheckpointFile reports whether a present checkpoint file is non-empty and a valid gzip
-// stream with non-empty content. Existence alone would certify a truncated or zero-byte file as
-// Found, and the fill path only re-fetches entries in Missing, so it would never be repaired.
+// probeCheckpointFile reports whether a present checkpoint file is a valid, non-empty gzip stream.
+// Existence alone would certify a truncated file as Found, and the fill path only re-fetches
+// entries in Missing, so it would never be repaired.
 //
-// It deliberately does not decode the XDR or check the ledger sequence: that full validation runs
-// only on freshly fetched candidates (validateCheckpointContent). Doing it for every existing file
-// would turn a Stat-bound walk over six-figure checkpoint counts into a gzip-decode-bound one.
+// It does not decode the XDR or check the ledger sequence (validateCheckpointContent does, on
+// fresh fetches only): doing so for every file would make a Stat-bound walk over six-figure
+// checkpoint counts gzip-decode-bound.
 func probeCheckpointFile(path string, st os.FileInfo) bool {
 	if st.Size() == 0 {
 		return false
@@ -153,13 +147,9 @@ func alignLastCheckpoint(to uint32) uint32 {
 		return to
 	}
 	if rem >= 63 || rem < 63 {
-		// rem < 63 → previous checkpoint is to - rem - 1
-		// (or to - rem + 63 - 64 if you prefer)
-		// Both forms equivalent; keep as a single branch.
+		// The previous checkpoint is to - rem - 1.
 		if to < 63 {
-			// No checkpoint at or before `to` — return 0 as a
-			// sentinel; the caller's firstCP > lastCP guard
-			// handles this cleanly.
+			// No checkpoint at or before `to`; 0 is a sentinel the firstCP > lastCP guard handles.
 			return 0
 		}
 		return to - rem - 1

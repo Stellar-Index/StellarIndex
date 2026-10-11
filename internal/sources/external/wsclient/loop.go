@@ -47,46 +47,39 @@ type Loop struct {
 	// (e.g. "binance").
 	Source string
 
-	// URL is the fully-built wss:// endpoint to dial. Built once by
-	// the venue's Start (query-string subscriptions like Binance's
-	// combined stream ride here).
+	// URL is the fully-built wss:// endpoint, including query-string subscriptions
+	// (Binance's combined stream).
 	URL string
 
 	// Logger receives structured reconnect / error messages. If nil,
 	// slog.Default() is used.
 	Logger *slog.Logger
 
-	// InitialBackoff is the first reconnect delay after a dropped
-	// connection. Each subsequent failure doubles it (with jitter) up
-	// to MaxBackoff. <=0 defaults to 5 s.
+	// InitialBackoff is the first reconnect delay; each failure doubles it (with jitter) up to
+	// MaxBackoff. <=0 defaults to 5 s.
 	InitialBackoff time.Duration
 
 	// MaxBackoff caps the exponential growth. <=0 defaults to 60 s.
 	MaxBackoff time.Duration
 
-	// HealthyThreshold is the connection lifetime past which the next
-	// disconnect resets backoff to InitialBackoff. <=0 defaults to
-	// [DefaultHealthyConnectionThreshold].
+	// HealthyThreshold is the lifetime past which the next disconnect resets backoff to
+	// InitialBackoff. <=0 defaults to [DefaultHealthyConnectionThreshold].
 	HealthyThreshold time.Duration
 
 	// PingInterval is how often the live connection is actively probed
 	// with a WebSocket ping. <=0 defaults to [DefaultPingInterval].
 	PingInterval time.Duration
 
-	// PingTimeout bounds each ping's pong wait; exceeding it drops the
-	// connection with [ErrStreamStalled] (metric reason "stall"). <=0
-	// defaults to [DefaultPingTimeout].
+	// PingTimeout bounds each pong wait; exceeding it drops the connection with
+	// [ErrStreamStalled] (metric reason "stall"). <=0 defaults to [DefaultPingTimeout].
 	PingTimeout time.Duration
 
-	// DialTimeout bounds each dial attempt including the upgrade
-	// handshake; exceeding it returns a "dial" disconnect and the loop
-	// reconnects with backoff. <=0 defaults to [DefaultDialTimeout].
+	// DialTimeout bounds each dial including the upgrade handshake; exceeding it is a "dial"
+	// disconnect and the loop backs off. <=0 defaults to [DefaultDialTimeout].
 	DialTimeout time.Duration
 
-	// ReadLimit caps a single WebSocket message in bytes, set on the
-	// connection right after dial. <=0 defaults to [DefaultReadLimit].
-	// coder/websocket's own default (32 KiB) is too small for a
-	// venue that batches many fills into one frame.
+	// ReadLimit caps one WebSocket message in bytes. <=0 defaults to [DefaultReadLimit];
+	// coder/websocket's 32 KiB default is too small for venues batching many fills per frame.
 	ReadLimit int64
 
 	// Subscribe, if non-nil, registers channels once per connection; an
@@ -156,9 +149,8 @@ func (l *Loop) Run(ctx context.Context, out chan<- canonical.Trade) {
 		reason := classify(err)
 		obs.CEXStreamDisconnectTotal.WithLabelValues(l.Source, reason).Inc()
 
-		// Healthy-lifetime reset: a long-lived connection that
-		// finally dropped is NOT evidence of a wedged venue — reset the
-		// backoff so the next cycle isn't penalised for prior failures.
+		// Healthy-lifetime reset: a long-lived connection finally dropping is not evidence of a
+		// wedged venue, so the next cycle is not penalised for prior failures.
 		if lifetime >= healthyThreshold {
 			backoff = initialBackoff
 		}

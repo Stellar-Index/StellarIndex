@@ -18,44 +18,34 @@ import (
 // It is deliberately NOT a whole-network figure: `excluded` lists every pooled-value surface
 // we index and leave out, with the reason. See docs/methodology/dex-tvl.md.
 type DEXTVLTotalView struct {
-	// TVLUSD is the exact sum of the included protocols' published
-	// tvl_usd strings, as a decimal string (ADR-0003).
+	// TVLUSD is the exact sum of the included protocols' published tvl_usd strings (decimal string).
 	TVLUSD string `json:"tvl_usd"`
-	// Protocols names, in registry-independent sorted order, exactly
-	// which protocols' figures are summed into TVLUSD. A consumer can
-	// re-add these rows and get TVLUSD.
+	// Protocols names, sorted, exactly the protocols summed into TVLUSD.
 	Protocols []string `json:"protocols"`
 	// LowerBound is true when an included protocol has unpriced pools, the reconciliation
 	// dropped a protocol, or a derived protocol published no figure this cycle: the named
 	// protocols' true value is at least TVLUSD. It says nothing about `Excluded`, which is a
 	// scope statement, not a valuation gap.
 	LowerBound bool `json:"lower_bound"`
-	// PoolsTotal / PoolsPriced / UnpricedPools are the summed pool
-	// counts across the included protocols.
+	// PoolsTotal / PoolsPriced / UnpricedPools sum the included protocols' pool counts.
 	PoolsTotal    int `json:"pools_total"`
 	PoolsPriced   int `json:"pools_priced"`
 	UnpricedPools int `json:"unpriced_pools"`
-	// AsOfLedger is the highest chain high-water across the included
-	// protocols (see ProtocolTVLView.AsOfLedger). 0/omitted when none
+	// AsOfLedger is the highest chain high-water across the included protocols; omitted when none
 	// carried a ledger.
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
-	// AsOf is when the snapshot the total was reconciled from was
-	// computed (RFC3339) — identical to every included protocol's
-	// as_of, because a protocol whose as_of differs is refused
-	// admission by the reconciliation.
+	// AsOf (RFC3339) equals every included protocol's as_of, since reconciliation refuses a
+	// protocol whose as_of differs.
 	AsOf string `json:"as_of"`
 	// Basis is a one-line provenance statement for the total.
 	Basis string `json:"basis"`
-	// Excluded enumerates the pooled-value surfaces deliberately NOT in
-	// TVLUSD, each with its reason — both the standing scope decisions
-	// and any protocol the reconciliation refused this cycle. Never
-	// empty: the scope entries always apply.
+	// Excluded lists the pooled-value surfaces NOT in TVLUSD with reasons: the standing scope
+	// decisions plus any protocol refused this cycle. Never empty.
 	Excluded []DEXTVLExclusion `json:"excluded"`
 }
 
-// DEXTVLExclusion is one thing the headline total does not contain and
-// why. `subject` is a protocol name where one applies, otherwise a
-// short noun phrase for the surface.
+// DEXTVLExclusion is one thing the headline total omits and why; `subject` is a protocol name
+// where one applies, else a short noun phrase.
 type DEXTVLExclusion struct {
 	Subject string `json:"subject"`
 	Reason  string `json:"reason"`
@@ -120,9 +110,8 @@ var dexTVLScopeExclusions = []DEXTVLExclusion{
 	},
 }
 
-// Reconciliation refusal reasons. A protocol that trips one of these is
-// LEFT OUT of the total and named in `excluded` — the total shrinks and
-// says why, rather than absorbing a figure whose own claims do not hold.
+// Reconciliation refusal reasons. A protocol tripping one is LEFT OUT of the total and named in
+// `excluded`, rather than absorbing a figure whose own claims do not hold.
 const (
 	dexTVLRefusedStale = "carried forward from an earlier refresh (its reserve read failed this cycle), " +
 		"so it cannot be published under this snapshot's as_of"
@@ -132,10 +121,9 @@ const (
 		"(pools_total != pools_priced + unpriced_pools), so the figure's coverage is unknown"
 )
 
-// Unavailability reasons: a protocol whose TVL IS derived here but that
-// published no figure this cycle. Named in `excluded` like a refusal, and
-// quoted by its /v1/protocols/{name}/tvl 404, so a derived protocol is
-// never mistaken for an unwired one.
+// Unavailability reasons: a protocol whose TVL is derived here but published no figure this cycle.
+// Named in `excluded` and quoted by its /v1/protocols/{name}/tvl 404, so it is never mistaken for
+// an unwired one.
 const (
 	dexTVLUnavailableReadFailed = "its reserve read failed this cycle and no earlier figure exists " +
 		"to carry forward, so no figure is published — the protocol is derived here, its TVL is not zero"
@@ -143,9 +131,8 @@ const (
 		"unavailable, never zero TVL, so no figure is published"
 )
 
-// Total returns the reconciled headline total for the most recent
-// refresh, or nil before the first refresh completes (cold start —
-// handlers omit the field, never 503).
+// Total returns the latest reconciled headline total, or nil before the first refresh completes
+// (handlers omit the field, never 503).
 func (c *DEXTVLCache) Total() *DEXTVLTotalView {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -203,9 +190,8 @@ func reconcileDEXTVLTotal(snapshot map[string]ProtocolTVLView, at time.Time, car
 	}
 
 	if len(out.Protocols) == 0 {
-		// Nothing was admitted. Publishing "0.00" would read as a real total of zero dollars,
-		// which is definitely wrong; tvl_total is an omitempty pointer so it can be absent
-		// while the per-protocol figures stay on the wire.
+		// Publishing "0.00" would read as a real zero-dollar total; tvl_total is an omitempty
+		// pointer so it can be absent while per-protocol figures stay on the wire.
 		obs.DEXTVLReconcileTotal.WithLabelValues("divergent").Inc()
 		return nil
 	}
@@ -229,9 +215,8 @@ func reconcileDEXTVLTotal(snapshot map[string]ProtocolTVLView, at time.Time, car
 // returns the parsed amount from the SAME call that validated it, so a caller can never sum a
 // figure this function did not vouch for. ok=false returns the refusal reason for `excluded`.
 func dexTVLAdmit(part ProtocolTVLView, stamp string, carried bool) (*big.Rat, string, bool) {
-	// Carried-forward is reported by Refresh; the stamp comparison is a
-	// second, independent way the same inconsistency can show up (a part
-	// built against a different instant), kept as defence in depth.
+	// The stamp comparison is defence in depth: a part built against a different instant is the
+	// same inconsistency Refresh reports as carried.
 	if carried || part.AsOf != stamp {
 		return nil, dexTVLRefusedStale, false
 	}
@@ -245,9 +230,8 @@ func dexTVLAdmit(part ProtocolTVLView, stamp string, carried bool) (*big.Rat, st
 	return amount, "", true
 }
 
-// dexTVLTotalBasis states what the total is over, naming the protocols
-// summed. It never claims network coverage — the `excluded` list is the
-// other half of the same sentence.
+// dexTVLTotalBasis names the protocols summed. It never claims network coverage; `excluded` is
+// the other half of the statement.
 func dexTVLTotalBasis(protocols []string) string {
 	if len(protocols) == 0 {
 		return "no protocol figure could be admitted to the total this cycle; see excluded"

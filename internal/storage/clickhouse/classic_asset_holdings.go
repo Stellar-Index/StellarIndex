@@ -11,21 +11,19 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// TrustlineAssetSeed is one distinct classic asset the lake holds a
-// trustline for, with the ledger bracket the evidence spans.
+// TrustlineAssetSeed is one distinct classic asset the lake holds a trustline for.
 //
 // It answers only whether this (code, issuer) EXISTS on Stellar. Balance, holder count and supply
-// belong to the asset_holders_* rollup and the supply pipeline; repeating them from an
-// operator-cadence scan would add a second, stale answer.
+// belong to the asset_holders_* rollup and the supply pipeline; repeating them here would add a
+// second, stale answer.
 type TrustlineAssetSeed struct {
 	// Asset is the lake's asset string, the canonical `CODE-GISSUER` form for a credit trustline
 	// (internal/xdrjson.TrustLineAssetID). The caller parses it with canonical.ParseAsset rather
 	// than splitting it: identity is (code, issuer), and a split on the first dash is not that.
 	Asset string
 
-	// FirstLedger / LastLedger bracket the ledgers at which a trustline
-	// entry for this asset was last modified. NOT the asset genesis — see
-	// the query note in [HoldingsScanner.TrustlineAssetsAfter].
+	// FirstLedger / LastLedger bracket the ledgers at which a trustline entry for this asset was
+	// last modified. NOT the asset genesis.
 	FirstLedger uint32
 	LastLedger  uint32
 
@@ -59,14 +57,13 @@ func (h *HoldingsScanner) Close() error {
 	return h.conn.Close()
 }
 
-// trustlineAssetsPageQuery is one page of the walk, keyset-paginated on
-// the asset string.
+// trustlineAssetsPageQuery is one page of the walk, keyset-paginated on the asset string.
 //
-// NO FINAL: the query groups on `asset` and takes min/max over `ledger_seq`, so the GROUP BY folds
-// the duplicate versions FINAL would collapse, and the read-time merge is the costliest part of
-// scanning this table. The answer differs only toward MORE evidence: any row present is a ledger
-// at which a trustline existed. max() is merge-invariant; min() is not, but the writer takes LEAST
-// across runs, so first_seen can only move EARLIER, toward the truth.
+// NO FINAL: the GROUP BY on `asset` with min/max over `ledger_seq` already folds the duplicate
+// versions FINAL would collapse, and the read-time merge is the costliest part of this scan. Any
+// row present is a ledger at which a trustline existed, so the answer only errs toward MORE
+// evidence. max() is merge-invariant; min() is not, but the writer takes LEAST across runs, so
+// first_seen can only move EARLIER, toward the truth.
 //
 // NO change_type FILTER: a deleted trustline is still proof the asset exists (the holders rollup
 // excludes `removed` because it answers "who holds this now").
@@ -90,8 +87,8 @@ const trustlineAssetsPageQuery = `
 	 ORDER BY asset
 	 LIMIT ?`
 
-// trustlineAssetCountQuery counts the population the page walk enumerates;
-// its predicates MUST match [trustlineAssetsPageQuery].
+// trustlineAssetCountQuery counts the walk's population; its predicates MUST match
+// [trustlineAssetsPageQuery].
 const trustlineAssetCountQuery = `
 	SELECT uniqExact(asset)
 	  FROM stellar.ledger_entries_current
@@ -101,8 +98,7 @@ const trustlineAssetCountQuery = `
 	   AND asset NOT LIKE 'pool:%'
 	   AND asset != 'pool'`
 
-// CountTrustlineAssets returns how many distinct classic assets the walk
-// would enumerate end to end.
+// CountTrustlineAssets returns how many distinct classic assets the walk would enumerate.
 func (h *HoldingsScanner) CountTrustlineAssets(ctx context.Context) (int64, error) {
 	var n uint64
 	if err := h.conn.QueryRow(ctx, trustlineAssetCountQuery).Scan(&n); err != nil {
@@ -111,12 +107,11 @@ func (h *HoldingsScanner) CountTrustlineAssets(ctx context.Context) (int64, erro
 	return int64(n), nil //nolint:gosec // a distinct-asset count cannot approach 2^63
 }
 
-// TrustlineAssetsAfter returns up to `limit` distinct classic assets whose
-// asset string sorts strictly after `after`, in ascending asset order.
+// TrustlineAssetsAfter returns up to `limit` distinct classic assets sorting strictly after
+// `after`, ascending.
 //
-// Keyset- rather than offset-paginated so a resumed run re-enters exactly where the previous one
-// stopped. Pass "" for the first page and the last Asset of page N for page N+1; an empty result
-// means the walk is complete.
+// Keyset pagination lets a resumed run re-enter exactly where the previous one stopped. Pass "" for
+// the first page and the last Asset of page N for page N+1; an empty result means the walk is done.
 //
 // entry_type is the FIRST sort-key column, so `entry_type = 'trustline'` prunes granules. Each
 // page re-aggregates the trustline range, so bigger pages mean fewer passes at more memory each.

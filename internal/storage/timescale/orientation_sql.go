@@ -37,10 +37,9 @@ func stablecoinInListSQL() string {
 	return strings.Join(codes, ", ")
 }
 
-// quoteRankSQL is a SQL CASE mirroring canonical.quoteRank for the
-// given asset column: fiat (4) > stablecoin (3) > XLM (2) > token (1).
-// Higher = more quote-like. Rendered per query because the declared
-// stablecoin SACs come from the alias registry installed at start-up.
+// quoteRankSQL is a SQL CASE mirroring canonical.quoteRank for col: fiat (4) > stablecoin (3) >
+// XLM (2) > token (1). Rendered per query because declared stablecoin SACs come from the alias
+// registry installed at start-up.
 func quoteRankSQL(col string, sacIdx int) string {
 	return fmt.Sprintf(`(CASE
         WHEN %[1]s LIKE 'fiat:%%' THEN 4
@@ -49,10 +48,9 @@ func quoteRankSQL(col string, sacIdx int) string {
         ELSE 1 END)`, col, stablecoinInListSQL(), nativeSACParam(sacIdx), stablecoinSACArmSQL(col))
 }
 
-// stablecoinSACArmSQL is quoteRankSQL's rank-3 arm for the declared
-// stablecoin SACs, or "" when none is declared (an empty IN list is a
-// syntax error). The forms passed strkey validation in the registry, so
-// they are base32 literals with no quoting surface.
+// stablecoinSACArmSQL is quoteRankSQL's rank-3 arm for declared stablecoin SACs, or "" when none
+// (an empty IN list is a syntax error). The forms passed strkey validation, so they are base32
+// literals with no quoting surface.
 func stablecoinSACArmSQL(col string) string {
 	forms := canonical.StablecoinSACForms()
 	if len(forms) == 0 {
@@ -61,10 +59,8 @@ func stablecoinSACArmSQL(col string) string {
 	return fmt.Sprintf("\n        WHEN %s IN ('%s') THEN 3", col, strings.Join(forms, "', '"))
 }
 
-// marketKeySQL is a market's identity for COUNTING: its unordered
-// {base, quote} pair. canonical.Orient is a function of that set alone,
-// so DISTINCT on this key counts exactly what DISTINCT on
-// canonOrientSQL's (base, quote) does, without the rank CASE.
+// marketKeySQL is a market's identity for COUNTING: its unordered {base, quote} pair. Orient is a
+// function of that set alone, so DISTINCT on it equals DISTINCT on canonOrientSQL without the CASE.
 const marketKeySQL = `LEAST(base_asset, quote_asset), GREATEST(base_asset, quote_asset)`
 
 // canonLastPriceSQL is a canonical market's newest last_price across its stored orientations, the
@@ -92,10 +88,8 @@ func canonLastPriceSQL(flipped string) string {
 func canonOrientSQL(sacIdx int) (canonBase, canonQuote, flipped string) {
 	const bcol, qcol = "base_asset", "quote_asset"
 	rb, rq := quoteRankSQL(bcol, sacIdx), quoteRankSQL(qcol, sacIdx)
-	// The stored base (bcol) is actually the canonical QUOTE when it
-	// outranks the stored quote, or on a tie sorts after it. COLLATE "C"
-	// makes the tie-break byte order, as Go's string compare is; the
-	// database's default collation (e.g. en_US) orders mixed case differently.
+	// Stored base is the canonical QUOTE when it outranks the stored quote or ties and sorts after.
+	// COLLATE "C" matches Go's byte-order compare; the default collation orders mixed case differently.
 	flipped = fmt.Sprintf(`(%[1]s > %[2]s OR (%[1]s = %[2]s AND %[3]s COLLATE "C" > %[4]s COLLATE "C"))`, rb, rq, bcol, qcol)
 	canonBase = fmt.Sprintf("(CASE WHEN %s THEN %s ELSE %s END)", flipped, qcol, bcol)
 	canonQuote = fmt.Sprintf("(CASE WHEN %s THEN %s ELSE %s END)", flipped, bcol, qcol)

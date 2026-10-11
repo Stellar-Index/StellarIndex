@@ -22,14 +22,11 @@ type TopicSample struct {
 	MaxLedger uint32
 }
 
-// distinctTopicSampleWindow bounds how far back (wall-clock) the cheap PHASE-1 scan looks for a
-// representative event per (contract_id, topic_0_sym) shape. Mirrors the gap detector's
-// trailing-window bound (computeGapScanWindow): recognition needs ONE example per shape and a
-// recent one is as good as an old one, so scanning the whole range is wasted IO.
-//
-// Full-history recognition is not this window's job: the ClickHouse path (computeRecognitionGapsCH)
-// is the authoritative ADR-0033 Claim 2a check. This Postgres path backs ad hoc runs; shapes
-// active only before the window are found by [Store.distinctSorobanContractTopicPairs].
+// distinctTopicSampleWindow bounds how far back (wall-clock) the cheap PHASE-1 scan looks for an
+// example per (contract_id, topic_0_sym) shape, mirroring computeGapScanWindow. A recent example
+// is as good as an old one, so scanning the whole range is wasted IO. Full-history recognition is
+// the ClickHouse path's job (computeRecognitionGapsCH, the authoritative ADR-0033 Claim 2a check);
+// shapes active only before the window are found by [Store.distinctSorobanContractTopicPairs].
 const distinctTopicSampleWindow = 30 * 24 * time.Hour
 
 // DistinctSorobanTopicSamples returns one representative row per distinct (contract_id,
@@ -51,18 +48,15 @@ func (s *Store) DistinctSorobanTopicSamples(ctx context.Context, from, to uint32
 	return s.distinctSorobanTopicSamplesAt(ctx, from, to, time.Now())
 }
 
-// distinctSorobanTopicSamplesAt is [Store.DistinctSorobanTopicSamples]
-// with the wall-clock reference threaded in so the windowing behaviour
-// is deterministically testable.
+// distinctSorobanTopicSamplesAt is [Store.DistinctSorobanTopicSamples] with the clock threaded in
+// so the windowing is testable.
 func (s *Store) distinctSorobanTopicSamplesAt(ctx context.Context, from, to uint32, now time.Time) ([]TopicSample, error) {
 	if to < from {
 		return nil, errors.New("timescale: DistinctSorobanTopicSamples: to < from")
 	}
 
-	// Phase 1: cheap trailing-window scan. This is the ONLY phase that
-	// touches the wide XDR columns (topic_*_xdr, body_xdr, op_args_xdr),
-	// and it's bounded to distinctTopicSampleWindow regardless of how
-	// far back `from` reaches — chunk-pruned by ledger_close_time.
+	// Phase 1: the ONLY phase that touches the wide XDR columns; bounded to
+	// distinctTopicSampleWindow however far back `from` reaches, chunk-pruned by ledger_close_time.
 	windowFrom := now.Add(-distinctTopicSampleWindow)
 	samples, err := s.distinctSorobanTopicSamplesWindowed(ctx, from, to, windowFrom)
 	if err != nil {
@@ -73,11 +67,10 @@ func (s *Store) distinctSorobanTopicSamplesAt(ctx context.Context, from, to uint
 		seen[[2]string{samples[i].Row.ContractID, samples[i].Row.Topic0Sym}] = true
 	}
 
-	// Phase 2: every (contract_id, topic_0_sym) pair that has EVER emitted a Symbol/String
-	// topic[0], including contracts quiet before the window. Reads ONLY
-	// soroban_events_contract_topic_idx, never a wide-column heap fetch. Still O(rows) as
-	// Postgres has no skip scan, but each row is a narrow read. Non-Symbol/String shapes are
-	// not recovered here (the partial index excludes NULL topic_0_sym); `-ch` backstops them.
+	// Phase 2: every (contract_id, topic_0_sym) pair that EVER emitted a Symbol/String topic[0],
+	// including contracts quiet before the window. Reads ONLY soroban_events_contract_topic_idx
+	// (O(rows), no skip scan, but narrow). Non-Symbol/String shapes are excluded by the partial
+	// index (NULL topic_0_sym); `-ch` backstops them.
 	pairs, err := s.distinctSorobanContractTopicPairs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: DistinctSorobanTopicSamples pair discovery: %w", err)
@@ -121,10 +114,8 @@ func distinctSorobanTopicSamplesWindowedQuery(rangeCovered bool) string {
         ORDER BY contract_id, topic_0_sym, ledger`
 }
 
-// distinctSorobanTopicSamplesWindowed is PHASE 1: the original
-// window-aggregate DISTINCT ON scan, additionally floored at
-// windowFrom so it only reads the trailing distinctTopicSampleWindow
-// of chunks (plus whatever narrower [from,to] bound already applies).
+// distinctSorobanTopicSamplesWindowed is PHASE 1: the DISTINCT ON scan floored at windowFrom, so
+// it reads only the trailing distinctTopicSampleWindow of chunks.
 func (s *Store) distinctSorobanTopicSamplesWindowed(ctx context.Context, from, to uint32, windowFrom time.Time) ([]TopicSample, error) {
 	// Chunk pruning: when ledger_ingest_log fully covers [from,to], add a ledger_close_time bound
 	// so only relevant chunks are hit (see SorobanEventsTimeBound). Otherwise the scan is
@@ -197,12 +188,11 @@ const distinctSorobanContractTopicPairsQuery = `
         FROM soroban_events
         WHERE topic_0_sym IS NOT NULL`
 
-// distinctSorobanContractTopicPairs is PHASE 2: a scan for EVERY (contract_id, topic_0_sym) pair
-// that has ever appeared with a Symbol/String topic[0], read entirely off
-// soroban_events_contract_topic_idx (partial, WHERE topic_0_sym IS NOT NULL) via an Index Only
-// Scan (uncompressed chunks) or a bloom-pruned ColumnarScan (compressed), never the wide XDR/body
-// columns. It still touches every row, as Postgres has no skip scan, but each is a narrow read, so
-// it stays far cheaper than a wide scan even for pairs with hundreds of millions of rows.
+// distinctSorobanContractTopicPairs is PHASE 2: EVERY (contract_id, topic_0_sym) pair ever seen
+// with a Symbol/String topic[0], read off soroban_events_contract_topic_idx (partial, WHERE
+// topic_0_sym IS NOT NULL) via an Index Only Scan (uncompressed chunks) or a bloom-pruned
+// ColumnarScan (compressed), never the wide XDR/body columns. It touches every row (no skip scan)
+// but each read is narrow, far cheaper than a wide scan.
 func (s *Store) distinctSorobanContractTopicPairs(ctx context.Context) ([][2]string, error) {
 	rows, err := s.db.QueryContext(ctx, distinctSorobanContractTopicPairsQuery)
 	if err != nil {
@@ -227,12 +217,9 @@ func (s *Store) distinctSorobanContractTopicPairs(ctx context.Context) ([][2]str
 // oneSorobanTopicSampleQuery is PHASE 3's query text, a const for the same reason as
 // distinctSorobanContractTopicPairsQuery: an equality filter on the composite index's exact
 // columns (contract_id, topic_0_sym) and LIMIT 1 with no ORDER BY, so Postgres stops at the first
-// matching index entry instead of sorting the pair's rows.
-//
-// No per-pair count/min/max aggregate: for a DORMANT pair with millions of ancient rows it would
-// scan the whole row set and exhaust the run budget. Recognition needs only the EXAMPLE ROW, so
-// fallback-sampled pairs report Count = -1 ("not measured"), and each fetch runs under its own
-// short deadline so a pathological pair degrades to a logged skip.
+// matching index entry instead of sorting the pair's rows. There is no per-pair count/min/max:
+// for a DORMANT pair it would scan millions of rows and exhaust the run budget, so sampled pairs
+// report Count = -1 ("not measured") and each fetch runs under its own short deadline.
 const oneSorobanTopicSampleQuery = `
         SELECT e.ledger, e.ledger_close_time, e.tx_hash, e.op_index, e.event_index,
                e.contract_id, e.contract_id_hex, e.topic_count, e.topic_0_sym,
@@ -242,17 +229,13 @@ const oneSorobanTopicSampleQuery = `
         WHERE e.contract_id = $1 AND e.topic_0_sym = $2 AND e.ledger BETWEEN $3 AND $4
         LIMIT 1`
 
-// oneSorobanTopicSampleTimeout bounds each PHASE 3 per-pair fallback
-// fetch. A miss is tolerable (the pair is reported unsampled); a run
-// abort is not.
+// oneSorobanTopicSampleTimeout bounds each PHASE 3 fetch: a miss is tolerable, a run abort is not.
 const oneSorobanTopicSampleTimeout = 90 * time.Second
 
 // oneSorobanTopicSample is PHASE 3: an index-backed fetch of ANY one row (LIMIT 1, no ORDER BY;
 // recognition doesn't care which) for a SPECIFIC (contract_id, topic_0_sym) pair within [from, to].
-// Only called for pairs Phase 1's window did not cover, so the minority of dormant shapes pay the
-// per-pair cost at most once per audit run.
-// ok=false when the pair has no rows within [from,to]: Phase 2 is not range-scoped, so a pair
-// found there can fall entirely outside the requested range.
+// Only called for pairs Phase 1's window missed, so dormant shapes pay this once per run.
+// ok=false when the pair has no rows within [from,to]: Phase 2 is not range-scoped.
 func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym string, from, to uint32) (TopicSample, bool, error) {
 	var (
 		samp                   TopicSample
@@ -277,9 +260,8 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 		return TopicSample{}, false, nil
 	}
 	if err != nil {
-		// Per-pair deadline expiry (not the caller's ctx): degrade to
-		// "unsampled" instead of failing the whole recognition scan —
-		// the pathological-dormant-pair case this timeout exists for.
+		// Per-pair deadline expiry (not the caller's ctx): degrade to "unsampled" instead of
+		// failing the whole recognition scan.
 		if pairTimeoutSkip(pairCtx, ctx, contractID, topic0Sym, from, to) {
 			return TopicSample{}, false, nil
 		}
@@ -308,9 +290,8 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 
 // pairTimeoutSkip reports whether a PHASE 3 per-pair fetch failed because ITS OWN deadline
 // (pairCtx, oneSorobanTopicSampleTimeout) expired, as opposed to the caller's ctx being canceled
-// or a genuine query error, and logs it. Without the log the shape would yield no gap and no
-// trace, and dormant rarely-emitted shapes, the class the audit exists to catch, are the likeliest
-// to time out. Split out so the classification is unit-testable without a live query.
+// or a genuine query error, and logs it. Without the log the shape would leave no gap and no
+// trace, and dormant shapes, the class the audit exists to catch, are likeliest to time out.
 func pairTimeoutSkip(pairCtx, ctx context.Context, contractID, topic0Sym string, from, to uint32) bool {
 	if pairCtx.Err() == nil || ctx.Err() != nil {
 		return false

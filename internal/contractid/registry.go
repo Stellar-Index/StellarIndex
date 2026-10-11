@@ -14,9 +14,8 @@ package contractid
 
 import "sync"
 
-// Registry is a set of factory-descended child contract IDs (C-strkeys)
-// plus the protocol's factory trust-root set, with an optional live-upsert
-// persistence hook. The zero value is not usable — construct with [New].
+// Registry is a set of factory-descended child contract IDs (C-strkeys) plus the protocol's factory
+// trust-root set, with an optional persistence hook. Construct with [New]; the zero value is unusable.
 //
 // A protocol may have MORE THAN ONE factory (Blend has two pool factories that both deploy real
 // pools). Gating the creation event on a single factory would silently drop the other's children,
@@ -64,9 +63,8 @@ func WithFactories(factoryIDs []string) Option {
 	}
 }
 
-// WithSeed pre-loads the child set from a durable warm (the
-// `protocol_contracts` table). Does NOT fire the persistence hook — these
-// IDs are already persisted. Safe to combine with WithHook.
+// WithSeed pre-loads the child set from the `protocol_contracts` table. It does NOT fire the
+// persistence hook because these IDs are already persisted.
 func WithSeed(childIDs []string) Option {
 	return func(r *Registry) {
 		for _, id := range childIDs {
@@ -100,16 +98,14 @@ func WithAttrSeed(seed map[string]Attrs) Option {
 	}
 }
 
-// WithAttrHook installs the callback [Registry.SeedWithAttrs] fires to persist
-// a child's attributes. Same constraints as [WithHook]: cheap, and invoked
-// without the registry lock held.
+// WithAttrHook installs the callback [Registry.SeedWithAttrs] fires to persist a child's
+// attributes. Like [WithHook] it must be cheap and runs without the registry lock held.
 func WithAttrHook(fn func(childID, factoryID string, firstLedger uint32, attrs Attrs)) Option {
 	return func(r *Registry) { r.attrHook = fn }
 }
 
-// Has reports whether contractID is a registered factory descendant.
-// This is the load-bearing gate the decoder's Matches() consults for
-// every non-creation event.
+// Has reports whether contractID is a registered factory descendant: the gate Matches() consults
+// for every non-creation event.
 func (r *Registry) Has(contractID string) bool {
 	r.mu.RLock()
 	_, ok := r.set[contractID]
@@ -117,10 +113,9 @@ func (r *Registry) Has(contractID string) bool {
 	return ok
 }
 
-// IsFactory reports whether contractID is one of the protocol's trust-root
-// factories. The decoder's Matches() consults this for the creation event
-// (e.g. Blend `deploy`) — only a genuine factory may announce a child, so a
-// foreign contract can't inject one into the registry.
+// IsFactory reports whether contractID is one of the protocol's trust-root factories. Matches()
+// consults it for the creation event (e.g. Blend `deploy`): only a genuine factory may announce a
+// child, so a foreign contract cannot inject one.
 func (r *Registry) IsFactory(contractID string) bool {
 	r.mu.RLock()
 	_, ok := r.factories[contractID]
@@ -128,9 +123,8 @@ func (r *Registry) IsFactory(contractID string) bool {
 	return ok
 }
 
-// Factories returns the protocol's factory trust-root set (sorted-agnostic;
-// callers needing order should sort). Used by the genesis-seed walk to
-// enumerate every factory whose creation events to replay.
+// Factories returns the factory trust-root set in no guaranteed order; the genesis-seed walk uses
+// it to find every factory whose creation events to replay.
 func (r *Registry) Factories() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

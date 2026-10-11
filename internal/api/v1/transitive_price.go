@@ -60,9 +60,8 @@ func (s *Server) transitiveCandidateAllowed(ctx context.Context, asset canonical
 		return false
 	}
 
-	// Near leg (the market converting asset into hop), through the package's one fold of both
-	// gates. The scam half covers asset AND hop: /v1/price refuses a flagged issuer's market
-	// for the hop itself, so it must not reappear here one conversion removed.
+	// Near leg (the market converting asset into hop) through the package's one fold of both
+	// gates. The scam half covers asset AND hop, since /v1/price refuses a flagged hop itself.
 	if withheldBy(ctx, s.Substance, s.Scam, asset, hop, "transitive") != pricingguard.NotWithheld {
 		return false
 	}
@@ -73,8 +72,7 @@ func (s *Server) transitiveCandidateAllowed(ctx context.Context, asset canonical
 		return false
 	}
 	// Far leg: the hop must stand on its own against the SAME quote set the catalogue prices
-	// through (native/XLM-SAC, fiat:USD, or an operator-declared USD peg); assetPriceAllowed
-	// encodes that policy, so reuse it to avoid drift. Counted as "transitive".
+	// through; reuse assetPriceAllowed, which encodes that policy. Counted as "transitive".
 	return s.assetPriceAllowed(ctx, hop, "transitive")
 }
 

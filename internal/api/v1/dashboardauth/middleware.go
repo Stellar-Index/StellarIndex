@@ -15,15 +15,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// touchTimeout caps the async TouchSession write — this is a
-// fire-and-forget background operation, so a stuck write
-// shouldn't keep the goroutine alive.
+// touchTimeout caps the fire-and-forget TouchSession write so a stuck one cannot pin its goroutine.
 const touchTimeout = 2 * time.Second
 
-// sendTimeout caps an outbound mail send that runs after a durable
-// write has already landed (e.g. the magic-link token). The request
-// context is deliberately not used for cancellation there: a client
-// disconnect must not read the same as a provider failure.
+// sendTimeout caps a mail send that runs after a durable write (e.g. the magic-link token). The
+// request context is deliberately not used: a client disconnect must not read as a provider failure.
 const sendTimeout = 10 * time.Second
 
 // newTouchCtx returns a context for the async TouchSession goroutine. It keeps the request's values
@@ -49,9 +45,8 @@ func parseIP(s string) net.IP {
 // TouchSession writes are debounced per minute so a single busy tab does not cause hot-row
 // contention on its session.
 func Middleware(cfg *Config) func(http.Handler) http.Handler {
-	// The caller's Config may never have run validate(), and resolveSession calls cfg.Now() and
-	// cfg.Logger.Warn(); a nil here would panic every authenticated request. Default them so the
-	// middleware does not depend on how the Config was built.
+	// The Config may never have run validate(); a nil Now or Logger would panic every authenticated
+	// request, so default them here.
 	if cfg.Now == nil {
 		cfg.Now = func() time.Time { return time.Now().UTC() }
 	}
@@ -88,33 +83,27 @@ func RequireSession() func(http.Handler) http.Handler {
 	}
 }
 
-// resolveSession is the inner read-the-cookie + load-from-DB
-// path. Pulls into a helper so Middleware stays small.
+// resolveSession reads the cookie and loads the session from the DB, keeping Middleware small.
 func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (SessionContext, bool) {
 	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil || cookie.Value == "" {
 		return SessionContext{}, false
 	}
-	// The cookie carries the random token, not the DB primary key. Hash
-	// it and look up by hash — the table stores only sha256(token), so a
-	// read of the sessions table is not directly replayable. Any
-	// non-matching / stale cookie simply misses.
+	// The cookie carries the random token, not the primary key. The table stores only
+	// sha256(token), so a read of it is not replayable.
 	sess, err := cfg.Users.GetSessionByTokenHash(r.Context(), HashSessionToken(cookie.Value))
 	if err != nil {
-		// ErrNotFound covers absent, revoked and expired (the
-		// store filters expires_at > now()). The user re-logs-in.
+		// ErrNotFound covers absent, revoked and expired (the store filters expires_at > now()).
 		if !errors.Is(err, platform.ErrNotFound) {
-			// Log only `err`, never the cookie token: it is the bearer credential, and this branch
-			// fires on any transient store error, so a database hiccup must not write one live
-			// long-lived token per request into logs that ship to Loki.
+			// Log only `err`, never the cookie token: it is the bearer credential, and a database
+			// hiccup must not write one live token per request into shipped logs.
 			cfg.Logger.Warn("session lookup", "err", err)
 		}
 		return SessionContext{}, false
 	}
 	if !sess.ExpiresAt.After(cfg.Now()) {
-		// The store filters on the database clock; this re-checks
-		// on the API clock so skew between the two cannot extend a
-		// session.
+		// The store filters on the database clock; re-check on the API clock so skew cannot extend
+		// a session.
 		return SessionContext{}, false
 	}
 	if sessionIdle(sess, cfg.Now(), cfg.SessionIdleTimeout) {
@@ -135,24 +124,21 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 		return SessionContext{}, false
 	}
 	if acct.Status != platform.AccountActive {
-		// Suspended / closed account → session denied.
-		// Revoke the session so the user's browser drops it.
+		// Suspended or closed account: deny and revoke the session.
 		_ = cfg.Users.RevokeSession(r.Context(), sess.ID)
 		return SessionContext{}, false
 	}
 
-	// Touch last-seen async (debounced). Don't block the
-	// request on the write — if it fails the dashboard still
-	// works; we just won't have a fresh last_seen_at.
+	// Touch last-seen async (debounced); a failed write only leaves last_seen_at stale.
 	if tracker.shouldTouch(sess.ID, cfg.Now()) {
 		parent := r.Context()
 		go func(parent context.Context, id uuid.UUID, ip string, ua string) {
-			// This runs in its own goroutine, so an unrecovered panic would terminate the whole
-			// process; no upstream Recoverer wraps it. Recover so a panic only drops this touch.
+			// No upstream Recoverer wraps this goroutine, so recover to keep a panic from killing the
+			// process.
 			defer func() {
 				if r := recover(); r != nil {
-					// worker.Report moves stellarindex_worker_panics_total so the panic pages. No
-					// session_id in the label or message: the worker label must stay bounded.
+					// worker.Report pages via stellarindex_worker_panics_total. No session_id in the
+					// label: it must stay bounded.
 					worker.Report(cfg.Logger, "api-dashboard-session-touch", r)
 				}
 			}()
@@ -166,13 +152,11 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 	return SessionContext{Session: sess, User: user, Account: acct}, true
 }
 
-// defaultSessionIdleTimeout bounds how long an unused session
-// cookie stays valid inside its absolute SessionTTL.
+// defaultSessionIdleTimeout bounds how long an unused session stays valid inside its SessionTTL.
 const defaultSessionIdleTimeout = 7 * 24 * time.Hour
 
-// sessionIdle reports whether sess has gone unused for longer than
-// idle. last_seen_at is touched at most once a minute, so the bound
-// is accurate to about that.
+// sessionIdle reports whether sess has been unused longer than idle; last_seen_at moves at most
+// once a minute, so the bound is that accurate.
 func sessionIdle(sess platform.Session, now time.Time, idle time.Duration) bool {
 	last := sess.LastSeenAt
 	if last.IsZero() {
@@ -181,10 +165,8 @@ func sessionIdle(sess platform.Session, now time.Time, idle time.Duration) bool 
 	return idle > 0 && !last.IsZero() && now.Sub(last) > idle
 }
 
-// touchTracker debounces TouchSession DB writes per session.
-// Map of session_id → last-touched timestamp. In-memory only;
-// a process restart resets it (worst case: one extra write per
-// session post-restart, which is fine).
+// touchTracker debounces TouchSession writes per session. It is in-memory; a restart costs at most
+// one extra write per session.
 type touchTracker struct {
 	mu        sync.Mutex
 	last      map[uuid.UUID]time.Time
@@ -210,14 +192,9 @@ func (t *touchTracker) shouldTouch(id uuid.UUID, now time.Time) bool {
 	return true
 }
 
-// sweepLocked evicts entries whose last touch has aged past interval. resolveSession has no
-// session-ended signal, so without this the map grows by one entry per session forever; an aged
-// entry no longer suppresses a touch anyway.
-//
-// It runs at most once per interval (see lastSweep) so a busy deployment does not pay an
-// O(map size) scan on every touch.
-//
-// Caller must hold t.mu.
+// sweepLocked evicts entries aged past interval; with no session-ended signal the map would
+// otherwise grow forever, and an aged entry suppresses nothing. It runs at most once per interval
+// so a busy deployment does not pay an O(map size) scan per touch. Caller must hold t.mu.
 func (t *touchTracker) sweepLocked(now time.Time) {
 	if now.Sub(t.lastSweep) < t.interval {
 		return
@@ -230,10 +207,8 @@ func (t *touchTracker) sweepLocked(now time.Time) {
 	}
 }
 
-// SessionAccountSubject scopes an Idempotency-Key on a dashboard create
-// route to the caller's account, so two customers who pick the same
-// literal key never share a cache entry. Empty when no session is
-// attached, which middleware.Idempotency treats as "don't dedupe".
+// SessionAccountSubject scopes an Idempotency-Key to the caller's account so two customers with the
+// same key never share a cache entry. Empty without a session, which Idempotency treats as "don't dedupe".
 func SessionAccountSubject(r *http.Request) string {
 	sc, ok := SessionFromContext(r.Context())
 	if !ok {

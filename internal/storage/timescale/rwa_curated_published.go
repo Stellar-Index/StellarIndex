@@ -12,40 +12,31 @@ import (
 )
 
 // curated_rwa_published_series caches the totals a third-party curator PUBLISHES about tokenized
-// real-world assets, for the RWA surface's curated arm (synced by `curated-rwa-sync`).
+// real-world assets, for the RWA curated arm (synced by `curated-rwa-sync`). It is separate from
+// rwa_curated_directory because the per-asset list lives in private uploads; only the latest RESULT
+// of the curator's public queries is readable.
 //
-// It exists apart from rwa_curated_directory because the directory's per-asset list and prices live
-// in CSV uploads private to the uploading team, so no sync can fill it; anyone can read only the
-// latest RESULT of the curator's public dashboard queries.
-//
-// A row means: "curator X's public query Q, when it last ran at executed_at, printed value_usd for
-// series S at month_end." It is the curator's arithmetic over private inputs (no signature, per-asset
-// breakdown, price or market), served under its own name beside the verified set, never inside it.
+// A row is the curator's own arithmetic over private inputs (no per-asset breakdown, price or
+// market), served under its name beside the verified set, never inside it.
 //
 // TWO CLOCKS. `executed_at` is the CURATOR's, so a figure is only as fresh as that. `observed_at` is
-// OURS; the reader's recognition bound ages on it, spliced into the SQL so no caller can read a stale
-// row as fresh. A sync replaces a curator's rows PER SERIES in one transaction, so a series shares
-// one observed_at and executed_at.
+// OURS; the recognition bound ages on it, spliced into the SQL so no caller can read a stale row as
+// fresh. A sync replaces a curator's rows PER SERIES in one transaction, so a series shares both.
 
 // Series names, shared by the writer and the reader.
 const (
-	// CuratedRWASeriesMonthlyTotal is one row per month_end, subclass
-	// '': the curator's headline monthly RWA market cap.
+	// CuratedRWASeriesMonthlyTotal is one row per month_end (subclass ''): the headline total.
 	CuratedRWASeriesMonthlyTotal = "rwa_mcap_monthly"
-	// CuratedRWASeriesMonthlyBySubclass is one row per (month_end,
-	// subclass): the same total split by the curator's own labels.
+	// CuratedRWASeriesMonthlyBySubclass is one row per (month_end, subclass), the curator's own split.
 	CuratedRWASeriesMonthlyBySubclass = "rwa_mcap_monthly_by_subclass"
 )
 
-// CuratedRWAPublishedRow is one point of a published series, as the
-// curator's query printed it.
+// CuratedRWAPublishedRow is one point of a published series, as the curator's query printed it.
 type CuratedRWAPublishedRow struct {
 	Series string
-	// MonthEnd is the last day of the month the curator bucketed the
-	// figure into, at midnight UTC. Stored as a date.
+	// MonthEnd is the last day of the bucketed month, midnight UTC, stored as a date.
 	MonthEnd time.Time
-	// Subclass is the curator's label on the split series; empty on the
-	// total series.
+	// Subclass is the curator's label on the split series; empty on the total.
 	Subclass string
 	// ValueUSD is the printed figure as a DECIMAL STRING (ADR-0003).
 	ValueUSD string
@@ -55,59 +46,50 @@ type CuratedRWAPublishedRow struct {
 	ExecutedAt time.Time
 }
 
-// CuratedRWAPublishedPoint is one (month_end, value) of the total series
-// as served.
+// CuratedRWAPublishedPoint is one (month_end, value) of the total series.
 type CuratedRWAPublishedPoint struct {
 	MonthEnd time.Time
 	ValueUSD string
 }
 
-// CuratedRWAPublishedSplit is one (subclass, value) of the latest month's
-// split as served.
+// CuratedRWAPublishedSplit is one (subclass, value) of the latest month's split.
 type CuratedRWAPublishedSplit struct {
 	Subclass string
 	ValueUSD string
 }
 
-// CuratedRWAPublished is what the curator last published, read whole:
-// the latest month's total, its split, and the full monthly series.
+// CuratedRWAPublished is what the curator last published, read whole.
 type CuratedRWAPublished struct {
-	// MonthEnd and TotalUSD are the latest point of the total series —
-	// the curator's headline figure.
+	// MonthEnd and TotalUSD are the latest point of the total series.
 	MonthEnd time.Time
 	TotalUSD string
-	// SourceQuery and ExecutedAt are the total series' provenance;
-	// SplitSourceQuery and SplitExecutedAt are the split's, a separate
-	// query execution (zero when the split has no rows for MonthEnd).
+	// SourceQuery and ExecutedAt are the total's provenance; the Split pair is the split's, a
+	// separate execution (zero when the split has no rows for MonthEnd).
 	SourceQuery      int64
 	SplitSourceQuery int64
 	ExecutedAt       time.Time
 	SplitExecutedAt  time.Time
 	// ObservedAt is when this index read the total series.
 	ObservedAt time.Time
-	// BySubclass is the split for MonthEnd, largest first. Empty when the
-	// split series has no rows for that month.
+	// BySubclass is the split for MonthEnd, largest first; empty when that month has no split rows.
 	BySubclass []CuratedRWAPublishedSplit
-	// Series is the whole total series, oldest first; its last point is
-	// (MonthEnd, TotalUSD).
+	// Series is the whole total series, oldest first.
 	Series []CuratedRWAPublishedPoint
 }
 
-// curatedRWAPublishedRecognisedSQL is the recognition bound: a run that
-// stopped leaves rows that age out on OUR clock, the same 48 hours the
-// directory uses (one missed daily run survivable, two not).
+// curatedRWAPublishedRecognisedSQL is the recognition bound: rows from a stopped run age out on OUR
+// clock after the directory's 48 hours (one missed daily run survivable, two not).
 const curatedRWAPublishedRecognisedSQL = `observed_at > now() - INTERVAL '` + curatedRWARecognitionMaxAge + `'`
 
-// curatedRWAPublishedInsertChunk bounds the multi-row insert: 500 rows ×
-// 7 params = 3500 placeholders, far under Postgres's 65535 bind cap.
+// curatedRWAPublishedInsertChunk bounds the multi-row insert: 500 rows × 7 params, far under the
+// 65535 bind cap.
 const curatedRWAPublishedInsertChunk = 500
 
-// ReplaceCuratedRWAPublished makes one curator's cache equal `rows`, PER SERIES: each series present
-// is deleted and re-inserted in one transaction, so a series is always one execution's whole output.
-// Series the rows do not name are left alone.
+// ReplaceCuratedRWAPublished makes one curator's cache equal `rows`, PER SERIES, in one transaction
+// so a series is always one execution's whole output; unnamed series are left alone.
 //
-// An empty set is refused: a run that fetched nothing cannot tell "publishes nothing" from "fetch
-// failed", and applying it would silence the curator.
+// An empty set is refused: "publishes nothing" and "fetch failed" look alike, and applying it would
+// silence the curator.
 func (s *Store) ReplaceCuratedRWAPublished(
 	ctx context.Context, curator string, rows []CuratedRWAPublishedRow,
 ) (inserted int64, err error) {
@@ -163,10 +145,8 @@ func (s *Store) ReplaceCuratedRWAPublished(
 	return inserted, nil
 }
 
-// dedupCuratedRWAPublishedRows keeps the LAST row per (series,
-// month_end, subclass). A published result can print one bucket twice;
-// the multi-row insert would then hit the primary key twice in one
-// statement, which Postgres refuses.
+// dedupCuratedRWAPublishedRows keeps the LAST row per (series, month_end, subclass): a result can
+// print one bucket twice, and a repeated key in one multi-row INSERT is refused.
 func dedupCuratedRWAPublishedRows(rows []CuratedRWAPublishedRow) []CuratedRWAPublishedRow {
 	type key struct {
 		series, subclass string
@@ -186,10 +166,8 @@ func dedupCuratedRWAPublishedRows(rows []CuratedRWAPublishedRow) []CuratedRWAPub
 	return out
 }
 
-// buildCuratedRWAPublishedInsert renders one multi-row INSERT for a
-// chunk. Every bind is cast explicitly; observed_at is transaction-stable
-// now(), so every row of one run shares the clock the recognition bound
-// reads.
+// buildCuratedRWAPublishedInsert renders one multi-row INSERT. Every bind is cast explicitly, and
+// observed_at is transaction-stable now() so one run shares the clock the recognition bound reads.
 func buildCuratedRWAPublishedInsert(curator string, rows []CuratedRWAPublishedRow) (string, []any) {
 	var b strings.Builder
 	b.WriteString(`
@@ -210,8 +188,7 @@ func buildCuratedRWAPublishedInsert(curator string, rows []CuratedRWAPublishedRo
 	return b.String(), args
 }
 
-// curatedRWAPublishedTotalSQL serves the whole recognised total series,
-// oldest first. The recognition bound is in the statement.
+// curatedRWAPublishedTotalSQL serves the whole recognised total series, oldest first.
 const curatedRWAPublishedTotalSQL = `
 		SELECT month_end, value_usd::text, source_query, executed_at, observed_at
 		  FROM curated_rwa_published_series
@@ -234,10 +211,8 @@ const curatedRWAPublishedSplitSQL = `
 		   AND ` + curatedRWAPublishedRecognisedSQL + `
 		 ORDER BY curated_rwa_published_series.value_usd DESC, subclass ASC`
 
-// LatestCuratedPublished returns what one curator last published, or
-// (nil, nil) when nothing of that curator's is inside the recognition
-// bound — an absence, not an error, so the surface can say
-// `unavailable` rather than fail.
+// LatestCuratedPublished returns what one curator last published, or (nil, nil) when nothing is
+// inside the recognition bound: an absence, so the surface can say `unavailable` rather than fail.
 func (s *Store) LatestCuratedPublished(ctx context.Context, curator string) (*CuratedRWAPublished, error) {
 	if curator == "" {
 		return nil, errors.New("curated rwa published: curator must be non-empty")
@@ -295,9 +270,8 @@ func (s *Store) LatestCuratedPublished(ctx context.Context, curator string) (*Cu
 	return out, nil
 }
 
-// dateUTC pins a scanned `date` to midnight UTC. pgx decodes a date into
-// the process's local zone; a month_end that reads back as the previous
-// evening would render as the wrong day.
+// dateUTC pins a scanned `date` to midnight UTC: pgx decodes it in the local zone, which could
+// render the previous evening.
 func dateUTC(t time.Time) time.Time {
 	y, m, d := t.Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)

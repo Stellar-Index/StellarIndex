@@ -14,19 +14,16 @@ import (
 // the sum of the four holding components, circulating is total minus the locked-set. All are non-nil
 // *big.Int (zero is valid); IssuerBalance is separate so the default locked-set member needs no re-query.
 type ClassicSupplyComponents struct {
-	// Trustline is Σ trustline_balance for the asset across every
-	// classic account that holds it. There is no issuer filter: the
-	// protocol refuses a trustline to one's own asset
-	// (CHANGE_TRUST_SELF_NOT_ALLOWED / MALFORMED), so no issuer row exists.
+	// Trustline is Σ trustline_balance across every classic holder. No issuer filter is needed: the
+	// protocol refuses a trustline to one's own asset, so no issuer row exists.
 	Trustline *big.Int
 
 	// Claimable is Σ claimable_balance amount for the asset across
 	// every open claimable balance entry.
 	Claimable *big.Int
 
-	// LPReserve is Σ liquidity_pool reserve for the asset across
-	// every classic LP. The pool's pro-rata share for this asset
-	// (NOT the asset's full LP-token holding side).
+	// LPReserve is Σ liquidity_pool reserve for the asset across every classic LP: the pool's
+	// reserve of this asset, not the LP-token holding side.
 	LPReserve *big.Int
 
 	// SACWrapped is Σ contract_data balance for the asset's SAC wrapper. Zero when no SAC is deployed
@@ -46,10 +43,8 @@ type ClassicSupplyComponents struct {
 	// [Policy.PerAsset], returned by the reader to avoid a per-account query path.
 	LockedAccountBalances *big.Int
 
-	// LockedContractBalances is Σ contract_data balance across the
-	// per-asset locked-set Contracts configured in
-	// [Policy.PerAsset]. Same single-query rationale as
-	// LockedAccountBalances.
+	// LockedContractBalances is Σ contract_data balance across the per-asset locked-set Contracts
+	// in [Policy.PerAsset], fetched in one query like LockedAccountBalances.
 	LockedContractBalances *big.Int
 
 	// MinComponentLedger is the lowest ledger of any contributing component observation; the [Refresher]
@@ -70,9 +65,7 @@ type ClassicComputer struct {
 	reader ClassicSupplyReader
 }
 
-// NewClassicComputer constructs an Algorithm 2 computer. Returns
-// ErrNilReader when reader is nil — there's no meaningful work the
-// computer can do without one.
+// NewClassicComputer constructs an Algorithm 2 computer; it returns ErrNilReader for a nil reader.
 func NewClassicComputer(policy Policy, reader ClassicSupplyReader) (*ClassicComputer, error) {
 	if reader == nil {
 		return nil, ErrNilReader
@@ -80,10 +73,8 @@ func NewClassicComputer(policy Policy, reader ClassicSupplyReader) (*ClassicComp
 	return &ClassicComputer{policy: policy, reader: reader}, nil
 }
 
-// ErrNotClassic is returned by [ClassicComputer.Compute] when the
-// supplied asset isn't a [canonical.AssetClassic]. Callers route
-// non-classic assets to the appropriate computer rather than letting
-// this one silently produce garbage.
+// ErrNotClassic is returned by [ClassicComputer.Compute] for a non-[canonical.AssetClassic] asset,
+// so callers route it to the right computer instead of getting a silently wrong supply.
 var ErrNotClassic = errors.New("supply: asset is not a classic credit asset")
 
 // Compute returns the [Supply] for a classic asset (Algorithm 2): total is trustline + claimable +
@@ -126,9 +117,8 @@ func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, le
 		circulating.SetInt64(0)
 	}
 
-	// max_supply: operator override beats the default nil. The SEP-1
-	// declaration overlay ([Overlay]) applies downstream, at the API
-	// serving layer (internal/api/v1/assets_f2.go).
+	// max_supply: an operator override beats the default nil; the SEP-1 overlay applies later, at
+	// the API serving layer.
 	var maxSupply *big.Int
 	basis := BasisIssuerExclusion
 	if override, ok, err := c.policy.MaxSupplyOverride(key); err != nil {
@@ -138,9 +128,8 @@ func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, le
 		basis = BasisOverride
 	}
 
-	// If the per-asset locked-set is non-empty AND no max-supply
-	// override fired, basis upgrades to Override (the operator
-	// expressed extra-than-default circulating policy).
+	// A non-empty per-asset locked-set with no max-supply override still upgrades basis to
+	// Override: the operator set a non-default circulating policy.
 	if !locked.IsEmpty() && basis == BasisIssuerExclusion {
 		basis = BasisOverride
 	}
@@ -161,10 +150,8 @@ func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, le
 	}, nil
 }
 
-// sacWrappedStroops derives [Supply.SACWrappedStroops] from the
-// reader's components: a defensive copy of SACWrapped when the reader
-// actually observed a SAC balance for this asset, nil otherwise. See
-// [ClassicSupplyComponents.SACObserved] and [CrossCheckSubsetBound].
+// sacWrappedStroops derives [Supply.SACWrappedStroops]: a copy of SACWrapped when a SAC balance
+// was observed, nil otherwise (see [ClassicSupplyComponents.SACObserved]).
 func sacWrappedStroops(comps ClassicSupplyComponents) *big.Int {
 	if !comps.SACObserved {
 		return nil

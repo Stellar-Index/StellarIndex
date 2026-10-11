@@ -18,9 +18,7 @@ import (
 // Scope: USD-pegged, classic-decimal (7) only. Non-USD pegs live in [VWAPUSDFXResolver];
 // SEP-41 tokens with other decimals are unsupported.
 type USDVolumeQuoteSpec struct {
-	// classicUSDPegs is the set of classic asset_keys (in the
-	// canonical "CODE-ISSUER" wire form) the operator has declared
-	// as USD-pegged stablecoins.
+	// classicUSDPegs holds the operator-declared USD-pegged classic keys in "CODE-ISSUER" form.
 	classicUSDPegs map[string]struct{}
 
 	// sacToClassic maps SAC contract id to the classic "CODE-ISSUER" key (normalised from the
@@ -51,8 +49,7 @@ func NewUSDVolumeQuoteSpec(classicUSDPegs []string, sacWrappers map[string]strin
 		out.classicUSDPegs[classicKey(asset)] = struct{}{}
 	}
 	for sacID, supplyKey := range sacWrappers {
-		// supplyKey is the supply.AssetKey "CODE:ISSUER" colon form;
-		// normalise to the dash form used in classicUSDPegs.
+		// supplyKey is the "CODE:ISSUER" colon form; normalise to the dash form of classicUSDPegs.
 		asset, err := canonical.ParseAsset(supplyKey)
 		if err != nil {
 			return nil, fmt.Errorf("usd-volume spec: sac_wrapper for %s (%q): %w", sacID, supplyKey, err)
@@ -73,8 +70,8 @@ func (s *USDVolumeQuoteSpec) QuoteUSDPegInfo(asset canonical.Asset) (decimals in
 	if s == nil {
 		return 0, false
 	}
-	// Only Classic + Soroban(SAC) assets can resolve to a USD-pegged classic;
-	// Native / Fiat / Crypto / RWA fall through to (0, false).
+	// Only Classic and Soroban (SAC) assets can resolve to a pegged classic; the rest fall through
+	// to (0, false).
 	//exhaustive:ignore
 	switch asset.Type {
 	case canonical.AssetClassic:
@@ -83,9 +80,7 @@ func (s *USDVolumeQuoteSpec) QuoteUSDPegInfo(asset canonical.Asset) (decimals in
 			return 7, true
 		}
 	case canonical.AssetSoroban:
-		// Resolve the SAC contract id back to its underlying classic.
-		// If the resolved classic is on the operator's USD-pegged
-		// list, the SAC inherits the peg + the 7-decimal scale.
+		// A SAC inherits the peg and 7-decimal scale of its underlying classic asset.
 		if classicKeyStr, ok := s.sacToClassic[asset.ContractID]; ok {
 			if _, pegged := s.classicUSDPegs[classicKeyStr]; pegged {
 				return 7, true
@@ -95,9 +90,7 @@ func (s *USDVolumeQuoteSpec) QuoteUSDPegInfo(asset canonical.Asset) (decimals in
 	return 0, false
 }
 
-// classicKey renders a classic Asset as "CODE-ISSUER" (the canonical
-// wire form, matching how operators write asset keys in TOML and
-// consistent with `[supply].watched_classic_assets`).
+// classicKey renders a classic Asset as "CODE-ISSUER", the form operators write in TOML.
 func classicKey(a canonical.Asset) string {
 	return a.Code + "-" + a.Issuer
 }

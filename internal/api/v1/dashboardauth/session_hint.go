@@ -5,25 +5,17 @@ import (
 	"time"
 )
 
-// SessionHintCookieName is a JS-readable presence flag shadowing
-// [SessionCookieName]. It is written and cleared in lockstep with the
-// session cookie and carries nothing else.
+// SessionHintCookieName is a JS-readable presence flag shadowing [SessionCookieName], written and
+// cleared in lockstep with it.
 //
-// Why: the explorer is a separate origin from the API, so it could only
-// tell a signed-in visitor from an anonymous one by a credentialed `GET
-// /v1/account/me`, a guaranteed 401 on every anonymous page load that logs
-// a console entry no client code can suppress. The session cookie cannot
-// answer: it is HttpOnly (and must stay so, being the bearer credential).
-// So the responses that write it also write this one, NOT HttpOnly, and the
-// explorer skips the probe when it is absent.
+// The explorer is a separate origin and the session cookie is HttpOnly (it is the bearer
+// credential), so without this flag the explorer must probe `GET /v1/account/me` and eat a 401 on
+// every anonymous page load. It skips the probe when the flag is absent.
 //
 // It is a HINT, never an authorization signal:
-//   - It carries no identity, token or email (the value is "1"), so
-//     forging it buys at most one 401.
-//   - Nothing server-side reads it; every authenticated route resolves
-//     [SessionCookieName] against the sessions table.
-//   - It can outlive the real session; the probe then 401s and the
-//     client drops the stale hint.
+//   - It carries no identity (the value is "1"), so forging it buys at most one 401.
+//   - Nothing server-side reads it; routes resolve [SessionCookieName] against the sessions table.
+//   - It can outlive the real session; the probe then 401s and the client drops the stale hint.
 const SessionHintCookieName = "stellarindex_session_present"
 
 // sessionHintValue is the entire contents of the hint cookie. A
@@ -41,19 +33,15 @@ func (h *Handlers) setSessionHintCookie(w http.ResponseWriter, expires time.Time
 		Path:    "/",
 		Domain:  h.cfg.SessionHintDomain,
 		Expires: expires,
-		// Deliberately readable from JavaScript — that is the whole
-		// point of this cookie. It is safe because the value is a
-		// constant with no bearer power (see [SessionHintCookieName]).
+		// Readable from JavaScript by design; safe because the value is a constant.
 		HttpOnly: false,
 		Secure:   h.cfg.CookieSecure,
 		SameSite: sessionSameSite(),
 	})
 }
 
-// clearSessionHintCookie drops the presence flag. Called from the same
-// places that clear the session cookie, so a browser can never be left
-// holding a hint for a session the server has already dropped on its
-// own initiative.
+// clearSessionHintCookie drops the presence flag wherever the session cookie is cleared, so a
+// browser is never left holding a hint for a session the server already dropped.
 func (h *Handlers) clearSessionHintCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124: deletion of the JS-readable hint; same attributes as setSessionHintCookie
 		Name:     SessionHintCookieName,

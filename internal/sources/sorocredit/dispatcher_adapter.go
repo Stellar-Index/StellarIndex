@@ -24,10 +24,8 @@ type Decoder struct {
 	reg *contractid.Registry
 }
 
-// NewDecoder constructs a sorocredit Decoder. The trust-root set (the
-// single main contract) is intrinsic to the protocol — hard-coded via
-// WithFactories, always installed first; caller opts (WithSeed / WithHook,
-// unused in current wiring) layer on top.
+// NewDecoder constructs a sorocredit Decoder. The main contract is installed first as the intrinsic
+// trust root (WithFactories); caller opts (WithSeed / WithHook) layer on top.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{contractid.WithFactories([]string{MainnetContract})}
 	return &Decoder{reg: contractid.New(append(base, opts...)...)}
@@ -39,9 +37,8 @@ var _ dispatcher.Decoder = (*Decoder)(nil)
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// GatedContractSet returns the contracts Matches can accept: the trust root
-// plus every child registered so far. The completeness re-derive scopes its
-// lake read to it, so a child's events are counted exactly as live admits them.
+// GatedContractSet returns the trust root plus every registered child, the contracts Matches can
+// accept. The completeness re-derive scopes its lake read to it so counts match live admission.
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
 // Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY, not the topic symbol
@@ -63,8 +60,8 @@ func (d *Decoder) Matches(ev events.Event) bool {
 }
 
 // Decode implements [dispatcher.Decoder], returning one consumer.Event per recognised event. A
-// NewCollateralContract also Seeds the announced child C-address so the childgate's Has() branch
-// recognises it (Matches already guaranteed the trust root emitted it, so the child is genuine).
+// NewCollateralContract also Seeds the announced child C-address; Matches already proved the trust
+// root emitted it, so the child is genuine.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	outs, err := project(&ev)
 	if err != nil {

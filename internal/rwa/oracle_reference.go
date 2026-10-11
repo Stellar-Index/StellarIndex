@@ -10,24 +10,21 @@ import (
 // publish a false discount to a real NAV. ADR-0040 curated, fail-closed, served for audit.
 //
 // An entry needs the issuer's SEP-1 naming the instrument, a directory attribution of the
-// G-address, and a feed-to-issuer tie (price agreement, or a weaker product-line match marked
-// as such). Adding a pair is a code change; nothing is inferred at runtime.
+// G-address, and a feed-to-issuer tie (price agreement, or a weaker match marked as such).
+// Nothing is inferred at runtime.
 
 // instrumentBinding is one curated (code, issuer) → feed pair.
 type instrumentBinding struct {
-	// Code and Issuer are the exact on-chain identity. Matched exactly:
-	// a case variant is a different token unless someone says otherwise,
-	// and saying otherwise is what this table is for.
+	// Code and Issuer are the exact on-chain identity; a case variant is a different token.
 	Code   string
 	Issuer string
-	// Feed is the ADR-0028 instrument code, spelled as
-	// [canonical.KnownRWACodes] spells it.
+	// Feed is the ADR-0028 instrument code, spelled as [canonical.KnownRWACodes] spells it.
 	Feed string
 }
 
 // etherfuseIssuer issues the Stablebond line. Its SEP-1 declares CETES, USTRY and TESOURO
 // as bonds and the directory attributes it to Etherfuse; all three are price-proved against
-// their own 24h SDEX VWAP (1.19, 15.35, 20.23 bps), non-circular since redstone is excluded from VWAP.
+// their own 24h SDEX VWAP (1.19, 15.35, 20.23 bps), non-circular as redstone is excluded from VWAP.
 const etherfuseIssuer = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
 
 // ondoIssuer issues USDY. Weaker than Etherfuse: no Stellar market price, so it rests on
@@ -47,9 +44,7 @@ var instrumentBindings = []instrumentBinding{
 	{Code: "CETES", Issuer: etherfuseIssuer, Feed: "CETES"},
 	{Code: "USTRY", Issuer: etherfuseIssuer, Feed: "USTRY"},
 	{Code: "TESOURO", Issuer: etherfuseIssuer, Feed: "TESOURO"},
-	// WEAKER: attribution-only. No Stellar market price exists for this
-	// token, so nothing corroborates the two matching attributions.
-	// Challenge this one first.
+	// WEAKER: attribution-only; no Stellar market price corroborates it. Challenge first.
 	{Code: "USDY", Issuer: ondoIssuer, Feed: "USDY"},
 	// WEAKER per row: same account evidence, but no Stellar market price.
 	{Code: "GILTS", Issuer: etherfuseIssuer, Feed: "GILTS"},
@@ -90,9 +85,8 @@ func InstrumentFeed(code, issuer string) (string, bool) {
 	return feed, ok
 }
 
-// OffChainReferenceCode reports whether an oracle feed of this code
-// prices an off-chain quantity rather than a token. Used only to choose
-// which refusal to report; it grants nothing.
+// OffChainReferenceCode reports whether a feed of this code prices an off-chain quantity; it
+// only picks the refusal wording and grants nothing.
 func OffChainReferenceCode(code string) bool {
 	_, ok := offChainReferenceCodes[strings.TrimSpace(code)]
 	return ok
@@ -106,10 +100,8 @@ type InstrumentBinding struct {
 	Feed   string `json:"feed"`
 }
 
-// InstrumentBindings lists the curated set in a stable order, for the
-// same reason [AnchorClasses] is served: the rule travels with the rows.
-// The feed is rendered in its canonical `rwa:` form, the id a consumer
-// can take straight to the oracle endpoints.
+// InstrumentBindings lists the curated set in a stable order, as [AnchorClasses] does, with
+// each feed in its canonical `rwa:` form for the oracle endpoints.
 func InstrumentBindings() []InstrumentBinding {
 	out := make([]InstrumentBinding, 0, len(instrumentBindings))
 	for _, b := range instrumentBindings {
@@ -159,9 +151,8 @@ var fundNAVIndex = func() map[instrumentKey]string {
 	return m
 }()
 
-// FundNAVTicker returns the fund ticker bound to this exact (code,
-// issuer), and whether any binding exists. Exact on both halves, as
-// [InstrumentFeed] is.
+// FundNAVTicker returns the fund ticker bound to this exact (code, issuer), as
+// [InstrumentFeed] does.
 func FundNAVTicker(code, issuer string) (string, bool) {
 	t, ok := fundNAVIndex[instrumentKey{
 		code:   strings.TrimSpace(code),

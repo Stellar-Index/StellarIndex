@@ -17,13 +17,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// explorerScanSettings pins resources on every SCAN-SHAPED explorer read (cost set by a lake
-// table's size, not a primary-key point lookup). At default max_threads a ledger_entries_current
-// probe fanned out to 4.76 GiB peak vs 89 MiB at max_threads=4: the amplification is per-stream
-// read buffers across part ranges. The 8 GiB ceiling makes a part-layout shift fail one query
-// loudly. Keyed point reads do not carry it (they never fan out). The clause is SQL text, not
-// clickhouse.WithSettings, because settings do not reach the server on some driver paths; this
-// also lets reader tests pin it. The spill pair turns an OOM into a slower success above 4 GB.
+// explorerScanSettings pins resources on every SCAN-SHAPED explorer read; keyed point reads never
+// fan out and skip it. Per-stream read buffers across part ranges amplify memory at default
+// max_threads (4.76 GiB vs 89 MiB at 4), and the 8 GiB ceiling fails one query loudly if the part
+// layout shifts. The spill pair turns an OOM above 4 GB into a slower success. It is SQL text, not
+// clickhouse.WithSettings, because settings do not reach the server on some driver paths.
 const explorerScanSettings = ` SETTINGS max_threads = 4, max_memory_usage = 8589934592,` +
 	` max_bytes_before_external_group_by = 4000000000, max_bytes_before_external_sort = 4000000000`
 
@@ -643,14 +641,12 @@ func scanOpsLight(rows driver.Rows) ([]OpRow, error) {
 	return out, rows.Err()
 }
 
-// RecentOperations returns recent operations network-wide, newest first, keyset-paged
-// by (ledger_seq, tx_index, op_index). Light columns only: BodyXDR is always "".
-// TWO-PASS: a read with no lower ledger bound opens every part in every partition, so the
-// tail-window slice (anchored at the tip, or at the cursor) is tried first. It returns exactly the
-// unbounded rows whenever the window holds a full page; a SHORT result repeats the read unbounded,
-// since stopping would truncate the listing and mint a next_cursor that skips operations.
-// A cursor page can be REFUSED (ErrOperationsCursorTooDeep) if its read would exceed the row
-// budget, because `?cursor=` is publicly mintable.
+// RecentOperations returns recent operations network-wide, newest first, keyset-paged by
+// (ledger_seq, tx_index, op_index). BodyXDR is always "".
+// Two passes: an unbounded read opens every part, so the tail window (at the tip or cursor) goes
+// first. A short result repeats the read unbounded, since stopping would mint a next_cursor that
+// skips operations. A cursor page can be refused (ErrOperationsCursorTooDeep) because `?cursor=`
+// is publicly mintable.
 func (r *ExplorerReader) RecentOperations(ctx context.Context, limit int, cur ExplorerCursor) ([]OpRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -720,14 +716,9 @@ func (r *ExplorerReader) queryRecentOperations(ctx context.Context, q string, cu
 }
 
 // recentOperationsQuery builds the exact-dedup SQL, the fallback when a windowed read cannot prove
-// a full page. LIMIT 1 BY the primary key, not FINAL: stellar.operations is
-// ReplacingMergeTree(ingested_at) and a re-ingested operation leaves an un-merged duplicate that
-// would be served twice. LIMIT 1 BY dedups inside the streamed ORDER BY read; FINAL would merge
-// every overlapping part.
-// The `bounded` arm's lower ledger bound (tip or cursor minus recentLedgersTailWindow) makes the
-// read partition-pruned. It is a PERFORMANCE bound only: RecentOperations re-runs unbounded when
-// the bounded pass is short. Cursor arms add recentOperationsCursorPredicate and
-// recentOperationsCursorRowCeiling.
+// a full page. LIMIT 1 BY the primary key, not FINAL: stellar.operations is a ReplacingMergeTree
+// and an un-merged duplicate would be served twice; FINAL would merge every overlapping part.
+// The `bounded` arm's lower ledger bound is a partition-pruning performance bound only.
 func recentOperationsQuery(hasCursor, bounded bool) string {
 	return recentOperationsSQL(hasCursor, bounded, true, false)
 }
@@ -760,22 +751,17 @@ func recentOperationsSQL(hasCursor, bounded, exactDedup, typed bool) string {
 	return q
 }
 
-// recentOperationsCursorPredicate is the keyset comparison written so the primary index can PRUNE.
-// It is equivalent to `(ledger_seq, tx_index, op_index) < (?, ?, ?)` via (L,T,O) < (l,t,o) iff
-// L < l OR (L = l AND (T,O) < (t,o)); all three columns are non-Nullable UInt32 and
-// ExplorerCursor.IsSet() guarantees l > 0. KeyCondition does not decompose a 3-column tuple
-// compare, so the tuple form would select essentially the whole table.
-// The outer parentheses are load-bearing: AND binds tighter than OR, so without them the
-// `AND ledger_seq >= ?` bound would attach to the equality arm alone and return every operation
-// below the cursor.
+// recentOperationsCursorPredicate is `(ledger_seq, tx_index, op_index) < (?, ?, ?)` expanded as
+// L < l OR (L = l AND (T,O) < (t,o)), because KeyCondition does not decompose a 3-column tuple
+// compare and the tuple form would select essentially the whole table. The outer parentheses are
+// load-bearing: AND binds tighter than OR, so without them the `AND ledger_seq >= ?` bound would
+// attach to the equality arm alone and return every operation below the cursor.
 const recentOperationsCursorPredicate = `(ledger_seq < ? OR (ledger_seq = ? AND (tx_index, op_index) < (?, ?)))`
 
 // recentOperationsCursorRowCeiling is the row budget on a CURSOR page. `?cursor=` is publicly
-// mintable, so a pathological pick is REFUSED (TOO_MANY_ROWS, 158) rather than served over
-// minutes. 200M is well above the densest legitimate window and far below a whole-table selection.
-// read_overflow_mode is pinned to 'throw': 'break' would silently TRUNCATE the page and mint a
-// next_cursor from the wrong row. Not applied to the first-page arms: their unbounded fallback is
-// the quiet-tip correctness net and has no caller-controlled input.
+// mintable, so a pathological pick is refused (TOO_MANY_ROWS, 158) rather than served over minutes.
+// read_overflow_mode is 'throw': 'break' would silently truncate the page and mint a next_cursor
+// from the wrong row. First-page arms skip it: their unbounded fallback has no caller input.
 const recentOperationsCursorRowCeiling = `, max_rows_to_read = 200000000, read_overflow_mode = 'throw'`
 
 // chTooManyRows is ClickHouse's TOO_MANY_ROWS (max_rows_to_read under read_overflow_mode='throw').
@@ -967,16 +953,15 @@ type ContractEventsCursor struct {
 // IsSet reports whether the cursor points past the newest row.
 func (c ContractEventsCursor) IsSet() bool { return c.Ledger > 0 }
 
-// Account listings resolve a page KEYSET from two account-keyed arms, merge it in Go,
-// then hydrate the wide columns once over the surviving keys:
+// Account listings resolve a page keyset from two account-keyed arms, merge it in Go, then hydrate
+// the wide columns once over the surviving keys:
 //   - sourced: stellar.ops_by_source (tx-MV rows carry the sentinel op_index).
 //   - participant: stellar.operation_participants, limited to transactions that
 //     succeeded or that the account itself sourced (participantKeys).
-// Both are ORDER BY (account, ledger_seq, tx_index[, op_index]), so each arm is a
-// primary-key-prefix range and the wide tables see only point lookups.
-// Exactness: the union of two top-N sets contains the union's top N. mergeKeysDesc drops
-// cross-arm duplicates BEFORE cutting to `limit`; a duplicate eating a slot would serve a short
-// page that the handler reads as end of history.
+//
+// Each arm is a primary-key-prefix range, so the wide tables see only point lookups. The union of
+// two top-N sets contains the union's top N; mergeKeysDesc drops cross-arm duplicates BEFORE
+// cutting to `limit`, since a duplicate eating a slot would serve a short page read as end of history.
 
 // sourcedTxKeysExactQuery is the sourced tx arm's LIMIT 1 BY form: exact but O(account
 // history), so it runs only when the windowed read cannot prove a full page. The leading
@@ -1441,13 +1426,11 @@ func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account
 	return out, rows.Err()
 }
 
-// TransactionByHash looks up one transaction by hex hash. Fast path: when tx_hash_index is
-// available (exists, holds rows) and covered (txHashIndexCovered), the hash resolves to its ledger
-// by primary-key search and a miss is AUTHORITATIVE absence. Otherwise the tx_hash bloom skip-index
-// scan over stellar.transactions runs (slow at lake scale). Non-emptiness alone is not coverage: a
-// fresh index goes non-empty on the first live tx, so the completion marker is also required; a
-// count comparison cannot stand in (transactions holds duplicates, the backfill inserts
-// FINAL-deduped rows; see txHashIndexBackfillQuery).
+// TransactionByHash looks up one transaction by hex hash. When tx_hash_index is available and
+// covered (txHashIndexCovered), a miss is authoritative absence; otherwise the slow bloom
+// skip-index scan runs. Non-emptiness is not coverage (a fresh index goes non-empty on the first
+// live tx), so the completion marker is required; a count comparison cannot stand in because
+// transactions holds duplicates (see txHashIndexBackfillQuery).
 func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (TxSummary, bool, error) {
 	if r.txHashIndexAvailable(ctx) && r.txHashIndexCovered(ctx) {
 		tx, found, indexHit, err := r.txByHashIndexed(ctx, hash)
@@ -1464,12 +1447,10 @@ func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (Tx
 	return r.txByHashScan(ctx, hash)
 }
 
-// txHashIndexAvailable reports whether tx_hash_index is USABLE: exists AND holds a row.
-// Row count matters because a per-hash miss is treated as authoritative not-found: against an
-// existing-but-EMPTY index (MV dropped or TRUNCATEd) every real hash would 404. Emptiness is not
-// cached. "Holds rows" is a LEASE, not a latch ([schemaProbeLease]), so truncation under a running
-// process stops granting authority within one lease. This catches total loss; the parity check
-// catches PARTIAL divergence.
+// txHashIndexAvailable reports whether tx_hash_index exists AND holds a row: a per-hash miss is
+// authoritative not-found, so an existing-but-EMPTY index (MV dropped or TRUNCATEd) would 404 every
+// real hash. "Holds rows" is a lease ([schemaProbeLease]), so truncation stops granting authority
+// within one lease. This catches total loss; the parity check catches partial divergence.
 func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.txIndexProbe,
 		`SELECT ledger_seq FROM stellar.tx_hash_index LIMIT 1`, true)
@@ -1638,20 +1619,17 @@ func (r *ExplorerReader) ledgerEntriesVersioned(ctx context.Context) bool {
 		`SELECT version FROM stellar.ledger_entries_current LIMIT 1`, false)
 }
 
-// probeSchema answers "does this schema object exist" and caches ONLY A DEFINITIVE ANSWER, so a
-// transient error (restart mid-deploy, deadline) cannot latch a probe false for the process
-// lifetime. Definitive means a SCHEMA VERDICT: no error caches true; an exception in
-// [schemaAbsentCodes] caches false (unless this process already saw the object). Anything else is
-// a non-answer: nothing cached, the caller degrades for this call, and re-probes are rate-limited
-// by [schemaProbeRetryAfter].
+// probeSchema answers "does this schema object exist" and caches only a definitive answer, so a
+// transient error cannot latch a probe false for the process lifetime. No error caches true; an
+// exception in [schemaAbsentCodes] caches false (unless this process already saw the object);
+// anything else caches nothing, the caller degrades for this call, and re-probes wait
+// [schemaProbeRetryAfter].
 // requireRows tightens "exists" to "exists AND non-empty" for probes whose caller derives
-// AUTHORITY from the object (an index miss is a 404). An existing-but-EMPTY object is unavailable
-// now and uncached. An observed row settles it only for [schemaProbeLease]. Rows renew the lease;
-// empty revokes at once; schema-absent revokes but does not latch (a mid-recreate); no answer
-// honours the old verdict for [schemaProbeStaleLeases], then drops it. Non-requireRows probes keep
-// the process-lifetime latch.
-// The query runs OUTSIDE the mutex (not context-aware, so holding it would serialise every reader
-// behind one slow probe); concurrent first callers may each probe, each a LIMIT 1.
+// authority from the object (an index miss is a 404). Rows renew the [schemaProbeLease]; empty
+// revokes at once; schema-absent revokes without latching (mid-recreate); no answer honours the
+// old verdict for [schemaProbeStaleLeases], then drops it. Other probes keep the process latch.
+// The query runs OUTSIDE the mutex (it is not context-aware, so holding it would serialise every
+// reader behind one slow probe); concurrent first callers may each probe, each a LIMIT 1.
 func (r *ExplorerReader) probeSchema(ctx context.Context, p *schemaProbe, query string, requireRows bool) bool {
 	if verdict, ok := p.cached(requireRows); ok {
 		return verdict

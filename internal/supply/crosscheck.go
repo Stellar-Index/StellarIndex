@@ -28,10 +28,8 @@ const (
 	WrapClassFull WrapClass = "full_wrap"
 )
 
-// normalizeWrapClass maps the Go zero-value ("") — and any value other
-// than [WrapClassFull] — to the safe [WrapClassPartial] default, so a
-// [CrossCheckPair] built without explicitly setting WrapClass never
-// accidentally lands on the stricter Full behaviour.
+// normalizeWrapClass maps the zero value and anything but [WrapClassFull] to [WrapClassPartial],
+// so an unset WrapClass never lands on the stricter Full behaviour.
 func normalizeWrapClass(c WrapClass) WrapClass {
 	if c == WrapClassFull {
 		return WrapClassFull
@@ -51,9 +49,8 @@ type CrossCheckResult struct {
 	WithinTolerance   bool
 	WrapClass         WrapClass
 
-	// ClassicLedger / SACLedger are the LedgerSequence each snapshot
-	// was computed at, so a reader can see the two sides are
-	// contemporaneous; 0 means the snapshot recorded no ledger anchor.
+	// ClassicLedger / SACLedger are the ledgers each snapshot was computed at, showing the two
+	// sides are contemporaneous; 0 means no ledger anchor was recorded.
 	ClassicLedger uint32
 	SACLedger     uint32
 
@@ -62,10 +59,8 @@ type CrossCheckResult struct {
 	// WithinTolerance. Set under [WrapClassPartial]; nil under [WrapClassFull].
 	OverMintStroops *big.Int
 
-	// SACWrapped is Algorithm 2's SACWrapped component as recorded on
-	// the classic snapshot ([Supply.SACWrappedStroops]) — the input to
-	// leg 2, preserved for log lines and runbook triage. nil when the
-	// snapshot recorded none.
+	// SACWrapped is the classic snapshot's SACWrapped component ([Supply.SACWrappedStroops]), the
+	// input to leg 2, kept for triage; nil when the snapshot recorded none.
 	SACWrapped *big.Int
 
 	// SubsetBoundChecked is true when a real SACWrapped component fed leg 2, false when the classic
@@ -78,15 +73,12 @@ type CrossCheckResult struct {
 	EscrowExcessStroops *big.Int
 }
 
-// ErrCrossCheckNilSupply is returned by [CrossCheck] when either
-// argument has a nil TotalSupply (the per-algorithm Computers always
-// populate TotalSupply on success; a nil here is a caller bug).
+// ErrCrossCheckNilSupply is returned by [CrossCheck] when either TotalSupply is nil, a caller bug
+// since the Computers always populate it on success.
 var ErrCrossCheckNilSupply = errors.New("supply: cross-check requires non-nil TotalSupply on both inputs")
 
-// ErrCrossCheckMisaligned is returned by [CrossCheckForClass] when the
-// two snapshots were computed more than [CrossCheckLedgerTolerance]
-// ledgers apart. Comparing arbitrarily-aged totals makes both
-// invariants unsound in both directions, so there is no verdict to give.
+// ErrCrossCheckMisaligned is returned by [CrossCheckForClass] when the snapshots are more than
+// [CrossCheckLedgerTolerance] ledgers apart; totals of different ages make both invariants unsound.
 var ErrCrossCheckMisaligned = errors.New("supply: cross-check snapshots describe different ledgers")
 
 // checkLedgerAlignment refuses a pair further apart than [CrossCheckLedgerTolerance]. A zero
@@ -134,9 +126,9 @@ func CrossCheckSubsetBound(classic, sac Supply) (CrossCheckResult, error) {
 		return CrossCheckResult{}, ErrCrossCheckNilSupply
 	}
 
-	// Leg 1 is DIAGNOSTIC-ONLY: sac.TotalSupply <= classic.TotalSupply conflates the CUMULATIVE net mint
-	// with the CURRENT escrow. BLND: ~12.6M retired classically (no SAC burn event). PHO: full supply
-	// minted via the SAC once, then distributed classic-side. Both would page with every unit accounted for.
+	// Leg 1 is DIAGNOSTIC-ONLY: sac.TotalSupply <= classic.TotalSupply conflates the CUMULATIVE net
+	// mint with the CURRENT escrow, so assets retired classically (BLND) or minted once via the SAC
+	// then distributed classic-side (PHO) would page with every unit accounted for.
 	overMint := excessOver(sac.TotalSupply, classic.TotalSupply)
 	res := CrossCheckResult{
 		ClassicKey:        classic.AssetKey,
@@ -164,9 +156,8 @@ func CrossCheckSubsetBound(classic, sac Supply) (CrossCheckResult, error) {
 	return res, nil
 }
 
-// excessOver returns max(0, have − bound) as a fresh *big.Int: how far
-// `have` breaches the upper bound `bound`, clamped at zero so a
-// satisfied bound reports 0 rather than a negative gauge reading.
+// excessOver returns max(0, have − bound) as a fresh *big.Int, clamped so a satisfied bound
+// reports 0 rather than a negative gauge reading.
 func excessOver(have, bound *big.Int) *big.Int {
 	excess := new(big.Int).Sub(have, bound)
 	if excess.Sign() < 0 {

@@ -21,10 +21,9 @@ package timescale
 // whole catalogue. Within one form a lone dust row is still the minute's rate when nothing else
 // printed (per-row floor [directLegMinQuoteVolume]).
 
-// xlmUSDAnchorMaxAge is how old the XLM/USD minute behind a triangulated price
-// may be at the instant it is applied: the ingest resolver's default
-// Freshness, so read time and trade time agree on when XLM has a USD price.
-// Past it the asset is unpriced, never re-marked at a stale rate.
+// xlmUSDAnchorMaxAge is the oldest XLM/USD minute a triangulated price may use: the ingest
+// resolver's default Freshness, so read and trade time agree on when XLM has a USD price. Past it
+// the asset is unpriced, never re-marked at a stale rate.
 const xlmUSDAnchorMaxAge = "1 hour"
 
 // xlmUSDAnchorMinUSD is the per-row USD floor; volume_usd is
@@ -37,10 +36,9 @@ func xlmUSDAnchorForms(sac string) string {
 	return "'native', 'crypto:XLM', " + sac
 }
 
-// xlmUSDAnchorMinutes renders a subquery yielding (form_rank, bucket, vwap):
-// XLM's USD rate per minute and form for closed minutes in [lo, hi]. lo and
-// hi are SQL timestamptz expressions; keep them sargable (no function of
-// bucket).
+// xlmUSDAnchorMinutes renders a subquery yielding (form_rank, bucket, vwap): XLM's USD rate per
+// minute and form for closed minutes in [lo, hi]. lo and hi are SQL timestamptz expressions and
+// must stay sargable (no function of bucket).
 func xlmUSDAnchorMinutes(lo, hi, sac string) string {
 	forms := xlmUSDAnchorForms(sac)
 	bounds := `bucket >= ` + lo + `
@@ -75,9 +73,8 @@ func xlmUSDAnchorPick(lo, hi, sac string) string {
 		   LIMIT 1`
 }
 
-// xlmUSDAnchorAt renders [xlmUSDAnchorPick] as of instant ts: no row when no
-// form printed within [xlmUSDAnchorMaxAge] before it. For single-row paths;
-// batch paths join [xlmUSDAnchorGridCTE], which
+// xlmUSDAnchorAt renders [xlmUSDAnchorPick] as of instant ts: no row when no form printed within
+// [xlmUSDAnchorMaxAge] before it. Batch paths join [xlmUSDAnchorGridCTE], which
 // TestXLMUSDAnchor_ShapesShareOnePopulation holds to the same value.
 func xlmUSDAnchorAt(ts, sac string) string {
 	return xlmUSDAnchorPick("("+ts+") - INTERVAL '"+xlmUSDAnchorMaxAge+"'", ts, sac)
@@ -113,9 +110,8 @@ func xlmUSDAnchorGridCTE(name, lo, sac string) string {
 		)`
 }
 
-// xlmUSDAnchorPerPeriodCTE renders CTE `name`(col, vwap): the anchor per
-// date_trunc(unit) period since lo — highest-priority form that printed in
-// the period, its newest minute. The sparklines' XLM leg.
+// xlmUSDAnchorPerPeriodCTE renders CTE `name`(col, vwap): the anchor per date_trunc(unit) period
+// since lo, from the highest-priority form that printed in it (newest minute). The sparklines' XLM leg.
 func xlmUSDAnchorPerPeriodCTE(name, col, unit, lo, sac string) string {
 	return `
 		` + name + ` AS (

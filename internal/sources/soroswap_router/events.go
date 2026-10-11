@@ -69,9 +69,8 @@ type RouterSwap struct {
 	CallDepth int
 	// CallKind is CallKindTopLevel when CallDepth == 0, else CallKindSubInvocation.
 	CallKind string
-	// AuthOccurrence is dispatcher.ContractCallContext.AuthOccurrence:
-	// 0 for the first identical call in its auth entry, n for the
-	// (n+1)th. It enters CallSig so repeated executions stay distinct.
+	// AuthOccurrence is 0 for the first identical call in its auth entry, n for the (n+1)th; it
+	// enters CallSig so repeated executions stay distinct.
 	AuthOccurrence int
 }
 
@@ -87,13 +86,11 @@ func (e Event) EventKind() string { return "soroswap-router.swap" }
 // Source implements [consumer.Event].
 func (e Event) Source() string { return SourceName }
 
-// CallSig is the per-call discriminator in the soroswap_router_swaps PK: one op can carry several
-// distinct router swaps sharing (ledger, tx_hash, op_index). It is a 128-bit hash of the economic
-// identity (function, recipient, path, requested amounts), so auth-tree duplicates of one call (a
-// co-signed tx surfaces it at several CallPaths) dedup via ON CONFLICT. deadline and
-// CallPath/CallDepth/CallKind describe position, not the swap, and are excluded. AuthOccurrence is
-// the one positional input: two identical calls in one auth entry are two executions, and
-// occurrence 0 adds nothing to the hash, so stored call_sigs stay stable.
+// CallSig is the per-call discriminator in the soroswap_router_swaps PK, since one op can carry
+// several router swaps. It hashes the economic identity (function, recipient, path, amounts) so
+// auth-tree duplicates of one call dedup via ON CONFLICT; deadline and CallPath/CallDepth/CallKind
+// describe position and are excluded. AuthOccurrence is the one positional input (identical calls
+// in one auth entry are separate executions); occurrence 0 adds nothing, keeping stored sigs stable.
 func (s RouterSwap) CallSig() string {
 	parts := make([]string, 0, len(s.Path)+5)
 	parts = append(parts, s.Function, s.Recipient)
