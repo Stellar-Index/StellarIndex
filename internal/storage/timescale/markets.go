@@ -16,14 +16,11 @@ import (
 // Market is one distinct (base, quote) pair summary with activity
 // statistics. Returned by [Store.DistinctPairs].
 //
-// Volume24hUSD is the trailing-24h USD volume summed from the
-// prices_1m hypertable (which has per-bucket volume_usd
-// computed by the aggregator) — or, for a source-filtered
-// listing, from pools_per_source_1h, so the figure is that
-// venue's own contribution and not the pair's cross-venue
-// total (see [Store.SourceMarkets]). Pointer + nil-when-zero so a
-// pair with no USD-equivalent trades emits JSON null rather
-// than "0" — important for downstream filtering.
+// Volume24hUSD is the trailing-24h USD volume summed from prices_1m, or,
+// for a source-filtered listing, from pools_per_source_1h so the figure
+// is that venue's own contribution (see [Store.SourceMarkets]). Pointer +
+// nil-when-zero so a pair with no USD-equivalent trades emits JSON null
+// rather than "0".
 //
 // Field semantics:
 //
@@ -165,23 +162,19 @@ func (s *Store) AssetMarkets(ctx context.Context, asset, cursor string, limit in
 // fields mean "no filter on this dimension"; an unfiltered call
 // uses PoolsFilter{}.
 //
-// Pair filter (Base + Quote both non-empty) is the canonical
-// per-pair source-contribution query — used by the pair detail
-// page to render "which venues moved this pair in the last 24h".
-// It matches either stored orientation, and rows come back in the
-// canonical orientation (canonical.Orient) whichever order was asked.
-// Single-side filters (Base only / Quote only) are accepted but
-// uncommon; they match that side of the canonical orientation. Every
-// asset filter matches all alias forms (canonical.AssetAliasStrings).
+// Pair filter (Base + Quote both non-empty) is the per-pair
+// source-contribution query behind the pair page's "which venues moved
+// this pair in the last 24h". It matches either stored orientation, and
+// rows come back in the canonical orientation (canonical.Orient).
+// Single-side filters (Base only / Quote only) match that side of the
+// canonical orientation. Every asset filter matches all alias forms
+// (canonical.AssetAliasStrings).
 //
-// Asset filter is the OR-shape — base = X OR quote = X. Used by
-// asset-detail surfaces ("every pool touching this asset")
-// without forcing the caller to fire two parallel `?base=` +
-// `?quote=` requests and merge client-side. Mutually exclusive
-// with Base/Quote at the handler layer (the storage layer
-// accepts the combination, but its semantics aren't
-// well-defined: an asset-OR + base-AND would land on the
-// intersection or the union depending on interpretation).
+// Asset filter is the OR-shape — base = X OR quote = X — for
+// asset-detail surfaces ("every pool touching this asset"). The handler
+// makes it mutually exclusive with Base/Quote; the storage layer
+// accepts the combination, but its semantics (intersection or union)
+// are not defined.
 type PoolsFilter struct {
 	Sources []string
 	Base    string
@@ -293,14 +286,10 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 // per-venue reads share: /v1/pools (buildPoolsQuery) and the
 // source-filtered /v1/markets listing (buildSourceMarketsQuery).
 //
-// It is one literal, not two, because the two surfaces are required to
-// agree: `/v1/markets?source=X` and `/v1/pools?source=X` describe the
-// same venue's same pair and would disagree by orders of magnitude if
-// the markets listing read the PAIR-WIDE prices_1m/prices_1d CAGGs and
-// merely FILTERED them by `source = ANY(sources)`, which selects
-// BUCKETS a venue printed in, not that venue's contribution. Sharing
-// the CTE makes the agreement structural instead of a thing two query
-// templates have to remember.
+// One literal makes their agreement structural: filtering the PAIR-WIDE
+// prices_1m/prices_1d CAGGs by `source = ANY(sources)` selects BUCKETS a
+// venue printed in, not that venue's contribution, and would disagree
+// with /v1/pools by orders of magnitude.
 //
 // Callers append their own filter predicates, the GROUP BY, and their
 // ordering tail. $1 is the recency-window lower bound; every caller
@@ -378,28 +367,21 @@ func poolsFilterArgs(filter PoolsFilter) []any {
 }
 
 func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit int, order MarketsOrder) (string, []any) { //nolint:funlen // CTE + select + 2 ordering branches form one query template; splitting would scatter the SQL across helpers
-	// Scanning the trades hypertable directly would take three passes:
-	// the vol_24h CTE (24h SUM grouped by source+pair), the last_px
-	// CTE (DISTINCT ON per-source latest price), and the outer
-	// enumeration (14d window LEFT JOINing both CTEs). That measures
-	// 8-30s on a populated 2.7B-row hypertable, so every read instead
-	// collapses into a single scan of the
-	// pools_per_source_1h continuous aggregate (migration 0036).
-	// One row per (source, base, quote, 1h bucket) holds
+	// One scan of the pools_per_source_1h continuous aggregate (migration
+	// 0036) replaces three passes over the trades hypertable (8-30s on
+	// 2.7B rows). One row per (source, base, quote, 1h bucket) holds
 	// SUM(usd_volume) split by Phase-1-priced vs needs-XLM-fallback,
-	// COUNT(*), and last(quote_amount/base_amount, ts). The
-	// `pools` CTE re-aggregates those hourly rows over the 14d
-	// window with FILTER clauses pulling the 24h slice for
-	// vol_24h_usd + count_24h. Trade-off: last_trade_at lags by up
-	// to one refresh interval (5 min) — acceptable for a pools
-	// discovery surface.
+	// COUNT(*), and last(quote_amount/base_amount, ts). The `pools` CTE
+	// re-aggregates those hourly rows over the 14d window with FILTER
+	// clauses pulling the 24h slice for vol_24h_usd + count_24h.
+	// Trade-off: last_trade_at lags by up to one refresh interval
+	// (5 min) — acceptable for a pools discovery surface.
 	//
-	// XLM-fallback semantics preserved exactly: priced trades
-	// contribute their stored usd_volume; unpriced trades with an
-	// XLM leg contribute base_amount × XLM/USD (or quote_amount
-	// × XLM/USD); pure-SEP-41/SEP-41 unpriced trades stay 0 (a
-	// direct trades scan would return NULL; the handler scan collapses
-	// NULL and "0" identically, so the two are equivalent).
+	// XLM-fallback semantics: priced trades contribute their stored
+	// usd_volume; unpriced trades with an XLM leg contribute
+	// base_amount × XLM/USD (or quote_amount × XLM/USD); pure
+	// SEP-41/SEP-41 unpriced trades stay 0 (the handler scan treats NULL
+	// and "0" identically).
 	// $8/$9 are the alias-fold arrays, after the $1..$7 layout below.
 	cte := perSourcePoolsCTE(8)
 	canonBase, canonQuote, flipped := canonOrientSQL(10)
@@ -558,15 +540,10 @@ func aliasFoldCTE(formsIdx int) string {
 // Why not distinctPairsCommon with a source filter:
 // prices_1m and prices_1d are grouped by (bucket, base, quote) with an
 // `array_agg(DISTINCT source) AS sources` column, so `$source = ANY(
-// p.sources)` is a BUCKET-membership test, not a contribution filter.
-// A pair soroswap printed three times, in minutes SDEX printed a
-// thousand times in, came back with SDEX's thousand:
-// `/v1/markets?source=soroswap` reported the whole market's volume and
-// trade count while `/v1/pools?source=soroswap` reported soroswap's
-// own, so the two surfaces disagreed by orders of magnitude about the
-// same venue's same pair. The per-source grain only exists in
-// pools_per_source_1h, so that is what a per-source answer has to be
-// computed from.
+// p.sources)` is a BUCKET-membership test, not a contribution filter: a
+// pair soroswap printed three times, in minutes SDEX printed a thousand
+// times in, would report SDEX's thousand. The per-source grain only
+// exists in pools_per_source_1h.
 //
 // Freshness comes along with it: pools_per_source_1h has a 5-minute
 // end_offset against prices_1d's 6 hours, so the per-venue last_price

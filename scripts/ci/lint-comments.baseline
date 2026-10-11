@@ -115,11 +115,6 @@ internal/storage/timescale/fx_quotes.go	long-block
 internal/storage/timescale/gap_detector.go	long-block
 internal/storage/timescale/issuer_auth_flags.go	long-block
 internal/storage/timescale/market_days.go	long-block
-internal/storage/timescale/markets.go	long-block
-internal/storage/timescale/markets.go	long-block
-internal/storage/timescale/markets.go	long-block
-internal/storage/timescale/markets.go	long-block
-internal/storage/timescale/markets.go	long-block
 internal/storage/timescale/ohlc_routes.go	long-block
 internal/storage/timescale/oracle.go	long-block
 internal/storage/timescale/oracle.go	long-block
