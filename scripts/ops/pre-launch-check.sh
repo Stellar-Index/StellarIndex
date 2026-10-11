@@ -79,13 +79,10 @@ else
   # sigpipe-ok: `ss -tlnp` lists listening sockets only — tens of lines,
   # orders of magnitude under the pipe buffer, so awk's early exit cannot
   # make ss block on a write.
-  # TASK_COMM_LEN is 16 bytes including the NUL, so the kernel
-  # truncates "stellarindex-api" (16 chars) to "stellarindex-ap" in
-  # /proc/<pid>/comm — which is what `ss -p` reads. The full name never
-  # matched, so this check was unreachable: $actual was always empty and
-  # step 1's only comparator against the RUNNING process was silently
-  # skipped, with no output. Matching the truncated form the kernel
-  # actually reports, and now run as root per this script's own header.
+  # TASK_COMM_LEN is 16 bytes including the NUL, so the kernel truncates
+  # "stellarindex-api" to "stellarindex-ap" in /proc/<pid>/comm, which
+  # `ss -p` reads. Match the truncated form; the full name never matched and
+  # silently skipped this check.
   actual="$(ss -tlnp 2>/dev/null | awk '/stellarindex-ap/ {print $4; exit}')"
   if [ -n "$actual" ]; then
     case "$actual" in
@@ -139,15 +136,11 @@ echo "  Alertmanager"
 if [ ! -f "$AM_ENV" ]; then
   fail "AM env file missing" "$AM_ENV"
 else
-  # The optional quote is load-bearing. Env files here write these
-  # values single-quoted, and `^NAME=https://` cannot match
-  # `NAME='https://...'` — so on r1 this reported all three as "unset —
-  # alerts won't fan out" while alertmanager was running with six
-  # receivers and eight webhook URLs loaded from that very file. A launch gate that cries wolf about paging is worse
-  # than no gate: it is read once, disbelieved, and then it is worth
-  # nothing when a URL really is missing.
-  # Still warns on an empty value or a non-URL — the quote is tolerated,
-  # the https:// requirement is not relaxed.
+  # The optional quote is load-bearing: env files write values single-quoted,
+  # and `^NAME=https://` cannot match `NAME='https://...'`, so a bare match
+  # reported all three as unset while alertmanager ran with them loaded. A gate
+  # that cries wolf about paging gets disbelieved. An empty value or a non-URL
+  # still warns: only the quote is tolerated, not the https:// requirement.
   for v in HEALTHCHECKS_DEADMANSSWITCH_URL DISCORD_WEBHOOK_URL_PAGES DISCORD_WEBHOOK_URL_ALERTS; do
     if grep -qE "^$v=('|\")?https://" "$AM_ENV" 2>/dev/null; then
       pass "$v" "set"
@@ -213,17 +206,12 @@ echo
 
 # ── 9. Boot warnings
 echo "  Recent SECURITY warnings"
-# -p warning filters on the journal's syslog PRIORITY, a property
-# of the transport — systemd stamps every line from stderr at the
-# default PRIORITY=6/info because no SyslogLevel is set anywhere in this
-# repo's deploy config (grep -rn SyslogLevel deploy configs → 0) — not
-# on the JSON payload's own "level" field the structured logger writes.
-# -p warning selected nothing regardless of what was logged, so the four
-# logger.Warn SECURITY: call sites in cmd/stellarindex-api/main.go were
-# unreachable by this check. Grep the payload for the level instead, and
-# read every boot line first so an empty journal (unit not found, wrong
-# name, no boot logs yet) fails loudly rather than reading as zero
-# warnings.
+# -p warning filters on the journal's syslog PRIORITY, which systemd stamps at
+# 6/info for every stderr line (no SyslogLevel is set in deploy config), not on
+# the JSON payload's "level" field. It selected nothing, so the logger.Warn
+# SECURITY: call sites in cmd/stellarindex-api/main.go were unreachable. Grep
+# the payload instead, and read every boot line first so an empty journal
+# (unit not found, no boot logs) fails loudly instead of reading as zero warnings.
 boot_log="$(journalctl -u stellarindex-api -b -o cat --no-pager 2>/dev/null)"
 if [ -z "$boot_log" ]; then
   fail "no boot log read for stellarindex-api" "journalctl returned nothing — cannot assert on SECURITY warnings"

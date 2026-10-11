@@ -3,42 +3,39 @@
 # ReplacingMergeTree(ledger_seq) → ReplacingMergeTree(version),
 # version = (ledger_seq << 32) | intra_ledger_seq.
 #
-# Executes deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql — the
-# operator-run migration artifact — as a phased, resumable script. Read that
-# file's header + its rehearsal note before running: the tie-break
-# is only effective where intra_ledger_seq is populated in the source
-# append-log (D2 partitions 39–53, Phase-0 re-derived ranges, live ingest
-# ≥~63,550,000). Run `probe-ordinals` first to see actual coverage.
-# cutover swaps the SERVED current-state table: ATTENDED ONLY. Acceptance:
-# `reconcile-balances -sample 50` reports 0 mismatches (it was 19/50 before).
+# Runs deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql (the
+# operator-run migration artifact) as a phased, resumable script; read that
+# file's header and rehearsal note first. The tie-break only works where
+# intra_ledger_seq is populated in the source append-log (D2 partitions 39–53,
+# Phase-0 re-derived ranges, live ingest ≥~63,550,000); `probe-ordinals` shows
+# actual coverage. cutover swaps the SERVED current-state table: ATTENDED ONLY.
+# Acceptance: `reconcile-balances -sample 50` reports 0 mismatches.
 #
-# Phases (run in order; each is independently resumable/idempotent):
-#   probe-ordinals            cheap per-partition sample of ordinal coverage
+# Phases (in order; each resumable/idempotent):
+#   probe-ordinals            per-partition sample of ordinal coverage
 #   setup                     Step 0 (ADD COLUMN) + Step 1 (v2 table + MV);
 #                             records the MV-creation tip in the state dir
 #   reproject <from> <to>     Step 2: windowed INSERT of [from,to) into v2;
-#                             resumable, overlapping re-runs are safe (RMT).
-#                             Resume state is keyed by <from>, so a second
-#                             window never reads the first one's progress
+#                             overlapping re-runs are safe (RMT). Resume state
+#                             is keyed by <from>, so windows never share progress
 #   verify                    Step 3: v1-vs-v2 divergence sample + coverage
 #   cutover                   Step 4: REFUSES unless v2 covers v1 (count,
-#                             min/max ledger_seq) — D3_FORCE_CUTOVER=yes to
-#                             override; then drop MVs, double-RENAME,
-#                             recreate MV, catch-up from the pre-cutover tip
+#                             min/max ledger_seq) unless D3_FORCE_CUTOVER=yes;
+#                             then drop MVs, double-RENAME, recreate MV,
+#                             catch up from the pre-cutover tip
 #   finalize                  Step 5: DROP _old (requires D3_FORCE_DROP_OLD=yes)
 #   rollback-precutover       drop v2 + its MV (v1 never stopped serving)
 #
-# Heavy phases (reproject) run under the wrapper:
+# Heavy phases run under the wrapper:
 #   run-heavy-job.sh d3-reproject /usr/local/sbin/d3-lecur-v2-rebuild.sh reproject <v1-floor> <mv-created-at-tip + 1>
-# where <v1-floor> = SELECT min(ledger_seq) FROM stellar.ledger_entries_current, and
-# <mv-created-at-tip> = cat $STATE_DIR/mv-created-at-tip. The +1 matters because TO is
-# exclusive: that ledger's rows were inserted before the MV existed, not by the MV.
+# <v1-floor> = SELECT min(ledger_seq) FROM stellar.ledger_entries_current;
+# <mv-created-at-tip> = cat $STATE_DIR/mv-created-at-tip. The +1 matters: TO is
+# exclusive, and that ledger's rows predate the MV rather than coming from it.
 set -euo pipefail
 
 # Optional ops-user credentials (STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD,
-# e.g. from /etc/default/stellarindex-ops). Handed to clickhouse-client via its
-# CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env — never argv, which ps and the journal
-# would show. Unset ⇒ nothing exported; the default user exactly as before.
+# e.g. from /etc/default/stellarindex-ops), passed to clickhouse-client via
+# CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env, never argv (visible to ps/journal).
 if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
   export CLICKHOUSE_USER="$STELLARINDEX_CLICKHOUSE_OPS_USER"
   export CLICKHOUSE_PASSWORD="${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD:-}"
@@ -59,16 +56,14 @@ q()   { $CH --max_execution_time 3600 \
             -q "$1"; }
 
 # Destructive-DDL size guard (docs/operations/clickhouse-destructive-ddl.md):
-# the DROP TABLE of ledger_entries_current_old / _v2 is refused above
-# max_table_size_to_drop (50 GiB, ansible 21-clickhouse-drop-guard.yml)
-# unless /var/lib/clickhouse/flags/force_drop_table exists. Armed for
-# exactly one statement and removed right after (the server only consumes
-# it when the drop was oversize; an unconsumed flag would silently permit
-# the NEXT big drop). Only the phases that already demand an explicit
-# D3_FORCE_DROP_* acknowledgement call this — never silently.
+# DROP TABLE above max_table_size_to_drop (50 GiB, ansible
+# 21-clickhouse-drop-guard.yml) is refused unless the force_drop_table flag
+# exists. Armed for exactly one statement and removed right after (an
+# unconsumed flag would permit the NEXT big drop). Only phases that already
+# demand an explicit D3_FORCE_DROP_* acknowledgement call this.
 CH_FLAGS_DIR="${CH_FLAGS_DIR:-/var/lib/clickhouse/flags}"
 guarded_ddl() {
-  # belt-and-braces: a SIGTERM between touch and rm must not leave the flag armed
+  # a SIGTERM between touch and rm must not leave the flag armed
   trap 'rm -f "$CH_FLAGS_DIR/force_drop_table"' EXIT
   touch "$CH_FLAGS_DIR/force_drop_table"; chown clickhouse:clickhouse "$CH_FLAGS_DIR/force_drop_table" 2>/dev/null || true
   log "force_drop_table armed for: $1"
@@ -77,21 +72,18 @@ guarded_ddl() {
   return $rc
 }
 
-# num <value> <what> — fail closed on anything that is not a plain
-# non-negative integer. clickhouse-client reports an error as TEXT and a
-# failed query yields an EMPTY capture, so an unchecked $(…) fed to
-# `[ -gt ]` would abort a phase with a raw shell error (or, worse, be
-# interpolated into the next statement) instead of a stated refusal.
+# num <value> <what> — fail closed unless a plain non-negative integer.
+# clickhouse-client reports errors as TEXT and a failed query yields an EMPTY
+# capture, so an unchecked $(…) in `[ -gt ]` would die with a raw shell error
+# or be interpolated into the next statement.
 num() {
   case "$1" in
     ''|*[!0-9]*) log "refusing: $2 is not a non-negative integer ('$1')"; exit 1 ;;
   esac
 }
 
-# coverage_of <table> — one TSV row "count min max" over ledger_seq. Raw
-# rows, not FINAL: the cutover gate only needs the aggregates the `verify`
-# phase already prints, and a FINAL scan of both tables is the expensive
-# part of `verify`, not of a few ms of DDL.
+# coverage_of <table> — TSV "count min max" over ledger_seq. Raw rows, not
+# FINAL: the gate needs only aggregates, and the FINAL scan is `verify`'s cost.
 coverage_of() {
   q "SELECT count(), min(ledger_seq), max(ledger_seq) FROM stellar.$1 FORMAT TSV"
 }
@@ -104,8 +96,8 @@ case "$phase" in
 
 probe-ordinals)
   # Sample 1000 ledgers mid-band per 1M partition of the source append-log.
-  # max_ord=0 for a band with real traffic ⇒ that band is un-ordinaled and the
-  # v2 tie-break degrades to v1 behavior there (NOT worse — same arbitrary pick).
+  # max_ord=0 for a band with real traffic means it is un-ordinaled and the v2
+  # tie-break degrades to v1 behavior there (not worse).
   TIP=$(q "SELECT max(ledger_seq) FROM stellar.ledger_entry_changes")
   MIN=$(q "SELECT min(ledger_seq) FROM stellar.ledger_entry_changes")
   log "append-log range: [$MIN, $TIP]"
@@ -139,8 +131,8 @@ setup)
   q "CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.ledger_entries_current_v2_mv
      TO stellar.ledger_entries_current_v2 AS
      SELECT $BASE_COLS FROM stellar.ledger_entry_changes"
-  # The MV captures everything from here forward; the historical reproject only
-  # needs to reach this ledger. Record it once (do not clobber on re-run).
+  # The MV captures everything from here on; the reproject only needs to reach
+  # this ledger. Recorded once, not clobbered on re-run.
   if [ ! -f "$STATE_DIR/mv-created-at-tip" ]; then
     q "SELECT max(ledger_seq) FROM stellar.ledger_entry_changes" > "$STATE_DIR/mv-created-at-tip"
   fi
@@ -153,8 +145,7 @@ reproject)
   if [ "$FROM" -ge "$TO" ]; then
     log "refusing: [$FROM,$TO) is an empty window — from must be below to"; exit 1
   fi
-  # Not a refusal: windows are legitimately chunked, so a lower TO in an
-  # earlier chunk is normal and a later chunk is expected to close the gap.
+  # Not a refusal: windows are chunked, so a lower TO in an earlier chunk is normal.
   if [ -f "$STATE_DIR/mv-created-at-tip" ]; then
     MVTIP=$(cat "$STATE_DIR/mv-created-at-tip")
     num "$MVTIP" "mv-created-at-tip"
@@ -163,15 +154,12 @@ reproject)
     fi
   fi
   REQ_FROM=$FROM
-  # Progress is keyed by the window's FROM, and a mark means "[FROM,mark) is
-  # inserted". One shared, unkeyed file named no window at all, so a run over
-  # a LOWER window adopted a HIGHER window's mark, iterated zero chunks and
-  # still logged "complete" — and a lower range after a higher one is the
-  # normal order here, not a corner case: phaseD-backfill.sh walks
-  # [54000000,63050000] and only then [2,38000000]. TO is deliberately NOT
-  # part of the key — the runbook invokes `reproject <v1-floor> <tip>` with a
-  # tip that moves between runs, and a TO-keyed file would restart the whole
-  # window every time the tip advanced.
+  # Progress is keyed by the window's FROM; a mark means "[FROM,mark) is
+  # inserted". A shared unkeyed file let a LOWER window adopt a HIGHER window's
+  # mark, iterate zero chunks and log "complete" — and lower-after-higher is the
+  # normal order (phaseD-backfill.sh walks [54000000,63050000] then
+  # [2,38000000]). TO is deliberately not in the key: the runbook's tip moves
+  # between runs, and a TO-keyed file would restart the window each time.
   PROG="$STATE_DIR/reproject-progress.from-$FROM"
   LEGACY="$STATE_DIR/reproject-progress"
   if [ ! -f "$PROG" ] && [ -f "$LEGACY" ]; then
@@ -216,15 +204,14 @@ verify)
 
 cutover)
   # ── Coverage gate (runs BEFORE anything is dropped or renamed) ──────
-  # The RENAME below is the moment rollback-precutover stops applying: an
-  # incomplete v2 swapped over a complete v1 is a data loss no later phase
-  # can undo. The floor rule is the migration artifact's own — Step 2 of
-  # deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql: "the
-  # min(ledger_seq) currently in stellar.ledger_entries_current preserves
-  # today's coverage floor; going lower additionally closes that floor".
-  # A window started at a fixed 38,000,000 therefore RAISES the floor
-  # whenever v1 already reaches below it (Phase D fills [2,38000000]). Refusal is the default; D3_FORCE_CUTOVER=yes is the same
-  # explicit acknowledgement finalize and rollback-precutover demand.
+  # RENAME is where rollback-precutover stops applying: an incomplete v2 over a
+  # complete v1 is data loss no later phase can undo. The floor rule is the
+  # artifact's Step 2 (deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql):
+  # min(ledger_seq) in v1 preserves the coverage floor; going lower closes it.
+  # A fixed 38,000,000 start therefore RAISES the floor when v1 already reaches
+  # below it (Phase D fills [2,38000000]). Refusal is the default;
+  # D3_FORCE_CUTOVER=yes is the same explicit acknowledgement finalize and
+  # rollback-precutover demand.
   read -r V1C V1MIN V1MAX <<< "$(coverage_of ledger_entries_current)"
   read -r V2C V2MIN V2MAX <<< "$(coverage_of ledger_entries_current_v2)"
   num "$V1C"   "v1 count()";          num "$V2C"   "v2 count()"
@@ -237,10 +224,9 @@ cutover)
   if [ "$V2C" -eq 0 ]; then
     viol "v2 is EMPTY — the reproject never ran against this table"
   elif [ "$V2C" -lt "$V1C" ]; then
-    # Both are ReplacingMergeTrees over the same ORDER BY, so at full merge
-    # the two counts converge; a freshly built v2 normally holds MORE rows
-    # (unmerged parts), never fewer. A small deficit CAN be nothing but
-    # merge state — that case is what the override exists for.
+    # Both are ReplacingMergeTrees on the same ORDER BY, so counts converge at
+    # full merge; a fresh v2 normally holds MORE rows (unmerged parts). A small
+    # deficit can be pure merge state, which is what the override is for.
     viol "v2 holds fewer rows than v1 ($V2C < $V1C)"
   fi
   if [ "$V2MIN" -gt "$V1MIN" ]; then
@@ -249,9 +235,9 @@ cutover)
   if [ "$V2MAX" -lt "$V1MAX" ]; then
     viol "v2 lags the tip: v2 max(ledger_seq)=$V2MAX is below v1's $V1MAX — the v2 MV is not capturing live ingest"
   fi
-  # The MV-creation ledger's rows were inserted before the MV existed, so
-  # only a reproject past it — never the min/max/count gate above — closes
-  # that single-ledger hole (r1 2026-09: 221 contract_data, 221 ttl, 6 stale offers).
+  # The MV-creation ledger's rows predate the MV, so only a reproject past it,
+  # never the min/max/count gate, closes that hole (r1 2026-09: 221 contract_data,
+  # 221 ttl, 6 stale offers).
   if [ -f "$STATE_DIR/mv-created-at-tip" ]; then
     MVTIP=$(cat "$STATE_DIR/mv-created-at-tip")
     num "$MVTIP" "mv-created-at-tip"
@@ -274,8 +260,8 @@ cutover)
     fi
     log "D3_FORCE_CUTOVER=yes — proceeding over $NVIOL coverage violation(s)"
   fi
-  # Capture the pre-cutover tip BEFORE dropping the MVs (the DDL gap loses MV
-  # inserts; the catch-up below re-covers from this ledger).
+  # Capture the tip BEFORE dropping the MVs (the DDL gap loses MV inserts; the
+  # catch-up below re-covers from this ledger).
   q "SELECT max(ledger_seq) FROM stellar.ledger_entry_changes" > "$STATE_DIR/pre-cutover-tip"
   TIPC=$(cat "$STATE_DIR/pre-cutover-tip")
   log "pre-cutover tip: $TIPC"

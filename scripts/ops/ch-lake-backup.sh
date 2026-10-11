@@ -2,28 +2,23 @@
 # ch-lake-backup.sh — the ClickHouse lake's DATA backup (ADR-0043 §2.4).
 #
 # ch-schema-snapshot.sh keeps the DDL; this keeps the rows. Without it the
-# lake's only recovery path is a re-derive from the Galexie archive, which
-# off-site-backup-plan.md measures at ~1–2 weeks against a restore measured
-# in hours.
+# only recovery is a re-derive from the Galexie archive: ~1–2 weeks
+# (off-site-backup-plan.md) against a restore measured in hours.
 #
-# Mechanism: ClickHouse's native BACKUP DATABASE into a backup disk that the
-# role declares in config.d (an s3_plain disk on off-site object storage, so
-# the credentials live in server config and never in a query text or the
-# query_log). No third-party tool.
+# Mechanism: native BACKUP DATABASE into a backup disk the role declares in
+# config.d (s3_plain on off-site storage, so credentials live in server config,
+# never in query text or query_log). No third-party tool.
 #
-#   - A chain is one FULL backup plus the daily INCREMENTALS taken on top of
-#     it (each `base_backup` = the previous link, so a daily ships only the
-#     parts that are new since yesterday).
+#   - A chain is one FULL plus daily INCREMENTALS on top (each `base_backup` =
+#     the previous link, so a daily ships only new parts).
 #   - A new chain starts every FULL_INTERVAL_DAYS. Older chains are removed
-#     ONLY after the new full has been confirmed BACKUP_CREATED, keeping the
-#     newest RETAIN_CHAINS — so there is never a moment with no restorable
-#     chain.
-#   - Local state (STATE_DIR) records the chain; a lost or unreadable state
-#     file starts a new full, which is the expensive-but-correct direction.
-#   - A failed full leaves its partial upload on the disk and never reaches
-#     the chain record, so after each confirmed full (and on the first
-#     success with no sweep on record) every older chain directory that is
-#     not on record is deleted as an orphan.
+#     ONLY after the new full is confirmed BACKUP_CREATED, keeping the newest
+#     RETAIN_CHAINS, so a restorable chain always exists.
+#   - STATE_DIR records the chain; a lost or unreadable state file starts a
+#     new full (expensive but correct).
+#   - A failed full leaves a partial upload that never reaches the chain
+#     record, so after each confirmed full (and the first success with no sweep
+#     on record) every unrecorded older chain directory is deleted as an orphan.
 #
 # Emits (node_exporter textfile collector):
 #   stellarindex_ch_lake_backup_configured      1 iff BACKUP_DISK is set
@@ -144,12 +139,12 @@ plan_next() {
   echo "incremental $last_path"
 }
 
-# Starts the BACKUP asynchronously and polls system.backups until it
-# settles; a multi-TiB full outlives any sane HTTP request. Sets `bytes`.
-# The query's memory counter drifts upward with bytes written (14 GiB claimed at
-# 5.3 TiB while server RSS was 5 GiB), so any per-query cap kills a full lake
-# backup. Real memory is bounded by the upload buffers instead:
-# 16 threads x (4 in flight + 1) x 32 MiB ~= 2.5 GiB, under max_server_memory_usage.
+# Starts the BACKUP asynchronously and polls system.backups until it settles;
+# a multi-TiB full outlives any sane HTTP request. Sets `bytes`.
+# The query memory counter drifts upward with bytes written (14 GiB claimed at
+# 5.3 TiB, server RSS 5 GiB), so any per-query cap kills a full lake backup.
+# Memory is bounded by upload buffers instead: 16 threads x (4 in flight + 1)
+# x 32 MiB ~= 2.5 GiB, under max_server_memory_usage.
 BACKUP_MEMORY_SETTINGS="max_memory_usage = 0, s3_strict_upload_part_size = 33554432, s3_max_inflight_parts_for_one_file = 4"
 
 run_backup() {
@@ -278,11 +273,11 @@ main() {
     write_metrics keep_success
     return 1
   fi
-  # Same host-wide lock run-heavy-job.sh's scheduled class takes (shared): an
-  # operator heavy job that rewrites lake parts (recompress, ch-backfill
-  # -write, ch-rebuild) is refused while this holds it, and a backup is
-  # deferred (exit 75) while one holds it, instead of reading parts mid-rewrite.
-  # The unit is not under run-heavy-job.sh (see the unit), so it takes it here.
+# Same host-wide lock run-heavy-job.sh's scheduled class takes (shared): an
+# operator heavy job that rewrites lake parts (recompress, ch-backfill -write,
+# ch-rebuild) is refused while this holds it, and a backup defers (exit 75)
+# while one holds it, rather than read parts mid-rewrite. This unit is not
+# under run-heavy-job.sh, so it takes the lock here.
   local heavy="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy.lock"
   [[ -e "$heavy" ]] || (umask 022; : >>"$heavy") 2>/dev/null || true
   if exec 8<"$heavy"; then

@@ -1,73 +1,32 @@
 #!/usr/bin/env bash
-# Import-boundary lint for Stellar Index.
+# Import-boundary lint: architectural layering that docs alone can't
+# enforce. A new rule is a ~5-line amendment to the rule tables below.
 #
-# Enforces architectural layering rules that docs alone can't: a
-# build-time check that certain package imports don't leak into
-# production code paths. Adding a rule is a ~5-line amendment to
-# the RULES array below.
+# Rules
+#   A. No `internal/stellarrpc` in production ingest (AGENTS.md invariant 6;
+#      ingest is Galexie → ledgerstream → dispatcher → decoder, see
+#      docs/architecture/ingest-pipeline.md). Allowed: the package itself,
+#      internal/ops/ subcommands (e.g. `rpc-probe`), scripts/dev/ fixture
+#      capture, source decode.go (imports the `Event` type only), *_test.go.
+#   B. No go-stellar-sdk/xdr in production connectors (ADR-0013): xdr stays
+#      behind the internal/scval wrapper. Allowed: that wrapper, *_test.go.
+#   C. No Horizon imports anywhere (ADR-0001).
+#   P/*. Foundation-purity: leaf packages (canonical, nettools, scale,
+#      version, cachekeys) pinned to a maximum internal-dependency set.
+#   L/*. Layering (D8 dependency direction): no pkg→internal (ADR-0005),
+#      sources→app layer, storage→compute (grandfathered via baseline),
+#      or internal/api imported outside api+cmd.
+#   S/storage-subpackage-only: internal/storage/ holds subpackages only.
 #
-# Current rules
-# -------------
-#
-#   A. No `internal/stellarrpc` in production ingest.
-#      Reason: stellar-rpc is not run on r1 (AGENTS.md invariant 6); the
-#      production ingest path is Galexie → ledgerstream →
-#      dispatcher → decoder. See
-#      docs/architecture/ingest-pipeline.md.
-#      Allowed in:
-#        - internal/stellarrpc/           (the package itself)
-#        - internal/ops/                  (stellarindex-ops subcommand
-#                                          packages, e.g. `rpc-probe`)
-#        - scripts/dev/                   (fixture-capture scripts)
-#        - internal/sources/*/decode.go   (imports `Event` type
-#                                          only; type moves to a
-#                                          neutral package in PR
-#                                          165b, at which point
-#                                          this allowlist entry
-#                                          goes away)
-#        - *_test.go                      (test files)
-#
-#   B. No go-stellar-sdk/xdr in production connectors.
-#      Reason: ADR-0013 scopes the xdr dep to the internal/scval
-#      wrapper. Connectors work with the scval re-exports
-#      (ScVal, ScMapEntry aliases).
-#      Allowed in:
-#        - internal/scval/                (the wrapper)
-#        - *_test.go                      (test fixtures often
-#                                          construct raw xdr)
-#
-#   C. No Horizon imports, anywhere.
-#      Reason: ADR-0001 rules Horizon out entirely. Preemptive.
-#      Allowed in: nowhere.
-#
-#   P/*. Foundation-purity rules — pin leaf packages (canonical,
-#      nettools, scale, version, cachekeys) to a maximum internal-
-#      dependency set. See PURITY_RULES below.
-#
-#   L/*. Layering rules (D8 dependency-direction) — forbid upward /
-#      sideways edges: pkg→internal (ADR-0005), sources→app layer,
-#      storage→compute (grandfathered via baseline pending D8 M0-1),
-#      internal/api imported outside api+cmd. See LAYERING_RULES.
-#
-#   S/storage-subpackage-only — internal/storage/ holds subpackages
-#      only (timescale/ clickhouse/ redisclient/); no top-level
-#      adapter files.
-#
-# Usage
-# -----
-#
-#   scripts/ci/lint-imports.sh
-#
-# Exit 0 on clean, non-zero on any violation. Hooked into
-# `make verify` and CI.
+# Usage: scripts/ci/lint-imports.sh
+# Exit 0 clean, non-zero on any violation. Runs in `make verify` and CI.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-# Delegate to a small Python program — walking *.go files and
-# parsing import blocks is easier in Python than in bash.
+# Walking *.go files and parsing import blocks is easier in Python than bash.
 python3 - <<'PY'
 import os
 import re

@@ -1,73 +1,44 @@
 #!/usr/bin/env bash
 # lint-served-value-cadence.sh — the served-value truth harness must be
-# SCHEDULED, and its alert thresholds must be calibrated to that schedule.
+# SCHEDULED, and its alert thresholds calibrated to that schedule.
 #
 # `stellarindex-ops verify-served-values` is the only check on the served
-# NUMBER rather than the pipe; a wrong served value can sit behind an
-# entirely green board for weeks. It writes
-# stellarindex_served_value_{ok,skipped,last_run_unix} to the node_exporter
-# textfile collector, and three alerts read those series.
+# NUMBER rather than the pipe. It writes stellarindex_served_value_{ok,skipped,
+# last_run_unix} to the node_exporter textfile collector; three alerts read them.
 #
-# WHY THIS EXISTS: the tool, the three alerts, the runbook ("daily timer")
-# and the alerts-catalogue rows all shipped — and nothing ever ran it. No
-# systemd unit, no timer, no ansible task, no cron. The textfile had
-# therefore never been written on r1 and all three alerts selected a series
-# that had never existed, which is silent by construction: `time() - <absent
-# series>` is an empty vector, not a large number. An alert layer that reads
-# as coverage and cannot fire is worse than no alert layer, and nothing in
-# CI could see it — lint-metric-refs.sh asks whether a metric has an EMITTER
-# in the repo, and this one always did. Nothing asked whether anything runs
-# it.
+# Why: the tool, alerts and runbook shipped and nothing ever ran it (no unit,
+# timer, task or cron). The alerts selected a series that never existed, which
+# is silent by construction: `time() - <absent series>` is an empty vector.
+# lint-metric-refs.sh only asks whether a metric has an emitter, not whether
+# anything runs it.
 #
-# The five assertions, in order:
-#
-#   1. the service template exists and actually invokes the subcommand,
-#      writing its textfile into the collector directory node_exporter
-#      scrapes (a unit that runs something else, or writes elsewhere,
-#      produces no series);
+# Assertions, in order:
+#   1. the service template invokes the subcommand and writes its textfile
+#      into the collector directory node_exporter scrapes;
 #   2. the timer template exists and drives that service;
-#   3. ansible INSTALLS both and enables the timer — proven by the task
-#      SHAPE, not by a mention of the unit name. A mention is satisfied by
-#      the block that removes the unit exactly as readily as by the one
-#      that renders it, and this role carries removal blocks for three
-#      other network-gated ops jobs;
-#   4. the units are enabled on the network they are correct for, so that
-#      flipping one default cannot silently unschedule the harness again
-#      with this gate still green;
-#   5. the timer's period is calibrated to the staleness threshold the
-#      alert actually carries, in BOTH rule trees:
-#
+#   3. ansible INSTALLS both and enables the timer, proven by task SHAPE, not
+#      a mention of the unit name (a removal block mentions it just as well,
+#      and this role carries removal blocks for other ops jobs);
+#   4. the units are enabled on the network they are correct for, so flipping
+#      one default cannot silently unschedule the harness;
+#   5. the timer period is calibrated to the staleness threshold the alert
+#      carries, in BOTH rule trees:
 #          period + SLACK  <=  threshold  <=  2 * period
+#      Lower: an on-cadence run must never trip stale. Upper: at most two
+#      missed cycles before the ticket fires ("has not completed in 2 days").
+#      This is lint-completeness-staleness.sh's contract with the upper bound
+#      inclusive (it fails at `>= 2 * period`), which lets the 48h threshold sit
+#      on a 24h timer.
 #
-#      Lower bound: a normal on-cadence run (a gap of one period plus
-#      jitter and run time) must never trip stale. Upper bound: at most two
-#      missed cycles may pass before the ticket fires, which is what
-#      "has not completed in 2 days" claims. Move the timer to weekly and
-#      both bounds break loudly instead of the alert quietly becoming
-#      unreachable.
+# Not asserted: that the alert fires when the series never existed, or that
+# the failed-unit ticket rides out one bad day. Both are behaviour, proven by
+# promtool in deploy/monitoring/rule-tests/served-values_test.yml.
 #
-#      This is lint-completeness-staleness.sh's contract with ONE bound
-#      relaxed: that script fails at `>= 2 * period`, this one at
-#      `> 2 * period`. The inclusive form is deliberate and it is what lets
-#      the shipped 48h threshold sit on a 24h timer — the alert's own
-#      summary is "has not completed in 2 days", so exactly two periods is
-#      the number it promises, not an overshoot.
-#
-# Deliberately NOT asserted here: that the alert can fire when the series
-# has never existed at all, and that the failed-unit ticket rides out one
-# bad day. Both are behaviour, and both are proven against the real rules
-# by promtool in deploy/monitoring/rule-tests/served-values_test.yml.
-#
-# The same five assertions cover every textfile harness listed in
-# configure_job below — today verify-served-values, supply verify-rollup,
-# verify-lake and verify-network-state.
+# The same assertions cover every harness in configure_job below.
 #
 # Usage: lint-served-value-cadence.sh [repo-root]
-#   CADENCE_JOBS (space-separated) narrows the job list; the self-test uses it
-#   to run one job against a fixture tree.
-#   The optional root exists for scripts/ci/lint-served-value-cadence-test.sh,
-#   which runs this gate against fixture trees.
-#
+#   The root exists for scripts/ci/lint-served-value-cadence-test.sh (fixture
+#   trees). CADENCE_JOBS (space-separated) narrows the job list.
 # Exit 0 clean, non-zero on any violation.
 set -euo pipefail
 cd "${1:-$(dirname "$0")/../..}"
@@ -172,25 +143,15 @@ grep -qx "Unit=$UNIT.service" "$TIMER" \
 
 [ -d "$TASK_DIR" ] || die "task directory not found: $TASK_DIR"
 
-# Prove the task SHAPE, not a mention. An earlier revision of this gate
-# accepted `grep -rl verify-served-values.service "$TASK_DIR"`, which the
-# removal block satisfies as readily as the install block — and this role
-# ships removal blocks for archive-completeness, verify-archive-tier-b and
-# now this unit, all naming the units they take away. So split each task
-# file into `- name:` blocks and require two distinct shapes to exist:
-#
-#   TEMPLATE — one task that runs ansible.builtin.template and names BOTH
-#              units (they are rendered through a `loop:`, so the unit name
-#              is in the loop rather than in `dest:`);
-#   ENABLE   — one task that runs ansible.builtin.systemd on the timer with
+# Prove the task SHAPE, not a mention: a removal block names the units as
+# readily as an install block. Split each task file into `- name:` blocks and
+# require two shapes:
+#   TEMPLATE — a task running ansible.builtin.template that names BOTH units
+#              (rendered through a `loop:`, so the name is not in `dest:`);
+#   ENABLE   — a task running ansible.builtin.systemd on the timer with
 #              `enabled: true` AND `state: started`.
-#
-# A file that only stops, disables and deletes the units matches neither:
-# its systemd task carries `enabled: false` / `state: stopped`, and it has
-# no template task at all.
-#
-# (bash 3.2 on macOS has no mapfile — fill the array with a read loop, and
-# refuse an empty task tree rather than handing awk no files to read.)
+# bash 3.2 (macOS) has no mapfile: fill the array with a read loop, and
+# refuse an empty task tree rather than give awk no files.
 task_files=()
 while IFS= read -r f; do task_files+=("$f"); done < <(
   find "$TASK_DIR" -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)
@@ -239,12 +200,9 @@ case "$shapes" in
   enabled timer runs exactly as often as no unit file at all." ;;
 esac
 
-# TAGGED — every task block that names the units must carry `tags: [ops-jobs]`,
-# because the operator apply is `--tags ops-jobs` and an untagged block is
-# rendered by nothing. This role has shipped exactly that regression before:
-# an archive tier's install block lost its tag, the documented apply rendered
-# its sibling's unit, skipped it, and the confirm step read green off the
-# sibling alone.
+# TAGGED — every block naming the units must carry `tags: [ops-jobs]`: the
+# operator apply is `--tags ops-jobs`, so an untagged block is rendered by
+# nothing. A lost tag once let the confirm step read green off a sibling unit.
 untagged=$(awk -v unit="$UNIT" '
   function flush() { if (index(blk, unit) && blk !~ /tags:[[:space:]]*\[[^]]*ops-jobs/) bad++; blk="" }
   FNR == 1 { flush() }
@@ -261,15 +219,11 @@ fi
 
 # ── 4. the harness is enabled where its ground truth is correct ───────────
 
-# Both of the harness's truth sources are pubnet authorities, so the install
-# is network-gated. That gate is one line, and if it ever resolves false on
-# pubnet the harness is unscheduled again on the only host that matters —
-# with assertions 1-3 still green, because the templates and tasks would all
-# still be there. This is a SHAPE check rather than a jinja render: it
-# accepts an unconditional `true` or an `== 'pubnet'` comparison, and refuses
-# anything else rather than returning a verdict on an expression it cannot
-# evaluate.
-# Installed unconditionally; assertion 3's task shape is the whole proof.
+# Both truth sources are pubnet authorities, so the install is network-gated;
+# if that one line resolves false on pubnet the harness is unscheduled while
+# assertions 1-3 stay green. A SHAPE check, not a jinja render: accepts an
+# unconditional `true` or an `== 'pubnet'` comparison and refuses anything else.
+# An empty ENABLED_VAR means installed unconditionally (assertion 3 is the proof).
 if [ -n "$ENABLED_VAR" ]; then
 [ -f "$DEFAULTS" ] || die "role defaults not found: $DEFAULTS"
 
@@ -289,10 +243,8 @@ fi
 
 # ── 5. cadence vs. the staleness threshold the alert carries ──────────────
 
-# Only the plain daily `*-*-* HH:MM:SS` form is understood. Anything
-# else (weekday lists, OnUnitActiveSec, multi-slot) is refused rather than
-# guessed at: a mis-parsed period would hand back a calibration verdict this
-# gate has no basis for.
+# Only the plain daily `*-*-* HH:MM:SS` form is understood; anything else is
+# refused rather than guessed, since a mis-parsed period gives a bogus verdict.
 on_calendar=$(awk -F= '/^OnCalendar=/ { sub(/^OnCalendar=/, "", $0); print; exit }' "$TIMER")
 [ -n "$on_calendar" ] || die "$TIMER has no OnCalendar= line."
 

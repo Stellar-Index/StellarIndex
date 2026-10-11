@@ -1,49 +1,34 @@
 #!/usr/bin/env bash
 # cut-release.sh — guard-rail script for cutting a SemVer binary release.
 #
-# Usage:
-#   scripts/dev/cut-release.sh vX.Y.Z [--dry-run] [--yes]
-#
+# Usage: scripts/dev/cut-release.sh vX.Y.Z [--dry-run] [--yes]
 #   --dry-run  run every gate, print what would happen, never tag/push
 #   --yes      skip the interactive "Proceed?" confirmation (automation)
 #
-# Non-TTY invocation (CI, a backgrounded shell, an agent harness) MUST
-# pass --yes or --dry-run; otherwise the script exits 2 immediately,
-# before the slow verify gate. Why: run from a non-TTY shell, `read` hit
-# EOF at the confirmation prompt and aborted — but the caller piped through `| tail`, which masked the
-# non-zero exit, so a "release cut" was reported with NO tag on origin.
-# Refusing early and loudly beats guessing either way.
+# A non-TTY invocation (CI, backgrounded shell, agent harness) MUST pass --yes
+# or --dry-run, else it exits 2 before the slow verify gate. Otherwise `read`
+# hits EOF at the prompt and aborts, and a caller piping through `| tail`
+# masks the non-zero exit, reporting a "release cut" with no tag on origin.
 #
-# What it does (in order):
-#   1. Validate the supplied tag matches SemVer (vX.Y.Z[-pre][+build])
-#   2. PRECONDITIONS, all three together and before anything else: on
-#      `main`, working tree clean, in sync with origin/main. They are
-#      evaluated as a set and every failure is named, because failing on
-#      the first one turns "cut a release" into three round trips — fix
-#      the branch, re-run, discover the tree is dirty, re-run, discover
-#      you are behind origin. The first line of output names the failing
-#      precondition.
-#   3. Refuse a non-TTY invocation that gave neither --yes nor --dry-run
-#   4. Verify the tag doesn't already exist locally or on origin
-#   5. Verify CHANGELOG.md has a `## [vX.Y.Z] — YYYY-MM-DD` section
-#      that is non-empty (release.yml's auto-notes extraction reads
-#      this; an empty section produces an empty release page)
-#   5b. Verify the newest docs/operations/sla-proof-YYYY-MM-DD.md report
-#      exists, is within SLA_PROOF_MAX_AGE_DAYS (default 45), and did not
-#      record `Verdict: FAIL` (`NOT PROVEN` is allowed through)
-#   6. Run `make prepush` (the same clearance a push needs; container
-#      profile where Docker is available, native otherwise)
-#   7. Echo what would happen — then either bail (--dry-run), confirm
-#      interactively (unless --yes), and:
-#      a. `git tag <tag>`
-#      b. `git push origin <tag>`
+# Steps, in order:
+#   1. Tag matches SemVer (vX.Y.Z[-pre][+build]).
+#   2. Preconditions on main, clean tree, in sync with origin/main, evaluated
+#      as a set with every failure named (one at a time costs a round trip each).
+#   3. Refuse non-TTY without --yes/--dry-run.
+#   4. Tag exists neither locally nor on origin.
+#   5. CHANGELOG.md has a non-empty `## [vX.Y.Z] — YYYY-MM-DD` section
+#      (release.yml's auto-notes read it; empty means an empty release page).
+#   5b. Newest docs/operations/sla-proof-YYYY-MM-DD.md exists, is within
+#      SLA_PROOF_MAX_AGE_DAYS (default 45) and did not record `Verdict: FAIL`
+#      (`NOT PROVEN` passes).
+#   6. `make prepush` (the push clearance; container profile with Docker,
+#      native otherwise).
+#   7. Print the plan, then bail (--dry-run) or confirm (unless --yes), then
+#      `git tag <tag>` and `git push origin <tag>`.
 #
 # release.yml fires on the tag push and produces the GitHub Release
-# (cross-compiled binaries + SHA256SUMS + a sigstore bundle). It does
-# NOT build or push container images (.github/workflows/release.yml
-# header). See
-# docs/operations/release-process.md for the full runbook this script
-# implements.
+# (cross-compiled binaries, SHA256SUMS, sigstore bundle); it does NOT build or
+# push container images. Runbook: docs/operations/release-process.md.
 
 set -euo pipefail
 
@@ -83,14 +68,8 @@ fi
 
 cd "$(git rev-parse --show-toplevel)"
 
-# Step 2 — the three repository preconditions, together.
-#
-# Branch, clean tree and origin-sync are one question — "is this checkout
-# in a state a release can be cut from?" — and asking them one at a time
-# costs a round trip per answer. They are evaluated as a set, every
-# failure is named, and the FIRST line of output is the failing
-# precondition rather than a preamble. Nothing slow, nothing that writes,
-# and no prompt runs before this.
+# Step 2 — the three repository preconditions, together. Nothing slow, nothing
+# that writes, no prompt before this; the first output line names the failure.
 preconditions=()
 
 branch="$(git branch --show-current)"
@@ -103,9 +82,8 @@ if [[ -n "$dirty" ]]; then
   preconditions+=("working tree has uncommitted changes — commit or discard them")
 fi
 
-# Read the remote tip through the gh API rather than `git fetch`, so this
-# works against both SSH-keyed and HTTPS-credential-via-gh setups (some
-# environments carry gh credentials but no SSH key, and vice versa).
+# Read the remote tip via the gh API, not `git fetch`: works with SSH-keyed
+# and gh-credential-only environments alike.
 local_sha=$(git rev-parse main 2>/dev/null || echo unknown)
 if command -v gh >/dev/null 2>&1; then
   remote_sha=$(gh api "repos/{owner}/{repo}/commits/main" --jq '.sha' 2>/dev/null || true)
@@ -136,13 +114,10 @@ if (( ${#preconditions[@]} > 0 )); then
   exit 1
 fi
 
-# Step 3 — no terminal to answer the step-7 prompt, and no instruction.
-# Without this, `read` hits EOF, the script aborts, and any `| tail`-style
-# pipeline hides the failure ("release cut", no tag on origin).
-# --dry-run never prompts, so it is exempt. It sits after the repository
-# preconditions deliberately: a caller on the wrong branch should be told
-# about the branch, which is the thing they can act on, not about the
-# terminal.
+# Step 3 — no terminal to answer the step-7 prompt and no instruction: refuse,
+# or `read` hits EOF and a `| tail` pipeline hides the failure. --dry-run never
+# prompts, so it is exempt. Runs after the repo preconditions so a caller on
+# the wrong branch hears about the branch first.
 if [[ ! -t 0 && "$ASSUME_YES" -eq 0 && "$DRY_RUN" -eq 0 ]]; then
   echo "ERR: stdin is not a TTY and neither --yes nor --dry-run was given." >&2
   echo "     The confirmation prompt cannot be answered; refusing to guess." >&2
@@ -155,8 +130,7 @@ if git rev-parse "$TAG" >/dev/null 2>&1; then
   echo "ERR: tag '$TAG' already exists locally" >&2
   exit 1
 fi
-# Use the gh API for the remote-tag-exists check too, for the
-# same SSH-vs-HTTPS reason as step 3.
+# gh API for the remote-tag check too, same SSH-vs-HTTPS reason as step 2.
 if command -v gh >/dev/null 2>&1; then
   if gh api "repos/{owner}/{repo}/git/ref/tags/$TAG" >/dev/null 2>&1; then
     echo "ERR: tag '$TAG' already exists on origin" >&2
@@ -167,9 +141,8 @@ elif git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; t
   exit 1
 fi
 
-# Step 5 — CHANGELOG section exists and is non-empty.
-# Uses awk's index() instead of $0 ~ regex so dot/dash chars in
-# the tag (e.g. v0.5.0-rc.1) don't collapse to a regex char class.
+# Step 5 — CHANGELOG section exists and is non-empty. awk index() rather than
+# a regex so dots/dashes in the tag (v0.5.0-rc.1) are literal.
 changelog_section=$(awk -v marker="## [$TAG]" '
   index($0, marker) == 1 { capture = 1; next }
   capture && /^## \[/    { exit }
@@ -186,19 +159,12 @@ if [[ -z "$(printf '%s' "$changelog_section" | tr -d '[:space:]')" ]]; then
   exit 1
 fi
 
-# Step 5b — SLA-proof freshness and verdict.
-#
-# Refuses the cut if the newest docs/operations/sla-proof-<YYYY-MM-DD>.md
-# report — the procedure's dated evidence, NOT sla-proof-procedure.md,
-# which is the recipe — is
-# missing, older than the procedure's window, or recorded a breach.
-# `NOT PROVEN` is a real report about a real measurement gap and is
-# allowed to pass; `FAIL` means the SLA was measured and breached, and a
-# release built on a known breach must not ship silently. Same glob and
-# portable-date idiom as scripts/ci/check-sla-evidence.sh, which this
-# script deliberately does not shell out to: that script also gates on
-# K6_TARGET/STELLARINDEX_LOAD_API_KEY/SLA_PROBE_PROM_URL readiness, which
-# is a CI-scheduling question, not a "is it safe to cut" question.
+# Step 5b — SLA-proof freshness and verdict. Refuses the cut if the newest
+# dated report (not sla-proof-procedure.md, the recipe) is missing, older than
+# the window, or recorded a breach. `NOT PROVEN` is a measurement gap and
+# passes; `FAIL` is a measured breach that must not ship silently. Same glob
+# and date idiom as scripts/ci/check-sla-evidence.sh, deliberately not called:
+# its K6/prom readiness gating is a CI-scheduling question, not a cut-safety one.
 sla_proof_max_age_days="${SLA_PROOF_MAX_AGE_DAYS:-45}"
 newest_sla_proof=""
 newest_sla_date=""
@@ -219,8 +185,7 @@ if [[ -z "$newest_sla_proof" ]]; then
   exit 1
 fi
 
-# Portable ISO date -> epoch (GNU date and BSD/macOS date differ) — same
-# idiom as scripts/ci/check-sla-evidence.sh.
+# Portable ISO date -> epoch (GNU and BSD date differ).
 sla_to_epoch() {
   date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%d" "$1" +%s 2>/dev/null || echo 0
 }
@@ -240,16 +205,10 @@ if grep -q '^\*\*Verdict: FAIL\.\*\*' "$newest_sla_proof"; then
 fi
 echo "  OK (${newest_sla_proof}, ${sla_proof_age_days}d old)"
 
-# Step 6 — verify gate
-#
-# The gate is `make prepush`, the same clearance a push needs: it archives
-# the committed HEAD into a disposable checkout and runs the full verify in
-# the pinned Linux container, adding the Docker-backed integration shards
-# when the range touches the paths that need them. Bare `scripts/dev/verify.sh`
-# is not the gate because it cannot pass on macOS: the migrations-sync
-# self-test needs GNU tar, so the run ends `VERIFY INCOMPLETE … exit 1` there
-# even when every section passed. prepush resolves its own
-# profile, so a machine without Docker still gets the native gate.
+# Step 6 — verify gate: `make prepush`, which verifies the committed HEAD in a
+# disposable checkout (pinned Linux container, plus Docker integration shards
+# when needed; native without Docker). Bare verify.sh is not the gate: on macOS
+# the migrations-sync self-test needs GNU tar, so it ends `VERIFY INCOMPLETE`.
 prepush_log="$(mktemp -t cut-release-prepush.XXXXXX)"
 echo "→ Running make prepush (the push clearance; this takes ~20 minutes)..."
 if ! make prepush >"$prepush_log" 2>&1 ||
@@ -264,13 +223,8 @@ rm -f "$prepush_log"
 echo "  OK"
 
 # Step 6b — reconfirm the verified commit is still what "main" points at.
-#
-# prepush archives the committed HEAD into a disposable checkout and
-# verifies that snapshot — it does not hold any lock on the live worktree.
-# This repo routinely runs several agents/sessions against one worktree
-# with direct-to-main commits, so `main` can move during the ~20-minute
-# wait above. Without this check, step 7 would tag whatever `main`
-# resolves to *now*, which may never have been prepushed.
+# prepush verifies a snapshot, not the live worktree, and main can move during
+# the ~20-minute run; otherwise step 7 would tag a commit never prepushed.
 post_sha="$(git rev-parse main 2>/dev/null || echo unknown)"
 if [[ "$post_sha" != "$local_sha" ]]; then
   echo "ERR: main moved during 'make prepush' (verified ${local_sha}, now ${post_sha})." >&2
@@ -283,8 +237,8 @@ echo ""
 echo "Ready to cut release $TAG"
 echo "  branch:        $branch ($local_sha)"
 echo "  tag:           $TAG"
-# A release's CHANGELOG section runs to many KiB, so piping it into `head`
-# can EPIPE the writer under pipefail. sed reads to completion.
+# The CHANGELOG section can be many KiB; `head` would EPIPE the writer under
+# pipefail, so sed reads to completion.
 echo "  CHANGELOG:     $(printf '%s' "$changelog_section" | sed -n '1,3p' | sed 's/^/    /')"
 echo ""
 
@@ -309,10 +263,8 @@ else
 fi
 
 git tag "$TAG" "$local_sha"
-# Resolve origin's URL so the push works whether origin is SSH-keyed,
-# HTTPS-via-gh-credentials, or some mix. `git push origin $TAG`
-# would also work in most setups, but using the explicit URL skips
-# the ambient SSH-key requirement on hosts that only have gh creds.
+# Push to an explicit URL so it works with SSH-keyed and gh-credential-only
+# hosts alike.
 origin_url=$(git remote get-url origin 2>/dev/null || echo "")
 case "$origin_url" in
   git@github.com:*)
