@@ -7,13 +7,6 @@ internal/api/v1/admin_accounts.go	long-block
 internal/api/v1/admin_accounts.go	long-block
 internal/api/v1/admin_keys.go	long-block
 internal/api/v1/auth_sep10.go	long-block
-internal/api/v1/chart.go	long-block
-internal/api/v1/chart.go	long-block
-internal/api/v1/chart.go	long-block
-internal/api/v1/chart.go	long-block
-internal/api/v1/chart.go	long-block
-internal/api/v1/chart.go	long-block
-internal/api/v1/chart.go	long-block
 internal/api/v1/csrf.go	long-block
 internal/api/v1/dashboardauth/auth.go	long-block
 internal/api/v1/dashboardauth/handlers.go	long-block
