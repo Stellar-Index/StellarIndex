@@ -10,11 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// AssetCoverageSignals is the per-asset signal set the priceless-popular
-// tripwire (internal/pricelesscoverage) classifies. All volumes are
-// USD-denominated (trades.usd_volume, non-null rows only); the tripwire's
-// pure classifier turns these into a fire/no-fire verdict — this struct
-// carries only the measured signals, never the thresholds.
+// AssetCoverageSignals is the per-asset signal set the priceless-popular tripwire
+// (internal/pricelesscoverage) classifies. Volumes are USD-denominated (trades.usd_volume, non-null
+// rows only); the struct carries measured signals only, never the thresholds.
 type AssetCoverageSignals struct {
 	// AssetID is the trades base or quote asset (canonical asset_id) the signals
 	// are grouped on — the directory row this coverage gap would page for.
@@ -35,27 +33,20 @@ type AssetCoverageSignals struct {
 	// decides on three floors over the alias union, so the tripwire asks
 	// the gate itself.
 	Volume24hUSD float64
-	// TopAccountPairVolShare is the fraction of the asset's 7d priced
-	// volume that trades in the single busiest UNORDERED counterparty
-	// key. High share == volume-painting wash (the scam-AUD signature:
-	// ~108/109 of its trades one wallet pair), which the classifier
-	// excludes so a wash farm cannot self-select into the alert.
+	// TopAccountPairVolShare is the fraction of the asset's 7d priced volume that trades in the
+	// single busiest UNORDERED counterparty key. A high share means volume-painting wash, which
+	// the classifier excludes so a wash farm cannot self-select into the alert.
 	//
-	// The key is the (maker,taker) account pair where both sides are
-	// recorded (SDEX) and the single known account where only one is
-	// (every Soroban AMM — see popularPricelessCandidatesSQL). Volume
-	// with NO account on either side (the external CEX feeds) can never
-	// enter the numerator, so it dilutes the share downward — see
-	// AttributedVolShare for how much of the volume the share speaks for.
+	// The key is the (maker,taker) account pair where both sides are recorded (SDEX) and the
+	// single known account where only one is (every Soroban AMM; see popularPricelessCandidatesSQL).
+	// Volume with NO account on either side (external CEX feeds) never enters the numerator, so it
+	// dilutes the share downward; AttributedVolShare says how much volume the share speaks for.
 	TopAccountPairVolShare float64
-	// AttributedVolShare is the fraction of the asset's 7d priced volume
-	// that carried an identifiable counterparty account, i.e. the share
-	// of the market TopAccountPairVolShare could be measured over. It is
-	// diagnostic — the classifier needs no floor on it, because the
-	// concentration is already expressed against the FULL volume
-	// (TopAccountPairVolShare <= AttributedVolShare by construction) —
-	// but it tells an operator reading the alert whether a low
-	// concentration means "broad market" or "venue without accounts".
+	// AttributedVolShare is the fraction of the asset's 7d priced volume that carried an
+	// identifiable counterparty account, i.e. what TopAccountPairVolShare was measured over. It is
+	// diagnostic: the classifier needs no floor on it because concentration is already expressed
+	// against the FULL volume (TopAccountPairVolShare <= AttributedVolShare by construction), but it
+	// tells an operator whether a low concentration means "broad market" or "venue without accounts".
 	AttributedVolShare float64
 	// TopAccountPairVolUSD / TopAccountPairTrades7d are the SAME top
 	// counterparty key's raw volume and trade count (paired from one row,
@@ -65,25 +56,22 @@ type AssetCoverageSignals struct {
 	TopAccountPairTrades7d int64
 }
 
-// coverageQuoteProxies is the USD/XLM-proxy quote set a servable price is
-// derived through — identical to the /v1/assets catalogue's direct_usd +
-// asset_vs_xlm CTEs (USDC classic + its SAC, fiat:USD, native + the XLM
-// SAC). Kept in lockstep with listAssetsBaseSelect: an asset priced only
-// through one of these quotes is "priced" for the coverage check.
+// coverageQuoteProxies is the USD/XLM-proxy quote set a servable price is derived through,
+// identical to the /v1/assets catalogue's direct_usd + asset_vs_xlm CTEs (USDC classic + its SAC,
+// fiat:USD, native + the XLM SAC) and kept in lockstep with listAssetsBaseSelect: an asset priced
+// only through one of these quotes is "priced" for the coverage check.
 //
-// Composed from the resolver's own lists (transitive_price.go) rather
-// than restated, so the tripwire and Store.TransitiveUSDPriceCandidates cannot
-// disagree about what a proxy is; TestProxyQuoteLists_Lockstep pins the
-// catalogue's literal IN-lists to the same set. The XLM SAC is bound at $1
-// in every query that splices this.
+// Composed from the resolver's own lists (transitive_price.go) rather than restated, so the
+// tripwire and Store.TransitiveUSDPriceCandidates cannot disagree about what a proxy is;
+// TestProxyQuoteLists_Lockstep pins the catalogue's IN-lists to the same set. The XLM SAC is bound
+// at $1 in every query that splices this.
 const coverageQuoteProxies = usdProxyQuotes + `,
 	` + xlmQuotesBound1
 
-// pricelessTradeLegs is the trailing-7d priced trade set seen from each
-// asset's side: one row per (trade, leg). Sources that store swap direction
-// (aquarius) can leave an asset on the QUOTE leg only, so enumerating base_asset
-// alone would never surface it. The proxy quotes are skipped on the quote leg:
-// they are seeded into the priced set, so they can never be candidates.
+// pricelessTradeLegs is the trailing-7d priced trade set seen from each asset's side: one row per
+// (trade, leg). Sources that store swap direction (aquarius) can leave an asset on the QUOTE leg
+// only, so enumerating base_asset alone would never surface it. Proxy quotes are skipped on the
+// quote leg: they are seeded into the priced set, so they can never be candidates.
 const pricelessTradeLegs = `(
   SELECT base_asset AS asset_id, ts, usd_volume, maker, taker
     FROM trades
@@ -97,26 +85,24 @@ const pricelessTradeLegs = `(
      AND quote_asset NOT IN (` + coverageQuoteProxies + `)
   ) legs`
 
-// popularPricelessCandidatesSQL extracts, per trades asset (either leg) with ANY
-// priced volume in the trailing 7 days, the signal set the tripwire classifies. It
-// PRE-FILTERS to priceless assets above a coarse RAW-volume floor ($1 / 1 trade)
-// so the candidate set stays bounded; the market-character discount, popularity
-// floor and withheld verdict are applied by the pure classifier, never here.
+// popularPricelessCandidatesSQL extracts, per trades asset (either leg) with ANY priced volume in
+// the trailing 7 days, the signal set the tripwire classifies. It PRE-FILTERS to priceless assets
+// above a coarse RAW-volume floor ($1 / 1 trade) so the candidate set stays bounded; the
+// market-character discount, popularity floor and withheld verdict belong to the pure classifier.
 //
 // The counterparty key is UNORDERED (LEAST/GREATEST) so A->B / B->A folds into one pair.
 //
-// ONE POPULATION. Only the SDEX decoder records both sides of a fill; on every
-// Soroban AMM the resting side is the POOL (taker set, maker NULL). Requiring
-// both columns in the numerator while the vol7d denominator took every row
-// measured two DIFFERENT populations: an AMM-only asset's share was 0, so the
-// wash exclusion never fired. The key DEGENERATES to the one known account when
-// a side is unknown (the AMM ping-pong signature).
+// ONE POPULATION. Only the SDEX decoder records both sides of a fill; on every Soroban AMM the
+// resting side is the POOL (taker set, maker NULL). Requiring both columns in the numerator while
+// the vol7d denominator took every row would measure two DIFFERENT populations, so an AMM-only
+// asset's share would be 0 and the wash exclusion never fire. The key DEGENERATES to the one known
+// account when a side is unknown (the AMM ping-pong signature).
 //
-// Rows with NO account on either side (external CEX feeds) cannot enter the
-// numerator, so unattributed volume dilutes the share DOWNWARD (the tripwire errs
-// toward paging); attributed_vol_share reports what the share was measured over.
+// Rows with NO account on either side (external CEX feeds) cannot enter the numerator, so
+// unattributed volume dilutes the share DOWNWARD (the tripwire errs toward paging);
+// attributed_vol_share reports what the share was measured over.
 //
-// COST: the wider population adds ~14s on r1; a full sweep stays ~70s, inside DefaultSweepTimeout (5 min).
+// COST: a full sweep takes about a minute, inside DefaultSweepTimeout (5 min).
 const popularPricelessCandidatesSQL = `
 WITH vol7d AS (
   SELECT asset_id,
@@ -232,21 +218,18 @@ func (s *Store) PopularPricelessCandidates(ctx context.Context) ([]AssetCoverage
 	return out, nil
 }
 
-// substanceFloorHaving is the "not decoration" substance gate applied to a
-// GROUP BY asset_id over prices_1m (SUM(volume_usd), COUNT(DISTINCT
-// bucket), MIN/MAX(bucket)): the same three floors one_hop's `priced` CTE
-// applies below. priced_direct shares this HAVING clause so its "is this
-// asset priced?" answer cannot drift from one_hop's — without it a single
+// substanceFloorHaving is the "not decoration" substance gate applied to a GROUP BY asset_id over
+// prices_1m: the same three floors one_hop's `priced` CTE applies. priced_direct shares this HAVING
+// clause so its "is this asset priced?" answer cannot drift from one_hop's; without it a single
 // unqualified prices_1m row would count as directly priced.
 const substanceFloorHaving = `SUM(volume_usd) >= 1000                                   -- pricingguard DefaultSubstanceMinVolumeUSD
      AND COUNT(DISTINCT bucket) >= 20                          -- pricingguard DefaultSubstanceMinBuckets
      AND EXTRACT(EPOCH FROM (MAX(bucket) - MIN(bucket))) >= 21600 -- pricingguard DefaultSubstanceMinSpan (6h)`
 
-// pricelessPricedCTEs is the "what counts as priced" half of the tripwire's
-// query — priced_direct, one_hop and priced — as one text so that a
-// single-asset probe asks EXACTLY the same question the sweep asks. Both
-// queries splice it after their own leading CTEs; it ends with the
-// `priced` CTE closed, no trailing comma.
+// pricelessPricedCTEs is the "what counts as priced" half of the tripwire's query (priced_direct,
+// one_hop and priced) as one text, so a single-asset probe asks EXACTLY the same question the sweep
+// asks. Both queries splice it after their own leading CTEs; it ends with the `priced` CTE closed,
+// no trailing comma.
 const pricelessPricedCTEs = `priced_direct AS (
   SELECT base_asset AS asset_id
     FROM prices_1m

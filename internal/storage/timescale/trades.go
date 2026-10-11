@@ -83,11 +83,9 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 	if fxResolver == nil {
 		return nil, nil
 	}
-	// With XLM as the BASE leg, value the trade off that leg BEFORE pricing the quote. Tier 3's
-	// quote rate for an on-chain token is usually the `token/XLM x XLM/USD` bridge from
-	// prices_1m, which a counterparty can author (one self-trade stored $8.5M for a $0.86 trade).
-	// XLM is the bridge's anchor, a direct market nobody can author. XLM only: a non-XLM base
-	// resolves through the same poisonable bridge.
+	// With XLM as the BASE leg, value the trade off that leg BEFORE pricing the quote: tier 3's
+	// token/XLM x XLM/USD bridge from prices_1m is counterparty-authorable, while XLM is a direct
+	// market nobody can author. XLM only: any other base resolves through the same poisonable bridge.
 	if isXLMAsset(t.Pair.Base) {
 		if v, err := usdVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver); err != nil || v != nil {
 			return v, err
@@ -113,7 +111,7 @@ func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *US
 //	usd_volume = base_amount / 10^decimals
 //
 // It trusts the declared peg like tiers 1/2, so it wins over a quote-side FX estimate (the two
-// diverged by up to 135% on USDC/XLM-style trades, and the error was the VWAP route's). It does
+// diverged on USDC/XLM-style trades, which skewed VWAP). It does
 // not re-check the quote leg: [usdVolumeDecimals] already declined it.
 func tradeUSDVolumeViaUSDBase(t canonical.Trade, md external.Metadata, quoteSpec *USDVolumeQuoteSpec) *string {
 	decimals, ok := usdVolumeDecimals(t.Pair.Base, md, quoteSpec)
@@ -184,9 +182,8 @@ func usdVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Metadata
 // store or nil (usd_volume NULL). `candidate` rests on a resolver rate for one leg;
 // `other`/`otherAmount` name the other leg.
 //
-// LEG CROSS-CHECK: the tier-3b bridge's token leg is attacker-writable (a planted rate stamped
-// $182M of usd_volume on a <$0.01 trade). Valuing the other leg too and storing the SMALLER past
-// usdLegAgreementFactor forces an attacker to pump both markets.
+// LEG CROSS-CHECK: the tier-3b bridge's token leg is attacker-writable. Valuing the other leg too
+// and storing the SMALLER past usdLegAgreementFactor forces an attacker to pump both markets.
 // SINGLE-LEG CEILING: with the other leg unresolvable the cross-check cannot fire, so a print
 // above singleLegMaxUSDVolume is refused rather than served.
 // One function so no tier can take the rate without the bound; never route an XLM-anchored value
@@ -784,13 +781,8 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 	return valuesParts, args, nil
 }
 
-// scanBatchTradeOutcome runs the batch INSERT..RETURNING query and folds the per-landed-row
-// (xmax=0) result set into the outcome tallies (new + unit-ratio per source) and the distinct
-// landed assets, each kept at its highest-ledger observation (registerClassicAssetSeen advances
-// last_seen_* via GREATEST), which drive the registry hook the batch path would otherwise skip.
-// emitBatchTradeOutcomeMetrics records the per-source insert-outcome metrics for
-// a batch: landed (new) + duplicate (sent-landed) + unit-ratio counts. Split
-// out of BatchInsertTrades to keep it under the length budget.
+// emitBatchTradeOutcomeMetrics records per-source insert outcomes for a batch: landed (new),
+// duplicate (sent minus landed) and unit-ratio counts.
 func emitBatchTradeOutcomeMetrics(trades []canonical.Trade, perSourceNew, perSourceUnitRatio map[string]int) {
 	// Per-source totals (we know how many we sent per source from the input
 	// slice). Duplicates = sent - landed.
@@ -817,6 +809,10 @@ func emitBatchTradeOutcomeMetrics(trades []canonical.Trade, perSourceNew, perSou
 	}
 }
 
+// scanBatchTradeOutcome runs the batch INSERT..RETURNING and folds the landed rows (xmax=0) into
+// per-source new/unit-ratio tallies and the distinct landed assets, each at its highest-ledger
+// observation (last_seen_* advances via GREATEST), which feed the registry hook.
+//
 // The statement runs in its own transaction. A re-derive store (deriveGeneration > 0) lifts the
 // TimescaleDB decompression cap with SET LOCAL: its upserts into compressed chunks decompress
 // whole segments per conflict and would otherwise fail with SQLSTATE 53400. Live ingest keeps the
@@ -1458,7 +1454,7 @@ const MaxTradesInRangeLimit = 10000
 // stored direction, oriented as requested and ordered (ts, ledger) ASC.
 //
 // It feeds /v1/vwap, /v1/twap, single-bar /v1/ohlc, /v1/price/tip and the orchestrator. One
-// direction alone is biased (the served high was 0.65% low). The per-row leg swap suffices
+// direction alone is biased (the high comes out low). The per-row leg swap suffices
 // because every downstream aggregate is defined on the integer amounts. Two limited arms keep
 // the NEWEST rows, so `len(rows) == limit` still signals truncation. limit <= 0 means 1000,
 // clamped to [MaxTradesInRangeLimit].

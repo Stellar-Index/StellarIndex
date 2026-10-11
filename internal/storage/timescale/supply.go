@@ -11,33 +11,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// ErrCirculatingExceedsTotal is returned by [Store.InsertSupply] for a
-// snapshot whose circulating supply exceeds its total. Every computer
-// derives circulating by subtracting exclusions from total, so such a
-// row can only come from a computer or ops-path bug; InsertSupply is
-// the sole writer of asset_supply_history, which carries only
-// per-column non-negativity CHECKs.
+// ErrCirculatingExceedsTotal is returned by [Store.InsertSupply] for a snapshot whose circulating
+// supply exceeds its total. Computers derive circulating by subtracting exclusions from total, so
+// this is a computer bug; InsertSupply is the sole writer and the table has only per-column CHECKs.
 var ErrCirculatingExceedsTotal = errors.New("timescale: InsertSupply: circulating_supply exceeds total_supply")
 
 // InsertSupply appends a [supply.Supply] snapshot to asset_supply_history.
-// Idempotent-corrective on (asset_key, ledger_sequence, time) — re-deriving
-// at the same ledger UPDATEs the value columns in place when the writer's
-// derive_generation is >= the stored one (migration 0109), so a corrected
-// re-derive lands without a DELETE + re-backfill; a lower generation is a
-// no-op guard-skip. Live ingest uses generation 0, so a plain re-observe
-// re-writes the identical value.
+// Idempotent-corrective on (asset_key, ledger_sequence, time): re-deriving at the same ledger
+// UPDATEs the value columns in place when the writer's derive_generation is >= the stored one, so a
+// corrected re-derive lands without a DELETE + re-backfill; a lower generation is a no-op skip.
+// Live ingest uses generation 0, so a plain re-observe re-writes the identical value.
 //
-// The third column (`time`) is required by TimescaleDB's rule that the
-// partition column be part of any unique index on a hypertable — see
-// migrations/0005_create_asset_supply_history.up.sql:55-61. Two writes for
-// the same (asset, ledger) carry the same `time` (the ledger close
-// timestamp), so (asset_key, ledger_sequence) uniqueness holds at the
-// application level.
+// `time` is in the key because TimescaleDB requires the partition column in any unique index on a
+// hypertable. Writes for the same (asset, ledger) carry the same `time` (the ledger close
+// timestamp), so (asset_key, ledger_sequence) uniqueness holds at the application level.
 //
-// Validates that AssetKey + TotalSupply + CirculatingSupply are populated (a
-// defensive guard against a zero-value struct). Per-field non-negativity is
-// enforced by the migration's CHECK constraints — a violation surfaces as a
-// pgx error rather than a quiet write of bad data.
+// AssetKey + TotalSupply + CirculatingSupply must be populated (guards a zero-value struct).
+// Non-negativity is enforced by CHECK constraints, so a violation surfaces as a pgx error rather
+// than a quiet write of bad data.
 func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 	if snap.AssetKey == "" {
 		return errors.New("timescale: InsertSupply: AssetKey is empty")
@@ -58,15 +49,10 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 		maxSupply = sql.NullString{Valid: true, String: snap.MaxSupply.String()}
 	}
 
-	// sac_wrapped_stroops (migration 0117): Algorithm 2's SACWrapped
-	// component, broken out so the supply cross-check can run the
-	// escrow-vs-minted leg. nil ⇒ SQL NULL, which the reader interprets
-	// as the "unchecked" state — NOT as zero. Negative is impossible
-	// upstream (supply.validateClassicComponents rejects it before
-	// Compute returns), but guard at the write boundary too: migration
-	// 0117 deliberately carries no CHECK constraint (see its header), so
-	// this is the only enforcement point left, and a negative escrow
-	// reading would make the subset bound pass on nonsense data.
+	// sac_wrapped_stroops is the SACWrapped component, kept so the supply cross-check can run the
+	// escrow-vs-minted leg. nil is SQL NULL, which readers treat as "unchecked", NOT zero. Negative
+	// is rejected upstream (supply.validateClassicComponents) but guarded here too: the column has
+	// no CHECK constraint, and a negative escrow would make the subset bound pass on nonsense.
 	var sacWrapped sql.NullString
 	if snap.SACWrappedStroops != nil {
 		if snap.SACWrappedStroops.Sign() < 0 {
@@ -76,25 +62,17 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 		sacWrapped = sql.NullString{Valid: true, String: snap.SACWrappedStroops.String()}
 	}
 
-	// Use the named-constraint form. Timescale hypertables in PG 16 +
-	// TS 2.16 don't expose unique constraints to ON CONFLICT's
-	// column-inference path, so the cleaner `ON CONFLICT (cols)` syntax
-	// fails with `there is no unique or exclusion constraint matching
-	// the ON CONFLICT specification`. The named-target form bypasses inference.
+	// Use the named-constraint form: Timescale hypertables in PG 16 + TS 2.16 don't expose unique
+	// constraints to ON CONFLICT's column inference, so `ON CONFLICT (cols)` fails with `there is
+	// no unique or exclusion constraint matching the ON CONFLICT specification`.
 	//
-	// Generation guard (migration 0109): on conflict we DO UPDATE the
-	// supply value columns plus derive_generation, guarded by
-	// `asset_supply_history.derive_generation <= EXCLUDED.derive_generation`,
-	// so a corrected re-derive (say, of a corrected supply algorithm)
-	// lands its value in place, while a lower generation (a live gen-0
-	// replay) can never revert a correction. Live ingest writes
-	// generation 0 (the default), so a same-(asset,ledger) re-observe
-	// just re-writes the identical value.
+	// Generation guard: on conflict we DO UPDATE the supply value columns plus derive_generation,
+	// guarded by `asset_supply_history.derive_generation <= EXCLUDED.derive_generation`, so a
+	// corrected re-derive lands in place while a lower generation (a live gen-0 replay) can never
+	// revert a correction.
 	//
-	// sac_wrapped_stroops joins the DO UPDATE value list for the same reason:
-	// leaving it out would freeze the first value ever written and re-create
-	// the re-derive trap for the column a `supply seed-sac-balances
-	// -full-history` pass exists to fix.
+	// sac_wrapped_stroops is in the DO UPDATE list too: leaving it out would freeze the first value
+	// written and defeat a `supply seed-sac-balances -full-history` re-derive.
 	const q = `
 		INSERT INTO asset_supply_history
 		    (time, asset_key, total_supply, circulating_supply, max_supply, basis, ledger_sequence, derive_generation, sac_wrapped_stroops)
@@ -127,12 +105,9 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 	return nil
 }
 
-// LatestSupply returns the most-recent snapshot for assetKey. Used
-// by the API's /v1/assets/{id} supply fields. Returns
-// [ErrNotFound] when the asset has no recorded supply (the asset-
-// detail handler then publishes nil for every supply field).
-// No time floor on purpose: a stale supply is still served with its
-// as-of, and (asset_key, time DESC) makes each chunk one index seek.
+// LatestSupply returns the most-recent snapshot for assetKey, for /v1/assets/{id}. It returns
+// [ErrNotFound] when the asset has no recorded supply. No time floor on purpose: a stale supply is
+// still served with its as-of, and (asset_key, time DESC) makes each chunk one index seek.
 func (s *Store) LatestSupply(ctx context.Context, assetKey string) (supply.Supply, error) {
 	const q = `
 		SELECT time, total_supply::text, circulating_supply::text, max_supply::text, basis, ledger_sequence, sac_wrapped_stroops::text
@@ -162,12 +137,8 @@ func (s *Store) LatestSupply(ctx context.Context, assetKey string) (supply.Suppl
 	return assembleSupply(assetKey, observedAt, totalStr, circulatingStr, maxStr, basis, ledger, sacWrappedStr)
 }
 
-// SupplyHistory returns snapshots for assetKey between [from, to)
-// in ascending time order. limit caps the result count; pass 0 for
-// no limit. Used by the asset-detail historical-supply chart.
-//
-// Empty slice + nil error when no rows match the window — the asset
-// is known but has no supply observations in the requested range.
+// SupplyHistory returns snapshots for assetKey in [from, to), ascending by time. limit caps the
+// count; 0 means no limit. An empty slice with nil error means no observations in the window.
 func (s *Store) SupplyHistory(ctx context.Context, assetKey string, from, to time.Time, limit int) ([]supply.Supply, error) {
 	q := `
 		SELECT time, total_supply::text, circulating_supply::text, max_supply::text, basis, ledger_sequence, sac_wrapped_stroops::text
@@ -222,16 +193,13 @@ type SupplyDayPoint struct {
 	Circulating *big.Int
 }
 
-// DailyCirculatingSupply returns daily last-known circulating supply
-// for assetKey from the supply_1d CAGG, ascending by day, within
-// [from, to] — plus the single most-recent point STRICTLY before
-// `from` (the carry-in row) so the caller can forward-fill the
-// leading edge of a windowed market-cap series. Empty slice + nil
-// error when the asset has no supply snapshots at all.
+// DailyCirculatingSupply returns daily last-known circulating supply for assetKey from the
+// supply_1d CAGG, ascending by day, within [from, to], plus the single most-recent point STRICTLY
+// before `from` (the carry-in row) so the caller can forward-fill the leading edge of a windowed
+// market-cap series. Empty slice with nil error when the asset has no snapshots at all.
 //
-// A zero `from` means "from inception"; the carry-in clause then
-// matches nothing (no bucket precedes the epoch) and the window
-// clause returns the full series, which is the intended behaviour.
+// A zero `from` means "from inception": the carry-in clause matches nothing and the window clause
+// returns the full series.
 func (s *Store) DailyCirculatingSupply(ctx context.Context, assetKey string, from, to time.Time) ([]SupplyDayPoint, error) {
 	const q = `
 		(SELECT bucket, circulating_supply::text
@@ -272,16 +240,12 @@ func (s *Store) DailyCirculatingSupply(ctx context.Context, assetKey string, fro
 	return out, nil
 }
 
-// assembleSupply parses the text-cast NUMERIC columns into *big.Int
-// and assembles a supply.Supply. Centralised so InsertSupply's
-// round-trip and SupplyHistory share identical decode logic — a bug
-// in one is a bug in both, easier to fix once.
+// assembleSupply parses the text-cast NUMERIC columns into *big.Int and assembles a supply.Supply,
+// so InsertSupply's round-trip and SupplyHistory share one decode path.
 //
-// sacWrappedStr is the nullable sac_wrapped_stroops column (migration
-// 0117). A SQL NULL stays nil on the returned Supply — the "unchecked"
-// state that makes the cross-check's escrow leg decline to evaluate. It
-// is deliberately NOT coerced to zero here: see
-// [supply.Supply.SACWrappedStroops].
+// sacWrappedStr is the nullable sac_wrapped_stroops column. A SQL NULL stays nil, the "unchecked"
+// state that makes the cross-check's escrow leg decline to evaluate; it is deliberately NOT coerced
+// to zero (see [supply.Supply.SACWrappedStroops]).
 func assembleSupply(assetKey string, observedAt time.Time, totalStr, circulatingStr string, maxStr sql.NullString, basis string, ledger int64, sacWrappedStr sql.NullString) (supply.Supply, error) {
 	total, ok := new(big.Int).SetString(totalStr, 10)
 	if !ok {

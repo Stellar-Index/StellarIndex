@@ -26,7 +26,7 @@ import (
 // bucket is older than [CEXFiatMaxQuoteStaleness] ([XLMBaseRestampStats.FXDeclinedStale]).
 //
 // The default tolerance is the live insert path's bound, so this never writes what `InsertTrade`
-// would decline; `-fx-max-staleness` may narrow it.
+// would decline; `-fx-max-staleness` may only narrow it.
 
 // CEXFiatMaxQuoteStaleness is the default and maximum as-of tolerance for the cex-fx tier. It
 // equals the live insert path's bound, so a restamped row carries what InsertTrade would write.
@@ -35,9 +35,9 @@ const CEXFiatMaxQuoteStaleness = fxQuotesSnapLookback
 // cexFiatQuoteAssets is the scan's quote-leg allow-list: every fiat code except USD, in the
 // sorted `fiat:<ISO4217>` wire form.
 //
-// It derives from [canonical.KnownFiatCodes] so a pair quoted in a new currency is picked up
-// automatically. USD is excluded because a USD quote is already exact (tier 1); scanning it would
-// drag millions of correct rows through the walk.
+// It derives from [canonical.KnownFiatCodes] so a new currency is picked up automatically. USD is
+// excluded because a USD quote is already exact (tier 1); scanning it would drag millions of
+// correct rows through the walk.
 func cexFiatQuoteAssets() []string {
 	codes := canonical.KnownFiatCodes()
 	out := make([]string, 0, len(codes))
@@ -58,10 +58,10 @@ func cexFiatRestampSources(allow map[string]bool) []string {
 
 // fxAsOfGate applies the as-of rule above to one window's rows.
 //
-// The read is cached per (ticker, UTC day): fx_quotes holds one bucket per ticker per day, so the
-// nearest bucket at or before any instant in day D is the same row for every trade in D. The AGE
-// is still measured from each row's OWN timestamp, so two trades in one day can fall on opposite
-// sides of the tolerance. Without the cache this would be one query per row.
+// The read is cached per (ticker, UTC day), saving a query per row: fx_quotes holds one bucket per
+// ticker per day, so the nearest bucket at or before any instant in day D is the same row for
+// every trade in D. The AGE is still measured from each row's OWN timestamp, so two trades in one
+// day can fall on opposite sides of the tolerance.
 type fxAsOfGate struct {
 	store *Store
 	max   time.Duration
@@ -119,10 +119,9 @@ func (g *fxAsOfGate) priceable(ctx context.Context, asset canonical.Asset, at ti
 
 // PlanCEXFiatUSDVolumeRestamp scans one bounded window and returns the rows the re-derive would
 // rewrite plus the disposition of every row it would not. READ-ONLY; [Store.ApplyUSDVolumeRestampPlan]
-// consumes the plan verbatim.
-//
-// maxStaleness <= 0 means [CEXFiatMaxQuoteStaleness]. A WIDER value is refused: the resolver would
-// decline the quote anyway, so the run would report a tolerance it did not apply.
+// consumes the plan verbatim. maxStaleness <= 0 means [CEXFiatMaxQuoteStaleness]; a WIDER value is
+// refused because the resolver would decline the quote anyway and the run would report a
+// tolerance it did not apply.
 func (s *Store) PlanCEXFiatUSDVolumeRestamp(ctx context.Context, p RestampScanParams, maxStaleness time.Duration) (*RestampPlan, error) {
 	if maxStaleness > CEXFiatMaxQuoteStaleness {
 		return nil, fmt.Errorf("timescale: cex-fx restamp: as-of tolerance %s exceeds the live insert path's own fx_quotes lookback (%s); "+

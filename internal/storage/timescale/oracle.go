@@ -23,13 +23,12 @@ func (s *Store) InsertOracleUpdate(ctx context.Context, u canonical.OracleUpdate
 	if err := u.Validate(); err != nil {
 		return err
 	}
-	// Atomic + idempotent-corrective, mirroring InsertTrade: the row upsert and the per-source
-	// entry-tally bump are one statement. On conflict every value column and derive_generation
-	// are updated, guarded by `derive_generation <= EXCLUDED.derive_generation`: a re-derive
-	// lands its corrected price in place, while a lower generation (a live gen-0 replay) can
-	// never revert a correction. `xmax = 0` separates a fresh insert from an update, and the
-	// `HAVING count(*) FILTER (WHERE inserted) > 0` gate keeps duplicates and re-derives from
-	// inflating the tally.
+	// Atomic and idempotent-corrective, mirroring InsertTrade: the upsert and the per-source
+	// entry-tally bump are one statement. On conflict the value columns update, guarded by
+	// `derive_generation <= EXCLUDED.derive_generation`, so a re-derive lands its corrected price
+	// while a lower generation (a live gen-0 replay) never reverts it. `xmax = 0` separates a
+	// fresh insert from an update, and the `HAVING count(*) FILTER (WHERE inserted) > 0` gate
+	// keeps duplicates and re-derives from inflating the tally.
 	const q = `
         WITH ins AS (
             INSERT INTO oracle_updates (
@@ -152,9 +151,8 @@ func (s *Store) LatestOracleUpdatesForAsset(ctx context.Context, asset canonical
 // quote is in the distinct key because one source can publish the SAME base asset against two
 // quotes as independent live feeds (e.g. Redstone EUROC/EUR and EUROC/USD); collapsing would
 // silently keep whichever published last. Callers wanting one row pass quoteFilter; empty
-// returns every live quote so the ambiguity stays visible.
-//
-// Unbounded in age (see the freshness convention above).
+// returns every live quote so the ambiguity stays visible. Unbounded in age (see the freshness
+// convention above).
 func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
 	if len(assets) == 0 {
 		return nil, nil
@@ -163,11 +161,10 @@ func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canon
 	for i, a := range assets {
 		keys[i] = a.String()
 	}
-	// Aggregate-then-fetch instead of DISTINCT ON over every matching row: max(ts) per
-	// (source, asset, quote), the compress_segmentby key, is answered from compressed-batch
-	// metadata, and the lateral fetches one stream's newest rows by exact ts. DISTINCT ON would
-	// sort the asset's whole history. OFFSET 0 keeps the lateral a parameterised nested loop;
-	// flattened, the planner hash-joins against a full scan of the open chunk.
+	// Aggregate-then-fetch, not DISTINCT ON (which sorts the asset's whole history): max(ts) per
+	// (source, asset, quote), the compress_segmentby key, comes from compressed-batch metadata and
+	// the lateral fetches one stream's newest rows by exact ts. OFFSET 0 keeps the lateral a
+	// parameterised nested loop; flattened, the planner hash-joins a full scan of the open chunk.
 	const q = `
         WITH latest AS (
             SELECT source, asset, quote, max(ts) AS ts
@@ -308,13 +305,12 @@ func (s *Store) LatestAggregatorPricesForPair(ctx context.Context, base, quote c
 }
 
 // LatestOracleObservation returns the single most-recent oracle_updates row for `source` whose
-// asset matches ANY of baseKeys AND whose quote matches ANY of quoteKeys. The key sets exist for
-// XLM's dual identity (`native` vs `crypto:XLM`).
+// asset matches ANY of baseKeys AND whose quote matches ANY of quoteKeys (XLM's dual identity,
+// `native` vs `crypto:XLM`).
 //
-// Returns (nil, nil), NOT ErrNotFound, when nothing matches: this implements
+// Returns (nil, nil), NOT ErrNotFound, when nothing matches (and for empty inputs): this implements
 // internal/divergence.OracleReader, which maps "no observation" to ErrAssetUnsupported without
-// importing this package's sentinel. Empty inputs are "no match" for the same reason.
-// Unbounded in age (see the freshness convention above).
+// importing this package's sentinel. Unbounded in age (see the freshness convention above).
 func (s *Store) LatestOracleObservation(ctx context.Context, source string, baseKeys, quoteKeys []string) (*canonical.OracleUpdate, error) {
 	if source == "" || len(baseKeys) == 0 || len(quoteKeys) == 0 {
 		return nil, nil
@@ -452,9 +448,9 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
 // OracleDayPoint is one day bucket of one oracle's observations of one asset, read off the
 // `oracle_prices_1d` continuous aggregate.
 //
-// Price is the bucket's CLOSING observation (`last(price, ts)`), the live snapshot's reduction at
-// day grain. The bucket has no timestamp of its own, so two sources' closes within a day cannot
-// be ordered; a caller choosing between sources must pick on other grounds and say which.
+// Price is the bucket's CLOSING observation (`last(price, ts)`). The bucket has no timestamp of
+// its own, so two sources' closes within a day cannot be ordered; a caller choosing between
+// sources must pick on other grounds and say which.
 type OracleDayPoint struct {
 	// Bucket is the UTC day (time_bucket('1 day', ts)).
 	Bucket time.Time
@@ -482,7 +478,7 @@ type OracleDayPoint struct {
 //
 // Unmapped `raw:` assets are dropped from `assets` and the SQL refuses raw: rows too (an
 // unvalidated Asset can still stringify to "raw:..."): they are record-layer only and must not
-// reach a price surface. Empty `assets` after that drop returns (nil, nil).
+// reach a price surface. Empty `assets` after the drop returns (nil, nil).
 func (s *Store) DailyOraclePrices(
 	ctx context.Context,
 	assets []canonical.Asset,

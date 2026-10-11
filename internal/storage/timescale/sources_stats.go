@@ -30,9 +30,9 @@ type SourceStats struct {
 // GetSourceStats returns trailing-24h trade counts grouped by source. Sources with no trades in
 // 24h are absent; callers join against the static external.Registry to fill in.
 //
-// Volume is SUM(usd_volume), the value stamped at trade time. Trades with no usd_volume are never
-// valued at today's XLM price (a historical figure would move with spot); they are counted in
-// UnpricedTrades24h so the caller can mark a lower bound.
+// Volume is SUM(usd_volume), stamped at trade time. Trades with no usd_volume are never valued at
+// today's XLM price (history would move with spot); they are counted in UnpricedTrades24h so the
+// caller can mark a lower bound.
 func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 	q := sourceStatsQuery()
 	rows, err := s.db.QueryContext(ctx, q, canonical.NativeSACContractID())
@@ -133,10 +133,10 @@ func (s *Store) GetSourceVolumeHistory7d(ctx context.Context) ([]SourceVolumeBuc
 // sourceVolumeHistory returns per-(source, hour) volume + trade count over a trailing window.
 // `window` is a Postgres interval literal bound as $1, never concatenated.
 //
-// Reads the source_volume_1h CAGG: sum_usd_priced is the trade-time usd_volume sum.
-// sum_xlm_base / sum_xlm_quote hold XLM legs that were never priced; valuing them at today's
-// XLM/USD would make a historical hour move with spot, so they are surfaced as xlm_unpriced
-// instead. The bucket predicate is dexHourlyBucketWindow, the set the DEX 24h readers select.
+// Reads the source_volume_1h CAGG: sum_usd_priced is the trade-time usd_volume sum. Unpriced XLM
+// legs (sum_xlm_base / sum_xlm_quote) are surfaced as xlm_unpriced, not valued at today's
+// XLM/USD, which would move a historical hour with spot. The bucket predicate is
+// dexHourlyBucketWindow, the set the DEX 24h readers select.
 func sourceVolumeHistoryQuery() string {
 	return `
 		SELECT source,
@@ -171,14 +171,12 @@ func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]Sourc
 }
 
 // The per-source breakdowns: two fully static query strings (not concatenated, gosec G202)
-// differing only in the WHERE predicate. Volume is SUM(usd_volume) as in GetSourceStats; trades
-// with no usd_volume are counted in unpriced_trades_24h, never valued at today's XLM price.
+// differing only in the WHERE predicate. Volume and unpriced handling match GetSourceStats.
 //
 // Asset filters use `= ANY($n)` against a bound string[] so the handler can pass every canonical
 // FORM of an asset (XLM's three: `native`, `crypto:XLM`, the SAC C-address; see
 // [canonical.AssetAliases]). One form undercounts: SDEX writes `native`, CEXes write
-// `crypto:XLM`, Soroban AMMs write the SAC. `= ANY(array)` stays sargable (equality on the
-// indexed asset columns).
+// `crypto:XLM`, Soroban AMMs write the SAC. `= ANY(array)` stays sargable.
 //
 // The pair query reads BOTH stored orientations, one UNION ALL arm each as pairMarketQuery does,
 // since a venue writing base = token_in stores one market as (A,B) and (B,A). The second arm
@@ -228,11 +226,8 @@ const (
 
 // PairSourceStats returns trailing-24h per-source USD volume + trade count for a single
 // (base, quote) market, ordered by USD volume desc (unpriced last), then trade count, then
-// source. Backs the market-pair volume-by-source breakdown; the recent-trades feed only samples a
-// page, so an accurate 24h share needs this aggregate.
-//
-// base / quote are each the full set of canonical FORMS to match (the handler expands via
-// assetAliases so XLM's `native` and `crypto:XLM` legs both count).
+// source. The recent-trades feed only samples a page, so an accurate 24h share needs this.
+// base / quote are each the full set of canonical forms (the handler expands via assetAliases).
 func (s *Store) PairSourceStats(ctx context.Context, base, quote []string) ([]SourceStats, error) {
 	return s.scanSourceStats(ctx, pairSourceStatsQuery, base, quote)
 }

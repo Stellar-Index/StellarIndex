@@ -12,37 +12,31 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Volume-character rollup worker store methods (wash-and-scam-signals design
-// §2). RefreshAssetVolumeCharacter runs the ALL-ASSET single-pass
-// generalization of assetVolumeCharacterSQL over the `trades` hypertable and
-// upserts one row per canonical asset into asset_volume_character (migration
-// 0149); AssetVolumeCharacterRollup is the keyed-on-PK read the
-// /v1/assets{,/{id}} paths use instead of the per-request 14-day trades roll.
-// The rollup only MOVES the compute: every signal value it stores is
-// byte-for-byte what the per-asset [Store.AssetVolumeCharacter] returns for
-// the same asset, because both derive from the SAME raw double-precision sums
-// through the SAME Go path ([volumeCharacterFromSums]).
+// Volume-character rollup worker store methods. RefreshAssetVolumeCharacter runs the all-asset
+// single-pass generalization of assetVolumeCharacterSQL over `trades` and upserts one row per
+// canonical asset into asset_volume_character; AssetVolumeCharacterRollup is the keyed-on-PK read
+// the /v1/assets{,/{id}} paths use instead of the per-request 14-day trades roll. The rollup only
+// moves the compute: every stored signal equals what the per-asset [Store.AssetVolumeCharacter]
+// returns, because both derive from the same raw double sums through [volumeCharacterFromSums].
 
 // assetVolumeCharacterRollupSQLTemplate is the all-asset generalization of
-// assetVolumeCharacterSQL: it projects EVERY trade onto BOTH its base_asset and
-// quote_asset (UNION ALL), folds each raw side onto its CANONICAL asset via the
-// alias_map, then GROUP BYs the canonical asset.
+// assetVolumeCharacterSQL: it projects every trade onto both its base_asset and quote_asset
+// (UNION ALL), folds each raw side onto its canonical asset via the alias_map (so XLM's three
+// identities land on one row), then GROUP BYs the canonical asset.
 //
-// {{ALIAS_VALUES}} is replaced (strings.Replace, not Sprintf: the LIKE patterns
-// carry literal %) by the alias-fold VALUES rows from the process AliasRegistry
-// (see buildAliasMapValues); alias params start at $1. {{WINDOW}} is the trailing
-// window as an interval LITERAL: against a bind parameter the planner cannot
-// exclude chunks, and this ~23-minute roll starved the compression policy.
+// {{ALIAS_VALUES}} is replaced (strings.Replace, not Sprintf: the LIKE patterns carry literal %)
+// by the alias-fold VALUES rows from the process AliasRegistry (see buildAliasMapValues); alias
+// params start at $1. {{WINDOW}} is the trailing window as an interval literal: against a bind
+// parameter the planner cannot exclude chunks, and this long roll starved the compression policy.
 //
 // Every per-asset signal is reproduced exactly:
-//   - total_vol / *_vol are SUM(usd_volume::double precision), the SAME double the
-//     per-asset query sums, so Go-derived shares match to full precision.
-//   - the (maker,taker) pair is UNORDERED (LEAST/GREATEST); maker is read through
+//   - total_vol / *_vol are SUM(usd_volume::double precision), the same double the per-asset query
+//     sums, so Go-derived shares match to full precision.
+//   - the (maker,taker) pair is unordered (LEAST/GREATEST); maker is read through
 //     volumeCharacterMakerSQL, so a pool is never an account.
 //   - issuer is the G-strkey suffix of a classic 'CODE-GISSUER' id, else empty.
-//   - market_styled tests the RAW counterpart, never the folded form.
-//   - total_vol_num is the EXACT NUMERIC sum (ADR-0003) for the stored volume_usd
-//     column.
+//   - market_styled tests the raw counterpart, never the folded form.
+//   - total_vol_num is the exact NUMERIC sum, for the stored volume_usd column.
 const assetVolumeCharacterRollupSQLTemplate = `
 WITH alias_map(form, canon) AS (
   VALUES {{ALIAS_VALUES}}
@@ -125,11 +119,9 @@ type assetVolumeCharacterRow struct {
 func buildAliasMapValues(startIdx int) (valuesSQL string, args []any) {
 	forms := canonical.AllAliasForms()
 	if len(forms) == 0 {
-		// Defensive: an empty registry never happens in the aggregator
-		// (it installs the registry before the worker starts), but a
-		// single no-op self-row keeps the VALUES list non-empty and the
-		// COALESCE a pass-through. base/quote_asset is never '' in real
-		// data, so this row matches nothing.
+		// Defensive: the aggregator installs the registry before the worker starts, but a no-op
+		// self-row keeps the VALUES list non-empty and the COALESCE a pass-through. base/quote_asset
+		// is never '' in real data, so this row matches nothing.
 		return "('', '')", nil
 	}
 	keys := make([]string, 0, len(forms))
@@ -150,12 +142,10 @@ func buildAliasMapValues(startIdx int) (valuesSQL string, args []any) {
 	return b.String(), args
 }
 
-// volumeCharacterFromSums derives the §2 signals + character from the raw
-// sums: the exact NUMERIC total text is the volume, the double sums only
-// form the unitless shares. It is the SINGLE derivation shared by the
-// per-asset [Store.AssetVolumeCharacter] and the all-asset rollup, so the
-// rollup can never drift from the value the detail computes live —
-// same inputs, same round4, same deriveVolumeCharacter.
+// volumeCharacterFromSums derives the signals + character from the raw sums: the exact NUMERIC
+// total text is the volume, the double sums only form the unitless shares. It is the single
+// derivation shared by [Store.AssetVolumeCharacter] and the all-asset rollup, so the rollup can
+// never drift from the value the detail computes live.
 func volumeCharacterFromSums(totalNum string, total, topPair, selfCross, issuerSide, marketStyled float64, makers, takers int64) AssetVolumeCharacter {
 	out := AssetVolumeCharacter{
 		WindowDays:     int(volumeCharacterWindow.Hours()) / 24,
@@ -193,17 +183,15 @@ const refreshAssetVolumeCharacterPrune = `DELETE FROM asset_volume_character WHE
 // [pruneRollup]); the interval is volumeCharacterWindow, pinned by test.
 const refreshAssetVolumeCharacterPruneExpired = `DELETE FROM asset_volume_character WHERE computed_at < now() - INTERVAL '14 days'`
 
-// RefreshAssetVolumeCharacter recomputes the per-asset volume-character
-// rollup from the live trailing-window trades roll and atomically replaces
-// its contents. Called on a slow cadence by the aggregator's
-// assetcharacterrollup worker so /v1/assets{,/{id}} never runs the
-// all-asset account-structure roll per request.
+// RefreshAssetVolumeCharacter recomputes the per-asset volume-character rollup from the live
+// trailing-window trades roll and atomically replaces its contents. The aggregator's
+// assetcharacterrollup worker calls it on a slow cadence so /v1/assets{,/{id}} never runs the
+// all-asset roll per request.
 //
-// The heavy all-asset SELECT runs OUTSIDE the transaction (a read); the
-// upsert + prune run in ONE transaction (row-level locks only — no ACCESS
-// EXCLUSIVE lock that would stall concurrent listing/detail reads on the
-// customer-facing endpoints). computed_at is stamped to the transaction
-// clock in SQL so the sibling prune sees just-written rows as current.
+// The heavy SELECT runs outside the transaction (a read); the upsert + prune run in one
+// transaction taking row-level locks only, never ACCESS EXCLUSIVE, which would stall concurrent
+// listing/detail reads. computed_at is stamped to the transaction clock in SQL so the sibling
+// prune sees just-written rows as current.
 func (s *Store) RefreshAssetVolumeCharacter(ctx context.Context) error {
 	rows, err := s.rollAssetVolumeCharacter(ctx)
 	if err != nil {
@@ -231,32 +219,26 @@ func (s *Store) RefreshAssetVolumeCharacter(ctx context.Context) error {
 // rollAssetVolumeCharacter runs the all-asset single-pass roll and returns
 // one row per canonical asset with priced volume in the window.
 //
-// Connection hygiene mirrors [Store.refreshCAGGBounded]: the pinned
-// connection's statement_timeout is read with current_setting before this
-// call overrides it, and restored (via set_config, on a context detached
-// from the caller's so a caller deadline that already fired doesn't also
-// fail the restore) before the connection goes back to the pool — so an
-// [OpenBackground] connector's session backstop isn't silently
-// replaced by this call's assetVolumeCharacterRollTimeout bound for whichever later query lands on
-// the same pooled connection. A restore that fails marks the connection
-// bad via conn.Raw(driver.ErrBadConn) rather than returning it to the pool
-// with the override still live. max_parallel_workers_per_gather has no
-// pool-level default to protect, so it keeps a bare RESET.
+// Connection hygiene mirrors [Store.refreshCAGGBounded]: the pinned connection's statement_timeout
+// is read with current_setting before this call overrides it, and restored (via set_config, on a
+// context detached from the caller's so an already-fired deadline doesn't also fail the restore)
+// before the connection returns to the pool, so an [OpenBackground] connector's session backstop
+// isn't silently replaced by this call's bound for a later query on the same pooled connection.
+// A failed restore marks the connection bad via conn.Raw(driver.ErrBadConn) rather than pooling it
+// with the override live. max_parallel_workers_per_gather has no pool-level default to protect, so
+// it keeps a bare RESET.
 func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolumeCharacterRow, err error) {
 	window := fmt.Sprintf("%d hours", int(volumeCharacterWindow.Hours()))
 	aliasValues, args := buildAliasMapValues(1)
 	query := strings.Replace(assetVolumeCharacterRollupSQLTemplate, "{{ALIAS_VALUES}}", aliasValues, 1)
 	query = strings.ReplaceAll(query, "{{WINDOW}}", window)
 
-	// This all-asset roll scans ~145M trades and shares the primary with the
-	// customer-facing API. Run it on a DEDICATED connection whose footprint is
-	// bounded so it can never starve serving:
-	//   - max_parallel_workers_per_gather=2 — leaves cores free for the API
-	//     rather than fanning the scan across every worker.
-	//   - statement_timeout=assetVolumeCharacterRollTimeout — a wedge guard: if it can't finish, it
-	//     aborts and the last good rollup stands (the worker retries next
-	//     cycle). Session settings, not SET LOCAL, so they cover the read
-	//     that runs outside any transaction.
+	// This all-asset roll scans the whole trailing window of trades and shares the primary with the
+	// API, so it runs on a dedicated connection with a bounded footprint:
+	//   - max_parallel_workers_per_gather=2 leaves cores free for the API.
+	//   - statement_timeout=assetVolumeCharacterRollTimeout is a wedge guard: if it can't finish it
+	//     aborts, the last good rollup stands and the worker retries next cycle.
+	// Session settings, not SET LOCAL, so they cover the read that runs outside any transaction.
 	conn, connErr := s.db.Conn(ctx)
 	if connErr != nil {
 		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter conn: %w", connErr)
@@ -399,13 +381,12 @@ SELECT window_days, volume_usd::text, distinct_makers, distinct_takers,
   FROM asset_volume_character
  WHERE asset_id = $1`
 
-// AssetVolumeCharacterRollup returns the pre-computed §2 signals + character
-// for one asset from the asset_volume_character rollup — a keyed-on-PK
-// lookup, no per-request trades roll. The assetID is folded to its
-// canonical form first (the rollup keys canonical assets), so a SAC-form
-// or crypto:XLM request resolves onto the same row its classic/native twin
-// wrote. found=false means the asset has no rolled row (no priced trades in
-// the window, or the worker hasn't run yet) — the caller omits the fields.
+// AssetVolumeCharacterRollup returns the pre-computed signals + character for one asset from the
+// asset_volume_character rollup: a keyed-on-PK lookup, no per-request trades roll. The assetID is
+// folded to its canonical form first (the rollup keys canonical assets), so a SAC-form or
+// crypto:XLM request resolves onto the same row its classic/native twin wrote. found=false means
+// no rolled row (no priced trades in the window, or the worker hasn't run yet); the caller omits
+// the fields.
 func (s *Store) AssetVolumeCharacterRollup(ctx context.Context, assetID string) (AssetVolumeCharacter, bool, error) {
 	key := assetID
 	if a, err := canonical.ParseAsset(assetID); err == nil {

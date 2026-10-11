@@ -15,15 +15,15 @@ import (
 
 // ─── `trades` chunk primitives for the chunk-wise usd_volume restamp ───
 //
-// An UPDATE into a COMPRESSED Timescale chunk decompresses it inside the transaction, and none of
+// An UPDATE into a compressed Timescale chunk decompresses it inside the transaction, and none of
 // the restamp's join clauses can become a scan key on a `segmentby` / `orderby` column, so the
-// WHOLE chunk is decompressed per batch. The dry run never shows it.
+// whole chunk is decompressed per batch. The dry run never shows it.
 //
-// The remedy needs BOTH halves: decompress the chunk ONCE, restamp it as a plain heap UPDATE and
+// The remedy needs both halves: decompress the chunk once, restamp it as a plain heap UPDATE and
 // compress it again; and bound the statement's own `ts` ([Store.applyXLMBaseRestampBatch]),
 // without which every compressed chunk is a result relation anyway. The primitives are one
 // statement each so the scripted-driver tests can pin the exact SQL; [Store.RestampTradesChunk]
-// owns their ORDER and the rule that a chunk is never left decompressed on a failure.
+// owns their order and the rule that a chunk is never left decompressed on a failure.
 
 // TradeChunk is one `trades` hypertable chunk as the chunk-wise restamp
 // sees it: its identity, its time range and its two sizes.
@@ -127,14 +127,14 @@ func (s *Store) compressTradesChunk(ctx, live context.Context, c TradeChunk) err
 
 // ─── the lock convoy: why every WAIT is bounded and the WORK is not ──────
 //
-// A pending AccessExclusiveLock request queues every LATER request for the object behind it,
+// A pending AccessExclusiveLock request queues every later request for the object behind it,
 // however compatible, so a queued decompress_chunk can blind alerting and degrade /v1/status.
 //
-// `SET LOCAL lock_timeout` (5 s, under the API's 15 s request timeout) bounds EVERY lock request
+// `SET LOCAL lock_timeout` (5 s, under the API's 15 s request timeout) bounds every lock request
 // in the attempt, including the late AccessExclusiveLock compress and decompress take after their
 // work. No `statement_timeout` is used, so a long decompress that holds its locks still runs.
 //
-// A refused late request throws that work away, so: a lock holder older than [longLockHolderAge]
+// A refused late request throws that work away, so a lock holder older than [longLockHolderAge]
 // is waited out with no request of ours pending, and each attempt first takes the opening locks
 // with `LOCK TABLE`, where a refusal is cheap. Each attempt is one transaction. The budget charges
 // only waiting, and a retry starts only if the last attempt fits the remaining wall-clock, so a
@@ -155,12 +155,10 @@ var (
 	//
 	// wait: under the API's 15 s request timeout and the exporter's 30 s scrape timeout, and far
 	// above an uncontended lock.
-	//
 	// drain: a convoy drains in under 20 s once its head is removed; 15 s of clear air per 5 s
 	// of asking keeps the drain ahead of the ask.
-	//
 	// budget: outlasts a legitimate long reader (the aggregator pool's statement_timeout backstop
-	// is 30 min, config.BackgroundStatementTimeout) and is finite because failing here is SAFE.
+	// is 30 min, config.BackgroundStatementTimeout) and is finite because failing here is safe.
 	tradesChunkDecompressLock = lockWaitPolicy{wait: 5 * time.Second, drain: 15 * time.Second, budget: 35 * time.Minute}
 	// tradesChunkCompressLock bounds compress_chunk. Same per-request bound and pause; the budget
 	// is larger because the chunk is ALREADY decompressed and giving up is the expensive outcome.
@@ -267,10 +265,10 @@ func (t *lockTally) String() string {
 }
 
 // execUnderBoundedLockWait runs one chunk statement, each attempt in its own transaction with
-// every lock request bounded at p.wait, retrying only while a lock request was the ONLY failure
+// every lock request bounded at p.wait, retrying only while a lock request was the only failure
 // and the policy allows it. Any other error returns at once: retrying an out-of-disk compress
-// would be worse than the convoy it avoids. Once `live` (the caller's own context) is done, no
-// retry that would repeat work starts.
+// would be worse than the convoy it avoids. Once `live` (the caller's context) is done, no retry
+// that would repeat work starts.
 func (s *Store) execUnderBoundedLockWait(ctx, live context.Context, p lockWaitPolicy, query string, c TradeChunk) error {
 	clk := s.lockClock
 	r := &lockRetry{t: lockTally{clk: clk, start: clk.now()}, p: p, live: live}
@@ -412,7 +410,7 @@ func (t *lockTally) drain(ctx context.Context, d time.Duration) error {
 // functions use on 2.26.4); run; COMMIT. inStatement reports whether a failure came from the
 // statement itself, after its opening locks were held, and stmtElapsed how long it ran.
 //
-// `SET LOCAL` is scoped by POSTGRES, not the driver: a session-level `SET` on a pooled connection
+// `SET LOCAL` is scoped by Postgres, not the driver: a session-level `SET` on a pooled connection
 // outlives the call (pgx v5's stdlib adapter resets nothing on reuse), while COMMIT/ROLLBACK
 // unwinds LOCAL even on the error path.
 func (s *Store) chunkLockAttempt(ctx context.Context, clk lockClock, wait time.Duration, query string, c TradeChunk) (stmtElapsed time.Duration, inStatement bool, err error) {
@@ -485,13 +483,12 @@ func (s *Store) TradesDataVolumePath(ctx context.Context) (string, error) {
 
 // ─── the `trades` compression policy ─────────────────────────────────────
 //
-// The `trades` compression policy runs as the custom job `trades_compression_policy` (the
-// built-in policy under a lock_timeout) on a 12-hour schedule, compressing every chunk older than
-// the lag that is not fully compressed. A chunk this tool decompressed by hand IS such a chunk:
-// the policy's next fire would re-compress the open chunk between two batches, and the next batch
-// would silently take the per-row decompression path, because DML into a compressed chunk does
-// not error, it crawls. The policy is therefore PAUSED for a write run and re-enabled on every
-// exit path. These are the primitives.
+// The compression policy runs as the custom job `trades_compression_policy` (the built-in policy
+// under a lock_timeout) on a 12-hour schedule, compressing every chunk older than the lag that is
+// not fully compressed. A chunk this tool decompressed by hand is such a chunk: the policy's next
+// fire would re-compress the open chunk between two batches, and the next batch would silently
+// take the per-row decompression path, because DML into a compressed chunk does not error, it
+// crawls. The policy is therefore paused for a write run and re-enabled on every exit path.
 
 // TradesCompressionPolicy is the `trades` compression policy job as the
 // chunk-wise restamp needs it.
@@ -567,10 +564,10 @@ type TradeChunkRestampResult struct {
 
 // ChunkRestampStep names the two statements in the bracket that can outlive the process issuing
 // them: a very large decompress or re-compress is what run-heavy-job.sh's TimeoutStopSec is sized
-// for (HEAVY_JOB_STOP_TIMEOUT=2h on the restamp's launch line; the wrapper default is 5min, and a
-// host without the heavy-job-wrapper tag is on systemd's 90 s), and a dropped connection aborts
-// the statement with the chunk in whatever state it was in. The bracket announces each through
-// the caller's `before` hook so a trace exists BEFORE the statement is issued.
+// for (HEAVY_JOB_STOP_TIMEOUT=2h on the restamp's launch line; the wrapper default is 5min), and
+// a dropped connection aborts the statement with the chunk in whatever state it was in. The
+// bracket announces each through the caller's `before` hook so a trace exists before the
+// statement is issued.
 type ChunkRestampStep int
 
 const (
@@ -580,20 +577,20 @@ const (
 	ChunkRestampCompress
 )
 
-// RestampTradesChunk runs `work` inside the chunk, restoring the state the
-// chunk was LISTED in ([TradeChunk.Compressed]) afterwards:
+// RestampTradesChunk runs `work` inside the chunk, restoring the state the chunk was listed in
+// ([TradeChunk.Compressed]) afterwards:
 //
 //	compressed at listing:    size → decompress_chunk → size → work → compress_chunk → size
 //	uncompressed at listing:  size → work → size
 //
-// Once decompressed, EVERY exit path compresses the chunk again, including a failed `work` and a
+// Once decompressed, every exit path compresses the chunk again, including a failed `work` and a
 // cancelled context: the compress runs on a context detached from the caller's, because a
 // SIGTERM under run-heavy-job.sh is the likeliest failure. Only a failed re-compress leaves it
-// decompressed, and the error says so by name. A chunk NOT compressed at listing stays that way
+// decompressed, and the error says so by name. A chunk not compressed at listing stays that way
 // (newer chunks are deliberately open for cursor-regression upserts).
 //
 // `before`, when not nil, is called with the step about to be issued, so the caller can print the
-// by-hand repair before a statement that may outlive the process. A failed decompress runs nothing.
+// by-hand repair before a statement that may outlive the process.
 func (s *Store) RestampTradesChunk(ctx context.Context, c TradeChunk, work func(context.Context) error, before func(ChunkRestampStep)) (res TradeChunkRestampResult, err error) {
 	res = TradeChunkRestampResult{Chunk: c}
 	start := time.Now()
@@ -662,9 +659,8 @@ func (s *Store) recompressTradesChunk(ctx context.Context, c TradeChunk, res *Tr
 // `compress_chunk`, a policy fire that started before the pause, or another actor's mitigation can
 // compress the open chunk between two batches. An UPDATE into a compressed chunk does not fail, it
 // decompresses the chunk wholesale in the transaction (the run's lifted decompression cap removes
-// the error that would surface it), so the run would crawl for hours unnoticed. The guard is a
-// catalog read before EVERY batch: one timescaledb_information.chunks row against a 20,000-row
-// UPDATE.
+// the error that would surface it), so the run would crawl unnoticed. The guard is a catalog read
+// before every batch: one timescaledb_information.chunks row against a 20,000-row UPDATE.
 
 // tradesChunkIsCompressed reads one chunk's compression state right now.
 const tradesChunkIsCompressed = `SELECT is_compressed FROM timescaledb_information.chunks WHERE chunk_schema = $1 AND chunk_name = $2`
@@ -723,14 +719,14 @@ func (s *Store) RestampExactTierUSDVolumeInChunk(ctx context.Context, c TradeChu
 
 // ─── one run per hypertable: the run lock ────────────────────────────────
 //
-// run-heavy-job.sh's flock is per JOB NAME, so an operator launching under a second name can have
-// two `-chunks -write` runs alive at once. That is the one thing the policy dance cannot survive:
-// the second finds the policy already unscheduled and re-enables it at ITS exit while the first
-// is still walking, handing the first run's open chunk to the policy's next fire. The run
-// therefore holds a session-level advisory lock on a DEDICATED connection for its whole life:
-// session-level because the run is thousands of transactions; dedicated because database/sql
-// would otherwise hand the lock-holding pooled connection to other statements and the release
-// could run on a different one. Postgres drops the lock with the connection (e.g. on SIGKILL).
+// run-heavy-job.sh's flock is per job name, so an operator launching under a second name can have
+// two `-chunks -write` runs alive at once. The policy dance cannot survive that: the second finds
+// the policy already unscheduled and re-enables it at its exit while the first is still walking,
+// handing the first run's open chunk to the policy's next fire. The run therefore holds a
+// session-level advisory lock on a dedicated connection for its whole life: session-level because
+// the run is thousands of transactions; dedicated because database/sql would otherwise hand the
+// lock-holding pooled connection to other statements and the release could run on a different
+// one. Postgres drops the lock with the connection (e.g. on SIGKILL).
 
 // USDVolumeRestampLockName is the text the lock key is hashed from —
 // `hashtext(name)`, the spelling the platform stores' claims use — so an
@@ -782,8 +778,8 @@ func (s *Store) TryUSDVolumeRestampLock(ctx context.Context) (release func(conte
 // jobRunningSelect reads both status columns of job_stats. On TimescaleDB 2.26 `job_status` is the
 // live signal: it reports 'Running' while pg_stat_activity holds an active backend under the job's
 // application name, checked before the 'Paused' branch, so a run mid-flight when alter_job
-// unschedules it still reads 'Running'. `last_run_status` is NULL during a run; it is read too so
-// a version reporting the run there is honoured. A job counts as running when EITHER says so.
+// unschedules it still reads 'Running'. `last_run_status` is NULL during a run but is read too in
+// case a version reports the run there. A job counts as running when either says so.
 const jobRunningSelect = `SELECT job_status, last_run_status FROM timescaledb_information.job_stats WHERE job_id = $1`
 
 // JobRunning reports whether the background job's proc is executing right

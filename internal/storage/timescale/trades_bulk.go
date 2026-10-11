@@ -24,10 +24,10 @@ import (
 // [Store.BulkBackfillTrades] is the BACKFILL-ONLY twin of
 // [Store.BatchInsertTrades]; only the latter is on the live ingest path.
 //
-// Landing into a COMPRESSED chunk is slower (PK enforced against compressed data), and `usd_volume`
-// resolution costs more than the write: on a cache miss one to four serial `prices_1m` round trips
-// per row ([VWAPUSDFXResolver]). So the win is concurrency: resolve through a bounded worker pool,
-// then land rows through parallel binary COPY streams over DISJOINT conflict-key partitions.
+// Writes into COMPRESSED chunks are slow (PK enforced against compressed data) and `usd_volume`
+// resolution costs more: up to four serial `prices_1m` round trips per row on a cache miss
+// ([VWAPUSDFXResolver]). So resolve through a bounded worker pool, then land rows through
+// parallel binary COPY streams over DISJOINT conflict-key partitions.
 //
 // COPY has no conflict handling (a duplicate PK aborts the stream), so it is only safe on a range
 // PROVEN empty; otherwise this FALLS BACK to the live writer, whose ON CONFLICT ... DO UPDATE is
@@ -36,9 +36,8 @@ import (
 // tradeBulkColumns is EXACTLY the column list [Store.BatchInsertTrades] and [Store.InsertTrade]
 // write, in the same order, so a row landed by either path is byte-identical.
 //
-// `ingested_at` is absent (the column default fires), and so are `routed_via` and `signer`:
-// neither insert path writes them. Their own sweepers (routed_via.go, signer.go) back-fill from
-// stored rows, so a bulk-loaded row is picked up like an upserted one.
+// `ingested_at` (column default), `routed_via` and `signer` are absent: neither insert path writes
+// them, and their sweepers (routed_via.go, signer.go) back-fill from stored rows.
 var tradeBulkColumns = []string{
 	"source", "ledger", "tx_hash", "op_index", "ts",
 	"base_asset", "quote_asset",
@@ -73,11 +72,10 @@ type BulkBackfillOptions struct {
 	// MaxTuplesDecompressedPerDML, when > 0, is applied as
 	// `SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction` in each COPY transaction.
 	//
-	// A knob, not a default: a provably-empty range should decompress nothing, but a `trades` chunk
-	// is 7 days wide and can hold this source's rows OUTSIDE the backfilled ledger window, so
-	// TimescaleDB may still decompress overlapping segments to enforce the PK. If the server cap is
-	// hit the COPY errors and the writer falls back to the upsert path; raising the cap here is
-	// the lever for pushing a stubborn window through instead.
+	// A knob, not a default: a `trades` chunk is 7 days wide and can hold this source's rows
+	// OUTSIDE the backfilled window, so TimescaleDB may still decompress overlapping segments to
+	// enforce the PK. If the server cap is hit the COPY errors and the writer falls back to the
+	// upsert path; raising the cap here pushes a stubborn window through instead.
 	MaxTuplesDecompressedPerDML int
 }
 
@@ -284,11 +282,10 @@ func (s *Store) resolveBulkUSDVolumes(ctx context.Context, rows []canonical.Trad
 	out := make([]sql.NullString, len(rows))
 	errAt := make([]error, len(rows))
 
-	// An unrecovered panic in ANY goroutine kills the process; a WaitGroup join does not protect
-	// it. But merely CONTAINING a panic would be worse: rows the dead worker never reached keep
-	// out[i]'s zero value (a NULL usd_volume) and errAt[i] stays nil, so the backfill would write
-	// a silently under-valued batch and report success. Recovery and failure record therefore
-	// land together: a panicked resolve fails the whole call.
+	// An unrecovered panic in any goroutine kills the process, but merely swallowing it is worse:
+	// rows the dead worker never reached keep a NULL usd_volume with errAt[i] nil, so the backfill
+	// would write a silently under-valued batch and report success. Recovery and failure record
+	// therefore land together: a panicked resolve fails the whole call.
 	var panicked panicRecord
 	var wg sync.WaitGroup
 	next := make(chan int, workers)

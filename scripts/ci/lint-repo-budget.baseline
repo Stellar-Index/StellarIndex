@@ -20,5 +20,4 @@ go-lines internal/obs/metrics.go 5981
 go-lines internal/pipeline/sink.go 2687
 go-lines internal/storage/clickhouse/explorer_reader.go 3145
 go-lines internal/storage/timescale/aggregates.go 2644
-go-lines internal/storage/timescale/asset_catalogue.go 2414
 go-lines pkg/client/types.go 2487

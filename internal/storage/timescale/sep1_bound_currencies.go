@@ -70,9 +70,9 @@ type Sep1BoundCensus struct {
 	// payload: a live failure streak (sep1_consecutive_failures > 0) and a NULL sep1_payload, the
 	// predicate [Store.IssuerSep1Unreachable] serves per asset.
 	//
-	// It exists because IssuersWithHomeDomain - IssuersWithPayload reads as an unfetched backlog
-	// when nearly all of it is dead, parked or non-SEP-1 domains already tried. The reason a
-	// reached domain served nothing (404, DNS, TLS, undecodable) is not recorded.
+	// Without it, IssuersWithHomeDomain - IssuersWithPayload reads as an unfetched backlog when
+	// nearly all of it is dead, parked or non-SEP-1 domains already tried. The reason a reached
+	// domain served nothing (404, DNS, TLS, undecodable) is not recorded.
 	IssuersFetchedWithoutPayload int
 	// IssuersPayloadStale counts payloads not fetched within [Sep1AttestationMaxAge], or of unknown
 	// fetch time. They are not read: a long-silent domain no longer attests to its last document.
@@ -123,9 +123,9 @@ func (c *Sep1BoundCensus) add(o Sep1BoundCensus) {
 
 // Check returns the reason the census does not balance, or "" when it does.
 //
-// Exported because the API declares its accounting UNBALANCED on the wire when this fails, rather
-// than serve numbers that cannot be reconciled. It catches what stage-by-stage published
-// arithmetic cannot: a stage clamped to zero for presentation would hide an inconsistent census.
+// Exported because the API marks its accounting UNBALANCED on the wire when this fails rather
+// than serve numbers that cannot be reconciled. A stage clamped to zero for presentation would
+// hide an inconsistent census that per-stage arithmetic alone cannot catch.
 func (c Sep1BoundCensus) Check() string {
 	if got := c.IssuersPayloadStale + c.IssuersPayloadUnreadable + c.IssuersDeclaringNothing + c.IssuersDeclaring; got != c.IssuersWithPayload {
 		return fmt.Sprintf("issuer stages sum to %d, not IssuersWithPayload %d", got, c.IssuersWithPayload)
@@ -171,9 +171,9 @@ func (s *Store) BoundSep1Currencies(ctx context.Context, keep Sep1CurrencyFilter
 	// The population upstream of this scan; an issuer with no home_domain can serve no toml.
 	//
 	// The second count separates our backlog from a domain that WAS reached and served nothing
-	// storable. It reads the failure streak rather than sep1_resolved_at, which a systemic-outage
-	// unwind leaves stamped on rows that never failed (see [Store.IssuerSep1Unreachable]).
-	// Both counts come off one aggregate so they describe one moment.
+	// storable. It reads the failure streak, not sep1_resolved_at, which an outage unwind leaves
+	// stamped on rows that never failed (see [Store.IssuerSep1Unreachable]). Both counts come off
+	// one aggregate so they describe one moment.
 	const popQ = `SELECT count(*) FILTER (WHERE home_domain IS NOT NULL AND btrim(home_domain) <> ''),
 	                     count(*) FILTER (WHERE home_domain IS NOT NULL AND btrim(home_domain) <> ''
 	                                        AND COALESCE(sep1_consecutive_failures, 0) > 0

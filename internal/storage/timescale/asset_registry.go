@@ -3,16 +3,13 @@
 //
 // Two observation sources feed it:
 //
-//   - TRADES, from the indexer hot path ([Store.registerClassicAssetSeen], called
-//     by InsertTrade / BatchInsertTrades). Advances the trade provenance columns
-//     and `observation_count`.
-//   - TRUSTLINE HOLDINGS, from the ClickHouse lake ([Store.RegisterClassicAssetsHeld],
-//     called by `stellarindex-ops asset-registry-backfill`). Advances the
-//     holding provenance columns and nothing else.
+//   - TRADES, from the indexer hot path ([Store.registerClassicAssetSeen]). Advances the trade
+//     provenance columns and `observation_count`.
+//   - TRUSTLINE HOLDINGS, from the ClickHouse lake ([Store.RegisterClassicAssetsHeld], called by
+//     `stellarindex-ops asset-registry-backfill`). Advances the holding provenance columns only.
 //
-// The ops job owns NO SQL against either table: it hands lake observations to this writer, so the
-// second source does not become a second writer with its own conflict clause and idea of
-// `observation_count`.
+// The ops job owns no SQL against either table, so the second source is not a second writer with
+// its own conflict clause and idea of `observation_count`.
 //
 // Both sources are idempotent and MONOTONE: LEAST on the first-seen pair, GREATEST on the
 // last-seen pair, and only the trade source touches the counter, so re-running over covered
@@ -30,11 +27,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// assetRegistryDedupeTTL throttles per-asset upserts so `last_seen_*` + `observation_count` keep
-// advancing while DB pressure stays bounded. A permanent seen-set would freeze the row at first
-// observation; a TTL caps the rate to one upsert per asset per window while the row still
-// advances under sustained trading. 60 s keeps the hot path off the registry table and the
-// "last seen" column within a minute of activity.
+// assetRegistryDedupeTTL caps upserts to one per asset per window. A permanent seen-set would
+// freeze `last_seen_*` and `observation_count` at first observation; 60 s keeps the hot path off
+// the registry table while "last seen" stays within a minute of activity.
 const assetRegistryDedupeTTL = 60 * time.Second
 
 // assetRegistryDedupe / issuerRegistryDedupe live on [Store], not at package scope, so the cache
@@ -154,12 +149,10 @@ func (s *Store) lowersCachedMinLedger(assetID string, minLedger uint32) bool {
 	return ok && minLedger < prev
 }
 
-// ResetAssetRegistryDedupeForTest clears this Store's dedupe cache ([Store.registerClassicAssetSeen])
-// to simulate a process restart between a trade insert and its replay. The duplicate-replay
-// integration test asserts `observation_count` does NOT advance on replay, because the
-// [Store.InsertTrade] `RowsAffected == 0` guard short-circuits the hook even with a cold cache;
-// the reset isolates that guard from the TTL cache that would otherwise mask a regression.
-// Production code never calls this.
+// ResetAssetRegistryDedupeForTest clears the dedupe cache to simulate a restart between a trade
+// insert and its replay. The replay test asserts `observation_count` does NOT advance, because the
+// [Store.InsertTrade] `RowsAffected == 0` guard short-circuits the hook even with a cold cache; the
+// reset keeps the TTL cache from masking a regression in that guard. Test-only.
 func (s *Store) ResetAssetRegistryDedupeForTest() {
 	s.assetRegistryDedupe.Range(func(k, _ any) bool {
 		s.assetRegistryDedupe.Delete(k)
@@ -265,16 +258,13 @@ type ClassicAssetHolding struct {
 // `classic_assets` and `issuers` rows when none exist (the second source; see the file header).
 // What it does NOT do is load-bearing:
 //
-//   - It never touches observation_count, which counts TRADE observations only,
-//     so the explorer "Observations" column, the default listing rank and the
-//     scam-triage sweep keep their meaning. A row created here starts at 0.
-//   - It never touches first_trade_* / last_trade_*, so "last traded" stays NULL
-//     for an asset that has never traded.
-//   - It never touches slug: a slug is a public URL, and ON CONFLICT keeps the
-//     existing one.
-//   - It does not populate the [Store] dedupe caches, which keep the indexer hot
-//     path off this table; a bulk walk seeding them would suppress the next
-//     trade's observation_count increment.
+//   - It never touches observation_count (trade observations only), so the explorer column,
+//     listing rank and scam-triage sweep keep their meaning. A row created here starts at 0.
+//   - It never touches first_trade_* / last_trade_*, so "last traded" stays NULL for an asset
+//     that has never traded.
+//   - It never touches slug: a slug is a public URL, and ON CONFLICT keeps the existing one.
+//   - It does not populate the [Store] dedupe caches; a bulk walk seeding them would suppress the
+//     next trade's observation_count increment.
 //
 // Returns the asset and issuer rows the statement reports as affected. Postgres counts an ON
 // CONFLICT DO UPDATE row whether or not a value changed, so the asset figure is "rows considered".
@@ -350,11 +340,9 @@ func normaliseHoldingBracket(o ClassicAssetHolding) ClassicAssetHolding {
 // insertIssuersBatch is the batch form of [Store.registerIssuerSeen]: g_strkey only, ON CONFLICT
 // DO NOTHING, the rest left to the AccountEntry observer and SEP-1 fetcher.
 //
-// These rows are the point of the holdings path for the RWA surface. `issuers` is written ONLY by
-// this writer, so an issuer whose assets are held but never traded would never reach
-// `issuer-enrich`, get a home_domain, enter IssuersNeedingSep1Refresh or get a sep1_payload, and
-// BoundSep1Currencies (the RWA membership build's only input) selects WHERE sep1_payload IS NOT
-// NULL.
+// The RWA surface needs these rows: `issuers` is written only here, so an issuer whose assets are
+// held but never traded would never get a home_domain or sep1_payload, and BoundSep1Currencies
+// (the RWA membership build's only input) selects WHERE sep1_payload IS NOT NULL.
 func (s *Store) insertIssuersBatch(ctx context.Context, gStrkeys []any) (int64, error) {
 	if len(gStrkeys) == 0 {
 		return 0, nil

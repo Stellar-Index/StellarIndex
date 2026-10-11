@@ -71,8 +71,8 @@ const earliestBucketStoredSQL = `
 // [Store.EarliestBucketAsStored]; the fiat-quoted /v1/ohlc series must use
 // [Store.EarliestBucketLiteralQuote].
 //
-// `to` must be strictly after `from` (same guard as [Store.OHLCSeries]). Returns (zero, false, nil)
-// when the pair has no bucket in the window.
+// `to` must be strictly after `from`. Returns (zero, false, nil) when the pair has no bucket in
+// the window.
 func (s *Store) EarliestBucket(
 	ctx context.Context,
 	p canonical.Pair,
@@ -87,8 +87,8 @@ func (s *Store) EarliestBucket(
 //
 // /v1/history is served by [Store.TradesInRangeAfter], which reads one stored orientation, so a
 // market recorded only as USDC/AQUA answers base=AQUA&quote=USDC with an empty page. A floor
-// folded across both orientations would claim coverage for rows the page can never return; the
-// floor must span exactly what the serving read spans.
+// folded across both orientations would claim coverage the page can never return; the floor must
+// span exactly what the serving read spans.
 func (s *Store) EarliestBucketAsStored(
 	ctx context.Context,
 	p canonical.Pair,
@@ -102,11 +102,10 @@ func (s *Store) EarliestBucketAsStored(
 // leg only; the base leg and both stored directions are still folded.
 //
 // The fiat-quoted /v1/ohlc series reads each USD-pegged constituent under one quote spelling and
-// [Store.OHLCSeries] never folds a second one, so a peg's SAC wrapper is unreachable from that
-// surface; a floor folded across the quote family would claim bars the series can never return.
-// The base leg keeps its fold because the combine enumerates every base spelling.
-//
-// The narrowing is in the bound array, so it shares one statement text with [Store.EarliestBucket].
+// [Store.OHLCSeries] never folds a second one, so a floor folded across the quote family would
+// claim bars the series can never return. The base leg keeps its fold because the combine
+// enumerates every base spelling. The narrowing is in the bound array, so it shares one statement
+// text with [Store.EarliestBucket].
 func (s *Store) EarliestBucketLiteralQuote(
 	ctx context.Context,
 	p canonical.Pair,

@@ -235,8 +235,7 @@ const (
 // ([restampDecide]) with this tier's gate.
 //
 // `anchor` is injected so the rules are testable without a live prices_1m; production passes a
-// closure over [usdVolumeViaXLMBaseAnchor], so the stored number is the one the live insert path
-// computes for the same row.
+// closure over [usdVolumeViaXLMBaseAnchor], so the stored number matches the live insert path.
 func xlmBaseRestampDecide(
 	row xlmBaseRestampScan,
 	spec *USDVolumeQuoteSpec,
@@ -255,11 +254,9 @@ func xlmBaseRestampDecide(
 // would rewrite, plus the disposition of every row it would not.
 //
 // READ-ONLY: it is the whole dry run; [Store.ApplyXLMBaseUSDVolumeRestamp] consumes the plan
-// verbatim.
-//
-// Requires the store's USD-volume resolution ([InstallUSDVolumeResolution]): without a resolver
-// the anchor declines every row, a configuration error dressed as a finding. Refused up front,
-// like [Store.reDeriveNullVolumeGuard].
+// verbatim. It requires the store's USD-volume resolution ([InstallUSDVolumeResolution]): without a
+// resolver the anchor declines every row, a configuration error dressed as a finding, so it is
+// refused up front like [Store.reDeriveNullVolumeGuard].
 func (s *Store) PlanXLMBaseUSDVolumeRestamp(ctx context.Context, p XLMBaseRestampParams) (*XLMBaseRestampPlan, error) {
 	return s.planRestampTier(ctx, p, restampTierScan{
 		Tier:    "xlm-base",
@@ -385,10 +382,9 @@ func (s XLMBaseRestampStats) Residual() int64 {
 const xlmBaseRestampApplyBatch = 2000
 
 // xlmBaseRestampMaxBatch caps the rows per UPDATE transaction, whatever the operator asked for.
-// The statement binds [xlmBaseRestampArgsPerRow] placeholders per row plus 3 fixed ones (the
-// generation and the two `ts` bounds), and the extended protocol carries at most 65,535
-// parameters: pgx refuses the Exec above that, mid-run. The cap turns an over-large batch into one
-// more transaction instead of an abort.
+// The statement binds [xlmBaseRestampArgsPerRow] placeholders per row plus 3 fixed ones, and the
+// extended protocol carries at most 65,535 parameters: above that pgx refuses the Exec mid-run.
+// The cap turns an over-large batch into one more transaction instead of an abort.
 const xlmBaseRestampMaxBatch = (65535 - 3) / xlmBaseRestampArgsPerRow
 
 // xlmBaseRestampArgsPerRow is the placeholders one row binds in the batch
@@ -449,7 +445,7 @@ func (s *Store) applyXLMBaseRestampBatches(ctx context.Context, plan *XLMBaseRes
 //
 // `trades` is mostly compressed chunks. An UPDATE that constrains `ts` only through a join clause
 // (`t.ts = v.ts`) cannot be pruned at planning time: every chunk becomes a result relation and is
-// decompressed wholesale (a 23-row UPDATE once wrote ~270 GB of WAL).
+// decompressed wholesale, producing enormous WAL for a handful of rows.
 //
 // The join already forces every matched `ts` into the batch's values, so bounding `t.ts` by their
 // min and max excludes no row, and the planner can prune to one result relation.
@@ -527,14 +523,13 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 	})
 }
 
-// MaxTradeLedgerInRange returns the highest on-chain ledger sequence
-// carried by any trade in [from, to), and ok=false when the range holds
-// no on-chain rows at all.
+// MaxTradeLedgerInRange returns the highest on-chain ledger sequence carried by any trade in
+// [from, to), and ok=false when the range holds no on-chain rows.
 //
 // It serves the live-overlap guard: a restamp may only rewrite history the live ingest tail has
 // passed, and the tail's position is a LEDGER (the `ledgerstream` cursor), not a timestamp.
-// Off-chain rows carry `ledger = 0` and are excluded; they have no place on the ledger axis.
-// Callers scope this to ONE day so the scan stays inside a single chunk.
+// Off-chain rows carry `ledger = 0` and are excluded. Callers scope this to ONE day so the scan
+// stays inside a single chunk.
 func (s *Store) MaxTradeLedgerInRange(ctx context.Context, from, to time.Time) (uint32, bool, error) {
 	const q = `SELECT max(ledger) FROM trades WHERE ts >= $1 AND ts < $2 AND ledger > 0`
 	var maxLedger sql.NullInt64

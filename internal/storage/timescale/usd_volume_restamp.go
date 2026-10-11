@@ -14,32 +14,26 @@ import (
 // [usd_volume_reconcile.go] is the READ side of the exact-tier identity
 // (`usd_volume = pegged_leg / 10^decimals`); this file is the WRITE side:
 //
-//   - tier and scale come from [ClassifyUSDVolumeTier], the SAME classifier the
-//     verifier uses (lock-stepped by TestClassifyUSDVolumeTier_TracksTheWaterfall);
-//     the tool never picks a leg or scale on its own;
+//   - tier and scale come from [ClassifyUSDVolumeTier], the SAME classifier the verifier uses
+//     (lock-stepped by TestClassifyUSDVolumeTier_TracksTheWaterfall);
 //   - each corrected row gets the run's `derive_generation`, guarded by
-//     `derive_generation <= $gen` like the InsertTrade upsert, so neither a live
-//     gen-0 replay nor an older re-derive can overwrite a correction;
-//   - a row that ALREADY satisfies the identity is untouched, so re-running a
-//     window is idempotent;
+//     `derive_generation <= $gen` like the InsertTrade upsert, so neither a live gen-0 replay nor
+//     an older re-derive can overwrite a correction;
+//   - a row that ALREADY satisfies the identity is untouched, so re-running a window is idempotent;
 //   - every rewrite first copies the prior usd_volume and derive_generation into
-//     `usd_volume_restamp_log` (migration 0175) in the same transaction, so a bad
-//     run can be undone;
+//     `usd_volume_restamp_log` in the same transaction, so a bad run can be undone;
 //   - NULL rows are left alone unless FillNull is set (filling is a COVERAGE change).
 //
-// Estimated tiers are OUT of scope here: their value is not reproducible from
-// the row alone (see the usd-volume-rederive runbook in docs/operations/).
+// Estimated tiers are OUT of scope: their value is not reproducible from the row alone.
 
-// ExactTierUSDVolume renders the exact-tier identity for one row: the
-// pegged leg divided by 10^decimals, rendered EXACTLY as [tradeUSDVolume]
-// renders it (`big.Rat.FloatString(8)`), so a restamped value is
-// byte-identical to what the insert path would have written.
+// ExactTierUSDVolume renders the exact-tier identity for one row: the pegged leg divided by
+// 10^decimals, rendered EXACTLY as [tradeUSDVolume] does (`big.Rat.FloatString(8)`), so a restamped
+// value is byte-identical to what the insert path would have written.
 //
-// ok=false when the row is one the waterfall would NOT value: a
-// non-exact tier, an unparseable amount, a non-positive quote (the
-// waterfall bails before any tier when quote_amount ≤ 0) or a non-positive
-// pegged leg. Callers must leave such rows untouched — writing a value the
-// insert path would have declined is a different defect, not a repair.
+// ok=false when the waterfall would NOT value the row: a non-exact tier, an unparseable amount, a
+// non-positive quote (the waterfall bails before any tier when quote_amount ≤ 0) or a
+// non-positive pegged leg. Callers must leave such rows untouched; writing a value the insert path
+// would have declined is a different defect, not a repair.
 func ExactTierUSDVolume(tier USDVolumeTier, decimals int, baseAmount, quoteAmount string) (string, bool) {
 	if !tier.Exact() {
 		return "", false
@@ -59,17 +53,14 @@ func ExactTierUSDVolume(tier USDVolumeTier, decimals int, baseAmount, quoteAmoun
 	return new(big.Rat).SetFrac(leg, scaleDenominator(decimals)).FloatString(usdVolumeRenderDecimals), true
 }
 
-// USDVolumeRestampDecision is the per-row differential: given the stored
-// usd_volume (nil = SQL NULL) and the row's legs, it returns the value the
-// identity says the row should carry and whether writing it would CHANGE
-// the row.
+// USDVolumeRestampDecision is the per-row differential: given the stored usd_volume (nil = SQL
+// NULL) and the row's legs, it returns the value the identity says the row should carry and
+// whether writing it would CHANGE the row.
 //
-// Comparison is by NUMERIC value, not by string: Postgres may render the
-// same number as "1.5" or "1.50000000", and neither is a violation.
-// A NULL stored value is a change only when fillNull is set.
+// Comparison is by NUMERIC value, not by string: Postgres may render "1.5" or "1.50000000", and
+// neither is a violation. A NULL stored value is a change only when fillNull is set.
 //
-// ok=false mirrors [ExactTierUSDVolume]: the row is not restampable and
-// must be left alone.
+// ok=false mirrors [ExactTierUSDVolume]: the row is not restampable and must be left alone.
 func USDVolumeRestampDecision(stored *string, tier USDVolumeTier, decimals int, baseAmount, quoteAmount string, fillNull bool) (want string, changed, ok bool) {
 	want, ok = ExactTierUSDVolume(tier, decimals, baseAmount, quoteAmount)
 	if !ok {
@@ -116,16 +107,13 @@ type USDVolumeRestampParams struct {
 	Generation int64
 }
 
-// exactTierRestampScope renders the group VALUES relation and the WHERE
-// clause shared by the dry-run count and the apply UPDATE, so the two can
-// never disagree about which rows are candidates (the SELECT joins the
-// relation in its FROM list; the UPDATE takes it as its FROM clause).
-// `$1..$3` are from/to/generation; each group contributes its own
-// placeholders. The pegged-leg expression and the 10^decimals
-// denominator are decided in Go ([USDVolumeRestampGroup]) and only
-// EVALUATED in SQL — the arithmetic is `round(leg / denom, 8)`, the SQL
-// spelling of `big.Rat.FloatString(8)` (both round half away from zero;
-// for decimals ≤ 8 the quotient is exact and no rounding occurs at all).
+// exactTierRestampScope renders the group VALUES relation and the WHERE clause shared by the
+// dry-run count and the apply UPDATE, so the two can never disagree about which rows are
+// candidates. `$1..$3` are from/to/generation; each group contributes its own placeholders. The
+// pegged-leg expression and the 10^decimals denominator are decided in Go
+// ([USDVolumeRestampGroup]) and only EVALUATED in SQL: `round(leg / denom, 8)` is the SQL spelling
+// of `big.Rat.FloatString(8)` (both round half away from zero; for decimals ≤ 8 the quotient is
+// exact and no rounding occurs).
 func exactTierRestampScope(p USDVolumeRestampParams) (groupRel, where, identity string, args []any, err error) {
 	if len(p.Groups) == 0 {
 		return "", "", "", nil, fmt.Errorf("timescale: usd-volume restamp: no groups")
@@ -185,12 +173,10 @@ func (s *Store) CountUSDVolumeRestampCandidates(ctx context.Context, p USDVolume
 	return n, nil
 }
 
-// RestampExactTierUSDVolume applies the identity to every candidate row in
-// the window and returns the number of rows rewritten. Rows that already
-// satisfy the identity are not touched (value or derive_generation). The
-// window is caller-sliced (see [USDVolumeRestampParams.From]), so the
-// transaction stays one bounded UPDATE; its before-image and transaction
-// discipline are [Store.restampTradesUSDVolume]'s.
+// RestampExactTierUSDVolume applies the identity to every candidate row in the window and returns
+// the number of rows rewritten; rows that already satisfy it are not touched. The window is
+// caller-sliced (see [USDVolumeRestampParams.From]), so the transaction stays one bounded UPDATE;
+// its before-image and transaction discipline are [Store.restampTradesUSDVolume]'s.
 func (s *Store) RestampExactTierUSDVolume(ctx context.Context, p USDVolumeRestampParams) (int64, error) {
 	groupRel, where, identity, args, err := exactTierRestampScope(p)
 	if err != nil {
@@ -203,11 +189,9 @@ func (s *Store) RestampExactTierUSDVolume(ctx context.Context, p USDVolumeRestam
 	})
 }
 
-// usdVolumeRestampWrite is one in-place rewrite of `trades.usd_volume`:
-// `rel` is joined to `trades t`, `where` selects the rows, `value` is the
-// new usd_volume expression and `gen` the placeholder carrying the run's
-// derive_generation. Every fragment is code-built by the caller and every
-// value travels in args.
+// usdVolumeRestampWrite is one in-place rewrite of `trades.usd_volume`: `rel` is joined to
+// `trades t`, `where` selects the rows, `value` is the new usd_volume expression and `gen` the
+// placeholder carrying the run's derive_generation. Fragments are code-built; values travel in args.
 type usdVolumeRestampWrite struct {
 	label, scope           string
 	rel, where, value, gen string
@@ -230,21 +214,19 @@ func (w usdVolumeRestampWrite) statements() (logStmt, updateStmt string) {
 // `usd_volume_restamp_log`, rewrites the rows, and refuses to commit unless the
 // two row counts agree.
 //
-// REPEATABLE READ, because the before-image and the rewrite are two statements:
-// at READ COMMITTED a writer committing between them would leave the log holding
-// a value the UPDATE never overwrote. A row changed under the snapshot fails the
-// UPDATE with a serialization error that rolls the log back too.
+// REPEATABLE READ, because the before-image and the rewrite are two statements: at READ COMMITTED
+// a writer committing between them would leave the log holding a value the UPDATE never
+// overwrote. A row changed under the snapshot fails the UPDATE with a serialization error that
+// rolls the log back too.
 //
 // The transaction lifts the decompression cap
-// (`timescaledb.max_tuples_decompressed_per_dml_transaction = 0`): history lives
-// in COMPRESSED chunks and the default 100k-tuple cap aborts a single day's DML
-// (one measured day needed 265k). It also pins a CUSTOM plan, since the `ts`
-// bounds are what let the planner prune chunks and a GENERIC plan cannot know
-// them ([Store.applyXLMBaseRestampBatch] carries the measurement).
+// (`timescaledb.max_tuples_decompressed_per_dml_transaction = 0`): history lives in COMPRESSED
+// chunks and the default 100k-tuple cap aborts a single day's DML. It also pins a CUSTOM plan,
+// since the `ts` bounds are what let the planner prune chunks and a GENERIC plan cannot know them
+// ([Store.applyXLMBaseRestampBatch] carries the measurement).
 //
-// `SET LOCAL`, because POSTGRES scopes it, not the driver: a session `SET`
-// outlives the call, as pgx v5's stdlib adapter does not reset it on reuse, so
-// the lifted cap would ride the pooled connection and uncap later DML.
+// `SET LOCAL`, because POSTGRES scopes it, not the driver: a session `SET` would ride the pooled
+// connection (pgx v5's stdlib adapter does not reset it on reuse) and uncap later DML.
 func (s *Store) restampTradesUSDVolume(ctx context.Context, w usdVolumeRestampWrite) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {
