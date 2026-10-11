@@ -395,6 +395,9 @@ type PriceSnapshot struct {
 	// usdLeg is set only on an ADR-0051 cross ([Server.tryUSDAnchoredFiatCross]).
 	usdLeg *usdLegFacts
 
+	// cryptoCross is set only on a crypto-quoted cross ([Server.closedUSDAnchoredCryptoCross]).
+	cryptoCross *cryptoCrossLegs
+
 	// displacedBook marks an ADR-0053 basis serve: the pair's own book was read and replaced, so its
 	// pair-keyed confidence and flags describe a value that is not on the wire.
 	displacedBook bool
@@ -419,6 +422,9 @@ type usdLegFacts struct {
 func marketSingleSource(snap PriceSnapshot, sources []string) bool {
 	if leg := snap.usdLeg; leg != nil {
 		return len(leg.sources) == 1
+	}
+	if c := snap.cryptoCross; c != nil {
+		return len(c.asset.sources) == 1 || len(c.quote.sources) == 1
 	}
 	return len(sources) == 1
 }
@@ -1092,12 +1098,16 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 	if ok {
 		return fallbackResult{snap: snap, sources: srcs, triangulated: true, ok: true, stale: true}
 	}
-	// Last, fiat crosses: fiat/fiat, or USD-anchored for a non-fiat asset quoted in a fiat with no
-	// market (ADR-0051). A direct book is weighed by [Server.preferUSDAnchoredBasis].
+	// Last, crosses: fiat/fiat, USD-anchored for a non-fiat asset quoted in a fiat with no market
+	// (ADR-0051), or through USD for one quoted in a crypto ticker. A direct book is weighed by
+	// [Server.preferUSDAnchoredBasis].
 	var cross fallbackResult
-	if asset.Type == canonical.AssetFiat {
+	switch {
+	case asset.Type == canonical.AssetFiat:
 		cross = s.closedFiatCross(ctx, asset, quote)
-	} else {
+	case quote.Type == canonical.AssetCrypto:
+		cross = s.closedUSDAnchoredCryptoCross(ctx, asset, quote)
+	default:
 		cross = s.closedUSDAnchoredFiatCross(ctx, asset, quote)
 	}
 	if cross.ok || cross.err != nil || cross.withheld != "" {
@@ -1151,39 +1161,6 @@ func fxBindFailure(err error) (fallbackResult, bool) {
 		return fallbackResult{withheld: PriceWithheldFXLeg}, true
 	}
 	return fallbackResult{err: err}, true
-}
-
-// closedUSDAnchoredFiatCross prices a NON-fiat asset in a fiat for the closed surfaces:
-// price(asset, USD) x the fixing binding at the USD leg's bucket end (ADR-0051, ADR-0018), so the
-// answer never depends on when or where it is read. The USD leg resolves first so a withheld leg
-// propagates; multiplying a withheld price by a rate would publish it through an ungated door.
-func (s *Server) closedUSDAnchoredFiatCross(ctx context.Context, asset, quote canonical.Asset) fallbackResult {
-	if asset.Type == canonical.AssetFiat || quote.Type != canonical.AssetFiat || quote.Code == "USD" {
-		return fallbackResult{}
-	}
-	usdSnap, usdSources, usdServed, usdStale, ok, withheld := s.resolveUSDLeg(ctx, asset)
-	if withheld {
-		return fallbackResult{withheld: PriceWithheldUnattributed}
-	}
-	if !ok || s.fxFixings == nil || isDeclaredPeg(usdSnap) {
-		return fallbackResult{}
-	}
-	e := time.Time(usdSnap.ObservedAt)
-	bound, err := s.bindFXFixings(ctx, []string{quote.Code}, e)
-	if miss, done := fxBindFailure(err); done {
-		return miss
-	}
-	b := bound[quote.Code]
-	out, ok := convertAtFixing(usdSnap, usdSources, quote, b)
-	if !ok {
-		return fallbackResult{withheld: PriceWithheldFXLeg}
-	}
-	out.AssetID = asset.String()
-	out.usdLeg = &usdLegFacts{sources: usdSources, served: usdServed}
-	return fallbackResult{
-		snap: out, sources: appendFXSource(usdSources, b.Source), triangulated: true, ok: true,
-		stale: usdStale || fxFixingStale(e, b),
-	}
 }
 
 // basisMinUSDVenues is how many venues the USD leg needs to displace a single-venue fiat book.
@@ -1389,6 +1366,12 @@ func (s *Server) resolveUSDLeg(
 	case errors.Is(err, ErrPriceWithheld):
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, true
 	case err == nil:
+		// A fallback is served without the handler's normalization, so the raw bucket scales here.
+		base := served
+		if base.IsZero() {
+			base = asset
+		}
+		s.normalizeRawPriceSnapshot(&snap, base, usd)
 		return snap, sources, served, stale, true, false
 	case !errors.Is(err, ErrPriceNotFound):
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, false
@@ -2044,6 +2027,9 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 // derived fiat pair's (no aggregator writes one). A frozen leg serves its held value converted at
 // a fixing, or nothing when none is held or none binds, never the refused bucket times the rate.
 func (s *Server) resolveFrozenServeFor(r *http.Request, snap PriceSnapshot, requested, served, quote canonical.Asset) frozenResolution {
+	if c := snap.cryptoCross; c != nil {
+		return s.resolveFrozenCryptoCross(r, c, requested, quote)
+	}
 	leg := snap.usdLeg
 	if leg == nil {
 		return s.resolveFrozenServe(r, requested, served, quote)
