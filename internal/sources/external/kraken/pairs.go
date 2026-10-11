@@ -7,11 +7,9 @@ import (
 )
 
 // DefaultPairs returns the built-in Kraken symbol to canonical.Pair map: XLM against the three
-// fiats Kraken lists, two crypto anchors, and the top-cap globals against USD for cross-venue
-// VWAP coverage.
-//
-// XLM is crypto:XLM so it aligns with Binance's XLMUSDT and Reflector CEX outputs; fiats use the
-// fiat: variant. Kraken wire symbols use "/" separators ("XLM/USD", not "XLMUSD").
+// fiats Kraken lists, two crypto anchors, and the top-cap globals against USD for cross-venue VWAP
+// coverage. XLM is crypto:XLM so it aligns with Binance's XLMUSDT and Reflector CEX outputs; fiats
+// use the fiat: variant. Kraken wire symbols use "/" ("XLM/USD", not "XLMUSD").
 func DefaultPairs() (map[string]canonical.Pair, error) {
 	xlm, err := canonical.NewCryptoAsset("XLM")
 	if err != nil {

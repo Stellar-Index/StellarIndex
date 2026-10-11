@@ -10,10 +10,9 @@
 //
 // Each row is stamped with the id's upstream last_updated_at, never our poll time: the aggregator
 // price tier, price_as_of and the oracle-stale alert read OracleUpdate.Timestamp as "when this
-// price was true", so a poll-time stamp would present a frozen cache as fresh.
-//
-// CoinGecko uses slug IDs ("stellar", "bitcoin"), not tickers. A small allow-listed ticker to id
-// table covers our pair set; unknown tickers skip per-entry.
+// price was true", so a poll-time stamp would present a frozen cache as fresh. CoinGecko uses
+// slug IDs ("stellar", "bitcoin"), so an allow-listed ticker-to-id table covers our pair set and
+// unknown tickers skip per-entry.
 package coingecko
 
 import (
@@ -202,11 +201,8 @@ func liftLastUpdated(prices simplePriceResponse) map[string]time.Time {
 // emits one OracleUpdate per (ticker, currency) hit.
 //
 // On HTTP 429 (or 403, which CoinGecko returns for demo-key-required paths) the poller skips calls
-// until `nextAllowedAt` rather than hammer the venue with refusals; see applyBackoff for the
-// cooldown length. The first successful response resets the backoff.
-//
-// Returning (nil, nil, nil) during cooldown, distinct from an error, avoids "poller error" log
-// spam for the expected cooldown case.
+// until `nextAllowedAt` rather than hammer the venue (see applyBackoff); the first success resets
+// it. Cooldown returns (nil, nil, nil), not an error, to avoid "poller error" log spam.
 func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canonical.Trade, []canonical.OracleUpdate, error) { //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitting would reduce linearity
 	if cooldownLeft := p.cooldownRemaining(); cooldownLeft > 0 {
 		return nil, nil, nil
@@ -376,10 +372,9 @@ func (p *Poller) cooldownRemaining() time.Duration {
 
 // applyBackoff arms the cooldown: max(hint, currentBackoff*2, MinBackoff), clamped to MaxBackoff.
 // The parsed Retry-After hint is a floor, not a ceiling, and the backoff still doubles on
-// consecutive 429s. Taking the hint at face value would pin the cooldown at MinBackoff, because
-// the free tier's Retry-After is consistently below it, which matches the runner's poll interval
-// and yields one 429 per minute forever; clients sharing an IP cap cannot trust the venue to
-// slow them enough. An unusually long Retry-After is still honoured.
+// consecutive 429s. The free tier's Retry-After is consistently below MinBackoff, which matches
+// the runner's poll interval, so taking it at face value would yield one 429 per minute forever.
+// An unusually long Retry-After is still honoured.
 func (p *Poller) applyBackoff(hint time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

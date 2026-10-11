@@ -62,10 +62,9 @@ func (r wasmDriftReport) drifting() int {
 
 // wasmDrift is the stellarindex-ops `wasm-drift` subcommand: every contract of a gated source with
 // an audit log must run a hash that log string-checked, because contracts upgrade in place and a
-// decoder audited against one build can silently misread the next.
-//
-// Usage: wasm-drift [-config PATH] [-ch-addr H:P] [-source NAME] [-textfile PATH].
-// Read-only; touches ClickHouse only. Exit code = drifting contracts (capped at 255).
+// decoder audited against one build can silently misread the next. Usage: wasm-drift [-config
+// PATH] [-ch-addr H:P] [-source NAME] [-textfile PATH]. Read-only; touches ClickHouse only. Exit
+// code = drifting contracts (capped at 255).
 func wasmDrift(args []string) error {
 	fs := flag.NewFlagSet("wasm-drift", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr")

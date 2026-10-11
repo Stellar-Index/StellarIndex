@@ -15,11 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// StoreChecker adapts *timescale.Store to the v1.ReadyChecker
-// interface so /readyz can include it in the dependency poll.
-//
-// Postgres is critical: every trade, aggregate and supply read hits Timescale with no fallback, so
-// Critical()==true and /readyz returns 503 when it is unreachable.
+// StoreChecker adapts *timescale.Store to v1.ReadyChecker. Postgres is critical: every trade,
+// aggregate and supply read hits Timescale with no fallback, so /readyz returns 503 when it is
+// unreachable.
 type StoreChecker struct{ S *timescale.Store }
 
 func (c StoreChecker) Name() string   { return "postgres" }
@@ -49,11 +47,10 @@ func (c SchemaChecker) SchemaMigrationVersion(ctx context.Context) (uint, bool, 
 }
 
 // RedisChecker adapts redis.UniversalClient to v1.ReadyChecker. Redis is non-critical: cache misses
-// fall back to Timescale per ADR-0007, so an outage costs latency, not correctness.
-// UniversalClient lets one adapter serve both dev single-node and the Sentinel FailoverClient.
-//
-// Critical()==false makes an outage a 200 with status="degraded" from /v1/readyz instead of a 503,
-// so HAProxy keeps the backend in service while operators see the degradation in the body.
+// fall back to Timescale per ADR-0007, so an outage costs latency, not correctness. Non-critical
+// makes an outage a 200 with status="degraded" from /v1/readyz, not a 503, so HAProxy keeps the
+// backend in service while operators see the degradation. UniversalClient lets one adapter serve
+// both dev single-node and the Sentinel FailoverClient.
 type RedisChecker struct{ RDB redis.UniversalClient }
 
 func (c RedisChecker) Name() string   { return "redis" }
@@ -93,13 +90,10 @@ func (k nonstandardDecimalsChecker) Ping(context.Context) error {
 }
 
 // ClickhouseChecker adapts *clickhouse.ExplorerReader to v1.ReadyChecker. It is non-critical: the
-// explorer/supply readers 503 on their own endpoints (/v1/ledgers, /v1/tx, /v1/assets/{id}/supply,
-// ...) when ClickHouse is down while Postgres-backed reads keep serving, so an outage should read
-// status="degraded", not drop the backend from load-balancer rotation. LakeTipLedger is the Ping
-// probe: a cheap query against the small `stellar.ledgers` table.
-//
-// `r` is nil when every boot dial in the retry window failed; the checker then still reports down
-// (see ClickhouseReadyChecks).
+// explorer/supply readers 503 on their own endpoints when ClickHouse is down while Postgres-backed
+// reads keep serving, so an outage should read status="degraded", not drop the backend from
+// rotation. LakeTipLedger is the Ping probe: a cheap query against the small `stellar.ledgers`
+// table. `r` is nil when every boot dial failed; the checker then still reports down.
 type ClickhouseChecker struct {
 	R          *clickhouse.ExplorerReader
 	DialErr    error
@@ -119,14 +113,11 @@ func (c ClickhouseChecker) Ping(ctx context.Context) error {
 // ClickhouseReadyChecks returns the readiness checkers for ClickHouse: none when
 // no address is configured, exactly one otherwise, wired or not.
 //
-// A checker registered only on boot-dial success would leave a ClickHouse that was down at startup
-// with no stellarindex_dependency_up series, so the alert (== 0, deliberately not absent()) could
-// not match while endpoints 503. One still unreachable when dialLakeReadersAtBoot's window ends
-// therefore reports down for the process's lifetime: the lake seams are never re-dialled, so a
-// Ping that went green would hide endpoints still 503ing. Only a ClickHouse that answers before
-// the last attempt (clickhouseBootDialMinAttempt) avoids this.
-//
-// No address means no lake and no dependency, so nothing is published.
+// A checker registered only on boot-dial success would leave a ClickHouse down at startup with no
+// stellarindex_dependency_up series, so the alert (== 0, deliberately not absent()) could not match
+// while endpoints 503. One still unreachable when dialLakeReadersAtBoot's window ends therefore
+// reports down for the process's lifetime: the lake seams are never re-dialled, so a Ping that
+// went green would hide endpoints still 503ing. No address means no lake, so nothing is published.
 func ClickhouseReadyChecks(addr string, er *clickhouse.ExplorerReader, dialErr error, dialBudget time.Duration) []v1.ReadyChecker {
 	if addr == "" {
 		return nil

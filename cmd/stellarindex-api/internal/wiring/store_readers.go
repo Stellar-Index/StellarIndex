@@ -28,12 +28,10 @@ func (r StoreVolumeReader) SorobanVolume24hUSDForAsset(ctx context.Context, asse
 	return r.S.SorobanVolume24hUSDForAsset(ctx, assetKey)
 }
 
-// StoreSupplyLooker adapts *timescale.Store to v1.SupplyLooker for
-// the F2-fields path on /v1/assets/{id}.
-//
-// timescale.ErrNotFound (no recorded snapshot) becomes v1.ErrSupplyNotFound, which the handler
-// treats as "unavailable for this asset" and leaves the F2 fields null. Other errors propagate
-// unchanged so the handler can log them at WARN.
+// StoreSupplyLooker adapts *timescale.Store to v1.SupplyLooker for the F2-fields path on
+// /v1/assets/{id}. timescale.ErrNotFound (no snapshot) becomes v1.ErrSupplyNotFound, which the
+// handler reads as "unavailable" and leaves the F2 fields null; other errors propagate so the
+// handler can log them at WARN.
 type StoreSupplyLooker struct{ S *timescale.Store }
 
 func (r StoreSupplyLooker) LatestSupply(ctx context.Context, assetKey string) (supply.Supply, error) {

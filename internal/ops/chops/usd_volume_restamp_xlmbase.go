@@ -18,13 +18,11 @@ import (
 
 // ─── `usd-volume-restamp -tier xlm-base` — the anchor re-derive ─────
 //
-// Unlike the exact tier (usd_volume_restamp.go), this re-derives an ESTIMATED tier, so:
-//
-//   - the value comes from usdVolumeViaXLMBaseAnchor, which the live insert calls too;
-//   - a row the anchor cannot price is reported, never guessed, as committing the defective
-//     quote-side fall-through at a high derive_generation would make it permanent;
-//   - the run is bounded, idempotent and resumable, and nothing spans a chunk;
-//   - it refuses a range the live ingest tail has not passed (checkRestampLiveOverlap).
+// Unlike the exact tier (usd_volume_restamp.go), this re-derives an ESTIMATED tier: the value
+// comes from usdVolumeViaXLMBaseAnchor (the live insert calls it too); a row the anchor cannot
+// price is reported, never guessed, since a quote-side fall-through at a high derive_generation
+// would be permanent; the run is bounded, idempotent and resumable, and nothing spans a chunk;
+// and it refuses a range the live ingest tail has not passed (checkRestampLiveOverlap).
 //
 // `-report` prints the decision block to read BEFORE authorising a production run; it writes
 // nothing and refuses -write.
@@ -221,8 +219,8 @@ func (r *xlmBaseRestampRun) summary(cfgPath string, from, to time.Time) string {
 // the bucket with SQLSTATE 22023).
 //
 // verify-usd-volume reads `trades` directly, but served volume reads aggregates whose auto-refresh
-// reaches back only days to months, so without this step the check goes green while the API keeps
-// serving pre-restamp numbers. It aliases [timescale.TradesCAGGs] because hand-kept copies drifted.
+// reaches back only days to months, so without this step the check goes green while the API
+// serves pre-restamp numbers. It aliases [timescale.TradesCAGGs] so the lists cannot drift.
 var xlmBaseRestampCAGGs = timescale.TradesCAGGs
 
 // followUp is the run's post-write block: the ordered CAGG refresh every
@@ -259,8 +257,8 @@ const xlmBaseMinRelDeltaGuidance = "\nFLAG GUIDANCE — `-min-rel-delta 0.001` i
 // volume reads continuous aggregates, which do not refresh this far back on their own.
 //
 // The window [from 00:00Z, to+1d 00:00Z) is padded by [timescale.PadRefreshWindow] to clear
-// Timescale's 2-bucket minimum. Padding re-materialises unchanged buckets cheaply, whereas a
-// rejected call leaves an operator skipping that aggregate and serving a partially stale surface.
+// Timescale's 2-bucket minimum: padding re-materialises unchanged buckets cheaply, whereas a
+// rejected call leaves a partially stale surface.
 func restampCAGGFollowUp(from, to time.Time) string {
 	lo := from.UTC().Truncate(24 * time.Hour)
 	hi := to.UTC().Truncate(24*time.Hour).AddDate(0, 0, 1)
@@ -574,13 +572,12 @@ func parseMinRelDelta(s string) (*big.Rat, error) {
 // projected-rebuild's [checkLiveCursorGuard].
 //
 // `trades.usd_volume` has one live writer, the indexer at the `ledgerstream` cursor, so a restamp
-// is legitimate only behind that cursor. If the tail is below the window's top (resync, stall,
-// rewind), the restamp's high derive_generation wins ON CONFLICT and discards the ingest value, or
-// rewrites a row the tail is about to overwrite, reporting a correction that did not survive.
+// is legitimate only behind that cursor. If the tail is below the window's top, the restamp's
+// high derive_generation wins ON CONFLICT and discards the ingest value, or rewrites a row the
+// tail is about to overwrite, reporting a correction that did not survive.
 //
-// haveLive=false (no ledgerstream cursor) is a conservative REFUSAL: an indexer that has never run
-// will walk this range. allowOverlap is the operator's explicit override, asserting the live
-// indexer will not touch the range.
+// haveLive=false (no cursor) is a conservative REFUSAL: an indexer that never ran will walk this
+// range. allowOverlap is the operator's override, asserting the indexer will not touch it.
 func checkRestampLiveOverlap(haveLive bool, liveLastLedger, windowTopLedger uint32, allowOverlap bool) error {
 	if allowOverlap {
 		return nil
@@ -609,8 +606,8 @@ func checkRestampLiveOverlap(haveLive bool, liveLastLedger, windowTopLedger uint
 // resolveWindowTopLedger finds the highest on-chain ledger the restamp
 // window can contain, for [checkRestampLiveOverlap].
 //
-// Ledger sequence is monotonic in `ts`, so the answer lives in the window's last day. Days with no
-// on-chain rows are walked back past; a window with none returns (0, nil), vacuously safe.
+// Ledger sequence is monotonic in `ts`, so the answer lives in the window's last day. Empty days
+// are walked back past; a window with no on-chain rows returns (0, nil), vacuously safe.
 func resolveWindowTopLedger(ctx context.Context, store *timescale.Store, from, to time.Time) (uint32, error) {
 	for day := to; !day.Before(from); day = day.AddDate(0, 0, -1) {
 		top, ok, err := store.MaxTradeLedgerInRange(ctx, day, day.AddDate(0, 0, 1))

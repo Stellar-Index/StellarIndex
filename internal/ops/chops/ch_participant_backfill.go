@@ -13,9 +13,8 @@ import (
 // chParticipantBackfill fills the non-source side of stellar.operation_participants for historical
 // ledgers by re-deriving from stellar.operations.body_xdr inside the lake. It shares the live
 // derivation (clickhouse.operationParticipantRows) and writes only non-source participants, since
-// source rows too would double-count each op. Windowed, resumable and idempotent
-// (ReplacingMergeTree). On r1 run it under /usr/local/sbin/run-heavy-job.sh: heavy CH load can
-// wedge the log channel.
+// source rows too would double-count each op. Windowed, resumable and idempotent; run it under
+// /usr/local/sbin/run-heavy-job.sh, as heavy CH load can wedge the log channel.
 func chParticipantBackfill(args []string) error {
 	fs := flag.NewFlagSet("ch-participant-backfill", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")

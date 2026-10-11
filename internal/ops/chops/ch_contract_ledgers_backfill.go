@@ -12,9 +12,9 @@ import (
 // activity index behind the explorer's quiet-contract events bound) from stellar.contract_events
 // history in windowed, resumable INSERT...SELECT chunks. The contract_active_ledgers_mv view covers
 // everything ingested after the DDL applies; this covers the history behind it. MUST run to
-// completion promptly after the DDL, because the reader trusts a present, non-empty index as
-// complete. Same cautions as ch-txindex-backfill: serialize, run under run-heavy-job.sh, resume
-// with the printed -from, and a bare invocation is refused (needs -from/-to or -full).
+// completion promptly after the DDL, because the reader trusts a non-empty index as complete.
+// Cautions as ch-txindex-backfill: serialize, run under run-heavy-job.sh, resume with the printed
+// -from; a bare invocation is refused (needs -from/-to or -full).
 func chContractLedgersBackfill(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-contract-ledgers-backfill")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")

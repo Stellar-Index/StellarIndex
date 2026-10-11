@@ -9,8 +9,8 @@
 // their own worker / FXQuoteWriter seam. forex ("massive" in [external.Registry]) is the ACTIVE
 // feed, run in the API binary (not the indexer); see
 // docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_feed_stale. [ecb] and
-// [exchangeratesapi] ARE Connector-framework pollers, disabled by default. ecb and [frankfurter]
-// read the same upstream through two code paths, a known and accepted duplication.
+// [exchangeratesapi] are Connector-framework pollers, disabled by default; ecb and [frankfurter]
+// read the same upstream through two code paths, an accepted duplication.
 package forex
 
 import (
@@ -68,10 +68,8 @@ func (c *Client) WithBase(base string) *Client {
 
 // LatestUSDRates returns the current USD-base rate map plus the publication date the upstream
 // stamped on the snapshot. Keys are lower-case ISO-4217 codes; values are the price of 1 USD in
-// that currency (usd to eur at 0.92 means 1 USD buys 0.92 EUR).
-//
-// Backed by /v2/aggs/grouped/.../fx/{date}: one HTTP call returns the closing aggregate for every
-// fx pair for the date, filtered here to USD-base tickers (`C:USD<TKR>`).
+// that currency (usd to eur at 0.92 means 1 USD buys 0.92 EUR). One /v2/aggs/grouped/.../fx/{date}
+// call returns every fx pair's closing aggregate, filtered here to USD-base tickers (`C:USD<TKR>`).
 func (c *Client) LatestUSDRates(ctx context.Context) (map[string]float64, time.Time, error) {
 	// "Latest" is the most recent UTC date with a published bar.
 	// We try today first; if 0 results (markets closed weekend /

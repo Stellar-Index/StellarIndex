@@ -44,9 +44,7 @@ const classicMovementsWindowDeadline = 20 * time.Minute
 // Claim/clawback correlation resolves in memory, then by one batched lookup, else counts as
 // unresolved; an amount is never guessed. AllowTrust/SetTrustLineFlags are skipped in a
 // zero-fidelity window, where their empty result would under-report CAP-0038 liquidations.
-//
-// Resume restarts from the highest ledger written (ReplacingMergeTree absorbs the overlap), and
-// is trusted only when data starts exactly at -from. -to is hard-clamped below
+// Resume is trusted only when data starts exactly at -from, and -to is hard-clamped below
 // classicMovementsP23StartLedger, the one enforcement point of ADR-0047 D2.
 func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse+clamp, resume, windowed stream+decode+write+verify loop, report.
 	fs, gate := opsutil.NewMutatingFlagSet("classic-movements-backfill")
@@ -228,11 +226,10 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 	return nil
 }
 
-// classicMovementsResumeStart is the pure -resume decision: jump startLedger to maxLedger only when
-// minFound && minLedger == startLedger, which proves the data starts exactly there (see
+// classicMovementsResumeStart is the pure -resume decision: jump to maxLedger only when
+// minLedger == startLedger, proving the data starts exactly there (see
 // sortAccountMovementRowsForInsert for why maxLedger is then a sound checkpoint). Data starting
-// ABOVE startLedger is a widened -from, and jumping would skip the gap silently. The caller has
-// already confirmed maxFound && maxLedger >= startLedger.
+// ABOVE startLedger is a widened -from, and jumping would skip the gap silently.
 func classicMovementsResumeStart(startLedger, maxLedger, minLedger uint32, minFound bool) (resumeAt uint32, jumped bool) {
 	if !minFound || minLedger != startLedger {
 		return startLedger, false
@@ -344,8 +341,8 @@ func classicMovementsDecodeOp(dec *classicmovements.Decoder, seen map[classicMov
 //     not in ClickHouse until this window is written;
 //  3. one batched clickhouse.FindClaimableBalanceCreates call for creates outside this run's range.
 //
-// Still-unresolved rows are counted and logged, never guessed. It never returns an error: a lookup
-// failure degrades the whole miss-set to unresolved rather than failing the window.
+// Still-unresolved rows are counted and logged, never guessed; a lookup failure degrades the miss-set
+// to unresolved rather than failing the window.
 func classicMovementsResolvePendingClaimableBalances(winCtx context.Context, chAddr string, dec *classicmovements.Decoder, wlo, whi uint32, res *windowResult) {
 	pending := dec.TakePendingClaimableBalances()
 	if len(pending) == 0 {

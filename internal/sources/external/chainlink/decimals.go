@@ -17,19 +17,14 @@ import (
 // On-chain decimals() verification for the ingest poller.
 //
 // A configured FeedSpec.Decimals that is wrong or drifted would silently store every reading
-// 10^(configured-actual) off, so the poller reads `decimals()` (SelDecimals) on the first poll of
-// each feed and again every decimalsRefreshInterval, and:
-//
-//   - configured value ABSENT (0): adopts the on-chain value;
-//   - both present and EQUAL: readings flow;
-//   - both present and DIFFERENT: logs ERROR, counts obs.ChainlinkFeedDecimalsMismatchTotal on
-//     every refused reading, and REFUSES the feed (ErrDecimalsMismatch): a mis-scaled oracle
-//     row is worse than none;
-//   - decimals() RPC failure: keeps the last known value with a WARN and retries after
-//     decimalsRetryInterval; a feed with no configured value and no successful read yet is
-//     refused (ErrDecimalsUnresolved), never projected at a guessed scale.
-//
-// Backfill goes through the same resolver.
+// 10^(configured-actual) off, so the poller reads `decimals()` (SelDecimals) on a feed's first poll
+// and every decimalsRefreshInterval. An absent (0) configured value adopts the on-chain one; equal
+// values let readings flow; differing values log ERROR, count
+// obs.ChainlinkFeedDecimalsMismatchTotal per refused reading and REFUSE the feed
+// (ErrDecimalsMismatch), since a mis-scaled oracle row is worse than none. On an RPC failure the
+// last known value is kept with a WARN and retried after decimalsRetryInterval; a feed with no
+// configured value and no successful read is refused (ErrDecimalsUnresolved), never projected at a
+// guessed scale. Backfill goes through the same resolver.
 const (
 	// decimalsRefreshInterval is how long a verified decimals() read stays trusted. Decimals are
 	// effectively immutable; the refresh bounds how long a proxy re-pointed at a

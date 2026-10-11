@@ -8,9 +8,9 @@
 //	GET https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbol=XLM,BTC,ETH&convert=USD
 //	{"data": {"XLM": [{"quote": {"USD": {"price": 0.17582, "last_updated": "..."}}}]}, ...}
 //
-// CMC wraps each symbol's payload in an array because multiple coins can share a ticker. `id=`
-// mode pins one project and its entry is verified against the requested id. `symbol=` mode has no
-// discriminator we can check, so an entry with more than one coin is refused rather than guessed.
+// CMC wraps each symbol's payload in an array because coins can share a ticker. `id=` mode pins
+// one project and verifies the entry's id; `symbol=` mode has no discriminator, so an entry with
+// more than one coin is refused rather than guessed.
 package coinmarketcap
 
 import (
@@ -62,11 +62,9 @@ type Poller struct {
 
 	// CMCIDs maps upper-case ticker to CMC numeric id (a string, "512" for XLM). Querying by
 	// `symbol=` is ambiguous: several coins share a ticker and CMC picks the highest-ranked match,
-	// which can drift over time. Every ticker present here is queried by `id=<numeric>`; absent
-	// tickers fall back to `symbol=`. The poller issues at most one `id=` and one `symbol=` request
-	// per poll, never mixed on one request.
-	//
-	// Wired from `currency.Catalogue.CoinMarketCapIDs()`. Leave nil for the symbol-only path.
+	// which drifts. Tickers present here are queried by `id=<numeric>`, absent ones by `symbol=`;
+	// at most one request of each kind per poll, never mixed. Wired from
+	// `currency.Catalogue.CoinMarketCapIDs()`; nil means the symbol-only path.
 	CMCIDs map[string]string
 
 	// AmbiguousSymbolSkips counts response entries dropped because

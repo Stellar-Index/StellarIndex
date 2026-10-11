@@ -17,9 +17,9 @@ import (
 // Client is a minimal Ethereum JSON-RPC client for eth_call (latestRoundData), eth_blockNumber
 // (backfill range probe) and eth_getLogs (backfill walk).
 //
-// It is deliberately tiny: go-ethereum's dependency tree is heavy and we need three methods, two
-// ABI shapes and no signing. Stateless and goroutine-safe: each method does one HTTP round-trip;
-// connection pooling is configured via http.Client.Transport.
+// It is deliberately tiny, as go-ethereum's dependency tree is heavy and we need no signing.
+// Stateless and goroutine-safe: each method does one HTTP round-trip; pooling lives in
+// http.Client.Transport.
 type Client struct {
 	HTTPClient *http.Client
 	Endpoint   string
@@ -216,11 +216,9 @@ func DoWithoutRedirects(c *http.Client, req *http.Request) (*http.Response, erro
 
 // RedactURLError converts a transport error into a string with the secret-bearing URL scrubbed.
 // Keyed RPC providers embed the API key in the endpoint path, so a *url.Error's default Error()
-// would leak it; the URL is replaced with a host-only, path-redacted form. Non-*url.Error inputs
-// carry no request URL and are returned unchanged.
-//
-// Exported because internal/divergence's ChainlinkReference reads the same CHAINLINK_RPC_URL and
-// must scrub it identically; one implementation avoids a second copy drifting out of coverage.
+// would leak it; the URL is replaced with a host-only form. Non-*url.Error inputs carry no request
+// URL and are returned unchanged. Exported because internal/divergence's ChainlinkReference reads
+// the same CHAINLINK_RPC_URL and must scrub it identically.
 func RedactURLError(err error, endpoint string) string {
 	var ue *url.Error
 	if !errors.As(err, &ue) {

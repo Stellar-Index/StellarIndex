@@ -22,13 +22,12 @@ import (
 // (ADR-0034 + docs/architecture/storage-considerations.md#supply-flows-in-the-lake.) The contract_id
 // is the asset's SAC (classic) or token (SEP-41) contract, a unique per-token key.
 //
-// Defaults to a report (top-N contracts by supply + coverage count). Window [from,to] per partition
-// for the full-history run; a single all-history pass holds one in-memory map (thousands of
-// contracts, bounded).
+// Defaults to a report (top-N contracts by supply + coverage count). Windowed per partition for
+// the full-history run; one all-history pass holds a single bounded in-memory map.
 //
 // Per-token supply is not persisted: the serving path sums `stellar.supply_flows` live
-// (SupplyReader.TokenSupply, "no rollup refresh" by design). -seed-flows keeps supply_flows itself
-// complete; the shared -write gate applies it, and without -write it counts the rows it would write.
+// (SupplyReader.TokenSupply, "no rollup refresh" by design). -seed-flows keeps supply_flows
+// complete, gated by the shared -write flag (without it, it counts the rows it would write).
 func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, stream+accumulate, optional seed, report; splitting hurts clarity.
 	fs, gate := opsutil.NewMutatingFlagSet("ch-supply")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")

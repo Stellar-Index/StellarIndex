@@ -34,8 +34,8 @@ func (r StoreOracleReader) LatestOracleStreams(ctx context.Context) ([]canonical
 // DISTINCT ON (source) sort is expensive (~580 ms p95) while oracle readings only refresh every
 // 1-5 minutes, so a 30 s entry absorbs polling fan-out without hurting freshness.
 //
-// A miss queries the inner reader then SETs; a hit deserialises and skips the DB. Errors on
-// either side fall through to the inner reader, never fail open.
+// A miss queries the inner reader then SETs; a hit skips the DB. Cache errors on either side
+// fall through to the inner reader, never fail open.
 type CachedOracleReader struct {
 	Inner v1.OracleReader
 	RDB   redis.UniversalClient

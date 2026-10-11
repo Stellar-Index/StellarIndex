@@ -21,10 +21,8 @@ const sponsorsRollupLockPath = "/var/lib/stellarindex/ch-sponsors-rollup.lock"
 // One pass over stellar.operations lands a narrow, deduplicated projection of the three
 // sponsorship operation types, and every served figure derives from those rows. No body_xdr is
 // read (the sponsored account is the End operation's source_account), which keeps the pass
-// affordable.
-//
-// The cycle also records the span it aggregated; that floor is protocol 14's activation, so the
-// surface can present it as the feature's genesis rather than as missing coverage.
+// affordable. The cycle also records the span it aggregated; that floor is protocol 14's
+// activation, so the surface shows it as the feature's genesis, not as missing coverage.
 //
 // Takes an exclusive advisory lock first, as ch-creators-rollup and ch-holders-rollup do: see
 // acquireRollupLock (rollup_lock.go).

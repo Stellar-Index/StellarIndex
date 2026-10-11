@@ -21,9 +21,9 @@ import (
 //
 // The scan is computeRecognitionGapsCH, the same census compute-completeness publishes as
 // recognition_ok, so the two cannot disagree. Exit is non-zero when any gap exists or the range
-// read no shapes at all, so cron / CI can gate on it. It uses the dispatcher the indexer builds
-// from ingestion.enabled_sources, so the verdict reflects what the deployment handles rather than
-// a hand-maintained topic list that could drift.
+// read no shapes at all. It uses the dispatcher the indexer builds from
+// ingestion.enabled_sources, so the verdict reflects what the deployment handles, not a topic
+// list that could drift.
 func verifyRecognition(args []string) error {
 	fs := flag.NewFlagSet("verify-recognition", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -87,11 +87,10 @@ func verifyRecognition(args []string) error {
 }
 
 // soroswapRecognitionSeed loads the soroswap pair registry and returns the dispatcher option that
-// seeds the soroswap decoder's pair-tokens cache, the same registry compute-completeness folds
-// into its recognition census. Without it Matches() rejects every real SoroswapPair event
-// (swap/sync/deposit/withdraw/skim) and each becomes a false recognition gap. Shared by
-// verify-recognition and ch-recognition so the seeding, and its fail-closed posture on a load
-// error (a partial registry would silently under-recognize), live in one place.
+// seeds the soroswap decoder's pair-tokens cache, as compute-completeness does. Without it
+// Matches() rejects every real SoroswapPair event and each becomes a false recognition gap.
+// Shared by verify-recognition and ch-recognition; it fails closed on a load error, since a
+// partial registry would silently under-recognize.
 func soroswapRecognitionSeed(ctx context.Context, store *timescale.Store) (soroswap.DecoderOption, error) {
 	pairs, err := store.LoadSoroswapPairRegistry(ctx)
 	if err != nil {

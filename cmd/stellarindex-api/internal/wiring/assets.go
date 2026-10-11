@@ -19,9 +19,9 @@ import (
 // StoreAssetReader adapts *timescale.Store to v1.AssetReader. The store returns canonical.Asset;
 // the API layer owns the wire-shape conversion to v1.AssetDetail.
 //
-// listingHomeDomains (listing page) and detailHomeDomainLookup (GetAsset) are the two surface
-// lookups from newHomeDomainLookups. An issuer with no known domain returns ("", false), leaving
-// HomeDomain nil so the overlay handler stamps sep1_status="not_fetched".
+// listingHomeDomains (listing page) and detailHomeDomainLookup (GetAsset) come from
+// newHomeDomainLookups. An issuer with no known domain returns ("", false), leaving HomeDomain
+// nil so the overlay handler stamps sep1_status="not_fetched".
 type StoreAssetReader struct {
 	S                      *timescale.Store
 	ListingHomeDomains     func(ctx context.Context, issuers []string) map[string]string
@@ -193,12 +193,10 @@ func (r CachedAssetReader) ListAssets(ctx context.Context, cursor string, limit 
 // AssetToDetail converts canonical.Asset → v1.AssetDetail. Nullable fields become nil pointers
 // when empty so the JSON omits them.
 //
-// homeDomainLookup (one of the homeDomainLookups; nil is allowed) populates HomeDomain for classic
-// assets whose issuer has a known home_domain, and the SEP-1 overlay handler then resolves
-// stellar.toml. Otherwise HomeDomain stays nil and the handler stamps sep1_status="not_fetched".
-//
-// SAC-wrapped classics and Soroban tokens have no classic issuer: HomeDomain stays nil and
-// sep1_status falls through to "not_applicable".
+// homeDomainLookup (nil allowed) populates HomeDomain for classic assets whose issuer has a known
+// home_domain, and the SEP-1 overlay handler then resolves stellar.toml; otherwise HomeDomain
+// stays nil and sep1_status is "not_fetched". SAC-wrapped classics and Soroban tokens have no
+// classic issuer, so sep1_status falls through to "not_applicable".
 func AssetToDetail(ctx context.Context, a canonical.Asset, homeDomainLookup func(ctx context.Context, issuer string) (string, bool)) v1.AssetDetail {
 	d := v1.AssetDetail{
 		AssetID: a.String(),

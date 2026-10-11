@@ -19,9 +19,8 @@ import (
 // verifyReconciliation implements ADR-0033 Claim 2b: per ledger, the rows a source should have
 // produced must equal the rows in its table. Soroban sources re-run the real decoder over the
 // lake's contract_events ([expectedProjection]); event-less ContractCall sources re-derive from
-// InvokeContract ops; SDEX runs lake operations through the decoder and the served write
-// filter, not the census, which counts one-side-zero fills the trades table cannot hold.
-// Exits non-zero on any mismatch.
+// InvokeContract ops; SDEX goes through the decoder and the served write filter, not the census,
+// which counts one-side-zero fills the trades table cannot hold. Exits non-zero on mismatch.
 func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funlen // linear per-source loop; splitting reduces clarity (same as backfillRouter).
 	fs := flag.NewFlagSet("verify-reconciliation", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -171,11 +170,11 @@ func reconciliationIsVacuous(expTotal, actTotal int) bool {
 }
 
 // seedSoroswapForRecon seeds the soroswap pair registry from the factory via RPC so the re-derive
-// resolves pairs created before the audited range, as verify-decoders does. An empty
-// oracle.soroswap.factory_contract disables the seed. A factory with no RPC endpoint, or a failed
-// sweep, is an error the caller must not swallow: a partly seeded registry expects 0 rows for
-// unseeded pairs and would publish projection_ok=false over healthy data. Notices carry no command
-// prefix because compute-completeness shares this.
+// resolves pairs created before the audited range. An empty oracle.soroswap.factory_contract
+// disables the seed. A factory with no RPC endpoint, or a failed sweep, is an error the caller
+// must not swallow: a partly seeded registry expects 0 rows for unseeded pairs and would publish
+// projection_ok=false over healthy data. Notices carry no command prefix; compute-completeness
+// shares this.
 func seedSoroswapForRecon(ctx context.Context, cfg config.Config, dec *soroswap.Decoder) error {
 	factory := cfg.Oracle.Soroswap.FactoryContract
 	if factory == "" {

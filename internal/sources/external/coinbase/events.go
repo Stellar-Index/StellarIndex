@@ -1,18 +1,14 @@
 // Package coinbase streams live trade matches from Coinbase
 // Exchange's public WebSocket feed, adding US price discovery for XLM/USD.
 //
-// We target Coinbase Exchange (no auth for matches/ticker), not Advanced Trade (OAuth,
-// rate-limited when unauthenticated): it is the stable feed and matches the
-// Binance/Kraken/Bitstamp capability profile.
+// We target Coinbase Exchange (no auth for matches/ticker), not Advanced Trade (OAuth), as the
+// stable feed matching the Binance/Kraken/Bitstamp capability profile.
 //
-// Wire details:
-//
-//   - Symbol format is "XLM-USD" (dash).
-//   - One subscribe message covers all product IDs:
-//     `{"type":"subscribe","channels":[{"name":"matches","product_ids":[...]}]}`.
-//   - The `matches` channel publishes executed trades. On subscribe Coinbase also sends one
-//     `last_match` per product, a real historical trade in the same shape as live matches.
-//   - Numbers arrive as strings; time is RFC 3339 with nanoseconds.
+// Wire details: symbols are "XLM-USD" (dash); one subscribe message covers all product IDs, e.g.
+// `{"type":"subscribe","channels":[{"name":"matches","product_ids":[...]}]}`. The `matches`
+// channel publishes executed trades, and on subscribe Coinbase also sends one `last_match` per
+// product, a real historical trade in the same shape. Numbers arrive as strings; time is RFC 3339
+// with nanoseconds.
 //
 // Wire format reference:
 // https://docs.cloud.coinbase.com/exchange/docs/websocket-channels

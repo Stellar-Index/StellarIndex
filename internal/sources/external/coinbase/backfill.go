@@ -54,8 +54,7 @@ func (e *rateLimitedError) Error() string { return "http 429: " + e.body }
 //
 // Coinbase's candle response is a positional array with an unusual field order: [time_sec, low,
 // high, open, close, volume]. Every other CEX here uses OHLC, so a parser assuming OHLC gets wrong
-// prices silently; we read explicitly by index. Depth has no documented cap beyond the 300-candle
-// per-request limit; Coinbase serves back to product listing.
+// prices silently; we read explicitly by index. The only cap is the 300-candle per-request limit.
 func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to time.Time, granularity time.Duration) ([]canonical.Trade, error) {
 	if !from.Before(to) {
 		return nil, fmt.Errorf("coinbase.Backfill: from %v must be before to %v", from, to)

@@ -21,9 +21,9 @@ import (
 // DB is untouched, and runs each through the production decoder chain's Matches(). A shape no
 // decoder claims is a recognition gap: an on-chain event the system would silently drop.
 //
-// The CAP-67 classic-token firehose (transfer/mint/burn) is excluded by default: the enabled
-// decoders don't claim it, so including it would report the whole SAC layer as unrecognized and
-// drown the protocol signal. Pass -include-firehose to audit it too.
+// The CAP-67 classic-token firehose (transfer/mint/burn) is excluded by default: no enabled
+// decoder claims it, so it would report the whole SAC layer as unrecognized and drown the
+// protocol signal. Pass -include-firehose to audit it too.
 func chRecognition(args []string) error { //nolint:gocognit,funlen // linear: parse, scan, recognize, report.
 	fs := flag.NewFlagSet("ch-recognition", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")

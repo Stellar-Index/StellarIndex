@@ -27,14 +27,12 @@ import (
 //
 // WHY: the Postgres sep41_transfers tail projects only WATCHED contracts, and native XLM's SAC is
 // deliberately unwatched (volume), so without this job a classic-payment account's /movements feed
-// stops at the P23 boundary.
+// stops at the P23 boundary. From P23 an issuer's payments report as mint/burn, so those and
+// clawback are derived too or they vanish (range tracked apart, see cap67SupplyFill).
 //
-// SHAPE: windowed and resumable via stellar.cap67_movements_watermark. `-follow` is the daemon:
-// catch up to the contiguous lake tip, sleep, repeat. Idempotent, as account_movements is a
-// ReplacingMergeTree. From P23 an issuer's payments report as mint/burn, so those and clawback
-// are derived too or they vanish (range tracked apart, see cap67SupplyFill).
-//
-// The API's movements handler floors its Postgres arm at this job's watermark, so the two arms are
+// Windowed and resumable via stellar.cap67_movements_watermark; `-follow` catches up to the
+// contiguous lake tip, sleeps, repeats. Idempotent (account_movements is a ReplacingMergeTree).
+// The API's movements handler floors its Postgres arm at this watermark, so the two arms are
 // gap-free and double-count-free at any backfill progress.
 func chCap67Movements(args []string) error {
 	fs := flag.NewFlagSet("ch-cap67-movements", flag.ContinueOnError)
@@ -177,11 +175,8 @@ func (c cap67CatchUp) idle() bool { return c.last < c.start }
 
 // runCap67CatchUp streams the resolved range into account_movements, advancing the watermark per
 // window. It never steps past a lake hole: Cap67Range clamps the range (including -to) and each
-// advance re-proves its own window hole-free.
-//
-// progress, when non-nil, is called after each window advances with its row count and the ledger
-// reached (see cap67Progress.record), so a long -follow tick can tell a stalled watermark from a
-// hung process.
+// advance re-proves its own window hole-free. progress, when non-nil, runs after each window so a
+// long -follow tick can tell a stalled watermark from a hung process.
 func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool, floorLedger uint32, progress func(rows int64, cursor uint32)) (cap67CatchUp, error) {
 	start, last, err := Cap67Range(ctx, chAddr, from, to, floorLedger)
 	if err != nil {
@@ -301,11 +296,10 @@ func cap67IdleLogTick(ctx context.Context, chAddr string, res cap67CatchUp, n in
 		n, res.start, res.last, minPresent, followTick(interval, n))
 }
 
-// followLoop runs catchUp now and after each sleep until ctx is cancelled. catchUp gets the
-// consecutive idle count and reports whether the tick did work; the sleep is followTick of that
-// count. An error is retried next tick with the idle count unchanged and skips no ledger, as the
-// watermark advances only after a clean window. Extracted so shutdown, error and idle accounting
-// are testable without ClickHouse.
+// followLoop runs catchUp now and after each sleep until ctx is cancelled; the sleep is followTick
+// of the consecutive idle count. An error is retried next tick with the idle count unchanged and
+// skips no ledger, as the watermark advances only after a clean window. Extracted so shutdown,
+// error and idle accounting are testable without ClickHouse.
 func followLoop(ctx context.Context, interval time.Duration, catchUp func(ctx context.Context, idle int) (worked bool, err error)) error {
 	idle := 0
 	for {
@@ -380,14 +374,12 @@ func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floo
 	}
 	// Contiguity gate: the LiveSink drops whole ledgers under buffer pressure, so the lake can have
 	// holes near the tip. Deriving past one would advance the watermark over it and lose that
-	// ledger's movements permanently, as account_movements never revisits it. Clamp to the
-	// contiguous watermark (as projector.resolveTip does) so the derive stalls until ch-live-catchup
-	// heals it. Keyed off stellar.ledgers, the commit marker flushed last. Returns start-1 when start
-	// is a hole, which the caller's `last < start` guard treats as nothing to do.
+	// ledger's movements permanently. Clamp to the contiguous watermark (as projector.resolveTip
+	// does), keyed off stellar.ledgers, the commit marker flushed last; it returns start-1 when
+	// start is a hole, which the caller's `last < start` guard treats as nothing to do.
 	//
-	// The clamp is unconditional: an operator-supplied -to is min()'d against the tip, because a
-	// gate only in the to == 0 branch would let `-to N` walk past a hole below N and stamp the
-	// watermark over it.
+	// The clamp is unconditional: an operator-supplied -to is min()'d against the tip, or `-to N`
+	// would walk past a hole below N and stamp the watermark over it.
 	tip, err := clickhouse.ContiguousWatermark(ctx, chAddr, start)
 	if err != nil {
 		return 0, 0, fmt.Errorf("resolve contiguous lake tip: %w", err)

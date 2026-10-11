@@ -24,8 +24,7 @@ import (
 //
 // It emits one canonical.OracleUpdate per new (feed_address, roundId). The dedup cache is
 // in-memory, so the first poll after a restart re-emits the latest round per feed; the storage
-// PK's ON CONFLICT rejects that idempotently. The runner serialises PollOnce per source, so the
-// internal mutexes only guard against future concurrent paths.
+// PK's ON CONFLICT rejects that idempotently. The runner serialises PollOnce per source.
 type Poller struct {
 	// Client is the EVM JSON-RPC client. Constructor injects the
 	// operator-supplied endpoint (Alchemy / Infura / public).
@@ -224,7 +223,7 @@ func (p *Poller) pollFeedOnce(ctx context.Context, pair canonical.Pair, spec Fee
 //
 // Per-feed failures (including stale and carried-forward rounds) are logged and counted on
 // stellarindex_chainlink_feed_polls_total, not bubbled, so one bad feed cannot stop the others.
-// At most p.Concurrency eth_call requests run at once, to stay polite to shared RPC endpoints.
+// At most p.Concurrency eth_call requests run at once, for shared RPC endpoints.
 func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canonical.Trade, []canonical.OracleUpdate, error) { //nolint:gocognit,gocyclo // dispatch-heavy; splitting hurts readability
 	logger := p.Logger
 	if logger == nil {
@@ -309,13 +308,11 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		updates = append(updates, r.update)
 	}
 
-	// nil/nil/nil means "skipped": returning an error would mark the whole tick "error" even when
-	// most feeds succeeded. Per-feed errors are already logged and counted above.
-	//
-	// An all-feeds-failed cycle is not a healthy skip: (nil,nil,nil) would let the runner bump
+	// nil/nil/nil means "skipped": an error would mark the whole tick "error" even when most feeds
+	// succeeded. But an all-feeds-failed cycle is not a healthy skip: the runner would bump
 	// ExternalPollerLastSuccessUnix and keep the staleness gauge green while the poller is wedged
-	// (bad endpoint, revoked key, RPC down). An unchanged sibling (ok=false) is current, not a
-	// failure, so firstErr surfaces only when no feed was current this tick.
+	// (bad endpoint, revoked key, RPC down). An unchanged sibling (ok=false) is current, so
+	// firstErr surfaces only when no feed was current this tick.
 	if len(updates) == 0 {
 		if firstErr != nil && !anyCurrent.Load() {
 			return nil, nil, firstErr
@@ -348,8 +345,7 @@ func (p *Poller) fetchLatest(ctx context.Context, pair canonical.Pair, spec Feed
 // 10^8 too large, and guessing 8 would hide the scale drift the resolver exists to catch.
 //
 // Identity is synthesized (Ledger=0, OpIndex=0, TxHash=sha256(feed||roundId)[:64],
-// Timestamp=Round.UpdatedAt), so re-emitting the same round hits the same PK and inserts
-// idempotently under restart and retry.
+// Timestamp=Round.UpdatedAt) so re-emitting a round is idempotent under restart and retry.
 func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonical.OracleUpdate, error) {
 	decimals := spec.Decimals
 	if decimals == 0 {
@@ -429,8 +425,8 @@ func (c *roundCache) commitEmit(feedAddr string, roundID *big.Int) {
 // syntheticTxHash derives a deterministic 64-char hex tx_hash (tx_hash is CHAR(64)) from the
 // (feed address, roundId) pair via SHA-256.
 //
-// roundID is the FULL uint80 proxy round id: rounds from different phases that share a low-64-bit
-// aggregatorRoundId must hash to distinct values so they do not collide on the storage PK.
+// roundID is the FULL uint80 proxy round id: rounds from different phases sharing a low-64-bit
+// aggregatorRoundId must hash distinctly or they collide on the storage PK.
 func syntheticTxHash(feedAddress string, roundID *big.Int) string {
 	h := sha256.New()
 	_, _ = h.Write([]byte(strings.ToLower(feedAddress)))

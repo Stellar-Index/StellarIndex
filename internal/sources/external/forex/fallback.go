@@ -11,11 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/ecb"
 )
 
-// RateProvider is a source of USD-base fiat rates for the worker.
-//
-// It keeps `massive`, a paid feed, from being a single point of failure: a subscription lapse,
-// a 429 or an unset MASSIVE_API_KEY would otherwise silently break every fiat cross once the
-// 7-day forex-snap lookback expired.
+// RateProvider is a source of USD-base fiat rates for the worker. It keeps `massive`, a paid feed,
+// from being a single point of failure: a lapse, a 429 or an unset MASSIVE_API_KEY would otherwise
+// silently break every fiat cross once the 7-day forex-snap lookback expired.
 type RateProvider interface {
 	// Name is the value stamped into fx_quotes.source and used as the
 	// `source` metric label, so an operator can see WHICH feed is live.
@@ -31,16 +29,11 @@ type RateProvider interface {
 // fabricated anchor would mis-price every fiat pair at once.
 var ErrNoUSDAnchor = errors.New("forex: upstream has no USD rate to rebase on")
 
-// ECBProvider adapts the ECB daily reference rates into the worker's
-// USD-base contract.
-//
-// ECB is free, keyless and authoritative, which makes it the right standby. Two limitations, both
-// preferable to no rates:
-//
-//   - COVERAGE is ~30 currencies, not massive's 111. Pairs outside ECB's list keep serving their
-//     last-good fx_quotes row via the lookback rather than getting a fresh one.
-//   - CADENCE is one publication per working day (~16:00 CET), so rates are static intraday and
-//     absent on weekends/TARGET holidays; the worker's staleness handling tolerates this.
+// ECBProvider adapts the ECB daily reference rates into the worker's USD-base contract. ECB is
+// free, keyless and authoritative, so it is the standby. Coverage is ~30 currencies, not massive's
+// 111, so other pairs keep serving their last-good fx_quotes row via the lookback. Cadence is one
+// publication per working day (~16:00 CET), static intraday and absent on weekends/TARGET
+// holidays, which the worker's staleness handling tolerates.
 type ECBProvider struct {
 	// Endpoint overrides the ECB daily-XML URL. Empty uses the
 	// package default; tests point it at an httptest server.
@@ -50,15 +43,10 @@ type ECBProvider struct {
 // Name implements [RateProvider].
 func (p ECBProvider) Name() string { return "ecb" }
 
-// LatestUSDRates implements [RateProvider], rebasing ECB's EUR-quoted
-// document onto USD.
-//
-// ECB publishes "1 EUR = X <currency>" but the worker wants "1 USD = X <currency>", so every rate
-// divides by ECB's own USD rate:
-//
-//	usdRate(X) = eurRate(X) / eurRate(USD)
-//
-// EUR is added by hand because ECB has no cube for its own base: EUR per USD is 1 / eurRate(USD).
+// LatestUSDRates implements [RateProvider], rebasing ECB's EUR-quoted document onto USD. ECB
+// publishes "1 EUR = X <currency>" but the worker wants "1 USD = X <currency>", so every rate
+// divides by ECB's own USD rate: usdRate(X) = eurRate(X) / eurRate(USD). EUR is added by hand
+// because ECB has no cube for its own base: EUR per USD is 1 / eurRate(USD).
 func (p ECBProvider) LatestUSDRates(ctx context.Context) (map[string]float64, time.Time, error) {
 	eurRates, publishedAt, err := ecb.LatestEURRates(ctx, p.Endpoint)
 	if err != nil {

@@ -10,9 +10,9 @@
 // Wire format reference: https://docs.kraken.com/api/docs/websocket-v2/trade
 //
 // The snapshot (last ~50 trades) carries real timestamps and is emitted like any trade; a
-// re-delivered snapshot dedupes on the synthesised tx_hash (symbol + trade_id). Raw-fill backfill
-// (BackfillTrades) derives the same tx_hash; candles key on close time and never match a live row,
-// so backfill-external refuses a window that already holds rows.
+// re-delivered snapshot dedupes on the synthesised tx_hash (symbol + trade_id). BackfillTrades
+// derives the same tx_hash; candles key on close time and never match a live row, so
+// backfill-external refuses a window that already holds rows.
 package kraken
 
 import (

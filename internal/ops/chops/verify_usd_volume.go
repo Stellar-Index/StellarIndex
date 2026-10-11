@@ -83,8 +83,8 @@ func verifyUSDVolume(args []string) error {
 // bound, not an identity.
 //
 // Trades are anchored at their own minute's price and the bound at the day VWAP, so honest days
-// drift (worst measured 1.2206, none at 1.30). Tightening below ~1.25 without a notional floor
-// makes false fires routine. A breach where stored and expected both round to $0.00 is exempt.
+// drift (worst measured 1.2206). Tightening below ~1.25 without a notional floor makes false
+// fires routine. A breach where stored and expected both round to $0.00 is exempt.
 const xlmBaseBoundTolerance = 0.30
 
 // xlmBaseBoundDustCeiling is half a cent: below it a value renders as
@@ -227,9 +227,9 @@ func newTierRollup() *usdVolumeTierRollup {
 }
 
 // classifyExactTierGroups classifies one day's groups and checks each exact-tier identity,
-// printing diagnostics. It returns the violation count, the judged count, the unclassifiable or
-// unparseable count and the tier rollups. The caller must fold parseErrs into violations so a
-// mis-spelled asset id cannot leave a clean exit.
+// printing diagnostics. It returns the violation, judged and unparseable counts plus the tier
+// rollups. The caller must fold parseErrs into violations so a mis-spelled asset id cannot leave
+// a clean exit.
 //
 //nolint:gocognit // one linear pass: classify → accumulate → judge exact tiers → print.
 func classifyExactTierGroups(
