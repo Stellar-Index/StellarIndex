@@ -4,36 +4,23 @@
 # See inventory/r1.example.yml for the operator-facing knobs.
 #
 # ─── Per-region differences (ADR-0016) ──────────────────────────────
-# Knobs marked `[Per-region: ...]` below differ between regions per
-# the storage strategy in docs/adr/0016-per-region-storage-strategy.md:
-#
-#   R1 FSN1 (Hetzner)        — full local mirror, all 4 verify tiers
-#   R2 US-East-1 (AWS)       — galexie-archive read from
-#                              s3://aws-public-blockchain (no local
-#                              archive bucket); Tier A + D weekly
-#   R3 Singapore (Vultr)     — galexie-archive on Vultr Object Storage
-#                              (S3, region-local); Tier A + D weekly
-#
-# When provisioning a new region, copy r1.example.yml → rN.yml and
-# override only the [Per-region] knobs. The inventory file is also
-# the right place for the per-region cron settings (verify-archive
-# tier flags) and for the stellarindex_live_seam_ledger value (each
-# region has its own seam where its galexie-live bucket starts).
+# Knobs marked `[Per-region: ...]` differ per docs/adr/0016-per-region-storage-strategy.md:
+#   R1 FSN1 (Hetzner)    — full local mirror, all 4 verify tiers
+#   R2 US-East-1 (AWS)   — galexie-archive read from s3://aws-public-blockchain; Tier A + D weekly
+#   R3 Singapore (Vultr) — galexie-archive on Vultr Object Storage; Tier A + D weekly
+# A new region copies r1.example.yml → rN.yml and overrides only the [Per-region]
+# knobs, the verify-archive tier flags and stellarindex_live_seam_ledger.
 
 # ───── Region ────────────────────────────────────────────────────────
 # [Per-region: r1=FSN1 (Hetzner Falkenstein), r2=US-East-1, r3=Singapore]
-# No default on purpose: region_id feeds the rendered stellarindex.toml
-# [region] id, the galexie S3 region, and per-region ADR-0016 data-path
-# decisions. A default would let a new-region inventory that forgot to
-# override it silently mislabel the host; the 01-preflight.yml assert
-# requires every inventory to set this explicitly instead.
+# No default on purpose: a new-region inventory that forgot to override it would
+# silently mislabel the host; the 01-preflight.yml assert requires it explicitly.
 region_id:           ""
 region_name:         "FSN1"
 home_domain:         "stellarindex.io"
 # Tier label the API reports in /v1/status's `region.deployment` block.
-# Pubnet is "production"; the lean test-net inventories override to
-# "testnet" / "futurenet" so a test net's status page never claims to be
-# PRODUCTION.
+# Pubnet is "production"; test-net inventories override so their status page never
+# claims PRODUCTION.
 region_deployment:   "production"
 
 # Minimum RAM the preflight requires (MB). Default = the pubnet archival-node
@@ -43,25 +30,19 @@ archival_node_min_ram_mb: 30000
 
 # ───── Which subsystems to run on this host ──────────────────────────
 run_postgres:        true
-# Primary stellar-core daemon. Off by default — the archive we ship
-# (galexie → MinIO) doesn't need it, and running it alongside the
-# captive-cores costs RAM/CPU/peer-slots for no gain. Flip to true
-# when we're ready to become a validator (ADR-0004).
+# Primary stellar-core daemon. Off: the archive (galexie → MinIO) does not need
+# it. Flip to true to become a validator (ADR-0004).
 run_stellar_core:    false
 run_galexie:         true
-# Restarting galexie is never casual: its captive core cold-catches-up
-# for ~9 minutes on mainnet. When the role finds an EFFECTIVE change in a
-# galexie input it has to restart for (galexie.toml, captive-core cfg,
-# /etc/default/galexie, the unit) or a galexie_version bump, and galexie
-# is active, it FAILS before writing anything unless this is true. Pass
-# `-e galexie_restart_ack=true` in a maintenance window; never set it in
-# inventory. `--check --diff` shows the pending restart (RUNNING HANDLER
-# [Restart galexie]) without it.
+# Restarting galexie is never casual: its captive core cold-catches-up for ~9 min
+# on mainnet. On an EFFECTIVE change to a galexie input (galexie.toml, captive-core
+# cfg, /etc/default/galexie, the unit) or a galexie_version bump, the role FAILS
+# before writing unless this is true. Pass `-e galexie_restart_ack=true` in a
+# maintenance window; never set it in inventory. `--check --diff` shows the
+# pending restart without it.
 galexie_restart_ack: false
-# stellar-rpc is NOT part of this role. Our indexer reads galexie's
-# MinIO output directly via ingest.ApplyLedgerMetadata, so stellar-rpc's
-# JSON-RPC surface isn't on the Stellar Index data path — see
-# docs/operations/r1-deployment-state.md for the rationale.
+# stellar-rpc is NOT part of this role: the indexer reads galexie's MinIO output
+# directly (docs/operations/r1-deployment-state.md).
 run_minio:           true
 run_observability:   true
 # Promtail journald → Loki shipper (10-observability.yml). Requires a
@@ -78,90 +59,66 @@ run_promtail:        true
 run_redis:               true
 run_clickhouse:          false
 
-# redis-server on the archival node was unauthenticated and
-# reachable from any local process (no requirepass, no bind
-# hardening) even though it holds the SEP-10 replay guard, the
-# rate-limit counters and the VWAP cache. Set from vault
-# (inventory/<region>.secrets.yml via ansible-vault) — same
-# posture as the redis-sentinel role's `redis_password`. Empty by
-# default so a fresh checkout fails the 08-redis.yml preflight
-# assert instead of silently shipping an open cache.
+# Unauthenticated redis would be reachable from any local process while holding
+# the SEP-10 replay guard, rate-limit counters and VWAP cache. Set from vault
+# (inventory/<region>.secrets.yml). Empty by default so a fresh checkout fails the
+# 08-redis.yml preflight assert instead of shipping an open cache.
 redis_password: ""
 
-# ch-live-catchup: the Tier-1 lake's only self-healer. Defaults TRUE
-# because a lake without it degrades into a permanently stalled
-# projector (resolveTip clamps to the ContiguousWatermark), and the job
-# is seconds of work every 10 minutes over just the new gap. Only
-# installed where the ClickHouse tasks run at all, i.e. behind
-# run_clickhouse. Set false to opt a host out deliberately.
+# ch-live-catchup: the Tier-1 lake's only self-healer. Defaults TRUE: without it
+# the projector stalls permanently (resolveTip clamps to the ContiguousWatermark),
+# and the job is seconds of work every 10 minutes. Only installed behind
+# run_clickhouse. Set false to opt a host out.
 #
-# That gate does not leave r1 without a healer: r1's copy, like the rest
-# of its lake, is installed out-of-band — the posture run_clickhouse:
-# false exists to preserve. No inventory in this repo installs the
-# healer through ansible (r1.example.yml sets no run_clickhouse;
-# testnet.yml / futurenet.yml set ch_live_catchup_enabled: false), and
-# the repo's script REFUSES to run without stellarindex_ch_live_era_from.
-# Whether r1 should let the ClickHouse install tasks run at all is a
-# deploy-topology decision.
+# r1's copy is installed out-of-band (the posture run_clickhouse: false
+# preserves); no inventory here installs it through ansible (testnet.yml /
+# futurenet.yml set false) and the script REFUSES to run without
+# stellarindex_ch_live_era_from.
 ch_live_catchup_enabled: true
-# stellarindex_ch_live_era_from — the ledger ch-live-catchup starts its
-# gap scan from: one past the ceiling of the certified bulk backfill.
+# stellarindex_ch_live_era_from — the ledger ch-live-catchup starts its gap scan
+# from: one past the ceiling of the certified bulk backfill.
 #
-# DELIBERATELY UNDEFINED HERE. It is a per-network, per-deployment fact,
-# and both ways of being wrong fail SILENTLY: too high and the scan
-# matches nothing (the lake's only self-healer becomes a no-op and the
-# projector stalls behind the first unhealed hole); too low and a
-# 10-minute timer becomes a full-history DISTINCT scan against the
-# ClickHouse that also serves the explorer. 08-clickhouse.yml copies the
-# script verbatim to every host, so a role default would hand every
-# test net a mainnet floor.
+# DELIBERATELY UNDEFINED HERE: a per-network fact whose wrong values fail
+# SILENTLY (too high: the scan matches nothing and the projector stalls behind
+# the first hole; too low: a 10-minute timer becomes a full-history DISTINCT scan
+# on the ClickHouse that serves the explorer). 08-clickhouse.yml copies the script
+# to every host, so a role default would hand test nets a mainnet floor.
 #
-# State it in the host's inventory (see inventory/r1.example.yml);
-# 09-minio.yml templates it into /etc/default/stellarindex-ops. Unset ⇒
-# ch-live-catchup exits 1 naming the variable, which pages through
-# stellarindex_systemd_unit_failed instead of degrading quietly.
+# State it in the host's inventory (see inventory/r1.example.yml); 09-minio.yml
+# templates it into /etc/default/stellarindex-ops. Unset ⇒ ch-live-catchup exits 1
+# naming the variable and pages via stellarindex_systemd_unit_failed.
 clickhouse_apply_schema: false
 # 9000 is MinIO's. Must equal storage.clickhouse_addr's default port and
 # self-hosting.md §4.5's <tcp_port> (internal/config selfhosting_ch_port_test).
 clickhouse_tcp_port:     9300
-# The directory clickhouse-server's Debian package creates and reads its
-# drop-ins from. Its presence is how tasks/main.yml decides whether the
-# three CH-CONFIG task files (20-serving-profile / 21-drop-guard /
-# 22-exporter) have a server to configure at all — they write into
-# config.d/ + users.d/ under here and shell out to clickhouse-client, so
-# on a host with no ClickHouse they are not "skippable extras", they
-# hard-fail the whole role. Those three are deliberately NOT gated on
-# run_clickhouse alone: run_clickhouse is false on r1 (so 08-clickhouse
-# never touches its hand-tended lake) and r1 is exactly the host whose
-# lake must keep receiving them. A variable rather than a literal so
-# scripts/ci/ansible-clickhouse-host-gate-test.sh can exercise both the
-# present and the absent host without a ClickHouse install.
+# The dir clickhouse-server's Debian package creates. Its presence decides whether
+# tasks/main.yml runs the three CH-CONFIG task files (20-serving-profile /
+# 21-drop-guard / 22-exporter), which write into config.d/ + users.d/ and shell
+# out to clickhouse-client, so they hard-fail on a host with no ClickHouse. They
+# are NOT gated on run_clickhouse alone: it is false on r1, whose lake must still
+# receive them. A variable so scripts/ci/ansible-clickhouse-host-gate-test.sh can
+# exercise both present and absent hosts.
 clickhouse_server_config_dir: "/etc/clickhouse-server"
 
 # ───── ZFS ───────────────────────────────────────────────────────────
-# The DEFAULT is raidz2 ON PURPOSE: a fresh archival node should get
-# two-drive parity (docs/architecture/infrastructure/archival-node-spec.md
-# "Why not raidz3"). It is NOT a description of any host we run — every
-# region pins its own topology in its inventory:
+# The DEFAULT is raidz2 ON PURPOSE (two-drive parity; see
+# docs/architecture/infrastructure/archival-node-spec.md "Why not raidz3"). It
+# does NOT describe any host we run — each region pins its own topology:
 # [Per-region:
 #   r1 = raidz1 across 4× NVMe (single-drive tolerance; pinned in
-#        inventory/r1.example.yml — this default does NOT describe r1,
-#        and a raidz2 rebuild there would be too small for r1's own
-#        footprint)
+#        inventory/r1.example.yml)
 #   r2 = NOT used — EBS gp3 directly, no ZFS layer
-#   r3 = mirror across 2× NVMe (Vultr SG SKU only ships 2 drives;
-#        single-drive tolerance, acceptable for an async DR replica)
+#   r3 = mirror across 2× NVMe (Vultr SG SKU ships 2 drives; acceptable for an
+#        async DR replica)
 # ]
 zfs_data_pool_name:  "data"
 zfs_data_pool_type:  "raidz2"
 zfs_data_devices:    []          # set in inventory, validated in preflight
 zfs_ashift:          12          # 4K NVMe sector alignment
 
-# Drives where installimage put OS partitions (ESP/swap/root) in slots
-# 1-3, leaving the rest of the disk unallocated. Role carves a p4 on
-# each of these spanning all remaining free space, to use as a ZFS
-# data-pool vdev alongside the whole-drive data disks. Empty = no
-# partitioning needed (all zfs_data_devices are whole drives).
+# Drives where installimage put OS partitions in slots 1-3. The role carves a p4
+# on each spanning the free space, as a ZFS data-pool vdev beside the whole-drive
+# disks. Empty = all zfs_data_devices are whole drives.
 zfs_os_drives_needing_data_partition: []
 zfs_os_drives_data_partition_number: 4
 
@@ -170,36 +127,29 @@ zfs_os_drives_data_partition_number: 4
 zfs_arc_max_bytes: 34359738368
 zfs_arc_min_bytes: 8589934592
 
-# Per-workload dataset tuning.
-#
-# recordsize is the PARSABLE byte value (131072, not "128K"): the
-# community.general.zfs module reads current properties with `zfs get -p`
-# and string-compares, so a human-readable "128K" never equals the live
-# "131072" and the task reports a phantom change on every --check run.
-# Every value here is grounded in the live
+# Per-workload dataset tuning, grounded in the live
 # `zfs get -p -o property,value,source data/<ds>` output on r1.
 #
-# List ONLY the properties a dataset sets LOCALLY. A property left to
-# inherit the pool default (recordsize 131072 / compression zstd / atime
-# off / logbias latency / primarycache all) is simply omitted — the
-# "Create ZFS datasets" task manages exactly the keys present on the item,
-# so --check never tries to convert an inherited property to local (which
-# is a real, drift-reporting change on the mountpoint-only datasets below).
+# recordsize is the PARSABLE byte value (131072, not "128K"): the zfs module
+# string-compares against `zfs get -p`, so "128K" reports a phantom change on
+# every --check.
+#
+# List ONLY properties a dataset sets LOCALLY. Inherited pool defaults (recordsize
+# 131072 / zstd / atime off / logbias latency / primarycache all) are omitted: the
+# "Create ZFS datasets" task manages exactly the keys present, so --check never
+# tries to convert an inherited property to local.
 zfs_datasets:
   - name: "os"
     recordsize: "131072"
     compression: "zstd"
     atime: "off"
     mountpoint: "/var/lib/stellarindex"
-    # Must agree with 04-users.yml "Ownership — stellarindex data dir"
-    # (0750); any other mode here ping-pongs every apply and keeps the drift
-    # check permanently red.
+    # Must agree with 04-users.yml "Ownership — stellarindex data dir" (0750), or
+    # every apply ping-pongs and the drift check stays red.
     dir_mode: "0750"
-    # Holds hashdb.bin (ADR-0016 drift detector) among other state.
-    # Deliberately not in zfs_snapshot_datasets below and not in
-    # docs/operations/off-site-backup-plan.md's streams — see that
-    # doc's §3 note for why (disposable, regenerated on next indexer
-    # start).
+    # Holds hashdb.bin (ADR-0016 drift detector). Deliberately not in
+    # zfs_snapshot_datasets or docs/operations/off-site-backup-plan.md's streams
+    # (disposable; see that doc's §3 note).
   - name: "postgres"
     recordsize: "8192"
     compression: "zstd"
@@ -207,12 +157,11 @@ zfs_datasets:
     logbias: "throughput"
     primarycache: "metadata"
     mountpoint: "/var/lib/postgresql"
-  # pg_wal (/var/lib/postgresql/wal/15-main/pg_wal, symlinked from the data
-  # directory), off the 49 GB root. A CHILD of postgres so the recursive
-  # rolling snapshot captures data and WAL in one instant. Every tuning
-  # property is local because the parent's 8K / throughput / metadata-only
-  # values are wrong for sequential WAL writes, and the refreservation
-  # keeps other datasets from starving WAL as the pool fills.
+  # pg_wal (symlinked from the data dir), off the 49 GB root. A CHILD of postgres so
+  # the recursive snapshot captures data and WAL in one instant. Tuning is local
+  # because the parent's 8K / throughput / metadata-only values are wrong for
+  # sequential WAL, and the refreservation keeps WAL from being starved as the pool
+  # fills.
   - name: "postgres/wal"
     recordsize: "131072"
     compression: "lz4"
@@ -221,10 +170,9 @@ zfs_datasets:
     primarycache: "all"
     refreservation: "274877906944"   # 256 GiB
     mountpoint: "/var/lib/postgresql/wal"
-  # "core" dataset (for the primary stellar-core daemon's bucket dir
-  # at /var/lib/stellar-core) is intentionally NOT in this list
-  # while run_stellar_core=false. When flipping to true for Phase-3
-  # validator work, add this entry back and re-apply the zfs tag:
+  # "core" (stellar-core bucket dir, /var/lib/stellar-core) is NOT in this list
+  # while run_stellar_core=false. Add it back and re-apply the zfs tag when flipping
+  # to true:
   #
   #   - name: "core"
   #     recordsize: "131072"
@@ -248,12 +196,10 @@ zfs_datasets:
     compression: "zstd"
     atime: "off"
     mountpoint: "/srv/history-archive"
-  # Datasets first created by hand on r1, all codified here:
-  #   clickhouse  — ADR-0034 lake
-  #   loki        — CH logs off the 49G root
-  #   prometheus  — TSDB off the root
-  #   pgbackrest  — pgBackRest repo1 backups (ADR-0043)
-  #   restore-drill — DRILL_ROOT for scripts/ops/restore-drill.sh
+  # Datasets first created by hand on r1, now codified:
+  #   clickhouse — ADR-0034 lake; loki — CH logs off the root; prometheus — TSDB off
+  #   the root; pgbackrest — repo1 backups (ADR-0043); restore-drill — DRILL_ROOT for
+  #   scripts/ops/restore-drill.sh
   - name: "clickhouse"
     recordsize: "131072"
     compression: "zstd"
@@ -265,35 +211,28 @@ zfs_datasets:
     atime: "off"
     mountpoint: "/var/lib/loki"
   - name: "prometheus"
-    # The Prometheus TSDB (~12-13G) on the 49G OS root keeps it chronically
-    # >90% full; on ZFS, zstd compresses it ~12x. recordsize 128K suits its
-    # chunk writes.
+    # The Prometheus TSDB (~12-13G) kept the 49G root >90% full; zstd compresses it
+    # ~12x on ZFS. recordsize 128K suits its chunk writes.
     recordsize: "131072"
     compression: "zstd"
     atime: "off"
     mountpoint: "/var/lib/prometheus"
-  # pgbackrest + restore-drill inherit the pool tuning (recordsize 131072 /
-  # compression zstd / atime off / logbias latency / primarycache all on
-  # r1), so only the LOCAL properties are declared: the mountpoint, plus
-  # the mount-dir mode for pgbackrest (0750, postgres-owned backup repo —
+  # pgbackrest + restore-drill inherit the pool tuning, so only LOCAL properties are
+  # declared: the mountpoint, plus pgbackrest's mount-dir mode (0750, postgres-owned;
   # dir_mode overrides the file task's 0755 default).
   - name: "pgbackrest"
     mountpoint: "/var/lib/pgbackrest"
     dir_mode: "0750"
-  # /srv, not /var/tmp and not /var/lib/stellarindex:
-  #   - PrivateTmp=true (which restore-drill.service sets, like every
-  #     hardened unit here) gives the unit its OWN empty /tmp AND /var/tmp,
-  #     so a drill root under there is invisible inside the service's mount
-  #     namespace and systemd fails the unit at namespace setup
-  #     (226/NAMESPACE) on every scheduled fire. A 616 GB Postgres restore
-  #     is not temp data either.
-  #   - /var/lib/stellarindex is drwxr-x--- stellarindex:stellarindex, and
-  #     pgbackrest runs as POSTGRES, which cannot traverse it ([041]
-  #     Permission denied on the scratch pgdata dir).
-  # /srv is root:root 0755 (traversable by anyone), stays writable under
-  # ProtectSystem=full, and already hosts history-archive. The mount dir
-  # itself is postgres-owned because pgbackrest creates the scratch pgdata
-  # dir inside it.
+  # /srv, not /var/tmp or /var/lib/stellarindex:
+  #   - PrivateTmp=true (restore-drill.service sets it) gives the unit its OWN empty
+  #     /tmp and /var/tmp, so a drill root there is invisible in the unit's mount
+  #     namespace and systemd fails it (226/NAMESPACE). A 616 GB restore is not temp
+  #     data either.
+  #   - /var/lib/stellarindex is 0750 stellarindex:stellarindex, which pgbackrest
+  #     (running as POSTGRES) cannot traverse.
+  # /srv is root:root 0755, writable under ProtectSystem=full, and already hosts
+  # history-archive. The mount dir is postgres-owned because pgbackrest creates the
+  # scratch pgdata inside it.
   - name: "restore-drill"
     mountpoint: "/srv/restore-drill"
     dir_owner: "postgres"
@@ -315,18 +254,15 @@ sysctl_tunings:
   vm.swappiness: 1
   vm.dirty_ratio: 10
   vm.dirty_background_ratio: 3
-  # Strict overcommit (2) makes malloc fail predictably instead of the
-  # OOM-killer nuking a critical process — sound on r1 (188 GB + 16 G swap →
-  # a generous commit budget). But on a small VM the budget is
-  # `overcommit_ratio% × RAM (+ swap)`, e.g. 80% × 20 GB = 16 GB, which
-  # ClickHouse + captive-core + the Go services routinely exceed → malloc/
-  # fork fail with "Cannot allocate memory" despite free RAM. Memory-
-  # constrained hosts (test-net VMs) override vm_overcommit_memory: 0
-  # (heuristic overcommit) — see the note there and the ClickHouse cap.
+  # Strict overcommit (2) makes malloc fail predictably instead of OOM-killing a
+  # critical process; sound on r1 (188 GB + 16 G swap). On a small VM the budget is
+  # `overcommit_ratio% × RAM (+ swap)` (80% × 20 GB = 16 GB), which ClickHouse +
+  # captive-core + the Go services exceed → "Cannot allocate memory" despite free
+  # RAM. Memory-constrained hosts (test-net VMs) override vm_overcommit_memory: 0.
   vm.overcommit_memory: "{{ vm_overcommit_memory | default(2) }}"
   vm.overcommit_ratio: "{{ vm_overcommit_ratio | default(80) }}"
-  # ClickHouse exhausted Ubuntu's 1,048,576 mappings twice on r1 and failed
-  # every allocation with errno 12 while RAM was free.
+  # ClickHouse exhausted Ubuntu's 1,048,576 mappings and failed every allocation
+  # with errno 12 while RAM was free.
   vm.max_map_count: 4194304
 
 # ───── Postgres ──────────────────────────────────────────────────────
@@ -343,27 +279,21 @@ postgres_maintenance_work_mem: "1GB"
 postgres_wal_compression: "zstd"
 postgres_max_connections: 200
 
-# Per-tx lock table sizing — see postgresql.conf.j2 for context.
-# Lock table size = max_locks_per_transaction × max_connections; every
-# full-scan query over the trades hypertable needs ~1 lock per chunk, so
-# the need grows with history. The Postgres default (64 → 12,800 entries)
-# overflows with SQLSTATE 53200, and a single diagnostic query has been
-# observed holding ~27k locks. 4096 → 819,200 entries is sized for
-# permanent headroom rather than another incremental bump: ~30
-# concurrent peak-size queries, or ~15,000 chunks (decades at ~365/yr)
-# with room for 50+ concurrent full scans. Memory cost ≈ 220 MB,
-# negligible against the 48 GB shared_buffers / 188 GB host RAM.
+# Per-tx lock table sizing — see postgresql.conf.j2. Table size =
+# max_locks_per_transaction × max_connections; a full-scan query over the trades
+# hypertable needs ~1 lock per chunk, so the need grows with history. The default
+# (64 → 12,800 entries) overflows with SQLSTATE 53200 (one diagnostic query held
+# ~27k locks). 4096 → 819,200 entries is permanent headroom: ~15,000 chunks with
+# 50+ concurrent full scans, ~220 MB, negligible against 48 GB shared_buffers.
 postgres_max_locks_per_transaction: 4096
 
 postgres_db_core:        "stellar_core"
 postgres_user_core:      "stellar_core"
 # postgres_pass_core ← set in ansible-vault secrets file
 
-# Application database for the indexer / aggregator / api binaries.
-# Owns the trades + oracle_updates hypertables + price_aggregates
-# CAGGs (see migrations/). TimescaleDB extension is enabled at db
-# create time so the migrations can `CREATE EXTENSION IF NOT EXISTS
-# timescaledb` without elevation.
+# Application database for the indexer / aggregator / api (trades + oracle_updates
+# hypertables, price_aggregates CAGGs). TimescaleDB is enabled at create time so
+# migrations need no elevation.
 postgres_db_stellarindex:    "stellarindex"
 postgres_user_stellarindex:  "stellarindex"
 # postgres_pass_stellarindex ← set in ansible-vault secrets file
@@ -378,10 +308,9 @@ postgres_dsn_stellarindex: >-
   postgres_pass_stellarindex | urlencode | replace('/', '%2F') }}@127.0.0.1:5432/{{
   postgres_db_stellarindex | urlencode | replace('/', '%2F') }}?sslmode=disable
 
-# The API's least-privilege role (migration 0213): reads everything, writes
-# only the platform tables. Opt-in: created, granted and wired into the API
-# unit only when postgres_pass_stellarindex_api is set in the secrets file;
-# without it the API keeps the owner DSN above.
+# The API's least-privilege role (migration 0213): reads everything, writes only
+# the platform tables. Opt-in: created and wired into the API unit only when
+# postgres_pass_stellarindex_api is set; otherwise the API keeps the owner DSN.
 postgres_user_stellarindex_api: "stellarindex_api"
 postgres_dsn_stellarindex_api: >-
   postgres://{{ postgres_user_stellarindex_api | urlencode | replace('/', '%2F') }}:{{
@@ -389,47 +318,35 @@ postgres_dsn_stellarindex_api: >-
   postgres_db_stellarindex | urlencode | replace('/', '%2F') }}?sslmode=disable
 
 # ───── ClickHouse schema + state snapshot (ADR-0043 §2.1) ─────────────
-# The lake's METADATA backup (the rows are ch_lake_backup_* below, ADR-0043
-# §2.4) — SHOW CREATE for every
-# stellar.* table/view, the partition + changed-settings inventory, and
-# the ch-backfill / ingestion cursor state. Megabytes a day. Losing the
-# DDL is what turns a re-derive from "run the script" into archaeology.
-#
-# Enabled by default: it is seconds of metadata queries, so none of the
-# Phase-A capacity caveats that ship restore-drill.timer disabled apply
-# here, and a backup that ships disabled is what the ADR was written
-# after.
+# The lake's METADATA backup (rows are ch_lake_backup_* below, §2.4): SHOW CREATE
+# for every stellar.* table/view, partition + changed-settings inventory, and the
+# ch-backfill / ingestion cursors. Megabytes a day; losing the DDL turns a
+# re-derive into archaeology. Enabled by default: seconds of metadata queries,
+# and a backup that ships disabled is what the ADR was written after.
 ch_schema_snapshot_enabled: true
 ch_schema_snapshot_dir: "/var/lib/stellarindex/ch-schema-snapshot"
-# Long tail on purpose — the snapshot's value is partly its DIFF
-# history ("when did that ORDER BY change?"), which a 7-day window
-# throws away for no saving.
+# Long tail on purpose: the snapshot's value is partly its DIFF history, which a
+# 7-day window discards.
 ch_schema_snapshot_retain_days: 90
-# `mc` alias/prefix for the offsite copy, e.g.
-# "offsite/stellarindex-backups/ch-schema". Empty = local-only: a copy on
-# the pool it protects is not a backup. REQUIRED on pubnet —
-# 18-pgbackrest-backup.yml refuses the backup surface (`--tags backup` /
-# `pgbackrest`) without it and reports the gap by name on every full run
-# (a full run is not aborted: the weekly drift check and its apply arm
-# must keep reaching everything after step 18), and the ack below does
-# NOT buy an exemption there. ADR-0043's restore is schema-first, so the
-# DDL is what a re-derive is replayed INTO; losing it with the pool
-# leaves nothing for the surviving Postgres backup and the two ledger
-# archives to be restored into. The ack remains available on test nets,
-# whose lakes are re-createable from deploy/clickhouse/*.sql.
-# Whichever way this is set, stellarindex_ch_schema_snapshot_offsite_stale
-# tickets the host — by name, per host — on a never-configured target as
-# loudly as on a failing push.
+# `mc` alias/prefix for the offsite copy, e.g. "offsite/stellarindex-backups/ch-schema".
+# Empty = local-only, and a copy on the pool it protects is not a backup. REQUIRED
+# on pubnet: 18-pgbackrest-backup.yml refuses the backup surface (`--tags backup` /
+# `pgbackrest`) without it and reports the gap on every full run (not aborted, so
+# the weekly drift check keeps reaching everything after step 18); the ack below
+# buys no exemption there. ADR-0043's restore is schema-first, so losing the DDL
+# with the pool leaves nothing to restore the other backups INTO. The ack remains
+# for test nets, whose lakes are re-createable from deploy/clickhouse/*.sql.
+# stellarindex_ch_schema_snapshot_offsite_stale tickets a never-configured target
+# as loudly as a failing push.
 ch_schema_snapshot_mc_target: ""
 ch_schema_snapshot_offsite_ack: false
 
 # ───── ClickHouse lake DATA backup (ADR-0043 §2.4) ─────────────────────
 # Native BACKUP DATABASE into an off-site s3_plain disk: a full every
-# ch_lake_backup_full_interval_days, daily incrementals on top of it.
-# The units install on every host with a ClickHouse; the backup itself
-# runs only once ch_lake_backup_s3_endpoint is set. Until then the run
-# reports configured=0, the unit fails, and stellarindex_ch_lake_backup_stale
-# tickets the host. Restore: docs/operations/runbooks/ch-lake-backup.md.
+# ch_lake_backup_full_interval_days, daily incrementals on top. Units install on
+# every ClickHouse host; the backup runs only once ch_lake_backup_s3_endpoint is
+# set. Until then the unit fails and stellarindex_ch_lake_backup_stale tickets the
+# host. Restore: docs/operations/runbooks/ch-lake-backup.md.
 ch_lake_backup_enabled: true
 ch_lake_backup_database: "stellar"
 ch_lake_backup_disk: "si_lake_backup"
@@ -440,20 +357,19 @@ ch_lake_backup_s3_region: "auto"
 # ch_lake_backup_s3_key / ch_lake_backup_s3_key_secret ← ansible-vault
 ch_lake_backup_state_dir: "/var/lib/stellarindex/ch-lake-backup"
 ch_lake_backup_full_interval_days: 28
-# Chains kept after a new full succeeds. 1 = only the newest, the same
-# lean off-site posture as pgbackrest_repo2_retention_full; the old chain
-# is removed only once the new full is BACKUP_CREATED.
+# Chains kept after a new full succeeds. 1 = only the newest (lean off-site posture,
+# as pgbackrest_repo2_retention_full); the old chain goes once the new full is
+# BACKUP_CREATED.
 ch_lake_backup_retain_chains: 1
-# Bytes/s ClickHouse may read for a backup — 100 MiB/s keeps a full of the
-# lake (~2 days) off the serving path's disks. 0 = unlimited.
+# Bytes/s ClickHouse may read for a backup; 100 MiB/s keeps a full (~2 days) off
+# the serving path's disks. 0 = unlimited.
 ch_lake_backup_max_bandwidth: 104857600
 
 # ───── Galexie archive off-site mirror (retired) ───────────────────────
-# The raw archive is NOT backed up off-site: it is a copy of SDF's public
-# dataset and is re-pulled from there (ADR-0043 §2).
-# Off-site copies are the ClickHouse lake and Postgres on B2. false removes
-# the units, script and textfile from the host; true re-installs the mirror,
-# which then needs galexie_archive_mirror_s3_endpoint or its unit fails.
+# The raw archive is NOT backed up off-site: it is a copy of SDF's public dataset
+# and is re-pulled from there (ADR-0043 §2). false removes the units, script and
+# textfile; true re-installs the mirror, which needs
+# galexie_archive_mirror_s3_endpoint or its unit fails.
 galexie_archive_mirror_enabled: false
 # s3 endpoint INCLUDING bucket, e.g.
 # "https://<account>.r2.cloudflarestorage.com". Empty = not configured.
@@ -466,151 +382,110 @@ galexie_archive_mirror_source_alias: "local/galexie-archive"
 
 # ───── ClickHouse schema DRIFT check ───────────────────────────────────
 # The other half of the snapshot: compares deploy/clickhouse/tier1_schema.sql
-# (repo intent) against the LIVE schema, on engine (incl. args) /
-# PARTITION BY / ORDER BY / column names. Enabled by default — it is one
-# loopback SHOW CREATE sweep plus sub-second text comparison, and a drift
-# guard that ships disabled detects nothing. Deliberately NOT gated on
-# ch_schema_snapshot_enabled: it reads ClickHouse directly and needs no
-# snapshot at all.
+# (repo intent) against the LIVE schema on engine (incl. args) / PARTITION BY /
+# ORDER BY / column names. Enabled by default (one loopback SHOW CREATE sweep; a
+# guard that ships disabled detects nothing). NOT gated on
+# ch_schema_snapshot_enabled: it reads ClickHouse directly.
 ch_schema_drift_enabled: true
-# Where the shipped copy of the repo's founding DDL lands on the host.
-# The comparison needs the repo's intent ON the box; r1 has no checkout.
+# Where the shipped copy of the repo's founding DDL lands (r1 has no checkout).
 ch_schema_drift_intent: "/usr/local/share/stellarindex/tier1_schema.sql"
-# Where every ansible binary deploy records the tag it just installed, one
-# file per binary (docs/operations/deployed-versions.md — "the live source
-# of record"). The drift check reads it to answer "what release is this
-# host running", and REFUSES to render a verdict when the shipped intent
-# is stamped with an older release: the intent side arrives by the same
-# convergence the check polices, so a host the role has not reached
-# would compare a stale repo against a stale server and read CLEAN. Same
-# mechanism deploy.yml's config-apply baseline reads — not a second one.
+# Where every ansible binary deploy records the tag it installed, one file per
+# binary (docs/operations/deployed-versions.md). The drift check REFUSES a verdict
+# when the shipped intent is stamped with an older release: the intent arrives by
+# the same convergence the check polices, so an unconverged host would compare a
+# stale repo against a stale server and read CLEAN. Same mechanism as deploy.yml's
+# config-apply baseline.
 ch_schema_drift_deployed_versions_dir: "/var/lib/stellarindex/deployed-versions"
-# true (DEFAULT) = the check runs its OWN SHOW CREATE sweep. This is the
-#   only reading that answers the question the unit's Description asks,
-#   and the only one that fails when ClickHouse is down instead of
-#   reporting "0 divergent" off an ageing file.
-# false = compare against the newest ch-schema-snapshot capture instead.
-#   Saves one loopback sweep a day and costs the control its meaning: the
-#   capture is up to a day old and blind to anything applied since — a
-#   deploy shipping a newer intent than the morning's capture puts live
-#   tables on the ABSENT list. The script REFUSES that comparison (exit 2)
-#   rather than reporting it, so this mode is honest — but it still
-#   measures a day-old schema. Set it only where a fresh sweep is
-#   genuinely unavailable, or to interrogate a retained capture by hand.
-# The unit's Description renders from THIS variable, so it cannot claim
-# "vs live" while comparing a snapshot.
+# true (DEFAULT) = the check runs its OWN SHOW CREATE sweep: the only reading that
+#   answers the unit's Description and the only one that fails when ClickHouse is
+#   down instead of reporting "0 divergent" off an ageing file.
+# false = compare against the newest ch-schema-snapshot capture. That capture is
+#   up to a day old, so a deploy shipping a newer intent puts live tables on the
+#   ABSENT list; the script REFUSES that comparison (exit 2). Set only where a
+#   fresh sweep is unavailable, or to interrogate a retained capture by hand.
+# The unit's Description renders from THIS variable so it cannot claim "vs live"
+# while comparing a snapshot.
 ch_schema_drift_use_live: true
 
 # ───── ClickHouse serving-query isolation (ADR-0048 D4) ───────────────
-# A dedicated ClickHouse settings profile + user for the API's
-# per-request explorer reads (GET /v1/ledgers, /v1/tx, /v1/accounts/*
-# incl. the ADR-0048 D5 movements feed, …), separate from the
-# unauthenticated `default` user every OTHER ClickHouse connection in
-# this repo still uses (the indexer's dual-sink, the aggregator's
-# explorer reader, stellarindex-ops backfills/gates/replays). Bounded
-# so a burst of public API traffic fails fast and cheap instead of
-# queuing behind — or getting starved by — a heavy backfill scan or a
-# background merge on the same host. See
-# 20-clickhouse-serving-profile.yml for the exact settings + rationale
-# per knob (max_threads/max_memory_usage/max_execution_time/priority/
-# os_thread_priority/max_concurrent_queries_for_user).
+# A dedicated ClickHouse settings profile + user for the API's per-request explorer
+# reads (/v1/ledgers, /v1/tx, /v1/accounts/* incl. the ADR-0048 D5 movements
+# feed), separate from the unauthenticated `default` user every OTHER connection
+# uses. Bounded so a burst of API traffic fails fast instead of queuing behind a
+# backfill scan or merge. Per-knob rationale: 20-clickhouse-serving-profile.yml.
 #
-# clickhouse_serving_profile_enabled defaults true so a fresh apply of
-# this role provisions the profile+user by default; the API config
-# side (storage.clickhouse_serving_user in stellarindex.toml.j2 below)
-# is a SEPARATE opt-in — provisioning the CH-side user does nothing
-# until the API is also told to authenticate as it. This intentional
-# two-step activation matches how clickhouse_live_sink itself was
-# rolled out (ADR-0041) and lets an operator provision the CH side
-# ahead of a coordinated API-config flip.
+# Defaults true so a fresh apply provisions the profile+user; the API-side flip
+# (storage.clickhouse_serving_user in stellarindex.toml.j2) is a SEPARATE opt-in,
+# letting an operator provision the CH side ahead of a coordinated API-config flip
+# (as clickhouse_live_sink was rolled out, ADR-0041).
 clickhouse_serving_profile_enabled: true
 clickhouse_serving_user: "api_serving"
 clickhouse_serving_max_threads: 2
 clickhouse_serving_max_memory_usage_bytes: 2147483648   # 2 GiB
 clickhouse_serving_max_execution_time_s: 10
 clickhouse_serving_max_concurrent_queries: 20
-# clickhouse_serving_password ← set in ansible-vault secrets file as
-# vault_clickhouse_serving_password (mirrors postgres_pass_stellarindex
-# / vault_stellarindex_reader_secret_key's pattern — see
-# inventory/r1.example.yml for the operator-facing wiring). The
-# plaintext is hashed (SHA-256) into the ClickHouse users.d drop-in at
-# render time and separately injected into
-# STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD in stellarindex.env.j2 for
-# the API process to authenticate with — it never lands on disk
-# outside the vault + those two rendered, root-only-readable files.
+# clickhouse_serving_password ← vault_clickhouse_serving_password (see
+# inventory/r1.example.yml). Hashed (SHA-256) into the users.d drop-in and also
+# injected as STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD in stellarindex.env.j2 for
+# the API; it never lands on disk outside the vault and those two root-only files.
 clickhouse_serving_password: "{{ vault_clickhouse_serving_password | default('') }}"
 
-# The API-side activation flip (stellarindex.toml.j2's
-# clickhouse_serving_user), SEPARATE from clickhouse_serving_profile_enabled
-# above (the CH-side provisioning). false until an operator has
-# confirmed the CH-side profile+user is live — see
-# 20-clickhouse-serving-profile.yml's header for the two-step
-# sequencing rationale.
+# The API-side activation flip (stellarindex.toml.j2's clickhouse_serving_user),
+# SEPARATE from clickhouse_serving_profile_enabled above. false until the CH-side
+# profile+user is confirmed live (see 20-clickhouse-serving-profile.yml's header).
 stellarindex_clickhouse_serving_enabled: false
 
 # ───── ClickHouse ops-batch isolation ──────────────────────────────────
-# The LOW-priority counterpart of the api_serving profile above: a
-# settings profile + user that stellarindex-ops batch jobs (ch-rebuild,
-# ch-backfill, classic-movements-backfill, verify/gate reads, replays)
-# authenticate as, so CH's query scheduler yields their CPU to the
-# serving side. WHY: a multi-million-ledger ops scan running as the same
-# `default` user as the aggregator starves its supply refresher
-# (stellarindex_aggregator_supply_refresh_error_dominant fires for every
-# watched contract within minutes). run-heavy-job.sh's cgroup caps cannot
-# help because the contention is INSIDE clickhouse-server. See
-# 20-clickhouse-serving-profile.yml for the per-knob rationale and
-# docs/operations/clickhouse-ops-batch-profile.md for the operator view.
+# The LOW-priority counterpart of api_serving: a settings profile + user that
+# stellarindex-ops batch jobs (ch-rebuild, ch-backfill,
+# classic-movements-backfill, verify/gate reads, replays) authenticate as, so CH's
+# scheduler yields CPU to the serving side. WHY: a multi-million-ledger ops scan as
+# the same `default` user as the aggregator starves its supply refresher
+# (stellarindex_aggregator_supply_refresh_error_dominant); run-heavy-job.sh's
+# cgroup caps cannot help because the contention is INSIDE clickhouse-server.
+# See 20-clickhouse-serving-profile.yml and
+# docs/operations/clickhouse-ops-batch-profile.md.
 #
-# Defaults FALSE (unlike clickhouse_serving_profile_enabled) because
-# enabling asserts a vault password, and ansible-drift.yml runs the
-# full playbook --check against r1 weekly with the real vault: a
-# default of true would turn that workflow red until every inventory
-# (r1, testnet, futurenet) has vault_clickhouse_ops_batch_password, and
-# block any `--tags clickhouse` apply meanwhile. Flip to true PER
-# INVENTORY in the same PR that adds that inventory's vault password.
-# Until then the CH user is not provisioned, /etc/default/stellarindex-ops
-# carries no STELLARINDEX_CLICKHOUSE_OPS_* pair, and run-heavy-job.sh
-# WARNS on every launch that the job runs as CH `default` — the gap is
-# loud, not silent (14-stellarindex-services.yml).
+# Defaults FALSE because enabling asserts a vault password, and ansible-drift.yml
+# runs the full playbook --check against r1 weekly: a true default would turn it
+# red until every inventory has vault_clickhouse_ops_batch_password. Flip PER
+# INVENTORY in the same PR that adds that password. Until then the CH user is not
+# provisioned, /etc/default/stellarindex-ops carries no
+# STELLARINDEX_CLICKHOUSE_OPS_* pair, and run-heavy-job.sh WARNS on every launch
+# that the job runs as CH `default` (14-stellarindex-services.yml).
 #
-# Two-step activation, same as api_serving: this provisions the CH-side
-# user; the ops binary only authenticates as it once
-# STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD are in
-# /etc/default/stellarindex-ops (09-minio.yml templates them, gated on
-# the same flag + a non-empty password so a partial apply can never
-# hand ops jobs a credential the CH side does not know), and
-# run-heavy-job.sh imports that pair into every wrapped job itself.
+# Two-step activation, as api_serving: the ops binary authenticates as this user
+# only once STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD are in
+# /etc/default/stellarindex-ops (09-minio.yml, gated on the same flag + a
+# non-empty password so a partial apply never hands ops jobs a credential CH does
+# not know); run-heavy-job.sh imports that pair into every wrapped job.
 clickhouse_ops_batch_profile_enabled: false
 clickhouse_ops_batch_user: "ops_batch"
 clickhouse_ops_batch_max_threads: 2
 clickhouse_ops_batch_max_memory_usage_bytes: 8589934592   # 8 GiB (default, not ceiling — see task file)
 clickhouse_ops_batch_max_concurrent_queries: 8
-# CH `priority`: lower number = higher priority; api_serving is 1, an
-# un-opted-in query is 0. 100 leaves room for intermediate tiers.
+# CH `priority`: lower = higher; api_serving is 1, an un-opted-in query 0. 100
+# leaves room for intermediate tiers.
 clickhouse_ops_batch_priority: 100
-# Linux nice value for the ops queries' own CH execution threads
-# (api_serving is -5; background merges run at 0). Positive so a batch
-# scan also yields to merges — falling behind on compaction is the other
-# way a heavy job hurts the serving side.
+# Linux nice value for the ops queries' CH threads (api_serving is -5; merges run
+# at 0). Positive so a batch scan also yields to merges, since falling behind on
+# compaction also hurts the serving side.
 clickhouse_ops_batch_os_thread_priority: 5
-# clickhouse_ops_batch_password ← ansible-vault, vault_clickhouse_ops_batch_password
-# (same discipline as vault_clickhouse_serving_password: SHA-256-hashed
-# into the users.d drop-in at render time, plaintext only ever lands in
-# /etc/default/stellarindex-ops, mode 0640 root:stellarindex).
+# clickhouse_ops_batch_password ← vault_clickhouse_ops_batch_password (SHA-256-hashed
+# into the users.d drop-in; plaintext only in /etc/default/stellarindex-ops, mode
+# 0640 root:stellarindex).
 clickhouse_ops_batch_password: "{{ vault_clickhouse_ops_batch_password | default('') }}"
 
 # ───── ClickHouse live-daemon identity ─────────────────────────────────
-# A named user for the indexer / aggregator / API connections that still
-# reach CH as its unauthenticated `default` user, so `default` can later
-# be locked down without cutting them off. Same `default` settings
-# profile, so the switch is priority- and limit-neutral. Defaults FALSE
-# for the same ansible-drift reason as ops_batch above: enabling asserts
-# a vault password. Flip per inventory together with that inventory's
-# vault_clickhouse_live_daemon_password. Two halves move together —
-# the CH user (--tags clickhouse-live-daemon-profile) and the env pair in
-# /etc/default/stellarindex (--tags stellarindex); the pair is rendered
-# only when both the flag and the password are set, and while it is
-# absent internal/storage/clickhouse/ops_auth.go falls back to `default`.
+# A named user for the indexer / aggregator / API connections still on the
+# unauthenticated `default`, so `default` can later be locked down. Same `default`
+# settings profile, so the switch is priority- and limit-neutral. Defaults FALSE
+# for the ops_batch ansible-drift reason; flip per inventory with
+# vault_clickhouse_live_daemon_password. Two halves move together: the CH user
+# (--tags clickhouse-live-daemon-profile) and the env pair in
+# /etc/default/stellarindex (--tags stellarindex), rendered only when flag and
+# password are set; absent, internal/storage/clickhouse/ops_auth.go falls back to
+# `default`.
 clickhouse_live_daemon_profile_enabled: false
 clickhouse_live_daemon_user: "live_daemon"
 # clickhouse_live_daemon_password ← ansible-vault, vault_clickhouse_live_daemon_password
@@ -619,14 +494,12 @@ clickhouse_live_daemon_user: "live_daemon"
 clickhouse_live_daemon_password: "{{ vault_clickhouse_live_daemon_password | default('') }}"
 
 # ───── ClickHouse ops_monitor / ops_admin identities ───────────────────
-# Named users for the last callers of CH's unauthenticated `default`:
-# ops_monitor (read-only probes, normal priority) and ops_admin (root
-# shells and ansible's own clickhouse-client tasks, via
-# /root/.clickhouse-client/config.xml). Each flag also renders that
-# user's client credential files. Defaults FALSE for the same
-# ansible-drift reason as ops_batch above: enabling asserts a vault
-# password. Passwords must be alphanumeric (`openssl rand -hex 32`): the
-# netrc format splits on whitespace and the client XML is not escaped.
+# Named users for the last callers of CH's unauthenticated `default`: ops_monitor
+# (read-only probes, normal priority) and ops_admin (root shells and ansible's own
+# clickhouse-client tasks, via /root/.clickhouse-client/config.xml). Each flag also
+# renders that user's client credential files. Defaults FALSE for the ops_batch
+# ansible-drift reason. Passwords must be alphanumeric (`openssl rand -hex 32`):
+# netrc splits on whitespace and the client XML is not escaped.
 clickhouse_ops_monitor_profile_enabled: false
 clickhouse_ops_monitor_user: "ops_monitor"
 # clickhouse_ops_monitor_password ← ansible-vault, vault_clickhouse_ops_monitor_password
@@ -637,35 +510,29 @@ clickhouse_ops_admin_user: "ops_admin"
 clickhouse_ops_admin_password: "{{ vault_clickhouse_ops_admin_password | default('') }}"
 
 # ───── ClickHouse destructive-DDL size guard ───────────────────────────
-# ClickHouse refuses DROP TABLE / TRUNCATE / DROP|REPLACE PARTITION on
-# anything larger than max_table_size_to_drop / max_partition_size_to_drop
-# unless the operator first touches /var/lib/clickhouse/flags/force_drop_table
-# — the one line between a typo'd `DROP TABLE` and losing a 582 GiB
-# account_movements. ClickHouse's own default is 50 GB (53687091200 bytes);
-# this drop-in pins every host to it, so a raised hand-set value cannot
-# leave every big lake table droppable with no second step. Raising it is
-# NOT the way to do a planned big drop — the force flag is (one drop per
-# touch, self-deleting); see docs/operations/clickhouse-destructive-ddl.md
-# for the procedure (ZFS snapshot first, then the flag, then the
-# statement). 0 = unlimited and is refused by the task file.
-# Hot-reloaded by clickhouse-server (config.d reloader) — no restart.
-# Mirrored as CH_DROP_GUARD_MAX_BYTES in scripts/ops/config-assertions.sh
-# (hourly live check); its test fails if the two values diverge.
+# ClickHouse refuses DROP TABLE / TRUNCATE / DROP|REPLACE PARTITION above
+# max_table_size_to_drop / max_partition_size_to_drop unless the operator first
+# touches /var/lib/clickhouse/flags/force_drop_table: the line between a typo'd
+# `DROP TABLE` and losing a 582 GiB account_movements. This drop-in pins every
+# host to ClickHouse's own 50 GB default (53687091200 bytes), so a raised hand-set
+# value cannot leave every big table droppable. Raising it is NOT the way to do a
+# planned big drop; the force flag is (one drop per touch, self-deleting). See
+# docs/operations/clickhouse-destructive-ddl.md (ZFS snapshot, flag, statement).
+# 0 = unlimited and is refused by the task file.
+# Hot-reloaded (config.d reloader), no restart.
+# Mirrored as CH_DROP_GUARD_MAX_BYTES in scripts/ops/config-assertions.sh (hourly
+# live check); its test fails if the two diverge.
 clickhouse_drop_guard_enabled: true
 clickhouse_max_table_size_to_drop: 53687091200       # 50 GiB — ClickHouse default
 clickhouse_max_partition_size_to_drop: 53687091200   # 50 GiB — ClickHouse default
 
 # ───── ClickHouse Prometheus endpoint ──────────────────────────────────
-# ClickHouse serves its own /metrics; there is no exporter to install.
-# The stock config.xml ships the whole <prometheus> block inside an XML
-# comment, so a default install publishes NOTHING — nothing on 9363,
-# zero `ClickHouse*` series. The lake is the substrate for the API's
-# explorer read path and the projector; without this its only signal is
-# the ingest-side drop counters our own binaries emit. Enabled by
-# default: the collectors run whether or not anything scrapes them, so
-# the endpoint costs one loopback listener. 9363 is ClickHouse's own
-# documented default and collides with nothing here (native 9300, MinIO
-# 9000, node_exporter 9100, redis 9121, postgres 9187, pgbackrest 9854).
+# ClickHouse serves its own /metrics; no exporter. The stock config.xml ships the
+# <prometheus> block inside an XML comment, so a default install publishes NOTHING
+# on 9363. Without it the lake's only signal is our ingest-side drop counters.
+# Enabled by default: one loopback listener. 9363 is ClickHouse's own default and
+# collides with nothing here (native 9300, MinIO 9000, node_exporter 9100, redis
+# 9121, postgres 9187, pgbackrest 9854).
 clickhouse_prometheus_enabled: true
 clickhouse_prometheus_port: 9363
 clickhouse_prometheus_endpoint: "/metrics"
@@ -673,21 +540,17 @@ clickhouse_prometheus_endpoint: "/metrics"
 # ───── stellarindex-indexer / aggregator / api services ───────────────
 run_stellarindex: true
 
-# Indexer source fleet. Region-INVARIANT by design (ADR-0015 closed-
-# bucket contract — every region must produce byte-equivalent
-# aggregate output from the same inputs), so the full 13-source set
-# is the default rather than a per-region knob. Matches r1's live
+# Indexer source fleet. Region-INVARIANT by design (ADR-0015 closed-bucket
+# contract: every region must produce byte-equivalent aggregate output), so the
+# full source set is the default, not a per-region knob. Matches r1's live
 # /etc/stellarindex.toml.
 #
-# This is the PUBNET default and stays a plain list — lint-source-
-# enablement.sh's read_yaml_list parses it as one and fails closed on
-# anything else (Jinja included), and §7 relies on no pubnet inventory
-# overriding it. The reflector-dex/cex/fx, redstone and band oracle
-# entries are consumed only by the aggregator; stellarindex.toml.j2
-# derives the rendered [ingestion] enabled_sources from run_aggregator
-# so a host that turns the aggregator off (and does not itself override
-# this list) doesn't ship oracle contracts the indexer has no aggregator
-# to feed.
+# This is the PUBNET default and stays a plain list: lint-source-enablement.sh's
+# read_yaml_list parses it as one and fails closed on anything else (Jinja
+# included), and §7 relies on no pubnet inventory overriding it. The
+# reflector-dex/cex/fx, redstone and band oracle entries are consumed only by the
+# aggregator; stellarindex.toml.j2 derives the rendered [ingestion] enabled_sources
+# from run_aggregator.
 stellarindex_enabled_sources:
   - "soroswap"
   - "soroswap-router"
@@ -707,109 +570,88 @@ stellarindex_enabled_sources:
   - "sdex"
   - "cctp"
   - "rozo"
-  # sushiswap_v3 — safe to enable without any pool list: the registry
-  # self-populates from the factory's own `pool_created` events (ADR-0035
-  # trust root, CD3KRKGD…GLYF) from ledger 61487379, the same genesis the
-  # completeness surface reports. A pool whose token mapping is still
-  # unknown fails CLOSED (no row, counted) rather than inventing a
-  # NULL-asset trade.
+  # sushiswap_v3 — needs no pool list: the registry self-populates from the factory's
+  # `pool_created` events (ADR-0035 trust root, CD3KRKGD…GLYF) from ledger 61487379.
+  # A pool with an unknown token mapping fails CLOSED (no row, counted).
   - "sushiswap_v3"
 
-  # upshift — the Upshift/Gami tokenized-vault decoder. Listed here
-  # because the completeness surface tracks it; a tracked source missing
+  # upshift — the Upshift/Gami tokenized-vault decoder. A tracked source missing
   # from this list has no projector and reads INCOMPLETE forever
   # (scripts/ci/lint-source-enablement.sh enforces the pairing).
   - "upshift"
 
-  # spectra — factory-anchored (pt_deployed admits a PT, its yt_deployed the
-  # YT) plus a hand-kept set; all eight WASM hashes are audited
-  # (docs/operations/wasm-audits/spectra.md). A new projector starts at
-  # genesis 63,778,088 and walks history itself.
+  # spectra — factory-anchored (pt_deployed admits a PT, yt_deployed the YT) plus a
+  # hand-kept set; all eight WASM hashes audited
+  # (docs/operations/wasm-audits/spectra.md). Starts at genesis 63,778,088.
   - "spectra"
-# The declared counterpart of the list above: every source whose decoder
-# has shipped (it is in internal/config/validate.go's KnownSources) but
-# which we deliberately do NOT run yet — a work-in-progress, or one
-# awaiting a product decision.
+# The declared counterpart of the list above: every source whose decoder has shipped
+# (in internal/config/validate.go's KnownSources) but which we deliberately do NOT
+# run yet.
 #
 #   stellarindex_sources_not_yet_enabled:
 #     <source>: "<why it is written but not run>"
 #
-# No ansible task or template reads this. It exists so that "written but
-# not enabled" is a DECISION with a name on it instead of an omission,
-# and it is enforced by scripts/ci/lint-source-enablement.sh: every
-# KnownSources name must appear either in the list above or here, so
-# shipping a decoder forces this file open whichever answer you give —
-# a decoder can otherwise ship as a handful of Go edits with nobody ever
-# opening the deployment default.
+# No ansible task or template reads this. It makes "written but not enabled" a
+# named DECISION, enforced by scripts/ci/lint-source-enablement.sh: every
+# KnownSources name must appear in the list above or here, so shipping a decoder
+# forces the deployment default open.
 #
-# A waiver here is NOT a licence to keep claiming a verdict. The same gate
-# refuses any name that is still a reconSource in the compute-completeness
-# catalogue (internal/ops/chops/reconciliation_catalogue.go), because a
-# source we do not run can only ever publish complete=false,
-# coverage_pct=0, watermark_ledger=genesis-1 on /v1/coverage — the
-# permanently-red row that teaches everyone to ignore the board. Deferring
-# the source means deferring the claim about it too.
+# A waiver is NOT a licence to keep claiming a verdict: the same gate refuses any
+# name still a reconSource in the compute-completeness catalogue
+# (internal/ops/chops/reconciliation_catalogue.go), because a source we do not run
+# can only publish complete=false, coverage_pct=0, watermark_ledger=genesis-1 on
+# /v1/coverage, the permanently-red row that teaches everyone to ignore the board.
 stellarindex_sources_not_yet_enabled: {}
 
-# Earliest ledger to backfill from on a fresh install (no persisted
-# cursor yet). 0 = refuse to start without a cursor — operator must
-# pick an explicit ledger to avoid accidental genesis re-ingest.
+# Earliest ledger to backfill from on a fresh install (no persisted cursor). 0 =
+# refuse to start without a cursor, to avoid an accidental genesis re-ingest.
 # [Per-region: each region picks its own backfill floor — r1's live
 #  value is 62403000. Set in inventory.]
 stellarindex_backfill_from_ledger: 0
 
-# First ledger present in the galexie-live bucket. Below this the
-# indexer reads from galexie-archive. Set to whatever galexie-append.sh
-# passed as --start when the live tail first started writing —
-# query the running galexie process args:
-#   pgrep -af 'galexie append'
-# 0 = live-only mode (archive bucket unused).
+# First ledger present in the galexie-live bucket; below it the indexer reads
+# galexie-archive. Use the --start galexie-append.sh was given (`pgrep -af
+# 'galexie append'`). 0 = live-only mode (archive bucket unused).
 #
-# [Per-region: each region has its own seam — the ledger where that
-#  region's *own* galexie-live bucket starts emitting. R1's seam is the
-#  cutover from archive-fill to live-tail. R2/R3 get their seams when
-#  their indexers first start.]
+# [Per-region: the ledger where that region's *own* galexie-live bucket starts
+#  emitting. R1's is the cutover from archive-fill to live-tail; R2/R3 get theirs
+#  when their indexers first start.]
 stellarindex_live_seam_ledger: 0
 
-# Lowest ledger the LOCAL galexie-archive mirror holds on purpose
-# (ADR-0027 trim; below it the cold tier serves). ONE value for every
-# consumer: the fill's static floor, archive-completeness's -from and the
-# verify-archive tiers' cold-start -from. 2 = no floor (the first ledger
-# galexie exports), right for an untrimmed or greenfield node. A trimmed
-# region sets it in its inventory in the same change that trims
-# (lcm-cache-tiering.md); r1.example.yml carries r1's trim boundary.
+# Lowest ledger the LOCAL galexie-archive mirror holds on purpose (ADR-0027 trim;
+# below it the cold tier serves). ONE value for the fill's static floor,
+# archive-completeness's -from and the verify-archive tiers' cold-start -from.
+# 2 = no floor (galexie's first export), right for an untrimmed or greenfield node.
+# A trimmed region sets it in the same change that trims (lcm-cache-tiering.md);
+# r1.example.yml carries r1's boundary.
 stellarindex_archive_hot_floor: 2
 
 # ───── Stellar network / quorum ──────────────────────────────────────
 stellar_network:         "pubnet"
 
-# The full network passphrase, derived from stellar_network. ONE source
-# of truth feeding BOTH stellar-core.cfg's NETWORK_PASSPHRASE AND (for
-# non-preset networks like futurenet) galexie's captive core — declared
-# here so the two can never drift; emitting the network NAME as the
-# passphrase leaves a captive core unable to join the network. MUST
-# match internal/config/config.go's passphrase map.
+# The full network passphrase, ONE source of truth for stellar-core.cfg's
+# NETWORK_PASSPHRASE AND (for non-preset networks like futurenet) galexie's captive
+# core, so they cannot drift; the network NAME as passphrase leaves a captive core
+# unable to join. MUST match internal/config/config.go's passphrase map.
 stellar_passphrases:
   pubnet:    "Public Global Stellar Network ; September 2015"
   testnet:   "Test SDF Network ; September 2015"
   futurenet: "Test SDF Future Network ; October 2022"
 stellar_passphrase: "{{ stellar_passphrases[stellar_network] | default(stellar_network) }}"
 
-# Per-network history archive (SDF-published). config.Validate REJECTS a
-# pubnet (core-live) URL on a non-pubnet network — the guard against a
-# test net silently ingesting pubnet checkpoints — so this MUST track
-# stellar_network. Override in inventory for a private/mirror archive.
+# Per-network SDF history archive. config.Validate REJECTS a pubnet URL on a
+# non-pubnet network (a test net must not ingest pubnet checkpoints), so this MUST
+# track stellar_network. Override in inventory for a private/mirror archive.
 stellar_history_archive_urls:
   pubnet:    "https://history.stellar.org/prd/core-live/core_live_001"
   testnet:   "https://history.stellar.org/prd/core-testnet/core_testnet_001"
   futurenet: "http://history.stellar.org/dev/core-futurenet/core_futurenet_001"
 stellar_history_archive_url: "{{ stellar_history_archive_urls[stellar_network] | default(stellar_history_archive_urls['pubnet']) }}"
 
-# stellar.rpc_endpoints for the ops CLIs that need a network tip or a
-# simulateTransaction (detect-gaps, seed/verify fallbacks). This role deploys
-# no stellar-rpc (see the note above run_minio), so a loopback URL here is dead: use the
-# network's public, unkeyed endpoint. No pubnet fallback — a wrong-network tip
-# is worse than a failed render. Override in inventory if a local rpc returns.
+# stellar.rpc_endpoints for ops CLIs that need a network tip or simulateTransaction
+# (detect-gaps, seed/verify fallbacks). This role deploys no stellar-rpc, so use
+# the network's public unkeyed endpoint. No pubnet fallback: a wrong-network tip
+# is worse than a failed render.
 stellar_rpc_endpoints_by_network:
   pubnet:    ["https://mainnet.sorobanrpc.com"]
   testnet:   ["https://soroban-testnet.stellar.org"]
@@ -818,11 +660,9 @@ stellar_rpc_endpoints: "{{ stellar_rpc_endpoints_by_network[stellar_network] }}"
 
 # The FULL SDF archive set per network (001/002/003), per
 # https://developers.stellar.org/docs/networks. `stellar_history_archive_url`
-# above stays single-valued (the archivist mirror + galexie-append probe want
-# one URL); this list is what a captive core replaying history should use, so a
-# single archive being slow or 404ing a checkpoint fails over instead of
-# stalling the replay. Consumed by stellar-core.cfg.j2 on NON-pubnet networks,
-# where the pubnet [[VALIDATORS]] (and their pubnet HISTORY URLs) are omitted.
+# stays single-valued (archivist mirror + galexie-append probe want one URL); this
+# list lets a captive core replaying history fail over instead of stalling. Used by
+# stellar-core.cfg.j2 on NON-pubnet networks, which omit the pubnet [[VALIDATORS]].
 stellar_history_archive_url_sets:
   pubnet:
     - "https://history.stellar.org/prd/core-live/core_live_001"
@@ -838,11 +678,11 @@ stellar_history_archive_url_sets:
     - "http://history.stellar.org/dev/core-futurenet/core_futurenet_003"
 stellar_history_archive_url_set: "{{ stellar_history_archive_url_sets[stellar_network] | default([stellar_history_archive_url]) }}"
 
-# Captive stellar-core apt version. Empty = fresh-host "latest available"; an
-# existing binary is upgraded by stellar-core-auto-upgrade.timer, not deploys. Pin the exact apt version
-# (e.g. "28.0.1-3508.947aad841.noble") to drive a PROTOCOL-UPGRADE core bump —
-# required before a network reaches a protocol the installed core predates.
-# See docs/operations/protocol-upgrades.md.
+# Captive stellar-core apt version. Empty = fresh-host "latest"; an existing binary
+# is upgraded by stellar-core-auto-upgrade.timer, not deploys. Pin the exact apt
+# version (e.g. "28.0.1-3508.947aad841.noble") to drive a PROTOCOL-UPGRADE bump,
+# required before a network reaches a protocol the installed core predates. See
+# docs/operations/protocol-upgrades.md.
 stellar_core_version: ""
 
 # stellar-core-auto-upgrade.timer installs apt's newer core every 6h with a
@@ -850,41 +690,34 @@ stellar_core_version: ""
 # stellar_core_version pin makes it skip; false disables the timer.
 stellar_core_auto_upgrade: true
 
-# stellar-archivist apt version. Empty = fresh-host "latest available" /
-# never-upgrade-an-existing-binary (06-stellar-core.yml), same posture as
-# stellar_core_version above. Pin the exact apt version (e.g. "0.1.5-486") to
-# clear stellarindex_stellar_stack_lagging{component="archivist"} — the probe
-# in 10-observability.yml compares dpkg-installed against the apt candidate.
-# archivist is the archive mirror/verify CLI (verify-archive tiers), NOT in the
-# live ingest path, so a bump is low-risk and needs no service restart.
-# VERSIONS.md pins the tools/stellar-archivist tag (v0.7.3) the Tier E argv
-# is verified against — that pin is NOT enforced here, same posture as
-# stellar_core_version above. Leaving this empty installs apt's latest
-# candidate on a fresh host, which can be newer than that tag; pin
-# explicitly in inventory to reproduce it. To upgrade an ALREADY-PROVISIONED
-# host, set this to the target version and re-run the role (06-stellar-core.yml
-# and 07-galexie.yml both install "stellar-archivist=<version>" when this is
-# set) — a differing pin drives the same upgrade/downgrade apt does for any
-# other pinned package version bump.
+# stellar-archivist apt version. Empty = fresh-host "latest" / never upgrade an
+# existing binary (06-stellar-core.yml), as stellar_core_version. Pin the exact apt
+# version (e.g. "0.1.5-486") to clear
+# stellarindex_stellar_stack_lagging{component="archivist"} (the probe in
+# 10-observability.yml compares dpkg against the apt candidate). archivist is the
+# archive mirror/verify CLI, not in the live ingest path: low-risk, no restart.
+# VERSIONS.md pins the tools/stellar-archivist tag (v0.7.3) the Tier E argv is
+# verified against; that pin is NOT enforced here, so empty can install a newer
+# candidate on a fresh host. To upgrade a provisioned host set the target version
+# and re-run the role (06-stellar-core.yml and 07-galexie.yml install
+# "stellar-archivist=<version>").
 stellar_archivist_version: ""
 
 # Protocol-transition era boundaries (internal/config/config.go StellarConfig).
-# Pubnet uses the real ledger numbers; a reset testnet/futurenet is entirely
-# post-Soroban AND post-P23 from ledger 1, so both sit at the chain's start
-# there — otherwise the SEP-41 supply observer and the CAP-67 movements feed
-# floor ABOVE every ledger the net has and produce nothing. These also drive
-# the ch-cap67-movements -floor-ledger flag (14-stellarindex-services.yml).
+# Pubnet uses real ledger numbers; a reset testnet/futurenet is post-Soroban AND
+# post-P23 from ledger 1, so both sit at the chain's start there, or the SEP-41
+# supply observer and CAP-67 movements feed floor ABOVE every ledger and produce
+# nothing. These also drive the ch-cap67-movements -floor-ledger flag
+# (14-stellarindex-services.yml).
 #
-# The movements floor is 2, not 1, off pubnet: no lake holds ledger 1 (the
-# genesis ledger is never exported — min(ledger_seq) is 2 on every
-# network), and the cap67 follow daemon's first run starts AT the floor,
-# gated on ContiguousWatermark, which reads a resume point the lake does
-# not hold as a boundary hole and answers "nothing to derive" forever.
-# The daemon also clamps its first run up to the lake's first ledger;
-# this default is the belt to that brace.
-# The same value flows into stellarindex.toml movements_floor_ledger (the
-# API's PG/CH split, where 2 is harmless: no ledger sits below it) and,
-# via -config, into the creators rollup's arm boundary.
+# The movements floor is 2, not 1, off pubnet: no lake holds ledger 1 (min
+# ledger_seq is 2 on every network), and the cap67 follow daemon's first run
+# starts AT the floor, gated on ContiguousWatermark, which reads a resume point
+# the lake does not hold as a boundary hole and answers "nothing to derive"
+# forever. The daemon also clamps its first run to the lake's first ledger; this
+# default is the belt to that brace. The same value flows into stellarindex.toml
+# movements_floor_ledger (the API's PG/CH split, where 2 is harmless) and, via
+# -config, the creators rollup's arm boundary.
 stellar_soroban_genesis_ledger: "{{ 50457424 if stellar_network == 'pubnet' else 1 }}"
 stellar_movements_floor_ledger: "{{ 58762517 if stellar_network == 'pubnet' else 2 }}"
 

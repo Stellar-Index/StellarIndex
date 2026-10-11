@@ -80,14 +80,9 @@
       # Managed by ansible (archival-node 12-hardening.yml).
       $nrconf{restart} = 'l';
 
-# ── CIS L2 minimum set: kernel info-leak sysctls + auditd ────────────
-# Scope is deliberately
-# narrow: kernel hardening + an auth/sudo-exec audit trail ONLY — no
-# SSH changes (templated above) and no network changes (11-firewall.yml).
-# Gated on `hardening_cis_l2` (default ON, defaults/main.yml).
-# Sudo-exec events land in the journal via auditd → journald and are
-# shipped to Loki by promtail (10-observability.yml), which closes the
-# old "sudo logging to Loki" TODO without any extra plumbing.
+# ── CIS L2 minimum set: kernel info-leak sysctls + auditd ─────────────
+# Kernel hardening + auth/sudo-exec audit trail only; no SSH or network changes.
+# Gated on `hardening_cis_l2`. Sudo-exec events reach Loki via auditd → journald → promtail.
 
 - name: Template CIS L2 kernel-hardening sysctls
   ansible.builtin.template:
