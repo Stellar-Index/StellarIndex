@@ -2,18 +2,14 @@ package dispatcher
 
 import "github.com/stellar/go-stellar-sdk/xdr"
 
-// ContractCall is the public projection of one extracted InvokeContract
-// call: the invoked contract (C-strkey), the function symbol, the base64
-// SCVal args, and the auth-tree CallPath ([] for the top-level call).
+// ContractCall is the public projection of one extracted InvokeContract call: the invoked contract
+// (C-strkey), function symbol, base64 SCVal args, and the auth-tree CallPath ([] for the top-level
+// call).
 //
-// It exists so off-line tooling — specifically the completeness
-// projection re-derive (stellarindex-ops compute-completeness) — can replay
-// exactly what the live dispatcher routes to ContractCallDecoders over the
-// certified ClickHouse lake, without reaching into the dispatcher's
-// unexported call-tree internals. Event-less ContractCall sources (band,
-// soroswap-router) have no soroban_events landing zone, so their projection
-// census is re-derived by streaming InvokeContract ops from the lake and
-// running this extraction + the source's ContractCallDecoder over each.
+// Off-line tooling (stellarindex-ops compute-completeness) uses it to replay what the live
+// dispatcher routes to ContractCallDecoders over the ClickHouse lake. Event-less sources (band,
+// soroswap-router) have no soroban_events landing zone, so their census is re-derived by streaming
+// InvokeContract ops and running this extraction plus the source's decoder over each.
 type ContractCall struct {
 	ContractID   string
 	FunctionName string
@@ -30,22 +26,16 @@ type ContractCall struct {
 	ExecutionCorroborated bool
 }
 
-// ExtractContractCallTree returns every InvokeContract call reachable from a
-// single operation: the op's TOP-LEVEL call (always, at CallPath []) plus
-// every call in the Soroban auth tree (the canonical source per ADR-0052).
-// This is byte-identical to what the live dispatcher feeds its
-// ContractCallDecoders (see extractInvokeContractCallTrees), so a census
-// re-derived through it reconciles against the served tier by the same
-// routing logic, including the ExecutionCorroborated flag the live
-// dispatcher computes. Returns nil for non-InvokeContract ops.
+// ExtractContractCallTree returns every InvokeContract call reachable from one operation: the
+// top-level call (always, at CallPath []) plus every call in the Soroban auth tree (ADR-0052).
+// It is byte-identical to what the live dispatcher feeds its ContractCallDecoders, including the
+// ExecutionCorroborated flag, so a re-derived census reconciles by the same routing logic.
+// Returns nil for non-InvokeContract ops.
 //
-// The top-level call is emitted even when the op carries an auth array.
-// An auth entry's RootInvocation is the root of the subtree that needs
-// authorization, not necessarily the op's entry point — so when the
-// top-level call needs no auth and something below it does, emitting it
-// only as a no-auth fallback would export the nested auth root with
-// CallPath [] and never export the real root at all. See
-// extractInvokeContractCallTrees for the re-rooting rule and its dedup.
+// The top-level call is emitted even when the op carries an auth array: an auth entry's
+// RootInvocation is the root of the subtree needing authorization, not necessarily the op's entry
+// point, so a no-auth-fallback-only emit would export the nested auth root at CallPath [] and never
+// the real root. See extractInvokeContractCallTrees for the re-rooting rule and its dedup.
 func ExtractContractCallTree(op xdr.Operation) []ContractCall {
 	trees := extractInvokeContractCallTrees([]xdr.Operation{op})
 	if len(trees) == 0 || trees[0] == nil {

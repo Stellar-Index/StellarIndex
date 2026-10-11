@@ -16,27 +16,22 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// StoreAssetReader adapts *timescale.Store to v1.AssetReader. Keeps
-// the typed boundary: the store returns canonical.Asset; the API
-// layer owns the wire-shape conversion to v1.AssetDetail.
+// StoreAssetReader adapts *timescale.Store to v1.AssetReader. The store returns canonical.Asset;
+// the API layer owns the wire-shape conversion to v1.AssetDetail.
 //
-// listingHomeDomains (listing page) and detailHomeDomainLookup (GetAsset)
-// are the two surface lookups from newHomeDomainLookups. An issuer with
-// no known domain is absent / returns ("", false); the AssetDetail then
-// has HomeDomain==nil and the overlay handler stamps
-// sep1_status="not_fetched" for that case.
+// listingHomeDomains (listing page) and detailHomeDomainLookup (GetAsset) are the two surface
+// lookups from newHomeDomainLookups. An issuer with no known domain returns ("", false), leaving
+// HomeDomain nil so the overlay handler stamps sep1_status="not_fetched".
 type StoreAssetReader struct {
 	S                      *timescale.Store
 	ListingHomeDomains     func(ctx context.Context, issuers []string) map[string]string
 	DetailHomeDomainLookup func(ctx context.Context, issuer string) (string, bool)
 }
 
-// homeDomainLookups is the ADR-0021 home-domain chain (observation, then
-// the operator-static map) split by surface. The listing has no live
-// on-chain read, so it takes the whole chain. The asset-detail surfaces
-// run v1's live ClickHouse AccountEntry read, which must outrank the
-// static map: detail carries only the observation layer, and static is
-// handed to v1 to consult after that read.
+// homeDomainLookups is the ADR-0021 home-domain chain (observation, then the operator-static map)
+// split by surface. The listing has no live on-chain read, so it takes the whole chain. Detail
+// surfaces run v1's live ClickHouse AccountEntry read, which must outrank the static map, so
+// detail carries only the observation layer and v1 consults static after that read.
 
 // ClassicAssetBySlug satisfies v1's optional classicSlugResolver
 // capability — /v1/assets/{slug} resolution for the migration-0134
@@ -89,13 +84,10 @@ func (r StoreAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.A
 	}
 	detail := AssetToDetail(ctx, a, r.DetailHomeDomainLookup)
 
-	// Best-effort F2 enrichment from the per-asset stats lookup
-	// — same data the /v1/coins listing carries. Failures here
-	// don't break the detail response; the field stays null and
-	// the rest of the body still serves cleanly. The proper
-	// supply pipeline (asset_supply_history) will overwrite
-	// these when it has a snapshot — populateF2Fields runs
-	// AFTER us in the handler stack.
+	// Best-effort F2 enrichment from the per-asset stats lookup, the same data the /v1/coins listing
+	// carries. A failure leaves the field null without breaking the detail response. The supply
+	// pipeline (asset_supply_history) overwrites these when it has a snapshot: populateF2Fields runs
+	// after us in the handler stack.
 	if stats, err := r.S.LatestAssetStats(ctx, a.String()); err == nil {
 		if detail.VolumeUSD24h == nil && stats.Volume24hUSD != nil {
 			detail.VolumeUSD24h = stats.Volume24hUSD
@@ -111,12 +103,9 @@ func (r StoreAssetReader) GetAsset(ctx context.Context, a canonical.Asset) (v1.A
 	return detail, nil
 }
 
-// CachedAssetReader / CachedMarketsReader — Redis read-through
-// caches for the catalogue list endpoints. Same shape as
-// CachedOracleReader: deserialise on hit, hit-the-DB-then-SET on
-// miss, fall through on error. Single-asset / single-pair lookups
-// pass through unchanged — they're already fast and benefit less
-// from caching.
+// CachedAssetReader / CachedMarketsReader are Redis read-through caches for the catalogue list
+// endpoints, shaped like CachedOracleReader: deserialise on hit, query then SET on miss, fall
+// through on error. Single-asset and single-pair lookups pass through; they are already fast.
 
 type listCachePayload[T any] struct {
 	Items      []T    `json:"items"`
@@ -163,12 +152,9 @@ type CachedAssetReader struct {
 	Log   *slog.Logger
 }
 
-// ClassicAssetBySlug forwards the optional classicSlugResolver
-// capability through the cache wrapper — a wrapping reader that
-// swallowed it would silently 400 every slug URL in production while
-// tests against the bare reader stayed green (the exact
-// capability-erasure bug class the mutation audit flagged). Uncached:
-// the lookup is a single unique-index point read.
+// ClassicAssetBySlug forwards the optional classicSlugResolver capability through the cache
+// wrapper: a wrapper that swallowed it would silently 400 every slug URL while tests against the
+// bare reader stayed green. Uncached because it is a single unique-index point read.
 func (r CachedAssetReader) ClassicAssetBySlug(ctx context.Context, slug string) (string, string, bool, error) {
 	res, ok := r.Inner.(interface {
 		ClassicAssetBySlug(ctx context.Context, slug string) (string, string, bool, error)
@@ -204,20 +190,15 @@ func (r CachedAssetReader) ListAssets(ctx context.Context, cursor string, limit 
 	return items, next, nil
 }
 
-// AssetToDetail converts canonical.Asset → v1.AssetDetail. Nullable
-// fields become nil pointers when empty so the JSON omits them.
+// AssetToDetail converts canonical.Asset → v1.AssetDetail. Nullable fields become nil pointers
+// when empty so the JSON omits them.
 //
-// homeDomainLookup populates HomeDomain for classic assets whose
-// issuer has a known home_domain (one of the homeDomainLookups). When
-// one is known, the
-// SEP-1 overlay handler downstream resolves stellar.toml and fills the
-// overlay fields; otherwise HomeDomain stays nil and the handler
-// stamps sep1_status="not_fetched". Pass nil for the lookup if the
-// caller doesn't have one (tests + scaffolding paths).
+// homeDomainLookup (one of the homeDomainLookups; nil is allowed) populates HomeDomain for classic
+// assets whose issuer has a known home_domain, and the SEP-1 overlay handler then resolves
+// stellar.toml. Otherwise HomeDomain stays nil and the handler stamps sep1_status="not_fetched".
 //
-// SAC-wrapped classics + Soroban tokens have no issuer in the
-// classic sense — HomeDomain stays nil; sep1_status falls through
-// to "not_applicable" via the handler.
+// SAC-wrapped classics and Soroban tokens have no classic issuer: HomeDomain stays nil and
+// sep1_status falls through to "not_applicable".
 func AssetToDetail(ctx context.Context, a canonical.Asset, homeDomainLookup func(ctx context.Context, issuer string) (string, bool)) v1.AssetDetail {
 	d := v1.AssetDetail{
 		AssetID: a.String(),
@@ -232,11 +213,8 @@ func AssetToDetail(ctx context.Context, a canonical.Asset, homeDomainLookup func
 	if a.Issuer != "" {
 		v := a.Issuer
 		d.Issuer = &v
-		// Classic asset with a known issuer — try the curated lookup
-		// to populate HomeDomain. The handler's overlay logic takes
-		// over from here: with HomeDomain set + s.meta wired,
-		// applySep1Overlay runs and stamps the resulting status; with
-		// HomeDomain set + s.meta nil, the handler stamps "not_fetched".
+		// Classic asset with a known issuer: try the curated lookup. With HomeDomain set and s.meta
+		// wired, applySep1Overlay stamps the status; with s.meta nil the handler stamps "not_fetched".
 		if homeDomainLookup != nil {
 			if hd, ok := homeDomainLookup(ctx, a.Issuer); ok {
 				d.HomeDomain = &hd

@@ -11,35 +11,27 @@ import (
 
 // IssuerHomeDomain is one on-chain reading of an account's home_domain.
 //
-// Observed=false: no AccountEntry observation exists for the account, so
-// the chain has told us nothing and the operator-static map may answer.
-// Observed=true, Domain=="": the latest observation says the account has
-// no home_domain (never set, cleared by SetOptions, or the account was
-// merged). The ledger is authoritative here: an issuer that clears its
-// home_domain has withdrawn the identity claim, and a static value must
-// not re-assert it.
+// Observed=false: no observation exists, so the operator-static map may answer.
+// Observed=true, Domain=="": the latest observation says the account has no home_domain (never
+// set, cleared, or merged). The ledger is authoritative: an issuer that clears its home_domain
+// has withdrawn the identity claim, and a static value must not re-assert it.
 type IssuerHomeDomain struct {
 	Observed bool
 	Domain   string
 }
 
-// AccountObservationLookup is the storage-side primitive the
-// [LCMHomeDomainResolver] consumes. Production impl adapts
-// timescale.Store.LatestAccountObservationAtOrBefore; tests pass fakes.
-// A missing observation is IssuerHomeDomain{Observed: false} with a nil
-// error (the batch form omits the issuer); only storage failures return an
-// error.
+// AccountObservationLookup is the storage primitive [LCMHomeDomainResolver] consumes. A missing
+// observation is IssuerHomeDomain{Observed: false} with a nil error (the batch form omits the
+// issuer); only storage failures return an error.
 type AccountObservationLookup interface {
 	HomeDomainAtOrBefore(ctx context.Context, issuer string, asOfLedger uint32) (IssuerHomeDomain, error)
 	HomeDomainsAtOrBefore(ctx context.Context, issuers []string, asOfLedger uint32) (map[string]IssuerHomeDomain, error)
 }
 
-// LCMHomeDomainResolver reads the latest home_domain the AccountEntry
-// observer recorded in `account_observations` for an issuer. It only
-// knows accounts the indexer watches (`[metadata].watched_issuer_accounts`
-// plus `[supply].sdf_reserve_accounts`); per ADR-0021 the operator-static
-// `[metadata.issuer_home_domains]` map answers for accounts with no
-// observation.
+// LCMHomeDomainResolver reads the latest home_domain recorded in `account_observations`. It only
+// knows accounts the indexer watches (`[metadata].watched_issuer_accounts` plus
+// `[supply].sdf_reserve_accounts`); per ADR-0021 the static `[metadata.issuer_home_domains]` map
+// answers for the rest.
 type LCMHomeDomainResolver struct {
 	store AccountObservationLookup
 }
@@ -86,18 +78,14 @@ var ErrLCMUnavailable = errors.New("metadata: LCM resolver storage error")
 // the response.
 const lcmLookupTimeoutMs = 100
 
-// ChainedHomeDomainLookup composes the live LCM resolver with the
-// operator-static map (`cfg.Metadata.HomeDomainFor`):
+// ChainedHomeDomainLookup composes the live LCM resolver with the operator-static map:
 //
-//  1. An observation exists → its reading is final: (domain, true) when
-//     the account carries a home_domain, ("", false) when it does not.
-//     The static map is NOT consulted, so an on-chain clear or merge
-//     cannot be overridden by operator config.
-//  2. No observation → the static map answers.
-//  3. Storage error → warnFn logs and the static map answers.
+//  1. An observation exists: its reading is final, and the static map is NOT consulted, so an
+//     on-chain clear or merge cannot be overridden by operator config.
+//  2. No observation: the static map answers.
+//  3. Storage error: warnFn logs and the static map answers.
 //
-// The read runs under the caller's ctx (bounded to 100ms), so a client
-// that disconnects cancels it.
+// The read runs under the caller's ctx, bounded to 100ms, so a disconnecting client cancels it.
 func ChainedHomeDomainLookup(
 	live *LCMHomeDomainResolver,
 	static func(issuer string) (string, bool),

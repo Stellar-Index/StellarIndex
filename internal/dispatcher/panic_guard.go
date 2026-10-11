@@ -25,26 +25,23 @@ type panicSite struct {
 	OpIndex int
 }
 
-// recordDecoderPanic converts a recovered decoder panic into the decode error
-// every dispatch seam already skips on. Decoders run on adversary-influenced
-// ledger data; an unrecovered panic would discard every source's output for the
-// ledger and refuse the cursor advance, so one decoder bug becomes a total
-// ingest outage.
+// recordDecoderPanic converts a recovered decoder panic into the decode error every dispatch seam
+// already skips on. Decoders run on adversary-influenced ledger data; an unrecovered panic would
+// discard every source's output for the ledger and refuse the cursor advance, turning one decoder
+// bug into a total ingest outage.
 //
-// Defensible only because the skip is DURABLY RECORDED:
-//   - The raw event is already in the ClickHouse lake (dispatchOne pushes to
-//     rawEventSink BEFORE the decoder pass): `projector-replay` / `ch-rebuild`
-//     re-derive it (invariant 8).
-//   - The decode-error delta reaches decoder_stats, and ADR-0033's re-derive
-//     marks the ledger a blind spot (/v1/coverage complete=false).
+// The skip is defensible only because it is durably recorded:
+//   - The raw event is already in the ClickHouse lake (dispatchOne pushes to rawEventSink BEFORE
+//     the decoder pass), so `projector-replay` / `ch-rebuild` can re-derive it (invariant 8).
+//   - The decode-error delta reaches decoder_stats, and ADR-0033's re-derive marks the ledger a
+//     blind spot (/v1/coverage complete=false).
 //   - DecoderPanicsTotal pages (stellarindex_decoder_panicked).
 //
-// A panicking Matches is treated like a panicking Decode, and a first-match
-// seam stops scanning: the NEXT decoder would inherit a broken decoder's
-// events, a misattribution ADR-0033 cannot see.
+// A panicking Matches counts like a panicking Decode, and a first-match seam stops scanning: the
+// next decoder would inherit a broken decoder's events, a misattribution ADR-0033 cannot see.
 //
-// seenCounted says whether bumpEventsSeen already ran; if not, bump it here so
-// the error-rate denominator stays one attempt per error.
+// seenCounted says whether bumpEventsSeen already ran; if not it is bumped here so the error-rate
+// denominator stays one attempt per error.
 func (d *Dispatcher) recordDecoderPanic(name string, seenCounted bool, r any, site panicSite) error {
 	if name == "" {
 		name = "unknown"
@@ -77,16 +74,14 @@ func (d *Dispatcher) log() *slog.Logger {
 	return slog.Default()
 }
 
-// DecodeRow runs one lake row through dec for a caller outside the dispatch
-// loop (the projector, projected-rebuild) under the same panic discipline as
-// recordDecoderPanic. Those callers skip a failed row and advance past it, so
-// the skip must be loud here, where no caller can forget it: a recovered panic
-// is counted in DecoderPanicsTotal and logged with its stack, and a returned
-// decode error is logged with the row coordinate.
+// DecodeRow runs one lake row through dec for a caller outside the dispatch loop (the projector,
+// projected-rebuild) under the same panic discipline as recordDecoderPanic. Those callers skip a
+// failed row and advance, so the skip is made loud here where no caller can forget it: a recovered
+// panic is counted in DecoderPanicsTotal and logged with its stack, a decode error is logged with
+// the row coordinate.
 //
-// matched is false when dec does not claim ev (outs and err are then nil). A
-// panic in Matches counts as that decoder's failure, exactly as in the
-// dispatcher. err is the decoder's own error or an [ErrDecoderPanic] wrap.
+// matched is false when dec does not claim ev (outs and err are then nil). A panic in Matches
+// counts as that decoder's failure. err is the decoder's own error or an [ErrDecoderPanic] wrap.
 func DecodeRow(name string, dec Decoder, ev events.Event, log *slog.Logger) (outs []consumer.Event, matched bool, err error) {
 	if name == "" {
 		name = "unknown"

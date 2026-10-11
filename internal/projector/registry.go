@@ -9,20 +9,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// BuildRegistry constructs the projector's source list from the
-// operator's enabled-sources config + oracle config, one [Source] per
-// name whose [pipeline.SourceSpec] has a Projector. Other names (sdex,
-// band, soroswap-router, external CEX/FX) are skipped: the dispatcher
-// writes them.
+// BuildRegistry builds one [Source] per name whose [pipeline.SourceSpec] has a Projector; other
+// names (sdex, band, soroswap-router, external CEX/FX) are skipped because the dispatcher writes them.
 //
-// Watched specs (sep41) are added whatever names says. They are not in
-// config.KnownSources, so they never appear in enabled_sources, and the
-// dispatcher cedes them to the projector as sole writer; registering
-// them only on request once left r1 with no sep41 writer for ~14 days.
+// Watched specs (sep41) are added whatever names says: they are not in config.KnownSources, and
+// the dispatcher cedes them to the projector as sole writer, so they must register unprompted.
 // They are skipped only when no SEP-41 contract is watched.
 //
-// Returns an error when a source needs oracle config that is empty
-// (e.g. `reflector-dex` enabled but `oracle.reflector.dex_contract` is "").
+// It errors when a source needs oracle config that is empty (e.g. `reflector-dex` enabled but
+// `oracle.reflector.dex_contract` is "").
 func BuildRegistry(names []string, oracle config.OracleConfig, watchedSEP41 []string, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (Registry, error) {
 	var sources []Source
 	seen := map[string]bool{}

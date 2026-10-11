@@ -25,24 +25,12 @@ type FanoutStore interface {
 	EnqueueDelivery(ctx context.Context, d platform.WebhookDelivery) error
 }
 
-// Fanout enqueues one webhook delivery per subscribed enabled
-// webhook when a product event fires. Producers (freeze sink,
-// incident creator, divergence service) call Fanout.Publish with
-// the event type + JSON payload; the service looks up every
-// subscriber and inserts a pending delivery row, which the worker
-// then drains.
+// Fanout enqueues one webhook delivery per subscribed enabled webhook when a product event fires;
+// the worker then drains the pending rows. Without a Publish caller a registered hook never fires.
 //
-// Without a caller of Publish no delivery row is ever inserted, so a
-// customer could register a hook that never fires.
-//
-// The event that triggered fan-out is already durable in its own
-// table (freeze_events, incidents, divergence_runs), so a fan-out
-// failure never blocks the producer. It is NOT, however, invisible: if
-// Publish returned nothing, a fan-out that enqueued zero of five
-// subscribers would look identical to a successful one from the
-// caller's side, with a WARN line as the only trace. Publish reports a
-// [PublishResult] plus an error whenever any delivery was lost, and
-// every loss also increments [obs.CustomerWebhookFanoutFailuresTotal].
+// The triggering event is already durable in its own table, so a fan-out failure never blocks the
+// producer. It must still be visible: Publish reports a [PublishResult] plus an error whenever any
+// delivery was lost, and every loss increments [obs.CustomerWebhookFanoutFailuresTotal].
 type Fanout struct {
 	store  FanoutStore
 	logger *slog.Logger
@@ -58,13 +46,9 @@ type PublishResult struct {
 	Enqueued    int
 	Failed      int
 
-	// Suppressed counts deliveries the store REFUSED by policy — today,
-	// the owning account was suspended or closed between the subscriber
-	// resolve and the insert. It is deliberately its
-	// own field rather than a Failed: Failed means "a customer LOST this
-	// event and nothing will re-derive it", which is alertable, and
-	// folding a deliberate withholding into it would page an operator
-	// for the kill switch doing its job.
+	// Suppressed counts deliveries the store REFUSED by policy (the owning account was suspended
+	// or closed between subscriber resolve and insert). It is not a Failed: Failed means a
+	// customer LOST the event and is alertable, so folding the kill switch in would page needlessly.
 	Suppressed int
 
 	// AlreadyEnqueued counts subscribers the store already held this
@@ -87,21 +71,17 @@ func NewFanout(store FanoutStore, logger *slog.Logger) *Fanout {
 	return &Fanout{store: store, logger: logger, clock: time.Now}
 }
 
-// Publish enqueues one delivery per subscribed enabled webhook.
-// `payload` must be valid JSON (caller-marshalled) and small
-// enough to live comfortably in a Postgres jsonb column.
+// Publish enqueues one delivery per subscribed enabled webhook. payload must be caller-marshalled
+// JSON small enough for a Postgres jsonb column.
 //
-// Returns the per-fan-out counts plus a non-nil error whenever at
-// least one subscribed customer LOST the event. A lost enqueue is
-// permanent: there is no retry row to drain. Zero subscribers is a
-// successful no-op, not a failure.
+// It returns the counts plus a non-nil error whenever a subscribed customer LOST the event; a lost
+// enqueue is permanent because no retry row exists. Zero subscribers is a successful no-op.
 //
-// A suspended or closed account is not a subscriber: the kill switch is
-// enforced in ListWebhooksSubscribedTo and again in EnqueueDelivery. A refusal
-// from that second gate lands in [PublishResult.Suppressed] and is NOT an error.
+// A suspended or closed account is not a subscriber: the kill switch is enforced in
+// ListWebhooksSubscribedTo and again in EnqueueDelivery, and a refusal from the second gate lands
+// in [PublishResult.Suppressed], not an error.
 //
-// Callers MUST log the error at ERROR with the event type + counts. Every loss
-// is also counted on [obs.CustomerWebhookFanoutFailuresTotal].
+// Callers MUST log the error at ERROR with the event type + counts.
 func (f *Fanout) Publish(
 	ctx context.Context, eventType platform.WebhookEventType, payload []byte,
 ) (PublishResult, error) {
@@ -149,11 +129,9 @@ func (f *Fanout) publish(
 }
 
 // PublishOnce is [Fanout.Publish] for an event with a stable identity.
-// Each subscriber's delivery ID is derived from (eventType, eventKey,
-// webhook id) rather than drawn at random, and the store keys the row on
-// it, so re-running a fan-out that partially failed enqueues only the
-// subscribers it missed; the rest land in [PublishResult.AlreadyEnqueued].
-// Receivers also see one X-StellarIndex-Delivery-Id per logical event.
+// Each delivery ID is derived from (eventType, eventKey, webhook id) and the store keys the row on
+// it, so re-running a partially failed fan-out enqueues only the missed subscribers; the rest land
+// in [PublishResult.AlreadyEnqueued]. Receivers see one Delivery-Id per logical event.
 //
 // eventKey must identify the event, not the attempt: two distinct events
 // sharing a key would collapse into one delivery. An empty key is refused.
@@ -222,16 +200,10 @@ func (f *Fanout) enqueueOne(
 	}
 }
 
-// deliverySuppressor is implemented by store errors that report an
-// enqueue REFUSED by policy rather than one LOST to a failure. The only
-// policy today is the account kill switch: the owning account is
-// suspended or closed, so we must not queue — let alone deliver — that
-// customer's events.
-//
-// Matched behaviourally rather than with errors.Is so the narrow
-// [FanoutStore] seam keeps its "no concrete store import" property; this
-// is the contract shape net.Error uses for Timeout. Implemented by
-// internal/platform/postgresstore's enqueue paths.
+// deliverySuppressor is implemented by store errors that report an enqueue REFUSED by policy (the
+// account kill switch: suspended or closed owner) rather than one LOST to a failure. It is matched
+// behaviourally, like net.Error's Timeout, so the narrow [FanoutStore] seam needs no concrete
+// store import.
 type deliverySuppressor interface{ WebhookSuppressed() bool }
 
 // suppressed reports whether err is a policy refusal (see
@@ -256,10 +228,6 @@ func MarshalPayload(logger *slog.Logger, v any) []byte {
 	return b
 }
 
-// ErrFanoutNotConfigured is what [Fanout.Publish] returns on a nil
-// receiver — the "webhook subsystem optional in this deployment"
-// posture [NewFanout] documents. Callers that already short-circuit
-// on `if f != nil` never see it; callers that don't can tell
-// "not wired" apart from "wired and lost the event" with
-// errors.Is.
+// ErrFanoutNotConfigured is what [Fanout.Publish] returns on a nil receiver (webhooks optional in
+// this deployment), so callers can tell "not wired" from "wired and lost the event" with errors.Is.
 var ErrFanoutNotConfigured = errors.New("customerwebhook: fanout not configured")

@@ -33,12 +33,9 @@ func (r StoreHistoryReader) LatestTradePerSource(ctx context.Context, pair canon
 	return r.S.LatestTradePerSource(ctx, pair, sourceFilter)
 }
 
-// HistoryPoints adapts [timescale.Store.HistoryPoints] to the
-// v1.HistoryReader interface. Translates the storage-side
-// timescale.HistoryGranularity string-typed enum back to plain
-// strings for the v1 type, and the rich timescale.HistoryPoint to
-// the v1 wire-shape variant. Unknown granularities propagate as
-// v1.ErrUnknownGranularity (handler turns into 400).
+// HistoryPoints adapts [timescale.Store.HistoryPoints] to v1.HistoryReader, converting the storage
+// granularity enum and HistoryPoint to the v1 wire types. Unknown granularities propagate as
+// v1.ErrUnknownGranularity (the handler returns 400).
 func (r StoreHistoryReader) HistoryPoints(ctx context.Context, pair canonical.Pair, granularity string, limit int) ([]v1.HistoryPoint, error) {
 	g := timescale.HistoryGranularity(granularity)
 	if err := g.Validate(); err != nil {
@@ -67,15 +64,12 @@ func (r StoreHistoryReader) HistoryPointsInRange(ctx context.Context, pair canon
 	return convertHistoryPoints(rows), nil
 }
 
-// StoreCoverageFloorReader adapts *timescale.Store to
-// v1.CoverageFloorReader. Separate from [StoreHistoryReader] on
-// purpose: the serving reader is wrapped in a 2-minute SWR cache whose
-// keying is per-method, while the floor has its own TTL memo in the
-// handler layer keyed by the pair's alias-canonical identity — layering
-// one over the other would cache the same answer twice under different
-// keys. Translates the string-typed granularity to the storage enum;
-// an unknown value surfaces as the store's own validation error, which
-// the handler renders as "no signal".
+// StoreCoverageFloorReader adapts *timescale.Store to v1.CoverageFloorReader. It is separate from
+// [StoreHistoryReader] on purpose: the serving reader sits behind a 2-minute SWR cache keyed
+// per method, while the floor has its own TTL memo in the handler keyed by the pair's
+// alias-canonical identity, so layering one over the other would cache the same answer twice under
+// different keys. An unknown granularity surfaces as the store's validation error, which the
+// handler renders as "no signal".
 type StoreCoverageFloorReader struct{ S *timescale.Store }
 
 func (r StoreCoverageFloorReader) EarliestBucket(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error) {
@@ -108,13 +102,11 @@ func (r StoreHistoryReader) TWAPPointsInRange(ctx context.Context, pair canonica
 
 // OHLCSeries adapts [timescale.Store.OHLCSeries] /
 // [timescale.Store.OHLCSeriesReBucketed] to the v1.HistoryReader
-// interface. The interval → view decision is [timescale.OHLCRoutes]:
-// a native row reads its own CAGG, a folded row re-buckets a finer
-// one (5m/30m from prices_1m, 2h/4h/12h from prices_1h, 3d from
-// prices_1d, 2w from prices_1w). Nothing is decided here, so the
-// reader cannot route an interval the store's fold allow-list has
-// not declared — the drift that 500d 2h/12h/3d/2w. Unknown
-// intervals propagate as v1.ErrUnknownGranularity.
+// interface. The interval → view decision is [timescale.OHLCRoutes]: a native row reads its own
+// CAGG, a folded row re-buckets a finer one (5m/30m from prices_1m, 2h/4h/12h from prices_1h, 3d
+// from prices_1d, 2w from prices_1w). Nothing is decided here, so the reader cannot route an
+// interval the store's fold allow-list has not declared. Unknown intervals propagate as
+// v1.ErrUnknownGranularity.
 func (r StoreHistoryReader) OHLCSeries(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]v1.OHLCSeriesBar, error) {
 	route, ok := timescale.OHLCRouteFor(interval)
 	if !ok {
