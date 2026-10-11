@@ -16,20 +16,17 @@ import (
 // EVERY FIGURE HERE IS HISTORY, and the two relationships are kept apart
 // because they are not the same kind of fact:
 //
-//   - CREATION is immutable. A CreateAccount happened or it did not, and
-//     it never un-happens. The only subtlety is that an address can be
-//     created more than once — created, merged away, created again — so
-//     `created_by` is a LIST, not a single value.
+//   - CREATION is immutable, but an address can be created more than once
+//     (created, merged away, created again), so `created_by` is a LIST.
 //
 //   - SPONSORSHIP is revocable, and this surface cannot see the live
-//     set. Every sponsorship figure counts arrangements STARTED. It is
-//     NOT a count of arrangements in force, and no field here may be
-//     read as one: a revocation names the entry it revokes inside XDR
-//     the rollup does not decode, so it is attributable to the account
-//     that ISSUED it and to no individual edge, and an arrangement also
-//     lapses silently when the sponsored entry is deleted or the account
-//     merges away. `revocations_issued` is therefore carried at account
-//     level, and there is deliberately no per-edge "current" flag.
+//     set. Every sponsorship figure counts arrangements STARTED, NOT those
+//     in force: a revocation names the entry it revokes inside XDR the
+//     rollup does not decode, so it is attributable to the account that
+//     ISSUED it and to no individual edge, and an arrangement also lapses
+//     silently when the sponsored entry is deleted or the account merges
+//     away. `revocations_issued` is therefore account-level, and there is
+//     no per-edge "current" flag.
 //
 // Stroops-denominated values are decimal STRINGS (ADR-0003); counts are
 // JSON numbers.

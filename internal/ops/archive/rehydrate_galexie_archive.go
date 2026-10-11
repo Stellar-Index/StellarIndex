@@ -19,27 +19,16 @@ import (
 // ─── stellarindex-ops rehydrate-galexie-archive ──────────────────
 //
 // Per ADR-0027 §Decision: a non-destructive operator that re-copies
-// LCM files from the cold tier (aws-public-blockchain, the AWS
-// Open Data Sponsorship bucket) back into the hot tier (local
-// galexie-archive MinIO bucket) for a given ledger range.
+// LCM files from the cold tier (aws-public-blockchain) back into the hot
+// tier (local galexie-archive MinIO bucket) for a given ledger range.
+// Uses: recovering from an accidental trim, pre-warming hot before a
+// backfill, and spot-checking the cold tier for gaps.
 //
-// Use cases:
-//   - Recovering from accidental trim — re-fetch a range an
-//     operator trimmed too aggressively.
-//   - Pre-warming hot before a planned backfill — pull the
-//     historical range to local disk so the backfill avoids
-//     per-LCM cross-Atlantic latency.
-//   - Cold-tier integrity spot check — read every file the
-//     trimmed range claims to hold upstream; surface any
-//     unexpected gaps.
+// Idempotent: uses PutFileIfNotExists, so re-running over a hydrated
+// range is a no-op (skipped files are counted but not refetched).
 //
-// Idempotent: uses PutFileIfNotExists, so re-running over a
-// range that's already hydrated is a no-op (skipped files are
-// counted but not refetched).
-//
-// Sees only schema-aligned ledger-file boundaries — the SDK's
-// DataStoreSchema.GetObjectKeyFromSequenceNumber gives the path;
-// we step by LedgersPerFile so each file is fetched once.
+// Steps by LedgersPerFile so each file is fetched once; the path comes
+// from DataStoreSchema.GetObjectKeyFromSequenceNumber.
 
 type rehydrateOpts struct {
 	cfgPath string

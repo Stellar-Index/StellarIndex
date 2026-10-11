@@ -27,10 +27,8 @@ import (
 //   - changed    = post exists AND (no pre-image OR pre.Val != post.Val).
 //
 // `removed` is a deletion, not a value write. P23 `restored` changes are ignored
-// on BOTH sides, so a restored-then-rewritten-unchanged entry counts as changed
-// on both paths equally. A per-key parse/marshal failure excludes that key.
-// Consumers treat StateWriteKeys as best-effort, with an arity check + fallback
-// to payload-median alignment (CAVEAT in internal/sources/redstone/payload.go).
+// on BOTH sides. A per-key parse/marshal failure excludes that key. Consumers
+// treat StateWriteKeys as best-effort (CAVEAT in internal/sources/redstone/payload.go).
 
 // contractDataWrite is one value-changing contract-data write.
 type contractDataWrite struct {

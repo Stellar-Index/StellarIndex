@@ -13,25 +13,17 @@ import (
 // then an unbounded read from `live` starting at seam.
 //
 // Behaviour:
-//   - seam <= 1 → archive bucket is unused; the call degrades to a
-//     plain unbounded Stream(live, from, 0, ...). (seam==1 is folded in
-//     with seam==0 because a bounded archive read of [from, seam-1]=[from,0]
-//     would hit Stream's to==0 UNBOUNDED sentinel and tail the archive
-//     forever — see the guard below.)
-//   - from >= seam → all wanted data lives in the live bucket; same
-//     degradation as above.
+//   - seam <= 1 or from >= seam → archive bucket unused; plain unbounded
+//     Stream(live, from, 0, ...). (seam==1 is folded in with seam==0
+//     because a bounded read of [from,0] would hit Stream's to==0
+//     UNBOUNDED sentinel and tail the archive forever.)
 //   - from < seam → bounded archive read then unbounded live read.
 //
-// Restart safety: each Stream call writes the cursor inside the
-// callback after every successful batch. A crash mid-archive-phase
-// resumes from cursor+1 (which is still < seam) on next start, so
-// the same archive→live progression replays. A crash after the
-// archive phase exits but before live starts is benign — the cursor
-// at that moment is seam-1; restart computes from = seam, takes the
-// live-only branch, and proceeds.
+// Restart safety: each Stream call writes the cursor after every
+// successful batch, so a crash in either phase resumes from cursor+1 and
+// replays the same archive→live progression.
 //
-// logger is used to mark the phase boundaries in the journal; if
-// nil, the function emits no log lines.
+// logger marks phase boundaries in the journal; if nil, no log lines.
 func StreamArchiveThenLive(
 	ctx context.Context,
 	archive, live Config,

@@ -20,11 +20,9 @@ import (
 // overlap, and the in-repo curated binding set names none of the directory's.
 //
 // So the population is the UNION of the directory's addresses and every address
-// the in-repo binding set names (a hand-reviewed table, so it cannot grow
-// without a code change). Enumerating is NOT admitting: a curated binding must
-// still be named by the listing directory to pass C2. Enumeration makes its
-// refusal REPORTED under contract_curated_binding_without_independent_listing
-// instead of vanishing before accounting starts.
+// the in-repo binding set names. Enumerating is NOT admitting: a curated binding
+// must still be named by the listing directory to pass C2. Enumeration makes its
+// refusal REPORTED under contract_curated_binding_without_independent_listing.
 //
 // # Why the two arms are reported separately
 //

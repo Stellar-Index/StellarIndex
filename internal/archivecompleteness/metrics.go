@@ -71,22 +71,13 @@ func NewMetricsSnapshot() *MetricsSnapshot {
 // and repair totals forward) is [WriteTextfileAtomic]'s job, because
 // only it knows the path to read the previous file back from.
 //
-// Operator workflow per ADR-0017 §"Prometheus surface":
+// Operator workflow per ADR-0017 §"Prometheus surface": a systemd timer
+// runs `archive-completeness verify -textfile-output PATH`, PATH being
+// node_exporter's textfile_collector/archive_completeness.prom; alerts in
+// `deploy/monitoring/rules/archive-completeness.yml` fire on thresholds.
 //
-//   - systemd timer runs `archive-completeness verify -textfile-output PATH`
-//   - PATH points at node_exporter's textfile_collector directory
-//     (e.g. `/var/lib/node_exporter/textfile_collector/archive_completeness.prom`)
-//   - node_exporter scrapes the directory and exposes the metrics
-//     on its standard /metrics endpoint
-//   - Prometheus scrapes node_exporter; alerts in
-//     `deploy/monitoring/rules/archive-completeness.yml` fire on
-//     the threshold conditions
-//
-// Atomic write protocol: the caller writes to a `<PATH>.tmp` file
-// first, then renames into place. node_exporter's textfile
-// collector treats partial writes as a parse error and skips them,
-// so renaming-after-write avoids a race where the scrape sees a
-// truncated metric block.
+// Atomic write protocol: the caller writes `<PATH>.tmp` then renames into
+// place, since the collector skips partial writes as parse errors.
 func WriteTextfile(w io.Writer, snapshot *MetricsSnapshot) error {
 	if snapshot == nil {
 		return nil

@@ -10,26 +10,17 @@ import (
 // request's context to d, so EVERY handler inherits a deadline even
 // when it forgets to wrap its own DB/ClickHouse read.
 //
-// This is the durable chokepoint for handlers that pass raw r.Context()
-// to expensive lake reads with no per-request timeout: without it a
-// handful of slow unauthenticated requests could hold every connection
-// of the API's small ClickHouse pools (16 for the explorer reader, 8 for
-// the supply reader) open indefinitely (the server WriteTimeout does NOT
-// cancel an in-flight query). A request-scoped deadline lets those reads observe
-// ctx cancellation and release their pool connection. Per-handler
-// context.WithTimeout wrappers (8s on the hot reads) still layer UNDER
-// this — they're tighter, so they fire first; this is the backstop for
-// every path that lacks one.
+// Without it a handful of slow unauthenticated requests could hold every
+// connection of the API's small ClickHouse pools (16 explorer, 8 supply)
+// open indefinitely (the server WriteTimeout does NOT cancel an in-flight
+// query). Per-handler context.WithTimeout wrappers (8s on the hot reads)
+// still layer UNDER this and fire first; this is the backstop.
 //
-// d SHOULD be longer than the per-read timeouts (8s) so a per-read
-// deadline surfaces its own, more specific error before this blanket
-// one; and shorter than the http.Server WriteTimeout so the deadline is
-// meaningful. d <= 0 disables the middleware (no deadline injected).
+// d SHOULD be longer than the per-read timeouts (8s) and shorter than the
+// http.Server WriteTimeout. d <= 0 disables the middleware.
 //
-// Streaming (SSE) endpoints are EXCLUDED: they are long-lived by design
-// and own their lifecycle through r.Context() cancellation on client
-// disconnect. A request deadline would sever the stream mid-flight. The
-// exempt routes are the exact set in streamingPaths.
+// Streaming (SSE) endpoints are EXCLUDED: a deadline would sever the
+// stream mid-flight. The exempt routes are the exact set in streamingPaths.
 func RequestTimeout(d time.Duration) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

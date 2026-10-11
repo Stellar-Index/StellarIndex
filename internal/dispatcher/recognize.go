@@ -9,23 +9,16 @@ import "github.com/Stellar-Index/StellarIndex/internal/events"
 //
 // This is the oracle for ADR-0033 Claim 2a (recognition): any
 // (contract_id, topic) shape in soroban_events it returns false for is an
-// on-chain event the system would silently drop. It uses the real Matches()
-// logic, so it cannot drift from what the decoders handle.
+// on-chain event the system would silently drop.
 //
-// ContractCallDecoders are intentionally excluded: they bind to
-// InvokeContract op args, emit no Soroban events, and so never produce
-// soroban_events rows to recognize.
+// ContractCallDecoders are excluded: they bind to InvokeContract op args
+// and emit no Soroban events.
 //
-// Matches() alone proves the topic *shape* is owned, not that this
-// specific sample would decode — a decoder can match on
-// (contract_id, topic[0]) and still fail deeper SCVal parsing. Recognize
-// cannot close that gap by calling Decode directly: d.decoders are the
-// SAME instances the live pipeline runs, and decoders with correlation
-// state (Soroswap swap+sync, Phoenix 8-field) would have that state
-// corrupted by an out-of-band dry-run Decode. Instead a matched
-// decoder may optionally implement [Validator] to opt into a
-// side-effect-free check of this exact sample; stateful decoders
-// simply don't implement it and keep today's shape-only behavior.
+// Matches() proves only the topic *shape* is owned, not that this sample
+// would decode. Calling Decode here would corrupt the correlation state
+// (Soroswap swap+sync, Phoenix 8-field) of the live decoder instances, so
+// a matched decoder may instead implement [Validator] to opt into a
+// side-effect-free check of this exact sample; stateful decoders don't.
 func (d *Dispatcher) Recognize(ev events.Event) (name string, ok bool) {
 	// Decoder-panic guard (ops path). Matches is arbitrary source
 	// code running on adversary-influenced ledger data — it type-asserts
