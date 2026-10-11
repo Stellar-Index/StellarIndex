@@ -31,9 +31,8 @@ func DexSourceNames() []string {
 	return out
 }
 
-// CexSourceNames returns every source registered with
-// Class=Exchange + Subclass=CEX, sorted for stable order. Exported so the
-// prewarm in cmd/stellarindex-api can warm `/v1/markets?source=<name>`.
+// CexSourceNames returns every CEX source, sorted. Exported so the prewarm can warm
+// `/v1/markets?source=<name>`.
 func CexSourceNames() []string {
 	out := make([]string, 0, len(external.Registry))
 	for name := range external.Registry {
@@ -52,15 +51,11 @@ func CexSourceNames() []string {
 // [CachedMarketsReader] does. Callers may replace a row's fields but not write through its
 // pointer/slice fields.
 type MarketsReader interface {
-	// DistinctPairsExt returns one page of (base, quote) pairs
-	// present in the trades store under the requested ordering.
-	// Cursor opaque; empty starts at page 1.
+	// DistinctPairsExt returns one page of (base, quote) pairs present in the trades store.
+	// Cursor is opaque; empty starts at page 1.
 	DistinctPairsExt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, error)
 
-	// SourceMarkets is DistinctPairsExt narrowed to a single
-	// source — the per-DEX pool list backing
-	// /v1/markets?source=<name>. Same shape as DistinctPairsExt
-	// for paginated drill-down.
+	// SourceMarkets is DistinctPairsExt narrowed to one source (/v1/markets?source=<name>).
 	SourceMarkets(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, error)
 
 	// AssetMarkets is DistinctPairsExt narrowed to pairs where the asset_id is base or quote, so
@@ -75,13 +70,11 @@ type MarketsReader interface {
 	// trades; /v1/pairs answers that with an empty 200 array, not a 404, per PairsEnvelope.
 	PairMarket(ctx context.Context, base, quote canonical.Asset) (Market, bool, error)
 
-	// GetPairsVolumeHistory24hBatch returns per-pair hourly USD-volume
-	// buckets for the trailing 24h. Backs the /v1/markets sparkline
-	// column when the caller passes ?include=sparkline.
+	// GetPairsVolumeHistory24hBatch returns per-pair hourly USD-volume buckets for the trailing
+	// 24h (?include=sparkline).
 	GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, error)
 
-	// FirstTradeBatch returns each pair's first daily bucket — the
-	// ?include=inception enrichment on /v1/markets.
+	// FirstTradeBatch returns each pair's first daily bucket (?include=inception).
 	FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error)
 }
 
@@ -96,15 +89,14 @@ type marketsStaleReader interface {
 	AssetMarketsAt(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
 }
 
-// poolsStaleReader is marketsStaleReader's /v1/pools counterpart: observedAt
-// is the served rows' fetch time and stale reports rows served from the
-// cache's stale-while-revalidate branch.
+// poolsStaleReader is marketsStaleReader's /v1/pools counterpart; stale means the rows came from
+// the cache's stale-while-revalidate branch.
 type poolsStaleReader interface {
 	AllPoolsStale(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, time.Time, bool, error)
 }
 
-// allPools reads through poolsStaleReader when the wired reader has it; an
-// uncached read is live: zero observedAt, stale false.
+// allPools reads through poolsStaleReader when available; an uncached read is live (zero
+// observedAt, stale false).
 func allPools(ctx context.Context, reader MarketsReader, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, time.Time, bool, error) {
 	if sr, ok := reader.(poolsStaleReader); ok {
 		return sr.AllPoolsStale(ctx, filter, cursor, limit, order)
@@ -113,9 +105,8 @@ func allPools(ctx context.Context, reader MarketsReader, filter timescale.PoolsF
 	return rows, next, time.Time{}, false, err
 }
 
-// Pool is the wire shape for /v1/pools entries. Same fields as
-// Market but with a `source` dimension so the same physical pair
-// traded on two DEXes shows as two rows.
+// Pool is the wire shape for /v1/pools entries: Market plus a `source`, so one pair on two DEXes
+// is two rows.
 type Pool struct {
 	Source        string   `json:"source"`
 	Base          string   `json:"base"`
@@ -125,10 +116,8 @@ type Pool struct {
 	Volume24hUSD  *string  `json:"volume_24h_usd,omitempty"`
 	// VolumeLowerBound: Volume24hUSD excludes trades with no trade-time usd_volume.
 	VolumeLowerBound bool `json:"volume_lower_bound,omitempty"`
-	// LastPrice is the most recent quote-per-base price observed
-	// for THIS pool — same wire shape as Market.LastPrice but
-	// per-source, so two venues trading the same pair surface
-	// independent prices.
+	// LastPrice is the latest quote-per-base price for THIS pool, so two venues of one pair
+	// surface independent prices.
 	LastPrice *string `json:"last_price,omitempty"`
 }
 
@@ -180,15 +169,10 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 		return
 	}
 
-	// Resolve DEX source list from the registry. Hard-coded to
-	// Subclass=DEX so the endpoint is unambiguously "pools" — no
-	// CEX rows ever.
+	// DEX-only, so no CEX rows ever appear under "pools".
 	dexSources := DexSourceNames()
 	if reqSource := r.URL.Query().Get("source"); reqSource != "" {
-		// Filter to the requested DEX. Non-DEX names get rejected
-		// here (empty intersection → empty result list, not a 400)
-		// so callers can pass through user input without separately
-		// validating against the registry.
+		// Non-DEX names give an empty list, not a 400, so callers can pass user input through.
 		filtered := make([]string, 0, 1)
 		for _, s := range dexSources {
 			if s == reqSource {
@@ -205,9 +189,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 		return
 	}
 	if len(dexSources) == 0 {
-		// Either the registry has no DEX sources (impossible) or
-		// the source= filter didn't match a DEX. Return an empty
-		// list rather than scan the trades hypertable for nothing.
+		// The source= filter matched no DEX; skip the trades-hypertable scan.
 		writeJSON(w, []Pool{}, Flags{})
 		return
 	}
@@ -328,25 +310,19 @@ type Market struct {
 	// VolumeLowerBound: Volume24hUSD excludes trades with no trade-time
 	// usd_volume. Set only under `?source=`.
 	VolumeLowerBound bool `json:"volume_lower_bound,omitempty"`
-	// LastPrice is the most recent quote-per-base price observed
-	// for this pair within the trailing 24h: across every source, or
+	// LastPrice is the latest quote-per-base price in the trailing 24h, across every source or
 	// that source's own with `?source=`. Null when none was observed.
 	LastPrice *string `json:"last_price,omitempty"`
-	// VolumeHistory24h — per-hour USD-volume buckets for the
-	// trailing 24h. Populated only when the request sets
-	// `?include=sparkline` without `?source=`. 24 entries oldest →
-	// newest, zero-filled server-side so the wire array length is stable.
+	// VolumeHistory24h holds 24 hourly USD-volume buckets, oldest to newest, zero-filled so the
+	// length is stable. Populated only with `?include=sparkline` without `?source=`.
 	VolumeHistory24h []MarketVolumeBucket `json:"volume_history_24h,omitempty"`
-	// FirstTradeAt is the pair's first recorded daily bucket — the
-	// RFP's "since inception = first recorded trade", queryable per
-	// market. Populated only with `?include=inception`
-	// without `?source=`; day precision.
+	// FirstTradeAt is the pair's first recorded daily bucket (day precision). Populated only with
+	// `?include=inception` without `?source=`.
 	FirstTradeAt *WireTime `json:"first_trade_at,omitempty"`
 }
 
-// MarketVolumeBucket — one hourly USD-volume datapoint for the
-// /v1/markets sparkline. Hour is RFC 3339; volume_usd is
-// numeric-stringified for precision parity.
+// MarketVolumeBucket is one hourly USD-volume datapoint for the sparkline; volume_usd is a string
+// for precision.
 type MarketVolumeBucket struct {
 	Hour      WireTime `json:"hour"`
 	VolumeUSD string   `json:"volume_usd"`
@@ -413,9 +389,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 			// Keep the PARSED spelling — see canonicaliseAssetFilter.
 			asset = parsed.String()
 		} else {
-			// Try the catalogue. Successful lookup expands to a slice
-			// of canonical asset_ids; failure → 400 (existing
-			// behaviour for unparseable input).
+			// Not a canonical id: try the catalogue slug; no match is a 400.
 			expanded := s.expandSlugToAssetIDs(asset)
 			if len(expanded) == 0 {
 				writeProblem(w, r,
@@ -437,9 +411,6 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 
 	reader := s.Markets
 	if reader == nil {
-		// Feature not wired — empty list is consistent with the
-		// contract and doesn't force a 503. Mirrors the /v1/assets
-		// degradation pattern.
 		writeJSON(w, []Market{}, Flags{})
 		return
 	}
@@ -503,22 +474,16 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	// Defensive nil-to-empty: OpenAPI's MarketsEnvelope.data is
-	// `type: array`, which means "data": null violates the schema.
-	// Mirrors the handleAssetList guard.
+	// OpenAPI types data as an array, so null would violate the schema.
 	if rows == nil {
 		rows = []Market{}
 	}
-	// dex-nonstandard-decimals forward normalization — see handlePools's
-	// equivalent comment. /v1/markets's last_price sources from the same
-	// prices_1d / pools_per_source_1h raw ratio.
+	// Same dex-nonstandard-decimals normalization as handlePools.
 	for i := range rows {
 		rows[i].LastPrice = s.adjustListingPriceStrings(mCtx, rows[i].Base, rows[i].Quote, rows[i].LastPrice, "markets")
 	}
 
-	// Optional opt-in: attach 24h hourly volume history per row
-	// for sparkline columns. Default off (avoids ~50KB per page
-	// of bloat for SDK consumers that don't render charts).
+	// Opt-in enrichment, default off to avoid ~50KB of sparkline per page.
 	includeSparkline := false
 	includeInception := false
 	for _, f := range strings.Split(r.URL.Query().Get("include"), ",") {
@@ -667,9 +632,7 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 		rows, observedAt, stale, err := assetMarketsLeg(ctx, reader, assets[i], limit, order)
 		results[i] = result{rows: rows, observedAt: observedAt, stale: stale, err: err} // distinct indices — no mutex needed
 	})
-	// Surface the first error if any. We don't fail-fast on partial
-	// success because a single asset_id with no recent trades is
-	// not an error condition — it just contributes zero rows.
+	// No fail-fast: an asset_id with no recent trades just contributes zero rows.
 	var firstErr error
 	var observedAt time.Time
 	var stale bool
@@ -681,15 +644,11 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 			if firstErr == nil {
 				firstErr = r.err
 			}
-			// A dropped leg means the composite is missing whatever
-			// that asset_id would have contributed — that's exactly
-			// what `stale` exists to signal, so a failed leg taints
-			// the composite the same as a stale one.
+			// A failed leg leaves the composite incomplete, which is what `stale` signals.
 			stale = true
 			continue
 		}
-		// Oldest observed-at across the contributing legs; any
-		// stale leg makes the composite stale.
+		// Oldest observed-at across legs; any stale leg makes the composite stale.
 		if !r.observedAt.IsZero() && (observedAt.IsZero() || r.observedAt.Before(observedAt)) {
 			observedAt = r.observedAt
 		}
@@ -740,10 +699,8 @@ func sortMergedMarkets(merged []Market, order timescale.MarketsOrder) {
 	}
 }
 
-// compareVolumeUSD compares two volume_24h_usd wire strings as
-// decimals (never float64 — ADR-0003) and returns -1/0/1. A nil
-// pointer (no recent volume) compares as zero, matching the SQL
-// path's `COALESCE(vol_24h_num, 0)`.
+// compareVolumeUSD compares two volume_24h_usd strings as decimals (never float64, ADR-0003).
+// A nil pointer compares as zero, matching the SQL path's `COALESCE(vol_24h_num, 0)`.
 func compareVolumeUSD(a, b *string) int {
 	toRat := func(s *string) *big.Rat {
 		if s == nil {

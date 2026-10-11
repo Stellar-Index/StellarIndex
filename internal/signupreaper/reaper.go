@@ -1,14 +1,13 @@
-// Package signupreaper deletes the orphan "speculative-account" rows
-// that the lost-signup-race recovery path leaves behind.
+// Package signupreaper deletes the orphan "speculative-account" rows left by the lost-signup-race
+// recovery path.
 //
-// Two concurrent /v1/auth/callback provisions for the same email can both create an `accounts`
-// row, but only one CreateUser wins on `users_email_idx`. The loser's account never gets a user;
-// the recovery path in internal/api/v1/dashboardauth marks it Suspended with a `signup-race:`
-// reason, and this reaper consumes that machine-matchable signal.
+// Two concurrent /v1/auth/callback provisions for one email can both create an `accounts` row,
+// but only one CreateUser wins on `users_email_idx`. The recovery path in
+// internal/api/v1/dashboardauth marks the loser Suspended with a `signup-race:` reason, which
+// this reaper matches.
 //
-// The worker sweeps once immediately, then every Interval, deleting rows that are Suspended with
-// the signup-race reason, older than MinAge and, as a second guard, have no child users or
-// api_keys. It is bound to the process root context for graceful shutdown.
+// It sweeps once immediately, then every Interval, deleting rows Suspended with that reason,
+// older than MinAge and, as a second guard, with no child users or api_keys.
 package signupreaper
 
 import (
@@ -20,10 +19,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// SignupRaceReasonPrefix is the `suspended_reason` prefix the signup-race
-// recovery path stamps on the losing account
-// ("signup-race: orphan speculative account"). The reaper
-// matches only rows whose reason starts with this exact literal.
+// SignupRaceReasonPrefix is the `suspended_reason` prefix the recovery path stamps on the losing
+// account; the reaper matches only reasons starting with this exact literal.
 const SignupRaceReasonPrefix = "signup-race:"
 
 // Defaults for a zero Options.
@@ -32,24 +29,18 @@ const (
 	DefaultMinAge   = 24 * time.Hour
 )
 
-// OrphanStore is the reaper's narrow write seam. Satisfied by
-// *postgresstore.AccountStore. Declared here (rather than widening
-// platform.AccountStore) so the delete surface stays off the broad
-// interface every account fake would otherwise have to implement.
+// OrphanStore is the reaper's narrow write seam (*postgresstore.AccountStore), kept off
+// platform.AccountStore so every account fake need not implement the delete surface.
 type OrphanStore interface {
-	// ReapSuspendedOrphans deletes accounts Suspended with a reason
-	// starting with reasonPrefix and suspended before olderThan,
-	// returning the number of rows removed. Conservative predicate —
-	// see the implementation.
+	// ReapSuspendedOrphans deletes accounts Suspended with a reason starting with reasonPrefix
+	// and suspended before olderThan, returning the rows removed. The predicate is conservative.
 	ReapSuspendedOrphans(ctx context.Context, reasonPrefix string, olderThan time.Time) (int64, error)
-	// CountAccounts returns the accounts row count, not a delete surface. It feeds
-	// [obs.AccountRows]: POST /v1/register is unauthenticated and mints a permanent account
-	// per call, which the sweep never touches, so this gauge is the only view of growth.
+	// CountAccounts feeds [obs.AccountRows]: POST /v1/register is unauthenticated and mints a
+	// permanent account per call, which the sweep never touches, so this gauge is the only view
+	// of growth.
 	CountAccounts(ctx context.Context) (int64, error)
-	// CountAPIKeys returns the current row count of the api_keys
-	// table, published as [obs.APIKeyRows]. Register mints one durable
-	// key per account (mintRegisterKey), so this tracks the same
-	// growth from the credential side.
+	// CountAPIKeys feeds [obs.APIKeyRows]: register mints one durable key per account, so this
+	// tracks the same growth from the credential side.
 	CountAPIKeys(ctx context.Context) (int64, error)
 }
 
@@ -57,9 +48,8 @@ type OrphanStore interface {
 type Options struct {
 	// Interval is the sweep cadence. <= 0 falls back to DefaultInterval.
 	Interval time.Duration
-	// MinAge is how long an orphan must have been suspended before it
-	// is eligible for reaping — a safety window well past any in-flight
-	// signup race. <= 0 falls back to DefaultMinAge.
+	// MinAge is how long an orphan must have been suspended before reaping, a safety window
+	// well past any in-flight signup race. <= 0 falls back to DefaultMinAge.
 	MinAge time.Duration
 	Logger *slog.Logger
 	// Clock lets tests pin "now". Defaults to time.Now().UTC.
@@ -75,9 +65,8 @@ type Reaper struct {
 	now      func() time.Time
 }
 
-// New builds a Reaper. Panics if store is nil (a wiring bug — the
-// caller must gate construction on the platform account store being
-// present).
+// New builds a Reaper. Panics if store is nil: a wiring bug, since the caller must gate
+// construction on the account store being present.
 func New(store OrphanStore, opts Options) *Reaper {
 	if store == nil {
 		panic("signupreaper: New requires a non-nil store")
@@ -122,10 +111,8 @@ func (r *Reaper) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep runs one reap pass and records the paired metric. Exported so
-// tests can drive a single pass deterministically. Errors are
-// swallowed after being recorded (best-effort background worker) — the
-// outcome is what the metric + alert rule read.
+// Sweep runs one reap pass and records the paired metric. Errors are swallowed after being
+// recorded (best-effort worker); the outcome label is what the alert rule reads.
 func (r *Reaper) Sweep(ctx context.Context) {
 	start := r.now()
 	deleted, outcome := r.sweepOnce(ctx)
@@ -163,9 +150,8 @@ func (r *Reaper) refreshRowGauges(ctx context.Context) {
 	}
 }
 
-// sweepOnce performs the delete and returns (rows deleted, outcome).
-// A context cancellation is reported as "ok" (clean shutdown, not a
-// failure) matching the pricealerts worker convention.
+// sweepOnce performs the delete and returns (rows deleted, outcome). Cancellation reports "ok"
+// (clean shutdown, not a failure), matching the pricealerts worker.
 func (r *Reaper) sweepOnce(ctx context.Context) (int64, string) {
 	olderThan := r.now().Add(-r.minAge)
 	deleted, err := r.store.ReapSuspendedOrphans(ctx, SignupRaceReasonPrefix, olderThan)

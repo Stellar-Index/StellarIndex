@@ -20,19 +20,16 @@ import (
 // refresh runs, so the TTL sets the freshness label rather than gating a blocking recompute.
 const opsDirTTL = 10 * time.Second
 
-// opsDirRefreshTimeout bounds one detached first-page rebuild. The read
-// itself is a tail-window-bounded page plus the batched parent-transaction
-// outcome read (its own txOutcomeStitchBudget), so 30s is contention
-// headroom, not an expectation.
+// opsDirRefreshTimeout bounds one detached first-page rebuild: a tail-window-bounded page plus the
+// batched outcome read, so 30s is contention headroom, not an expectation.
 const opsDirRefreshTimeout = 30 * time.Second
 
 // opsDirMaxLimit is the page size the cached entry holds. It matches the handler's ParseLimit
 // ceiling, so the one warm entry serves any accepted `?limit=` by slicing its head.
 const opsDirMaxLimit = 200
 
-// opsDirFlightKey is the single-flight key. The cache holds exactly one
-// entry (the max page), so the key is a constant — it exists only to
-// reuse perKeyFlight.
+// opsDirFlightKey is the single-flight key; the cache holds one entry, so it is constant and only
+// reuses perKeyFlight.
 const opsDirFlightKey = "ops_directory"
 
 // opsDirCache is a tiny SWR cache for the /v1/operations directory FIRST page (no cursor), which
@@ -56,10 +53,8 @@ type opsDirEntry struct {
 	cachedAt time.Time
 }
 
-// get returns the cached first-page view whenever one exists — INCLUDING
-// past the TTL (fresh=false). Staleness is the caller's judgment, so a run
-// of failed refreshes degrades to old-but-real data rather than to a
-// blocking read on every hit.
+// get returns the cached first-page view whenever one exists, INCLUDING past the TTL (fresh=false):
+// failed refreshes then degrade to old-but-real data, not a blocking read on every hit.
 func (c *opsDirCache) get() (e opsDirEntry, ok, fresh bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -82,14 +77,12 @@ func (c *opsDirCache) put(view OperationsView) {
 // a day of the operations table.
 const opTypeStatsTTL = 5 * time.Minute
 
-// opTypeStatsRefreshTimeout bounds one detached op-type aggregation — a
-// FINAL GROUP BY over ~24h of the operations table, comfortably inside a
-// minute in the background even under load.
+// opTypeStatsRefreshTimeout bounds one detached op-type aggregation, a FINAL GROUP BY over ~24h of
+// operations.
 const opTypeStatsRefreshTimeout = time.Minute
 
-// opTypeStatsCache holds the last computed op-type breakdown. On a refresh
-// failure the caller serves the STALE value rather than blanking the panel —
-// a slow aggregate should degrade to slightly-old numbers, never to nothing.
+// opTypeStatsCache holds the last computed op-type breakdown; on refresh failure the caller serves
+// the STALE value rather than blanking the panel.
 type opTypeStatsCache struct {
 	mu    sync.Mutex
 	stats []OpTypeStatV
@@ -112,9 +105,8 @@ func (c *opTypeStatsCache) put(stats []OpTypeStatV) {
 	c.stats, c.at = stats, time.Now()
 }
 
-// OpView is the wire shape for a decoded operation. Type is the snake_case op
-// type; Fields holds the decoded, human-readable body (empty for not-yet-decoded
-// types, in which case RawXDR carries the original base64 so nothing is lost).
+// OpView is the wire shape for a decoded operation. Fields is the decoded body; for not-yet-decoded
+// types it is empty and RawXDR carries the original base64.
 type OpView struct {
 	Ledger        uint32         `json:"ledger"`
 	CloseTime     string         `json:"close_time"`
@@ -160,9 +152,8 @@ func opViewLight(o clickhouse.OpRow) OpView {
 	}
 }
 
-// opView decodes an operation row's XDR body into the wire shape. On decode
-// failure it degrades to the lake's (normalised) op type + the raw body, so a
-// single malformed/unknown op never fails the response.
+// opView decodes an operation row's XDR body. On decode failure it degrades to the normalised lake
+// op type plus the raw body, so one malformed op never fails the response.
 func opView(o clickhouse.OpRow) OpView {
 	v := OpView{
 		Ledger:        o.Seq,
@@ -188,9 +179,8 @@ func opView(o clickhouse.OpRow) OpView {
 	return v
 }
 
-// normalizeLakeOpType turns the lake's "OperationTypeManageSellOffer" into a
-// best-effort lowercase fallback ("managesselloffer") for the decode-error path
-// only — the happy path uses xdrjson's controlled snake_case vocabulary.
+// normalizeLakeOpType turns "OperationTypeManageSellOffer" into a lowercase fallback for the
+// decode-error path only; the happy path uses xdrjson's snake_case vocabulary.
 func normalizeLakeOpType(s string) string {
 	return strings.ToLower(strings.TrimPrefix(s, "OperationType"))
 }
@@ -296,9 +286,8 @@ func (h *Handler) PrewarmOpTypeStats(ctx context.Context) {
 	h.refreshOpTypeStats() //nolint:contextcheck // intentional detach — prewarm kicks the same background compute
 }
 
-// refreshOpTypeStats kicks ONE detached op-type aggregation (no-op when a
-// flight is already up). Detached: the aggregate must never share a
-// request's deadline (see resolveOpTypeStats).
+// refreshOpTypeStats kicks ONE detached op-type aggregation (no-op while a flight is up); it must
+// never share a request's deadline.
 func (h *Handler) refreshOpTypeStats() {
 	fl, owner := h.opTypeStats.flight.begin("stats")
 	if !owner {
@@ -479,10 +468,8 @@ type ThroughputBucketV struct {
 	Partial bool `json:"partial,omitempty"`
 }
 
-// knownFeePoolAdjustments lists fee_pool credits that no transaction paid.
-// Each is keyed on its UTC day AND the protocol upgrade applied that day, so
-// a network whose upgrade fell on another day (testnet, futurenet) never
-// matches.
+// knownFeePoolAdjustments lists fee_pool credits no transaction paid, keyed on UTC day AND the
+// upgrade applied that day, so testnet/futurenet never match.
 var knownFeePoolAdjustments = []struct {
 	day                    string
 	fromProtocol, protocol uint32
@@ -724,9 +711,8 @@ func (h *Handler) lightOperationsView(ctx context.Context, rows []clickhouse.OpR
 	return out
 }
 
-// buildOperationsOfType assembles one type-filtered directory page. The read
-// scans a bounded ledger span, so a short page still continues below that
-// span (cursor `<floor>.0.0`) until the scan reaches genesis.
+// buildOperationsOfType assembles one type-filtered directory page. The read scans a bounded ledger
+// span, so a short page still continues below it (cursor `<floor>.0.0`) until genesis.
 func (h *Handler) buildOperationsOfType(ctx context.Context, limit int, cur clickhouse.ExplorerCursor, opTypes []string) (OperationsView, error) {
 	page, err := h.Reader.RecentOperationsOfType(ctx, limit, cur, opTypes)
 	if err != nil {

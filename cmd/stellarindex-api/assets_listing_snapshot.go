@@ -42,22 +42,17 @@ func assetsListingSnapshotRedisKey(limit int, order timescale.AssetsOrder) asset
 		assetRowSchemaFingerprint(), int(order), limit))
 }
 
-// assetsListingSnapshotTTL bounds how long a snapshot survives in
-// Redis. It is longer than [assetsListingSeedMaxAge] on purpose, so an over-age snapshot is
-// refused with a log line instead of vanishing as an indistinguishable cache miss.
+// assetsListingSnapshotTTL outlives [assetsListingSeedMaxAge] on purpose, so an over-age snapshot
+// is refused with a log line instead of vanishing as an indistinguishable cache miss.
 const assetsListingSnapshotTTL = 30 * time.Minute
 
-// assetsListingSeedMaxAge is the oldest page-set the boot seed will
-// publish. Beyond it the seed is refused and the request pays the cold query.
-//
-// The rows carry prices and volumes, so the bound is a freshness decision: 10 minutes matches
-// the longest horizon the handler accepts for its own enrichment reads and refuses to
-// republish valuations from a long outage.
+// assetsListingSeedMaxAge is the oldest page-set the boot seed will publish; beyond it the
+// request pays the cold query. The rows carry prices and volumes, so 10 minutes matches the
+// handler's own enrichment horizon and refuses to republish valuations from a long outage.
 const assetsListingSeedMaxAge = 10 * time.Minute
 
-// assetsListingSnapshotBudget bounds the whole boot-seed read. It runs
-// on the startup path ahead of ListenAndServe, so it must not delay the listener; the
-// fallback is only the cold path.
+// assetsListingSnapshotBudget bounds the boot-seed read, which runs ahead of ListenAndServe and
+// must not delay the listener; the fallback is only the cold path.
 const assetsListingSnapshotBudget = 2 * time.Second
 
 // assetsListingSnapshot is the persisted page-set.
@@ -69,10 +64,9 @@ type assetsListingSnapshot struct {
 	Rows       []timescale.AssetRow `json:"rows"`
 }
 
-// assetsListingSnapshots reads and writes [assetsListingSnapshot]s. A
-// nil receiver, or one with a nil client, is a no-op on both sides —
-// Redis is optional in this binary and its absence must degrade to the
-// cold-fill behaviour, never to an error or an empty listing.
+// assetsListingSnapshots reads and writes [assetsListingSnapshot]s. A nil receiver or client is a
+// no-op on both sides: Redis is optional, and its absence must degrade to the cold fill, never to
+// an error or an empty listing.
 type assetsListingSnapshots struct {
 	rdb redis.UniversalClient
 	log *slog.Logger
@@ -87,10 +81,9 @@ func newAssetsListingSnapshots(rdb redis.UniversalClient, log *slog.Logger) *ass
 	return &assetsListingSnapshots{rdb: rdb, log: log}
 }
 
-// save persists one warmed listing variant. Empty row-sets and
-// undated reads are skipped: an entry we cannot date cannot be
-// labelled honestly at serve time, and an empty page-set must never be
-// able to displace a real cold fill.
+// save persists one warmed listing variant. Empty row-sets and undated reads are skipped: an
+// undatable entry cannot be labelled honestly at serve time, and an empty page-set must never
+// displace a real cold fill.
 func (s *assetsListingSnapshots) save(
 	ctx context.Context, opts timescale.ListAssetsOptions, rows []timescale.AssetRow, observedAt time.Time,
 ) {
@@ -108,9 +101,8 @@ func (s *assetsListingSnapshots) save(
 	}
 }
 
-// load returns the persisted page-set for one variant. ok=false covers
-// every degraded case — no client, key absent, Redis unreachable,
-// undecodable payload — and each of them means "fall back to the cold
+// load returns the persisted page-set for one variant. ok=false covers every degraded case (no
+// client, key absent, Redis unreachable, undecodable payload) and means "fall back to the cold
 // fill", never an error to the caller.
 func (s *assetsListingSnapshots) load(
 	ctx context.Context, opts timescale.ListAssetsOptions,
@@ -134,15 +126,14 @@ func (s *assetsListingSnapshots) load(
 	return snap, true
 }
 
-// seedAssetListingsFromSnapshots primes the in-process listing cache from the
-// previous process's snapshots, and reports how many of the requested variants
-// were seeded.
+// seedAssetListingsFromSnapshots primes the in-process listing cache from the previous process's
+// snapshots and reports how many requested variants were seeded.
 //
-// Call it before the HTTP listener starts; a seed that races the listener loses. It is bounded
-// by [assetsListingSnapshotBudget] so it can be synchronous, and seeds exactly
-// [assetListingPrewarmOptions] through the handler's own key derivation. Zero seeded out of a
-// non-empty request set is a real signal (cold Redis, schema change, broken path), so the
-// caller logs (seeded, requested).
+// Call it before the listener starts; a seed that races the listener loses. It is bounded by
+// [assetsListingSnapshotBudget] so it can be synchronous, and seeds exactly
+// [assetListingPrewarmOptions] through the handler's own key derivation. Zero seeded from a
+// non-empty request set is a real signal (cold Redis, schema change, broken path), so the caller
+// logs (seeded, requested).
 func seedAssetListingsFromSnapshots(
 	ctx context.Context, logger *slog.Logger, reader *v1.CachedAssetsReader, snaps *assetsListingSnapshots,
 ) (seeded, requested int) {

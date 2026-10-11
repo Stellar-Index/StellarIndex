@@ -1,18 +1,13 @@
 // Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package nettools holds the single canonical SSRF blocklist used by every
-// outbound fetch of an issuer/customer-controlled URL (SEP-1 metadata
-// resolution, customer-webhook delivery + registration). It is a stdlib-only
-// leaf package so any layer can import it.
+// Package nettools holds the single canonical SSRF blocklist used by every outbound fetch of an
+// issuer/customer-controlled URL (SEP-1 metadata resolution, customer-webhook delivery and
+// registration). It is a stdlib-only leaf package so any layer can import it.
 //
-// It is one package because per-call-site copies drift: when three packages
-// each carried the block-list logic, metadata/sep1.go blocked 192.0.0.0/24
-// (Oracle Cloud metadata 192.0.0.192) + 198.18.0.0/15, but the two webhook
-// guards did not — so an Oracle-hosted deployment could be made to dial its
-// own metadata endpoint via a customer webhook. IsBlockedIP is the
-// UNION of every range any call site ever checked; add a range here once and
-// every guard gets it.
+// Per-call-site copies drift: a guard missing 192.0.0.0/24 (Oracle metadata 192.0.0.192) would let a
+// customer webhook make the host dial its own metadata endpoint. IsBlockedIP is the UNION of every
+// range any call site checks; add a range here once and every guard gets it.
 package nettools
 
 import (
@@ -69,9 +64,8 @@ var extraBlockedNets = func() []*net.IPNet {
 	return out
 }()
 
-// IsBlockedIP reports whether ip is in a non-public / SSRF-dangerous range.
-// A nil IP is treated as blocked (fail-closed). This is the canonical guard;
-// do NOT re-implement it per package.
+// IsBlockedIP reports whether ip is in a non-public / SSRF-dangerous range; nil is blocked
+// (fail-closed). It is the canonical guard, never re-implemented per package.
 func IsBlockedIP(ip net.IP) bool {
 	if ip == nil {
 		return true

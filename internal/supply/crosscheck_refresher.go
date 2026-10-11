@@ -33,20 +33,16 @@ type CrossCheckPair struct {
 	WrapClass WrapClass
 }
 
-// CrossCheckOutcomeKind is the per-pair outcome of one tick. Stable
-// metric-label strings; the aggregator-level counter uses these
-// values directly as the `outcome` label per
-// `stellarindex_supply_cross_check_total`.
+// CrossCheckOutcomeKind is the per-pair outcome of one tick. The strings are stable: they are the
+// `outcome` label of `stellarindex_supply_cross_check_total`.
 type CrossCheckOutcomeKind string
 
 const (
-	// CrossCheckOutcomeWithin — both snapshots loaded, divergence ≤
-	// CrossCheckTolerance. The gauge is set to the divergence value
-	// (≥0 stroops, almost always 0).
+	// CrossCheckOutcomeWithin — both snapshots loaded, divergence ≤ CrossCheckTolerance; the gauge
+	// is set to the divergence (almost always 0).
 	CrossCheckOutcomeWithin CrossCheckOutcomeKind = "within"
 
-	// CrossCheckOutcomeOver — both snapshots loaded, divergence >
-	// CrossCheckTolerance. The gauge is set to the divergence; the
+	// CrossCheckOutcomeOver — both snapshots loaded, divergence > CrossCheckTolerance; the
 	// supply_cross_check_divergence alert fires after `for: 5m`.
 	CrossCheckOutcomeOver CrossCheckOutcomeKind = "over"
 
@@ -54,10 +50,8 @@ const (
 	// series is CLEARED so a zero or stale reading can't imply "checked, agreed".
 	CrossCheckOutcomeMissing CrossCheckOutcomeKind = "missing_snapshot"
 
-	// CrossCheckOutcomeReadError — a transient storage error fired
-	// while reading either side. The gauge series is CLEARED; the
-	// surface is the counter so operators can chart and alert on a
-	// sustained read-failure rate.
+	// CrossCheckOutcomeReadError — a transient storage error reading either side. The gauge series
+	// is CLEARED; the counter carries the sustained read-failure rate.
 	CrossCheckOutcomeReadError CrossCheckOutcomeKind = "read_error"
 
 	// CrossCheckOutcomeMisaligned: both snapshots loaded but further apart than
@@ -77,8 +71,7 @@ const (
 // 5m refresh cadence; it bounds alignment, not component age.
 const CrossCheckLedgerTolerance uint32 = 1000
 
-// ledgerGap returns |a − b| for two ledger sequences without the
-// uint32 underflow a bare subtraction would produce.
+// ledgerGap returns |a − b| without the uint32 underflow of a bare subtraction.
 func ledgerGap(a, b uint32) uint32 {
 	if a > b {
 		return a - b
@@ -109,10 +102,8 @@ type CrossCheckEmitter interface {
 	// stalled pair would read as its last verdict. The outcome counter carries the reason.
 	ClearDivergence(classicKey string, wrapClass WrapClass)
 
-	// Outcome increments the per-outcome counter, labelled by
-	// WrapClass. Called for every outcome (including Missing /
-	// ReadError) so operators see the "is the cross-checker even
-	// running" signal.
+	// Outcome increments the per-outcome counter, labelled by WrapClass. It is called for every
+	// outcome, including Missing and ReadError, so operators can tell the checker is running.
 	Outcome(kind CrossCheckOutcomeKind, wrapClass WrapClass)
 }
 
@@ -209,10 +200,8 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 			"sac_key", p.SACKey, "err", err)
 		return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeReadError, Err: err}
 	}
-	// Each snapshot is the LATEST for its own asset_key, written
-	// by its own per-asset refresher, so they can describe wildly
-	// different ledgers; CrossCheckForClass refuses such a pair rather
-	// than publish a verdict the data can't support.
+	// Each snapshot is the LATEST for its own asset_key, so the two can describe wildly different
+	// ledgers; CrossCheckForClass refuses such a pair rather than publish an unsupported verdict.
 	result, err := CrossCheckForClass(classic, sac, p.WrapClass)
 	if errors.Is(err, ErrCrossCheckMisaligned) {
 		r.logger.Warn("cross-check: snapshots misaligned, comparison skipped",
@@ -230,8 +219,7 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 		return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeReadError, Err: err}
 	}
 	if result.WrapClass == WrapClassPartial && !result.SubsetBoundChecked {
-		// A partial-wrap check whose escrow leg was not evaluated checked
-		// nothing that feeds the divergence (leg 1 is diagnostic only).
+		// Without the escrow leg nothing feeding the divergence was checked (leg 1 is diagnostic).
 		r.logger.Debug("cross-check: escrow leg UNCHECKED (no sac_wrapped_stroops on the classic snapshot)",
 			"classic_key", p.ClassicKey,
 			"sac_key", p.SACKey,
@@ -248,9 +236,8 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 		"sac_key", p.SACKey,
 		"wrap_class", string(result.WrapClass),
 		"divergence_stroops", result.DivergenceStroops.String(),
-		// Leg 2 (escrow excess) is what breached: mints are missing or
-		// burns double-counted. Leg 1 (over-mint) is diagnostic context
-		// only. See the supply runbook (supply.md).
+		// Leg 2 (escrow excess) breached: mints are missing or burns double-counted. Leg 1
+		// (over-mint) is diagnostic context only.
 		"over_mint_stroops", bigOrUnset(result.OverMintStroops),
 		"escrow_excess_stroops", bigOrUnset(result.EscrowExcessStroops),
 		"subset_bound_checked", result.SubsetBoundChecked,
@@ -258,9 +245,8 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 	return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeOver, Result: result}
 }
 
-// bigOrUnset renders an optional *big.Int for a log line, mapping nil
-// to "unset" rather than "<nil>" or a misleading "0" — the per-leg
-// fields are nil exactly when that leg was not evaluated.
+// bigOrUnset renders an optional *big.Int, mapping nil to "unset" rather than a misleading "0":
+// a per-leg field is nil exactly when that leg was not evaluated.
 func bigOrUnset(v *big.Int) string {
 	if v == nil {
 		return "unset"

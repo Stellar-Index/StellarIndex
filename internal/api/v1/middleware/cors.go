@@ -32,26 +32,20 @@ type CORSOptions struct {
 	// explicitly for a stricter cross-origin posture.
 	AllowedMethods []string
 
-	// AllowedHeaders is the list of non-safe-listed headers clients
-	// may include on cross-origin requests. Defaults to
-	// [DefaultCORSAllowedHeaders].
+	// AllowedHeaders lists the non-safelisted request headers; defaults to [DefaultCORSAllowedHeaders].
 	AllowedHeaders []string
 
-	// ExposedHeaders is the list of response headers a cross-origin
-	// script may read beyond the Fetch safelist. Defaults to
-	// [DefaultCORSExposedHeaders].
+	// ExposedHeaders lists the response headers scripts may read beyond the Fetch safelist;
+	// defaults to [DefaultCORSExposedHeaders].
 	ExposedHeaders []string
 
-	// MaxAge is the cache duration for the preflight response, in
-	// seconds. Defaults to 600 (10 min) — long enough to amortise
-	// preflight overhead without going so far that rotating the
-	// policy becomes slow. Browsers silently cap at 2h.
+	// MaxAge is the preflight cache duration in seconds. Defaults to 600: long enough to amortise
+	// preflights, short enough that a policy change lands quickly. Browsers cap it at 2h.
 	MaxAge int
 }
 
-// DefaultCORSAllowedHeaders are the request headers the API accepts
-// from a client: every header the OpenAPI spec or the auth middleware
-// tells a caller to send. cors_test.go diffs it against the spec.
+// DefaultCORSAllowedHeaders are the request headers the OpenAPI spec or auth middleware tell a
+// caller to send; cors_test.go diffs it against the spec.
 var DefaultCORSAllowedHeaders = []string{
 	"Content-Type",
 	"Authorization",
@@ -62,10 +56,8 @@ var DefaultCORSAllowedHeaders = []string{
 	"Last-Event-ID",
 }
 
-// DefaultCORSExposedHeaders are the non-safelisted response headers a
-// client is told to act on (429 back-off, quota, request correlation).
-// Without Access-Control-Expose-Headers a browser hides them from
-// cross-origin scripts however correct the server's value is.
+// DefaultCORSExposedHeaders are the response headers a client must act on (429 back-off, quota,
+// request id). Without Access-Control-Expose-Headers a browser hides them from cross-origin scripts.
 var DefaultCORSExposedHeaders = []string{
 	"Retry-After",
 	"X-RateLimit-Limit",
@@ -150,10 +142,8 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 				w.Header().Set("Access-Control-Expose-Headers", exposed)
 			}
 
-			// Per-request CORS observability. One increment
-			// per request so operators can dashboard cross-origin
-			// traffic patterns and alert when a wildcard policy
-			// starts handling real cross-origin traffic in prod.
+			// One increment per request, so operators can alert when a wildcard policy starts
+			// handling real cross-origin traffic.
 			switch {
 			case origin == "":
 				obs.APICORSDecisionsTotal.WithLabelValues("no_origin").Inc()

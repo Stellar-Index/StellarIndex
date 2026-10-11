@@ -31,9 +31,8 @@ import (
 // path, a free-space pre-flight, a refusal of live-adjacent chunks, and re-compression of a
 // failed chunk.
 
-// chunkRestampStore is the DRIVER's seam: the chunk, policy and lock
-// primitives, and nothing that knows a tier. *timescale.Store satisfies
-// it; each tier extends it with its own plan/apply pair.
+// chunkRestampStore is the DRIVER's seam: chunk, policy and lock primitives, nothing tier-aware.
+// Each tier extends it with its own plan/apply pair.
 type chunkRestampStore interface {
 	TradesChunksInRange(ctx context.Context, from, to time.Time) ([]timescale.TradeChunk, error)
 	TradesChunkBytes(ctx context.Context, c timescale.TradeChunk) (int64, error)
@@ -45,101 +44,80 @@ type chunkRestampStore interface {
 	RestampTradesChunk(ctx context.Context, c timescale.TradeChunk, work func(context.Context) error, before func(timescale.ChunkRestampStep)) (timescale.TradeChunkRestampResult, error)
 }
 
-// chunkRestampTier is the per-tier half of the walk: everything the
-// driver cannot decide without knowing WHICH usd_volume tier is being
-// repaired. Every method is scoped to one chunk's slice [lo, hi) of the
-// run window, which the driver has already clamped.
+// chunkRestampTier is the per-tier half of the walk: what the driver cannot decide without
+// knowing WHICH usd_volume tier is being repaired. Methods are scoped to one chunk's slice
+// [lo, hi) of the already-clamped run window.
 type chunkRestampTier interface {
-	// write reports whether this is a -write run. The driver reads it from
-	// the tier rather than carrying its own copy, so the guard that
-	// decompresses and the walk that writes can never disagree.
+	// write reports whether this is a -write run; the driver reads it from the tier so the
+	// guard that decompresses and the walk that writes can never disagree.
 	write() bool
-	// header is the run's opening line: the window and every flag that
-	// shaped the population. Printed to stderr before anything is read.
+	// header is the run's opening line, printed to stderr before anything is read.
 	header(from, to time.Time, copts chunkRestampOptions) string
 	// probe answers, read-only, whether [lo, hi) still holds a row this run would change. A clean
 	// chunk is skipped undecompressed, which makes a rerun resume at the first unfinished chunk, and
 	// still counts toward the closing report.
 	probe(ctx context.Context, lo, hi time.Time) (bool, error)
-	// preview is the dry run's read-only pass over [lo, hi): it folds the
-	// slice into the run's totals and returns the operator-facing
-	// description of what it found ("would change N row(s) …").
+	// preview is the dry run's read-only pass over [lo, hi): it folds the slice into the run's
+	// totals and describes what it found ("would change N row(s) …").
 	preview(ctx context.Context, lo, hi time.Time) (string, error)
-	// restamp does the write inside chunk c, which the driver has already
-	// decompressed. The outcome is meaningful even when the error is
-	// non-nil: it carries the rows written before the failure.
+	// restamp writes inside chunk c, which the driver has already decompressed. The outcome is
+	// meaningful even on error: it carries the rows written before the failure.
 	restamp(ctx context.Context, c timescale.TradeChunk, lo, hi time.Time) (chunkRestampOutcome, error)
-	// tick reports the run's cumulative progress to the job heartbeat at
-	// the slice boundary the walk has reached.
+	// tick reports cumulative progress to the job heartbeat at the slice boundary reached.
 	tick(watermark time.Time)
-	// tickBytes reports the run's cumulative OBSERVED byte movement to
-	// the job heartbeat — the second progress dimension, which is what
-	// keeps the walk visibly alive through a decompress that completes no
-	// rows. See [chunkRestampWalk.watchChunkBytes].
+	// tickBytes reports cumulative OBSERVED byte movement to the heartbeat, the second progress
+	// dimension that keeps the walk visibly alive through a decompress completing no rows. See
+	// [chunkRestampWalk.watchChunkBytes].
 	tickBytes(moved uint64)
-	// finish is the closing block, printed after the last chunk: whatever
-	// the tier reports on its own stdout, plus the summary the driver
-	// writes to its `out`.
+	// finish is the closing block printed after the last chunk.
 	finish(cfgPath string, from, to time.Time) string
-	// resume is the RESUME line printed when the walk stops early — the
-	// same command, carrying the run's generation and every flag that
-	// shaped its population.
+	// resume is the RESUME line printed when the walk stops early: the same command, carrying
+	// the run's generation and every flag that shaped its population.
 	resume(cfgPath string, from, to time.Time, copts chunkRestampOptions) string
 }
 
 // chunkRestampOutcome is what one tier did inside one chunk.
 type chunkRestampOutcome struct {
-	// Written is the rows the database actually changed. Reported even on
-	// the error path, so a stopped walk can say how far it got.
+	// Written is the rows the database actually changed, reported even on the error path so a
+	// stopped walk can say how far it got.
 	Written int64
-	// Note is the tier's own description for the chunk's progress line
-	// ("changed N row(s) (planned M)"); the driver adds the timing and the
+	// Note is the tier's description for the chunk's progress line; the driver adds timing and
 	// byte figures around it.
 	Note string
 }
 
-// chunkRestampOptions is the chunk walk's own flag set, resolved. Every
-// field is the DRIVER's, except Batch — see its comment.
+// chunkRestampOptions is the chunk walk's resolved flag set; every field is the DRIVER's except
+// Batch.
 type chunkRestampOptions struct {
-	// Batch is -chunk-batch: rows per UPDATE transaction inside a
-	// decompressed chunk. It belongs to the xlm-base tier, whose write set
-	// is a row list; the exact tier's per-transaction bound is its -slice
-	// window, and `-chunk-batch` is refused with `-tier exact`.
+	// Batch is -chunk-batch: rows per UPDATE transaction inside a decompressed chunk. It belongs
+	// to the xlm-base tier (a row list); the exact tier is bounded by -slice and refuses it.
 	Batch int
-	// MinFreeBytes is -min-free-bytes: the operator's assertion of free
-	// space on the data volume, used INSTEAD of a measurement. 0 = measure.
+	// MinFreeBytes is -min-free-bytes: the operator's assertion of free space, used INSTEAD of a
+	// measurement. 0 = measure.
 	MinFreeBytes int64
-	// RemoteDBHost is the first non-loopback host the Postgres DSN dials
-	// ("" = every host is a Unix socket or loopback). Set, a local statfs
-	// measures THIS host's filesystem, so the pre-flight refuses to use it.
+	// RemoteDBHost is the first non-loopback host the DSN dials ("" = socket or loopback). Set, a
+	// local statfs would measure THIS host's filesystem, so the pre-flight refuses to use it.
 	RemoteDBHost string
-	// AllowLiveAdjacent is -allow-live-adjacent: walk a window whose right
-	// edge reaches into the compression policy's lag anyway.
+	// AllowLiveAdjacent is -allow-live-adjacent: walk a window reaching into the policy's lag.
 	AllowLiveAdjacent bool
-	// ResumePausedPolicy is -resume-paused-policy: proceed when the
-	// compression policy is already unscheduled at start, and re-enable it
-	// at exit. Without it that state is a refusal.
+	// ResumePausedPolicy is -resume-paused-policy: proceed when the policy is already
+	// unscheduled at start and re-enable it at exit; without it that state is a refusal.
 	ResumePausedPolicy bool
-	// PolicyIdleTimeout bounds the wait for a policy run in flight after
-	// the pause. Zero = defaultPolicyIdleTimeout.
+	// PolicyIdleTimeout bounds the wait for an in-flight policy run after the pause. Zero =
+	// defaultPolicyIdleTimeout.
 	PolicyIdleTimeout time.Duration
-	// PolicyPoll is the interval between polls of that wait. Zero =
-	// defaultPolicyPoll. A seam for the tests.
+	// PolicyPoll is the interval between polls of that wait. Zero = defaultPolicyPoll.
 	PolicyPoll time.Duration
 	// ChunkBytesPoll is how often the walk re-reads the chunk's on-disk size, keeping progress
 	// observable through a decompress that completes no rows. Zero means defaultChunkBytesPoll.
 	ChunkBytesPoll time.Duration
-	// FreeBytes measures free space on the filesystem holding path. nil =
-	// statfs. A seam for the tests.
+	// FreeBytes measures free space on the filesystem holding path. nil = statfs (test seam).
 	FreeBytes func(path string) (uint64, error)
-	// Now is the instant the live-adjacent check is made against. Zero =
-	// time.Now(). A seam for the tests.
+	// Now is the instant the live-adjacent check uses. Zero = time.Now() (test seam).
 	Now time.Time
-	// Out receives the plan, the verdict, the per-chunk lines and the
-	// report. nil = os.Stdout.
+	// Out receives the plan, verdict, per-chunk lines and report. nil = os.Stdout.
 	Out io.Writer
-	// Err receives the run header, the policy notices and the by-hand
-	// repair traces. nil = os.Stderr.
+	// Err receives the run header, policy notices and by-hand repair traces. nil = os.Stderr.
 	Err io.Writer
 }
 
@@ -149,14 +127,12 @@ type chunkRestampOptions struct {
 // case is about 2x plus WAL; a run near it should free space or narrow the window.
 const chunkFreeSpaceHeadroom = 2.0
 
-// heavyMinDataKBDefault mirrors the run-heavy-job disk watchdog's DATA-POOL
-// floor default (configs/ansible/roles/archival-node/tasks/
-// 14-stellarindex-services.yml, HEAVY_MIN_DATA_KB) so a run that clears the
-// CLI's own headroom check cannot still be one the watchdog kills mid-chunk.
+// heavyMinDataKBDefault mirrors the run-heavy-job disk watchdog's DATA-POOL floor default
+// (HEAVY_MIN_DATA_KB), so a run clearing the CLI's headroom check is not killed mid-chunk.
 const heavyMinDataKBDefault = 314572800 // 300 GiB, KB (watchdog's unit)
 
-// heavyMinDataFloorBytes reads the watchdog's own floor, HEAVY_MIN_DATA_KB,
-// so the two guards read one number instead of two that can drift apart.
+// heavyMinDataFloorBytes reads the watchdog's own HEAVY_MIN_DATA_KB so the two guards cannot
+// drift apart.
 func heavyMinDataFloorBytes() uint64 {
 	kb := int64(heavyMinDataKBDefault)
 	if v := os.Getenv("HEAVY_MIN_DATA_KB"); v != "" {
@@ -167,10 +143,8 @@ func heavyMinDataFloorBytes() uint64 {
 	return uint64(kb) * 1024
 }
 
-// runChunkRestamp is the `-chunks` walk, for whichever tier it is handed.
-// Called by usdVolumeRestamp once the shared window/flag/live-tail
-// validation has passed. The named return is what lets the deferred
-// policy re-enable fold its own failure into the run's error.
+// runChunkRestamp is the `-chunks` walk, for whichever tier it is handed. The named return lets
+// the deferred policy re-enable fold its own failure into the run's error.
 func runChunkRestamp(ctx context.Context, store chunkRestampStore, cfgPath string, from, to time.Time, copts chunkRestampOptions, tier chunkRestampTier) (err error) { //nolint:gocognit,funlen // linear: header, policy, live-adjacent, plan, pre-flight, pause, walk, report — each guard beside the print that explains it.
 	out, errw := copts.Out, copts.Err
 	if out == nil {
@@ -273,8 +247,7 @@ func checkRestampLiveAdjacent(to, now time.Time, compressAfter time.Duration, al
 		to.Format(time.DateOnly), windowEnd.Format(time.RFC3339), compressAfter, edge.Format(time.RFC3339))
 }
 
-// policyReenableSQL is the by-hand re-enable, spelled once so every trace
-// prints the same statement.
+// policyReenableSQL is the by-hand re-enable, spelled once so every trace prints it identically.
 func policyReenableSQL(p timescale.TradesCompressionPolicy) string {
 	return fmt.Sprintf("SELECT alter_job(%d, scheduled => true);", p.JobID)
 }
@@ -305,18 +278,18 @@ func pauseTradesCompressionPolicy(ctx context.Context, store chunkRestampStore, 
 }
 
 // beginChunkWriteRun does what a -write run needs between pre-flight and the first decompress, in
-// the order that makes each guard hold: take the lock, re-read the policy under it, refuse an
-// unscheduled one without -resume-paused-policy, pause it, wait out a run in flight and re-list
-// the chunks. It returns that list and the teardown (re-enable, then unlock); a failure undoes
-// what was taken, so no refusal leaves the lock held or the policy paused.
+// the order that makes each guard hold: lock, re-read the policy under it, refuse an unscheduled
+// one without -resume-paused-policy, pause, wait out a run in flight, re-list the chunks. It
+// returns that list and the teardown; a failure undoes what was taken, so no refusal leaves the
+// lock held or the policy paused.
 func beginChunkWriteRun(ctx context.Context, store chunkRestampStore, from, windowEnd time.Time, planned []timescale.TradeChunk, copts chunkRestampOptions, out, errw io.Writer) (chunks []timescale.TradeChunk, finish func(error) error, err error) {
 	release, err := takeRestampLock(ctx, store, errw)
 	if err != nil {
 		return nil, nil, err
 	}
 	finish = func(runErr error) error { return releaseRestampLock(ctx, release, errw, runErr) }
-	// fail routes every later refusal through whatever finish has become,
-	// so the lock (and, after the pause, the policy) is put back first.
+	// fail routes later refusals through the current finish so the lock (and, after the pause,
+	// the policy) is put back first.
 	fail := func(err error) error { return finish(err) }
 
 	policy, err := store.TradesCompressionPolicy(ctx)
@@ -338,9 +311,8 @@ func beginChunkWriteRun(ctx context.Context, store chunkRestampStore, from, wind
 	if err := waitTradesPolicyIdle(ctx, store, policy, copts, errw); err != nil {
 		return nil, nil, fail(err)
 	}
-	// The listing that shaped the plan was taken before the pause; the one
-	// the walk restores is taken after it, once nothing else compresses
-	// trades chunks.
+	// The plan's listing predates the pause; the walk uses this one, taken once nothing else
+	// compresses trades chunks.
 	chunks, err = store.TradesChunksInRange(ctx, from, windowEnd)
 	if err != nil {
 		return nil, nil, fail(fmt.Errorf("usd-volume-restamp: %w", err))
@@ -351,10 +323,8 @@ func beginChunkWriteRun(ctx context.Context, store chunkRestampStore, from, wind
 	return chunks, finish, nil
 }
 
-// restampLockHolderSQL is how an operator finds the session holding the
-// run lock: every advisory lock on the server, with its holder. The run
-// lock is the only session-level one this codebase takes; the platform
-// stores' claims are transaction-level and gone in milliseconds.
+// restampLockHolderSQL finds the session holding the run lock. It lists every advisory lock
+// because the run lock is the only session-level one; platform claims are transaction-level.
 const restampLockHolderSQL = `SELECT a.pid, a.application_name, a.backend_start, a.state, l.classid, l.objid
       FROM pg_locks l JOIN pg_stat_activity a USING (pid)
      WHERE l.locktype = 'advisory';`
@@ -392,9 +362,8 @@ func holdInPlaceRestampLock(ctx context.Context, store chunkRestampStore, write,
 	return func(runErr error) error { return releaseRestampLock(ctx, release, errw, runErr) }, nil
 }
 
-// releaseRestampLock releases the run lock on a context detached from the
-// run's cancellation and folds a failure into the run's error. The lock
-// goes with its connection regardless, which the message says.
+// releaseRestampLock releases the run lock on a context detached from cancellation and folds a
+// failure into the run's error; the lock goes with its connection regardless.
 func releaseRestampLock(ctx context.Context, release func(context.Context) error, errw io.Writer, runErr error) error {
 	if err := release(context.WithoutCancel(ctx)); err != nil {
 		_, _ = fmt.Fprintf(errw, "usd-volume-restamp: FAILED to release the run lock (%v); the connection that held it is closed, which releases it\n", err)
@@ -404,19 +373,17 @@ func releaseRestampLock(ctx context.Context, release func(context.Context) error
 	return runErr
 }
 
-// The bound on waiting for a policy run in flight, and the poll interval.
-// Ten minutes is several times the longest compression run the 7-day
-// chunks have taken; a job still running past it is not the one this run
-// expected, and the run refuses rather than decompresses beside it.
+// The bound on waiting for a policy run in flight, and the poll interval. Ten minutes is several
+// times the longest compression run on the 7-day chunks; a job past it is not the one expected,
+// so the run refuses rather than decompresses beside it.
 const (
 	defaultPolicyIdleTimeout = 10 * time.Minute
 	defaultPolicyPoll        = 15 * time.Second
 )
 
-// waitTradesPolicyIdle waits, after the pause, while the policy's proc is
-// still executing: the pause stops the NEXT fire, a fire in flight
-// finishes on its own, and a decompress issued beside it races it. One
-// progress line per poll; a bounded wait, refused at the bound.
+// waitTradesPolicyIdle waits, after the pause, while the policy's proc is still executing: the
+// pause stops the NEXT fire, an in-flight one finishes on its own, and a decompress beside it
+// would race it. Bounded; refused at the bound.
 func waitTradesPolicyIdle(ctx context.Context, store chunkRestampStore, p timescale.TradesCompressionPolicy, copts chunkRestampOptions, errw io.Writer) error {
 	timeout, poll := copts.PolicyIdleTimeout, copts.PolicyPoll
 	if timeout <= 0 {
@@ -495,14 +462,11 @@ const defaultChunkBytesPoll = 30 * time.Second
 // inside that chunk, and returns the stop for the poll.
 //
 // A decompress is the longest step (up to ~1.5 h) with zero row progress, so
-// stellarindex_ops_job_no_progress would ticket every healthy run, and muting it would blind it
-// where a wedge is likeliest. decompress_chunk grows the chunk's own relations, so the size climbs
-// while it runs and stays flat when wedged.
+// stellarindex_ops_job_no_progress would ticket every healthy run. decompress_chunk grows the
+// chunk's own relations, so the size climbs while it runs and stays flat when wedged.
 //
-// The re-compress is not covered, as its new relation is invisible until commit; the largest
-// chunk's outlasts the alert, which fails safe with one extra ticket (confirm with
-// pg_stat_activity). A failed poll is skipped; a never-succeeding one leaves the counter flat,
-// which the alert already covers.
+// The re-compress is not covered (its new relation is invisible until commit); the largest
+// chunk's outlasts the alert, which fails safe with one extra ticket. A failed poll is skipped.
 func (w *chunkRestampWalk) watchChunkBytes(ctx context.Context, c timescale.TradeChunk) (stop func()) {
 	poll := w.copts.ChunkBytesPoll
 	if poll <= 0 {
@@ -527,10 +491,8 @@ func (w *chunkRestampWalk) watchChunkBytes(ctx context.Context, c timescale.Trad
 			if err != nil {
 				continue
 			}
-			// |delta|, not the raw size: the figure climbs through a
-			// decompress and falls at a re-compress's commit, and BOTH
-			// are the storage moving. A counter that only credited growth
-			// would report nothing for half of what it watched.
+			// |delta|, not the raw size: the figure climbs through a decompress and falls at a
+			// re-compress's commit, and BOTH are the storage moving.
 			if seeded && n != last {
 				delta := n - last
 				if delta < 0 {
@@ -572,8 +534,8 @@ func (w *chunkRestampWalk) chunk(ctx context.Context, idx, n int, c timescale.Tr
 	}
 
 	if c.Compressed {
-		// Free space is re-measured against THIS chunk right before it is
-		// decompressed: the run is long, and the pool is shared.
+		// Re-measured against THIS chunk right before the decompress: the run is long and the
+		// pool is shared.
 		if pf := chunkRestampPreflight(ctx, w.chunks, c.UncompressedBytes, w.copts); pf.Err != nil {
 			return fmt.Errorf("usd-volume-restamp: %s: pre-flight refused before the decompress (the chunk is untouched): %w", label, pf.Err)
 		}
@@ -582,8 +544,8 @@ func (w *chunkRestampWalk) chunk(ctx context.Context, idx, n int, c timescale.Tr
 	// on-disk size ([chunkRestampWalk.watchChunkBytes]). Deferred, not stopped at the tail, so the
 	// poll goroutine also ends when the bracket propagates a panic.
 	defer w.watchChunkBytes(ctx, c)()
-	// Every write inside the chunk goes through the tier's guarded apply,
-	// which reads the chunk's is_compressed ahead of the UPDATE.
+	// Every write goes through the tier's guarded apply, which reads is_compressed ahead of the
+	// UPDATE.
 	var inside chunkRestampOutcome
 	res, err := w.chunks.RestampTradesChunk(ctx, c, func(ctx context.Context) error {
 		var werr error
@@ -634,10 +596,8 @@ func chunkState(c timescale.TradeChunk) string {
 	return "uncompressed"
 }
 
-// clampTradesChunk intersects a chunk's range with the run window
-// [from, to). The chunk that holds -from usually starts before it and the
-// chunk that holds -to usually ends after it; only the overlap is walked,
-// so the run never touches rows outside the window it was given.
+// clampTradesChunk intersects a chunk's range with the run window [from, to), so the edge chunks
+// never have rows outside the given window touched.
 func clampTradesChunk(c timescale.TradeChunk, from, to time.Time) (lo, hi time.Time) {
 	lo, hi = c.RangeStart, c.RangeEnd
 	if from.After(lo) {
@@ -649,16 +609,14 @@ func clampTradesChunk(c timescale.TradeChunk, from, to time.Time) (lo, hi time.T
 	return lo, hi
 }
 
-// tradesChunkPlan is the operator-facing summary of the chunks a run
-// would walk — printed by the dry run AND the write run before anything
-// is decompressed.
+// tradesChunkPlan is the operator-facing summary of the chunks a run would walk, printed by dry
+// and write runs before anything is decompressed.
 type tradesChunkPlan struct {
 	Count             int
 	CompressedCount   int
 	TotalUncompressed int64
 	TotalCompressed   int64
-	// Largest is the chunk with the biggest uncompressed size; the
-	// pre-flight sizes against it.
+	// Largest is the biggest uncompressed chunk; the pre-flight sizes against it.
 	Largest timescale.TradeChunk
 }
 
@@ -678,8 +636,7 @@ func summarizeTradesChunkPlan(chunks []timescale.TradeChunk) tradesChunkPlan {
 	return p
 }
 
-// renderTradesChunkPlan renders the chunk plan. A string rather than a
-// print so the dry run's output is testable.
+// renderTradesChunkPlan renders the chunk plan as a string so the dry run's output is testable.
 func renderTradesChunkPlan(from, to time.Time, chunks []timescale.TradeChunk, p tradesChunkPlan) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "=== chunk plan: %d trades chunk(s) intersect [%s, %s] — %d compressed, %d not\n",
@@ -703,8 +660,7 @@ func renderTradesChunkPlan(from, to time.Time, chunks []timescale.TradeChunk, p 
 	return b.String()
 }
 
-// chunkPreflight is the free-space verdict and everything that went into
-// it, so the printed line can show its working.
+// chunkPreflight is the free-space verdict plus its inputs, so the printed line shows its working.
 type chunkPreflight struct {
 	Largest  int64
 	Required uint64
@@ -723,9 +679,9 @@ type chunkPreflight struct {
 // chunkRestampPreflight decides whether a -write run may start and, called again per chunk with
 // that chunk's size, whether the next decompress may go ahead.
 //
-// The free figure is -min-free-bytes when the operator gave one (trusted as stated, warned about
-// loudly), otherwise statfs on the directory the database reports for `trades`, only when the DSN
-// dials this host. Neither available is a refusal, not a guess.
+// The free figure is -min-free-bytes when given (trusted, with a loud warning), otherwise statfs
+// on the directory the database reports for `trades`, only when the DSN dials this host. Neither
+// available is a refusal, not a guess.
 func chunkRestampPreflight(ctx context.Context, store interface {
 	TradesDataVolumePath(context.Context) (string, error)
 }, largest int64, copts chunkRestampOptions,
@@ -828,9 +784,9 @@ func (p chunkPreflight) render() string {
 	return b.String()
 }
 
-// remoteDSNHost returns the first host the DSN would dial that is neither a
-// Unix socket directory nor loopback, "" when there is none. It resolves the
-// DSN exactly as the driver does (URL or key=value form, PGHOST, multi-host).
+// remoteDSNHost returns the first host the DSN would dial that is neither a Unix socket nor
+// loopback, "" when none. It resolves the DSN as the driver does (URL or key=value, PGHOST,
+// multi-host).
 func remoteDSNHost(dsn string) string {
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
@@ -890,9 +846,8 @@ func resolveRestampMaxGeneration(maxGen, generation int64) (int64, error) {
 	return maxGen, nil
 }
 
-// fmtBytes renders a byte count the way pg_size_pretty does (1024-based,
-// one decimal), so the plan reads like the psql the operator checks it
-// against.
+// fmtBytes renders a byte count like pg_size_pretty (1024-based, one decimal) so the plan matches
+// the psql the operator checks it against.
 func fmtBytes(n int64) string {
 	const unit = 1024
 	if n < unit && n > -unit {

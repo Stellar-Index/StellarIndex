@@ -27,25 +27,22 @@ import (
 
 // CuratedRWAEntry is one row as the curator published it.
 type CuratedRWAEntry struct {
-	// Address is the Stellar address as published: a Soroban contract
-	// C-strkey (for a classic asset, its Stellar Asset Contract) or a
-	// classic CODE-GISSUER pair. The join key; never the code.
+	// Address is the address as published: a Soroban contract C-strkey (a classic asset's SAC) or
+	// a classic CODE-GISSUER pair. It is the join key, never the code.
 	Address string
-	// AssetCode and AssetIssuer are what the curator printed beside the
-	// address. Display and reconciliation only.
+	// AssetCode and AssetIssuer are what the curator printed beside the address; display and
+	// reconciliation only.
 	AssetCode   string
 	AssetIssuer string
 	// Company is the curator's issuing-entity label, served verbatim.
 	Company string
-	// AssetSubclass is the curator's instrument class, served verbatim
-	// beside this index's own vocabulary and never mapped onto it.
+	// AssetSubclass is the curator's instrument class, served verbatim and never mapped onto this
+	// index's own vocabulary.
 	AssetSubclass string
-	// PriceUSD is the curator's price per token as a DECIMAL STRING —
-	// the literal the upload printed. Empty when the curator published
-	// none, or when the one it published is past [curatedRWAPriceMaxAge].
+	// PriceUSD is the curator's price per token as a DECIMAL STRING, the literal the upload
+	// printed. Empty when none was published or it is past [curatedRWAPriceMaxAge].
 	PriceUSD string
-	// PricedAt is the curator's own stamp for that price. Zero exactly
-	// when PriceUSD is empty.
+	// PricedAt is the curator's stamp for that price; zero exactly when PriceUSD is empty.
 	PricedAt time.Time
 	// Source is the provenance the sync run recorded.
 	Source string
@@ -58,30 +55,24 @@ type CuratedRWAEntry struct {
 //	Entries = Contracts + Classic   (a table CHECK makes the two forms exhaustive)
 //	Priced <= Contracts, PricedClassic <= Classic
 type CuratedRWACensus struct {
-	// Entries counts rows inside the recognition bound, of either
-	// address form.
+	// Entries counts rows inside the recognition bound, of either address form.
 	Entries int
-	// Contracts counts recognised rows whose address is a C-strkey —
-	// the only form the curated arm serves.
+	// Contracts counts recognised rows with a C-strkey address, the only form the arm serves.
 	Contracts int
-	// Classic counts recognised rows whose address is a `CODE-GISSUER`
-	// pair. The arm does not serve them, so this is the count that says
-	// how much of the curator's list was left out.
+	// Classic counts recognised rows with a `CODE-GISSUER` address. The arm does not serve them,
+	// so this says how much of the curator's list was left out.
 	Classic int
-	// Priced counts recognised CONTRACT rows whose price is inside its
-	// bound.
+	// Priced counts recognised CONTRACT rows whose price is inside its bound.
 	Priced int
-	// PricedClassic is the same count over the CLASSIC rows, kept apart
-	// so Priced keeps comparing against what the arm can serve.
+	// PricedClassic is the same count over CLASSIC rows, kept apart so Priced compares against
+	// what the arm can serve.
 	PricedClassic int
-	// Stale counts rows PRESENT in the cache but past the recognition
-	// bound — the fail-closed shrink. This is the number to watch: it is
-	// the only evidence, from this side, that the sync has stopped.
+	// Stale counts rows present but past the recognition bound (the fail-closed shrink). It is the
+	// only evidence from this side that the sync has stopped.
 	Stale int
 }
 
-// Check returns the reason the census does not balance, or "" when it
-// does.
+// Check returns the reason the census does not balance, or "" when it does.
 func (c CuratedRWACensus) Check() string {
 	if got := c.Contracts + c.Classic; got != c.Entries {
 		return fmt.Sprintf("address forms sum to %d, not Entries %d", got, c.Entries)
@@ -95,9 +86,8 @@ func (c CuratedRWACensus) Check() string {
 	return ""
 }
 
-// curatedRWARecognitionMaxAge is how long a cached row may be reused as
-// "the curator names this address". The sync runs daily; 48 hours means
-// one missed run is survivable and two are not.
+// curatedRWARecognitionMaxAge is how long a cached row still counts as "the curator names this
+// address". The sync runs daily, so one missed run is survivable and two are not.
 const curatedRWARecognitionMaxAge = "48 hours"
 
 // curatedRWAPriceMaxAge is how long the curator's own price may be served after its day stamp.
@@ -111,13 +101,12 @@ const curatedRWAPriceFreshSQL = `price_usd IS NOT NULL
 		   AND priced_at IS NOT NULL
 		   AND priced_at > now() - INTERVAL '` + curatedRWAPriceMaxAge + `'`
 
-// curatedRWAUpsertChunk bounds the multi-row upsert: 500 rows × 9 params
-// = 4500 placeholders, far under Postgres's 65535 bind-param cap.
+// curatedRWAUpsertChunk bounds the multi-row upsert: 500 rows x 9 params is far under Postgres's
+// 65535 bind-param cap.
 const curatedRWAUpsertChunk = 500
 
-// ReplaceCuratedRWADirectory makes the cache for one curator equal to
-// `entries`: every entry is upserted with a fresh synced_at, and every row of that curator the run
-// did not touch is pruned.
+// ReplaceCuratedRWADirectory makes one curator's cache equal to `entries`: each entry is upserted
+// with a fresh synced_at and every row of that curator the run did not touch is pruned.
 //
 // An empty set is refused: a run that fetched nothing cannot tell "the curator lists nothing" from
 // "the fetch failed", and applying it would prune the whole curator into silence.
@@ -172,10 +161,8 @@ func (s *Store) ReplaceCuratedRWADirectory(
 	return upserted, pruned, nil
 }
 
-// dedupCuratedRWAEntries keeps the LAST entry per address. A curator's
-// upload can carry an address twice; the multi-row upsert would then hit
-// its own ON CONFLICT target twice in one statement, which Postgres
-// refuses.
+// dedupCuratedRWAEntries keeps the LAST entry per address: a duplicate would hit the upsert's
+// ON CONFLICT target twice in one statement, which Postgres refuses.
 func dedupCuratedRWAEntries(entries []CuratedRWAEntry) []CuratedRWAEntry {
 	idx := make(map[string]int, len(entries))
 	out := make([]CuratedRWAEntry, 0, len(entries))
@@ -190,10 +177,9 @@ func dedupCuratedRWAEntries(entries []CuratedRWAEntry) []CuratedRWAEntry {
 	return out
 }
 
-// buildCuratedRWAUpsert renders one multi-row INSERT … ON CONFLICT for a
-// chunk. The price and its time travel as a pair: an empty price binds
-// NULL for both, so the table's CHECK holds by construction rather than
-// by the caller remembering it.
+// buildCuratedRWAUpsert renders one multi-row INSERT … ON CONFLICT for a chunk. The price and its
+// time travel as a pair (an empty price binds NULL for both), so the table's CHECK holds by
+// construction.
 func buildCuratedRWAUpsert(curator string, entries []CuratedRWAEntry, source string) (string, []any) {
 	var b strings.Builder
 	b.WriteString(`
@@ -231,9 +217,8 @@ func buildCuratedRWAUpsert(curator string, entries []CuratedRWAEntry, source str
 	return b.String(), args
 }
 
-// curatedRWAByAddressSQL serves every recognised row of one curator. The
-// price columns come back NULL when the curator's own stamp is past its
-// bound, so a stale price reads as an absence and never as a value.
+// curatedRWAByAddressSQL serves every recognised row of one curator. Price columns come back NULL
+// past the curator's stamp bound, so a stale price reads as absent, never as a value.
 const curatedRWAByAddressSQL = `
 		SELECT address, asset_code, asset_issuer, company, asset_subclass,
 		       CASE WHEN ` + curatedRWAPriceFreshSQL + `
@@ -246,9 +231,8 @@ const curatedRWAByAddressSQL = `
 		   AND ` + curatedRWARecognisedSQL + `
 		 ORDER BY address`
 
-// curatedRWACensusSQL counts every bucket in one pass, for one curator.
-// The address-form predicates are the listing directory's: migration
-// 0161's CHECK is the same pair of regexes as 0160's.
+// curatedRWACensusSQL counts every bucket for one curator in one pass, using the listing
+// directory's address-form predicates (the table CHECK is the same pair of regexes).
 const curatedRWACensusSQL = `
 		SELECT
 		  count(*) FILTER (WHERE ` + curatedRWARecognisedSQL + `)          AS entries,
@@ -266,8 +250,8 @@ const curatedRWACensusSQL = `
 		  FROM rwa_curated_directory
 		 WHERE curator = $1`
 
-// CuratedRWADirectoryByAddress returns one curator's recognised rows keyed
-// by exact address, with the census of that curator's whole cache.
+// CuratedRWADirectoryByAddress returns one curator's recognised rows keyed by exact address, with
+// the census of that curator's whole cache.
 //
 // The map key is the address as published, never the code: a code lookup would hand a curator's
 // price to whichever account minted the ticker first, while a strkey or a code bound to its

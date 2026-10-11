@@ -17,10 +17,9 @@ type LakeWatermarkReader interface {
 }
 
 // lakeStaleThreshold: a lake-backed response is flagged `flags.stale` when the watermark's close
-// time trails now by more than this. 300s (~60 ledgers) is far beyond normal sink lag, so it does
-// not flap on an indexer restart, yet catches a wedged sink before the projections are
-// meaningfully wrong. It tracks the ops data-freshness watchdog, not the tighter served-tier
-// price SLA.
+// time trails now by more than this. 300s (~60 ledgers) is beyond normal sink lag, so it does not
+// flap on an indexer restart, yet catches a wedged sink. It tracks the ops data-freshness
+// watchdog, not the tighter served-tier price SLA.
 const lakeStaleThreshold = 300 * time.Second
 
 // lakeWatermarkTTL bounds how often the watermark query runs: 15s of drift is invisible next to
@@ -60,9 +59,8 @@ func (s *Server) lakeWatermark(ctx context.Context) (ledger uint32, stale bool, 
 	case fresh:
 		// Within the TTL — nothing to do.
 	case l != 0:
-		// Lapsed but serviceable: closedAt only gets older, so the cached
-		// value still yields correct `stale` semantics while the refresh
-		// runs off the request path.
+		// Lapsed but serviceable: closedAt only gets older, so `stale` stays correct while the
+		// refresh runs off the request path.
 		if mayRead {
 			s.refreshLakeWatermark() //nolint:contextcheck // intentional detach — the read must outlive the request that noticed the lapse (see refreshLakeWatermark)
 		}

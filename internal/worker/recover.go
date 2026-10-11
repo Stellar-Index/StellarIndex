@@ -1,7 +1,5 @@
-// Package worker holds shared primitives for the detached background
-// worker goroutines the StellarIndex binaries spawn — VWAP / supply
-// refreshers, rollup loops, external-source streamers and pollers, the
-// SSE price publisher, and the like.
+// Package worker holds shared primitives for the detached background worker goroutines the
+// StellarIndex binaries spawn (refreshers, rollup loops, streamers, pollers, publishers).
 package worker
 
 import (

@@ -35,26 +35,21 @@ func IsInfraError(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Context cancellation / deadline is shutdown, not an infra fault —
-	// callers stop retrying on it. Checked FIRST because
-	// context.DeadlineExceeded also satisfies net.Error (Timeout()=true)
-	// and would otherwise be misclassified as a retryable dial timeout.
+	// Checked FIRST: context.DeadlineExceeded also satisfies net.Error and would otherwise read
+	// as a retryable dial timeout, but cancellation is shutdown and callers must stop retrying.
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	// database/sql surfaces a dead pooled connection as driver.ErrBadConn
-	// once it has exhausted its own internal retry.
+	// database/sql returns driver.ErrBadConn for a dead pooled connection after its own retry.
 	if errors.Is(err, driver.ErrBadConn) {
 		return true
 	}
-	// Net-level: connection refused / reset / i/o timeout while dialing
-	// or talking to Postgres. *net.OpError satisfies net.Error.
+	// Refused / reset / i/o timeout while dialing or talking to Postgres.
 	var netErr net.Error
 	if errors.As(err, &netErr) {
 		return true
 	}
-	// Postgres server-state SQLSTATEs (pgx exposes pgconn.PgError.Code as
-	// the full 5-char SQLSTATE; the first 2 chars are its class).
+	// pgx exposes the full 5-char SQLSTATE; its first 2 chars are the class.
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		if sqlStateClass(pgErr.Code) == "08" { // connection_exception family
@@ -68,13 +63,10 @@ func IsInfraError(err error) bool {
 			"53400": // configuration_limit_exceeded
 			return true
 		}
-		// Any other typed pg error (constraint, numeric, check, …) is a
-		// data fault — do NOT retry it.
+		// Any other typed pg error (constraint, numeric, check, …) is a data fault: do NOT retry.
 		return false
 	}
-	// Belt-and-braces string match for driver dial errors that aren't
-	// wrapped as a typed net.Error (the exact incident signature travels
-	// as a plain fmt-wrapped string through database/sql in some paths).
+	// Some paths surface dial errors as plain fmt-wrapped strings, not a typed net.Error.
 	msg := err.Error()
 	for _, s := range []string{
 		"connection refused",
@@ -127,13 +119,9 @@ func IsPermanentDataError(err error) bool {
 			"23": // integrity_constraint_violation (CHECK / not-null / fk / unique)
 			return true
 		}
-		// class 08 (connection), 40 (deadlock/serialization), 53
-		// (capacity), 55 (lock_not_available), 57 (query_canceled /
-		// shutdown) and everything else are transient — retry, don't skip.
+		// Classes 08, 40, 53, 55, 57 and everything else are transient: retry, don't skip.
 		return false
 	}
-	// Non-pg error (net fault, driver.ErrBadConn, an unwrapped
-	// validation error): default to transient. See the godoc — the
-	// safe side for a data-integrity caller is retry-and-alert, not skip.
+	// Non-pg errors default to transient; a data-integrity caller's safe side is retry-and-alert.
 	return false
 }

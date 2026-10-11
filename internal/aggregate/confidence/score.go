@@ -209,9 +209,8 @@ func applyBootstrapCap(c, ageDays float64, released bool) float64 {
 	return c
 }
 
-// bootstrapCapInForce is the one predicate behind both the ceiling in
-// [applyBootstrapCap] and [Factors.BootstrapCapped], so the served flag
-// can never disagree with the cap that was applied.
+// bootstrapCapInForce is the one predicate behind [applyBootstrapCap] and
+// [Factors.BootstrapCapped], so the served flag cannot disagree with the cap applied.
 func bootstrapCapInForce(ageDays float64, released bool) bool {
 	if math.IsNaN(ageDays) {
 		return false
@@ -222,9 +221,8 @@ func bootstrapCapInForce(ageDays float64, released bool) bool {
 	return ageDays < BootstrapDensityDays
 }
 
-// servedBaselineAgeDays maps a non-finite density onto the negative
-// no-baseline reading: the Score is JSON-encoded into the cache, and
-// encoding/json rejects NaN and ±Inf.
+// servedBaselineAgeDays maps a non-finite density to the negative no-baseline reading, because the
+// Score is JSON-encoded into the cache and encoding/json rejects NaN and ±Inf.
 func servedBaselineAgeDays(ageDays float64) float64 {
 	if math.IsNaN(ageDays) || math.IsInf(ageDays, 0) {
 		return -1

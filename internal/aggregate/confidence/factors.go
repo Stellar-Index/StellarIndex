@@ -5,22 +5,17 @@ import "math"
 // Factor shapes follow ADR-0019 and are code, not config: only the per-factor
 // [Weights] are operator-tunable.
 
-// zScoreSigmoidWidth controls how fast [ZScoreFactor] decays with
-// rising z. The ADR's "1.0 at z=0, decays smoothly to ~0 at z=10"
-// shape is achieved by 1 / (1 + exp((z - 5) / width)) with width
-// chosen so the value at z=10 is ~0 and z=0 is ~1.
+// zScoreSigmoidWidth sets how fast [ZScoreFactor] decays: 1/(1+exp((z-5)/width)) gives ~1 at
+// z=0 and ~0 at z=10.
 const zScoreSigmoidWidth = 1.0
 
-// sourceCountInflectionN is the n_sources value at which
-// [SourceCountFactor] crosses 0.5. Per the ADR: "single-source
-// assets cap at ~0.3, n>=6 reaches near-1.0" — the crossover at
-// n=3 satisfies both.
+// sourceCountInflectionN is where [SourceCountFactor] crosses 0.5; n=3 gives single-source
+// ~0.3 and n>=6 near 1.0, as the ADR requires.
 const sourceCountInflectionN = 3.0
 
 // liquidityFloorUSD and liquidityCeilingUSD bound [LiquidityFactor]: $1K → 0, $1M → ~1.
-// At $100K the median BTC/USD 5m bucket (~$124K) already saturated the factor, so it
-// discriminated only among thin pairs and wash volume bought full credit cheaply.
-// The ceiling moves which freeze leg binds below ~$15.6K, not the z > 5 trigger itself.
+// A $100K ceiling saturated at the median BTC/USD 5m bucket, so wash volume bought full credit
+// cheaply. The ceiling moves which freeze leg binds below ~$15.6K, not the z > 5 trigger itself.
 const (
 	liquidityFloorUSD   = 1_000.0
 	liquidityCeilingUSD = 1_000_000.0
@@ -31,9 +26,9 @@ const (
 const LiquidityUnmeasured = -1.0
 
 // LiquidityUnmeasuredFactor is the neutral no-signal midpoint for [LiquidityUnmeasured].
-// Deliberately not tracked to the curve (LiquidityFactor(10_000) = 0.333): the unmeasured
-// pairs are the thin single-source ones where a false freeze is most damaging. Read
-// [Factors.LiquidityMeasured], since a measured ~$31.6K bucket also scores 0.5.
+// Deliberately not tracked to the curve: unmeasured pairs are the thin single-source ones where
+// a false freeze is most damaging. Read [Factors.LiquidityMeasured], since a measured ~$31.6K
+// bucket also scores 0.5.
 const LiquidityUnmeasuredFactor = 0.5
 
 // crossOracleTolerancePct: within 1% of the cross-oracle median is full agreement (ADR-0019).
@@ -129,9 +124,7 @@ func CrossOracleFactor(divergencePct float64) float64 {
 	if divergencePct <= crossOracleTolerancePct {
 		return 1.0
 	}
-	// Exponential decay past the tolerance band:
-	//   factor = exp(-(x - tolerance) * ln(2) / half_life)
-	// Hits 0.5 at x = tolerance + half_life.
+	// Exponential decay past the tolerance band; hits 0.5 at tolerance + half_life.
 	excess := divergencePct - crossOracleTolerancePct
 	return clamp01(math.Exp(-excess * math.Ln2 / crossOracleHalfLifePct))
 }

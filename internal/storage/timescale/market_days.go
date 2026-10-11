@@ -11,18 +11,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Daily observed dollar market per asset, the market twin of [Store.DailyOraclePrices].
-//
-// The oracle reader answers what was published as the instrument's worth; this one answers what
-// was observed paid for the token. A premium to net asset value is their ratio, so both must be
-// readable on the same clock and grain, and neither may be derived from the other.
+// Daily observed dollar market per asset, the market twin of [Store.DailyOraclePrices]: that reader
+// gives the published worth, this one what was observed paid. A premium to net asset value is their
+// ratio, so both share a clock and grain and neither is derived from the other.
 
 // MarketDay is one UTC day of one asset's observed dollar market: the day's VWAP plus the three
-// measurements the thin-market floor is made of.
-//
-// The substance measurements travel with the price instead of being a WHERE clause because a floor
-// is policy and this is measurement; the caller applies it and can say on the wire what it refused,
-// since a too-thin day is a finding, not a row to drop silently.
+// measurements the thin-market floor is made of. They travel with the price, not as a WHERE clause,
+// because the floor is the caller's policy and a too-thin day is a finding, not a row to drop.
 type MarketDay struct {
 	// Day is the UTC day bucket (time_bucket('1 day', bucket)).
 	Day time.Time
@@ -105,10 +100,9 @@ func (s *Store) DailyMarketDays(
 	for i, q := range quotes {
 		quoteKeys[i] = q.String()
 	}
-	// time_bucket, not date_trunc: date_trunc('day', timestamptz) folds
-	// at the SESSION timezone, so a server whose TimeZone is not UTC
-	// would cut days somewhere other than midnight UTC — and the two
-	// legs of a premium would then be bucketed on different clocks.
+	// time_bucket, not date_trunc: date_trunc('day', timestamptz) folds at the SESSION timezone,
+	// so a non-UTC server would cut days off midnight UTC and bucket a premium's two legs on
+	// different clocks.
 	rows, err := s.db.QueryContext(ctx, dailyMarketDaysQuery, spellings, quoteKeys,
 		from.UTC().Truncate(24*time.Hour), to.UTC().Truncate(24*time.Hour), members)
 	if err != nil {
@@ -132,10 +126,9 @@ func (s *Store) DailyMarketDays(
 	return out, nil
 }
 
-// marketDayFamilies binds every alias spelling of each requested asset
-// ($1) alongside the requested asset it folds onto ($5), as parallel
-// arrays. Each spelling is bound once: a requested asset always keeps
-// its own spelling, and an alias form goes to the first asset naming it.
+// marketDayFamilies binds every alias spelling of each requested asset ($1) alongside the asset it
+// folds onto ($5), as parallel arrays. Each spelling is bound once: an asset keeps its own, and a
+// shared alias goes to the first asset naming it.
 func marketDayFamilies(assets []canonical.Asset) (spellings, members []string) {
 	seen := make(map[string]struct{}, len(assets)*2)
 	claim := func(form, member string) {

@@ -12,9 +12,8 @@ type feedEntry struct {
 	Base  canonical.Asset
 	Quote canonical.Asset
 
-	// Invert marks feeds published in market-FX convention (units-per-USD): the decoder reciprocates
-	// exactly so the row reads "<Base> in USD", keeping the lossy on-chain integer as PublishedPrice. Only
-	// MXNe today (~17.4 → ~0.0575, matching reflector-fx MXN). Orientation only; a depeg still shows (ADR-0028).
+	// Invert marks feeds published units-per-USD (MXNe): the decoder reciprocates exactly so the row
+	// reads "<Base> in USD", keeping the lossy on-chain integer as PublishedPrice. Orientation only.
 	Invert bool
 }
 
@@ -26,25 +25,22 @@ var (
 )
 
 // quoteBTC / quoteSolvBTC denominate the SolvBTC `_FUNDAMENTAL` NAV ratios, whose reserve is crypto.
-// Quoting them `fiat:USD` would serve "a BTC-backed token is worth $1.00" with mapped=true, beside its
-// own `_FUNDAMENTAL/USD` sibling at $78,313.
+// Quoting them `fiat:USD` would serve "a BTC-backed token is worth $1.00" beside its `/USD` sibling.
 var (
 	quoteBTC     = mustCrypto("BTC")
 	quoteSolvBTC = mustCrypto("SolvBTC")
 )
 
-// earnUSDCVaultContract is the Gami earnUSDC tokenized vault (the contract IS the share token),
-// verified in the lake: 115 deposit / 35 withdraw / 8 transfer events from ledger 62938336, while the other
-// circulated address has none. An alias of upshift's constant so the price and the decoded activity
-// cannot drift onto different asset ids.
+// earnUSDCVaultContract is the Gami earnUSDC vault (the contract IS the share token). It aliases
+// upshift's constant so the price and the decoded activity cannot drift onto different asset ids.
 const earnUSDCVaultContract = upshift.MainnetVaultEarnUSDC
 
 // feedRegistry maps each EXACT on-chain feed_id() to its canonical (base, quote) — the 32 RedStone
 // Stellar mainnet feeds (TestFeedRegistry_CountMatchesItsDocComment). No two feed_ids share a pair
 // (TestFeedRegistry_UniquePairs): one batch would interleave two quantities into one series.
 //
-// The key is the write_prices feed_id, not the display name (EUROC/EUR, BENJI_ETHEREUM_FUNDAMENTAL), and
-// the quote is per-feed, so a ticker allow-list like canonical.IsKnownCrypto would drop 5 feeds.
+// The key is the write_prices feed_id, not the display name, and the quote is per-feed, so a ticker
+// allow-list like canonical.IsKnownCrypto would drop 5 feeds.
 var feedRegistry = map[string]feedEntry{
 	// Crypto / stablecoin feeds.
 	"BTC":       {Base: mustCrypto("BTC"), Quote: quoteUSD},
@@ -59,19 +55,15 @@ var feedRegistry = map[string]feedEntry{
 	// earnUSDC — an Upshift vault share, keyed on the vault contract, NOT USDC: collapsing a
 	// yield-bearing claim into USDC is the asset-identity error class.
 	//
-	// REPORTED AS PUBLISHED: RedStone prices it ~0.72 against a ~1.01 share price, confirmed with them as
-	// their figure; BTC and EUROC on the same contract decode right. Do not "correct" this entry.
+	// REPORTED AS PUBLISHED: RedStone's ~0.72 differs from the ~1.01 share price and is their
+	// confirmed figure. Do not "correct" this entry.
 	"earnUSDC_FUNDAMENTAL": {Base: mustSoroban(earnUSDCVaultContract), Quote: quoteUSD},
-	// MXNe is published units-per-USD (USDMXN market convention);
-	// Invert reciprocates it to MXNe-in-USD. See feedEntry.Invert.
+	// MXNe is published units-per-USD; Invert reciprocates it to MXNe-in-USD.
 	"MXNe": {Base: mustCrypto("MXNe"), Quote: quoteUSD, Invert: true},
 
-	// Tokenized-BTC feeds (crypto). `SolvBTC` is a dollar price; the bare `_FUNDAMENTAL` feeds are NAV
-	// RATIOS in their reserve asset, derived from live rows where both `_FUNDAMENTAL/USD` legs read 78313.03:
-	//
-	//   SolvBTC_FUNDAMENTAL     1.00295305 = 78313.03 / 78082.5 (BTC) ⇒ denominated in BTC.
-	//   SolvBTC.BBN_FUNDAMENTAL 1.00000000 on three captures, with NAV_USD equal to SolvBTC's
-	//     ⇒ denominated in SolvBTC; quoting BTC would contradict its own _USD row.
+	// Tokenized-BTC feeds. `SolvBTC` is a dollar price; the bare `_FUNDAMENTAL` feeds are NAV RATIOS
+	// in their reserve asset: SolvBTC_FUNDAMENTAL is denominated in BTC, and SolvBTC.BBN_FUNDAMENTAL
+	// in SolvBTC (its NAV_USD equals SolvBTC's, so quoting BTC would contradict its own _USD row).
 	"SolvBTC":                 {Base: mustCrypto("SolvBTC"), Quote: quoteUSD},
 	"SolvBTC_FUNDAMENTAL":     {Base: mustCrypto("SolvBTC_FUNDAMENTAL"), Quote: quoteBTC},
 	"SolvBTC.BBN_FUNDAMENTAL": {Base: mustCrypto("SolvBTC.BBN_FUNDAMENTAL"), Quote: quoteSolvBTC},
@@ -87,8 +79,7 @@ var feedRegistry = map[string]feedEntry{
 	"SPXU":                        {Base: mustRWA("SPXU"), Quote: quoteUSD},
 
 	// ── Relayer expansion (ledger 63624934) ───────────────────────
-	// Orientation and magnitude verified live against api.redstone.finance with CoinGecko cross-checks;
-	// none needs Invert.
+	// None of these needs Invert.
 
 	// Bare EUROC is USD-quoted (live 1.1398 ≈ EUR/USD), a separate series from `EUROC/EUR` (1.0003).
 	"EUROC": {Base: mustCrypto("EUROC"), Quote: quoteUSD},
@@ -97,17 +88,15 @@ var feedRegistry = map[string]feedEntry{
 	"USDe":  {Base: mustCrypto("USDe"), Quote: quoteUSD},
 	"sUSDe": {Base: mustCrypto("sUSDe"), Quote: quoteUSD},
 
-	// Avant Protocol staked USD — crypto-native yield vault, same
-	// class as sUSDe (NOT ADR-0028 rwa). Live 1.1877, accruing.
+	// Avant staked USD: a crypto-native yield vault like sUSDe, not an ADR-0028 rwa.
 	"savUSD_FUNDAMENTAL": {Base: mustCrypto("savUSD_FUNDAMENTAL"), Quote: quoteUSD},
 
-	// USD-quoted SolvBTC NAV feeds: NAV in USD (live 65,430), a different quantity from the unsuffixed
-	// ratio feeds, so distinct base codes (`/` → `_`, see canonical.knownCryptoCodes) and quotes.
+	// USD-quoted SolvBTC NAV feeds: a different quantity from the unsuffixed ratio feeds, so
+	// distinct base codes (`/` → `_`, see canonical.knownCryptoCodes) and quotes.
 	"SolvBTC_FUNDAMENTAL/USD":     {Base: mustCrypto("SolvBTC_FUNDAMENTAL_USD"), Quote: quoteUSD},
 	"SolvBTC.BBN_FUNDAMENTAL/USD": {Base: mustCrypto("SolvBTC.BBN_FUNDAMENTAL_USD"), Quote: quoteUSD},
 
-	// Tokenized RWAs (ADR-0028). RWA codes strip the feed-id suffix
-	// per the BENJI precedent.
+	// Tokenized RWAs (ADR-0028). RWA codes strip the feed-id suffix.
 	"USDY_FUNDAMENTAL/USD":    {Base: mustRWA("USDY"), Quote: quoteUSD},    // Ondo USDY: live 1.1408 (CG 1.14, accruing note)
 	"USST_FUNDAMENTAL":        {Base: mustRWA("USST"), Quote: quoteUSD},    // STBL USST: live 1.0096
 	"XAUm_FUNDAMENTAL/USD":    {Base: mustRWA("XAUm"), Quote: quoteUSD},    // Matrixdock gold: live 4115.67/oz (CG pax-gold 4088)

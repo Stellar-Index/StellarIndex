@@ -12,14 +12,13 @@ import (
 	"time"
 )
 
-// LoginIntentCookieName is the short-lived cookie binding a magic link to
-// the browser that asked for it.
+// LoginIntentCookieName is the short-lived cookie binding a magic link to the browser that asked
+// for it.
 //
-// Login CSRF defence: GET /v1/auth/callback mints a session from a query-string token, and
-// sessionSameSite() is Lax, which permits top-level cross-site GET navigation. Without the
-// binding, an attacker could mail a victim a magic link for the attacker's OWN account, and
-// everything the victim then did (minting an API key, adding a payment method) would land in
-// the attacker's dashboard. Single use and the TTL do not prevent this.
+// Login CSRF defence: GET /v1/auth/callback mints a session from a query-string token and the
+// session cookie is SameSite=Lax, so without the binding an attacker could mail a victim a link
+// for the attacker's OWN account and the victim's later actions would land in it. Single use and
+// the TTL do not prevent this.
 //
 // POST /v1/auth/login stamps this cookie with a random per-browser id and mints a token whose
 // second half is a MAC of its first half and that id ([Generator.newBoundToken]); the callback
@@ -28,26 +27,21 @@ import (
 // Distinct from [SessionCookieName] so one credential cannot be read as the other.
 const LoginIntentCookieName = "__Host-stellarindex_login_intent"
 
-// loginIntentBrowserLen is the hex length of a browser id and of a
-// full magic-link plaintext.
+// loginIntentBrowserLen is the hex length of a browser id and of a full magic-link plaintext.
 const loginIntentBrowserLen = MagicLinkPlaintextLen * 2
 
-// loginIntentSeparator joins the fields of the login-device cookie
-// value. '.' is a valid RFC 6265 cookie-octet and never appears in
-// hex or a decimal expiry.
+// loginIntentSeparator joins the login-device cookie fields; '.' is a valid cookie-octet and never
+// appears in hex or a decimal expiry.
 const loginIntentSeparator = "."
 
-// loginIntentDomain separates this MAC from the other uses of the
-// server secret (code derivation, passkey ceremony).
+// loginIntentDomain separates this MAC from other uses of the server secret.
 const loginIntentDomain = "stellarindex/login-intent/v3|"
 
 // loginDeviceDomain labels the login-device marker's MAC key and input.
 const loginDeviceDomain = "stellarindex/login-device/v1|"
 
-// loginIntentTag is the second half of a bound magic-link plaintext:
-// a MAC, under the server secret, of the random first half and the
-// requesting browser's id. Only this server can compute it, and it
-// binds the link to exactly one browser.
+// loginIntentTag is the second half of a bound magic-link plaintext: a MAC, under the server
+// secret, of the random first half and the requesting browser's id, binding the link to one browser.
 func loginIntentTag(secret []byte, nonceHex, browser string) string {
 	mac := hmac.New(sha256.New, mustPurposeKey(secret, loginIntentDomain))
 	mac.Write([]byte(loginIntentDomain))
@@ -57,9 +51,8 @@ func loginIntentTag(secret []byte, nonceHex, browser string) string {
 	return hex.EncodeToString(mac.Sum(nil)[:MagicLinkPlaintextLen/2])
 }
 
-// isLoginIntentHex reports whether s is exactly loginIntentBrowserLen
-// lowercase hex characters. Client-supplied cookie content is echoed back
-// in Set-Cookie, so it is validated rather than trusted.
+// isLoginIntentHex reports whether s is exactly loginIntentBrowserLen lowercase hex characters.
+// Cookie content is echoed back in Set-Cookie, so it is validated rather than trusted.
 func isLoginIntentHex(s string) bool {
 	if len(s) != loginIntentBrowserLen {
 		return false
@@ -73,10 +66,8 @@ func isLoginIntentHex(s string) bool {
 	return true
 }
 
-// newBoundToken mints a magic-link token whose plaintext is
-// `random half || loginIntentTag(random half, browser)`: same length and
-// alphabet as an unbound one, with the browser binding carried in the
-// link itself so the cookie holds no per-link state.
+// newBoundToken mints a token whose plaintext is `random half || loginIntentTag(half, browser)`,
+// the same shape as an unbound one, so the cookie holds no per-link state.
 func (g *Generator) newBoundToken(browser string) (plaintext string, hash []byte, code string, err error) {
 	raw, _, _, err := g.NewToken()
 	if err != nil {
@@ -108,10 +99,8 @@ func (h *Handlers) setLoginIntentCookie(w http.ResponseWriter, r *http.Request) 
 	return browser
 }
 
-// clearLoginIntentCookie drops the witness once a link has been
-// redeemed. Not load-bearing for security (the token itself is
-// single-use), just hygiene: a spent binding shouldn't linger in
-// the browser for the rest of the TTL.
+// clearLoginIntentCookie drops the witness once a link is redeemed; hygiene only, since the token
+// is single-use.
 func (h *Handlers) clearLoginIntentCookie(w http.ResponseWriter) {
 	c := credentialCookie(LoginIntentCookieName, "") //nolint:gosec // G124: credentialCookie sets Secure, HttpOnly and SameSite=Lax
 	c.MaxAge = -1
@@ -125,12 +114,11 @@ func (h *Handlers) clearLoginIntentCookie(w http.ResponseWriter) {
 // It authenticates nothing and is scoped by Path to the /v1/auth routes.
 const LoginDeviceCookieName = "stellarindex_login_device"
 
-// loginDeviceTTL is the longest cookie lifetime browsers honour (RFC 6265bis
-// caps Max-Age at 400 days); every sign-in re-issues it.
+// loginDeviceTTL is the longest cookie lifetime browsers honour (400 days); each sign-in re-issues it.
 const loginDeviceTTL = 400 * 24 * time.Hour
 
-// loginDeviceMAC binds an address and an expiry under the server secret,
-// so the cookie can be neither forged nor moved to another address.
+// loginDeviceMAC binds an address and expiry under the server secret, so the cookie can be neither
+// forged nor moved to another address.
 func loginDeviceMAC(secret []byte, email string, expires int64) string {
 	m := hmac.New(sha256.New, mustPurposeKey(secret, loginDeviceDomain))
 	m.Write([]byte(loginDeviceDomain))

@@ -31,9 +31,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// sorobanEraFloor is the network's first Soroban ledger — the lower bound for
-// the global recognition scan and event census. A test net starts at 1, so the
-// pubnet boundary would invert the range; zero (no defaults applied) is pubnet.
+// sorobanEraFloor is the network's first Soroban ledger, the lower bound of the recognition scan
+// and event census. A test net starts at 1, so the pubnet boundary would invert the range.
 func sorobanEraFloor(cfg config.Config) uint32 {
 	if cfg.Stellar.SorobanGenesisLedger == 0 {
 		return clickhouse.SorobanGenesisLedger
@@ -56,9 +55,8 @@ type substrateScan struct {
 	detail  string
 }
 
-// substrateScanner performs a [from,to] CH substrate query. It is the seam
-// clickhouse.SubstrateProblem is exposed through so substrateForGenesis is
-// unit-testable without a live lake.
+// substrateScanner is the seam over clickhouse.SubstrateProblem that keeps substrateForGenesis
+// testable without a live lake.
 type substrateScanner func(ctx context.Context, from, to uint32) (problem uint32, hasProblem bool, detail string, err error)
 
 // substrateForGenesis returns the CH substrate verdict for one source's own [max(floor,genesis),
@@ -121,10 +119,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	if !*useCH {
 		return fmt.Errorf("compute-completeness: -ch is required (every claim reads the certified ClickHouse lake; the Postgres soroban_events path is removed)")
 	}
-	// Fail CLOSED on -pass combined with the per-source / per-chunk knobs it
-	// replaces (validatePassFlags): a partial pass that publishes over a subset
-	// of sources, or carries a stale substrate/recognition verdict, would look
-	// complete while re-opening exactly the redundancy + flap this mode fixes.
+	// Fail CLOSED on -pass combined with the knobs it replaces (validatePassFlags): a partial pass
+	// over a subset of sources, or one carrying a stale verdict, would look complete.
 	if perr := validatePassFlags(*pass, *only, *fromLedger, *skipSubstrate, *skipRecognition); perr != nil {
 		return fmt.Errorf("compute-completeness: %w", perr)
 	}
@@ -161,17 +157,14 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		fmt.Fprintln(os.Stderr, "compute-completeness: -pass — recognition + substrate proven once at full range; projection reconciled per source from its own watermark")
 	}
 
-	// sep41_transfers/sep41_supply are promoted into this catalogue by
-	// buildReconciliationCatalogue itself
-	// whenever [supply] watched_sep41_contracts is configured —
-	// see its doc comment.
+	// buildReconciliationCatalogue promotes sep41_transfers/sep41_supply into this catalogue itself
+	// whenever [supply] watched_sep41_contracts is configured.
 	catalogue, soroswapDec, err := buildReconciliationCatalogue(cfg)
 	if err != nil {
 		return fmt.Errorf("compute-completeness: reconciliation catalogue: %w", err)
 	}
-	// Fail CLOSED on an unknown -source before the per-source loop, which
-	// would otherwise skip every source and report SUCCESS having verified
-	// nothing.
+	// Fail CLOSED on an unknown -source: the loop would skip every source and report success
+	// having verified nothing.
 	if verr := validateSourceFilter(*only, catalogue); verr != nil {
 		return fmt.Errorf("compute-completeness: %w", verr)
 	}
@@ -200,9 +193,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		}
 	}
 
-	// The CH lake event source for projection re-derive (ADR-0034) is built
-	// PER SOURCE inside the loop below: the wide op_args_xdr column is read
-	// only for sources whose decoder consumes events.Event.OpArgs (redstone).
+	// The CH event source for projection re-derive is built PER SOURCE in the loop: the wide
+	// op_args_xdr column is read only for decoders that consume events.Event.OpArgs (redstone).
 
 	// ── Recognition (Claim 2a): one global scan, attributed per source ──
 	//
@@ -268,10 +260,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			subScanFrom = uint32(*fromLedger) //nolint:gosec // ledger seq fits uint32
 		}
 	}
-	// The event table recognition and projection read, censused against
-	// ledgers over the whole Soroban era every run — including -skip-substrate
-	// and -from runs, whose carried prefix is exactly where a dropped partition
-	// hides (eventCensusLoss).
+	// The event table is censused against ledgers over the whole Soroban era every run, including
+	// -skip-substrate and -from runs, whose carried prefix is where a dropped partition hides
+	// (eventCensusLoss).
 	evCensus, err := clickhouse.EventCensusShortfalls(ctx, *chAddr, sorobanFloor, tip)
 	if err != nil {
 		return fmt.Errorf("contract_events census (failing closed — cannot certify the event table recognition and projection read): %w", err)
@@ -403,9 +394,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			detail = append(detail, d)
 		}
 
-		// Claim 2a: recognition gaps attributed to this source's contracts
-		// (static contractIDs OR the factory-child / soroswap-pair registry
-		// members folded into ownerOf above).
+		// Claim 2a: recognition gaps attributed to this source's contracts (static IDs or the
+		// registry members folded into ownerOf).
 		recOK, recProblems := sourceRecognitionOK(genesis, tip, recBySource[src.name], *skipRecognition, priorRec[src.name])
 		problems = append(problems, recProblems...)
 		recDetail := recognitionClaim(recOK, *skipRecognition)
@@ -551,9 +541,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return errors.Join(srcErr, recSnapErr)
 	}
 
-	// On a non-pubnet network, stale rows for pubnet-only sources would keep the verdict
-	// red by construction — clear them. Only canonical names sourcenet
-	// itself classifies as not applicable are ever passed.
+	// On a non-pubnet network, stale rows for pubnet-only sources would keep the verdict red by
+	// construction, so clear them. Only names sourcenet classifies as not applicable are passed.
 	if na := sourcenet.NotApplicableOn(cfg.Stellar.Network); write && len(na) > 0 {
 		names := make([]string, 0, len(na))
 		for _, e := range na {
@@ -645,9 +634,8 @@ func projectionFloor(genesis uint32, pass bool, prior priorProjection, priorWate
 	return genesis
 }
 
-// maxTipCursorLagLedgers is how far the network may provably have run past the
-// ledgerstream cursor before the cursor stops being usable as the verdict tip:
-// ~1h at [completeness.SlowestLedgerClose], far above a live indexer's lag.
+// maxTipCursorLagLedgers is how far the network may run past the ledgerstream cursor before the
+// cursor stops being a usable verdict tip: ~1h at [completeness.SlowestLedgerClose].
 const maxTipCursorLagLedgers uint32 = 600
 
 // tipFromLiveCursor resolves the verdict tip from the live ledgerstream cursor, refusing one the
@@ -662,9 +650,8 @@ func tipFromLiveCursor(cur timescale.Cursor, now time.Time) (uint32, error) {
 	return cur.LastLedger, nil
 }
 
-// verdictTipFromCursorRead applies the cursor read result: with an explicit -to,
-// a missing cursor row means there is no live ingest to guard (a host that never
-// ingested); any other read error, or a missing row without -to, fails closed.
+// verdictTipFromCursorRead applies the cursor read: with an explicit -to a missing cursor row
+// means no live ingest to guard; any other read error, or a missing row without -to, fails closed.
 func verdictTipFromCursorRead(to uint32, cur timescale.Cursor, readErr error, now time.Time, allowFrozen bool) (uint32, error) {
 	if readErr != nil {
 		if to != 0 && errors.Is(readErr, timescale.ErrNotFound) {
@@ -675,10 +662,9 @@ func verdictTipFromCursorRead(to uint32, cur timescale.Cursor, readErr error, no
 	return resolveVerdictTip(to, cur, now, allowFrozen)
 }
 
-// resolveVerdictTip picks the verdict tip. The frozen-cursor guard applies to an
-// explicit -to as well, since the nightly wrapper passes -to (cursor minus a
-// margin) and would otherwise keep refreshing computed_at against a stalled
-// ingest. Only an explicit override skips it.
+// resolveVerdictTip picks the verdict tip. The frozen-cursor guard also applies to an explicit
+// -to, since the nightly wrapper passes one and would otherwise keep refreshing computed_at
+// against a stalled ingest.
 func resolveVerdictTip(to uint32, cur timescale.Cursor, now time.Time, allowFrozen bool) (uint32, error) {
 	live, err := tipFromLiveCursor(cur, now)
 	switch {
@@ -868,10 +854,9 @@ func recognitionClaim(recOK, skipRecognition bool) string {
 	}
 }
 
-// projectionFoundProblem reports whether the CH aggregate reconcile FOUND a
-// failure. It localises none to a ledger, so combineWatermark leaves
-// FirstProblem at zero and the snapshot must carry this instead; a
-// projection that was not evaluated, or failed only on scope, is not a find.
+// projectionFoundProblem reports whether the CH aggregate reconcile FOUND a failure. It localises
+// none to a ledger, so the snapshot must carry this instead of FirstProblem; an unevaluated
+// projection, or one that failed only on scope, is not a find.
 func projectionFoundProblem(delta int, blind completeness.BlindSpots, floorLoss []string) bool {
 	return delta != 0 || blind.Any() || len(floorLoss) > 0
 }
@@ -1297,9 +1282,8 @@ func substrateFloorLoss(genesis, subScanFrom, floorProblem uint32, floorHasProbl
 		genesis, subScanFrom, genesis, subScanFrom-1)
 }
 
-// readsContractEvents reports whether the source's recognition and projection
-// axes read stellar.contract_events. sdex (the op census) and the event-less
-// ContractCall sources (band, soroswap-router) read stellar.operations instead.
+// readsContractEvents reports whether the source reads stellar.contract_events; sdex and the
+// event-less ContractCall sources (band, soroswap-router) read stellar.operations instead.
 func (src reconSource) readsContractEvents() bool {
 	return !src.census && src.callDec == nil
 }
@@ -1468,10 +1452,9 @@ func gatedPrefilter(ctx context.Context, chStreamer completeness.EventStreamer, 
 			func(ev events.Event) error {
 				if perr := completeness.Guard(func() {
 					if fresh.Matches(ev) {
-						// Decode registers the announced child in `fresh`'s registry
-						// (its only side effect for a creation event); a decode error
-						// on a malformed creation event is soft-failed exactly as the
-						// re-derive would, so the walk stays non-fatal.
+						// Decode registers the announced child in `fresh`'s registry; an error on a
+						// malformed creation event is soft-failed like the re-derive, so the walk
+						// stays non-fatal.
 						_, _ = fresh.Decode(ev)
 					}
 				}); perr != nil {
@@ -1591,9 +1574,8 @@ type contractCallRowID struct {
 	callSig string
 }
 
-// contractCallRowIdentity returns the served-row identity for a ContractCall
-// source event. ok=false for an event type not routed through such a source
-// (defensive; never expected here).
+// contractCallRowIdentity returns the served-row identity for a ContractCall source event;
+// ok=false (defensive) for an event type not routed through one.
 func contractCallRowIdentity(ev consumer.Event) (contractCallRowID, bool) {
 	switch e := ev.(type) {
 	case soroswap_router.Event:
@@ -1698,9 +1680,8 @@ func decodeContractCallTree(
 	return nil
 }
 
-// decodeContractCall runs dec over one call under completeness.Guard. A panic
-// in Matches or Decode comes back as a decode error on a matched call, so the
-// caller records it blind exactly as the dispatcher skips it on the live path.
+// decodeContractCall runs dec over one call under completeness.Guard. A panic in Matches or
+// Decode comes back as a decode error, so the caller records it blind as the live path skips it.
 func decodeContractCall(op clickhouse.ContractCallOp, call dispatcher.ContractCall, dec dispatcher.ContractCallDecoder) (evs []consumer.Event, matched bool, err error) {
 	if perr := completeness.Guard(func() {
 		if matched = dec.Matches(call.ContractID, call.FunctionName); !matched {
@@ -1763,9 +1744,8 @@ func projectionDelta(src reconSource, table string, expected, actual map[uint32]
 		// the re-derive, so reconcile strict per-ledger.
 		return strictPerLedgerDelta(table, expected, actual, lo, hi)
 	default:
-		// The window straddles the boundary: aggregate up to it, strict above
-		// it, so a real post-boundary drop cannot net against a pre-boundary
-		// phantom.
+		// The window straddles the boundary: aggregate up to it, strict above, so a real
+		// post-boundary drop cannot net against a pre-boundary phantom.
 		b := w.boundary
 		preD, preDetail := aggregateDelta(src, table,
 			countsAtOrBelow(expected, b), countsAtOrBelow(actual, b), lo, b)
@@ -1895,9 +1875,8 @@ func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr str
 	return gaps, nil
 }
 
-// buildCensusDispatcher builds the recognition census's decoder chain the
-// way the indexer does: the enabled sources plus the watched-set-gated
-// sep41 event decoders, which BuildDispatcher alone does not register.
+// buildCensusDispatcher builds the census decoder chain as the indexer does: the enabled sources
+// plus the watched-set-gated sep41 event decoders, which BuildDispatcher alone does not register.
 func buildCensusDispatcher(cfg config.Config, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) {
 	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated, soroswapOpts...)
 	if err != nil {

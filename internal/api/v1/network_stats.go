@@ -15,17 +15,13 @@ type NetworkStatsReader interface {
 	GetNetworkStats(ctx context.Context) (timescale.NetworkStats, error)
 }
 
-// networkStatsStaleReader is the optional capability a NetworkStatsReader
-// exposes when it can report each served value's freshness — the TTL cache
-// (CachedNetworkStatsReader) implements it; the raw store does not. When a
-// reader satisfies it, handleNetworkStats stamps an honest as_of (the
-// served data's real observation time) and flags.stale, instead of the
-// cache's SWR stale-serve path silently asserting stale:false / as_of=now
-// over a value a failing refresh has let age past the TTL.
+// networkStatsStaleReader is the optional capability of a reader that reports each served value's
+// freshness (the TTL cache does; the raw store does not). handleNetworkStats then stamps the real
+// as_of and flags.stale, so the cache's stale-while-revalidate path cannot assert stale:false
+// over a value a failing refresh let age past the TTL.
 //
-// GetNetworkStatsAt returns the stats, observedAt (the served value's fetch
-// time; zero → as_of=now, not stale), and stale (the served value is past
-// the cache TTL). Mirrors marketsStaleReader.
+// GetNetworkStatsAt returns the stats, observedAt (fetch time; zero means as_of=now, not stale)
+// and stale (past the cache TTL). Mirrors marketsStaleReader.
 type networkStatsStaleReader interface {
 	GetNetworkStatsAt(ctx context.Context) (timescale.NetworkStats, time.Time, bool, error)
 }
@@ -55,17 +51,8 @@ type NetworkStats struct {
 	TotalSources    int     `json:"total_sources"`
 }
 
-// handleNetworkStats serves GET /v1/network/stats.
-//
-// Returns the home-page aggregate stats — total 24h USD volume,
-// active markets count, classic-assets-indexed count, latest live
-// ledger, exchange-class source count. Single SQL query under the
-// hood (`GetNetworkStats`); the source counts are derived from
-// the static `external.Registry` map, not the DB.
-//
-// Designed to back the explorer's home network strip in one HTTP
-// call instead of fanning out to /v1/coins, /v1/markets,
-// /v1/sources, /v1/diagnostics/cursors separately.
+// handleNetworkStats serves GET /v1/network/stats: the home-page aggregates in one call. One SQL
+// query (GetNetworkStats) feeds it; the source counts come from the static external.Registry.
 func (s *Server) handleNetworkStats(w http.ResponseWriter, r *http.Request) {
 	if s.NetworkStats == nil {
 		writeProblem(w, r,
@@ -74,10 +61,8 @@ func (s *Server) handleNetworkStats(w http.ResponseWriter, r *http.Request) {
 			"This deployment hasn't wired the network-stats reader yet.")
 		return
 	}
-	// Honest freshness: when the reader can report it (the TTL cache does;
-	// the raw store doesn't), stamp flags.stale + the served value's real
-	// observation time. A zero observedAt (live/uncached read) leaves
-	// as_of to default to now with stale=false — truthful and unchanged.
+	// Stamp flags.stale and the real observation time when the reader reports them; a zero
+	// observedAt (uncached read) leaves as_of at now with stale=false.
 	var (
 		stats      timescale.NetworkStats
 		observedAt time.Time

@@ -14,16 +14,12 @@ package canonical
 // [Asset.IsMapped] or `asset NOT LIKE 'raw:%'`. An unmapped feed's orientation is unknown, so
 // a raw row carries no Invert.
 
-// rawSymbolMaxLen caps the verbatim symbol. Reflector/Band symbols
-// are ScSymbol (≤ 32 bytes); RedStone feed_ids are ScString and the
-// longest seen is well under 64. The cap bounds what a buggy or
-// malicious relayer can make us persist.
+// rawSymbolMaxLen caps the verbatim symbol: Reflector/Band symbols are ScSymbol (<= 32 bytes) and
+// RedStone feed_ids stay well under 64. It bounds what a buggy or malicious relayer can persist.
 const rawSymbolMaxLen = 64
 
-// validateRawSymbol enforces the permissive raw charset: 1–64 bytes
-// of printable ASCII 0x21–0x7E — no whitespace, no control bytes, no
-// non-ASCII. `/`, `.`, `_` and `-` are allowed because RedStone
-// feed_ids carry them (`SolvBTC.BBN_FUNDAMENTAL/USD`).
+// validateRawSymbol enforces 1–64 bytes of printable ASCII 0x21–0x7E. `/`, `.`, `_` and `-` are
+// allowed because RedStone feed_ids carry them (`SolvBTC.BBN_FUNDAMENTAL/USD`).
 func validateRawSymbol(code string) error {
 	l := len(code)
 	if l == 0 || l > rawSymbolMaxLen {
@@ -49,10 +45,8 @@ func NewOracleRawAsset(symbol string) (Asset, error) {
 	return Asset{Type: AssetOracleRaw, Code: symbol}, nil
 }
 
-// IsMapped reports whether a is a canonical (interpretable) asset —
-// i.e. anything but the record-layer-only [AssetOracleRaw] variant.
-// The interpretation layer (pairs, VWAP, divergence, MEV scans) must
-// check this before treating an oracle_updates row as comparable.
+// IsMapped reports whether a is anything but the record-layer-only [AssetOracleRaw]. Pairs, VWAP,
+// divergence and MEV scans must check it before treating an oracle_updates row as comparable.
 func (a Asset) IsMapped() bool {
 	return a.Type != AssetOracleRaw
 }

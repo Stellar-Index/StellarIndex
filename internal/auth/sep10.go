@@ -8,10 +8,8 @@ import (
 // SEP10Validator is the server side of SEP-10: Challenge issues a transaction to sign, Verify accepts it and issues a JWT, VerifyJWT checks the JWT (called per request when auth_mode=sep10).
 // Production is internal/auth/sep10.Validator; NoopSEP10Validator is the fallback when required config is missing (every method returns ErrNotImplemented, so /v1/auth/sep10/* answers 404), whereas auth_mode=sep10 with missing config is a hard startup failure.
 type SEP10Validator interface {
-	// Challenge generates a SEP-10-conformant challenge transaction
-	// for the given account. The transaction is unsigned and never
-	// submitted to the network — it's a structured nonce. Returns
-	// [ErrNotImplemented] from the stub.
+	// Challenge generates a SEP-10 challenge transaction for the account: unsigned and never
+	// submitted, a structured nonce. The stub returns [ErrNotImplemented].
 	Challenge(ctx context.Context, account string) (Challenge, error)
 
 	// Verify accepts a challenge transaction signed by the account in Challenge and returns a JWT for it; ErrUnauthorized for bad signatures, ErrTokenMalformed for an unparseable transaction.
@@ -21,19 +19,14 @@ type SEP10Validator interface {
 	VerifyJWT(ctx context.Context, jwt string) (Subject, error)
 }
 
-// Challenge is a SEP-10 challenge transaction. The TransactionXDR is
-// what the client signs; the other fields are echoed for the
-// client's own diagnostics.
+// Challenge is a SEP-10 challenge transaction; the client signs TransactionXDR and the other
+// fields are echoed for its diagnostics.
 type Challenge struct {
-	// TransactionXDR — base64-encoded XDR of the unsigned
-	// transaction. Client signs this with its account key (no
-	// network submission).
+	// TransactionXDR — base64 XDR of the unsigned transaction, signed by the client's account key.
 	TransactionXDR string
 
-	// NetworkPassphrase — the network the transaction was crafted
-	// for ("Public Global Stellar Network ; September 2015" for
-	// pubnet). Echoed so the client can verify it doesn't sign a
-	// transaction crafted for the wrong network.
+	// NetworkPassphrase — the network crafted for ("Public Global Stellar Network ; September 2015"
+	// for pubnet), echoed so the client can refuse a challenge for the wrong network.
 	NetworkPassphrase string
 
 	// IssuedAt + ValidUntil — the challenge has a short lifetime

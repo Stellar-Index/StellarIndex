@@ -2,12 +2,8 @@ package canonical
 
 // Off-chain crypto-ticker asset helpers — see ADR-0014.
 //
-// AssetCrypto carries off-chain crypto reference tickers (BTC, ETH, USDT, …), not Stellar
-// assets: oracle prices (notably Reflector's CEX oracle) quote against a global asset concept,
-// not an on-chain token. Wire form `crypto:<TICKER>`.
-//
-// `USDC:GA5ZSEJY…` (Circle's on-chain USDC) and `crypto:USDC` (the global concept) are
-// intentionally NOT Equal().
+// AssetCrypto is a global reference ticker (wire form `crypto:<TICKER>`), not a Stellar asset.
+// `USDC:GA5ZSEJY…` (Circle's on-chain USDC) and `crypto:USDC` are intentionally NOT Equal().
 
 // knownCryptoCodes is the allow-list of recognized crypto tickers: observed Reflector CEX
 // oracle traffic plus the largest-cap global assets.
@@ -20,19 +16,17 @@ var knownCryptoCodes = map[string]struct{}{
 	// Stablecoins and fiat-pegged tokens stay crypto, not fiat: the aggregator converts them at
 	// VWAP time (stablecoin-as-fiat is aggregator policy), so the decoder stays proxy-agnostic.
 	"DAI": {}, "PYUSD": {}, "USDP": {},
-	// USDT0 (omnichain USDT) is a DISTINCT asset from USDT: its own issuance and peg risk, and
-	// merging them would be the eager normalisation the stablecoin rule rejects. Any fiat:USD
-	// proxying is decided in internal/aggregate/stablecoin.go.
+	// USDT0 is DISTINCT from USDT (own issuance and peg risk); merging them would be eager
+	// normalisation. Fiat proxying is decided in internal/aggregate/stablecoin.go.
 	"USDT0": {},
 	// Euro-pegged stablecoins stay crypto; the aggregator maps them to fiat:EUR. EURC and EUROC
 	// are one asset (Circle's rename, see eurcAliasFamily); EUROB is a different token.
 	"EURC": {}, "EUROC": {}, "EUROB": {},
 	// Mexican Peso stablecoin (Bitso MXNe); the aggregator maps it to fiat:MXN.
 	"MXNe": {},
-	// Tokenized-BTC variants. SolvBTC is BTC-backed crypto, not RWA (ADR-0028 reserves `rwa`
-	// for tokenized tradfi). `_FUNDAMENTAL` feeds publish NAV; each feed_id is its own code so
-	// market and NAV observations never collide. These two NAV feeds are quoted in their
-	// RESERVE asset (crypto:BTC and crypto:SolvBTC), not USD; see redstone.feedRegistry.
+	// Tokenized-BTC variants: BTC-backed crypto, not RWA (ADR-0028). Each `_FUNDAMENTAL` NAV
+	// feed_id is its own code so market and NAV observations never collide; these two are quoted
+	// in their RESERVE asset, not USD (see redstone.feedRegistry).
 	"SolvBTC": {}, "SolvBTC_FUNDAMENTAL": {}, "SolvBTC.BBN_FUNDAMENTAL": {},
 	// Ethena's synthetic-dollar tokens are crypto-native (delta-neutral basis), not ADR-0028
 	// rwa. sUSDe is the staked, value-accruing form.
@@ -40,10 +34,9 @@ var knownCryptoCodes = map[string]struct{}{
 	// Avant Protocol staked USD: a crypto-native yield vault like sUSDe, not rwa. The code
 	// keeps the full feed_id.
 	"savUSD_FUNDAMENTAL": {},
-	// USD-quoted SolvBTC NAV feeds publish the NAV in USD, a DIFFERENT quantity from the
-	// unsuffixed `_FUNDAMENTAL` feeds (NAV ratio against the reserve asset), so they get
-	// distinct codes. The feed_id's `/` becomes `_` because codes travel as URL path segments
-	// (`/v1/assets/{id}`).
+	// USD-quoted NAV feeds are a DIFFERENT quantity from the unsuffixed ones (a ratio against the
+	// reserve asset), so they get distinct codes. The feed_id's `/` becomes `_` because codes
+	// travel as URL path segments.
 	"SolvBTC_FUNDAMENTAL_USD": {}, "SolvBTC.BBN_FUNDAMENTAL_USD": {},
 }
 

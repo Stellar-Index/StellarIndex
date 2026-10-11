@@ -12,13 +12,10 @@ import (
 // one writer, so nothing needs to discriminate rows by writer.
 const SourceName = "classic-movements"
 
-// P23StartLedger is the first ledger of Protocol 23, the hard upper bound of this package's
-// reconstruction: from there every classic-asset movement emits a unified CAP-67 event
-// (internal/sources/sep41_transfers).
-//
-// The /v1/accounts/{g}/movements merge (timescale.SEP41MovementsFloorLedger) keys off the same
-// value via a duplicate constant, because internal/storage sits below internal/sources in the
-// import direction. TestP23BoundaryConstantsAgree pins the two together.
+// P23StartLedger is the first ledger of Protocol 23, the upper bound of this package's
+// reconstruction: from there every classic movement emits a CAP-67 event (sep41_transfers).
+// timescale.SEP41MovementsFloorLedger duplicates it because internal/storage cannot import
+// internal/sources; TestP23BoundaryConstantsAgree pins the two together.
 const P23StartLedger uint32 = 58_762_517
 
 // Kind discriminates a movement's semantic type. The ten values match migration 0103's
@@ -91,20 +88,16 @@ type Movement struct {
 	FromAddress     string
 	ToAddress       string
 
-	// Attributes is the kind-specific remainder. Both path_payment legs carry the whole op
-	// (send/dest asset and amount, from/to) since each leg's Asset/Amount holds only its own side;
-	// claimable-balance kinds carry balance_id (plus claimants on create); the CAP-0038 revocation
-	// edge case marks its provenance here. Values are strings (decimal amounts, hex ids, asset
-	// ids) or slices of them, never a raw i128 or JSON number, to keep full precision.
+	// Attributes is the kind-specific remainder (both path_payment legs carry the whole op, since
+	// each leg's Asset/Amount holds only its own side). Values are strings or slices of them,
+	// never a raw i128 or JSON number, to keep full precision.
 	Attributes map[string]any
 }
 
 // MovementEvent is the consumer.Event this package emits, a thin wrapper like sdex.TradeEvent.
-//
-// It deliberately has NO persist arm in pipeline's HandleEvent: movements are historical-only and
-// are written to ClickHouse stellar.account_movements by the `stellarindex-ops
-// classic-movements-backfill` batch writer, never the live dispatcher. The notSunkEvents entry in
-// lockstep_ast_test.go enforces this.
+// It has NO persist arm in pipeline's HandleEvent on purpose: movements are historical-only and
+// written to ClickHouse by the classic-movements-backfill batch writer, never the live dispatcher
+// (enforced by the notSunkEvents entry in lockstep_ast_test.go).
 type MovementEvent struct {
 	Movement Movement
 }
@@ -130,10 +123,8 @@ type PendingClaimableBalanceRef struct {
 	ToAddress       string
 }
 
-// ResolvePendingClaimableBalance builds the Movement for a pending claim/clawback once its create
-// row's asset/amount/creator are found, typically by the caller's ClickHouse second-pass lookup
-// (clickhouse.FindClaimableBalanceCreates) after Decoder.TakePendingClaimableBalances. This
-// package stays storage-agnostic.
+// ResolvePendingClaimableBalance builds the Movement for a pending claim/clawback once the caller
+// has found the create row (a ClickHouse second pass); this package stays storage-agnostic.
 func ResolvePendingClaimableBalance(ref PendingClaimableBalanceRef, asset string, amount canonical.Amount, createdBy string) Movement {
 	return Movement{
 		Kind:            ref.Kind,
@@ -157,10 +148,9 @@ func ResolvePendingClaimableBalance(ref PendingClaimableBalanceRef, asset string
 
 // Errors returned by the decode path.
 var (
-	// ErrUnsupportedOpType is returned by Decode for an op type outside scope. Matches() gates the
-	// type before Decode in the backfill loop, so this should never fire there; it exists so a
-	// future author must extend Matches AND the Decode switch together instead of an unhandled op
-	// type silently producing zero rows (recognition_test.go).
+	// ErrUnsupportedOpType is returned by Decode for an op type outside scope. It exists so a
+	// future author must extend Matches AND the Decode switch together, not silently produce zero
+	// rows (recognition_test.go).
 	ErrUnsupportedOpType = errors.New("classicmovements: unsupported op type for this phase")
 
 	// ErrMalformedMovement means a decoded field failed validation (non-positive amount,

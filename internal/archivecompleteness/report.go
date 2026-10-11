@@ -12,26 +12,20 @@ import (
 // The Schema field locks the wire shape: new optional fields are fine, but removing or
 // repurposing one bumps Schema and goes through an ADR amendment.
 type Report struct {
-	// Schema is the report's wire-format version. Stable per PR.
-	// Pinned to "1" for PR A.
+	// Schema is the report's wire-format version, currently "1".
 	Schema string `json:"schema"`
 
-	// ScannedAt is when this report was produced. RFC 3339 UTC.
+	// ScannedAt is when this report was produced, UTC.
 	ScannedAt time.Time `json:"scanned_at"`
 
-	// Range that was checked across all archives, in ledger
-	// sequence numbers.
+	// Range is the ledger-sequence range checked across all archives.
 	Range RangeSpec `json:"range"`
 
-	// CrossAnchor holds the results of the cross-anchor archive
-	// scan. Nil when the operator skipped that check via
-	// `-checks` selection.
+	// CrossAnchor holds the cross-anchor scan results; nil when `-checks` skipped it.
 	CrossAnchor *CrossAnchorReportSection `json:"cross_anchor,omitempty"`
 
-	// Primary holds the results of the primary (galexie-archive)
-	// scan. Nil in the current repo snapshot because the shipped
-	// archive-completeness flow only enforces the cross-anchor
-	// archive today.
+	// Primary holds the primary (galexie-archive) scan results; nil because only the cross-anchor
+	// archive is enforced today.
 	Primary *PrimaryReportSection `json:"primary,omitempty"`
 }
 
@@ -41,15 +35,12 @@ type RangeSpec struct {
 	To   uint32 `json:"to"`
 }
 
-// CrossAnchorReportSection is the per-archive section for the
-// cross-anchor scan.
+// CrossAnchorReportSection is the per-archive section for the cross-anchor scan.
 type CrossAnchorReportSection struct {
-	// ArchiveRoot is the absolute path that was scanned. Helps
-	// downstream tooling know which mount this report describes.
+	// ArchiveRoot is the absolute path scanned, so tooling knows which mount the report describes.
 	ArchiveRoot string `json:"archive_root"`
 
-	// Expected / Found / MissingCount are the same fields from
-	// [CrossAnchorResult] surfaced to the wire.
+	// Expected / Found / MissingCount mirror [CrossAnchorResult].
 	Expected     int      `json:"expected"`
 	Found        int      `json:"found"`
 	MissingCount int      `json:"missing_count"`
@@ -57,16 +48,14 @@ type CrossAnchorReportSection struct {
 	Truncated    bool     `json:"truncated,omitempty"`
 }
 
-// PrimaryReportSection is the per-archive section for the primary
-// galexie-archive scan. Not implemented: no code in this package
-// populates it, so [Report.Primary] is always nil today.
+// PrimaryReportSection is the per-archive section for the primary galexie-archive scan. Nothing
+// populates it yet, so [Report.Primary] is always nil.
 type PrimaryReportSection struct {
 	BucketName   string `json:"bucket_name"`
 	Expected     int    `json:"expected"`
 	Found        int    `json:"found"`
 	MissingCount int    `json:"missing_count"`
-	// MissingRanges holds (start, end) gap ranges as galexie
-	// detect-gaps reports them. Inclusive on both ends.
+	// MissingRanges holds galexie detect-gaps (start, end) ranges, inclusive on both ends.
 	MissingRanges []GapRange `json:"missing_ranges,omitempty"`
 }
 
@@ -76,9 +65,7 @@ type GapRange struct {
 	End   uint32 `json:"end"`
 }
 
-// NewReport returns an empty Report scaffold for the given range.
-// Callers populate CrossAnchor / Primary sections as they run each
-// scan, then call WriteJSON to emit.
+// NewReport returns an empty Report for the given range; callers fill the sections per scan.
 func NewReport(from, to uint32) *Report {
 	return &Report{
 		Schema:    "1",
@@ -87,8 +74,7 @@ func NewReport(from, to uint32) *Report {
 	}
 }
 
-// SetCrossAnchor populates the cross-anchor section from a
-// [CrossAnchorResult].
+// SetCrossAnchor populates the cross-anchor section from a [CrossAnchorResult].
 func (r *Report) SetCrossAnchor(archiveRoot string, res CrossAnchorResult) {
 	r.CrossAnchor = &CrossAnchorReportSection{
 		ArchiveRoot:  archiveRoot,
@@ -100,17 +86,14 @@ func (r *Report) SetCrossAnchor(archiveRoot string, res CrossAnchorResult) {
 	}
 }
 
-// WriteJSON encodes the report to w as indented JSON. Returns any
-// error from the encoder.
+// WriteJSON encodes the report to w as indented JSON.
 func (r *Report) WriteJSON(w io.Writer) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(r)
 }
 
-// AnyMissing reports whether either archive section shows missing
-// files. Returns false on a clean report or one where every check
-// section is nil.
+// AnyMissing reports whether either archive section shows missing files.
 func (r *Report) AnyMissing() bool {
 	if r.CrossAnchor != nil && r.CrossAnchor.MissingCount > 0 {
 		return true
