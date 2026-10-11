@@ -47,21 +47,16 @@ const (
 // caller writes).
 //
 // 429 is skipped: one misconfigured client can produce thousands per second on a
-// public origin, and on r1 a 60-second probe produced 343 k suppressed
-// `systemd-journald` entries, dropping other services' messages. Visibility is
-// preserved by the `stellarindex_http_requests_total{status="429"}` counter
+// public origin and flood journald, dropping other services' messages. Visibility
+// is kept by the `stellarindex_http_requests_total{status="429"}` counter
 // (`internal/obs/http_middleware.go`).
 //
 // Synthetic traffic goes to DEBUG, the same judgement the SLO uses
-// ([obs.IsSyntheticRequest]). The SLA probe drives ~800 requests per endpoint per
-// run across ten endpoints every 15 minutes: 98% of everything the journal held,
-// so with SystemMaxUse 500 MB a MaxRetentionSec of 14 d delivered about five
-// hours. Only SUCCESSFUL synthetic requests are demoted; a probe seeing a 4xx or
-// 5xx stays at WARN/ERROR. Counts remain exact either way: a demoted line is still
-// emitted, and `stellarindex_http_requests_total` is unaffected.
+// ([obs.IsSyntheticRequest]); the SLA probe would otherwise dominate the journal.
+// Only SUCCESSFUL synthetic requests are demoted; a 4xx or 5xx stays at
+// WARN/ERROR, and counts stay exact.
 //
 // Does NOT log query parameters or request bodies: they may carry API keys or PII.
-// Add named fields in specific handlers when needed.
 func Logger(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()

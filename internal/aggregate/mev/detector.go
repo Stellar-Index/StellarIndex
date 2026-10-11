@@ -1,40 +1,26 @@
-// Package mev detects on-chain MEV (maximal-extractable-value)
-// patterns from the canonical trade stream and writes them to
-// mev_events for the explorer's /mev feed.
+// Package mev detects on-chain MEV patterns from the canonical trade stream and
+// writes them to mev_events for the explorer's /mev feed. Detected kinds:
 //
-// Detected kinds:
+//   - arbitrage (detector.go): one taker trades a closed asset cycle inside a
+//     single transaction.
+//   - wash_trade (washtrade.go): self-trades and two-account back-and-forth.
+//   - sandwich (sandwich.go): one account's trades in two different transactions
+//     bracket another account's trade on the same pair within one ledger. Needs
+//     intra-ledger TRANSACTION ordering, which only the raw lake carries
+//     (stellar.transactions.tx_index), so it runs only when a TxOrderResolver is
+//     wired.
+//   - oracle_sandwich (oracle_sandwich.go): one account's trades bracket an
+//     on-chain oracle update on an asset the trades touch, within one ledger.
+//     Same tx_index requirement.
+//   - liquidation_cascade (cascade.go): Blend liquidation-auction fills against
+//     distinct positions clustered within a short ledger window with an oracle
+//     update in the bracket.
 //
-//   - arbitrage (detector.go): one taker trades a closed asset cycle
-//     inside a single transaction. Purely structural — the served
-//     trades rows carry everything needed.
-//   - wash_trade (washtrade.go): self-trades (maker == taker) and
-//     repeated two-account back-and-forth on one pair. Served rows
-//     only.
-//   - sandwich (sandwich.go): one account's trades in two different
-//     transactions bracket another account's trade on the same pair
-//     within one ledger. Needs intra-ledger TRANSACTION ordering,
-//     which the served trades table does not carry — the raw lake
-//     does (stellar.transactions.tx_index, application order), so
-//     this detector runs only when a TxOrderResolver is wired.
-//   - oracle_sandwich (oracle_sandwich.go): one account's trades
-//     bracket an on-chain oracle update on an asset the trades touch,
-//     within one ledger. Same tx_index requirement as sandwich.
-//   - liquidation_cascade (cascade.go): Blend liquidation-auction
-//     fills against distinct positions clustered within a short
-//     ledger window with an on-chain oracle update in the bracket.
-//     Served rows only (blend_auctions + oracle_updates).
-//
-// Every detector is a pure function over batches of served rows (plus
-// an optional tx_hash → tx_index map from the lake); the worker
-// (worker.go) supplies the inputs and persists candidates. Detection
-// is positional/structural evidence, not proof of intent, and
-// direction-dependent claims (front-run vs back-run) are never
-// asserted.
-//
-// The served rows DO carry trade direction: trades.base_asset under a
-// per-source convention (takerBaseIsReceived). sandwich and
-// oracle_sandwich both require their bracket legs to run in opposite
-// directions and drop direction-unknown brackets. See each detail Note.
+// Every detector is a pure function over batches of served rows (plus an optional
+// tx_hash → tx_index map); the worker (worker.go) supplies the inputs and
+// persists candidates. Detection is positional evidence, not proof of intent.
+// sandwich and oracle_sandwich require bracket legs in opposite directions
+// (trades.base_asset, convention takerBaseIsReceived) and drop unknown ones.
 package mev
 
 import (

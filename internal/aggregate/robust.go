@@ -135,42 +135,30 @@ func robustCentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
 	return centre, scale
 }
 
-// symmetricDev returns the deviation of p from centre measured
-// symmetrically in RATIO (log) space, expressed in the same price units
-// as the σ-equivalent scale the callers compare it against.
+// symmetricDev returns the deviation of p from centre measured symmetrically in
+// RATIO (log) space, in the same price units as the σ-equivalent scale.
 //
-// Why: an ADDITIVE band in price space — `|p − centre| > K·scale` — which
-// is one-sided-blind by construction. `p` can only ever be `centre`
-// below the centre, so once `K·scale >= centre` NO downward print can
-// exceed the threshold: a crash print or a decimal-shift fat finger (on
-// the served guard, even an exact 0) scores inside the band, while the mirror-image up-move
-// is still rejected. The additive band goes blind below at a relative
-// scale of 1/K — 16.9 % for [FilterOutliers] at the default σ=4, 6.75 %
-// for [robustBand]'s MAD arm at K=10 — which ordinary long-tail
-// volatility reaches routinely.
+// Why: an ADDITIVE band `|p − centre| > K·scale` is one-sided-blind. `p` can only
+// ever be `centre` below the centre, so once `K·scale >= centre` NO downward
+// print can exceed the threshold: a crash print or a decimal-shift fat finger
+// (on the served guard, even an exact 0) scores inside the band while the
+// mirror-image up-move is rejected. It goes blind at a relative scale of 1/K
+// (16.9 % for [FilterOutliers] at σ=4, 6.75 % for [robustBand] at K=10).
 //
 // Price noise is MULTIPLICATIVE (ADR-0046 §1: "a half-size print is exactly as
-// outlying as a double-size one"), so the deviation is measured on the
-// ratio: a price below the centre is first mirrored to the up-move that
-// is the same distance away in log space (centre²/p — the reflection of
-// p about centre under multiplication) and then measured from the
+// outlying as a double-size one"), so a price below the centre is first mirrored
+// to the up-move at the same log distance (centre²/p) and then measured from the
 // centre. The resulting band is
 //
 //	[ centre² / (centre + K·scale) , centre + K·scale ]
 //
-// — geometrically symmetric (lo·hi = centre²), always strictly
-// positive, and IDENTICAL to the additive band above the centre. Below it
-// the mirrored edge is never lower than the additive one (1/(1+r) >= 1 − r), so
-// this only ever tightens the downward side: nothing the additive band
-// rejects is accepted. Exact *big.Rat throughout (ADR-0003) — the
-// mirror is one multiply and one divide, so no logarithm (and no
-// float64) enters the value path.
+// — geometrically symmetric, strictly positive, and IDENTICAL to the additive
+// band above the centre; below it the mirrored edge is never lower than the
+// additive one, so it only tightens the downward side. Exact *big.Rat
+// (ADR-0003): no logarithm, no float64.
 //
-// Returns nil for a non-positive p against a positive centre: such a
-// print has no finite ratio deviation at all, and callers treat nil as
-// "rejected" / "no finite score". A non-positive centre has nothing to
-// mirror around, so the plain additive deviation is returned unchanged
-// (defensive — every caller's centre is the median of positive prices).
+// Returns nil for a non-positive p against a positive centre (callers treat nil
+// as "rejected"); a non-positive centre returns the plain additive deviation.
 func symmetricDev(p, centre *big.Rat) *big.Rat {
 	if p == nil || centre == nil {
 		return nil

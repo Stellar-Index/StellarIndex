@@ -1,46 +1,27 @@
-// Package blend_emitter decodes on-chain events from the Blend
-// **Emitter** contract — the protocol-emissions plumbing that mints
-// and distributes BLND to the backstop pools, separate from both the
-// pool/pool-factory decoder (internal/sources/blend) and the
-// Backstop decoder (internal/sources/blend_backstop).
+// Package blend_emitter decodes on-chain events from the Blend **Emitter**
+// contract — the emissions plumbing that mints and distributes BLND to the
+// backstop pools, separate from internal/sources/blend and
+// internal/sources/blend_backstop.
 //
-// Wire shape, verified against every event the contract has emitted on
-// mainnet in the certified ClickHouse lake (ADR-0034): 4 topics, all
-// single-topic.
+// Wire shape, verified against every mainnet event in the certified ClickHouse
+// lake (ADR-0034): topic[0] = Symbol("<event_name>") is the only topic; body:
 //
-//		topic[0] = Symbol("<event_name>")   (the only topic)
-//		body     = per-event shape below
+//   - "distribute": Vec[ Address backstop_id, i128 amount ] → DistributeEvent
+//   - "drop": a one-shot airdrop, Vec[ Vec[ Address recipient, i128 amount ], ... ]
+//     of VARIABLE length → ONE DropEvent with the full Recipients slice; the
+//     storage writer fans it out per recipient (recipient_index discriminator).
+//   - "q_swap" QUEUES a timelocked backstop swap, Map{ new_backstop,
+//     new_backstop_token: Address, unlock_time: u64 } → SwapConfigQueued;
+//     "swap" EXECUTES it after the timelock (same body) → SwapConfigExecuted
 //
-//	  - "distribute" — one BLND emission distributed to a backstop.
-//	    body = Vec[ Address backstop_id, i128 amount ]
-//	    → emits a DistributeEvent
-//	  - "drop" — a one-shot BLND airdrop to a VARIABLE-LENGTH recipient
-//	    list (observed arities: 13 and 3).
-//	    body = Vec[ Vec[ Address recipient, i128 amount ], ... ]
-//	    → emits ONE DropEvent carrying the full Recipients slice; the
-//	    storage writer fans it out one row per recipient
-//	    (recipient_index discriminator, so a coarse PK cannot drop rows).
-//	  - "q_swap" — QUEUES a timelocked swap of the Emitter's target
-//	    backstop + backstop token.
-//	    body = Map{ new_backstop: Address, new_backstop_token: Address,
-//	    unlock_time: u64 }
-//	    → emits a SwapConfigEvent{Kind: SwapConfigQueued}
-//	  - "swap" — EXECUTES a queued backstop swap after its timelock;
-//	    same body as q_swap (byte-identical on the real fixture).
-//	    → emits a SwapConfigEvent{Kind: SwapConfigExecuted}
+// GATING (ADR-0035/0040): blend_backstop ALSO emits a bare `distribute` (body
+// `i128 amount`), so topic bytes alone would misfire. Matches() gates on CONTRACT
+// IDENTITY via the curated registry (the comet.MainnetGatedSet() pattern); the
+// Emitter has one mainnet instance spanning Blend V1→V2 and no factory.
 //
-// GATING (ADR-0035/0040): blend_backstop ALSO emits a bare `distribute`
-// (body `i128 amount`, no backstop_id), so topic bytes alone would
-// misfire or disagree on body shape. Matches() gates on CONTRACT
-// IDENTITY via the curated registry, the comet.MainnetGatedSet()
-// pattern: there is no factory to anchor on, and the Emitter has a
-// single mainnet instance spanning Blend V1→V2.
-//
-// WASM audit CLOSED (docs/operations/wasm-audits/blend_emitter.md): the
-// sole WASM hash
-// (438a5528cff17ede6fe515f095c43c5f15727af17d006971485e52462e7e7b89)
-// SHA256-verifies against lake bytes, and every lifetime event decodes
-// to the shapes above, exhaustively. BackfillSafe is true.
+// WASM audit closed (docs/operations/wasm-audits/blend_emitter.md): the sole hash
+// (438a5528cff17ede6fe515f095c43c5f15727af17d006971485e52462e7e7b89) decodes
+// every lifetime event to the shapes above. BackfillSafe is true.
 package blend_emitter
 
 import (

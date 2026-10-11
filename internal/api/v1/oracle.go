@@ -48,35 +48,25 @@ type oracleAtReader interface {
 //
 // Reflector, the only on-chain oracle publishing per-asset readings, keys
 // observations by the global crypto ticker (`crypto:XLM`, `crypto:USDC`, ...)
-// rather than the per-network canonical asset_id. Without this expansion
-// `/v1/oracle/latest?asset=native` returns empty even though Reflector publishes
-// XLM under crypto:XLM.
+// rather than the per-network canonical asset_id; without this expansion
+// `/v1/oracle/latest?asset=native` returns empty.
 //
 // The `crypto:<TICKER>` translation is IDENTITY-GATED. Firing on the CODE alone
-// answers any classic asset whose code spells a global ticker with the REAL
-// issuer's oracle rows: `?asset=USDC-GBNZILST...AQUA` (AQUA's issuer wearing
-// Circle's code, an asset that does not exist) returned band / redstone /
-// reflector-cex USDC prices verbatim. That is attacker-authored pricing: identity
-// is (code, issuer), never code alone. Only an asset the verified-currency
-// catalogue itself issues under that ticker (internal/currency, the trust surface
-// `/v1/assets/{slug}` dispatches on) may claim the ticker's readings; an
+// would answer any classic asset whose code spells a global ticker with the REAL
+// issuer's oracle rows (attacker-authored pricing): identity is (code, issuer),
+// never code alone. Only an asset the verified-currency catalogue itself issues
+// under that ticker (internal/currency) may claim the ticker's readings; an
 // impersonator gets its own key and, correctly, no rows.
 //
 // A Soroban contract id resolves FIRST through the deterministic SAC derivation
 // (internal/xdrjson, ADR-0013): a contract that IS native XLM's or a verified
-// asset's SAC denotes that asset, so it inherits the classic key and then faces the
-// same gate. A C-address in neither the verified set nor the alias registry keeps
-// only its own key.
+// asset's SAC inherits the classic key and then faces the same gate. A C-address
+// in neither set keeps only its own key.
 //
-// Every form is first expanded through [canonical.AssetAliases], the expander the
-// divergence path binds, so `native` also reaches reflector-dex's XLM rows (keyed
-// only by the XLM SAC C-address) and a configured classic<->SAC pair is answered
-// under both forms. The verified-ticker grant is layered on top for this serving
-// path only.
-//
-// The returned slice always includes the original asset first; later entries are
-// best-effort translations the storage layer's `WHERE asset = ANY($1)` filter
-// unions over.
+// Every form is first expanded through [canonical.AssetAliases]; the verified-
+// ticker grant is layered on top for this serving path only. The result always
+// starts with the original asset; later entries are best-effort translations for
+// the storage layer's `WHERE asset = ANY($1)` filter.
 func (s *Server) oracleAssetCandidates(a canonical.Asset) []canonical.Asset {
 	candidates := canonical.AssetAliases(a)
 

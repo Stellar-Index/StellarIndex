@@ -758,28 +758,19 @@ const statusHeartbeatStaleAfter = 60 * time.Second
 //     alert is firing, OR a latency SLO is breached, OR services are in a mixed
 //     known state (one ok + one unknown: partial visibility is honest
 //     degradation, not "ok").
+//   - "unknown": every service is unknown (or has a zero LastSeen). Distinct from
+//     "down": no signal at all. Without it a full metrics-backend outage would
+//     read overall=ok.
+//   - "ok": every service is ok and no canary signal trips.
 //
-// The latency input exists because a roll-up judging only service LIVENESS
-// reported "All systems operational" while the same response carried p95 840ms
-// against a 200ms target, rendered in red beneath the green banner. A status
-// page that contradicts its own panels is worse than none.
-//
-// TICKET incidents are deliberately NOT an input, though `incidents.active_count`
-// sits beside `overall` and a reader can see "ok" next to active tickets. `page`
-// means customers are affected; `ticket` means look during working hours. If
-// `overall` is ever meant to reflect open tickets, that changes what "ok"
-// PROMISES on a public surface and belongs in a decision, not a patch.
+// TICKET incidents are deliberately NOT an input: `page` means customers are
+// affected, `ticket` means look during working hours. Changing that changes what
+// "ok" PROMISES on a public surface and belongs in a decision, not a patch.
 //
 // An active-source SHORTFALL (freshness.active_sources < total_sources) is
 // likewise not an input: the count is over a 7-day window, so it describes ingest
-// coverage, not whether customers are served now, and a stalled source raises its
-// own alert. It surfaces as freshness_status "degraded" only. A failed freshness
-// QUERY does degrade, via backendErr, like every other panel.
-//
-//   - "unknown": every service is unknown (or has a zero LastSeen). Distinct from
-//     "down": no signal at all. Without this branch a full metrics-backend outage
-//     would read overall=ok.
-//   - "ok": every service is ok and no canary signal trips.
+// coverage, not whether customers are served now. It surfaces as freshness_status
+// "degraded" only. A failed freshness QUERY does degrade, via backendErr.
 func rollupOverall(services []StatusService, backendErr, pageFiring, latencyBreached bool) string {
 	var anyDown, anyDegraded, anyOK, anyUnknown bool
 	for _, svc := range services {

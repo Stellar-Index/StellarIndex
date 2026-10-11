@@ -467,35 +467,25 @@ func recognitionAxisView(sn timescale.CompletenessSnapshot) *RecognitionAxisView
 // answers "is this `complete: true` a statement about the chain as it is NOW?",
 // which the rows cannot: `tip_ledger`, `coverage_pct` and every claim boolean are
 // stamped at the audit's compute time, so a dead audit still reads
-// `coverage_pct: 1` against a tip hours behind the network.
+// `coverage_pct: 1` against a tip hours behind.
 //
-// Four independent signals, OR'd (fail-closed; any one means the response is
-// below the surface's baseline contract, which is what `flags.stale` means per
-// ADR-0018):
+// Four independent signals, OR'd (fail-closed; any one is `flags.stale`, ADR-0018):
 //
 //   - LEDGER GAP: the network tip has run more than [coverageVerdictStaleLedgers]
 //     past the verdict's own tip. The network tip is the ledgerstream cursor
-//     extrapolated by wall-clock time since it last advanced
-//     ([completeness.NetworkTipLowerBound]), not the bare cursor:
-//     compute-completeness resolves its `tip` from that cursor, so a frozen cursor
-//     would always agree with the verdict it produced.
-//   - VERDICT AGE: computed_at older than [coverageVerdictStaleAge], or absent
-//     (an unknown-age verdict cannot be claimed fresh).
+//     extrapolated by wall-clock time ([completeness.NetworkTipLowerBound]), not
+//     the bare cursor, which would always agree with the verdict computed from it.
+//   - VERDICT AGE: computed_at older than [coverageVerdictStaleAge], or absent.
 //   - EVIDENCE AGE: a source claiming projection_ok whose projection_evidenced_at
-//     is older than [coverageVerdictEvidenceStaleAge], or unknown. computed_at is
-//     restamped by a run that only carried the claim forward, so it cannot see a
-//     claim whose last real proof is weeks old. Audit axes carry no projection
-//     claim and are exempt.
+//     is older than [coverageVerdictEvidenceStaleAge], or unknown (computed_at is
+//     restamped by runs that only carry the claim forward). Audit axes carry no
+//     projection claim and are exempt.
 //   - INGEST STALL: the ledgerstream cursor has not been written for
-//     [coverageIngestStallAge]. A frozen cursor plus a running audit keeps the gap
-//     at 0 and computed_at fresh while tip_ledger falls behind; the cursor's
-//     wall-clock age is the reference that does not move with it.
+//     [coverageIngestStallAge]; a frozen cursor plus a running audit keeps the gap
+//     at 0 and computed_at fresh.
 //
-// An EMPTY verdict list is not flagged: there is no claim to qualify.
-//
-// The gate degrades rather than fails: no CursorsReader, no cursor yet, or a
-// slow/failing cursor read leaves the ledger-gap signal unavailable and the age
-// signal alone decides.
+// An EMPTY verdict list is not flagged. Without a cursor read the ledger-gap
+// signal is unavailable and the age signals decide.
 func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.CompletenessSnapshot) bool {
 	if len(snaps) == 0 {
 		return false

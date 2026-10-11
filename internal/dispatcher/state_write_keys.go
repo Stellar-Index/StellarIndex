@@ -7,43 +7,30 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// This file populates events.Event.StateWriteKeys on the production LCM
-// path: the base64 XDR LedgerKeys of the contract-data entries whose
-// VALUE the event's operation CHANGED, filtered per event to the event's
-// own contract. It is the state-write sibling of the OpArgs enrichment
-// (extractInvokeContractCalls): same per-operation granularity, same
-// "decoders stay pure — the dispatcher supplies inputs" contract.
+// This file populates events.Event.StateWriteKeys on the production LCM path: the
+// base64 XDR LedgerKeys of the contract-data entries whose VALUE the event's
+// operation CHANGED, filtered per event to the event's own contract (sibling of
+// the OpArgs enrichment, extractInvokeContractCalls).
 //
-// VALUE-CHANGED, not merely written — ground-truthed on pubnet ledger
-// 62056824: the RedStone adapter's write_prices REWRITES
-// every REQUESTED feed's entry, byte-identical for feeds its freshness
-// verifier rejected (an empty-batch push still rewrote its one requested
-// key unchanged), while an ACCEPTED feed's stored PriceData always
-// changes (write_timestamp at minimum). So "keys written" names the
-// REQUESTED set and only "keys whose value changed" names the ACCEPTED
-// set — the signal Redstone's exact subset attribution needs
-// (internal/sources/redstone/decode.go resolveFeedAttribution).
+// VALUE-CHANGED, not merely written: the RedStone adapter's write_prices REWRITES
+// every REQUESTED feed's entry, byte-identical for feeds its freshness verifier
+// rejected, while an ACCEPTED feed's stored PriceData always changes. Only "keys
+// whose value changed" names the ACCEPTED set, which Redstone's exact subset
+// attribution needs (internal/sources/redstone/decode.go resolveFeedAttribution).
 //
-// The rule, applied identically here and by the ClickHouse re-derive
-// twin (internal/storage/clickhouse/state_write_keys.go, from the lake's
-// ledger_entry_changes rows):
+// The rule, identical here and in the ClickHouse re-derive twin
+// (internal/storage/clickhouse/state_write_keys.go):
 //
 //   - pre-image  = the op's FIRST `state` change for the key
 //     (ContractDataEntry.Val bytes);
 //   - post-image = the op's LAST `created`/`updated` change for the key;
 //   - changed    = post exists AND (no pre-image OR pre.Val != post.Val).
 //
-// `removed` is a deletion, not a value write. P23 `restored` changes are
-// ignored on BOTH sides (the lake twin's query selects only
-// state/created/updated rows): a restored-then-rewritten-unchanged entry therefore has
-// no visible pre-image and would count as changed on both paths equally.
-// Any per-key parse/marshal failure excludes that key (mirroring the lake
-// extractor's skip-and-tolerate). Consumers treat StateWriteKeys as
-// best-effort input with their own arity check + fallback, so either
-// degradation sends Redstone to payload-median alignment. That fallback
-// is NOT misattribution-free: see the CAVEAT in
-// internal/sources/redstone/payload.go for the residual it carries and
-// the part of it these keys close.
+// `removed` is a deletion, not a value write. P23 `restored` changes are ignored
+// on BOTH sides, so a restored-then-rewritten-unchanged entry counts as changed
+// on both paths equally. A per-key parse/marshal failure excludes that key.
+// Consumers treat StateWriteKeys as best-effort, with an arity check + fallback
+// to payload-median alignment (CAVEAT in internal/sources/redstone/payload.go).
 
 // contractDataWrite is one value-changing contract-data write.
 type contractDataWrite struct {

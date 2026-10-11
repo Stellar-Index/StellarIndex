@@ -23,28 +23,23 @@ import (
 // classic asset's supply can sit; the others are claimable balances,
 // liquidity-pool reserves and balances a Stellar Asset Contract holds for
 // CONTRACT holders. `stellar.ledger_entries_current` fills its `asset` column for
-// trustlines ONLY, so an `asset = 'CODE-ISSUER'` query is blind to the other
-// three by construction. For RWA assets the invisible share reaches tens of
-// percent.
+// trustlines ONLY, so an `asset = 'CODE-ISSUER'` query is blind to the rest.
 //
 // # Why the fix reads flows rather than widening the state query
 //
 // A liquidity pool holds two assets in one row, which one (asset, balance)
-// column pair cannot represent. A SAC balance entry names its CONTRACT, never
-// its asset, and contract -> asset is derivable only FORWARD. So the lake reads
-// `stellar.supply_flows` (decode-at-ingest, i128 amounts): Σmint − Σburn −
-// Σclawback over the asset's SAC is its supply wherever the tokens rest. It is
-// the figure GET /v1/assets/{asset_id}/supply already serves, from the same
-// reader; the listing surfaces must not publish a blinder number.
+// column pair cannot represent, and a SAC balance entry names its CONTRACT, never
+// its asset. So the lake reads `stellar.supply_flows` (i128 amounts):
+// Σmint − Σburn − Σclawback over the asset's SAC is its supply wherever the
+// tokens rest, the same figure GET /v1/assets/{asset_id}/supply serves.
 //
 // # Why it can only ever raise the served figure
 //
 // Every trustline balance was minted, so the trustline sum is a PROVABLE LOWER
 // BOUND on issued supply. A flows total BELOW it means the flows are
 // incompletely seeded, so [higherClassicSupply] keeps the trustline figure. The
-// floor holds only for a trustline sum of comparable vintage: one taken before a
-// burn floors nothing after it, hence cachedClassicSupply stops serving the map
-// once it is classicSupplyMaxAge old.
+// floor holds only for a trustline sum of comparable vintage, hence
+// cachedClassicSupply stops serving the map once it is classicSupplyMaxAge old.
 
 const (
 	// classicLakeSupplyTTL bounds how long one asset's lake-flows reading is
