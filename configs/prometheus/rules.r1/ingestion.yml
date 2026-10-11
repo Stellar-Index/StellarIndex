@@ -8,28 +8,13 @@ groups:
     interval: 30s
     rules:
 
-      # A 5-minute window false-positives routinely on low-volume Soroban /
-      # FX sources (band, blend, comet, ecb, phoenix), which legitimately
-      # emit events sporadically (auctions, oracle pushes, FX dailies). The
-      # runbook `ingestion.md#stellarindex_ingestion_source_stopped`
-      # acknowledges "Low-volume sources during quiet windows … can
-      # genuinely see zero swaps for 5+ minute stretches". Total-outage
-      # coverage is the 3-minute `stellarindex_ingestion_all_sources_stopped`
-      # alert below — that one stays tight because if no source at all
-      # emits, something is broken across the whole indexer/upstream surface.
-      # Per-source-class windows: one universal window false-positives on
-      # legitimately low-volume sources:
-      #   - low-volume Soroban DEXes (comet/phoenix/soroswap) can go
-      #     hours between swaps
-      #   - ECB publishes rates once daily
-      # The alert needs to match the source's actual cadence to be useful.
-      # Three rules by source-name regex is the simplest path that doesn't
-      # require adding a `class` label to stellarindex_source_events_total.
+      # A 5m window false-positives on low-volume Soroban/FX sources (band, blend,
+      # comet, ecb, phoenix), so windows are per source class, chosen by name regex
+      # (no `class` label on stellarindex_source_events_total). Total outage is
+      # stellarindex_ingestion_all_sources_stopped, which stays at 3m.
 
-      # High-volume sources (CEX feeds, SDEX, oracles, aggregators).
-      # 30-min rate / 15-min sustained — the original window. These
-      # sources emit continuously by design; any gap > 30 min is a
-      # real signal.
+      # High-volume sources (CEX, SDEX, oracles, aggregators) emit continuously, so a
+      # 30m gap is a real signal.
       - alert: stellarindex_ingestion_source_stopped
         expr: |
           sum by (source) (rate(stellarindex_source_events_total[30m])) == 0
@@ -63,13 +48,9 @@ groups:
             as enabled in ingestion.enabled_sources.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
 
-      # Low-volume Soroban DEX sources. 24-hour rate / 30-min sustained.
-      # These can go hours between swaps on quiet days and that's
-      # not an outage signal — long-tail TVL just doesn't trade
-      # constantly. 24h, not 6h: phoenix's measured 30-day max swap gap is
-      # 8h28m, and a genuine 12h lull (lake-verified quiet — zero swap events
-      # on any known or unknown pool) trips a 6h window. One cadence, one
-      # threshold: all three phoenix-cadence rules agree at 24h.
+      # Low-volume Soroban DEXes can go hours between swaps. 24h, not 6h: phoenix's
+      # measured 30-day max swap gap is 8h28m and a lake-verified 12h lull trips 6h.
+      # source_insert_stale uses the same 24h cadence.
       - alert: stellarindex_ingestion_source_stopped_low_volume_dex
         expr: |
           sum by (source) (rate(stellarindex_source_events_total[24h])) == 0
@@ -97,9 +78,7 @@ groups:
             indexer team.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
 
-      # Daily-publisher sources (ECB). Rates published once a
-      # day at most — anything below 30h sustained for 1h is the
-      # earliest meaningful signal.
+      # ECB publishes at most daily; 30h silent for 1h is the earliest meaningful signal.
       - alert: stellarindex_ingestion_source_stopped_daily_publisher
         expr: |
           sum by (source) (rate(stellarindex_source_events_total[30h])) == 0
@@ -122,9 +101,9 @@ groups:
             ample slack for upstream cadence variation.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
 
-      # Hourly publishers. Band relays hourly (divergence.md#stellarindex_oracle_stale), so a 30h
-      # window would take a day and a half to notice a dead relayer.
-      # 6h = six missed relays; for 1h keeps a late push from ticketing.
+      # Band relays hourly (divergence.md#stellarindex_oracle_stale), so a 30h window
+      # would take a day and a half to notice a dead relayer. 6h = six missed relays;
+      # for 1h keeps a late push from ticketing.
       - alert: stellarindex_ingestion_source_stopped_hourly_publisher
         expr: |
           sum by (source) (rate(stellarindex_source_events_total[6h])) == 0
@@ -145,29 +124,10 @@ groups:
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
 
       - alert: stellarindex_ingestion_all_sources_stopped
-        # Two branches, and the second is what makes this a P1 that
-        # STAYS a P1.
-        #
-        # `sum(rate(...))` over a series that has STOPPED behaves in two
-        # phases. While the dead process's last samples are still inside
-        # the 5m window, rate() is 0 and the alert fires correctly at
-        # t+3m. Then the samples age out, the series vanishes, and
-        # sum(rate()) over nothing is the EMPTY VECTOR — not zero. The
-        # alert stops matching and Alertmanager sends a RESOLVED for a
-        # SEV-1 while ingestion is still completely down, which reads to
-        # a responder as "it fixed itself".
-        #
-        # absent_over_time takes over at exactly the point rate() gives
-        # up — both use a 5m window — so the two branches hand over
-        # without a gap, and the page persists until events actually
-        # resume. It also covers the case rate() never sees at all: the
-        # indexer already being down when Prometheus starts, or
-        # Prometheus restarting mid-outage.
-        #
-        # No new paging scenario: the rate branch ALREADY pages after 3m
-        # of zero events, so any restart longer than `for: 3m` pages
-        # today. What changes is that the page no longer lies about
-        # recovery.
+        # The absent_over_time branch keeps the page alive: once a dead process's samples
+        # age out of the 5m window, sum(rate()) is an empty vector, not 0, and the SEV-1
+        # would RESOLVE while ingestion is still down. It hands over at the same 5m
+        # boundary and also covers Prometheus starting or restarting mid-outage.
         expr: |
           sum(rate(stellarindex_source_events_total[5m])) == 0
           or
@@ -187,45 +147,24 @@ groups:
             or shared storage (Timescale) before restarting the indexer.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_all_sources_stopped
 
-      # A MinIO / lake outage must PAGE, and three things compose so that
-      # no other rule pages for it:
+      # A MinIO / lake outage must PAGE and no other rule does it:
+      #   1. The live-tail read retries for ~5 min, so the process does not exit fast.
+      #   2. StartLimitBurst 60 / 15 min never parks a ~5min10s restart cycle, so
+      #      stellarindex_systemd_unit_failed (ticket, 15m) stays quiet.
+      #   3. CEX/FX connectors in the same binary keep source_events_total moving, so
+      #      all_sources_stopped stays quiet.
+      # cursor_stuck cannot fire either: "ledgerstream" is a cursor namespace, not a
+      # stellarindex_source_enabled series. source_stopped and data_source_stale only
+      # ticket.
       #
-      #   1. The live-tail read has a ~5-minute retry budget, so the process
-      #      does not exit within seconds of the lake going away.
-      #      `stellarindex_systemd_unit_failed` (a TICKET, 15m) cannot
-      #      fire for it either.
-      #   3. The CEX/FX connectors run in the SAME binary and keep
-      #      incrementing stellarindex_source_events_total, so
-      #      `all_sources_stopped` stays quiet while no ledger is being
-      #      ingested at all.
+      # So page on the ledger cursor itself. cmd/stellarindex-indexer advances it only
+      # after a ledger is processed and its cursor row committed, so it covers the whole
+      # lake -> dispatcher -> Postgres path. Branches hand over at 5m as in
+      # all_sources_stopped; the gauge is born on the first committed ledger, so a
+      # restart that never gets one leaves it absent, which must not read as recovery.
       #
-      # What is left without this rule: cursor_stuck (ticket) cannot fire
-      # for this cursor, because it joins `on (source)
-      # stellarindex_source_enabled`, and "ledgerstream" is a cursor
-      # namespace, not a configured source — no such series exists.
-      # source_stopped (ticket, 30m window) and data_source_stale
-      # (ticket, 1h) eventually notice. No page.
-      #
-      # So page on the thing that is actually wrong: the LEDGER cursor is
-      # not advancing. cmd/stellarindex-indexer advances this gauge only
-      # after a ledger is fully processed AND its cursor row is committed
-      # (processAndPersistCursor), so it is the honest liveness signal for
-      # the whole Galexie -> ledgerstream -> dispatcher -> Postgres path —
-      # a lake read failure, a wedged dispatch goroutine and a Postgres
-      # outage all stall it, and none of them is "all sources stopped".
-      #
-      # Two branches, handing over at the same 5m boundary, for the reason
-      # all_sources_stopped documents above: while the last samples are
-      # still in the window the gauge is flat and the delta branch fires;
-      # once the process is gone long enough for the series to age out,
-      # the delta branch has nothing to evaluate and absent_over_time
-      # takes over. The gauge is BORN on the first successfully committed
-      # ledger, so a restart that never gets one leaves it absent — that
-      # is the MinIO-outage shape, and it must not read as recovery.
-      #
-      # ~10 min to page (5m flat window + `for: 5m`). Live ledgers close
-      # every ~5-6 s, so five flat minutes is ~50 consecutive misses; a
-      # deploy or a Postgres restart is well inside it.
+      # ~10 min to page (5m flat window + `for: 5m`). Ledgers close every ~5-6 s, so
+      # deploys and Postgres restarts fit well inside it.
       - alert: stellarindex_ingestion_ledger_stalled
         expr: |
           (
@@ -302,20 +241,11 @@ groups:
             minutes. Usually a contract-event-schema change or a regression
             in the decoder.
 
-      # A decoder CRASHED on an input. The dispatcher recovers the panic,
-      # skips that one input, counts it as a decode error and lets the
-      # ledger complete — the only design that does not turn one decoder's
-      # bug into an all-source ingest outage (an unrecovered panic exits the
-      # process, systemd restarts it onto the same cursor, and after
-      # StartLimitBurst restarts the unit parks in `failed`). The trade is
-      # only sound if the skip is LOUD, so this pages on the FIRST occurrence.
-      #
-      # Raw value, not increase(): the counter is process-lifetime and a
-      # poison input usually panics ONCE, so the series is born at 1 and
-      # never moves again — increase() over a series that appears inside
-      # the lookback window evaluates to 0 and would never fire. `> 0`
-      # also keeps firing until the fixed binary is deployed, which is
-      # correct: the decoder is still dropping every event of that shape.
+      # The dispatcher recovers a decoder panic and skips that input, which is only
+      # sound if the skip is LOUD, so this pages on the FIRST occurrence.
+      # Raw value, not increase(): a poison input usually panics once, so the series is
+      # born at 1 and increase() reads 0. `> 0` also keeps firing until the fixed
+      # binary ships, as the decoder still drops that event shape.
       - alert: stellarindex_decoder_panicked
         expr: stellarindex_decoder_panics_total > 0
         for: 0m
@@ -337,26 +267,14 @@ groups:
             op_index / stack), fix the decoder, then re-derive the window
             with projector-replay or ch-rebuild.
 
-      # Oracle capture-totality (docs/design/oracle-capture-totality-design.md):
-      # an indexed on-chain oracle (Reflector / RedStone / Band) is
-      # publishing a symbol / feed_id the canonical allow-list does not
-      # map. The observations are recorded verbatim as `raw:` rows, and
-      # this alert means "extend the allow-list / feed registry" — a
-      # mapping gap only a code change closes. 25h window: band publishes
-      # once a day, so a trailing window shorter than its cadence flaps
-      # daily. An unmapped symbol recurs on EVERY event of that source
-      # until the registry catches up, so any increase is a persistent
-      # gap, not a one-off.
+      # Oracle capture-totality (docs/design/oracle-capture-totality-design.md): a
+      # Reflector / RedStone / Band symbol or feed_id the allow-list does not map is
+      # stored as `raw:` rows, so nothing is lost; only a code change closes the gap.
+      # 25h window: band publishes daily, so a shorter trailing window flaps. An
+      # unmapped symbol recurs on every event, so any increase is a persistent gap.
       #
-      # INFORMATIONAL, not ticket. An oracle listing a new token is normal
-      # business, not a fault of ours, and we index what our sources
-      # publish rather than holding opinions about which tickers deserve
-      # to exist. The observations are captured under `raw:<symbol>`
-      # either way, so nothing is lost while this is open — which is
-      # exactly why it should not sit in the ticket queue competing with
-      # things that ARE broken. It routes to its own low-traffic channel
-      # so the notice still arrives and a mapping can be added when
-      # convenient.
+      # INFORMATIONAL, not ticket: an oracle listing a new token is not our fault and
+      # would compete with things that ARE broken. Routes to a low-traffic channel.
       - alert: stellarindex_ingestion_oracle_unknown_symbols
         expr: sum by (source) (increase(stellarindex_source_unknown_symbols_total[25h])) > 0
         for: 30m
@@ -381,27 +299,16 @@ groups:
             doing at leisure, which is why this is informational rather than a
             ticket. See the runbook.
 
-      # A slot whose feed_id the record layer cannot represent at
-      # all (empty / >64 bytes / a byte outside printable ASCII) is
-      # DROPPED — not even a raw: row lands. Its own alert, not a fold
-      # into the unknown-symbols one above: that alert's remedy is
-      # "extend the registry, then promote the raw rows in place", and
-      # there are no raw rows here to promote — this needs the registry
-      # entry AND a replay. Only RedStone can realistically fire it
-      # (feed_ids are ScString; Reflector/Band symbols are ScSymbol).
-      # Same 25h/30m shape as its sibling so a daily-cadence oracle
-      # cannot flap it.
+      # A feed_id the record layer cannot represent (empty, >64 bytes, non-printable) is
+      # DROPPED with no raw: row. Separate from unknown_symbols because that remedy
+      # promotes raw rows in place, and here there are none: it needs the registry entry
+      # AND a replay. Mostly RedStone (ScString feed_ids). Same 25h/30m shape so a
+      # daily-cadence oracle cannot flap it.
       #
-      # Second arm, for the same reason stellarindex_decoder_panicked
-      # above compares the raw value: the counter is an unseeded
-      # CounterVec, so
-      # a `{source}` child born at N and never incremented again has a
-      # flat range and increase() reads 0 — the FIRST unrepresentable
-      # feed_id a source ever publishes would be invisible to the
-      # increase() arm alone. `unless ... offset 25h` reads "this child
-      # exists now and did not exist one window ago" (the
-      # backup-offsite.yml idiom) and falls quiet when the birth ages out
-      # of the window, so a flat counter still does not ticket forever.
+      # Second arm, as in decoder_panicked: the counter is an unseeded CounterVec, so a
+      # child born at N reads 0 under increase(). `unless ... offset 25h` reads "exists
+      # now, did not exist a window ago" (backup-offsite.yml idiom) and goes quiet once
+      # the birth leaves the window.
       - alert: stellarindex_ingestion_oracle_unrepresentable_symbols
         expr: |
           sum by (source) (increase(stellarindex_source_unrepresentable_symbols_total[25h])) > 0
@@ -427,21 +334,14 @@ groups:
             later. Closing it needs a feed-registry / allow-list entry AND
             a replay of the affected ledgers. See the runbook.
 
-      # Note — `for:` equal to the increase window is DELIBERATE on this
-      # rule. That shape cannot fire on one isolated increment (true for W
-      # after it, pending needs a further W); it fires only while increments
-      # keep arriving, which is exactly what this rule's own description
-      # asks for. The any-increase TRIPWIRES that shared the shape by accident
-      # (persist_drop, trade_buffer_drop, projector row_quarantined,
-      # ledgerstream tier_both_missing) are `for: 0m`. Pinned both ways in
-      # deploy/monitoring/rule-tests/tripwire-isolated-increment*_test.yml.
-      # Applies equally to stellarindex_ingestion_discovery_record_failures
-      # and the two stellarindex_ingestion_ch_live_sink_drops* rules below
-      # ("drops are normal in rare bursts … fires when dropping is
-      # continuous" — clickhouse.md#stellarindex_ingestion_ch_live_sink_drops).
-      # The marker below is what scripts/ci/lint-tripwire-window.py reads;
-      # each of those rules carries its own, because a waiver covers only
-      # the rule directly beneath it.
+      # `for:` equal to the increase window is DELIBERATE here: it cannot fire on one
+      # isolated increment, only while increments keep arriving, which is what this
+      # rule's description asks for. The any-increase tripwires (persist_drop,
+      # trade_buffer_drop, projector row_quarantined, ledgerstream tier_both_missing)
+      # use `for: 0m`. Pinned in deploy/monitoring/rule-tests/tripwire-isolated-increment*_test.yml.
+      # Same for discovery_record_failures and the two ch_live_sink_drops* rules. Each
+      # carries its own waiver marker (read by lint-tripwire-window.py) because a
+      # waiver covers only the rule directly beneath it.
       # lint-tripwire-window:sustained: informational; one dropped hit is
       # best-effort by design, the description asks for "continued doing so
       # for 10 minutes"
@@ -461,41 +361,21 @@ groups:
             stall the main ingest path, but discovery coverage is degrading
             under recorder pressure or buffer saturation.
 
-      # SENSITIVE (rate > 0) tripwire on the money-flow insert kinds
-      # (the soroswap-router + defindex persist paths count a dropped swap /
-      # vault-flow row in source_insert_errors_total like every sibling). The
-      # generic stellarindex_ingestion_insert_errors alert only fires above
-      # 0.1/s, so a low-rate silent drop would slip past it.
-      # kind="trade" (a trade permanently dropped on a data fault: sdex,
-      # the projected DEXes, external) is in the set too. A ctx-abandoned
-      # trade retry (cursor held, re-derivable) counts as
-      # kind="trade_abandoned" and is deliberately NOT in it.
-      # `for: 0m`, NOT `for:` = the increase window. A tripwire must
-      # fire on ONE isolated increment, and `increase(m[W]) > 0` with
-      # `for: W` cannot: the expression is true only for W after the
-      # increment, and the pending period needs it true for a further W,
-      # so it would fire only while increments KEPT arriving — a
-      # sustained-rate alert wearing a tripwire's description. A `for:`
-      # shorter than the window would be a pure delay that filters nothing
-      # (the expression cannot go false sooner than W after the event), so
-      # there is none, as stellarindex_ingestion_sink_undrained_rows does.
-      # Second arm: this CounterVec child is not pre-seeded, so it is BORN
-      # at 1 by the very increment the alert is for, and increase() over a
-      # series with no earlier sample reads 0. Counters reset on every
-      # deploy, so "first drop of this process life" is the common case.
-      # `unless … offset` reads "exists now, did not exist one window ago"
-      # — the same idiom as the oracle-symbol rules in this tree; it goes
-      # quiet once the birth leaves the window, so an old count never
-      # re-fires.
-      # KNOWN FALSE POSITIVE of that arm (accepted at ticket severity, as
-      # the oracle-symbol rules accept it): "did not exist one window ago"
-      # is also true when PROMETHEUS has no sample there. After a
-      # Prometheus outage or scrape gap longer than the 5m lookback, every
-      # child already above 0 reads as newly born while `offset 15m` lands
-      # in the hole, and this tickets for up to 15m with no new drop.
-      # Check `increase()` on the series before treating such a ticket as
-      # a drop. It is why the arm is not used on a page. Pinned as a known
-      # limitation in rule-tests/tripwire-isolated-increment*_test.yml.
+      # SENSITIVE (rate > 0) tripwire on the money-flow insert kinds. The generic
+      # insert_errors alert only fires above 0.1/s, so a low-rate silent drop slips
+      # past it. kind="trade" is a permanent data-fault drop; a ctx-abandoned retry
+      # (cursor held, re-derivable) is kind="trade_abandoned" and deliberately excluded.
+      # `for: 0m`: increase(m[W]) > 0 with `for: W` cannot fire on one isolated
+      # increment (true for W, needs W more), and a shorter `for:` filters nothing.
+      # Second arm: the CounterVec child is not pre-seeded, so the very increment we
+      # alert on births it at 1 and increase() reads 0 (counters reset on every
+      # deploy). `unless ... offset` = "exists now, not one window ago"; it goes quiet
+      # once the birth leaves the window.
+      # KNOWN FALSE POSITIVE of that arm, accepted at ticket severity (and why it is
+      # not used on a page): after a Prometheus gap longer than the 5m lookback every
+      # child above 0 looks newly born, so this tickets for up to 15m with no new drop.
+      # Check `increase()` on the series first. Pinned in
+      # rule-tests/tripwire-isolated-increment*_test.yml.
       - alert: stellarindex_ingestion_persist_drop
         expr: |
           increase(stellarindex_source_insert_errors_total{kind=~"trade|soroswap_router_swap|defindex_flow_strategy|defindex_flow_vault"}[15m]) > 0
@@ -525,10 +405,9 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
 
-      # Discovery Recorder.Record failures inside the async sink: without
-      # this count a recorder outage would silently stop discovered_assets
-      # from growing. Informational (best-effort: the contract re-appears
-      # on a later event), same posture as discovery_drops.
+      # Recorder.Record failures in the async sink; without this a recorder outage
+      # silently stops discovered_assets growing. Informational posture as
+      # discovery_drops (the contract re-appears on a later event).
       # lint-tripwire-window:sustained: best-effort write, the contract
       # re-appears on a later event; the description asks for "kept failing
       # for 10 minutes" (see the `for:` note above discovery_drops)
@@ -596,18 +475,12 @@ groups:
             certified-lake tail (the coverage claim's substrate) is at
             risk. Treat as data-loss-risk (ADR-0041).
 
-      # `errored` is a different fault from outcome="dropped" (which the
-      # live-sink pages match). A drop is the sink shedding a ledger it
-      # accepted; an error is either ExtractLedger failing before the
-      # sink is even offered the ledger (cmd/stellarindex-indexer/
-      # main.go, the sampled `ch extract` WARN) or the sink's own
-      # Add/Flush failing. The remedies differ, so this is its own rule
-      # rather than a widened matcher on the drop page.
-      #
-      # Range [30m] against `for: 15m` deliberately: a single step must
-      # stay true for longer than the pending period, otherwise the
-      # very fault this exists for (one meta-version break, then a dead
-      # indexer) resolves out from under itself.
+      # `errored` is not outcome="dropped": either ExtractLedger failed before the sink
+      # saw the ledger, or the sink's own Add/Flush failed. The remedies differ, hence
+      # a separate rule.
+      # [30m] range against `for: 15m` on purpose: one step must stay true longer than
+      # the pending period, or the fault (one meta-version break, then a dead indexer)
+      # resolves under itself.
       - alert: stellarindex_ingestion_ch_live_sink_errors
         expr: increase(stellarindex_ch_live_sink_ledgers_total{outcome="errored"}[30m]) > 0
         for: 15m
@@ -631,14 +504,10 @@ groups:
             leaves the hole, and internal/projector clamps to the
             contiguous watermark behind it.
 
-      # The read-undercount twin of the errored rule above. An undercount
-      # ledger is NOT an error: the extract succeeds and its ledgers row is
-      # written, so the commit marker claims a ledger whose contract_events
-      # are short, and ch-live-catchup (which re-fills MISSING ledgers)
-      # never revisits it. On the census path the ledger_ingest_log row is
-      # skipped instead, leaving a substrate gap. Same [30m] / for: 15m
-      # shape as the errored rule so one isolated bad ledger stays true
-      # past the pending period.
+      # Read-undercount twin of the errored rule: the extract succeeds and the ledgers
+      # row is written, so the commit marker claims a ledger with short contract_events
+      # that ch-live-catchup (which refills MISSING ledgers) never revisits. The census
+      # path skips the ledger_ingest_log row instead. Same [30m] / for: 15m shape.
       - alert: stellarindex_ingestion_ch_live_sink_read_undercount
         expr: increase(stellarindex_ch_live_sink_read_undercount_total[30m]) > 0
         for: 15m
@@ -660,23 +529,14 @@ groups:
             heal the lake case: the ledgers row exists. A climb on
             every ledger is a TransactionMeta version break.
 
-      # Served-tier twin of the ch_live_sink rules above. The Postgres
-      # pipeline sink's shutdown drain is bounded (pipeline.ShutdownDeadline
-      # → drainTimeout) and the indexer upserts the ledger cursor per
-      # ledger BEFORE the sink writes, so a row the drain abandons is a
-      # served-tier gap the cursor never revisits. Until this counter the
-      # loss was one ERROR log line ("abandoned on shutdown — re-derive
-      # this ledger range") that nothing alerted on.
-      #
-      # `for: 0m` + a 1h range deliberately: the loss is a COMPLETED event,
-      # not a sustained condition — the process exits within seconds of
-      # the increment, so there is nothing to wait for and a `for:` would
-      # only risk the alert resolving before it fired. The 1h window keeps
-      # the ticket visible long enough to be read after a deploy;
-      # increase() carries the pre-restart value across the counter reset
-      # that follows. Ticket, not page: the rows are recoverable (trades
-      # from the CH lake via ch-rebuild -sdex-gaps, events via their
-      # source's gap detector) — but only if someone acts.
+      # Served-tier twin of the ch_live_sink rules. The Postgres sink's shutdown drain
+      # is bounded and the cursor is upserted before the sink writes, so an abandoned
+      # row is a served-tier gap the cursor never revisits.
+      # `for: 0m` with a 1h range: the loss is a completed event (the process exits
+      # within seconds), so a `for:` could only let it resolve before firing. 1h keeps
+      # the ticket readable after a deploy and increase() carries the pre-restart value
+      # across the counter reset. Ticket, not page: rows are recoverable (ch-rebuild
+      # -sdex-gaps, the source's gap detector) but only if someone acts.
       - alert: stellarindex_ingestion_sink_undrained_rows
         expr: increase(stellarindex_sink_undrained_rows_total[1h]) > 0
         for: 0m
@@ -697,16 +557,12 @@ groups:
             (events); re-derive it from the CH lake (ADR-0034) per the
             runbook. Usually Postgres was slow or down during a deploy.
 
-      # ADR-0041: the trade sink RETRIES an infrastructure-classified
-      # insert failure (connection refused/reset, PG restarting) with
-      # backpressure instead of dropping the write. While it retries, the
-      # on-chain drain goroutine is blocked, so the ledger cursor STALLS
-      # (nothing lost) but the served tier is frozen. A sustained retry
-      # rate is the early signal that Postgres is unreachable and ingest
-      # is backpressured. Ticket, not page: no data is being lost, and
-      # cursor-stuck / all-sources-stopped page separately if this turns
-      # into a full outage. Mirror of the rule in
-      # deploy/monitoring/rules/ingestion.yml (the pair lint keeps both in sync).
+      # Mirror of the rule in deploy/monitoring/rules/ingestion.yml (pair lint keeps both in sync).
+      # ADR-0041: infra insert failures retry with backpressure instead of dropping.
+      # The drain goroutine blocks, so the cursor stalls and the served tier freezes
+      # with nothing lost; a sustained retry rate is the early sign Postgres is
+      # unreachable. Ticket, not page: cursor-stuck / all-sources-stopped page if it
+      # becomes a full outage.
       - alert: stellarindex_ingestion_trade_insert_backpressure
         expr: sum(rate(stellarindex_trade_insert_retries_total{outcome="retry"}[5m])) > 0
         for: 10m
@@ -749,22 +605,14 @@ groups:
             loss: a permanent data fault (kind=trade) or external-buffer
             overflow (kind=dropped). Escalate quickly if the rate is high.
 
-      # Mirror of the rule in deploy/monitoring/rules/ingestion.yml (the
-      # pair lint requires both copies to stay in sync). ADR-0041
-      # companion to trade_insert_backpressure above: kind="dropped" is
-      # GENUINE, PERMANENT loss — the external (CEX/FX) retry buffer
-      # trimmed its oldest entry because an infra fault (sick DB) outlasted
-      # the bounded buffer, or a per-row isolation pass hit a permanent data
-      # fault. The stellarindex_ingestion_insert_errors alert above only
-      # fires above 0.1/s summed across EVERY kind fleet-wide, so a slow
-      # trickle of buffer-overflow drops during a sustained-but-not-total DB
-      # outage could sit below that threshold indefinitely. Sensitive (any
-      # nonzero increase).
-      # `for: 0m` plus the born-inside-the-window arm — see
-      # stellarindex_ingestion_persist_drop above for why `for: 15m` over a
-      # 15m increase window could never fire on a single drop, why an
-      # unseeded {source,kind="dropped"} child needs the second arm, and
-      # that arm's known false positive after a Prometheus scrape gap.
+      # Mirror of the rule in deploy/monitoring/rules/ingestion.yml (pair lint keeps both in sync).
+      # ADR-0041 companion to trade_insert_backpressure: kind="dropped" is permanent
+      # loss (the external CEX/FX retry buffer trimmed its oldest entry, or per-row
+      # isolation hit a permanent data fault; internal/pipeline/trade_sink.go). The
+      # fleet-wide insert_errors gate (0.1/s) can miss a slow trickle during a partial
+      # DB outage, so any increase tickets.
+      # `for: 0m` plus the born-inside-the-window arm: see persist_drop above for why,
+      # including that arm's known false positive after a Prometheus gap.
       - alert: stellarindex_ingestion_trade_buffer_drop
         expr: |
           increase(stellarindex_source_insert_errors_total{kind="dropped"}[15m]) > 0
@@ -794,14 +642,11 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_trade_insert_backpressure
 
-      # Classic-supply companion to stellarindex_ingestion_persist_drop
-      # / trade_buffer_drop above, same reason — kind="trustline_observation"
-      # measured ~17,663 errors over 30 days on r1 (~0.007/s average), well
-      # under the generic insert_errors 0.1/s fleet-wide gate, so no other
-      # alert covers it. persistTrustlineObservation (internal/pipeline/sink.go)
-      # has no retry/backpressure path of its own (unlike trade, ADR-0041): a
-      # failed insert is one classic-supply trustline delta permanently
-      # missing from that account's history.
+      # Classic-supply companion to persist_drop / trade_buffer_drop: trustline_observation
+      # errors (~0.007/s measured on r1) sit far under the generic 0.1/s insert_errors
+      # gate. persistTrustlineObservation has no retry/backpressure path (unlike trade,
+      # ADR-0041), so a failed insert is a trustline delta permanently missing from
+      # that account's history.
       - alert: stellarindex_ingestion_trustline_observation_drop
         expr: |
           increase(stellarindex_source_insert_errors_total{kind="trustline_observation"}[15m]) > 0
@@ -829,16 +674,15 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
 
-      # Detects cursor-replay / stuck-tip pattern via the
-      # trade_insert_outcome_total counter.
-      # Mirror of the rule in deploy/monitoring/rules/ingestion.yml;
-      # the per-host pair lint requires both copies to stay in sync.
-      # `unless on (source) rate(new[10m]) > 0`, not
-      # `and on (source) rate(new[10m]) == 0` — the join form needs the
-      # outcome="new" child series to EXIST, and a source that has
-      # produced only duplicates since process start never creates it
-      # (call-site-seeded counter, config-dependent `source` label), so
-      # the `and` form would be silent in exactly its target scenario.
+      # Mirror of the rule in deploy/monitoring/rules/ingestion.yml (pair lint keeps both in sync).
+      # Cursor-replay: trade_inserts_total can tick while the trades max(ts) is hours
+      # old, every attempt an ON CONFLICT DO NOTHING no-op; neither insert_errors nor
+      # source_stopped fires. Fires on a duplicate rate with zero new rate for 10m.
+      # Ticket: degraded freshness, not outage.
+      # `unless on (source) rate(new[10m]) > 0`, not `and ... == 0`: the outcome="new"
+      # child is call-site-seeded with a config-dependent `source` label, so a source
+      # that only ever hit the conflict path has no such series and an `and` join would
+      # stay silent in exactly this flood. `unless` treats absent and zero alike.
       - alert: stellarindex_ingestion_duplicate_flood
         expr: |
           sum by (source) (rate(stellarindex_trade_insert_outcome_total{outcome="duplicate"}[10m])) > 0.5
@@ -866,24 +710,14 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_duplicate_flood
 
-      # Unit-ratio trade sentinel. Mirror of the rule in
-      # deploy/monitoring/rules/ingestion.yml; the pair lint requires both
-      # copies to stay in sync. A decoder field-mapping bug that
-      # swaps/collapses base_amount and quote_amount lands every trade of
-      # a source at an exact 1:1 price (measured: 237k Phoenix rows, for
-      # months) — and ADR-0033 completeness checks verify presence, not
-      # economic plausibility, so nothing else catches it.
-      # stellarindex_dex_trade_unit_ratio_total (emitted from
-      # internal/storage/timescale InsertTrade + BatchInsertTrades)
-      # bumps per landed ON-CHAIN trade whose base_amount exactly
-      # equals quote_amount (CEX/FX excluded — they scale amounts
-      # differently). Legitimate 1:1 trades are COMMON on parity pairs
-      # (yUSDC/USDC, yETH/ETH wrapper redemptions; EUR-stable crosses —
-      # a busy wrapper morning can reach ~2% of sdex flow), so an
-      # absolute threshold false-fires. The decode-bug fingerprint makes
-      # EVERY trade 1:1, so alert on the FRACTION of the source's flow
-      # (>50%) with a >25 min-volume guard. Ticket, not page — a
-      # data-quality signal, not an outage.
+      # Mirror of the rule in deploy/monitoring/rules/ingestion.yml (pair lint keeps both in sync).
+      # Unit-ratio sentinel: a decoder field-mapping bug that collapses base_amount and
+      # quote_amount puts every trade of a source at exactly 1:1, and ADR-0033
+      # completeness checks verify presence, not plausibility. Counts landed ON-CHAIN
+      # trades with base == quote (CEX/FX scale amounts differently, so excluded).
+      # Legitimate 1:1 trades are common on parity pairs (yUSDC/USDC, yETH/ETH,
+      # EUR-stables; a few % of sdex flow), so alert on the FRACTION (>50%) with a
+      # >25 trades/30m volume guard. Ticket: data quality, not outage.
       - alert: stellarindex_dex_trade_unit_ratio_detected
         expr: |
           (
@@ -916,19 +750,16 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex.md#stellarindex_dex_trade_unit_ratio_detected
 
-      # Mirror of source_insert_stale in deploy/monitoring/rules/
-      # ingestion.yml — timestamp-shape sibling to duplicate_flood
-      # above. The pair lint requires both copies to stay in
-      # sync.
+      # Mirror of the rule in deploy/monitoring/rules/ingestion.yml (pair lint keeps both in sync).
+      # Timestamp-shape sibling of duplicate_flood: last successful INSERT older than
+      # the budget while source_enabled=1. Covers low-volume sources (phoenix, comet)
+      # whose insert rate never crosses the rate-shape 0.5/s threshold.
       - alert: stellarindex_ingestion_source_insert_stale
-        # 1 h budget for normal sources; 24 h for the genuinely-sparse Soroban
-        # AMMs (comet, phoenix). Comet is tiny — ~20-70 trades/day, bursty —
-        # so multi-hour quiet stretches are normal; phoenix's measured 30-day
-        # max gap is 8h28m, and a genuine 12h market lull (zero swap events on
-        # any known or unknown pool in the lake) trips a 6 h budget. 24 h
-        # still catches a real day-scale stall; the ADR-0033 completeness
-        # verdict is the correctness net. Tune the regex as new sparse
-        # sources appear.
+        # 1 h budget for normal sources; 24 h for the sparse Soroban AMMs (comet,
+        # phoenix): comet is ~20-70 trades/day and bursty, phoenix's measured 30-day max
+        # gap is 8h28m, and a lake-verified 12h lull trips a 6 h budget. 24 h still
+        # catches a day-scale stall; the ADR-0033 completeness verdict is the
+        # correctness net. Extend the regex as new sparse sources appear.
         expr: |
           (
             time() - stellarindex_source_last_insert_unix > 3600
@@ -962,10 +793,8 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_duplicate_flood
 
-      # Data-derived gap detector — mirrors the multi-host rule.
-      # See deploy/monitoring/rules/ingestion.yml for the full
-      # rationale. The pair lint requires both copies to stay
-      # in sync.
+      # Data-derived gap detector; rationale in deploy/monitoring/rules/ingestion.yml
+      # (the pair lint requires both copies to stay in sync).
       - alert: stellarindex_ingest_gap_detected
         expr: |
           max by (source) (stellarindex_ingest_gap_max_size_ledgers) > 1000
@@ -1055,55 +884,27 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap.md#stellarindex_ingest_gap_detector_silent
 
-      # ── long-running ops jobs ──────────────────────────────────────
-      # Long backfills run for days, and without these alerts a HUNG one is
-      # indistinguishable from a working one unless somebody happens to be
-      # tailing the journal.
-      #
-      # internal/ops/opsutil.JobHeartbeat publishes three things
-      # separately, on purpose, because they need different responses:
-      #   running        1 while the process is alive
-      #   heartbeat_unix rewritten on a 60s TIMER, independent of work
-      #   progress_total units completed
-      #
-      # so the two alerts below are genuinely distinct failure modes and
-      # not two thresholds on one signal.
-      #
-      # `running == 1` in both exprs is load-bearing: after a clean exit
-      # the job stamps running=0 and progress stops advancing forever, so
-      # without that guard a finished backfill would alert eternally.
+      # ── long-running ops jobs ──
+      # Without these a HUNG multi-day backfill looks like a working one.
+      # opsutil.JobHeartbeat publishes running, heartbeat_unix (60s timer, independent
+      # of work) and progress_total separately because the two alerts below are
+      # distinct failure modes.
+      # `running == 1` in both exprs is load-bearing: a finished job stamps running=0
+      # and stops progressing, so without it every finished backfill alerts forever.
       - alert: stellarindex_ops_job_heartbeat_stale
-        # Operand ORDER is load-bearing, not style: `and` returns the LEFT
-        # side's sample value, so with `running == 1` on the left the
-        # summary's {{ $value }} rendered the flag (1 → "1s ago") instead
-        # of the staleness. Caught by
-        # deploy/monitoring/rule-tests/ops-job_test.yml.
-        #
-        # The JOIN KEY is `(ops_job, instance)` and both halves matter.
-        #
-        # `ops_job` because `job` is a Prometheus reserved label: node_exporter
-        # is scraped with honor_labels unset, so a textfile that exposed
-        # `job="ch-backfill"` arrives as `job="node_exporter"` with the real
-        # value demoted to `exported_job`. Joining `on (job)` therefore matched
-        # EVERY ops job on the host as one group — a cleanly-finished
-        # `backfill` (running=0, heartbeat frozen) joined against a healthy
-        # running `ch-backfill` and ticketed forever. Two .prom files per host
-        # is the steady state: the heartbeat is wired into both subcommands.
-        #
-        # `instance` because without it a job running on host B satisfies host
-        # A's `running == 1` guard, so a genuinely dead job on A is masked by a
-        # healthy namesake on B. Multi-host is exactly what this tree is for.
-        #
-        # `pid` because the emitter's concurrency guard (opsutil.claimPath)
-        # gives the SECOND concurrent run of a subcommand its own
-        # `<file>.pid<N>.prom`, carrying an extra `pid` label. Without pid in
-        # the join, the flock winner and that sibling share a match key
-        # exactly — so a winner that finished cleanly gets "rescued" by the
-        # still-running loser and tickets forever. Same cross-match class the
-        # `ops_job` rename fixed one scope out. PromQL treats an absent label
-        # as "", so the primary (no pid) matches only the primary and a .pid
-        # sibling only its own; the primary's series identity is unchanged,
-        # which is why pid is NOT emitted unconditionally.
+        # Operand ORDER is load-bearing: `and` returns the LEFT sample's value, and
+        # `running == 1` on the left made {{ $value }} render the flag instead of the
+        # staleness (deploy/monitoring/rule-tests/ops-job_test.yml).
+        # Join key (ops_job, instance, pid), all three needed:
+        #   - `ops_job`, not `job`: `job` is reserved (node_exporter has honor_labels
+        #     unset, so a textfile `job` is demoted to `exported_job`), and `on (job)`
+        #     matched every ops job on the host as one group.
+        #   - `instance`: otherwise a healthy namesake on host B masks a dead job on A.
+        #   - `pid`: opsutil.claimPath gives a concurrent second run its own
+        #     `.pid<N>.prom` with a `pid` label; without it the still-running loser
+        #     rescues a cleanly finished winner and tickets forever. An absent label is
+        #     "", so the primary matches only itself; that is why pid is not emitted
+        #     unconditionally.
         expr: |
           (time() - stellarindex_ops_job_heartbeat_unix) > 900
           and on (ops_job, instance, pid)
@@ -1135,40 +936,19 @@ groups:
 
       - alert: stellarindex_ops_job_no_progress
         # Same operand-order and (ops_job, instance, pid) join discipline as
-        # the sibling above — see its comment for why none of the three is
-        # optional.
-        #
-        # TWO progress counters, and the alert needs BOTH flat.
-        #
-        # `progress_total` counts completed units (ledgers, rows). For some
-        # jobs that unit is structurally zero for whole phases of a
-        # perfectly healthy run: `usd-volume-restamp -chunks` must
-        # decompress a Timescale chunk before it can restamp one row in it,
-        # and on r1 that decompress takes 49+ minutes on a 17.3 GB chunk
-        # and about 1.5 hours on a 159.7 GB one. Alerting on progress_total
-        # alone would ticket on EVERY healthy chunked run, and an alert that
-        # fires on every healthy run is one the operator learns to ignore —
-        # the same blindness it exists to prevent, reached by a different
-        # route.
-        #
-        # The answer is NOT a phase mute or a wider window: that phase is
-        # the longest and most dangerous part of the run, and "alive and
-        # hung" is real there (decompress_chunk waits on a lock the
-        # ledgerstream replay can hold; a stalled read never returns). The
-        # job reports the work it IS doing — `progress_bytes_total`,
-        # the chunk's on-disk size climbing as its heap and indexes are
-        # extended (measured on TimescaleDB 2.26.4 / PG 15.17: every sample
-        # moved through a decompress). A WEDGED decompress extends no
-        # files, so both counters go flat and this still fires.
-        #
-        # `or changes(progress_total[30m]) * 0` defaults the bytes term to
-        # ZERO for a job that does not publish that series. Without it the
-        # `+` would be a one-to-one vector match that DROPS every label set
-        # missing the right-hand side, and this alert would go silent for
-        # any job whose binary lacks the series — a monitoring hole
-        # disguised as a monitoring upgrade. The emitter publishes the
-        # series unconditionally (at 0), so the fallback only covers a job
-        # still running an older binary across a rollout.
+        # heartbeat_stale.
+        # TWO progress counters, both must be flat. progress_total is structurally zero
+        # for whole phases of a healthy run (usd-volume-restamp -chunks decompresses a
+        # Timescale chunk first: 49+ min for 17 GB, ~1.5 h for 160 GB on r1), so alone it
+        # would ticket every healthy chunked run. No phase mute or wider window: that
+        # phase is the most dangerous and "alive and hung" is real there
+        # (decompress_chunk can wait on a lock). progress_bytes_total (chunk on-disk size
+        # climbing) moves through a decompress; a wedged one extends no files, so both
+        # go flat.
+        # `or changes(progress_total[30m]) * 0` defaults the bytes term to 0 for jobs
+        # that do not publish it; otherwise the one-to-one `+` drops those label sets and
+        # the alert goes silent. The emitter publishes it at 0, so this only covers older
+        # binaries mid-rollout.
         expr: |
           (
             changes(stellarindex_ops_job_progress_total[30m])
@@ -1205,21 +985,11 @@ groups:
             recurred (galexie wedge, 2026-07-05) and the stack is the
             only evidence of which read blocked.
 
-      # ── A job that RAN TO COMPLETION and FAILED ──
-      # `stellarindex_ops_job_last_exit_ok`, emitted by
-      # opsutil.JobHeartbeat.render(). A job that exits 1 (backfill hit a
-      # permanent error, verify-contiguity found a gap it couldn't close)
-      # finishes cleanly from the heartbeat's point of view: running→0, no
-      # further staleness, no_progress's `running == 1` guard goes false
-      # too. Both siblings are correctly silent on it, so without this rule
-      # nothing watches it.
-      #
-      # No `running == 1` guard here — unlike the two siblings above, this
-      # alert is specifically about the TERMINAL state a finished run left
-      # behind, not about a process that is still alive. `for: 0m` matches
-      # the other terminal-state alerts in this tree (e.g.
-      # stellarindex_projector_row_dropped_permanent): one bad exit is the
-      # whole signal, not a rate to sustain.
+      # ── a job that ran to completion and FAILED ──
+      # last_exit_ok: heartbeat_stale and no_progress are both correctly silent on a
+      # job that exited non-zero (running=0), so nothing else watches it. No
+      # `running == 1` guard: this is the terminal state a finished run left. `for: 0m`
+      # because one bad exit is the whole signal (as stellarindex_projector_row_dropped_permanent).
       - alert: stellarindex_ops_job_run_failed
         expr: stellarindex_ops_job_last_exit_ok == 0
         for: 0m
@@ -1247,16 +1017,11 @@ groups:
             same as heartbeat_stale — deliberate, so a failed run does not
             go invisible just because nothing is currently running.
 
-      # The three dispatcher whole-transaction skip counters
-      # (tx_read_errors, tx_event_read_errors, entry_meta_unsupported)
-      # log a WARN; this makes a sustained climb visible to on-call.
-      # to on-call. Sensitive (any nonzero increase): each counter means
-      # a whole transaction's events, or its whole apply-phase entry
-      # walk, vanished — indistinguishable downstream from an empty
-      # ledger. evicted_keys_unreadable is the ledger-level sibling: a
-      # whole ledger's state-archival evictions vanished the same way.
-      # `for: 0m` (not the window's 15m) so a lone occurrence
-      # still fires — see lint-tripwire-window.py.
+      # Whole-transaction skip counters (tx_read_errors, tx_event_read_errors,
+      # entry_meta_unsupported) plus evicted_keys_unreadable (a ledger's evictions): each
+      # means events or an entry walk vanished, indistinguishable downstream from an
+      # empty ledger, so any increase tickets. `for: 0m` so a lone occurrence fires —
+      # see lint-tripwire-window.py.
       - alert: stellarindex_ingestion_dispatcher_tx_skips
         expr: |
           increase(stellarindex_dispatcher_tx_read_errors_total[15m]) > 0
@@ -1285,24 +1050,14 @@ groups:
             ledger, not a failure, so any nonzero increase needs eyes.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_dispatcher_tx_skips
 
-      # stellarindex_source_uncorroborated_calls_total (an
-      # oracle-class ContractCall declared in the auth tree but never
-      # executed, so the dispatcher refused it before Decode) had a WARN
-      # log but no alert, so a rejected price-forgery attempt — or a
-      # routing-shape change that starts refusing legitimate calls — was
-      # invisible to on-call. Sensitive (any nonzero increase), same
-      # `for: 0m` reasoning as the tripwire above — see
-      # lint-tripwire-window.py.
-      # Second arm: this CounterVec{source} child is not pre-seeded, so a
-      # source's FIRST-EVER rejected call is BORN at 1 with no earlier
-      # sample and increase() reads 0 — the exact real-world case (an
-      # oracle a forgery attempt targets for the first time) would go
-      # silent. Same born-inside-the-window idiom as
-      # stellarindex_ingestion_persist_drop above. Both arms are wrapped
-      # in the same `sum by (source)` as the first arm — the metric's
-      # only label is `source`, but the scrape adds job/instance, and
-      # without the wrap the born arm's raw vector keeps them, producing
-      # a second, differently-labelled alert instance for the same event.
+      # An oracle-class ContractCall declared in the auth tree but never executed is
+      # refused before Decode; a rejected price-forgery attempt, or a routing change
+      # refusing legitimate calls, needs eyes. Any increase tickets; `for: 0m` as in
+      # the tripwire above — see lint-tripwire-window.py.
+      # Second arm: the CounterVec{source} child is not pre-seeded, so a source's
+      # first-ever rejection is born at 1 and increase() reads 0; same idiom as
+      # persist_drop. Both arms use `sum by (source)` so scrape-added job/instance
+      # labels don't produce a second, differently-labelled alert for one event.
       - alert: stellarindex_ingestion_uncorroborated_calls
         expr: |
           sum by (source) (increase(stellarindex_source_uncorroborated_calls_total[15m])) > 0

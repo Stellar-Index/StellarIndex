@@ -7,19 +7,10 @@ groups:
     interval: 30s
     rules:
 
-      # The scrape job is `node_exporter` in both the multi-host
-      # (configs/ansible/.../prometheus.yml.j2) and r1
-      # (configs/prometheus/prometheus.r1.yml) configs — there is no
-      # `node` job, so `up{job="node"}` would match nothing.
-      #
-      # `up == 0` only fires while the target is still known to
-      # Prometheus and merely failing to respond. If the target drops
-      # out of service discovery entirely (host deregistered, scrape
-      # config change), the `up{job="node_exporter"}` series itself
-      # goes absent and this alert never fires — same gap meta.yml's
-      # redis/postgres/pgbackrest/minio exporter-down alerts close with
-      # the `absent_over_time(...) == 1` arm, and this alert carries the
-      # same arm for node_exporter.
+      # The scrape job is `node_exporter` (there is no `node` job). `up == 0`
+      # cannot fire once a target drops out of service discovery, so the
+      # `absent_over_time(...) == 1` arm covers that, as in meta.yml's
+      # exporter-down alerts.
       - alert: stellarindex_host_down
         expr: |
           up{job="node_exporter"} == 0
@@ -70,11 +61,9 @@ groups:
             allocations; Postgres shared_buffers is the usual culprit if
             the box also runs other workloads.
 
-      # node_exporter's ZFS collector metric is `node_zfs_zpool_state`
-      # (there is no `node_zfs_pool_state`). It uses LOWERCASE state values
-      # (online|degraded|faulted|offline|removed|unavail|suspended) and
-      # labels the pool as `zpool`, with value 1 on the pool's current
-      # state. A rule on a name with no producer is a silently dead PAGE.
+      # node_exporter's ZFS metric is `node_zfs_zpool_state`, with LOWERCASE
+      # state values and a `zpool` label; value 1 marks the current state. A
+      # rule on a name with no producer is a silently dead PAGE.
       - alert: stellarindex_zfs_pool_degraded
         expr: node_zfs_zpool_state{state=~"degraded|faulted|unavail|suspended"} > 0
         for: 60s
@@ -91,43 +80,26 @@ groups:
             only ONE drive failure — a second failure before the resilver
             completes means data loss. Replace + resilver IMMEDIATELY.
 
-      # ── Pool capacity ─────────────────────────────────────────────
-      # No zpool-level capacity metric on this box: node_exporter's ZFS
-      # collector here exports only node_zfs_zpool_state + dataset IO
-      # counters (no size/alloc/free). All ZFS datasets share the pool's
-      # free space, so node_filesystem_avail_bytes{fstype="zfs"} (identical
-      # across every dataset) is the pool-free proxy. Without it a
-      # ~90%-full pool on r1 had NO fullness alert.
+      # ── Pool capacity ──
       #
-      # The floors are RATIOS of pool capacity, not absolute bytes, so they
-      # travel to any host unchanged. Absolute floors (1.3e12 / 0.65e12,
-      # calibrated to r1's ~16.8 TiB pool) mean something else on a
-      # differently-sized pool: r2/r3 (ADR-0016) have their own topologies,
-      # a 2 TB box that is 90 % EMPTY would trip a 1.3 TB floor (permanent
-      # false ticket), and a 100 TB box at 98 % full would never trip it
-      # (silent, which is the dangerous direction).
+      # No zpool size metric exists, so capacity is rebuilt from the dataset
+      # series: each dataset reports size = its used + the shared pool avail,
+      # so
+      #   pool_used = sum(size - avail), pool_avail = min(avail), pool_total = used + avail.
+      # A per-dataset avail/size ratio is NOT equivalent: with data spread
+      # over several datasets it looks comfortable while the pool is nearly
+      # full (fail-open).
       #
-      # Pool capacity has to be reconstructed from the dataset series
-      # because there is no zpool size metric: every ZFS dataset reports
-      # `size = <that dataset's used> + <shared pool avail>`, so
-      #   pool_used  = sum(size - avail) over the datasets, and
-      #   pool_avail = min(avail)         (identical across datasets),
-      #   pool_total = pool_used + pool_avail.
-      # A per-dataset `avail/size` ratio is NOT equivalent and must not be
-      # substituted: it reads the free fraction as avail/(one dataset's used
-      # + avail), so a pool whose data is spread across several datasets
-      # reports a comfortable ratio while the pool itself is nearly full —
-      # fail-open, the exact direction this alert exists to catch.
-      #
-      # Thresholds preserve r1's calibrated behaviour (1.3e12 and 0.65e12
-      # against ~16.8 TiB usable ≈ 18.5e12 B → 7 % and 3.5 %). ZFS is
-      # copy-on-write: it degrades sharply past ~90 % full and can stall
-      # writes near-full, so both floors sit well above 0.
+      # Floors are ratios so they hold on any pool size; absolute bytes would
+      # false-ticket an empty small box and never trip on a large full one
+      # (ADR-0016 hosts differ). 7 % and 3.5 % match r1's calibrated 1.3e12 /
+      # 0.65e12 B on ~16.8 TiB. ZFS is copy-on-write and degrades sharply past
+      # ~90 % full.
       #
       # SINGLE-POOL ASSUMPTION: instance-level aggregation treats all
       # fstype="zfs" mounts on a host as one pool (true on r1). A host with
-      # two zpools needs a `device=~` / `mountpoint=~` selector added here,
-      # or the two pools' used bytes are summed against one pool's free.
+      # two zpools needs a `device=~` / `mountpoint=~` selector, or the pools'
+      # used bytes are summed against one pool's free.
       - alert: stellarindex_zfs_pool_low_space
         expr: |
           min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})
@@ -183,41 +155,23 @@ groups:
             and Postgres. Reclaim space NOW (drop stale snapshots, move
             pgBackRest off-box) or ingestion will halt.
 
-      # ── NVMe error log + thermal ──────────────────────────────────
-      # Both alerts below named series nothing emits:
-      # `node_disk_io_errors_total` and `node_nvme_temperature_celsius`
-      # are not node_exporter metrics (the diskstats collector has no
-      # io-errors series, and node_exporter has no NVMe-thermal
-      # collector), so a drive could run hot or fill its error log with
-      # no alert at all.
+      # ── NVMe error log + thermal ──
       #
-      # The telemetry was there the whole time under different names:
-      # configs/ansible/roles/archival-node/tasks/10-observability.yml
-      # pipes the packaged
-      # `/usr/share/prometheus-node-exporter-collectors/nvme_metrics.py`
-      # into the SCRAPED textfile dir as `nvme.prom`, which publishes
-      # bare `nvme_<field>` series per device — the same source the three
-      # live wear alerts in storage.yml read
-      # (`nvme_percentage_used_ratio`, `nvme_available_spare_ratio`,
-      # `nvme_media_errors_total`). Both series named below were read off
-      # r1's scrape before repointing: four series each, one per device.
+      # Series come from the packaged nvme_metrics.py textfile collector
+      # (archival-node 10-observability.yml), the same source as the
+      # storage.yml wear alerts; node_exporter itself has no NVMe error-log or
+      # thermal series.
       #
       # Fired-state coverage: deploy/monitoring/rule-tests/infra_test.yml.
       - alert: stellarindex_nvme_smart_warn
-        # The controller's error log, not `nvme_media_errors_total`:
-        # that series already has its own alert next door
-        # (stellarindex_nvme_media_errors, storage.yml), and pointing
-        # both at it would notify twice for one event. The error log is
-        # also the wider signal — command timeouts and transport errors
-        # land there and never touch the media counter.
+        # The controller's error log, not `nvme_media_errors_total`: that has
+        # its own alert (stellarindex_nvme_media_errors, storage.yml) and
+        # reusing it would notify twice. The error log is wider: timeouts and
+        # transport errors never touch the media counter.
         expr: increase(nvme_num_err_log_entries_total[1h]) > 0
-        # 5m, not 1h. A `for` equal to the
-        # increase() window can never be satisfied by an isolated error:
-        # the expr is true for exactly the hour after the entry, so the
-        # condition expires at the same instant `for: 1h` would mature,
-        # and the single-error case this alert is named for would have
-        # to become a steady stream to notify. Same shape as the
-        # media-errors sibling (long window, short `for`).
+        # `for` 5m, not 1h: a `for` equal to the increase() window never
+        # matures for an isolated error, because the expr goes false at the
+        # same instant.
         for: 5m
         labels:
           severity: ticket
@@ -236,14 +190,9 @@ groups:
         expr: nvme_temperature_celsius > 70
         for: 5m
         labels:
-          # Page, not the ticket this carried while it was inert. The
-          # wear alerts next door have months of lead time and are
-          # procurement triggers; this is a drive already past its rated
-          # ceiling, throttling live IO and accelerating its own wear for
-          # as long as it stays there. `ticket` routes to a chat channel
-          # on a 24h repeat interval — the wrong latency for a condition
-          # that compounds every hour it is left alone, on a pool with
-          # single parity.
+          # Page: a drive past its rated ceiling throttles live IO and
+          # accelerates its own wear, on a single-parity pool. A 24h-repeat
+          # ticket is too slow.
           severity: page
           team: stellarindex
           component: infra
@@ -255,24 +204,16 @@ groups:
             catchup slows, Postgres WAL flush stalls. Check chassis airflow
             + ambient temperature.
 
-      # ── Textfile-collector scrape errors ─────────────────────
+      # ── Textfile-collector scrape errors ──
       #
-      # node_exporter's own `node_textfile_scrape_error` gauge is 1 when
-      # ANY file under --collector.textfile.directory failed to parse on
-      # the last scrape (malformed exposition, wrong HELP/TYPE line, a
-      # write caught mid-truncate). This host hangs a dozen alert
-      # families off that one directory — archive_completeness,
-      # sla_probe, nvme_*, process-mappings, zfs-snapshots, binary/stack
-      # version skew, api-smoke — and a parse failure silently drops the
-      # whole broken file's series, so every alert reading it goes quiet
-      # instead of firing. There was no rule on this metric at all: same
-      # "make the dead-alert state itself observable" pattern as
-      # stellarindex_metrics_registry_absent (metrics-registry.yml), one
-      # level further down the stack.
+      # node_textfile_scrape_error is 1 when ANY textfile-collector file
+      # failed to parse; that file's series then vanish and every alert
+      # reading it goes quiet instead of firing. Watches the alert inputs
+      # themselves (cf. stellarindex_metrics_registry_absent, metrics-
+      # registry.yml).
       #
-      # `for: 15m` rides out the tmp+mv atomic-write pattern every writer
-      # in 10-observability.yml uses — a scrape landing mid-rename would
-      # read a transient error node_exporter self-clears next cycle.
+      # `for: 15m` rides out the tmp+mv atomic-write pattern: a scrape mid-
+      # rename reads a transient error.
       - alert: stellarindex_textfile_scrape_error
         expr: node_textfile_scrape_error > 0
         for: 15m
@@ -296,46 +237,30 @@ groups:
             node_exporter's own log, fix or remove it, confirm the
             gauge clears.
 
-      # ── Catch-all: any systemd unit sitting in `failed` ───────────
+      # ── Catch-all: any systemd unit in `failed` ──
       #
-      # Most of this host's ~20 oneshot timers are named in NO alert
-      # rule. directory-sync shows why that matters: it is the SOLE
-      # writer of account_directory, which the scam-pricing gate reads on
-      # every aggregated price serve. It is Type=oneshot with no
-      # OnFailure and no metric, so if it stops, the table freezes at its
-      # last good snapshot, a newly-flagged scam issuer is never learned,
-      # and the gate keeps serving — reproducing the incident the gate
-      # was built to stop, with the gate present, correct, and reading
-      # stale input.
+      # Most oneshot timers are named in no alert. directory-sync is the sole
+      # writer of account_directory (read by the scam-pricing gate); if it
+      # fails silently the table freezes and the gate serves on stale input.
+      # So everything is covered unless a unit has its OWN alert with better
+      # triage.
       #
-      # Naming every unit individually leaves that gap, so this is
-      # the inverse: everything is covered unless a unit has its OWN
-      # alert with better triage. The exclusion list lives at
-      # scripts/ci/unit-failed-dedicated.baseline, and its self-test
-      # asserts each entry really is named in a rule file — an exclusion
-      # cannot be used to silence a unit nothing else watches.
+      # The exclusion list is scripts/ci/unit-failed-dedicated.baseline; its
+      # self-test asserts each entry is named in a rule file, so an exclusion
+      # cannot silence an unwatched unit.
       #
-      # Ticket, not page: a failed oneshot is rarely customer-impacting
-      # within minutes, and the units whose failure IS urgent already
-      # have dedicated alerts at their own severities.
+      # Ticket, not page: units whose failure is urgent have dedicated alerts.
       #
-      # A oneshot whose timer re-runs it more often than the ride-out
-      # (ch-live-catchup, every 10m) is never CONTINUOUSLY failed: each
-      # run is an `activating` dip, and a plain `== 1` resolves on the dip
-      # and restarts its pending clock, so a unit failing EVERY run never
-      # tickets. max_over_time[10m] bridges dips up to 10m, and `for:`
-      # grows by the same 10m so the ride-out is unchanged: a single
-      # failure must still persist 15m+ before it tickets.
+      # A oneshot re-run more often than the ride-out (ch-live-catchup, 10m)
+      # dips to `activating` each run, which resolves a plain `== 1` and
+      # resets `for`. max_over_time[10m] bridges the dips and `for:` grows by
+      # the same 10m, so a failure must still persist 15m+.
       - alert: stellarindex_worker_panicked
-        # RAW value, not increase(). A recovered panic means that worker is
-        # STOPPED until the process restarts, so the alert must describe the
-        # DEAD STATE, not the moment of death. `increase(...[10m]) > 0`
-        # auto-resolved about ten minutes after the panic while the worker
-        # was still gone — an all-clear for a condition that had not
-        # cleared. The counter resets on process start, which is exactly the
-        # operator action that fixes it, so the raw form clears itself at the
-        # right moment and only then. Same treatment as
-        # stellarindex_decoder_panicked.
+        # RAW value, not increase(): a recovered panic leaves the worker
+        # STOPPED until restart, so the alert must describe the dead state.
+        # increase()[10m] would auto-resolve while the worker is still gone.
+        # The counter resets on process start, which is the operator fix. Same
+        # as stellarindex_decoder_panicked.
         expr: stellarindex_worker_panics_total > 0
         for: 0m
         labels:
@@ -375,13 +300,11 @@ groups:
             `systemctl status {{ $labels.name }}` then
             `journalctl -u {{ $labels.name }} --since -24h` for the cause.
 
-      # keepalived-textfile-scraper.timer runs every 30s
-      # (OnUnitActiveSec=30s, haproxy role 07-monitoring.yml) and
-      # node_exporter re-serves keepalived.prom's last value on every
-      # scrape regardless of whether the timer is still alive — the
-      # same frozen-file class stellarindex_config_assertions_stale
-      # exists for. stellarindex_haproxy_vip_owner alone cannot see a
-      # dead scraper. 10m tolerates ~20 missed 30s runs before paging.
+      # keepalived-textfile-scraper.timer runs every 30s, and node_exporter
+      # re-serves keepalived.prom's last value even if the timer is dead (same
+      # frozen-file class as stellarindex_config_assertions_stale), which
+      # stellarindex_haproxy_vip_owner cannot see. 10m tolerates ~20 missed
+      # runs.
       - alert: stellarindex_keepalived_textfile_stale
         expr: time() - node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/keepalived.prom"} > 600
         for: 5m
@@ -398,13 +321,10 @@ groups:
             reading a frozen file, not live VRRP state. `systemctl
             status keepalived-textfile-scraper.timer`.
 
-      # r1's boot/root disks are mdadm RAID1 (installimage SWRAID 1):
-      # md0 = swap, md1 = / (configs/libvirt/installimage-host.conf,
-      # docs/operations/r1-deployment-state.md). node_exporter's mdadm
-      # collector publishes `node_md_disks{device,state}` — a component
-      # dropping out of an array is a redundancy loss on the SAME class
-      # of failure stellarindex_zfs_pool_degraded pages for the data
-      # pool, just on the OS disks instead.
+      # r1's boot/root disks are mdadm RAID1 (md0 swap, md1 /). A component
+      # dropping out is the same redundancy loss
+      # stellarindex_zfs_pool_degraded pages for, on the OS disks. Uses
+      # node_md_disks{device,state}.
       - alert: stellarindex_md_array_degraded
         expr: node_md_disks{state="failed"} > 0
         for: 5m
@@ -422,14 +342,10 @@ groups:
             yet a data-loss event. Check `cat /proc/mdstat` and replace
             the failed member before a second disk fails.
 
-      # A filesystem remounted read-only (kernel-forced, on an
-      # unrecoverable block I/O error or detected corruption) is a
-      # distinct failure mode from running out of space — writes fail
-      # outright rather than degrading, and none of the disk-full alerts
-      # (stellarindex_node_root_disk_*, stellarindex_timescale_disk_*)
-      # can see it since the filesystem still reports free space.
-      # fstype-excluded: pseudo-filesystems node_exporter also reports on
-      # that are read-only by design, not by failure.
+      # A read-only remount (kernel-forced on block I/O error or corruption)
+      # fails writes outright and is invisible to the disk-full alerts, since
+      # free space still reports. fstype-excluded: pseudo-filesystems that are
+      # read-only by design.
       - alert: stellarindex_filesystem_readonly
         expr: node_filesystem_readonly{fstype!~"tmpfs|squashfs|overlay|nsfs|ramfs"} == 1
         for: 5m
@@ -447,14 +363,11 @@ groups:
             it's the DB volume, application logs if it's root — is now
             failing outright. `dmesg -T | grep -i "remount-ro\|EXT4-fs error\|XFS.*Corruption"`.
 
-      # Composite bitmask straight from the drive controller's SMART log
-      # (nvme-cli's `critical_warning` field), published by the same
-      # packaged nvme collector the three storage.yml wear alerts read
-      # (nvme_percentage_used_ratio, nvme_available_spare_ratio,
-      # nvme_media_errors_total) — see infra.md#stellarindex_nvme_smart_warn. Any nonzero value
-      # means the controller itself has flagged a condition (temperature,
-      # spare capacity, reliability, read-only mode, or backup device
-      # failure) rather than something this alert set had to infer.
+      # Bitmask from the drive's SMART log (nvme-cli `critical_warning`) via
+      # the packaged nvme collector; see
+      # infra.md#stellarindex_nvme_smart_warn. Any nonzero value is a flag
+      # from the controller itself (temperature, spare, reliability, read-
+      # only, backup device).
       - alert: stellarindex_nvme_critical_warning
         expr: nvme_critical_warning > 0
         for: 5m
@@ -472,15 +385,10 @@ groups:
             from wear/spare/media counters. `smartctl -a` the device and
             treat as the other infra.md#stellarindex_nvme_smart_warn alerts.
 
-      # pg_stat_archiver_last_archive_age (postgres_exporter's built-in
-      # pg_stat_archiver collector) is the same signal
-      # internal/api/v1/diagnostics_backups.go reads for
-      # `postgres.wal_archive_max_age_seconds`, and the same view the
-      # infra.md runbook's manual `SELECT ... FROM
-      # pg_stat_archiver` check already relies on — this wires that
-      # check to an alert instead of requiring an operator to run it by
-      # hand. Continuous WAL archiving is what holds the 5-min RPO
-      # between full backups (infra.md); 14d max observed was
+      # pg_stat_archiver_last_archive_age is the same signal as
+      # postgres.wal_archive_max_age_seconds in
+      # internal/api/v1/diagnostics_backups.go. Continuous WAL archiving holds
+      # the 5-min RPO between full backups (infra.md); 14d max observed was
       # 82s, so 600s is well above steady state.
       - alert: stellarindex_wal_archive_stale
         expr: pg_stat_archiver_last_archive_age > 600
@@ -506,16 +414,14 @@ groups:
     interval: 15m
     rules:
 
-      # Trend tier: the zfs_pool_capacity floors only speak once the pool is
-      # past 93 % full, which on r1 leaves days, not weeks, to reclaim.
-      # These project the pool's free space forward against the same
-      # reconstructed capacity. The regression runs over each day's TROUGH
-      # (min_over_time 1d), so a backup or merge cycle that briefly eats
-      # headroom is judged by its worst point, not averaged away, and a
-      # single-scrape blip cannot swing the slope.
+      # Trend tier: the zfs_pool_capacity floors only speak past 93 % full,
+      # leaving days to reclaim. These project free space forward against the
+      # same reconstructed capacity, regressing over each day's TROUGH
+      # (min_over_time 1d) so a transient backup/merge dip counts at its worst
+      # and a one-scrape blip cannot swing the slope.
       #
-      # Own alert_family: a projection is a different signal from the
-      # current-state floors, so a trend page must not mute the 7 % ticket.
+      # Own alert_family: a projection is a different signal from the current-
+      # state floors, so a trend page must not mute the 7 % ticket.
       - alert: stellarindex_zfs_pool_fill_85pct_within_30d
         expr: |
           predict_linear(
@@ -576,10 +482,9 @@ groups:
             ClickHouse, MinIO and Postgres) follows within days. Find what
             is filling the pool and reclaim before the floors fire.
 
-      # needrestart is list-only, so security updates no longer restart
-      # services: the host keeps running superseded libraries until a
-      # reboot. Ticket-only with a 7d `for` — a reboot of a single-box
-      # node is a scheduled maintenance decision, never a page.
+      # needrestart is list-only, so the host runs superseded libraries until
+      # reboot. Ticket-only with a 7d `for`: a single-box reboot is a
+      # scheduled maintenance decision, never a page.
       - alert: stellarindex_node_reboot_required
         expr: node_reboot_required == 1
         for: 7d
