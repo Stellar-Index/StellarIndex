@@ -61,7 +61,6 @@ internal/auth/signup_ip_throttle.go	long-block
 internal/auth/signup_ip_throttle.go	long-block
 internal/canonical/amount.go	long-block
 internal/dispatcher/census.go	long-block
-internal/divergence/chainlink_decimals.go	long-block
 internal/nettools/ssrf.go	long-block
 internal/ops/accounts/freeze_unfreeze.go	long-block
 internal/ops/accounts/freeze_unfreeze.go	long-block
@@ -69,7 +68,6 @@ internal/ops/chops/projected_rebuild.go	long-block
 internal/ops/chops/usd_volume_restamp_xlmbase.go	long-block
 internal/ops/keys/mint_key.go	long-block
 internal/ops/keys/upgrade_key.go	long-block
-internal/ops/supply/supply_sep41_genesis_seed.go	long-block
 internal/ops/usage/usage_rollup_backfill.go	long-block
 internal/platform/account.go	long-block
 internal/platform/account.go	long-block
@@ -78,9 +76,7 @@ internal/platform/postgresstore/token_store.go	long-block
 internal/ratelimit/bucket.go	long-block
 internal/ratelimit/inprocess.go	long-block
 internal/ratelimit/throttlekey.go	long-block
-internal/sources/external/scale/scale.go	long-block
 internal/sources/spectra/consumer.go	long-block
-internal/storage/clickhouse/asset_supply_reader.go	long-block
 internal/storage/clickhouse/ops_auth.go	long-block
 internal/storage/timescale/account_directory.go	long-block
 internal/storage/timescale/account_directory_rwa.go	long-block

@@ -33,8 +33,7 @@ import (
 // rebuilt under the new floor in the same transaction
 // ([timescale.Store.UpsertSEP41GenesisBaseline]), which also repairs a fold that
 // swept the pre-boundary band in before the first seed. A Soroban-only contract
-// is seeded with a zero baseline. -genesis-ledger
-// defaults to clickhouse.SorobanGenesisLedger. Without -write it is a dry run.
+// is seeded with a zero baseline. Without -write it is a dry run.
 func supplySeedSEP41Genesis(args []string) error {
 	fs := flag.NewFlagSet("supply seed-sep41-genesis", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
