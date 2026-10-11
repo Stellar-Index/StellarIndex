@@ -33,20 +33,16 @@ import (
 //     are reported alongside, informational.
 //  2. stellar.ledger_entry_changes coverage vs. tx-bearing ledgers: every
 //     ledger with tx_count>0 should have at least one entry_changes row
-//     at/above -ec-floor. The default (0) derives the floor from the lake:
-//     the lowest ledger in range holding a transaction-scoped entry-change
-//     row (see resolveECFloor), so every hole above that edge is a failure.
+//     at/above -ec-floor. The default (0) derives the floor from the lake
+//     (see resolveECFloor), so every hole above that edge is a failure.
 //
 // Exit code = (ledger gaps) + (entry-change deficiencies at/above
-// -ec-floor), capped at 255, mirroring reconcile-balances' and
-// scripts/dev/r1-smoke.sh's "exit code = number of failed checks"
-// convention so cron/Healthchecks.io can consume it directly. Backfill-
-// pending entries below -ec-floor are reported but never counted toward
-// the exit code; the exempted range is always printed.
+// -ec-floor), capped at 255 ("exit code = number of failed checks", as in
+// reconcile-balances). Backfill-pending entries below -ec-floor are reported
+// but never counted; the exempted range is always printed.
 //
-// Usage: verify-contiguity [-config PATH] [-ch-addr H:P] [-from N] [-to N]
-// [-ec-floor N] [-check ledgers|entrychanges|all]. Read-only; touches
-// ClickHouse only (no Postgres).
+// Flags: [-config] [-ch-addr] [-from] [-to] [-ec-floor] [-check
+// ledgers|entrychanges|all]. Read-only; ClickHouse only.
 func verifyContiguity(args []string) error {
 	fs := flag.NewFlagSet("verify-contiguity", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr (this tool reads ClickHouse only, never Postgres); a missing/unreadable file is tolerated when -ch-addr is passed explicitly")

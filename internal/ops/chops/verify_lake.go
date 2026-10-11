@@ -27,17 +27,12 @@ import (
 //     the ledger headers' counts per 1M-ledger partition; operation_results and
 //     operation_participants presence-only (verify_raw_census.go).
 //
-// Checks 1-3 share verify-contiguity's and verify-hashchain's run* funcs.
-//
 // Exit code = ledger gaps + entry-change deficiencies at/above -ec-floor +
 // broken hash links + short raw-table partitions, capped at 255.
 //
 // -textfile PATH writes lake_verify.prom only once every requested check has
 // completed; an erroring run writes nothing, so the stale alert covers it.
-// Read-only; ClickHouse only.
-//
-// reconcile-balances is not composed in: it is network-bound and
-// account-sampled, not range-scoped. Run it separately with -sample N.
+// Read-only; ClickHouse only. reconcile-balances is run separately.
 func verifyLake(args []string) error {
 	fs := flag.NewFlagSet("verify-lake", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr (this tool reads ClickHouse only, never Postgres); a missing/unreadable file is tolerated when -ch-addr is passed explicitly")

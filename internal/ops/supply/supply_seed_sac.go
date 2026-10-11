@@ -18,28 +18,22 @@ import (
 
 // supplySeedSACBalances seeds sac_balance_observations from the ClickHouse lake
 // for every current `Balance(Address)` contract_data entry of each
-// `[supply.sac_wrappers]` contract (ADR-0022 / migration 0014), the SAC analogue
-// of `supply seed-observations`. The live observer writes a row only when a
-// Balance entry changes, so a dormant balance is invisible to Algorithm-2
-// classic supply and market_cap.
+// `[supply.sac_wrappers]` contract (ADR-0022 / migration 0014). The live
+// observer writes a row only when a Balance entry changes, so a dormant balance
+// is invisible to Algorithm-2 classic supply and market_cap.
 //
 // Idempotent: rows land at each entry's true last-modified ledger and readers
-// pick the newest row per (contract_id, holder), so an old seed never clobbers a
-// newer live observation. A removed or archived entry is written as an
-// is_removal tombstone, tallied as a retraction, never a holder.
+// pick the newest row per (contract_id, holder). A removed or archived entry is
+// an is_removal tombstone, never a holder.
 //
-// The scan touches every contract_data entry network-wide (the contract id lives
-// inside key_xdr, so filtering runs in Go): run under run-heavy-job.sh on r1.
-// All writes happen after the scan, so a -timeout mid-scan loses the pass.
+// Scans every contract_data entry network-wide: run under run-heavy-job.sh on
+// r1. Writes happen after the scan, so a -timeout mid-scan loses the pass.
 // Without -write it is a dry run.
 //
-// -full-history: stellar.ledger_entries_current is fed by an MV created near
-// ledger 62,000,000 and misses entries dormant since before it, so this reads
-// stellar.ledger_entry_changes (complete to genesis). It prints nothing until
-// the last window is reduced. It first proves stellar.ledgers contiguous and
-// hash-linked (a hole hides the change that superseded an entry) and stamps
-// provenance with the ledger the lake was verified through. -contracts scopes
-// the pass and touches only those wrappers' provenance rows.
+// -full-history: stellar.ledger_entries_current misses entries dormant since
+// before its MV (~ledger 62,000,000), so this reads stellar.ledger_entry_changes
+// after proving stellar.ledgers contiguous and hash-linked, and stamps
+// provenance with the verified ledger. -contracts scopes the pass.
 func supplySeedSACBalances(args []string) error {
 	fs := flag.NewFlagSet("supply seed-sac-balances", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

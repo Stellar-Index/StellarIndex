@@ -144,25 +144,17 @@ type PriceAlertStore interface {
 	// ONLY when the row is armed and its own cooldown has elapsed, and
 	// reports whether it won.
 	//
-	// The claim has to be conditional in the UPDATE itself because the
-	// evaluator's cooldown check reads a SNAPSHOT taken by
-	// ListEnabledPriceAlerts at the top of the sweep. Two evaluators —
-	// an operator running a second aggregator, an R2/R3 standby, or a
-	// deploy in which the old and new process overlap — both pass that
-	// check on the same crossing, and an unconditional stamp would let BOTH
-	// fan out, so the customer would get two webhooks per crossing and the
-	// once-per-cooldown-window guarantee would hold only for a single
-	// instance. Postgres serialises the concurrent UPDATEs on the row lock,
-	// so the loser re-evaluates the predicate against the winner's committed
-	// row and matches nothing.
+	// The claim is conditional in the UPDATE itself because the evaluator's
+	// cooldown check reads a SNAPSHOT from ListEnabledPriceAlerts: two
+	// overlapping evaluators (second aggregator, standby, deploy overlap) both
+	// pass it, and an unconditional stamp would send two webhooks per crossing.
+	// Postgres serialises the UPDATEs on the row lock, so the loser matches nothing.
 	//
 	// a is the snapshot the caller evaluated: the claim also requires the
 	// row to still be enabled with the same pair, condition and threshold.
 	//
-	// claimed=false means "not yours to deliver": another evaluator
-	// claimed this window, or the alert was edited, disabled or deleted
-	// mid-sweep. All call for the same thing — skip the fan-out — so they
-	// are deliberately not distinguished.
+	// claimed=false means "not yours to deliver" (claimed elsewhere, or edited,
+	// disabled or deleted mid-sweep); skip the fan-out.
 	ClaimPriceAlertFire(ctx context.Context, a PriceAlert, firedAt time.Time) (claimed bool, err error)
 
 	// RearmPriceAlert clears Disarmed after the evaluator saw the condition

@@ -33,19 +33,10 @@ import (
 //
 //	stellarindex-ops listing-sync -config /etc/stellarindex.toml
 //
-// Sibling of `directory-sync` in every structural respect — same flag
-// set, same fail-closed write gate, same "refuse an empty parse so a
-// broken fetch can never prune the table to nothing" guard — and a
-// sibling in posture too: what it caches CORROBORATES an address, it
-// does not attest to one. There are no scam flags in that table and it
-// admits none; an absence from it means "not listed", which is the
-// normal condition of nearly every asset on the network.
-//
-// Scale, measured against the live upstream: 21,247 coin
-// objects / 3.7 MB, of which exactly 50 carry a non-empty
-// `platforms.stellar` — 17 Soroban contract C-strkeys and 33 classic
-// `CODE-GISSUER` pairs. The price call then covers those 50 ids in one
-// request.
+// Sibling of `directory-sync`: same flags, same fail-closed write gate, same
+// "refuse an empty parse so a broken fetch can never prune the table to
+// nothing" guard, and same posture: what it caches CORROBORATES an address, it
+// does not attest to one. The table has no scam flags; absence means "not listed".
 const (
 	listingSource = "coingecko"
 
