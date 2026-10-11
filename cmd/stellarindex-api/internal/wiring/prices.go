@@ -195,9 +195,7 @@ func (g GlobalPriceReader) LookupTriangulated(ctx context.Context, base, quote c
 	// flagged issuer's headline; this tier served it, and it is the tier a
 	// Stellar-only token actually reaches — its literal <asset>/fiat:USD
 	// pair has no prices_1m rows, so tier 1 misses by construction and the
-	// headline comes from the aggregator's cache instead. A flagged
-	// issuer's asset page carrying a price and a market cap IS the
-	// decision this gate was built for. Withheld
+	// headline comes from the aggregator's cache instead. Withheld
 	// degrades to "no data", exactly as tier 1 does: the caller falls
 	// through, and the on-chain headline fallback it lands on is gated by
 	// the listing's own substance screen.

@@ -101,11 +101,10 @@ func (c *NonstandardDecimalsCache) Refresh(ctx context.Context) error {
 //
 // This is unreachable on today's data (every flagged row is a bare C-strkey
 // with a singleton alias family) and the durable fix is to alias-fold the
-// lookup itself, which changes this cache's contract and affects its other
-// callers. That is deliberately not done here. What IS done is refusing to let
-// the state arrive silently: the dangerous row is added to a TABLE at runtime,
-// not to code, so no unit test over fixtures can catch it — only a check at
-// refresh time against the rows actually loaded can.
+// lookup itself, which changes this cache's contract for its other callers.
+// Instead the state may not arrive silently: the dangerous row is added to a
+// TABLE at runtime, not to code, so no unit test over fixtures can catch it —
+// only a check at refresh time against the rows actually loaded can.
 //
 // It warns and counts; it does not drop the row or fail the refresh. A partial
 // family is a data-entry question for an operator, and blanking the guard

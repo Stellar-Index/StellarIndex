@@ -129,8 +129,8 @@ type TVLUSDPegInfo interface {
 // TVLValueGate is the serving-side TRUST gate on a reserve leg: may this
 // platform publish a USD valuation of this asset at all?
 //
-// It is, in production, literally the decision function every other served
-// price surface asks. Without it `rateFor` consults only the resolver, whose
+// In production it is the decision function every other served price
+// surface asks. Without it `rateFor` consults only the resolver, whose
 // sole floor is one cent of quote notional, so a scam-flagged issuer's token
 // with one self-traded $0.01 minute would be valued into a pool's TVL and summed
 // into the protocol headline. An attacker-authored number is not a lower bound,
@@ -138,10 +138,9 @@ type TVLUSDPegInfo interface {
 //
 // Production wiring routes to cmd/stellarindex-api's priceWithheld chokepoint
 // (substance gate OR scam gate; never consulted separately). Nil is a valid
-// allow-everything gate, so a deployment with [pricing_guard] disabled keeps
-// ungated figures. buildDEXTVLValueGate must return a nil INTERFACE when
-// neither guard is wired, because an interface holding a non-pointer struct is
-// never == nil.
+// allow-everything gate ([pricing_guard] disabled). buildDEXTVLValueGate must
+// return a nil INTERFACE when neither guard is wired: an interface holding a
+// non-pointer struct is never == nil.
 //
 // The quote set behind "does this asset have a publishable USD price" (vs XLM /
 // fiat:USD / a declared peg, as [Server.listingPriceAllowed] tries) and the
