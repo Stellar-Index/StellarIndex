@@ -12,18 +12,14 @@ import (
 	"testing"
 )
 
-// Source-level tripwire (the decimals_boot_guard_test.go /
-// freeze_wiring_guard_test.go pattern): the retrying lake dial is only
-// worth anything if the wiring goes through it. The call sites live inside
-// run(), which needs a config file, a Postgres pool and a Redis client
-// before they are reachable, so the WIRING is asserted here.
+// Source-level tripwire: the retrying lake dial is only worth anything if the wiring goes through
+// it. The call sites live inside run(), which needs a config file, a Postgres pool and a Redis
+// client, so the WIRING is asserted here.
 //
-// The property pinned is "no component of this binary dials the lake
-// inline", not a call count of one constructor in one file: every non-test
-// file of the package is scanned, and a lake dial is any clickhouse
-// constructor that takes a context — derived from the clickhouse package's
-// own source, so NewExplorerReaderAuth, a future New*Reader, or an aliased
-// import cannot slip past it.
+// The property pinned is "no component of this binary dials the lake inline", not a call count:
+// every non-test file of the package is scanned, and a lake dial is any clickhouse constructor
+// that takes a context, derived from the clickhouse package's own source, so a future New*Reader
+// or an aliased import cannot slip past it.
 func TestLakeReadersAreDialledWithRetry(t *testing.T) {
 	c := censusLakeDials(t, ".", lakeDialConstructors(t, clickhouseSourceDir))
 
@@ -33,12 +29,10 @@ func TestLakeReadersAreDialledWithRetry(t *testing.T) {
 			"whole process lifetime whenever ClickHouse was still loading metadata after a "+
 			"reboot, so the guard's resolver must go through the retrying dial", c.viaDecimals)
 	}
-	// dialDecimalsResolver's own delegation + the MEV tx-order resolver +
-	// the priceless-coverage SAC resolver + the supply refresher's
-	// close-time reader on a real (non-dry-run) boot, via
-	// newLazyCloseTimeReader: that dial must not be a single
-	// synchronous `return err` on failure, which would abort the whole aggregator
-	// over a transient ClickHouse blip.
+	// dialDecimalsResolver's delegation, the MEV tx-order resolver, the priceless-coverage SAC
+	// resolver and the supply refresher's close-time reader (real boot, via
+	// newLazyCloseTimeReader). That dial must not be a single synchronous `return err`, which
+	// would abort the whole aggregator over a transient ClickHouse blip.
 	const wantViaGenericRetry = 4
 	if c.viaGeneric != wantViaGenericRetry {
 		t.Errorf("found %d dialLakeReaderWithRetry call(s) in package main, want %d — the MEV "+
@@ -46,14 +40,11 @@ func TestLakeReadersAreDialledWithRetry(t *testing.T) {
 			"refresher's close-time reader must all dial through the retrying helper, or a "+
 			"cold lake at boot disables them for the process lifetime again (K024)", c.viaGeneric, wantViaGenericRetry)
 	}
-	// Every component still allowed to dial the lake inline: the supply
-	// refresher's close-time source, -dry-run branch ONLY — a
-	// single synchronous dial so a bad config fails -dry-run instead of
-	// only surfacing at a real start. The real boot path does not use
-	// this call; it goes through newLazyCloseTimeReader above.
-	// Plus the SEP-41 genesis auto-seeder's NewSupplyReader: dialled per
-	// seed attempt and failed closed, so a cold lake is retried on the next
-	// attempt rather than disabling anything for the process lifetime.
+	// Components still allowed to dial the lake inline: the supply refresher's close-time source,
+	// -dry-run branch ONLY (one synchronous dial so a bad config fails -dry-run; the real boot
+	// goes through newLazyCloseTimeReader above), plus the SEP-41 genesis auto-seeder's
+	// NewSupplyReader, dialled per seed attempt and failed closed so a cold lake is retried on
+	// the next attempt rather than disabling anything for the process lifetime.
 	knownDirectDials := []string{"NewExplorerReader", "NewSupplyReader"}
 	if got := c.directConstructors(); !slices.Equal(got, knownDirectDials) {
 		t.Errorf("direct lake dials in package main = %v, want %v:\n%s\na new one is a "+

@@ -50,34 +50,27 @@ func TestRequestTimeout_UnsetKeepsDefault(t *testing.T) {
 	}
 }
 
-// TestRequestTimeout_StreamExemptionCannotBeForged is a
-// regression test, and it derives its own subject set from the
-// router so future routes are covered without a second edit.
+// TestRequestTimeout_StreamExemptionCannotBeForged derives its subject set from the router so
+// future routes are covered without a second edit.
 //
-// RequestTimeout exempts SSE endpoints by path, and a path test can be
-// forged two ways. A `/stream` suffix match is met by setting a trailing
-// wildcard to "stream". And r.URL.Path is DECODED while Go's mux routes on
-// the ESCAPED form; those disagree exactly when a wildcard segment
-// contains a percent-encoded slash:
+// RequestTimeout exempts SSE endpoints by path, and a path test can be forged two ways. A
+// `/stream` suffix match is met by setting a trailing wildcard to "stream". And r.URL.Path is
+// DECODED while Go's mux routes on the ESCAPED form; those disagree exactly when a wildcard
+// segment contains a percent-encoded slash:
 //
 //	GET /v1/assets/native%2Fstream
 //	  → routes to "GET /v1/assets/{asset_id}", asset_id="native/stream"
 //	  → r.URL.Path       = "/v1/assets/native/stream"   (ends /stream)
 //	  → r.URL.EscapedPath = "/v1/assets/native%2Fstream" (does not)
 //
-// So any route ending in a wildcard could be asked to run with NO
-// request deadline at all — the one thing this middleware exists to
-// guarantee.
+// So any route ending in a wildcard could be made to run with NO request deadline, the one thing
+// this middleware exists to guarantee.
 //
-// Enumerating the routes from source rather than listing them here is
-// the point: the forgery works against EVERY trailing-wildcard route, of
-// any method, on the one mux — server.go's own registrations and the
-// sub-packages' Mount calls alike — and new ones are added regularly. A
-// hand-written table would pin today's routes and silently miss
-// tomorrow's.
+// Enumerating routes from source is the point: the forgery works against EVERY trailing-wildcard
+// route, of any method, on the one mux (server.go's registrations and the sub-packages' Mount
+// calls alike), and a hand-written table would silently miss new routes.
 //
-// Proven red against r.URL.Path: every trailing-wildcard route below
-// loses its deadline.
+// Red against r.URL.Path: every trailing-wildcard route below loses its deadline.
 func TestRequestTimeout_StreamExemptionCannotBeForged(t *testing.T) {
 	wildcard, streams := routePatternsFromTree(t)
 	if len(wildcard) == 0 {
@@ -99,12 +92,10 @@ func TestRequestTimeout_StreamExemptionCannotBeForged(t *testing.T) {
 
 	for _, route := range wildcard {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {
-			// Every wildcard gets a concrete value — a leftover literal
-			// "{name}" would make url.Parse treat RawPath as invalid and
-			// fall back to re-encoding the decoded Path, which is a
-			// property of the test URL rather than of the middleware.
-			// The TRAILING one carries the forgery: a value whose decoded
-			// form ends in /stream but whose escaped form does not.
+			// Every wildcard gets a concrete value: a leftover literal "{name}" makes url.Parse
+			// treat RawPath as invalid and re-encode the decoded Path, a property of the test URL
+			// rather than the middleware. The TRAILING one carries the forgery: a value whose
+			// decoded form ends in /stream but whose escaped form does not.
 			path := anyWildcard.ReplaceAllString(route.path, "x")
 			path = strings.TrimSuffix(path, "/x") + "/x%2Fstream"
 			probe := requestDeadlineAt(t, route.method, path)
@@ -136,19 +127,14 @@ func TestRequestTimeout_StreamExemptionCannotBeForged(t *testing.T) {
 	}
 }
 
-// TestRequestTimeout_BoundsThePreHandlerStack pins that
-// RequestTimeout must wrap outside the credential middleware, not just above
-// CaptureRoute — the INNERMOST cross-cutting wrapper — so every
-// credential/quota/limit middleware (Auth, KeyPolicy,
-// RequireEmailVerified, MonthlyQuota, RateLimit, UsageTracker,
-// SessionAuth) ran OUTSIDE it. Their Redis/Postgres round-trips were
-// bounded only by go-redis's 3s default and the http.Server WriteTimeout
-// (which cancels nothing in flight), while the placement comment claimed
-// "EVERY handler inherits a deadline".
+// TestRequestTimeout_BoundsThePreHandlerStack: RequestTimeout must wrap outside the credential
+// middleware (Auth, KeyPolicy, RequireEmailVerified, MonthlyQuota, RateLimit, UsageTracker,
+// SessionAuth), not just above CaptureRoute, the INNERMOST cross-cutting wrapper. Otherwise their
+// Redis/Postgres round-trips are bounded only by go-redis's 3s default and the http.Server
+// WriteTimeout (which cancels nothing in flight).
 //
-// Auth is the OUTERMOST member of that block and KeyPolicy the innermost
-// exposed seam; both must observe a request context that already carries
-// the deadline.
+// Auth is the OUTERMOST member of that block and KeyPolicy the innermost exposed seam; both must
+// observe a request context that already carries the deadline.
 func TestRequestTimeout_BoundsThePreHandlerStack(t *testing.T) {
 	authProbe, policyProbe := &deadlineProbe{}, &deadlineProbe{}
 
@@ -217,10 +203,9 @@ var (
 
 type mountedRoute struct{ method, path string }
 
-// routePatternsFromTree walks every non-test source under internal/api/v1
-// — server.go and each sub-package that mounts onto the same mux — and
-// returns the routes, of any method, whose final segment is a {wildcard},
-// plus the real SSE routes. Any call whose first argument is a mux spec
+// routePatternsFromTree walks every non-test source under internal/api/v1 (server.go and each
+// sub-package mounting onto the same mux) and returns the routes, of any method, whose final
+// segment is a {wildcard}, plus the real SSE routes. Any call whose first argument is a mux spec
 // literal counts, so HandleFunc, Handle and handlePublic are all seen.
 func routePatternsFromTree(t *testing.T) (wildcard []mountedRoute, streams []string) {
 	t.Helper()

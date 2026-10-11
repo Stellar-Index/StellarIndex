@@ -96,12 +96,10 @@ func TestTransitivePriceFor_FallsBackToNextHopWhenTopHopGated(t *testing.T) {
 	}
 }
 
-// The whole safety property of transitive pricing lives in this one
-// function, so every arm of its gate is pinned here. A two-hop price
-// inherits its weakest leg: serving one whose intermediate was never
-// substance-checked would let a thin middle market reprice everything
-// quoted against it — the manipulation the floors exist to stop, one hop
-// removed.
+// The whole safety property of transitive pricing lives in this function, so every arm of its
+// gate is pinned. A two-hop price inherits its weakest leg: serving one whose intermediate was
+// never substance-checked lets a thin middle market reprice everything quoted against it, the
+// manipulation the floors exist to stop.
 func TestTransitivePriceFor_GateMatrix(t *testing.T) {
 	const (
 		assetID = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
@@ -204,11 +202,10 @@ func (g transitiveScamGate) WithheldPair(_ context.Context, base, quote canonica
 	return g.flagged[base.String()] || g.flagged[quote.String()]
 }
 
-// TestTransitivePriceFor_ScamGateOnBothLegs: the helper once gated
-// only substance, so a hop whose issuer the directory flags (and whose
-// wash volume clears the floor) priced /v1/assets/{id} transitively while
-// /v1/price refused the hop itself. Every case clears the substance gate,
-// so the scam gate alone decides.
+// TestTransitivePriceFor_ScamGateOnBothLegs: the helper must gate scam flags as well as
+// substance, or a hop whose issuer the directory flags (with wash volume clearing the floor)
+// would price /v1/assets/{id} transitively while /v1/price refuses the hop. Every case clears
+// the substance gate, so the scam gate alone decides.
 func TestTransitivePriceFor_ScamGateOnBothLegs(t *testing.T) {
 	const (
 		assetID = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
@@ -288,16 +285,12 @@ func TestTransitivePriceFor_ResolverCalledOnce(t *testing.T) {
 	}
 }
 
-// REGRESSION (v0.46.0): the transitive fill must run when the asset has
-// NO catalogue row at all.
+// The transitive fill must run when the asset has NO catalogue row at all.
 //
-// `classic_assets` requires a G-issuer (issuer_g_strkey NOT NULL), so a
-// Soroban-native contract asset can never have a row — which is the
-// entire premise of transitive pricing. The first implementation put the
-// fill AFTER applyAssetRowToDetail's `sql.ErrNoRows` early return, so it
-// was unreachable for exactly the assets it was built for. v0.46.0
-// shipped and CAUP7 still served price_usd:null; nothing in the suite
-// noticed, because every test fed it a row.
+// `classic_assets` requires a G-issuer (issuer_g_strkey NOT NULL), so a Soroban-native contract
+// asset can never have a row, which is the premise of transitive pricing. Placing the fill
+// AFTER applyAssetRowToDetail's `sql.ErrNoRows` early return makes it unreachable for exactly
+// those assets, and only a test that feeds no row catches it.
 func TestApplyAssetRowToDetail_FillsTransitiveWhenNoCatalogueRow(t *testing.T) {
 	const (
 		assetID = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
@@ -353,16 +346,13 @@ func TestApplyAssetRowToDetail_RealErrorDoesNotPrice(t *testing.T) {
 	}
 }
 
-// The transitive fill is a product of RAW prices_1m ratios, and it exists
-// for Soroban-native contracts — the only asset class that can carry a
-// non-7 decimals(). The product must be normalised like every
-// sibling price surface, else the one price a 9-decimals token
-// could get here reads 100x low.
+// The transitive fill is a product of RAW prices_1m ratios and exists for Soroban-native
+// contracts, the only asset class that can carry a non-7 decimals(). The product must be
+// normalised like every sibling price surface, or a 9-decimals token's price reads 100x low.
 //
-// The chain telescopes: whatever the hop's decimals are, they cancel, and
-// the product is off by 10^(asset decimals − 7). The "hop flagged, asset
-// not" row pins that — a correction keyed on the (asset, hop) leg alone
-// would rescale a price that was already right.
+// The chain telescopes: the hop's decimals cancel and the product is off by
+// 10^(asset decimals − 7). The "hop flagged, asset not" row pins that a correction keyed on the
+// (asset, hop) leg alone would rescale a price that was already right.
 func TestTransitivePriceFor_NormalisesNonstandardDecimals(t *testing.T) {
 	const (
 		// The runbook's confirmed 9-decimals contract.

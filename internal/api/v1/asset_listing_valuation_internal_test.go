@@ -14,14 +14,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// The listing-priced valuation arm, tested from the two sides that can
-// go wrong: the BINDING (whose price ends up on whose row) and the
-// HOLE (which rows this arm is allowed to speak about at all).
+// The listing-priced valuation arm, tested from the two sides that can go wrong: the BINDING
+// (whose price ends up on whose row) and the HOLE (which rows this arm may speak about at all).
 //
-// Every address below is real. That is not decoration: the whole claim
-// of this arm is that a third party who never read this repository
-// published the same 56 characters the repository derives, and an
-// invented strkey cannot express that claim or fail to.
+// Every address below is real: the arm's claim is that an independent third party published the
+// same 56 characters the repository derives, which an invented strkey cannot express.
 
 const (
 	// The catalogue identity. USDT0 is a recent Stellar launch and
@@ -147,12 +144,10 @@ func tlvDustSuppressedRow(assetID, price, servedSupply string) AssetDetail {
 }
 
 // TestListingValuation_ObservationIsNeverPromotedOver guards the row's
-// supply is an ADR-0011 observation, which classicSupplyReading ranks
-// ABOVE the lake because the lake over-counts replayed mints (BLND read
-// +11.53%). The floor guard that lets the lake replace a trustline sum
-// does not apply to an observation, so the valuation must multiply the
-// observation the row itself publishes. A reading with no basis is not
-// known to be a floor either.
+// supply is an ADR-0011 observation, which classicSupplyReading ranks ABOVE the lake because the
+// lake over-counts replayed mints. The floor guard that lets the lake replace a trustline sum
+// does not apply to an observation, so the valuation must multiply the observation the row
+// itself publishes. A reading with no basis is not known to be a floor either.
 func TestListingValuation_ObservationIsNeverPromotedOver(t *testing.T) {
 	const observation = "23000000000000" // below tlvUSDT0LakeSupply
 	observed := string(supply.BasisIssuerExclusion)
@@ -194,12 +189,9 @@ func tlvApply(t *testing.T, s *Server, rows []AssetDetail) []AssetDetail {
 // ─── the binding ────────────────────────────────────────────────────
 
 // TestListingValuation_SACDerivationMatchesThePublishedAddress checks the
-// instrument on a case whose answer was already known before trusting it
-// on one whose answer was not.
-//
-// Both halves matter. USDC's SAC is public and long-standing, so a
-// derivation that reproduces it is working; USDT0's is the address this
-// arm is about to bind a price to.
+// instrument on a case whose answer is already known before trusting it on one whose answer is
+// not. USDC's SAC is public and long-standing, so a derivation that reproduces it is working;
+// USDT0's is the address this arm binds a price to.
 func TestListingValuation_SACDerivationMatchesThePublishedAddress(t *testing.T) {
 	for _, tc := range []struct{ assetID, wantSAC string }{
 		{tlvUSDCAsset, tlvUSDCSAC},
@@ -388,10 +380,9 @@ func TestListingValuation_ServedMarketCapIsNeverReplaced(t *testing.T) {
 }
 
 // TestListingValuation_ObservedPriceWithoutSupplyStandsDown is the
-// subtler half of the same rule. A catalogue row carrying a gated,
-// observed market price and no cap is missing a SUPPLY reading, not a
-// price — and filling it from a third party would hide a gap in this
-// index's own data behind somebody else's number.
+// subtler half of the same rule. A catalogue row with a gated, observed market price and no cap
+// is missing a SUPPLY reading, not a price; filling it from a third party would hide a gap in
+// this index's own data behind somebody else's number.
 func TestListingValuation_ObservedPriceWithoutSupplyStandsDown(t *testing.T) {
 	price := "0.0036550258"
 	s := tlvServer(t,
@@ -637,16 +628,14 @@ func TestListingValueUSD_IsExact(t *testing.T) {
 
 // TestListingValuation_ScamSuppressionClearsTheListingPair.
 //
-// suppressScamIssuerPricing nulled price_usd, market_cap_usd, fdv_usd, the
-// change_* set and the price series, and left the listing-sourced pair
-// standing. `listing_reference.price_usd` is a dollar price and
-// `listing_valuation.value_usd` is a dollar market cap, drawn from the same
-// third-party directory, so a flagged row served exactly the two figures the
-// tag exists to refuse — under different field names, beside the nulls.
+// suppressScamIssuerPricing must null price_usd, market_cap_usd, fdv_usd, the change_* set and
+// the price series AND the listing-sourced pair. `listing_reference.price_usd` is a dollar price
+// and `listing_valuation.value_usd` a dollar market cap from the same third-party directory, so
+// leaving them would serve exactly the two figures the tag exists to refuse, under different
+// field names beside the nulls.
 //
-// The pair is built by the arm above and then suppressed, which is the real
-// shipped sequence on the catalogue-twin fan-out, so this exercises the
-// production producer rather than a hand-built literal.
+// The pair is built by the arm above and then suppressed, the real sequence on the
+// catalogue-twin fan-out, so this exercises the production producer rather than a literal.
 func TestListingValuation_ScamSuppressionClearsTheListingPair(t *testing.T) {
 	srv := tlvServer(t, &stubAssetListingDirectory{rows: map[string]timescale.ListingEntry{
 		tlvUSDT0SAC: tlvEntry(tlvUSDT0SAC, "usdt0", "1.0002", time.Hour),
@@ -689,10 +678,9 @@ func TestListingValuation_ScamSuppressionClearsTheListingPair(t *testing.T) {
 }
 
 // TestListingValuation_FlaggedIssuerGetsNoValuationWhenTagsArrivedFirst is
-// the same refusal from the other side: once the directory has stamped the
-// row — which is now what happens BEFORE this arm runs on every path — the
-// arm declines to build the pair at all, silently, rather than building it
-// for the suppression to tear down.
+// the same refusal from the other side: once the directory has stamped the row (which happens
+// BEFORE this arm runs on every path) the arm declines to build the pair at all, rather than
+// building it for the suppression to tear down.
 func TestListingValuation_FlaggedIssuerGetsNoValuationWhenTagsArrivedFirst(t *testing.T) {
 	srv := tlvServer(t, &stubAssetListingDirectory{rows: map[string]timescale.ListingEntry{
 		tlvUSDT0SAC: tlvEntry(tlvUSDT0SAC, "usdt0", "1.0002", time.Hour),

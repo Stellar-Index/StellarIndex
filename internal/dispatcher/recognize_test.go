@@ -46,12 +46,9 @@ func TestRecognize(t *testing.T) {
 	}
 }
 
-// TestRecognize_ValidateFailureIsRecognitionGap proves that a
-// decoder whose Matches() reports the topic shape as owned, but whose
-// sample would not actually decode, must surface as a recognition gap
-// (ok == false) rather than a false "recognized". A decoder that does
-// not implement Validator (fakeDecoder) keeps today's shape-only
-// behavior unchanged.
+// TestRecognize_ValidateFailureIsRecognitionGap: a decoder whose Matches() claims the topic
+// shape but whose sample would not decode must surface as a recognition gap (ok == false), not a
+// false "recognized". A decoder without Validator (fakeDecoder) keeps shape-only behavior.
 func TestRecognize_ValidateFailureIsRecognitionGap(t *testing.T) {
 	bad := &validatingFakeDecoder{
 		fakeDecoder: fakeDecoder{name: "gamma", topic0: "unstable"},
@@ -71,12 +68,10 @@ func TestRecognize_ValidateFailureIsRecognitionGap(t *testing.T) {
 	}
 }
 
-// TestRecognize_OverlappingMatchDoesNotFallThrough proves that
-// when two decoders both match the same event shape and the first's
-// Validate() fails, Recognize must report a recognition gap (ok == false),
-// not fall through and report the second decoder as the match. dispatchOne
-// (dispatcher.go) commits to the first Matches()==true decoder and returns
-// on its decode failure without trying later decoders; Recognize must agree.
+// TestRecognize_OverlappingMatchDoesNotFallThrough: when two decoders match the same event shape
+// and the first's Validate() fails, Recognize must report a gap (ok == false), not fall through
+// to the second. dispatchOne commits to the first Matches()==true decoder and never tries later
+// ones; Recognize must agree.
 func TestRecognize_OverlappingMatchDoesNotFallThrough(t *testing.T) {
 	first := &validatingFakeDecoder{
 		fakeDecoder: fakeDecoder{name: "first", topic0: "overlap"},
@@ -91,18 +86,14 @@ func TestRecognize_OverlappingMatchDoesNotFallThrough(t *testing.T) {
 	}
 }
 
-// TestRecognize_PanicResolvesToUnrecognised covers the Recognize seam:
-// Recognize walks every decoder's Matches, and it
-// is called from the completeness recogniser and two ops subcommands,
-// none of which recovered — so one malformed row took the whole
-// verification run down with it.
+// TestRecognize_PanicResolvesToUnrecognised: Recognize walks every decoder's Matches and is
+// called from the completeness recogniser and ops subcommands that do not recover, so one
+// malformed row must not take the whole verification run down.
 //
-// The DIRECTION of the answer is the load-bearing part. A panic must
-// resolve to "not recognised", which pushes the shape into the
-// unrecognised-on-unowned-contract bucket and turns the recognition axis
-// RED. Naming the panicking decoder as the owner would certify a shape
-// that nothing can actually decode — a false green on the one axis whose
-// whole job is to catch shapes we do not understand.
+// The DIRECTION of the answer is load-bearing. A panic must resolve to "not recognised", which
+// pushes the shape into the unrecognised-on-unowned-contract bucket and turns the recognition
+// axis RED. Naming the panicking decoder as owner would certify a shape nothing can decode, a
+// false green on the one axis that exists to catch shapes we do not understand.
 func TestRecognize_PanicResolvesToUnrecognised(t *testing.T) {
 	dec := &panickyDecoder{name: "panic-recognise-src", contract: "CPOISON", panicInMatch: true}
 	disp := New(dec)

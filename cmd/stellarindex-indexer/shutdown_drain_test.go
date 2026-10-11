@@ -27,11 +27,8 @@ func readMainGo() ([]byte, error) { return os.ReadFile("main.go") }
 // shutdownSpan returns the CODE lines between the shutdown select's
 // producer arm and the externalWait() call, with comments stripped.
 //
-// Comment-stripping is not tidiness: the first attempt at these guards
-// matched `externalWait()` inside the explanatory comment ABOVE the code,
-// so the span it measured was empty and the guard passed while asserting
-// nothing. A structural test that can be satisfied by prose is worse than
-// no test.
+// Comments must be stripped: matching `externalWait()` inside explanatory prose above the code
+// yields an empty span and a guard that passes while asserting nothing.
 func shutdownSpan(t *testing.T) []string {
 	t.Helper()
 	data, err := readMainGo()
@@ -50,13 +47,9 @@ func shutdownSpan(t *testing.T) []string {
 		if start < 0 && strings.Contains(line, "case err := <-streamErr:") {
 			start = i
 		}
-		// The drain call's spelling changes as the shutdown path is
-		// hardened — the drain is wrapped in
-		// waitBounded so a stuck connector cannot hang the exit. Match the
-		// CALL SITE by the function it drains, not by an exact line, or
-		// this guard silently stops finding the span (which is what it did
-		// when waitBounded landed: span end -1, both guards failed loudly
-		// — the good outcome, but only because they fail closed).
+		// The drain is wrapped in waitBounded so a stuck connector cannot hang the exit. Match the
+		// CALL SITE by the function it drains, not an exact line, so the guard keeps finding the
+		// span; a missing span (end -1) must fail loudly.
 		if start >= 0 && strings.Contains(line, "externalWait") && !strings.Contains(line, ":=") {
 			end = i
 			break
@@ -68,13 +61,12 @@ func shutdownSpan(t *testing.T) []string {
 	return code[start:end]
 }
 
-// TestNoReturnBetweenShutdownSelectAndDrain closes the hole an independent
-// review found in the guard above: moving `return fatalErr` to the line
-// AFTER the select satisfies "no return INSIDE the select" while
-// reintroducing the exact bug — the drain is skipped just the same.
+// TestNoReturnBetweenShutdownSelectAndDrain closes a hole in the guard above: moving
+// `return fatalErr` to the line AFTER the select passes "no return INSIDE the select" yet still
+// skips the drain.
 //
-// The real invariant is positional: between the shutdown select and
-// externalWait(), any `return` skips the drain.
+// The real invariant is positional: between the shutdown select and externalWait(), any
+// `return` skips the drain.
 func TestNoReturnBetweenShutdownSelectAndDrain(t *testing.T) {
 	// Match the `return` TOKEN anywhere on the line, not just at the start.
 	// A prefix check misses `if fatalErr != nil { return fatalErr }`, which
@@ -91,12 +83,9 @@ func TestNoReturnBetweenShutdownSelectAndDrain(t *testing.T) {
 	}
 }
 
-// TestShutdownCancelsRootBeforeDraining pins the fix for the hang that
-// d160215b introduced. The external connectors are bound to rootCtx, so
-// draining without cancelling it first waits on goroutines nothing has
-// asked to stop: the process hangs with its metrics server already down,
-// never exits, and systemd never restarts it. r1 runs seven external
-// connectors, so one MinIO blip would have wedged ingest silently.
+// TestShutdownCancelsRootBeforeDraining: the external connectors are bound to rootCtx, so
+// draining without cancelling it first waits on goroutines nothing has asked to stop. The process
+// would hang with its metrics server down and never exit, so systemd never restarts it.
 func TestShutdownCancelsRootBeforeDraining(t *testing.T) {
 	for _, line := range shutdownSpan(t) {
 		if strings.TrimSpace(line) == "cancel()" {
@@ -107,14 +96,12 @@ func TestShutdownCancelsRootBeforeDraining(t *testing.T) {
 		"the external connectors are bound to rootCtx, so the WaitGroup can never drain and the process hangs")
 }
 
-// TestMetricsServerShutsDownAfterTheDrainNotBeforeIt pins that the metrics
-// server is not shut down immediately after cancel(), before the
-// producer-wait / external-connector-wait / sink-drain sequence that
-// follows, which would make /metrics unscrapable for the entire drain window —
-// exactly when an operator most needs to see in-flight drain progress.
+// TestMetricsServerShutsDownAfterTheDrainNotBeforeIt: shutting the metrics server down right
+// after cancel() would make /metrics unscrapable for the whole drain window, exactly when an
+// operator needs to see drain progress.
 //
-// Asserted positionally, like the guards above: metricsSrv.Shutdown must
-// appear AFTER the sinkDone wait, not between cancel() and it.
+// Asserted positionally, like the guards above: metricsSrv.Shutdown must appear AFTER the
+// sinkDone wait, not between cancel() and it.
 func TestMetricsServerShutsDownAfterTheDrainNotBeforeIt(t *testing.T) {
 	data, err := readMainGo()
 	if err != nil {

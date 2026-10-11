@@ -12,17 +12,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TestMarketCap_NativeNeverDustSuppressed_DetailPath is the L2 regression: the
-// listing SQL forces native XLM's source_count to NULL (asset_catalogue.go:
-// `WHEN ca.asset_id = 'native' THEN NULL::int`), so XLM — triangulated and
-// definitionally liquid — is NEVER dust-suppressed on the listing. The detail
-// path (populateMarketCap) must agree, or /v1/assets/native and /v1/assets can
-// disagree on the flag. A classic asset with the identical (single-venue,
-// sub-floor-volume) shape IS suppressed — proving the carve-out is native-only,
-// not a blanket disable.
-//
-// Fails red against the un-fixed populateMarketCap (native suppressed:
-// market_cap_low_liquidity=true, cap absent); passes green with the carve-out.
+// TestMarketCap_NativeNeverDustSuppressed_DetailPath: the listing SQL forces native XLM's
+// source_count to NULL (asset_catalogue.go: `WHEN ca.asset_id = 'native' THEN NULL::int`), so XLM,
+// triangulated and definitionally liquid, is NEVER dust-suppressed on the listing. The detail path
+// (populateMarketCap) must agree, or /v1/assets/native and /v1/assets disagree on the flag. A
+// classic asset with the identical (single-venue, sub-floor-volume) shape IS suppressed, proving
+// the carve-out is native-only.
 func TestMarketCap_NativeNeverDustSuppressed_DetailPath(t *testing.T) {
 	// 10^17 raw @ 7dp × $0.50 = $5,000,000,000.00.
 	snap := supply.Supply{
@@ -84,18 +79,13 @@ func TestMarketCap_NativeNeverDustSuppressed_DetailPath(t *testing.T) {
 	}
 }
 
-// TestMarketCap_NegativeSupplyOmitted_DetailPath is the finding-#4 regression:
-// a negative circulating supply (Σburn > Σmint data error) must NOT serve a
-// negative market_cap_usd on /v1/assets/{id}. usdMarketValue rejects the
-// negative result (matching computeMarketCapUSD's Sign()<0 guard on the listing
-// path), so market_cap_usd is OMITTED. fdv_usd (backed by a positive max
-// supply) still serves — proving only the negative field is dropped, not all
-// valuation.
+// TestMarketCap_NegativeSupplyOmitted_DetailPath: a negative circulating supply (Σburn > Σmint
+// data error) must NOT serve a negative market_cap_usd on /v1/assets/{id}. usdMarketValue rejects
+// the negative result (matching computeMarketCapUSD's Sign()<0 guard on the listing path), so
+// market_cap_usd is OMITTED while fdv_usd (backed by a positive max supply) still serves.
 //
-// Multi-source + liquid volume so the dust guard is out of the picture — the
-// only thing that can drop market_cap_usd here is the negative-value guard.
-// Fails red against the un-fixed usdMarketValue (serves
-// market_cap_usd:"-5000000000.00"); passes green with the guard.
+// Multi-source + liquid volume keep the dust guard out of the picture, so only the
+// negative-value guard can drop market_cap_usd here.
 func TestMarketCap_NegativeSupplyOmitted_DetailPath(t *testing.T) {
 	const assetID = "OBSC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	snap := supply.Supply{
@@ -143,10 +133,7 @@ func TestMarketCap_NegativeSupplyOmitted_DetailPath(t *testing.T) {
 //  3. MULTI-source but thin ($10/day) → market cap PRESENT (multi-source
 //     alone is not enough to suppress).
 //
-// In every case price_usd still serves — the guard is on the valuation,
-// not the price. Without the guard, case 1 serves market_cap_usd
-// "5000000000.00" (the exact defect); this test fails red against the
-// un-guarded populateMarketCap and passes green with it.
+// In every case price_usd still serves: the guard is on the valuation, not the price.
 func TestMarketCap_DustLiquiditySuppression_DetailPath(t *testing.T) {
 	// Huge supply: an un-guarded dust price would assert billions.
 	snap := supply.Supply{

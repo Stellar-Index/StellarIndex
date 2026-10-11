@@ -16,18 +16,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// /v1/chart withheld a directory-scam-flagged issuer's price SERIES
-// while /v1/history/since-inception served the identical
-// trajectory at 200 — the same pair, the same CAGG VWAP chain (the
-// handler's own comment says so), differing only in the read closure.
-// Gating one and not the other bought nothing: `?timeframe=all` and
-// since-inception answer the same question.
+// /v1/chart withholds a directory-scam-flagged issuer's price SERIES, so /v1/history/since-inception
+// must too: it serves the same pair over the same CAGG VWAP chain, differing only in the read
+// closure, and `?timeframe=all` and since-inception answer the same question.
 //
-// scam.go promises the RAW surfaces stay visible — /v1/history's trade
-// rows, /v1/observations, /v1/ohlc — and that promise is kept. The
-// distinction is raw trades versus an AGGREGATED price claim, not the
-// route prefix: this endpoint is named for the raw family but serves
-// bucketed VWAP.
+// scam.go promises the RAW surfaces stay visible (/v1/history's trade rows, /v1/observations,
+// /v1/ohlc). The distinction is raw trades versus an AGGREGATED price claim, not the route
+// prefix: this endpoint is named for the raw family but serves bucketed VWAP.
 
 // A flagged base must be withheld — and withheld BEFORE the read, so a
 // flagged issuer's series never leaves the store.
@@ -314,12 +309,10 @@ func TestHistorySinceInception_HappyPath(t *testing.T) {
 	}
 }
 
-// TestHistorySinceInception_StablecoinFallback pins that, when
-// the literal X/fiat:USD CAGG read returns
-// empty (because no on-chain trades quote in fiat:USD), the handler
-// retries against each operator-declared classic USD-peg and serves
-// the first non-empty result. Without this, since-inception
-// XLM/fiat:USD returns empty even when XLM/<USDC-classic> has data.
+// TestHistorySinceInception_StablecoinFallback: when the literal X/fiat:USD CAGG read is empty
+// (no on-chain trades quote in fiat:USD), the handler retries against each operator-declared
+// classic USD-peg and serves the first non-empty result, so XLM/fiat:USD is not empty while
+// XLM/<USDC-classic> has data.
 func TestHistorySinceInception_StablecoinFallback(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	usdcG := "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -378,11 +371,10 @@ func TestHistorySinceInception_GranularityForwarded(t *testing.T) {
 	}
 }
 
-// TestHistorySinceInception_RowCapTruncated pins that since-inception
-// has no window to compare against the 50k-bucket cap up front, so a
-// pair whose grid exceeds it must be flagged AFTER the read — an
-// oldest-first cap-hit is otherwise indistinguishable from a series
-// that legitimately ends at the last returned bucket.
+// TestHistorySinceInception_RowCapTruncated: since-inception has no window to compare against the
+// 50k-bucket cap up front, so a pair whose grid exceeds it must be flagged AFTER the read; an
+// oldest-first cap-hit is otherwise indistinguishable from a series that legitimately ends at the
+// last returned bucket.
 func TestHistorySinceInception_RowCapTruncated(t *testing.T) {
 	const historyMaxPoints = 50_000 // internal/api/v1/history.go
 	t0 := time.Unix(1_000_000_000, 0).UTC()
@@ -443,14 +435,10 @@ func TestHistorySinceInception_NonstandardDecimals_NormalizesPrice(t *testing.T)
 	}
 }
 
-// TestHistorySinceInception_StablecoinFallback_ReachesPegSACTwin is the
-// since-inception half of the same defect, and it was blind on BOTH sides:
-// the fallback proxied the LITERAL base against the CLASSIC peg only, so
-// the combination Soroban depth is stored under — SAC base quoted in the
-// peg's SAC — was never read even though the literal-spelling walk above
-// it already crosses the base aliases.
-//
-// RED without the fix: 0 points.
+// TestHistorySinceInception_StablecoinFallback_ReachesPegSACTwin: the fallback must cross the
+// aliases on BOTH sides. Proxying the LITERAL base against the CLASSIC peg only never reads the
+// combination Soroban depth is stored under (SAC base quoted in the peg's SAC), even though the
+// literal-spelling walk above already crosses the base aliases.
 func TestHistorySinceInception_StablecoinFallback_ReachesPegSACTwin(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	t0 := time.Unix(1_770_000_000, 0).UTC()
@@ -485,11 +473,8 @@ func TestHistorySinceInception_StablecoinFallback_ReachesPegSACTwin(t *testing.T
 	}
 }
 
-// TestHistorySinceInception_DeclaredPeg_FiatUSD_CrossesThroughXLM is the
-// since-inception half: the same fixture, the same request under the
-// classic id, points from inception rather than a window.
-//
-// RED without the cross: 0 points.
+// TestHistorySinceInception_DeclaredPeg_FiatUSD_CrossesThroughXLM: the same fixture and request
+// under the classic id, with points from inception rather than a window.
 func TestHistorySinceInception_DeclaredPeg_FiatUSD_CrossesThroughXLM(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	t0 := time.Unix(1_770_000_000, 0).UTC()

@@ -6,18 +6,13 @@ import (
 	"testing"
 )
 
-// TestWalkCoverage guards the rule every
-// galexie-walking subcommand in this package applies before it
-// reports on what it saw: DELIVERED must equal REQUESTED.
+// TestWalkCoverage guards the rule every galexie-walking subcommand in this package applies
+// before it reports on what it saw: DELIVERED must equal REQUESTED.
 //
-// The defect it pins is not "the gate lacked a check" — ch-gate had
-// plenty of checks. It is that every one of them measured the walk
-// against ITSELF. `ch.LedgerRows != uint64(walked)` compares the rows
-// ClickHouse holds for the range to the number of ledgers the walk
-// produced, so when a wrong bucket or a hole tolerated by
-// TolerateTrailingMissing shortens the walk, both sides shrink together
-// and the gate certifies the slice it happened to read. The subset of
-// the range that was never opened has nothing to disagree with.
+// Every other ch-gate check measured the walk against itself. `ch.LedgerRows != uint64(walked)`
+// compares the rows ClickHouse holds for the range to the ledgers the walk produced, so when a
+// wrong bucket or a hole tolerated by TolerateTrailingMissing shortens the walk, both sides shrink
+// together and the gate certifies the slice it happened to read.
 func TestWalkCoverage(t *testing.T) {
 	t.Parallel()
 
@@ -80,12 +75,9 @@ func TestWalkCoverage(t *testing.T) {
 		}
 	})
 
-	// The old gate, stated exactly: ch-gate compared the ClickHouse row
-	// count to `walked`. This asserts that rule ACCEPTS the short walk
-	// the new rule rejects — i.e. that the two are not equivalent and
-	// the fix is load-bearing, not decorative. A backfill that wrote 37
-	// ledgers and a walk that read 37 of the 100 requested agreed
-	// perfectly, and the gate printed PASSED.
+	// The old gate compared the ClickHouse row count to `walked`. This asserts that rule accepts
+	// the short walk the new rule rejects, so the two are not equivalent and the fix is
+	// load-bearing.
 	t.Run("the rule it replaces accepts the short walk", func(t *testing.T) {
 		t.Parallel()
 		const (
@@ -103,13 +95,10 @@ func TestWalkCoverage(t *testing.T) {
 	})
 }
 
-// funcBody returns the source text of the named top-level function in
-// the given file of this package. The call-site wiring below is pinned
-// at the source because chGate needs a config
-// file, a galexie bucket over S3 and (for the gate) a live ClickHouse
-// before they will run a single line — the same reason
-// ingest.TestRunBackfillChunk_CoverageCheckPrecedesRefreshAndCompletion
-// pins its sibling rule this way.
+// funcBody returns the source text of the named top-level function in the given file of this
+// package. The call-site wiring below is pinned at the source because chGate needs a config file,
+// a galexie bucket over S3 and a live ClickHouse before it runs a single line, as with
+// ingest.TestRunBackfillChunk_CoverageCheckPrecedesRefreshAndCompletion.
 func funcBody(t *testing.T, file, fn string) string {
 	t.Helper()
 	b, err := os.ReadFile(file)

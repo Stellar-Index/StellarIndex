@@ -7,20 +7,12 @@ import (
 	"testing"
 )
 
-// TestLoad_RealCorpus exercises the actual embedded markdown
-// files. At time of writing the corpus is four real incidents plus
-// _template.md (skipped).
+// TestLoad_RealCorpus exercises the actual embedded markdown files (_template.md is skipped).
+// Load is content-shape agnostic, so a new entry should still pass.
 //
-// A new entry shipping with a future PR should still make this
-// pass — Load is content-shape agnostic; this asserts the loader
-// round-trips the embedded fixtures.
-//
-// Load() silently drops a post that fails
-// to parse (deliberate, per the package doc — one bad post shouldn't
-// break the feed) and only logs a warning. A `len(got) != 0` check
-// can't tell "every post parsed" from "all but one silently didn't":
-// cross-check against the real file count on disk so a corpus file
-// that stops parsing fails this test instead of vanishing quietly.
+// Load() silently drops a post that fails to parse (deliberate: one bad post shouldn't break
+// the feed) and only logs a warning. A `len(got) != 0` check can't tell "every post parsed"
+// from "all but one", so cross-check against the real file count on disk.
 func TestLoad_RealCorpus(t *testing.T) {
 	got, err := Load(nil)
 	if err != nil {
@@ -61,15 +53,10 @@ func TestLoad_RealCorpus(t *testing.T) {
 	}
 }
 
-// TestLoad_NoSilentDrops guards the failure mode Load's own doc comment
-// accepts by design: a post that fails frontmatter validation is logged
-// and skipped rather than panicking the binary. That's correct for one
-// bad post among many, but nothing else catches the count going
-// quietly wrong — a malformed post vanishes from /v1/incidents and the
-// status page with only a log line, which CI never inspects. This
-// compares Load's output count against every non-template *.md file
-// actually embedded, so a corpus file that stops parsing fails the build
-// instead of the public feed.
+// TestLoad_NoSilentDrops guards the failure mode Load accepts by design: a post failing
+// frontmatter validation is logged and skipped rather than panicking. Nothing else catches the
+// count going quietly wrong (a malformed post vanishes from /v1/incidents and the status page
+// with only a log line), so this compares Load's count against every non-template *.md embedded.
 func TestLoad_NoSilentDrops(t *testing.T) {
 	entries, err := fs.ReadDir(contentFS, "data")
 	if err != nil {
@@ -97,11 +84,8 @@ func TestLoad_NoSilentDrops(t *testing.T) {
 	}
 }
 
-// TestLoad_SortedByStartedAtDesc — newest first.
-//
-// Exercises the sort.Slice in Load with whatever the corpus is.
-// One-element corpus passes vacuously; multi-element catches
-// regressions.
+// TestLoad_SortedByStartedAtDesc: newest first. A one-element corpus passes vacuously;
+// multi-element catches regressions in Load's sort.
 func TestLoad_SortedByStartedAtDesc(t *testing.T) {
 	got, err := Load(nil)
 	if err != nil {
@@ -185,13 +169,10 @@ func TestParseTimestamp_NoneParseable(t *testing.T) {
 	}
 }
 
-// An out-of-enum severity or status must fail the post loudly rather
-// than shipping through. The OpenAPI contract declares both as required
-// enums, and every downstream severity mapping is a ternary chain whose
-// final branch renders "maintenance" — GREEN on the public status page.
-// So a one-keystroke slip (`sev-1`) would publish an ongoing SEV-1
-// looking like routine maintenance, while also breaking the typed
-// clients.
+// An out-of-enum severity or status must fail the post loudly. The OpenAPI contract declares
+// both as required enums, and downstream severity mapping falls through to "maintenance"
+// (GREEN on the status page), so a slip like `sev-1` would publish an ongoing SEV-1 as routine
+// maintenance and break typed clients.
 func TestParseFile_RejectsOutOfEnumSeverityAndStatus(t *testing.T) {
 	t.Parallel()
 
@@ -250,13 +231,9 @@ body
 	}
 }
 
-// TestLoad_RedisDiskFullPostmortem_NoDanglingPRRefs — the 2026-05-10
-// post must not cite "PR #1228" or "PR #1229" for its two follow-up
-// items. Neither PR exists in this repo (max issue/PR is far below
-// 1228); the loader publishes BodyMarkdown verbatim to
-// status.stellarindex.io, so a reader following either link gets a
-// 404 on GitHub. The remediation commits are real and are cited by
-// SHA instead.
+// TestLoad_RedisDiskFullPostmortem_NoDanglingPRRefs: the Redis disk-full post must not cite
+// "PR #1228" or "PR #1229", which do not exist. The loader publishes BodyMarkdown verbatim to
+// the status site, so readers would hit a 404; the real remediation commits are cited by SHA.
 func TestLoad_RedisDiskFullPostmortem_NoDanglingPRRefs(t *testing.T) {
 	got, err := Load(nil)
 	if err != nil {

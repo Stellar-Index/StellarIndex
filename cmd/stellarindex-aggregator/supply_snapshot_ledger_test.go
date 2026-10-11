@@ -61,19 +61,14 @@ func (c *capturingSupplyInserter) InsertSupply(_ context.Context, snap supply.Su
 	return nil
 }
 
-// TestSupplyAggregatorLedgers_ClampsToLandedLakeTip guards against a
-// r1 failure. ingestion_cursors (Postgres, realtime) leads ClickHouse
-// stellar.ledgers (CH sink) by design: measured on r1, the ledgerstream
-// cursor sat at 64274510 while max(stellar.ledgers) was 64274509. The
-// aggregator resolved the snapshot ledger as the cursor's own value and
-// then demanded an exact stellar.ledgers row for it, so every refresh
-// landing in that window failed closed as `no_ledger` — 9.9 % of all
-// ticks over a 2 h window, bursty enough to push whole cohorts of
-// watched assets past the per-asset error_dominant threshold together.
+// TestSupplyAggregatorLedgers_ClampsToLandedLakeTip: ingestion_cursors (Postgres, realtime)
+// leads ClickHouse stellar.ledgers (CH sink) by design, so the cursor can sit one ledger past
+// max(stellar.ledgers). Demanding an exact stellar.ledgers row for the cursor fails refreshes in
+// that window closed as `no_ledger`, in bursts that push whole cohorts of watched assets past the
+// per-asset error_dominant threshold together.
 //
-// Resolution must clamp to the newest LANDED ledger at or before the
-// cursor and stamp THAT ledger's real close time, so the tick produces a
-// snapshot instead of an error.
+// Resolution must clamp to the newest LANDED ledger at or before the cursor and stamp THAT
+// ledger's real close time, so the tick produces a snapshot instead of an error.
 func TestSupplyAggregatorLedgers_ClampsToLandedLakeTip(t *testing.T) {
 	const (
 		cursorLedger = uint32(64_274_510)
@@ -205,14 +200,11 @@ func TestSupplyAggregatorLedgers_FailsClosedOnStalledLake(t *testing.T) {
 	}
 }
 
-// TestSupplyAggregatorLedgers_BoundsByTheChainCursor applies the chain-cursor bound to
-// the aggregator path. ingestion_cursors is a table of JOB positions, not
-// chain positions: with the indexer behind (restart, re-derive,
-// maintenance) and an operator backfilling near the tip, MAX(last_ledger)
-// hands the backfill job's position to the clamp — so the snapshot is
-// bounded by, and can be stamped at, a ledger no component balance was
-// observed at, and the stalled-lake bound is measured against a job's
-// progress rather than the chain's.
+// TestSupplyAggregatorLedgers_BoundsByTheChainCursor applies the chain-cursor bound to the
+// aggregator path. ingestion_cursors holds JOB positions, not chain positions: with the indexer
+// behind and an operator backfilling near the tip, MAX(last_ledger) hands the backfill job's
+// position to the clamp, so the snapshot can be stamped at a ledger no component balance was
+// observed at, and the stalled-lake bound is measured against a job's progress, not the chain's.
 func TestSupplyAggregatorLedgers_BoundsByTheChainCursor(t *testing.T) {
 	const chainLedger = uint32(63_000_000)
 	lakeClose := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
@@ -241,11 +233,9 @@ func TestSupplyAggregatorLedgers_BoundsByTheChainCursor(t *testing.T) {
 	}
 }
 
-// TestSupplyChainCursorLedger_FallbackNamesTheJobCursor keeps the
-// pre-first-run case working (an aggregator started before the indexer has
-// written its ledgerstream row) and requires the fallback to NAME itself,
-// so the resolution error an operator reads states that a job cursor
-// supplied the bound.
+// TestSupplyChainCursorLedger_FallbackNamesTheJobCursor keeps the pre-first-run case working (an
+// aggregator started before the indexer has written its ledgerstream row) and requires the
+// fallback to NAME itself, so the resolution error states that a job cursor supplied the bound.
 func TestSupplyChainCursorLedger_FallbackNamesTheJobCursor(t *testing.T) {
 	ledger, source := supplyChainCursorLedger([]timescale.Cursor{
 		{Source: "backfill", Sub: "1-100", LastLedger: 100},
@@ -276,13 +266,11 @@ func TestSupplyAggregatorLedgers_PropagatesCursorReadError(t *testing.T) {
 	}
 }
 
-// TestSupplyLakeClampMatchesLookupWindow pins the clamp to the window the
-// lake lookup actually scans. They are one constant today, and this is what
-// keeps them one: a resolver that refuses past 512 while the lookup reads
-// every partition below the cursor pays chain-history-sized reads for rows it
-// can never accept (measured on r1: 735.59 MiB per call, once per
-// watched asset per 5-minute tick), and a resolver that accepts further back
-// than the lookup reads would fail closed on a lake that is merely lagging.
+// TestSupplyLakeClampMatchesLookupWindow pins the clamp to the window the lake lookup actually
+// scans, keeping them one constant. A resolver that refuses past 512 while the lookup reads every
+// partition below the cursor pays chain-history-sized reads (per watched asset, every tick) for
+// rows it can never accept, and one that accepts further back than the lookup reads would fail
+// closed on a lake that is merely lagging.
 func TestSupplyLakeClampMatchesLookupWindow(t *testing.T) {
 	if maxSupplyLakeClampLedgers != clickhouse.LatestLedgerLookbackLedgers {
 		t.Errorf("maxSupplyLakeClampLedgers = %d but the lookup scans %d ledgers below the cursor — the refusal bound and the scan window must be the same constant",

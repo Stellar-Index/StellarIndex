@@ -13,13 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// The absolute dust floor asks whether an asset's trading is SMALL. It cannot
-// ask whether the CLAIM is large against the trading there is, and the gap
-// between those two questions is where $5.89B of the listing's headline total
-// was sitting in production: two vanity mints from one domain, both clearing
-// the $1,000 floor on real four-figure volume, both publishing a cap three
-// orders of magnitude past anything a recognised asset on the same surface
-// claimed.
+// The absolute dust floor asks whether trading is SMALL, not whether the CLAIMED cap is large
+// against the trading there is. Two vanity mints cleared the floor on four-figure volume yet
+// published caps orders of magnitude past any recognised asset, inflating the headline total.
 //
 // These are the figures the surface actually served, not invented ones.
 const (
@@ -42,12 +38,10 @@ const (
 	usdcVolumeUSD = "68388882.73730980"
 )
 
-// TestCapExceedsObservedTurnoverSeparatesTheMeasuredSet is the test that
-// chooses the default, and it is written from the served set rather than from
-// taste: at 50,000 the two mintx.co rows are refused and every other row on
-// the surface — including the least liquid one — keeps its cap. The gap
-// between TFT and SLVR is a factor of 289, so the line is not finely balanced
-// and a new asset would have to be extraordinary to land in it.
+// TestCapExceedsObservedTurnoverSeparatesTheMeasuredSet chooses the default from the served
+// set: at 50,000 the two mintx.co rows are refused and every other row, including the least
+// liquid, keeps its cap. The gap between TFT and SLVR is a factor of 289, so the line is not
+// finely balanced.
 func TestCapExceedsObservedTurnoverSeparatesTheMeasuredSet(t *testing.T) {
 	const defaultRatio = 50_000
 	for _, tt := range []struct {
@@ -70,11 +64,9 @@ func TestCapExceedsObservedTurnoverSeparatesTheMeasuredSet(t *testing.T) {
 	}
 }
 
-// TestCapExceedsObservedTurnoverNeverActsOnAnUnmeasuredReading mirrors the
-// floor's rule exactly. A missing, unparseable or non-positive volume is the
-// ABSENCE of a reading, not evidence of thin trading, and a guard that treated
-// the two alike would withhold caps for a data gap — the failure the floor
-// already documents at its own nil and zero branches.
+// TestCapExceedsObservedTurnoverNeverActsOnAnUnmeasuredReading mirrors the floor's rule: a
+// missing, unparseable or non-positive volume is the ABSENCE of a reading, not evidence of
+// thin trading, so it must not withhold a cap for a data gap.
 func TestCapExceedsObservedTurnoverNeverActsOnAnUnmeasuredReading(t *testing.T) {
 	huge := "3133231779.97"
 	for _, tt := range []struct {
@@ -122,11 +114,9 @@ func TestCapExceedsObservedTurnoverRefusesNothingOnAnAbsentCap(t *testing.T) {
 	}
 }
 
-// TestCapExceedsObservedTurnoverIsExactAtTheBoundary — the comparison is
-// strictly greater-than, so a cap of exactly N x volume is KEPT. Exactness
-// matters because the arithmetic is big.Float rather than float64: a ratio
-// this large multiplied by a dollar figure with eight decimal places is
-// precisely where a float64 would round across the line.
+// TestCapExceedsObservedTurnoverIsExactAtTheBoundary: the comparison is strictly greater-than,
+// so a cap of exactly N x volume is KEPT. The arithmetic is big.Float because a float64 would
+// round across the line at this ratio times an eight-decimal dollar figure.
 func TestCapExceedsObservedTurnoverIsExactAtTheBoundary(t *testing.T) {
 	vol := "1000.00"
 	for _, tt := range []struct {
@@ -145,12 +135,10 @@ func TestCapExceedsObservedTurnoverIsExactAtTheBoundary(t *testing.T) {
 	}
 }
 
-// TestFillRowMarketCapRefusesACapItsOwnMarketNeverValued drives the
-// PRODUCTION listing fill over the exact row the surface served:
-// SLVR's real supply, price and volume, a multi-source price
-// count so the dust floor cannot fire, and the default ceiling. This is the
-// wiring test — the pure-function cases above would all still pass against a
-// build that computed the verdict and threw it away.
+// TestFillRowMarketCapRefusesACapItsOwnMarketNeverValued drives the PRODUCTION listing fill over
+// SLVR's real supply, price and volume with a multi-source price count (so the dust floor cannot
+// fire) and the default ceiling. It is the wiring test: the pure-function cases above would pass
+// against a build that computed the verdict and discarded it.
 func TestFillRowMarketCapRefusesACapItsOwnMarketNeverValued(t *testing.T) {
 	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000}}
 	price := "1.5666161388"
@@ -182,11 +170,9 @@ func TestFillRowMarketCapRefusesACapItsOwnMarketNeverValued(t *testing.T) {
 	}
 }
 
-// TestFillRowMarketCapKeepsTheLeastLiquidRecognisedAsset is the control, and
-// it is the half that decides whether the default is defensible. TFT is the
-// thinnest-traded asset on the surface that still publishes a cap; if the
-// guard took it, the line would be drawn through the served set rather than
-// around an outlier.
+// TestFillRowMarketCapKeepsTheLeastLiquidRecognisedAsset is the control: TFT is the thinnest
+// asset that still publishes a cap, and if the guard took it the line would cut through the
+// served set rather than around an outlier.
 func TestFillRowMarketCapKeepsTheLeastLiquidRecognisedAsset(t *testing.T) {
 	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000}}
 	price := "0.0062624500"
@@ -212,11 +198,9 @@ func TestFillRowMarketCapKeepsTheLeastLiquidRecognisedAsset(t *testing.T) {
 	}
 }
 
-// TestFillRowMarketCapNativeIsNeverTurnoverSuppressed — XLM is definitionally
-// liquid and the listing SQL gives it no source count, which is why the dust
-// floor already carves it out. The ceiling needs the same carve-out for the
-// same reason, and it is reachable: a low-volume day against the whole XLM
-// float is exactly the shape the ratio is looking for.
+// TestFillRowMarketCapNativeIsNeverTurnoverSuppressed: XLM is definitionally liquid and the
+// listing SQL gives it no source count, so like the dust floor the ceiling must exempt it. A
+// low-volume day against the whole XLM float would otherwise trip the ratio.
 func TestFillRowMarketCapNativeIsNeverTurnoverSuppressed(t *testing.T) {
 	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000}}
 	price := "0.16"
@@ -237,17 +221,12 @@ func TestFillRowMarketCapNativeIsNeverTurnoverSuppressed(t *testing.T) {
 	}
 }
 
-// TestPopulateMarketCapAgreesWithTheListingOnTheSameAsset covers the DETAIL
-// path, and it exists because the two surfaces disagreeing is the worse
-// failure. Before the ceiling, /v1/assets published $3.13B for SLVR while
-// /v1/assets/{id} published no cap at all for the same asset in the same
-// minute — for an unrelated reason (the detail path had no supply), which
-// meant the agreement was an accident rather than a rule.
+// TestPopulateMarketCapAgreesWithTheListingOnTheSameAsset covers the DETAIL path: the listing
+// and /v1/assets/{id} must agree on whether an asset's cap is published, by rule rather than by
+// accident.
 //
-// The FDV assertion is on the same row deliberately. FDV is the cap computed
-// over MAX supply, so it is the larger figure: withholding market_cap_usd
-// while publishing an even bigger fdv_usd beside it would defeat the guard on
-// the row it just fired on.
+// The FDV assertion is on the same row deliberately. FDV is the cap over MAX supply, so
+// withholding market_cap_usd while publishing a bigger fdv_usd would defeat the guard.
 func TestPopulateMarketCapAgreesWithTheListingOnTheSameAsset(t *testing.T) {
 	s := &Server{
 		Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000},
@@ -311,13 +290,10 @@ func slogDiscard() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// TestPopulateMarketCapFlagsFDVOnlyCeilingBreach covers the row
-// shape TestPopulateMarketCapAgreesWithTheListingOnTheSameAsset does not:
-// circulating supply small enough that market_cap_usd CLEARS the turnover
-// ceiling and publishes, while max_supply is large enough that fdv_usd
-// alone breaches it. FDV >= market_cap_usd whenever max_supply >
-// circulating_supply, so this is the common shape for any issuer whose
-// declared cap sits above what has vested — not an edge case.
+// TestPopulateMarketCapFlagsFDVOnlyCeilingBreach covers the row shape the test above does not:
+// market_cap_usd clears the turnover ceiling and publishes while fdv_usd alone breaches it.
+// FDV >= market_cap_usd whenever max_supply > circulating_supply, so this is the common shape
+// for any issuer whose declared cap exceeds what has vested.
 func TestPopulateMarketCapFlagsFDVOnlyCeilingBreach(t *testing.T) {
 	s := &Server{
 		Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000},

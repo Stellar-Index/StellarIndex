@@ -40,11 +40,9 @@ func assertNoStems(t *testing.T, in, got string) {
 	}
 }
 
-// Known finds the secret by VALUE, so it has to hold for every way Go
-// repeats a string it was given — bare, %q, and cut short the way the
-// flag package cuts a "flag name" at its first `=` — and for every
-// character, including the whitespace no pattern over unquoted text can
-// bound.
+// Known finds the secret by value, so it must hold for every way Go repeats a string: bare, %q,
+// and cut at its first `=` as the flag package does. It must also hold for every character,
+// including whitespace that no pattern over unquoted text can bound.
 func TestKnownCutsThePasswordHoweverItIsRepeated(t *testing.T) {
 	for name, pw := range hostilePasswords {
 		dsn := "postgres://stellarindex:" + pw + "@db.example.invalid:5432/app?sslmode=disable"
@@ -84,13 +82,10 @@ func TestKnownCutsThePasswordHoweverItIsRepeated(t *testing.T) {
 	}
 }
 
-// The destructive branch, WITH its trigger. The scrubber is armed by a
-// held DSN, and the everyday development DSN uses one word for the
-// user, the password and the database. A scrubber that cut the bare
-// password would rewrite every message naming the database; this one
-// cuts it only inside the `:password@` span or directly after the text
-// it was held behind, so text that merely contains the word must come
-// back byte-identical.
+// The destructive branch, with its trigger. The everyday development DSN uses one word for the
+// user, the password and the database, so a scrubber that cut the bare password would rewrite
+// every message naming the database. It cuts only inside the `:password@` span or directly after
+// the text it was held behind; text that merely contains the word must come back byte-identical.
 func TestKnownDoesNotMangleTextThatMerelyContainsThePassword(t *testing.T) {
 	dsn := "postgres://app:app@localhost:5432/app?sslmode=disable"
 	for _, in := range []string{
@@ -146,16 +141,13 @@ func TestKnownIgnoresValuesWithNoPasswordSpan(t *testing.T) {
 	}
 }
 
-// ParseFailure runs the real parser over each hostile DSN and renders
-// what it returned. The reason's quoted fragment is the leak this exists
-// for: `invalid port ":<password up to the slash>" after host`.
+// ParseFailure runs the real parser over each hostile DSN and renders what it returned. The leak
+// is the reason's quoted fragment: `invalid port ":<password up to the slash>" after host`.
 //
-// A string that does not parse has no structure, so NOTHING of it is
-// rendered — not the fragment, not the host, not the scheme. Two rounds
-// of this fix tried to keep the host by reading the malformed string
-// with a heuristic, and each round a shape turned up that the heuristic
-// read wrong and printed part of the secret out of. The kind of failure
-// and the source of the value (the caller's to add) are the diagnostic.
+// A string that does not parse has no structure, so nothing of it is rendered: not the fragment,
+// the host or the scheme. Keeping the host by heuristic always met a malformed shape the
+// heuristic misread and printed part of the secret. The kind of failure and the source of the
+// value (the caller's to add) are the diagnostic.
 func TestParseFailureRepeatsNothingOfTheUnparseableString(t *testing.T) {
 	failed := 0
 	for name, pw := range hostilePasswords {
@@ -188,13 +180,10 @@ func TestParseFailureRepeatsNothingOfTheUnparseableString(t *testing.T) {
 	}
 }
 
-// The other half: a string that DOES parse — refused by some parser
-// further down, the driver's own, say — is rendered from the parse tree,
-// so the operator gets the user, host, database and options and the tool
-// stays diagnosable. Every part comes from the parser, so there is no
-// boundary left to read wrong, and the refusing error's own text (which
-// here embeds the whole DSN, as a driver's does) is classified and
-// discarded rather than passed through.
+// A string that does parse but is refused further down (the driver's own parser, say) is
+// rendered from the parse tree, so the operator still gets user, host, database and options.
+// Every part comes from the parser, and the refusing error's own text, which embeds the whole
+// DSN, is classified and discarded rather than passed through.
 func TestParseFailureRendersAParseableStringStructurally(t *testing.T) {
 	for name, tc := range map[string]struct{ in, want string }{
 		"userinfo password": {
@@ -228,11 +217,9 @@ func TestParseFailureRendersAParseableStringStructurally(t *testing.T) {
 	}
 }
 
-// The query spelling, by value. keywordPasswordPattern is written for
-// free text, where a space, a quote or a `;` is the only boundary on
-// offer, so it ended the value there and the rest printed. A raw `&` is
-// the same mistake one level up: read by the URL grammar it ends the
-// value, and what follows it is the rest of the password.
+// The query spelling, by value. keywordPasswordPattern is written for free text, where a space,
+// quote or `;` is the only boundary. A raw `&` is the same mistake under the URL grammar: it
+// would end the value and the rest of the password would print.
 func TestKnownCutsAQueryPasswordByValue(t *testing.T) {
 	for name, sep := range map[string]string{
 		"space": " ", "semicolon": ";", "single quote": "'", "double quote": `"`,
@@ -259,12 +246,10 @@ func TestKnownCutsAQueryPasswordByValue(t *testing.T) {
 	}
 }
 
-// The migration tool holds TWO connection strings that normally share an
-// anchor: the environment's DSN and the one in argv, both
-// `postgres://stellarindex:`. Cut one held value at a time and the first
-// takes only the prefix the two passwords share — a rotated password, a
-// naming convention — leaving the second nothing to match; its tail then
-// prints wherever the text gives a pattern no boundary.
+// The migration tool holds two connection strings that normally share an anchor (the
+// environment's DSN and the one in argv, both `postgres://stellarindex:`). Cutting one held value
+// at a time removes only the prefix the two passwords share, leaving the second nothing to
+// match, so its tail prints wherever the text gives a pattern no boundary.
 func TestKnownHoldsSeveralStringsBehindOneAnchor(t *testing.T) {
 	const shared = "SHARED-PREFIX-"
 	for name, tc := range map[string]struct{ other, echoed, keep string }{
@@ -357,14 +342,10 @@ func TestKnownCutsAPasswordWithNoAtSignAfterIt(t *testing.T) {
 	}
 }
 
-// A query password holding an unescaped `@` — the character that matters here,
-// in the spelling attempt two did not cover. Nothing in a malformed DSN
-// tells the `@` that ends a userinfo from one inside a secret, so the
-// userinfo reading runs to the LAST `@` and swallows the `password=`
-// that the query reading is recognised by: the cut ended at `HEAD` and
-// printed `@TAIL`. The fix is not a better guess — both readings are
-// held, and a cut may not stop inside a second secret whose anchor it
-// consumed.
+// A query password holding an unescaped `@`. Nothing in a malformed DSN tells the `@` that ends
+// a userinfo from one inside a secret, so the userinfo reading runs to the last `@` and swallows
+// the `password=` anchor of the query reading, ending the cut at `HEAD` and printing `@TAIL`.
+// Both readings are held, and a cut may not stop inside a second secret whose anchor it consumed.
 func TestKnownCutsAQueryPasswordThatHoldsAnAtSign(t *testing.T) {
 	for name, dsn := range map[string]string{
 		"host and port before the query": "postgres://db.example.invalid:5432/app?password=" + sentinel + "@" + tailStem + "&sslmode=disable",
@@ -432,11 +413,9 @@ func TestKnownAppliedToTheStringItHolds(t *testing.T) {
 		"postgres://u:" + sentinel + "/x#h:5432":   "postgres://u:<redacted>",
 		"postgres://u:12345#" + sentinel + "/db":   "postgres://u:<redacted>",
 		"postgres://user@db.example.invalid/db%ZZ": "postgres://user@db.example.invalid/db%ZZ",
-		// A query password with an `@` in it: the userinfo reading runs to
-		// that `@` and eats the `password=` the query reading needs, so the
-		// cut has to run through both. The host goes with it — the cost of
-		// holding two readings of one ambiguous string, paid in diagnostic
-		// rather than in credential.
+		// A query password with an `@` in it: the userinfo reading runs to that `@` and eats the
+		// `password=` the query reading needs, so the cut has to run through both. The host goes
+		// with it, the diagnostic cost of holding two readings of one ambiguous string.
 		"postgres://h:5432/db?password=" + sentinel + "@" + tailStem: "postgres://h:<redacted>",
 	} {
 		if got := Known(in, in); got != want {

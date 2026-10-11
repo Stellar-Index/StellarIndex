@@ -10,21 +10,14 @@ import (
 	"time"
 )
 
-// clientAborted is the helper handlers use to decide whether a
-// reader-returned error came from a cancelled client request
-// (return without writing — let HTTPMetrics label the request
-// 499) vs. a genuine internal error (write 500) or a server-side
-// deadline (write 503).
+// clientAborted decides whether a reader error came from a cancelled client request (return
+// without writing so HTTPMetrics labels it 499) or from a genuine error (500) or server-side
+// deadline (503).
 //
-// Decision rule: the request context must be done AND cancelled.
-// net/http cancels r.Context() with context.Canceled when the peer
-// hangs up, so that is the one state in which nobody is left to read
-// a response. Every other done-ness is a SERVER-side budget expiring
-// with the client still waiting, and must flow through to the 503
-// timeout-response branch: the cold-path WithTimeout guards inside
-// handlers, and the blanket
-// middleware.RequestTimeout deadline, which wraps
-// r.Context() itself.
+// Decision rule: the request context must be done AND cancelled. net/http cancels r.Context()
+// with context.Canceled when the peer hangs up, the one state where nobody is left to read a
+// response. Any other done-ness is a SERVER-side budget (handler WithTimeout guards or the
+// blanket middleware.RequestTimeout, which wraps r.Context()) and must reach the 503 branch.
 //
 // The cases this test pins:
 //
@@ -37,11 +30,8 @@ import (
 //   - request ctx DEADLINE-EXCEEDED (any err)     → false
 //   - none of the above                           → false
 //
-// Without these tests, a regression that re-added the errors.Is
-// chain would silently swallow server-side timeouts and leave the
-// client hanging without a response — and one that went back to a
-// bare `Err() != nil` would turn the request deadline into a
-// bodyless HTTP 200.
+// A regression that re-added the errors.Is chain would swallow server-side timeouts and leave
+// the client hanging; a bare `Err() != nil` would turn the request deadline into a bodyless 200.
 
 func TestClientAborted_directContextCanceled_aliveReqCtx(t *testing.T) {
 	// A bare context.Canceled with the request context still alive
@@ -55,12 +45,9 @@ func TestClientAborted_directContextCanceled_aliveReqCtx(t *testing.T) {
 }
 
 func TestClientAborted_directDeadlineExceeded_aliveReqCtx(t *testing.T) {
-	// THE bug fix: a bare context.DeadlineExceeded with the request
-	// context still alive comes from one of our cold-path
-	// context.WithTimeout(8s) guards. Returning
-	// true here would short-circuit the handler before its 503
-	// timeout-response branch fires — the client would get an empty
-	// body instead of a structured problem+json.
+	// A bare DeadlineExceeded with the request context alive comes from a cold-path
+	// WithTimeout guard. Returning true would skip the handler's 503 branch and send an
+	// empty body instead of problem+json.
 	r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
 	if clientAborted(r, context.DeadlineExceeded) {
 		t.Error("clientAborted(context.DeadlineExceeded, alive ctx) = true, want false (server-side deadline must flow to 503 path)")
@@ -112,15 +99,10 @@ func TestClientAborted_nilErrorButCtxDone(t *testing.T) {
 }
 
 func TestClientAborted_reqCtxDeadlineExceeded_isNotAnAbort(t *testing.T) {
-	// The request context itself is done — but with DEADLINE, not
-	// CANCEL. That is the middleware.RequestTimeout budget expiring
-	// (it wraps r.Context()), and the client is still on the wire.
-	//
-	// Treating it as an abort is what made
-	// /v1/lending/pools/{pool}/reserves answer HTTP 200 with
-	// content-length 0 after 15.1s: the handler returned silently and
-	// net/http supplied the implicit 200. A caller checking resp.ok
-	// then renders an empty pool as fact.
+	// The request context is done with DEADLINE, not CANCEL: the middleware.RequestTimeout
+	// budget expired while the client is still on the wire. Treating it as an abort makes the
+	// handler return silently and net/http supply an implicit empty 200, which a caller
+	// checking resp.ok renders as fact.
 	r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
 	ctx, cancel := context.WithTimeout(r.Context(), time.Nanosecond)
 	defer cancel()
@@ -143,15 +125,9 @@ func TestClientAborted_canceledErr_butReqCtxDone_returnsTrue(t *testing.T) {
 	}
 }
 
-// TestClientAborted classifies cancellation states a handler may
-// observe while reading from the request body or upstream calls.
-// The clientAborted predicate gates the "skip writeProblem, let
-// HTTPMetrics label this 499" path. The decision rule is
-// req-context-done → true; everything else (including bare ctx
-// errors when r.Context() is alive) is false so that server-side
-// context.WithTimeout deadlines flow into
-// each handler's 503 timeout-response branch instead of being
-// silently swallowed.
+// TestClientAborted classifies the cancellation states a handler may observe. clientAborted
+// gates the "skip writeProblem, let HTTPMetrics label this 499" path; bare ctx errors with a
+// live r.Context() must stay false so server-side deadlines reach the 503 branch.
 func TestClientAborted(t *testing.T) {
 	t.Run("ctx canceled error with live request ctx", func(t *testing.T) {
 		// Bare context.Canceled with the request still alive is a

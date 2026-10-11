@@ -67,13 +67,11 @@ func fuzzEvent(contract string, topics []string, value string, op, ev uint16) ev
 	}
 }
 
-// FuzzVaultFlowAmountsByName drives DeFindexVault deposit/withdraw through
-// the production gate + Decode over arbitrary i128 values and asserts the
-// VaultFlow is exact: every Vec<i128> element in wire order and at full
-// width (ADR-0003), the share delta from its OWN direction's field name,
-// the user from its own field name — regardless of Map field order. A
-// body carrying the OTHER direction's field names is a foreign shape and
-// must be refused, not decoded into the wrong columns.
+// FuzzVaultFlowAmountsByName drives DeFindexVault deposit/withdraw through the production gate
+// and Decode over arbitrary i128 values. The VaultFlow must be exact: every Vec<i128> element in
+// wire order at full width (ADR-0003), the share delta and user read by field name regardless of
+// Map field order. A body with the OTHER direction's field names is a foreign shape and must be
+// refused, not decoded into the wrong columns.
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzVaultFlowAmountsByName$ -fuzztime=60s -parallel=2 ./internal/sources/defindex/
@@ -152,11 +150,10 @@ func FuzzVaultFlowAmountsByName(f *testing.F) {
 	})
 }
 
-// FuzzDFeesEntries asserts a `dfees` event fans out into exactly one
-// DFeesEvent per distributed_fees tuple, in Vec order, with FeeIndex =
-// position (the per-entry PK discriminator), the event's own EventIndex
-// on every entry, and each (token, i128 amount) exact at full width. An
-// empty Vec is zero rows and no error.
+// FuzzDFeesEntries asserts a `dfees` event fans out into exactly one DFeesEvent per
+// distributed_fees tuple, in Vec order, with FeeIndex = position (the per-entry PK
+// discriminator), the event's own EventIndex on every entry, and each i128 amount exact at full
+// width. An empty Vec is zero rows and no error.
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzDFeesEntries$ -fuzztime=60s -parallel=2 ./internal/sources/defindex/
@@ -209,9 +206,9 @@ func FuzzDFeesEntries(f *testing.F) {
 	})
 }
 
-// FuzzStrategyFlowAmount asserts every BlendStrategy flow kind decodes
-// its own Direction and the exact i128 `amount` (never a truncated low
-// limb, never price_per_share on a harvest), from any field order.
+// FuzzStrategyFlowAmount asserts every BlendStrategy flow kind decodes its own Direction and the
+// exact i128 `amount` (never a truncated low limb, never price_per_share on a harvest), from any
+// field order.
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzStrategyFlowAmount$ -fuzztime=60s -parallel=2 ./internal/sources/defindex/

@@ -16,12 +16,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestPopularPriceless_Census pins the tripwire's verdict against the three
-// build-directive cases plus their guards. Each row is chosen so exactly
-// ONE guard decides it, so removing that guard flips the row — the test is
-// non-vacuous against each of: the market-character (wash) exclusion, the
-// priced short-circuit, and the popularity floor. The withheld verdict is
-// the serving gate's, pinned by TestSweep_WithheldIsTheServingGatesVerdict.
+// TestPopularPriceless_Census pins the tripwire's verdict. Each row is chosen so exactly ONE
+// guard decides it, so removing that guard flips the row: the market-character (wash) exclusion,
+// the priced short-circuit, and the popularity floor. The withheld verdict is the serving
+// gate's, pinned by TestSweep_WithheldIsTheServingGatesVerdict.
 func TestPopularPriceless_Census(t *testing.T) {
 	cases := []struct {
 		name string
@@ -86,12 +84,10 @@ func TestPopularPriceless_Census(t *testing.T) {
 			want: true,
 		},
 		{
-			// Mid-range wash: 0.80 share is BELOW the 0.90 all-or-nothing
-			// gate, so washConcentrated does not exclude it. But $16k of
-			// the $20k raw 7d volume is that one wash pair — the
-			// market-character volume is only $4k, under the $10k floor.
-			// A raw-volume comparison fires here; the market-character
-			// discount must not.
+			// Mid-range wash: its 0.80 share is below the 0.90 all-or-nothing gate, so
+			// washConcentrated does not exclude it, but $16k of the $20k raw 7d volume is one
+			// wash pair; market-character volume is $4k, under the $10k floor. A raw-volume
+			// comparison fires here; the market-character discount must not.
 			name: "mid_range_wash_discount_silent",
 			in: timescale.AssetCoverageSignals{
 				AssetID: "MIDWASH-GISSUER", HasPriceUSD: false,
@@ -127,12 +123,10 @@ func (f substanceStore) PairMarketSubstanceAt(
 	return f.m, nil
 }
 
-// The tripwire's "withheld" is the serving gate's own asset verdict, not a
-// re-derivation of one of its floors. Each case disagrees with the old
-// 24h-volume-only reading in one direction: a market clearing $1,000 in
-// too few distinct minutes is withheld by the gate (no gap), and one whose
-// candidate-row 24h volume is low while the gate's alias-union measure
-// clears is served-or-missing, so its absence is a real gap.
+// The tripwire's "withheld" is the serving gate's own asset verdict, not a re-derivation of one
+// of its floors. A market clearing $1,000 in too few distinct minutes is withheld by the gate (no
+// gap); one whose candidate-row 24h volume is low while the gate's alias-union measure clears is
+// served-or-missing, so its absence is a real gap.
 func TestSweep_WithheldIsTheServingGatesVerdict(t *testing.T) {
 	const assetID = "GOLD-GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q"
 	cases := []struct {
@@ -233,11 +227,10 @@ func (d *deadlineReader) PopularPricelessCandidates(ctx context.Context) ([]time
 }
 
 // TestSweep_BoundsReadWithTimeout proves the sweep hands the reader a
-// deadline-bearing context (the full-catalogue scan is ~55s warm and can
-// balloon under load; an unbounded read could pin a DB connection). The
-// live smoke that motivated this measured 54.5s, so the ceiling must sit
-// above that yet be finite. Red-proof: pass ctx straight through in Sweep
-// and sawDeadline goes false.
+// deadline-bearing context: the full-catalogue scan takes about a minute warm and can balloon
+// under load, and an unbounded read could pin a DB connection. The ceiling must sit above the
+// warm scan yet be finite. Red-proof: pass ctx straight through in Sweep and sawDeadline goes
+// false.
 func TestSweep_BoundsReadWithTimeout(t *testing.T) {
 	r := &deadlineReader{}
 	w := New(r, Options{SweepTimeout: 90 * time.Second})
@@ -338,11 +331,9 @@ func TestSweep_ProbeTimeoutReportsDegradedOutcome(t *testing.T) {
 	}
 }
 
-// Each candidate's probe must get its OWN bounded context, not the shared
-// sweepCtx: a sweep whose SweepTimeout has already elapsed by the time it
-// reaches a probe must not hand that probe an already-expired deadline —
-// every remaining candidate would then time out together, indistinguishable
-// from a real mass coverage gap.
+// Each candidate's probe must get its OWN bounded context, not the shared sweepCtx: a probe must
+// not inherit an already-expired deadline, or every remaining candidate times out together,
+// indistinguishable from a real mass coverage gap.
 func TestSweep_ProbeContextIndependentOfSweepTimeout(t *testing.T) {
 	var probeDeadline time.Duration
 	sigs := []timescale.AssetCoverageSignals{

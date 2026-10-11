@@ -10,16 +10,15 @@ import (
 )
 
 // Regression tests for the two UNION arms in
-// AccountOperations / AccountTransactions, which must carry a per-arm
-// ORDER BY / LIMIT. With only the outer query bounded, a high-activity account
-// would materialise EVERY row it ever touched (for operations, including
-// the KB-scale body_xdr blob) before the outer LIMIT 50 discarded almost all of
-// it; that was live-measured at 5–6 s on an otherwise idle box.
+// AccountOperations / AccountTransactions, which must carry a per-arm ORDER BY / LIMIT. With only
+// the outer query bounded, a high-activity account would materialise EVERY row it ever touched
+// (for operations, including the KB-scale body_xdr blob) before the outer LIMIT discarded almost
+// all of it, taking seconds on an idle box.
 //
 // These use the stubConn/stubRows harness from tx_hash_index_test.go.
 // TestAccountListings_ExactSourcedArmIsBounded pins the bounded shape;
-// TestUnionArmTopN_MatchesUnboundedMerge proves bounding each arm cannot lose
-// a row, against the per-arm limit the reader actually binds.
+// TestUnionArmTopN_MatchesUnboundedMerge proves bounding each arm cannot lose a row, against the
+// per-arm limit the reader actually binds.
 
 // armBodies splits the emitted UNION query into its two arm bodies (the text
 // between the parens either side of UNION ALL). Fails the test if the query
@@ -95,17 +94,16 @@ func mergeTopN(arms [][]opKey, n int) []opKey {
 // armTopN is one arm's new per-arm `ORDER BY … LIMIT n`.
 func armTopN(arm []opKey, n int) []opKey { return mergeTopN([][]opKey{arm}, n) }
 
-// TestUnionArmTopN_MatchesUnboundedMerge is the correctness half of C-F1a: the
-// arms are now cut to their own top-N BEFORE the merge, so the fix is only
-// safe if the union of two individually-top-N arms always contains the union's
-// top N. It does — a row in the true top N has at most N-1 rows ahead of it
-// across both arms, hence at most N-1 ahead of it within its own arm — and
-// this pins that invariant against the page size the reader actually binds
-// (read off the emitted query, so shrinking the per-arm limit breaks it).
+// TestUnionArmTopN_MatchesUnboundedMerge is the correctness half of the per-arm bound: arms are
+// cut to their own top-N BEFORE the merge, which is safe only if the union of two individually
+// top-N arms always contains the union's top N. It does: a row in the true top N has at most N-1
+// rows ahead of it across both arms, hence at most N-1 within its own arm. This pins that
+// invariant against the page size the reader actually binds (read off the emitted query, so
+// shrinking the per-arm limit breaks it).
 //
-// Fixtures cover the seam cases: arms fully interleaved, one arm strictly
-// newer than the other (the case where a naive "half the limit per arm" split
-// loses rows), cross-arm duplicates, and arms shorter than the page.
+// Fixtures cover the seam cases: arms fully interleaved, one arm strictly newer than the other
+// (where a naive "half the limit per arm" split loses rows), cross-arm duplicates, and arms
+// shorter than the page.
 func TestUnionArmTopN_MatchesUnboundedMerge(t *testing.T) {
 	const limit = 4
 
@@ -174,13 +172,11 @@ func TestUnionArmTopN_MatchesUnboundedMerge(t *testing.T) {
 }
 
 // TestAccountOpTypeCounts_QueryShape pins the aggregate variant
-// (accountOpTypeCountsQuery, GET /v1/accounts/{g}/activity) to the same
-// two-arm discipline as the row listings: sourced arm on the
-// source_account skip-index, participant arm resolved on the operations
-// primary key — never an `OR … IN (…)` (which defeats the skip-index and
-// full-scans the multi-billion-row table), and uniqExact-deduped per arm
-// (a plain count() over ReplacingMergeTree inflates on un-merged
-// duplicate parts).
+// (accountOpTypeCountsQuery, GET /v1/accounts/{g}/activity) to the same two-arm discipline as
+// the row listings: sourced arm on the source_account skip-index, participant arm resolved on
+// the operations primary key, never an `OR … IN (…)` (which defeats the skip-index and
+// full-scans the table), and uniqExact-deduped per arm (a plain count() over ReplacingMergeTree
+// inflates on un-merged duplicate parts).
 func TestAccountOpTypeCounts_QueryShape(t *testing.T) {
 	arm1, arm2 := armBodies(t, accountOpTypeCountsQuery)
 	if !strings.Contains(arm1, "source_account = ?") {

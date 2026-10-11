@@ -33,16 +33,13 @@ func TestCountRecentEventsQuery_labelsEveryLeg(t *testing.T) {
 	}
 }
 
-// The census's two leg shapes. A leg either labels its rows with a
-// literal source name (`SELECT 'blend', count(*) FROM blend_positions`)
-// or groups by a `source` column on a table that holds several sources'
-// rows (`SELECT source, count(*) FROM trades … GROUP BY source`).
+// The census's two leg shapes. A leg either labels its rows with a literal source name
+// (`SELECT 'blend', count(*) FROM blend_positions`) or groups by a `source` column on a table
+// holding several sources' rows (`SELECT source, count(*) FROM trades … GROUP BY source`).
 //
-// The guards below PARSE countRecentEventsQuery rather than restating
-// its legs: a hand-written list of expected arms only ever asserts what
-// its author already remembered, which is exactly how sorocredit shipped
-// four hypertables and a permanent events_24h of 0 while the rollup and
-// the lake-derived activity series disagreed in the same payload.
+// The guards below parse countRecentEventsQuery rather than restating its legs: a hand-written
+// list of expected arms only asserts what its author already remembered, which is how a source
+// can ship hypertables with a permanent events_24h of 0.
 var (
 	censusLabelledLeg = regexp.MustCompile(`SELECT\s+'([a-z0-9_-]+)',\s*count\(\*\)\s+FROM\s+([a-z][a-z0-9_]*)`)
 	censusGroupedLeg  = regexp.MustCompile(`SELECT\s+source,\s*count\(\*\)(?:\s+AS\s+n)?\s+FROM\s+([a-z][a-z0-9_]*)`)
@@ -57,20 +54,16 @@ var excludedFromEventCensus = map[string]string{
 	"soroban_events":  "the ADR-0029 landing zone — the raw superset every decoded source is projected FROM. Counting it as a protocol would double-count every other leg.",
 }
 
-// TestCountRecentEventsQuery_countsEveryIngestedSource is the per-source
-// coverage guard for the trailing-24h census behind /v1/protocols'
-// events_24h.
+// TestCountRecentEventsQuery_countsEveryIngestedSource is the per-source coverage guard for the
+// trailing-24h census behind /v1/protocols' events_24h.
 //
-// [DefaultGapDetectorTargets] is the registry every per-source hypertable
-// must join (ADR-0030), so it is the authoritative answer to "which
-// sources does this deployment write rows for". A source that writes rows
-// but has no census leg reports events_24h: 0 forever — next to a
-// lake-derived activity series showing thousands of events a day, in the
-// same response.
+// [DefaultGapDetectorTargets] is the registry every per-source hypertable must join, so it is the
+// authoritative answer to "which sources does this deployment write rows for". A source that
+// writes rows but has no census leg reports events_24h: 0 forever, next to a lake-derived
+// activity series showing thousands of events a day in the same response.
 //
-// Table-driven off that registry rather than off a list maintained here,
-// so adding a source's hypertable without adding its census arm fails
-// this test instead of shipping a self-contradicting payload.
+// Table-driven off that registry, so adding a hypertable without its census arm fails this test
+// instead of shipping a self-contradicting payload.
 func TestCountRecentEventsQuery_countsEveryIngestedSource(t *testing.T) {
 	t.Parallel()
 
@@ -124,15 +117,11 @@ func TestExcludedFromEventCensus_hasNoStaleEntries(t *testing.T) {
 	}
 }
 
-// censusCoveredSources derives the set of logical source names
-// countRecentEventsQuery can emit a row for.
-//
-// Labelled legs contribute their literal. A GROUP BY source leg
-// contributes whichever sources land in that table — which
-// [DefaultGapDetectorTargets] already records, since a source scanned
-// through a shared table registers a target on it (sdex/aquarius/
-// soroswap/phoenix/comet on `trades`, the five oracle feeds on
-// `oracle_updates`).
+// censusCoveredSources derives the set of logical source names countRecentEventsQuery can emit a
+// row for. Labelled legs contribute their literal. A GROUP BY source leg contributes whichever
+// sources land in that table, which [DefaultGapDetectorTargets] records since a source scanned
+// through a shared table registers a target on it (sdex/aquarius/soroswap/phoenix/comet on
+// `trades`, the five oracle feeds on `oracle_updates`).
 func censusCoveredSources() map[string]bool {
 	covered := make(map[string]bool, 32)
 	for _, m := range censusLabelledLeg.FindAllStringSubmatch(countRecentEventsQuery, -1) {
@@ -164,11 +153,9 @@ func sourceTables() map[string][]string {
 	return out
 }
 
-// TestCountRecentEventsBySource_readsRollup asserts the read path is a
-// keyed-on-PK lookup against protocol_events_24h — NOT the inline
-// multi-table census that a latency fix moved to the
-// aggregator worker. If this regresses (someone re-inlines the census)
-// the /v1/protocols cold latency comes back.
+// TestCountRecentEventsBySource_readsRollup asserts the read path is a primary-key lookup against
+// protocol_events_24h, not the inline multi-table census, which belongs in the aggregator worker.
+// Re-inlining the census brings back the /v1/protocols cold latency.
 func TestCountRecentEventsBySource_readsRollup(t *testing.T) {
 	if !strings.Contains(readProtocolEventsRollup, "FROM protocol_events_24h") {
 		t.Errorf("reader must select FROM protocol_events_24h, got: %q", readProtocolEventsRollup)

@@ -31,13 +31,10 @@ type fakeAlertStore struct {
 	// the fired-mark.
 	claimErr  error
 	claimErrN int
-	// dbLastFired is the AUTHORITATIVE last_fired_at the conditional
-	// UPDATE evaluates its predicate against — the row as it stands in
-	// Postgres NOW, which is not necessarily the snapshot
-	// ListEnabledPriceAlerts handed the evaluator at the top of the sweep.
-	// Seeding it independently of `enabled` is how a test models a second
-	// evaluator having claimed the same crossing in between.
-	// Empty entry = SQL NULL = never fired.
+	// dbLastFired is the AUTHORITATIVE last_fired_at the conditional UPDATE evaluates its
+	// predicate against, which may differ from the ListEnabledPriceAlerts snapshot taken at the
+	// top of the sweep. Seeding it independently models a second evaluator having claimed the
+	// same crossing in between. Empty entry = SQL NULL = never fired.
 	dbLastFired map[uuid.UUID]time.Time
 	// dbDisarmed is the authoritative disarmed column; rearms counts
 	// RearmPriceAlert calls that cleared it.
@@ -394,15 +391,12 @@ func TestSweep_NoSubscribedWebhook_DoesNotMarkFired(t *testing.T) {
 	}
 }
 
-// TestSweep_FiredMarkFlaky_NoDuplicateDelivery: a
-// transient ClaimPriceAlertFire failure must NOT cause the crossing to be
-// re-delivered to the same webhooks on the next tick. With the fired-mark
-// advanced before the fan-out, each subscribed webhook receives the
-// crossing at most once across repeated sweeps.
+// TestSweep_FiredMarkFlaky_NoDuplicateDelivery: a transient ClaimPriceAlertFire failure must NOT
+// cause the crossing to be re-delivered to the same webhooks on the next tick. With the
+// fired-mark advanced before the fan-out, each webhook receives the crossing at most once.
 //
-// Enqueue-then-mark would let sweep 1 enqueue both webhooks, the mark
-// fail, and sweep 2 re-enqueue both → 4 deliveries (duplicates on new,
-// un-dedupable delivery ids). Required: 2 deliveries, one per webhook.
+// Enqueue-then-mark would let sweep 1 enqueue both webhooks, the mark fail, and sweep 2
+// re-enqueue both: 4 deliveries with un-dedupable delivery ids. Required: 2, one per webhook.
 func TestSweep_FiredMarkFlaky_NoDuplicateDelivery(t *testing.T) {
 	acct := uuid.New()
 	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
@@ -459,11 +453,10 @@ func TestSweep_NoPrice_NoFire(t *testing.T) {
 	}
 }
 
-// TestSweep_StalePrice_NoFire proves the evaluator rejects a crossing
-// built off a closed VWAP bucket older than its own freshness budget
-// The condition is crossed and there is no cooldown in the
-// way, but the bucket closed well outside maxPriceStaleness of "now", so
-// the alert must not fire and the `stale` outcome must be recorded.
+// TestSweep_StalePrice_NoFire proves the evaluator rejects a crossing built off a closed VWAP
+// bucket older than its freshness budget. The condition is crossed with no cooldown, but the
+// bucket closed outside maxPriceStaleness of "now", so the alert must not fire and the `stale`
+// outcome must be recorded.
 func TestSweep_StalePrice_NoFire(t *testing.T) {
 	acct := uuid.New()
 	alert := platform.PriceAlert{
@@ -537,25 +530,18 @@ func TestConditionCrossed(t *testing.T) {
 	}
 }
 
-// TestSweep_CrossingAlreadyClaimedByAnotherEvaluator_NoFanOut:
-// the cooldown gate is check-then-act, so it cannot be the thing
-// that guarantees one notification per crossing.
+// TestSweep_CrossingAlreadyClaimedByAnotherEvaluator_NoFanOut: the cooldown gate is
+// check-then-act, so it cannot be what guarantees one notification per crossing.
 //
-// coolingDown reads a.LastFiredAt from the SNAPSHOT
-// ListEnabledPriceAlerts took at the top of the sweep. Two evaluators
-// running the same code — an operator who started a second aggregator, an
-// R2/R3 standby, or the overlap window of a rolling deploy — take that
-// snapshot before either has fired, so BOTH pass the gate on the same
-// crossing. An unconditional UPDATE mark would let both also
-// "succeed" and both fanned out: the customer got two webhooks per
-// crossing, with different delivery ids they cannot dedup on
-// X-StellarIndex-Delivery-Id.
+// coolingDown reads a.LastFiredAt from the SNAPSHOT taken at the top of the sweep. Two evaluators
+// running the same code (a second aggregator, an R2/R3 standby, a rolling-deploy overlap) both
+// snapshot before either fires, so BOTH pass the gate on the same crossing. An unconditional
+// UPDATE mark would let both fan out, sending two webhooks with different delivery ids that
+// cannot be deduped on X-StellarIndex-Delivery-Id.
 //
-// Modelled here as the second instance: the alert's snapshot says "never
-// fired" while the authoritative row already carries the winner's
-// last_fired_at, one second old, inside a one-hour cooldown. The
-// conditional UPDATE must refuse the claim and the fan-out must not
-// happen.
+// Modelled as the second instance: the snapshot says "never fired" while the authoritative row
+// already carries the winner's last_fired_at inside the cooldown. The conditional UPDATE must
+// refuse the claim and the fan-out must not happen.
 //
 // Without the claim check: 1 delivery enqueued, want 0.
 func TestSweep_CrossingAlreadyClaimedByAnotherEvaluator_NoFanOut(t *testing.T) {
@@ -845,12 +831,10 @@ func TestSweep_FanOutFailedPartially_StaysDisarmed(t *testing.T) {
 	}
 }
 
-// The sweep is serial on the process context, so one alert
-// whose price read never returns held every later alert — every other
-// tenant's — for up to the 30 m background statement timeout, and no
-// sweep outcome was emitted meanwhile. Each alert now has its own
-// deadline; the stalled one is recorded as a timeout and the next alert
-// still fires within the same sweep.
+// The sweep is serial on the process context, so one alert whose price read never returns would
+// hold every later alert, across all tenants, until the background statement timeout. Each alert
+// has its own deadline: the stalled one is recorded as a timeout and the next alert still fires
+// within the same sweep.
 func TestSweep_StalledAlertTimesOutAndOthersStillFire(t *testing.T) {
 	acct := uuid.New()
 	stalled := platform.PriceAlert{

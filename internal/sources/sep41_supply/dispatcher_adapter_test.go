@@ -115,10 +115,9 @@ func stringScVal(s string) xdr.ScVal {
 }
 
 // mintEventCAP67 builds the REAL post-P23 (CAP-67 / Whisk) mint shape:
-// ["mint", to(Addr), sep0011_asset(String)] — `to` at topic[1], the asset
-// String at topic[2]. This is the dominant mainnet shape (99.96% of recent
-// mints per the r1 lake) and is DISTINCT from the legacy mintEvent helper,
-// which prefixes the admin (`to` at topic[2]). The old decoder dropped this.
+// ["mint", to(Addr), sep0011_asset(String)], with `to` at topic[1] and the asset String at
+// topic[2]. It is the dominant mainnet shape and DISTINCT from the legacy mintEvent helper,
+// which prefixes the admin (`to` at topic[2]).
 func mintEventCAP67(t *testing.T, contract string, amount int64) events.Event {
 	t.Helper()
 	ev := mintEvent(t, contract, amount)
@@ -316,18 +315,12 @@ func TestDecoder_DecodeNegativeAmount(t *testing.T) {
 	}
 }
 
-// TestDecoder_CounterpartyAcrossShapes pins the shape-aware counterparty
-// decode across EVERY mainnet-observed topic shape (lake-verified on r1).
-// The counterparty position is NOT fixed by topic count: the
-// legacy SAC form prefixes `admin` (counterparty at topic[2]), while the
-// CAP-67 / Whisk form (mainnet 2025-09-03, 99.96% of recent mints + 100% of
-// clawbacks) puts the counterparty at topic[1] and the sep0011_asset STRING at
-// topic[2]. The discriminator is the TYPE of topic[2] (Address ⇒ legacy).
-//
-// This supersedes the old back-compat test, whose "post-P23" fixture appended
-// sep0011 to the LEGACY admin-prefixed form (`["mint", admin, to, sep0011]`) —
-// a shape mainnet never emits — and so passed while the decoder silently
-// dropped every real CAP-67 mint + clawback.
+// TestDecoder_CounterpartyAcrossShapes pins the shape-aware counterparty decode across EVERY
+// mainnet-observed topic shape. The counterparty position is NOT fixed by topic count: the
+// legacy SAC form prefixes `admin` (counterparty at topic[2]), while the CAP-67 / Whisk form puts
+// it at topic[1] and the sep0011_asset STRING at topic[2]. The discriminator is the TYPE of
+// topic[2] (Address means legacy). A fixture appending sep0011 to the legacy admin-prefixed form
+// is a shape mainnet never emits and would pass while real CAP-67 mints and clawbacks drop.
 func TestDecoder_CounterpartyAcrossShapes(t *testing.T) {
 	d, _ := NewDecoder([]string{cWatched})
 
@@ -425,14 +418,10 @@ func encodeMapNoAmount(t *testing.T) string {
 	return encodeScVal(t, xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &mp})
 }
 
-// Real mainnet event blobs pulled from the r1 ClickHouse lake
-// (stellar.contract_events) for the dropped-mints
-// finding. Contract CBH4M45T…OCKF is one of the 15 watched SEP-41
-// tokens whose sep41_supply_rollup showed burn_total > mint_total
-// (mint_total == 0): every one of its mints carries the CAP-67 MAP
-// body { amount: i128, to_muxed_id: String } and the i128-only
-// decodeAmount rejected them all with ErrAmountNotI128, dropping the
-// whole row. These are the base64 SCVal blobs (topics + body) verbatim.
+// Real mainnet event blobs from stellar.contract_events. Contract CBH4M45T…OCKF is a watched
+// SEP-41 token whose mints all carry the CAP-67 MAP body { amount: i128, to_muxed_id: String },
+// which an i128-only decodeAmount rejects with ErrAmountNotI128, dropping the whole row. These
+// are the base64 SCVal blobs (topics + body) verbatim.
 const (
 	// mint @ ledger 59977903 — DROPPED by the old decoder.
 	// topics: ["mint", to=GDZS…U44, "ETH:GBFX…SOCC"]
@@ -456,12 +445,9 @@ const (
 	realWatched = "CBH4M45TQBLDPXOK6L7VYKMEJWFITBOL64BN3WDAIIDT4LNUTWTTOCKF"
 )
 
-// TestDecoder_DecodeRealCAP67MapMint is the regression golden for the
-// dropped-mints finding. It feeds the REAL on-wire XDR of a
-// mint whose body is a CAP-67 map (amount wrapped alongside
-// to_muxed_id) and proves the decoder now (a) does not drop it and
-// (b) recovers the exact i128 amount and the topic[1] recipient. Before
-// the fix decodeAmount returned ErrAmountNotI128 on the map body.
+// TestDecoder_DecodeRealCAP67MapMint is the golden for map-bodied mints. It feeds the REAL
+// on-wire XDR of a mint whose body is a CAP-67 map (amount alongside to_muxed_id) and proves the
+// decoder (a) does not drop it and (b) recovers the exact i128 amount and the topic[1] recipient.
 func TestDecoder_DecodeRealCAP67MapMint(t *testing.T) {
 	d, _ := NewDecoder([]string{realWatched})
 	ev := events.Event{

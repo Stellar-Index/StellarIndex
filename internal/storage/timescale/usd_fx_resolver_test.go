@@ -517,24 +517,15 @@ var (
 	}
 )
 
-// TestVWAPUSDFXResolver_XLMAnchorResolvesThroughItsSorobanForms is the
-// alias regression: the tier-3/4 XLM/USD anchor was bound to ONE
-// spelling of XLM (`native`) against ONE spelling of the peg (the
-// classic), and XLM's USD markets are split across its three canonical
-// identities BY VENUE. Measured on r1, prices_1m buckets
-// clearing this query's own dust floor:
+// TestVWAPUSDFXResolver_XLMAnchorResolvesThroughItsSorobanForms is the alias regression. XLM's
+// USD markets are split across its three canonical identities by venue: the classic pair
+// (`native` / USDC-GA5Z...) and the SAC pair (CAS3J7... / CCW67T...) each have their own
+// prices_1m buckets, and no other combination of those forms has any. A single-spelling
+// predicate therefore could not price on-chain XLM trades, which were stored with usd_volume
+// NULL and served as $0.00.
 //
-//	native      / USDC-GA5Z… (classic)  215,790 buckets, recent
-//	CAS3J7…SAC  / CCW67T…SAC (the SAC)  291,883 buckets, since 2024
-//	every other combination of those forms                0
-//
-// so a single-spelling predicate could not price ANY on-chain XLM trade before
-// the alias fix — 28,534 sdex/AMM XLM-base rows in one month, moving
-// 19,174,885 XLM, all stored with usd_volume NULL and served as $0.00.
-//
-// The scripted driver replays that exact shape: `native` misses,
-// `crypto:XLM` misses, the SAC form hits. The assertion is the RESOLVED
-// RATE, not merely that something came back.
+// The scripted driver replays that shape: `native` misses, `crypto:XLM` misses, the SAC form
+// hits. The assertion is the resolved rate, not merely that something came back.
 func TestVWAPUSDFXResolver_XLMAnchorResolvesThroughItsSorobanForms(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
@@ -598,13 +589,10 @@ func TestVWAPUSDFXResolver_XLMAnchorResolvesThroughItsSorobanForms(t *testing.T)
 	}
 }
 
-// TestVWAPUSDFXResolver_AliasLoopStopsAtTheEstablishedForm pins the other
-// half of the alias contract: the loop is ADDITIVE. Where the
-// pre-existing `native` form already answers — every date after
-// the alias fix — it answers FIRST, no further form is consulted, and the result is
-// what the single-spelling code returned. This is the manipulation guard
-// [canonical.AssetAliases] documents (SAC form LAST) expressed as
-// behaviour: the fresher, 99.00 Soroban print must not win.
+// TestVWAPUSDFXResolver_AliasLoopStopsAtTheEstablishedForm pins the other half of the alias
+// contract: the loop is additive. Where the `native` form already answers, it answers first and
+// no further form is consulted. This is the manipulation guard [canonical.AssetAliases]
+// documents (SAC form last) expressed as behaviour: a fresher, 99.00 Soroban print must not win.
 func TestVWAPUSDFXResolver_AliasLoopStopsAtTheEstablishedForm(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 8, 15, 9, 30, 0, 0, time.UTC)
@@ -640,12 +628,10 @@ func TestVWAPUSDFXResolver_AliasLoopStopsAtTheEstablishedForm(t *testing.T) {
 	}
 }
 
-// TestUSDPegForms_MatchesTheExactTierPegSet is the lockstep guard between
-// the package's two spellings of "is this quote a declared dollar":
-// [USDVolumeQuoteSpec.QuoteUSDPegInfo] (tiers 1/2) and [usdPegForms]
-// (tiers 3/4). They drifted — the exact tier let a SAC INHERIT its
-// classic's peg while the FX tier bound the classic strings alone — and
-// that drift is half of what made the XLM anchor blind to Soroban.
+// TestUSDPegForms_MatchesTheExactTierPegSet is the lockstep guard between the package's two
+// spellings of "is this quote a declared dollar": [USDVolumeQuoteSpec.QuoteUSDPegInfo] (tiers
+// 1/2) and [usdPegForms] (tiers 3/4). If the exact tier lets a SAC inherit its classic's peg
+// while the FX tier binds the classic strings alone, the XLM anchor goes blind to Soroban.
 func TestUSDPegForms_MatchesTheExactTierPegSet(t *testing.T) {
 	t.Parallel()
 	pegs := []string{usdcClassicPeg}
@@ -686,14 +672,13 @@ func TestUSDPegForms_MatchesTheExactTierPegSet(t *testing.T) {
 	}
 }
 
-// TestUSDPegForms_RejectsMalformedWrapper — strict on the WRAPPER, like
-// [NewUSDVolumeQuoteSpec]: a wrapper we cannot parse is a peg form we
-// would silently never bind, i.e. invisible under-counted volume.
+// TestUSDPegForms_RejectsMalformedWrapper is strict on the wrapper, like
+// [NewUSDVolumeQuoteSpec]: a wrapper we cannot parse is a peg form we would silently never
+// bind, which under-counts volume invisibly.
 //
-// The declared peg strings themselves are deliberately NOT re-validated:
-// they are bound verbatim into the SQL exactly as they were before this
-// expansion existed, and [NewUSDVolumeQuoteSpec] already rejects an
-// unparseable one on the production wiring path.
+// The declared peg strings are deliberately not re-validated: they are bound verbatim into the
+// SQL, and [NewUSDVolumeQuoteSpec] already rejects an unparseable one on the production wiring
+// path.
 func TestUSDPegForms_RejectsMalformedWrapper(t *testing.T) {
 	t.Parallel()
 	if _, err := usdPegForms([]string{usdcClassicPeg}, map[string]string{usdcSAC: "not-an-asset"}); err == nil {

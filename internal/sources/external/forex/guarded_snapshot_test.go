@@ -14,17 +14,12 @@ import (
 
 // The served in-memory snapshot and the fx sanity band.
 //
-// /v1/price's two fiat paths read the forex Cache directly. A worker that
-// installs the snapshot built from the RAW upstream map and only
-// afterwards runs the band, inside persistSnapshot, protects fx_quotes
-// and nothing else. During the Massive UZS incident
-// the guard kept 1820 (true level ~11,800) out of fx_quotes all day while
-// the cache served it to every fiat:UZS request.
+// /v1/price's two fiat paths read the forex Cache directly, so installing the snapshot built from
+// the RAW upstream map before the band runs protects fx_quotes and nothing else.
 //
-// These tests drive the production refresh entry point, [Worker.refreshOnce],
-// against a fake of massive's two REST endpoints. None of them calls the
-// band helpers directly: the defect was an ORDERING between the band and
-// the install, which only the real refresh path can show.
+// These tests drive the production entry point, [Worker.refreshOnce], against a fake of massive's
+// two REST endpoints. They never call the band helpers directly: the defect was an ORDERING
+// between the band and the install, which only the real refresh path can show.
 
 // fakeMassive serves the grouped-daily FX endpoint and the reference
 // tickers endpoint. `current` answers the most recent UTC date (what
@@ -153,12 +148,9 @@ func (r *recordingFXWriter) InsertFXQuoteBatch(_ context.Context, q []FXQuote) e
 	return nil
 }
 
-// TestRefreshOnce_BandRejectedRateIsNeverInstalled is the UZS incident:
-// a healthy refresh, then the current feed starts serving 1820 against a
-// true ~11,800 and keeps serving it. The band refuses it (first as a
-// deviation, then — because agreeing dated bars refute it — via the
-// confirm veto). The cache must serve the last GUARDED rate throughout,
-// exactly as fx_quotes does.
+// TestRefreshOnce_BandRejectedRateIsNeverInstalled: after a healthy refresh the current feed
+// serves a wildly wrong rate. The band refuses it (as a deviation, then via the confirm veto
+// once dated bars refute it); the cache must keep serving the last GUARDED rate, like fx_quotes.
 func TestRefreshOnce_BandRejectedRateIsNeverInstalled(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -220,12 +212,10 @@ func TestRefreshOnce_BandRejectedRateIsNeverInstalled(t *testing.T) {
 	}
 }
 
-// TestRefreshOnce_HealedBootstrapIsRefusedNotServed is the same incident
-// at process restart: the FIRST sample is the broken one, the bootstrap
-// arm accepts it sight-unseen, and the ticker's own dated bars then refute
-// it (the history-majority heal scrubs the row from the fx_quotes batch).
-// A scrubbed row is not a guarded rate, so the cache serves NOTHING for
-// the ticker — a refusal — rather than the refuted sample.
+// TestRefreshOnce_HealedBootstrapIsRefusedNotServed: at restart the FIRST sample is the broken
+// one and the bootstrap arm accepts it, then the ticker's dated bars refute it (the heal scrubs
+// the row from the fx_quotes batch). A scrubbed row is not a guarded rate, so the cache serves
+// NOTHING for the ticker rather than the refuted sample.
 func TestRefreshOnce_HealedBootstrapIsRefusedNotServed(t *testing.T) {
 	up := &fakeMassive{
 		current: map[string]float64{"UZS": 1820, "EUR": 0.92},
@@ -279,11 +269,9 @@ func TestRefreshOnce_ConfirmedMoveReachesTheCache(t *testing.T) {
 	}
 }
 
-// TestRefreshOnce_HeldRateExpires bounds the hold. A rate nothing has
-// re-confirmed is served with its ORIGINAL UpdateAt, and only for as long
-// as the fx_quotes read path would serve its last-good row (the 7-day
-// forex-snap lookback). Past that it is dropped: fail closed, never an
-// indefinitely stale money value.
+// TestRefreshOnce_HeldRateExpires bounds the hold. An unconfirmed rate is served with its
+// ORIGINAL UpdateAt, only as long as the fx_quotes read path would serve its last-good row (the
+// forex-snap lookback). Past that it is dropped: fail closed, never an indefinitely stale price.
 func TestRefreshOnce_HeldRateExpires(t *testing.T) {
 	up := &fakeMassive{
 		current: map[string]float64{"EUR": 0.92},
@@ -361,14 +349,12 @@ func TestRefreshOnce_ECBFallbackJoinsAgainstPrimaryNames(t *testing.T) {
 	}
 }
 
-// TestRefreshOnce_ReusedNamesJoinAgainstPrimaryRates is the second
-// trigger: rates are healthy, the NAMES endpoint fails, and the worker
-// reuses the last snapshot's names — which it re-keys by the UPPER-case
-// Ticker — against the primary's lower-case rates.
+// TestRefreshOnce_ReusedNamesJoinAgainstPrimaryRates: rates are healthy, the NAMES endpoint
+// fails, and the worker reuses the last snapshot's names (re-keyed by UPPER-case Ticker) against
+// the primary's lower-case rates.
 //
-// The assertion is on the NEW rate, not on presence: since the served
-// snapshot holds a ticker's last guarded rate, a collapsed join no longer
-// makes EUR vanish — it silently pins it at the previous refresh's value.
+// The assertion is on the NEW rate, not on presence: a collapsed join does not make EUR vanish
+// (the snapshot holds the last guarded rate), it silently pins it at the previous value.
 func TestRefreshOnce_ReusedNamesJoinAgainstPrimaryRates(t *testing.T) {
 	up := &fakeMassive{
 		current: map[string]float64{"EUR": 0.92, "UZS": 11800},
@@ -401,14 +387,10 @@ func TestRefreshOnce_ReusedNamesJoinAgainstPrimaryRates(t *testing.T) {
 	}
 }
 
-// TestRefreshOnce_ColdStartWithoutNamesStillInstallsSnapshot is the
-// cold-start arm of a primary outage: the process has never installed a
-// snapshot, the rates fetch succeeds (here directly; in production via
-// the ECB fallback) and the primary's names endpoint errors. Names are
-// static display labels, so the refresh must still install the rates —
-// labelled by ticker — rather than leave the feed empty until the
-// primary returns. The warm path already reuses cached names; this
-// pins the one-time cold path, which must not return before cache.Set.
+// TestRefreshOnce_ColdStartWithoutNamesStillInstallsSnapshot: with no snapshot ever installed,
+// the rates fetch succeeds (in production via the ECB fallback) but the names endpoint errors.
+// Names are static display labels, so the refresh must still install the rates, labelled by
+// ticker, rather than leave the feed empty. The cold path must not return before cache.Set.
 func TestRefreshOnce_ColdStartWithoutNamesStillInstallsSnapshot(t *testing.T) {
 	up := &fakeMassive{
 		current: map[string]float64{"EUR": 0.92, "UZS": 11800},
@@ -529,11 +511,9 @@ func TestRefreshOnce_ColdStartWithoutUsableReaderHoldsNothing(t *testing.T) {
 	}
 }
 
-// TestRefreshOnce_ECBStandbyAttributesEachRowToItsFetcher drives a full
-// refresh on a cold worker whose primary serves dated history but not
-// current rates or names. The ECB standby answers the current rates, so
-// the current-day rows are ECB's; the dated bars still come from the
-// primary client and must say so.
+// TestRefreshOnce_ECBStandbyAttributesEachRowToItsFetcher: the primary serves dated history but
+// not current rates or names, so the ECB standby answers current rates. Current-day rows are
+// ECB's; the dated bars still come from the primary client and must say so.
 func TestRefreshOnce_ECBStandbyAttributesEachRowToItsFetcher(t *testing.T) {
 	const groupedPrefix = "/v2/aggs/grouped/locale/global/market/fx/"
 	recent := time.Now().UTC().AddDate(0, 0, -5).Format("2006-01-02")

@@ -15,10 +15,9 @@ import (
 // TestTTLKeyHashMatchesCoreDerivation pins the derivation stellar-core uses
 // for LedgerKeyTtl.keyHash: sha256 over the DECODED LedgerKey bytes.
 //
-// Hashing the base64 TEXT instead of the decoded bytes is the easy mistake
-// here, and it fails silently — every lookup simply misses, every entry comes
-// back TTLUnknown, and the filter degrades to a no-op that looks like "nothing
-// was archived" rather than like a bug.
+// Hashing the base64 text instead of the decoded bytes is the easy mistake and fails silently:
+// every lookup misses, every entry comes back TTLUnknown, and the filter degrades to a no-op that
+// looks like "nothing was archived" rather than a bug.
 func TestTTLKeyHashMatchesCoreDerivation(t *testing.T) {
 	raw := []byte{0x00, 0x00, 0x00, 0x06, 0xDE, 0xAD, 0xBE, 0xEF}
 	keyXDR := base64.StdEncoding.EncodeToString(raw)
@@ -45,11 +44,10 @@ func TestTTLKeyHashRejectsUndecodableKey(t *testing.T) {
 	}
 }
 
-// ttlDDLFiles returns the two DDL files that carry the TTL extraction since
-// v0.21.4 moved it out of Go query text: the canonical fresh-deployment schema
-// and the operator migration artifact. Both must stay in lockstep with the Go
-// layout constants — the extraction runs at INGEST now, so a drifted offset
-// would corrupt the projection silently rather than fail a query.
+// ttlDDLFiles returns the two DDL files that carry the TTL extraction: the canonical
+// fresh-deployment schema and the operator migration artifact. Both must stay in lockstep with the
+// Go layout constants; extraction runs at ingest, so a drifted offset corrupts the projection
+// silently rather than failing a query.
 func ttlDDLFiles(t *testing.T) map[string]string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -71,17 +69,15 @@ func ttlDDLFiles(t *testing.T) map[string]string {
 	return out
 }
 
-// TestTTLLiveUntilDDLIsShapeGuarded pins the fail-open property of the
-// liveUntil extraction in BOTH DDL files (canonical schema + operator
-// artifact), asserted against the Go layout constants. The MV inserts only
-// rows whose decoded key/entry lengths are exactly 36/48 bytes, so a future
-// protocol change to the TTLEntry layout yields NO row (→ key absent →
-// TTLUnknown → entry KEPT) rather than a garbage ledger number that would
-// read as "archived" and silently delete live balances.
+// TestTTLLiveUntilDDLIsShapeGuarded pins the fail-open property of the liveUntil extraction in
+// both DDL files, asserted against the Go layout constants. The MV inserts only rows whose decoded
+// key/entry lengths are exactly 36/48 bytes, so a future TTLEntry layout change yields no row (key
+// absent, TTLUnknown, entry kept) rather than a garbage ledger number that reads as "archived" and
+// silently deletes live balances.
 //
-// It also pins tryBase64Decode over base64Decode: inside a materialized view
-// a decode THROW fails the whole source INSERT into ledger_entry_changes —
-// i.e. blocks ingest — while try* + the length guards skip the row.
+// It also pins tryBase64Decode over base64Decode: inside a materialized view a decode throw fails
+// the whole source INSERT into ledger_entry_changes and blocks ingest, while try* plus the length
+// guards skip the row.
 func TestTTLLiveUntilDDLIsShapeGuarded(t *testing.T) {
 	wantExprs := []string{
 		// live_until: 4 bytes at decoded offset 40 (0-indexed) = 41
@@ -122,8 +118,7 @@ func TestTTLLiveUntilDDLIsShapeGuarded(t *testing.T) {
 	}
 }
 
-// TestTTLEntryLayoutConstants documents the wire layout the offsets encode, so
-// a reader can check them against the XDR without running a query:
+// TestTTLEntryLayoutConstants documents the wire layout the offsets encode:
 //
 //	TTL LedgerKey  = type(4) + keyHash(32)                          = 36
 //	TTL LedgerEntry= lastModified(4) + type(4) + keyHash(32)
@@ -143,11 +138,9 @@ func TestTTLEntryLayoutConstants(t *testing.T) {
 	}
 }
 
-// TestTTLLivenessQueryIsSlimLookup pins the v0.21.4 query shape: a bounded
-// primary-key lookup over the slim projection, latest state via
-// argMax(live_until, version), thread/memory guard rails retained — and,
-// critically, NO scan of ledger_entries_current and NO per-row entry_xdr
-// decode (the design that OOM'd six production runs).
+// TestTTLLivenessQueryIsSlimLookup pins the query shape: a bounded primary-key lookup over the
+// slim projection, latest state via argMax(live_until, version), thread/memory guard rails kept,
+// and no scan of ledger_entries_current or per-row entry_xdr decode (that design OOM'd).
 func TestTTLLivenessQueryIsSlimLookup(t *testing.T) {
 	q := ttlLivenessBatchQuery([]string{"unhex(?)", "unhex(?)"})
 

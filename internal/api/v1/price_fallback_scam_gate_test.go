@@ -14,36 +14,26 @@ import (
 
 // The side door into the withholding decision.
 //
-// /v1/price's reader gate (cmd/stellarindex-api's priceWithheld
-// chokepoint) only fires on the arms of LatestPrice that HAVE a value:
-// the closed-1m-bucket arm and the last-trade arm. Every other exit is
-// ErrPriceNotFound — the synthetic-fiat fast path (a fiat:/crypto:
-// quote never has a literal prices_1m row, so an asset whose only
-// market is against a stablecoin misses there by construction), and the
-// zero-trades exit. That 404 is exactly what routes the handler into
-// priceFallback, whose FIRST layer re-serves the aggregator's cached
-// VWAP for the same pair with no gate consultation at all.
+// /v1/price's reader gate (cmd/stellarindex-api's priceWithheld chokepoint) only fires on the
+// arms of LatestPrice that have a value: the closed-1m-bucket arm and the last-trade arm. Every
+// other exit is ErrPriceNotFound: the synthetic-fiat fast path (a fiat:/crypto: quote never has
+// a literal prices_1m row) and the zero-trades exit. That 404 routes the handler into
+// priceFallback, whose first layer re-serves the aggregator's cached VWAP for the same pair with
+// no gate consultation at all.
 //
-// So for a directory-scam-flagged issuer's triangulated pair, /v1/price
-// answered 200 with the flagged market's own price — the number the
-// same endpoint withholds the moment a prices_1m row exists for it. The
-// aggregator that writes that Redis value gates nothing on the write
-// path either (its ScamGate is built for the price-alert evaluator
-// alone), so the cache is not a laundered-clean source.
+// So a directory-scam-flagged issuer's triangulated pair would answer 200 with the flagged
+// market's own price, the number the same endpoint withholds once a prices_1m row exists. The
+// aggregator that writes that Redis value gates nothing on the write path either (its ScamGate
+// serves the price-alert evaluator alone), so the cache is not a laundered-clean source.
 //
-// Layers 2-4 of the chain already propagate a withheld verdict
-// (tryStablecoinFiatProxy / tryUSDAnchoredFiatCross read through the
-// GATED LatestPrice on the proxy pair) — layer 1 is the one that does
-// not, which is why the gate belongs at the chain's entry rather than
-// inside one layer.
+// Layers 2-4 of the chain already propagate a withheld verdict (tryStablecoinFiatProxy and
+// tryUSDAnchoredFiatCross read through the gated LatestPrice on the proxy pair); layer 1 does
+// not, so the gate belongs at the chain's entry rather than inside one layer.
 
-// fallbackScamGate is a PAIR-AWARE stub (the production
-// *pricingguard.ScamGate is pair-aware — pinned by
-// TestProductionScamGateIsPairAware), so these tests exercise the same
-// fold production takes rather than the base-only compatibility arm.
-// It records the surface labels it was asked with, so a test can assert
-// the gate was actually consulted and not that a 404 arrived for some
-// unrelated reason.
+// fallbackScamGate is a pair-aware stub (the production *pricingguard.ScamGate is pair-aware,
+// pinned by TestProductionScamGateIsPairAware), so these tests take the same fold production does
+// rather than the base-only compatibility arm. It records the surface labels it was asked with, so
+// a test can assert the gate was consulted and the 404 did not arrive for an unrelated reason.
 type fallbackScamGate struct {
 	withheld map[string]bool
 	surfaces []string
@@ -202,24 +192,18 @@ func TestPriceBatchFallbackWithholdsScamFlaggedBase(t *testing.T) {
 	}
 }
 
-// TestCachedVWAPSurfacesWithholdScamFlaggedMarket is the class guard:
-// EVERY route that can answer out of the aggregator's VWAP cache must
-// reach the same verdict about the same market. The leak was never
-// about one handler — the cache is a shared primitive, and each route
-// reaches it by its own path:
+// TestCachedVWAPSurfacesWithholdScamFlaggedMarket is the class guard: every route that can answer
+// out of the aggregator's VWAP cache must reach the same verdict about the same market. The cache
+// is a shared primitive and each route reaches it by its own path:
 //
-//   - /v1/price — the reader misses (ErrPriceNotFound) and the handler
-//     runs priceFallback, whose layer 1 is the cache; ?window=N is
-//     rejected outright (the retired surface never reaches
-//     the cache at all, so it has no gate of its own to test here);
-//   - /v1/price/tip — its own cache branch, gated at the top of
-//     computeTip (already correct; here so a regression there fails
-//     alongside its siblings rather than silently);
-//   - the two SEP-40 passthroughs — the same priceFallback chain, and
-//     the surface whose consumers are oracle integrators.
+//   - /v1/price: the reader misses (ErrPriceNotFound) and the handler runs priceFallback, whose
+//     layer 1 is the cache; ?window=N is rejected outright and never reaches the cache;
+//   - /v1/price/tip: its own cache branch, gated at the top of computeTip (listed so a regression
+//     there fails alongside its siblings);
+//   - the two SEP-40 passthroughs: the same priceFallback chain, serving oracle integrators.
 //
-// /v1/price/batch is deliberately absent: its wire contract OMITS a
-// withheld row rather than 404ing the request, and it has its own test.
+// /v1/price/batch is deliberately absent: its wire contract omits a withheld row rather than
+// 404ing the request, and it has its own test.
 func TestCachedVWAPSurfacesWithholdScamFlaggedMarket(t *testing.T) {
 	base := fallbackFlaggedBase(t)
 	const cached = "0.00723"

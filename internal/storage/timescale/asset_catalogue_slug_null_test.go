@@ -7,28 +7,19 @@ import (
 	"testing"
 )
 
-// REGRESSION (seen in production): GET /v1/assets with limit=500
-// returned HTTP 500 —
+// REGRESSION: GET /v1/assets with a large limit returned HTTP 500:
 //
 //	timescale: scan asset: sql: Scan error on column index 0,
 //	name "slug": converting NULL to string is unsupported
 //
-// catalogue_assets UNIONs classic_assets with Soroban-native contract
-// assets, and a Soroban row has slug AND code both NULL by nature (no
-// issuer account, no SEP-1 code). The projection was
-// COALESCE(ca.slug, ca.code) — two arms, both NULL for those rows —
-// and slug scans into a non-nullable Go string.
+// catalogue_assets UNIONs classic_assets with Soroban-native contract assets, and a Soroban row
+// has slug AND code both NULL by nature (no issuer account, no SEP-1 code), so a
+// COALESCE(ca.slug, ca.code) projection is NULL there while slug scans into a non-nullable Go
+// string. The failure is ORDER-dependent: small pages never reach a Soroban row, so the default
+// page size looks healthy.
 //
-// It stayed hidden because the failure is ORDER-dependent: limit=100
-// never reached one of the 60 Soroban rows, so the endpoint looked
-// healthy at the default page size while being broken at limit>=150.
-// It also hard-failed the explorer build, which refuses to bake
-// fallback HTML rather than ship a page built on a broken fetch —
-// that guard is what surfaced it.
-//
-// asset_id is the correct third arm, not merely a non-null one: it is
-// already the asset's URL segment (/assets/CAUP7NFA… resolves), so the
-// slug a caller receives is the slug that works.
+// asset_id is the correct third arm, not merely a non-null one: it is already the asset's URL
+// segment (/assets/CAUP7NFA… resolves), so the slug a caller receives is the slug that works.
 func TestCatalogueSlugProjection_FallsBackToAssetID(t *testing.T) {
 	t.Parallel()
 
@@ -52,13 +43,10 @@ func TestCatalogueSlugProjection_FallsBackToAssetID(t *testing.T) {
 	}
 }
 
-// nullSorobanScanner mimics database/sql's behaviour for the row a
-// Soroban-native catalogue entry produces: slug/code/issuer_g_strkey
-// arrive as NULL. Assigning NULL to a *string is a hard error there
-// ("converting NULL to string is unsupported"); assigning it to a
-// *sql.NullString just marks it invalid. Reproducing that rule is the
-// whole point — it is what turns "one row has no code" into "the
-// entire /v1/assets request fails".
+// nullSorobanScanner mimics database/sql for the row a Soroban-native catalogue entry produces:
+// slug/code/issuer_g_strkey arrive as NULL. Assigning NULL to a *string is a hard error
+// ("converting NULL to string is unsupported"); a *sql.NullString just becomes invalid. That
+// rule is what turns "one row has no code" into "the entire /v1/assets request fails".
 type nullSorobanScanner struct {
 	// nullAt are the dest indices the driver reports as NULL.
 	nullAt map[int]bool
@@ -85,14 +73,10 @@ func (s nullSorobanScanner) Scan(dest ...any) error {
 	return nil
 }
 
-// REGRESSION: fixing `slug` alone with a SQL COALESCE just moves the failure
-// to "column index 2, code". The defect is not about one column: catalogue_assets' Soroban arm supplies slug, code
-// AND issuer_g_strkey as NULL, and all three scanned into non-nullable
-// Go strings. Fixing them one deploy at a time is the instance, not the
-// class.
-//
-// This pins the class: hand scanAssetRow a row where every
-// NULL-by-nature column is NULL, and require it to succeed.
+// REGRESSION: fixing `slug` alone with a SQL COALESCE just moves the failure to "column index
+// 2, code". catalogue_assets' Soroban arm supplies slug, code AND issuer_g_strkey as NULL, so
+// the defect is the class, not one column. This pins the class: hand scanAssetRow a row where
+// every NULL-by-nature column is NULL, and require it to succeed.
 func TestScanAssetRow_SorobanNullColumns(t *testing.T) {
 	t.Parallel()
 

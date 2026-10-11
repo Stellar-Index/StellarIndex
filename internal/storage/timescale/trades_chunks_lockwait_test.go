@@ -15,18 +15,15 @@ import (
 
 // ─── the bounded exclusive-lock wait (lock convoy) ─────────────────
 //
-// r1, 00:12–00:31 UTC: a restamp's decompress_chunk could not have its
-// AccessExclusiveLock because a cold-start aggregator read held
-// AccessShareLock on `trades`, so it QUEUED — and PostgreSQL queues every
-// later request for that object behind a PENDING exclusive one. Three
-// postgres_exporter scrapes (917 s), two of the restamp's own UPDATEs
-// (1,164 s) and the size watcher (904 s) piled up behind it; the exporter
-// being in that list is what made the alerting layer cascade-blind.
+// A decompress_chunk that cannot get its AccessExclusiveLock (another read holds
+// AccessShareLock on `trades`) QUEUES, and PostgreSQL queues every later request for that
+// object behind a PENDING exclusive one. Scrapes, the restamp's own UPDATEs and the size
+// watcher then pile up behind it; the exporter being among them makes alerting cascade-blind.
 //
-// These pin the properties the fix rests on: every request is bounded, a
-// refusal is RETRIED rather than surrendered to (a re-compress that gave
-// up leaves 160 GB decompressed), an error that is NOT a lock refusal is
-// never retried, and the budget is charged for waiting, never for work.
+// These pin the properties the fix rests on: every request is bounded, a refusal is RETRIED
+// rather than surrendered to (a re-compress that gave up leaves a huge chunk decompressed),
+// an error that is NOT a lock refusal is never retried, and the budget is charged for
+// waiting, never for work.
 
 // lockTimeoutErr is a driver error shaped like pgx's *pgconn.PgError:
 // [isLockNotAvailable] matches on SQLSTATE via errors.As, never on the
@@ -82,11 +79,10 @@ func countStatements(stmts []string, substr string) int {
 	return n
 }
 
-// TestDecompressTradesChunk_BoundsThePendingLockRequest is the incident's
-// direct lesson: the statement that convoyed the database must never be
-// issued with an unbounded lock wait. The bound is the PRODUCTION one and
-// it is transaction-LOCAL — a session-level `SET` would ride the pooled
-// connection into every later statement that landed on it.
+// TestDecompressTradesChunk_BoundsThePendingLockRequest: the statement that can convoy the
+// database must never be issued with an unbounded lock wait. The bound is the PRODUCTION one
+// and transaction-LOCAL; a session-level `SET` would ride the pooled connection into every
+// later statement on it.
 func TestDecompressTradesChunk_BoundsThePendingLockRequest(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -228,12 +224,10 @@ func TestExecUnderBoundedLockWait_DoesNotRetryOtherErrors(t *testing.T) {
 	}
 }
 
-// TestExecUnderBoundedLockWait_StopsOnCancellation: the decompress runs on
-// the caller's context, so a SIGTERM under run-heavy-job.sh must end the
-// retry loop rather than hold the process open through its stop grace.
-// (The re-compress runs on a context detached from that cancellation —
-// [Store.recompressTradesChunk] — which is what keeps the chunk closable
-// on the way out.)
+// TestExecUnderBoundedLockWait_StopsOnCancellation: the decompress runs on the caller's
+// context, so a SIGTERM under run-heavy-job.sh must end the retry loop rather than hold the
+// process open through its stop grace. (The re-compress runs on a context detached from that
+// cancellation, [Store.recompressTradesChunk], so the chunk stays closable.)
 func TestExecUnderBoundedLockWait_StopsOnCancellation(t *testing.T) {
 	t.Parallel()
 	var script []scriptedResult
@@ -261,20 +255,16 @@ func TestExecUnderBoundedLockWait_StopsOnCancellation(t *testing.T) {
 	}
 }
 
-// TestTradesChunkLockPolicies_CompressIsTheOneThatMayNotGiveUp pins the
-// asymmetry the whole design rests on, because it is the property a future
-// "let's make these consistent" edit would quietly destroy:
+// TestTradesChunkLockPolicies_CompressIsTheOneThatMayNotGiveUp pins the asymmetry the design
+// rests on, which a future "make these consistent" edit would quietly destroy:
 //
-//   - a decompress that never runs changed NOTHING — the chunk is still
-//     compressed and a rerun resumes at it — so its budget is the smaller
-//     one;
-//   - a compress that never runs leaves a 160 GB chunk open on a pool with
-//     4.69 TB free, with the compression policy paused, which is the exact
-//     state this tool exists to avoid. Its budget is much larger.
+//   - a decompress that never runs changed NOTHING (the chunk is still compressed and a rerun
+//     resumes at it), so its budget is the smaller one;
+//   - a compress that never runs leaves a huge chunk open with the compression policy paused,
+//     the exact state this tool exists to avoid. Its budget is much larger.
 //
-// The per-attempt wait is the same for both and stays well under the
-// 30 s postgres_exporter scrape timeout that the convoy blew through —
-// that is what keeps the alerting layer alive while either statement asks.
+// The per-attempt wait is the same for both and stays well under the 30 s
+// postgres_exporter scrape timeout, which keeps alerting alive while either statement asks.
 func TestTradesChunkLockPolicies_CompressIsTheOneThatMayNotGiveUp(t *testing.T) {
 	t.Parallel()
 	const exporterScrapeTimeout = 30 * time.Second
@@ -298,11 +288,10 @@ func TestTradesChunkLockPolicies_CompressIsTheOneThatMayNotGiveUp(t *testing.T) 
 	}
 }
 
-// TestExecUnderBoundedLockWait_ChargesWaitingNotWorking: the budget is for
-// WAITING. An attempt that worked for most of the budget and was refused
-// at its end-stage lock must not leave the cheap acquire retries after it
-// with no budget, which is what a wall-clock deadline set before attempt 1
-// does to a 90-minute decompress.
+// TestExecUnderBoundedLockWait_ChargesWaitingNotWorking: the budget is for WAITING. An attempt
+// that worked most of the budget and was refused at its end-stage lock must not leave the
+// cheap acquire retries with no budget, as a wall-clock deadline set before attempt 1 would
+// for a long decompress.
 func TestExecUnderBoundedLockWait_ChargesWaitingNotWorking(t *testing.T) {
 	t.Parallel()
 	// Virtual time: the work and the drains advance a fake clock instead of
@@ -361,11 +350,9 @@ func TestExecUnderBoundedLockWait_LateRefusalThatDoesNotFitGivesUpAtOnce(t *test
 	}
 }
 
-// TestExecUnderBoundedLockWait_NoRepeatedWorkOnceTheCallerHasGone: the
-// re-compress runs on a context detached from the caller's, so after a
-// SIGTERM it still retries a cheap refusal (that is how the chunk gets
-// closed) but never starts the work over (that is what the SIGKILL would
-// cut off).
+// TestExecUnderBoundedLockWait_NoRepeatedWorkOnceTheCallerHasGone: the re-compress runs on a
+// context detached from the caller's, so after a SIGTERM it still retries a cheap refusal
+// (how the chunk gets closed) but never starts the work over (what SIGKILL would cut off).
 func TestExecUnderBoundedLockWait_NoRepeatedWorkOnceTheCallerHasGone(t *testing.T) {
 	t.Parallel()
 	gone, cancel := context.WithCancel(context.Background())
@@ -392,11 +379,10 @@ func TestExecUnderBoundedLockWait_NoRepeatedWorkOnceTheCallerHasGone(t *testing.
 	})
 }
 
-// TestExecUnderBoundedLockWait_WaitsOutALongHolderBeforeWorking: a
-// transaction that has held a lock on the chunk for longer than
-// [longLockHolderAge] would block the end-stage request and throw the
-// work away, so no attempt starts until it is gone — and that wait is
-// charged to the budget, with the holder named when the budget runs out.
+// TestExecUnderBoundedLockWait_WaitsOutALongHolderBeforeWorking: a transaction holding a lock
+// on the chunk for longer than [longLockHolderAge] would block the end-stage request and throw
+// the work away, so no attempt starts until it is gone. That wait is charged to the budget,
+// with the holder named when the budget runs out.
 func TestExecUnderBoundedLockWait_WaitsOutALongHolderBeforeWorking(t *testing.T) {
 	t.Parallel()
 	p := lockWaitPolicy{wait: 5 * time.Millisecond, drain: 5 * time.Millisecond, budget: time.Minute}

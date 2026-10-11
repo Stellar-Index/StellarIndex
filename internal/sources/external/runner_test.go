@@ -227,15 +227,11 @@ func TestRun_RejectsNonPositivePollInterval(t *testing.T) {
 	}
 }
 
-// TestRun_LatePollerConfigErrorDoesNotDeadlock is the regression test
-// for a startup deadlock: if runPoller goroutines are bound to the raw
-// parent ctx, teardown() (triggered when a
-// LATER poller in the same Run call fails config validation) only
-// cancels the derived streamerCtx. An earlier poller's goroutine
-// bound to the raw ctx never observes that cancellation, so
-// teardown's wg.Wait() — and thus Run() itself — hangs forever
-// whenever the caller's own ctx isn't independently cancelled (the
-// normal case for a startup-time config error, matched here by
+// TestRun_LatePollerConfigErrorDoesNotDeadlock: if runPoller goroutines are bound to the raw
+// parent ctx, teardown() (triggered when a LATER poller in the same Run call fails config
+// validation) only cancels the derived streamerCtx. An earlier poller bound to the raw ctx never
+// sees that cancellation, so teardown's wg.Wait(), and thus Run(), hangs whenever the caller's
+// own ctx isn't independently cancelled (the normal startup-config-error case, matched here by
 // context.Background()).
 func TestRun_LatePollerConfigErrorDoesNotDeadlock(t *testing.T) {
 	good := &mockPoller{
@@ -294,11 +290,10 @@ func TestRun_CtxCancelClosesForwarders(t *testing.T) {
 	}
 }
 
-// TestRun_DeclaresFiniteOracleBudgetForEveryPoller pins the two edges of
-// the runner's staleness declaration: a slow poll interval raises a
-// fast registry cadence (a row can never be fresher than our fetch),
-// and a poller the registry has no cadence for still gets a finite
-// budget — never the +Inf that stellarindex_oracle_stale cannot exceed.
+// TestRun_DeclaresFiniteOracleBudgetForEveryPoller pins the two edges of the runner's staleness
+// declaration: a slow poll interval raises a fast registry cadence (a row can never be fresher
+// than our fetch), and a poller with no registry cadence still gets a finite budget, never the
+// +Inf that stellarindex_oracle_stale cannot exceed.
 func TestRun_DeclaresFiniteOracleBudgetForEveryPoller(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -328,16 +323,13 @@ func TestRun_DeclaresFiniteOracleBudgetForEveryPoller(t *testing.T) {
 	}
 }
 
-// A streamer dust guard of a flat 100_000 units at the external 10^8
-// scale is 0.001 of WHATEVER the quote asset is. binance/pairs.yaml and
-// bitstamp/pairs.go both configure XLM/BTC, where 0.001 BTC is ~$100, so
-// every XLM/BTC print under roughly a thousand XLM would be silently
-// dropped. The drop is size-biased, so the surviving XLM/BTC volume +
-// VWAP would skew toward large trades.
+// A flat 100_000-unit streamer dust guard at the external 10^8 scale is 0.001 of WHATEVER the
+// quote asset is. On XLM/BTC (configured by binance and bitstamp) 0.001 BTC is ~$100, so every
+// print under roughly a thousand XLM would be dropped, and the size-biased drop skews the
+// surviving volume and VWAP toward large trades.
 //
-// These tests pin the CORRECTED thresholds: the floor is $0.001 of
-// notional expressed in the quote asset's own units, so the same
-// $0.001 applies on XLM/BTC as on XLM/USDT.
+// These tests pin the floor as $0.001 of notional expressed in the quote asset's own units, so
+// the same $0.001 applies on XLM/BTC as on XLM/USDT.
 
 // dustPair builds an XLM/<quote> pair for the dust tests.
 func dustPair(t *testing.T, quote canonical.Asset) canonical.Pair {
@@ -422,11 +414,9 @@ func TestDustFloorUnits_ClampsToOne(t *testing.T) {
 	}
 }
 
-// TestForwardTrades_DustFloorIsQuoteAssetAware drives the real
-// streamer path. The BTC-quoted case is the quote-blind-floor regression: a
-// 0.0005 BTC fill (~$50 of notional) is a genuine retail-size
-// XLM/BTC print and MUST reach the sink; a flat 100_000-unit floor
-// drops it.
+// TestForwardTrades_DustFloorIsQuoteAssetAware drives the real streamer path. A 0.0005 BTC fill
+// (~$50 of notional) is a genuine retail-size XLM/BTC print and MUST reach the sink; a
+// quote-blind flat 100_000-unit floor drops it.
 func TestForwardTrades_DustFloorIsQuoteAssetAware(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -598,16 +588,11 @@ func (panicPoller) PollOnce(context.Context, []canonical.Pair) ([]canonical.Trad
 	panic("simulated poller fault in PollOnce")
 }
 
-// TestRun_RecoversPanickingPoller proves that a panic in a
-// poller's tick (the per-connector goroutine Run fans out) is CONTAINED.
-// The poller's immediate first doPoll panics; the guard recovers it, the
-// goroutine unwinds, and Run's wait() returns — instead of the panic
-// crashing the whole ingest process.
-//
-// Proven red: without the `defer worker.Recover(...)` added to the
-// poller goroutine, the panic below is unrecovered in a DETACHED
-// goroutine and takes the entire test binary down. With the guard,
-// wait() returns.
+// TestRun_RecoversPanickingPoller: a panic in a poller's tick (the per-connector goroutine Run
+// fans out) is CONTAINED. The immediate first doPoll panics; the guard recovers it, the
+// goroutine unwinds and Run's wait() returns instead of the panic crashing the ingest process.
+// Without the `defer worker.Recover(...)` the panic is unrecovered in a DETACHED goroutine and
+// takes the entire test binary down.
 func TestRun_RecoversPanickingPoller(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

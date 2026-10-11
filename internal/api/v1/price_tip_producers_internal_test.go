@@ -131,27 +131,22 @@ func TestTipProducerRegistry_ReacquireDuringLingerKeepsProducer(t *testing.T) {
 	}
 }
 
-// TestTipProducerRegistry_CeilingBoundsDetachedProducers is the
-// unauthenticated-DoS regression guard.
+// TestTipProducerRegistry_CeilingBoundsDetachedProducers is the unauthenticated-DoS guard.
 //
-// The SSE caps count CONNECTIONS, but a tip-stream connection also mints
-// a DETACHED producer: context.Background(), outliving the request by
-// design and surviving release for tipProducerLinger. So aborting the
-// connection immediately does not stop the compute loop, and the
-// connection cap never sees it.
+// The SSE caps count CONNECTIONS, but a tip-stream connection also mints a DETACHED producer
+// (context.Background(), surviving release for tipProducerLinger). Aborting the connection does
+// not stop the compute loop, and the connection cap never sees it.
 //
-// The producer key includes a CLIENT-CHOSEN window_seconds in [1,60], so
-// the key space is pairs × 60 — an unauthenticated client can enumerate
-// it without needing distinct assets. Without a ceiling, running() grows
-// without bound and each entry polls the database on its own ticker.
+// The producer key includes a CLIENT-CHOSEN window_seconds in [1,60], so the key space is
+// pairs x 60 and an unauthenticated client can enumerate it without distinct assets. Without a
+// ceiling, running() grows without bound and each entry polls the database on its own ticker.
 //
-// A lingering producer yields its slot to a new mint, so the abort loop
-// is admitted — but it can only ever replace lingering compute loops,
-// never add to them. Refusal (and its count) is for a registry whose
-// every slot is subscribed.
+// A lingering producer yields its slot to a new mint, so the abort loop is admitted but can only
+// replace lingering compute loops, never add to them. Refusal (and its count) is for a registry
+// whose every slot is subscribed.
 //
-// Red against a registry with no ceiling: acquire always succeeds, so
-// running() reached the full attempt count.
+// Red against a registry with no ceiling: acquire always succeeds, so running() reaches the full
+// attempt count.
 func TestTipProducerRegistry_CeilingBoundsDetachedProducers(t *testing.T) {
 	const ceiling = 8
 	reg := &tipProducerRegistry{maxProducers: ceiling}
@@ -274,17 +269,12 @@ func TestTipProducerRegistry_NegativeCeilingDisablesTheBound(t *testing.T) {
 	}
 }
 
-// TestTipProducerRegistry_RespawnsAfterPanicWhileSubscriberStillConnected
-// is the regression.
-//
-// worker.Recover stops a panicking compute loop's goroutine without
-// releasing the registry entry: refs stays whatever it was, since
-// release() is never called on a panic. Without the re-start under test, nothing
-// re-invokes start while refs > 0 — release()'s linger only fires once
-// the LAST subscriber leaves, so an existing, still-connected subscriber
-// (the one holding rel below) got heartbeats only, forever, for as long
-// as it stayed connected: exactly the "no new emits" symptom the finding
-// names.
+// TestTipProducerRegistry_RespawnsAfterPanicWhileSubscriberStillConnected: worker.Recover stops
+// a panicking compute loop's goroutine without releasing the registry entry (release() is never
+// called on a panic), so refs stays unchanged. Without the re-start under test, nothing
+// re-invokes start while refs > 0, since release()'s linger only fires once the LAST subscriber
+// leaves. A still-connected subscriber (the one holding rel below) would get heartbeats only,
+// forever: the "no new emits" symptom.
 func TestTipProducerRegistry_RespawnsAfterPanicWhileSubscriberStillConnected(t *testing.T) {
 	reg := &tipProducerRegistry{restartBackoffFor: testRestartBackoff}
 	var starts atomic.Int32
@@ -739,13 +729,11 @@ func TestTipProducerRegistry_JoiningAnExistingProducerIsNeverCharged(t *testing.
 	}
 }
 
-// The charge follows the entry's HOLDERS, not whoever minted it.
-// A caller who opened a popular pair and then closed every stream no
-// longer influences the entry's life — other viewers do — so it must not
-// stay charged for it, or it is refused new pairs while holding none. The
-// charge moves to a caller still holding the entry, who is keeping it
-// alive; the linger after the LAST holder leaves stays charged to that
-// holder, which is the window the abort-loop flood exploits.
+// The charge follows the entry's HOLDERS, not whoever minted it. A caller who opened a popular
+// pair and closed every stream no longer influences the entry's life, so it must not stay
+// charged or it is refused new pairs while holding none. The charge moves to a caller still
+// holding the entry; the linger after the LAST holder leaves stays charged to that holder, the
+// window the abort-loop flood exploits.
 func TestTipProducerRegistry_MinterLeavingHandsTheChargeToAHolder(t *testing.T) {
 	reg := &tipProducerRegistry{maxPerCaller: 1, lingerFor: time.Hour}
 	start := func(ctx context.Context) { <-ctx.Done() }

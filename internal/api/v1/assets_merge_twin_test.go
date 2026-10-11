@@ -8,16 +8,11 @@ import (
 // A catalogue row that inherits its classic twin's circulating supply
 // must inherit the twin's SCALE with it.
 //
-// `circulating_supply` is documented and consumed as a raw integer in
-// the asset's smallest unit, paired with `decimals`. A catalogue row's
-// own Decimals is vc.SupplyDecimals, which is 0 for every
-// Stellar-issued entry (the curated seed states fiat M2 in whole
-// units). Copying a 7-decimal stroop value onto a decimals=0 row made
-// the pair self-inconsistent, so every consumer scaling by 10^decimals
-// rendered it 10^7 too large — seen live on r1: XLM's
-// /v1/assets row served decimals=0 with 342797138733487851, which the
-// explorer displayed as 342,797,138,733,487,872 against the ~34.3B its
-// own market_cap_usd/price_usd implies.
+// `circulating_supply` is consumed as a raw integer in the asset's smallest unit, paired with
+// `decimals`. A catalogue row's own Decimals is vc.SupplyDecimals, which is 0 for every
+// Stellar-issued entry (the curated seed states fiat M2 in whole units). Copying a 7-decimal
+// stroop value onto a decimals=0 row makes the pair self-inconsistent, so every consumer scaling
+// by 10^decimals renders it 10^7 too large.
 func TestMergeTwinStats_CarriesDecimalsWithSupply(t *testing.T) {
 	t.Parallel()
 
@@ -54,15 +49,11 @@ func TestMergeTwinStats_LeavesOwnSupplyAndDecimalsAlone(t *testing.T) {
 	}
 }
 
-// TestMergeTwinStats_CarriesTheListingValuation — the listing-priced arm
-// runs on the TWIN row (the one carrying the asset_id the directory's
-// addresses derive from, the price, and the gate outcome), so the
-// catalogue row it stands in for only sees the result if the merge
-// carries it.
-//
-// This is the same failure the dust flag had: a value computed on the
-// twin, correct on the classic row and the detail page, and absent from
-// the catalogue-listing row the /rwa stablecoin tile actually sums.
+// TestMergeTwinStats_CarriesTheListingValuation: the listing-priced arm runs on the twin row (the
+// one carrying the asset_id the directory's addresses derive from, the price and the gate
+// outcome), so the catalogue row it stands in for only sees the result if the merge carries it.
+// Otherwise a value computed on the twin is correct on the classic row and detail page but absent
+// from the catalogue-listing row that the /rwa stablecoin tile sums.
 func TestMergeTwinStats_CarriesTheListingValuation(t *testing.T) {
 	value := "2581052.90"
 	twin := AssetDetail{
@@ -138,18 +129,14 @@ func TestMergeTwinStats_CarriesLowerBoundWithVolume(t *testing.T) {
 // The catalogue row is priced on its own, so the twin's
 // scam suppression has to be CARRIED, not merely performed.
 //
-// A catalogue row carries no issuer (projectCatalogueRow sets none, and
-// `type: "global"` rows are documented as issuer-less), so
-// fillIssuerDirectoryTags skips it and the suppression that call
-// performs never reaches it. That would be harmless if the row's only
-// money came from its twin — but fillCataloguePricesForPage runs BEFORE
-// fillCatalogueStatsForPage and fills price_usd / market_cap_usd from
-// buildGlobalAssetView's global tier, and mergeTwinStats fills only what
-// is nil. So a flagged issuer's verified currency served a price and a
-// market cap on the catalogue phase of /v1/assets, on
-// /v1/assets?asset_class=…, and on /v1/external/assets, while the
-// classic row that suppressCatalogueTwins throws away in its favour —
-// and its own detail page — served null.
+// A catalogue row carries no issuer (projectCatalogueRow sets none; `type: "global"` rows are
+// issuer-less), so fillIssuerDirectoryTags skips it and its suppression never reaches the row.
+// That would be harmless if the row's money came only from its twin, but
+// fillCataloguePricesForPage runs before fillCatalogueStatsForPage and fills price_usd /
+// market_cap_usd from buildGlobalAssetView's global tier, and mergeTwinStats fills only what is
+// nil. A flagged issuer's verified currency would then serve a price and market cap on the
+// catalogue phase of /v1/assets, /v1/assets?asset_class=... and /v1/external/assets, while the
+// classic row suppressCatalogueTwins discards, and its detail page, served null.
 func TestMergeTwinStats_CarriesTheScamSuppressionOntoTheCatalogueRow(t *testing.T) {
 	t.Parallel()
 

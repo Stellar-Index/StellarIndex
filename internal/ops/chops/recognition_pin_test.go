@@ -13,12 +13,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// staticOwners builds the contract → sources map the way computeCompleteness
-// seeds it BEFORE the registry fold (contractOwners over every catalogue
-// source's static contractIDs). rozo and blend_backstop are not
-// gated-registry sources, so loadRegistryOwners (protocol_contracts +
-// soroswap_pairs) can never name their contracts; this static pass is the
-// only path that can put them in ownerOf.
+// staticOwners builds the contract → sources map the way computeCompleteness seeds it BEFORE
+// the registry fold (contractOwners over every catalogue source's static contractIDs). rozo and
+// blend_backstop are not gated-registry sources, so loadRegistryOwners can never name their
+// contracts; this static pass is the only path that puts them in ownerOf.
 func staticOwners(t *testing.T) (map[string][]string, []reconSource) {
 	t.Helper()
 	return staticOwnersFor(t, config.Config{})
@@ -44,16 +42,14 @@ func catalogueSource(t *testing.T, cat []reconSource, name string) reconSource {
 	return reconSource{}
 }
 
-// TestRecognitionAttribution_RozoAndBackstopOwnTheirContracts pins contract ownership.
-// Without declared contractIDs an unhandled
-// topic on a Rozo payment contract or on the Blend backstop fell into the
-// system-wide `unattributed` bucket and the source's own recognition_ok
-// was structurally unable to go false — the rozo blind-spot
-// class, now that no alert covers it.
+// TestRecognitionAttribution_RozoAndBackstopOwnTheirContracts pins contract ownership. Without
+// declared contractIDs an unhandled topic on a Rozo payment contract or the Blend backstop
+// falls into the system-wide `unattributed` bucket, and the source's own recognition_ok can
+// never go false.
 //
-// Walks the real chain (catalogue → ownerOf → attributeRecognitionGaps →
-// sourceRecognitionOK) for EVERY contract each decoder claims, so a
-// contract added to a decoder without being pinned here fails too.
+// Walks the real chain (catalogue → ownerOf → attributeRecognitionGaps → sourceRecognitionOK)
+// for EVERY contract each decoder claims, so a contract added to a decoder without being
+// pinned here fails too.
 func TestRecognitionAttribution_RozoAndBackstopOwnTheirContracts(t *testing.T) {
 	ownerOf, cat := staticOwners(t)
 
@@ -100,12 +96,10 @@ func TestRecognitionAttribution_RozoAndBackstopOwnTheirContracts(t *testing.T) {
 	}
 }
 
-// TestRecognitionAttribution_EveryPinningSourceCanFail pins: with the
-// SEP-41 pair configured (sep41_transfers and sep41_supply both gated on the
-// same watched list), a recognition gap on ANY pinned contract must cap EVERY
-// catalogue source that pins it. A single-owner map handed every watched
-// contract to sep41_supply (catalogued second), so sep41_transfers'
-// recognition_ok could not go false.
+// TestRecognitionAttribution_EveryPinningSourceCanFail: with the SEP-41 pair configured
+// (sep41_transfers and sep41_supply both gated on the same watched list), a recognition gap on
+// ANY pinned contract must cap EVERY catalogue source that pins it. A single-owner map would
+// hand every watched contract to one source, so the other's recognition_ok could not go false.
 func TestRecognitionAttribution_EveryPinningSourceCanFail(t *testing.T) {
 	sep41Contract, err := strkey.Encode(strkey.VersionByteContract, make([]byte, 32))
 	if err != nil {
@@ -143,13 +137,11 @@ func TestRecognitionAttribution_EveryPinningSourceCanFail(t *testing.T) {
 	}
 }
 
-// TestCatalogue_RecognitionPinsMatchDecoderIdentity holds the recognition pins in
-// step with each decoder's own identity gate. contractIDs is not only the
-// recognition owner map: ch-rebuild and ch-reproject use it as a HARD
-// per-event filter and the re-derive uses it as the lake prefilter. A pin
-// naming a contract the decoder does not claim would attribute a
-// stranger's gaps to this source; a pin MISSING a contract the decoder
-// does claim would silently drop that contract's rows from a rebuild.
+// TestCatalogue_RecognitionPinsMatchDecoderIdentity keeps the recognition pins in step with
+// each decoder's identity gate. contractIDs is also a HARD per-event filter for ch-rebuild and
+// ch-reproject and the lake prefilter for the re-derive. A pin naming a contract the decoder
+// does not claim attributes a stranger's gaps to this source; a pin MISSING a claimed contract
+// silently drops that contract's rows from a rebuild.
 func TestCatalogue_RecognitionPinsMatchDecoderIdentity(t *testing.T) {
 	ownerOf, cat := staticOwners(t)
 

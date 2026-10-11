@@ -48,12 +48,10 @@ func (r *keyedChangeSummaryReader) GetChangeSummary(_ context.Context, _, entity
 	return timescale.ChangeSummaryRow{}, sql.ErrNoRows
 }
 
-// TestHandleChangeSummary_ResolvesXLMSACForm is the proven-red
-// guard: when the change-summary worker has written the XLM rollup
-// only under the SAC C-address (a Soroban-sourced row), a caller
-// asking for /v1/changes/coin/native must still resolve it. Without the SAC form
-// the candidate set for `native` would be [native, crypto:XLM] — the SAC
-// form omitted, so the lookup would 404.
+// TestHandleChangeSummary_ResolvesXLMSACForm: when the change-summary worker has written the XLM
+// rollup only under the SAC C-address (a Soroban-sourced row), a caller asking for
+// /v1/changes/coin/native must still resolve it. Without the SAC form the candidate set for
+// `native` would be [native, crypto:XLM] and the lookup would 404.
 func TestHandleChangeSummary_ResolvesXLMSACForm(t *testing.T) {
 	reader := &keyedChangeSummaryReader{
 		rows: map[string]timescale.ChangeSummaryRow{
@@ -124,13 +122,10 @@ func TestHandleChangeSummary_InvalidEntityType400(t *testing.T) {
 }
 
 // TestHandleChangeSummary_UnservedEntityType400 — `protocol` and
-// `source` are reserved by the change_summary_5m CHECK but no worker
-// computes them (a protocol sums across pools, a source across
-// assets; neither reduces to the single canonical pair the rollup
-// keys on). Accepting them returned 404 "the worker hasn't computed
-// a row for this entity yet" — indistinguishable from worker lag, on
-// families that will never have a row. They must be rejected at the
-// boundary, and the 400 detail must not advertise them back.
+// `source` are reserved by the change_summary_5m CHECK but no worker computes them (a protocol
+// sums across pools, a source across assets; neither reduces to the single canonical pair the
+// rollup keys on). A 404 would be indistinguishable from worker lag on families that will never
+// have a row. They must be rejected at the boundary, and the 400 detail must not advertise them.
 func TestHandleChangeSummary_UnservedEntityType400(t *testing.T) {
 	cases := map[string]string{"protocol": "soroswap", "source": "binance"}
 	for entityType, entityID := range cases {
@@ -168,12 +163,10 @@ func TestHandleChangeSummary_UnservedEntityType400(t *testing.T) {
 }
 
 // TestHandleChangeSummary_PairIDPercentEncoded — a `pair` entity_id
-// carries a `/` inside it (`base/quote`), so the whole id has to
-// arrive percent-encoded in one path segment. Pins that the router
-// hands the handler the DECODED id, which is what the worker keyed
-// the row under; without the encoding the request would split across
-// two segments and match no route, and the SDK relies on this by
-// escaping the id for callers.
+// carries a `/` inside it (`base/quote`), so the whole id has to arrive percent-encoded in one
+// path segment. Pins that the router hands the handler the DECODED id, which is what the worker
+// keyed the row under; unencoded, the request would split across two segments and match no
+// route. The SDK relies on this by escaping the id for callers.
 func TestHandleChangeSummary_PairIDPercentEncoded(t *testing.T) {
 	reader := &stubChangeSummaryReader{
 		row: timescale.ChangeSummaryRow{
@@ -394,11 +387,9 @@ func TestHandleChangeSummary_StaleFlag(t *testing.T) {
 	}
 }
 
-// TestChangeSummary_MoneyFieldsAreJSONStrings is the money-as-string guard: the
-// /v1/changes *_value fields are MONEY and must serialize as JSON STRINGS
-// (like every other money field the API serves), while the *_delta_pct
-// PERCENTAGE fields stay JSON numbers. The stub feeds the rollup's exact
-// decimal row values through the handler unchanged.
+// TestChangeSummary_MoneyFieldsAreJSONStrings is the money-as-string guard: the /v1/changes
+// *_value fields are MONEY and must serialize as JSON STRINGS, while the *_delta_pct PERCENTAGE
+// fields stay JSON numbers. The stub feeds the rollup's exact decimal values through unchanged.
 func TestChangeSummary_MoneyFieldsAreJSONStrings(t *testing.T) {
 	h1, h24 := "0.20380247911865504", "0.19673099518995452"
 	hd24 := 3.784588530467602
@@ -443,15 +434,12 @@ func TestChangeSummary_MoneyFieldsAreJSONStrings(t *testing.T) {
 	}
 }
 
-// /v1/changes published the rollup's RAW ratios as absolute money values.
-// For a confirmed 9-decimals base every one of them was 100x low, beside a
-// /v1/price that normalises the very same bucket. The percentages are
-// scale-free (both legs of each come from one raw series) and must NOT
-// move.
+// /v1/changes must not publish the rollup's RAW ratios as absolute money values: for a confirmed
+// 9-decimals base they are 100x low, unlike /v1/price which normalises the same bucket. The
+// percentages are scale-free (both legs come from one raw series) and must NOT move.
 //
-// The inputs are chosen so a naive float multiply would be caught too:
-// 1.15×100, 0.07×100 and 4.35×100 are all inexact in binary floating
-// point (114.99999999999999, 7.000000000000001, 434.99999999999994).
+// The inputs also catch a naive float multiply: 1.15×100, 0.07×100 and 4.35×100 are all inexact
+// in binary floating point (114.99999999999999, 7.000000000000001, 434.99999999999994).
 func TestHandleChangeSummary_NormalisesNonstandardDecimals(t *testing.T) {
 	pairID := flaggedAsset + "/native"
 	for _, tc := range []struct{ entityType, entityID string }{

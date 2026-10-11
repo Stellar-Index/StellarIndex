@@ -350,20 +350,15 @@ func TestTopicSymbolFlush_StableEncoding(t *testing.T) {
 
 // ─── real-lake golden frames (base64 SCVal) ──────────────────────
 //
-// payment_event's BODY decode is
-// verified here against real on-chain bytes (elsewhere only the topic
-// SHAPE — topic_count=1 — is lake-verified; see the Payment
-// doc comment in events.go). Captured read-only from the ClickHouse
-// raw lake (stellar.contract_events) on r1, scoped to the four
-// MainnetPaymentContracts, topic_0_sym = 'payment_event'.
-// Same base64-capture convention as
-// internal/sources/blend_backstop/decode_test.go's goldenFrames.
+// payment_event's BODY decode is verified here against real on-chain bytes (elsewhere only the
+// topic SHAPE, topic_count=1, is lake-verified; see the Payment doc comment in events.go).
+// Captured read-only from stellar.contract_events in the raw lake, scoped to the four
+// MainnetPaymentContracts, topic_0_sym = 'payment_event', using the same base64-capture
+// convention as internal/sources/blend_backstop/decode_test.go's goldenFrames.
 //
-// Verdict: DecodePayment agrees with the real wire shape exactly —
-// alphabetical ScMap {amount, destination, from, memo}, all four
-// fields present, i128 amount, both from/destination as ACCOUNT
-// (G-strkey) addresses. No decoder change was needed; this locks
-// the verified-correct shape against regression.
+// The real wire shape is an alphabetical ScMap {amount, destination, from, memo} with all four
+// fields present, an i128 amount, and from/destination as ACCOUNT (G-strkey) addresses; this
+// locks that shape against regression.
 var rozoGoldenPaymentFrames = map[string]struct {
 	contractID string
 	ledger     uint32
@@ -418,13 +413,10 @@ var rozoGoldenPaymentFrames = map[string]struct {
 	},
 }
 
-// TestGolden_Payment_LakeBytes pins DecodePayment against real
-// mainnet lake bytes across both the original and the later-
-// admitted 4th contract's sibling deployments, and across both
-// observed memo naming conventions. This is the body
-// verification: the body field-name mapping
-// (amount/destination/from/memo) is documented from the contract
-// source; this round-trips it against a captured real event.
+// TestGolden_Payment_LakeBytes pins DecodePayment against real mainnet lake bytes across the
+// original and the later-admitted 4th contract's sibling deployments, and both observed memo
+// naming conventions. The body field-name mapping (amount/destination/from/memo) is documented
+// from the contract source; this round-trips it against a captured real event.
 func TestGolden_Payment_LakeBytes(t *testing.T) {
 	t.Parallel()
 	for name, f := range rozoGoldenPaymentFrames {
@@ -466,14 +458,11 @@ func TestGolden_Payment_LakeBytes(t *testing.T) {
 	}
 }
 
-// TestGolden_FlushEvent_NeverObserved documents that flush_event
-// (the admin sweep path) has never fired on mainnet across any of
-// the four gated v1 Payment contracts in the lake
-// census (topic_0_sym = 'flush_event' returns zero rows) — so
-// DecodeFlush's body shape remains UNVERIFIED against real bytes,
-// unlike DecodePayment above. This is the honest counterpart to the
-// blend_backstop precedent (rw_zone_remove: synthetic-from-source,
-// unverified) rather than a silent gap.
+// TestGolden_FlushEvent_NeverObserved documents that flush_event (the admin sweep path) has
+// never fired on mainnet across the four gated Payment contracts in the lake (topic_0_sym =
+// 'flush_event' returns zero rows), so DecodeFlush's body shape stays UNVERIFIED against real
+// bytes, unlike DecodePayment. It follows the blend_backstop precedent (rw_zone_remove:
+// synthetic-from-source) rather than leaving a silent gap.
 func TestGolden_FlushEvent_NeverObserved(t *testing.T) {
 	t.Parallel()
 	t.Log("flush_event: 0 real occurrences across all 4 MainnetPaymentContracts " +

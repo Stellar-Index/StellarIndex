@@ -1,12 +1,8 @@
 package v1_test
 
-// Home-domain identity precedence. Founding case: the
-// ex-apay ETH issuer GBFXOHVAS… — its on-chain home_domain has said
-// ultracapital.xyz since Ultra Stellar acquired apay.io's wrapped
-// assets, but /v1/assets/ETH-GBFXOHVAS… rendered "apay.io" (and
-// SEP-1-"verified" against it) because the hand-curated knownIssuers
-// map outranked the account's own signed field. Precedence is now:
-// storage row → live on-chain account state → curated map.
+// Home-domain identity precedence: storage row, then live on-chain account state, then the
+// curated knownIssuers map. The curated map must never outrank the account's own signed
+// home_domain field, or a moved issuer renders (and SEP-1 verifies against) its old domain.
 
 import (
 	"encoding/json"
@@ -57,11 +53,9 @@ func TestIssuerGet_OnChainBeatsCuratedMap(t *testing.T) {
 	}
 }
 
-// TestIssuerGet_ScamSuppressionSurvivesAccountState — for a
-// flagged, unverified issuer, the self-declared identity IS the
-// impersonation. The suppression must not run
-// ahead of the account-state enrich, which would refill the cleared
-// home_domain straight from the scammer's own on-chain field.
+// TestIssuerGet_ScamSuppressionSurvivesAccountState: for a flagged, unverified issuer the
+// self-declared identity is the impersonation. Suppression must not run ahead of the account-state
+// enrich, which would refill the cleared home_domain from the scammer's own on-chain field.
 func TestIssuerGet_ScamSuppressionSurvivesAccountState(t *testing.T) {
 	const scam = "GA2XZLXNLAL26VBCA2OESAIMXTRH5GXKLHYZMDGNCR2SYS5QZWWNBLCK"
 	reader := &stubIssuersReader{
@@ -103,17 +97,14 @@ func TestIssuerGet_ScamSuppressionSurvivesAccountState(t *testing.T) {
 
 // TestIssuerGet_LiveOnChainBeatsAStoredHomeDomain.
 //
-// The stored column is a COPY of the AccountEntry field, and between its
-// two writers it was write-once, so a value in it is at best an older
-// reading of the entry the handler is holding right now. The founding case
-// is an anchor that moved domain with SetOptions and let the old name
-// lapse: the row keeps the lapsed name, the hourly SEP-1 refresh keeps
-// fetching it, and whoever registers it next can publish a stellar.toml
-// listing the anchor's issuer back and inherit its verified identity. The
-// anchor's own on-chain change has to be able to correct that.
+// The stored column is a copy of the AccountEntry field and is effectively write-once, so it is
+// at best an older reading of the entry the handler holds now. If an anchor moves domain with
+// SetOptions and lets the old name lapse, the stale row keeps being SEP-1 refreshed, and whoever
+// registers the lapsed name can publish a stellar.toml listing the issuer and inherit its verified
+// identity. The anchor's own on-chain change has to be able to correct that.
 //
-// The auth flags in the SAME function are already replaced by the same
-// entry; this pins home_domain to the same rule.
+// The auth flags in the same function are already replaced by the same entry; this pins
+// home_domain to the same rule.
 func TestIssuerGet_LiveOnChainBeatsAStoredHomeDomain(t *testing.T) {
 	const anchor = "GBFXOHVAS7DXHZPMPZL4HDPPMGSSJBWDGEOXSYHMPTSJKDFHPPFXFZ2K"
 	reader := &stubIssuersReader{
@@ -151,12 +142,10 @@ func TestIssuerGet_LiveOnChainBeatsAStoredHomeDomain(t *testing.T) {
 	}
 }
 
-// TestIssuerGet_StoredHomeDomainSurvivesASilentLiveEntry keeps the rule
-// above from over-reaching. An AccountEntry that resolves WITHOUT a domain
-// is not a retraction: a merged account's reading is persisted without one
-// on purpose (a dead account's self-declared identity is not persistable),
-// and the lake can simply not carry the field. Only a non-empty live value
-// replaces the stored one.
+// TestIssuerGet_StoredHomeDomainSurvivesASilentLiveEntry keeps the rule above from over-reaching.
+// An AccountEntry that resolves without a domain is not a retraction: a merged account's reading
+// is persisted without one on purpose, and the lake may not carry the field. Only a non-empty live
+// value replaces the stored one.
 func TestIssuerGet_StoredHomeDomainSurvivesASilentLiveEntry(t *testing.T) {
 	const anchor = "GBFXOHVAS7DXHZPMPZL4HDPPMGSSJBWDGEOXSYHMPTSJKDFHPPFXFZ2K"
 	reader := &stubIssuersReader{

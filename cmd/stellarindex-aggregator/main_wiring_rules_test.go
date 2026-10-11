@@ -26,29 +26,20 @@ func TestMainWiringRules(t *testing.T) {
 	}
 }
 
-// Source-level tripwire (the freeze_wiring_guard_test.go /
-// internal/api/v1/slo_guard_test.go pattern): the decimals cache's
-// initial, BOOT-time refresh must be fatal.
+// Source-level tripwire (the freeze_wiring_guard_test.go / internal/api/v1/slo_guard_test.go
+// pattern): the decimals cache's initial, BOOT-time refresh must be fatal.
 //
-// The cache is fail-open, and that is right for a periodic
-// refresh: a Postgres blip leaves the last-good snapshot in place and
-// one newly-confirmed offender's normalization phases in late. At BOOT
-// there is no last-good snapshot, so the same fail-open policy makes
-// Lookup answer "nothing is flagged" for EVERY confirmed non-7-decimals
-// asset, and the orchestrator publishes each of their windows
-// unnormalized — wrong by 10^(7-decimals) — into prices_1m and every
-// price surface downstream, at one Warn line per minute. A published
-// price that is wrong by orders of magnitude is not degraded service; it
-// is a false statement about the market, and it persists in the
-// continuous aggregates long after the outage ends.
+// The cache is fail-open, which is right for a periodic refresh: a Postgres blip leaves the
+// last-good snapshot in place. At BOOT there is no snapshot, so fail-open makes Lookup answer
+// "nothing is flagged" for EVERY confirmed non-7-decimals asset, and the orchestrator publishes
+// their windows unnormalized (wrong by 10^(7-decimals)) into prices_1m and every downstream
+// price surface. A price wrong by orders of magnitude is a false statement about the market,
+// and it persists in the continuous aggregates long after the outage ends.
 //
-// The fix is one line, which is exactly why it needs a tripwire: turning
-// `return err` back into `logger.Warn(...)` looks like a resilience
-// improvement to anyone who does not know the cold-cache case.
-//
-// Behavioural coverage is not available here — the branch lives inside
-// run(), which needs a config file, a Postgres pool and a Redis client
-// before it reaches this line — so this asserts on the wiring itself.
+// Turning `return err` into `logger.Warn(...)` looks like a resilience improvement to anyone
+// who does not know the cold-cache case, hence the tripwire. Behavioural coverage is not
+// available: the branch lives inside run(), which needs a config file, a Postgres pool and a
+// Redis client first, so this asserts on the wiring itself.
 
 func ruleDecimalsRefreshIsFatal(t *testing.T) {
 	fset := token.NewFileSet()
@@ -110,16 +101,11 @@ func bodyReturns(body *ast.BlockStmt) bool {
 	return false
 }
 
-// Source-level tripwire (the freeze_wiring_guard_test.go /
-// TestMainWiringRules pattern): changesummary.New, the ClickHouse
-// close-time reader, and the supply / cross-check refresher builders must
-// be constructed before run()'s dry-run early-return, so a config that
-// fails one of them is caught by -dry-run instead of only surfacing at a
-// real start.
-//
-// Behavioural coverage is not available here — the calls live inside
-// run(), which needs a config file, a Postgres pool and a Redis client
-// before it reaches this line — so this asserts on the wiring itself.
+// Source-level tripwire (the freeze_wiring_guard_test.go / TestMainWiringRules pattern):
+// changesummary.New, the ClickHouse close-time reader, and the supply / cross-check refresher
+// builders must be constructed before run()'s dry-run early-return, so a config that fails one
+// is caught by -dry-run instead of only at a real start. The calls live inside run(), which
+// needs a config file, a Postgres pool and a Redis client, so this asserts on the wiring.
 
 func ruleSupplyConstructorsBeforeDryRunReturn(t *testing.T) {
 	fset := token.NewFileSet()
@@ -174,11 +160,10 @@ func ruleSupplyConstructorsBeforeDryRunReturn(t *testing.T) {
 		}
 	}
 
-	// clickhouse.NewExplorerReader is called from several unrelated
-	// constructors in run() (the mev tx-order resolver, the decimals
-	// resolver, the priceless-coverage SAC reader) — only the one feeding
-	// the supply aggregator-refresh path is in scope here, identified by
-	// its assignment to `supplyCloseTimes`.
+	// clickhouse.NewExplorerReader is called from several unrelated constructors in run() (the
+	// mev tx-order resolver, the decimals resolver, the priceless-coverage SAC reader); only the
+	// one feeding the supply refresh path is in scope, identified by its assignment to
+	// `supplyCloseTimes`.
 	supplyCloseTimesPos := token.NoPos
 	ast.Inspect(runFn.Body, func(n ast.Node) bool {
 		assign, ok := n.(*ast.AssignStmt)
@@ -272,12 +257,11 @@ func callName(call *ast.CallExpr) string {
 	return ""
 }
 
-// TestDecimalsGuardHeartbeatSeededBeforeDial pins the wiring half of the
-// never-armed arm of stellarindex_decimals_guard_sweep_stale. Unseeded, the
-// gauge reads 0 through the cold-boot lake dial and the startup Backfill, so
-// time()-0 tickets 15 minutes after every restart, and a lake-less aggregator
-// cannot be told apart from a wedged one. The seed must be set inside the
-// lake-configured branch and before either of those can block.
+// TestDecimalsGuardHeartbeatSeededBeforeDial pins the wiring half of the never-armed arm of
+// stellarindex_decimals_guard_sweep_stale. Unseeded, the gauge reads 0 through the cold-boot
+// lake dial and the startup Backfill, so time()-0 alerts 15 minutes after every restart and a
+// lake-less aggregator looks wedged. The seed must be set inside the lake-configured branch
+// and before either of those can block.
 func ruleDecimalsHeartbeatSeededBeforeDial(t *testing.T) {
 	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
 	if err != nil {

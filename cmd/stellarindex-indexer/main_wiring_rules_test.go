@@ -30,17 +30,15 @@ func TestMainWiringRules(t *testing.T) {
 
 // TestCHLiveSinkDialIsNonFatalAndRetried is a structural guard.
 //
-// clickhouse.NewLiveSink must not be dialled once, inline, in realMain: a
-// single failure returned a fatal boot error, so a host whose ClickHouse
-// was still loading metadata after a shared reboot — the same cold-boot
-// race startSignerTagger's docstring describes — could not ingest a
-// single ledger until an operator noticed and restarted the indexer. The
-// dial must instead go through startCHLiveSink, which retries in its own
+// clickhouse.NewLiveSink must not be dialled once, inline, in realMain: a single failure is a
+// fatal boot error, so a host whose ClickHouse is still loading metadata after a reboot (the
+// cold-boot race startSignerTagger's docstring describes) could not ingest until an operator
+// restarted the indexer. The dial must go through startCHLiveSink, which retries in its own
 // goroutine and never blocks or fails realMain.
 //
-// Asserted structurally, like TestShutdownSelectNeverReturnsBeforeTheDrain
-// in shutdown_drain_test.go: the wiring lives inline in realMain, which
-// needs a full dependency tree (config, Postgres, Redis) to run.
+// Asserted structurally, like TestShutdownSelectNeverReturnsBeforeTheDrain in
+// shutdown_drain_test.go: the wiring lives inline in realMain, which needs a full dependency
+// tree (config, Postgres, Redis) to run.
 func ruleCHLiveSinkDialNonFatalAndRetried(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main.go", nil, parser.ParseComments)
@@ -104,11 +102,9 @@ func ruleCHLiveSinkDialNonFatalAndRetried(t *testing.T) {
 
 // TestDryRunExitsBeforeBackgroundWorkers pins that `-dry-run` ("load config +
 // open connections + exit without ingesting") returns from run() before any
-// background worker is launched. The routed-via and signer taggers issue
-// UPDATEs against trades on their immediate first sweep and again on
-// shutdown, and the decoder-stats flusher writes on its shutdown drain, so a
-// launcher that precedes the dry-run return turns a config check into a
-// production write.
+// background worker is launched. The routed-via and signer taggers UPDATE trades on their
+// immediate first sweep and on shutdown, and the decoder-stats flusher writes on its shutdown
+// drain, so a launcher before the dry-run return turns a config check into a production write.
 func ruleDryRunExitsBeforeBackgroundWorkers(t *testing.T) {
 	fset := token.NewFileSet()
 	body := runBody(t, fset)
@@ -271,23 +267,17 @@ func isReturn(s ast.Stmt) bool {
 
 // TestShutdownSelectNeverReturnsBeforeTheDrain is a guard-coverage test.
 //
-// The shutdown path is: wait for either a signal or the producer's exit,
-// then externalWait -> close(events) -> wait for sinkDone -> wait for the
-// projector. Everything the producer already emitted is still sitting in
-// the events channel buffer (256) when that select fires, and every one
-// of those events has ALREADY been counted against the cursor. So a
-// `return` inside the select discards them permanently: the next start
-// resumes past them and the hole is silent.
+// The shutdown path is: wait for either a signal or the producer's exit, then externalWait ->
+// close(events) -> wait for sinkDone -> wait for the projector. Everything the producer already
+// emitted still sits in the events channel buffer when that select fires, and every one of those
+// events has ALREADY been counted against the cursor. So a `return` inside the select discards
+// them permanently: the next start resumes past them and the hole is silent.
 //
-// It is not a hypothetical path. pipeline.ProcessLedger recovers a
-// decoder panic INTO a ledger error, and that error arrives on exactly
-// this channel — so the failure mode that loses data is the same one a
-// single malformed event triggers.
+// The path is real: pipeline.ProcessLedger recovers a decoder panic INTO a ledger error that
+// arrives on exactly this channel, so a single malformed event can trigger it.
 //
-// This is asserted structurally rather than behaviourally because the
-// sequence lives inline in realMain, which needs a full dependency tree
-// to run. A structural guard that cannot be satisfied by accident is
-// worth more here than a behavioural test nobody can build.
+// Asserted structurally because the sequence lives inline in realMain, which needs a full
+// dependency tree to run.
 func ruleShutdownSelectNeverReturnsBeforeTheDrain(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main.go", nil, parser.ParseComments)

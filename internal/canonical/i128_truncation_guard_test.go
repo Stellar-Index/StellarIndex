@@ -3,43 +3,33 @@
 
 package canonical
 
-// This file is the REAL i128-truncation guard ADR-0003 relies on
-// (no "custom golangci analyzer" exists). It walks every non-test Go package in the
-// repo with go/types and FAILS on lossy numeric conversions of the
-// hi/lo words of xdr.Int128Parts / xdr.UInt128Parts / xdr.Int256Parts
-// / xdr.UInt256Parts — the KALIEN-class bug where int64(parts.Lo)
-// silently discards the high 64 bits of a Soroban amount.
+// This file is the REAL i128-truncation guard ADR-0003 relies on (no custom golangci analyzer
+// exists). It walks every non-test Go package with go/types and FAILS on lossy numeric
+// conversions of the hi/lo words of xdr.Int128Parts / UInt128Parts / Int256Parts /
+// UInt256Parts, the bug class where int64(parts.Lo) silently discards the high 64 bits of a
+// Soroban amount.
 //
-// What counts as a violation:
+// Violations:
 //
-//   - a conversion of `<x>.Lo` / `<x>.Hi` / `<x>.HiHi|HiLo|LoHi|LoLo`
-//     (receiver typed as one of the xdr 128/256-bit parts structs) to
-//     any numeric type OTHER than the field's own underlying type.
-//     `uint64(p.Lo)` and `int64(p.Hi)` (on Int128Parts) are the
-//     correct FromInt128Parts decode shape and pass; `int64(p.Lo)`,
-//     `int(p.Lo)`, `float64(p.Hi)`, … are sign-reinterpreting /
-//     narrowing / precision-losing and fail.
-//   - a `MustI128()` / `MustU128()` / `MustI256()` / `MustU256()`
-//     result used as the operand of a numeric conversion.
-//   - either of the above reached through a local: `lo := p.Lo;
-//     int64(lo)` is the same truncation and is judged the same way,
-//     however many plain assignments sit between the word and the
-//     conversion (see collectWordTaint).
-//   - an `Int64()` / `Uint64()` / `Float64()` call on a math/big Int,
-//     Rat or Float. A 128-bit amount widened into big.* is narrowed
-//     again there, and the go/types receiver type is the only thing
-//     that sees it: `new(big.Float).SetInt(total).Float64()` has no
-//     parts word or Must* call left in the expression. Every such site
-//     is judged, so each deliberate one carries its reason.
-//   - a (*big.Int).Quo / Div whose dividend is a power of ten: the
-//     truncating reciprocal of a scaled price. Invert through
-//     scale.InvertScaled, which rounds half-up.
+//   - a conversion of `<x>.Lo` / `<x>.Hi` / `<x>.HiHi|HiLo|LoHi|LoLo` (receiver typed as one of
+//     the xdr parts structs) to any numeric type OTHER than the field's own underlying type.
+//     `uint64(p.Lo)` and `int64(p.Hi)` (on Int128Parts) are the correct FromInt128Parts decode
+//     shape; `int64(p.Lo)`, `int(p.Lo)`, `float64(p.Hi)` reinterpret, narrow or lose precision.
+//   - a `MustI128()` / `MustU128()` / `MustI256()` / `MustU256()` result used as the operand
+//     of a numeric conversion.
+//   - either of the above reached through a local (`lo := p.Lo; int64(lo)`), however many plain
+//     assignments sit between (see collectWordTaint).
+//   - an `Int64()` / `Uint64()` / `Float64()` call on a math/big Int, Rat or Float: a 128-bit
+//     amount widened into big.* is narrowed again there, and only the go/types receiver type
+//     sees it (`new(big.Float).SetInt(total).Float64()` has no parts word or Must* call left).
+//     Each deliberate site carries its reason.
+//   - a (*big.Int).Quo / Div whose dividend is a power of ten: the truncating reciprocal of a
+//     scaled price. Invert through scale.InvertScaled, which rounds half-up.
 //
-// Escape hatch: a `//i128:ok <reason>` comment on the same line (or
-// the line above) exempts a site. Reasons are mandatory; stale
-// markers (ones that exempt nothing) fail the test so the allowlist
-// can only shrink. See scripts/ci/lint-i128.sh for the fast grep
-// sibling and scripts/ci/lint-migrations.sh for the SQL-side guard.
+// Escape hatch: a `//i128:ok <reason>` comment on the same line (or the line above) exempts a
+// site. Reasons are mandatory; stale markers (ones that exempt nothing) fail the test so the
+// allowlist can only shrink. See scripts/ci/lint-i128.sh for the fast grep sibling and
+// scripts/ci/lint-migrations.sh for the SQL-side guard.
 
 import (
 	"fmt"
@@ -86,12 +76,9 @@ var bigNumberTypes = map[string]bool{"Int": true, "Rat": true, "Float": true}
 
 var i128OkMarker = regexp.MustCompile(`^\s*i128:ok\s+\S+`)
 
-// guardScope is the import-path segment set the repo-wide guards
-// protect — the same directories scripts/ci/lint-i128.sh scans. A load
-// error there is fatal: the guard cannot vouch for code it could not
-// type-check. One outside it (scripts/ tooling, test/ harnesses) is
-// reported and that package skipped, so a scratch file cannot take the
-// guard down with it.
+// guardScope is the import-path segment set the repo-wide guards protect, the same directories
+// scripts/ci/lint-i128.sh scans. A load error inside it is fatal: the guard cannot vouch for
+// code it could not type-check. One outside it (scripts/, test/) is reported and skipped.
 var guardScope = []string{"/internal/", "/cmd/", "/pkg/"}
 
 // minGuardedPackages is the floor on in-scope packages the loader must
@@ -501,22 +488,16 @@ func TestI128TruncationGuard(t *testing.T) {
 	}
 }
 
-// TestI128TruncationGuard_PositiveControl proves the DETECTOR still FIRES on
-// the exact KALIEN-class truncation it exists to catch. Without it,
-// TestI128TruncationGuard asserts only the ABSENCE of violations against the
-// live tree — so a silent rot of partTypes / partFields / mustAccessors /
-// isPartsType (an SDK field rename, a moved Int128Parts, a changed /xdr path)
-// would make the guard return "" for every site and pass on an effectively
-// empty tree: "detector works, tree clean" becomes indistinguishable from
-// "detector broken, finds nothing" (the "a guard that never
-// fails is decorative" class).
+// TestI128TruncationGuard_PositiveControl proves the DETECTOR still FIRES on the truncation it
+// exists to catch. TestI128TruncationGuard asserts only the ABSENCE of violations on the live
+// tree, so silent rot of partTypes / partFields / mustAccessors / isPartsType (an SDK field
+// rename, a moved Int128Parts, a changed /xdr path) would make "detector works, tree clean"
+// indistinguishable from "detector broken, finds nothing".
 //
-// It is fully self-contained — a synthetic package whose path ends in "/xdr"
-// with a locally-defined Int128Parts, so it needs no importer and cannot go
-// stale against the real SDK. It exercises every fragile table the real
-// detector depends on: partTypes (the struct name), partFields (Hi/Lo),
-// isPartsType (the /xdr suffix + Named-type resolution), the field-kind
-// comparison, and mustAccessors (the Must* branch).
+// It is self-contained: a synthetic package whose path ends in "/xdr" with a locally-defined
+// Int128Parts, so it needs no importer and cannot go stale against the real SDK. It exercises
+// every fragile table: partTypes, partFields, isPartsType (the /xdr suffix + Named-type
+// resolution), the field-kind comparison, and mustAccessors (the Must* branch).
 func TestI128TruncationGuard_PositiveControl(t *testing.T) {
 	const src = `package xdr
 
@@ -600,11 +581,10 @@ func sink() {
 	}
 }
 
-// TestI128TruncationGuard_BigNarrowingPositiveControl proves the math/big
-// sink fires on the widen-then-narrow spellings that carry no parts word
-// or Must* call — the aggregate VWAP weight's original
-// `new(big.Float).SetInt(totalQuote).Float64()` among them — and stays
-// silent on same-named methods of other types.
+// TestI128TruncationGuard_BigNarrowingPositiveControl proves the math/big sink fires on the
+// widen-then-narrow spellings that carry no parts word or Must* call, such as
+// `new(big.Float).SetInt(totalQuote).Float64()`, and stays silent on same-named methods of
+// other types.
 func TestI128TruncationGuard_BigNarrowingPositiveControl(t *testing.T) {
 	const src = `package sink
 

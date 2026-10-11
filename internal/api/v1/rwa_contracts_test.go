@@ -16,18 +16,14 @@ import (
 
 // GET /v1/rwa/assets — the CONTRACT arm.
 //
-// The arm exists because the entities that actually hold real-world
-// assets on Stellar are invisible to the classic one. Measured on r1
-// a live deployment: Franklin Templeton and Spiko are both in the curated
-// directory, tagged `issuer`, with the correct domains — and both are
-// absent from the `issuers` table, so `sep1-refresh -issuer` returns
-// `sql: no rows in result set` for each. That table is written from ONE
-// site, the classic-asset registration path, so an entity whose Stellar
-// presence is contract-issued is never collected at all.
+// The arm exists because entities holding real-world assets on Stellar via contracts are
+// invisible to the classic arm: the `issuers` table is written from ONE site, the classic-asset
+// registration path, so a contract-issued entity (Franklin Templeton and Spiko are in the
+// curated directory but absent from it) is never collected at all.
 //
-// So these tests cover two things a refusal tally cannot: that a
-// contract the definition admits is served AND valued, and that an
-// entity nothing can reach is REPORTED rather than silently absent.
+// So these tests cover two things a refusal tally cannot: that a contract the definition
+// admits is served AND valued, and that an entity nothing can reach is REPORTED rather than
+// silently absent.
 
 // Valid C-strkeys used as fixtures. They stand for nothing on the
 // network.
@@ -234,11 +230,9 @@ func confirmedNonstandardDecimals(t *testing.T, decimals map[string]uint32) *v1.
 	return c
 }
 
-// TestRWAContracts_AdmitsAndValuesARecognisedContract is the positive
-// path end to end: the curated directory names the exact contract with
-// an issuing tag, an oracle prices an instrument of its on-chain symbol,
-// and the row is served WITH a market cap derived from lake supply and
-// the served price.
+// TestRWAContracts_AdmitsAndValuesARecognisedContract is the positive path end to end: the
+// directory names the exact contract with an issuing tag, an oracle prices its on-chain
+// symbol, and the row is served WITH a market cap from lake supply and the served price.
 func TestRWAContracts_AdmitsAndValuesARecognisedContract(t *testing.T) {
 	view := getRWA(t, rwaContractServer(t,
 		&stubRWAContractReader{
@@ -322,12 +316,10 @@ func TestRWAContracts_DecimalsDriveTheValuation(t *testing.T) {
 
 // TestRWAContracts_UnreadScaleValuesNothingFromAnySupply pins that rule.
 //
-// The contract pipeline runs the generic listing fill first, and that fill
-// reads the precise-supply map, which is keyed by contract id for a pure
-// SEP-41 token. With the scale unreadable it divides by the catalogue's
-// default 7, and the contract arm's decimals_unavailable refusal then left
-// that cap standing: 1,000,000 tokens at a true 6 decimals x 1.074 served
-// as a published 107,400.00, a tenth of the real figure.
+// The contract pipeline runs the generic listing fill first, which reads the precise-supply
+// map keyed by contract id for a pure SEP-41 token. With the scale unreadable it divides by
+// the catalogue's default 7, and a decimals_unavailable refusal would leave that cap standing
+// at a tenth of the real figure (a true 6-decimal supply mis-scaled by 10^1).
 func TestRWAContracts_UnreadScaleValuesNothingFromAnySupply(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -358,11 +350,9 @@ func TestRWAContracts_UnreadScaleValuesNothingFromAnySupply(t *testing.T) {
 			if a.Valuation.Status != v1.RWAValuationDecimalsUnknown {
 				t.Errorf("status = %q, want %q", a.Valuation.Status, v1.RWAValuationDecimalsUnknown)
 			}
-			// Decimals itself must not serve the catalogue's
-			// unread default (7) beside a supply and a status that says
-			// the scale was never read — a consumer following the field
-			// description alone (divide circulating_supply by
-			// 10^decimals) would misvalue the row by a false exponent.
+			// Decimals must not serve the catalogue's unread default (7) beside a status saying
+			// the scale was never read: a consumer dividing circulating_supply by 10^decimals
+			// would misvalue the row by a false exponent.
 			if a.Decimals != nil {
 				t.Errorf("decimals = %v with the scale unread, want nil (not the catalogue default)", *a.Decimals)
 			}
@@ -449,14 +439,10 @@ func TestRWAContracts_IncompleteSupplyIsUnavailableNeverZero(t *testing.T) {
 	}
 }
 
-// TestRWAContracts_ScamFlagAcquiredAfterAdmissionWithholdsTheValuation
-// pins the gap this arm closes.
-//
-// fillIssuerDirectoryTags keys on the issuer G-address and skips every
-// row without one, so a contract asset has never been subject to the
-// directory scam gate on ANY surface. On a page that admits contracts on
-// the strength of a directory entry, declining to re-read that entry
-// when it turns hostile would be indefensible.
+// TestRWAContracts_ScamFlagAcquiredAfterAdmissionWithholdsTheValuation pins the gap this arm
+// closes: fillIssuerDirectoryTags keys on the issuer G-address and skips rows without one, so
+// a contract asset was never subject to the directory scam gate. A page admitting contracts on
+// a directory entry must re-read that entry when it turns hostile.
 func TestRWAContracts_ScamFlagAcquiredAfterAdmissionWithholdsTheValuation(t *testing.T) {
 	view := getRWA(t, rwaContractServer(t,
 		&stubRWAContractReader{contracts: []timescale.DirectoryEntry{

@@ -12,18 +12,15 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// Regression tests for ContractCodeHistory's read
-// of stellar.ledger_entry_changes must be LIMITed. Its sibling instance lookups
-// (contractWasmHash, SACClassicAssetName) are all `ORDER BY ledger_seq DESC
-// LIMIT 1`; an unbounded one streams and XDR-decodes every captured change to a
-// contract's instance key, so a contract that rewrites its instance entry often
-// (instance-STORAGE writes, not only `update_contract` upgrades) reintroduces an
-// unbounded scan even once the skip index is tightened.
+// Regression tests: ContractCodeHistory's read of stellar.ledger_entry_changes must be LIMITed.
+// Its sibling instance lookups (contractWasmHash, SACClassicAssetName) are all `ORDER BY
+// ledger_seq DESC LIMIT 1`; an unbounded one streams and XDR-decodes every captured change to a
+// contract's instance key, which is an unbounded scan for contracts that rewrite their instance
+// entry often (instance-STORAGE writes, not only `update_contract` upgrades).
 //
-// These use the stubConn/stubRows harness from tx_hash_index_test.go. stubConn
-// does not execute SQL, so the bound assertions are query-SHAPE assertions —
-// proof of the SQL the reader emits — while TestContractCodeHistory_CollapsesTo
-// DistinctExecutables below pins the decoded output values end to end.
+// These use the stubConn/stubRows harness from tx_hash_index_test.go. stubConn does not execute
+// SQL, so the bound assertions are query-SHAPE assertions, while
+// TestContractCodeHistory_CollapsesToDistinctExecutables pins the decoded output end to end.
 
 // testContractID is a well-formed C-strkey (the same one the explorer handler
 // tests use), so strkey.Decode succeeds and the reader reaches its query.
@@ -176,12 +173,10 @@ func TestContractCodeHistory_CollapsesToDistinctExecutables(t *testing.T) {
 	}
 }
 
-// TestContractCodeHistory_IndexedPath pins the fast path over
-// stellar.contract_instance_changes: when the
-// probe finds the index usable, the reader must walk the keyed timeline
-// (contract_hash primary-key predicate, wasm-only rows, the same
-// newest-first cap re-sorted ascending) and never touch the changes log;
-// the pre-extracted hashes collapse exactly like the legacy decode.
+// TestContractCodeHistory_IndexedPath pins the fast path over stellar.contract_instance_changes:
+// when the probe finds the index usable, the reader must walk the keyed timeline (contract_hash
+// primary-key predicate, wasm-only rows, the same newest-first cap re-sorted ascending) and never
+// touch the changes log; the pre-extracted hashes collapse exactly like the legacy decode.
 func TestContractCodeHistory_IndexedPath(t *testing.T) {
 	rawA, rawB := wasmHashN(0xAA), wasmHashN(0xBB)
 	hashA := hex.EncodeToString(rawA[:])
@@ -259,13 +254,10 @@ func indexMissStub(legacy [][]any) *stubConn {
 	return conn
 }
 
-// TestContractCodeHistory_IndexMissFallsBackToLegacyScan: a usable
-// index holding no per-contract row is NOT proof the contract never
-// upgraded — instanceChangesIndexAvailable is a table-global LIMIT-1
-// emptiness probe that cannot see partial per-contract backfill coverage
-// (the same class already fixed for contractWasmHash). So the reader must
-// fall through to the changes-log scan rather than serving the empty
-// timeline as authoritative.
+// TestContractCodeHistory_IndexMissFallsBackToLegacyScan: a usable index holding no per-contract
+// row is NOT proof the contract never upgraded; instanceChangesIndexAvailable is a table-global
+// LIMIT-1 emptiness probe that cannot see partial per-contract backfill coverage. The reader must
+// fall through to the changes-log scan rather than serve the empty timeline as authoritative.
 func TestContractCodeHistory_IndexMissFallsBackToLegacyScan(t *testing.T) {
 	conn := indexMissStub(nil)
 	r := &ExplorerReader{conn: conn}
@@ -348,19 +340,12 @@ func TestContractCodeHistory_SACInIndexSkipsLegacyScan(t *testing.T) {
 	}
 }
 
-// TestContractCodeHistory_PartialIndexMissFallsBackToLegacy is the
-// sibling gap: ContractCodeHistory trusted an EMPTY per-contract
-// result from contract_instance_changes as an authoritative "never
-// upgraded", even though instanceChangesIndexAvailable is the same
-// table-global LIMIT-1 emptiness probe that cannot see partial per-contract
-// backfill coverage. Only contractWasmHash guarded against this; this read
-// did not.
-//
-// Without the fallback, an applied-but-still-backfilling index would make ContractCodeHistory
-// return an empty timeline for any contract the backfill hadn't reached
-// yet, even though the changes log holds its real upgrade history. The
-// fallback mirrors contractWasmHash: only a NON-EMPTY indexed result is
-// trusted; an empty one falls through to the legacy changes-log scan.
+// TestContractCodeHistory_PartialIndexMissFallsBackToLegacy: an EMPTY per-contract result from
+// contract_instance_changes must not be trusted as an authoritative "never upgraded", because
+// instanceChangesIndexAvailable is a table-global LIMIT-1 probe blind to partial per-contract
+// backfill coverage. Without the fallback, a still-backfilling index returns an empty timeline
+// for contracts it has not reached, though the changes log holds their upgrade history. As in
+// contractWasmHash, only a NON-EMPTY indexed result is trusted.
 func TestContractCodeHistory_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 	wantHash := wasmHashN(0xEF)
 

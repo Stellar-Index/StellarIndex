@@ -8,25 +8,15 @@ import (
 	"testing"
 )
 
-// TestGapDetectorTargetsCoverAllPerSourceHypertables is the
-// load-bearing lint guard for ADR-0030's per-source coverage
-// invariant. Every per-source hypertable that ships in a
-// migration MUST appear in [DefaultGapDetectorTargets] in the
-// same PR — without this, a new source's table can land with no
-// data-derived coverage signal at all (the exact failure mode
-// seen at the soroban_events layer).
+// TestGapDetectorTargetsCoverAllPerSourceHypertables guards ADR-0030's per-source coverage
+// invariant: every per-source hypertable in a migration MUST appear in
+// [DefaultGapDetectorTargets] in the same PR, or a new source's table lands with no
+// data-derived coverage signal.
 //
-// The test walks migrations/*.up.sql for `CREATE TABLE <name>`
-// statements whose name matches the per-source naming
-// conventions, then asserts each name is registered as a target
-// (or appears in [excludedFromGapDetector] with a documented
-// reason).
-//
-// Failure mode: the test prints the missing table and the
-// shortest plausible target registration so the operator can
-// copy-paste into per_source_gaps.go. This is intentional — a
-// failing CI run should not require the author to also know the
-// fix.
+// It walks migrations/*.up.sql for `CREATE TABLE <name>` statements matching the per-source
+// naming conventions and asserts each is registered (or listed in [excludedFromGapDetector]
+// with a documented reason). On failure it prints the missing table and the shortest plausible
+// registration to paste into per_source_gaps.go.
 func TestGapDetectorTargetsCoverAllPerSourceHypertables(t *testing.T) {
 	t.Parallel()
 
@@ -86,41 +76,29 @@ func TestGapDetectorExclusionsAreNotTargets(t *testing.T) {
 	}
 }
 
-// excludedFromGapDetector lists tables whose name matches the per-
-// source pattern but which legitimately shouldn't be registered as
-// a gap-detector target. Each entry MUST have a reason; "leftover
-// from refactor" is not a valid reason — delete the entry or the
-// table instead.
+// excludedFromGapDetector lists tables matching the per-source pattern that legitimately are
+// not gap-detector targets. Each entry MUST have a real reason; delete a stale entry or table.
 var excludedFromGapDetector = map[string]string{
 	"sdex_offer_events": "#358 (2026-09-02): migration 0026 created the table but NO writer has ever existed — nothing in internal/ or cmd/ inserts into it. A target here scanned a permanently-empty table and reported a permanent genesis→tip gap for a phantom source (and made backfill_coverage lie). Re-add the target WITH the writer.",
 	"freeze_events":     "system-state table, not per-source ingest. Populated on demand by /v1/admin/freeze handler; no continuous-coverage invariant.",
 	"mev_events":        "MEV detection sidecar — populated only when an op's effects suggest sandwich/frontrun. Sparse-by-design, not a coverage signal.",
 	"api_usage_events":  "HTTP-request usage logging for the platform API, not Stellar-network ingest. No coverage invariant.",
-	// classic_movements (migration 0105, ADR-0047) doesn't match
-	// perSourcePattern's suffix list (it ends in "_movements", not
-	// "_events"/etc.), so this entry isn't mechanically required by
-	// the regex walk below — added anyway as an explicit, documented
-	// decision for anyone who greps this map wondering why a real
-	// per-source hypertable isn't a live target. classic_movements
-	// has NO live writer at all (ADR-0047 D2: historical-only,
-	// written solely by the bounded `classic-movements-backfill`
-	// command below the P23 ledger boundary) — a "coverage vs
-	// current tip" gauge would be structurally meaningless, since
-	// tip is always far past where this source stops. Coverage
-	// verification instead follows ADR-0047 D4: a static recognition
-	// test (internal/sources/classicmovements/recognition_test.go)
-	// plus, from Phase 4 onward, an ADR-0033-style projection
-	// reconcile against ledger_entry_changes.
+	// classic_movements (ADR-0047) does not match perSourcePattern's suffix list, so the regex
+	// walk does not require this entry; it documents why a real per-source hypertable is not
+	// a live target. It has NO live writer (ADR-0047 D2: historical-only, written by the
+	// bounded `classic-movements-backfill` below the P23 ledger boundary), so a "coverage vs
+	// current tip" gauge would be meaningless. Coverage follows ADR-0047 D4: a static
+	// recognition test (internal/sources/classicmovements/recognition_test.go) plus, from
+	// Phase 4, an ADR-0033-style projection reconcile against ledger_entry_changes.
 	"classic_movements": "historical-only, no live writer (ADR-0047 D2) — see the comment above this map entry.",
 }
 
-// The five LedgerEntryChange supply observers' tables only get a row when a
-// WATCHED entry changes, so a ledger with no row is the normal case, not a
-// loss, and a LAG-over-DISTINCT gap scan would alert on that quiet. Only the
-// account observer has a true processed watermark (account_observer_watermark,
-// migration 0144); the other four do not, and MAX(ledger) of their tables
-// goes stale on a healthy observer, so they cannot tell dead from quiet.
-// That liveness gap is open. The ADR-0033 re-derive covers soroban_events only.
+// The five LedgerEntryChange supply observers' tables only get a row when a WATCHED entry
+// changes, so a ledger with no row is normal, not a loss, and a LAG-over-DISTINCT gap scan
+// would alert on that quiet. Only the account observer has a true processed watermark
+// (account_observer_watermark); MAX(ledger) of the other four goes stale on a healthy
+// observer, so they cannot tell dead from quiet. That liveness gap is open. The ADR-0033
+// re-derive covers soroban_events only.
 const (
 	accountObserverReason = "watched-set-sparse LedgerEntryChange observer table: absent ledgers are quiet, not lost, so a ledger-gap target would false-alert. Liveness is account_observer_watermark; there is no ADR-0033 reconcile axis for LedgerEntry sources."
 	noWatermarkReason     = "watched-set-sparse LedgerEntryChange observer table: absent ledgers are quiet, not lost, so a ledger-gap target would false-alert. OPEN GAP: no processed watermark exists, so a dead observer is indistinguishable from a quiet one; there is no ADR-0033 reconcile axis for LedgerEntry sources."

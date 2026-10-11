@@ -124,20 +124,15 @@ func TestBucket_KeysAreIndependent(t *testing.T) {
 }
 
 func TestBucket_ColonInKeyDoesNotCollide(t *testing.T) {
-	// Keys containing `:` (IPv6 addresses, future API-key formats)
-	// must not collide with distinct keys. Take() builds the Redis key as
-	// `rl:<key>:<minute>`; without escaping, two IPv6 clients whose
-	// addresses share a prefix could land on the same slot.
-	// url.QueryEscape in Take() closes this.
+	// Keys containing `:` (IPv6 addresses, API-key formats) must not collide with distinct keys.
+	// Take() builds the Redis key as `rl:<key>:<minute>`; url.QueryEscape stops two IPv6 clients
+	// with a shared address prefix from landing on the same slot.
 	rdb, _ := newRedis(t)
 	b := ratelimit.New(rdb, 1, time.Minute)
 	ctx := context.Background()
 
-	// Two realistic IPv6 addresses. Without escaping, the bucket
-	// key for "2001:db8::1" in minute M ends with ":<M>"; for
-	// "2001:db8::1:<M>" in minute 0 also ends with ":<M>". The
-	// safety here is that neither collides with the other OR with
-	// the minute suffix.
+	// Without escaping, the key for "2001:db8::1" in minute M ends with ":<M>", as does the key
+	// for "2001:db8::1:<M>" in minute 0. Neither may collide with the other or the minute suffix.
 	if r, _ := b.Take(ctx, "2001:db8::1"); !r.Allowed {
 		t.Fatal("client A 1st should be allowed")
 	}
@@ -202,14 +197,11 @@ func TestBucket_RetryAfterIsWindowRemaining(t *testing.T) {
 }
 
 func TestBucket_DenyHoldsWhenTTLReportsNegative(t *testing.T) {
-	// Regression: the Lua clamps a negative TTL to 0 on the deny path
-	// (see bucket.go's `if ttl < 0 then ttl = 0`), so Go MUST NOT read
-	// "retryTTL == 0" as "allowed". Use `count > max` as the
-	// authoritative signal.
+	// The Lua clamps a negative TTL to 0 on the deny path (bucket.go's `if ttl < 0 then ttl = 0`),
+	// so Go MUST NOT read "retryTTL == 0" as "allowed"; `count > max` is the authoritative signal.
 	//
-	// Reproduce the condition by stripping the TTL from the bucket's
-	// Redis key via miniredis's Persist — simulating the rare race
-	// where a key survives past its EXPIRE (e.g. lazy eviction ordering).
+	// Reproduce it by stripping the TTL via miniredis's Persist, simulating a key that survives
+	// past its EXPIRE (e.g. lazy eviction ordering).
 	rdb, mr := newRedis(t)
 	fakeNow := time.Unix(1_750_000_000, 0)
 	b := ratelimit.New(rdb, 1, time.Minute,
@@ -383,17 +375,14 @@ func TestBucket_DwellTime_FailsClosedAfterWindow(t *testing.T) {
 	}
 }
 
-// TestBucket_DwellTime_FlapVsSustainedRecovery pins the recovery
-// semantic: a SINGLE Redis success must NOT reset the fail-closed dwell clock
-// (a flapping Redis with occasional successes still trips fail-closed after
-// dwellTime); only a SUSTAINED healthy streak (dwellTime of unbroken successes)
-// clears it and restores fail-open. If one success wiped the clock, a flapping
-// Redis (1 success/<dwellTime) would keep this throttle, and the auth
-// brute-force + signup throttles that share the Bucket type, fail-open
-// indefinitely while Redis was effectively down.
+// TestBucket_DwellTime_FlapVsSustainedRecovery pins the recovery semantic: a SINGLE Redis success
+// must NOT reset the fail-closed dwell clock (a flapping Redis still trips fail-closed after
+// dwellTime); only a SUSTAINED healthy streak (dwellTime of unbroken successes) clears it and
+// restores fail-open. If one success wiped the clock, a flapping Redis would keep this throttle,
+// and the auth brute-force and signup throttles sharing the Bucket type, fail-open indefinitely
+// while Redis was effectively down.
 //
-// A faultInjector wrapping redis.Cmdable + a fake clock drive the sequences
-// deterministically (we can't toggle a real Redis mid-test).
+// A faultInjector wrapping redis.Cmdable + a fake clock drive the sequences deterministically.
 func TestBucket_DwellTime_FlapVsSustainedRecovery(t *testing.T) {
 	rdb, _ := newRedis(t)
 	fi := &faultInjector{Cmdable: rdb}
@@ -553,13 +542,11 @@ func TestBucket_DwellTime_DeadlineCtxArms(t *testing.T) {
 	}
 }
 
-// faultInjector wraps a redis.Cmdable. When fail is true every Eval
-// call (which is what the Lua script driver invokes) returns
-// redis.ErrClosed; otherwise calls pass through.
+// faultInjector wraps a redis.Cmdable. When fail is true every Eval call (what the Lua script
+// driver invokes) returns redis.ErrClosed; otherwise calls pass through.
 //
-// Bucket.Take only uses EvalSha + Eval (script.Run), so overriding
-// those two is sufficient to drive errors deterministically without
-// closing the underlying connection.
+// Bucket.Take only uses EvalSha + Eval (script.Run), so overriding those two drives errors
+// deterministically without closing the underlying connection.
 type faultInjector struct {
 	redis.Cmdable
 	fail bool
@@ -674,11 +661,8 @@ func TestBucket_WithKeyPrefixOverridesDefault(t *testing.T) {
 	}
 }
 
-// TestBucket_Charge_SpendsCostTokens: the
-// limiter had no notion of cost — the only N it took was a per-subject
-// LIMIT and the script did a plain INCR — so a 1000-id batch and a one-id read
-// spent the same single token. A charge of N must move the counter by
-// N, in one call.
+// TestBucket_Charge_SpendsCostTokens: a request priced at N must move the counter by N in one
+// call; a plain INCR would let a 1000-id batch and a one-id read spend the same single token.
 func TestBucket_Charge_SpendsCostTokens(t *testing.T) {
 	chargeBackends(t, func(t *testing.T, rdb redis.Cmdable) {
 		b := newChargeBucket(rdb, 100)
@@ -745,13 +729,11 @@ func TestBucket_Charge_ExactFitIsAllowed(t *testing.T) {
 
 // TestBucket_Charge_ClampsCost pins both ends of the normalisation.
 //
-// Above the limit: a request priced over the ceiling is charged the
-// whole ceiling, not refused forever — it is servable into an untouched
-// window and leaves nothing behind it.
+// Above the limit: a request priced over the ceiling is charged the whole ceiling, not refused
+// forever; it is servable into an untouched window and leaves nothing behind it.
 //
-// Below one: zero and negative costs spend a token. A negative INCRBY
-// would hand budget BACK, which is the one thing a limiter must never
-// do on caller-computed input.
+// Below one: zero and negative costs spend a token. A negative INCRBY would hand budget BACK,
+// which a limiter must never do on caller-computed input.
 func TestBucket_Charge_ClampsCost(t *testing.T) {
 	chargeBackends(t, func(t *testing.T, rdb redis.Cmdable) {
 		ctx := context.Background()
@@ -830,11 +812,9 @@ func TestBucket_Charge_LimitIsNotCost(t *testing.T) {
 	})
 }
 
-// chargeBackends runs fn against both limiter backends. The in-process
-// fallback is what enforces the limit when Redis is absent at boot, so
-// a weight that only the Redis path honoured would leave the
-// amplification live in exactly the degraded mode the fallback exists
-// for.
+// chargeBackends runs fn against both limiter backends. The in-process fallback enforces the
+// limit when Redis is absent at boot, so a weight honoured only by the Redis path would leave
+// amplification live in exactly the degraded mode the fallback exists for.
 func chargeBackends(t *testing.T, fn func(t *testing.T, rdb redis.Cmdable)) {
 	t.Helper()
 	t.Run("redis", func(t *testing.T) {
@@ -856,11 +836,9 @@ func newChargeBucket(rdb redis.Cmdable, limit int) *ratelimit.Bucket {
 	return ratelimit.New(rdb, limit, time.Minute)
 }
 
-// Take's eval-error path is the seam between the Redis client and
-// the rate-limit layer. Per the package doc: callers should fail
-// open on this kind of error — but Take itself MUST surface the
-// error rather than quietly returning Allowed=false (which would
-// manifest as a fleet-wide rate-limit jam during a Redis outage).
+// Take's eval-error path is the seam between the Redis client and the rate-limit layer. Callers
+// fail open on this error, but Take itself MUST surface it rather than quietly return
+// Allowed=false, which would jam rate limiting fleet-wide during a Redis outage.
 func TestBucket_TakeReturnsErrorOnRedisOutage(t *testing.T) {
 	rdb, _ := newRedis(t)
 	if err := rdb.Close(); err != nil {

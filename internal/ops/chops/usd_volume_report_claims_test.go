@@ -16,17 +16,13 @@ import (
 // TestUSDVolumeFooter_QuotesTheBoundsRealFiringThresholds is the lockstep
 // guard between [xlmBaseBoundTolerance] and the prose the operator reads.
 //
-// A footer telling operators the XLM-base bound "catches 10x+
-// errors" and "cannot false-alarm on intraday movement". Both are false at
-// ±30%: it fires at 1.30× overstatement / 1.43× understatement, and its
-// immunity to intraday movement is a measured 0.08 of headroom (worst
-// honest day 1.2206 over 120 days of r1 data), not a structural property.
-// That wrong footer would invite the hypothesis that a
-// 1.3–1.7 ratio must be dispersion rather than error.
+// A footer claiming the XLM-base bound "catches 10x+ errors" and "cannot false-alarm on intraday
+// movement" is false at ±30%: it fires at 1.30× overstatement / 1.43× understatement, and its
+// immunity to intraday movement is a measured headroom, not a structural property. A wrong
+// footer would invite the hypothesis that a 1.3–1.7 ratio must be dispersion rather than error.
 //
-// The thresholds are DERIVED from the constant here, so changing the
-// tolerance without updating the text fails this test rather than shipping
-// a footer that lies by a different amount.
+// The thresholds are DERIVED from the constant here, so changing the tolerance without updating
+// the text fails this test rather than shipping a footer that lies by a different amount.
 func TestUSDVolumeFooter_QuotesTheBoundsRealFiringThresholds(t *testing.T) {
 	t.Parallel()
 	footer := usdVolumeFooterText(0)
@@ -56,20 +52,15 @@ func TestUSDVolumeFooter_QuotesTheBoundsRealFiringThresholds(t *testing.T) {
 
 // ─── The restamp report must name its own follow-up ──────────
 
-// TestXLMBaseRestampFollowUp_OrdersPricesFirstAndTwapsLast is the
-// follow-up ordering regression. The restamp's printed `acceptance:` step runs
-// verify-usd-volume, which reads `trades` DIRECTLY — while every served
-// volume surface reads a continuous aggregate that will not auto-refresh
-// a months-old window (measured start_offset on r1: prices_1m 5 min,
-// nothing further back than 7 days). So the acceptance check can go green
-// while /v1/markets, asset volume, venue rankings and every chart serve
-// pre-restamp numbers indefinitely. The report must therefore print the
-// refresh sequence itself.
+// TestXLMBaseRestampFollowUp_OrdersPricesFirstAndTwapsLast: the restamp's printed `acceptance:`
+// step runs verify-usd-volume, which reads `trades` DIRECTLY, while every served volume surface
+// reads a continuous aggregate that will not auto-refresh a months-old window. The acceptance
+// check can go green while /v1/markets, asset volume, venue rankings and charts serve pre-restamp
+// numbers indefinitely, so the report must print the refresh sequence itself.
 //
-// The ORDER is the load-bearing part and the reason this is a test rather
-// than a doc: twap_1h and twap_1d are the only hierarchical aggregates in
-// the set (parent_mat_hypertable_id → prices_1m's materialisation), so
-// refreshing them before prices_1m re-materialises them from stale input.
+// The ORDER is load-bearing: twap_1h and twap_1d are the only hierarchical aggregates in the set
+// (parent_mat_hypertable_id → prices_1m's materialisation), so refreshing them before prices_1m
+// re-materialises them from stale input.
 func TestXLMBaseRestampFollowUp_OrdersPricesFirstAndTwapsLast(t *testing.T) {
 	t.Parallel()
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -99,11 +90,10 @@ func TestXLMBaseRestampFollowUp_OrdersPricesFirstAndTwapsLast(t *testing.T) {
 		}
 	}
 
-	// Windows must clear Timescale's 2-bucket minimum per aggregate, or
-	// the call is REJECTED (SQLSTATE 22023) and the operator skips that
-	// aggregate — shipping a partially-stale surface. The 200-day window
-	// above satisfies every minimum on its own, so exercise the narrow
-	// case: a ONE-day restamp must still pad prices_1mo out to 93 days.
+	// Windows must clear Timescale's 2-bucket minimum per aggregate, or the call is REJECTED
+	// (SQLSTATE 22023) and the operator skips that aggregate, leaving a partially-stale surface.
+	// The 200-day window above satisfies every minimum, so exercise the narrow case: a ONE-day
+	// restamp must still pad prices_1mo out to 93 days.
 	narrow := xlmBaseRestampFollowUp(from, from)
 	lo, hi := parseRefreshWindow(t, narrow, "prices_1mo")
 	if got := hi.Sub(lo); got < 93*24*time.Hour {
@@ -163,13 +153,11 @@ func TestXLMBaseRestampFollowUp_ForcesPrices1mOverEveryTwapWindow(t *testing.T) 
 	}
 }
 
-// TestXLMBaseRestampFollowUp_RecommendsMinRelDelta pins the min-rel-delta advice. The
-// re-derive reads the FINALISED prices_1m bucket while the original
-// insert read the partially-materialised real-time bucket for the same
-// minute, so ~8% of the write set moves by under 0.1% — repairing nothing,
-// on a compressed hypertable where the write is the expensive part.
-// -min-rel-delta 0.001 drops exactly that, and never a NULL fill (pinned
-// behaviourally by
+// TestXLMBaseRestampFollowUp_RecommendsMinRelDelta pins the min-rel-delta advice. The re-derive
+// reads the FINALISED prices_1m bucket while the original insert read the partially-materialised
+// real-time bucket, so a share of the write set moves by under 0.1%, repairing nothing on a
+// compressed hypertable where the write is the expensive part. -min-rel-delta 0.001 drops exactly
+// that, and never a NULL fill (pinned behaviourally by
 // timescale.TestXLMBaseRestampDecide_MinRelDeltaSuppressesSmallMovesOnly).
 func TestXLMBaseRestampFollowUp_RecommendsMinRelDelta(t *testing.T) {
 	t.Parallel()
