@@ -16,9 +16,8 @@ import (
 // issuer wrap corridors. DISPLAY / ANALYTICS metadata only; it never re-ranks anything.
 
 const (
-	// volumeCharacterWindow is the trailing window the signals roll over.
-	// 14 days is long enough to survive a quiet day, short enough that a corridor that has
-	// since gone honest recovers.
+	// volumeCharacterWindow is the trailing window: long enough to survive a quiet day, short
+	// enough that a corridor that has since gone honest recovers.
 	volumeCharacterWindow = 14 * 24 * time.Hour
 
 	// VolumeCharacterMarket / …Operational / …Concentrated are the wire
@@ -32,30 +31,25 @@ const (
 	// dust-bot volume so real low-value wash is still caught.
 	volumeCharacterMinVolumeUSD = 1000
 
-	// volumeCharacterConcentrationThreshold — >90% of window volume in a
-	// SINGLE (unordered) account pair on a market-styled pair is the
-	// volume-painting / ping-pong / dust signature (design §1 census).
+	// volumeCharacterConcentrationThreshold — over 90% of window volume in a SINGLE (unordered)
+	// account pair on a market-styled pair is the volume-painting / ping-pong / dust signature.
 	volumeCharacterConcentrationThreshold = 0.90
 
-	// volumeCharacterMarketStyledThreshold — an asset is "market-styled"
-	// when at least half its priced volume trades against a real price
-	// surface (native / USDC / fiat) rather than a wrap counterpart.
+	// volumeCharacterMarketStyledThreshold — "market-styled" means at least half the priced
+	// volume trades against a real price surface (native / USDC / fiat), not a wrap counterpart.
 	volumeCharacterMarketStyledThreshold = 0.50
 
-	// volumeCharacterIssuerSideThreshold — the issuer-side share that,
-	// on a NON-market-styled (wrap) pair, marks an operational
-	// mint/redeem corridor (USDC↔USDCAllow, AUDD↔AUDR).
+	// volumeCharacterIssuerSideThreshold — the issuer-side share that, on a NON-market-styled
+	// (wrap) pair, marks an operational mint/redeem corridor (USDC to USDCAllow, AUDD to AUDR).
 	volumeCharacterIssuerSideThreshold = 0.90
 )
 
-// AssetVolumeCharacter is the §2 signal set for one asset over the
-// trailing window, plus the derived character. Shares are fractions in
-// [0,1] rounded to 4 dp.
+// AssetVolumeCharacter is the signal set for one asset over the trailing window plus the derived
+// character. Shares are fractions in [0,1] rounded to 4 dp.
 type AssetVolumeCharacter struct {
 	WindowDays int
-	// VolumeUSD is the priced (usd_volume non-null) window volume the
-	// shares below are computed against: the exact NUMERIC sum's decimal
-	// text, never a float (ADR-0003).
+	// VolumeUSD is the priced window volume the shares are computed against: the exact NUMERIC
+	// sum's decimal text, never a float (ADR-0003).
 	VolumeUSD              string
 	DistinctMakers         int64
 	DistinctTakers         int64
@@ -127,9 +121,8 @@ SELECT
                  OR counterpart LIKE 'USDC-%'), 0)                                 AS market_styled_vol
 `
 
-// AssetVolumeCharacter computes the §2 signals + derived character for one
-// asset. A newly-observed asset with no priced trades in the window comes
-// back as the neutral default `market` with zeroed signals.
+// AssetVolumeCharacter computes the signals and derived character for one asset; an asset with
+// no priced trades in the window is the neutral `market` with zeroed signals.
 func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (AssetVolumeCharacter, error) {
 	issuer := ""
 	if a, err := canonical.ParseAsset(assetID); err == nil {
@@ -149,10 +142,8 @@ func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (Asset
 		return AssetVolumeCharacter{}, fmt.Errorf("timescale: AssetVolumeCharacter %s: %w", assetID, err)
 	}
 
-	// Shared derivation: the all-asset rollup
-	// (RefreshAssetVolumeCharacter) turns the SAME raw double-precision
-	// sums into shares + character through this exact path, so the rollup
-	// can never drift from the value this per-request read produces.
+	// Shared with RefreshAssetVolumeCharacter so the all-asset rollup cannot drift from this
+	// per-request read.
 	return volumeCharacterFromSums(totalNum, total, topPair, selfCross, issuerSide, marketStyled, makers, takers), nil
 }
 
@@ -191,8 +182,8 @@ func deriveVolumeCharacter(s AssetVolumeCharacter) string {
 	return VolumeCharacterMarket
 }
 
-// belowVolumeCharacterFloor compares the exact decimal volume against the
-// floor in big.Rat. Unparseable text is below it: no readable signal, no badge.
+// belowVolumeCharacterFloor compares the exact decimal volume to the floor in big.Rat;
+// unparseable text is below it (no readable signal, no badge).
 func belowVolumeCharacterFloor(volumeUSD string) bool {
 	v, ok := new(big.Rat).SetString(volumeUSD)
 	return !ok || v.Cmp(big.NewRat(volumeCharacterMinVolumeUSD, 1)) < 0

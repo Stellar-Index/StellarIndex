@@ -10,75 +10,65 @@ import (
 )
 
 // QuarantineAfterCycles is the retry budget for an UNCLASSIFIED sink failure when the cycle proved
-// the sink healthy (another event committed). After this many CONSECUTIVE cycles failing on the
-// same row identity the row is quarantined (loud log + counter) and the cursor advances past it.
+// the sink healthy (another event committed). After this many CONSECUTIVE failing cycles on one
+// row identity the row is quarantined (loud log + counter) and the cursor advances past it.
 //
-// 20 cycles ≈ 100s at [Interval]: long enough for transient non-infra faults (deadlock 40P01,
-// serialization 40001, lock_not_available 55P03, statement_timeout 57014) to clear, short enough
-// that a poison row costs the source ~2 minutes rather than forever.
+// 20 cycles is about 100s at [Interval]: long enough for transient faults (deadlock, serialization,
+// lock_not_available, statement_timeout) to clear, short enough that a poison row is not forever.
 const QuarantineAfterCycles = 20
 
-// QuarantineAfterCyclesNoProgress is the much longer retry budget used when the cycle could NOT
-// prove the sink healthy (nothing else committed), so "this row is poison" and "the whole sink is
-// broken" look identical. A GLOBAL fault (schema drift, permissions change, wedged downstream)
-// must be a visible stall, not shed rows, so the projector holds ~1 hour of cycles, well past the
-// paging alert on projector lag / sink_retry, and only then gives up one row per cycle. Sparse
-// sources with a single poison event still self-heal, slowly and loudly.
+// QuarantineAfterCyclesNoProgress is the longer retry budget used when the cycle could NOT prove
+// the sink healthy, so "this row is poison" and "the whole sink is broken" look identical. A
+// GLOBAL fault (schema drift, permissions, wedged downstream) must be a visible stall, not shed
+// rows, so the projector holds about 1 hour, past the lag / sink_retry paging alert.
 const QuarantineAfterCyclesNoProgress = 720
 
-// PermanentSkipPerCycle is the most rows ONE cycle may shed on a [dispositionSkip] verdict (a
-// SQLSTATE class 22/23 rejection or a canonical value-shape rejection). IsPermanentDataError is
-// true for ANY class 22/23 error and those are not always row-local: a migration adding a NOT NULL
-// or CHECK the live rows violate makes every row "poison" at once, and shedding them all would be
-// unbounded silent loss.
+// PermanentSkipPerCycle is the most rows ONE cycle may shed on a [dispositionSkip] verdict.
+// Class 22/23 errors are not always row-local: a migration adding a NOT NULL or CHECK the live
+// rows violate makes every row "poison" at once, and shedding them all would be silent loss.
 //
 // So the skip arm borrows both halves of the quarantine rail:
 //
 //   - the RATE limit: at most ONE row per cycle, lowest ledger first ([shedCandidate]); every row
 //     not shed HOLDS the cursor like a retryable fault;
 //   - the sink-health PROOF: [permanentSkipCandidate] takes the same `madeProgress` argument as
-//     [quarantineCandidate], so a verdict from a cycle that committed nothing else first waits out
+//     [quarantineCandidate], so a cycle that committed nothing else first waits out
 //     [QuarantineAfterCyclesNoProgress].
 //
-// A global fault has no such proof: it becomes a visible stall (lag climbing,
-// runs_total{outcome="sink_retry"}) and only then bleeds at 1 row per [Interval].
+// A global fault has no such proof: it becomes a visible stall, then bleeds 1 row per [Interval].
 const PermanentSkipPerCycle = 1
 
 // heldRowLogEvery throttles the per-row "holding cursor" warning to the first failing cycle and
-// every Nth after, mirroring the sink's infraRetryLogEvery: a held row retries every [Interval]
-// for as long as the fault lasts, and a line per row per cycle would bury the ERROR lines an
-// operator needs. Cycle-level signals (runs_total{outcome="sink_retry"}, lag) stay the paging surface.
+// every Nth after, so a held row retrying every [Interval] does not bury the ERROR lines.
 const heldRowLogEvery = 20
 
 // sinkDisposition is the projector's verdict for ONE sink write failure: may the cursor advance
 // past this row?
 //
-// It is three-valued, not a permanent/transient boolean. A boolean would fold "known transient"
-// and "unclassified" into one retry-forever bucket, so any deterministic failure the classifier
-// missed (a pre-SQL store validation error, an `OracleUpdate.Validate` rejection) would hold the
-// per-source cursor forever. A sole-writer domain such as sep41 (ADR-0032) has no second writer,
-// so one malformed on-chain value would halt the domain silently, visible only as growing lag.
+// It is three-valued, not a boolean: a boolean would fold "known transient" and "unclassified"
+// into one retry-forever bucket, so a deterministic failure the classifier missed would hold the
+// per-source cursor forever. A sole-writer domain such as sep41 would halt silently, visible only
+// as growing lag.
 type sinkDisposition int
 
 const (
-	// dispositionSkip is a positively identified, row-local, deterministic data fault: the DB
-	// rejected the row's VALUES (SQLSTATE class 22/23) or it failed a canonical value-shape check
-	// before reaching SQL. Retrying cannot succeed, so the row is counted, logged loudly and
-	// skipped on the first cycle that also proved the sink healthy, at most [PermanentSkipPerCycle]
-	// rows per cycle because the same SQLSTATE classes also arrive globally. Without that proof
-	// the wait is [QuarantineAfterCyclesNoProgress]; a row over the cap holds the cursor.
+	// dispositionSkip is a row-local, deterministic data fault: the DB rejected the row's VALUES
+	// (SQLSTATE class 22/23) or it failed a canonical value-shape check before SQL. Retrying
+	// cannot succeed, so the row is skipped loudly once a cycle also proved the sink healthy, at
+	// most [PermanentSkipPerCycle] per cycle because those classes also arrive globally. Without
+	// that proof the wait is [QuarantineAfterCyclesNoProgress]; a row over the cap holds the cursor.
 	dispositionSkip sinkDisposition = iota
 
-	// dispositionRetry is a positively identified infrastructure or shutdown fault (Postgres
-	// down, restarting or out of capacity; context cancellation; cycle deadline). It is global and
-	// self-clearing, so the cursor is held below the row and the row retried FOREVER. Never
-	// quarantined: dropping live rows because the database is down would be silent loss.
+	// dispositionRetry is an infrastructure or shutdown fault (Postgres down or at capacity,
+	// context cancellation, cycle deadline). It is global and self-clearing, so the row is
+	// retried FOREVER. Never quarantined: dropping live rows because the database is down would
+	// be silent loss.
 	dispositionRetry
 
-	// dispositionUnclassified is everything else. It retries like [dispositionRetry] but under a
-	// bounded budget ([QuarantineAfterCycles] / [QuarantineAfterCyclesNoProgress]): a row that
-	// re-fails identically for the whole budget is deterministic in practice and is quarantined so
-	// it cannot wedge the source. A new, unenumerated failure mode lands here and self-heals.
+	// dispositionUnclassified is everything else. It retries under a bounded budget
+	// ([QuarantineAfterCycles] / [QuarantineAfterCyclesNoProgress]); a row that re-fails
+	// identically for the whole budget is deterministic in practice and is quarantined so it
+	// cannot wedge the source.
 	dispositionUnclassified
 )
 
@@ -97,15 +87,13 @@ func (d sinkDisposition) String() string {
 	}
 }
 
-// valueShapeSentinels are the canonical errors meaning "this row's VALUES are invalid", a verdict
-// about the data that retrying cannot change. They are the pre-SQL twin of SQLSTATE class 22/23:
-// `Store.InsertOracleUpdate` returns `OracleUpdate.Validate`'s error verbatim, so a bad oracle
-// update surfaces here rather than as a *pgconn.PgError.
+// valueShapeSentinels are the canonical errors meaning "this row's VALUES are invalid", which
+// retrying cannot change. They are the pre-SQL twin of SQLSTATE class 22/23:
+// `Store.InsertOracleUpdate` returns `OracleUpdate.Validate`'s error verbatim.
 //
 // Deliberately EXCLUDED:
 //
-//   - canonical.ErrUnknownAsset depends on registry state a later cycle may have warmed, so it is
-//     not row-deterministic.
+//   - canonical.ErrUnknownAsset depends on registry state a later cycle may have warmed.
 //   - canonical.ErrPairMismatch is a cross-row comparison, not a row verdict.
 //
 // Both fall to [dispositionUnclassified], where the retry budget bounds the damage.
@@ -135,9 +123,8 @@ func classifySinkFault(err error) sinkDisposition {
 	if isValueShapeError(err) {
 		return dispositionSkip
 	}
-	// … or the sink panicked on this event. That is deterministic for the event, and holding the
-	// cursor would re-run the panicking decode every cycle for the whole budget. Skipped under
-	// the same shed cap + health proof as the rest.
+	// … or the sink panicked on this event: deterministic for the event, so holding the cursor
+	// would only re-run the panic. Skipped under the same shed cap + health proof.
 	if errors.Is(err, pipeline.ErrSinkPanic) {
 		return dispositionSkip
 	}
@@ -154,10 +141,9 @@ func classifySinkFault(err error) sinkDisposition {
 // must fit in 128 bits did not.
 //
 // It is skipped like the other [valueShapeSentinels], but it is NOT a verdict about an on-chain
-// value: per ADR-0003 any production ErrI128Overflow is a SEV-1, meaning an int64 snuck onto an
-// amount path and silently truncates every value it touches. So the drop is counted under its own
-// `outcome`, not folded into the class-22/23 count, which gives the alert
-// (stellarindex_projector_i128_overflow) a rule to hang on.
+// value: any production ErrI128Overflow means an int64 snuck onto an amount path and truncates
+// every value it touches (ADR-0003). So the drop is counted under its own `outcome`, giving the
+// alert (stellarindex_projector_i128_overflow) a rule to hang on.
 func isI128Overflow(err error) bool {
 	return errors.Is(err, canonical.ErrI128Overflow)
 }
@@ -183,11 +169,10 @@ type rowIdentity struct {
 }
 
 // poisonTracker counts CONSECUTIVE failing cycles per row identity for ONE source. It is
-// goroutine-local (one per source loop, like the adaptive window in runOneSource), so it needs
-// no locking.
+// goroutine-local (one per source loop), so it needs no locking.
 //
 // The map is bounded by the rows failing inside one [BatchLimit] window: [poisonTracker.retain]
-// drops every identity that did not fail in the last cycle, so a transient blip cannot accumulate.
+// drops every identity that did not fail in the last cycle.
 type poisonTracker struct {
 	fails map[rowIdentity]int
 }

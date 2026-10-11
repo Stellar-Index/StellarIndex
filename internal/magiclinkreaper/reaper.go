@@ -38,9 +38,8 @@ const (
 	// DefaultInterval is the sweep cadence; hourly holds the table flat for one indexed range
 	// DELETE plus one count.
 	DefaultInterval = time.Hour
-	// DefaultRetention is how long an EXPIRED row is kept past expires_at. The magic-link TTL is
-	// 15 minutes, so 48 h preserves the expired-vs-absent error for a user clicking a stale link
-	// two days late and a forensics window on a mint flood, while still holding the table flat.
+	// DefaultRetention is how long an EXPIRED row is kept past expires_at: long enough for the
+	// expired-vs-absent error and a forensics window on a mint flood.
 	DefaultRetention = 48 * time.Hour
 )
 

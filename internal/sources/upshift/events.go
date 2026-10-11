@@ -25,24 +25,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// SourceName is the canonical string stamped on every event this
-// package emits and on every `upshift_vault_events` row.
+// SourceName is stamped on every emitted event and every `upshift_vault_events` row.
 const SourceName = "upshift"
 
-// EventKind is the [consumer.Event] discriminator for every row this
-// package emits. One event type carries all four decoded kinds (the
-// sep41_transfers shape), so there is one kind string.
+// EventKind is the [consumer.Event] discriminator; one type carries all four decoded kinds (the
+// sep41_transfers shape).
 const EventKind = "upshift.vault_event"
 
-// Vault contract ids on pubnet. Held as named constants because they
-// are IDENTITIES, not tunables: changing one re-points a served row —
-// and, for earnUSDC, a published oracle price — at a different
-// instrument.
+// Vault contract ids on pubnet. They are IDENTITIES, not tunables: changing one re-points a served
+// row, and for earnUSDC a published oracle price, at a different instrument.
 const (
-	// MainnetVaultEarnUSDC is the earnUSDC vault: native Stellar USDC
-	// in, earnUSDC shares out. It is also the base asset of the
-	// RedStone `earnUSDC_FUNDAMENTAL` feed — internal/sources/redstone
-	// imports THIS constant so the two can never drift apart.
+	// MainnetVaultEarnUSDC is the earnUSDC vault (native USDC in, shares out) and the base asset of
+	// the RedStone `earnUSDC_FUNDAMENTAL` feed; internal/sources/redstone imports THIS constant so
+	// the two cannot drift.
 	MainnetVaultEarnUSDC = "CCL3WITWFFXIHV2I52ECV5DPIEOFSTU3PBPR53ILPLF2IP5KHECXRUTY"
 
 	// MainnetVaultEarnXLM is the earnXLM vault: native XLM in, earnXLM shares out. Identified
@@ -51,30 +46,23 @@ const (
 	MainnetVaultEarnXLM = "CC6TRAPQD3NK7THUKWPV5SL2JHKQGNXZVB6S6MVYFSLRWAKEFUWZKZ7J"
 )
 
-// GenesisLedger is the ledger of the protocol's first event on pubnet —
-// earnUSDC's `admin_set` at 62,623,313, six ledgers ahead of earnXLM's.
-// This is the density denominator (ADR-0031) and the gap detector's
-// floor: an exact observed value, never a rounded estimate.
+// GenesisLedger is the protocol's first pubnet event (earnUSDC's `admin_set`). It is the density
+// denominator (ADR-0031) and the gap detector's floor: an exact observed value, never an estimate.
 const GenesisLedger uint32 = 62_623_313
 
-// VaultMeta is the curated, lake-verified description of one vault. The
-// underlying is recorded as EVIDENCE of what the vault holds — nothing
-// in this package converts between the two scales (see the package doc
-// on the decimals offset), and no row is written with an invented asset.
+// VaultMeta is the curated, lake-verified description of one vault. The underlying is EVIDENCE of
+// what the vault holds; nothing here converts between the two scales or invents an asset.
 type VaultMeta struct {
-	// Label is the share token's ticker as published by the protocol.
-	// INFERRED from the underlying, not read from any event — no event
-	// carries the share symbol. Never used as an identity; the contract
-	// id is.
+	// Label is the share ticker, INFERRED from the underlying (no event carries it). Never an
+	// identity; the contract id is.
 	Label string
 
-	// Underlying is the C-strkey of the Stellar Asset Contract whose
-	// `transfer` accompanies this vault's `deposit` in the same
-	// transaction, for the same amount.
+	// Underlying is the C-strkey of the SAC whose `transfer` accompanies this vault's `deposit`
+	// in the same transaction, for the same amount.
 	Underlying string
 
-	// UnderlyingAsset is the SEP-11 asset string that same SAC transfer
-	// carries in its topic[3] — the proof of what Underlying is.
+	// UnderlyingAsset is the SEP-11 asset string in that SAC transfer's topic[3], the proof of
+	// what Underlying is.
 	UnderlyingAsset string
 
 	// FirstEventLedger is the vault's own first event in the lake.
@@ -114,8 +102,7 @@ func MainnetGatedSet() []string {
 	return out
 }
 
-// Decoded event kinds — the values stamped on Event.Kind and on the
-// `upshift_vault_events.event_kind` CHECK constraint (migration 0157).
+// Decoded event kinds, stamped on Event.Kind and bound by the `upshift_vault_events.event_kind` CHECK.
 const (
 	EventDeposit               = "deposit"
 	EventWithdraw              = "withdraw"
@@ -123,9 +110,8 @@ const (
 	EventDeployedAssetsChanged = "deployed_assets_changed"
 )
 
-// Recognized-but-undecoded kinds. Gated and classified so the ADR-0033
-// re-derive counts their ledgers as expected-ZERO rather than treating
-// them as blind spots; see the package doc for why each is skipped.
+// Recognized-but-undecoded kinds, classified so the ADR-0033 re-derive counts their ledgers as
+// expected-ZERO rather than blind spots (package doc says why each is skipped).
 const (
 	EventApprove                 = "approve"
 	EventDepositToSubaccount     = "deposit_to_subaccount"
@@ -139,9 +125,8 @@ const (
 	EventVaultUnpaused           = "vault_unpaused"
 )
 
-// Pre-encoded base64 SCVal Symbol blobs, for byte-equality matching on
-// topic[0] with no SCVal parse on the reject path. Every one of these
-// was checked byte-for-byte against the lake's own `topics_xdr[1]`.
+// Pre-encoded base64 SCVal Symbol blobs for byte-equality matching on topic[0], so the reject path
+// parses no SCVal. Each was checked against the lake's `topics_xdr[1]`.
 var (
 	TopicSymbolDeposit               = scval.MustEncodeSymbol(EventDeposit)
 	TopicSymbolWithdraw              = scval.MustEncodeSymbol(EventWithdraw)
@@ -159,9 +144,8 @@ var (
 	TopicSymbolVaultUnpaused         = scval.MustEncodeSymbol(EventVaultUnpaused)
 )
 
-// Decoder errors. ErrMalformedPayload is INDETERMINATE — a body that
-// did not match the proven schema — and stays an error so the
-// completeness verdict goes blind rather than silently under-counting.
+// Decoder errors. ErrMalformedPayload is INDETERMINATE (body off the proven schema) and stays an
+// error so the completeness verdict goes blind rather than silently under-counting.
 var (
 	ErrNotUpshiftEvent  = errors.New("upshift: topic[0] is not an Upshift vault event")
 	ErrMalformedPayload = errors.New("upshift: event body does not match the proven schema")

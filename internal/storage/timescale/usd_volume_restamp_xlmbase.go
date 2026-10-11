@@ -63,9 +63,8 @@ type XLMBaseRestampParams struct {
 	MinRelDelta *big.Rat
 }
 
-// XLMBaseRestampRow is one row the re-derive would rewrite: its primary
-// key, what is stored now, and the value [usdVolumeViaXLMBaseAnchor]
-// produces for it today.
+// XLMBaseRestampRow is one row the re-derive would rewrite: its primary key, the stored value, and
+// the value [usdVolumeViaXLMBaseAnchor] produces for it.
 type XLMBaseRestampRow struct {
 	Source  string
 	Ledger  uint32
@@ -76,22 +75,20 @@ type XLMBaseRestampRow struct {
 	BaseAsset  string
 	QuoteAsset string
 
-	// BaseAmount, QuoteAmount and Generation are the row as the plan read
-	// it; the apply writes only while the row still matches them and Stored.
+	// BaseAmount, QuoteAmount and Generation are the row as the plan read it; the apply writes
+	// only while the row still matches them and Stored.
 	BaseAmount  string
 	QuoteAmount string
 	Generation  int64
 
 	// Stored is the current column value; nil for SQL NULL.
 	Stored *string
-	// Want is the anchor's value, rendered exactly as the insert path
-	// renders it (`big.Rat.FloatString(8)`).
+	// Want is the anchor's value, rendered as the insert path renders it (FloatString(8)).
 	Want string
 
 	// AbsDelta is |Want - Stored| in USD; equal to Want for a NULL fill.
 	AbsDelta *big.Rat
-	// RelDelta is |Want - Stored| / |Stored|. RelOK is false when the
-	// stored value is NULL or zero, i.e. there is no ratio to state.
+	// RelDelta is |Want - Stored| / |Stored|. RelOK is false when Stored is NULL or zero.
 	RelDelta *big.Rat
 	RelOK    bool
 	// NullFill marks a row that goes from SQL NULL to a value.
@@ -104,16 +101,12 @@ type XLMBaseRestampRow struct {
 type XLMBaseRestampStats struct {
 	// Scanned is every row the SQL predicate returned.
 	Scanned int64
-	// QuotePegged rows have a USD-pegged quote leg: exact tier, owned by
-	// `-tier exact`, never touched here.
+	// QuotePegged rows have a USD-pegged quote leg: exact tier, owned by `-tier exact`.
 	QuotePegged int64
-	// NotDEX rows came from a source whose subclass is not DEX, or whose
-	// base leg is not an XLM form. Should be zero given the scan's
-	// filters; counted so a registry change that re-classes a source is
-	// visible rather than silently shrinking the population.
+	// NotDEX rows came from a non-DEX source or a non-XLM base leg. Should be zero given the
+	// scan's filters; counted so a registry re-class shows up instead of shrinking the population.
 	NotDEX int64
-	// Unparseable rows carry a base/quote amount or a stored usd_volume
-	// that is not a positive decimal — reportable, never rewritten.
+	// Unparseable rows carry an amount or stored usd_volume that is not a positive decimal.
 	Unparseable int64
 	// AnchorDeclinedNull / AnchorDeclinedStored are the rows the XLM anchor cannot price, split by
 	// what they hold today. The first is coverage the re-derive cannot recover; the second stays
@@ -122,16 +115,13 @@ type XLMBaseRestampStats struct {
 	AnchorDeclinedStored int64
 	// Unchanged rows already hold exactly the anchor's value.
 	Unchanged int64
-	// Changed is every row in the write set; NullFilled is the subset
-	// going NULL -> value.
+	// Changed is every row in the write set; NullFilled is the subset going NULL -> value.
 	Changed    int64
 	NullFilled int64
-	// NullCandidates counts rows the anchor CAN price that are stored
-	// NULL, whether or not FillNull admitted them — so a dry run without
-	// -fill-null still reports the coverage on offer.
+	// NullCandidates counts rows the anchor CAN price that are stored NULL, whether or not
+	// FillNull admitted them, so a dry run still reports the coverage on offer.
 	NullCandidates int64
-	// BelowMinRelDelta counts rows suppressed from the write set by
-	// MinRelDelta.
+	// BelowMinRelDelta counts rows suppressed from the write set by MinRelDelta.
 	BelowMinRelDelta int64
 	// FXDeclinedStale counts rows the cex-fx tier refused because the nearest fx_quote at or before
 	// the trade is outside the as-of tolerance (see [Store.PlanCEXFiatUSDVolumeRestamp]). A
@@ -139,9 +129,8 @@ type XLMBaseRestampStats struct {
 	// [XLMBaseRestampStats.Residual] ignores it, as it does NullCandidates.
 	FXDeclinedStale int64
 
-	// SumStored / SumWant are the USD sums over the CHANGED rows, so the
-	// operator can read the aggregate effect of the run before running
-	// it, and RelBucket counts changed rows by relative-move magnitude.
+	// SumStored / SumWant are the USD sums over the CHANGED rows, so the operator can read the
+	// run's aggregate effect up front; RelBucket counts changed rows by relative-move magnitude.
 	SumStored *big.Rat
 	SumWant   *big.Rat
 	RelBucket map[string]int64
@@ -171,28 +160,23 @@ type XLMBaseRestampPlan struct {
 	Stats XLMBaseRestampStats
 }
 
-// DEXSourceNames is the ops layer's view of [dexSourceNames] — the set of
-// on-chain venues whose trades the XLM-base anchor will value. Exported
-// so `usd-volume-restamp` can print the scope it is about to walk.
+// DEXSourceNames is the on-chain venues whose trades the XLM-base anchor will value, exported so
+// `usd-volume-restamp` can print its scope.
 func DEXSourceNames() []string { return dexSourceNames() }
 
-// xlmAssetForms are the two on-chain wire forms of XLM a trade's base leg
-// can carry. Mirrors [isXLMAsset]; kept as a function so the SQL scan and
-// [xlmBaseTierFor]'s Go gate cannot drift.
+// xlmAssetForms are the two on-chain wire forms of XLM a base leg can carry. Mirrors [isXLMAsset],
+// so the SQL scan and [xlmBaseTierFor]'s Go gate cannot drift.
 func xlmAssetForms() []string {
 	return []string{canonical.NativeAsset().String(), canonical.NativeSACContractID()}
 }
 
-// xlmBaseRestampSources resolves the scan's source list: the DEX registry
-// filtered by the caller's allow-list.
+// xlmBaseRestampSources resolves the scan's sources: the DEX registry filtered by the allow-list.
 func xlmBaseRestampSources(allow map[string]bool) []string {
 	return restampScanSources(DEXSourceNames(), allow)
 }
 
-// xlmBaseRestampScan is one candidate row straight off the SELECT, before
-// any Go decision has been taken. Split out so [xlmBaseRestampDecide] —
-// which holds every rule this tool is judged on — is a pure function unit
-// tests can drive without a database.
+// xlmBaseRestampScan is one candidate row straight off the SELECT. It keeps [xlmBaseRestampDecide],
+// which holds every rule this tool is judged on, a pure function testable without a database.
 type xlmBaseRestampScan struct {
 	Source  string
 	Ledger  uint32
@@ -208,8 +192,7 @@ type xlmBaseRestampScan struct {
 	Generation  int64
 }
 
-// xlmBaseDisposition is what [xlmBaseRestampDecide] concluded about one
-// scanned row. Every scanned row gets exactly one.
+// xlmBaseDisposition is what [xlmBaseRestampDecide] concluded about one row; every row gets one.
 type xlmBaseDisposition int
 
 const (
@@ -270,8 +253,7 @@ func (s *Store) PlanXLMBaseUSDVolumeRestamp(ctx context.Context, p XLMBaseRestam
 	})
 }
 
-// NewXLMBaseRestampStats initialises the sums + bucket map so callers
-// never have to nil-check them.
+// NewXLMBaseRestampStats initialises the sums and bucket map so callers need no nil checks.
 func NewXLMBaseRestampStats() XLMBaseRestampStats {
 	return XLMBaseRestampStats{
 		SumStored: new(big.Rat),
@@ -280,9 +262,8 @@ func NewXLMBaseRestampStats() XLMBaseRestampStats {
 	}
 }
 
-// Record files one decided row into the plan. Exported so the ops layer's
-// tests can build a plan without a database and still exercise the SAME
-// accounting the planner uses.
+// Record files one decided row into the plan. Exported so ops tests build a plan without a
+// database through the SAME accounting the planner uses.
 func (p *XLMBaseRestampPlan) Record(row XLMBaseRestampRow, disp xlmBaseDisposition) {
 	p.Stats.Scanned++
 	switch disp {
@@ -309,8 +290,7 @@ func (p *XLMBaseRestampPlan) Record(row XLMBaseRestampRow, disp xlmBaseDispositi
 	}
 }
 
-// recordChanged files one row of the WRITE set: the counters, the USD
-// sums and the relative-move distribution the report prints.
+// recordChanged files one row of the WRITE set into the counters, USD sums and move distribution.
 func (p *XLMBaseRestampPlan) recordChanged(row XLMBaseRestampRow) {
 	p.Stats.Changed++
 	if row.NullFill {
@@ -335,10 +315,9 @@ func (p *XLMBaseRestampPlan) recordChanged(row XLMBaseRestampRow) {
 	p.Rows = append(p.Rows, row)
 }
 
-// Merge folds another window's statistics into this one. The per-row
-// detail is deliberately NOT carried: 28M candidate rows do not belong in
-// one process's memory, so the caller keeps only the extremes and a
-// sample and merges the counters.
+// Merge folds another window's statistics into this one. Per-row detail is deliberately NOT
+// carried: millions of candidate rows do not belong in one process, so callers keep only the
+// extremes and a sample.
 func (s *XLMBaseRestampStats) Merge(o XLMBaseRestampStats) {
 	s.Scanned += o.Scanned
 	s.QuotePegged += o.QuotePegged
@@ -387,9 +366,8 @@ const xlmBaseRestampApplyBatch = 2000
 // The cap turns an over-large batch into one more transaction instead of an abort.
 const xlmBaseRestampMaxBatch = (65535 - 3) / xlmBaseRestampArgsPerRow
 
-// xlmBaseRestampArgsPerRow is the placeholders one row binds in the batch
-// UPDATE: its primary key, the new value, and the plan-read state the row
-// must still match.
+// xlmBaseRestampArgsPerRow is the placeholders one row binds: primary key, new value and the
+// plan-read state it must still match.
 const xlmBaseRestampArgsPerRow = 10
 
 // ApplyXLMBaseUSDVolumeRestamp writes the plan's rows and returns how many rows the database
@@ -407,10 +385,9 @@ func (s *Store) ApplyXLMBaseUSDVolumeRestamp(ctx context.Context, plan *XLMBaseR
 	return s.ApplyUSDVolumeRestampPlan(ctx, plan, generation, batch)
 }
 
-// applyXLMBaseRestampBatches is the batch loop behind both applies. `before`,
-// when not nil, runs ahead of EVERY batch and a non-nil error stops the loop
-// with the rows written so far — the chunk walk's is-the-chunk-still-
-// decompressed guard ([Store.ApplyXLMBaseUSDVolumeRestampInChunk]).
+// applyXLMBaseRestampBatches is the batch loop behind both applies. A non-nil `before` runs ahead
+// of EVERY batch and its error stops the loop with the rows written so far (the chunk walk's
+// still-decompressed guard, [Store.ApplyXLMBaseUSDVolumeRestampInChunk]).
 func (s *Store) applyXLMBaseRestampBatches(ctx context.Context, plan *XLMBaseRestampPlan, generation int64, batch int, before func(context.Context) error) (int64, error) {
 	if plan == nil || len(plan.Rows) == 0 {
 		return 0, nil
@@ -472,9 +449,7 @@ func xlmBaseRestampTSBounds(rows []XLMBaseRestampRow) (lo, hi time.Time) {
 	return lo, hi
 }
 
-// applyXLMBaseRestampBatch writes one bounded batch in its own
-// transaction. Split from the loop so the transaction's lifetime is a
-// single function body and cannot accidentally span batches.
+// applyXLMBaseRestampBatch writes one bounded batch in its own transaction.
 func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRestampRow, generation int64) (int64, error) {
 	if len(rows) == 0 {
 		return 0, nil
@@ -497,9 +472,7 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 		args = append(args, r.Source, int64(r.Ledger), r.TxHash, int64(r.OpIndex), r.TS.UTC(), r.Want,
 			r.BaseAmount, r.QuoteAmount, stored, r.Generation)
 	}
-	// Every fragment is code-built here; all values (the generation, the
-	// two `ts` bounds and each row's primary key + value) travel as
-	// positional placeholders.
+	// Fragments are code-built; every value travels as a positional placeholder.
 	return s.restampTradesUSDVolume(ctx, usdVolumeRestampWrite{
 		label: "xlm-base restamp",
 		scope: fmt.Sprintf("(%d rows from %s)", len(rows), rows[0].TS.Format(time.RFC3339)),

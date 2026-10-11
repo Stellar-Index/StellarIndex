@@ -26,21 +26,15 @@ import (
 // only as a host-only, Secure, Path=/ cookie (see [credentialCookie]).
 const SessionCookieName = "__Host-stellarindex_session"
 
-// MagicLinkPlaintextLen — the random-bytes length we use for
-// magic-link tokens. 32 bytes = 256 bits = preimage-safe;
-// the hex-encoded form is what the user sees in the URL.
+// MagicLinkPlaintextLen is the random-byte length of magic-link tokens: 256 bits, preimage-safe.
 const MagicLinkPlaintextLen = 32
 
-// SessionTokenLen — the random-bytes length of the session cookie
-// token. 32 bytes = 256 bits: the cookie carries this token (hex),
-// and the DB stores only sha256(token), so read-access to the
-// sessions table is not directly replayable.
+// SessionTokenLen is the random-byte length of the session token. The DB stores only
+// sha256(token), so read access to the sessions table is not replayable.
 const SessionTokenLen = 32
 
-// HashSessionToken returns sha256 of a session cookie token. The
-// authentication path hashes the incoming cookie with this and looks
-// the session up by hash; mintSession stores the same hash. Mirrors
-// [HashMagicLinkPlaintext] — the plaintext is never persisted.
+// HashSessionToken returns sha256 of a session cookie token; sessions are looked up and stored by
+// this hash, never the plaintext (like [HashMagicLinkPlaintext]).
 func HashSessionToken(token string) []byte {
 	sum := sha256.Sum256([]byte(token))
 	return sum[:]
@@ -65,9 +59,7 @@ func generateMagicLinkToken(read func([]byte) (int, error), secret []byte) (plai
 	return plaintext, sum[:], codeFromHashKeyed(secret, sum[:]), nil
 }
 
-// loginCodeDomain domain-separates the code HMAC from any other use
-// of the server secret, so a code can never be confused with (or
-// replayed as) another derived value.
+// loginCodeDomain domain-separates the code HMAC from other uses of the server secret.
 const loginCodeDomain = "stellarindex/login-code/v1|"
 
 // codeFromHashKeyed derives the 6-digit email code from a stored token hash
@@ -83,8 +75,7 @@ const loginCodeDomain = "stellarindex/login-code/v1|"
 // 10^6 reduction has negligible modulo bias (0.02%).
 func codeFromHashKeyed(secret, hash []byte) string {
 	if len(hash) < 4 {
-		// Defensive: a malformed hash must not silently produce a
-		// guessable constant-derived code.
+		// A malformed hash must not yield a guessable constant-derived code.
 		return ""
 	}
 	mac := hmac.New(sha256.New, mustPurposeKey(secret, loginCodeDomain))
@@ -94,10 +85,8 @@ func codeFromHashKeyed(secret, hash []byte) string {
 	return fmt.Sprintf("%06d", binary.BigEndian.Uint32(sum[:4])%1_000_000)
 }
 
-// purposeKey derives the independent HMAC key one consumer of the server
-// secret uses (HKDF-SHA256, the consumer's domain string as info), so no
-// two purposes — codes, ceremony cookies, login intents, device markers —
-// share key material.
+// purposeKey derives one consumer's independent HMAC key (HKDF-SHA256, its domain string as info)
+// so no two purposes (codes, ceremony cookies, login intents, device markers) share key material.
 func purposeKey(root []byte, label string) ([]byte, error) {
 	return hkdf.Key(sha256.New, root, nil, label, sha256.Size)
 }
@@ -112,17 +101,13 @@ func mustPurposeKey(root []byte, label string) []byte {
 	return k
 }
 
-// HashMagicLinkPlaintext returns the sha256 hash of a
-// user-supplied plaintext token. Exported so the callback
-// handler can derive the hash to look up in TokenStore.
+// HashMagicLinkPlaintext returns the sha256 of a user-supplied token, for the TokenStore lookup.
 func HashMagicLinkPlaintext(plaintext string) []byte {
 	sum := sha256.Sum256([]byte(plaintext))
 	return sum[:]
 }
 
-// Generator wraps the entropy source — production uses
-// crypto/rand.Read; tests inject a fixed source for
-// deterministic plaintexts.
+// Generator wraps the entropy source; tests inject a fixed one for deterministic plaintexts.
 type Generator struct {
 	Read func([]byte) (int, error)
 	// Secret is the root server secret, never used as a MAC key itself: each consumer derives its
@@ -144,10 +129,8 @@ func (g *Generator) NewToken() (plaintext string, hash []byte, code string, err 
 	return generateMagicLinkToken(g.Read, g.Secret)
 }
 
-// CodeForHash re-derives the 6-digit code for a stored token hash
-// under this Generator's secret. The verify-code handler computes it
-// per candidate token and constant-time compares against the
-// user-supplied code — the code itself is never stored anywhere.
+// CodeForHash re-derives the 6-digit code for a stored token hash. verify-code compares it in
+// constant time against the user's code; the code itself is never stored.
 func (g *Generator) CodeForHash(hash []byte) string {
 	return codeFromHashKeyed(g.Secret, hash)
 }

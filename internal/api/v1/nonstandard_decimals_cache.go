@@ -10,44 +10,30 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// NonstandardDecimalsReader is the storage seam the read-time serving guard
-// consults. *timescale.Store satisfies it via LoadNonstandardDecimalsAssets.
-// Kept as an interface so [NonstandardDecimalsCache] is unit-testable
-// without a database.
+// NonstandardDecimalsReader is the storage seam the serving guard consults;
+// *timescale.Store satisfies it, and the interface keeps the cache testable without a database.
 type NonstandardDecimalsReader interface {
 	LoadNonstandardDecimalsAssets(ctx context.Context) ([]timescale.NonstandardDecimalsAsset, error)
 }
 
-// NonstandardDecimalsRefreshInterval is the cadence the background
-// goroutine in main.go calls Refresh at. This is the READ side of the
-// dex-nonstandard-decimals guard
-// (docs/operations/runbooks/dex.md): the aggregator's
-// decimals-guard sweep (internal/decimalsguard) writes confirmed non-7-
-// decimal assets into `nonstandard_decimals_assets` (migration 0093); this
-// cache mirrors that table in-process so /v1/price, /v1/vwap, /v1/history,
-// /v1/ohlc, /v1/price/at and the chart surfaces can NORMALIZE a pair
-// touching such an asset without a per-request DB round trip.
+// NonstandardDecimalsRefreshInterval is the cadence at which main.go refreshes the cache. This is
+// the READ side of the dex-nonstandard-decimals guard (docs/operations/runbooks/dex.md): the
+// decimals-guard sweep writes confirmed non-7-decimal assets into `nonstandard_decimals_assets`
+// and the cache mirrors it so price surfaces can NORMALIZE a pair touching such an asset without
+// a per-request DB round trip.
 //
-// These surfaces correct rather than decline, applying
-// aggregate.AdjustPrice's exact 10^(baseDecimals-quoteDecimals) factor
-// (see Server.normalizeRawRatioString). 60s keeps the cache tight so an
-// operator who corrects a row sees serving follow within one interval
-// rather than a process lifetime.
+// Surfaces correct rather than decline, applying aggregate.AdjustPrice's exact
+// 10^(baseDecimals-quoteDecimals) factor (see Server.normalizeRawRatioString). 60s lets an
+// operator's correction reach serving within one interval.
 const NonstandardDecimalsRefreshInterval = 60 * time.Second
 
-// NonstandardDecimalsCache wraps a [NonstandardDecimalsReader] with an
-// in-process snapshot, refreshed on a background schedule
-// (NewNonstandardDecimalsCache + Refresh wired in
-// cmd/stellarindex-api/main.go, mirroring [CoverageCache]).
+// NonstandardDecimalsCache wraps a [NonstandardDecimalsReader] with an in-process snapshot
+// refreshed on a background schedule (mirroring [CoverageCache]).
 //
-// Fail-open by design: a read error leaves the PREVIOUS snapshot in place
-// (logged at WARN + obs.NonstandardDecimalsCacheRefreshFailuresTotal
-// incremented) rather than clearing it — availability wins over the guard
-// for infra errors. A Postgres blip must not turn into a blanket price
-// outage across every pair; the guard itself stays effective for the
-// known-offender case because the last-good snapshot is retained, and a
-// cold cache (nothing fetched yet) is treated as "nothing flagged", never
-// as "everything flagged" — see [NonstandardDecimalsCache.Lookup].
+// Fail-open by design: a read error keeps the PREVIOUS snapshot (WARN + failure counter) rather
+// than clearing it, so a Postgres blip is not a blanket price outage while known offenders stay
+// guarded. A cold cache means "nothing flagged", never "everything flagged"; see
+// [NonstandardDecimalsCache.Lookup].
 type NonstandardDecimalsCache struct {
 	mu        sync.RWMutex
 	assets    map[string]timescale.NonstandardDecimalsAsset
@@ -56,18 +42,15 @@ type NonstandardDecimalsCache struct {
 	logger    Logger
 }
 
-// NewNonstandardDecimalsCache constructs an empty cache. Call Refresh once
-// at startup before serving requests; subsequent refreshes happen on the
-// background goroutine's schedule. An unrefreshed cache is nil-safe and
-// fail-open (Lookup always reports "not flagged"), so a slow first refresh
-// degrades to "guard not yet effective", never to "everything declined".
+// NewNonstandardDecimalsCache constructs an empty cache; call Refresh once at startup. An
+// unrefreshed cache is fail-open (Lookup reports "not flagged"), so a slow first refresh means
+// "guard not yet effective", never "everything declined".
 func NewNonstandardDecimalsCache(reader NonstandardDecimalsReader, logger Logger) *NonstandardDecimalsCache {
 	return &NonstandardDecimalsCache{reader: reader, logger: logger}
 }
 
-// Refresh runs the underlying query and atomically swaps the cached
-// snapshot on success. On error the previous snapshot is kept — a
-// transient DB hiccup must not blank (or worse, invert) the guard.
+// Refresh swaps in a fresh snapshot on success; on error the previous one is kept so a
+// transient DB hiccup cannot blank (or invert) the guard.
 func (c *NonstandardDecimalsCache) Refresh(ctx context.Context) error {
 	rows, err := c.reader.LoadNonstandardDecimalsAssets(ctx)
 	if err != nil {
@@ -89,26 +72,18 @@ func (c *NonstandardDecimalsCache) Refresh(ctx context.Context) error {
 	return nil
 }
 
-// warnOnPartialAliasFamily reports a flagged asset whose alias family is only
-// PARTLY flagged. [NonstandardDecimalsCache.Lookup] is a raw map lookup on the
-// exact asset-id string, so it does not alias-fold — and an asset that lives
-// under several canonical spellings (XLM is `native`, `crypto:XLM` and its SAC
-// contract id) would then be normalised under one spelling and not another.
-// The consequence is not a missing value but a WRONG one: the price leg is
-// scaled per source pair, whose base may be a different spelling of the same
-// asset, while the supply leg is divided by the requested base's decimals — so
-// price and supply diverge by a power of ten with both legs looking plausible.
+// warnOnPartialAliasFamily reports a flagged asset whose alias family is only PARTLY flagged.
+// [NonstandardDecimalsCache.Lookup] does not alias-fold, so an asset with several spellings (XLM
+// is `native`, `crypto:XLM` and its SAC) would be normalised under one and not another. The
+// result is a WRONG value, not a missing one: the price leg scales per source pair while the
+// supply leg divides by the requested base's decimals, so they diverge by a power of ten.
 //
-// This is unreachable on today's data (every flagged row is a bare C-strkey
-// with a singleton alias family) and the durable fix is to alias-fold the
-// lookup itself, which changes this cache's contract for its other callers.
-// Instead the state may not arrive silently: the dangerous row is added to a
-// TABLE at runtime, not to code, so no unit test over fixtures can catch it —
-// only a check at refresh time against the rows actually loaded can.
+// Unreachable on today's data (every flagged row is a bare C-strkey with a singleton family);
+// the durable fix is alias-folding the lookup, which changes the contract for other callers. The
+// bad row arrives via a TABLE at runtime, so only a refresh-time check can catch it.
 //
-// It warns and counts; it does not drop the row or fail the refresh. A partial
-// family is a data-entry question for an operator, and blanking the guard
-// would turn a scaling error into an unnormalised one across every surface.
+// It warns and counts but neither drops the row nor fails the refresh: blanking the guard would
+// turn a scaling error into an unnormalised one across every surface.
 func (c *NonstandardDecimalsCache) warnOnPartialAliasFamily(next map[string]timescale.NonstandardDecimalsAsset) {
 	for id := range next {
 		asset, err := canonical.ParseAsset(id)
@@ -134,10 +109,8 @@ func (c *NonstandardDecimalsCache) warnOnPartialAliasFamily(next map[string]time
 	}
 }
 
-// Lookup reports whether assetID is a confirmed non-7-decimal asset and, if
-// so, its declared decimals. A nil cache (guard not wired in this
-// deployment) and a cold/never-refreshed cache both report found=false —
-// the guard is opt-in via server wiring and fails open, never closed.
+// Lookup reports whether assetID is a confirmed non-7-decimal asset and its decimals. A nil or
+// cold cache reports found=false: the guard is opt-in and fails open, never closed.
 func (c *NonstandardDecimalsCache) Lookup(assetID string) (decimals int, found bool) {
 	if c == nil {
 		return 0, false
@@ -151,8 +124,7 @@ func (c *NonstandardDecimalsCache) Lookup(assetID string) (decimals int, found b
 	return row.Decimals, true
 }
 
-// Snapshot returns the size + fetch time of the current snapshot —
-// diagnostic use only (not consulted by the enforcement path).
+// Snapshot returns the size and fetch time of the current snapshot, for diagnostics only.
 func (c *NonstandardDecimalsCache) Snapshot() (count int, fetchedAt time.Time) {
 	if c == nil {
 		return 0, time.Time{}

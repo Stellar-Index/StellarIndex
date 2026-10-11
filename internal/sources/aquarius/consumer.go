@@ -53,28 +53,20 @@ type ReservesEvent struct {
 	Ledger     uint32
 	TxHash     string
 	OpIndex    uint32
-	// EventIndex is the contract event's index within its operation —
-	// an op can emit several update_reserves events (one per pool
-	// touched), so this is the per-event discriminator in the
-	// aquarius_reserves PK (same role as comet_liquidity.event_index).
+	// EventIndex is the event's index within its operation; an op can emit several
+	// update_reserves events (one per pool touched), so it is part of the aquarius_reserves PK.
 	EventIndex uint32
 	ObservedAt time.Time
-	// Kind discriminates which reserve event this is: EventUpdateReserves
-	// (post-state reserves → aquarius_reserves) or EventReservesSync (the
-	// distinct reserves_sync signal → aquarius_reserves_sync). Empty is
-	// treated as update_reserves for backward compatibility.
+	// Kind is EventUpdateReserves (-> aquarius_reserves) or EventReservesSync (-> the distinct
+	// aquarius_reserves_sync). Empty is treated as update_reserves.
 	Kind string
-	// Reserves is the per-pool-token value vector, ordered by the pool's
-	// canonical token index. For update_reserves it is the post-state
-	// reserves; for reserves_sync it is the synced value. Length is the
-	// pool's token count. i128 per ADR-0003 (never truncates).
+	// Reserves is the per-pool-token vector in canonical token order: post-state reserves for
+	// update_reserves, the synced value for reserves_sync. i128 per ADR-0003 (never truncates).
 	Reserves []canonical.Amount
 }
 
-// EventKind implements [consumer.Event]. reserves_sync is a DISTINCT
-// signal from update_reserves (see Kind) and lands in its own table
-// (persistAquariusReserves), so it carries its own kind — the two no
-// longer share one coarse identity a by-EventKind reconcile can't split.
+// EventKind implements [consumer.Event]. reserves_sync lands in its own table, so it carries its
+// own kind; a by-EventKind reconcile can then tell the two apart.
 func (e ReservesEvent) EventKind() string {
 	if e.Kind == EventReservesSync {
 		return "aquarius.reserves_sync"
@@ -97,9 +89,8 @@ type LiquidityEvent struct {
 	EventIndex uint32
 	ObservedAt time.Time
 	Action     LiquidityAction
-	// Tokens is the pool's token address (strkey) at each position;
-	// Amounts is the amount moved for that token. len(Tokens) ==
-	// len(Amounts) == the pool's token count. i128 per ADR-0003.
+	// Tokens is the token strkey at each position and Amounts the amount moved for it;
+	// len(Tokens) == len(Amounts). i128 per ADR-0003.
 	Tokens  []string
 	Amounts []canonical.Amount
 	// Shares is the LP-share amount minted (deposit) / burned
@@ -118,10 +109,8 @@ func (LiquidityEvent) Source() string { return SourceName }
 // aquarius_rewards_events.event_kind CHECK constraint.
 type RewardsAction string
 
-// Rewards-gauge event kinds. See README.md's "Rewards-gauge subsystem"
-// section for the per-kind lifetime counts + real-lake-bytes wire-shape
-// citations (decode_rewards.go has the per-kind decode + Rust-shape
-// doc comment).
+// Rewards-gauge event kinds. See README.md's "Rewards-gauge subsystem" section and
+// decode_rewards.go for the per-kind wire shapes.
 const (
 	RewardsPoolState           RewardsAction = RewardsAction(EventPoolState)
 	RewardsClaimReward         RewardsAction = RewardsAction(EventClaimReward)
@@ -170,9 +159,7 @@ func (RewardsEvent) Source() string { return SourceName }
 // aquarius_admin.event_kind CHECK constraint.
 type AdminAction string
 
-// Governance / upgrade admin event kinds. See README.md's
-// "Governance / admin" section for lifetime counts; decode_admin.go
-// has the per-kind decode + wire-shape citation.
+// Governance / upgrade admin event kinds; decode_admin.go has the per-kind wire shapes.
 const (
 	AdminApplyUpgrade            AdminAction = AdminAction(EventApplyUpgrade)
 	AdminCommitUpgrade           AdminAction = AdminAction(EventCommitUpgrade)

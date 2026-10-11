@@ -57,12 +57,10 @@ type AuthOptions struct {
 	// Ignored otherwise.
 	SEP10 auth.SEP10Validator
 
-	// FailedAuthLimiter, when non-nil, throttles INVALID-credential
-	// attempts per client IP and per presented API-key prefix.
-	// Auth runs before RateLimit so tier limits key off the subject, which means a rejected
-	// credential never reaches the main limiter and key-guessing would go unthrottled. Each
-	// credential FAILURE consumes a token here (see takeFailedAuth); over budget returns 429.
-	// Valid and anonymous requests never touch it. Nil disables it.
+	// FailedAuthLimiter, when non-nil, throttles INVALID-credential attempts per client IP and per
+	// API-key prefix. Auth runs before RateLimit, so a rejected credential never reaches the main
+	// limiter and key-guessing would go unthrottled. Each FAILURE consumes a token (see
+	// takeFailedAuth); over budget returns 429. Valid and anonymous requests never touch it.
 	FailedAuthLimiter *ratelimit.Bucket
 }
 
@@ -107,10 +105,8 @@ func Auth(opts AuthOptions) Middleware {
 	}
 }
 
-// rejectAuth writes the response for a failed authenticate call.
-// Throttle per-IP and per-key-prefix on a CREDENTIAL FAILURE so a bad
-// key/token can't be retried without bound. Server-misconfig 503s
-// (ErrNotImplemented) don't count.
+// rejectAuth writes the response for a failed authenticate call, throttling a CREDENTIAL FAILURE so
+// a bad key/token cannot be retried without bound. Server-misconfig 503s do not count.
 func rejectAuth(w http.ResponseWriter, r *http.Request, mode AuthMode, opts AuthOptions, err error) {
 	rejected := isCredentialRejection(err)
 	if opts.FailedAuthLimiter != nil && rejected {
@@ -126,14 +122,11 @@ func rejectAuth(w http.ResponseWriter, r *http.Request, mode AuthMode, opts Auth
 	writeAuthError(w, err)
 }
 
-// isUnauthenticatedInfraPath reports whether a path is operational plumbing
-// that must answer WITHOUT credentials, whatever `auth_mode` is.
-//
-// Auth() wraps the whole mux, so without this list an apikey cutover would 401 health probes
-// and the Prometheus scrape. /metrics is listed because loopbackOnly() is its real gate and
-// Auth would otherwise 401 first. Nothing here reads user data or accepts input.
-// Matching is exact, not prefix, so an exemption cannot silently widen to a later route; the
-// one prefix, /errors/, fronts a static docs handler.
+// isUnauthenticatedInfraPath reports whether a path is operational plumbing that must answer
+// WITHOUT credentials, whatever `auth_mode` is: Auth() wraps the whole mux, so an apikey cutover
+// would otherwise 401 health probes and the scrape. /metrics is listed because loopbackOnly() is
+// its real gate. Matching is exact so an exemption cannot silently widen; the one prefix,
+// /errors/, fronts a static docs handler.
 func isUnauthenticatedInfraPath(path string) bool {
 	switch path {
 	case "/v1/healthz", "/v1/readyz", "/v1/livez/lake", "/v1/version", "/metrics", "/robots.txt", "/":
@@ -144,16 +137,12 @@ func isUnauthenticatedInfraPath(path string) bool {
 	return strings.HasPrefix(path, "/errors/")
 }
 
-// PublicRoutes is the set of route patterns that are unauthenticated by
-// design: credential bootstraps (signup, register, SEP-10, dashboard login)
-// and public status surfaces. Mounting a route through [PublicRoutes.Handle]
-// exempts it from [Auth]'s credential requirement in the same call, so
-// "mounted public" and "exempt from auth" are one fact — a hand-kept path
-// list cannot notice the next bootstrap route.
+// PublicRoutes is the set of route patterns that are unauthenticated by design: credential
+// bootstraps and public status surfaces. Mounting through [PublicRoutes.Handle] exempts a route
+// from [Auth] in the same call, so "mounted public" and "exempt from auth" are one fact.
 //
-// Unlike [isUnauthenticatedInfraPath], a public route is credential-OPTIONAL,
-// not credential-blind: a presented key or JWT is still verified (and a bad
-// one rejected), so signup can keep refusing already-authenticated callers.
+// Unlike [isUnauthenticatedInfraPath], a public route is credential-OPTIONAL: a presented key or
+// JWT is still verified (a bad one rejected), so signup can refuse already-authenticated callers.
 type PublicRoutes struct {
 	match    *http.ServeMux
 	patterns []string
@@ -167,8 +156,7 @@ func NewPublicRoutes() *PublicRoutes {
 // Handle mounts h on mux under pattern and records pattern as public.
 func (p *PublicRoutes) Handle(mux *http.ServeMux, pattern string, h http.Handler) {
 	mux.Handle(pattern, h)
-	// A second mux reuses ServeMux's own method/wildcard/precedence
-	// matching, so the exemption covers exactly what the route serves.
+	// A second mux reuses ServeMux's matching, so the exemption covers exactly what the route serves.
 	p.match.Handle(pattern, h)
 	p.patterns = append(p.patterns, pattern)
 }
@@ -216,9 +204,8 @@ func isCredentialRejection(err error) bool {
 	}
 }
 
-// takeFailedAuth consumes one failed-auth token on each dimension that
-// applies to r and reports whether the caller is now over budget (and
-// the Retry-After seconds to advertise). The dimensions are:
+// takeFailedAuth consumes one failed-auth token per applicable dimension and reports whether the
+// caller is over budget, with the Retry-After seconds. The dimensions are:
 //
 //   - the resolved client IP ("failauth:"; /64 prefix for IPv6, see [remoteIPPrefixFor]),
 //     bounding one source's guessing across every key;
@@ -230,14 +217,12 @@ func isCredentialRejection(err error) bool {
 func takeFailedAuth(r *http.Request, mode AuthMode, limiter *ratelimit.Bucket) (throttled bool, retryAfter int) {
 	ip := remoteIPPrefixFor(r)
 	if ip == "" {
-		// No resolvable IP → collapse into one shared bucket rather than
-		// skip the throttle (fail-closed for the throttle itself).
+		// No resolvable IP: share one bucket rather than skip the throttle.
 		ip = "unknown"
 	}
-	// Detach from the request's cancellation — see [throttleContext]:
-	// ratelimit.Bucket cannot tell a client abort from a Redis outage,
-	// so a caller that RSTs mid-take must not arm the fail-closed dwell
-	// clock for these shared buckets.
+	// Detach from request cancellation (see [throttleContext]): ratelimit.Bucket cannot tell a
+	// client abort from a Redis outage, so a caller RSTing mid-take must not arm the fail-closed
+	// dwell clock for these shared buckets.
 	takeCtx, takeCancel := throttleContext(r)
 	defer takeCancel()
 	if throttled, ra := takeFailedAuthBucket(takeCtx, limiter, "failauth:"+ip); throttled {
@@ -270,10 +255,8 @@ func takeFailedAuthBucket(ctx context.Context, limiter *ratelimit.Bucket, key st
 	res, err := limiter.Take(ctx, key)
 	if err != nil {
 		if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
-			// Sustained outage: fail CLOSED, mirroring
-			// writeThrottleUnavailableProblem's Retry-After — matches
-			// [ratelimit.DefaultDwellTime] so clients that obey it
-			// naturally space retries past a typical Redis fail-over.
+			// Sustained outage: fail CLOSED. Retry-After matches [ratelimit.DefaultDwellTime] so
+			// obedient clients space retries past a typical Redis fail-over.
 			obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterFailedAuth).Inc()
 			return true, int(ratelimit.DefaultDwellTime.Seconds())
 		}
@@ -289,10 +272,8 @@ func takeFailedAuthBucket(ctx context.Context, limiter *ratelimit.Bucket, key st
 	return true, ra
 }
 
-// writeAuthThrottleProblem is the 429 returned when a caller exceeds a
-// failed-auth budget. Distinct problem type from the ordinary
-// rate-limit 429 so operators reading access logs can tell
-// credential-stuffing defence apart from ordinary request throttling.
+// writeAuthThrottleProblem is the 429 for an exceeded failed-auth budget. Its problem type differs
+// from the ordinary rate-limit 429 so logs separate credential-stuffing defence from throttling.
 func writeAuthThrottleProblem(w http.ResponseWriter, retryAfter int) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -320,10 +301,8 @@ func authenticate(r *http.Request, mode AuthMode, opts AuthOptions) (auth.Subjec
 			return missingCredential(r)
 		}
 		if opts.APIKey == nil {
-			// Mis-configuration: mode says apikey but no validator
-			// wired. Fail-loud rather than silently demoting to
-			// anonymous (which would be the wrong default for a
-			// deployment that intentionally enabled apikey).
+			// Misconfiguration: fail loud rather than silently demote to anonymous, the wrong
+			// default for a deployment that enabled apikey.
 			return auth.Subject{}, auth.ErrNotImplemented
 		}
 		return opts.APIKey.Lookup(r.Context(), key)
@@ -331,16 +310,14 @@ func authenticate(r *http.Request, mode AuthMode, opts AuthOptions) (auth.Subjec
 	case AuthModeAPIKeyOptional:
 		key := bearerOrXKey(r)
 		if key == "" {
-			// No key → anonymous. Endpoints that require auth still
-			// gate via subject.Tier check inside the handler.
+			// No key: anonymous. Auth-requiring endpoints gate on the subject's Tier.
 			return auth.Anonymous(anonymousIdentifier(r)), nil
 		}
 		if opts.APIKey == nil {
 			return auth.Subject{}, auth.ErrNotImplemented
 		}
-		// Key supplied → must be valid. Wrong-key 401 is
-		// preferable to silent anonymous-downgrade because the
-		// caller is asserting they have credentials.
+		// A supplied key must be valid: 401 beats silent anonymous downgrade because the caller
+		// is asserting credentials.
 		return opts.APIKey.Lookup(r.Context(), key)
 
 	case AuthModeSEP10:
@@ -354,9 +331,7 @@ func authenticate(r *http.Request, mode AuthMode, opts AuthOptions) (auth.Subjec
 		return opts.SEP10.VerifyJWT(r.Context(), jwt)
 	}
 
-	// Unknown mode — fail-loud rather than treat as none. Config
-	// validation rejects unknown modes at startup so this branch
-	// shouldn't fire in production.
+	// Unknown mode: fail loud rather than treat as none. Config validation rejects it at startup.
 	return auth.Subject{}, auth.ErrNotImplemented
 }
 
@@ -391,9 +366,8 @@ func writeAuthError(w http.ResponseWriter, err error) {
 			"Forbidden",
 			"The authenticated subject is not permitted to access this resource.")
 	case errors.Is(err, auth.ErrNotImplemented):
-		// Fail-loud on a deployment that enabled an auth mode but
-		// didn't wire the validator. 503 + a body that names the
-		// problem so an operator sees it on the first failed request.
+		// An auth mode enabled with no validator wired: 503 naming the problem so an operator
+		// sees it on the first failed request.
 		writeAuthProblem(w, http.StatusServiceUnavailable,
 			"https://api.stellarindex.io/errors/auth-not-configured",
 			"Auth validator not configured",
@@ -460,10 +434,8 @@ func bearerOrXKey(r *http.Request) string {
 	return strings.TrimSpace(r.Header.Get(HeaderAPIKey))
 }
 
-// bearerOnly extracts the token from `Authorization: Bearer <token>`.
-// Empty string if the header is missing or its scheme is not Bearer.
-// The scheme is matched case-insensitively (RFC 7235 §2.1). Trims
-// surrounding whitespace from the token.
+// bearerOnly extracts the token from `Authorization: Bearer <token>`, or "" when the header is
+// missing or not Bearer. The scheme is case-insensitive (RFC 7235 §2.1).
 func bearerOnly(r *http.Request) string {
 	scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
 	if !ok || !strings.EqualFold(scheme, "Bearer") {

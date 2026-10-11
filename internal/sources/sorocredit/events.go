@@ -31,15 +31,13 @@ import (
 // labels, cursor rows, and storage attribution. Stable.
 const SourceName = "sorocredit"
 
-// MainnetContract is the protocol's single main contract on Stellar
-// mainnet — the ONE trust root for the whole event surface (ADR-0035).
-// Every business + config event is emitted by this contract; it also
-// deploys the per-position `Collateral-<uuid>` child contracts.
+// MainnetContract is the protocol's single main contract on mainnet, the ONE trust root for the
+// event surface (ADR-0035). It emits every business and config event and deploys the
+// per-position `Collateral-<uuid>` child contracts.
 const MainnetContract = "CCG5EWFY2KCWWYYEIUMIRG6WSAQFLDR5QE5FMCWY25N36XA5GYTCPQWR"
 
-// GenesisLedger is the first ledger at which the main contract emitted
-// any event. Lower bound for
-// the per-source gap detector + the ADR-0033 reconcile re-derive.
+// GenesisLedger is the first ledger at which the main contract emitted any event, the lower
+// bound for the per-source gap detector and the ADR-0033 reconcile re-derive.
 const GenesisLedger uint32 = 61_620_822
 
 // Event topic[0] symbols, exactly as they appear on the wire (Soroban
@@ -60,9 +58,8 @@ const (
 	TopicTreasuryUpdated = "TreasuryUpdated"
 )
 
-// Pre-encoded base64 SCVal::Symbol blobs for topic[0], computed once at
-// init. Classify does a single string-equality compare per event rather
-// than re-decoding the topic. Mirrors blend / cctp.
+// Pre-encoded base64 SCVal::Symbol blobs for topic[0], so classify compares strings instead of
+// re-decoding the topic per event.
 var (
 	topicSymNewCollateralContract = scval.MustEncodeSymbol(TopicNewCollateralContract)
 	topicSymStatementPublished    = scval.MustEncodeSymbol(TopicStatementPublished)
@@ -92,8 +89,7 @@ var topicClassifications = []struct {
 	{TopicTreasuryUpdated, topicSymTreasuryUpdated, TypeTreasuryUpdated},
 }
 
-// classifyBySym indexes topicClassifications by encoded symbol for
-// classify()'s O(1) lookup. Built once at init.
+// classifyBySym indexes topicClassifications by encoded symbol for classify().
 var classifyBySym = func() map[string]EventType {
 	m := make(map[string]EventType, len(topicClassifications))
 	for _, c := range topicClassifications {
@@ -113,10 +109,8 @@ func EventSymbols() []string {
 	return syms
 }
 
-// EventType is the decoder-side discriminator that routes a decoded
-// event to its served-tier table. The string values are stable — they
-// appear in EventKind(), the `event_type` CHECK on credit_events, and
-// the reconciliation catalogue's per-table kind filters.
+// EventType routes a decoded event to its served-tier table. The values are stable: they appear
+// in EventKind(), the `event_type` CHECK on credit_events and the reconciliation kind filters.
 type EventType string
 
 const (
@@ -124,10 +118,8 @@ const (
 	TypeNewCollateralContract EventType = "new_collateral_contract"
 	// TypeStatement → credit_statements.
 	TypeStatement EventType = "statement_published"
-	// TypeSettlement → credit_settlements. Decoded from the on-wire
-	// "Liquidation" topic; named `settlement` because these are
-	// scheduled recurring settlements, NOT distressed liquidations
-	// (see the package doc).
+	// TypeSettlement → credit_settlements. Decoded from the on-wire "Liquidation" topic but
+	// scheduled settlements, NOT distressed liquidations (see the package doc).
 	TypeSettlement EventType = "settlement"
 	// TypeWithdrawal → credit_events.
 	TypeWithdrawal EventType = "withdrawal"
@@ -137,22 +129,18 @@ const (
 	TypeSupportedAssetAdded EventType = "supported_asset_added"
 	// TypeCollateralHashUpdated → credit_events (config).
 	TypeCollateralHashUpdated EventType = "collateral_hash_updated"
-	// TypeTreasuryUpdated → credit_events (config). The treasury-pointer
-	// rotation; body captured verbatim (no promoted column). The
-	// credit_events.event_type CHECK admits this value via migration 0145.
+	// TypeTreasuryUpdated → credit_events (config). Treasury-pointer rotation; body verbatim.
 	TypeTreasuryUpdated EventType = "treasury_updated"
 )
 
 // Errors returned by the decode path. Callers classify via errors.Is.
 var (
-	// ErrNotSoroCreditEvent — topic[0] doesn't match any of the eight
-	// tracked symbols. Returned by decodeOne so the dispatcher skips
-	// cheaply rather than treating it as malformed.
+	// ErrNotSoroCreditEvent — topic[0] matches none of the eight tracked symbols; the dispatcher
+	// skips it cheaply rather than treating it as malformed.
 	ErrNotSoroCreditEvent = errors.New("sorocredit: not a tracked event")
 
-	// ErrMalformedPayload — topic arity / body shape / type tags don't
-	// match what the contract emits. Per-event fail-loud rather than a
-	// silent skip; surfaces decoder-vs-WASM drift.
+	// ErrMalformedPayload — topic arity, body shape or type tags differ from what the contract
+	// emits. Fail-loud per event, not a silent skip, so decoder-vs-WASM drift surfaces.
 	ErrMalformedPayload = errors.New("sorocredit: malformed event payload")
 )
 

@@ -9,43 +9,33 @@ import (
 )
 
 // Decoder is the OpDecoder for pre-P23 classic-movement reconstruction. It is NEVER registered
-// with the live dispatcher; only `stellarindex-ops classic-movements-backfill` feeds
-// clickhouse.ClassicOp values through Decode as a dispatcher.OpContext, as ch-rebuild's SDEX pass
-// does.
+// with the live dispatcher; only `stellarindex-ops classic-movements-backfill` feeds it.
 //
-// Stateful: claiming or clawing back a claimable balance needs that create's Asset/Amount, which
-// neither op carries (only the BalanceId). balances is an in-RUN index filled as Decode sees
-// 'claimable_balance_create' movements; pending collects claims it cannot resolve (create outside
-// this run's range or in a not-yet-visited window) for the caller's second-pass ClickHouse lookup,
-// via TakePendingClaimableBalances / ResolvePendingClaimableBalance.
+// Stateful: a claim or clawback carries only the BalanceId, so the create's Asset/Amount come from
+// the in-run balances index; claims it cannot resolve go to pending for the caller's second-pass
+// ClickHouse lookup (TakePendingClaimableBalances).
 //
-// The index is BOUNDED at maxCBIndexEntries (FIFO, oldest create evicted first): a genesis-to-P23
-// run would otherwise hold about the full CreateClaimableBalance row count (~1.5B) before any
-// claim. Eviction is safe: a miss falls through to clickhouse.FindClaimableBalanceCreates, the
-// batched second pass. Chunk `-from`/`-to` to keep more claims on the in-memory path.
+// The index is BOUNDED at maxCBIndexEntries (FIFO): a genesis-to-P23 run would otherwise hold the
+// full CreateClaimableBalance row count (~1.5B). Eviction is safe because a miss falls through to
+// clickhouse.FindClaimableBalanceCreates. Chunk `-from`/`-to` to keep more claims in memory.
 //
 // Not safe for concurrent Decode calls (as dispatcher.Dispatcher).
 type Decoder struct {
 	balances map[string]claimableBalanceInfo
-	// balanceOrder is a fixed-size ring buffer (len == maxCBIndexEntries) recording FIFO insertion
-	// order of balances' keys. "" marks an unused slot; balance_id is never empty
-	// (indexClaimableBalanceCreate guards it), so it is a safe sentinel.
+	// balanceOrder is a fixed-size ring buffer of balances' keys in FIFO order. "" marks an unused
+	// slot; balance_id is never empty (indexClaimableBalanceCreate guards it).
 	balanceOrder []string
-	// balanceNext is the ring slot indexClaimableBalanceCreate writes
-	// to next.
+	// balanceNext is the ring slot written next.
 	balanceNext int
 	pending     []PendingClaimableBalanceRef
 }
 
-// maxCBIndexEntries bounds the Decoder's in-run claimable-balance-create index. At ~400 bytes per
-// entry, 8,000,000 entries is ~3 GB, sized against a heavy job's MemoryMax=20G ceiling.
+// maxCBIndexEntries bounds the in-run claimable-balance-create index. At ~400 bytes per entry,
+// 8,000,000 entries is ~3 GB, sized against a heavy job's MemoryMax=20G ceiling.
 //
-// It must be large because the claimable-balance spam era (ledgers ~49M+) creates 2-3 million
-// balances per 10k-ledger window. A smaller cap evicts a window's own creates before its
-// second-pass resolution, dumping 600k+ refs per window onto the ClickHouse fallback (~2.5 min
-// per scan over 695M cb-create rows). 8M keeps ~3 spam windows of locality, so memory resolves
-// nearly all claims and the CH fallback stays rare. A var so tests can shrink it to exercise
-// eviction without allocating millions of ring slots.
+// It must be large because the claimable-balance spam era creates 2-3 million balances per
+// 10k-ledger window; a smaller cap evicts a window's own creates before second-pass resolution and
+// floods the slow ClickHouse fallback. A var so tests can shrink it to exercise eviction.
 var maxCBIndexEntries = 8_000_000
 
 // claimableBalanceInfo is what a 'claimable_balance_create' movement
@@ -74,13 +64,9 @@ func (*Decoder) Matches(op xdr.Operation) bool {
 	return matchesSupportedOp(op)
 }
 
-// Decode implements dispatcher.OpDecoder. ctx.TxSource is used directly as FromAddress; the caller
-// populates it from stellar.operations' resolved source_account (op override else tx source), as
-// ch-rebuild's SDEX pass does. ctx.OpSource is not consulted because there is no unresolved
-// source to fall back from.
-//
-// Every emitted 'claimable_balance_create' movement is indexed by balance_id for later
-// claim/clawback correlation within this Decoder's lifetime.
+// Decode implements dispatcher.OpDecoder. ctx.TxSource is used directly as FromAddress because the
+// caller already resolved it from stellar.operations' source_account (op override else tx source);
+// ctx.OpSource is not consulted. Each 'claimable_balance_create' is indexed for later correlation.
 func (d *Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
 	movements, err := d.decodeOp(ctx.Ledger, ctx.ClosedAt, ctx.TxHash, uint32(ctx.OpIndex), ctx.TxSource, ctx.Op, ctx.OpResult) //nolint:gosec // OpIndex is a non-negative XDR index; widening int->uint32 is safe for real ledger data.
 	if err != nil {
@@ -96,14 +82,12 @@ func (d *Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
 	return out, nil
 }
 
-// indexClaimableBalanceCreate records a decoded 'claimable_balance_create' movement in the in-run
-// index. A missing balance_id would be a bug in decodeCreateClaimableBalance, not bad chain data,
-// so it is skipped rather than panicking: a later claim just lands in pending, which is slower but
-// never wrong.
+// indexClaimableBalanceCreate records a create in the in-run index. A missing balance_id is a
+// decoder bug, not chain data, so it is skipped rather than panicking: a later claim lands in
+// pending, which is slower but never wrong.
 //
-// A new balance_id consumes one ring slot, first evicting the oldest key if the ring has wrapped
-// (see maxCBIndexEntries). A balance_id already present (a retried window re-decoding the op) is
-// updated in place and does not consume a slot or move in FIFO order.
+// A new balance_id takes one ring slot, evicting the oldest key once the ring has wrapped. One
+// already present (a retried window) is updated in place and keeps its FIFO position.
 func (d *Decoder) indexClaimableBalanceCreate(m Movement) {
 	id, ok := m.Attributes["balance_id"].(string)
 	if !ok || id == "" {
@@ -137,12 +121,10 @@ func (d *Decoder) recordPending(ref PendingClaimableBalanceRef) {
 	d.pending = append(d.pending, ref)
 }
 
-// ResolveBalance re-checks the in-run index for balanceIDHex so a caller draining
-// TakePendingClaimableBalances after a whole window can retry the free in-memory path before
-// ClickHouse. It closes the same-window gap: StreamClassicOps orders ops by (ledger_seq, tx_hash,
-// op_index), so a claim whose tx_hash sorts before its own create's in the SAME ledger is decoded
-// first and lands in pending. Once the window is decoded the index has caught up, avoiding a
-// ClickHouse round trip or a false "unresolved" count.
+// ResolveBalance re-checks the in-run index so a caller draining pending after a whole window can
+// skip ClickHouse. StreamClassicOps orders by (ledger_seq, tx_hash, op_index), so a claim whose
+// tx_hash sorts before its own create's in the SAME ledger lands in pending; once the window is
+// decoded the index has caught up.
 func (d *Decoder) ResolveBalance(balanceIDHex string) (asset string, amount canonical.Amount, createdBy string, found bool) {
 	info, ok := d.lookupClaimableBalance(balanceIDHex)
 	if !ok {
@@ -151,11 +133,9 @@ func (d *Decoder) ResolveBalance(balanceIDHex string) (asset string, amount cano
 	return info.Asset, info.Amount, info.CreatedBy, true
 }
 
-// TakePendingClaimableBalances returns every claim/clawback the in-run index could not resolve
-// since the last call, and clears the buffer. The caller drains it after each streamed window for
-// a batched ClickHouse second pass (clickhouse.FindClaimableBalanceCreates). An entry still
-// unresolved there is a genuine incompleteness signal: count it, log a summary, never guess an
-// amount.
+// TakePendingClaimableBalances returns and clears the claims the in-run index could not resolve,
+// for a batched ClickHouse second pass. An entry still unresolved there is a genuine
+// incompleteness signal: count it, log a summary, never guess an amount.
 func (d *Decoder) TakePendingClaimableBalances() []PendingClaimableBalanceRef {
 	out := d.pending
 	d.pending = nil

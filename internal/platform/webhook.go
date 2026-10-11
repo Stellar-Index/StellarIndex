@@ -13,15 +13,12 @@ import (
 type WebhookEventType string
 
 const (
-	// WebhookEventIncidentSEV1 fires when a SEV-1 incident has been
-	// declared (status-page page-level event). Triggered by
-	// Alertmanager via an internal inbound-webhook receiver that
-	// fans the event out to every customer subscribed to it.
+	// WebhookEventIncidentSEV1 fires when a SEV-1 incident is declared; an internal receiver
+	// fed by Alertmanager fans it out to every subscribed customer.
 	WebhookEventIncidentSEV1 WebhookEventType = "incident.sev1"
 
-	// WebhookEventIncidentResolved fires when a previously-active
-	// incident has cleared. Same incident_id as the corresponding
-	// SEV-1 event so consumers can correlate.
+	// WebhookEventIncidentResolved fires when an active incident clears, with the same
+	// incident_id as its SEV-1 event so consumers can correlate.
 	WebhookEventIncidentResolved WebhookEventType = "incident.resolved"
 
 	// WebhookEventAnomalyFreeze fires when the aggregator engages a
@@ -37,10 +34,9 @@ const (
 	WebhookEventPriceAlert WebhookEventType = "price.alert"
 )
 
-// WebhookEventTypes returns every [WebhookEventType] in declaration order.
-// It is the one membership list: subscription validation, metric seeding
-// and their guards all read it, and TestWebhookEventTypesListsEveryConstant
-// fails when a constant above is missing from it.
+// WebhookEventTypes returns every [WebhookEventType] in declaration order: the one membership
+// list for subscription validation and metric seeding. TestWebhookEventTypesListsEveryConstant
+// fails when a constant is missing from it.
 func WebhookEventTypes() []WebhookEventType {
 	return []WebhookEventType{
 		WebhookEventIncidentSEV1,
@@ -90,9 +86,8 @@ func (w CustomerWebhook) ActivePreviousSigningKey(now time.Time) []byte {
 	return w.PreviousSigningKey
 }
 
-// WebhookDelivery is one attempt to deliver an event to a
-// customer webhook. We track every attempt (delivered or
-// failed) so the dashboard can render the delivery log.
+// WebhookDelivery is one delivery of an event to a customer webhook; every attempt is tracked
+// so the dashboard can render the delivery log.
 type WebhookDelivery struct {
 	ID                 uuid.UUID
 	WebhookID          uuid.UUID
@@ -106,10 +101,8 @@ type WebhookDelivery struct {
 	CreatedAt          time.Time
 }
 
-// IsTerminal reports whether the delivery has stopped retrying:
-// either it was delivered, or the retry budget is exhausted
-// (signalled by NextAttemptAt being zero with DeliveredAt also
-// zero — caller distinguishes by checking DeliveredAt).
+// IsTerminal reports whether the delivery has stopped retrying: delivered, or the retry budget
+// is exhausted (NextAttemptAt zero with DeliveredAt zero; callers tell them apart by DeliveredAt).
 func (d WebhookDelivery) IsTerminal() bool {
 	return !d.DeliveredAt.IsZero() || d.NextAttemptAt.IsZero()
 }
@@ -124,26 +117,21 @@ type WebhookStore interface {
 	// CreateWebhook registers an endpoint, enforcing `maxPerAccount` atomically in one SQL statement ([ErrWebhookQuotaExceeded]); a cap <= 0 admits nothing, and a duplicate w.URL on the account returns [ErrConflict].
 	CreateWebhook(ctx context.Context, w CustomerWebhook, maxPerAccount int) (CustomerWebhook, error)
 
-	// GetWebhook by ID, with SigningKey unsealed. A key that cannot
-	// be unsealed is an error wrapping [ErrWebhookKeyUnsealable]
-	// returned beside the row's other fields, so key-free callers
-	// (ownership checks, edits, deletes) can still use them.
+	// GetWebhook by ID, with SigningKey unsealed. A key that cannot be unsealed is an error
+	// wrapping [ErrWebhookKeyUnsealable] returned beside the row's other fields, so key-free
+	// callers (ownership checks, edits, deletes) can still use them.
 	GetWebhook(ctx context.Context, id uuid.UUID) (CustomerWebhook, error)
 
-	// ListWebhooksForAccount returns every webhook (enabled +
-	// disabled) for the account, without SigningKey.
+	// ListWebhooksForAccount returns every webhook (enabled or not) for the account, without
+	// SigningKey.
 	ListWebhooksForAccount(ctx context.Context, accountID uuid.UUID) ([]CustomerWebhook, error)
 
-	// ListWebhooksSubscribedTo returns every enabled webhook
-	// (across all accounts) subscribed to `eventType`, without
-	// SigningKey. Used by the fan-out service to enqueue one
-	// delivery per subscriber when a product event fires.
+	// ListWebhooksSubscribedTo returns every enabled webhook across all accounts subscribed to
+	// `eventType`, without SigningKey, for the fan-out's one delivery per subscriber.
 	ListWebhooksSubscribedTo(ctx context.Context, eventType WebhookEventType) ([]CustomerWebhook, error)
 
-	// UpdateWebhook writes mutable fields (name, url, events,
-	// enabled). Secret rotation is a separate explicit method.
-	// Returns [ErrConflict] when the new url duplicates another of
-	// the account's webhooks.
+	// UpdateWebhook writes mutable fields (name, url, events, enabled); secret rotation is
+	// separate. Returns [ErrConflict] when the new url duplicates another of the account's.
 	UpdateWebhook(ctx context.Context, w CustomerWebhook) error
 
 	// RotateWebhookSecret makes newSecret the signing key IN PLACE, keeping the old one valid until previousExpiresAt (a rotation inside an open overlap replaces the older previous key); both are stored like create stores them, [ErrNotFound] if absent.
@@ -152,16 +140,13 @@ type WebhookStore interface {
 	// DeleteWebhook hard-deletes (cascades to deliveries).
 	DeleteWebhook(ctx context.Context, id uuid.UUID) error
 
-	// AppendDelivery records one attempt. Called by the
-	// delivery worker after each send.
+	// AppendDelivery records one attempt, called by the worker after each send.
 	AppendDelivery(ctx context.Context, d WebhookDelivery) (WebhookDelivery, error)
 
-	// UpdateDelivery rewrites the attempt-state fields after a
-	// retry. Idempotent.
+	// UpdateDelivery rewrites the attempt-state fields after a retry. Idempotent.
 	UpdateDelivery(ctx context.Context, d WebhookDelivery) error
 
-	// ListDeliveries returns recent attempts for the webhook,
-	// most-recent first. Used by the dashboard delivery log.
+	// ListDeliveries returns recent attempts for the webhook, most recent first.
 	ListDeliveries(ctx context.Context, webhookID uuid.UUID, limit int) ([]WebhookDelivery, error)
 
 	// ─── Worker-side queue surface ─────
@@ -173,14 +158,12 @@ type WebhookStore interface {
 	// ListPendingDeliveries claims up to `limit` due deliveries, FIFO per webhook with every webhook's oldest row ahead of any second, so one backlog cannot fill the batch.
 	ListPendingDeliveries(ctx context.Context, limit int) ([]WebhookDelivery, error)
 
-	// MarkDelivered records a successful POST: stamps
-	// delivered_at=now, clears next_attempt_at, records the
-	// response_status. Idempotent.
+	// MarkDelivered records a successful POST (delivered_at=now, next_attempt_at cleared,
+	// response_status). Idempotent.
 	MarkDelivered(ctx context.Context, id uuid.UUID, responseStatus int) error
 
-	// MarkAttemptFailed records a failed POST + schedules the
-	// next retry. nextAttemptAt zero = permanently failed (drops
-	// out of the pending-listing predicate; consumers see the
-	// row via ListDeliveries with delivered_at unset).
+	// MarkAttemptFailed records a failed POST and schedules the next retry. nextAttemptAt zero
+	// means permanently failed: the row leaves the pending listing and shows in ListDeliveries
+	// with delivered_at unset.
 	MarkAttemptFailed(ctx context.Context, id uuid.UUID, errMsg string, responseStatus int, nextAttemptAt time.Time) error
 }

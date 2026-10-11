@@ -18,9 +18,8 @@ import (
 // Invariant: BaseAmount >= 0, QuoteAmount >= 0, not both zero. A single zero leg is a real
 // (unpriceable) fill; both zero is an ingestion bug.
 type Trade struct {
-	// Source is the connector name ("sdex", "soroswap", "aquarius",
-	// "binance", …). Must be stable — it's part of the trade ID and
-	// appears in API responses.
+	// Source is the connector name ("sdex", "soroswap", ...). Must be stable: it is part of the
+	// trade ID.
 	Source string `json:"source"`
 
 	// Ledger is the pubnet ledger sequence in which this trade closed.
@@ -35,18 +34,14 @@ type Trade struct {
 	// event/claim index, so several trades from one operation never collide on the primary key.
 	OpIndex uint32 `json:"op_index"`
 
-	// Timestamp is the ledger close time (UTC). Millisecond precision
-	// where the upstream event supplies it; otherwise second-precision
-	// from ledger headers.
+	// Timestamp is the ledger close time (UTC); second precision unless upstream supplies ms.
 	Timestamp time.Time `json:"ts"`
 
 	// Pair is the (base, quote) the trade executed against.
 	// Direction matches the on-chain event — we do not normalise here.
 	Pair Pair `json:"pair"`
 
-	// BaseAmount is the quantity of the base asset that changed hands,
-	// in the base asset's smallest unit (stroops for XLM,
-	// 10^-decimals for SEP-41).
+	// BaseAmount is the base quantity that changed hands, in the asset's smallest unit.
 	BaseAmount Amount `json:"base_amount"`
 
 	// QuoteAmount is the quantity of the quote asset paid for the
@@ -57,9 +52,8 @@ type Trade struct {
 	// empty ("unknown / not applicable") and carry only Taker. Not part of trade identity.
 	Maker string `json:"maker,omitempty"`
 
-	// Taker is the account that consumed the offer (SDEX), or on a
-	// Soroban swap the on-chain recipient/caller address, which may be
-	// a contract (C...) such as a router. Optional.
+	// Taker is the SDEX offer consumer, or a Soroban swap's recipient/caller (possibly a router
+	// contract). Optional.
 	Taker string `json:"taker,omitempty"`
 
 	// RoutedVia is READ-SIDE attribution: the router (routers.name) whose same-tx invocation
@@ -91,10 +85,8 @@ func FanoutOpIndex(opIndex, eventIndex int) uint32 {
 	return uint32(opIndex)<<16 | uint32(eventIndex)
 }
 
-// ID is the stable unique identifier used as the primary key in the
-// trades hypertable and as the dedup key across region replicas.
-//
-// Format: `<source>:<ledger>:<tx_hash>:<op_index>:<unix_nanos_utc>`.
+// ID is the primary key in the trades hypertable and the dedup key across region replicas:
+// `<source>:<ledger>:<tx_hash>:<op_index>:<unix_nanos_utc>`.
 func (t Trade) ID() string {
 	return fmt.Sprintf("%s:%d:%s:%d:%d",
 		t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC().UnixNano())
@@ -141,9 +133,8 @@ func (t Trade) PriceRatio() (num, den *big.Int) {
 	return t.QuoteAmount.BigInt(), t.BaseAmount.BigInt()
 }
 
-// Equal compares two trades by storage identity only. Fields like
-// Maker/Taker are observational — two records of the same persisted row
-// may differ on Maker if only one region's event included it.
+// Equal compares two trades by storage identity only; Maker/Taker are observational and may
+// differ between regions' records of the same row.
 func (t Trade) Equal(o Trade) bool {
 	return t.Source == o.Source &&
 		t.Ledger == o.Ledger &&
