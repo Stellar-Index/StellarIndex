@@ -25,11 +25,10 @@ type CAGGRefreshStep struct {
 // prices1mView is the minute rung the [CAGGsOnPrices1m] views read.
 const prices1mView = "prices_1m"
 
-// PlanCAGGRefresh orders a refresh of views, each over window(view).
-// prices_1m is the input of [CAGGsOnPrices1m]: it is forced over the hull
-// of their windows, and they are forced after it, so none of them
-// recomputes a bucket from minute rows a retention drop removed
-// (migration 0156). views must list prices_1m before them.
+// PlanCAGGRefresh orders a refresh of views, each over window(view). prices_1m feeds
+// [CAGGsOnPrices1m], so it is forced over the hull of their windows and they are forced after it;
+// none then recomputes a bucket from minute rows a retention drop removed. views must list
+// prices_1m before them.
 func PlanCAGGRefresh(views []CAGGSpec, window func(CAGGSpec) (time.Time, time.Time)) []CAGGRefreshStep {
 	onMinute := make(map[string]bool, len(CAGGsOnPrices1m))
 	for _, v := range CAGGsOnPrices1m {
@@ -68,11 +67,10 @@ type CAGGStepRefresher interface {
 	RefreshContinuousAggregateForced(ctx context.Context, viewName string, from, to time.Time) error
 }
 
-// CAGGRefreshPieceSpan is the longest window one refresh CALL covers,
-// unless the view's MinWindow is longer. A CALL materialises its whole
-// window in one transaction and holds AccessShare on every source chunk
-// the window touches until it commits; one CALL over a replayed range
-// held the trades chunks for 80+ min, blocking their compression.
+// CAGGRefreshPieceSpan is the longest window one refresh CALL covers, unless the view's
+// MinWindow is longer. A CALL materialises its whole window in one transaction and holds
+// AccessShare on every source chunk it touches until commit, which blocks chunk compression, so
+// a long replayed range must be cut into short CALLs.
 const CAGGRefreshPieceSpan = 24 * time.Hour
 
 // bucketOrigin is time_bucket's default origin for fixed-width buckets.
@@ -97,12 +95,9 @@ func bucketCeil(t time.Time, bucket time.Duration) time.Time {
 	return t
 }
 
-// RefreshPieces cuts st into consecutive windows of at least
-// max([CAGGRefreshPieceSpan], MinWindow) that together cover exactly
-// [st.From, st.To). Every cut sits on the view's bucket grid, so no bucket
-// straddles two pieces and the pieces refresh the same buckets one CALL
-// over the whole window would. A step with no known Bucket, or too short
-// to cut, is returned whole.
+// RefreshPieces cuts st into consecutive windows of at least max([CAGGRefreshPieceSpan],
+// MinWindow) covering exactly [st.From, st.To). Every cut sits on the view's bucket grid, so no
+// bucket straddles two pieces. A step with no known Bucket, or too short to cut, is returned whole.
 func RefreshPieces(st CAGGRefreshStep) []CAGGRefreshStep {
 	var out []CAGGRefreshStep
 	if (st.Bucket > 0 || st.Bucket == MonthBucket) && st.MinWindow > 0 {
@@ -121,14 +116,11 @@ func RefreshPieces(st CAGGRefreshStep) []CAGGRefreshStep {
 	return append(out, st)
 }
 
-// RunCAGGRefreshStep runs one planned refresh as the CALLs [RefreshPieces]
-// cuts it into, so each commits and releases its chunk locks before the
-// next starts. A failed piece does not stop the rest; the error names
-// every window left unrefreshed. A view built on prices_1m is refused
-// while that view's retention policy is armed: it could drop the minute
-// rows this run just rebuilt before the view reads them, and migration
-// 0156 requires the policy disarmed for this refresh. Non-forced too: each
-// drop logs an invalidation against the view, which it would then apply.
+// RunCAGGRefreshStep runs one planned refresh as the CALLs [RefreshPieces] cuts it into, so each
+// commits and releases its chunk locks before the next starts. A failed piece does not stop the
+// rest; the error names every window left unrefreshed. A view built on prices_1m is refused while
+// its retention policy is armed: the policy could drop the minute rows just rebuilt before the
+// view reads them, and each drop logs an invalidation that a non-forced refresh would then apply.
 func RunCAGGRefreshStep(ctx context.Context, s CAGGStepRefresher, st CAGGRefreshStep, prices1mRetentionArmed bool) error {
 	if prices1mRetentionArmed && slices.Contains(CAGGsOnPrices1m, st.View) {
 		return fmt.Errorf("refused: prices_1m's retention policy is armed, and %s is materialised from prices_1m; "+

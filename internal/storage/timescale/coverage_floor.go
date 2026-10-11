@@ -13,26 +13,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// earliestBucketSQL finds the START of the oldest materialised bucket a
-// prices_<granularity> CAGG holds for a pair, across every canonical identity
-// form of both legs AND both stored market directions, inside the half-open
-// window [$3, $4).
+// earliestBucketSQL finds the START of the oldest materialised bucket a prices_<granularity> CAGG
+// holds for a pair, across every identity form of both legs and both stored directions, inside
+// [$3, $4).
 //
-// Shape: `WHERE base_asset = ANY($1) AND quote_asset = ANY($2)` does NOT
-// reach prices_<g>_pair_bucket_idx; it plans as a bucket-ordered scan with
-// the pair as a post-filter, so proving a sparse direction empty walks every
-// chunk. One correlated `min(bucket)` per (form, form, direction) is an
-// Index Only Scan. The alias arrays are cross-joined here so the SQL text
-// is STATIC.
+// `base_asset = ANY($1) AND quote_asset = ANY($2)` does not reach prices_<g>_pair_bucket_idx: it
+// plans as a bucket-ordered scan, so proving a sparse direction empty walks every chunk. One
+// correlated min(bucket) per (form, form, direction) is an Index Only Scan, and cross-joining the
+// alias arrays keeps the SQL text static.
 //
-// Both window bounds are Go-side literals rather than now(): run-time chunk
-// exclusion for now() leaves the PLANNER enumerating every chunk. The
-// ADR-0015 closed-bucket guard rides on that bound as
-// `bucket <= $4 - INTERVAL`, never `bucket + INTERVAL <= $4`.
-//
-// The `::timestamptz` cast on $4 is load-bearing: uncast it parses as
-// `interval - interval` and fails with 42883. A probe error is silent by
-// design, so the integration test must execute this statement.
+// The bounds are Go-side literals, not now(), because run-time chunk exclusion leaves the planner
+// enumerating every chunk. The closed-bucket guard is `bucket <= $4 - INTERVAL`, never
+// `bucket + INTERVAL <= $4`. The ::timestamptz cast on $4 is load-bearing (uncast it parses as
+// interval - interval and fails 42883), and probe errors are silent, so the integration test must
+// execute this statement.
 const earliestBucketSQL = `
 	SELECT min(m) FROM (
 	    SELECT (SELECT min(p.bucket)
@@ -53,11 +47,8 @@ const earliestBucketSQL = `
 	) t
 `
 
-// earliestBucketStoredSQL is [earliestBucketSQL] without the flipped
-// arm: the oldest bucket the CAGG holds for the pair in the orientation
-// it was ASKED for, alias-complete on both legs. It backs the floor of
-// a surface whose serving read spans one stored orientation — see
-// [Store.EarliestBucketAsStored].
+// earliestBucketStoredSQL is [earliestBucketSQL] without the flipped arm: the oldest bucket in the
+// orientation asked for, alias-complete on both legs. See [Store.EarliestBucketAsStored].
 const earliestBucketStoredSQL = `
 	SELECT min(m) FROM (
 	    SELECT (SELECT min(p.bucket)
@@ -70,25 +61,18 @@ const earliestBucketStoredSQL = `
 	) t
 `
 
-// EarliestBucket returns the START of the oldest CLOSED bucket the
-// prices_<granularity> CAGG holds for the pair inside [from, to), and whether
-// one exists. It is the coverage-FLOOR primitive behind the API's
-// outside-coverage signal.
+// EarliestBucket returns the START of the oldest CLOSED bucket the prices_<granularity> CAGG holds
+// for the pair inside [from, to), and whether one exists. It is the coverage-floor primitive
+// behind the API's outside-coverage signal.
 //
-// Alias-complete on BOTH legs and BOTH stored directions: the serving reads
-// this floor explains take ONE spelling per leg, and the API walks
-// canonical.AssetAliases across both. XLM's forms are disjoint venue
-// populations and SDEX records a market in whichever orientation the venue
-// used, so a floor read against one spelling would be too LATE.
-//
-// A surface reading ONE stored orientation must use
-// [Store.EarliestBucketAsStored]; the fiat-quoted /v1/ohlc series, which
-// reads each USD-pegged constituent in one named quote spelling, must use
+// It is alias-complete on both legs and both stored directions, because XLM's forms are disjoint
+// venue populations and SDEX records a market in whichever orientation the venue used; a floor
+// read against one spelling would be too late. Surfaces reading one stored orientation must use
+// [Store.EarliestBucketAsStored]; the fiat-quoted /v1/ohlc series must use
 // [Store.EarliestBucketLiteralQuote].
 //
-// [from, to) is mandatory and half-open; `to` must be strictly after `from`
-// (same guard as [Store.OHLCSeries]). Returns (zero, false, nil) when the
-// pair has no bucket in the window.
+// `to` must be strictly after `from` (same guard as [Store.OHLCSeries]). Returns (zero, false, nil)
+// when the pair has no bucket in the window.
 func (s *Store) EarliestBucket(
 	ctx context.Context,
 	p canonical.Pair,
@@ -98,23 +82,13 @@ func (s *Store) EarliestBucket(
 	return s.earliestBucket(ctx, "EarliestBucket", earliestBucketSQL, p, granularity, from, to, true)
 }
 
-// EarliestBucketAsStored is [Store.EarliestBucket] over the requested
-// orientation ONLY: the oldest closed bucket stored with base_asset in
-// the base leg's alias family and quote_asset in the quote leg's, and
-// never the flipped rows.
+// EarliestBucketAsStored is [Store.EarliestBucket] over the requested orientation only, never the
+// flipped rows.
 //
-// It exists for /v1/history. That page is served by
-// [Store.TradesInRangeAfter], which reads one stored orientation and is
-// never flipped by its caller, so a market the decoder recorded only as
-// USDC/AQUA answers `base=AQUA&quote=USDC` with an empty page every
-// time. A floor folded across both orientations would find the
-// USDC/AQUA bucket and describe that page as a quiet market with a
-// floor years back — a coverage claim about rows the page can never
-// return. The floor of a surface is a property of the read that serves
-// it, so this variant spans exactly what that read spans.
-//
-// Same window contract, same alias fold on each leg, same closed-bucket
-// guard as [Store.EarliestBucket].
+// /v1/history is served by [Store.TradesInRangeAfter], which reads one stored orientation, so a
+// market recorded only as USDC/AQUA answers base=AQUA&quote=USDC with an empty page. A floor
+// folded across both orientations would claim coverage for rows the page can never return; the
+// floor must span exactly what the serving read spans.
 func (s *Store) EarliestBucketAsStored(
 	ctx context.Context,
 	p canonical.Pair,
@@ -124,23 +98,15 @@ func (s *Store) EarliestBucketAsStored(
 	return s.earliestBucket(ctx, "EarliestBucketAsStored", earliestBucketStoredSQL, p, granularity, from, to, true)
 }
 
-// EarliestBucketLiteralQuote is [Store.EarliestBucket] with the alias
-// fold on the QUOTE leg removed: the oldest closed bucket the CAGG
-// holds with quote_asset equal to the spelling that was asked for (or,
-// through the flipped arm, base_asset equal to it), the base leg still
-// alias-complete and both stored directions still folded.
+// EarliestBucketLiteralQuote is [Store.EarliestBucket] with the alias fold removed from the QUOTE
+// leg only; the base leg and both stored directions are still folded.
 //
-// It exists for the fiat-quoted /v1/ohlc series, which reads each USD-pegged
-// constituent ([v1.Server.usdPeggedConstituents]) under ONE quote spelling.
-// [Store.OHLCSeries] never folds a second spelling of a leg, so a declared
-// peg's SAC wrapper (where Soroban AMMs quote) is unreachable from that
-// surface; a floor folded across the quote family would claim coverage for
-// bars the series can never return. The base leg keeps its fold because the
-// combine itself enumerates every base spelling.
+// The fiat-quoted /v1/ohlc series reads each USD-pegged constituent under one quote spelling and
+// [Store.OHLCSeries] never folds a second one, so a peg's SAC wrapper is unreachable from that
+// surface; a floor folded across the quote family would claim bars the series can never return.
+// The base leg keeps its fold because the combine enumerates every base spelling.
 //
-// Same window contract, same closed-bucket guard, and the same
-// statement text as [Store.EarliestBucket] — the narrowing is in the
-// bound array, so both reads share one prepared plan.
+// The narrowing is in the bound array, so it shares one statement text with [Store.EarliestBucket].
 func (s *Store) EarliestBucketLiteralQuote(
 	ctx context.Context,
 	p canonical.Pair,
@@ -150,16 +116,10 @@ func (s *Store) EarliestBucketLiteralQuote(
 	return s.earliestBucket(ctx, "EarliestBucketLiteralQuote", earliestBucketSQL, p, granularity, from, to, false)
 }
 
-// earliestBucketLegs builds the two bound leg arrays a floor statement
-// cross-joins. `quoteAliases` is the whole difference between
-// [Store.EarliestBucket] and [Store.EarliestBucketLiteralQuote], which
-// share one statement text: with it the quote leg spans its alias
-// family, without it exactly the spelling that was asked for. The base
-// leg always spans its family — every caller's serving read enumerates
-// the base spellings itself.
-//
-// Split out from the query so the narrowing is provable without a
-// database: the SQL cannot show which of the two reads issued it.
+// earliestBucketLegs builds the two bound leg arrays a floor statement cross-joins. quoteAliases
+// is the whole difference between [Store.EarliestBucket] and [Store.EarliestBucketLiteralQuote];
+// the base leg always spans its family. It is split out so the narrowing is provable without a
+// database.
 func earliestBucketLegs(p canonical.Pair, quoteAliases bool) (bases, quotes []string) {
 	bases = canonical.AssetAliasStrings(p.Base)
 	if quoteAliases {
@@ -168,13 +128,9 @@ func earliestBucketLegs(p canonical.Pair, quoteAliases bool) (bases, quotes []st
 	return bases, []string{p.Quote.String()}
 }
 
-// earliestBucket runs one of the three floor reads. `op` names the
-// caller in errors; `tmpl` binds the table as %[1]s and the
-// closed-bucket interval as %[2]s, once per arm, so the two-arm and
-// one-arm statements take the same two operands; `quoteAliases` selects
-// the leg arrays ([earliestBucketLegs]). The arrays are BOUND, never
-// interpolated: the statement text stays static whichever spellings a
-// caller spans.
+// earliestBucket runs one of the three floor reads. `tmpl` binds the table as %[1]s and the
+// closed-bucket interval as %[2]s so the two-arm and one-arm statements take the same operands.
+// The leg arrays are bound, never interpolated, so the statement text stays static.
 func (s *Store) earliestBucket(
 	ctx context.Context,
 	op, tmpl string,

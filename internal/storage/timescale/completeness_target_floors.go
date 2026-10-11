@@ -5,23 +5,17 @@ import (
 	"fmt"
 )
 
-// CompletenessTargetFloor is one projection target's durable verification
-// floor (migration 0116, ADR-0033).
+// CompletenessTargetFloor is one projection target's durable verification floor (ADR-0033).
 //
-// VerifiedFrom is the LOWEST ledger this target has ever been reconciled
-// from. It exists because compute-completeness otherwise derives its floor
-// from MIN(ledger) of the target itself, which makes the check blind to the
-// one event it exists to catch: if the oldest served rows are deleted,
-// MIN(ledger) rises with the loss and the reconcile range follows it up, so
-// "rows were dropped" and "we never projected below there" are
-// indistinguishable.
+// VerifiedFrom is the lowest ledger the target has ever been reconciled from. Deriving the floor
+// from MIN(ledger) of the target itself would blind the check to deletions: if the oldest rows
+// are lost, MIN(ledger) rises with them, so "rows were dropped" and "never projected below
+// there" become indistinguishable.
 type CompletenessTargetFloor struct {
 	Source string
-	// Table and Filter together identify the target. Filter is
-	// reconTarget.whereFilter ("" when the whole table belongs to the
-	// source) and is part of the identity because one table — `trades` —
-	// is split across sources, and those slices can honestly have
-	// different true floors.
+	// Table and Filter together identify the target. Filter is reconTarget.whereFilter ("" when
+	// the whole table belongs to the source); it is part of the identity because `trades` is split
+	// across sources whose slices can honestly have different true floors.
 	Table        string
 	Filter       string
 	VerifiedFrom uint32
@@ -30,21 +24,11 @@ type CompletenessTargetFloor struct {
 // UpsertCompletenessTargetFloor records that `floor.Table` has been
 // reconciled from `floor.VerifiedFrom`, keeping the LOWEST value ever seen.
 //
-// The LEAST() is the whole point and is deliberately not a plain assignment.
-// The floor must only ever fall:
-//
-//   - A run reconciling from a LOWER ledger than recorded is new ground and
-//     legitimately lowers the floor.
-//   - A run starting HIGHER is either real loss — which
-//     [Store.CompletenessTargetFloors]'s caller must FAIL on, not record — or
-//     a deliberately narrowed `-from` window, which is not evidence about
-//     the target's true floor at all.
-//
-// Letting the column rise would allow a partial or narrowed run to quietly
-// ratchet the floor up to the post-loss MIN, hiding the very loss the
-// durable floor of migration 0116 exists to expose. Same regressive-run
-// hazard the never-regress guard covers on completeness_snapshots, in the
-// opposite direction.
+// LEAST() is deliberate, not a plain assignment: the floor must only ever fall. A run from a lower
+// ledger is new ground; a run starting higher is either real loss (the caller of
+// [Store.CompletenessTargetFloors] must fail on it, not record it) or a narrowed `-from` window,
+// which says nothing about the true floor. Letting the column rise would let such a run ratchet
+// the floor up to the post-loss MIN and hide the very loss the durable floor exists to expose.
 func (s *Store) UpsertCompletenessTargetFloor(ctx context.Context, floor CompletenessTargetFloor) error {
 	const q = `
         INSERT INTO completeness_target_floors (
@@ -67,10 +51,9 @@ func (s *Store) UpsertCompletenessTargetFloor(ctx context.Context, floor Complet
 // CompletenessTargetFloors returns every recorded floor, keyed by
 // (source, table, filter) via [TargetFloorKey].
 //
-// A target absent from the map has no recorded floor yet — that is the
-// first-run case and must be treated as "nothing to compare against", never
-// as a floor of zero. Reporting loss against a floor that was never
-// established would fail every target on the first run after this migration.
+// A target absent from the map has no recorded floor yet and means "nothing to compare against",
+// never a floor of zero; reporting loss against an unestablished floor would fail every target on
+// its first run.
 func (s *Store) CompletenessTargetFloors(ctx context.Context) (map[string]CompletenessTargetFloor, error) {
 	const q = `
         SELECT source, target_table, target_filter, projection_verified_from
@@ -98,13 +81,10 @@ func (s *Store) CompletenessTargetFloors(ctx context.Context) (map[string]Comple
 }
 
 // TargetFloorKey builds the map key for a (source, table, filter) target.
-// Exported so the caller keys its lookups identically rather than
-// reimplementing the join and drifting.
+// Exported so callers key lookups identically instead of reimplementing the join.
 //
-// The separator is "\x00" rather than something readable: whereFilter is
-// arbitrary SQL and can contain any punctuation, so a printable separator
-// could be produced by the filter text itself and collide two distinct
-// targets onto one key.
+// The separator is "\x00" because whereFilter is arbitrary SQL: a printable separator could
+// appear in the filter text itself and collide two distinct targets onto one key.
 func TargetFloorKey(source, table, filter string) string {
 	return source + "\x00" + table + "\x00" + filter
 }

@@ -7,26 +7,20 @@ import (
 	"time"
 )
 
-// SoroswapRouterSwap is one soroswap_router_swaps row — a single observed
-// router invocation (one call to `swap_exact_tokens_for_tokens` /
-// `swap_tokens_for_exact_tokens`), mirroring migration 0049's columns.
+// SoroswapRouterSwap is one soroswap_router_swaps row: a single observed router invocation
+// (`swap_exact_tokens_for_tokens` / `swap_tokens_for_exact_tokens`).
 //
-// Identity: (ledger, tx_hash, op_index, call_sig). op_index disambiguates
-// multiple router invocations in one tx; call_sig further distinguishes multiple
-// distinct router swaps within one op (aggregator / batch calls).
+// Identity is (ledger, tx_hash, op_index, call_sig): op_index separates router invocations in one
+// tx, call_sig separates distinct router swaps within one op (aggregator / batch calls).
 //
-// AmountIn / AmountOut are decimal-string numerics (i128 → *big.Int →
-// string per ADR-0003). Path is the hop sequence of raw token C-strkeys
-// (≥ 2 by router precondition).
+// AmountIn / AmountOut are decimal-string numerics (i128 via *big.Int, ADR-0003). Path is the hop
+// sequence of raw token C-strkeys (at least 2 by router precondition).
 //
-// CAVEAT: these hold the router call's two i128 args as DECLARED — they are
-// NOT both realized amounts. Exactly one side is exact and the other is a
-// caller-declared slippage BOUND: for swap_exact_tokens_for_tokens,
-// amount_out is amount_out_min (a FLOOR); for swap_tokens_for_exact_tokens,
-// amount_in is amount_in_max (a CEILING). Read function_name before treating
-// either as realized; the realized per-hop fills live in the per-pair
-// soroswap `swap` events (trades) for the same tx. See
-// soroswap_router/decode.go.
+// CAVEAT: the amounts are the call's two i128 args as declared, not both realized. One side is
+// exact and the other a slippage bound: amount_out_min (a floor) for swap_exact_tokens_for_tokens,
+// amount_in_max (a ceiling) for swap_tokens_for_exact_tokens. Read function_name before treating
+// either as realized; realized per-hop fills live in the per-pair soroswap swap events (trades)
+// for the same tx.
 type SoroswapRouterSwap struct {
 	Ledger          uint32
 	LedgerCloseTime time.Time
@@ -51,24 +45,18 @@ type SoroswapRouterSwap struct {
 	// swaps in one op (aggregator / batch) while deduping auth-tree duplicates.
 	CallSig string
 
-	// CallPath / CallDepth / CallKind (migration 0101) record WHERE in the
-	// tx's Soroban auth tree the router call was observed: CallPath is the
-	// ordered contract C-strkey chain from the top-level invocation down to
-	// the router (always ends in ContractID), CallDepth = len(CallPath)-1,
-	// CallKind is 'top_level' | 'sub_invocation'. An empty CallKind writes
-	// SQL NULLs for all three (the row shape from before migration 0101) —
-	// set all three together or none; the migration's CHECK rejects partial
-	// combinations.
+	// CallPath / CallDepth / CallKind record where in the tx's Soroban auth tree the router call
+	// was observed: CallPath is the contract C-strkey chain from the top-level invocation down to
+	// the router (always ends in ContractID), CallDepth = len(CallPath)-1, CallKind is 'top_level'
+	// | 'sub_invocation'. An empty CallKind writes SQL NULLs for all three; set all three or none,
+	// since the table CHECK rejects partial combinations.
 	CallPath  []string
 	CallDepth int
 	CallKind  string
 }
 
-// InsertSoroswapRouterSwap appends one soroswap_router_swaps row,
-// idempotent on (ledger_close_time, ledger, tx_hash, op_index,
-// call_sig).
-// Defensive: rejects empty PK columns + empty function name + empty
-// path before touching the DB.
+// InsertSoroswapRouterSwap appends one row, idempotent on (ledger_close_time, ledger, tx_hash,
+// op_index, call_sig). It rejects empty PK columns, function name and path before touching the DB.
 func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSwap) error {
 	if e.TxHash == "" {
 		return errors.New("timescale: InsertSoroswapRouterSwap: TxHash is empty")
@@ -150,13 +138,10 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
             derive_generation = EXCLUDED.derive_generation
           WHERE soroswap_router_swaps.derive_generation <= EXCLUDED.derive_generation
     `
-	// deadline_ts is a user-supplied u64 expiry. Some router calls pass a
-	// sentinel / garbage value (≈3e18, or one that overflows int64 to a BC
-	// year) that lands outside Postgres's timestamptz range [4713 BC, 294276
-	// AD]. The swap itself is a real, successful token movement — so an
-	// unrepresentable deadline is NULLed rather than rejecting the whole row
-	// (the column is nullable). Without this the live indexer + every backfill
-	// silently drop these swaps (≈24% of historical router calls).
+	// deadline_ts is a user-supplied u64 expiry; some calls pass a sentinel that falls outside
+	// timestamptz range [4713 BC, 294276 AD]. The swap is still a real token movement, so an
+	// unrepresentable deadline is NULLed (the column is nullable) rather than dropping the row,
+	// which would silently lose a large share of historical router calls.
 	var deadline interface{}
 	if e.DeadlineTS != nil && pgTimestamptzRepresentable(*e.DeadlineTS) {
 		deadline = e.DeadlineTS.UTC()

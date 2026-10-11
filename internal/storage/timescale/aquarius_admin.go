@@ -115,9 +115,8 @@ func (s *Store) InsertAquariusAdminEvent(ctx context.Context, e AquariusAdminEve
 
 // ─── Read side: governance analytics for the Aquarius bespoke block ────
 //
-// These reads serve the governance events to the same consumer as
-// aquarius_rewards.go's matching section (protocol_bespoke.go's
-// aquariusRewardsBlocks).
+// These reads serve the same consumer as aquarius_rewards.go's matching section
+// (protocol_bespoke.go's aquariusRewardsBlocks).
 
 // aquariusAdminAllKinds is the ordered set of the eight governance/upgrade
 // kinds — the migration-0100 census order (busiest kind first).
@@ -128,18 +127,13 @@ var aquariusAdminAllKinds = []AquariusAdminKind{
 	AquariusAdminPoolGaugeSwitchToken,
 }
 
-// AquariusAdminLifetimeTotal reads the LIFETIME (all-time) governance/
-// upgrade event count across all eight kinds.
+// AquariusAdminLifetimeTotal reads the all-time governance/upgrade event count across all eight
+// kinds.
 //
-// Uses the same per-kind LATERAL pattern as
-// AquariusRewardsLifetimeByKind (bounded `event_kind = <literal>` index
-// scans against aquarius_admin_kind_ts_idx, migration 0100, one per kind,
-// single round trip) rather than a plain `count(*)` — aquarius_admin is a
-// low-volume table (governance actions are inherently rare — the
-// migration-0100 census counted ~1.8K lifetime rows across all 8 kinds),
-// so an unqualified count(*) would likely be cheap too, but staying
-// consistent with the indexed-per-kind access path costs nothing and
-// avoids relying on "this table happens to be small today."
+// It uses the per-kind LATERAL pattern of AquariusRewardsLifetimeByKind (bounded
+// `event_kind = <literal>` scans on aquarius_admin_kind_ts_idx in one round trip) rather than a
+// plain `count(*)`. The table is small (rare governance actions), but the indexed path costs
+// nothing and does not rely on it staying small.
 func (s *Store) AquariusAdminLifetimeTotal(ctx context.Context) (int64, error) {
 	kinds := make([]string, len(aquariusAdminAllKinds))
 	for i, k := range aquariusAdminAllKinds {
@@ -172,21 +166,13 @@ type AquariusAdminEventView struct {
 	LedgerCloseTime time.Time
 }
 
-// LatestAquariusAdminEvents reads the most recent `limit` governance/
-// upgrade events across the router + pools, newest first. limit <= 0 is
-// treated as 25.
+// LatestAquariusAdminEvents reads the most recent `limit` governance/upgrade events across the
+// router + pools, newest first. limit <= 0 means 25.
 //
-// Deliberately UNWINDOWED, unlike the sibling bespoke augments' `since`-
-// bound "recent N" queries (e.g. lendingAuctionBlocks' "Recent auctions"):
-// aquarius_admin is a low-frequency governance surface (~1.8K lifetime
-// rows across all 8 kinds), so a trailing-window bound could render an
-// empty table between rare upgrade/ownership events even though the
-// protocol has governance history worth surfacing. `ORDER BY
-// ledger_close_time DESC LIMIT $1` stays indexed + bounded regardless:
-// ledger_close_time is the leading column of aquarius_admin's primary-key
-// index, so this is a backward index scan capped by LIMIT — TimescaleDB's
-// standard "top-N over a hypertable's time column" access path, not a
-// full-table scan.
+// Deliberately UNWINDOWED, unlike sibling "recent N" augments: governance events are rare, so a
+// trailing-window bound could render an empty table despite real history. `ORDER BY
+// ledger_close_time DESC LIMIT $1` stays bounded anyway: ledger_close_time leads the primary-key
+// index, so this is a backward index scan capped by LIMIT, not a full-table scan.
 func (s *Store) LatestAquariusAdminEvents(ctx context.Context, limit int) ([]AquariusAdminEventView, error) {
 	if limit <= 0 {
 		limit = 25

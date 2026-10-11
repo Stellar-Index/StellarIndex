@@ -11,16 +11,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// StoredBaseline is the wire shape between the storage layer and
-// the aggregator's refresh worker. Wraps a [baseline.MultiBaseline]
-// (1d / 7d / 30d windows per ADR-0019 Phase 2) with the metadata
-// the persistence layer needs to track refresh freshness.
+// StoredBaseline is the wire shape between storage and the aggregator's refresh worker: a
+// [baseline.MultiBaseline] (1d / 7d / 30d windows, ADR-0019) plus refresh-freshness metadata.
 //
-// Day1 / Day7 may be nil when the pair's data history is too short
-// for that window — the migration's CHECK constraints + the wire
-// shape's nil-pointer convention together encode "bootstrap on this
-// scale". Day30 is required (a stored row with n_30d < MinSamples
-// fails pre-flight in [Store.UpsertBaseline]).
+// Day1 / Day7 are nil when the pair's history is too short for that window, which encodes
+// "bootstrap on this scale". Day30 is required: n_30d < MinSamples fails pre-flight in
+// [Store.UpsertBaseline].
 type StoredBaseline struct {
 	Pair        canonical.Pair
 	ComputedAt  time.Time
@@ -35,17 +31,11 @@ type StoredBaseline struct {
 // "bootstrap" branch (ADR-0019 §"Bootstrap (warmup) policy").
 var ErrBaselineNotFound = errors.New("timescale: baseline not found for pair")
 
-// UpsertBaseline writes (or overwrites) the baseline row for the
-// given pair. UPSERT semantics: one row per pair, the latest
-// refresh wins. The aggregator's refresh worker is the only writer.
+// UpsertBaseline writes or overwrites the baseline row for a pair: one row per pair, latest
+// refresh wins, and the aggregator's refresh worker is the only writer.
 //
-// Validates that:
-//
-//   - Day30 is non-nil (a row without a 30d baseline is meaningless;
-//     the table's NOT NULL constraint on median/mad/sample_count
-//     would reject it anyway, but pre-flight gives a clearer error)
-//   - Day30.N >= [baseline.MinSamples]
-//   - WindowEnd > WindowStart
+// Pre-flight requires a non-nil Day30 (the NOT NULL columns would reject it anyway, but this gives
+// a clearer error), Day30.N >= [baseline.MinSamples], and WindowEnd > WindowStart.
 func (s *Store) UpsertBaseline(ctx context.Context, sb StoredBaseline) error {
 	if sb.Multi.Day30 == nil {
 		return fmt.Errorf("timescale: UpsertBaseline %s: 30d baseline is nil", sb.Pair.String())
@@ -117,12 +107,9 @@ func nullableBaseline(b *baseline.Baseline) (sql.NullFloat64, sql.NullFloat64, s
 		sql.NullInt64{Valid: true, Int64: int64(b.N)}
 }
 
-// LatestBaseline returns the current baseline for `pair`. Returns
-// [ErrBaselineNotFound] when no row exists for the pair (the
-// caller should fall through to the bootstrap policy).
-//
-// API hot path; covered by the (base_asset, quote_asset) primary-
-// key index — point lookup, not a scan.
+// LatestBaseline returns the current baseline for `pair`, or [ErrBaselineNotFound] when none exists
+// (the caller falls through to the bootstrap policy). API hot path: a point lookup on the
+// (base_asset, quote_asset) primary key, not a scan.
 func (s *Store) LatestBaseline(ctx context.Context, pair canonical.Pair) (StoredBaseline, error) {
 	const q = `
 		SELECT computed_at, window_start, window_end,

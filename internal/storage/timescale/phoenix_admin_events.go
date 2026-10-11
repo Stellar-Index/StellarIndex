@@ -32,12 +32,10 @@ type PhoenixAdminEvent struct {
 	Value           string // decimal i128 of blend_set_min_trading_*; "" → NULL
 }
 
-// InsertPhoenixAdmin lands one admin-rotation event, idempotent on the
-// (ledger_close_time, pool, ledger, tx_hash, op_index, event_index) PK
-// with the generation-guarded corrective upsert (migration 0110).
+// InsertPhoenixAdmin lands one admin-rotation event, idempotent on the table PK with the
+// generation-guarded corrective upsert.
 //
-// Defensive: rejects an empty Pool / TxHash, a zero LedgerCloseTime, and
-// an AdminAction outside the closed set.
+// It rejects an empty Pool/TxHash, a zero LedgerCloseTime and an AdminAction outside the closed set.
 func (s *Store) InsertPhoenixAdmin(ctx context.Context, e PhoenixAdminEvent) error {
 	if e.Pool == "" {
 		return errors.New("timescale: InsertPhoenixAdmin: Pool is empty")

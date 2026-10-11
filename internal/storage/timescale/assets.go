@@ -19,17 +19,9 @@ import (
 // Returns (assets, nextCursor, err). nextCursor is empty when the
 // page is the last one.
 //
-// Recency window: matches /v1/markets's "active assets" semantic.
-// Without the window the UNIONed DISTINCT scans run across every
-// chunk in the trades hypertable, taking minutes per call, far
-// past any client deadline. With the
-// 14-day cap the scan touches ~1.5M rows and finishes inside the
-// 30s API budget. Without it the unbounded query would run on every
-// /v1/assets call; the recency cap brings the endpoint into the
-// SLA range without a new materialised table. The planned
-// optimisation is a materialised `asset_catalogue` populated
-// incrementally by the indexer (future migration; not on main
-// today) — that would let us drop the recency bound entirely.
+// The recency window matches /v1/markets's "active assets" semantic and bounds cost: without
+// it the UNIONed DISTINCT scans every chunk of the trades hypertable and takes minutes, far
+// past the 30s API budget. A materialised asset catalogue would let the bound go.
 func (s *Store) DistinctAssets(ctx context.Context, cursor string, limit int) ([]canonical.Asset, string, error) {
 	if limit < 1 {
 		limit = 100
@@ -94,34 +86,21 @@ func (s *Store) DistinctAssets(ctx context.Context, cursor string, limit int) ([
 	return out, nextCursor, nil
 }
 
-// HasAsset reports whether this index knows the asset. Cheap existence
-// check — doesn't page through data.
-//
-// Returns (true, nil) for known asset; (false, nil) for unknown;
-// (_, err) for a query failure.
+// HasAsset reports whether this index knows the asset: (true, nil) known, (false, nil)
+// unknown, (_, err) on query failure. A cheap existence check that never pages data.
 //
 // Dispatch:
 //
-//   - AssetClassic: PK lookup on `classic_assets` (one row per (code, issuer)
-//     ever observed): one index seek, and it bypasses the trades hypertable,
-//     where `base_asset = $1 OR quote_asset = $1` seeks every chunk's index.
-//   - Every other type (native / soroban / fiat / crypto / rwa):
-//     [Store.hasNonClassicAsset], a WINDOW-BOUNDED probe. No registry
-//     table can hold these types — `classic_assets` requires a non-null
-//     `issuer_g_strkey`, which native and contract assets structurally
-//     do not have — so the window bound, not a registry, is what keeps
-//     the read off the cold end of the hypertable.
+//   - AssetClassic: PK lookup on `classic_assets` (one row per (code, issuer) ever observed),
+//     one index seek that bypasses the trades hypertable, where
+//     `base_asset = $1 OR quote_asset = $1` seeks every chunk's index.
+//   - Every other type: [Store.hasNonClassicAsset], a WINDOW-BOUNDED probe. classic_assets
+//     requires a non-null issuer, which native and contract assets do not have, so the window
+//     bound is what keeps the read off the cold end of the hypertable.
 func (s *Store) HasAsset(ctx context.Context, a canonical.Asset) (bool, error) {
-	// XLM is not discovered by trading. It is the network's native asset:
-	// it exists on every Stellar network from the genesis ledger, whether
-	// or not anyone has traded it, so no evidence needs to be sought and
-	// none can be absent. Answering it from trade activity is a category
-	// error that bites on a QUIET network — when measured,
-	// futurenet had ZERO XLM trades in the 14-day window this file's
-	// non-classic probe bounds on, so routing native through that probe
-	// would 404 the native asset of a network we ask developers to build
-	// against. testnet had 2,030 in the same window and would have looked
-	// fine, which is exactly how this ships unnoticed.
+	// Native XLM exists from genesis whether or not anyone has traded it, so answering from
+	// trade activity is a category error that bites on a quiet network: a network with no XLM
+	// trades in the probe window would 404 its own native asset.
 	if a.Type == canonical.AssetNative {
 		return true, nil
 	}
@@ -131,23 +110,16 @@ func (s *Store) HasAsset(ctx context.Context, a canonical.Asset) (bool, error) {
 	return s.hasNonClassicAsset(ctx, a)
 }
 
-// hasClassicAsset is the fast path: PK lookup on
-// classic_assets. The registry was specifically designed (migration
-// 0023) as "the catalogue of every classic asset ever observed."
+// hasClassicAsset is the fast path: PK lookup on classic_assets, the catalogue of every
+// classic asset ever observed.
 //
-// The registry is not populated only by the trade-insert hook: since
-// migration 0158 it also carries assets registered from TRUSTLINE
-// HOLDINGS ([Store.RegisterClassicAssetsHeld]), which is 61% of the
-// classic-asset population. Presence here is therefore NOT a subset of
-// presence in `trades`, and that is the point: without the holdings rows
-// an asset that is held but never traded would have no row here,
-// [Store.HasAsset] would answer false for an asset that demonstrably
-// exists, and GET /v1/assets/{id} would 404 it.
+// The registry is also populated from TRUSTLINE HOLDINGS ([Store.RegisterClassicAssetsHeld]),
+// so presence here is NOT a subset of presence in `trades`; without those rows a held but
+// never-traded asset would answer false and GET /v1/assets/{id} would 404 it.
 //
-// The short-circuit is sound: this function answers "does this asset
-// exist", not "has it traded". A hit avoids the hypertable; a miss means
-// we have never observed the asset from any source. A hit does not imply
-// a trade — read last_trade_at for that.
+// The short-circuit is sound because this answers "does the asset exist", not "has it traded".
+// A hit avoids the hypertable; a miss means no source has ever observed it. Read last_trade_at
+// for trade activity.
 func (s *Store) hasClassicAsset(ctx context.Context, a canonical.Asset) (bool, error) {
 	const q = `SELECT EXISTS (SELECT 1 FROM classic_assets WHERE asset_id = $1)`
 	var exists bool
@@ -164,22 +136,17 @@ func (s *Store) hasClassicAsset(ctx context.Context, a canonical.Asset) (bool, e
 // hasNonClassicAsset answers existence for every asset type the classic
 // registry cannot hold.
 //
-// It avoids the unbounded `trades WHERE base = $1 OR quote = $1` scan the
-// no-unbounded-trade-scan rule forbids: the OR BitmapOrs every chunk back
-// to 2017, and on r1 `GET /v1/assets/native` blew the 15 s budget while
-// historical chunks were being recompressed. Instead three probes are
-// ORed and evaluated lazily: classic_assets over the alias forms (so a
-// declared SAC agrees with its classic twin), then trades base side and
-// quote side, each `= ANY($1) AND ts >= $2` so each leads on its own
-// column's index. `since` is computed Go-side so the planner excludes
-// out-of-window chunks at plan time. The probes bind [assetAliasArray],
-// so XLM's three spellings answer alike.
+// It avoids the unbounded `trades WHERE base = $1 OR quote = $1` scan: the OR BitmapOrs every
+// chunk back to 2017 and can blow the API budget during recompression. Instead three probes are
+// ORed and evaluated lazily: classic_assets over the alias forms (so a declared SAC agrees with
+// its classic twin), then trades base side and quote side, each `= ANY($1) AND ts >= $2` so
+// each leads on its own column's index. `since` is computed Go-side so the planner excludes
+// out-of-window chunks at plan time. The probes bind [assetAliasArray], so XLM's three
+// spellings answer alike.
 //
-// The answer is "traded inside [MarketsRecencyWindow], or in the classic
-// registry", the window [Store.DistinctAssets] uses, so the detail route
-// cannot 404 an asset the listing shows. A non-classic asset whose only
-// trades predate the window now answers false; for Soroban contracts that
-// residual is contracts the listing does not show either. Removing it
+// The answer is "traded inside [MarketsRecencyWindow], or in the classic registry", the window
+// [Store.DistinctAssets] uses, so the detail route cannot 404 an asset the listing shows. A
+// non-classic asset whose only trades predate the window answers false; removing that residual
 // needs a writer-side asset-seen registry for every type.
 func (s *Store) hasNonClassicAsset(ctx context.Context, a canonical.Asset) (bool, error) {
 	const q = `

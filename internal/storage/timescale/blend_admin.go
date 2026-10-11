@@ -24,24 +24,16 @@ func toAssetAmountRows(in []domain.BlendAssetAmount) []blendAssetAmountRow {
 	return out
 }
 
-// InsertBlendAdminEvent appends one Blend admin / pool-config /
-// pool-factory lifecycle event (set_admin / update_pool /
-// queue_set_reserve / cancel_set_reserve / set_reserve / set_status
-// / deploy) to the blend_admin hypertable. Idempotent on the PK
-// (contract_id, ledger, tx_hash, op_index, event_kind,
+// InsertBlendAdminEvent appends one Blend admin / pool-config / pool-factory lifecycle event
+// (set_admin, update_pool, queue/cancel_set_reserve, set_reserve, set_status, deploy) to the
+// blend_admin hypertable, idempotent on (contract_id, ledger, tx_hash, op_index, event_kind,
 // ledger_close_time).
 //
-// Promoted typed columns: admin / asset / target — populated when
-// the event kind carries them; NULL otherwise (see per-kind doc
-// in migration 0045 + blend.AdminEvent godoc). Event-type-specific
-// remainder (update_pool body, queue_set_reserve ReserveConfig,
-// set_reserve index, set_status status+by_admin) lands in the
-// attributes jsonb column.
+// The admin / asset / target columns are promoted when the event kind carries them, else NULL (see
+// blend.AdminEvent); the kind-specific remainder lands in the attributes jsonb column.
 //
-// i128 amounts (update_pool.min_collateral, ReserveConfig.supply_cap)
-// are decimal strings inside jsonb per ADR-0003 — NUMERIC inside
-// jsonb is lossy, but a decimal string round-trips at full
-// precision.
+// i128 amounts (update_pool.min_collateral, ReserveConfig.supply_cap) are decimal strings inside
+// jsonb (ADR-0003): a jsonb number is lossy, a decimal string round-trips at full precision.
 func (s *Store) InsertBlendAdminEvent(ctx context.Context, e domain.BlendAdminEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertBlendAdminEvent: ContractID is empty")
@@ -59,11 +51,9 @@ func (s *Store) InsertBlendAdminEvent(ctx context.Context, e domain.BlendAdminEv
 		return fmt.Errorf("timescale: InsertBlendAdminEvent: marshal attributes: %w", err)
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the decoded columns (admin / asset / target and
-	// the attributes jsonb, which carries i128 amounts like
-	// min_collateral / supply_cap) lands in place when its generation is >=
-	// the stored one; a live gen-0 replay can never revert it.
+	// Generation-guarded corrective upsert: a corrected re-derive of the decoded columns (including
+	// attributes, which carries the i128 amounts) lands in place when its generation is >= the
+	// stored one; a live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO blend_admin (
             contract_id, ledger, tx_hash, op_index, event_index, ledger_close_time,

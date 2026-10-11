@@ -6,43 +6,31 @@ import (
 	"fmt"
 )
 
-// opsVerifyStatementTimeoutMS bounds the per-query statement_timeout for the
-// full-history ops/verify counts (CountRowsByLedger, MinLedger). These are
-// TRUSTED ops jobs — never the request path,
-// whose DoS backstop is OpenServing's separate SESSION statement_timeout — and
-// they scan full-history hypertables that legitimately take tens of minutes as
-// the chain grows (e.g. sep41_supply_events: ~9.3M rows / 130 chunks over the
-// Soroban range ≈ 40 min, index-only scan). The prior 5-minute cap SILENTLY
-// FAILED the completeness projection verify on large sources ("canceling
-// statement due to statement timeout"). 2h is generous headroom yet still
-// catches a genuinely stuck query; the caller's context is the real outer
-// bound. (per_source_gaps and sep41_supply_events already carry their own
-// longer / caller-supplied timeouts. The aggregator's gap detector — gap
-// scan AND source-coverage count — MUST NOT use this constant: its Go
-// context is 15 min, and a 2h PG timeout there orphans backends; see
-// gapDetectorStatementTimeoutMS.)
+// opsVerifyStatementTimeoutMS bounds statement_timeout for the full-history ops/verify counts
+// (CountRowsByLedger, MinLedger). These are trusted ops jobs, never the request path (whose DoS
+// backstop is OpenServing's session statement_timeout), and they scan full-history hypertables
+// that legitimately take tens of minutes as the chain grows; a short cap silently fails the
+// completeness projection verify on large sources. 2h leaves headroom yet still catches a stuck
+// query; the caller's context is the real outer bound.
+//
+// The aggregator's gap detector must NOT use this constant: its Go context is 15 min, and a 2h PG
+// timeout there orphans backends (see gapDetectorStatementTimeoutMS).
 const opsVerifyStatementTimeoutMS = 7200000 // 2 hours, in ms
 
 // MinLedger returns the smallest ledger present in a per-source table over
-// [from, to] — where that target's served data ACTUALLY begins. It is the
-// lower bound of the ADR-0033 Claim 2b projection reconcile (chops.targetScope);
-// a hardcoded floor such as `tip - 1_500_000` would certify only the last ~100
-// days while the served tier holds full history.
+// [from, to], i.e. where that target's served data actually begins. It is the lower bound of the
+// projection reconcile (chops.targetScope); a hardcoded floor such as `tip - 1_500_000` would
+// certify only the last ~100 days while the served tier holds full history.
 //
-// No reconcile target has a retention policy (verified against the migrations
-// and r1: 0031 removed it from trades / prices_1m / prices_15m and 0040 from
-// oracle_updates), so a RISING value here is unambiguously served-tier LOSS,
-// not a drop_chunks artifact. Migration 0156 adds one on prices_1m (90 days,
-// created disabled) and does not weaken that: prices_1m is a continuous
-// aggregate keyed on `bucket`, has no `ledger` column and is not among the
-// reconcile targets (chops.reconciliation_catalogue — raw event and trade
-// tables only). chops.detectFloorLoss makes exactly that comparison against
-// the durable floor in completeness_target_floors (migration 0116), which is
-// why this value must stay a raw observation and not be clamped or
-// defaulted. Returns ok=false if no rows.
+// No reconcile target has a retention policy, so a rising value here is unambiguously served-tier
+// loss, not a drop_chunks artifact. The optional prices_1m retention does not weaken that: it is a
+// continuous aggregate with no `ledger` column and not a reconcile target (raw event and trade
+// tables only). chops.detectFloorLoss compares this value against the durable floor in
+// completeness_target_floors, so it must stay a raw observation, never clamped or defaulted.
+// Returns ok=false if no rows.
 //
-// Identifiers are interpolated — callers MUST pass compile-time-trusted values
-// (same discipline as CountRowsByLedger / ADR-0030).
+// Identifiers are interpolated; callers must pass compile-time-trusted values (as for
+// CountRowsByLedger).
 func (s *Store) MinLedger(ctx context.Context, table, ledgerColumn, whereFilter string, from, to uint32) (uint32, bool, error) {
 	filter := ""
 	if whereFilter != "" {
@@ -70,19 +58,15 @@ func (s *Store) MinLedger(ctx context.Context, table, ledgerColumn, whereFilter 
 	return uint32(minL.Int64), true, nil
 }
 
-// CountRowsByLedger returns rows-per-ledger for a per-source protocol
-// table over [from, to] — the "actual" side of the ADR-0033 Claim 2b
-// projection reconciliation. The expected side is the decoder
-// re-derive over soroban_events (internal/completeness.ReDeriveOutputCounts).
+// CountRowsByLedger returns rows-per-ledger for a per-source protocol table over [from, to], the
+// "actual" side of the projection reconciliation (the expected side is the decoder re-derive,
+// internal/completeness.ReDeriveOutputCounts).
 //
-// table / ledgerColumn / whereFilter are interpolated into the SQL, so
-// callers MUST pass compile-time-trusted identifiers (the same
-// discipline as GapDetectorTarget per ADR-0030) — never user input.
+// table / ledgerColumn / whereFilter are interpolated into the SQL, so callers must pass
+// compile-time-trusted identifiers (as for GapDetectorTarget), never user input.
 //
-// A generous ops statement_timeout (opsVerifyStatementTimeoutMS)
-// backstops the GROUP BY on large full-history hypertables; the caller's
-// context is the real bound. Raised from the old 5-min cap that failed the
-// completeness verify on grown sources (sep41_supply_events).
+// opsVerifyStatementTimeoutMS backstops the GROUP BY on large full-history hypertables; the
+// caller's context is the real bound.
 func (s *Store) CountRowsByLedger(ctx context.Context, table, ledgerColumn, whereFilter string, from, to uint32) (map[uint32]int, error) {
 	if to < from {
 		return nil, fmt.Errorf("timescale: CountRowsByLedger: to (%d) < from (%d)", to, from)

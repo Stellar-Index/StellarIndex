@@ -12,11 +12,9 @@ import (
 type OracleRederiveSweep struct {
 	Source   string
 	From, To uint32
-	// Generation is the re-derive run's own derive_generation. A row is
-	// stale only if a row at exactly this generation shares its identity.
-	// Zero is accepted on a dry run only, and then counts a twin at any
-	// newer generation: what a sweep after a fresh re-derive would remove,
-	// assuming the decoder still emits what the newest stored rows hold.
+	// Generation is the re-derive run's own derive_generation; a row is stale only if a row at
+	// exactly this generation shares its identity. Zero is accepted on a dry run only, where it
+	// counts a twin at any newer generation (what a sweep after a fresh re-derive would remove).
 	Generation int64
 	// AssetScoped adds (asset, quote) to the identity, for a source whose
 	// (ledger, tx_hash, op_index) is not unique on its own: band packs
@@ -62,13 +60,11 @@ type oracleSweepCandidate struct {
 	ts, twinTS      time.Time
 }
 
-// SweepOracleRederive deletes the oracle_updates rows a ts-changing
-// re-derive left behind: an on-chain row in [From, To] at a generation
-// below Generation whose identity (source, ledger, tx_hash, op_index, plus
-// asset and quote when AssetScoped) has a row at Generation with another
-// ts. The newest row of an identity is never a candidate, and a row with
-// no Generation twin is never deleted; every DELETE re-checks its twin by
-// exact primary key. Each delete is bounded by ledger and by ts, and the
+// SweepOracleRederive deletes the oracle_updates rows a ts-changing re-derive left behind: an
+// on-chain row in [From, To] at a generation below Generation whose identity (source, ledger,
+// tx_hash, op_index, plus asset and quote when AssetScoped) has a row at Generation with another
+// ts. The newest row of an identity and any row without a Generation twin are never deleted;
+// every DELETE re-checks its twin by exact primary key and is bounded by ledger and ts, and the
 // source_entry_counts tally is decremented in the same transaction.
 func (s *Store) SweepOracleRederive(ctx context.Context, sw OracleRederiveSweep) (OracleRederiveSweepResult, error) {
 	var res OracleRederiveSweepResult

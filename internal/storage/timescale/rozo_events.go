@@ -27,15 +27,11 @@ func (t RozoEventType) IsValid() bool {
 	return false
 }
 
-// RozoEvent is one rozo_events row — a single observed Rozo v1
-// intent-bridge contract event on Stellar. Mirrors the
-// migration-0039 columns.
+// RozoEvent is one rozo_events row: a Rozo v1 intent-bridge contract event.
 //
-// Amount and Destination are present on both event types. From and
-// Memo are payment-only; Token is flush-only — each is a *string so
-// a nil pointer writes SQL NULL and distinguishes "not applicable to
-// this event type" from an empty-string value (an empty payment memo
-// is a real value and round-trips as an empty string, not NULL).
+// Amount and Destination are on both event types; From and Memo are payment-only and Token is
+// flush-only. Those are *string so nil writes SQL NULL ("not applicable"), distinct from an empty
+// string (an empty payment memo is a real value and round-trips as such).
 type RozoEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -50,26 +46,19 @@ type RozoEvent struct {
 	Amount      string // decimal i128
 	Destination string
 	From        *string // payment-only
-	// Memo is payment-only ('' is a valid tag). The on-chain memo is
-	// payer-chosen BYTES; the rozo decoder hands it over in scval.ToText
-	// form (the literal memo when it is valid NUL-free UTF-8, else `\x` +
-	// hex), which is what the `memo` text column stores. InsertRozoEvent
-	// binds it unchanged: ToText is applied once, at decode, and is not
-	// idempotent, so re-encoding here would corrupt an encoded memo.
+	// Memo is payment-only ('' is a valid tag). The on-chain memo is payer-chosen BYTES, handed
+	// over in scval.ToText form (literal if valid NUL-free UTF-8, else `\x` + hex). InsertRozoEvent
+	// binds it unchanged: ToText is not idempotent, so re-encoding would corrupt it.
 	Memo  *string
 	Token *string // flush-only
 }
 
-// InsertRozoEvent appends one Rozo event row, idempotent on the
-// (contract_id, ledger, tx_hash, op_index, event_type, ts) PK.
-// Re-running the indexer or a backfill over the same range writes
-// the same rows; ON CONFLICT DO UPDATE guarded by derive_generation
-// (migration 0110) corrects the row in place on a higher-or-equal-
-// generation replay and no-ops a stale lower-generation one.
+// InsertRozoEvent appends one Rozo event row, idempotent on the table PK. ON CONFLICT DO UPDATE
+// guarded by derive_generation corrects the row on a higher-or-equal-generation replay and
+// no-ops a stale one.
 //
-// Defensive: rejects empty ContractID / TxHash / Destination, an
-// invalid EventType, and an empty Amount (the column is NOT NULL)
-// before touching the DB.
+// It rejects empty ContractID/TxHash/Destination, an invalid EventType and an empty Amount (NOT
+// NULL) before touching the DB.
 func (s *Store) InsertRozoEvent(ctx context.Context, e RozoEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertRozoEvent: ContractID is empty")
@@ -87,14 +76,10 @@ func (s *Store) InsertRozoEvent(ctx context.Context, e RozoEvent) error {
 		return fmt.Errorf("timescale: InsertRozoEvent: Amount is empty (contract=%s tx=%s)", e.ContractID, e.TxHash)
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the payment `amount` (or destination /
-	// from / memo / token) lands in place when its generation is >= the
-	// stored one; a live gen-0 replay can never revert it. event_index
-	// ($13) is in the INSERT column list AND the ON CONFLICT target
-	// (migration 0112): two same-type events emitted by one op differ
-	// only in event_index, so it MUST be part of the conflict key or
-	// the second row collapses onto the first.
+	// Generation-guarded corrective upsert: a corrected re-derive lands in place when its
+	// generation is >= the stored one, so a live gen-0 replay never reverts it. event_index ($13)
+	// MUST be in the ON CONFLICT target: two same-type events from one op differ only by it, and
+	// otherwise the second row collapses onto the first.
 	const q = `
         INSERT INTO rozo_events (
             contract_id, ledger, tx_hash, op_index, ts,

@@ -10,11 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// PhoenixLiquidityAction discriminates the two Phoenix pool
-// liquidity-management actions. String values match the
-// phoenix_liquidity.action CHECK constraint (migration 0044) and
-// internal/sources/phoenix's EventActionProvideLiquidity /
-// EventActionWithdrawLiquidity constants.
+// PhoenixLiquidityAction discriminates provide and withdraw liquidity events. Its values must match
+// the phoenix_liquidity.action CHECK constraint and the phoenix package's EventAction constants.
 type PhoenixLiquidityAction string
 
 const (
@@ -31,15 +28,12 @@ func (a PhoenixLiquidityAction) IsValid() bool {
 	return false
 }
 
-// PhoenixLiquidityChange is one phoenix_liquidity row — a single
-// observed provide_liquidity / withdraw_liquidity event from a
-// Phoenix pool (volatile or stableswap). Mirrors the migration-0044
-// columns.
+// PhoenixLiquidityChange is one phoenix_liquidity row: a provide_liquidity or withdraw_liquidity
+// event from a Phoenix pool.
 //
-// Amount fields are decimal-string numerics (per ADR-0003 i128 ->
-// *big.Int -> string). TokenA / TokenB / SharesAmount are empty on
-// the side that doesn't carry them (withdraw has no token addresses;
-// provide has no shares amount) — the writer maps "" → SQL NULL.
+// Amounts are decimal-string numerics (i128 -> *big.Int -> string, never int64). TokenA, TokenB and
+// SharesAmount are empty where the event omits them (withdraw has no token addresses; provide has
+// no shares amount); the writer maps "" to SQL NULL.
 type PhoenixLiquidityChange struct {
 	Pool       string
 	Ledger     uint32
@@ -59,18 +53,13 @@ type PhoenixLiquidityChange struct {
 	SharesAmount string // withdraw-only; "" → NULL
 }
 
-// InsertPhoenixLiquidityChange appends one phoenix_liquidity row,
-// idempotent on the (ledger_close_time, pool, ledger, tx_hash,
-// op_index, action, event_index) PK (event_index, from migration 0060,
-// keeps two provides/withdraws in one op from colliding). Re-running
-// the indexer over the same range or replaying a backfill writes the
-// same rows; ON CONFLICT DO UPDATE guarded by derive_generation
-// (migration 0110) corrects the row in place on a higher-or-equal-
-// generation replay and no-ops a stale lower-generation one.
+// InsertPhoenixLiquidityChange appends one phoenix_liquidity row, idempotent on the
+// (ledger_close_time, pool, ledger, tx_hash, op_index, action, event_index) PK; event_index keeps
+// two provides/withdraws in one op from colliding. ON CONFLICT DO UPDATE guarded by
+// derive_generation corrects the row on a higher-or-equal-generation replay and no-ops a stale one.
 //
-// Defensive: rejects empty Pool / TxHash / Sender, an invalid
-// Action, and empty NUMERIC amounts (AmountA / AmountB are NOT NULL)
-// before touching the DB.
+// It rejects empty Pool/TxHash/Sender, an invalid Action and empty NUMERIC amounts (AmountA and
+// AmountB are NOT NULL) before touching the DB.
 func (s *Store) InsertPhoenixLiquidityChange(ctx context.Context, e PhoenixLiquidityChange) error {
 	if e.Pool == "" {
 		return errors.New("timescale: InsertPhoenixLiquidityChange: Pool is empty")
@@ -143,18 +132,13 @@ func (s *Store) InsertPhoenixLiquidityChange(ctx context.Context, e PhoenixLiqui
 	return nil
 }
 
-// PhoenixPoolFlow is one Phoenix pool's net liquidity flow over a window —
-// the two-token (leg A / leg B) net (provide − withdraw) from
-// phoenix_liquidity per-event amounts (migration 0044). This is a WINDOW
-// DELTA, NOT an absolute pool reserve: Phoenix pool events carry the moved
-// amounts (actual_received / return_amount), not post-state reserves, so a
-// clean pool-reserve / TVL is not derivable here.
+// PhoenixPoolFlow is one pool's net (provide - withdraw) liquidity flow per token leg over a
+// window. It is a WINDOW DELTA, NOT an absolute reserve: Phoenix events carry moved amounts, not
+// post-state reserves, so no clean reserve or TVL is derivable.
 //
-// TokenA / TokenB are resolved from the pool's most recent provide_liquidity
-// row (withdraw events omit the token addresses); they are "" when no
-// provide was observed for the pool in the window. NetA / NetB are
-// i128/NUMERIC (canonical.Amount, never int64 — ADR-0003) and can be
-// negative when withdrawals exceed provides in the window.
+// TokenA/TokenB come from the pool's most recent provide_liquidity row (withdraw events omit
+// addresses) and are "" when no provide was seen in the window. NetA/NetB are canonical.Amount
+// (never int64) and negative when withdrawals exceed provides.
 type PhoenixPoolFlow struct {
 	Pool      string
 	TokenA    string
@@ -166,22 +150,15 @@ type PhoenixPoolFlow struct {
 	LatestAt  time.Time
 }
 
-// LatestPhoenixLiquidityFlows returns per-pool net liquidity flow over the
-// trailing windowDays, most-active pool first. NetA / NetB are the leg-A /
-// leg-B provide-minus-withdraw deltas; token addresses are resolved
-// positionally from the pool's most recent provide (mirrors the
-// aquarius_reserves address-recovery pattern — withdraw events carry no
-// token address, migration 0044).
+// LatestPhoenixLiquidityFlows returns per-pool net liquidity flow over the trailing windowDays,
+// most-active pool first. Token addresses are resolved from the pool's most recent provide, since
+// withdraw events carry none.
 //
-// This is the READ side of the Phoenix liquidity-depth signal
-// InsertPhoenixLiquidityChange captures. Phoenix has no post-state reserve
-// snapshot and no published price, so the figures are native-token
-// base-unit WINDOW deltas, not absolute reserves or USD TVL. Phoenix is
-// contract-identity gated (curated set, gated before Comet), so unlike Comet
-// these figures carry no historical-rows-may-predate-the-gate caveat.
+// Phoenix has no post-state reserve snapshot or published price, so the figures are base-unit
+// WINDOW deltas, not absolute reserves or USD TVL. Phoenix is contract-identity gated, so unlike
+// Comet these rows carry no may-predate-the-gate caveat.
 //
-// Empty-safe: returns (nil, nil) when no liquidity events were captured in
-// the window. windowDays <= 0 is treated as 90.
+// It returns (nil, nil) when nothing was captured in the window; windowDays <= 0 means 90.
 func (s *Store) LatestPhoenixLiquidityFlows(ctx context.Context, windowDays int) ([]PhoenixPoolFlow, error) {
 	if windowDays <= 0 {
 		windowDays = 90

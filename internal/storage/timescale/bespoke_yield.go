@@ -5,26 +5,21 @@ package timescale
 // (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the scan
 // helpers stay in protocol_bespoke.go.
 
-// ─── Yield bespoke analytics (DeFindex) ──────────────────────────────────
+// Yield bespoke analytics (DeFindex), built from defindex_flows, which records both layers of every
+// flow:
 //
-// Built from defindex_flows (migration 0050), which records BOTH layers of
-// every protocol flow.
-//
-//   - VAULT layer (who/when): actor is the end-user, contract_id the vault.
-//     The amount lives in amounts_vec, one entry per asset in the vault's
-//     basket (nearly all vaults are single-asset).
-//   - STRATEGY layer (how much capital moved): actor is the vault contract,
-//     contract_id the strategy, amount a single-asset scalar.
+//   - Vault layer (who/when): actor is the end-user, contract_id the vault, and the amount lives in
+//     amounts_vec, one entry per basket asset (nearly all vaults are single-asset).
+//   - Strategy layer (how much capital moved): actor is the vault contract, contract_id the
+//     strategy, amount a single-asset scalar.
 //
 // Amount honesty rules (the mixed-asset-sum trap):
 //
-//  1. Per-vault amounts are shown ONLY for vaults whose every window flow
-//     carries a single-entry amounts_vec. A vault with any multi-asset (or
-//     missing) vector shows '—' instead of a fabricated cross-asset sum.
-//  2. Amounts are NEVER summed ACROSS vaults or strategies into one
-//     number-with-a-unit: different vaults hold different assets. Cross-vault
-//     headlines are COUNTS; cross-strategy gross-volume KPIs carry a "summed
-//     base units across strategies" caveat in the Notes.
+//  1. Per-vault amounts are shown only for vaults whose every window flow carries a single-entry
+//     amounts_vec. Any multi-asset or missing vector shows '—' instead of a fabricated sum.
+//  2. Amounts are never summed across vaults or strategies into one number-with-a-unit, since
+//     different vaults hold different assets. Cross-vault headlines are counts; cross-strategy
+//     gross-volume KPIs carry a "summed base units across strategies" caveat in the Notes.
 
 import (
 	"context"
@@ -88,12 +83,9 @@ func defindexVaultCountSeriesQuery(windowDays int) string {
 		GROUP BY 1, 2 ORDER BY 1, 2 ASC`
 }
 
-// defindexStrategyVolumeSeriesQuery builds the strategy-layer flow volume
-// series split by direction (summed scalar amounts, token base units
-// across strategies — see the Notes caveat), matching the direction split
-// already applied by the KPI and per-strategy table queries. 'harvest' is
-// excluded — it is strategy yield, not capital deposited/withdrawn, and
-// mixing it in would inflate the capital-volume figure. $1 = interval.
+// defindexStrategyVolumeSeriesQuery builds the strategy-layer flow volume series split by direction
+// (base units summed across strategies, see the Notes caveat). 'harvest' is excluded: it is yield,
+// not capital moved, and would inflate the capital-volume figure. $1 = interval.
 func defindexStrategyVolumeSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
@@ -116,11 +108,9 @@ func defindexStrategyEventsSeriesQuery(windowDays int) string {
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
-// defindexVaultBreakdownQuery returns per-vault window flow COUNTS
-// (vault layer), count-descending, labelled with the curated router name
-// where one is seeded (migration 0033) and the vault contract id
-// otherwise. Counts only — amounts across vaults are different assets.
-// $1 = interval.
+// defindexVaultBreakdownQuery returns per-vault window flow counts (vault layer), count-descending,
+// labelled with the curated router name where seeded, else the vault contract id. Counts only,
+// since amounts across vaults are different assets. $1 = interval.
 func defindexVaultBreakdownQuery() string {
 	return `
 		SELECT COALESCE(r.name, f.contract_id), count(*)::text, count(*)
@@ -129,12 +119,9 @@ func defindexVaultBreakdownQuery() string {
 		GROUP BY 1 ORDER BY count(*) DESC, 1 ASC`
 }
 
-// defindexVaultFlowsTableQuery returns the per-vault window drill-down:
-// deposit/withdraw counts always, plus deposited/withdrawn amounts in the
-// vault's OWN asset base units — but only when every one of the vault's
-// window flows carries a single-entry amounts_vec (single-asset vault
-// evidence); anything else shows '—' rather than a cross-asset sum.
-// $1 = interval.
+// defindexVaultFlowsTableQuery returns the per-vault window drill-down: deposit/withdraw counts
+// always, plus amounts in the vault's own asset base units only when every window flow carries a
+// single-entry amounts_vec; anything else shows '—' rather than a cross-asset sum. $1 = interval.
 func defindexVaultFlowsTableQuery() string {
 	return `
 		SELECT COALESCE(r.name, f.contract_id),
@@ -167,10 +154,8 @@ func defindexStrategyTableQuery() string {
 }
 
 // bespokeYield builds the DeFindex vault bespoke block from defindex_flows:
-// window + retained-history KPIs across both layers, deposit-vs-withdraw
-// and strategy series, the flows-by-vault breakdown, and the per-vault +
-// per-strategy tables. See the file doc for the layer split and the
-// amount-honesty rules.
+// window and retained-history KPIs across both layers, series, the flows-by-vault breakdown and
+// per-vault and per-strategy tables. See the file doc for the amount-honesty rules.
 func (s *Store) bespokeYield(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
 	if source != "defindex" {
 		return nil, nil

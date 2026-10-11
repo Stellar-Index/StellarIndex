@@ -10,19 +10,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical/discovery"
 )
 
-// RecordDiscovered persists a [discovery.Hit] to the
-// `discovered_assets` table. Idempotent on contract_id via
-// ON CONFLICT — the first observation per contract preserves
-// first_seen_*, subsequent observations update last_seen_* and
-// increment event_count by hit.Count (1 when unset): AsyncSink flushes
-// in-process-dedup deltas with Count set to the true number of
-// observations, so this is not always a plain +1.
+// RecordDiscovered persists a [discovery.Hit] to `discovered_assets`, idempotent on contract_id via
+// ON CONFLICT: the first observation preserves first_seen_*, later ones update last_seen_* and add
+// hit.Count (1 when unset) to event_count, since AsyncSink flushes deduped deltas carrying the true
+// observation count.
 //
-// discovery_kind (migration 0103) distinguishes which sniffer produced the hit
-// ([discovery.KindSEP41] / [discovery.KindOracleEvent] / [discovery.KindOracleCall]);
-// an empty Kind is treated as KindSEP41, matching the sniffer's own default.
-// first_seen_event stores hit.Symbol when set and falls back to hit.EventType
-// when Symbol is empty.
+// discovery_kind records which sniffer produced the hit ([discovery.KindSEP41] /
+// [discovery.KindOracleEvent] / [discovery.KindOracleCall]); an empty Kind means KindSEP41.
+// first_seen_event stores hit.Symbol, falling back to hit.EventType when Symbol is empty.
 //
 // Implements [discovery.Recorder].
 func (s *Store) RecordDiscovered(ctx context.Context, hit discovery.Hit) error {
@@ -75,10 +70,9 @@ func (s *Store) RecordDiscovered(ctx context.Context, hit discovery.Hit) error {
 // IsKnownDiscovered reports whether contractID has been recorded.
 // Implements [discovery.Recorder].
 //
-// Returns (false, nil) for never-seen contracts (NOT an error —
-// that's the steady-state for the first event from a new contract).
-// Storage errors propagate; caller can choose to log + continue
-// (the same contract will reappear on the next event) or surface.
+// Returns (false, nil) for never-seen contracts; that is the normal state for a new contract's first
+// event, not an error. Storage errors propagate, and the caller may log and continue since the
+// contract will reappear on its next event.
 func (s *Store) IsKnownDiscovered(ctx context.Context, contractID string) (bool, error) {
 	if contractID == "" {
 		return false, nil
@@ -102,30 +96,21 @@ type DiscoveredAsset struct {
 	ContractID      string
 	FirstSeenAt     time.Time
 	FirstSeenLedger uint32
-	// FirstSeenEvent holds the raw first-seen symbol string cast to
-	// [discovery.SEP41EventType] for backward compatibility. For
-	// DiscoveryKind == KindSEP41 rows this is exactly one of the four
-	// named SEP-41 constants; for KindOracleEvent/KindOracleCall rows
-	// it holds the matched oracle-suggestive symbol/function name
-	// (e.g. "price_update", "relay") — still a valid string value,
-	// just not one of the four legacy constants.
+	// FirstSeenEvent is the raw first-seen symbol cast to [discovery.SEP41EventType]. For KindSEP41
+	// rows it is one of the four SEP-41 constants; for oracle rows it is the matched symbol or
+	// function name (e.g. "price_update", "relay"), not one of those constants.
 	FirstSeenEvent discovery.SEP41EventType
-	// DiscoveryKind distinguishes which sniffer produced the first
-	// sighting (added migration 0103). Rows written before that
-	// migration read back as [discovery.KindSEP41] (the column's
-	// DEFAULT).
+	// DiscoveryKind is the sniffer that produced the first sighting; older rows read back as
+	// [discovery.KindSEP41] (the column DEFAULT).
 	DiscoveryKind  discovery.Kind
 	LastSeenAt     time.Time
 	LastSeenLedger uint32
 	EventCount     int64
 }
 
-// ListDiscovered returns rows from `discovered_assets` ordered by
-// first_seen_at DESC. Used by the operator-facing "what's new"
-// query (`stellarindex-ops discovery list`) and integration tests.
-//
-// limit caps the result count; pass 0 for no limit. Returns an
-// empty slice (not nil + nil error) when the table is empty.
+// ListDiscovered returns `discovered_assets` rows ordered by first_seen_at DESC, for
+// `stellarindex-ops discovery list` and integration tests. limit 0 means no limit; an empty table
+// yields an empty slice, not nil.
 func (s *Store) ListDiscovered(ctx context.Context, limit int) ([]DiscoveredAsset, error) {
 	q := `
 		SELECT contract_id, first_seen_at, first_seen_ledger, first_seen_event,

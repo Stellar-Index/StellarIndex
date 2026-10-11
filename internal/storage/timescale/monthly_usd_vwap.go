@@ -37,12 +37,9 @@ type MonthlyUSDVWAP struct {
 	VolumeUSD float64
 }
 
-// monthlyUSDVWAPsSQL reads the monthly CAGG's USD-quoted rows in
-// [from, to). The quote set is the transitive resolver's usdProxyQuotes
-// — the quotes whose VWAP is ALREADY a USD price — so a month priced here
-// agrees with the live path about what counts as a dollar. $1/$2 are
-// cast explicitly: an untyped bind beside a timestamptz column is the
-// 42883 trap.
+// monthlyUSDVWAPsSQL reads the monthly CAGG's USD-quoted rows in [from, to). The quote set is
+// usdProxyQuotes (quotes whose VWAP is ALREADY USD) so a month priced here agrees with the live
+// path. $1/$2 are cast explicitly: an untyped bind beside a timestamptz column fails with 42883.
 const monthlyUSDVWAPsSQL = `
 SELECT bucket, base_asset, vwap::text, volume_priced::text, COALESCE(volume_usd, 0)::text, sources
   FROM prices_1mo
@@ -53,20 +50,15 @@ SELECT bucket, base_asset, vwap::text, volume_priced::text, COALESCE(volume_usd,
    AND volume_priced > 0
  ORDER BY bucket, base_asset`
 
-// MonthlyUSDVWAPs folds prices_1mo's USD-quoted rows into ONE row per
-// (canonical asset, month), volume-weighted across every alias spelling
-// of the base and every USD proxy it was quoted in: a month where XLM
-// traded as 'native' against USDC and as 'crypto:XLM' against fiat:USD
-// yields a single 'native' row whose price is Σ quote / Σ base of both,
-// each row's volume taken in whole units so a spelling stored at 10^8
-// does not outweigh one stored at 10^7. The arithmetic is exact
-// (big.Rat); only the final rendering rounds.
+// MonthlyUSDVWAPs folds prices_1mo's USD-quoted rows into ONE row per (canonical asset, month),
+// volume-weighted across every alias spelling of the base and every USD proxy it was quoted in.
+// XLM traded as 'native' against USDC and as 'crypto:XLM' against fiat:USD yields one 'native' row
+// priced at sum(quote) / sum(base), each row's volume in whole units so a spelling stored at 10^8
+// does not outweigh one at 10^7. Arithmetic is exact (big.Rat); only final rendering rounds.
 //
-// XLM's own row rides along under 'native', so an asset quoted only in
-// XLM can be priced through it by a follow-up. Rows are ascending by
-// (month, asset). An empty result is a measurement — no USD-quoted
-// market in the range — not an error. sourceDecimals scales off-chain
-// spellings; nil fails any off-chain row rather than guess its unit.
+// XLM's row rides along under 'native' so an asset quoted only in XLM can be priced through it.
+// Rows ascend by (month, asset). An empty result means no USD-quoted market, not an error.
+// sourceDecimals scales off-chain spellings; nil fails any off-chain row rather than guess a unit.
 func (s *Store) MonthlyUSDVWAPs(ctx context.Context, from, to time.Time, sourceDecimals SourceAmountDecimals) ([]MonthlyUSDVWAP, error) {
 	rows, err := s.db.QueryContext(ctx, monthlyUSDVWAPsSQL, from.UTC(), to.UTC())
 	if err != nil {
@@ -176,16 +168,13 @@ func foldMonthlyUSDVWAPs(in []monthlyUSDVWAPRow, sourceDecimals SourceAmountDeci
 // venue traded them.
 const classicAmountDecimals = 7
 
-// monthlyUSDVWAPScale is the factor (10^-decimals) that turns one row's
-// stored base volume into whole units. The fold only needs rows sharing a
-// key to agree, and keys cross spellings only through the alias registry:
-//   - an on-chain classic spelling ('native', CODE-ISSUER, a registered
-//     SAC) is stored at the ledger's 7 places;
-//   - an off-chain spelling (crypto:, fiat:, …) is stored at its sources'
-//     registered scale (CEX 10^8, FX 10^6), which the row's sources must
-//     agree on — a row mixing scales is not one market's volume;
-//   - anything else (a pure contract token, a non-asset spelling) folds
-//     with its own spelling only, so it is left raw.
+// monthlyUSDVWAPScale is the factor (10^-decimals) turning one row's stored base volume into whole
+// units. Rows sharing a key only need to agree, and keys cross spellings only via the alias
+// registry:
+//   - an on-chain classic spelling ('native', CODE-ISSUER, a registered SAC) is stored at 7 places;
+//   - an off-chain spelling (crypto:, fiat:) is stored at its sources' registered scale (CEX 10^8,
+//     FX 10^6), on which the row's sources must agree; mixed scales are not one market's volume;
+//   - anything else folds with its own spelling only, so it is left raw.
 func monthlyUSDVWAPScale(raw string, sources []string, sourceDecimals SourceAmountDecimals) (*big.Rat, error) {
 	a, err := canonical.ParseAsset(raw)
 	if err != nil {
@@ -223,11 +212,9 @@ func tenToMinus(decimals int) *big.Rat {
 	return new(big.Rat).SetFrac(big.NewInt(1), new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil))
 }
 
-// monthlyUSDVWAPAsset is the fold key for one stored base_asset spelling:
-// its canonical form under the process alias registry (native for every
-// XLM spelling; the classic form for a registered SAC), or the spelling
-// itself when it is not a canonical asset id at all — such a row folds
-// with nothing, which is the truth about it.
+// monthlyUSDVWAPAsset is the fold key for a stored base_asset spelling: its canonical form under
+// the alias registry (native for every XLM spelling, the classic form for a registered SAC), or
+// the spelling itself when it is no canonical asset id, so that row folds with nothing.
 func monthlyUSDVWAPAsset(raw string) string {
 	a, err := canonical.ParseAsset(raw)
 	if err != nil {

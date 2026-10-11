@@ -12,10 +12,8 @@ import (
 )
 
 // AccountObservationSeedProvenanceScope is the fixed singleton key for
-// account_observation_seed_provenance (migration 0189). Unlike
-// seed-claimable-balances, `supply seed-observations` has no -assets-style
-// scope: every pass seeds the whole configured `[supply]
-// sdf_reserve_accounts` watchlist, so one row is enough.
+// account_observation_seed_provenance. `supply seed-observations` has no -assets-style scope:
+// every pass seeds the whole `[supply] sdf_reserve_accounts` watchlist, so one row is enough.
 const AccountObservationSeedProvenanceScope = "sdf_reserve_accounts"
 
 // AccountObservationSeedProvenance is one complete `supply seed-observations`
@@ -32,13 +30,11 @@ type AccountObservationSeedProvenance struct {
 	SeededAt        time.Time
 }
 
-// UpsertAccountObservationSeedProvenance records (or overwrites) the most
-// recent complete seed pass. A row whose counts don't sum to the watchlist
-// size is refused: it would claim coverage the pass never actually walked.
-// WatchedAccounts/MissingAccounts must match AccountsWatched/AccountsMissing
-// in length — the arrays are what makes a `missing` count traceable to a
-// specific account — and are sorted here before the write so the stored
-// value is deterministic regardless of caller order.
+// UpsertAccountObservationSeedProvenance records (or overwrites) the most recent complete seed
+// pass. A row whose counts do not sum to the watchlist size is refused, since it would claim
+// coverage the pass never walked. WatchedAccounts/MissingAccounts must match
+// AccountsWatched/AccountsMissing in length, making a `missing` count traceable to an account,
+// and are sorted here so the stored value is deterministic regardless of caller order.
 func (s *Store) UpsertAccountObservationSeedProvenance(ctx context.Context, p AccountObservationSeedProvenance) error {
 	if p.AccountsWatched <= 0 {
 		return errors.New("timescale: UpsertAccountObservationSeedProvenance: AccountsWatched must be > 0 — the pass did not cover a watchlist")

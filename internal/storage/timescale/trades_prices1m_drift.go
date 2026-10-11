@@ -18,12 +18,10 @@ type TradesPrices1mDrift struct {
 	TradeUSD, CAGGUSD       string
 }
 
-// TradesPrices1mDrift compares, per pair, the trade count, base volume and
-// USD volume of `trades` in [from, to) with the sums prices_1m serves for
-// the same minutes, and returns every pair where they differ. prices_1m is
-// a plain GROUP BY minute over `trades`, so on a fully materialised window
-// the two agree exactly; a difference is a bucket the aggregate still
-// holds from rows that have since been rewritten, added or removed.
+// TradesPrices1mDrift compares, per pair, the trade count, base volume and USD volume of `trades`
+// in [from, to) with the sums prices_1m serves for the same minutes, returning every pair that
+// differs. prices_1m is a plain GROUP BY minute over `trades`, so a fully materialised window
+// agrees exactly; a difference is a bucket still holding rows since rewritten, added or removed.
 // from and to must be whole minutes, or the bucket and row ranges differ.
 func (s *Store) TradesPrices1mDrift(ctx context.Context, from, to time.Time) ([]TradesPrices1mDrift, error) {
 	if !from.Equal(from.Truncate(time.Minute)) || !to.Equal(to.Truncate(time.Minute)) || !from.Before(to) {

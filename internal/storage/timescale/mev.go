@@ -13,13 +13,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
-// tradesForArbScanQuery values each leg at its stored usd_volume, else
-// its XLM leg at the XLM/USD anchor of the trade's own minute
-// ([xlmUSDAnchorGridCTE]). SDEX arb legs quote XLM/token and often carry
-// NULL usd_volume, so without the fallback real cycles reported "$0"
-// notionals. With no anchor minute within xlmUSDAnchorMaxAge of the trade
-// the leg stays empty — never re-marked at a stale or later rate — as do
-// token/token legs with no XLM side. $3 is the network's native-XLM SAC.
+// tradesForArbScanQuery values each leg at its stored usd_volume, else its XLM leg at the XLM/USD
+// anchor of the trade's own minute ([xlmUSDAnchorGridCTE]). SDEX arb legs often carry NULL
+// usd_volume, so the fallback keeps real cycles from reporting "$0" notionals. With no anchor
+// within xlmUSDAnchorMaxAge the leg stays empty, never re-marked at a stale or later rate.
+// $3 is the network's native-XLM SAC.
 //
 //nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var tradesForArbScanQuery = `
@@ -54,16 +52,13 @@ var tradesForArbScanQuery = `
          ORDER BY t.ledger DESC, t.tx_hash DESC, t.op_index DESC
     `
 
-// TradesForArbScan returns the NEWEST `limit` ON-CHAIN trades (ledger >
-// 0, with a taker) that closed after `since`, returned ascending by
-// (ledger, tx_hash, op_index) — the order the MEV detector groups on —
-// plus a parallel slice of each trade's USD volume ("" when NULL).
+// TradesForArbScan returns the NEWEST `limit` on-chain trades (ledger > 0, with a taker) after
+// `since`, ascending by (ledger, tx_hash, op_index) as the MEV detector groups, plus each
+// trade's USD volume ("" when NULL).
 //
-// The cap keeps the newest rows, not the oldest: the worker re-scans a
-// trailing window every tick, so earlier ticks already covered the oldest
-// rows, while an oldest-first LIMIT drops the same burst tail on every
-// tick. len == limit means the window was truncated; the worker counts
-// that and trims the possibly-partial oldest ledger.
+// The cap keeps the newest rows: the worker re-scans a trailing window every tick, so an
+// oldest-first LIMIT would drop the same burst tail every time. len == limit means the window
+// was truncated; the worker counts that and trims the possibly-partial oldest ledger.
 func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int) ([]canonical.Trade, []string, error) {
 	if limit <= 0 {
 		limit = 50_000
@@ -116,13 +111,9 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
 	return trades, usd, nil
 }
 
-// oracleUpdatesForMEVScanQuery is the OracleUpdatesForMEVScan SQL.
-// `asset NOT LIKE 'raw:%'` excludes the unmapped rows the oracle
-// capture-totality design records verbatim (canonical.AssetOracleRaw):
-// they are record-layer only and must never become MEV evidence. The
-// detectors also key on asset (cascade on the position's assets, the
-// sandwich on the trade's), so this predicate is the SQL-side half of
-// that rule.
+// oracleUpdatesForMEVScanQuery is the OracleUpdatesForMEVScan SQL. `asset NOT LIKE 'raw:%'`
+// excludes unmapped oracle symbols recorded verbatim (canonical.AssetOracleRaw): they are
+// record-layer only and must never become MEV evidence, and the detectors key on asset.
 const oracleUpdatesForMEVScanQuery = `
         SELECT source, COALESCE(contract_id, ''), ledger, tx_hash, op_index,
                asset, quote, ts
@@ -134,12 +125,8 @@ const oracleUpdatesForMEVScanQuery = `
          LIMIT $2
     `
 
-// OracleUpdatesForMEVScan returns the newest `limit` ON-CHAIN oracle
-// updates (ledger > 0, mapped assets only — see
-// oracleUpdatesForMEVScanQuery) published after `since`, returned
-// ascending by ledger (newest kept, for the reason TradesForArbScan gives).
-// Satisfies mev.OracleScanner — the input for the oracle_sandwich +
-// liquidation_cascade detectors.
+// OracleUpdatesForMEVScan returns the newest `limit` on-chain, mapped-asset oracle updates after
+// `since`, ascending by ledger (newest kept, as in TradesForArbScan). Satisfies mev.OracleScanner.
 func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, limit int) ([]domain.MEVOracleRef, error) {
 	if limit <= 0 {
 		limit = 50_000
@@ -168,11 +155,9 @@ func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, li
 	return out, nil
 }
 
-// BlendFillsForMEVScan returns recent Blend liquidation-relevant
-// auction fills (event_kind='fill', auction_type 0=UserLiquidation /
-// 1=BadDebt — Interest auctions aren't liquidations) after `since`: the
-// newest `limit`, returned ascending by ledger (newest kept, for the
-// reason TradesForArbScan gives). Satisfies mev.AuctionScanner.
+// BlendFillsForMEVScan returns the newest `limit` Blend liquidation fills (event_kind='fill',
+// auction_type 0=UserLiquidation / 1=BadDebt; Interest auctions are not liquidations) after
+// `since`, ascending by ledger (newest kept, as in TradesForArbScan). Satisfies mev.AuctionScanner.
 func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit int) ([]domain.MEVAuctionFill, error) {
 	if limit <= 0 {
 		limit = 50_000
@@ -221,14 +206,11 @@ func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit
 	return out, nil
 }
 
-// insertMEVEventQuery is idempotent on dedup_key, but a re-scan whose
-// evidence CONTAINS the stored row's legs replaces its evidence columns: a
-// later overlapping scan that found more victims or more round-trip fills
-// supersedes the first partial detection instead of being dropped. A scan
-// that saw less (its window slid past earlier legs) never overwrites.
-// detected_at and the ledger keep the first detection's identity. RETURNING
-// xmax = 0 is true only for a fresh insert, so an update is not counted as
-// a new event.
+// insertMEVEventQuery is idempotent on dedup_key, but a re-scan whose evidence CONTAINS the
+// stored row's legs replaces its evidence columns, so a later overlapping scan with more victims
+// or fills supersedes a partial detection. A scan that saw less never overwrites. detected_at and
+// the ledger keep the first detection's identity. RETURNING xmax = 0 is true only for a fresh
+// insert, so an update is not counted as a new event.
 const insertMEVEventQuery = `
         INSERT INTO mev_events (
             detected_at, detected_at_ledger, kind,
@@ -288,14 +270,9 @@ type MEVEventRow struct {
 	ProfitUSD        string // "" when NULL
 }
 
-// ListMEVEvents returns the most-recent MEV events, newest first.
-// kind "" returns all kinds; a non-empty kind filters to it (uses the
-// per-kind index). limit must be in [1, 500]; anything outside that
-// range falls back to the 50-row default rather than being clamped to
-// the ceiling — the same normalisation as ListIssuers /
-// ListFreezeEvents / ListDivergenceLatest. /v1/mev already rejects an
-// out-of-range ?limit= with 400 (parseExplorerLimit), so this is the
-// defensive bound for direct callers.
+// ListMEVEvents returns the most-recent MEV events, newest first. kind "" returns all kinds; a
+// non-empty kind uses the per-kind index. A limit outside [1, 500] falls back to the 50-row
+// default rather than clamping, as in ListIssuers; /v1/mev already rejects it with 400.
 func (s *Store) ListMEVEvents(ctx context.Context, kind string, limit int) ([]MEVEventRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50

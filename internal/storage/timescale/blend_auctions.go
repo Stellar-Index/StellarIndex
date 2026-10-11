@@ -61,22 +61,12 @@ func decodeBlendAssetAmounts(jsonStr string) ([]BlendAssetAmount, error) {
 }
 
 // InsertBlendNewAuction writes a `new_auction` event row.
-// Idempotent on (ledger, tx_hash, op_index, ts, event_kind,
-// event_index) — re-running over the same range corrects the row in
-// place rather than producing duplicates. event_index (migration
-// 0058) is the per-event discriminator so multiple auction events
-// emitted by one operation don't collide; the ON CONFLICT arm is DO
-// UPDATE guarded by derive_generation (migration 0110), not DO NOTHING.
+// Idempotent on (ledger, tx_hash, op_index, ts, event_kind, event_index); event_index keeps
+// several auction events from one operation apart, and the ON CONFLICT arm is a
+// derive_generation-guarded DO UPDATE so a re-run corrects rows in place.
 //
-// The auction lifecycle produces multiple rows in this table:
-//
-//	new_auction      → event_kind='new'
-//	fill_auction(s)  → event_kind='fill'
-//	delete_auction   → event_kind='delete' (rare; admin removal)
-//
-// Read-side queries group these by (pool, auction_type,
-// user_address) ordered by ledger / ts to reconstruct a single
-// auction's lifecycle.
+// One auction's lifecycle is several rows (event_kind new, fill, delete); readers group by
+// (pool, auction_type, user_address) ordered by ledger / ts to rebuild it.
 func (s *Store) InsertBlendNewAuction(ctx context.Context, e blend.NewAuctionEvent) error {
 	bid, err := encodeBlendAssetAmounts(e.Data.Bid)
 	if err != nil {
@@ -86,12 +76,9 @@ func (s *Store) InsertBlendNewAuction(ctx context.Context, e blend.NewAuctionEve
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBlendNewAuction: lot: %w", err)
 	}
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the decoded columns (bid / lot i128 amounts,
-	// percent, block) lands in place when its generation is >= the stored
-	// one; a live gen-0 replay can never revert it. event_kind is part of the
-	// conflict key, so a 'new' row only ever conflicts with another 'new' row
-	// — the SET touches exactly this writer's columns.
+	// A corrected re-derive lands in place when its generation is >= the stored one, so a live
+	// gen-0 replay can never revert it. event_kind is in the conflict key, so the SET only ever
+	// touches rows of this writer's kind.
 	const q = `
         INSERT INTO blend_auctions (
             pool, auction_type, user_address,
@@ -268,17 +255,10 @@ type BlendAssetAmount struct {
 }
 
 // BlendPoolSummary is one row of the /v1/lending/pools listing.
-// Identifies a Blend pool contract observed in our event stream
-// (auctions and/or position events), with auction activity plus a
-// 30-day net-flow proxy for supply/borrow.
-//
-// NetSupplied30d / NetBorrowed30d are window NET-FLOW deltas from
-// blend_positions in token base-units, NOT all-time TVL or current
-// balances — the served tier is retention-scoped, and event flow ≠
-// on-chain reserve state. They are nil when the window's flows span
-// more than one reserve asset: base units of different tokens do not
-// add (the bespoke lending block dropped its cross-asset totals for
-// the same reason). Current-state per-reserve figures come from
+// NetSupplied30d / NetBorrowed30d are window NET-FLOW deltas from blend_positions in token
+// base-units, NOT TVL or current balances: the served tier is retention-scoped and event flow
+// is not on-chain reserve state. They are nil when the flows span more than one reserve asset,
+// because base units of different tokens do not add. Current per-reserve state comes from
 // BlendPoolReserves.
 type BlendPoolSummary struct {
 	Pool           string
@@ -290,11 +270,8 @@ type BlendPoolSummary struct {
 	NetBorrowed30d *string // token base-units, 30d net flow; nil when multi-asset
 }
 
-// BlendPoolAssets returns the distinct reserve assets (underlying
-// token C-strkeys) seen in the pool's position-event stream — the
-// reserve set whose current-state (ResData/ResConfig) the ADR-0039
-// reader looks up. Ordered by event volume so the busiest reserves
-// come first.
+// BlendPoolAssets returns the distinct reserve assets (underlying token C-strkeys) seen in the
+// pool's position events, busiest first; these are the reserves whose current state is read.
 func (s *Store) BlendPoolAssets(ctx context.Context, pool string) ([]string, error) {
 	const q = `
         SELECT asset
@@ -318,13 +295,10 @@ func (s *Store) BlendPoolAssets(ctx context.Context, pool string) ([]string, err
 	return out, rows.Err()
 }
 
-// BlendPoolVersion resolves a pool's contract generation from the
-// factory that deployed it, as recorded in the protocol_contracts
-// registry (the Blend decoder's trust root, never retention-scoped).
-// V1 and V2 pools store reserve rates at different scales under the
-// same field names, so this lineage is the only safe key. A pool the
-// registry does not hold, or holds under an unrecognised factory, is
-// PoolVersionUnknown.
+// BlendPoolVersion resolves a pool's generation from its deploying factory in the
+// protocol_contracts registry (the decoder's trust root, never retention-scoped). V1 and V2
+// store reserve rates at different scales under the same field names, so factory lineage is
+// the only safe key. Unregistered pools and unrecognised factories give PoolVersionUnknown.
 func (s *Store) BlendPoolVersion(ctx context.Context, pool string) (blend.PoolVersion, error) {
 	const q = `SELECT factory_id FROM protocol_contracts WHERE source = $1 AND contract_id = $2`
 	var factory string
@@ -339,16 +313,10 @@ func (s *Store) BlendPoolVersion(ctx context.Context, pool string) (blend.PoolVe
 }
 
 // BlendReserveConfigs returns the latest APPLIED ReserveConfig per
-// reserve asset for a pool, read from its admin-event lifecycle
-// (whose 'metadata' carries the full rate-model config on
-// queue_set_reserve). Blend timelocks a queued config behind a
-// separate set_reserve that applies it, or a cancel_set_reserve that
-// withdraws it — a queue_set_reserve alone is neither. This walks
-// each asset's event stream in order and keeps a queued config only
-// when the event immediately following it (same asset) is
-// set_reserve; a next-event of cancel_set_reserve, a superseding
-// queue_set_reserve, or nothing yet (still timelocked) drops it. Of
-// the resulting applied configs, the most recent per asset wins.
+// reserve asset for a pool, read from its admin-event lifecycle. Blend timelocks a
+// queue_set_reserve until a set_reserve applies it or a cancel_set_reserve withdraws it, so a
+// queued config counts only when the next event for that asset is set_reserve; a cancel, a
+// superseding queue or nothing yet (still timelocked) drops it. The latest applied config wins.
 func (s *Store) BlendReserveConfigs(ctx context.Context, pool string) (map[string]blend.ReserveConfig, error) {
 	const q = `
         WITH events AS (
@@ -391,15 +359,10 @@ func (s *Store) BlendReserveConfigs(ctx context.Context, pool string) (map[strin
 }
 
 // ListBlendPools returns one row per distinct pool contract observed
-// in EITHER blend_auctions OR blend_positions, with auction counts,
-// last-seen, and a 30-day net-flow proxy for supply/borrow (NULL when
-// the window's flows cross reserve assets — see BlendPoolSummary). Sorted
-// by AuctionsTotal desc so high-activity pools surface first; ties
-// broken by pool address for deterministic output.
-//
-// 24h / 30d windows match the rest of the activity surfaces (24h on
-// /assets / /sources, 30d for the unique-user + net-flow roll-ups
-// since liquidations and positions cluster).
+// in EITHER blend_auctions OR blend_positions, with auction counts, last-seen and a 30-day
+// net-flow proxy (NULL when flows cross reserve assets, see BlendPoolSummary). Sorted by
+// AuctionsTotal desc, ties by pool address for deterministic output. The 24h / 30d windows
+// match the other activity surfaces.
 func (s *Store) ListBlendPools(ctx context.Context) ([]BlendPoolSummary, error) {
 	const q = `
         WITH pools AS (

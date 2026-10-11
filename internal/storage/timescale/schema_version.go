@@ -7,11 +7,10 @@ import (
 	"fmt"
 )
 
-// SchemaMigrationVersion reads golang-migrate's single schema_migrations
-// row: the highest applied migration and whether it was left dirty. No
-// row means no migrations are applied (version 0). It satisfies
-// v1.SchemaVersionReader, so the indexer and aggregator gate readiness on
-// the same schema-head check the API's /v1/readyz uses.
+// SchemaMigrationVersion reads golang-migrate's single schema_migrations row: the highest applied
+// migration and whether it was left dirty (no row means version 0). It satisfies
+// v1.SchemaVersionReader so the indexer and aggregator gate readiness on the same schema-head
+// check as /v1/readyz.
 func (s *Store) SchemaMigrationVersion(ctx context.Context) (uint, bool, error) {
 	var version uint
 	var dirty bool

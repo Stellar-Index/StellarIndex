@@ -5,11 +5,9 @@ import (
 	"fmt"
 )
 
-// realTimeCAGGs are the only continuous aggregates allowed to serve their
-// open bucket (real-time aggregation, migrations 0069 / 0076). Both are
-// volume counters, not prices. Every other CAGG must be materialized_only:
-// that property is ADR-0015's closed-bucket guard for the many readers
-// that carry no `bucket <= now() - INTERVAL` predicate of their own.
+// realTimeCAGGs are the only continuous aggregates allowed to serve their open bucket; both are
+// volume counters, not prices. Every other CAGG must be materialized_only, the closed-bucket guard
+// for readers with no `bucket <= now() - INTERVAL` predicate of their own.
 var realTimeCAGGs = map[string]bool{
 	"source_volume_1h":    true,
 	"pools_per_source_1h": true,

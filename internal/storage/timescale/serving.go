@@ -10,47 +10,36 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
-// OpenServing is [Open] with a session-level `statement_timeout` on every
-// pooled connection, the SQL-side backstop under the app-layer per-request
-// deadline. Heavy scans override it with `SET LOCAL statement_timeout`.
-// statementTimeout <= 0 falls back to plain [Open] (no timeout, no
-// plan-mode override).
+// OpenServing is [Open] with a session-level `statement_timeout` on every pooled connection, the
+// SQL-side backstop under the per-request deadline. Heavy scans override it with
+// `SET LOCAL statement_timeout`. statementTimeout <= 0 falls back to plain [Open].
 //
-// The serving pool also runs `SET plan_cache_mode = force_custom_plan`: the
-// raw-trades fallback (TradesInRange) flips to a GENERIC plan after five
-// executions, and planning that across every chunk costs hundreds of
-// milliseconds each time the plan cache invalidates (about once a minute).
-// Custom plans bind in milliseconds and prune better; batch pools keep the
-// default, where generic plans pay off.
+// The serving pool also runs `SET plan_cache_mode = force_custom_plan`: the raw-trades fallback
+// (TradesInRange) flips to a GENERIC plan after five executions, and planning that across every
+// chunk costs hundreds of milliseconds whenever the plan cache invalidates. Custom plans bind in
+// milliseconds and prune better; batch pools keep the default, where generic plans pay off.
 //
-// Both settings are a post-connect SET (a wrapping driver.Connector), not a
-// DSN edit, so URL and keyword-form DSNs behave alike.
+// Both settings are a post-connect SET (a wrapping driver.Connector), not a DSN edit, so URL and
+// keyword-form DSNs behave alike.
 func OpenServing(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
 	return openWithSessionSetup(ctx, dsn, statementTimeout, true)
 }
 
-// OpenBackground is [Open] with a session-level `statement_timeout` on every
-// pooled connection, for the long-running INDEXER and AGGREGATOR binaries,
-// so a stuck query stops server-side even after its Go ctx is cancelled.
+// OpenBackground is [Open] with a session-level `statement_timeout` on every pooled connection,
+// for the long-running indexer and aggregator binaries, so a stuck query stops server-side even
+// after its Go ctx is cancelled.
 //
-// The bound is deliberately GENEROUS (StorageConfig.BackgroundStatementTimeout)
-// so it only kills a true runaway; heavy batch scans set a longer
-// `SET LOCAL statement_timeout` in their own transaction. It is distinct
-// from OpenServing so each call site reads its intent and config field;
-// one-shot ops/migrate/backfill paths stay on unbounded [Open].
-//
-// statementTimeout <= 0 falls back to plain [Open] (no session timeout).
+// The bound is deliberately GENEROUS so it only kills a true runaway; heavy batch scans set a
+// longer `SET LOCAL statement_timeout` in their own transaction. One-shot ops/migrate/backfill
+// paths stay on unbounded [Open]. statementTimeout <= 0 falls back to plain [Open].
 func OpenBackground(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
 	return openWithSessionSetup(ctx, dsn, statementTimeout, false)
 }
 
-// openWithSessionSetup is the shared implementation behind OpenServing
-// and OpenBackground: a pool whose every connection runs its session
-// SETs on dial (via [statementTimeoutConnector]), Ping'd before
-// returning. statementTimeout <= 0 falls back to plain [Open] — the
-// serving plan-mode override rides the same connector, so it also
-// requires a positive timeout (the serving pool always configures one;
-// see StorageConfig.ServingStatementTimeout's default).
+// openWithSessionSetup is the shared implementation behind OpenServing and OpenBackground: every
+// connection runs its session SETs on dial (via [statementTimeoutConnector]) and the pool is
+// pinged before returning. statementTimeout <= 0 falls back to plain [Open]; the serving
+// plan-mode override rides the same connector, so it also needs a positive timeout.
 func openWithSessionSetup(ctx context.Context, dsn string, statementTimeout time.Duration, forceCustomPlans bool) (*Store, error) {
 	connector, err := boundedConnector(dsn, statementTimeout, forceCustomPlans)
 	if err != nil {
@@ -91,11 +80,9 @@ func boundedConnector(dsn string, statementTimeout time.Duration, forceCustomPla
 	}, nil
 }
 
-// statementTimeoutConnector wraps a driver.Connector so every freshly
-// dialed connection runs `SET statement_timeout` before it is handed to
-// the pool. The GUC is a session parameter — it persists for the life of
-// the connection and applies to every subsequent statement until a
-// transaction overrides it with `SET LOCAL`.
+// statementTimeoutConnector wraps a driver.Connector so every freshly dialed connection runs
+// `SET statement_timeout` before reaching the pool. The session GUC lasts the connection's life
+// until a transaction overrides it with `SET LOCAL`.
 type statementTimeoutConnector struct {
 	base      driver.Connector
 	timeoutMS int64

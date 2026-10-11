@@ -128,14 +128,11 @@ type SpectraEvent struct {
 	YieldInIBT  *canonical.Amount
 }
 
-// InsertSpectraEvent writes one spectra_events row, idempotent on the
-// (ledger_close_time, contract_id, ledger, tx_hash, op_index,
-// event_index) key under the derive_generation guard: an equal-or-higher
-// generation overwrites the stored row, a lower one is refused. When the
-// row written is, or replaces, a pt_deployed / yt_deployed / pt_added row,
-// the markets it names are re-derived from spectra_events in the same
-// transaction, so a rebuild that corrects a discovery row's PT leaves no
-// stale market behind, and a refused replay touches neither table.
+// InsertSpectraEvent writes one spectra_events row, idempotent on (ledger_close_time, contract_id,
+// ledger, tx_hash, op_index, event_index) under the derive_generation guard: an equal-or-higher
+// generation overwrites, a lower one is refused. When the row is or replaces a pt_deployed /
+// yt_deployed / pt_added row, the markets it names are re-derived in the same transaction, so a
+// rebuild leaves no stale market and a refused replay touches neither table.
 func (s *Store) InsertSpectraEvent(ctx context.Context, e SpectraEvent) error {
 	args, err := spectraEventArgs(e)
 	if err != nil {
@@ -347,10 +344,9 @@ func priorSpectraMarket(ctx context.Context, tx *sql.Tx, e SpectraEvent) (string
 	return "", nil
 }
 
-// refreshSpectraMarket re-derives one spectra_markets row from the
-// earliest discovery row of each kind naming pt, and deletes it when none
-// is left. The six pt_deployed columns come from one row, so the
-// all-or-none CHECK holds.
+// refreshSpectraMarket re-derives one spectra_markets row from the earliest discovery row of each
+// kind naming pt, deleting it when none is left. The six pt_deployed columns come from one row so
+// the all-or-none CHECK holds.
 //
 // unbounded-latest-ok: a market's creation row is arbitrarily old, and the read is keyed to one market_pt.
 func refreshSpectraMarket(ctx context.Context, tx *sql.Tx, pt string) error {

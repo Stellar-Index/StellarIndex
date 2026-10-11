@@ -11,26 +11,21 @@ import (
 	"time"
 )
 
-// curated_rwa_published_series — the totals a third-party curator
-// PUBLISHES about tokenized real-world assets on Stellar (migration
-// 0162), cached for the RWA surface's curated arm. Synced by
-// `stellarindex-ops curated-rwa-sync`.
+// curated_rwa_published_series caches the totals a third-party curator PUBLISHES about tokenized
+// real-world assets, for the RWA surface's curated arm (synced by `curated-rwa-sync`).
 //
-// WHY THIS TABLE, and not rwa_curated_directory alone. The directory (0161)
-// holds the curator's per-asset list and prices, which live in CSV uploads
-// PRIVATE to the uploading team, so no sync can fill it. What anyone can read
-// is the latest RESULT of the curator's public dashboard queries.
+// It exists apart from rwa_curated_directory because the directory's per-asset list and prices live
+// in CSV uploads private to the uploading team, so no sync can fill it; anyone can read only the
+// latest RESULT of the curator's public dashboard queries.
 //
-// WHAT A ROW MEANS, precisely. "Curator X's public query Q, when it last ran at
-// executed_at, printed value_usd for series S at month_end (and subclass)." The
-// curator's arithmetic over private inputs: no signature, no per-asset breakdown,
-// no price, no market. Served under its own name beside the verified set, never inside it.
+// A row means: "curator X's public query Q, when it last ran at executed_at, printed value_usd for
+// series S at month_end." It is the curator's arithmetic over private inputs (no signature, per-asset
+// breakdown, price or market), served under its own name beside the verified set, never inside it.
 //
-// TWO CLOCKS. `executed_at` is the CURATOR's: when its query last ran, so the
-// figure is as fresh as that. `observed_at` is OURS: when this index read the
-// result; the reader's recognition bound ages on it, spliced into the SQL so no
-// caller can read a stale row as fresh. One sync run replaces a curator's rows
-// PER SERIES in one transaction, so a series shares one observed_at and executed_at.
+// TWO CLOCKS. `executed_at` is the CURATOR's, so a figure is only as fresh as that. `observed_at` is
+// OURS; the reader's recognition bound ages on it, spliced into the SQL so no caller can read a stale
+// row as fresh. A sync replaces a curator's rows PER SERIES in one transaction, so a series shares
+// one observed_at and executed_at.
 
 // Series names, shared by the writer and the reader.
 const (
@@ -107,14 +102,12 @@ const curatedRWAPublishedRecognisedSQL = `observed_at > now() - INTERVAL '` + cu
 // 7 params = 3500 placeholders, far under Postgres's 65535 bind cap.
 const curatedRWAPublishedInsertChunk = 500
 
-// ReplaceCuratedRWAPublished makes the cache for one curator equal to
-// `rows`, PER SERIES: every series present in `rows` is deleted and
-// re-inserted in one transaction, so a series is always one execution's
-// whole output. Series the rows do not name are left alone.
+// ReplaceCuratedRWAPublished makes one curator's cache equal `rows`, PER SERIES: each series present
+// is deleted and re-inserted in one transaction, so a series is always one execution's whole output.
+// Series the rows do not name are left alone.
 //
-// An empty set is refused rather than applied: a run that fetched
-// nothing cannot tell "the curator publishes nothing" from "the fetch
-// failed", and applying it would empty the curator into silence.
+// An empty set is refused: a run that fetched nothing cannot tell "publishes nothing" from "fetch
+// failed", and applying it would silence the curator.
 func (s *Store) ReplaceCuratedRWAPublished(
 	ctx context.Context, curator string, rows []CuratedRWAPublishedRow,
 ) (inserted int64, err error) {
@@ -227,13 +220,11 @@ const curatedRWAPublishedTotalSQL = `
 		   AND ` + curatedRWAPublishedRecognisedSQL + `
 		 ORDER BY month_end ASC`
 
-// curatedRWAPublishedSplitSQL serves the split for ONE month, largest
-// first, under the same bound.
+// curatedRWAPublishedSplitSQL serves the split for ONE month, largest first, under the same bound.
 //
-// The ORDER BY names the TABLE column. The select list's `value_usd::text`
-// takes the output name `value_usd`, and Postgres resolves an unqualified
-// ORDER BY against output names first — which sorted "904795860.00"
-// above "3100000000.00" as text until the integration test caught it.
+// The ORDER BY names the TABLE column: the select list's `value_usd::text` takes the output name
+// `value_usd`, and Postgres resolves an unqualified ORDER BY against output names first, which
+// would sort the amounts as text ("904795860.00" above "3100000000.00").
 const curatedRWAPublishedSplitSQL = `
 		SELECT subclass, value_usd::text, source_query, executed_at
 		  FROM curated_rwa_published_series

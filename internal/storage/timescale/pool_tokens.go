@@ -7,33 +7,24 @@ import (
 	"sort"
 )
 
-// poolTokensRowLimit bounds every PoolTokens DISTINCT scan. It caps the
-// per-pool token fan-out (pools × tokens) so a runaway table can't stall
-// the detail page — the same defensive bound ListSourceContractsFromProjection
-// uses on its roster scan. Realistic pool counts (a few thousand across the
-// densest AMM) × ≤4 tokens sit far below it.
+// poolTokensRowLimit bounds every PoolTokens DISTINCT scan, capping the pools x tokens fan-out
+// so a runaway table cannot stall the detail page. Realistic counts sit far below it.
 const poolTokensRowLimit = 40000
 
 // PoolTokens maps each of a pool-based protocol's contracts to the token
 // contract C-strkeys it holds, sourced from the protocol's per-token
-// liquidity / reserve table. It lets the /v1/protocols/{name} roster render
-// a human asset pair ("XLM/USDC") in place of two raw C-strkeys.
+// liquidity / reserve table, so the /v1/protocols/{name} roster can render an asset pair
+// ("XLM/USDC") instead of two raw C-strkeys.
 //
-// Returns (nil, nil) — never an error — for a source without such a table:
-//   - soroswap carries its token identities in soroswap_pairs (token0/token1)
-//     and is enriched from there, not here;
+// Returns (nil, nil), never an error, for a source without such a table:
+//   - soroswap is enriched from soroswap_pairs instead;
 //   - sdex / oracles / bridges hold no pools;
-//   - sorocredit's credit-market model (a collateral contract + per-statement
-//     debt assets) does not map to a stable pool→reserve set, so it is left
-//     to the raw-contract roster (documented gap).
+//   - sorocredit's collateral model has no stable pool-to-reserve set, so it stays on the
+//     raw-contract roster.
 //
-// Ordering follows the pool's canonical token order where the table records a
-// position (aquarius token_index; phoenix token_a then token_b). comet
-// (weighted, order-free on the wire) and blend (a reserve SET, not a pair)
-// have no positional order, so their tokens sort deterministically.
-//
-// Lending markets (blend) return the pool's reserve ASSETS — a set, not a
-// pair — from blend_positions.asset.
+// Order follows the pool's canonical token order where the table records one (aquarius
+// token_index; phoenix token_a then token_b). comet (order-free on the wire) and blend (a
+// reserve SET of blend_positions.asset, not a pair) sort deterministically.
 func (s *Store) PoolTokens(ctx context.Context, source string) (map[string][]string, error) {
 	switch source {
 	case "phoenix":
@@ -142,10 +133,8 @@ func (s *Store) aquariusPoolTokens(ctx context.Context) (map[string][]string, er
 }
 
 // groupedPoolTokens runs a two-column (pool, token) DISTINCT query and groups
-// the tokens per pool, sorted for a deterministic order-free set (comet
-// weighted pools / blend reserve sets). query MUST select exactly (pool,
-// token) in that order and is a hard-coded constant per source (never
-// request-derived).
+// the tokens per pool, sorted for a deterministic order-free set. query MUST select exactly
+// (pool, token) in that order and is a hard-coded per-source constant, never request-derived.
 func (s *Store) groupedPoolTokens(ctx context.Context, source, query string) (map[string][]string, error) {
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {

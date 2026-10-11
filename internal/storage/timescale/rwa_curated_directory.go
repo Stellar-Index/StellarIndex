@@ -12,26 +12,18 @@ import (
 	"time"
 )
 
-// rwa_curated_directory — a third party's list of which Stellar addresses
-// are tokenized real-world assets, and that party's own price for each,
-// cached for the RWA surface's CURATED arm (migration 0161). Synced by
+// rwa_curated_directory caches a third party's list of tokenized real-world-asset addresses and
+// that party's own price for each, for the RWA surface's CURATED arm. Synced by
 // `stellarindex-ops curated-rwa-sync`.
 //
-// WHAT A ROW MEANS, precisely. "Curator X states that this address is a
-// real-world asset issued by company Y, of subclass Z, and values one
-// token at P dollars." That is the entire content of the claim: no signature,
-// no proof of control, no attestation, no market.
+// A row is only a claim: "curator X says this address is an RWA of company Y, subclass Z, worth P
+// dollars", with no signature, proof of control or market. Such rows are served under their own
+// basis and total, beside the verified set and never inside it.
 //
-// Rows admitted here are served under their own basis and their own total,
-// beside the verified set and never inside it.
-//
-// TWO CLOCKS, TWO BOUNDS, the same shape as asset_listing_directory:
-//
-//   - RECOGNITION ages on `synced_at`, OUR clock ([curatedRWARecognitionMaxAge]).
-//   - The PRICE ages on `priced_at`, the CURATOR's day stamp ([curatedRWAPriceMaxAge]).
-//
-// Both are spliced into the reader's SQL, never applied by a caller, so no code
-// path reads a stale row as fresh.
+// Two clocks, as in asset_listing_directory: recognition ages on `synced_at` (our clock,
+// [curatedRWARecognitionMaxAge]) and the price ages on `priced_at` (the curator's day stamp,
+// [curatedRWAPriceMaxAge]). Both bounds are spliced into the reader's SQL, never applied by a
+// caller, so no path reads a stale row as fresh.
 
 // CuratedRWAEntry is one row as the curator published it.
 type CuratedRWAEntry struct {
@@ -59,15 +51,11 @@ type CuratedRWAEntry struct {
 	Source string
 }
 
-// CuratedRWACensus is the storage layer's account of one curator's cache,
-// taken in the same statement as the read so the counts and the rows
-// come from ONE snapshot.
-//
-// The arithmetic closes as [ListingDirectoryCensus]'s does, and
+// CuratedRWACensus is the storage layer's account of one curator's cache, read in the same
+// snapshot as the rows. Its arithmetic closes as [ListingDirectoryCensus]'s does, and
 // [CuratedRWACensus.Check] proves it:
 //
-//	Entries = Contracts + Classic   (migration 0161's CHECK makes the two
-//	                                 forms exhaustive)
+//	Entries = Contracts + Classic   (a table CHECK makes the two forms exhaustive)
 //	Priced <= Contracts, PricedClassic <= Classic
 type CuratedRWACensus struct {
 	// Entries counts rows inside the recognition bound, of either
@@ -112,12 +100,9 @@ func (c CuratedRWACensus) Check() string {
 // one missed run is survivable and two are not.
 const curatedRWARecognitionMaxAge = "48 hours"
 
-// curatedRWAPriceMaxAge is how long the curator's own price may be served
-// after the day it was stamped. Uploaded price tables are refreshed on
-// the curator's schedule, not ours, and the one behind the first curator
-// was last updated seven days before this file was written — so the bound
-// is a week, and a row past it comes back recognised and UNPRICED rather
-// than disappearing.
+// curatedRWAPriceMaxAge is how long the curator's own price may be served after its day stamp.
+// Price tables refresh on the curator's schedule, not ours, hence a week; a row past it comes back
+// recognised and UNPRICED rather than disappearing.
 const curatedRWAPriceMaxAge = "7 days"
 
 const curatedRWARecognisedSQL = `synced_at > now() - INTERVAL '` + curatedRWARecognitionMaxAge + `'`
@@ -131,12 +116,11 @@ const curatedRWAPriceFreshSQL = `price_usd IS NOT NULL
 const curatedRWAUpsertChunk = 500
 
 // ReplaceCuratedRWADirectory makes the cache for one curator equal to
-// `entries`: every entry is upserted with a fresh synced_at, and every
-// row of that curator the run did NOT touch is pruned.
+// `entries`: every entry is upserted with a fresh synced_at, and every row of that curator the run
+// did not touch is pruned.
 //
-// An empty set is refused rather than applied. A run that fetched nothing
-// cannot distinguish "the curator lists nothing" from "the fetch failed",
-// and applying it would prune the whole curator into silence.
+// An empty set is refused: a run that fetched nothing cannot tell "the curator lists nothing" from
+// "the fetch failed", and applying it would prune the whole curator into silence.
 func (s *Store) ReplaceCuratedRWADirectory(
 	ctx context.Context, curator string, entries []CuratedRWAEntry, source string,
 ) (upserted, pruned int64, err error) {
@@ -285,10 +269,9 @@ const curatedRWACensusSQL = `
 // CuratedRWADirectoryByAddress returns one curator's recognised rows keyed
 // by exact address, with the census of that curator's whole cache.
 //
-// The map key is the ADDRESS AS PUBLISHED and nothing else. A lookup by
-// code would hand a curator's price to whichever account minted the
-// ticker first; a 56-character strkey, or a code bound to its issuer's
-// G-address, cannot be collided into.
+// The map key is the address as published, never the code: a code lookup would hand a curator's
+// price to whichever account minted the ticker first, while a strkey or a code bound to its
+// issuer cannot be collided into.
 func (s *Store) CuratedRWADirectoryByAddress(
 	ctx context.Context, curator string,
 ) (map[string]CuratedRWAEntry, CuratedRWACensus, error) {
@@ -296,11 +279,8 @@ func (s *Store) CuratedRWADirectoryByAddress(
 		return nil, CuratedRWACensus{}, errors.New("curated rwa directory: curator must be non-empty")
 	}
 
-	// REPEATABLE READ, not the pool default: under READ COMMITTED each
-	// statement in a transaction still takes its OWN snapshot, so merely
-	// wrapping the two reads in a BeginTx would not deliver the "ONE
-	// snapshot" this method documents. Same isolation, same reason, as
-	// [Store.restampTradesUSDVolume]'s before-image/update pair.
+	// REPEATABLE READ because under READ COMMITTED each statement takes its own snapshot, so a
+	// bare BeginTx would not give the census and rows one snapshot.
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return nil, CuratedRWACensus{}, fmt.Errorf("curated rwa directory: begin: %w", err)

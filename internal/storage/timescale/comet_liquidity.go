@@ -46,14 +46,11 @@ func (k CometLiquidityKind) Direction() string {
 	return ""
 }
 
-// CometLiquidityEvent is one comet_liquidity row — a single observed
+// CometLiquidityEvent is one comet_liquidity row: a single observed
 // (POOL, join_pool | exit_pool | deposit | withdraw) Comet event.
-// Mirrors the migration-0042 columns.
 //
-// PoolAmountIn is populated only for withdraw events (the count of
-// BPT-share tokens burned in exchange for the underlying); the
-// writer translates a zero Amount to SQL NULL on the other three
-// kinds.
+// PoolAmountIn is populated only for withdraw events (BPT-share tokens burned for the
+// underlying); the writer turns a zero Amount into SQL NULL on the other three kinds.
 type CometLiquidityEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -72,24 +69,16 @@ type CometLiquidityEvent struct {
 	PoolAmountIn canonical.Amount // withdraw-only; zero on the other kinds
 }
 
-// InsertCometLiquidity appends one Comet liquidity event row,
-// idempotent on the (ledger_close_time, contract_id, ledger,
-// tx_hash, op_index, event_kind, token, event_index) PK (event_index
-// added by migration 0059 so two same-(kind,token) events
-// from one op don't collide). Re-running the indexer or a backfill
-// over the same range writes the same rows. ON CONFLICT ... DO UPDATE, guarded by
-// `derive_generation <= EXCLUDED.derive_generation`: a replay
-// at an equal-or-higher generation OVERWRITES the stored value
-// columns, a lower-generation one is refused. Idempotent in row count,
-// NOT inert in value — the corrective upsert exists so a re-derive can
-// repair a wrong stored row, so a replay wired with different inputs
-// will rewrite them.
+// InsertCometLiquidity appends one Comet liquidity event row, idempotent on the
+// (ledger_close_time, contract_id, ledger, tx_hash, op_index, event_kind, token, event_index)
+// PK; event_index keeps two same-(kind,token) events from one op apart. ON CONFLICT DO UPDATE
+// is guarded by `derive_generation <= EXCLUDED.derive_generation`: an equal-or-higher
+// generation replay OVERWRITES the stored value columns, a lower one is refused. Idempotent in
+// row count, NOT inert in value, because the corrective upsert exists to repair wrong rows.
 //
-// Defensive: rejects empty ContractID / TxHash / Caller / Token, an
-// invalid Kind, and a non-positive Amount before touching the DB —
-// the decoder already enforces these but the writer double-checks
-// so a malformed Event coming from an integration test or fuzz
-// harness can't silently land bad rows.
+// Defensive: rejects empty ContractID / TxHash / Caller / Token, an invalid Kind and a
+// non-positive Amount before touching the DB, so a malformed event from a test or fuzz harness
+// cannot land bad rows.
 func (s *Store) InsertCometLiquidity(ctx context.Context, e CometLiquidityEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertCometLiquidity: ContractID is empty")
@@ -159,15 +148,12 @@ func (s *Store) InsertCometLiquidity(ctx context.Context, e CometLiquidityEvent)
 }
 
 // CometTokenFlow is one Comet pool's net liquidity flow for a single token
-// over a window — the added / removed / net (added − removed) triple from
-// comet_liquidity per-event amounts (migration 0042). This is a WINDOW
-// DELTA, NOT an absolute pool reserve: comet_liquidity captures per-event
-// join_pool / exit_pool / deposit / withdraw amounts, and the Comet port
-// emits no post-state reserve snapshot — so a clean pool-reserve / TVL is
-// not derivable here (unlike Aquarius's aquarius_reserves).
+// over a window: the added / removed / net (added - removed) triple from per-event amounts.
+// This is a WINDOW DELTA, NOT an absolute pool reserve: Comet emits no post-state reserve
+// snapshot, so a clean reserve / TVL is not derivable here (unlike aquarius_reserves).
 //
-// All amounts are i128/NUMERIC (canonical.Amount, never int64 — ADR-0003);
-// Net can be negative when removals exceed adds in the window.
+// Amounts are i128/NUMERIC (canonical.Amount, never int64); Net is negative when removals
+// exceed adds in the window.
 type CometTokenFlow struct {
 	ContractID string
 	Token      string
@@ -179,22 +165,17 @@ type CometTokenFlow struct {
 }
 
 // LatestCometLiquidityFlows returns per-(pool, token) net liquidity flow
-// over the trailing windowDays, most-active token leg first. Added is the
-// summed add-direction amount (join_pool / deposit), Removed the summed
-// remove-direction amount (exit_pool / withdraw), Net = Added − Removed.
+// over the trailing windowDays, most-active token leg first. Added sums join_pool / deposit,
+// Removed sums exit_pool / withdraw, Net = Added - Removed.
 //
-// This is the READ side of the Comet liquidity-depth signal InsertCometLiquidity
-// captures. Comet has no post-state reserve snapshot and no published price,
-// so the figures are native-token base-unit WINDOW deltas — not absolute
-// reserves or USD TVL. Comet is contract-identity gated (curated one-pool
-// allowlist): the decoder's Matches() requires the emitting contract to be
-// in comet.MainnetGatedSet, so a look-alike Balancer-v1 deployment cannot
-// land NEW rows. Rows an earlier topic-only-match decoder captured were not
-// retroactively re-verified, so historical rows may not have passed the
-// gate (see docs/protocols/comet.md); callers surface that caveat.
+// Comet has no post-state reserve snapshot and no published price, so these are native-token
+// base-unit WINDOW deltas, not absolute reserves or USD TVL. The decoder is contract-identity
+// gated (comet.MainnetGatedSet), so a look-alike Balancer-v1 deployment cannot land new rows,
+// but historical rows captured by the earlier topic-only match were never re-verified against
+// the gate (docs/protocols/comet.md); callers surface that caveat.
 //
-// Empty-safe: returns (nil, nil) when no liquidity events were captured in
-// the window. windowDays <= 0 is treated as 90.
+// Empty-safe: returns (nil, nil) when no events were captured in the window. windowDays <= 0
+// is treated as 90.
 func (s *Store) LatestCometLiquidityFlows(ctx context.Context, windowDays int) ([]CometTokenFlow, error) {
 	if windowDays <= 0 {
 		windowDays = 90

@@ -5,14 +5,10 @@ import (
 	"fmt"
 )
 
-// Provenance labels for issuers.auth_flags_source (migration 0153).
-//
-// These MIRROR clickhouse.AuthFlagsSource. They are duplicated rather than
-// imported because the served-tier store must not import the lake reader
-// (see [IssuerAuthFlags]) — the copies are reconciled against the migration's
-// CHECK by TestIssuerAuthFlagsSourceMirrorsTheMigrationCheck, because an
-// enumerated string set whose copies are never colocated drifts silently:
-// a member added to one compiles green while the database rejects every write.
+// Provenance labels for issuers.auth_flags_source. They MIRROR clickhouse.AuthFlagsSource,
+// duplicated because the served-tier store must not import the lake reader.
+// TestIssuerAuthFlagsSourceMirrorsTheMigrationCheck reconciles them against the migration's
+// CHECK, since a member added to one copy compiles green while the database rejects every write.
 const (
 	// AuthFlagsSourceLive — the flags were decoded from the account's
 	// CURRENT on-chain AccountEntry. The account exists.
@@ -45,20 +41,13 @@ type IssuerAuthFlags struct {
 }
 
 // validate refuses a row whose provenance is internally inconsistent, BEFORE
-// it reaches Postgres. Two of the three arms mirror migration 0153's CHECKs
-// so the failure names the invariant instead of surfacing as a constraint
-// violation; the third is not expressible as a column constraint at all.
+// it reaches Postgres. Two arms mirror the migration's CHECKs so the failure names the
+// invariant instead of a constraint violation; the third is not expressible as a constraint.
 //
-// The home_domain arm is defence in depth. A merged account's home_domain is
-// a self-declared identity claim that can no longer be checked against SEP-1's
-// bidirectional [[CURRENCIES]] back-reference, so persisting one would create
-// an impersonation surface on exactly the accounts that can no longer be
-// verified on-chain — and it is not hypothetical: 979 of 985 recovered
-// pre-images in a 1,000-issuer r1 sample carried one, including
-// `stellarkraken.com` and `stellarbrunch.com` on accounts that no longer
-// exist. clickhouse.RemovedAccountsLastKnownAuthFlags already blanks it at
-// the reader, which is the primary defence; this refuses to be the second
-// way in rather than silently dropping the value.
+// The home_domain arm is defence in depth. A merged account's home_domain is a self-declared
+// claim that can no longer be checked against SEP-1's [[CURRENCIES]] back-reference, so
+// persisting it would be an impersonation surface. The lake reader already blanks it; this
+// refuses to be the second way in rather than silently dropping the value.
 func (f IssuerAuthFlags) validate() error {
 	switch f.Source {
 	case "":
@@ -82,10 +71,8 @@ func (f IssuerAuthFlags) validate() error {
 }
 
 // IssuerGStrkeysNeedingFlags returns issuer G-strkeys whose auth flags are
-// not yet persisted, oldest-first by primary key so repeated bounded runs
-// make forward progress instead of re-walking the same head.
-//
-// `limit` <= 0 returns every candidate.
+// not yet persisted, oldest-first by primary key so repeated bounded runs make forward
+// progress instead of re-walking the same head. A limit <= 0 returns every candidate.
 func (s *Store) IssuerGStrkeysNeedingFlags(ctx context.Context, limit int) ([]string, error) {
 	q := `SELECT g_strkey FROM issuers WHERE auth_required IS NULL ORDER BY g_strkey`
 	args := []any{}
@@ -115,21 +102,17 @@ func (s *Store) IssuerGStrkeysNeedingFlags(ctx context.Context, limit int) ([]st
 
 // IssuerGStrkeysNeedingRecheck returns issuer G-strkeys whose persisted auth
 // flags are a LAST-KNOWN reading taken from an account that had been merged
-// away, oldest-first by primary key like [Store.IssuerGStrkeysNeedingFlags].
+// away, oldest-first by primary key like [Store.IssuerGStrkeysNeedingFlags]. A limit <= 0
+// returns every candidate.
 //
-// `limit` <= 0 returns every candidate.
+// A second queue is needed because an account can be re-created at the same address after an
+// account_merge, making a `last_known_before_removal` reading false, and these rows already
+// have auth_required so the primary queue (`auth_required IS NULL`) never revisits them.
 //
-// Why a second queue: an account can be re-created at the same address after an
-// account_merge, at which point a `last_known_before_removal` reading stops
-// being true. The primary queue is `auth_required IS NULL` and these rows HAVE
-// auth_required, so nothing else would revisit them.
-//
-// `live` rows are deliberately NOT re-checked: the API read path re-reads a live
-// AccountEntry per request and outranks the persisted value. A `last_known` row
-// is the one the read path CANNOT correct, because absence from the
-// current-state projection looks the same for a merged account and a
-// lake-coverage gap; only this job, which reads an actual `removed` row, may
-// conclude "removed".
+// `live` rows are NOT re-checked: the read path re-reads the live AccountEntry per request and
+// outranks the persisted value. A `last_known` row is one the read path cannot correct,
+// because absence from the current-state projection looks the same for a merged account and a
+// lake-coverage gap; only this job, which reads an actual `removed` row, may conclude "removed".
 func (s *Store) IssuerGStrkeysNeedingRecheck(ctx context.Context, limit int) ([]string, error) {
 	q := `SELECT g_strkey FROM issuers WHERE auth_flags_source = $1 ORDER BY g_strkey`
 	args := []any{AuthFlagsSourceLastKnownBeforeRemoval}
@@ -182,25 +165,23 @@ var persistIssuerAuthFlagsQuery = `
 		        OR auth_flags_as_of_ledger <= $8::integer)`
 
 // PersistIssuerAuthFlags writes decoded auth flags for the given issuers,
-// returning how many rows it actually changed. UPDATE, not upsert: account
-// entries must not invent issuer rows.
+// returning how many rows it actually changed. UPDATE, not upsert: account entries must not
+// invent issuer rows.
 //
-// home_domain follows the reading's provenance, and a changed domain unbinds the
-// row's SEP-1 state in the same statement (sep1ResetOnHomeDomainChange):
+// home_domain follows the reading's provenance, and a changed domain unbinds the row's SEP-1
+// state in the same statement (sep1ResetOnHomeDomainChange):
 //
 //   - live: set to exactly what the AccountEntry declares; "" CLEARS it.
-//   - last_known_before_removal: cleared. A merged account's domain can no longer
-//     be verified against SEP-1's [[CURRENCIES]], so keeping it is an impersonation surface.
+//   - last_known_before_removal: cleared, since a merged account's domain can no longer be
+//     verified against SEP-1 and keeping it is an impersonation surface.
 //   - "" (unlabelled): a non-empty value overwrites; an empty one is ignored.
 //
-// No COALESCE keeping the stored value: the SEP-1 resolver READS this column, so a
-// write-once column would stop an anchor that moved or cleared its domain from
-// taking it back. See [Store.SyncIssuerHomeDomain].
+// No COALESCE keeping the stored value: the SEP-1 resolver reads this column, so a write-once
+// column would stop an anchor that moved or cleared its domain from taking it back.
 //
-// auth_flags_source and auth_flags_as_of_ledger move TOGETHER or not at all; an
-// empty Source leaves both untouched. A labelled reading older than the one on
-// record is refused and not counted, so out-of-order drain runs cannot reinstate
-// a home_domain the account moved away from.
+// auth_flags_source and auth_flags_as_of_ledger move together or not at all. A labelled reading
+// older than the one on record is refused and not counted, so out-of-order drain runs cannot
+// reinstate a home_domain the account moved away from.
 func (s *Store) PersistIssuerAuthFlags(ctx context.Context, flags []IssuerAuthFlags) (int, error) {
 	if len(flags) == 0 {
 		return 0, nil

@@ -5,26 +5,21 @@ package timescale
 // (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the scan
 // helpers stay in protocol_bespoke.go.
 
-// ─── Oracle bespoke analytics (reflector-dex/cex/fx, redstone, band) ─────
+// Oracle bespoke analytics (reflector-dex/cex/fx, redstone, band).
 //
-// Everything here is COUNTS + TIMESTAMPS over oracle_updates scoped by source
-// = the protocol page's name. No price averaging, rescaling, or aggregation
-// happens on this page: aggregated pricing is the aggregator's domain
-// (ADR-0006 / docs/methodology), and oracle sources never feed VWAP
-// (external.Registry class policy). The one price shown, in "Latest feed
-// prices", is the raw observed integer verbatim with its declared decimals.
+// Everything here is counts and timestamps over oracle_updates scoped by source = the protocol
+// page's name. No price averaging or rescaling happens: aggregated pricing is the aggregator's
+// domain, and oracle sources never feed VWAP. The one price shown ("Latest feed prices") is the
+// raw observed integer verbatim with its declared decimals.
 //
-// Batch semantics: some sources (redstone: one "REDSTONE" event per batch
-// push) land one ROW PER FEED per publication, so update counts weight feeds,
-// not transactions. The median publish interval is therefore measured between
-// DISTINCT publication timestamps, not rows — row-to-row gaps within one
-// batch are zero and would report a dishonest "0s cadence".
+// Some sources (redstone) land one row per feed per publication, so update counts weight feeds,
+// not transactions. The median publish interval is therefore measured between distinct
+// publication timestamps; row-to-row gaps within one batch are zero and would report a dishonest
+// "0s cadence".
 //
-// oracle_updates carries NO retention (migration 0040), so "all-time" figures
-// start at each source's first ingested observation, NOT at protocol genesis.
-//
-// Every windowed query is bounded by ts > now() - $N::interval (1-day chunks
-// make this a chunk-excluded scan).
+// oracle_updates has no retention, so "all-time" figures start at each source's first ingested
+// observation, not at protocol genesis. Windowed queries are bounded by
+// ts > now() - $N::interval so 1-day chunks are excluded.
 
 import (
 	"context"
@@ -41,14 +36,10 @@ const oracleSeriesNameUpdates = "Updates"
 // folding the tail into one honest "Others" slice.
 const oracleBreakdownTopN = 10
 
-// oracleWindowKPIQuery returns the windowed headline counts: updates,
-// distinct feeds, mean updates/day, the freshest-update age (now minus
-// the newest publication ts in the window, truncated to seconds), and the
-// number of those feeds that are UNMAPPED (`raw:<symbol>` rows — oracle
-// symbols recorded verbatim because they map to no canonical asset; see
-// canonical.AssetOracleRaw). Totality is what this page counts, so the
-// unmapped feeds stay inside every count and table and are surfaced as
-// their own KPI rather than filtered.
+// oracleWindowKPIQuery returns the windowed headline counts: updates, distinct feeds, mean
+// updates/day, freshest-update age, and how many feeds are unmapped (`raw:<symbol>` rows, see
+// canonical.AssetOracleRaw). The page counts totality, so unmapped feeds stay inside every count
+// and table and get their own KPI instead of being filtered.
 // $1 = source, $2 = windowDays, $3 = interval.
 func oracleWindowKPIQuery() string {
 	return `
@@ -62,9 +53,8 @@ func oracleWindowKPIQuery() string {
 }
 
 // oracleMedianIntervalQuery returns the median gap between successive
-// DISTINCT publication timestamps in the window (see the batch-semantics
-// file doc — row-to-row gaps within one batch push are zero). NULL (fewer
-// than two distinct timestamps) renders as an honest em dash.
+// DISTINCT publication timestamps in the window (batch rows share a ts, so row gaps are zero).
+// NULL (fewer than two distinct timestamps) renders as an em dash.
 // $1 = source, $2 = interval.
 func oracleMedianIntervalQuery() string {
 	return `
@@ -77,9 +67,8 @@ func oracleMedianIntervalQuery() string {
 }
 
 // oracleAllTimeKPIQuery returns the retained-history totals: every stored
-// update for the source plus the first observation date. Deliberately NOT
-// window-bounded — but see the file doc: this is served-tier retained
-// history (no retention since migration 0040), not protocol genesis.
+// update for the source plus the first observation date. Deliberately not window-bounded; it is
+// retained served-tier history, not protocol genesis.
 // $1 = source.
 func oracleAllTimeKPIQuery() string {
 	return `
@@ -161,10 +150,8 @@ func oracleLatestPricesQuery() string {
 }
 
 // bespokeOracle builds the oracle bespoke block (reflector-dex/cex/fx,
-// band, redstone) from oracle_updates scoped by source: update-cadence
-// KPIs (window + retained-history), the total and per-feed update series,
-// the updates-by-feed breakdown, the per-feed cadence table, and the
-// latest raw-observation table.
+// band, redstone) from oracle_updates scoped by source: cadence KPIs, update series, the
+// updates-by-feed breakdown, per-feed cadence and the latest raw observations.
 func (s *Store) bespokeOracle(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
 	since := fmt.Sprintf("%d days", windowDays)
 	blk := &BespokeBlock{
@@ -328,12 +315,9 @@ func (s *Store) collectKeyedSeries(ctx context.Context, query, unit string, name
 	return out, rows.Err()
 }
 
-// foldBreakdownRows keeps the first topN rows (the query orders them
-// count-descending) and folds the remainder into one "Others" row whose
-// Value/Count are the tail's summed counts. Intended for COUNT-weighted
-// breakdowns where Value is the decimal rendering of Count — never for
-// token-amount breakdowns (amounts across feeds/vaults are different
-// units and must not be summed).
+// foldBreakdownRows keeps the first topN rows (count-descending) and folds the rest into one
+// "Others" row with the tail's summed counts. Only for count-weighted breakdowns, never token
+// amounts: amounts across feeds or vaults are different units and must not be summed.
 func foldBreakdownRows(rows []BespokeBreakdownRow, topN int) []BespokeBreakdownRow {
 	if len(rows) <= topN {
 		return rows

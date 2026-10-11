@@ -8,15 +8,12 @@ import (
 	"time"
 )
 
-// SoroswapLiquidityEvent is one soroswap_liquidity row — a single
-// observed Soroswap pair `deposit` or `withdraw` (LP add / remove)
-// event (migration 0127).
+// SoroswapLiquidityEvent is one soroswap_liquidity row: a single Soroswap pair `deposit` or
+// `withdraw` (LP add / remove) event.
 //
-// The amount columns are decimal-string i128 values per ADR-0003,
-// stored verbatim into the NUMERIC columns by the postgres driver.
-// Token0 / Token1 are the pair's canonical asset_ids resolved from
-// the factory registry; empty string → SQL NULL (pair unseeded at
-// decode time, resolvable downstream via soroswap_pairs).
+// Amounts are decimal-string i128 values (ADR-0003), stored verbatim into NUMERIC columns.
+// Token0 / Token1 are the pair's canonical asset_ids from the factory registry; an empty string
+// becomes SQL NULL (pair unseeded at decode time, resolvable later via soroswap_pairs).
 type SoroswapLiquidityEvent struct {
 	Pair            string
 	Ledger          uint32
@@ -35,19 +32,13 @@ type SoroswapLiquidityEvent struct {
 	NewReserve1     string // decimal i128
 }
 
-// InsertSoroswapLiquidity appends one Soroswap liquidity event row,
-// idempotent on the (ledger_close_time, pair, ledger, tx_hash,
-// op_index, event_index, action) PK. Uses the generation-guarded
-// corrective upsert (migration 0110 pattern, same as trades /
-// soroswap_skim_events): a corrected re-derive lands in place when its
-// generation is >= the stored one; a live gen-0 replay can never
-// revert it.
+// InsertSoroswapLiquidity appends one Soroswap liquidity event row, idempotent on the table PK.
+// It uses the generation-guarded upsert (migration 0110 pattern): a corrected re-derive lands when
+// its generation is >= the stored one, and a live gen-0 replay never reverts it.
 //
-// Defensive: rejects empty Pair / TxHash / Provider / Action / the
-// five amount strings and a zero LedgerCloseTime (the partition
-// column — a NULL/zero would route the row to a chunk Timescale won't
-// open). The amount columns are NOT NULL in the migration; passing an
-// empty string here is a caller bug, not a missing-field case.
+// Rejects empty Pair / TxHash / Provider / Action, the five amount strings, and a zero
+// LedgerCloseTime (the partition column; a zero value routes to a chunk Timescale will not open).
+// The amount columns are NOT NULL, so an empty string is a caller bug, not a missing field.
 func (s *Store) InsertSoroswapLiquidity(ctx context.Context, e SoroswapLiquidityEvent) error {
 	if e.Pair == "" {
 		return errors.New("timescale: InsertSoroswapLiquidity: Pair is empty")

@@ -17,26 +17,17 @@ type NetworkStats struct {
 	// volume column is NUMERIC and can exceed int64 in raw cents).
 	// Nil when prices_1m has no recent rows.
 	Volume24hUSD *string
-	// MarketsCount24h: distinct (base, quote) pairs that recorded
-	// any volume_usd in the trailing 24h. This is an ORDER OF
-	// MAGNITUDE SMALLER than AssetsIndexed, not larger: it counts
-	// only pairs that TRADED in the window, while AssetsIndexed
-	// counts every classic asset ever seen, most of which never
-	// trade. Measured: 20,932 markets vs 198,636 assets.
+	// MarketsCount24h: distinct (base, quote) pairs that recorded any volume_usd in the trailing
+	// 24h. It is an ORDER OF MAGNITUDE SMALLER than AssetsIndexed because it counts only pairs
+	// that TRADED in the window, while AssetsIndexed counts every classic asset ever seen.
 	MarketsCount24h int64
-	// AssetsIndexed: total rows in classic_assets — 198,636 when
-	// measured via /v1/network/stats (the figure grows
-	// monotonically as issuers appear, so read it, don't quote it).
-	// Doesn't filter by recent activity; this is "what we know
-	// about", not "what's currently trading".
+	// AssetsIndexed: total rows in classic_assets. It grows monotonically and does not filter by
+	// recent activity: it is "what we know about", not "what's currently trading".
 	//
-	// EXPECT A STEP CHANGE the first time `stellarindex-ops
-	// asset-registry-backfill` runs: up to ~512,496, the number of
-	// classic assets the lake held a trustline for when measured. That
-	// is not an anomaly and not double counting. Without the backfill
-	// the registry learns about an asset only from a TRADE, so 61% of
-	// the population was missing when measured and the number meant
-	// "assets that have traded at least once", not "what we know about".
+	// EXPECT A STEP CHANGE the first time `stellarindex-ops asset-registry-backfill` runs; that
+	// is not an anomaly or double counting. Without the backfill the registry learns of an asset
+	// only from a TRADE, so most of the trustline population is missing and the number means
+	// "assets that have traded at least once".
 	AssetsIndexed int64
 	// LatestLedger: max(ingestion_cursors.last_ledger) across the live
 	// cursor namespaces ([LiveCursorSources]). A one-shot job's shard
@@ -69,11 +60,9 @@ func (s *Store) GetNetworkStats(ctx context.Context) (NetworkStats, error) {
 	return out, nil
 }
 
-// networkStatsQuery builds GetNetworkStats's query. canonBase/canonQuote
-// fold a market's two stored orientations (e.g. XLM/USDC and USDC/XLM)
-// into one row before counting distinct pairs — see canonOrientSQL.
-// Without this, a market that prices_1m recorded in both directions is
-// counted twice.
+// networkStatsQuery builds GetNetworkStats's query. canonBase/canonQuote fold a market's two
+// stored orientations (e.g. XLM/USDC and USDC/XLM) into one row before counting distinct pairs
+// (see canonOrientSQL), so a market recorded in both directions is not counted twice.
 func networkStatsQuery() string {
 	canonBase, canonQuote, _ := canonOrientSQL(2)
 	return `

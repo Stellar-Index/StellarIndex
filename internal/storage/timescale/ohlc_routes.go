@@ -5,22 +5,18 @@ package timescale
 
 import "strings"
 
-// OHLCRoute is how one `/v1/ohlc?interval=` value is served: either
-// straight from the continuous aggregate of that width (Native), or
-// by folding a finer aggregate into it at query time (Source + Fold,
-// see [Store.OHLCSeriesReBucketed]). Exactly one of the two shapes is
-// set; [OHLCRoute.Folded] tells them apart.
+// OHLCRoute is how one `/v1/ohlc?interval=` value is served: straight from the continuous
+// aggregate of that width (Native), or by folding a finer one at query time (Source + Fold, see
+// [Store.OHLCSeriesReBucketed]). Exactly one shape is set; [OHLCRoute.Folded] tells them apart.
 type OHLCRoute struct {
 	// Interval is the wire value the API accepts (`2h`).
 	Interval string
 	// Native is the granularity whose prices_<Native> view is read
 	// as-is. Empty on a folded route.
 	Native HistoryGranularity
-	// Source is the finer granularity whose prices_<Source> rows are
-	// folded, and Fold the Postgres INTERVAL literal they are folded
-	// by (`2 hours`). Fold MUST be an integer multiple of Source's
-	// bucket — TestOHLCRoutesFoldIsAMultipleOfItsSource pins it. Both
-	// empty on a native route.
+	// Source is the finer granularity whose prices_<Source> rows are folded, and Fold the Postgres
+	// INTERVAL literal they are folded by (`2 hours`). Fold MUST be an integer multiple of
+	// Source's bucket (TestOHLCRoutesFoldIsAMultipleOfItsSource). Both empty on a native route.
 	Source HistoryGranularity
 	Fold   string
 }
@@ -29,25 +25,17 @@ type OHLCRoute struct {
 // rather than reading its own.
 func (r OHLCRoute) Folded() bool { return r.Native == "" }
 
-// OHLCRoutes is the ONE declaration of the /v1/ohlc interval ladder,
-// finest first. Three things derive from it and so cannot disagree:
-// the API's `interval` validation and its 400 body (through
-// [OHLCRouteFor] / [OHLCIntervalList]), the serving reader's choice
-// of view (cmd/stellarindex-api's storeHistoryReader.OHLCSeries),
-// and the fold allow-list inside [Store.OHLCSeriesReBucketed] — the
-// literal that composes into that query is accepted precisely when a
-// folded row here declares it.
+// OHLCRoutes is the one declaration of the /v1/ohlc interval ladder, finest first. The API's
+// `interval` validation and 400 body ([OHLCRouteFor] / [OHLCIntervalList]), the serving reader's
+// view choice (storeHistoryReader.OHLCSeries) and the fold allow-list in
+// [Store.OHLCSeriesReBucketed] all derive from it. Separate hand-kept lists would drift, and a
+// width the reader knows but the allow-list does not would answer 500 for every such request.
 //
-// Two hand-kept lists in two packages would drift: a width the reader's
-// switch learns but the allow-list does not answers 500 for every
-// request at that width.
-//
-// The fold pairings are query-time derivations over existing views, so nothing
-// here needs a backfill. 3d folds the DAILY view rather than the hourly one
-// (3 source rows instead of 72; prices_1d is already the closed-bucket authority
-// for day boundaries). 4h folds prices_1h although prices_4h exists: moving it
-// onto the native view changes which rows the extremes' notional floor
-// (migration 0147) admits, a served-value decision to take on its own.
+// Folds are query-time derivations over existing views, so none needs a backfill. 3d folds the
+// daily view rather than the hourly one (3 source rows instead of 72; prices_1d is already the
+// closed-bucket authority for day boundaries). 4h folds prices_1h although prices_4h exists:
+// moving it to the native view changes which rows the extremes' notional floor (migration 0147)
+// admits, a served-value decision to take on its own.
 var OHLCRoutes = []OHLCRoute{
 	{Interval: "1m", Native: Granularity1m},
 	{Interval: "5m", Source: Granularity1m, Fold: "5 minutes"},
@@ -89,11 +77,9 @@ func OHLCIntervalList() string {
 	return strings.Join(parts, historyGranularitySep)
 }
 
-// ohlcFoldDeclared reports whether some folded route re-buckets
-// `source` by exactly `fold`. It is the allow-list
-// [Store.OHLCSeriesReBucketed] applies before `fold` composes into
-// SQL: a pairing is safe to interpolate precisely because it is a
-// literal in this file, never a request value.
+// ohlcFoldDeclared reports whether some folded route re-buckets `source` by exactly `fold`. It is
+// the allow-list [Store.OHLCSeriesReBucketed] applies before `fold` is interpolated into SQL: the
+// pairing is safe because it is a literal in this file, never a request value.
 func ohlcFoldDeclared(source HistoryGranularity, fold string) bool {
 	for _, r := range OHLCRoutes {
 		if r.Folded() && r.Source == source && r.Fold == fold {

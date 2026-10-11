@@ -13,12 +13,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// Instance locks make "one indexer, one aggregator per database"
-// (ha-plan §3.7/§3.8) something Postgres enforces rather than a deployment
-// convention: a second process would race the cursors and double-write
-// every sink. Each is a session-level advisory lock on a dedicated
-// connection, so Postgres drops it with the session and a crashed holder
-// never wedges its successor.
+// Instance locks make "one indexer, one aggregator per database" something Postgres enforces: a
+// second process would race the cursors and double-write every sink. Each is a session-level
+// advisory lock on a dedicated connection, so Postgres drops it with the session and a crashed
+// holder never wedges its successor.
 const (
 	IndexerInstanceLockName    = "instance:stellarindex-indexer"
 	AggregatorInstanceLockName = "instance:stellarindex-aggregator"
@@ -52,12 +50,10 @@ type InstanceLock struct {
 	watchDone chan struct{}
 }
 
-// HoldInstanceLock takes the named instance lock without waiting — a held
-// lock is [ErrInstanceLockHeld] — and re-verifies it every
-// [InstanceLockVerifyInterval] until ctx ends or [InstanceLock.Release].
-// If the session dies, the lock is retaken on a new one; if another
-// session got there first, onLost is called once and [InstanceLock.Lost]
-// reports it.
+// HoldInstanceLock takes the named instance lock without waiting (a held lock is
+// [ErrInstanceLockHeld]) and re-verifies it every [InstanceLockVerifyInterval] until ctx ends or
+// [InstanceLock.Release]. If the session dies the lock is retaken on a new one; if another
+// session got there first, onLost is called once and [InstanceLock.Lost] reports it.
 func (s *Store) HoldInstanceLock(ctx context.Context, name string, onLost func(), logger *slog.Logger) (*InstanceLock, error) {
 	l := &InstanceLock{db: s.db, name: name, onLost: onLost, logger: logger}
 	conn, err := l.take(ctx)

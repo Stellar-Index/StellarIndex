@@ -11,52 +11,38 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Daily OBSERVED dollar market per asset — the market twin of
-// [Store.DailyOraclePrices].
+// Daily observed dollar market per asset, the market twin of [Store.DailyOraclePrices].
 //
-// The oracle reader answers "what did somebody PUBLISH this instrument
-// to be worth on this day". This one answers "what was somebody
-// observed PAYING for the token on this day". A premium to net asset
-// value is their ratio, so the two have to be readable on the same
-// clock at the same grain, and neither may ever be derived from the
-// other.
+// The oracle reader answers what was published as the instrument's worth; this one answers what
+// was observed paid for the token. A premium to net asset value is their ratio, so both must be
+// readable on the same clock and grain, and neither may be derived from the other.
 
-// MarketDay is one UTC day of one asset's observed dollar market: the
-// day's volume-weighted average price, plus the three measurements the
-// serving thin-market floor is made of.
+// MarketDay is one UTC day of one asset's observed dollar market: the day's VWAP plus the three
+// measurements the thin-market floor is made of.
 //
-// The substance measurements travel WITH the price rather than being
-// applied as a WHERE clause, because a floor is policy and this is a
-// measurement. The caller applies the policy and can then say on the
-// wire what it refused and why — a day whose market was too thin to
-// price is a finding about that day, not a row to drop in silence.
+// The substance measurements travel with the price instead of being a WHERE clause because a floor
+// is policy and this is measurement; the caller applies it and can say on the wire what it refused,
+// since a too-thin day is a finding, not a row to drop silently.
 type MarketDay struct {
 	// Day is the UTC day bucket (time_bucket('1 day', bucket)).
 	Day time.Time
 	// AssetID is the requested asset's string. Rows stored under any
 	// alias spelling of it (its SAC wrapper) are folded onto it.
 	AssetID string
-	// VWAP is the day's volume-weighted average price in dollars, as
-	// exact NUMERIC text (ADR-0003 — never a float). Weighted by each
-	// hour's volume_priced, which recovers the day's true
-	// sum(quote)/sum(base) over priceable trades: each hour's vwap is that
-	// hour's own ratio over the same trades, so the weighting is an
-	// identity, not an approximation. `volume` also counts zero-leg
-	// trades and would skew it.
+	// VWAP is the day's volume-weighted average price in dollars as exact NUMERIC text, never a
+	// float. Weighting each hour by volume_priced recovers the true sum(quote)/sum(base) over
+	// priceable trades exactly; `volume` also counts zero-leg trades and would skew it.
 	VWAP string
 	// VolumeUSD is the day's dollar volume over the same buckets. The
 	// first leg of the substance floor.
 	VolumeUSD string
 	// Hours is how many distinct hour buckets carried a trade.
 	//
-	// The serving gate counts buckets at MINUTE grain. An hour is the
-	// finest grain a HISTORICAL day can be held to — see the reader's
-	// "Why prices_1h" note for why the minute grain's reach is a
-	// deployment setting rather than a property of the schema.
+	// The serving gate counts minute buckets, but an hour is the finest grain a historical day
+	// can be held to (minute reach is a deployment setting, see the prices_1h note below).
 	Hours int64
-	// SpanSeconds is max(bucket) - min(bucket) inside the day: the
-	// "a market must have existed at more than one point in time" leg
-	// of the floor, measured at the same hour grain.
+	// SpanSeconds is max(bucket) - min(bucket) inside the day: the "market existed at more than
+	// one point in time" leg of the floor, at hour grain.
 	SpanSeconds int64
 	// Trades is the day's trade count. Carried as evidence for a
 	// reader, not as a gate.
@@ -66,21 +52,19 @@ type MarketDay struct {
 // DailyMarketDays returns one [MarketDay] per (asset, UTC day) over the
 // inclusive range [from, to], folding EVERY dollar spelling in `quotes`.
 //
-// The dollar spellings (classic USDC, its SAC, `fiat:USD`) carry disjoint
-// venue populations, so the market is their sum, the same union
-// [pricingguard.SubstanceGate] and [Store.GetAssetATH] use. Each asset's
-// [canonical.AssetAliases] forms are mapped back to it in SQL, so `hours` counts
-// distinct hours once. A spelling shared by two requested assets is credited to the first only.
+// The dollar spellings (classic USDC, its SAC, `fiat:USD`) carry disjoint venue populations, so the
+// market is their sum, the same union [pricingguard.SubstanceGate] and [Store.GetAssetATH] use.
+// Each asset's [canonical.AssetAliases] forms are mapped back to it in SQL so `hours` counts
+// distinct hours once; a spelling shared by two requested assets is credited to the first only.
 //
-// It reads prices_1h: prices_1d has no intra-day timing, and prices_1m can carry
-// an armable 90-day retention (migration 0156) that would silently truncate the
-// series. prices_1h has no retention ([CAGGsLiveForever]) but its depth is not
-// promised: an unmaterialised span reads as "did not trade", so callers counting
-// silent days must bound the count to the span this reader covers.
+// It reads prices_1h: prices_1d has no intra-day timing, and prices_1m can carry an armable 90-day
+// retention that would silently truncate the series. prices_1h has no retention
+// ([CAGGsLiveForever]) but its depth is not promised: an unmaterialised span reads as "did not
+// trade", so callers counting silent days must bound the count to the span this reader covers.
 //
-// Only rows with the asset as base are read; a dollar-first book reads as no market
-// (a false absence, never a wrong price). Empty `assets` or `quotes` returns
-// (nil, nil). Closed buckets only (ADR-0015). Bounds floor to their UTC day; `to` reads through its end.
+// Only rows with the asset as base are read; a dollar-first book reads as no market (a false
+// absence, never a wrong price). Empty `assets` or `quotes` returns (nil, nil). Closed buckets only;
+// bounds floor to their UTC day and `to` reads through its end.
 //
 // dailyMarketDaysQuery is package-level so a query-shape test can pin its sargability.
 const dailyMarketDaysQuery = `

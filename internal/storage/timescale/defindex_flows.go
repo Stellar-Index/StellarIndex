@@ -48,15 +48,13 @@ func (d DefindexDirection) IsValid() bool {
 
 // DefindexFlow is one defindex_flows row.
 //
-// Strategy-layer rows: Amount is set (single-asset), AmountsVec is
-// nil/empty, DfTokens is empty. Actor is the vault contract
-// C-strkey moving capital.
+// Strategy-layer rows set Amount (single-asset) and leave AmountsVec and DfTokens empty; Actor is
+// the vault contract C-strkey moving capital.
 //
-// Vault-layer rows: AmountsVec is set (one entry per vault basket
-// asset), Amount is empty, DfTokens is set (share-token delta).
-// Actor is the end-user G-strkey (or routing C-strkey).
+// Vault-layer rows set AmountsVec (one entry per basket asset) and DfTokens (share-token delta)
+// and leave Amount empty; Actor is the end-user G-strkey (or routing C-strkey).
 //
-// All amount fields are decimal-string numerics per ADR-0003.
+// All amount fields are decimal-string numerics (ADR-0003).
 type DefindexFlow struct {
 	Ledger          uint32
 	LedgerCloseTime time.Time
@@ -101,15 +99,11 @@ func (s *Store) InsertDefindexFlow(ctx context.Context, e DefindexFlow) error {
 			return errors.New("timescale: InsertDefindexFlow: strategy layer requires Amount")
 		}
 	case DefindexLayerVault:
-		// AmountsVec present-but-empty is a legal shape, not a caller
-		// bug: decode.go's decodeVaultFlow accepts an empty on-chain
-		// `amounts` Vec (a zero-asset deposit/withdraw is valid SCVal)
-		// and documents that the decision of what to do with it belongs
-		// downstream (TestDecodeVaultFlow_emptyAmountsVec). Rejecting it
-		// here would turn a genuine on-chain event into an unclassified
-		// sink fault (held, then quarantined) instead of a clean insert.
-		// Only a Go-nil AmountsVec — the caller never set the field at
-		// all — is the caller bug this guard exists for.
+		// A present-but-empty AmountsVec is legal, not a caller bug: decodeVaultFlow accepts an
+		// empty on-chain `amounts` Vec and leaves its handling downstream
+		// (TestDecodeVaultFlow_emptyAmountsVec). Rejecting it would turn a genuine on-chain event
+		// into an unclassified sink fault. Only a Go-nil AmountsVec (field never set) is the
+		// caller bug this guard catches.
 		if e.AmountsVec == nil {
 			return errors.New("timescale: InsertDefindexFlow: vault layer requires AmountsVec")
 		}

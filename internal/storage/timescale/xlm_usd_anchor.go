@@ -3,26 +3,23 @@
 
 package timescale
 
-// The XLM/USD anchor: the one rate every read-side XLM-triangulated price is
-// multiplied by. Every renderer reads the same population through
-// [xlmUSDAnchorMinutes], so the scalar, grid and per-period shapes agree.
+// The XLM/USD anchor: the one rate every read-side XLM-triangulated price is multiplied by. Every
+// renderer reads the same population through [xlmUSDAnchorMinutes], so the scalar, grid and
+// per-period shapes agree.
 //
-// Population: XLM in every alias form ([canonical.AssetAliases] order: native,
-// crypto:XLM, the SAC) against every USD proxy ([usdProxyQuotes]), in BOTH stored
-// directions — SDEX stores the offer's sold asset as base and swap-direction
-// venues store token_in, so reversed rows enter as 1/vwap. Closed minutes only
-// (ADR-0015).
+// Population: XLM in every alias form ([canonical.AssetAliases] order: native, crypto:XLM, the SAC)
+// against every USD proxy ([usdProxyQuotes]), in both stored directions (SDEX stores the sold asset
+// as base, swap venues store token_in), so reversed rows enter as 1/vwap. Closed minutes only.
 //
-// Per minute and form the rate is the volume_usd-weighted mean of those rows.
-// volume_usd, never the leg sums: CEX amounts are scaled 1e8 and on-chain ones
-// 1e7, so leg sums would weight a CEX row 10x.
+// Per minute and form the rate is the volume_usd-weighted mean of those rows. volume_usd, never the
+// leg sums: CEX amounts are scaled 1e8 and on-chain ones 1e7, so leg sums would weight a CEX row
+// 10x.
 //
-// Across forms the FIRST form (alias order) with a qualifying minute in the
-// freshness window wins, newest minute within it — the same contract as the
-// ingest resolver's alias loop ([VWAPUSDFXResolver.queryDB]): SAC last, so a
-// thin Soroban pool printing after a quiet SDEX minute cannot set the rate for
-// the whole catalogue. Within one form a lone dust row is still the minute's
-// rate when nothing else printed (per-row floor [directLegMinQuoteVolume]).
+// Across forms the first form (alias order) with a qualifying minute in the freshness window wins,
+// newest minute within it, matching the ingest resolver's alias loop ([VWAPUSDFXResolver.queryDB]).
+// SAC is last so a thin Soroban pool printing after a quiet SDEX minute cannot set the rate for the
+// whole catalogue. Within one form a lone dust row is still the minute's rate when nothing else
+// printed (per-row floor [directLegMinQuoteVolume]).
 
 // xlmUSDAnchorMaxAge is how old the XLM/USD minute behind a triangulated price
 // may be at the instant it is applied: the ingest resolver's default
@@ -87,10 +84,9 @@ func xlmUSDAnchorAt(ts, sac string) string {
 }
 
 // xlmUSDAnchorGridCTE renders CTEs `<name>_min` and `<name>`(minute, vwap,
-// bucket): [xlmUSDAnchorAt] evaluated at every minute from lo to now, for
-// equi-joining on a 1-minute bucket. One range scan plus a forward fill per
-// form (the count-group trick), instead of an index probe per joined row.
-// The grid starts [xlmUSDAnchorMaxAge] before lo so the fill is seeded at lo.
+// bucket): [xlmUSDAnchorAt] at every minute from lo to now, for equi-joining on a 1-minute bucket.
+// One range scan plus a forward fill per form (the count-group trick) replaces an index probe per
+// joined row. The grid starts [xlmUSDAnchorMaxAge] before lo so the fill is seeded at lo.
 func xlmUSDAnchorGridCTE(name, lo, sac string) string {
 	start := "(" + lo + ") - INTERVAL '" + xlmUSDAnchorMaxAge + "'"
 	return `

@@ -23,11 +23,10 @@ type TxIndexTag struct {
 	TxIndex uint32
 }
 
-// UntaggedTxIndexTrades pages the distinct on-chain (ledger, tx_hash) pairs in
-// [from, to) whose trades still lack a tx_index, in (ledger, tx_hash) order
-// strictly after (afterLedger, afterHash). Off-chain rows (ledger = 0) are
-// excluded. Keyset paging lets a caller walk the whole window, so a tx the
-// lake cannot resolve never starves the rows behind it.
+// UntaggedTxIndexTrades pages the distinct on-chain (ledger, tx_hash) pairs in [from, to) whose
+// trades lack a tx_index, in (ledger, tx_hash) order strictly after (afterLedger, afterHash).
+// Off-chain rows (ledger = 0) are excluded. Keyset paging lets a caller walk the whole window,
+// so a tx the lake cannot resolve never starves the rows behind it.
 func (s *Store) UntaggedTxIndexTrades(ctx context.Context, from, to time.Time, afterLedger uint32, afterHash string, limit int) ([]TxIndexKey, error) {
 	const q = `
         SELECT ledger, tx_hash, min(ts), max(ts)
@@ -63,12 +62,11 @@ func (s *Store) UntaggedTxIndexTrades(ctx context.Context, from, to time.Time, a
 	return out, nil
 }
 
-// TagTradesTxIndex back-fills trades.tx_index for the supplied tags across
-// every on-chain source. FIRST-WINS (tx_index IS NULL), so it is idempotent
-// and never overwrites a tagged row; tx_index is absent from the trades
-// INSERT / ON CONFLICT DO UPDATE, so a re-derive UPSERT preserves it.
-// [from, to) bounds the ts partition — REQUIRED so the hypertable prunes to
-// the tags' chunks and stays under the per-DML decompression cap (53400).
+// TagTradesTxIndex back-fills trades.tx_index for the supplied tags across every on-chain source.
+// FIRST-WINS (tx_index IS NULL), so it is idempotent and never overwrites a tagged row; tx_index
+// is absent from the trades INSERT / ON CONFLICT DO UPDATE, so a re-derive UPSERT preserves it.
+// [from, to) bounds the ts partition and is REQUIRED so the hypertable prunes to the tags' chunks
+// and stays under the per-DML decompression cap (53400).
 func (s *Store) TagTradesTxIndex(ctx context.Context, from, to time.Time, tags []TxIndexTag) (int64, error) {
 	if len(tags) == 0 {
 		return 0, nil

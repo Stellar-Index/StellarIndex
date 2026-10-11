@@ -6,14 +6,10 @@ import (
 	"time"
 )
 
-// SorobanDEXTradeRef is one (source, asset) pair where a DEX trade for a
-// Soroban-contract asset landed in the served `trades` tier. Asset is the
-// token's C-strkey contract id (56 chars). Consumed by the aggregator's
-// decimals-guard (internal/decimalsguard) — both its periodic freshness
-// sweep (short window, minutes) and its one-time startup backfill pass
-// (long window, default 90 days) call this same enumerator with a
-// different `since`; both resolve each asset's on-chain decimals() and
-// alert when it is not 7.
+// SorobanDEXTradeRef is one (source, asset) pair where a DEX trade for a Soroban-contract asset
+// landed in the served `trades` tier; Asset is the token's 56-char C-strkey. The decimals-guard
+// calls the same enumerator for its short-window sweep and its long-window startup pass, and
+// alerts when an asset's on-chain decimals() is not 7.
 type SorobanDEXTradeRef struct {
 	Source string
 	Asset  string
@@ -22,22 +18,17 @@ type SorobanDEXTradeRef struct {
 // RecentSorobanDEXTrades returns the DISTINCT (source, Soroban-contract-asset)
 // pairs whose trades landed at or after `since`.
 //
-// Scope: only Soroban-contract asset keys are returned — the ONLY assets that
-// can carry non-7 decimals. Classic (`CODE-ISSUER`), `native`, `fiat:*` and
-// `crypto:*` keys are 7-dp-or-not-a-DEX-token and are excluded in SQL:
+// Only Soroban-contract asset keys are returned, the ONLY assets that can carry non-7 decimals.
+// Classic (`CODE-ISSUER`), `native`, `fiat:*` and `crypto:*` keys are excluded in SQL:
 //
-//   - `>= 'C' AND < 'D'`  — contract strkeys start with 'C' (a sargable range
-//     on trades_base_ts_idx / trades_quote_ts_idx, NOT a `LIKE 'C%'` scan).
-//   - `char_length(...) = 56` and `position('-' in ...) = 0` — a contract
-//     strkey is exactly 56 chars with no `-`; this rejects a classic credit
-//     whose CODE happens to start with 'C' (e.g. `CATS-G...`).
+//   - `>= 'C' AND < 'D'`: contract strkeys start with 'C' (a sargable range on
+//     trades_base_ts_idx / trades_quote_ts_idx, NOT a `LIKE 'C%'` scan).
+//   - `char_length(...) = 56` and `position('-' in ...) = 0`: a contract strkey is exactly 56
+//     chars with no `-`, rejecting a classic credit whose CODE starts with 'C' (e.g. `CATS-G...`).
 //
-// Boundedness: `since` is always computed Go-side so the planner prunes chunks
-// at plan time — this is deliberately NOT an unbounded DISTINCT over all `trades`
-// history (the full-sort trap). The periodic freshness sweep uses a SHORT trailing
-// window (minutes); the guard's one-time startup backfill pass uses a LONGER one
-// (default 90 days, config-surfaced). Widening the window changes how much of the
-// sargable base_asset/quote_asset + ts range is scanned, not the query's shape.
+// `since` is always computed Go-side so the planner prunes chunks at plan time; this is deliberately
+// NOT an unbounded DISTINCT over all `trades` history (the full-sort trap). Widening the window
+// changes how much of the sargable asset + ts range is scanned, not the query's shape.
 func (s *Store) RecentSorobanDEXTrades(ctx context.Context, since time.Time) ([]SorobanDEXTradeRef, error) {
 	const q = `
 SELECT DISTINCT source, base_asset AS asset

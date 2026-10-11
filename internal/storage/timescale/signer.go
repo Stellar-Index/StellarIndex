@@ -6,45 +6,32 @@ import (
 	"time"
 )
 
-// SignerTag is one (ledger, tx_hash) → transaction-source-account mapping
-// the signer sweeper back-fills into trades.signer. Signer is the tx
-// fee-payer / initiator, sourced from the lake's stellar.transactions
-// (the projector-replayed events carry no source account, so it cannot be
-// set on the decode path — see migration 0150).
+// SignerTag maps one (ledger, tx_hash) to its transaction source account, back-filled into
+// trades.signer by the sweeper. Signer is the tx fee-payer/initiator from the lake's
+// stellar.transactions; decoded events carry no source account, so the decode path cannot set it.
 type SignerTag struct {
 	Ledger uint32
 	TxHash string
 	Signer string
 }
 
-// AMMSignerSources are the AMM/Soroban trade sources whose `taker` is the
-// on-chain caller (the event's to/sender/caller/user), NOT necessarily the
-// human — so the tx source account is the missing initiator worth tagging.
-// SDEX carries a real `maker`; classic trades have no contract tx to
-// attribute. Exported so the indexer's sweeper gate reads the SAME list
-// (no drift) — kept in lockstep with the decoders that leave `maker` empty.
+// AMMSignerSources are the AMM/Soroban trade sources whose `taker` is the on-chain caller, not
+// necessarily the human, so the tx source account is the initiator worth tagging. SDEX carries a
+// real `maker`. Exported so the indexer's sweeper gate reads the same list; keep it in lockstep
+// with the decoders that leave `maker` empty.
 var AMMSignerSources = []string{"comet", "soroswap", "aquarius", "phoenix", "sushiswap_v3"}
 
-// TagTradesSigner back-fills trades.signer for the supplied
-// (ledger, tx_hash) → source-account tags. FIRST-WINS: it only touches AMM
-// rows whose signer IS NULL, so it is idempotent + re-runnable and never
-// overwrites an already-tagged value. `signer` is DELIBERATELY absent from
-// the trades INSERT / ON CONFLICT DO UPDATE (trades.go), so a value tagged
-// here survives the projector's ~5s re-derive UPSERT — exactly the
-// routed_via first-wins contract.
+// TagTradesSigner back-fills trades.signer for the supplied (ledger, tx_hash) tags. FIRST-WINS:
+// it only touches AMM rows whose signer IS NULL, so it is idempotent and never overwrites a tag.
+// `signer` is deliberately absent from the trades INSERT / ON CONFLICT DO UPDATE (trades.go), so a
+// tagged value survives the projector's re-derive upsert, as with routed_via.
 //
-// Empty-string signers in the batch are ignored — the join carries
+// Empty-string signers are skipped (the WHERE filter on s.signer) so an unresolved tx leaves the row
+// NULL for a later pass rather than pinning a blank.
 //
-//	WHERE s.signer <> ''
-//
-// so a tx whose source could not be resolved leaves the row NULL for a
-// later pass rather than pinning it to a blank.
-// [from, to) is the trades TIME-PARTITION (ts) bound covering the tags —
-// REQUIRED: `trades` is a ts-partitioned Timescale hypertable, so without it
-// this UPDATE scans EVERY chunk (incl. compressed historical ones) and trips
-// the per-DML tuple-decompression limit (SQLSTATE 53400). With the bound
-// TimescaleDB prunes to the window's chunks (mirrors TagTradesRoutedVia).
-// Callers pass the close-time span of the tagged txs.
+// [from, to) is the trades ts bound covering the tags and is REQUIRED: without it the UPDATE
+// scans every chunk, including compressed ones, and trips the per-DML tuple-decompression limit
+// (SQLSTATE 53400). Callers pass the close-time span of the tagged txs.
 func (s *Store) TagTradesSigner(ctx context.Context, from, to time.Time, tags []SignerTag) (int64, error) {
 	if len(tags) == 0 {
 		return 0, nil
@@ -84,16 +71,13 @@ func (s *Store) TagTradesSigner(ctx context.Context, from, to time.Time, tags []
 	return n, nil
 }
 
-// UntaggedAMMSignerLedgerRange returns the inclusive ledger span of AMM trades
-// in [from, to) that still lack a signer, so the sweeper can scope its lake
-// read to exactly those ledgers instead of every recent transaction. ok=false
-// when nothing needs tagging (the sweeper then skips the lake read entirely).
+// UntaggedAMMSignerLedgerRange returns the inclusive ledger span of AMM trades in [from, to) that
+// still lack a signer, so the sweeper scopes its lake read to those ledgers; ok=false means
+// nothing needs tagging and the lake read is skipped.
 //
-// At steady state the sweep tags each window every tick, so only the last
-// minute or two of trades are ever untagged and the span (and the lake read it
-// bounds) is small; a projector lag or a restart widens it up to the lookback
-// and self-heals on the next clean sweep. Bounded by the ts window + the AMM
-// source filter — a min/max aggregate over recent trades chunks, not a scan.
+// At steady state only the last minute or two is untagged, so the span is small; projector lag or
+// a restart widens it up to the lookback and self-heals on the next sweep. The ts window plus the
+// AMM source filter make this a min/max over recent chunks, not a scan.
 func (s *Store) UntaggedAMMSignerLedgerRange(ctx context.Context, from, to time.Time) (minLedger, maxLedger uint32, ok bool, err error) {
 	const q = `
         SELECT min(ledger), max(ledger)
