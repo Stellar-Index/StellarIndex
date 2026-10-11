@@ -37,21 +37,17 @@ const tipProducerLinger = 30 * time.Second
 
 // defaultMaxTipProducers caps how many distinct tip producers may run at once.
 //
-// The SSE caps count CONNECTIONS, but a tip-stream connection also mints a
-// DETACHED producer (context from context.Background()) that survives the
-// connection's release for tipProducerLinger. An unauthenticated client could
-// open and abort streams in a loop and leave an unbounded set of compute loops,
-// each polling the database on its own ticker, with no connection to attribute
-// them to.
+// A tip-stream connection mints a DETACHED producer (context.Background()) that
+// outlives the connection for tipProducerLinger, so the SSE connection caps do not
+// bound it: an unauthenticated client could open and abort streams in a loop and
+// leave unbounded compute loops, each polling the database on its own ticker.
 //
-// The key is (asset, quote, window_seconds) and window_seconds is CLIENT-CHOSEN in
-// [1,60], so the key space is pairs × 60. The Hub's topic reaper cannot shed this
-// load: it evicts only subscriber-less topics, and a live producer re-publishes
-// every window.
+// The key is (asset, quote, window_seconds) with window_seconds CLIENT-CHOSEN in
+// [1,60], so the key space is pairs × 60. The Hub's topic reaper cannot shed it:
+// it evicts only subscriber-less topics, and a live producer re-publishes every window.
 //
-// 512 is generous against legitimate use (watched pairs number in the hundreds at
-// most) while capping the worst case short of starving the DB pool. Tune with
-// [Server.SetMaxTipProducers].
+// 512 is generous for legitimate use while capping the worst case short of starving
+// the DB pool. Tune with [Server.SetMaxTipProducers].
 //
 // A lingering producer (no subscriber) still counts because it still computes, but
 // at either global bound the oldest lingering entries are evicted to admit a new
@@ -61,24 +57,19 @@ const defaultMaxTipProducers = 512
 // defaultMaxTipProducersPerCaller caps how many producers ONE caller may have
 // minted and still hold registered (running or lingering).
 //
-// The global [defaultMaxTipProducers] ceiling alone is a pool partitioned by
+// The global [defaultMaxTipProducers] ceiling alone is one pool partitioned by
 // nothing: one unauthenticated address looping the key space (~9 real pairs ×
-// window_seconds 1..60) and aborting each connection once headers arrive fills all
-// 512 slots with producers that survive for [tipProducerLinger], refusing every
-// OTHER caller's first request for a pair with no producer running. The
-// connection caps cannot see this because the producer is detached
-// (context.Background()) so it outlives the request.
+// window_seconds 1..60) and aborting each connection fills all 512 slots for
+// [tipProducerLinger], refusing every OTHER caller's first request for a pair with
+// no producer running. The connection caps cannot see it: the producer is detached.
 //
-// So each producer is charged to the caller that MINTED it, for as long as its
-// registry entry lives; releasing the connection does not return the slot, since
-// the linger is what the flood exploits.
+// So each producer is charged to the caller that MINTED it for as long as its
+// registry entry lives; releasing the connection does not return the slot.
 //
-// 24 is chosen against the per-IP concurrent-stream cap
-// ([config].api.max_streams_per_ip, default 20): a compliant caller can watch at
-// most 20 distinct pairs, so 24 leaves headroom for linger overlap while capping
-// one address under 5% of the pool. Joining an ALREADY-RUNNING producer is never
-// charged, so a page reload can never hit this. Tune with
-// [Server.SetMaxTipProducersPerCaller].
+// 24 sits just above the per-IP concurrent-stream cap ([config].api.max_streams_per_ip,
+// default 20), leaving headroom for linger overlap while capping one address
+// under 5% of the pool. Joining an ALREADY-RUNNING producer is never charged.
+// Tune with [Server.SetMaxTipProducersPerCaller].
 const defaultMaxTipProducersPerCaller = 24
 
 // defaultMaxTipTicksPerMinute bounds the AGGREGATE compute rate of every

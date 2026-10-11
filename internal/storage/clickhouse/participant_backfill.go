@@ -12,27 +12,22 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// operationParticipantRows derives the stellar.operation_participants rows for a
-// single operation: the ONE participant derivation shared by the live lake
-// extractor (extract.go's extractOps) and ch-participant-backfill, so the two
-// cannot drift (ADR-0038 Phase B).
+// operationParticipantRows derives the stellar.operation_participants rows for one
+// operation: the ONE derivation shared by the live lake extractor (extractOps) and
+// ch-participant-backfill, so the two cannot drift (ADR-0038 Phase B).
 //
-// It returns one row per NON-source G-account the op body touches, as decoded
-// by xdrjson.ParticipantAccounts (payment / path-payment / account-merge
-// destination, allow-trust / set-trust-line-flags trustor, clawback `from`).
-// Soroban InvokeContract ops contribute NO participant: their args and auth
-// entries are attacker-controllable at decode time. Muxed (M-) destinations
-// resolve to their underlying G.
+// It returns one row per NON-source G-account the op body touches, as decoded by
+// xdrjson.ParticipantAccounts. Soroban InvokeContract ops contribute NO
+// participant: their args and auth entries are attacker-controllable at decode time.
 //
-// The op's own source_account is EXCLUDED: it is already the full-history
-// operations.source_account column, and the account-history reader UNIONs the
-// two arms on the invariant that an op is sourced XOR has the account as a
-// non-source participant (explorer_reader.AccountOperations); a source row
-// would double-count it.
+// The op's own source_account is EXCLUDED: it is already in operations.source_account,
+// and the account-history reader UNIONs the two arms on the invariant that an op is
+// sourced XOR has the account as a non-source participant
+// (explorer_reader.AccountOperations); a source row would double-count it.
 //
-// Asset ISSUERS and counterparties of op types xdrjson doesn't field-decode yet
-// are not captured, so live and historical stay consistent. Extending either is
-// a live-path change; a re-derive must reproduce live output.
+// Asset ISSUERS and counterparties of op types xdrjson doesn't field-decode yet are
+// not captured, so live and historical stay consistent; a re-derive must reproduce
+// live output.
 //
 // A malformed body_xdr returns the decode error; callers soft-skip and count it.
 // Sorted, deduplicated output makes a re-derive idempotent under the RMT.

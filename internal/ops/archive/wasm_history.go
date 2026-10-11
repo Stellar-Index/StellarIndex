@@ -378,8 +378,8 @@ func writeCodeUploadsOutput(path string, workers []workerResult) error {
 }
 
 // wasmHistoryMergeJSONL rebuilds the canonical wasm-history JSON from the
-// per-worker JSONL transition logs that `wasm-history -checkpoint-dir`
-// wrote, to recover a walk that died before its end-of-run JSON write.
+// per-worker JSONL transition logs that `wasm-history -checkpoint-dir` wrote,
+// to recover a walk that died before its end-of-run JSON write.
 //
 // Flags:
 //   - -checkpoint-dir: directory containing wasm-history-w*.jsonl files.
@@ -387,16 +387,14 @@ func writeCodeUploadsOutput(path string, workers []workerResult) error {
 //     last open range per contract.
 //   - -output:         path for the merged JSON (default stdout).
 //
-// The merge mirrors [mergeWasmHistories]: read the files in lexical (worker)
-// order, collect and sort each contract's transitions by at_ledger, collapse
-// adjacent same-hash transitions (a worker's first sight of an already-known
-// hash is not a transition), then build wasmRange[] where each range closes
-// at the next transition's at_ledger - 1 and the last closes at -to.
+// The merge mirrors [mergeWasmHistories]: read files in lexical (worker) order,
+// sort each contract's transitions by at_ledger, collapse adjacent same-hash
+// transitions (a worker's first sight of an already-known hash is not one), then
+// build wasmRange[]: each range closes at the next transition's at_ledger - 1,
+// the last at -to.
 //
-// Empty-history contracts (`{"contract":"...","ranges":null}` from
-// wasmHistory) are NOT emitted: the JSONL only carries observed transitions.
-// The original walk's JSON is the canonical artefact; this only recovers what
-// was seen before the crash.
+// Empty-history contracts are NOT emitted: the JSONL only carries observed
+// transitions. This only recovers what was seen before the crash.
 func wasmHistoryMergeJSONL(args []string) error {
 	fs := flag.NewFlagSet("wasm-history-merge-jsonl", flag.ContinueOnError)
 	checkpointDir := fs.String("checkpoint-dir", "",
@@ -784,27 +782,21 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 	}
 }
 
-// mergeWasmHistories combines per-worker state maps into one
-// per-contract timeline. Workers scan disjoint, ledger-ordered
-// chunks (opsutil.SplitRange gives worker i the i-th contiguous
-// range), so each worker's per-contract ranges are reconstructed
-// back into point transitions (one per range's FromLedger) and
-// concatenated in worker order — reproducing the same ordered
-// transition stream a single serial (-parallel 1) walk would have
-// produced. Feeding that through buildRangesFromTransitions (the
-// same primitive wasm-history-merge-jsonl's crash-recovery path
-// uses) collapses hash-unchanged worker boundaries correctly.
+// mergeWasmHistories combines per-worker state maps into one per-contract
+// timeline. Workers scan disjoint, ledger-ordered chunks (opsutil.SplitRange gives
+// worker i the i-th contiguous range), so each worker's per-contract ranges are
+// rebuilt into point transitions (one per range's FromLedger) and concatenated in
+// worker order, reproducing the transition stream a serial (-parallel 1) walk
+// would have produced. buildRangesFromTransitions (also used by
+// wasm-history-merge-jsonl) then collapses hash-unchanged worker boundaries.
 //
-// Stitching only at an exact chunk boundary is not enough: a worker's
-// first transition lands on that boundary only when the version
-// changed on the very first ledger of its chunk. A worker chunk with
-// no instance write at all (the contract's hash simply continued
-// unchanged) would contribute nothing, leaving a silent hole in the
-// reported timeline.
+// Stitching only at an exact chunk boundary is not enough: a worker's first
+// transition lands on that boundary only when the version changed on the very
+// first ledger of its chunk. A chunk with no instance write at all would
+// contribute nothing, leaving a silent hole in the timeline.
 //
-// The final range's close point is the LAST worker's upperEnd — the
-// true last ledger observed by the whole walk — not the operator's
-// requested -to, matching how each worker closes its own open range.
+// The final range's close point is the LAST worker's upperEnd (the true last
+// ledger observed by the whole walk), not the operator's requested -to.
 func mergeWasmHistories(
 	workers []workerResult,
 	watch map[sdkxdr.Hash]string,

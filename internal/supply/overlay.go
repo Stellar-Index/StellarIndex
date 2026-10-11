@@ -25,30 +25,24 @@ type MetadataResolver interface {
 	SEP1MaxSupply(ctx context.Context, asset canonical.Asset) (raw string, ok bool, err error)
 }
 
-// Overlay applies the SEP-1 max_supply precedence rule on top of a
-// computed [Supply]. Wired into the /v1/assets/{id} serving path
-// (internal/api/v1/assets_f2.go); its resolver adapts the SEP-1 fields
-// already stamped on the AssetDetail, scaled from display to raw units.
-// Per ADR-0011 the max_supply precedence is:
+// Overlay applies the SEP-1 max_supply precedence rule (ADR-0011) on top of a
+// computed [Supply]:
 //
 //  1. Operator override (Policy.MaxSupplyOverrides), applied by the
 //     per-algorithm Computer; surfaces here as snap.MaxSupply non-nil.
-//  2. SEP-1 [[CURRENCIES]].max_supply, applied here when no override
-//     fired.
+//  2. SEP-1 [[CURRENCIES]].max_supply, applied here when no override fired.
 //  3. nil, preserved.
 //
-// XLM (Algorithm 1) is hard-capped at total; the Computer always sets
-// its MaxSupply and Overlay returns applied=false.
+// XLM (Algorithm 1) is hard-capped at total; the Computer always sets its
+// MaxSupply and Overlay returns applied=false.
 //
-// When the resolver returns junk (negative, unparseable), Overlay does
-// NOT apply: the SEP-1 declaration is a *display value*, not a *source
-// of truth*, and ignoring junk beats 5xx-ing the API for that asset.
+// When the resolver returns junk (negative, unparseable), Overlay does NOT
+// apply: the SEP-1 declaration is a *display value*, not a *source of truth*,
+// and ignoring junk beats 5xx-ing the API for that asset.
 //
-// Returns the (possibly-modified) Supply (when applied, MaxSupply and
-// MaxSupplyBasis = BasisSEP1DeclaredMax change, Basis does not);
-// applied=true iff the overlay set MaxSupply; an error only on
-// unambiguous resolver bugs (non-nil error from SEP1MaxSupply with
-// ok=true), propagated as (snap-unchanged, applied=false, err).
+// On apply, MaxSupply and MaxSupplyBasis = BasisSEP1DeclaredMax change; Basis does
+// not. An error is returned only for unambiguous resolver bugs (SEP1MaxSupply
+// error with ok=true), as (snap-unchanged, applied=false, err).
 func Overlay(ctx context.Context, snap Supply, asset canonical.Asset, resolver MetadataResolver) (Supply, bool, error) {
 	// XLM and assets with operator-override max already set —
 	// nothing to do.

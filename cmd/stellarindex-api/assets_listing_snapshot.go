@@ -31,13 +31,11 @@ import (
 // `flags.stale`, one detached refresh behind it.
 //
 // KEY GRAMMAR. `internal/cachekeys` is the canonical home for Redis key
-// families (ADR-0007) and has no builder for this shape (its
-// `assets:list:<cursor>:<limit>` family is a different reader and payload
-// type, with no `order` dimension). The family is declared here, with its sole
-// reader and writer, like `internal/ratelimit` ("rl:") and `internal/usage`
-// ("usage:"). It keeps ADR-0007's guarantees: a named key type, a single
-// builder, and a golden-string test. Promote it to internal/cachekeys the
-// moment a second binary needs to read it.
+// families (ADR-0007) but has no builder for this shape (its
+// `assets:list:<cursor>:<limit>` family is a different reader and payload type).
+// The family is declared here with its sole reader and writer, keeping ADR-0007's
+// guarantees: a named key type, a single builder, and a golden-string test.
+// Promote it to internal/cachekeys when a second binary needs to read it.
 
 // assetsListingSnapshotKey is the typed Redis key for the
 // `assets:listing-snapshot:<schema>:<order>:<limit>` family.
@@ -170,26 +168,23 @@ func (s *assetsListingSnapshots) load(
 	return snap, true
 }
 
-// seedAssetListingsFromSnapshots primes the in-process listing cache
-// from the previous process's snapshots, and reports how many of the
-// requested variants were seeded.
+// seedAssetListingsFromSnapshots primes the in-process listing cache from the
+// previous process's snapshots, and reports how many of the requested variants
+// were seeded.
 //
-// Call this BEFORE the HTTP listener starts: on r1 the listener is up
-// 12 ms after "starting" and human traffic arrives at +3.5 s, so a seed
-// that races the listener is a seed that loses. It is bounded by
-// [assetsListingSnapshotBudget] precisely so it can be synchronous
-// there.
+// Call this BEFORE the HTTP listener starts: on r1 the listener is up 12 ms after
+// "starting" and human traffic arrives at +3.5 s, so a seed that races the
+// listener loses. It is bounded by [assetsListingSnapshotBudget] so it can be
+// synchronous there.
 //
-// It seeds exactly [assetListingPrewarmOptions] — the same list the
-// prewarm warms and the same one save() is driven from — so the seed
-// cannot address a variant the prewarm does not maintain, and the
-// handler's key derivation is shared with the seed
+// It seeds exactly [assetListingPrewarmOptions], the list the prewarm warms and
+// save() is driven from, so the seed cannot address a variant the prewarm does
+// not maintain; key derivation is shared with the handler
 // (v1.CachedAssetsReader.SeedListing → listAssetsCacheKey).
 //
-// Returns (seeded, requested) so the caller can log a self-accounting
-// line: zero seeded out of a non-empty request set is a real signal
-// (cold Redis, first deploy, schema change, or a genuinely broken
-// path), not silence.
+// Returns (seeded, requested) so the caller can log a self-accounting line: zero
+// seeded out of a non-empty request set is a real signal (cold Redis, first
+// deploy, schema change, or a broken path), not silence.
 func seedAssetListingsFromSnapshots(
 	ctx context.Context, logger *slog.Logger, reader *v1.CachedAssetsReader, snaps *assetsListingSnapshots,
 ) (seeded, requested int) {

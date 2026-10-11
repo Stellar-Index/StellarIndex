@@ -1,27 +1,22 @@
 // Package guardscan finds every detached goroutine a Go source file
 // starts and reports whether each one registers panic recovery.
 //
-// It exists because an unrecovered panic in ANY goroutine terminates the
-// whole Go process — it is not confined to the goroutine that panicked —
-// so each binary carries an AST guard test asserting that every `go`
-// statement in its main.go defers a recovery helper. A per-binary copy
-// of that test that understands only the `go func(){…}()` form is blind
-// to the second form below:
+// An unrecovered panic in ANY goroutine kills the whole Go process, so each
+// binary's AST guard test asserts that every `go` statement in its main.go defers
+// a recovery helper. A test that understands only the `go func(){…}()` form is
+// blind to the second form below:
 //
 //	go func() { defer worker.Recover(logger, "x"); loop(ctx) }()   // seen
 //	go loop(ctx)                                                   // INVISIBLE
 //
-// The second form is the one that bites, because it looks tidier. This package
-// resolves a named callee to its declaration — same package (any file), or
-// another package of the SAME MODULE, located from go.mod and parsed — and
-// checks the guard there.
+// This package resolves a named callee to its declaration (same package, any
+// file, or another package of the SAME MODULE, located from go.mod and parsed)
+// and checks the guard there.
 //
 // Resolution is syntactic (go/parser only, no type checker or x/tools), so it
 // cannot resolve everything. That is safe in ONE direction only: a site it
 // cannot resolve is reported as [KindUnresolved], never as "guarded". Callers
 // must fail on unresolved sites and ask for a `go func(){ defer … }()` wrapper.
-// A scanner that quietly skipped what it could not understand would be a guard
-// that widens itself.
 package guardscan
 
 import (

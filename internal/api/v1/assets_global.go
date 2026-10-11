@@ -35,26 +35,20 @@ type GlobalAssetView struct {
 	CoinGeckoID    string `json:"coingecko_id,omitempty"`
 	CMCID          string `json:"coinmarketcap_id,omitempty"`
 
-	// ─── Headline price (from ComputeGlobalPrice's three-tier
-	// fallback chain) ─────────────────────────────
+	// ─── Headline price (ComputeGlobalPrice's three-tier fallback chain) ───
 	//
-	// All four fields are null/empty together when nothing produced
-	// a price (typically a Stellar-only token like AQUA where neither
-	// CEX nor reference-aggregator coverage exists — consumers
-	// should drill into the canonical /v1/assets/{asset_id} surface
-	// to reach the Stellar-issued price).
+	// All four fields are null/empty together when nothing produced a price
+	// (typically a Stellar-only token like AQUA with no CEX or reference-aggregator
+	// coverage; drill into /v1/assets/{asset_id} for the Stellar-issued price).
 	//
-	// Window semantics: this is a GLOBAL (CEX/aggregator) price, not
-	// the on-chain closed-bucket VWAP /v1/price serves, so the two are
-	// expected to differ — venue mix, not window, is the dominant term
-	// here. PriceAsOf carries the tier's own observation time and is
-	// the field to read for freshness; for the fiat class it is an
-	// fx_quotes point from Massive's DAILY grouped-aggregate series, so a fiat
-	// price_usd can legitimately be days old over a weekend. It is null
-	// only under price_authority onchain_listing, whose listing row
-	// carries no observation time. The package doc's
-	// "Current-price surfaces and their windows" section maps every
-	// price surface.
+	// Window semantics: this is a GLOBAL (CEX/aggregator) price, not the on-chain
+	// closed-bucket VWAP /v1/price serves, so the two are expected to differ. PriceAsOf
+	// carries the tier's own observation time and is the field to read for freshness;
+	// for the fiat class it is an fx_quotes point from Massive's DAILY grouped-aggregate
+	// series, so a fiat price_usd can legitimately be days old over a weekend. It is null
+	// only under price_authority onchain_listing, whose listing row carries no
+	// observation time. The package doc's "Current-price surfaces and their windows"
+	// section maps every price surface.
 	PriceUSD       *string                  `json:"price_usd,omitempty"`
 	PriceAuthority aggregate.PriceAuthority `json:"price_authority,omitempty"`
 	PriceSources   []string                 `json:"price_sources,omitempty"`
@@ -322,17 +316,15 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 // ([Server.fiatMarketCapUSD]) and the asset DETAIL path
 // ([Server.populateFiatView]).
 //
-// Sharing it keeps the two paths from drifting. A path that called
-// PriceReader alone would get ErrPriceNotFound for any fiat-quoted request
-// (storePriceReader fast-paths it, since no on-chain trades exist for a
-// fiat/fiat pair), so GET /v1/assets/{fiat-slug} would serve price_usd:
-// null and market_cap_usd: null for every non-USD currency while the
-// listing beside it showed correct values for the same asset.
+// Sharing keeps the two paths from drifting. PriceReader alone returns
+// ErrPriceNotFound for any fiat-quoted request (storePriceReader fast-paths it,
+// since no on-chain trades exist for a fiat/fiat pair), so the detail path would
+// serve price_usd: null and market_cap_usd: null for every non-USD currency while
+// the listing showed correct values.
 //
-// Order is load-bearing: fx_quotes first (Massive-backed daily
-// grouped-aggregate rates — the authoritative store the forex worker
-// lands in), PriceReader only as a last resort for deployments
-// without fx_quotes wiring.
+// Order is load-bearing: fx_quotes first (Massive-backed daily grouped-aggregate
+// rates, the authoritative store the forex worker lands in), PriceReader only as a
+// last resort for deployments without fx_quotes wiring.
 //
 // InverseUSD, not RateUSD: rate_usd is UNITS-OF-TICKER PER 1 USD (JPY
 // 163.09), inverse_usd is "1 unit in USD". Swapping them is a 24,000x error

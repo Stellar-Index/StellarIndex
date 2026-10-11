@@ -10,29 +10,24 @@ import (
 )
 
 // ParticipantAccounts returns the non-source G-account strkeys an operation
-// touches — the "incoming"/counterparty side the participant index (ADR-0038
-// Phase B) needs so an account's RECEIVED activity (it's the payment
-// destination, the trustor, the merge target, the clawback victim, …) is
-// queryable, not just what it sourced.
+// touches: the "incoming"/counterparty side the participant index (ADR-0038
+// Phase B) needs so an account's RECEIVED activity (payment destination, trustor,
+// merge target, clawback victim, …) is queryable, not just what it sourced.
 //
-// Implementation: decode the op body and, keyed on the op type, collect ONLY
-// the fields that are genuine account addresses (payment/path-payment
-// destination, allow-trust / set-trust-line-flags trustor, clawback `from`,
-// account-merge / create-account destination, create-claimable-balance
-// claimant destinations, sponsorship targets, and muxed destinations resolved
-// to their underlying G-account).
+// The op body is decoded and, keyed on op type, ONLY fields that are genuine
+// account addresses are collected (payment-like and create-account destinations,
+// trustors, clawback `from`, claimants, sponsorship targets; muxed destinations
+// resolved to their underlying G-account).
 // Opaque free-text fields (a manage_data name/value, a memo, a contract string
-// arg) are NEVER interpreted as participants even when they happen to spell a
-// valid G-strkey — a per-type allowlist is the only safe way to keep an
+// arg) are NEVER interpreted as participants even when they spell a valid
+// G-strkey: a per-type allowlist is the only safe way to keep an
 // attacker-controlled blob out of a victim account's history. Soroban
-// InvokeContract ops contribute NOTHING here: call arguments and auth entries
-// are attacker-controllable at this XDR-decode layer (an auth-entry signature
-// is verified only by the network during apply, while the indexer also decodes
-// failed-tx op bodies), so no arg- or auth-derived address can establish
-// participation. Soroban received-activity belongs to the event-based
-// /movements path (SEP-41 transfer events). The operation's own source account
-// is a lake column, so it is NOT returned here. Deduplicated + sorted
-// (deterministic → idempotent re-derive).
+// InvokeContract ops contribute NOTHING: call arguments and auth entries are
+// attacker-controllable at this XDR-decode layer (an auth-entry signature is
+// verified only by the network during apply, while the indexer also decodes
+// failed-tx op bodies). Soroban received-activity belongs to the event-based
+// /movements path. The op's own source account is a lake column, so it is NOT
+// returned. Deduplicated + sorted (deterministic, so re-derive is idempotent).
 func ParticipantAccounts(bodyB64 string) ([]string, error) {
 	var body xdr.OperationBody
 	if err := scval.UnmarshalBase64(bodyB64, &body); err != nil {

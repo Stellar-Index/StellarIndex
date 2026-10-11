@@ -12,30 +12,25 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Recover turns a panic in a DETACHED background worker goroutine into a
-// logged error instead of a whole-process crash.
+// Recover turns a panic in a DETACHED background worker goroutine into a logged
+// error instead of a whole-process crash (an unrecovered panic in ANY goroutine
+// kills the process). Every long-running `go` worker must register it.
 //
-// An unrecovered panic in ANY goroutine terminates the entire Go process, so
-// every long-running worker spawned with `go` must register this guard.
-//
-// It MUST be invoked as a deferred call from INSIDE the goroutine body:
+// It MUST be deferred from INSIDE the goroutine body:
 //
 //	go func() {
 //		defer worker.Recover(logger, "my-worker")
 //		runForever(ctx)
 //	}()
 //
-// recover() only fires from a function the panicking goroutine itself
-// deferred, so this cannot be hoisted into a helper the goroutine merely calls.
-// A caller-side guard around the goroutine that CALLS a Run method does not
-// protect the inner per-item goroutines Run fans out; each needs its own
-// deferred Recover.
+// recover() only fires from a function the panicking goroutine itself deferred,
+// so this cannot be hoisted into a helper the goroutine merely calls. A guard
+// around the goroutine that CALLS a Run method does not protect the inner
+// per-item goroutines Run fans out; each needs its own deferred Recover.
 //
-// The panicking worker STOPS (not restarted), so a crash-looping worker becomes
-// a silently idle one rather than a crash-looping process. That is better than
-// taking down healthy siblings, but a real degradation — hence Error level plus
-// the full stack. Mirrors the stellarindex-api binary's local
-// recoverBackgroundWorker exactly (log-only; no restart).
+// The panicking worker STOPS (not restarted): a crash-looping worker becomes a
+// silently idle one, better than taking down healthy siblings but a real
+// degradation, hence Error level plus the full stack.
 func Recover(logger *slog.Logger, name string) {
 	if r := recover(); r != nil {
 		Report(logger, name, r)
