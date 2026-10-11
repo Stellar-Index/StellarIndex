@@ -14,21 +14,11 @@ import (
 
 // ─── `-tier exact -chunks` — the peg identity's half of the walk ────────
 //
-// The chunk driver (usd_volume_restamp_chunks.go) owns the chunks, the
-// compression policy, the run lock and the free-space guard. This file runs
-// the exact tier's `round(pegged_leg / 10^decimals, 8)` UPDATE (the day
-// walk's, usd_volume_restamp.go) on one chunk's slice through the guarded
-// in-chunk apply. Any DML into a compressed chunk decompresses it inside the
-// transaction, so an in-place exact repair over millions of rows takes days;
-// the per-chunk bracket does not.
-//
-// Not shared with the xlm-base tier: `-chunk-batch` (one `-slice` window is one
-// UPDATE, so `-slice` is the bound and the flag is refused rather than ignored)
-// and `-max-generation` / `-min-rel-delta` / `-report` / `-sample` (an identity
-// has no relative-move distribution).
-//
-// Fail-closed dry run: without `-write` it counts through
-// CountUSDVolumeRestampCandidates and decompresses nothing.
+// The chunk driver (usd_volume_restamp_chunks.go) owns chunks, compression policy, the run lock
+// and the free-space guard; this file runs the exact UPDATE on one chunk slice. DML into a
+// compressed chunk decompresses it, so the per-chunk bracket is what keeps this from taking days.
+// `-chunk-batch` and the relative-move flags are refused here: an identity has no move distribution.
+// Fail-closed dry run: without `-write` it only counts and decompresses nothing.
 
 // exactChunkStore is the exact tier's seam: the driver's chunk and policy
 // primitives, the day walk's classify/count/apply trio, and the in-chunk
@@ -143,11 +133,9 @@ func (t *exactChunkTier) resume(cfgPath string, from, to time.Time, copts chunkR
 	return exactChunkResumeHint(cfgPath, from, to, t.run, copts)
 }
 
-// exactChunkResumeHint is the exact tier's RESUME line: the same command,
-// carrying the run's generation and every flag that shaped its
-// population. Finished chunks are probed read-only and skipped; the
-// failed chunk was re-compressed unless the error above says LEFT
-// DECOMPRESSED.
+// exactChunkResumeHint builds the RESUME command carrying the run's generation and every
+// population-shaping flag. Finished chunks are skipped; the failed chunk was re-compressed
+// unless the error says LEFT DECOMPRESSED.
 func exactChunkResumeHint(cfgPath string, from, to time.Time, run *restampRun, copts chunkRestampOptions) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\nRESUME: stellarindex-ops usd-volume-restamp -config %s -tier %s -chunks -from %s -to %s -generation %d",

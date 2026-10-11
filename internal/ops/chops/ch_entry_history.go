@@ -19,13 +19,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// ch-entry-history derives the account- and asset-keyed entry-change history
-// (stellar.account_entry_changes + stellar.asset_entry_changes,
-// deploy/clickhouse/entry_history.sql) from ONE decode pass of
-// stellar.ledger_entry_changes, windowed and resumable via
-// stellar.entry_history_watermark. Without -write it writes nothing and
-// reports the rows and field bytes each entry type would add — the sizing
-// measurement to run before the from-genesis backfill.
+// ch-entry-history derives the account- and asset-keyed entry-change history from one decode pass
+// of stellar.ledger_entry_changes, windowed and resumable via stellar.entry_history_watermark.
+// Without -write it only reports the rows and bytes each entry type would add.
 func chEntryHistory(args []string) error {
 	fs := flag.NewFlagSet("ch-entry-history", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -159,11 +155,9 @@ func deriveEntryHistoryWindow(ctx context.Context, addr string, lo, hi uint32, d
 	return written, txLedgers, nil
 }
 
-// entryHistoryProjector turns source rows into history rows. It must see a
-// window's rows in source sort-key order: stellar-core emits each update's and
-// removal's 'state' pre-image immediately before it in the same
-// (tx, op_index) group, so the projector keeps the latest pre-image per key
-// for the current group only.
+// entryHistoryProjector turns source rows into history rows. It needs source sort-key order:
+// core emits each update's and removal's 'state' pre-image just before it in the same
+// (tx, op_index) group, so only the latest pre-image per key in the current group is kept.
 type entryHistoryProjector struct {
 	ledger uint32
 	tx     string

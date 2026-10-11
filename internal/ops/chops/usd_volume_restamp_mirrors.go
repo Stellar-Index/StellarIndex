@@ -12,25 +12,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// `-tier xlm-quote` and `-tier cex-fx`, the two mirror re-derives, repair the populations either side of the xlm-base tier through the
-// same run, walk, chunk driver, generation guard, `-fill-null` opt-in and
-// fail-closed dry run; each supplies only a planner.
-//
-//	-tier xlm-quote: on-chain DEX trades whose QUOTE leg is XLM (`native` or
-//	  the SAC) and whose BASE leg is neither XLM nor a declared USD peg.
-//	  usd_volume = quote_amount/1e7 x XLM/USD at ts, through the xlm-base
-//	  tier's anchor ([timescale.Store.PlanXLMQuoteUSDVolumeRestamp]).
-//
-//	-tier cex-fx: off-chain CEX trades quoted in a non-USD fiat.
-//	  usd_volume = quote_amount/10^<source scale> x <fiat>/USD at ts, read
-//	  from `fx_quotes` because prices_1m holds no fiat pair. The as-of rule
-//	  is on [timescale.Store.PlanCEXFiatUSDVolumeRestamp].
-//
-// Both keep the xlm-base money rules: an unpriceable row is REPORTED and left
-// as it is (NULL stays NULL, a value is never blanked or replaced by a
-// second-choice estimate at a high derive_generation, which a later
-// correction cannot claw back), and token/token pairs with no trustworthy leg
-// stay outside both scans (the substance gate, usd_volume_restamp_legs.go).
+// `-tier xlm-quote` (DEX trades quoted in XLM, priced through the xlm-base anchor, see
+// [timescale.Store.PlanXLMQuoteUSDVolumeRestamp]) and `-tier cex-fx` (CEX trades quoted in a
+// non-USD fiat, priced from `fx_quotes`, see [timescale.Store.PlanCEXFiatUSDVolumeRestamp])
+// share the xlm-base run, walk and guards and supply only a planner. They keep its money rules:
+// an unpriceable row is reported and left as is (never blanked or replaced by a second-choice
+// estimate at a high derive_generation), and token/token pairs with no trustworthy leg stay out.
 
 // xlmQuoteRestampStore is the slice of [timescale.Store] the XLM-quote
 // mirror walks through. A seam rather than the concrete store so the walk
@@ -60,11 +47,8 @@ func xlmQuoteTierProfile(store xlmQuoteRestampStore) estimatedTierProfile {
 	}
 }
 
-// cexFiatTierProfile is the fiat-quote re-derive's profile. The as-of
-// tolerance rides in the header and in the RESUME line as well as in the
-// planner: a run at a narrowed tolerance and a run at the default leave
-// different rows unpriced, and an operator reading a report has to be
-// able to tell which one produced it.
+// cexFiatTierProfile is the fiat-quote re-derive's profile. The as-of tolerance also appears in
+// the header and RESUME line because different tolerances leave different rows unpriced.
 func cexFiatTierProfile(store cexFiatRestampStore, maxStaleness time.Duration) estimatedTierProfile {
 	p := estimatedTierProfile{
 		Tier: restampTierCEXFX,

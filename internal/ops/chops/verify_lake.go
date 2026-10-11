@@ -14,25 +14,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// verifyLake is the stellarindex-ops `verify-lake` subcommand: one "is the lake
-// sound?" verdict, run daily by verify-lake.timer and used as the restore
-// acceptance gate. Over one resolved [-from,-to] range it runs:
-//
-//  1. Ledger substrate contiguity (verify-contiguity's Check 1).
-//  2. stellar.ledger_entry_changes coverage, floor-gated at -ec-floor (0 =
-//     derived from the lake); below the floor is backfill-pending, only
-//     reported.
-//  3. Hash-chain integrity, in-window and boundary links.
-//  4. Raw-table census: transactions, operations and contract_events against
-//     the ledger headers' counts per 1M-ledger partition; operation_results and
-//     operation_participants presence-only (verify_raw_census.go).
-//
-// Exit code = ledger gaps + entry-change deficiencies at/above -ec-floor +
-// broken hash links + short raw-table partitions, capped at 255.
-//
-// -textfile PATH writes lake_verify.prom only once every requested check has
-// completed; an erroring run writes nothing, so the stale alert covers it.
-// Read-only; ClickHouse only. reconcile-balances is run separately.
+// verifyLake is the verify-lake subcommand, the daily "is the lake sound?" verdict and restore
+// gate: ledger contiguity, entry-change coverage above -ec-floor, hash-chain integrity and the
+// raw-table census. Exit code is the failure count capped at 255; -textfile writes the .prom
+// only after every requested check completed, so an erroring run leaves the stale alert to fire.
 func verifyLake(args []string) error {
 	fs := flag.NewFlagSet("verify-lake", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr (this tool reads ClickHouse only, never Postgres); a missing/unreadable file is tolerated when -ch-addr is passed explicitly")
@@ -195,10 +180,8 @@ func renderLakeVerifyProm(c lakeChecks, n lakeCounts, from, to uint32, now time.
 }
 
 // lakeCheckLine formats one verify-lake summary line. A check narrowed out
-// via -checks prints "SKIPPED (not requested)" rather than a zero count —
-// "not run" and "ran, found zero" must not share one representation
-// , or a report from a narrowed run reads as full coverage. Pure
-// — unit-testable without a live lake.
+// via -checks prints "SKIPPED (not requested)" rather than a zero count, so "not run" is never
+// read as "ran, found zero".
 func lakeCheckLine(label string, ran bool, detail string) string {
 	if !ran {
 		return fmt.Sprintf("  %-15s SKIPPED (not requested)\n", label+":")
@@ -240,13 +223,8 @@ const (
 	lakeChecksDefault = lakeCheckContiguity + "," + lakeCheckEntryChanges + "," + lakeCheckHashChain + "," + lakeCheckRawCensus
 )
 
-// parseLakeChecks turns the -checks flag's comma-separated token list
-// into which of the composed checks to run, so an operator can
-// subset a run (e.g. -checks hashchain to re-verify just the chain
-// after a targeted fix). Unknown tokens and an empty resulting set are
-// both errors — a typo in -checks silently running zero checks would
-// defeat the whole point of a "is the lake sound?" gate. Pure — no
-// ClickHouse dependency — so it's unit-testable without a live lake.
+// parseLakeChecks maps the -checks token list to the checks to run. Unknown tokens and an empty
+// set are errors, so a typo cannot silently run zero checks.
 func parseLakeChecks(raw string) (lakeChecks, error) {
 	var c lakeChecks
 	for _, tok := range strings.Split(raw, ",") {

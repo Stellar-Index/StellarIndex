@@ -25,12 +25,9 @@ import (
 )
 
 // ── mock identity-gated decoder ─────────────────────────────────────────────
-// Mirrors the aquarius/phoenix gate contract WITHOUT the XDR-heavy real bodies,
-// so the test drives the REAL contractid.Registry (GatedSet / Seed / Has /
-// IsFactory) and the REAL gatedPrefilter + re-derive entry points — a "biz"
-// event is counted only from a registered contract, a "create" event
-// (factory-only) registers the child named in its Value. This is exactly the
-// identity gate ReDeriveOutputCountsByKindFromEvents' prefilter must preserve.
+// Mirrors the aquarius/phoenix gate without XDR-heavy bodies, driving the real contractid.Registry
+// and gatedPrefilter: a "biz" event counts only from a registered contract, and a factory-only
+// "create" event registers the child named in its Value.
 
 const (
 	prefFactory = "CFACTORYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -83,12 +80,9 @@ func (d *mockGatedDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
 
 func (d *mockGatedDecoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
-// countingEventStreamer models the CH contract_events reader: it applies the
-// `contract_id IN (…)` prefilter (the load-bearing filter this fix adds) and
-// tallies how many rows it actually streamed, so the test can prove the
-// prefilter genuinely narrows the read (non-vacuity). topic0Syms is ignored —
-// the walk passes it as a redundant secondary prefilter, and dropping it here
-// only makes the fake stream a SUPERSET to the decoder, never fewer rows.
+// countingEventStreamer models the CH contract_events reader: it applies the contract_id IN (...)
+// prefilter and counts the rows it streamed, so tests can prove the prefilter really narrows the
+// read. topic0Syms is ignored; dropping that redundant prefilter only streams a superset.
 type countingEventStreamer struct {
 	evs      []events.Event
 	streamed *int
@@ -138,19 +132,10 @@ func mockCreate(ledger uint32, factory, child string, eventIndex int) events.Eve
 	}
 }
 
-// TestGatedPrefilter_identicalCountsSelfSeedPreserved is the load-bearing proof
-// of the -pass timeout fix: restricting the -ch re-derive to a factory-gated
-// source's contract set yields BYTE-IDENTICAL per-ledger/-kind counts to the
-// whole-lake stream, because Matches() rejects the excluded contracts anyway.
-//
-// Non-vacuous on three axes:
-//   - the prefilter genuinely EXCLUDES a real streamed row (the foreign
-//     look-alike emitting the identical "biz" shape) — the filtered read
-//     touches fewer rows than the unfiltered one;
-//   - it still counts an IN-WINDOW child's events (self-seeding preserved: the
-//     prefilter walk captured the pool the factory announced inside [lo,hi]);
-//   - it includes the factory trust root (task requirement — so add_pool
-//     creation events keep streaming and self-seeding in-window children).
+// TestGatedPrefilter_identicalCountsSelfSeedPreserved proves restricting the re-derive to a
+// factory-gated source's contract set gives identical per-ledger/kind counts to the whole-lake
+// stream. Non-vacuous: the prefilter excludes a real foreign look-alike row, still counts an
+// in-window child's events (self-seeding), and keeps the factory trust root streaming.
 func TestGatedPrefilter_identicalCountsSelfSeedPreserved(t *testing.T) {
 	const lo, hi = uint32(100), uint32(200)
 	// Order matters: the factory's create event (index 1, ledger 100) precedes
@@ -307,17 +292,11 @@ func TestGatedContractSet_realDecoders(t *testing.T) {
 	}
 }
 
-// TestCatalogue_GatedPrefilterOptIn pins the exact opt-in set: aquarius,
-// phoenix, soroswap and sushiswap_v3 (identity gates that time out / risk timing out on
-// the whole-lake re-derive) opt in; defindex must NOT (its decode correlates
-// events ACROSS contracts in the same tx, which a contract-id prefilter would
-// break), and neither may a census / oracle / ContractCall source.
-//
-// sushiswap_v3 qualifies on both counts the opt-in requires. Its Matches()
-// keys purely on contract identity and its decode is self-contained (a V3 swap
-// body carries both amounts, so nothing correlates across contracts), and its
-// own `mint` / `burn` symbols are 33% and 12% of ALL pubnet contract events, so
-// an unscoped re-derive over [61.5M, tip] streams the CAP-67 firehose.
+// TestCatalogue_GatedPrefilterOptIn pins the exact opt-in set: aquarius, phoenix, soroswap and
+// sushiswap_v3 opt in; defindex must not (its decode correlates events across contracts in a tx,
+// which a contract-id prefilter would break), nor may a census, oracle or ContractCall source.
+// sushiswap_v3 qualifies because its decode is self-contained and its mint/burn symbols are
+// 33% and 12% of all pubnet contract events.
 func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 	cat, _, err := buildReconciliationCatalogue(config.Config{})
 	if err != nil {
@@ -427,12 +406,9 @@ func TestGatedPrefilter_PanicIsBlindNotCrash(t *testing.T) {
 	}
 }
 
-// TestCatalogue_SoroswapReDeriveIsContractScoped: soroswap is the
-// first catalogue source, and a failing prior projection verdict re-floors it
-// at genesis. With no contract scope that re-derive streamed every
-// contract event from genesis to tip. The entry must scope the lake read to
-// the soroswap gate — every factory plus every pair the (RPC-seeded) decoder
-// holds — and exclude a look-alike emitting the same topics.
+// TestCatalogue_SoroswapReDeriveIsContractScoped pins that the soroswap re-derive, which a failing
+// prior verdict re-floors at genesis, scopes the lake read to its gate (every factory plus every
+// pair the decoder holds) and excludes a look-alike emitting the same topics.
 func TestCatalogue_SoroswapReDeriveIsContractScoped(t *testing.T) {
 	cat, soroswapDec, err := buildReconciliationCatalogue(config.Config{})
 	if err != nil {

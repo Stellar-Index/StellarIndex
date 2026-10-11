@@ -3,17 +3,9 @@
 
 package chops
 
-// scripts/ops/ch-rebuild-projected.sh deleted a HARD-CODED table set
-// whatever -sources it then passed, keyed its done-state by window alone,
-// and recorded nothing when the re-derive failed after the DELETE. So a
-// narrowed run emptied eleven tables it never rebuilt, marked the window
-// done for every source, and a failed run left a hole that a later
-// narrowed run then certified.
-//
-// These execute the shipped script (harness in
-// ch_rebuild_projected_script_test.go) and hold it to one rule: a table is
-// emptied only for a source the SAME window re-derives, and a window that
-// was emptied and not rebuilt is never forgotten.
+// These execute scripts/ops/ch-rebuild-projected.sh (harness in ch_rebuild_projected_script_test.go)
+// and hold it to one rule: a table is emptied only for a source the same window re-derives, and a
+// window that was emptied and not rebuilt is never forgotten.
 
 import (
 	"os"
@@ -98,11 +90,9 @@ func TestChRebuildProjectedScript_NarrowedRunDeletesOnlyItsOwnTables(t *testing.
 	}
 }
 
-// Ownership is not the script's to assert: the reconciliation catalogue
-// says which source re-derives which table, and whether it owns the whole
-// table. An unfiltered DELETE on a table the catalogue shares between
-// sources, or gives to a different source, empties rows the run will not
-// rewrite.
+// The reconciliation catalogue, not the script, says which source re-derives which table and
+// whether it owns it wholesale. An unfiltered DELETE on a shared table, or one owned by another
+// source, empties rows the run will not rewrite.
 func TestChRebuildProjectedScript_EachSourceDeletesOnlyTablesTheCatalogueSaysItOwns(t *testing.T) {
 	t.Parallel()
 	cat, _, err := buildReconciliationCatalogue(config.Config{})
@@ -149,13 +139,8 @@ func TestChRebuildProjectedScript_EachSourceDeletesOnlyTablesTheCatalogueSaysItO
 	}
 }
 
-// The reverse of the containment test above: the catalogue is the ceiling
-// AND the floor. A table the catalogue says a source owns wholesale
-// (whereFilter == "") must be emptied by that source's window, or the
-// clean-slate re-derive that follows leaves the catalogue's own rows
-// stale forever — the hand-maintained case statement falling behind the
-// catalogue in the other direction from the one the containment test
-// guards.
+// The catalogue is the floor as well as the ceiling: a table it says a source owns wholesale
+// (whereFilter == "") must be emptied by that source's window, or the re-derive leaves stale rows.
 func TestChRebuildProjectedScript_EachSourceDeletesEveryTableTheCatalogueSaysItOwnsWholesale(t *testing.T) {
 	t.Parallel()
 	cat, _, err := buildReconciliationCatalogue(config.Config{})
@@ -526,11 +511,9 @@ func TestChRebuildProjectedScript_UnusableStaleRecordRefusesBeforeAnyDelete(t *t
 	}
 }
 
-// TestChRebuildProjectedScript_EmptiedWindowTellsTheVerdictHow is the
-// completeness-verdict leg of the emptied-window case: the DELETE landed, the re-derive died,
-// so the window is EMPTY. $DIRTY records that for the next run of this
-// script; nothing recorded it for /v1/coverage, which kept certifying the
-// hole complete=true until someone noticed.
+// TestChRebuildProjectedScript_EmptiedWindowTellsTheVerdictHow covers the case where the DELETE
+// landed and the re-derive died: $DIRTY records the empty window for the next run, and the
+// completeness verdict must also be told so /v1/coverage does not certify the hole complete.
 func TestChRebuildProjectedScript_EmptiedWindowTellsTheVerdictHow(t *testing.T) {
 	t.Parallel()
 	run := runProjectedScript(t, "", map[string]string{
@@ -614,11 +597,9 @@ func TestChRebuildProjectedScript_CleanWindowTellsTheVerdictNothing(t *testing.T
 	}
 }
 
-// TestChRebuildProjectedScript_PrintedRecordCommandIsAcceptedByTheBinary
-// closes the drift the note would otherwise invite: a command an operator
-// pastes at 03:00 and that the binary rejects is worse than no note. It
-// feeds the printed flags to the REAL chRebuild entry point and requires
-// the failure to be the missing config, never an unknown flag.
+// TestChRebuildProjectedScript_PrintedRecordCommandIsAcceptedByTheBinary feeds the printed flags
+// to the real chRebuild entry point and requires the failure to be the missing config, never an
+// unknown flag, since a pasted command the binary rejects is worse than no note.
 func TestChRebuildProjectedScript_PrintedRecordCommandIsAcceptedByTheBinary(t *testing.T) {
 	t.Parallel()
 	run := runProjectedScript(t, "", map[string]string{"SRC": "cctp", "STUB_FAIL_WRITE_FROM": "61000000"})
@@ -875,14 +856,9 @@ func TestChRebuildProjectedScript_DeletesOnlyTradeSourcesItRederives(t *testing.
 	}
 }
 
-// ch-rebuild's refusals (BackfillSafe, the live-cursor one-writer
-// guard, the buffered-range ceiling) must fire before the -write
-// run, not after the script's DELETE has committed — or the guard doing its
-// job would leave the window's tables empty. A refusal must cost nothing.
-//
-// Every shape a "no" can arrive in is covered, not just the polite one: a
-// guard refusal, a deployed binary that predates -preflight (flag parse
-// error), and a binary that exits 0 without a verdict line.
+// ch-rebuild's refusals (BackfillSafe, the one-writer live-cursor guard, the buffered-range
+// ceiling) must fire before the DELETE commits, so a refusal costs nothing. Covers a guard refusal,
+// a binary without -preflight (flag parse error) and a binary exiting 0 with no verdict line.
 func TestChRebuildProjectedScript_RefusalDeletesNothing(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"refuse", "oldbinary", "silent"} {
@@ -1078,13 +1054,9 @@ func TestChRebuildProjectedScript_DeletesOnlySourcesTradeOfCanRewrite(t *testing
 	}
 }
 
-// TestChRebuildProjectedScript_EveryCaseArmDeleteIsReconcilable is the
-// per-arm check: the trades DELETE above is only 1 of the 12 DELETE statements
-// window_delete_sql emits — the other 11 clear per-source ancillary
-// tables (aquarius_admin, blend_positions, ...) inside a per-source case
-// arm. A source/table pair deleted there but absent from ch-rebuild's
-// reconciliation catalogue is the same silent-data-loss shape as the
-// trades case, just on a different table.
+// TestChRebuildProjectedScript_EveryCaseArmDeleteIsReconcilable checks the 11 per-source
+// ancillary DELETEs in window_delete_sql: a source/table pair deleted there but absent from
+// ch-rebuild's reconciliation catalogue is silent data loss.
 func TestChRebuildProjectedScript_EveryCaseArmDeleteIsReconcilable(t *testing.T) {
 	arms := caseArmDeletes(t, "../../../scripts/ops/ch-rebuild-projected.sh")
 	if len(arms) == 0 {

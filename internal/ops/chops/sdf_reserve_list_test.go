@@ -18,12 +18,9 @@ import (
 )
 
 // r1ReserveAccounts is supply.sdf_reserve_accounts as deployed
-// (configs/ansible/roles/archival-node/defaults/main.yml,
-// stellarindex_sdf_reserve_accounts — 16 accounts transcribed from
-// stellar/dashboard common/lumens.js). The parser's
-// definition of "the published set" is pinned to this list below: if
-// the two ever disagree on the fixture, either the transcription or
-// the parser is wrong, and the check must say which.
+// (configs/ansible/roles/archival-node/defaults/main.yml, stellarindex_sdf_reserve_accounts, 16
+// accounts transcribed from stellar/dashboard common/lumens.js). The parser's published set is
+// pinned to this list, so a disagreement on the fixture means the transcription or parser is wrong.
 var r1ReserveAccounts = []string{
 	"GD2D6JG6D3V52ZMPIYSVHYFKVNIMXGYVLYJQ3HYHG5YDPGJ3DCRGPLTP",
 	"GA2VRL65L3ZFEDDJ357RGI3MAOKPJZ2Z3IJTPSC24I4KDTNFSVEQURRA",
@@ -43,11 +40,9 @@ var r1ReserveAccounts = []string{
 	"GBEZOC5U4TVH7ZY5N3FLYHTCZSI6VFGTULG7PBITLF5ZEBPJXFT46YZM",
 }
 
-// Two accounts that appear in the fixture but are NOT reserve accounts:
-// the burn address (subtracted from TOTAL supply, not circulating) and
-// the escrow SDF retired by commenting its row out. A parser that
-// sweeps every G-strkey in the file would include both, and the live
-// r1 list would then read as drifted by two on day one.
+// Two accounts in the fixture are not reserve accounts: the burn address (subtracted from total
+// supply, not circulating) and the escrow SDF retired by commenting its row out. A parser that
+// swept every G-strkey would include both and read the live list as drifted by two.
 const (
 	fixtureVoidAccount     = "GALAXYVOIDAOPZTDLHILAJQKCVVFMD4IKLXLSZV5YHO7VY74IWZILUTO"
 	fixtureRetiredEscrow   = "GBA6XT7YBQOERXT656T74LYUVJ6MEIOC5EUETGAQNHQHEPUFPKCW5GYM"
@@ -70,10 +65,8 @@ func sortedCopy(in []string) []string {
 	return out
 }
 
-// TestDiffReserveList pins the pure set difference on the three
-// fixtures the finding asks for — equal, missing, extra — plus the
-// invariants that make the verdict deterministic: order-independence,
-// duplicate-tolerance and sorted output.
+// TestDiffReserveList pins the set difference (equal, missing, extra) and the invariants that make
+// the verdict deterministic: order-independence, duplicate-tolerance and sorted output.
 func TestDiffReserveList(t *testing.T) {
 	a, b, c := "GAAA", "GBBB", "GCCC"
 	cases := []struct {
@@ -106,11 +99,9 @@ func TestDiffReserveList(t *testing.T) {
 	}
 }
 
-// TestParsePublishedReserveList_RealSource parses the REAL
-// common/lumens.js (as captured in testdata/) and pins the
-// published set to r1's deployed 16: the accounts table's 15 live rows
-// plus the network-upgrade reserve constant; not the commented-out
-// escrow, not the burn address.
+// TestParsePublishedReserveList_RealSource parses the real common/lumens.js captured in testdata/
+// and pins the published set to r1's deployed 16: 15 live table rows plus the network-upgrade
+// reserve constant, excluding the commented-out escrow and the burn address.
 func TestParsePublishedReserveList_RealSource(t *testing.T) {
 	got, err := parsePublishedReserveList(readLumensFixture(t))
 	if err != nil {
@@ -137,11 +128,9 @@ func TestParsePublishedReserveList_RealSource(t *testing.T) {
 	}
 }
 
-// TestParsePublishedReserveList_ShapeChangeIsAnError — a source the
-// parser does not recognise must be an error, never an empty or
-// partial list. An empty list would diff every configured account as
-// `extra`; a partial one would report phantom `extra` accounts. Both
-// are false drift verdicts, and the caller maps the error to SKIP.
+// TestParsePublishedReserveList_ShapeChangeIsAnError pins that an unrecognised source is an error,
+// never an empty or partial list, since either would give a false drift verdict (the caller maps
+// the error to SKIP).
 func TestParsePublishedReserveList_ShapeChangeIsAnError(t *testing.T) {
 	fixture := readLumensFixture(t)
 	cases := []struct {
@@ -168,11 +157,9 @@ func TestParsePublishedReserveList_ShapeChangeIsAnError(t *testing.T) {
 	}
 }
 
-// TestParsePublishedReserveList_RetirementAndAddition — the two
-// upstream edits the check exists to catch, applied to the real
-// source: SDF retires an account by commenting its row out (it must
-// leave the published set), and adds one by inserting a row (it must
-// enter it).
+// TestParsePublishedReserveList_RetirementAndAddition applies the two upstream edits the check
+// exists to catch to the real source: commenting a row out must remove the account from the
+// published set, and inserting a row must add it.
 func TestParsePublishedReserveList_RetirementAndAddition(t *testing.T) {
 	fixture := readLumensFixture(t)
 
@@ -204,12 +191,9 @@ func TestParsePublishedReserveList_RetirementAndAddition(t *testing.T) {
 	}
 }
 
-// writeReserveConfig writes a stellarindex.toml fragment carrying the
-// given reserve list, padded with unrelated sections and an unknown
-// key so the test proves the partial decode ignores everything but
-// supply.sdf_reserve_accounts (config.Load would reject the unknown
-// key and validate the whole file; the list check must not inherit
-// either failure mode).
+// writeReserveConfig writes a stellarindex.toml fragment with the given reserve list, padded with
+// unrelated sections and an unknown key, to prove the partial decode reads only
+// supply.sdf_reserve_accounts (config.Load would reject the key and validate the whole file).
 func writeReserveConfig(t *testing.T, accounts []string) string {
 	t.Helper()
 	var b strings.Builder
@@ -226,11 +210,9 @@ func writeReserveConfig(t *testing.T, accounts []string) string {
 	return path
 }
 
-// TestReconcileReserveList_Outcomes drives the check end to end against
-// a stub of the published source and a temp config: in step, missing,
-// extra, published source dark (SKIP — never a verdict), published
-// source reshaped (SKIP), and config unreadable (a FAILURE of our own
-// side, never a skip).
+// TestReconcileReserveList_Outcomes drives the check against a stub source and a temp config:
+// in step, missing, extra, source dark or reshaped (SKIP, never a verdict), and config unreadable
+// (a failure on our side, never a skip).
 func TestReconcileReserveList_Outcomes(t *testing.T) {
 	fixture := readLumensFixture(t)
 	ctx := context.Background()
@@ -322,14 +304,10 @@ func TestReconcileReserveList_Outcomes(t *testing.T) {
 	})
 }
 
-// TestRenderServedValueProm_ReserveList pins the exposition contract
-// for the list check: its verdict lives in its own
-// stellarindex_sdf_reserve_list_drift{kind} family (both kinds always
-// emitted when verified, so `> 0` alerts have a series to go quiet
-// on), it shares served_value_skipped so a dark source is covered by
-// persistently_skipped, it NEVER emits served_value_ok (its remedy is
-// account-level, not a tolerance), and — the F5 rule — a skipped or
-// config-failed run emits NO drift gauge at all.
+// TestRenderServedValueProm_ReserveList pins the exposition contract: the verdict lives in the
+// stellarindex_sdf_reserve_list_drift{kind} family (both kinds always emitted when verified, so
+// `> 0` alerts can go quiet), served_value_skipped is shared, served_value_ok is never emitted,
+// and a skipped or config-failed run emits no drift gauge at all.
 func TestRenderServedValueProm_ReserveList(t *testing.T) {
 	now := time.Unix(1_751_000_000, 0)
 	value := []servedValueResult{{name: "a", relErr: 0.001, ok: true}}
@@ -405,11 +383,9 @@ func TestRenderServedValueProm_ReserveList(t *testing.T) {
 	})
 }
 
-// TestParsePublishedReserveList_UnrecognisedRowIsNeverAPartialList — an
-// upstream reshape of ONE row must fail the whole parse (the caller
-// skips), never yield the rows before it. A partial list reads as
-// phantom `extra` accounts whose runbook remedy is deleting real SDF
-// reserve accounts from our config.
+// TestParsePublishedReserveList_UnrecognisedRowIsNeverAPartialList pins that one reshaped row
+// fails the whole parse, since a partial list would read as phantom extra accounts whose remedy
+// deletes real SDF reserve accounts from our config.
 func TestParsePublishedReserveList_UnrecognisedRowIsNeverAPartialList(t *testing.T) {
 	fixture := readLumensFixture(t)
 	const row = `  escrowJan2023: "GA2VRL65L3ZFEDDJ357RGI3MAOKPJZ2Z3IJTPSC24I4KDTNFSVEQURRA",`
@@ -467,11 +443,9 @@ func TestParsePublishedReserveList_EquivalentSpellingsParseWhole(t *testing.T) {
 	}
 }
 
-// TestReconcileReserveList_ImplausibleRetirementIsSkipped — a published
-// table the grammar accepts but that retires more accounts at once than
-// SDF plausibly does (e.g. rows moved to a second table) must not become
-// a drift verdict whose remedy deletes reserve accounts: it is skipped,
-// still naming the accounts, and the bound itself stays a verdict.
+// TestReconcileReserveList_ImplausibleRetirementIsSkipped pins that a table retiring more
+// accounts at once than SDF plausibly does (e.g. rows moved elsewhere) is skipped, still naming
+// the accounts, rather than becoming a drift verdict whose remedy deletes reserve accounts.
 func TestReconcileReserveList_ImplausibleRetirementIsSkipped(t *testing.T) {
 	fixture := readLumensFixture(t)
 	c := &http.Client{Timeout: 5 * time.Second}

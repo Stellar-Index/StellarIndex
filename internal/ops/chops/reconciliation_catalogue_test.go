@@ -37,16 +37,9 @@ const wantSEP41Filter = "contract_id IN (" +
 	"'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75', " +
 	"'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC')"
 
-// TestBuildReconciliationCatalogue_PromotesSEP41WhenWatched pins the
-// sep41 promotion: once the full-history truncate+re-derive
-// (`ch-rebuild -sep41 -write`) has purged
-// every pre-migration-0057 collapsed row, a configured watched set makes
-// the DEFAULT catalogue (compute-completeness / ch-reproject /
-// verify-reconciliation) carry sep41_transfers + sep41_supply with the
-// same wiring buildSEP41ReconSources documents (genesis, contractIDs
-// prefilter, kinds, strict per-ledger reconcile) — see
-// TestBuildSEP41ReconSources_OptIn for the field-level assertions this
-// mirrors.
+// TestBuildReconciliationCatalogue_PromotesSEP41WhenWatched pins that a configured watched set
+// makes the default catalogue carry sep41_transfers and sep41_supply with the wiring
+// buildSEP41ReconSources documents; TestBuildSEP41ReconSources_OptIn holds the field-level checks.
 func TestBuildReconciliationCatalogue_PromotesSEP41WhenWatched(t *testing.T) {
 	cfg := testConfigWithAllSources()
 	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
@@ -74,16 +67,10 @@ func TestBuildReconciliationCatalogue_PromotesSEP41WhenWatched(t *testing.T) {
 	}
 }
 
-// TestBuildReconciliationCatalogue_GenesisMirrorsProtocolRegistry pins the
-// lake-derived exact genesis values for the two sources whose catalogue
-// floors had drifted: cctp's true first on-chain event is
-// ledger 62,146,641 (the MessageTransmitter's first event; the stale
-// 62_403_000 ingestion-config floor left 410 real served rows permanently
-// BELOW the verify floor, structurally out of every verdict) and rozo's is
-// 60,829,397 (first event across all four Rozo contracts). The values
-// mirror internal/api/v1/protocols_registry.go (fixed there 07-30) —
-// spelled as literals here so this test cannot agree with a re-drifted
-// catalogue.
+// TestBuildReconciliationCatalogue_GenesisMirrorsProtocolRegistry pins the lake-derived genesis
+// of cctp (ledger 62,146,641, the MessageTransmitter's first event) and rozo (60,829,397, first
+// event across all four contracts). They are literals so the test cannot agree with a re-drifted
+// catalogue; a floor above the true genesis leaves served rows outside every verdict.
 func TestBuildReconciliationCatalogue_GenesisMirrorsProtocolRegistry(t *testing.T) {
 	want := map[string]uint32{
 		"cctp": 62_146_641,
@@ -108,12 +95,9 @@ func TestBuildReconciliationCatalogue_GenesisMirrorsProtocolRegistry(t *testing.
 	}
 }
 
-// TestBuildReconciliationCatalogue_NoSEP41WithoutWatchedSet asserts the
-// promotion is silent-skip, not an error, for a deployment that never
-// opted into SEP-41 capture — mirroring the dispatcher's own
-// non-opted-in behavior (buildSEP41ReconSources itself errors on an
-// empty watched set; buildReconciliationCatalogue must never surface
-// that error for a plain unconfigured deployment).
+// TestBuildReconciliationCatalogue_NoSEP41WithoutWatchedSet asserts the promotion is a silent
+// skip, not an error, when SEP-41 capture is not configured, although buildSEP41ReconSources
+// itself errors on an empty watched set.
 func TestBuildReconciliationCatalogue_NoSEP41WithoutWatchedSet(t *testing.T) {
 	cfg := testConfigWithAllSources() // WatchedSEP41Contracts left empty
 
@@ -128,11 +112,9 @@ func TestBuildReconciliationCatalogue_NoSEP41WithoutWatchedSet(t *testing.T) {
 	}
 }
 
-// TestBuildSEP41ReconSources_OptIn asserts the opt-in variant produces
-// both sep41 sources with the documented kind + genesis + prefilter
-// wiring (cfg.Supply.WatchedSEP41Contracts +
-// contractIDs prefilter; kinds "sep41_transfers.event" /
-// "sep41_supply.event"; genesis 50_457_424).
+// TestBuildSEP41ReconSources_OptIn asserts the opt-in variant produces both sep41 sources with
+// the documented kinds ("sep41_transfers.event", "sep41_supply.event"), genesis 50_457_424 and the
+// contractIDs prefilter from cfg.Supply.WatchedSEP41Contracts.
 func TestBuildSEP41ReconSources_OptIn(t *testing.T) {
 	cfg := config.Config{}
 	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
@@ -178,15 +160,10 @@ func TestBuildSEP41ReconSources_OptIn(t *testing.T) {
 		if len(tgt.kinds) != 1 || tgt.kinds[0] != w.kind {
 			t.Errorf("%s: kinds = %v, want [%q]", src.name, tgt.kinds, w.kind)
 		}
-		// The sep41 targets are watched-set SLICES of their tables, not
-		// whole tables. Demanding whereFilter == ""
-		// (whole-table ownership) would encode a defect: the served
-		// side would count every contract's rows while the expected
-		// side is gated on the watched set by dec/contractIDs, so any
-		// row from a since-unwatched contract was a permanent, never-
-		// closing surplus. Pinned to the exact predicate, not merely
-		// non-empty, because this string is part of the durable
-		// completeness_target_floors key.
+		// The sep41 targets are watched-set slices of their tables, so whole-table ownership
+		// (whereFilter == "") would count unwatched contracts' rows on the served side only, a
+		// surplus that never closes. The exact predicate is pinned because it is part of the
+		// durable completeness_target_floors key.
 		if tgt.whereFilter != wantSEP41Filter {
 			t.Errorf("%s: whereFilter = %q, want %q (watched-set scoping matching the expected side)",
 				src.name, tgt.whereFilter, wantSEP41Filter)
@@ -225,23 +202,13 @@ func TestBuildSEP41ReconSources_EmptyWatchedSetErrors(t *testing.T) {
 	}
 }
 
-// ─── sep41 served-vs-expected scoping (reconcile defect 4a) ────────
-//
-// The expected side of the sep41 reconcile is gated on the watched set
-// twice over (the decoders' own watched map, and the contractIDs lake
-// prefilter). The served side is a plain row count over the target
-// table. If the served count is not scoped to the SAME contracts, rows
-// for a contract that is no longer watched — dropped from `[supply]
-// watched_sep41_contracts`, or captured under a wider set during an
-// earlier backfill — inflate served forever while expected can never
-// grow to match. The reconcile then reports a surplus that no re-derive
-// can close.
+// The expected side of the sep41 reconcile is gated on the watched set, so the served side must
+// be scoped to the same contracts or rows of an unwatched contract inflate it with a surplus
+// no re-derive can close.
 
-// TestSEP41Filter_ScopesToWatchedSetOnly builds two catalogues from
-// watched sets that differ by one contract and asserts the served-side
-// predicate differs with them. A whole-table filter ("") is identical
-// for both — which is exactly the bug — so this fails on any fix that
-// leaves the served side unscoped.
+// TestSEP41Filter_ScopesToWatchedSetOnly builds two catalogues from watched sets differing by one
+// contract and asserts the served-side predicate differs too; a whole-table filter ("") is
+// identical for both, so it fails.
 func TestSEP41Filter_ScopesToWatchedSetOnly(t *testing.T) {
 	const (
 		a = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
@@ -299,11 +266,8 @@ func TestSEP41Filter_StableAcrossOrdering(t *testing.T) {
 	}
 }
 
-// TestSEP41Filter_RejectsNonStrkey — whereFilter is interpolated into
-// SQL by timescale.Store's row-count helpers, and the watched set comes
-// from operator config, which only checks non-emptiness. Anything that
-// is not a contract C-strkey must fail the build loudly rather than
-// reach the query text.
+// TestSEP41Filter_RejectsNonStrkey pins that anything but a contract C-strkey fails the build,
+// because whereFilter is interpolated into SQL and operator config only checks non-emptiness.
 func TestSEP41Filter_RejectsNonStrkey(t *testing.T) {
 	for _, bad := range []string{
 		"C'); DROP TABLE sep41_transfers; --",
@@ -318,13 +282,10 @@ func TestSEP41Filter_RejectsNonStrkey(t *testing.T) {
 	}
 }
 
-// TestCatalogue_OpArgsOnlyForRedstone pins the wide-column trim:
-// redstone is the ONLY decoder that consumes events.Event.OpArgs (write_prices
-// feed-id zip), so it alone may ask the -ch reconcile to read the wide
-// op_args_xdr column. Every other source — critically the sep41 pair (in the
-// catalogue, whose reconcile streams the CAP-67
-// firehose) — must keep needsOpArgs false, or the lake read regrows the memory
-// profile that OOM-killed compute-completeness at any ClickHouse server cap.
+// TestCatalogue_OpArgsOnlyForRedstone pins the wide-column trim: only redstone consumes
+// events.Event.OpArgs, so only it may read the wide op_args_xdr column. Every other source,
+// critically the sep41 pair streaming the CAP-67 firehose, must keep needsOpArgs false or the
+// lake read regrows the memory profile that OOM-killed compute-completeness.
 func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
 	cfg := testConfigWithAllSources()
 	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
@@ -360,23 +321,10 @@ func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
 	}
 }
 
-// TestBlendEmitterDropFanoutWaived pins the blend_emitter
-// projection false-red fix. The `drop` event is a FAN-OUT: one decoder
-// DropEvent carries N recipients and the sink writes one blend_emitter_events
-// row per recipient (recipient_index is a PK component), so a per-ledger
-// event-count-vs-served-row-count reconcile false-flags every drop ledger
-// (r1-measured: ledger 51,499,914 = 13 rows / 1 event identity;
-// ledger 57,467,292 = 3 / 1 → Σ|Δ|=14, data CORRECT).
-//
-// Unlike the aquarius_reserves/liquidity fan-out tables — which are ENTIRELY
-// fan-out and are waived whole — blend_emitter_events is MIXED: `distribute`
-// (465 events) and `q_swap`/`swap` (2) are strictly 1:1. So instead of waiving
-// the whole table and losing that 1:1 coverage, the catalogue carves ONLY the
-// fan-out drop rows out of the served side (whereFilter `event_kind <> 'drop'`)
-// and omits the drop kind from the re-derive: the 467/469 1:1 events keep exact
-// per-ledger reconciliation and the 2 drop ledgers are covered by the density
-// gap-detector (per_source_gaps.go). This test fails against a
-// catalogue whose kinds include "blend_emitter.drop" with whereFilter "".
+// TestBlendEmitterDropFanoutWaived pins that the fan-out drop event is carved out. One DropEvent
+// writes a row per recipient, so a per-ledger count reconcile would false-flag every drop ledger.
+// The table is mixed (distribute and swap are 1:1), so the catalogue excludes only drop rows from
+// the served side (whereFilter event_kind <> 'drop') and omits the drop kind from the re-derive.
 func TestBlendEmitterDropFanoutWaived(t *testing.T) {
 	cat, _, err := buildReconciliationCatalogue(testConfigWithAllSources())
 	if err != nil {
@@ -448,15 +396,9 @@ func TestValidateSourceFilter(t *testing.T) {
 	}
 }
 
-// TestValidateSourceFilter_EntryDecoderSourceGetsDistinctMessage pins:
-// "accounts" (and its four RegisterSupplyEntryDecoders siblings) are real,
-// config-driven ingest sources — they bump stellarindex_source_decode_errors_total
-// like any other source and the generic decode-error alert fires on them —
-// but they read LedgerEntry changes, not soroban_events, so they can never
-// be a reconSource. Without a tailored message, -source accounts gets the SAME "matches
-// no reconciliation source" message a typo would, which reads as "accounts
-// isn't a real source" rather than "accounts is real but not reconcilable
-// here". The rejection must name the reason, not just the known-sources list.
+// TestValidateSourceFilter_EntryDecoderSourceGetsDistinctMessage pins that "accounts" and its
+// four supply entry-decoder siblings are real ingest sources that read LedgerEntry changes, so
+// they can never be a reconSource. The rejection must say that, not reuse the typo message.
 func TestValidateSourceFilter_EntryDecoderSourceGetsDistinctMessage(t *testing.T) {
 	cat := []reconSource{{name: "soroswap"}, {name: "aquarius"}}
 
@@ -479,11 +421,9 @@ func TestValidateSourceFilter_EntryDecoderSourceGetsDistinctMessage(t *testing.T
 	}
 }
 
-// TestFilterCatalogueByNetwork pins network filtering: on a test net the pubnet-anchored
-// protocol sources leave the catalogue entirely (their decoders match
-// nothing there and their pubnet genesis floors sit above the network's
-// tip), while the ledger-anchored ones stay. On pubnet the filter is the
-// identity — that is the safety argument for the whole change.
+// TestFilterCatalogueByNetwork pins that on a test net the pubnet-anchored protocol sources leave
+// the catalogue (their decoders match nothing and their genesis floors sit above the tip) while
+// ledger-anchored ones stay. On pubnet the filter is the identity.
 func TestFilterCatalogueByNetwork(t *testing.T) {
 	cat := []reconSource{
 		{name: "soroswap"},
@@ -523,19 +463,10 @@ func TestFilterCatalogueByNetwork(t *testing.T) {
 	}
 }
 
-// TestBandGenesisAgreesAcrossEveryConstant pins the fix for a four-way
-// disagreement. Band's genesis lived in four places and two
-// of them said 60,000,000 while two said 50,842,736 — a 9.16M-ledger
-// difference that silently shortened the range every completeness and
-// gap check evaluated, so the source read clean over a window that
-// excluded most of its history.
-//
-// The right value is hard to find, which is why it drifted: Band's
-// Soroban contract emits ZERO events, so the obvious probe (min ledger
-// in contract_events) returns 0 rows and reads as "no data" rather than
-// "wrong table". It has to come from contract_instance_changes, and it
-// is corroborated by contract_data writes in ledger_entry_changes from
-// the same ledger and by the WASM audit.
+// TestBandGenesisAgreesAcrossEveryConstant pins that every Band genesis constant agrees. A
+// disagreement silently shortens the range completeness and gap checks evaluate. The true value
+// comes from contract_instance_changes, because Band's contract emits zero events and a
+// min-ledger probe on contract_events returns no rows.
 func TestBandGenesisAgreesAcrossEveryConstant(t *testing.T) {
 	const bandGenesis = 50_842_736
 
@@ -614,11 +545,9 @@ func standingRetentionRelations(t *testing.T) map[string]string {
 	return held
 }
 
-// 0116's floor treats a rising MIN(ledger) on a reconcile target as
-// loss. That is only true while no reconcile target can shed its oldest
-// rows on a schedule; a retention policy on one would make the floor
-// fire continuously. Its header asks for the rule to be revisited
-// first — this is what makes that request binding.
+// Migration 0116's floor treats a rising MIN(ledger) on a reconcile target as loss, which holds
+// only while no target sheds its oldest rows on a schedule; a retention policy would make the
+// floor fire continuously.
 func TestReconcileTargets_CarryNoRetentionPolicy(t *testing.T) {
 	cfg := testConfigWithAllSources()
 	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
@@ -659,13 +588,10 @@ var packageGenesis = map[string]uint32{
 	"defindex":       defindex.GenesisLedger,
 }
 
-// TestCatalogueGenesisLocksStepWithGapDetectorTargets pins every
-// catalogued source's genesis to the gap detector's floor for the same
-// source — the earliest Genesis across its DefaultGapDetectorTargets rows
-// (a sub-table may start later, never earlier) — and, where the source
-// package exports a constant, both to that constant. Without it a
-// one-sided correction scores reconciliation and gap density over
-// different ledger ranges and nothing fails.
+// TestCatalogueGenesisLocksStepWithGapDetectorTargets pins each catalogued source's genesis to
+// the earliest Genesis across its DefaultGapDetectorTargets rows (a sub-table may start later,
+// never earlier) and to the source package constant where one exists, so reconciliation and gap
+// density never score different ledger ranges.
 func TestCatalogueGenesisLocksStepWithGapDetectorTargets(t *testing.T) {
 	cfg := testConfigWithAllSources()
 	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41

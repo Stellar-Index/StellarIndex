@@ -22,36 +22,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// ─── Catalogue-completeness invariant (the "next omission" guard) ─────
-//
-// The projection reconcile axis (ADR-0033 Claim 2b) only checks the
-// protocol tables listed as reconTargets in the catalogue. A source's
-// decoder emits consumer.Event values that the sink (pipeline.handleEvent)
-// routes to served tables; if a table is not a reconTarget it is covered
-// ONLY by the coarse density gap-detector, never per-ledger count-verified.
-// That is exactly how soroswap.liquidity, the aquarius reserves/rewards/
-// admin/fee/kill family, and defindex.strategy.harvest each shipped a
-// persisted-but-unreconciled table (or, for harvest, an unreconciled KIND).
-//
-// This file makes that class impossible to reintroduce SILENTLY. It
-// enumerates EVERY consumer.Event type the sink persists (statically, from
-// pipeline.handleEvent's real type switch — the CI-guaranteed-complete
-// universe, per pipeline/lockstep_ast_test.go) and asserts each one is
-// EITHER covered by a reconTarget in the built catalogue OR carries an
-// explicit noReconcile waiver with a written reason. A new decoder event
-// type that routes to a persisted table without being reconciled or waived
-// fails this test, not production.
-//
-// Residual (documented, not hidden): several decoders emit their
-// EventKind() DYNAMICALLY from wire data (defindex by Direction, sorocredit
-// by EventType, aquarius reserves/liquidity by a coarse kind shared across
-// tables). No decoder exports a static kind vocabulary, so a purely-static
-// enumeration of every KIND is infeasible. The guard is therefore
-// TYPE-level for the omission class (which catches every persisted-but-
-// unreconciled TABLE), plus a decoder-truth cross-check
-// (TestCatalogue_DeclaredKindsMatchDecoderOutput) that INSTANTIATES the
-// concrete emitters — including defindex per-Direction, so the
-// defindex.strategy.harvest KIND-omission regression is caught explicitly.
+// Every consumer.Event type the sink persists (enumerated statically from
+// pipeline.handleEvent's type switch) must be covered by a reconTarget in the catalogue or carry
+// an explicit noReconcile waiver with a reason, so a new persisted table cannot go unreconciled
+// silently. Decoders emit some kinds dynamically, so the guard is type-level, backed by
+// TestCatalogue_DeclaredKindsMatchDecoderOutput which instantiates the concrete emitters.
 
 type routeDisp int
 
@@ -101,26 +76,15 @@ type projRoute struct {
 	reason string
 }
 
-// accountObservationWaiver covers account_observations specifically: a
-// LedgerEntry observation, not a soroban-event projection, so it never flows
-// through the EventKind re-derive — but unlike the other four observers it
-// genuinely IS covered by its own axis: migrations/0144_account_observer_watermark
-// tracks freshness for this table. Do not reuse this reason for a table that
-// has no such watermark — see observationWaiverNoAxis.
+// accountObservationWaiver covers account_observations: a LedgerEntry observation that is covered
+// by its own observer watermark. Do not reuse it for a table without one; see observationWaiverNoAxis.
 const accountObservationWaiver = "LedgerEntry observation (supply observer), not a soroban-event " +
 	"projection — outside the EventKind re-derive; covered by the account observer watermark " +
 	"(migrations/0144_account_observer_watermark)"
 
-// observationWaiverNoAxis covers the four NON-account supply observers
-// (trustline / claimable-balance / liquidity-pool-reserve / SAC-balance):
-// LedgerEntry observations, not soroban-event projections, so — like
-// accounts — they never flow through the EventKind re-derive. UNLIKE
-// accounts, none of the four has a completeness or freshness mechanism of
-// any kind: no observer watermark exists for them (only migration 0144,
-// account-only). This waiver documents that gap rather than asserting
-// coverage that does not exist — do not describe it as "covered by the
-// observer's own coverage axis" until one of these four gains an equivalent
-// watermark.
+// observationWaiverNoAxis covers the four non-account supply observers (trustline,
+// claimable-balance, liquidity-pool-reserve, SAC-balance). None has a completeness or freshness
+// mechanism, so this waiver documents the gap rather than claiming coverage that does not exist.
 const observationWaiverNoAxis = "LedgerEntry observation (supply observer), not a soroban-event " +
 	"projection — outside the EventKind re-derive; NO observer watermark or other completeness " +
 	"mechanism exists for this table (unlike account_observations / migration 0144) — a real gap, " +
@@ -173,11 +137,8 @@ var projRoutes = []projRoute{
 	{typeName: "sushiswap_v3.PositionEvent", table: "sushiswap_v3_position_events", kind: "sushiswap_v3.position", disp: reconciledByKind},
 
 	// ── upshift ──
-	// One consumer.Event carrying all four decoded kinds (the
-	// sep41_transfers shape), one table, no fan-out: each decoded event
-	// is exactly one row. The eight recognised custody / governance /
-	// allowance events emit no consumer.Event at all, so they have no
-	// persist arm and need no route.
+	// One consumer.Event carries all four decoded kinds into one table, one row each. The eight
+	// recognised custody, governance and allowance events emit no consumer.Event, so need no route.
 	{typeName: "upshift.Event", table: "upshift_vault_events", kind: "upshift.vault_event", disp: reconciledByKind},
 
 	// ── spectra ──
@@ -348,16 +309,9 @@ func sortedTypeSet(m map[string]bool) []string {
 	return out
 }
 
-// TestCatalogue_EveryPersistedEventTypeIsRoutedOrWaived is THE durable
-// omission guard. Every consumer.Event type the sink persists must appear
-// in projRoutes (routed to a reconTarget or explicitly waived), and every
-// projRoutes entry must correspond to a real persist arm (no stale rows).
-//
-// This is the mechanism that would have failed CI the day soroswap.liquidity
-// / the aquarius reserves/rewards/admin/fee/kill types / defindex's vault
-// event first gained a persist arm without a matching reconcile decision —
-// forcing the author to add a reconTarget or a written waiver, never a
-// silent density-only table.
+// TestCatalogue_EveryPersistedEventTypeIsRoutedOrWaived is the omission guard. Every persisted
+// consumer.Event type must appear in projRoutes (routed or waived), and every projRoutes entry
+// must match a real persist arm, so a new table needs a reconTarget or a written waiver.
 func TestCatalogue_EveryPersistedEventTypeIsRoutedOrWaived(t *testing.T) {
 	persisted := sinkHandleEventTypes(t)
 
@@ -381,12 +335,9 @@ func TestCatalogue_EveryPersistedEventTypeIsRoutedOrWaived(t *testing.T) {
 	}
 }
 
-// TestCatalogue_ReconciledRoutesArePresent asserts every reconciled route is
-// actually covered by the built catalogue: a reconciledByKind table exists
-// as a reconTarget with a NON-EMPTY kinds list (and, when the route spells
-// its kind, that kind is present); a reconciledByCensus table exists on a
-// census/ContractCall source. This is the non-vacuity anchor — deleting a
-// reconTarget (or emptying its kinds) fails here.
+// TestCatalogue_ReconciledRoutesArePresent is the non-vacuity anchor: a reconciledByKind table
+// must be a reconTarget with non-empty kinds (including the route's kind), and a
+// reconciledByCensus table must sit on a census or ContractCall source.
 func TestCatalogue_ReconciledRoutesArePresent(t *testing.T) {
 	cov := catalogueCoverage(builtCatalogue(t))
 	for _, r := range projRoutes {
@@ -463,16 +414,9 @@ func TestCatalogue_WaiversAreDeclared(t *testing.T) {
 	}
 }
 
-// TestCatalogue_ObservationWaiversDoNotOverclaimCoverage: only
-// account_observations has an actual completeness/freshness mechanism
-// (migrations/0144_account_observer_watermark). The other four supply
-// observers (trustline / claimable-balance / liquidity-pool-reserve /
-// SAC-balance) have NONE. A waiver reason claiming "covered by the
-// observer's own coverage axis" for one of those four would assert a
-// mechanism that does not exist — exactly the false-comfort a reader of
-// this CI-enforced table is entitled not to be given. Pins that only the
-// accounts table may carry the "covered by ... watermark" language, and
-// that every other observation waiver honestly says no mechanism exists.
+// TestCatalogue_ObservationWaiversDoNotOverclaimCoverage pins that only account_observations may
+// claim watermark coverage; the other four supply observers have no mechanism, and their waivers
+// must say so rather than assert coverage that does not exist.
 func TestCatalogue_ObservationWaiversDoNotOverclaimCoverage(t *testing.T) {
 	const falseCoverageClaim = "covered by the observer's own coverage axis"
 	nonAccountObservers := map[string]bool{
@@ -504,13 +448,9 @@ func TestCatalogue_ObservationWaiversDoNotOverclaimCoverage(t *testing.T) {
 	}
 }
 
-// TestCatalogue_DeclaredKindsMatchDecoderOutput is the decoder-truth
-// cross-check: it INSTANTIATES the concrete emitter events and asserts their
-// real EventKind() equals the kind the catalogue reconciles them under — so
-// the catalogue's kind strings can never silently drift from the decoders,
-// AND it enumerates defindex per-Direction so the defindex.strategy.harvest
-// KIND-omission regression is caught explicitly (the type-level guard above
-// cannot see a missing sub-kind on an already-routed type).
+// TestCatalogue_DeclaredKindsMatchDecoderOutput instantiates the concrete emitter events and
+// asserts their real EventKind() equals the catalogue kind, including defindex per Direction,
+// since the type-level guard cannot see a missing sub-kind on an already-routed type.
 func TestCatalogue_DeclaredKindsMatchDecoderOutput(t *testing.T) {
 	cov := catalogueCoverage(builtCatalogue(t))
 

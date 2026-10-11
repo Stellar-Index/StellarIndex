@@ -35,24 +35,11 @@ const (
 	hotArchiveMismatchSample = 20
 )
 
-// verifyNetworkState is the stellarindex-ops `verify-network-state`
-// subcommand: it compares the lake's derived current state with state the
-// network itself publishes, which no other verifier does (ADR-0033's checks
-// compare our rows with our own events; verify-archive checks headers only).
-//
-//  1. hotarchive — every archived entry in the history archive's hot-archive
-//     bucket list at a checkpoint must match ledger_entries_current's row for
-//     that key. Protocol upgrades can rewrite hot-archive entries without any
-//     ledger-meta change, so this is the only place such a rewrite shows.
-//  2. lumens — native XLM held in accounts, claimable balances, liquidity
-//     pools and native-SAC contract balances, plus the header's fee_pool,
-//     must equal the header's total_coins exactly.
-//
-// Exit code = hot-archive mismatches (+1 for a run that compared nothing)
-// + 1 for a non-zero lumen residual, capped at 255. Keys the lake does not
-// hold, or changed after the checkpoint, are reported but not counted: they
-// are coverage, not faithfulness. -textfile writes network_state_verify.prom
-// only after every requested check completed.
+// verifyNetworkState compares the lake's derived current state with state the network publishes:
+// hot-archive entries against ledger_entries_current (upgrades can rewrite them without any
+// ledger-meta change), and native XLM holdings plus fee_pool against total_coins exactly.
+// Exit code counts mismatches (a run that compared nothing counts 1), capped at 255; keys the
+// lake lacks or that changed after the checkpoint are coverage, not faithfulness.
 func verifyNetworkState(args []string) error {
 	fs := flag.NewFlagSet("verify-network-state", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — the network passphrase and history archive URL come from it, so it must load")

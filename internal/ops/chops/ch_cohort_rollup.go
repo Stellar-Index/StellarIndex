@@ -19,13 +19,9 @@ import (
 // loaded, so a cohort's oldest flow can be valued at its own month.
 var cohortPricesFrom = time.Date(2015, time.September, 1, 0, 0, 0, 0, time.UTC)
 
-// closedMonthEdge is the exclusive upper bound the cycle reads
-// [Store.MonthlyUSDVWAPs] to: the first instant of now's calendar
-// month. prices_1mo's current-month bucket is still accumulating
-// trades, so admitting it would serve a partial-month VWAP that
-// changes on every rollup cycle — the flicker ADR-0015's closed-bucket
-// rule exists to prevent, applied here to the month grain instead of
-// the rate endpoints' 30 s one.
+// closedMonthEdge is the exclusive upper bound for [Store.MonthlyUSDVWAPs]: the start of now's
+// month. The current month is still accumulating, so admitting it would serve a flickering partial
+// VWAP (ADR-0015's closed-bucket rule).
 func closedMonthEdge(now time.Time) time.Time {
 	now = now.UTC()
 	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -42,24 +38,11 @@ func sourceAmountDecimals(source string) int {
 // holdersRollupLockPath).
 const cohortRollupLockPath = "/var/lib/stellarindex/ch-cohort-rollup.lock"
 
-// ch-cohort-rollup — what the accounts an address created or sponsored
-// went on to hold and do: current holdings, monthly flows, the contracts
-// they moved value through, recent activity, and open DeFi positions,
-// per root, into the account_cohort_* tables (deploy/clickhouse/
-// account_cohort_rollup.sql). Backs /v1/accounts/{g}/graph/cohort.
-//
-// Two stores, one cycle: the DeFi position snapshot (served tier's
-// per-protocol folds) and the served tier's monthly USD VWAPs (prices_1mo,
-// alias-folded) are staged into ClickHouse first, so the cohort join happens
-// beside the 25M-row membership rather than shipping it to Postgres. The
-// rest is ClickHouse only.
-//
-// Runs AFTER the creators and sponsors rollups: membership is their
-// edge tables, and the creator floor reads account_creators_rollup.
-//
-// Takes an exclusive advisory lock before it runs anything, for the same
-// reason ch-creators-rollup and ch-holders-rollup do: see
-// acquireRollupLock (rollup_lock.go).
+// ch-cohort-rollup rolls up what the accounts an address created or sponsored went on to hold and
+// do, per root, into the account_cohort_* tables backing /v1/accounts/{g}/graph/cohort. The served
+// tier's DeFi positions and monthly USD VWAPs are staged into ClickHouse first so the join runs
+// beside the membership. Runs AFTER the creators and sponsors rollups, whose edge tables it reads,
+// and takes the exclusive lock described at acquireRollupLock (rollup_lock.go).
 func chCohortRollup(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-cohort-rollup")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -97,11 +80,8 @@ func chCohortRollup(args []string) error {
 		fmt.Fprintf(os.Stderr, "ch-cohort-rollup: "+format+"\n", a...)
 	}
 
-	// The monthly price fold keys every alias spelling of a base onto
-	// its canonical form, so the registry the API resolves against has
-	// to be installed here too — without it only XLM's three forms fold
-	// and a SAC-quoted month of USDC would price under the C… id nothing
-	// joins on. Fail-closed on a malformed wrapper, as the API does.
+	// The monthly price fold needs the API's alias registry: without it only XLM's three forms
+	// fold and a SAC-quoted month prices under an id nothing joins on. Fail closed on a bad wrapper.
 	aliasRegistry, err := canonical.NewAliasRegistry(cfg.Stellar.Passphrase(), cfg.Supply.SACWrappers)
 	if err != nil {
 		return fmt.Errorf("alias registry: %w", err)
