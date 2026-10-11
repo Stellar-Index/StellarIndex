@@ -548,26 +548,23 @@ type OracleDayPoint struct {
 // inclusive bucket range [from, to] — ascending by bucket, then asset,
 // then source.
 //
-// This is the first read of the `oracle_prices_*` family: everything
-// else in this package reads the raw `oracle_updates` hypertable. The
-// CAGG is used here because the question is a HISTORY over a fixed
-// grain, which is exactly what it materialises, and because it carries
-// no retention policy (migration 0034) — the day series reaches back as
-// far as the oracle has ever published.
+// This is the first read of the `oracle_prices_*` family; the rest of this
+// package reads raw `oracle_updates`. The CAGG fits because the question is a
+// HISTORY over a fixed grain, and it carries no retention policy
+// (migration 0034), so the series reaches back as far as the oracle has
+// published.
 //
 // There is deliberately NO carry-in row of the kind
 // [Store.DailyCirculatingSupply] returns. A supply is a stock whose last
-// reading stays true until something moves it; a price is an observation
-// of a quantity that moves on its own, so the most recent bucket BEFORE
-// the window says nothing about any day inside it. A caller wanting a
-// value on a day the oracle was silent has to report the silence, not
-// fill it.
+// reading stays true until something moves it; a price is an observation of a
+// quantity that moves on its own, so the most recent bucket BEFORE the window
+// says nothing about any day inside it. A caller wanting a value on a day the
+// oracle was silent has to report the silence, not fill it.
 //
 // Unmapped `raw:` assets are dropped from `assets`, and the SQL refuses
-// raw: rows too (an unvalidated Asset can still stringify to "raw:…"): the
-// CAGG carries them, but they are record-layer only and must not reach a
-// price surface.
-// An empty `assets` (after that drop) returns (nil, nil): no keys is not a query.
+// raw: rows too (an unvalidated Asset can still stringify to "raw:…"): they
+// are record-layer only and must not reach a price surface. An empty `assets`
+// (after that drop) returns (nil, nil): no keys is not a query.
 func (s *Store) DailyOraclePrices(
 	ctx context.Context,
 	assets []canonical.Asset,

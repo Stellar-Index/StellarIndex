@@ -58,31 +58,27 @@ func queryFold[T any](ctx context.Context, db *sql.DB, label, query string, args
 
 // BlendPositionFold is one (pool, asset) money-market fold for a user, read
 // from blend_positions (migration 0045/0053/0054). SupplyNet and BorrowNet
-// are independent nets: a user can carry both a supply and a borrow position
-// in the same (pool, asset), so each becomes its own position row at the
-// handler layer, independently net-zero-filtered.
+// are independent nets: a user can carry both in the same (pool, asset), so
+// each becomes its own position row at the handler layer, independently
+// net-zero-filtered.
 //
 // SupplyNet sums `token_amount` (the UNDERLYING asset amount, NOT
 // `b_or_d_amount`, the b-token amount) signed +supply/+supply_collateral,
 // -withdraw/-withdraw_collateral. BorrowNet sums the same column signed
-// +borrow/+flash_loan, -repay: a flash_loan mints d-tokens to the user that
-// stay owed until a `repay` burns them, so excluding it would net that repay
-// to a negative debt.
+// +borrow/+flash_loan, -repay: a flash_loan mints d-tokens that stay owed
+// until a `repay` burns them; excluding it nets that repay to negative debt.
 //
-// These are summed UNDERLYING amounts at each historical event, not a live
-// read of the pool's b/d-token exchange rate, so the fold cannot reflect
-// interest accrued since each event (amount_semantics
-// "net_underlying_at_event_time" at the handler layer documents this).
+// These are summed UNDERLYING amounts at each event, not a live read of the
+// b/d-token exchange rate, so the fold cannot reflect accrued interest
+// (amount_semantics "net_underlying_at_event_time" at the handler layer).
 //
 // SupplySuperseded / BorrowSuperseded mark a leg an auction or bad-debt
-// write-off has moved b/d-tokens into or out of (blendAuctionMovesSQL).
-// Those moves carry no underlying amount, so SupplyNet/BorrowNet stop
-// describing the position and stay wrong after any later event. For such a
-// leg SupplyTokens/BorrowTokens is its exact b/d-token balance (the events'
-// b_or_d_amount plus every move), which is how the handler tells a fully
-// seized leg (zero tokens) from a partly seized one. A superseded leg exists
-// even with no blend_positions row (a filler that only ever received a lot),
-// and its last activity includes the move.
+// write-off has moved b/d-tokens into or out of (blendAuctionMovesSQL). Those
+// moves carry no underlying amount, so SupplyNet/BorrowNet stop describing
+// the position. For such a leg SupplyTokens/BorrowTokens is its exact b/d-token
+// balance (the events' b_or_d_amount plus every move), which tells the handler
+// a fully seized leg (zero tokens) from a partly seized one. A superseded leg
+// exists even with no blend_positions row (a filler that only received a lot).
 type BlendPositionFold struct {
 	Pool               string
 	Asset              string

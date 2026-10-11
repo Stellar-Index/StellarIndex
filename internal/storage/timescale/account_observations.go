@@ -265,29 +265,24 @@ func (s *Store) UpsertAccountObserverWatermark(ctx context.Context, processedLed
 // MaxAccountObservationLedger returns how far the ACCOUNT OBSERVER has
 // PROCESSED at-or-before asOfLedger — the true observer watermark
 // (account_observer_watermark, migration 0144), bounded by asOfLedger. Zero
-// when no watermark has been recorded yet (fresh cluster before the first live
-// tick), which the refresher's freshness gate treats as its permissive bypass.
+// when no watermark has been recorded yet, which the refresher's freshness
+// gate treats as its permissive bypass.
 //
 // Why a watermark and not MAX(ledger) FROM account_observations: that table
 // only gets a row when a watched account's balance CHANGES, so MAX(ledger) is
-// the most recent SDF-reserve balance change, NOT the observer's progress.
-// During any quiet period it would go stale while the observer was healthy: the
-// XLM freshness gate would cross its dormancy horizon and false-reject, firing
-// a continuous supply_refresh_error_dominant ticket AND freezing XLM's served
-// as_of on a value that was actually current — while MASKING a genuinely-dead
-// observer behind the same stale signal.
+// the last balance change, NOT the observer's progress. In a quiet period it
+// would go stale while the observer is healthy, false-rejecting the XLM
+// freshness gate, and would mask a genuinely dead observer behind the same
+// stale signal.
 //
 // The watermark advances every ledger the indexer drives the observer over
 // (see [Store.UpsertAccountObserverWatermark]), so a healthy-but-quiet
-// observer keeps the anchor fresh (gate permissive, supply accepted as
-// current) and only a genuinely dead observer stops advancing it — at which
-// point the anchor freezes and the gate correctly fails closed past the
-// horizon (dead-observer detection preserved).
+// observer keeps the anchor fresh and only a dead one freezes it, at which
+// point the gate fails closed past the horizon.
 //
-// asOfLedger is capped at int4 for symmetry with the sibling reads, then used
-// to bound the returned value: a watermark ahead of the snapshot ledger (which
-// should not happen — the indexer advances the watermark no faster than tip)
-// is clamped so the gate never sees a negative gap.
+// asOfLedger is capped at int4 for symmetry with the sibling reads. A
+// watermark ahead of the snapshot ledger is clamped so the gate never sees a
+// negative gap.
 func (s *Store) MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error) {
 	const maxInt32 = uint32(math.MaxInt32)
 	if asOfLedger > maxInt32 {

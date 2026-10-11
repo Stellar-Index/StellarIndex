@@ -71,14 +71,13 @@ type Sep1BoundCurrency struct {
 // [[CURRENCIES]] entry one scan walked: the population it started from,
 // and a named bucket for each way an entry stopped short of the result.
 //
-// It exists because the alternative — returning only the survivors —
-// makes the two most important questions about this scan unanswerable
-// from outside it: how large was the population, and which stage
-// removed it. Both stages that swallow silently are represented here
+// It exists because returning only the survivors makes two questions
+// unanswerable from outside the scan: how large was the population, and which
+// stage removed it. Both stages that swallow silently are represented
 // ([Sep1BoundCensus.IssuersPayloadUnreadable] and
 // [Sep1BoundCensus.IssuersDeclaringNothing]); without them, a scan that
-// dropped a whole population through either stage would look identical
-// to a network where nothing qualified.
+// dropped a whole population would look identical to a network where nothing
+// qualified.
 //
 // The arithmetic closes, and [Sep1BoundCensus.Check] proves it:
 //
@@ -88,8 +87,7 @@ type Sep1BoundCurrency struct {
 //	                     EntriesNamingAnotherIssuer + EntriesBound
 //	EntriesBound       = EntriesFiltered + EntriesKept
 //
-// and the domain-bearing population splits three ways, which
-// [Sep1BoundCensus.Check] bounds rather than equates because the two
+// The domain-bearing population is bounded, not equated, because the two
 // halves are read by different queries:
 //
 //	IssuersWithHomeDomain >= IssuersWithPayload +

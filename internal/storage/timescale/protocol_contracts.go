@@ -54,27 +54,24 @@ func (s *Store) UpsertProtocolContract(ctx context.Context, source, contractID, 
 // commands at startup to warm a gated decoder's contractid.Registry.
 //
 // Returns an empty slice (not nil + error) when the source has no rows —
-// the steady-state for a fresh deployment that hasn't run
-// `stellarindex-ops seed-protocol-contracts -source <name>` yet. The gate
-// then sees an empty registry and (correctly, per ADR-0035) drops every
-// child event until seeded; running the genesis walk is a deploy
+// the steady state before `stellarindex-ops seed-protocol-contracts -source
+// <name>` has run. The gate then sees an empty registry and (per ADR-0035)
+// drops every child event until seeded; the genesis walk is a deploy
 // precondition.
 // ListProtocolContracts returns every registered child contract for
 // source as full rows (contract + deploying factory + first-observed
 // ledger), ordered by first_ledger then contract_id so the API serves
-// a stable, chronologically-meaningful listing. The flat-ID
-// LoadProtocolContracts above stays as the decoder-warmup seam; this
-// richer projection backs GET /v1/protocols/{name}.
+// a stable listing. The flat-ID LoadProtocolContracts above stays as the
+// decoder-warmup seam; this backs GET /v1/protocols/{name}.
 //
 // first_ledger is NULL when the seeding path didn't know it; that maps
 // to FirstLedger 0 here (and the NULLs sort last).
 // ProtocolContractIndex returns a contract_id → source map over every
 // registered protocol contract, regardless of source. Backs the explorer's
-// contract-attribution overlay (the "this contract IS a Blend pool" hinge):
-// the contracts directory + contract detail look each contract_id up in this
-// map to tag it with its owning protocol. The table is small (factory-
-// descended pools across all gated sources — tens to low-hundreds of rows),
-// so loading it whole and mapping in-process is cheaper than a per-id query.
+// contract-attribution overlay: the contracts directory + contract detail
+// look each contract_id up in this map to tag its owning protocol. The table
+// is small (tens to low-hundreds of rows), so loading it whole is cheaper
+// than a per-id query.
 func (s *Store) ProtocolContractIndex(ctx context.Context) (map[string]string, error) {
 	const q = `SELECT contract_id, source FROM protocol_contracts`
 	rows, err := s.db.QueryContext(ctx, q)

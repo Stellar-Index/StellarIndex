@@ -6,30 +6,26 @@ import "fmt"
 //
 // Both tables were verified against Circle's PRIMARY docs:
 //
-//   - USDC token contracts per chain:
-//     https://developers.circle.com/stablecoins/usdc-contract-addresses
-//   - CCTP domain registry:
-//     https://developers.circle.com/cctp/concepts/supported-chains-and-domains
+//   - https://developers.circle.com/stablecoins/usdc-contract-addresses
+//   - https://developers.circle.com/cctp/concepts/supported-chains-and-domains
 //
-// INBOUND source-chain attribution: a Stellar mint's transfer carries the
-// burn-side USDC token in its CCTP BurnMessage body (version u32 ‖ burnToken
-// bytes32 ‖ mintRecipient bytes32 ‖ …). The projected message_received row
-// stores the body as raw hex, so hex chars 33..72 are the LOW 20 BYTES of
-// burnToken. For EVM chains that slice IS the token address (bytes32 is the
-// left-padded address); for 32-byte-address chains (Solana / Aptos /
-// Starknet) it is the verified tail of the full address:
+// INBOUND source-chain attribution: a Stellar mint's CCTP BurnMessage body
+// is (version u32 ‖ burnToken bytes32 ‖ mintRecipient bytes32 ‖ …), stored
+// by the projected message_received row as raw hex, so hex chars 33..72 are
+// the LOW 20 BYTES of burnToken. For EVM chains that slice IS the token
+// address (left-padded); for 32-byte-address chains it is the verified tail
+// of the full address:
 //
 //	Solana   USDC mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
 //	         = 0xc6fa7af3…452f5d61 (base58-decoded), tail abc9…5d61
 //	Aptos    USDC 0xbae207659db88bea0cbead6da0ed00aac12edcdda169e591cd41c94180b46f3b
 //	Starknet USDC 0x033068f6539f8e6e6b131e6b2b814e6c34a5224bc66947c47dab9dfee93b35fb
 //
-// A tail that is not in the table renders as "Unverified (0x…)" — an honest
-// label is always preferred over a guessed chain name.
+// A tail not in the table renders as "Unverified (0x…)" — an honest label
+// beats a guessed chain name.
 //
 // cctpBurnTokenChains maps that lowercase 40-hex-char burn-token tail to the
-// chain name. Only chains that are CCTP domains are listed (a burn observed
-// on Stellar can only originate from a CCTP domain).
+// chain name. Only CCTP domains are listed.
 var cctpBurnTokenChains = map[string]string{
 	// EVM chains — the slice is the USDC contract address itself.
 	"a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "Ethereum",

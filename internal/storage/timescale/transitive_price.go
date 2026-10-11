@@ -17,23 +17,19 @@ import (
 // shapes: `direct_usd` (quoted in a USD proxy) and `asset_vs_xlm`
 // (quoted in XLM, times xlm_usd). An asset that trades against NEITHER
 // is unpriceable no matter how deep its market — and both catalogue
-// queries are additionally built on `classic_assets`, which is
-// structurally classic-only (`issuer_g_strkey NOT NULL`), so no
-// Soroban-native contract asset can reach them at all.
-//
-// Example: `CAUP7NFA…` traded $71.8k over 6,418 trades in 7 days and served
-// no price, because its ONLY counterparty is `CBIJ…`, which is itself a
-// Soroban-native contract. Both legs are substantial — CAUP7/CBIJ is $18,872
-// over 1,216 buckets spanning 24h, and CBIJ/XLM is $18,908 over 27 buckets
-// spanning 19.1h — so the price is derivable; nothing was deriving it.
+// queries are built on `classic_assets`, which is structurally classic-only
+// (`issuer_g_strkey NOT NULL`), so no Soroban-native contract asset can
+// reach them at all. Example: an asset whose ONLY counterparty is itself a
+// Soroban-native contract, with both legs substantial, is derivable but
+// nothing derived it.
 //
 // SAFETY. This deliberately returns the hop rather than just a number.
 // A transitive price is only as trustworthy as its weakest leg, so the
 // caller MUST gate both (asset→hop and hop→proxy) through the substance
 // gate before serving. Publishing a two-hop price without checking the
 // intermediate would let a thin middle market reprice everything
-// downstream of it — the exact manipulation the substance floors exist
-// to prevent.
+// downstream of it — the manipulation the substance floors exist to
+// prevent.
 type TransitivePrice struct {
 	// PriceUSD is the derived USD price as an exact NUMERIC string
 	// (ADR-0003 — never float64 on a money path).

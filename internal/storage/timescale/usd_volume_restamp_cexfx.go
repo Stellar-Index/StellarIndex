@@ -19,25 +19,22 @@ import (
 //
 //	usd_volume = quote_amount / 10^<source scale> x <fiat>/USD at ts
 //
-// prices_1m holds only crypto markets, so before the resolver read
-// `fx_quotes` these rows inserted NULL; the insert path is fixed and this
-// repairs the history. The rate comes from `fx_quotes` (rate_usd = units
+// prices_1m holds only crypto markets, so such rows were NULL. The rate comes from `fx_quotes` (rate_usd = units
 // per 1 USD, migration 0028) through the insert path's own resolver
 // ([VWAPUSDFXResolver.usdPriceForFiat] → [Store.fxQuotesSnapAtOrBefore]),
 // inverted in exact *big.Rat space.
 //
 // As-of rule, per row: take the newest daily bucket AT OR BEFORE `ts`,
 // never a later one and never an interpolation, which would be a rate the
-// vendor never published. The guarantee is per UTC day: the worker
-// rewrites today's bucket and the trailing 7 days, so runs inside that
-// window can differ by intraday FX. REFUSE the row when that bucket is
-// older than [CEXFiatMaxQuoteStaleness] ([XLMBaseRestampStats.FXDeclinedStale]);
-// stored values and NULLs are left as they are.
+// vendor never published. The guarantee is per UTC day: the worker rewrites
+// today's bucket and the trailing 7 days, so runs inside that window can
+// differ by intraday FX. REFUSE the row when that bucket is older than
+// [CEXFiatMaxQuoteStaleness] ([XLMBaseRestampStats.FXDeclinedStale]); stored
+// values and NULLs are left as they are.
 //
-// The default tolerance is [fxQuotesSnapLookback], 7 days, the bound the
-// live insert path applies, so this never writes what `InsertTrade` would
-// decline; `-fx-max-staleness` may narrow it. 7 days also covers the
-// feed's longest routine holiday gap.
+// The default tolerance is [fxQuotesSnapLookback] (7 days), the live insert
+// path's bound, so this never writes what `InsertTrade` would decline;
+// `-fx-max-staleness` may narrow it.
 
 // CEXFiatMaxQuoteStaleness is the default (and maximum) as-of tolerance
 // for the cex-fx tier: how far back the nearest `fx_quotes` bucket at or

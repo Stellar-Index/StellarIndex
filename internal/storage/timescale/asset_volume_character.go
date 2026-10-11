@@ -184,20 +184,16 @@ func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (Asset
 //	Third-party ping-pong  | two non-issuer wallets round-trip   | concentrated
 //	Dust-bot               | one account pair, micro trades      | concentrated
 //
-// The design's discriminator: high issuer-side share ALONE is not wash — a
-// stablecoin mint/redeem corridor is 100% issuer-side by nature. Wash is
-// issuer-side (or not) AND single-counterparty AND a market-styled pair.
+// High issuer-side share ALONE is not wash — a stablecoin mint/redeem
+// corridor is 100% issuer-side by nature. Wash is single-counterparty AND a
+// market-styled pair.
 //
-//   - Below the volume floor → `market` (insufficient signal; never badge a
-//     quiet asset).
-//   - market-styled AND one account pair owns >90% of volume →
-//     `concentrated` (volume-painting wash, dust-bot on native/USDC/fiat).
+//   - Below the volume floor → `market` (never badge a quiet asset).
+//   - market-styled AND one account pair owns >90% of volume → `concentrated`.
 //   - NOT market-styled (wrap pair) AND overwhelmingly issuer-side →
 //     `operational` (mint/redeem corridor: USDC↔USDCAllow, AUDD↔AUDR).
 //   - one account pair owns >90% but the issuer is NOT the counterparty →
-//     `concentrated` (third-party ping-pong on a wrap-styled pair — one
-//     pair paints the volume, but it isn't an issuer corridor, so it's
-//     fabricated, not operational).
+//     `concentrated` (third-party ping-pong, fabricated not operational).
 //   - otherwise → `market`.
 func deriveVolumeCharacter(s AssetVolumeCharacter) string {
 	if belowVolumeCharacterFloor(s.VolumeUSD) {

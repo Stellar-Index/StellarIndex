@@ -19,31 +19,24 @@ import (
 // per-column non-negativity CHECKs.
 var ErrCirculatingExceedsTotal = errors.New("timescale: InsertSupply: circulating_supply exceeds total_supply")
 
-// InsertSupply appends a [supply.Supply] snapshot to
-// asset_supply_history. Idempotent-corrective on
-// (asset_key, ledger_sequence, time) — re-deriving at the same
-// ledger UPDATEs the value columns in place when the writer's
-// derive_generation is >= the stored one (migration 0109),
-// so a corrected re-derive lands without a DELETE + re-backfill; a
-// lower generation is a no-op guard-skip. Live ingest uses the
-// default generation 0, so a plain re-observe re-writes the identical
-// value. The aggregator writes one snapshot per asset-affecting
-// bucket close.
+// InsertSupply appends a [supply.Supply] snapshot to asset_supply_history.
+// Idempotent-corrective on (asset_key, ledger_sequence, time) — re-deriving
+// at the same ledger UPDATEs the value columns in place when the writer's
+// derive_generation is >= the stored one (migration 0109), so a corrected
+// re-derive lands without a DELETE + re-backfill; a lower generation is a
+// no-op guard-skip. Live ingest uses generation 0, so a plain re-observe
+// re-writes the identical value.
 //
-// The third column (`time`) is required by TimescaleDB's unique-
-// index constraint that the partition column be part of any
-// uniqueness invariant on a hypertable — see
-// migrations/0005_create_asset_supply_history.up.sql:55-61. In
-// practice two writes for the same (asset, ledger) carry the same
-// `time` derived from the ledger close timestamp, so the
-// (asset_key, ledger_sequence) uniqueness invariant the migration's
-// comment describes is preserved at the application level.
+// The third column (`time`) is required by TimescaleDB's rule that the
+// partition column be part of any unique index on a hypertable — see
+// migrations/0005_create_asset_supply_history.up.sql:55-61. Two writes for
+// the same (asset, ledger) carry the same `time` (the ledger close
+// timestamp), so (asset_key, ledger_sequence) uniqueness holds at the
+// application level.
 //
-// Validates that AssetKey + TotalSupply + CirculatingSupply are
-// populated (the supply-package computers always populate them; this
-// is a defensive guard against an upstream bug calling InsertSupply
-// with a zero-value struct). Per-field non-negativity is enforced by
-// the migration's CHECK constraints — a violation here surfaces as a
+// Validates that AssetKey + TotalSupply + CirculatingSupply are populated (a
+// defensive guard against a zero-value struct). Per-field non-negativity is
+// enforced by the migration's CHECK constraints — a violation surfaces as a
 // pgx error rather than a quiet write of bad data.
 func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 	if snap.AssetKey == "" {

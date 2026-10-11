@@ -359,28 +359,24 @@ func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, wi
 // gauge / governance surface (aquarius_rewards_events, migration 0099;
 // aquarius_admin, migration 0100). Adds:
 //
-//   - lifetime + windowed KPIs: total rewards-gauge events (lifetime), 30d
+//   - lifetime + windowed KPIs: rewards-gauge events (lifetime), 30d
 //     claim_reward count/distinct claimants (+ volume when a single reward
 //     token was claimed), and governance events (lifetime).
 //   - a 30d claim_reward volume table, one row per reward token.
 //   - a lifetime per-kind event-count table (all 12 rewards-gauge kinds).
-//   - a recent-governance-events table (kind/contract/admin/target/ledger,
-//     newest first, across all 8 admin kinds) — mirrors
-//     lendingAuctionBlocks' "Recent auctions" shape.
-//   - a daily claim_reward series, alongside bespokeDEX's own "Daily USD
-//     volume" series (the "small time-series" the sibling lending/DEX
-//     augments carry — see lendingPositionBlocks' "Daily position events").
+//   - a recent-governance-events table (newest first, across all 8 admin
+//     kinds), mirroring lendingAuctionBlocks' "Recent auctions".
+//   - a daily claim_reward series, like lendingPositionBlocks' "Daily
+//     position events".
 //
-// The claim_reward drill-down is fixed at 30 days regardless of the
-// caller's windowDays (the block's headline metric on a fixed, comparable
-// window); the per-kind breakdown and governance total are unwindowed
-// lifetime figures; the daily series follows the caller's windowDays like
-// its DEX-block siblings.
+// The claim_reward drill-down is fixed at 30 days regardless of the caller's
+// windowDays (a fixed, comparable window); the per-kind breakdown and
+// governance total are unwindowed lifetime figures; the daily series follows
+// windowDays like its DEX-block siblings.
 //
-// Empty-safe: a no-op (leaves the rest of the block as is) when neither
-// rewards-gauge nor governance events have been captured, so the panel
-// renders cleanly pre-backfill; each KPI/table/series within also degrades
-// independently on an empty result.
+// Empty-safe: a no-op when neither rewards-gauge nor governance events have
+// been captured; each KPI/table/series also degrades independently on an
+// empty result.
 func (s *Store) aquariusRewardsBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
 	byKind, err := s.AquariusRewardsLifetimeByKind(ctx)
 	if err != nil {

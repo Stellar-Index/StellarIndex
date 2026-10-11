@@ -12,28 +12,23 @@ import (
 //
 // The off-chain CEX/FX path doesn't need this — every external source
 // stamps amounts at the uniform 10^8 scale and recognises peg via
-// `aggregate.FiatProxy`'s crypto-ticker map. On-chain trades, however,
-// stamp amounts at per-asset decimals and the quote can be:
+// `aggregate.FiatProxy`'s crypto-ticker map. On-chain trades stamp amounts
+// at per-asset decimals and the quote can be:
 //
 //   - `AssetClassic{Code, Issuer}`, e.g. SDEX's USDC-GA5...
 //   - `AssetSoroban{ContractID}`, e.g. Soroswap's USDC SAC contract
 //     CCW6...
 //
 // Neither form maps to a global ticker; the operator declares which
-// (CODE, ISSUER) pairs they trust as USD-pegged, and this spec
-// resolves both the classic form and its SAC-wrapped counterpart
-// transitively via the same `[supply.sac_wrappers]` map the supply
-// pipeline already consumes.
+// (CODE, ISSUER) pairs are trusted as USD-pegged, and this spec resolves
+// both the classic form and its SAC-wrapped counterpart via the same
+// `[supply.sac_wrappers]` map the supply pipeline consumes.
 //
-// Phase 1 scope (launch-readiness L2.2 phase 1): USD-pegged
-// stablecoins only, classic-decimal (7) only. This struct stays
-// USD-only — the orthogonal Phase 2 path lives in [VWAPUSDFXResolver] and covers
-// non-USD pegs (EUR / MXN / etc.) by looking up
-// `<quote>/<USD-peg>` in prices_1m at the trade's timestamp.
-// SEP-41 tokens with non-classic decimals (rare on Stellar today)
-// remain unsupported on either path — they'd need per-asset
-// decimals plumbed through the trade insert path; not a current
-// blocker.
+// Scope: USD-pegged stablecoins only, classic-decimal (7) only. Non-USD pegs
+// (EUR / MXN / etc.) live in [VWAPUSDFXResolver], which looks up
+// `<quote>/<USD-peg>` in prices_1m at the trade's timestamp. SEP-41 tokens
+// with non-classic decimals remain unsupported on either path; they would
+// need per-asset decimals plumbed through the trade insert path.
 type USDVolumeQuoteSpec struct {
 	// classicUSDPegs is the set of classic asset_keys (in the
 	// canonical "CODE-ISSUER" wire form) the operator has declared

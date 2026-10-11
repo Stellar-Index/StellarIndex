@@ -10,29 +10,26 @@ import (
 // SoroswapRouterSwap is one soroswap_router_swaps row — a single
 // observed router invocation (one call to
 // `swap_exact_tokens_for_tokens` / `swap_tokens_for_exact_tokens`).
-// Mirrors migration 0049's columns; sister to canonical.Trade rows
-// in the `trades` hypertable which hold the per-pair leg-level
-// records emitted by the per-pair contracts the router walks.
+// Mirrors migration 0049's columns; sister to canonical.Trade rows in the
+// `trades` hypertable, which hold the per-pair leg-level records.
 //
-// Identity: (ledger, tx_hash, op_index, call_sig). Multiple router
-// invocations in the same tx are theoretically possible (a contract
-// calling the router twice inside one InvokeContract) but op_index
-// disambiguates them; call_sig (migration 0056) additionally
-// distinguishes multiple distinct router swaps observed within one
-// op (aggregator / batch calls).
+// Identity: (ledger, tx_hash, op_index, call_sig). op_index disambiguates
+// multiple router invocations in one tx; call_sig (migration 0056) further
+// distinguishes multiple distinct router swaps within one op (aggregator /
+// batch calls).
 //
-// AmountIn / AmountOut are decimal-string numerics (i128 →
-// *big.Int → string per ADR-0003). Path is the hop sequence of
-// raw token C-strkeys (≥ 2 by router precondition).
+// AmountIn / AmountOut are decimal-string numerics (i128 → *big.Int →
+// string per ADR-0003). Path is the hop sequence of raw token C-strkeys
+// (≥ 2 by router precondition).
 //
-// CAVEAT: these hold the router call's two i128 args as
-// DECLARED — they are NOT both realized amounts. Exactly one side is
-// exact/realized and the other is a caller-declared slippage BOUND:
-// for swap_exact_tokens_for_tokens, amount_out is amount_out_min (a
-// FLOOR); for swap_tokens_for_exact_tokens, amount_in is amount_in_max
-// (a CEILING). Read function_name before treating either as realized;
-// the realized per-hop fills live in the per-pair soroswap `swap`
-// events (trades) for the same tx. See soroswap_router/decode.go.
+// CAVEAT: these hold the router call's two i128 args as DECLARED — they are
+// NOT both realized amounts. Exactly one side is exact and the other is a
+// caller-declared slippage BOUND: for swap_exact_tokens_for_tokens,
+// amount_out is amount_out_min (a FLOOR); for swap_tokens_for_exact_tokens,
+// amount_in is amount_in_max (a CEILING). Read function_name before treating
+// either as realized; the realized per-hop fills live in the per-pair
+// soroswap `swap` events (trades) for the same tx. See
+// soroswap_router/decode.go.
 type SoroswapRouterSwap struct {
 	Ledger          uint32
 	LedgerCloseTime time.Time
