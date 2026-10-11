@@ -2,81 +2,63 @@
 # lint-shell-sigpipe — refuse `… | head` inside a pipefail shell script,
 # and inside a pipefail `run:` block in a GitHub workflow.
 #
-# THE BUG CLASS. Under `set -o pipefail`, a pipeline whose LAST
-# stage stops reading early is a coin flip. `head -n N` is the obvious
-# form, but any early-exit consumer does it: `awk '...{exit}'`,
-# `sed '...q'`, `grep -m N`, `grep -q`. A lint that catches one spelling of
-# a class licenses the others; `if ! … | grep -q "$want"` reports a
-# substring MISSING from output that contains it. Example of the obvious form:
+# BUG CLASS. Under `set -o pipefail`, a pipeline whose LAST stage stops reading
+# early is a coin flip. `head -n N` is the obvious form, but any early-exit
+# consumer does it: `awk '...{exit}'`, `sed '...q'`, `grep -m N`, `grep -q`.
+# Catching one spelling licenses the others; `if ! … | grep -q "$want"`
+# reports a substring MISSING from output that contains it.
 #
 #     mc ls … | sort | head -n 4 > out      # looks fine, fails ~1 run in 3
 #
-# `head` exits the moment it has N lines and closes the pipe. systemd's
-# default IgnoreSIGPIPE=yes turns the resulting signal into a plain EPIPE,
-# so the upstream process does not die silently — it PRINTS
-# "write failed: 'standard output': Broken pipe" and exits non-zero.
-# pipefail promotes that to the pipeline's status, and (with `set -e`) it
-# kills the script. It only bites when the producer writes more than the
-# 64 KiB pipe buffer before `head` is done, which is why it presents as a
-# random, unreproducible failure.
+# `head` exits at N lines and closes the pipe. systemd's default
+# IgnoreSIGPIPE=yes turns the signal into EPIPE, so the producer PRINTS
+# "write failed: 'standard output': Broken pipe" and exits non-zero; pipefail
+# promotes that to the pipeline status and (with `set -e`) kills the script.
+# It only bites when the producer writes more than the 64 KiB pipe buffer
+# before `head` is done, hence the random, unreproducible failure.
 #
-# THE FIX is always the same shape — land the output, then slice it:
+# FIX: land the output, then slice it:
 #
 #     mc ls … | sort > /tmp/x.txt
 #     head -n 4 /tmp/x.txt > out
 #
-# A consumer that reads to EOF is as safe and usually shorter: `sed -n 1p`,
-# `sed -n '1,12p'`, `awk 'NR==1'` with no `exit`, or slicing a captured
-# value with "${var%%$'\n'*}" / "${var:0:200}".
-#
-# For a match test the landing place is a value, and a here-string feeds it
-# with no pipe at all — bash writes the whole string before grep starts, via
-# a temp file once it outgrows a pipe buffer:
+# A consumer that reads to EOF is also safe: `sed -n 1p`, `sed -n '1,12p'`,
+# `awk 'NR==1'` with no `exit`, "${var%%$'\n'*}" / "${var:0:200}".
+# For a match test, a here-string feeds grep with no pipe at all:
 #
 #     grep -qF -- "$want" <<<"$OUT"
 #     grep -q 'GNU tar' <<<"$(tar --version 2>/dev/null)"
 #
-# ESCAPE HATCH: put `# sigpipe-ok: <reason>` on the line, or anywhere in
-# the comment block directly above it, when the producer provably writes
-# less than a pipe buffer
-# (a `pgrep` result, a single grepped line). State the reason; "it's
-# fine" is not one.
+# ESCAPE HATCH: `# sigpipe-ok: <reason>` on the line, or anywhere in the comment
+# block directly above it, when the producer provably writes less than a pipe
+# buffer (a `pgrep` result, a single grepped line). "it's fine" is not a reason.
 #
-# WORKFLOW YAML. A `run:` block inside GitHub workflow YAML is not a .sh
-# file, but it is pipefail shell and fails a deploy the same way. Turning
-# `ls | head` into `ls | sort | head -n 10` only moves the SIGPIPE to sort.
+# WORKFLOW YAML. A `run:` block is pipefail shell and fails a deploy the same
+# way; `ls | sort | head` only moves the SIGPIPE to sort. The workflows
+# directory is a root and a `run:` block a subject. Shell is EXTRACTED with a
+# real YAML parse (literal `|`, folded `>` or single line), and its RAW source
+# lines go to the SAME matcher and `# sigpipe-ok:` rule as .sh files at their
+# original line numbers, so reports resolve in the open workflow file. A folded
+# `>` block joins its lines, so the joined script is checked at the `run:`
+# line. The marker must be inside the run block; YAML comments outside it are
+# not part of the script.
 #
-# So the workflows directory is a root and a `run:` block is a subject. The
-# shell is EXTRACTED with a real YAML parse — a run block is a scalar with
-# its own indentation, literal `|` or folded `>` or a single line — rather
-# than regexed out of the YAML, and the block's RAW source lines are handed
-# to the SAME matcher and the same `# sigpipe-ok:` rule the .sh files get,
-# at their original line numbers, so a report resolves in the workflow file
-# a reader has open. (A folded `>` block is the exception: folding joins its
-# source lines, so no single source line holds the whole pipeline and the
-# joined script is checked at the `run:` line instead.) The marker lives in
-# the shell, i.e. inside the run block; a YAML comment outside it is not
-# part of the extracted script.
+# Two workflow-only rules, from how GitHub runs a step:
 #
-# Two workflow-only rules, both from how GitHub runs a step:
-#
-#   shell:    the default for `run:` on a Linux runner is `bash -e {0}`; an
-#             explicit `shell: bash` is `bash --noprofile --norc -eo
-#             pipefail {0}`; `shell: python` / `pwsh` / `node` are not bash
-#             at all and are never linted as such. `defaults.run.shell` at
+#   shell:    the Linux default is `bash -e {0}`; explicit `shell: bash` is
+#             `bash --noprofile --norc -eo pipefail {0}`; `python` / `pwsh` /
+#             `node` are not bash and never linted. `defaults.run.shell` at
 #             workflow or job level supplies a step's shell.
-#   pipefail: the precondition, exactly as for a .sh file. The `-e` half of
-#             the .sh predicate deliberately does NOT carry over: every run
-#             block already has `-e` from GitHub, and without pipefail an
-#             early close cannot fail the step, so honouring `-e` alone
-#             would flag every pipeline in every workflow for a class that
-#             cannot fire there. A step is in scope when it sets pipefail
-#             itself (`set -euo pipefail`) or inherits it from an explicit
-#             `shell: bash`.
+#   pipefail: the precondition, as for .sh. The `-e` half of the .sh predicate
+#             does NOT carry over: every run block already has `-e`, and
+#             without pipefail an early close cannot fail the step, so `-e`
+#             alone would flag every pipeline for a class that cannot fire. A
+#             step is in scope when it sets pipefail itself or inherits it from
+#             an explicit `shell: bash`.
 set -uo pipefail
 
-# scripts/ci is a default root because the gate scripts and their self-tests
-# are themselves pipefail shell.
+# scripts/ci is a default root: the gate scripts and their self-tests are
+# pipefail shell too.
 roots=("${@:-configs/ansible/roles/archival-node/files scripts/ops scripts/dev scripts/ci .github/workflows}")
 # shellcheck disable=SC2206
 read -r -a roots <<<"${roots[*]}"
@@ -87,20 +69,16 @@ read -r -a roots <<<"${roots[*]}"
 #   awk … exit      stops at the first match
 #   sed … q         stops at the first match
 #   grep -m N       stops at N matches
-#   grep -q/-l/-L   stops at the FIRST match — the same shape, and the one
-#                   the tree actually writes. `seq 1 400000 | grep -q 1`
-#                   exits 141 under pipefail: the match SUCCEEDED and the
-#                   pipeline still reports failure, so `if ! … | grep -q x`
-#                   silently inverts on any producer past 64 KiB. -L reads
-#                   to EOF under BSD grep but stops at the first match under
-#                   GNU grep, which is what CI and r1 run.
+#   grep -q/-l/-L   stops at the FIRST match, and the one the tree actually
+#                   writes: `seq 1 400000 | grep -q 1` exits 141 under pipefail
+#                   though the match SUCCEEDED, so `if ! … | grep -q x`
+#                   silently inverts past 64 KiB. -L reads to EOF under BSD grep
+#                   but stops at the first match under GNU grep (CI and r1).
 #
-# Two anchors keep the match honest. A stage only counts when a REAL pipe
-# feeds it — `[^|]\|` keeps `cmd || grep -q x` out, where grep reads a file
-# and there is no upstream to kill. And the flag is a whole token in THIS
-# stage: `[^|&;()]*` stops the scan at the next `&&`, `;` or `)` so that a
-# later `&& ! grep -q x` on the same line is not read as this pipe's
-# consumer. The cluster form (`-qE`, `-Fxq`, `-qxF`) is matched too.
+# Anchors: a stage counts only when a REAL pipe feeds it (`[^|]\|` keeps
+# `cmd || grep -q x` out). The flag must be a whole token in THIS stage
+# (`[^|&;()]*` stops at the next `&&`, `;` or `)`), so a later `&& ! grep -q x`
+# is not read as this pipe's consumer. Cluster forms (`-qE`, `-Fxq`) match too.
 early_exit_re='(^|[^|])\|[[:space:]]*(head([[:space:]]|$)|awk[^|]*\<exit\>|sed[^|]*\<q\>|grep[^|&;()]*[[:space:]]-([A-Za-z]*[qlL][A-Za-z]*([[:space:]]|$)|m[[:space:]]*[0-9]|-(quiet|silent|files-with-matches|files-without-match|max-count)([=[:space:]]|$)))'
 
 TMPD=$(mktemp -d)
@@ -114,18 +92,12 @@ wf_skipped_shell=0
 wf_skipped_nopipefail=0
 wf_note=""
 
-# join_pipe_continuations <src> <dst> — merge a line ending in a bare
-# trailing pipe with the line(s) that follow it, so
-#     producer |
-#         consumer
-# reads as one logical pipeline to the matcher, the same as the one-line
-# form. This is the OTHER legal continuation, distinct from the leading-pipe
-# form (`producer \` then `| consumer`), which the early-exit regex already
-# matches on its own line via its `^` alternative and needs no joining. The
-# joined text is placed on the line the pipe OPENS; the line(s) it absorbed
-# are blanked, so a report still resolves at the line number of the original
-# file (mirrors the workflow shadow above). A line ending in `|` inside a
-# comment (e.g. a fenced example) is never joined.
+# join_pipe_continuations <src> <dst> — merge a line ending in a bare trailing
+# pipe with the line(s) after it so `producer |` / `    consumer` reads as one
+# pipeline. The leading-pipe form (`producer \` then `| consumer`) needs no
+# joining: the regex's `^` alternative matches it. The joined text sits on the
+# line the pipe OPENS and absorbed lines are blanked, so reports keep original
+# line numbers. A trailing `|` inside a comment is never joined.
 join_pipe_continuations() {
   local src="$1" dst="$2"
   awk '
@@ -159,10 +131,9 @@ join_pipe_continuations() {
   ' "$src" > "$dst"
 }
 
-# scan_subject <file-to-scan> <path-to-report> — the one matcher, and the one
-# notion of "guarded". For a .sh file the two arguments are the same file; for
-# a workflow the first is the extracted, line-aligned shell and the second is
-# the YAML the reader has open.
+# scan_subject <file-to-scan> <path-to-report> — the one matcher and the one
+# notion of "guarded". For .sh both arguments are the file; for a workflow the
+# first is the extracted line-aligned shell, the second the YAML.
 scan_subject() {
   local scan="$1" label="$2"
   local line body prev back pl joined
@@ -172,8 +143,8 @@ scan_subject() {
   while IFS=: read -r line _; do
     [ -n "$line" ] || continue
     body=$(sed -n "${line}p" "$scan")
-    # Look back over the whole contiguous comment block above the line, so
-    # the marker can sit anywhere in a multi-line justification.
+    # Scan the whole contiguous comment block above, so the marker can sit
+    # anywhere in a multi-line justification.
     prev=""
     back=$((line - 1))
     while [ "$back" -ge 1 ]; do
@@ -183,8 +154,7 @@ scan_subject() {
         *) break ;;
       esac
     done
-    # A comment ABOUT the pattern is not an instance of it — this lint's
-    # own explanatory comments, and the fixed sites', quote the bad shape.
+    # A comment ABOUT the pattern is not an instance of it.
     case "$(printf '%s' "$body" | sed 's/^[[:space:]]*//')" in
       '#'*) continue ;;
     esac
@@ -206,9 +176,8 @@ while IFS= read -r f; do
 done < <(find "${roots[@]}" -type f -name '*.sh' 2>/dev/null | sort)
 
 # ── 2. GitHub workflow `run:` blocks ─────────────────────────────────
-# Only YAML that lives in a workflows directory: the other YAML under the
-# roots (ansible tasks, prometheus rules) is not a workflow, and parsing it
-# here would report another gate's failure with less context.
+# Only YAML in a workflows directory: other YAML under the roots (ansible,
+# prometheus rules) is another gate's subject.
 : >"$TMPD/wf-files.txt"
 while IFS= read -r y; do
   case "$y" in
@@ -217,12 +186,9 @@ while IFS= read -r y; do
 done < <(find "${roots[@]}" -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | sort)
 wf_files=$(wc -l <"$TMPD/wf-files.txt" | tr -d ' ')
 
-# A root that IS a workflows directory, or holds one, must yield workflow
-# files. An empty subject set is the exact failure this gate was blind to for
-# its whole life, so it is a hard failure and never a quiet OK — and because a
-# default run always names the workflows directory as a root, this is also what
-# stops the workflow half going silently absent if that directory is ever moved
-# or renamed underneath it.
+# A root that IS or holds a workflows directory must yield workflow files. An
+# empty subject set is the failure this gate was blind to for its whole life, so
+# it is a hard failure, which also catches the directory being moved or renamed.
 wf_dirs=$(find "${roots[@]}" -type d -path '*.github/workflows' 2>/dev/null | wc -l | tr -d ' ')
 wf_expected=0
 for r in "${roots[@]}"; do
@@ -236,9 +202,9 @@ if { [ "$wf_dirs" -gt 0 ] || [ "$wf_expected" -eq 1 ]; } && [ "$wf_files" -eq 0 
 fi
 
 if [ "$wf_files" -gt 0 ]; then
-  # Interpreter discovery, as in check-alertmanager-parity.sh. PyYAML is how
-  # the run blocks are located — scalar style, block indentation and the
-  # defaults chain are not regexable — and CI is fail-closed.
+  # Interpreter discovery, as in check-alertmanager-parity.sh. PyYAML locates
+  # the run blocks (scalar style, indentation and the defaults chain are not
+  # regexable); CI is fail-closed.
   PY=""
   for cand in python3 /opt/homebrew/bin/python3; do
     if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import yaml' >/dev/null 2>&1; then
@@ -256,9 +222,8 @@ if [ "$wf_files" -gt 0 ]; then
 
   if [ -n "$PY" ]; then
     mkdir -p "$TMPD/shadow"
-    # Emits, per workflow, a line-aligned copy of the file in which every line
-    # of an in-scope run block is its raw source line and every other line is
-    # blank — so a grep hit's line number IS the YAML line number.
+    # Emits per workflow a line-aligned copy where in-scope run-block lines are
+    # raw source and all else is blank, so a hit's line number IS the YAML line.
     if ! wf_stats=$("$PY" - "$TMPD/wf-files.txt" "$TMPD/shadow" "$TMPD/index.tsv" <<'PY'
 import os
 import re

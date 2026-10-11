@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# Local sequential quality checks — run this before every push.
-#
-# CI runs these jobs in parallel; verify.sh is the strictly-sequential
-# local equivalent that surfaces failures one at a time. Pattern
-# borrowed from loop-app/scripts/verify.sh.
+# Local sequential quality checks: run before every push. CI runs the same
+# jobs in parallel; this surfaces failures one at a time.
 
 set -euo pipefail
 
@@ -11,23 +8,15 @@ cd "$(dirname "$0")/../.."
 
 # ── Preconditions: five seconds, before anything expensive ───────────────
 #
-# Two failed local verify runs died about ten minutes into a
-# twelve-minute sequence, in sections unrelated to the change under test,
-# on a missing install: `openapi-typescript: command not found` (web/explorer
-# had no node_modules), then `tsc: command not found` (web/status had none).
-# The conditions guarding those sections test for pnpm-lock.yaml, which is
-# TRACKED and therefore always present — node_modules is not tracked and was
-# never checked at all.
+# Missing installs (`openapi-typescript: command not found`, `tsc: command not
+# found`) used to kill a run ten minutes into its twelve, because the section
+# guards tested pnpm-lock.yaml, which is tracked and always present, never
+# node_modules. This block resolves those same conditions up front, reports
+# every gap at once and stops before the first slow gate. It asserts nothing
+# new: a gap named here is a gate that would fail later.
 #
-# This block changes nothing about WHAT any check below asserts. It resolves
-# the preconditions those checks already depend on, in one pass, reports
-# every gap at once, and stops before the first slow gate. Each condition
-# below is the same condition as the section that needs it, so a gap named
-# here is a gate that would fail later, and a gap absent here is not.
-#
-# Deferrable tools are only listed, never failed on — except under
-# VERIFY_FAIL_ON_SKIP=1 (what `make prepush` sets), where defer_check exits 1
-# and the identical verdict is simply reached ten minutes sooner.
+# Deferrable tools are only listed, never failed on, except under
+# VERIFY_FAIL_ON_SKIP=1 (set by `make prepush`), where defer_check exits 1.
 preflight_gaps=()
 preflight_defers=()
 gap()   { preflight_gaps+=("$1"); }
@@ -48,26 +37,23 @@ for tool in git make go python3 tar; do
     command -v "$tool" >/dev/null 2>&1 || gap "${tool} is not on PATH"
 done
 
-# make fmt and make lint call these out of $(GOBIN) by absolute path, so
-# PATH is irrelevant and `command -v` would report a false miss.
-# `|| true` because this file runs under set -e: with go absent, the bare
-# substitution aborts the script at 127 with stderr suppressed, and the gap
-# list below — which names the missing go — is never printed.
+# make fmt and make lint call these by absolute path under $(GOBIN), so PATH is
+# irrelevant and `command -v` would report a false miss.
+# `|| true`: under set -e a bare substitution with go absent aborts at 127 with
+# stderr suppressed, and the gap list naming the missing go never prints.
 verify_go_bin="$(go env GOPATH 2>/dev/null || true)/bin"
 for tool in gofumpt goimports golangci-lint; do
     [ -x "${verify_go_bin}/${tool}" ] || gap "${verify_go_bin}/${tool} is absent (make fmt / make lint call it by absolute path)"
 done
 
-# A Go-built tool embeds the toolchain it was compiled with, and golangci-lint
-# REFUSES to run when that is older than the module's target:
+# A Go-built tool embeds its build toolchain, and golangci-lint REFUSES to run
+# when that is older than the module's target:
 #   can't load config: the Go language version (go1.25) used to build
 #   golangci-lint is lower than the targeted Go version (1.26.8)
-# Moving go.mod's toolchain therefore breaks every previously-installed local
-# tool at once, and does it five minutes in, in the Lint section, with a
-# message that reads like a config error rather than a stale binary. CI and
-# the verify container never see it because both build these tools from source
-# against the same go.mod; only a developer machine carries the old ones.
-# Cheap here, so it is checked here — `make deps` reinstalls all three.
+# A go.mod toolchain bump therefore breaks every old local tool at once, five
+# minutes in, with a message that reads like a config error. CI and the verify
+# container build the tools from source against go.mod and never see it.
+# `make deps` reinstalls all three.
 verify_go_target="$(awk '/^toolchain[ \t]+go/ { sub(/^go/, "", $2); print $2; exit }' go.mod 2>/dev/null || true)"
 [ -n "$verify_go_target" ] || verify_go_target="$(awk '/^go[ \t]+[0-9]/ { print $2; exit }' go.mod 2>/dev/null || true)"
 if [ -n "$verify_go_target" ] && command -v go >/dev/null 2>&1; then
@@ -85,9 +71,9 @@ if [ -n "$verify_go_target" ] && command -v go >/dev/null 2>&1; then
     done
 fi
 
-# node_modules, per app, under exactly the conditions that make each app's
-# section run. The test is the executable each gate invokes, because a
-# half-finished install leaves the directory present and the binary absent.
+# node_modules per app, under the conditions that make each app's section run.
+# The test is the executable each gate invokes: a half-finished install leaves
+# the directory and not the binary.
 verify_have_pnpm_explorer=0
 if command -v pnpm >/dev/null 2>&1 && [ -f web/explorer/pnpm-lock.yaml ]; then verify_have_pnpm_explorer=1; fi
 if command -v node >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then
@@ -102,20 +88,14 @@ if [ "$verify_have_pnpm_explorer" = 1 ]; then
         gap "web/explorer/node_modules/.bin/tsc is absent — 'make web-typecheck' needs it"
 fi
 
-# A PRESENT node_modules is not a CURRENT one. The checks above ask whether an
-# install happened, never whether it matches the lockfile in the tree — so a
-# pull that moves pnpm-lock.yaml leaves the gate running yesterday's packages
-# and saying nothing. Once `package.json` declared vitest `^5.0.0`
-# while `node_modules` still held **4.1.10**, so every local
-# `make web-test` had been grading the tree under a different test runner than
-# CI installs — the same shape as the Go toolchain skew checked above, and
-# invisible for the same reason: the tool was present, just wrong.
+# A PRESENT node_modules is not a CURRENT one: a pull that moves pnpm-lock.yaml
+# otherwise leaves the gate running yesterday's packages (vitest 4.1.10 installed
+# while package.json declared ^5.0.0, so local `make web-test` graded the tree
+# under a different runner than CI).
 #
-# mtime comparison rather than a version probe: it is one stat per app, needs
-# no package names, and catches ANY drift rather than the one dependency
-# someone thought to check. `pnpm install` rewrites node_modules/.modules.yaml,
-# so that file being older than the lockfile is exactly "the lockfile moved and
-# nothing reinstalled".
+# mtime, not a version probe: one stat per app, catches any drift. `pnpm install`
+# rewrites node_modules/.modules.yaml, so that file older than the lockfile means
+# the lockfile moved and nothing reinstalled.
 for verify_app in explorer status dashboard; do
     verify_lock="web/${verify_app}/pnpm-lock.yaml"
     verify_stamp="web/${verify_app}/node_modules/.modules.yaml"
@@ -170,11 +150,10 @@ defer_check() {
     deferred_checks=$((deferred_checks + 1))
 }
 
-# verify.sh ↔ CI parity. The #1 cause of "green locally, red in CI"
-# is this gate drifting behind CI's repo-gates job. This deterministic
-# meta-check (no network) fails fast if CI runs a scripts/ci gate that the
-# steps below do not mirror — so a lint added to CI obligates adding it here.
-# The self-test runs first (the gate is only as trustworthy as its fixtures).
+# verify.sh <-> CI parity: green locally and red in CI usually means this gate
+# drifted behind CI's repo-gates job. This network-free meta-check fails if CI
+# runs a scripts/ci gate the steps below do not mirror. The self-test runs first
+# (a gate is only as trustworthy as its fixtures).
 echo "=== verify↔CI parity self-test ===" && ./scripts/ci/check-verify-parity-test.sh
 echo "=== verify.sh ↔ CI repo-gates parity ===" && ./scripts/ci/check-verify-parity.sh
 echo "=== self-test runners self-test ===" && ./scripts/ci/check-selftest-runners-test.sh
@@ -213,32 +192,20 @@ fi
 
 # ── Tier 0: every check measured under five seconds, before the Go build ────
 #
-# Cost order, not topic order. Each section below runs in under five seconds
-# standalone (measured on a warm cache; the table is in
-# docs/contributing/local-verification.md), and the sections after this block
-# run from five seconds to several minutes. Nothing here changes WHAT any
-# check asserts, WHICH checks run, or the ALL CHECKS PASSED / VERIFY
-# INCOMPLETE verdict — only when each one is reached.
+# Cost order, not topic order: each section here runs in under five seconds
+# standalone (table in docs/contributing/local-verification.md); the rest take
+# five seconds to several minutes. Nothing here changes WHAT any check asserts,
+# WHICH run, or the ALL CHECKS PASSED / VERIFY INCOMPLETE verdict, only when each
+# is reached. lint-shell-sigpipe.sh (2.5 s) is here so a shell edit that trips it
+# is told in the first fifteen seconds, not after ten minutes of Go build.
 #
-# The measurement that forced it: lint-shell-sigpipe.sh takes 2.5 s and used
-# to sit at section ~95 of 103, so a one-line shell edit that tripped it was
-# told so after about ten minutes of Go build, doc lints and web builds. It
-# now answers in the first fifteen seconds of a run, and `make lint-changed`
-# answers before the commit exists.
-#
-# Relative order inside this block is unchanged from before the move, so a
-# section's neighbours — a gate and its self-test especially — still read
-# together, and this reordering is a pure move rather than a rewrite.
-#
-# Two ordering facts worth stating, since both look like accidents:
-#   * These lints now run BEFORE `make fmt` rewrites anything. They judge the
-#     tree as committed, which is what CI judges; none of their assertions is
-#     about formatting.
+# Two ordering facts that look like accidents:
+#   * These lints run BEFORE `make fmt` rewrites anything. They judge the tree as
+#     committed, which is what CI judges; none asserts on formatting.
 #   * The three `go run` lints in scripts/ci (lint-golangci-config,
-#     lint-openapi-urls, lint-pk-discriminators) are here because each is a
-#     standalone program (stdlib plus yaml/jsonschema, no repo imports), so
-#     no amount of breakage in internal/ can make them fail. On a cold Go
-#     build cache their first compile costs more than the sub-second figure.
+#     lint-openapi-urls, lint-pk-discriminators) are standalone programs (stdlib
+#     plus yaml/jsonschema, no repo imports), so breakage in internal/ cannot
+#     fail them. A cold Go build cache makes their first compile slower.
 # The container verifier runs native arm64 on Apple-silicon Docker, and the
 # syscall table there differs from amd64: dup2 has no arm64 entry, so a
 # call that vets clean on amd64 CI and on the production host does not
@@ -256,24 +223,21 @@ echo "=== Actions pinning ===" && ./scripts/ci/lint-actions-pinning.sh
 echo "=== Actions pinning self-test ===" && ./scripts/ci/lint-actions-pinning-test.sh
 echo "=== pnpm version pin ===" && ./scripts/ci/lint-pnpm-version-pin.sh
 echo "=== pnpm version pin self-test ===" && ./scripts/ci/lint-pnpm-version-pin-test.sh
-# ci.yml's path-filter change-class computation, mirrored so a local run
-# judges the same classification CI gates on.
-# check-change-class.sh is a HELPER that CI invokes with a class and a file
-# list, not a standalone gate — running it bare is a usage error. Its
-# self-test is the meaningful local mirror, as for every other -test.sh here.
+# ci.yml's path-filter change-class computation, mirrored so a local run judges
+# the same classification CI gates on. check-change-class.sh is a helper CI
+# invokes with a class and file list; bare it is a usage error, so its self-test
+# is the local mirror.
 echo "=== Change-class computation self-test ===" && ./scripts/ci/check-change-class-test.sh
 # Refuses a Dependabot PR that rides a go/toolchain or engines/packageManager
-# bump in under a dependency-patch label — that decision is deliberate, never
-# automatic.
-# Another HELPER: CI passes it the PR author login. Its self-test is the mirror.
+# bump under a dependency-patch label: that decision is deliberate, never
+# automatic. A helper (CI passes the PR author login); its self-test is the mirror.
 echo "=== Dependabot toolchain-bump guard self-test ===" && ./scripts/ci/check-dependabot-toolchain-bump-test.sh
 # govulncheck must be built with the Go version go.mod declares, or a
 # toolchain bump makes the vulnerability gate fail to parse the module graph
 # instead of reporting on it.
 echo "=== Go toolchain parity (govulncheck) ===" && ./scripts/ci/lint-go-toolchain-parity.sh
 echo "=== Go toolchain parity self-test ===" && ./scripts/ci/lint-go-toolchain-parity-test.sh
-# VERSIONS.md's pinned go-stellar-sdk tag must track go.mod's require line
-# (Q274: the row drifted to v0.6.0 while go.mod moved to v0.7.3).
+# VERSIONS.md's pinned go-stellar-sdk tag must track go.mod's require line.
 echo "=== SDK version pin self-test ===" && ./scripts/ci/lint-sdk-version-pin-test.sh
 echo "=== SDK version pin ===" && ./scripts/ci/lint-sdk-version-pin.sh
 echo "=== Dead scheduled-control detector self-test ===" && ./scripts/ci/check-scheduled-controls-test.sh
@@ -335,9 +299,8 @@ echo "=== systemd EnvironmentFile= order ===" && ./scripts/ci/lint-systemd-envfi
 echo "=== systemd EnvironmentFile= order self-test ===" && ./scripts/ci/lint-systemd-envfile-order-test.sh
 echo "=== Textfile-collector exposition ===" && ./scripts/ci/lint-textfile-exposition.sh
 echo "=== Textfile-collector exposition self-test ===" && ./scripts/ci/lint-textfile-exposition-test.sh
-# Registered in scripts/ci/textfile-producers.manifest but nothing
-# ran either self-test — the manifest's third column proved only that the
-# file existed, not that it executed.
+# Registered in scripts/ci/textfile-producers.manifest, but the manifest's third
+# column only proved the file existed, not that it ran: run the self-test.
 echo "=== ch-schema-snapshot self-test ===" && ./scripts/ops/ch-schema-snapshot-test.sh
 echo "=== ch-schema-drift self-test ===" && ./configs/ansible/roles/archival-node/files/ch-schema-drift-test.sh
 echo "=== Ansible task lint (pipefail/bash, secret-on-argv) ===" && ./scripts/ci/lint-ansible-tasks.sh
@@ -378,17 +341,14 @@ echo "=== galexie catchup probe self-test ===" && ./scripts/ci/galexie-catchup-p
 echo "=== galexie archive contiguity self-test ===" && ./scripts/ci/galexie-archive-contiguity-test.sh
 echo "=== stellar-core auto-upgrade self-test ===" && ./scripts/ci/stellar-core-auto-upgrade-test.sh
 echo "=== galexie archive tip-lag self-test ===" && ./scripts/ci/galexie-archive-tip-lag-test.sh
-# BASE_SHA-gated. Both this and lint-replay-plan.sh below take their
-# comparison base from the environment, and with none set they print a skip
-# line and exit 0 — so invoking them bare made verify↔CI parity look honest
-# while checking nothing. That gap is not theoretical: 38fb58019 shipped an
-# undeclared .gitleaksignore entry through a fully green local run and turned
-# main red, and the gate's own anti-heal walk then held it red.
+# BASE_SHA-gated. This and lint-replay-plan.sh below take their comparison base
+# from the environment and, with none set, print a skip line and exit 0, which
+# made verify<->CI parity look honest while checking nothing (an undeclared
+# .gitleaksignore entry shipped through a green local run and reddened main).
 #
 # Locally the analogue of CI's push base is the merge-base with the upstream
-# tip: it covers exactly the commits about to be pushed. With nothing
-# unpushed the range is empty and both gates pass trivially, which is correct
-# — there is no growth to declare.
+# tip, covering exactly the commits about to be pushed. Nothing unpushed gives an
+# empty range and both gates pass trivially, which is correct: no growth to declare.
 if [ -z "${BASE_SHA:-}" ] && git rev-parse -q --verify origin/main >/dev/null 2>&1; then
     BASE_SHA="$(git merge-base origin/main HEAD 2>/dev/null || true)"
     [ -n "$BASE_SHA" ] && export BASE_SHA && echo "verify: BASE_SHA=${BASE_SHA} (merge-base with origin/main)"
@@ -409,9 +369,9 @@ echo "=== PK discriminators ===" && go run ./scripts/ci/lint-pk-discriminators
 echo "=== derive_generation guard (INV-3) ===" && go run ./scripts/ci/lint-derive-generation-guard
 echo "=== Comment history citations ===" && ./scripts/ci/lint-comments.sh
 echo "=== Comment history citations self-test ===" && ./scripts/ci/lint-comments-test.sh
-# Structural rule-file lint — pure-Python (no promtool), so it runs even
-# on machines without a Prometheus install and catches the mis-indented-rule
-# class that otherwise only CI's promtool job flags (alerts at group level → "field expr not found in type RuleGroup").
+# Structural rule-file lint, pure Python (no promtool): catches the mis-indented
+# rule class (alerts at group level → "field expr not found in type RuleGroup")
+# that otherwise only CI's promtool job flags.
 echo "=== Rule structure ===" && python3 ./scripts/ci/lint-rule-structure.py
 # YAML-aware runbook guard: runbook_url must be an annotation,
 # not a label, on every alert — else the Alertmanager Discord templates
@@ -424,27 +384,23 @@ echo "=== Ansible secret-diff ===" && python3 ./scripts/ci/lint-ansible-secret-d
 # Installed scripts reaching ClickHouse without a credential file
 # (report-only until `default` is locked) + its self-test.
 echo "=== ClickHouse client auth ===" && python3 ./scripts/ci/lint-ch-client-auth.py && ./scripts/ci/lint-ch-client-auth-test.sh
-# The metric-refs SELF-test (does the guard still detect a dead ref?)
-# needs neither promtool nor the monitoring stack, so it runs
-# unconditionally — outside the promtool branch above, which would
-# otherwise skip it on any machine that HAS promtool. CI's repo-gates
-# job runs it, so verify.sh must too or check-verify-parity fails.
+# The metric-refs SELF-test needs neither promtool nor the monitoring stack, so
+# it runs outside the promtool branch (which would skip it on any machine that
+# HAS promtool). CI's repo-gates job runs it, so verify.sh must too or
+# check-verify-parity fails.
 echo "=== Metric refs self-test ===" && ./scripts/ci/lint-metric-refs-test.sh
 echo "=== Unit-failed baseline self-test ===" && ./scripts/ci/lint-unit-failed-baseline-test.sh
 echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-user-test.sh
-# scripts/ci runs the gate scripts this file mirrors; scripts/dev/lint-changed.sh
-# is a dispatcher OVER those same gates and had no caller of its own — a
-# 99-assertion self-test that no gate ever ran. check-verify-parity.sh only
-# enforces the CI-\>verify direction for scripts/ci, so it could not have
-# caught this. Run it here explicitly.
+# lint-changed.sh is a dispatcher OVER the scripts/ci gates with no caller of its
+# own, and check-verify-parity.sh enforces only the CI->verify direction, so run
+# its self-test here explicitly.
 echo "=== Changed-file dispatcher self-test ===" && ./scripts/dev/lint-changed-test.sh
 echo "=== Doctor self-test ===" && ./scripts/dev/doctor-test.sh
 echo "=== verify-r1-sync self-test ===" && ./scripts/dev/verify-r1-sync-test.sh
-# Pins commit-identity-range.sh's new-branch/tag fallback (a
-# detached-HEAD checkout with the branch's own commit also present as a
-# remote-tracking ref) against the exact regression that made the range
-# come back empty and the job report "checking 0 commit(s)" as a pass.
-# The self-test existed but ran nowhere until now.
+# Pins commit-identity-range.sh's new-branch/tag fallback (detached HEAD with
+# the branch's own commit also present as a remote-tracking ref) against the
+# regression that made the range come back empty and the job report "checking 0
+# commit(s)" as a pass.
 echo "=== Commit-identity range self-test ===" && ./scripts/ci/commit-identity-range-test.sh
 # govulncheck. Graceful-skip when not installed locally —
 # CI installs it via `make deps`. Mirrors the promtool pattern.
@@ -456,23 +412,17 @@ fi
 
 # ── Generated-artifact drift: MUST run before any parallel lane starts ─────
 #
-# CI enforces three of these — docs/reference/api and examples/postman in
-# the `openapi` job, web/explorer/src/api/types.ts in the `web/explorer`
-# job — each by regenerating and diffing. verify.sh ran none of them, so an
-# OpenAPI change that regenerated two of the three passed local gate and
-# reddened CI on the third.
+# CI enforces three: docs/reference/api and examples/postman (`openapi` job) and
+# web/explorer/src/api/types.ts (`web/explorer` job), each by regenerating and
+# diffing. An OpenAPI change that regenerated two passed locally and reddened CI
+# on the third.
 #
-# Regenerating here is deliberate: unlike CI, a local run should FIX the
-# drift rather than just report it, so the operator commits the result. The
-# diff is still checked so the run is loud about having changed files.
+# Regenerating here is deliberate: a local run should FIX drift so the operator
+# commits it; the diff is still checked so the run is loud about changed files.
 #
-# This step is pulled out of the parallel block below and run BEFORE any
-# lane starts, on purpose: it regenerates web/explorer/src/api/types.ts,
-# which lane c's typecheck/build reads, and a concurrent regenerate-while-
-# read is exactly the race the ordering rule under "Parallel phase" exists
-# to forbid. Running it here also means every lane sees the freshly
-# regenerated tree, which serial order already guaranteed for `Test` and
-# `Showcase` and now guarantees for lane a and lane d's readers too.
+# Run before any lane because it rewrites web/explorer/src/api/types.ts, which
+# lane c reads; a concurrent regenerate-while-read is the race the "Parallel
+# phase" ordering rule forbids, and every lane now sees the regenerated tree.
 if command -v node >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then
     echo "=== Generated API reference + Postman + web client drift ==="
     ./scripts/dev/docs-api.sh >/dev/null
@@ -487,11 +437,10 @@ else
     defer_check "Generated-artifact drift" "node or npx is not installed"
 fi
 
-# Config reference drift. docs/reference/config/README.md is generated
-# from internal/config/config.go struct tags (`make docs-config`) and is not
-# in the diff list above, so a struct-tag removal/rename would leave the doc
-# describing a config block that no longer exists. Needs only `go run`, so —
-# unlike the block above — it runs unconditionally, no node/npx gate.
+# Config reference drift. docs/reference/config/README.md is generated from
+# internal/config/config.go struct tags (`make docs-config`) and is not in the
+# diff list above, so a removed tag would leave the doc describing a dead block.
+# Needs only `go run`, so no node/npx gate.
 echo "=== Generated config reference drift ==="
 go run ./cmd/stellarindex-ops docs-config > docs/reference/config/README.md
 if ! git diff --exit-code --stat -- docs/reference/config; then
@@ -503,10 +452,8 @@ fi
 
 # ── Parallel phase (TIER 1b) ─────────────────────────────────────────────────
 #
-# Same sections, same assertions as before; only WHEN and IN WHAT PROCESS
-# each runs has changed. Four lanes, grouped so each shares no file with any
-# other — the property that makes concurrent execution safe rather than
-# merely fast:
+# Four lanes, grouped so none shares a file with another, which is what makes
+# concurrent execution safe rather than merely fast:
 #
 #   a  doc lints            reads markdown + this file's own targets; writes nothing
 #   b  Go build/vet/tests   the ONLY lane that writes a tracked file (`make fmt`)
@@ -514,20 +461,13 @@ fi
 #   d  everything else      ops/ansible/migration/monitoring self-tests; none of it
 #                           invokes go, invokes pnpm, or writes a tracked file
 #
-# No single section dominates the serial run: Lint, Monitoring, Test and the
-# Doc links self-test are four roughly comparable costs. Grouped into the
-# lanes above, the ceiling is lane b (Format + Vet + Lint + Test +
-# Integration build), about a third of the serial total.
+# Lane b (Format + Vet + Lint + Test + Integration build) is the ceiling, about a
+# third of the serial total. Lane d keeps promtool's Monitoring, amtool's
+# Alertmanager config and gitleaks' Secrets scans: none touches *.go or web/**.
 #
-# Lane d keeps promtool's Monitoring, amtool's Alertmanager config and
-# gitleaks' Secrets scans — none of those tools, nor anything else in lane
-# d, touches *.go or web/**, so lane d is safe to run alongside b and c
-# rather than needing a lane of its own.
-#
-# A lane runs in a background subshell, so it cannot write back to this
-# script's own `deferred_checks` variable or exit the parent on failure —
-# each lane keeps its own deferred-count file and its own exit code, and
-# both are collected after every lane finishes.
+# A lane runs in a background subshell, so it cannot write this script's
+# `deferred_checks` or exit the parent: each keeps its own deferred-count file and
+# exit code, collected after every lane finishes.
 LANEDIR="$(mktemp -d "${TMPDIR:-/tmp}/verify-lanes.XXXXXX")"
 trap 'rm -rf "$LANEDIR"' EXIT
 
@@ -558,10 +498,9 @@ lane_b() { # Go build/vet/unit tests
     echo "=== Vet ==="           && make vet
     echo "=== Lint ==="          && make lint
     echo "=== Test ==="          && make test
-    # Compile-only: catches interface-extension breakage in
-    # build-tagged integration adapters without spinning testcontainers.
-    # Real `make test-integration` lives outside verify because Docker
-    # isn't always available locally.
+    # Compile-only: catches interface-extension breakage in build-tagged
+    # integration adapters without testcontainers (Docker isn't always local;
+    # real `make test-integration` lives outside verify).
     echo "=== Integration build ===" && make test-integration-build
 }
 
@@ -574,29 +513,21 @@ lane_c() { # web typecheck/lint/test/build. Graceful-skip when pnpm isn't
     if command -v pnpm >/dev/null 2>&1 && [ -f web/explorer/pnpm-lock.yaml ]; then
         echo "=== Showcase typecheck ===" && make web-typecheck
         echo "=== Showcase lint ==="      && make web-lint
-        # Without this the vitest suite ran in NEITHER CI nor this gate:
-        # 209 tests across 49 files, all green and all dead —
-        # including safe-domain.test.ts, the isSafeHomeDomain /
-        # isSafePublicImageUrl phishing + client-SSRF regression gate, and
-        # the AGT-06 stale-flag regression. A refactor loosening any of
-        # them would have landed green.
-        # BUILD BEFORE TEST, deliberately. nav-shell.built.test.ts asserts on
-        # the static export in web/explorer/out, so with the build after it the
-        # suite graded whatever `out/` a previous run happened to leave behind.
-        # Once that was a five-day-old export from before /rwa existed,
-        # and the test duly reported `/rwa: no rwa/index.html in the export` plus
-        # three pages with an empty <main> — a stale artifact, not a regression in
-        # the source. A test whose verdict depends on leftover build output is
-        # worse than no test: it reads green while the tree it claims to grade is
-        # unbuilt, and red for a reason that has nothing to do with the diff.
+        # Runs the vitest suite, including safe-domain.test.ts (the isSafeHomeDomain /
+        # isSafePublicImageUrl phishing + client-SSRF regression gate): a refactor
+        # loosening it must not land green.
+        # BUILD BEFORE TEST: nav-shell.built.test.ts asserts on the static export in
+        # web/explorer/out, so with the build after it the suite graded a stale
+        # `out/` (a five-day-old export reported `/rwa: no rwa/index.html in the
+        # export` and empty <main> pages). A verdict that depends on leftover build
+        # output reads green for an unbuilt tree and red for reasons unrelated to the diff.
         echo "=== Showcase build ==="     && \
             NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make web-build >/dev/null
         echo "=== Showcase tests ==="     && make web-test
     else
         defer_check_lane "$LANEDIR/c.deferred" "Showcase" "pnpm or web/explorer/pnpm-lock.yaml is unavailable"
     fi
-    # Dashboard SPA — same pnpm gate. Skipped silently when the
-    # lockfile is missing (e.g. fresh checkouts that haven't installed).
+    # Dashboard SPA, same pnpm gate; skipped silently without a lockfile (fresh checkout).
     if command -v pnpm >/dev/null 2>&1 && [ -f web/dashboard/pnpm-lock.yaml ]; then
         echo "=== Dashboard typecheck ===" && make dashboard-typecheck
         echo "=== Dashboard lint ==="      && make dashboard-lint
@@ -646,10 +577,9 @@ lane_d() { # everything else
     echo "=== Fleet release-drift verdict self-test ===" && ./scripts/ci/check-fleet-release-drift-test.sh
     echo "=== zfs-snapshot job self-test ===" && ./scripts/ci/zfs-snapshot-test.sh
     echo "=== ordinal-rederive-chunks wrapper self-test ===" && ./scripts/ci/ordinal-rederive-chunks-test.sh
-    # The behavioural twin above pins HOW the job snapshots; this pins WHICH
-    # datasets it is given (NS03 — the Galexie LCM archive the other two
-    # tiers are derived from had none). Renders the role template, so the
-    # render arms skip without a jinja2 python locally; CI fails closed.
+    # Pins WHICH datasets the job is given (the Galexie LCM archive the other two
+    # tiers derive from had none); the behavioural twin above pins HOW it snapshots.
+    # Renders the role template, so render arms skip without a local jinja2; CI fails closed.
     echo "=== zfs-snapshot dataset coverage ===" && ./scripts/ci/zfs-snapshot-coverage-test.sh
     # Migrations-sync self-test: structural half needs only python; the
     # behavioural half runs the task file with ansible and needs GNU tar on the
@@ -672,11 +602,8 @@ lane_d() { # everything else
     echo "=== ClickHouse maintenance + Phase-D failure-path self-test ===" && bash scripts/ops/ch-maintenance-fail-closed-test.sh
     echo "=== Lake-dedup driver self-test ===" && bash deploy/clickhouse/lake-dedup-driver-test.sh
     echo "=== D3 current-state rebuild self-test (cutover coverage gate) ===" && bash scripts/ops/d3-lecur-v2-rebuild-test.sh
-    # Prometheus rule files. Graceful-skip when promtool isn't
-    # installed locally — CI installs it explicitly. The Makefile
-    # target hard-fails on missing promtool; verify.sh wraps it with
-    # an existence check so local-dev `bash scripts/dev/verify.sh`
-    # keeps working without a full Prometheus install.
+    # Prometheus rule files. Graceful-skip without promtool (CI installs it); the
+    # Makefile target hard-fails, so verify.sh guards it to keep local runs working.
     if command -v promtool >/dev/null 2>&1; then
         echo "=== Monitoring ===" && make monitoring-check
     else
@@ -685,11 +612,9 @@ lane_d() { # everything else
         # the promtool-dependent monitoring-check is skipped.
         echo "=== Metric refs ===" && ./scripts/ci/lint-metric-refs.sh
     fi
-    # Alertmanager config — validate BOTH render branches of apply.sh
-    # (all URLs empty → stub path through the block-stripper; all URLs
-    # set → substitution path). Graceful-skip when amtool isn't
-    # installed, same convention as promtool above; CI's
-    # monitoring-rules job installs it explicitly and never skips.
+    # Alertmanager config: validates BOTH render branches of apply.sh (all URLs empty
+    # → stub path through the block-stripper; all set → substitution path).
+    # Graceful-skip without amtool; CI's monitoring-rules job never skips.
     if command -v amtool >/dev/null 2>&1; then
         echo "=== Alertmanager config ==="
         ALERTMANAGER_SECRETS=/dev/null bash configs/alertmanager/apply.sh --check-only
@@ -697,35 +622,25 @@ lane_d() { # everything else
         printf 'HEALTHCHECKS_DEADMANSSWITCH_URL=https://hc-ping.com/x\nDISCORD_WEBHOOK_URL_PAGES=https://discord.com/api/webhooks/1/a\nDISCORD_WEBHOOK_URL_ALERTS=https://discord.com/api/webhooks/2/b\n' > "$AM_DUMMY_ENV"
         ALERTMANAGER_SECRETS="$AM_DUMMY_ENV" bash configs/alertmanager/apply.sh --check-only
         rm -f "$AM_DUMMY_ENV"
-        # And the fail-closed guard's SELF-test: an empty URL must be
-        # refused at apply time. Renders green either way without this —
-        # the 31-day outage installed a receiver-less config through a
-        # fully-passing gate.
+        # And the fail-closed guard's SELF-test: an empty URL must be refused at
+        # apply time. Renders green either way without this (a 31-day outage
+        # installed a receiver-less config through a fully-passing gate).
         bash configs/alertmanager/apply-test.sh
     else
         defer_check_lane "$LANEDIR/d.deferred" "Alertmanager config" "amtool is not installed"
     fi
-    # gitleaks (secret scan). CI runs this as its own job; verify.sh didn't,
-    # so a new base64/XDR test fixture that trips the generic-api-key entropy
-    # heuristic passed local gate but reddened CI. Graceful-skip
-    # when absent (mirrors promtool/govulncheck).
+    # gitleaks (secret scan), graceful-skip when absent. Two scans, because
+    # neither subsumes the other:
     #
-    # TWO scans, because neither subsumes the other and running only the first
-    # is what once let a leak through:
+    #   --no-git  scans the WORKING TREE, including uncommitted edits: catches a
+    #             fixture before you commit it. Cannot see history.
+    #   (default) scans COMMITTED HISTORY, which is what CI runs (fetch-depth: 0).
+    #             Cannot see uncommitted edits.
     #
-    #   --no-git  scans the WORKING TREE, including uncommitted edits. This is
-    #             the one that catches a fixture before you commit it, when the
-    #             fix is still cheap. It cannot see history.
-    #   (default) scans COMMITTED HISTORY, which is exactly what CI runs (with
-    #             fetch-depth: 0). It cannot see uncommitted edits.
-    #
-    # The gap that bit: a test fixture was committed, then removed from the
-    # working tree in a follow-up commit. --no-git went green — the string was
-    # genuinely gone from the tree — while CI stayed red, because the commit
-    # that INTRODUCED it is still in the log and always will be. A local gate
-    # that calls itself "run before every push" has to run what CI runs, or it
-    # is issuing a pass it has no basis for. History findings that are provably
-    # not credentials are exempted by fingerprint in .gitleaksignore.
+    # A fixture committed then removed in a follow-up commit passes --no-git but
+    # stays red in CI, since the introducing commit is still in the log. History
+    # findings provably not credentials are exempted by fingerprint in
+    # .gitleaksignore.
     if command -v gitleaks >/dev/null 2>&1; then
         echo "=== Secrets (gitleaks, working tree) ===" && \
             gitleaks detect --no-git --no-banner --redact --config .gitleaks.worktree.toml
@@ -738,22 +653,15 @@ lane_d() { # everything else
     fi
 }
 
-# Lane CONCURRENCY is bounded by memory, not by core count. Lane b runs
-# golangci-lint (multi-GB on this tree) and lane c runs a Next.js build
-# (another GB-scale Node process); on a host with tens of GB all four lanes
-# coexist happily, but `make prepush` runs this inside Docker, and this
-# machine's Docker VM has 7.65 GiB for all of it. Running all four there
-# OOM-killed golangci-lint — `make[1]: *** [Makefile:158: lint] Killed`, a
-# bare SIGKILL with no diagnostic, which reads like a lint failure and is
-# not one. The host run that preceded it passed, so the parallel win is real
-# and worth keeping where the memory exists; it must simply not be assumed.
+# Lane CONCURRENCY is bounded by memory, not core count. Lane b runs golangci-lint
+# (multi-GB) and lane c a Next.js build; `make prepush` runs inside Docker with a
+# 7.65 GiB VM, where all four lanes OOM-killed golangci-lint (`make[1]: ***
+# [Makefile:158: lint] Killed`, a bare SIGKILL that reads like a lint failure).
 #
-# Below the threshold the two heavy lanes are separated rather than the whole
-# tier being serialised: a and d are both light (doc lints; shell/python/
-# ansible self-tests plus gitleaks, which is CPU-hungry but not memory-hungry)
-# and still run together, then b alone, then c alone. VERIFY_LANES=1 forces
-# that schedule and VERIFY_LANES=4 forces the parallel one, so a machine that
-# disagrees with the heuristic is not stuck with it.
+# Below the threshold the heavy lanes are separated, not the whole tier: a and d
+# (doc lints; shell/python/ansible self-tests plus gitleaks, CPU-hungry but not
+# memory-hungry) run together, then b alone, then c alone. VERIFY_LANES=1 forces
+# that schedule and VERIFY_LANES=4 the parallel one.
 verify_total_mem_mb() {
     # cgroup v2 limit first: inside a container it is the number that binds,
     # and it is smaller than the host's MemTotal that /proc would report.
@@ -799,20 +707,16 @@ else
     lane_d > "$LANEDIR/d.log" 2>&1 & pid_d=$!
     wait "$pid_a" || lane_rc_a=$?
     wait "$pid_d" || lane_rc_d=$?
-    # b and c run one at a time (memory-constrained), but each still runs as
-    # its own backgrounded job so `wait` reports its real exit code — calling
-    # a function directly on the left of `||` disables errexit for its whole
-    # body, which let a failing `make test`/`make lint` inside the function
-    # go unnoticed as long as the function's last command still succeeded.
+    # b and c run one at a time but each as its own backgrounded job so `wait`
+    # reports its real exit code: a function on the left of `||` runs with errexit
+    # disabled, which hid a failing `make test`/`make lint` inside it.
     lane_b > "$LANEDIR/b.log" 2>&1 & pid_b=$!
     wait "$pid_b" || lane_rc_b=$?
     lane_c > "$LANEDIR/c.log" 2>&1 & pid_c=$!
     wait "$pid_c" || lane_rc_c=$?
 fi
 
-# Every lane's log, in full, lane order — a lane runs concurrently with the
-# others but is itself strictly sequential, so within one lane's block the
-# output reads exactly as the old serial run did.
+# Every lane's log, in full, in lane order; each lane is strictly sequential inside.
 echo ""
 echo "── lane a: doc lints ──────────────────────────────────────────────"
 cat "$LANEDIR/a.log"
@@ -826,9 +730,8 @@ echo ""
 echo "── lane d: everything else ─────────────────────────────────────────"
 cat "$LANEDIR/d.log"
 
-# A lane failure fails the whole run, and names every lane that failed —
-# not just the first one bash happened to notice, since all four already
-# ran to their own completion or their own first failure independently.
+# A lane failure fails the run and names every failed lane, not just the first
+# bash noticed.
 failed_lanes=()
 [ "$lane_rc_a" -eq 0 ] || failed_lanes+=("a:doc-lints(exit ${lane_rc_a})")
 [ "$lane_rc_b" -eq 0 ] || failed_lanes+=("b:go-build-vet-test(exit ${lane_rc_b})")

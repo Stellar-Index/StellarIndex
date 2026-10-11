@@ -1,102 +1,84 @@
 #!/usr/bin/env bash
 # sla-proof-from-probe.sh — render the dated SLA proof report from the
-# stellarindex-sla-probe series already in r1's Prometheus, instead of
-# from a k6 load run against a target that does not exist.
+# stellarindex-sla-probe series already in r1's Prometheus, instead of from a k6
+# load run against a target that does not exist.
 #
-# WHY THIS EXISTS. The weekly SLA proof had exactly one source: a k6
-# soak against K6_TARGET_STAGING. That secret is deliberately unset, the
-# scenarios refuse a production target by design
-# (test/load/scenarios/lib/env.js), and the canonical scenario is a
-# 300 rps / 10 min soak — so pointing it at the single production host
-# was never on the table. k6-weekly.yml's own header offered two ways
-# out, "provision a production-shaped target, or retire this workflow",
-# and neither happened; the schedule stayed red for weeks and the
-# scheduled-control sweep flagged it.
+# WHY. The weekly SLA proof had one source: a k6 soak against
+# K6_TARGET_STAGING, a secret deliberately unset. The scenarios refuse a
+# production target by design (test/load/scenarios/lib/env.js) and the canonical
+# scenario is a 300 rps / 10 min soak, so aiming it at the single production host
+# was never on the table. k6-weekly.yml's own header offered two ways out,
+# "provision a production-shaped target, or retire this workflow".
 #
-# There is a third source, and it has been running the whole time.
-# stellarindex-sla-probe fires every 15 minutes on r1, writes
-# per-endpoint p50/p95/p99, availability, freshness and sample counts
-# into node_exporter's textfile collector, and Prometheus has been
-# scraping them at 15 s for as long as its retention holds. That is a
-# real, continuous measurement of served latency across ten endpoints.
-# It is NOT a load test, and this script's whole job is to render it as
-# proof of exactly what it measured and of nothing more.
+# The third source: stellarindex-sla-probe fires every 15 minutes on r1, writes
+# per-endpoint p50/p95/p99, availability, freshness and sample counts into
+# node_exporter's textfile collector, and Prometheus scrapes them at 15 s for as
+# long as its retention holds: a continuous measurement of served latency across
+# ten endpoints. It is NOT a load test; this script renders it as proof of
+# exactly what it measured and nothing more.
 #
-# THE RULE IT ENFORCES, unchanged from scripts/ci/render-sla-proof.sh:
-# an unlabelled number is not evidence. The report is refused outright
-# (rc 2, nothing written) unless the run can name its own provenance and
-# unless the series actually carry the numbers the claim is about. A run
-# that cannot produce evidence must fail loudly; it must never publish a
+# THE RULE, unchanged from scripts/ci/render-sla-proof.sh: an unlabelled number
+# is not evidence. The report is refused outright (rc 2, nothing written) unless
+# the run can name its own provenance and the series carry the numbers the claim
+# is about. A run that cannot produce evidence fails loudly and never publishes a
 # partial report that reads as a pass.
 #
-# WHAT THE WEEKLY FIGURE IS. Percentiles do not average. The probe
-# exports one p50/p95/p99 PER RUN and never the underlying samples, so
-# the request-level population percentile for the week is not
-# recoverable from these series and this script does not pretend to
-# compute it. What it publishes instead is a bound that is exactly true:
+# THE WEEKLY FIGURE. Percentiles do not average. The probe exports one
+# p50/p95/p99 PER RUN, never the samples, so the population percentile for the
+# week is not recoverable and is not computed. What is published is a bound that
+# is exactly true:
 #
 #   the pooled p95 over the window <= max(per-run p95)
 #
-# because every run has at least 95 % of its own samples at or below its
-# own p95, so pooling them keeps at least 95 % at or below the largest
-# of those values — for any run sizes, no uniformity assumed. The bound
-# is one-directional and the report says so: a max under the target
-# PROVES the target held; a max over it proves only that the bound is
-# uninformative, never that the target was missed. Nothing in the report
-# averages a percentile, and nothing rolls percentiles up across
-# endpoints.
+# because every run has at least 95 % of its own samples at or below its own
+# p95, so pooling keeps at least 95 % at or below the largest of them, for any
+# run sizes. The bound is one-directional and the report says so: a max under the
+# target PROVES it held; a max over it proves only that the bound is
+# uninformative, never that the target was missed. Nothing averages a percentile
+# or rolls percentiles up across endpoints.
 #
 # Usage:
 #   sla-proof-from-probe.sh [--prom-url URL] [--window 7d] [--host NAME]
 #                           [--out-dir DIR] [--extract-out FILE]
 #   sla-proof-from-probe.sh --extract FILE [--out-dir DIR]
 #
-# Two modes, one renderer. In FETCH mode the script queries Prometheus,
-# builds a self-contained extract of every series it read, and renders
-# it. In --extract mode it renders a previously-saved extract and does
-# no network at all — which is how scripts/ops/sla-proof-from-probe-test.sh
-# exercises every refusal path on a PR rather than once a week.
+# Two modes, one renderer. FETCH mode queries Prometheus, builds a
+# self-contained extract of every series read, and renders it. --extract mode
+# renders a saved extract with no network, which is how
+# scripts/ops/sla-proof-from-probe-test.sh exercises every refusal path on a PR.
 #
-# The filename is DERIVED from the last sample in the effective window,
-# never passed in: a report whose name disagrees with the window it
-# measured is the mislabelling this script exists to prevent. The written
-# path is echoed as the last line of stdout.
+# The filename is DERIVED from the last sample in the effective window, never
+# passed in: a name that disagrees with the window measured is the mislabelling
+# this script exists to prevent. The written path is the last line of stdout.
 #
-# Required provenance (env; every one must be non-empty). None of these
-# is recoverable from the series, and each answers a question the
-# numbers are meaningless without:
+# Required provenance (environment variables, every one non-empty; none is
+# recoverable from the series, and the numbers are meaningless without each):
 #   SLA_PROOF_PROBE_TARGET       base URL the probe requests. The report
-#                                DERIVES its network-path caveat from
-#                                this — a loopback target excludes TLS,
-#                                the reverse proxy and any CDN, and the
-#                                report must say which it was.
-#   SLA_PROOF_PROBE_CONCURRENCY  the probe's -concurrency. This is the
-#                                load condition that was NOT exercised;
-#                                stating it is the difference between a
+#                                DERIVES its network-path caveat from this: a
+#                                loopback target excludes TLS, the reverse
+#                                proxy and any CDN, and the report says which.
+#   SLA_PROOF_PROBE_CONCURRENCY  the probe's -concurrency: the load condition
+#                                NOT exercised, the difference between a
 #                                latency measurement and a latency claim.
-#   SLA_PROOF_COMMIT             the commit/release the measured API was
-#                                serving.
+#   SLA_PROOF_COMMIT             the commit/release the measured API served.
 #
 # Optional provenance:
 #   SLA_PROOF_RUN_URL   CI run permalink (recorded as a local run if unset)
 #   SLA_PROOF_NOTE      free text appended to "Notes / caveats"
 #
-# Exit codes — the workflow branches on all three, so they are a contract
-# and they mirror render-sla-proof.sh's:
+# Exit codes — the workflow branches on all three (a contract, mirroring
+# render-sla-proof.sh's):
 #   0  PASS     report written; every per-endpoint bound held across a
 #               window with no gaps.
-#   1  FAIL     report written; at least one bound did not hold, a
-#               headline cell could not be evaluated (no finite value for
-#               that endpoint in that family — an unmeasured cell is not
-#               a pass), or the window has gaps that stop it proving
-#               anything. Still
-#               evidence — a failing proof is a real measurement and must
-#               be retained — but the run is red.
-#   2  REFUSED  nothing written: the inputs cannot support a labelled
-#               claim (Prometheus unreachable, headline series absent,
-#               provenance missing, more than one host in the data,
-#               effective window below the floor, credential in the
-#               target URL).
+#   1  FAIL     report written; a bound did not hold, a headline cell could not
+#               be evaluated (no finite value for that endpoint in that family;
+#               an unmeasured cell is not a pass), or the window has gaps that
+#               stop it proving anything. Still evidence: a failing proof is a
+#               real measurement and must be retained, but the run is red.
+#   2  REFUSED  nothing written: the inputs cannot support a labelled claim
+#               (Prometheus unreachable, headline series absent, provenance
+#               missing, more than one host in the data, effective window below
+#               the floor, credential in the target URL).
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -125,10 +107,10 @@ EXTRACT_IN=""
 EXTRACT_OUT=""
 MIN_WINDOW="24h"
 MIN_COVERAGE="0.95"
-# A dead probe (masked by a textfile collector that keeps re-serving the
-# last file it was given) leaves the scrape series continuous, so
-# coverage alone cannot catch it. no_pass_max_sec / unit_failed_frac are
-# the probe-liveness facts that do; see the window_clean fold below.
+# A dead probe (masked by a textfile collector re-serving its last file) leaves
+# the scrape series continuous, so coverage alone cannot catch it.
+# no_pass_max_sec / unit_failed_frac are the liveness facts that do; see the
+# window_clean fold below.
 MAX_NO_PASS_SEC="1800"
 MAX_UNIT_FAILED_FRAC="0.05"
 
@@ -159,9 +141,8 @@ EOF
 fi
 
 # ── Provenance gate ─────────────────────────────────────────────────────
-# Every field here answers one of "against what, under what load, at
-# which commit". A report missing any of them is a number without a claim
-# attached.
+# Every field answers "against what, under what load, at which commit"; a report
+# missing any is a number without a claim attached.
 missing=""
 for v in SLA_PROOF_PROBE_TARGET SLA_PROOF_PROBE_CONCURRENCY SLA_PROOF_COMMIT; do
   if [ -z "${!v:-}" ]; then
@@ -179,9 +160,8 @@ EOF
   exit 2
 fi
 
-# A committed report is public and records the probe target verbatim, so
-# a URL carrying userinfo would publish a credential. Refuse rather than
-# silently strip: the caller must fix the input.
+# A committed report is public and records the probe target verbatim, so a URL
+# with userinfo would publish a credential. Refuse rather than silently strip.
 case "$SLA_PROOF_PROBE_TARGET" in
   *"@"*)
     cat >&2 <<'EOF'
@@ -206,9 +186,8 @@ export SLA_PROBE_MIN_COVERAGE="$MIN_COVERAGE"
 export SLA_PROBE_MAX_NO_PASS_SEC="$MAX_NO_PASS_SEC"
 export SLA_PROBE_MAX_UNIT_FAILED_FRAC="$MAX_UNIT_FAILED_FRAC"
 
-# Export explicitly so the renderer below sees them whether the caller
-# exported them, set them inline, or assigned them as plain shell
-# variables in a wrapper.
+# Export explicitly so the renderer sees them however the caller set them
+# (exported, inline, or plain wrapper variables).
 export SLA_PROOF_PROBE_TARGET SLA_PROOF_PROBE_CONCURRENCY SLA_PROOF_COMMIT
 export SLA_PROOF_RUN_URL="${SLA_PROOF_RUN_URL:-}"
 export SLA_PROOF_NOTE="${SLA_PROOF_NOTE:-}"

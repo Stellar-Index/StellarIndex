@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # check-ansible-drift.sh — the codified≠live verdict for ansible-drift.yml.
 #
-# Why an ENUMERATION, not a changed-task count: a count lets a hand fix on
-# r1 that ansible would erase pass silently inside the slack. Every task
-# allowed to report `changed` is named, with a reason, in
-# scripts/ci/ansible-drift.baseline; ANY other changed task fails at count 1.
+# Why an ENUMERATION, not a changed-task count: a count lets a hand fix on r1
+# that ansible would erase pass silently inside the slack. Every task allowed
+# to report `changed` is named, with a reason, in scripts/ci/ansible-drift.baseline;
+# ANY other changed task fails at count 1.
 #
 # The verdict, in order:
 #
@@ -17,23 +17,20 @@
 #   5. recap changed > the      → FAIL: more changed tasks than there are
 #      number of entries           entries to explain them.
 #
-#   Every failure mode is fail-closed: the gate can be wrong about WHAT
-#   drifted, never wrong about WHETHER something did.
+#   Every failure mode is fail-closed: the gate can be wrong about WHAT drifted,
+#   never about WHETHER something did.
 #
 # Baseline format (scripts/ci/ansible-drift.baseline):
 #
 #       <task name>  # <why this task reports changed on every run>
 #
-#   The reason is MANDATORY — an entry without one fails the gate. The
-#   task name is matched after stripping ansible's `<role> : ` prefix,
-#   so `TASK [archival-node : Sync migrations from repo to r1]` matches
-#   the entry `Sync migrations from repo to r1`. Handlers
-#   (`RUNNING HANDLER [...]`) are matched the same way.
+#   The reason is MANDATORY (an entry without one fails). The task name is
+#   matched after stripping ansible's `<role> : ` prefix, so `TASK [archival-node :
+#   Sync migrations from repo to r1]` matches `Sync migrations from repo to r1`.
+#   Handlers (`RUNNING HANDLER [...]`) match the same way.
 #
-#   The file is `*.baseline`, so scripts/ci/lint-baseline-growth.sh
-#   makes it SHRINK-ONLY: adding an entry needs an explicit
-#   `Baseline-Growth:` commit trailer. Widening the allowance is now an
-#   auditable act with a name and a reason attached, not a `13` → `14`.
+#   `*.baseline` makes the file SHRINK-ONLY under scripts/ci/lint-baseline-growth.sh:
+#   adding an entry needs a `Baseline-Growth:` commit trailer.
 #
 # Usage:
 #   bash scripts/ci/check-ansible-drift.sh /tmp/drift.out
@@ -46,30 +43,21 @@ BASELINE="${ANSIBLE_DRIFT_BASELINE:-scripts/ci/ansible-drift.baseline}"
 RUNBOOK="docs/operations/r1-ansible-drift-2026-07-03.md"
 
 # ── The report ───────────────────────────────────────────────────────
-# A weekly check that reliably finds something and is reliably ignored
-# is worse than none: it teaches everyone to skip the notification. The
-# verdict below therefore renders into the run's JOB SUMMARY — the page
-# a person actually lands on — and NAMES the tasks and the host paths
-# that would change. "r1 has unapplied changes" is unactionable; "these
-# six tasks would change, here are their files" is a quick fix.
-#
-# Every drifted task also gets its own `::error file=…,line=…::`
-# annotation, resolved back to the `- name:` line in the role, so the
-# finding is attached to the code rather than buried in ~1,800 lines of
-# ansible stdout.
-#
-# Unset GITHUB_STEP_SUMMARY (a local run, the fixture tests) writes no
-# summary and changes nothing else.
+# A weekly check that reliably finds something and is reliably ignored is worse
+# than none. The verdict renders into the run's JOB SUMMARY and NAMES the tasks
+# and host paths that would change ("these six tasks, here are their files",
+# not "r1 has unapplied changes"). Every drifted task also gets a
+# `::error file=…,line=…::` annotation on its `- name:` line in the role.
+# Unset GITHUB_STEP_SUMMARY (local run, fixture tests) writes no summary.
 SUMMARY_FILE="${GITHUB_STEP_SUMMARY:-}"
 summary() {
   [ -n "$SUMMARY_FILE" ] || return 0
   printf '%s\n' "$*" >> "$SUMMARY_FILE"
 }
 
-# where_defined <task name> → "<path>:<line>" for the `- name:` that
-# declares it, or empty. Literal match (task names carry em dashes,
-# slashes and plus signs), then an exact compare on the stripped line so
-# `Install X` does not match `Install X units`.
+# where_defined <task name> → "<path>:<line>" of the `- name:` that declares it,
+# or empty. Literal match (names carry em dashes, slashes, plus signs), then an
+# exact compare on the stripped line so `Install X` does not match `Install X units`.
 where_defined() {
   local needle="$1" hit
   while IFS= read -r hit; do
@@ -79,7 +67,6 @@ where_defined() {
     line="${hit#*:}"
     line="${line%%:*}"
     text="${hit#"$path":"$line":}"
-    # strip leading whitespace + the list dash
     text="${text#"${text%%[![:space:]]*}"}"
     text="${text#- }"
     text="${text#name: }"
@@ -120,8 +107,7 @@ trap 'rm -f "$allowed_file" "$changed_file" "$detail_file"' EXIT
 
 bad_entry=0
 while IFS= read -r line; do
-  # Blank and comment lines (leading whitespace tolerated, matching
-  # scripts/ci/lint-baseline-growth.sh's `^\s*(#|$)`).
+  # Blank and comment lines; leading whitespace tolerated (as lint-baseline-growth.sh).
   case "${line#"${line%%[![:space:]]*}"}" in
     ''|'#'*) continue ;;
   esac
@@ -148,9 +134,8 @@ fi
 allowed_count="$(wc -l < "$allowed_file" | tr -d ' ')"
 
 # ── The PLAY RECAP ───────────────────────────────────────────────────
-# Only lines AFTER the `PLAY RECAP` banner are recap lines; a `--diff`
-# hunk can contain the literal text `changed=` and must not be read as
-# one, so the recap is parsed from the banner onward only.
+# Only lines AFTER the `PLAY RECAP` banner count: a `--diff` hunk can contain
+# the literal text `changed=`.
 recap_lines="$(awk '/^PLAY RECAP/ {inrecap=1; next} inrecap && /changed=[0-9]+/ {print}' "$DRIFT_OUT")"
 
 if [ -z "$recap_lines" ]; then
@@ -174,8 +159,7 @@ while IFS= read -r line; do
   # emits at most a handful of `changed=N` tokens — bytes, not kilobytes.
   n="$(printf '%s' "$line" | grep -oE 'changed=[0-9]+' | head -1 | cut -d= -f2)"
   recap_changed=$((recap_changed + ${n:-0}))
-  # Parameter expansion, no pipeline: one recap line carries at most one
-  # `failed=` token, and this avoids another early-exit consumer under
+  # Parameter expansion, no pipeline: avoids another early-exit consumer under
   # pipefail (scripts/ci/lint-shell-sigpipe.sh).
   f=0
   case "$line" in
@@ -187,10 +171,9 @@ $recap_lines
 EOF
 
 # ── The changed tasks ────────────────────────────────────────────────
-# One line per TASK/RUNNING HANDLER block that reported at least one
-# `changed:` result, normalized to the bare task name. Loop items emit
-# several `changed:` lines for a single task; the recap counts the task
-# once, so the block — not the line — is the unit.
+# One line per TASK/RUNNING HANDLER block with at least one `changed:` result,
+# normalized to the bare task name. Loop items emit several `changed:` lines
+# for one task and the recap counts the task once, so the block is the unit.
 awk '
   /^TASK \[/ || /^RUNNING HANDLER \[/ {
     name = $0
@@ -210,9 +193,8 @@ awk '
 parsed_count="$(wc -l < "$changed_file" | tr -d ' ')"
 
 # ── What each changed task would touch ───────────────────────────────
-# `--diff` prints `--- before: <host path>` for a file it would rewrite,
-# and `(item=<unit>)` for a loop. Both answer "which file?", which is the
-# half of the report that makes a finding actionable rather than a count.
+# `--diff` prints `--- before: <host path>` for a file it would rewrite and
+# `(item=<unit>)` for a loop: the "which file?" half that makes a finding actionable.
 awk '
   /^TASK \[/ || /^RUNNING HANDLER \[/ {
     name = $0
@@ -252,38 +234,30 @@ detail_for() {
 }
 
 # ── comment-only diffs and the handlers they trigger ──────────────────
-# A template whose live copy differs from the repo ONLY in comment text
-# (a hand-written incident note on r1, a comment block rewritten in the
-# repo, a trailing `# why` on a value that did not change) reports
-# `changed` and notifies its restart handler exactly like a real
-# configuration change. It is not one: the effective configuration is
-# identical, and applying it would buy a production restart for a
-# comment. Such a task is classified comment-only below and reported,
-# not counted as drift; a changed handler is classified consequential
-# when every non-allowed changed task it could follow is comment-only.
+# A template whose live copy differs from the repo ONLY in comment text (an
+# incident note on r1, a rewritten comment block, a trailing `# why`) reports
+# `changed` and notifies its restart handler like a real change, but the
+# effective configuration is identical and applying it would buy a production
+# restart for a comment. Such a task is classified comment-only, reported and
+# not counted as drift; a changed handler is consequential when every
+# non-allowed changed task it could follow is comment-only.
 #
-# "Comment-only" is decided on EFFECTIVE lines: every removed and added
-# line is stripped of a trailing comment (leading whitespace too, unless
-# the file's indentation is itself semantic — see indent_semantic()
-# below), blank and comment-only lines are dropped, and the task is
-# comment-only iff the removed effective lines and the added effective
-# lines form the same ORDERED sequence. A value that changes, a line
-# that appears or disappears, or two unchanged lines that swap order,
-# stays drift whatever else is in the hunk — a per-line multiset compare
-# would pass a reordering of two substantive lines as "comment-only"
-# even when neither line contains a comment.
+# "Comment-only" is decided on EFFECTIVE lines: each removed/added line has its
+# trailing comment stripped (and leading whitespace, unless indentation is
+# semantic — see indent_semantic()), blank and comment-only lines are dropped,
+# and the task is comment-only iff removed and added lines form the same
+# ORDERED sequence. A changed value, an appearing/disappearing line, or two
+# swapped lines stays drift; a per-line multiset compare would pass a reorder
+# of two substantive lines.
 #
-# What counts as a comment is decided PER FILE, from the host path on the
-# hunk's `--- before: <path>` line. Stripping every `#`, `--` and `//`
-# regardless of file would discard URL hosts and long flags, reporting a
-# changed endpoint or retention flag as "comments only". The table names ONE
-# line-comment token per file type — the same rows as `comment_marker`
-# in scripts/ci/config-apply-gate.sh, plus the extensionless host paths
-# this role renders — and a type with no known convention (ClickHouse
-# `.xml`, apt.conf.d, a binary) is substantive outright. A marker only
-# counts when it BEGINS a token (start of line or after whitespace), so
-# the `//` of `https://` and a `#fragment` inside a URL are never
-# comments.
+# What is a comment is decided PER FILE from the host path on the hunk's
+# `--- before: <path>` line: stripping every `#`, `--` and `//` would discard
+# URL hosts and long flags and report a changed endpoint as "comments only".
+# The table names ONE line-comment token per file type (the rows of
+# `comment_marker` in scripts/ci/config-apply-gate.sh plus the extensionless
+# host paths this role renders); a type with no known convention (ClickHouse
+# `.xml`, apt.conf.d, a binary) is substantive. A marker only counts when it
+# BEGINS a token, so the `//` of `https://` and a URL `#fragment` are not comments.
 comment_only_file="$(mktemp)"
 handler_file="$(mktemp)"
 trap 'rm -f "$allowed_file" "$changed_file" "$detail_file" "$comment_only_file" "$handler_file"' EXIT
@@ -359,12 +333,10 @@ comment_only_count="$(grep -c . "$comment_only_file" || true)"
 
 echo "ansible-drift: PLAY RECAP reports changed=$recap_changed; parsed $parsed_count changed task block(s); $allowed_count enumerated allowance(s)."
 
-# 1b — an ABORTED preview. A task that errors under `--check` is fatal,
-# so ansible stops the play and every task after it is never evaluated:
-# the run reports a recap, but that recap describes a PREFIX of the role,
-# not the role, and the drift may sit in the tasks that never ran.
-# Fail with the failing task NAMED, and never let a truncated pass
-# read as "codified = live".
+# 1b — an ABORTED preview. A task that errors under `--check` is fatal, so
+# ansible stops and later tasks are never evaluated: the recap describes a
+# PREFIX of the role and drift may sit in tasks that never ran. Fail with the
+# failing task NAMED; never let a truncated pass read as "codified = live".
 if [ "$recap_failed" -gt 0 ]; then
   failing="$(awk '
     /^TASK \[/ || /^RUNNING HANDLER \[/ {
@@ -420,8 +392,8 @@ EOF
   exit 1
 fi
 
-# 2 + 3 — the anti-vacuity guards. A callback/format change that makes
-# the parser silently see nothing must fail, not report "no drift".
+# 2 + 3 — anti-vacuity guards: a format change that makes the parser see
+# nothing must fail, not report "no drift".
 if [ "$recap_changed" -ne "$parsed_count" ]; then
   cat >&2 <<EOF
 ansible-drift ❌ parser/recap disagree — PLAY RECAP says changed=$recap_changed
@@ -455,10 +427,9 @@ sed 's/^/  - /' "$changed_file"
 unexpected="$(sort -u "$changed_file" | grep -vxF -f "$allowed_file" | grep -vxF -f "$comment_only_file" || true)"
 consequential=""
 if [ -n "$unexpected" ] && [ "$comment_only_count" -gt 0 ]; then
-  # Every remaining unexpected task a handler? Then they are the
-  # restarts a comment-only template change notified — consequential,
-  # not drift. One real task among them and every handler stays drift,
-  # because a handler cannot say which change it follows.
+  # If every remaining unexpected task is a handler, they are the restarts a
+  # comment-only template change notified: consequential, not drift. One real
+  # task among them keeps every handler drift (a handler cannot say what it follows).
   only_handlers="$(printf '%s\n' "$unexpected" | grep -vxF -f "$handler_file" || true)"
   if [ -z "$only_handlers" ]; then
     consequential="$unexpected"
@@ -492,8 +463,7 @@ so the widening is reviewable. Do NOT add a task that is merely
 EOF
   } >&2
 
-  # One annotation per drifted task, pinned to its `- name:` line, so the
-  # finding is attached to the code instead of ending up as a single
+  # One annotation per drifted task, pinned to its `- name:` line, not one
   # unnamed "drift detected" line above ~1,800 lines of ansible stdout.
   drift_count="$(printf '%s\n' "$unexpected" | grep -c . || true)"
   summary "## ansible-drift ❌ $drift_count task(s) would change on r1"
@@ -524,9 +494,8 @@ EOF
   exit 1
 fi
 
-# 5 — more changed tasks than there are entries to explain them. With a
-# single host this cannot trigger once 3 passed, but it is the backstop
-# if the parser ever de-duplicates something the recap counts twice.
+# 5 — more changed tasks than entries to explain them. Backstop if the parser
+# ever de-duplicates something the recap counts twice.
 consequential_count="$(printf '%s\n' "$consequential" | grep -c . || true)"
 if [ "$recap_changed" -gt $((allowed_count + comment_only_count + consequential_count)) ]; then
   echo "::error::ansible drift detected — changed=$recap_changed exceeds the $allowed_count enumerated allowance(s) in $BASELINE." >&2

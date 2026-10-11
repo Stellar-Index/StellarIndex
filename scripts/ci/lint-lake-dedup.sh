@@ -3,36 +3,31 @@
 # table must collapse that table on its full identity first.
 #
 # `stellar.transactions` and `stellar.operations` are
-# ReplacingMergeTree(ingested_at) archives whose duplicate rows are not
-# merged away, and not merged away in BULK: on r1 every
-# `(ledger_seq, tx_index)` key in `stellar.transactions` has carried more
-# than one row, and `stellar.operations` has run at 2.0x.
-# A `count()`, `sum()` or `groupArray()` over either table therefore
-# reports a multiple of the truth, and a join to either MULTIPLIES the
-# other side by the duplicate count of each key it matches.
+# ReplacingMergeTree(ingested_at) archives whose duplicates are not merged away
+# in BULK: on r1 every `(ledger_seq, tx_index)` key in `stellar.transactions`
+# has carried more than one row, and `stellar.operations` runs at 2.0x. A
+# `count()`, `sum()` or `groupArray()` over either reports a multiple of the
+# truth, and a join to either MULTIPLIES the other side by each key's duplicate
+# count.
 #
-# WHY THIS EXISTS: a naive join inflates a leaderboard, an undeduplicated
-# count reports rows "dropped" that were not, and a bare equality on the
-# success flag needs `argMax(t.successful, t.ingested_at)` over a GROUP BY
-# on the operation identity instead. None of these is visible in a total:
-# an inflated board still sums to a plausible number, and a "dropped rows"
-# reconciliation still balances against itself. That is what makes the class dangerous
-# and what makes it worth a gate.
+# WHY A GATE: a naive join inflates a leaderboard, an undeduplicated count
+# reports rows "dropped" that were not, and a bare equality on the success flag
+# needs `argMax(t.successful, t.ingested_at)` over a GROUP BY on the operation
+# identity instead. None shows in a total: an inflated board still sums to a
+# plausible number and a "dropped rows" reconciliation balances against itself.
 #
-# ── THE RULE, stated plainly ──────────────────────────────────────────
+# ── THE RULE ──────────────────────────────────────────────────────────
 #
-# A read of `stellar.transactions` or `stellar.operations` is IN SCOPE
-# only when its OWN select list applies a MULTIPLICITY-SENSITIVE
-# aggregate — one whose value changes when a row is repeated:
+# A read of either table is IN SCOPE only when its OWN select list applies a
+# MULTIPLICITY-SENSITIVE aggregate (value changes when a row is repeated):
 #
 #     count countIf sum sumIf avg avgIf groupArray groupArrayIf
 #     topK sumMap avgWeighted corr covarPop covarSamp
 #     quantile* median* stddev* varPop varSamp
 #
-# Deliberately NOT in that set, because each is idempotent under an
-# exact duplicate and each is the tree's own collapse vocabulary:
-# `min`, `max`, `any`, `anyIf`, `argMax`, `argMin`, `uniq`, `uniqExact`,
-# `uniqCombined`, `countDistinct`, `groupUniqArray`.
+# NOT in that set (idempotent under an exact duplicate, and the tree's own
+# collapse vocabulary): `min`, `max`, `any`, `anyIf`, `argMax`, `argMin`,
+# `uniq`, `uniqExact`, `uniqCombined`, `countDistinct`, `groupUniqArray`.
 #
 # An in-scope read must carry, in its own query block, one of:
 #
@@ -42,8 +37,7 @@
 #   * a `uniqExact`/`countDistinct`-family call over that identity
 #   * `SELECT DISTINCT` governing the read      (collapse by projection)
 #
-# Identities are the tables' full ORDER BY keys
-# (deploy/clickhouse/tier1_schema.sql):
+# Identities are the tables' full ORDER BY keys (deploy/clickhouse/tier1_schema.sql):
 #
 #     stellar.transactions  (ledger_seq, tx_index)
 #     stellar.operations    (ledger_seq, tx_index, op_index)
@@ -51,46 +45,35 @@
 #
 # ── WHAT THIS DELIBERATELY DOES NOT FLAG ─────────────────────────────
 #
-# A per-entity DETAIL reader legitimately returns what the ledger
-# contained, row for row, and the repo has about five of them —
-# explorer_reader.go, sdex_op_reader.go, contract_call_op_reader.go,
-# classic_movement_reader.go, participant_backfill.go. A gate that
-# fired on all of them would be noise nobody keeps, and it would be
-# WRONG: those reads carry `FINAL` or `LIMIT 1 BY` where duplicates
-# would be visible to a caller, and where they do not, no aggregate is
-# reading them. Keying scope on the aggregate — not on the table — is
-# what separates "this number is a multiple of the truth" from "this
-# listing returns rows".
+# Per-entity DETAIL readers (explorer_reader.go, sdex_op_reader.go,
+# contract_call_op_reader.go, classic_movement_reader.go,
+# participant_backfill.go) legitimately return the ledger row for row; they
+# carry `FINAL` or `LIMIT 1 BY` where duplicates would be visible. Keying scope
+# on the aggregate, not the table, separates "this number is a multiple of the
+# truth" from "this listing returns rows".
 #
-# Also not flagged, and each is a decision rather than an oversight:
+# Also not flagged, each a decision:
 #
-#   * Go `//` comments. Go comments in this tree are prose ABOUT the
-#     query beside them, and they quote fragments constantly ("a join
-#     to stellar.transactions on the full (ledger_seq, tx_index)
-#     identity"). Operator recipes live in `.sql` headers, which ARE
-#     read — see deploy/clickhouse/ops_by_source.sql's Step 3, whose
-#     `countDistinct(ledger_seq, tx_index)` exists because the first
-#     verify run flagged 20 of 20 accounts on exactly this class.
-#   * a read whose owning select applies only duplicate-idempotent
-#     aggregates. `SELECT source_account, max(ledger_seq) … GROUP BY
-#     source_account` over the archive is exact under duplicates.
-#   * a statement whose aggregate sits ABOVE a subquery that already
-#     collapses. The read belongs to the innermost select, so
-#     `count() FROM (SELECT … FROM stellar.operations GROUP BY
-#     ledger_seq, tx_index, op_index)` is out of scope by construction.
+#   * Go `//` comments: prose ABOUT the query beside them, constantly quoting
+#     fragments. Operator recipes live in `.sql` headers, which ARE read (see
+#     deploy/clickhouse/ops_by_source.sql Step 3, whose
+#     `countDistinct(ledger_seq, tx_index)` exists because verify flagged 20 of
+#     20 accounts on this class).
+#   * a read whose owning select applies only duplicate-idempotent aggregates
+#     (`SELECT source_account, max(ledger_seq) … GROUP BY source_account`).
+#   * a statement whose aggregate sits ABOVE a subquery that already collapses.
+#     The read belongs to the innermost select, so `count() FROM (SELECT … FROM
+#     stellar.operations GROUP BY ledger_seq, tx_index, op_index)` is out of scope.
 #
 # ── ESCAPE HATCH ─────────────────────────────────────────────────────
 #
-# scripts/ci/lint-lake-dedup.baseline, one `<file>:<table>  <reason>`
-# entry per grandfathered site, reason REQUIRED. It is a
-# scripts/ci/*.baseline, so growing it needs a `Baseline-Growth:`
-# commit trailer naming it (lint-baseline-growth.sh), and a stale entry
-# — a site that no longer violates — fails this gate until the line is
-# deleted. The baseline shrinks monotonically.
+# scripts/ci/lint-lake-dedup.baseline: one `<file>:<table>  <reason>` entry per
+# grandfathered site, reason REQUIRED. Growing it needs a `Baseline-Growth:`
+# commit trailer (lint-baseline-growth.sh), and a stale entry (a site that no
+# longer violates) fails the gate until deleted. It shrinks monotonically.
 #
 # Usage: lint-lake-dedup.sh [repo-root]
-#   The optional root exists for scripts/ci/lint-lake-dedup-test.sh,
-#   which runs this gate against fixture trees.
+#   The optional root is for scripts/ci/lint-lake-dedup-test.sh (fixture trees).
 #
 # Exit 0 clean, non-zero on any violation.
 set -euo pipefail
@@ -101,13 +84,12 @@ BASELINE="scripts/ci/lint-lake-dedup.baseline"
 die() { echo "lint-lake-dedup: FAIL — $*" >&2; exit 1; }
 
 # Subject files: every tracked-or-untracked .go/.sql that NAMES a
-# duplicate-bearing table. A file that never mentions one cannot
-# violate, and pre-filtering keeps the gate at one awk pass over ~60
-# files rather than the whole tree.
+# duplicate-bearing table (others cannot violate; the pre-filter keeps this to
+# one awk pass over ~60 files).
 #
-# `find` rather than `git ls-files`: this runs against fixture trees
-# that are not checkouts. The prunes mirror lint-imports.sh's SKIP_DIRS,
-# plus .claude: agent worktrees under it put whole repo copies in the walk.
+# `find` not `git ls-files`: fixture trees are not checkouts. The prunes mirror
+# lint-imports.sh's SKIP_DIRS plus .claude, where agent worktrees put whole
+# repo copies in the walk.
 subjects=()
 while IFS= read -r f; do
   [ -n "$f" ] || continue
@@ -133,14 +115,11 @@ fi
 
 # ── canary ───────────────────────────────────────────────────────────
 #
-# `examined == 0` below proves the FROM/JOIN extraction still matches
-# something, but nothing proves the AGGREGATE/collapse half of the
-# analyser still works: a mult_agg() or covers_identity() regression
-# that stopped every real read from registering as aggregating would
-# report a clean "0 aggregating" run, indistinguishable from a tree
-# that legitimately aggregates nothing. Run one synthetic,
-# guaranteed-uncollapsed aggregating read through the SAME analyser as
-# the real subjects and require it come back flagged.
+# `examined == 0` below proves the FROM/JOIN extraction still matches, but not
+# that the AGGREGATE/collapse half works: a mult_agg() or covers_identity()
+# regression would report a clean "0 aggregating", indistinguishable from a tree
+# that aggregates nothing. One synthetic, guaranteed-uncollapsed aggregating
+# read goes through the SAME analyser and must come back flagged.
 canary_dir="$(mktemp -d "${TMPDIR:-/tmp}/lint-lake-dedup-canary.XXXXXX")"
 trap 'rm -rf "$canary_dir"' EXIT
 canary_file="$canary_dir/canary.sql"
@@ -151,9 +130,8 @@ SQL
 # ── The analyser ─────────────────────────────────────────────────────
 #
 # Emits one TAB-separated `<file>\t<line>\t<table>\t<snippet>` record per
-# violating read, and a final `#counts <reads> <aggregating>` self-accounting
-# line so a pattern that silently stopped matching reads as a fault rather
-# than as a clean run.
+# violating read plus a final `#counts <reads> <aggregating>` self-accounting
+# line, so a pattern that stopped matching reads as a fault, not a clean run.
 violations="$(
   awk '
     # ── identity + vocabulary ────────────────────────────────────────
@@ -396,10 +374,9 @@ if [ -z "${examined:-}" ] || [ -z "${aggregating:-}" ]; then
   an empty accounting stream. Fix the analyser, do not delete the check."
 fi
 
-# The canary is a subject too, so its own +1/+1 is baked into
-# `examined`/`aggregating` above; pull its violation record out by
-# filename (field 1) and require it fired before trusting either count
-# — that is the proof the classifier is awake, not just quiet.
+# The canary is a subject too, so its +1/+1 is in `examined`/`aggregating`
+# above; require its violation record (by filename, field 1) before trusting
+# either count: proof the classifier is awake, not just quiet.
 canary_report="$(printf '%s\n' "$violations" | awk -F'\t' -v f="$canary_file" '$1 == f')"
 violations="$(printf '%s\n' "$violations" | awk -F'\t' -v f="$canary_file" '$1 != f')"
 if [ -z "$canary_report" ]; then
@@ -422,9 +399,8 @@ fi
 
 # ── baseline ─────────────────────────────────────────────────────────
 #
-# `<file>:<table>  <reason>`; the reason is required and is the whole
-# point of the hatch — an unexplained exemption is the thing baselines
-# are for stopping.
+# `<file>:<table>  <reason>`; the reason is required: an unexplained exemption
+# is what baselines exist to stop.
 declare -a base_keys=()
 if [ -f "$BASELINE" ]; then
   lineno=0
