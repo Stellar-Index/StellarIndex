@@ -1,29 +1,21 @@
 #!/usr/bin/env bash
 # Cross-check the frontend's hand-maintained name sets against the Go
-# source-of-truth registries they mirror.
+# source-of-truth registries they mirror. Fails if any pair disagrees.
 #
 # §1 protocol directory. internal/api/v1/protocols_registry.go is
-# authoritative for the protocol set. web/explorer/src/app/protocols/registry.ts
-# mirrors the NAME set so the Next.js static export knows which
-# /protocols/{name} slugs to pre-render. The two are hand-maintained and —
-# until this lint — nothing cross-checked them, so a Go-registered protocol
-# could silently have no pre-rendered explorer page (a 404).
+# authoritative; web/explorer/src/app/protocols/registry.ts mirrors the NAME
+# set so the static export pre-renders /protocols/{name}. A drifted protocol
+# has no explorer page (404).
 #
 # §2 DEX pages. internal/sources/external/registry.go is authoritative for
-# which sources are Class=Exchange Subclass=DEX. TWO frontend maps mirror
-# that set by hand, and BOTH are load-bearing:
-#   - DEX_INFO in dexes/registry.ts feeds generateStaticParams (and the
-#     sitemap's /dexes/<source> entries), so a missing key means
-#     /dexes/<source> is not pre-rendered and the venue has no page;
-#   - ALL_DEXES in dexes/DexesView.tsx is the source-filter chip row, so a
+# Class=Exchange Subclass=DEX. Two frontend maps mirror it, both load-bearing:
+#   - DEX_INFO in dexes/registry.ts feeds generateStaticParams and the
+#     sitemap; a missing key means no /dexes/<source> page;
+#   - ALL_DEXES in dexes/DexesView.tsx is the source-filter chip row; a
 #     missing entry means the venue cannot be filtered for.
-# A venue can otherwise ship registered and serving trades with no page.
 #
-# Fails if any pair of sets disagrees.
-#
-# blend_backstop is intentionally NOT a top-level Go protocol registry Name
-# (it folds into the blend entry via ExtraEventSources), so it never appears
-# in either §1 list.
+# blend_backstop is NOT a top-level Go registry Name (it folds into blend via
+# ExtraEventSources), so it never appears in either §1 list.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -61,10 +53,9 @@ bullets() {
 GO_REG=internal/api/v1/protocols_registry.go
 TS_REG=web/explorer/src/app/protocols/registry.ts
 
-# Character class covers every shape a source name takes in this repo:
-# plain (comet), hyphenated (reflector-cex), underscored + numbered
-# (sushiswap_v3). A narrower class silently drops a name from BOTH captures,
-# which passes the comm-diff while cross-checking nothing.
+# Covers every source-name shape: plain (comet), hyphenated (reflector-cex),
+# underscored + numbered (sushiswap_v3). A narrower class silently drops names
+# from BOTH captures, so the comm-diff passes while checking nothing.
 go_names=$(grep -oE 'Name:[[:space:]]+"[a-z0-9_-]+"' "$GO_REG" | grep -oE '"[a-z0-9_-]+"' | tr -d '"' | sort -u)
 ts_names=$(grep -oE "name: '[a-z0-9_-]+'" "$TS_REG" | grep -oE "'[a-z0-9_-]+'" | tr -d "'" | sort -u)
 
@@ -84,19 +75,16 @@ for f in "$SRC_REG" "$DEX_PAGE" "$DEX_VIEW"; do
 	}
 done
 
-# gofmt aligns the map values, so the run of spaces after the key's colon
-# is variable-width — match it rather than a single space.
+# gofmt aligns map values, so the spaces after the key's colon vary in width.
 dex_go=$(grep -oE '"[a-z0-9_-]+":[[:space:]]*\{Class: ClassExchange, Subclass: SubclassDEX' "$SRC_REG" |
 	grep -oE '^"[a-z0-9_-]+"' | tr -d '"' | sort -u)
 
-# Range-scoped so an unrelated object literal elsewhere in the file cannot
-# contribute a key: DEX_INFO's entries are the only 2-space-indented
-# `<name>: {` lines between its declaration and the closing `};`.
+# Range-scoped so an unrelated object literal cannot contribute a key:
+# DEX_INFO entries are the only 2-space-indented `<name>: {` lines up to `};`.
 dex_info=$(awk '/^export const DEX_INFO/{inblock=1} inblock && /^};/{exit} inblock' "$DEX_PAGE" |
 	grep -oE '^  [a-z0-9_-]+: \{' | grep -oE '[a-z0-9_-]+' | sort -u)
 
-# ALL_DEXES is a single array literal; prettier may wrap it over several
-# lines, so read to the closing `];` rather than assuming one line.
+# ALL_DEXES is one array literal that prettier may wrap; read to the `];`.
 all_dexes=$(awk '/^const ALL_DEXES/{inblock=1} inblock{print} inblock && /\];/{exit}' "$DEX_VIEW" |
 	grep -oE "'[a-z0-9_-]+'" | tr -d "'" | sort -u)
 

@@ -11,9 +11,8 @@
 #     [-s <start_ledger>]
 #
 # Env:
-#   WASM_HASH  Directory label for captured fixtures. Use a tag +
-#              date like `v2-2026-04-23` until the ops CLI can
-#              resolve real WASM hashes.
+#   WASM_HASH  Directory label for captured fixtures: a tag + date like
+#              `v2-2026-04-23` until the ops CLI can resolve real WASM hashes.
 #
 # Why per-WASM layout: docs/architecture/ingest-pipeline.md#contract-schema-evolution.
 
@@ -41,8 +40,8 @@ TOPIC_TRADE='AAAADwAAAAV0cmFkZQAAAA=='
 fixture_capture_resolve_start_ledger
 
 # Trade events carry 4 topics: [Symbol("trade"), Address(token_in),
-# Address(token_out), Address(user)]. Without the three trailing
-# wildcards, stellar-rpc's length-aware filter drops every event.
+# Address(token_out), Address(user)]; without the three trailing wildcards
+# stellar-rpc's length-aware filter drops every event.
 # shellcheck disable=SC2016  # $start/$t0/$limit are jq variables, not shell
 params="$("$JQ" -nc \
   --argjson start "$START_LEDGER" \

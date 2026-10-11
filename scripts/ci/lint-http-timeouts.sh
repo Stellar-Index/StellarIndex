@@ -1,31 +1,25 @@
 #!/usr/bin/env bash
 # lint-http-timeouts — refuse an unbounded HTTP client in production Go code.
 #
-# THE BUG CLASS. A client with no Timeout has NONE: a server that
-# accepts the connection and then stops sending leaves the caller blocked
-# forever — not slow, HUNG. Two real instances shipped:
+# THE BUG CLASS. A client with no Timeout has NONE: a server that accepts the
+# connection and stops sending leaves the caller HUNG, not slow. Two real
+# instances shipped:
+#   internal/sources/external/kraken/backfill_trades.go — a backfill that never
+#     returns looks like a slow venue, so nobody investigates.
+#   internal/ops/ingest/directory_sync.go — an operator command hung mid-sync.
 #
-#   internal/sources/external/kraken/backfill_trades.go — a backfill that
-#     never returns looks like a slow venue, so nobody investigates.
-#   internal/ops/ingest/directory_sync.go — an operator command that
-#     hangs at the terminal, mid-sync.
+# A context deadline is NOT a substitute: it bounds the call only if the CALLER
+# supplies one (these all had a ctx already). The fix is a client with an
+# explicit Timeout, so the bound holds whatever the caller passed.
 #
-# A context deadline is NOT a substitute: it bounds the call only when
-# the CALLER supplies one, and every one of these had a ctx parameter
-# already. The fix is a client with an explicit Timeout, so the bound
-# holds regardless of what the caller passed.
+# Unbounded spellings caught besides `http.DefaultClient`: the package-level
+# shortcuts (`http.Get`/`Post`/`Head`/`PostForm`, which use DefaultClient), and
+# any `http.Client{` composite literal that never sets Timeout.
 #
-# `http.DefaultClient` is not the only shape. Two other spellings of the
-# same unbounded client: the package-
-# level shortcuts (`http.Get`/`Post`/`Head`/`PostForm`, which use
-# DefaultClient internally), and any `http.Client{` composite literal —
-# var-declared or inline — that never sets Timeout.
+# Test files are exempt: a hung test fails the run loudly anyway.
 #
-# Test files are exempt: a hung test fails the run loudly, which is the
-# outcome we want anyway.
-#
-# ESCAPE HATCH: `// http-timeout-ok: <reason>` on the line or in the
-# comment block directly above it. State the reason.
+# ESCAPE HATCH: `// http-timeout-ok: <reason>` on the line or in the comment
+# block directly above it. State the reason.
 set -uo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
@@ -70,8 +64,8 @@ report() {
   fail=$((fail + 1))
 }
 
-# check_client_literals <file> — a `http.Client{...}` composite literal
-# (possibly multi-line) with no `Timeout:` field anywhere inside it.
+# check_client_literals <file> — an `http.Client{...}` literal (possibly
+# multi-line) with no `Timeout:` field inside it.
 check_client_literals() {
   local f="$1"
   while IFS=$'\t' read -r n has; do

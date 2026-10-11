@@ -1,26 +1,17 @@
 #!/usr/bin/env bash
-# lint-go-toolchain-parity.sh — every actions/setup-go step in the
-# workflow tree must resolve its Go version FROM go.mod, never from a
-# hardcoded pin.
+# lint-go-toolchain-parity.sh — every actions/setup-go step in the workflow
+# tree must resolve its Go version FROM go.mod, never from a hardcoded pin.
 #
-# The "govulncheck toolchain parity" concern this guards: if the `vuln`
-# job's Go toolchain were pinned independently of go.mod, a
-# language-version bump would make
-# govulncheck analyse a NEWER module graph with an OLDER SDK, and the
-# vulnerability gate would fail to parse instead of failing on an
-# actual vulnerability — going dark exactly when the toolchain moves,
-# which is the one moment it matters most.
+# Guards "govulncheck toolchain parity": if the `vuln` job's Go were pinned
+# independently of go.mod, a language-version bump would make govulncheck
+# analyse a NEWER module graph with an OLDER SDK. The vulnerability gate would
+# then fail to parse rather than report a vulnerability, going dark exactly
+# when the toolchain moves.
 #
-# Every `actions/setup-go` step uses `go-version-file: go.mod`, so a
-# go.mod bump carries every job (including `vuln`) without a second edit.
-# This gate keeps it that way: nothing else stops a
-# future edit from adding a `go-version: '1.25'` pin next to (or
-# instead of) `go-version-file`, silently reintroducing the exact
-# divergence Section D describes. This gate is that durability: it
-# fails on any actions/setup-go step that lacks go-version-file: go.mod,
-# or that also declares a hardcoded go-version (setup-go documents
-# go-version as taking precedence when both are set, so a hardcoded
-# value there defeats go-version-file even when the latter is present).
+# Every `actions/setup-go` step uses `go-version-file: go.mod`, so one go.mod
+# bump carries every job. This gate fails on any step that lacks it, or that
+# also declares a hardcoded go-version (setup-go gives go-version precedence,
+# defeating go-version-file even when present).
 #
 # Usage:
 #   bash scripts/ci/lint-go-toolchain-parity.sh              # .github/workflows
@@ -106,12 +97,10 @@ if [[ "$FAIL" -gt 0 ]]; then
 fi
 
 # ── Container Go pin ───────────────────────────────────────────────────────
-# A Dockerfile cannot read go.mod, so its `FROM golang:X.Y.Z` is a SECOND,
-# independent declaration of the toolchain — the same divergence this gate
-# forbids in workflows, in the one place `go-version-file` cannot reach.
-# It has drifted in both directions before, and the container is what
-# `make prepush` runs, so a stale pin silently grades the
-# push with a different compiler than CI and production use.
+# A Dockerfile cannot read go.mod, so `FROM golang:X.Y.Z` is a SECOND,
+# independent toolchain declaration, in the one place `go-version-file` cannot
+# reach. It has drifted both ways, and the container is what `make prepush`
+# runs, so a stale pin grades the push with a different compiler than CI.
 DOCKER_DIR="${DOCKER_DIR:-docker}"
 DOCKERFILES=()
 while IFS= read -r df; do
@@ -148,8 +137,8 @@ for df in "${DOCKERFILES[@]}"; do
         FAIL=$((FAIL + 1))
         ;;
     esac
-    # A minor tag like 1.26-alpine floats across patch releases, so without
-    # a digest the compiler the image builds with is not fixed at all.
+    # A minor tag like 1.26-alpine floats across patch releases; without a
+    # digest the build compiler is not fixed.
     case "$tag" in
       *@sha256:*) ;;
       *)

@@ -1,31 +1,21 @@
 #!/usr/bin/env bash
 # lint-agents-file.sh — keep AGENTS.md operative rather than expository.
 #
-# AGENTS.md is the file an agent or a new contributor reads COLD and has
-# to retain. Its value is inversely proportional to its length: a rule
-# buried on line 600 is a rule nobody follows.
+# AGENTS.md is read COLD by agents and new contributors; its value falls with
+# its length. It once reached 829 lines of true but non-operative reference
+# material (directory listing, domain narrative, task recipes). Comparable
+# projects keep this file to 18-161 lines: rules, commands, constraints only.
 #
-# It reached 829 lines by accumulating reference material — a 112-line
-# directory listing, 194 lines of domain narrative, 183 lines of task
-# recipes. All of it was true and none of it was operative. Comparable
-# projects keep this file between 18 and 161 lines (uv 27, kubernetes 38,
-# firecrawl 18) because they keep only rules, commands and constraints in
-# it, and file the explanations as docs.
-#
-# What this gate asserts:
-#
-#   1. LENGTH. A hard ceiling, so the file cannot silently re-accumulate.
+# Asserts:
+#   1. LENGTH. A hard ceiling so the file cannot silently re-accumulate.
 #   2. NO REFERENCE SECTIONS. A directory listing, docs index or changelog
-#      inside AGENTS.md means the split is being undone.
-#   3. IT STILL CONTAINS RULES. A file that has been emptied of its
-#      imperative vocabulary passes 1 and 2 while being useless — the
-#      vacuous-gate shape this repo keeps finding. So a minimum count of
+#      means the split is being undone.
+#   3. IT STILL CONTAINS RULES. A file emptied of imperative vocabulary passes
+#      1 and 2 while being useless (vacuous gate), so a minimum count of
 #      ALWAYS/NEVER/PREFER/AVOID directives is required.
-#   4. NO SELF-LINKS. A markdown link from a file to itself is always a
-#      rename artefact; three of them survived the CLAUDE.md -> AGENTS.md
-#      rename and pointed readers in a circle.
-#   5. THE POINTERS RESOLVE. Every relative link out of AGENTS.md must
-#      exist on disk, or the split has stranded the reference material.
+#   4. NO SELF-LINKS. A link from the file to itself is a rename artefact
+#      (left over from CLAUDE.md -> AGENTS.md) that sends readers in circles.
+#   5. THE POINTERS RESOLVE. Every relative link out of AGENTS.md must exist.
 #
 # Exit code = number of failures.
 set -uo pipefail
@@ -53,15 +43,9 @@ else
 fi
 
 # 2. No reference sections creeping back in.
-#
-# Headings are read OUTSIDE fenced blocks only: this file's main job is
-# holding commands, and a shell comment such as `# changelog entry goes
-# under [Unreleased]` inside a ```sh block is not a heading. Matching it
-# made the gate red on a legitimate file.
-#
-# The synonym list is deliberately broad and matches ANY heading depth.
-# A narrow list is how the section comes back under a new name: "##
-# Directory structure" and "#### Repo map" both passed an earlier cut.
+# Headings are read OUTSIDE fenced blocks: a shell comment inside a ```sh
+# block is not a heading. The synonym list is broad and matches ANY heading
+# depth; a narrow list lets the section return under a new name.
 ref_hits=0
 in_fence=0
 while IFS= read -r line; do

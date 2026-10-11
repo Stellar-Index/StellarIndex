@@ -2,22 +2,20 @@
 # lint-repo-budget.sh — regrowth tripwires for three kinds of maintenance debt
 # that no other gate watches:
 #
-#   dated-md   A tracked *.md whose basename carries a -YYYY-MM date is a
-#              point-in-time snapshot that goes stale while still being read.
-#              Existing ones are baselined; docs/operations/sla-proof-
-#              YYYY-MM-DD.md is exempt (the weekly SLA job writes one, and
-#              check-sla-evidence.sh requires that filename shape).
-#   go-lines   A hand-written .go file over 2,000 lines must be baselined, and
-#              may not grow past its baselined ceiling. _test.go files and
-#              files whose first line is a "Code generated ... DO NOT EDIT."
-#              marker are out of scope.
-#   comments   An ADDED Go comment may not carry a date or a review-ticket id:
-#              both belong in the commit message and rot in the source.
-#              Diff-only, so no existing line can fail. ADR-/SEP-/CAP-/RFC-/
-#              ISO-/SHA-/UTF- references and the Go layout 2006-01-02 pass.
+#   dated-md   A tracked *.md whose basename carries a -YYYY-MM date is a stale
+#              point-in-time snapshot. Existing ones are baselined;
+#              docs/operations/sla-proof-YYYY-MM-DD.md is exempt (the weekly
+#              SLA job writes it; check-sla-evidence.sh requires that name).
+#   go-lines   A hand-written .go file over 2,000 lines must be baselined and
+#              may not grow past its ceiling. _test.go files and files whose
+#              first line is a "Code generated ... DO NOT EDIT." marker are out.
+#   comments   An ADDED Go comment may not carry a date or review-ticket id
+#              (they belong in the commit message). Diff-only, so no existing
+#              line can fail. ADR-/SEP-/CAP-/RFC-/ISO-/SHA-/UTF- references and
+#              the Go layout 2006-01-02 pass.
 #
 # A stale baseline entry (file gone, or no longer over the limit) also fails,
-# so the baseline only shrinks; lint-baseline-growth.sh guards it growing.
+# so the baseline only shrinks; lint-baseline-growth.sh guards growth.
 #
 # Usage:
 #   scripts/ci/lint-repo-budget.sh           comments diffed over ${BASE_SHA:-origin/main}...HEAD

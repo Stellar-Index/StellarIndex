@@ -1,26 +1,23 @@
 #!/usr/bin/env bash
 # lint-deploy-playbook.sh — the deploy path must work over the test-net
-# ProxyJump and on hosts without pgBackRest (deploy-ansible-deploy-2).
+# ProxyJump and on hosts without pgBackRest.
 #
 # deploy.yml reaches the NAT-only testnet/futurenet VMs ONLY via
-# `--ssh-common-args "-o ProxyJump=…"`. Modules whose transport runs on
-# the CONTROLLER (ansible.posix.synchronize → rsync dials the host itself)
-# never see that argument, so a deploy-binary.yml that used synchronize
-# for the migrations dir timed out before it reached the schema — and the
-# backup-freshness gate, which fails closed on a missing pgbackrest, could
-# only ever exit 1 on the VMs (18-pgbackrest-backup.yml installs nothing
-# there). The sole escape was migrations_skip=true: the workflow could
-# never apply schema off r1. Nothing in CI syntax-checks deploy-binary.yml
-# and `gh run list` showed zero test-net deploys, so it stayed latent.
+# `--ssh-common-args "-o ProxyJump=…"`. Modules whose transport runs on the
+# CONTROLLER (ansible.posix.synchronize → rsync dials the host itself) never
+# see that argument, so a synchronize in deploy-binary.yml timed out before
+# reaching the schema. The backup-freshness gate fails closed on a missing
+# pgbackrest, so it could only exit 1 on the VMs (nothing installs it there).
+# Nothing else syntax-checks deploy-binary.yml, so both stayed latent.
 #
 # Deterministic, no network, no ansible:
 #   1. every module in deploy-binary.yml + the task files it includes is
-#      connection-agnostic (no synchronize / rsync). The transfer must ALSO
-#      be one archive, not a directory-src copy (O(files): > 16 min for
-#      291 files on r1, run 33244745680) — deploy-sync-test.sh pins that;
+#      connection-agnostic (no synchronize / rsync). The transfer must ALSO be
+#      one archive, not a directory-src copy (O(files)) — deploy-sync-test.sh
+#      pins that;
 #   2. the pgBackRest gate is conditioned on `pgbackrest_backup_enabled`
 #      (default true — fail closed) and deploy.yml passes that var as -e,
-#      set false for the test-net regions and left true for r1.
+#      false for the test-net regions, true for r1.
 #
 # Run: bash scripts/ci/lint-deploy-playbook.sh
 set -euo pipefail

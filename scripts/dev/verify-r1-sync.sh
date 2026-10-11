@@ -50,35 +50,24 @@ for f in configs/prometheus/rules.r1/*.yml; do
     FAILS=$((FAILS + 1))
   fi
 done
-# Pre-deploy migration check.
-#
-# deploy.yml syncs binaries only — Postgres migrations are operator-
-# manual per feedback_migrations_not_auto_deployed. A binary release
-# that adds a column / table will crash on its first DB write if the
-# matching migration hasn't been applied. Compare local
-# migrations/NNNN_*.up.sql versus the schema_migrations table on r1.
-# Pending = local has it, r1 doesn't.
+# Pre-deploy migration check. deploy.yml syncs binaries only; Postgres
+# migrations are operator-manual (feedback_migrations_not_auto_deployed). A
+# release adding a column/table crashes on its first DB write if the migration
+# is not applied. Pending = local migrations/NNNN_*.up.sql version r1's
+# schema_migrations lacks.
 LOCAL_LATEST_MIG=$(find migrations -maxdepth 1 -name '[0-9]*_*.up.sql' 2>/dev/null | sed -E 's|migrations/0*([0-9]+)_.*|\1|' | sort -n | tail -1)
 R1_LATEST_MIG=$(ssh -o ConnectTimeout=5 "$R1_HOST" "sudo -u postgres psql -tA -d stellarindex -c 'SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1;' 2>/dev/null" | tr -d '[:space:]')
 if [ -n "$LOCAL_LATEST_MIG" ] && [ -n "$R1_LATEST_MIG" ]; then
   if [ "$LOCAL_LATEST_MIG" -gt "$R1_LATEST_MIG" ]; then
     pending=$((LOCAL_LATEST_MIG - R1_LATEST_MIG))
     echo "DRIFT: migrations — local latest is $LOCAL_LATEST_MIG, r1 schema_migrations.version is $R1_LATEST_MIG ($pending pending)"
-    # The suggested command has been wrong in three ways at once, and a
-    # remediation line that does not work is worse than none: an operator
-    # pastes it, it fails or — worse — silently does something else, and
-    # the drift stays. `migrations/00*.sql` misses every migration
-    # numbered 0100 and above (i.e. all the recent ones, which are
-    # exactly the pending ones). `-database` and `-path` are upstream
-    # golang-migrate's flag names; this binary has `-dsn` and
-    # `-migrations` and would reject them. And it copied only the .sql
-    # files without their directory, so `-path .` pointed at /tmp.
-    #
-    # It is also not how migrations actually reach r1: deploy.yml stages
-    # the migrations FROM THE TAG'S TREE and applies them before the
-    # binary swap, which is the only path that keeps binary and schema in
-    # step. Hand-applying is the break-glass form, so it is shown as
-    # such.
+    # The remediation text must be paste-safe: a wrong command fails or silently
+    # does something else and the drift stays. `-dsn`/`-migrations` are this
+    # binary's flags (not golang-migrate's `-database`/`-path`), and a
+    # `migrations/00*.sql` glob misses every migration numbered 0100+ (the
+    # pending ones). deploy.yml, which stages migrations from the TAG'S TREE and
+    # applies them before the binary swap, is the only path keeping binary and
+    # schema in step; hand-applying is the break-glass form.
     echo "       normally: re-run deploy.yml — it stages migrations from the tag and applies"
     echo "       them BEFORE the binary swap (binary/schema parity)."
     echo "       break-glass, on r1:  stellarindex-migrate -migrations /path/to/migrations up"

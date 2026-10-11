@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
 #
-# audit-public-api.sh — exercise every public anonymous-tier
-# endpoint with the example values published in openapi/. The
-# Scalar docs UI's "Send" button uses these examples verbatim; if
-# they don't return 200, the docs are misleading users.
+# audit-public-api.sh — exercise every public anonymous-tier endpoint with the
+# example values published in openapi/. Scalar's "Send" button uses these
+# verbatim; if they don't return 200 the docs mislead users.
 #
-# Why: many Scalar default test requests returned
-# 4xx because OpenAPI examples used short symbols like `USDC` /
-# `XLM` against handlers that strict-validate canonical asset
-# IDs. This script catches that class of regression.
+# Catches the regression where OpenAPI examples used short symbols like `USDC` /
+# `XLM` against handlers that strict-validate canonical asset IDs (4xx).
 #
 # Usage:
 #   bash scripts/dev/audit-public-api.sh
 #   API_BASE_URL=https://api.stellarindex.io bash scripts/dev/audit-public-api.sh
 #
-# Exit code = number of failed checks (0 = all green). Bodies of
-# failed responses are printed so the caller can see why.
+# Exit code = number of failed checks (0 = all green). Failed response bodies
+# are printed.
 
 set -uo pipefail
 
@@ -33,10 +30,8 @@ else
   GREEN=""; RED=""; DIM=""; OFF=""
 fi
 
-# USDC issuer (Centre) — the canonical USDC contract on Stellar.
-# Pinned here so a single edit covers every audit case using USDC
-# as base or quote. Same value lives as the default example in
-# openapi/stellar-index.v1.yaml#components.parameters.Base.
+# USDC issuer (Centre), pinned once for every audit case using USDC; the same
+# value is the default example in openapi/stellar-index.v1.yaml#components.parameters.Base.
 readonly USDC="USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
 audit() {
@@ -45,11 +40,9 @@ audit() {
   TOTAL=$((TOTAL + 1))
   body=$(/usr/bin/curl -sS -m "$TIMEOUT" -A "stellarindex-audit/1" \
     -w "\n%{http_code}" "${API_BASE_URL}${path}" 2>&1) || {
-    # Transient curl failure: a connect blip, or a slow-but-working origin
-    # under heavy backfill/re-derive load exceeding TIMEOUT (e.g. the XLM/USDC
-    # pricing path while a Phoenix trade re-derive rewrites that pair). Retry
-    # ONCE with a doubled timeout before hard-failing — a slow endpoint should
-    # not red this smoke audit (same intent as the generous TIMEOUT default).
+    # Transient curl failure (connect blip, or a slow-but-working origin under
+    # backfill/re-derive load exceeding TIMEOUT): retry ONCE with a doubled
+    # timeout so a slow endpoint does not red this smoke audit.
     sleep 3
     body=$(/usr/bin/curl -sS -m "$((TIMEOUT * 2))" -A "stellarindex-audit/1" \
       -w "\n%{http_code}" "${API_BASE_URL}${path}" 2>&1) || {
@@ -66,8 +59,8 @@ audit() {
     detail=$(echo "$body" | python3 -c \
       "import sys,json; d=json.load(sys.stdin); print(d.get('detail',d.get('title','?'))[:160])" \
       2>/dev/null)
-    # $body is an unbounded HTTP response body, so `| head -c` can EPIPE the
-    # writer under pipefail. Slice it in the shell instead.
+    # $body is unbounded, so `| head -c` can EPIPE the writer under pipefail;
+    # slice in the shell instead.
     [ -z "$detail" ] && detail=${body:0:120}
     printf "  %sFAIL%s %-44s %sHTTP %s — %s%s\n" "$RED" "$OFF" "$label" "$DIM" "$status" "$detail" "$OFF"
     FAILS=$((FAILS + 1))
@@ -87,8 +80,7 @@ audit "diagnostics/cursors"    "/v1/diagnostics/cursors"
 audit "incidents"              "/v1/incidents"
 
 # Catalogue
-# /v1/coins + /v1/currencies were removed in rc.48; the unified
-# /v1/assets surface replaces both.
+# /v1/assets replaced the removed /v1/coins + /v1/currencies.
 audit "assets (5)"             "/v1/assets?limit=5"
 audit "assets/{id}=native"     "/v1/assets/native"
 audit "assets metadata=native" "/v1/assets/native/metadata"

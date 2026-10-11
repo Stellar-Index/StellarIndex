@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Capture real Soroswap pair events (swap + sync) + factory new_pair
-# events from a live stellar-rpc. Writes one fixture JSON per event
-# under test/fixtures/soroswap/<wasm_hash>/{swap,sync,new_pair}_*.json.
+# Capture real Soroswap pair events (swap + sync) + factory new_pair events
+# from a live stellar-rpc. Writes one fixture JSON per event under
+# test/fixtures/soroswap/<wasm_hash>/{swap,sync,new_pair}_*.json.
 #
-# Consumed by internal/sources/soroswap/real_fixture_test.go, which
-# pairs swap + sync by (ledger, tx_hash, contract) before decoding.
+# Consumed by internal/sources/soroswap/real_fixture_test.go, which pairs
+# swap + sync by (ledger, tx_hash, contract) before decoding.
 #
 # Usage:
 #   scripts/dev/capture-soroswap-fixtures.sh \
@@ -18,16 +18,13 @@
 #   -s  Start ledger (default: latestLedger - 200).
 #
 # Environment:
-#   WASM_HASH  Directory label for captured fixtures (default:
-#              "unknown-wasm-hash"). Use a tag + date label like
-#              `v1-2026-04-23` until the ops CLI can resolve true
-#              WASM hashes from the contract's instance entry.
+#   WASM_HASH  Directory label for fixtures (default "unknown-wasm-hash").
+#              Use a tag + date label like `v1-2026-04-23` until the ops CLI
+#              can resolve true WASM hashes from the contract instance entry.
 #
-# Rationale for per-WASM-hash fixture layout: see
-# docs/architecture/ingest-pipeline.md#contract-schema-evolution — a contract
-# `update_contract` swap can change body field names / arity, and
-# we need decoders pinned to specific WASM versions so backfill
-# against old ledgers stays correct.
+# Per-WASM-hash layout: docs/architecture/ingest-pipeline.md#contract-schema-evolution
+# (an `update_contract` can change body fields/arity; decoders are pinned to
+# WASM versions so backfill over old ledgers stays correct).
 
 set -euo pipefail
 
@@ -38,7 +35,7 @@ JQ="${JQ:-jq}"
 CURL="${CURL:-curl}"
 WASM_HASH="${WASM_HASH:-unknown-wasm-hash}"
 
-# Factory contract ID (constant per docs/protocols/soroswap.md).
+# Factory contract ID (docs/protocols/soroswap.md).
 FACTORY_ID="CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2"
 
 # shellcheck source=scripts/dev/lib/fixture-capture-common.sh
@@ -48,8 +45,8 @@ fixture_capture_parse_args "$@"
 fixture_capture_check_deps
 fixture_capture_setup_outdir soroswap
 
-# Pre-encoded topic blobs — must match what the package computes
-# at init. Regenerate via:
+# Pre-encoded topic blobs; must match what the package computes at init.
+# Regenerate via:
 #   go run scripts/dev/encode-topics -type string  SoroswapPair SoroswapFactory
 #   go run scripts/dev/encode-topics -type symbol  swap sync new_pair
 TOPIC_PREFIX_PAIR='AAAADgAAAAxTb3Jvc3dhcFBhaXI='
