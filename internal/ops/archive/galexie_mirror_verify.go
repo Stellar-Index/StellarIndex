@@ -75,8 +75,10 @@ type mirrorVerifyResult struct {
 	objectsCompared        int
 	objectsMatched         int
 	unverifiable           int
-	missingLocal           int
 	findings               []mirrorFinding
+	// missing are upstream objects a compared partition lacks locally:
+	// the fill's job, so they never fail the run.
+	missing []mirrorFinding
 }
 
 func (r mirrorVerifyResult) count(cause string) int {
@@ -214,7 +216,7 @@ func (r *mirrorVerifyResult) merge(o mirrorVerifyResult) {
 	r.objectsCompared += o.objectsCompared
 	r.objectsMatched += o.objectsMatched
 	r.unverifiable += o.unverifiable
-	r.missingLocal += o.missingLocal
+	r.missing = append(r.missing, o.missing...)
 	r.findings = append(r.findings, o.findings...)
 }
 
@@ -259,9 +261,9 @@ func compareMirrorPartition(ctx context.Context, local, upstream mirrorStore, pa
 			res.findings = append(res.findings, mirrorFinding{partition: part, key: key, cause: cause, local: lo, upstream: uo})
 		}
 	}
-	for key := range upstreamObjs {
+	for key, uo := range upstreamObjs {
 		if _, ok := localObjs[key]; !ok {
-			res.missingLocal++
+			res.missing = append(res.missing, mirrorFinding{partition: part, key: key, upstream: uo})
 		}
 	}
 	return res, nil
@@ -341,11 +343,20 @@ func reportMirrorVerify(w io.Writer, res mirrorVerifyResult, maxReport int) {
 			f.local.etag, mirrorOrNone(f.upstream.etag), f.local.size, f.upstream.size,
 			mirrorTime(f.local.modified), mirrorTime(f.upstream.modified), f.key)
 	}
+	for i, f := range res.missing {
+		if i == maxReport {
+			_, _ = fmt.Fprintf(w, "... %d more missing object(s) not printed (-max-report %d)\n", len(res.missing)-i, maxReport)
+			break
+		}
+		_, _ = fmt.Fprintf(w, "MISSING partition=%s ledger=%s upstream_etag=%s upstream_size=%d upstream_modified=%s key=%s\n",
+			strings.TrimSuffix(f.partition, "/"), mirrorLedgerLabel(f.key), f.upstream.etag, f.upstream.size,
+			mirrorTime(f.upstream.modified), f.key)
+	}
 	_, _ = fmt.Fprintf(w, "galexie-mirror-verify: partitions_compared=%d partitions_local_only=%d partitions_upstream_only=%d objects_compared=%d matched=%d upstream_rewritten=%d local_differs=%d local_only=%d unverifiable=%d missing_local=%d\n",
 		res.partitionsCompared, res.partitionsLocalOnly, res.partitionsUpstreamOnly,
 		res.objectsCompared, res.objectsMatched,
 		res.count(mirrorCauseUpstreamRewritten), res.count(mirrorCauseLocalDiffers), res.count(mirrorCauseLocalOnly),
-		res.unverifiable, res.missingLocal)
+		res.unverifiable, len(res.missing))
 }
 
 func mirrorOrNone(s string) string {
@@ -376,7 +387,7 @@ func writeMirrorVerifyTextfile(path string, res mirrorVerifyResult, now time.Tim
 		{mirrorCauseLocalDiffers, res.count(mirrorCauseLocalDiffers)},
 		{mirrorCauseLocalOnly, res.count(mirrorCauseLocalOnly)},
 		{"unverifiable", res.unverifiable},
-		{"missing-local", res.missingLocal},
+		{"missing-local", len(res.missing)},
 	} {
 		fmt.Fprintf(&b, "galexie_archive_upstream_objects{result=%q} %d\n", s.result, s.n)
 	}
