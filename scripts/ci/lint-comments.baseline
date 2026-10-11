@@ -82,7 +82,6 @@ internal/ops/chops/projected_rebuild.go	long-block
 internal/ops/chops/sdf_reserve_list.go	long-block
 internal/ops/chops/usd_volume_restamp_mirrors.go	long-block
 internal/ops/chops/usd_volume_restamp_xlmbase.go	long-block
-internal/ops/chops/verify_usd_volume.go	long-block
 internal/ops/keys/mint_key.go	long-block
 internal/ops/keys/upgrade_key.go	long-block
 internal/ops/supply/supply_sep41_genesis_seed.go	long-block
@@ -240,4 +239,3 @@ internal/storage/timescale/usd_volume_restamp_xlmbase.go	long-block
 internal/storage/timescale/usd_volume_restamp_xlmbase.go	long-block
 internal/storage/timescale/xlm_usd_anchor.go	long-block
 internal/usage/counter.go	long-block
-test/harness/timescale.go	long-block

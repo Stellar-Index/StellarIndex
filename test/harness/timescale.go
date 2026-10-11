@@ -81,13 +81,8 @@ func StartTimescale(t *testing.T, ctx context.Context) string {
 		// DROPs the very hypertables whose compression / CAGG-refresh
 		// policies it has just created, and TimescaleDB's job scheduler
 		// runs those policies concurrently — so a DROP's
-		// AccessExclusiveLock and a running job can form a lock CYCLE.
-		// CI hit exactly that, twice: "migrate down: deadlock detected,
-		// Process 94 waits for AccessExclusiveLock on relation 21724;
-		// blocked by process 161" in the round-trip test, then the same
-		// deadlock in 0126's DROP MATERIALIZED VIEW through the
-		// storage-suite bootstrap. It reproduces only under load, which
-		// is why it passes locally in 5s.
+		// AccessExclusiveLock and a running job can form a lock CYCLE
+		// ("deadlock detected"); it reproduces only under CI load.
 		//
 		// Retrying is not the fix: a failed migration leaves
 		// golang-migrate's version DIRTY, so the retry needs a force.
