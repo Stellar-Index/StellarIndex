@@ -364,10 +364,8 @@ func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, wi
 //     token was claimed), and governance events (lifetime).
 //   - a 30d claim_reward volume table, one row per reward token.
 //   - a lifetime per-kind event-count table (all 12 rewards-gauge kinds).
-//   - a recent-governance-events table (newest first, across all 8 admin
-//     kinds), mirroring lendingAuctionBlocks' "Recent auctions".
-//   - a daily claim_reward series, like lendingPositionBlocks' "Daily
-//     position events".
+//   - a recent-governance-events table (newest first, across all 8 admin kinds).
+//   - a daily claim_reward series.
 //
 // The claim_reward drill-down is fixed at 30 days regardless of the caller's
 // windowDays (a fixed, comparable window); the per-kind breakdown and

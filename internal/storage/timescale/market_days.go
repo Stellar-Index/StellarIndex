@@ -69,24 +69,20 @@ type MarketDay struct {
 // The dollar spellings (classic USDC, its SAC, `fiat:USD`) carry disjoint
 // venue populations, so the market is their sum, the same union
 // [pricingguard.SubstanceGate] and [Store.GetAssetATH] use. Each asset's
-// [canonical.AssetAliases] forms are likewise mapped back to it in SQL, so
-// `hours` counts distinct hours once. A spelling shared by two requested
-// assets is credited to the first only.
+// [canonical.AssetAliases] forms are mapped back to it in SQL, so `hours` counts
+// distinct hours once. A spelling shared by two requested assets is credited to the first only.
 //
-// It reads prices_1h: prices_1d has no intra-day timing, and prices_1m can
-// carry an armable 90-day retention (migration 0156) that would silently
-// truncate the series. prices_1h has no retention ([CAGGsLiveForever]) but
-// its depth is not promised (migrations 0115/0147 left re-materialisation to
-// the operator): an unmaterialised span reads as "did not trade", so callers
-// counting silent days must bound the count to the span this reader covers.
+// It reads prices_1h: prices_1d has no intra-day timing, and prices_1m can carry
+// an armable 90-day retention (migration 0156) that would silently truncate the
+// series. prices_1h has no retention ([CAGGsLiveForever]) but its depth is not
+// promised: an unmaterialised span reads as "did not trade", so callers counting
+// silent days must bound the count to the span this reader covers.
 //
-// Only rows with the asset as base are read; a dollar-first book reads as
-// no market (a false absence, never a wrong price). Empty `assets` or
-// `quotes` returns (nil, nil). Closed buckets only (ADR-0015). Bounds floor
-// to their UTC day; `to` reads through the end of its day.
+// Only rows with the asset as base are read; a dollar-first book reads as no market
+// (a false absence, never a wrong price). Empty `assets` or `quotes` returns
+// (nil, nil). Closed buckets only (ADR-0015). Bounds floor to their UTC day; `to` reads through its end.
 //
-// dailyMarketDaysQuery is package-level so a query-shape test can pin its
-// sargability, as for [closedVWAPAtOrBeforeQueryTemplate].
+// dailyMarketDaysQuery is package-level so a query-shape test can pin its sargability.
 const dailyMarketDaysQuery = `
         WITH family AS (
             SELECT spelling, member

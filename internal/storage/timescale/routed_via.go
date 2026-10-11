@@ -25,10 +25,9 @@ import (
 //     1-indexed; Go CallPath[0]) is the OUTERMOST invoking contract. When it is a
 //     registered 'router'-kind entry the trade is tagged with THAT name, so
 //     /v1/aggregators can report volume via the specific wrapper. Otherwise it
-//     falls back to routerName (direct calls, unregistered wrappers, and legacy
-//     call_path IS NULL rows, which cannot be told apart from direct calls), so
-//     the fallback never claims a wrapper it lacks evidence for. See
-//     docs/adr/0052-contract-call-tree-routing.md.
+//     falls back to routerName (direct calls, unregistered wrappers, legacy NULL
+//     call_path), so the fallback never claims a wrapper it lacks evidence for.
+//     See docs/adr/0052-contract-call-tree-routing.md.
 
 // routedViaTsSlack widens the trades.ts chunk-pruning bound relative
 // to the router-swap window. Generous (well beyond any close-time

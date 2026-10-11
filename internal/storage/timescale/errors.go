@@ -37,12 +37,6 @@ func sqlStateClass(code string) string {
 // path — it is neither an unavailability signal nor a permanent row
 // fault, and the batch path's sorted insert order keeps it rare.
 //
-// Without this predicate, a Postgres outage — `dial tcp
-// 127.0.0.1:5432: connect: connection refused` — would make the trade
-// sink log "insert trade failed" and drop the write while the ledger
-// cursor kept advancing. This function is the gate that turns that
-// drop into a blocking retry.
-//
 // Conservative by design: only clear unavailability/capacity signals
 // return true. Anything unrecognised returns false so it falls to the
 // error-and-skip path (fail-visible, never fail-silent).

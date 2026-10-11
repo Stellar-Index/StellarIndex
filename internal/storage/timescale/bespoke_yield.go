@@ -25,10 +25,6 @@ package timescale
 //     number-with-a-unit: different vaults hold different assets. Cross-vault
 //     headlines are COUNTS; cross-strategy gross-volume KPIs carry a "summed
 //     base units across strategies" caveat in the Notes.
-//
-// Every windowed query is bounded by ledger_close_time > now() -
-// $1::interval. Series follow the shared bridgeSeriesGrain rule: hourly
-// buckets at the 24h window, daily otherwise, with window-stable names.
 
 import (
 	"context"

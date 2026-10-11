@@ -16,9 +16,6 @@ import (
 // (the persisted shape of internal/sources/accounts.Observation — see
 // domain's doc.go for why storage takes the domain type rather than
 // importing the accounts package) to `account_observations`.
-// Per the migration, identity is (account_id, ledger, observed_at) —
-// the partition column is dragged into the PK because Timescale
-// requires it.
 //
 // Last-writer-wins on conflict: an account touched multiple times
 // in the same ledger (e.g. fee + op + op) writes successive rows
@@ -279,10 +276,6 @@ func (s *Store) UpsertAccountObserverWatermark(ctx context.Context, processedLed
 // (see [Store.UpsertAccountObserverWatermark]), so a healthy-but-quiet
 // observer keeps the anchor fresh and only a dead one freezes it, at which
 // point the gate fails closed past the horizon.
-//
-// asOfLedger is capped at int4 for symmetry with the sibling reads. A
-// watermark ahead of the snapshot ledger is clamped so the gate never sees a
-// negative gap.
 func (s *Store) MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error) {
 	const maxInt32 = uint32(math.MaxInt32)
 	if asOfLedger > maxInt32 {

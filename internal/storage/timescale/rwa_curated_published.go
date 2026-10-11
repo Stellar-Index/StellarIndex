@@ -19,21 +19,18 @@ import (
 // WHY THIS TABLE, and not rwa_curated_directory alone. The directory (0161)
 // holds the curator's per-asset list and prices, which live in CSV uploads
 // PRIVATE to the uploading team, so no sync can fill it. What anyone can read
-// is the latest RESULT of the curator's public dashboard queries: a monthly
-// RWA market-cap total and that total split by the curator's subclass labels.
+// is the latest RESULT of the curator's public dashboard queries.
 //
-// WHAT A ROW MEANS, precisely. "Curator X's public query Q, when it last
-// ran at executed_at, printed value_usd for series S at month_end (and
-// subclass)." The curator's arithmetic over private inputs: no signature, no
-// per-asset breakdown, no price, no market. Served under its own name beside
-// the verified set, never inside it.
+// WHAT A ROW MEANS, precisely. "Curator X's public query Q, when it last ran at
+// executed_at, printed value_usd for series S at month_end (and subclass)." The
+// curator's arithmetic over private inputs: no signature, no per-asset breakdown,
+// no price, no market. Served under its own name beside the verified set, never inside it.
 //
-// TWO CLOCKS. `executed_at` is the CURATOR's — when its query last ran; the
-// figure is as fresh as that. `observed_at` is OURS — when this index read
-// the result; the reader's recognition bound ages on it, spliced into the SQL
-// so no caller can read a stale row as fresh. One sync run replaces a
-// curator's rows PER SERIES in one transaction, so every row of a series
-// shares one observed_at and one executed_at.
+// TWO CLOCKS. `executed_at` is the CURATOR's: when its query last ran, so the
+// figure is as fresh as that. `observed_at` is OURS: when this index read the
+// result; the reader's recognition bound ages on it, spliced into the SQL so no
+// caller can read a stale row as fresh. One sync run replaces a curator's rows
+// PER SERIES in one transaction, so a series shares one observed_at and executed_at.
 
 // Series names, shared by the writer and the reader.
 const (

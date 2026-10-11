@@ -190,19 +190,17 @@ var persistIssuerAuthFlagsQuery = `
 //
 //   - live: set to exactly what the AccountEntry declares; "" CLEARS it.
 //   - last_known_before_removal: cleared. A merged account's domain can no longer
-//     be checked against SEP-1's [[CURRENCIES]] back-reference, so keeping it is
-//     an impersonation surface.
+//     be verified against SEP-1's [[CURRENCIES]], so keeping it is an impersonation surface.
 //   - "" (unlabelled): a non-empty value overwrites; an empty one is ignored.
 //
 // No COALESCE keeping the stored value: the SEP-1 resolver READS this column, so a
 // write-once column would stop an anchor that moved or cleared its domain from
 // taking it back. See [Store.SyncIssuerHomeDomain].
 //
-// auth_flags_source and auth_flags_as_of_ledger move TOGETHER or not at all, so a
-// reading is never claimed true at a ledger it was not taken from. An empty Source
-// leaves both untouched. A labelled reading older than the one on record is refused
-// and not counted, so out-of-order drain runs cannot reinstate a home_domain the
-// account moved away from.
+// auth_flags_source and auth_flags_as_of_ledger move TOGETHER or not at all; an
+// empty Source leaves both untouched. A labelled reading older than the one on
+// record is refused and not counted, so out-of-order drain runs cannot reinstate
+// a home_domain the account moved away from.
 func (s *Store) PersistIssuerAuthFlags(ctx context.Context, flags []IssuerAuthFlags) (int, error) {
 	if len(flags) == 0 {
 		return 0, nil

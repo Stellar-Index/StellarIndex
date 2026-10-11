@@ -184,9 +184,8 @@ func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (Asset
 //	Third-party ping-pong  | two non-issuer wallets round-trip   | concentrated
 //	Dust-bot               | one account pair, micro trades      | concentrated
 //
-// High issuer-side share ALONE is not wash — a stablecoin mint/redeem
-// corridor is 100% issuer-side by nature. Wash is single-counterparty AND a
-// market-styled pair.
+// High issuer-side share ALONE is not wash: a stablecoin mint/redeem corridor is
+// 100% issuer-side by nature. Wash is single-counterparty AND market-styled.
 //
 //   - Below the volume floor → `market` (never badge a quiet asset).
 //   - market-styled AND one account pair owns >90% of volume → `concentrated`.

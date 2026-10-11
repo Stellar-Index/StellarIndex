@@ -9,27 +9,23 @@ import (
 // CCTP bespoke analytics.
 //
 // deposit_for_burn = OUTBOUND, mint_and_withdraw = INBOUND; message and
-// admin/config events carry no value and are excluded from flow sums.
+// admin/config events carry no value and are excluded from flow sums. Division
+// is exact NUMERIC, never a float literal (ADR-0003).
 //
-//  1. VALUE ROWS ARE READ RAW, one transfer per stored event row, with no
-//     per-(tx, op) collapse: cctp_events' PK discriminates on event_index, and
-//     collapsing with max(amount) would HALVE a genuine batched double-transfer
-//     in one op (same-op same-type groups exist on the wire).
+//  1. VALUE ROWS ARE READ RAW, one transfer per stored event row, with no per-(tx, op)
+//     collapse: cctp_events' PK discriminates on event_index, and collapsing with
+//     max(amount) would HALVE a genuine batched double-transfer in one op.
 //  2. mint_and_forward IS NOT A SEPARATE TRANSFER. It always accompanies
-//     mint_and_withdraw for the SAME funds, restating the value at the LOCAL
-//     7-decimal SAC scale (exactly 10x) while mint_and_withdraw carries the
-//     CANONICAL 6-decimal amount. Inbound sums use mint_and_withdraw ONLY;
-//     summing both counts the transfer 11x. deposit_for_burn is the canonical
-//     scale too (TestDepositForBurnAmount_IsCanonicalSixDecimals).
+//     mint_and_withdraw for the SAME funds, at the LOCAL 7-decimal SAC scale
+//     (exactly 10x) while mint_and_withdraw carries the CANONICAL 6-decimal
+//     amount. Inbound sums use mint_and_withdraw ONLY: summing both counts it 11x. deposit_for_burn is canonical too
+//     (TestDepositForBurnAmount_IsCanonicalSixDecimals).
 //
 // Inbound source-chain attribution: the same-op message_received row's
-// message_body carries the BurnMessage; hex chars 33..72 are the low 20 bytes of
-// the burn-side USDC token, resolved via cctpBurnTokenChains (see cctp_chains.go).
-// That receive side is the ONE place a per-(tx, op) group survives: the join
-// needs exactly one body row per op or every mint row would fan out (see
-// cctpRecvCTE). Outbound uses counterparty_domain via Circle's domain registry.
-//
-// Division is exact NUMERIC, never a float literal (ADR-0003).
+// message_body carries the BurnMessage; its burn-token tail is resolved via
+// cctpBurnTokenChains (see cctp_chains.go). That receive side is the ONE place a
+// per-(tx, op) group survives: the join needs exactly one body row per op or every
+// mint row would fan out (see cctpRecvCTE). Outbound uses counterparty_domain.
 
 // cctpSeriesNameInbound / …Outbound are the direction-stable total-series
 // names the frontend pairs on; cctpPerChainPrefix* prefix the per-chain

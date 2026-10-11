@@ -209,8 +209,7 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 // SaveLadder persists the ADR-0019 lifecycle state onto the currently-firing
 // `freeze_events` row for (asset, quote). Implements freeze.LadderStore.
 //
-// Migration 0119. Held only in memory and the Redis marker's JSON, the ladder
-// (hold_until / extensions_used / escalated / corroborated) would let a Redis
+// Held only in memory and the Redis marker's JSON, the ladder would let a Redis
 // flush take an ESCALATED freeze (held "until manual unfreeze") down with it.
 // This is the durable copy, written on every transition by freeze.Writer.MarkHold.
 //
@@ -296,9 +295,6 @@ func (s *FreezeEventSink) SaveLadder(ctx context.Context, asset, quote canonical
 //     have no ladder to restore. Those fall back to today's Redis-only
 //     behaviour rather than rehydrating a zero ladder, which would read as
 //     "freeze fired just now, 0 extensions" and reset the escalation clock.
-//
-// FiredAt comes from the row's own `frozen_at` — the freeze's true age,
-// already stored, never duplicated into a second column.
 //
 // The caller ([freeze.Writer.LoadState]) applies the freshness bound on
 // hold_until; this method reports the stored state verbatim so an operator

@@ -171,15 +171,13 @@ func (s *Store) SetDeriveGeneration(gen int64) {
 // this makes the combination unrepresentable: any trade write in re-derive mode
 // without resolvers fails loudly at the first row. Live ingest (generation == 0)
 // and non-trade re-derives (no InsertTrade/BatchInsertTrades call) are unaffected.
-// It is deliberately PRECISE rather than blanket: it fires only when this
-// trade's usd_volume actually resolved to NULL *and* resolution was never
-// wired. A blanket "re-derive without Install ⇒ refuse" is wrong, because
-// tier 1 prices CEX USD-quoted trades from the quote decimals alone (no
-// resolver needed), so a blanket guard would refuse writes that compute a
-// perfectly correct usd_volume. Firing only on (computed == nil && !installed)
-// targets exactly the destructive case — about to write NULL over a value that
-// resolution might have priced — while a genuinely-unpriceable trade in a
-// properly-wired re-derive (installed, still nil) writes its honest NULL.
+// It is deliberately PRECISE rather than blanket: it fires only when this trade's
+// usd_volume actually resolved to NULL *and* resolution was never wired. Tier 1
+// prices CEX USD-quoted trades from the quote decimals alone (no resolver
+// needed), so a blanket guard would refuse writes that compute a correct
+// usd_volume. Firing only on (computed == nil && !installed) targets the
+// destructive case — writing NULL over a value resolution might have priced —
+// while a genuinely-unpriceable trade in a wired re-derive writes its honest NULL.
 func (s *Store) reDeriveNullVolumeGuard(t canonical.Trade, computed *string) error {
 	if s.deriveGeneration > 0 && computed == nil && !s.usdVolumeResolutionInstalled {
 		return fmt.Errorf("timescale: refusing to write trade %s/%s (source=%s ledger=%d) "+

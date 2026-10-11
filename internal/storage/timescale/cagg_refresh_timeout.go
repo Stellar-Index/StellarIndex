@@ -11,17 +11,13 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// Per-CALL bound on refresh_continuous_aggregate.
-//
-// The ops backfill pool is plain [Open] (no session statement_timeout), so one
-// wedged refresh would block every `-parallel` worker behind
-// ingest.caggRefreshMu until SIGINT instead of failing its own chunk.
+// Per-CALL bound on refresh_continuous_aggregate. The ops backfill pool has no
+// session statement_timeout, so one wedged refresh would block every `-parallel`
+// worker behind ingest.caggRefreshMu until SIGINT.
 //
 //   - refresh_continuous_aggregate refuses to run inside a transaction block, so
 //     `SET LOCAL statement_timeout` is unavailable. The GUC is set at SESSION
-//     level on one pinned pooled connection for exactly the CALL, then restored to
-//     its prior value ("0" on the ops pool, the connector's backstop on an
-//     [OpenBackground] pool).
+//     level on one pinned pooled connection for exactly the CALL, then restored.
 //   - statement_timeout is kept although pgx also cancels on a Go deadline: the
 //     server enforces it (query_canceled, see isStatementTimeoutErr) and the
 //     connection stays healthy. The Go deadline (bound + grace) is the second line

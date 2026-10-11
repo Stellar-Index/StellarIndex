@@ -12,27 +12,23 @@ import (
 // The usd_volume VALUE reconcile.
 //
 // The usd-volume alerts (configs/prometheus/rules.r1/usd-volume-coverage.yml)
-// check COVERAGE only. A trade priced with the WRONG number is 100% covered and
-// completely wrong, and every published volume surface sums that column.
+// check COVERAGE only; a trade priced with the WRONG number is 100% covered.
 //
 // This file is the value half's read side: the day-scoped SQL aggregation and the
 // exact rational arithmetic that judges it. The TIER CLASSIFIER lives in trades.go
-// beside the waterfall it mirrors ([ClassifyUSDVolumeTier]): they must move
-// together or the check verifies a waterfall the writer no longer runs, and this
-// file must not import internal/sources/external (storage-below-compute layering).
+// beside the waterfall it mirrors ([ClassifyUSDVolumeTier]); they must move together,
+// and this file must not import internal/sources/external (storage-below-compute layering).
 //
 // It does NOT re-price trades from an independent series: the upper tiers are
-// VWAP/FX ESTIMATES measured diverging by up to 134.92% on the same trades, and
-// nobody has calibrated a tolerance. It exploits the BOTTOM tiers instead: tiers
-// 1/2 (QUOTE leg is USD or a declared peg) and 2b (BASE leg is) are pure decimal
-// rescalings of an amount on the row:
+// VWAP/FX ESTIMATES with no calibrated tolerance. It exploits the BOTTOM tiers
+// instead: tiers 1/2 (QUOTE leg is USD or a declared peg) and 2b (BASE leg is)
+// are pure decimal rescalings of an amount on the row:
 //
 // 	usd_volume = pegged_leg_amount / 10^decimals
 //
 // An EXACT identity with no price lookup or tolerance. If it fails, `usd_volume`
-// used the wrong scale, leg, peg list or backfill vintage, and every aggregate on
-// it is wrong by that factor. Estimated tiers are MEASURED (sums, row counts) so
-// an operator can calibrate a threshold later, but not judged.
+// used the wrong scale, leg, peg list or backfill vintage. Estimated tiers are
+// MEASURED (sums, row counts) so an operator can calibrate a threshold later, but not judged.
 
 // USDVolumeTier names how a trade's `usd_volume` was derived, mirroring the
 // waterfall in [tradeUSDVolume]. Stable strings: they appear in the

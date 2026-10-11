@@ -19,16 +19,13 @@ import (
 //   - `AssetSoroban{ContractID}`, e.g. Soroswap's USDC SAC contract
 //     CCW6...
 //
-// Neither form maps to a global ticker; the operator declares which
-// (CODE, ISSUER) pairs are trusted as USD-pegged, and this spec resolves
-// both the classic form and its SAC-wrapped counterpart via the same
-// `[supply.sac_wrappers]` map the supply pipeline consumes.
+// Neither form maps to a global ticker; the operator declares which (CODE, ISSUER)
+// pairs are trusted as USD-pegged, and this spec resolves both the classic form
+// and its SAC-wrapped counterpart via the `[supply.sac_wrappers]` map.
 //
 // Scope: USD-pegged stablecoins only, classic-decimal (7) only. Non-USD pegs
-// (EUR / MXN / etc.) live in [VWAPUSDFXResolver], which looks up
-// `<quote>/<USD-peg>` in prices_1m at the trade's timestamp. SEP-41 tokens
-// with non-classic decimals remain unsupported on either path; they would
-// need per-asset decimals plumbed through the trade insert path.
+// (EUR / MXN / etc.) live in [VWAPUSDFXResolver]. SEP-41 tokens with
+// non-classic decimals remain unsupported on either path.
 type USDVolumeQuoteSpec struct {
 	// classicUSDPegs is the set of classic asset_keys (in the
 	// canonical "CODE-ISSUER" wire form) the operator has declared

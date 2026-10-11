@@ -35,9 +35,8 @@ type USDVolumeFXResolver interface {
 	USDPriceAt(ctx context.Context, asset canonical.Asset, at time.Time) (string, bool, error)
 }
 
-// tradeUSDVolume returns the per-trade USD-equivalent volume as a
-// NUMERIC-compatible string, or nil (stored as NULL) when the trade can't
-// be converted cleanly.
+// tradeUSDVolume returns the per-trade USD-equivalent volume as a NUMERIC-compatible
+// string, or nil (stored as NULL) when the trade can't be converted cleanly.
 //
 // Tiers run in order of EXACTNESS: the peg tiers need no market lookup, so
 // they always win over the estimated FX tiers.
@@ -45,17 +44,15 @@ type USDVolumeFXResolver interface {
 //  1. Off-chain CEX/FX source, quote fiat:USD or an `aggregate.FiatProxy`
 //     stablecoin; scaled by the source's AmountScaleDecimals.
 //  2. On-chain DEX source, quote USD-pegged per [USDVolumeQuoteSpec]; x7.
-//     2b. The BASE leg is USD-pegged (either source class), for
-//     `USDC/TOKEN`-oriented markets; see [tradeUSDVolumeViaUSDBase].
+//     2b. The BASE leg is USD-pegged (either source class); see [tradeUSDVolumeViaUSDBase].
 //  3. `fxResolver` returns a USD rate for the quote at the trade's
 //     timestamp (also tried for off-chain trades that missed tier 1).
-//  4. DEX trade whose BASE is XLM or its SAC: base_amount is stroops, so
-//     usd_volume = base_amount/1e7 × XLM/USD; see [usdVolumeViaXLMBaseAnchor].
+//  4. DEX trade whose BASE is XLM or its SAC (stroops): see [usdVolumeViaXLMBaseAnchor].
 //
 // On a DEX trade with an XLM leg on either side, the XLM anchor runs ahead
 // of tier 3 (base side first, then [tradeUSDVolumeViaXLMQuoteAnchorFor]).
-// Peg tiers trust the peg at insert time; a depeg does not rewrite stored
-// values. Anything else stays NULL rather than over-claim USD-equivalence.
+// Peg tiers trust the peg at insert time (a depeg does not rewrite stored
+// values); anything else stays NULL rather than over-claim USD-equivalence.
 // LOCKSTEP: [ClassifyUSDVolumeTier] mirrors this waterfall (legs, order,
 // scale); TestClassifyUSDVolumeTier_TracksTheWaterfall fails on drift.
 func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolumeQuoteSpec, fxResolver USDVolumeFXResolver) *string {

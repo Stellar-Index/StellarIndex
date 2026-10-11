@@ -170,20 +170,17 @@ func (s *Store) LatestOracleUpdatesForAsset(ctx context.Context, asset canonical
 // keeps the observation with the highest (ts, ledger) per that pair,
 // regardless of which input key it matched.
 //
-// quote is INCLUDED in the distinct key rather than collapsed to one
-// row per source: a single source can publish the SAME base asset
-// against two different quotes as two independent live feeds (e.g.
-// Redstone's EUROC/EUR and EUROC/USD — see feeds.go). Collapsing on
-// source alone silently kept whichever quote happened to publish most
-// recently, which is a live-feed coin flip, not a "latest reading".
-// Callers that want exactly one row disambiguate with quoteFilter (the
-// v1 handler's `?quote=`); an empty quoteFilter returns every live
-// quote so the caller can see the ambiguity rather than have it hidden.
+// quote is INCLUDED in the distinct key rather than collapsed to one row per
+// source: a single source can publish the SAME base asset against two quotes as
+// independent live feeds (e.g. Redstone's EUROC/EUR and EUROC/USD — see
+// feeds.go), and collapsing would silently keep whichever published last.
+// Callers wanting one row disambiguate with quoteFilter (the v1 handler's
+// `?quote=`); an empty quoteFilter returns every live quote so the ambiguity
+// stays visible.
 //
-// Use case: the v1 handler calls this with a translation list —
-// e.g. user-facing `native` expands to `[native, crypto:XLM]`
-// because Reflector publishes XLM under the global crypto ticker
-// rather than the per-network "native" form.
+// Use case: the v1 handler passes a translation list, e.g. user-facing `native`
+// expands to `[native, crypto:XLM]` because Reflector publishes XLM under the
+// global crypto ticker.
 //
 // Unbounded in age — see the freshness convention note above
 // InsertOracleUpdate.
@@ -548,9 +545,7 @@ type OracleDayPoint struct {
 // inclusive bucket range [from, to] — ascending by bucket, then asset,
 // then source.
 //
-// This is the first read of the `oracle_prices_*` family; the rest of this
-// package reads raw `oracle_updates`. The CAGG fits because the question is a
-// HISTORY over a fixed grain, and it carries no retention policy
+// Reads the `oracle_prices_*` CAGG, which carries no retention policy
 // (migration 0034), so the series reaches back as far as the oracle has
 // published.
 //

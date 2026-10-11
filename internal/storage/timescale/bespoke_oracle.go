@@ -24,8 +24,7 @@ package timescale
 // start at each source's first ingested observation, NOT at protocol genesis.
 //
 // Every windowed query is bounded by ts > now() - $N::interval (1-day chunks
-// make this a chunk-excluded scan); the two all-time reads are narrow index
-// counts. The block builds under the window-keyed protocol-detail TTL cache.
+// make this a chunk-excluded scan).
 
 import (
 	"context"

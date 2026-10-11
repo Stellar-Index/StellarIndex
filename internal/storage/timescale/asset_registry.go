@@ -141,9 +141,7 @@ func (s *Store) registerClassicAssetRange(
 
 	// first_seen_* uses LEAST so chunked / parallel backfill that
 	// processes ledgers out of order cannot leave a higher value
-	// behind. Without this, replaying an older window after the
-	// row already exists would leave first_seen_ledger pinned at
-	// the original (later) ledger — wrong by definition.
+	// behind.
 	//
 	// slug (migration 0135): the fully-qualified asset_id, verbatim,
 	// not an abbreviated lower(code)-issuer8 form: an 8-char issuer
@@ -329,9 +327,8 @@ type ClassicAssetHolding struct {
 //     scam-triage sweep keep their meaning. A row created here starts at 0.
 //   - It never touches first_trade_* / last_trade_*, so "last traded" stays NULL
 //     for an asset that has never traded.
-//   - It never touches slug. A slug is a public URL; ON CONFLICT keeps the
-//     existing one, and a new row takes the migration-0135 form (the asset_id
-//     verbatim).
+//   - It never touches slug: a slug is a public URL, and ON CONFLICT keeps the
+//     existing one.
 //   - It does not populate the [Store] dedupe caches, which keep the indexer hot
 //     path off this table; a bulk walk seeding them would suppress the next
 //     trade's observation_count increment.

@@ -5,17 +5,13 @@ package timescale
 // hypertable unbounded:
 //
 //  1. dex_volume_by_pair_1d (migration 0064, materialized_only=true): the daily
-//     per-(source, pair) rollup, for >1-day windows. Two shapes keep sdex 90d
-//     cheap: the window KPI uses a hash-agg pair-count subquery (a naive
-//     count(DISTINCT (base,quote)) row-comparison sort is ~9x slower) and the
-//     top-5 series uses a top CTE + direct index join (re-aggregating the CAGG
-//     through a grouped CTE is ~20x slower). HONESTY FLOOR: it starts well after
-//     genesis, so lifetime figures are "since <floor date>", never "all-time".
+//     per-(source, pair) rollup, for >1-day windows (sdex 90d stays cheap via a
+//     hash-agg pair count and a top CTE + direct index join). HONESTY FLOOR: it
+//     starts well after genesis, so lifetime figures are "since <floor date>", never "all-time".
 //  2. source_volume_1h (migration 0068, real-time): the 24h window.
 //  3. Raw `trades`, the ONLY place taker addresses and per-trade rows live,
-//     window-bounded. sdex 7d is 1.4s and extrapolates to ~15-20s at 90d, so
-//     raw-derived surfaces are gated OFF for sdex beyond 7 days (dexRawWindowOK)
-//     and the omission is Noted on the block.
+//     window-bounded; sdex is gated OFF beyond 7 days (dexRawWindowOK, ~15-20s
+//     at 90d) and the omission is Noted on the block.
 //
 // Older soroswap rows carry NULL taker: trader metrics are omitted (with a Note)
 // unless the window has taker-stamped rows.

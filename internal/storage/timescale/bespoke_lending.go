@@ -423,11 +423,8 @@ func truncLendingID(id string) string {
 // (sorocredit has no published price).
 //
 // creditAmountUnitsNote and creditSettlementVolumeHint document the USDC
-// scale served in the block: sorocredit's USDC leg is the classic Stellar
-// asset's SAC wrapper, and every classic Stellar asset — including a SAC
-// wrapping one — is uniformly 7-decimal fixed point on-chain, never the
-// off-chain (e.g. Ethereum) 6-decimal USDC convention (AGENTS.md: "NEVER
-// assume off-chain amount scaling is uniform").
+// scale: a SAC wrapping a classic asset is 7-decimal fixed point on-chain,
+// never the off-chain 6-decimal USDC convention.
 const (
 	creditAmountUnitsNote      = "Amounts are in token base units (USDC settlements at 7-decimal USDC base units; statement amounts at the protocol's i128 scale) — NOT USD. sorocredit has no published price and never contributes to VWAP."
 	creditSettlementVolumeHint = "summed scheduled-settlement amount in 7-decimal USDC base units (NOT a liquidation/risk signal)"

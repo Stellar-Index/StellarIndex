@@ -102,13 +102,9 @@ func (s *Store) DistinctAssets(ctx context.Context, cursor string, limit int) ([
 //
 // Dispatch:
 //
-//   - AssetClassic: PK lookup on `classic_assets`. The registry table
-//     has one row per (code, issuer) ever observed and a primary key
-//     on `asset_id`; an unknown classic asset costs one index seek.
-//     Bypasses the trades hypertable entirely: answering from `trades`
-//     takes seconds on the cold path, because the
-//     `WHERE base_asset = $1 OR quote_asset = $1` across billions of
-//     trades rows has to seek every chunk's index.
+//   - AssetClassic: PK lookup on `classic_assets` (one row per (code, issuer)
+//     ever observed): one index seek, and it bypasses the trades hypertable,
+//     where `base_asset = $1 OR quote_asset = $1` seeks every chunk's index.
 //   - Every other type (native / soroban / fiat / crypto / rwa):
 //     [Store.hasNonClassicAsset], a WINDOW-BOUNDED probe. No registry
 //     table can hold these types — `classic_assets` requires a non-null

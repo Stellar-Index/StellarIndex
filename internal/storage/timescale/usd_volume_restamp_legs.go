@@ -13,10 +13,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The ESTIMATED tiers' shared row-list re-derive. [usd_volume_restamp.go]
-// repairs the EXACT tiers (a SQL identity); an estimated tier's value is a
-// function of a RATE at the row's timestamp, so each candidate row is rebuilt
-// into the [canonical.Trade] the decoder produced and handed to the function
+// The ESTIMATED tiers' shared row-list re-derive. [usd_volume_restamp.go] repairs
+// the EXACT tiers (a SQL identity); an estimated tier's value is a function of a
+// RATE at the row's timestamp, so each candidate row is rebuilt into the
+// [canonical.Trade] the decoder produced and handed to the function
 // [Store.InsertTrade] calls. Only these vary per tier:
 //
 // 	tier       source scope   scanned leg        value function
@@ -29,13 +29,9 @@ import (
 // Every tier prices off a leg whose USD rate nobody trading the pair can author:
 // native XLM or a vendor fiat feed (`fx_quotes`). A token/token pair has NO tier
 // here and must stay unpriced: valuing it would read the tier-3b `<token>/XLM`
-// bridge, which is whatever the last counterparty wrote (one incident stored
-// $8,559,224.82 for a trade worth $0.86). Both scans are bounded by an asset
+// bridge, which is whatever the last counterparty wrote. Both scans are bounded
 // ALLOW-LIST on the tier's own leg and the Go gate ([restampScope]) re-asserts
 // the tier, so a widened scan fails CLOSED.
-//
-// The row/plan/stats vocabulary keeps the xlm-base tier's exported spelling to
-// avoid churn across a money-path type; the aliases give it a tier-neutral name.
 
 type (
 	// RestampScanParams scopes one window of an estimated-tier re-derive.

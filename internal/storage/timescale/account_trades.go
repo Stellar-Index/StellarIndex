@@ -20,17 +20,14 @@ import (
 //
 // QUERY SHAPE: two index-friendly arms UNION'd, not `taker = $1 OR maker = $1`: an
 // OR across two columns cannot ride one account-leading index in output order, so
-// the planner does a bitmap-or + sort over the account's whole history before the
-// LIMIT. Each arm has its own ORDER BY + LIMIT and walks its partial index
-// (migration 0123) in output order; the union of two top-N arms provably contains
-// the union's top N (same invariant as clickhouse.accountTransactionsQuery). The
-// maker arm excludes rows where the address is ALSO the taker so a self-crossed
-// sdex trade appears once.
+// the planner sorts the account's whole history before the LIMIT. Each arm has its
+// own ORDER BY + LIMIT on its partial index (migration 0123); the union of two top-N
+// arms contains the union's top N. The maker arm excludes rows where the address is
+// ALSO the taker so a self-crossed sdex trade appears once.
 //
 // KEYSET: (ts DESC, ledger DESC, tx_hash DESC, op_index DESC). ts alone is not
-// unique and (ts, ledger, op_index) still collides for two same-account txs in
-// one ledger, so tx_hash rides in the tuple: never re-emits a served row, never
-// skips an unserved one.
+// unique and (ts, ledger, op_index) collides for two same-account txs in one
+// ledger, so tx_hash rides in the tuple.
 
 // accountTradesMaxLimit clamps one page. Mirrors the sibling explorer
 // listings' 200-row ceiling.
@@ -159,11 +156,6 @@ const tradesHorizonFailClosedWindow = 24 * time.Hour
 // backfill) while everything after it has already compressed, and
 // min(range_start) over uncompressed chunks then picks that ancient straggler
 // as the "floor".
-//
-// A stranded uncompressed chunk (one whose range starts before that
-// floor) doesn't make the floor unsafe — it's excluded either way — but
-// it is an anomaly worth an operator's attention (genuinely-indexed
-// history is being excluded from the fast path), so it's logged.
 //
 // Cached for 10 minutes; the horizon only moves when the compression policy
 // compresses another chunk. Fails CLOSED — a short recent window

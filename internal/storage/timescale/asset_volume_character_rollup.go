@@ -26,23 +26,20 @@ import (
 // assetVolumeCharacterRollupSQLTemplate is the all-asset generalization of
 // assetVolumeCharacterSQL: it projects EVERY trade onto BOTH its base_asset and
 // quote_asset (UNION ALL), folds each raw side onto its CANONICAL asset via the
-// alias_map (as assetAliasArray does per-asset, so a SAC twin and its classic
-// agree), then GROUP BYs the canonical asset.
+// alias_map, then GROUP BYs the canonical asset.
 //
 // {{ALIAS_VALUES}} is replaced (strings.Replace, not Sprintf: the LIKE patterns
 // carry literal %) by the alias-fold VALUES rows from the process AliasRegistry
 // (see buildAliasMapValues); alias params start at $1. {{WINDOW}} is the trailing
 // window as an interval LITERAL: against a bind parameter the planner cannot
-// exclude chunks, so this ~23-minute roll held ACCESS SHARE on every trades chunk
-// and starved the compression policy.
+// exclude chunks, and this ~23-minute roll starved the compression policy.
 //
 // Every per-asset signal is reproduced exactly:
 //   - total_vol / *_vol are SUM(usd_volume::double precision), the SAME double the
 //     per-asset query sums, so Go-derived shares match to full precision.
 //   - the (maker,taker) pair is UNORDERED (LEAST/GREATEST); maker is read through
 //     volumeCharacterMakerSQL, so a pool is never an account.
-//   - issuer is the G-strkey suffix of a classic 'CODE-GISSUER' id, empty
-//     otherwise, matching canonical.ParseAsset(assetID).Issuer.
+//   - issuer is the G-strkey suffix of a classic 'CODE-GISSUER' id, else empty.
 //   - market_styled tests the RAW counterpart, never the folded form.
 //   - total_vol_num is the EXACT NUMERIC sum (ADR-0003) for the stored volume_usd
 //     column.

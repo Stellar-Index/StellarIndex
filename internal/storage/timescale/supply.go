@@ -80,8 +80,7 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 	// TS 2.16 don't expose unique constraints to ON CONFLICT's
 	// column-inference path, so the cleaner `ON CONFLICT (cols)` syntax
 	// fails with `there is no unique or exclusion constraint matching
-	// the ON CONFLICT specification`. The named-target form bypasses
-	// inference. Constraint added by migration 0030.
+	// the ON CONFLICT specification`. The named-target form bypasses inference.
 	//
 	// Generation guard (migration 0109): on conflict we DO UPDATE the
 	// supply value columns plus derive_generation, guarded by
@@ -92,13 +91,10 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 	// generation 0 (the default), so a same-(asset,ledger) re-observe
 	// just re-writes the identical value.
 	//
-	// sac_wrapped_stroops joins the DO UPDATE value list for the same
-	// reason every other value column is there: a corrected re-derive
-	// (say, after a `supply seed-sac-balances -full-history` pass
-	// recovers dormant pool balances) must land its new component in
-	// place. Leaving it out of the SET list would freeze the first value
-	// ever written and re-create the re-derive trap for exactly the
-	// column the recovery procedure exists to fix.
+	// sac_wrapped_stroops joins the DO UPDATE value list for the same reason:
+	// leaving it out would freeze the first value ever written and re-create
+	// the re-derive trap for the column a `supply seed-sac-balances
+	// -full-history` pass exists to fix.
 	const q = `
 		INSERT INTO asset_supply_history
 		    (time, asset_key, total_supply, circulating_supply, max_supply, basis, ledger_sequence, derive_generation, sac_wrapped_stroops)

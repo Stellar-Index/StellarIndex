@@ -199,12 +199,10 @@ func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]Sourc
 // The asset filters use `= ANY($n)` against a bound string[] so the
 // handler can pass every canonical FORM of an asset (XLM's three:
 // `native`, `crypto:XLM` and the SAC C-address — see
-// [canonical.AssetAliases]). Without the array a multi-form asset
-// undercounts — SDEX writes `native`, every CEX writes `crypto:XLM` and
-// Soroban AMMs write the SAC, so a single-form filter saw only one
-// side. `= ANY(array)` stays sargable (equality on the indexed
-// base_asset/quote_asset columns, planned as an index scan / BitmapOr)
-// — NOT a function on the column.
+// [canonical.AssetAliases]). Without the array a multi-form asset undercounts:
+// SDEX writes `native`, every CEX writes `crypto:XLM` and Soroban AMMs write
+// the SAC. `= ANY(array)` stays sargable (equality on the indexed
+// base_asset/quote_asset columns) — NOT a function on the column.
 //
 // The pair query reads BOTH stored orientations, one UNION ALL arm each
 // as pairMarketQuery does: a venue that writes base = token_in stores

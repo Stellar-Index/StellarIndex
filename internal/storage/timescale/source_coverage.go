@@ -12,10 +12,9 @@ import (
 //
 // Two complementary numbers per source:
 //
-//   - **DensityPct** = DistinctLedgers / ExpectedLedgers (capped
-//     [0, 1]). Raw coverage. Dense sources (SDEX, Soroswap)
-//     approach 1.0; sparse sources (Blend auctions, CCTP) are
-//     naturally low because the contract doesn't emit per ledger.
+//   - **DensityPct** = DistinctLedgers / ExpectedLedgers (capped [0, 1]). Raw
+//     coverage. Dense sources (SDEX, Soroswap) approach 1.0; sparse sources (Blend
+//     auctions, CCTP) are naturally low because the contract doesn't emit per ledger.
 //   - **GapFreePct** = 1 - MaxGapLedgers / ExpectedLedgers. Goes
 //     to 1.0 when no contiguous gap larger than the per-target
 //     [GapDetectorTarget.EffectiveMinGapSize] threshold exists.
@@ -23,13 +22,10 @@ import (
 //     DensityPct is low — they're emitting on cadence, just not
 //     every ledger.
 //
-// Both honest. Together they say "we have X% of emitted events
-// AND no unexplained breaks." A cascade incident drops both;
-// natural sparsity drops only DensityPct.
+// Both honest: a cascade incident drops both; natural sparsity drops only DensityPct.
 //
-// LastUpdated is the gap detector's last successful cycle for
-// this source — operators read this to confirm the signal isn't
-// stale during an incident.
+// LastUpdated is the gap detector's last successful cycle for this source —
+// operators read it to confirm the signal isn't stale during an incident.
 type SourceCoverage struct {
 	Source          string
 	Table           string

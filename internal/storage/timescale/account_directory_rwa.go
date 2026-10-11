@@ -24,13 +24,9 @@ import (
 // has always accepted both strkey forms (migration 0136 —
 // `^[GC][A-Z2-7]{55}$`, because the upstream set tags contract addresses
 // too). So the contract arm walks it.
-//
-// WHAT THIS IS NOT. It is not a second trust surface bolted on. The
-// classic arm has read this same table for requirement R3 since the
-// surface shipped; the contract arm reads the same rows under the same
-// scam vocabulary and a NARROWER recognition vocabulary. What changes is
-// which column is the key: the issuer G-address for a classic asset, the
-// contract address itself for a contract.
+// Unlike the classic arm, which keys on the issuer G-address, the contract arm
+// keys on the contract address itself, under the same scam vocabulary and a
+// NARROWER recognition vocabulary.
 
 // DirectoryRWACensus accounts for every curated directory row the
 // contract-arm scan walked: the population it started from, and a named

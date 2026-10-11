@@ -49,23 +49,6 @@ func (s *Store) UpsertProtocolContract(ctx context.Context, source, contractID, 
 	return nil
 }
 
-// LoadProtocolContracts returns every child contract C-strkey registered
-// for source, as a flat slice. Used by the indexer / projector / audit
-// commands at startup to warm a gated decoder's contractid.Registry.
-//
-// Returns an empty slice (not nil + error) when the source has no rows —
-// the steady state before `stellarindex-ops seed-protocol-contracts -source
-// <name>` has run. The gate then sees an empty registry and (per ADR-0035)
-// drops every child event until seeded; the genesis walk is a deploy
-// precondition.
-// ListProtocolContracts returns every registered child contract for
-// source as full rows (contract + deploying factory + first-observed
-// ledger), ordered by first_ledger then contract_id so the API serves
-// a stable listing. The flat-ID LoadProtocolContracts above stays as the
-// decoder-warmup seam; this backs GET /v1/protocols/{name}.
-//
-// first_ledger is NULL when the seeding path didn't know it; that maps
-// to FirstLedger 0 here (and the NULLs sort last).
 // ProtocolContractIndex returns a contract_id → source map over every
 // registered protocol contract, regardless of source. Backs the explorer's
 // contract-attribution overlay: the contracts directory + contract detail
@@ -94,6 +77,14 @@ func (s *Store) ProtocolContractIndex(ctx context.Context) (map[string]string, e
 	return out, nil
 }
 
+// ListProtocolContracts returns every registered child contract for
+// source as full rows (contract + deploying factory + first-observed
+// ledger), ordered by first_ledger then contract_id so the API serves
+// a stable listing. The flat-ID LoadProtocolContracts stays as the
+// decoder-warmup seam; this backs GET /v1/protocols/{name}.
+//
+// first_ledger is NULL when the seeding path didn't know it; that maps
+// to FirstLedger 0 here (and the NULLs sort last).
 func (s *Store) ListProtocolContracts(ctx context.Context, source string) ([]ProtocolContract, error) {
 	if source == "" {
 		return nil, errors.New("timescale: ListProtocolContracts: empty source")
@@ -275,6 +266,15 @@ func (s *Store) listContractsFilteredBySource(ctx context.Context, table, column
 	return out, nil
 }
 
+// LoadProtocolContracts returns every child contract C-strkey registered
+// for source, as a flat slice. Used by the indexer / projector / audit
+// commands at startup to warm a gated decoder's contractid.Registry.
+//
+// Returns an empty slice (not nil + error) when the source has no rows —
+// the steady state before `stellarindex-ops seed-protocol-contracts -source
+// <name>` has run. The gate then sees an empty registry and (per ADR-0035)
+// drops every child event until seeded; the genesis walk is a deploy
+// precondition.
 func (s *Store) LoadProtocolContracts(ctx context.Context, source string) ([]string, error) {
 	if source == "" {
 		return nil, errors.New("timescale: LoadProtocolContracts: empty source")

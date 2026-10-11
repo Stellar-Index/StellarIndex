@@ -3,30 +3,26 @@
 
 package timescale
 
-// The XLM/USD anchor: the one rate every read-side XLM-triangulated price
-// is multiplied by. Every renderer below reads the same population through
-// [xlmUSDAnchorMinutes], so the scalar, grid and per-period shapes cannot
-// disagree about which rows count.
+// The XLM/USD anchor: the one rate every read-side XLM-triangulated price is
+// multiplied by. Every renderer reads the same population through
+// [xlmUSDAnchorMinutes], so the scalar, grid and per-period shapes agree.
 //
-// Population: XLM in every alias form ([canonical.AssetAliases] order:
-// native, crypto:XLM, the SAC) against every USD proxy ([usdProxyQuotes]),
-// in BOTH stored directions — SDEX stores the offer's sold asset as base and
-// swap-direction venues store token_in, so (USDC, native) and
-// (USDC-SAC, XLM-SAC) rows carry real XLM/USD trades; they enter as 1/vwap.
-// Closed minutes only (ADR-0015).
+// Population: XLM in every alias form ([canonical.AssetAliases] order: native,
+// crypto:XLM, the SAC) against every USD proxy ([usdProxyQuotes]), in BOTH stored
+// directions — SDEX stores the offer's sold asset as base and swap-direction
+// venues store token_in, so reversed rows enter as 1/vwap. Closed minutes only
+// (ADR-0015).
 //
 // Per minute and form the rate is the volume_usd-weighted mean of those rows.
-// volume_usd, never the leg sums: CEX amounts are scaled 1e8 and on-chain
-// ones 1e7, so leg sums would weight a CEX row 10x; volume_usd is already USD
-// at each source's own scale.
+// volume_usd, never the leg sums: CEX amounts are scaled 1e8 and on-chain ones
+// 1e7, so leg sums would weight a CEX row 10x.
 //
 // Across forms the FIRST form (alias order) with a qualifying minute in the
 // freshness window wins, newest minute within it — the same contract as the
 // ingest resolver's alias loop ([VWAPUSDFXResolver.queryDB]): SAC last, so a
-// thin Soroban pool printing after a quiet SDEX minute cannot set the rate
-// for the whole catalogue. Within one form a lone dust row is still the
-// minute's rate when nothing else printed; the per-row floor matches the
-// resolver's [directLegMinQuoteVolume].
+// thin Soroban pool printing after a quiet SDEX minute cannot set the rate for
+// the whole catalogue. Within one form a lone dust row is still the minute's
+// rate when nothing else printed (per-row floor [directLegMinQuoteVolume]).
 
 // xlmUSDAnchorMaxAge is how old the XLM/USD minute behind a triangulated price
 // may be at the instant it is applied: the ingest resolver's default

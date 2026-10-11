@@ -478,19 +478,14 @@ func ApplicableGapDetectorTargets(targets []GapDetectorTarget, network string, l
 // target, extracted so its shape is unit-testable without a database
 // (mirrors [countDistinctLedgersQuery]'s pattern).
 //
-// The `seeded` CTE UNION-ALLs a synthetic ledger row at $4 (the
-// caller's seed) whenever $4 is positive and below the window's `from`
-// ($1). Without a seed, a gap that spans a scan-window boundary — one
-// row just below `from`, the next row `from`+N — is invisible: the
-// preceding row never entered the CTE, so LAG's first pairing inside
-// the window has no `prev_l` and is dropped by `WHERE prev_l IS NOT
-// NULL`. Every steady-state gap threshold (>= 1000 ledgers) is wider
-// than a 30-min or 6h incremental window, so without the seed this
-// boundary-split class would be the dominant failure mode in steady
-// state. Seeding with the last ledger the PREVIOUS cycle observed
-// present restores the pairing across the boundary at zero extra scan
-// cost — the seed is a single literal row, not a second query over the
-// table.
+// The `seeded` CTE UNION-ALLs a synthetic ledger row at $4 (the caller's seed)
+// whenever $4 is positive and below the window's `from` ($1). Without it, a gap
+// that spans a scan-window boundary (one row just below `from`, the next
+// `from`+N) is invisible: the preceding row never entered the CTE, so LAG's first
+// pairing has no `prev_l` and is dropped by `WHERE prev_l IS NOT NULL`. Every
+// steady-state gap threshold (>= 1000 ledgers) is wider than an incremental
+// window, so seeding with the last ledger the PREVIOUS cycle observed restores the
+// pairing at zero extra scan cost (the seed is a single literal row).
 //
 // timeBound is an extra predicate ANDed into the scan (from
 // [closeTimeBoundPredicate]); empty for targets without a

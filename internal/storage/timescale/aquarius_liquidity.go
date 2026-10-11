@@ -261,11 +261,6 @@ type AquariusPoolReserve struct {
 // ledger at the same op_index and event_index the snapshot is either
 // one's post-state, not provably the final one.
 //
-// This is the READ side of the Aquarius liquidity-depth signal that
-// InsertAquariusReserves captures, in per-asset base units. The DEX TVL
-// snapshot (internal/api/v1 refreshAquarius) values these reserves in USD
-// through the served price tiers, and its Basis restates both limits.
-//
 // Empty-safe: returns (nil, nil) when no reserves have been captured in the
 // window. windowDays <= 0 is treated as 90.
 func (s *Store) LatestAquariusReserves(ctx context.Context, windowDays int) ([]AquariusPoolReserve, error) {
