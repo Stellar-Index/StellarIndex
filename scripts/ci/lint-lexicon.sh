@@ -1,37 +1,12 @@
 #!/usr/bin/env bash
-# lint-lexicon.sh — domain-lexicon + idiom ratchet.
+# lint-lexicon.sh - domain-lexicon + idiom ratchet (docs/architecture/lexicon.md,
+# docs/engineering-standards.md "Go idioms").
 #
-# The lexicon is docs/architecture/lexicon.md; the idiom rules are
-# docs/engineering-standards.md "Go idioms". This script enforces the
-# cheap, grep-able subset in two modes:
-#
-#   ZERO rules — patterns the repo has NONE of today and must never
-#   gain (a violation fails immediately):
-#     - `func Fetch…` / `func Make…` — the verb lexicon is
-#       Get (single keyed read) / List (slice) / …Batch (multi-key) /
-#       New (constructor) / Load (embedded or file data). No synonyms.
-#     - non-slog logging imports (zap / zerolog / logrus / std "log")
-#       — slog is the only logger in this codebase.
-#
-#   RATCHET rules — deprecated vocabulary/idioms that already exist
-#   (renames ride other changes; see lexicon.md "migration rule") but
-#   must not SPREAD. Baseline = scripts/ci/lint-lexicon.baseline, one
-#   `<class> <file>` entry per grandfathered file:
-#     - coin              file uses Coin* identifiers for what the
-#                         lexicon calls an asset (Coinbase/CoinGecko
-#                         the venues are excluded — they're names).
-#     - positional-logger constructor takes `logger *slog.Logger`
-#                         positionally (canonical: Logger rides in
-#                         the trailing Options struct).
-#     - variadic-option   constructor takes `...Option` functional
-#                         options (canonical: a plain Options struct).
-#
-#   A file NOT in the baseline that gains a deviation fails the build.
-#   A baseline entry whose file no longer deviates is STALE and fails
-#   the build until the line is deleted — the baseline shrinks
-#   monotonically (deletion-only edits don't trip
-#   lint-baseline-growth.sh; additions require a Baseline-Growth:
-#   commit trailer, same as lint-imports.baseline).
+# ZERO rules fail immediately: `func Fetch*`/`func Make*` (use Get/List/...Batch/New/Load),
+# and non-slog logging imports.
+# RATCHET rules (classes coin, positional-logger, variadic-option) are grandfathered per file in
+# scripts/ci/lint-lexicon.baseline as `<class> <file>`. A new deviation fails; a stale entry
+# fails until deleted, so the baseline only shrinks (additions need a Baseline-Growth: trailer).
 #
 # Exit 0 clean, non-zero on any violation. Wired into verify.sh,
 # `make lint-lexicon`, and CI's import-checks job.
@@ -47,10 +22,7 @@ root="${1:-.}"
 BASELINE="${LEXICON_BASELINE:-scripts/ci/lint-lexicon.baseline}"
 fail=0
 
-# Bare `internal cmd pkg` (not `./internal …`) when root is the default: the
-# ratchet baseline stores paths exactly as grep prints them, and `-r "./x"`
-# prefixes every match with `./`, which would make every baseline entry
-# look stale on the very invocation the baseline was written against.
+# Bare dirs (not ./internal) so grep output matches the baseline's path form.
 if [ "$root" = "." ]; then
   dirs=(internal cmd pkg)
 else
@@ -69,9 +41,8 @@ if [ -n "$hits" ]; then
   fail=1
 fi
 
-# 2) slog is the only logger. The stdlib arm matches "log" with or without
-#    a leading import alias (`l "log"`, `_ "log"`) — anchored at the end so
-#    a longer path ending in /log ("github.com/foo/log") never matches.
+# 2) slog is the only logger. The stdlib arm tolerates an import alias but is anchored so
+#    paths merely ending in /log do not match.
 hits=$(grep -rnE '"(github\.com/rs/zerolog|go\.uber\.org/zap[a-z/]*|github\.com/sirupsen/logrus)"|(^|[[:space:]])([A-Za-z_][A-Za-z0-9_]* +)?"log"[[:space:]]*$' \
   --include='*.go' --exclude='*_test.go' "${dirs[@]}" 2>/dev/null || true)
 if [ -n "$hits" ]; then
@@ -86,16 +57,9 @@ current=$(mktemp)
 trap 'rm -f "$current"' EXIT
 
 {
-  # coin: Coin-identifiers for assets. NOT violations: the vendor
-  # names Coinbase / CoinGecko / CoinMarketCap (+ the CMC poller's
-  # cmcCoin wire type, which mirrors the vendor's JSON) and
-  # totalCoins (Stellar's own LedgerHeader field for lumens in
-  # existence — protocol vocabulary, not ours). A file counts only
-  # if it has a Coin token that survives that filter.
-  # NOTE: not `grep -vq` — BSD grep's -q reports raw match status and
-  # ignores -v, silently dropping files on macOS. Capturing what survives
-  # the filter and testing THAT for emptiness is portable, and (unlike a
-  # trailing `head -1`) never closes the pipe on a file full of matches.
+  # coin: Coin-identifiers for assets. Vendor names (Coinbase, CoinGecko, CoinMarketCap,
+  # cmcCoin) and Stellar's totalCoins are not violations.
+  # Capture the filtered output and test emptiness: BSD grep -q ignores -v, and head -1 would close the pipe.
   grep -rl 'Coin' --include='*.go' --exclude='*_test.go' "${dirs[@]}" 2>/dev/null | \
     while IFS= read -r f; do
       kept="$(grep -oE '[A-Za-z_]*Coin[A-Za-z_]*' "$f" | grep -vE 'Coinbase|CoinGecko|Coingecko|CoinMarketCap|cmcCoin|[Tt]otalCoins' || true)"
