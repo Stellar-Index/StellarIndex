@@ -12,13 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Graph-based cross-rate router: a port of the Rates Engine pathfinder
-// (predecessor system, rate_calculator.go). It answers "what is the price of
-// base in quote's terms?" when no direct market exists, by chaining fresh
-// per-pair rates through hub assets (XLM, USD, BTC, ...) and corroborating
-// across every independent path of the same (shortest) length.
-//
-// Two deliberate adaptations from the reference:
+// Graph-based cross-rate router: a port of the Rates Engine pathfinder (predecessor system, rate_calculator.go). It
+// answers "what is the price of base in quote's terms?" when no direct market exists, by chaining fresh per-pair
+// rates through hub assets (XLM, USD, BTC, ...) and corroborating across every independent path of the same
+// (shortest) length. Two deliberate adaptations from the reference:
 //  - Types: canonical.Pair / canonical.Asset and exact *big.Rat prices
 //    (ADR-0003). A rate's inverse is new(big.Rat).Inv(p), never 1.0/p; no
 //    float64 touches a served price.
@@ -28,14 +25,11 @@ import (
 //    matches the repo's masking-resistant median posture (robust.go /
 //    FilterOutliers / GuardServedVWAP) and isn't dragged by one divergent
 //    survivor.
-//
-// Confidence is weakest-link: a single dust SDEX print (0.00001 units for $10,
-// an implied ~$1M/unit) must never launder itself into a confident valuation by
-// riding through a hub. Every edge carries a confidence scalar in [0,1], a
-// route's confidence is the MINIMUM across its edges, and [CombineRoutes] gates
-// routes on a caller-supplied floor before treating a composite as confident.
-// Price math stays exact *big.Rat; confidence is a float64 quality weight, never
-// a served money value.
+// Confidence is weakest-link: a single dust SDEX print (0.00001 units for $10, an implied ~$1M/unit) must never
+// launder itself into a confident valuation by riding through a hub. Every edge carries a confidence scalar in [0,1],
+// a route's confidence is the MINIMUM across its edges, and [CombineRoutes] gates routes on a caller-supplied floor
+// before treating a composite as confident. Price math stays exact *big.Rat; confidence is a float64 quality weight,
+// never a served money value.
 
 var (
 	// ErrNoRoute is returned by [CombineRoutes] when no path of at most
@@ -442,13 +436,9 @@ type scoredRoute struct {
 	confidence float64
 }
 
-// CombineRoutes is the top-level cross-rate resolver: it finds the fewest-hop
-// routes from base to quote, gates them on weakest-link confidence, rejects
-// median-relative outliers, and serves the most-trusted surviving route(s).
-// minConfidence is the floor (0 disables it): routes at or above it alone back
-// the combine when any exist.
-//
-// Returns:
+// CombineRoutes is the top-level cross-rate resolver: it finds the fewest-hop routes from base to quote, gates them
+// on weakest-link confidence, rejects median-relative outliers, and serves the most-trusted surviving route(s).
+// minConfidence is the floor (0 disables it): routes at or above it alone back the combine when any exist. Returns:
 //   - composite: the MEMBER median of the highest-confidence tier, chosen BEFORE
 //     outlier omission ([highestConfidencePrice]): a lower-confidence route can
 //     trip diverged but never move the top price.
@@ -614,13 +604,11 @@ func maxConfidence(scored []scoredRoute) float64 {
 	return best
 }
 
-// highestConfidencePrice is the SERVED composite: the MEMBER median of the
-// prices of only the routes whose weakest-link confidence equals the maximum
-// (the top-confidence TIER), computed on the GATED set BEFORE outlier omission.
-// A lower-confidence route therefore can never evict the top tier as a
-// price-median outlier: a thin, unguarded bridge route (e.g. XLM->BTC->GBP,
-// whose XLM/BTC leg escapes the USD-volume floor) can trip the divergence flags
-// but never move the price.
+// highestConfidencePrice is the SERVED composite: the MEMBER median of the prices of only the
+// routes whose weakest-link confidence equals the maximum (the top-confidence TIER), computed on
+// the GATED set BEFORE outlier omission. A lower-confidence route therefore can never evict the top
+// tier as a price-median outlier: a thin, unguarded bridge route (e.g. XLM->BTC->GBP, whose XLM/BTC
+// leg escapes the USD-volume floor) can trip the divergence flags but never move the price.
 //   - single route: that route's price.
 //   - one deep route + one thin bridge route: the deep route's price, even when
 //     the thin one is a divergent majority; the disagreement still sets
@@ -630,12 +618,11 @@ func maxConfidence(scored []scoredRoute) float64 {
 //     disagreeing routes. A divergent minority (median-relative, >=3 only) is
 //     dropped first.
 //
-// Coherent with combinedConfidence = maxConfidence(gated): we serve the price OF
-// the route(s) whose confidence we report. The top tier is never empty when
-// routes is non-empty.
+// Coherent with combinedConfidence = maxConfidence(gated): we serve the price OF the route(s) whose
+// confidence we report. The top tier is never empty when routes is non-empty.
 //
-// Also returns the top tier's size after its own outlier omission
-// (servedRouteCount, distinct from pathCount).
+// Also returns the top tier's size after its own outlier omission (servedRouteCount, distinct from
+// pathCount).
 func highestConfidencePrice(routes []scoredRoute) (*big.Rat, int) {
 	best := maxConfidence(routes)
 	top := make([]*big.Rat, 0, len(routes))
@@ -678,14 +665,12 @@ func spreadExceeds(vals []*big.Rat, pct int) bool {
 	return lhs.Cmp(rhs) > 0
 }
 
-// corroboratingRouteCount is the anti-manipulation corroboration count
-// ([CombineRoutes]' corroborationCount): the number of INDEPENDENT,
-// tightly-agreeing, non-diverged routes backing the composite. It is
-// deliberately much stricter than the raw survivor count, so "N routes agree"
-// can't be faked by wash-trading a single shared leg. Rules, in order:
+// corroboratingRouteCount is the anti-manipulation corroboration count ([CombineRoutes]' corroborationCount): the
+// number of INDEPENDENT, tightly-agreeing, non-diverged routes backing the composite. It is deliberately much
+// stricter than the raw survivor count, so "N routes agree" can't be faked by wash-trading a single shared leg.
+// Rules, in order:
 //   - diverged: 0 (fail closed).
-//   - 0 or 1 survivor: that count; one route is the "one unverified path"
-//     baseline (1).
+//   - 0 or 1 survivor: that count (one route is the "one unverified path" baseline, 1).
 //   - 2+ survivors with no tightly-agreeing pair (within
 //     routerCorroborationAgreePct): 0. Routes that fit the loose 40% outlier
 //     band but actively disagree are evidence of a PROBLEM, so this drops below

@@ -91,14 +91,12 @@ import (
 // probe, cache refreshers, prewarm, stream publisher, webhook sender, usage
 // rollup, signup reaper) would take down every healthy in-flight request.
 //
-// The trade-off: the panicking worker STOPS and is not restarted, so a
-// crash-looping refresher becomes a silently stale cache rather than a
-// crash-looping process. That is the better failure for a read API, hence Error
-// level and the full stack.
+// The panicking worker STOPS and is not restarted, so a crash-looping refresher
+// becomes a silently stale cache rather than a crash-looping process: the
+// better failure for a read API, hence Error level and the full stack.
 //
 // Deliberately NOT applied to the http.Server goroutine: if the listener dies
-// the process should die, since recovering would leave a running process serving
-// nothing.
+// the process should die, since recovering would leave it serving nothing.
 //
 // It reports through [worker.Report], which increments
 // stellarindex_worker_panics_total{worker} BEFORE logging, so a dead worker is
@@ -361,27 +359,23 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		})
 	}
 
-	// Rate limit — separate buckets per tier.
-	// `anon` is keyed by remote IP (with Subject.Identifier when an
-	// auth middleware has stamped one); `auth` is keyed per-API-key
-	// or per-Subject for authenticated tiers (apikey, SEP-10).
+	// Rate limit: separate buckets per tier. `anon` is keyed by remote IP (with
+	// Subject.Identifier when an auth middleware has stamped one); `auth` per
+	// API key or per Subject for authenticated tiers (apikey, SEP-10).
 	//
-	// The buckets are constructed
-	// even when Redis is absent. ratelimit.New(nil, …) returns a Bucket
-	// backed by an IN-PROCESS fixed-window limiter, so the anon/key
-	// tiers stay ENFORCED (fail-closed, single-instance accounting)
-	// rather than the stack running uncapped; an anonymous flood would
-	// otherwise have no limiter at all. Single-instance accounting is correct
-	// for the R1 single-instance deployment; a future multi-instance
-	// deployment provides Redis and gets fleet-wide accounting back.
-	// 0 is a valid, Validate()-accepted
-	// value for either limit, but it means "this tier is completely
-	// UNBOUNDED" (fail-open) — a config typo or a copy-pasted
-	// dev-profile value silently disables abuse protection with no
-	// signal anywhere. Warn loudly at boot so the choice is visible
-	// even though it isn't rejected (an operator may have a
-	// legitimate reason — e.g. auth_mode=apikey with a downstream
-	// WAF doing the limiting).
+	// The buckets are constructed even when Redis is absent. ratelimit.New(nil, ...)
+	// returns a Bucket backed by an IN-PROCESS fixed-window limiter, so the anon/key
+	// tiers stay ENFORCED (fail-closed, single-instance accounting) rather than the
+	// stack running uncapped. That is correct for the R1 single-instance
+	// deployment; a multi-instance deployment provides Redis and gets fleet-wide
+	// accounting back.
+	//
+	// 0 is a valid, Validate()-accepted value for either limit, but it means "this
+	// tier is completely UNBOUNDED" (fail-open): a config typo or a copy-pasted
+	// dev-profile value silently disables abuse protection with no signal anywhere.
+	// Warn loudly at boot so the choice is visible even though it isn't rejected
+	// (an operator may have a legitimate reason, e.g. auth_mode=apikey with a
+	// downstream WAF doing the limiting).
 	if cfg.API.AnonRateLimitPerMin == 0 {
 		logger.Warn("anonymous rate limit is DISABLED (api.anon_rate_limit_per_min=0) — anonymous requests are UNBOUNDED",
 			"auth_mode", cfg.API.AuthMode)
@@ -1507,29 +1501,22 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 
 	// Prewarm the classic circulating-supply cache OUT OF BAND: it backs
 	// market-cap enrichment on /v1/assets, and its full-table GROUP BY outlives
-	// the request timeout, so a cold fill on the request path would cost the
-	// first visitor after every deploy a slow, degraded page. It runs on
-	// prewarmHeavy's 5-minute cadence against a 10-minute TTL, so it stays
-	// permanently warm; each call reuses the request path's single-flight +
-	// retry-gap and is a cheap no-op when the entry is live.
-	//
-	// Other prewarms ride this loop, each because its build would otherwise run
+	// the request timeout, so a cold fill on the request path would cost the first
+	// visitor after every deploy a slow, degraded page. It runs on prewarmHeavy's
+	// 5-minute cadence against a 10-minute TTL, so it stays permanently warm; each
+	// call reuses the request path's single-flight + retry-gap and is a cheap no-op
+	// when the entry is live. Other prewarms ride this loop, each because its build would otherwise run
 	// inline on a request deadline:
 	//  - PrewarmAccountsWealth (15-minute TTL, two cycles of slack).
-	//  - PrewarmContractsDirectory (the /v1/contracts default rung is a
-	//    multi-day GROUP BY; 5-minute TTL).
-	//  - PrewarmOpTypeStats (5-minute TTL).
-	//  - PrewarmNetworkThroughput (a FINAL scan over up to a year of ledgers;
-	//    5-minute TTL).
+	//  - PrewarmContractsDirectory (multi-day GROUP BY on the default rung).
+	//  - PrewarmNetworkThroughput (a FINAL scan over up to a year of ledgers).
 	//  - PrewarmNativeLiquidityPools: only the ENTRY must exist for the request
-	//    path to stop blocking; freshness comes from the request-kicked refresh
-	//    at its 60s TTL, so this is a never-cold/repair guarantee.
-	//  - PrewarmSep1Images (logo map over every issuer's cached stellar.toml,
-	//    448 MB of JSON across 35,829 issuers on r1; rebuilt inline it costs a
-	//    request 10-13 s; 10-minute TTL).
-	//  - PrewarmContractProtocolIndex (cohort view's contract-to-protocol map;
-	//    a request that had spent its budget would cache a statics-only map for
-	//    everyone; 10-minute TTL, an incomplete build retries within 30 s).
+	//    path to stop blocking; freshness comes from the request-kicked refresh at
+	//    its 60s TTL, so this is a never-cold/repair guarantee.
+	//  - PrewarmSep1Images (logo map over every issuer's cached stellar.toml; 10-13 s
+	//    inline on r1; 10-minute TTL).
+	//  - PrewarmContractProtocolIndex (a request that had spent its budget would
+	//    cache a statics-only map for everyone; an incomplete build retries in 30 s).
 	bgWG.Add(1)
 	go func() {
 		defer bgWG.Done()
@@ -1575,28 +1562,22 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		prewarmClassicLakeSupply(rootCtx, apiSrv)
 	}()
 
-	// RWA prewarm: its own goroutine, NOT the 5-minute loop above, for
-	// the same reason the lake-supply pass has one — the membership
-	// rebuild is an indexed scan over every issuer-bound SEP-1 payload
-	// (1.18M currency entries on r1) plus the curated-directory walk,
-	// measured at ~11.5 s, and it must never delay the cheap prewarms.
+	// RWA prewarm: its own goroutine, NOT the 5-minute loop above, like the
+	// lake-supply pass: the membership rebuild is an indexed scan over every
+	// issuer-bound SEP-1 payload (1.18M currency entries on r1) plus the
+	// curated-directory walk, ~11.5 s, and must never delay the cheap prewarms.
 	//
-	// What it is for: before the rebuild was detached, the /rwa page's three routes
-	// shared ONE ten-minute membership cache that rebuilt INLINE on
-	// whichever request happened to find it expired. The route's
-	// latency on r1 was perfectly bimodal — 39 of 43 requests under 1 s,
-	// the other 4 over 10 s — so roughly one visitor in ten met a
-	// twelve-second page. The rebuild is detached now, so a stale set
-	// costs a request nothing; this is what stops it being cold in the
-	// first place, and what makes the waiter for the first build after
-	// a deploy this goroutine rather than a visitor.
+	// Why: before the rebuild was detached, the /rwa page's three routes shared ONE
+	// ten-minute membership cache that rebuilt INLINE on whichever request found it
+	// expired, so about one visitor in ten met a twelve-second page. The rebuild is
+	// detached now, so a stale set costs a request nothing; this keeps it from being
+	// cold in the first place and makes this goroutine, not a visitor, the waiter
+	// for the first build after a deploy.
 	//
 	// Cadence: 5 minutes against the caches' 10-minute TTLs, the same
-	// two-cycles-of-slack rule PrewarmClassicSupply and
-	// PrewarmSep1Images follow. Freshness does not depend on it — the
-	// request-kicked detached refresh maintains that — so this is a
-	// never-cold/repair guarantee, and every pass that finds the entry
-	// warm is a no-op.
+	// two-cycles-of-slack rule PrewarmClassicSupply and PrewarmSep1Images follow.
+	// Freshness does not depend on it (the request-kicked detached refresh keeps
+	// that), so it is a never-cold/repair guarantee and a warm pass is a no-op.
 	bgWG.Add(1)
 	go func() {
 		defer bgWG.Done()
@@ -1707,29 +1688,23 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		IdleTimeout:       120 * time.Second,
 	}
 
-	// Tell the SSE writers when the drain starts. httpSrv.Shutdown waits
-	// for every active connection to become IDLE, and an SSE connection
-	// never is — it holds an open response for as long as the client
-	// reads. The stream handlers watch r.Context(), which cancels when
-	// the CLIENT leaves, not when this process does, so without this
-	// hook a single attached stream pinned the drain for the whole 30s
-	// budget below: Shutdown returned "context deadline exceeded", the
-	// process exited on top of the still-open connection (the client saw
-	// a truncated response), and the background-worker wait that shares
-	// the deadline inherited nothing. Measured on r1, same
-	// binary: 30.18s with one browser on /v1/ledger/stream, 0.21s with
-	// none — 30s of avoidable downtime on every deploy that happened to
-	// have a viewer attached, against a 99.9% availability SLO.
+	// Tell the SSE writers when the drain starts. httpSrv.Shutdown waits for every
+	// active connection to become IDLE, and an SSE connection never is. The stream
+	// handlers watch r.Context(), which cancels when the CLIENT leaves, not when
+	// this process does, so without this hook a single attached stream pinned the
+	// drain for the whole 30s budget below: Shutdown returned "context deadline
+	// exceeded", the process exited on top of the open connection (truncated
+	// response), and the background-worker wait sharing the deadline inherited
+	// nothing. Measured on r1: 30.18s with one browser on /v1/ledger/stream, 0.21s
+	// with none, against a 99.9% availability SLO.
 	//
-	// Shutdown invokes registered hooks the instant it starts, which is
-	// exactly the moment the streams need to hear about it.
+	// Shutdown invokes registered hooks the instant it starts, exactly when the
+	// streams need to hear about it.
 	//
-	// NOT BaseContext. Deriving every request context from rootCtx would
-	// also free the streams, and would cancel every ordinary in-flight
-	// request along with them the moment SIGTERM landed — trading a
-	// stream problem for an abrupt teardown of the overwhelming
-	// majority of traffic that is not a stream. The drain is visible
-	// only to the stream writers.
+	// NOT BaseContext. Deriving every request context from rootCtx would also free
+	// the streams, but would cancel every ordinary in-flight request the moment
+	// SIGTERM landed, trading a stream problem for an abrupt teardown of most
+	// traffic. The drain is visible only to the stream writers.
 	httpSrv.RegisterOnShutdown(apiSrv.BeginStreamDrain)
 
 	// Run the closed-bucket subscriber alongside the HTTP server.
@@ -2075,26 +2050,19 @@ func buildAPIKeyValidator(opts authValidatorOptions, logger *slog.Logger, modeNa
 	}
 }
 
-// buildSEP10Validator constructs an [auth.SEP10Validator] from the
-// API's SEP10Config. Reads the seed + JWT secret from the
-// configured env vars; missing or empty values surface as errors
-// the caller can decide to handle (auth_mode=sep10 → fail loud at
-// startup; otherwise → wire a Noop and log).
+// buildSEP10Validator constructs an [auth.SEP10Validator] from the API's
+// SEP10Config. Reads the seed + JWT secret from the configured env vars; missing
+// or empty values (including an unset SeedEnv / JWTSecretEnv, meaning SEP-10 is
+// not configured) surface as errors the caller handles: auth_mode=sep10 fails
+// loud at startup, otherwise it wires a Noop and logs.
 //
-// Empty SeedEnv / JWTSecretEnv (config not opted into SEP-10) is
-// also an error — the caller treats it as "feature not configured"
-// and falls back to the Noop. The behaviour is symmetric across
-// "env name unset" and "env value empty": both mean the operator
-// hasn't supplied a credential.
-// nilOrMounter returns nil-typed nil when the supplied
-// concrete *Handlers pointer is nil, otherwise returns it as
-// the v1.DashboardAuthMounter interface.
+// nilOrMounter returns a nil interface when the concrete *Handlers pointer is
+// nil, otherwise it returns it as the v1.DashboardAuthMounter interface.
 //
-// Naked assignment (`opts.DashboardKeys = bundle.keys`) wraps a
-// typed-nil pointer in a non-nil interface, so server.go's
-// `if s.dashboardKeys != nil` would mount routes whose handlers
-// then panic on first request when they dereference cfg. This
-// helper sidesteps the Go interface-nil-vs-pointer-nil gotcha.
+// Naked assignment (`opts.DashboardKeys = bundle.keys`) wraps a typed-nil
+// pointer in a non-nil interface, so server.go's `if s.dashboardKeys != nil`
+// would mount routes whose handlers then panic on first request. This helper
+// sidesteps the Go interface-nil-vs-pointer-nil gotcha.
 func nilOrMounter[T v1.DashboardAuthMounter](h T) v1.DashboardAuthMounter {
 	// Generic constraint catches both *dashboardauth.Handlers and
 	// *dashboardkeys.Handlers without runtime reflection.
@@ -2365,7 +2333,6 @@ func (t *inProcessSignupIPThrottle) CheckIP(ctx context.Context, ip string) erro
 // wireDashboardAuthThrottles sets authCfg's EmailLocker + LoginThrottle based on
 // Redis availability. Split out of buildDashboardBundle to keep that function
 // under the funlen ceiling.
-//
 // Per-email signup lock: Redis SETNX serialises first-login provisioning so two
 // callbacks for the same just-verified email can't both create speculative
 // Account rows. Without Redis the locker stays nil and the Suspend-on-conflict
@@ -2376,8 +2343,7 @@ func (t *inProcessSignupIPThrottle) CheckIP(ctx context.Context, ip string) erro
 // send quota. Without Redis it falls back to an in-process two-bucket throttle
 // (same shape and defaults as auth.RedisLoginThrottle), because the global
 // anonymous per-IP limit does not bound the per-target-email dimension.
-// Single-instance accounting, never an off switch, like the rate-limit tiers'
-// fallback in run().
+// Single-instance accounting, never an off switch.
 //
 // Passkey ceremony replay guard: each WebAuthn challenge is single-use, so the
 // spent-set must be SHARED or a replay routed to another instance is not seen.
@@ -2886,28 +2852,24 @@ var usdQuoteAsset = func() canonical.Asset {
 	return a
 }()
 
-// storeChange24hReader adapts *timescale.Store to v1.Change24hReader.
-// Looks up the latest closed prices_1m bucket whose end is at-or-
-// before now-24h for the asset/USD pair. sql.ErrNoRows (asset
-// first traded < 24h ago, or retention pruned the bucket) is
-// translated to v1.ErrChange24hUnavailable so the handler treats
-// it as "feature unavailable for this asset" rather than a real
-// failure. Other errors propagate unchanged.
+// storeChange24hReader adapts *timescale.Store to v1.Change24hReader. Looks up
+// the latest closed prices_1m bucket whose end is at-or-before now-24h for the
+// asset/USD pair. sql.ErrNoRows (first traded < 24h ago, or retention pruned the
+// bucket) becomes v1.ErrChange24hUnavailable so the handler treats it as
+// "unavailable for this asset", not a failure. Other errors propagate.
 //
-// Pegs is the same operator-declared classic USD-pegged set used
-// by the v1 handler's tryStablecoinFiatProxy fallback. When the
-// literal asset/fiat:USD lookup misses (the steady-state case on
-// Stellar mainnet — nothing on-chain quotes in fiat:USD), this
-// adapter walks the pegs and re-runs the at-or-before lookup
-// against asset/<peg>. First non-error result wins. Without
-// this, /v1/assets/{id}.change_24h_pct silently stays null for
-// every on-chain asset (the /v1/price handler has the same fallback).
+// Pegs is the same operator-declared classic USD-pegged set as the v1 handler's
+// tryStablecoinFiatProxy fallback. When the literal asset/fiat:USD lookup misses
+// (the steady state on mainnet: nothing on-chain quotes in fiat:USD), this
+// adapter walks the pegs and re-runs the lookup against asset/<peg>; first
+// non-error result wins. Without it /v1/assets/{id}.change_24h_pct silently
+// stays null for every on-chain asset.
 //
-// decimals is the confirmed non-7-decimals table. The bucket this
-// returns is a RAW prices_1m ratio, and both callers divide it into a
-// current price that is ALREADY decimals-normalised (lookupUSDPrice and
-// the batch row), so an un-normalised anchor put the two legs of one
-// percentage on different scales — see [normalizeChange24hAnchor].
+// decimals is the confirmed non-7-decimals table. The returned bucket is a RAW
+// prices_1m ratio, and both callers divide it into a current price that is
+// ALREADY decimals-normalised (lookupUSDPrice and the batch row), so an
+// un-normalised anchor put the two legs of one percentage on different scales;
+// see [normalizeChange24hAnchor].
 type storeChange24hReader struct {
 	s        *timescale.Store
 	pegs     []canonical.Asset
@@ -3200,14 +3162,11 @@ func warnCollapsedStreamCap(logger *slog.Logger, listenAddr string, maxStreamsPe
 //
 // Fires only when the anonymous tier is reachable AND capped:
 // anon_rate_limit_per_min > 0 under an auth mode that admits anonymous callers
-// (none / apikey_optional). apikey / sep10 reject anonymous requests with 401
-// before the limiter.
-//
-// Unlike warnCollapsedStreamCap this fires for a loopback bind too: the
+// (none / apikey_optional); apikey / sep10 reject anonymous requests before the
+// limiter. Unlike warnCollapsedStreamCap it fires for a loopback bind too: the
 // canonical R1 shape is 127.0.0.1:3000 behind Caddy, exactly where the collapse
-// bites. Only a non-empty trusted_proxy_cidrs silences it. A direct-bind deploy
-// can't be told apart from a proxied one, so the message is worded
-// conditionally.
+// bites. Only a non-empty trusted_proxy_cidrs silences it; a direct-bind deploy
+// can't be told apart from a proxied one, so the message is worded conditionally.
 func warnCollapsedAnonThrottle(logger *slog.Logger, authMode string, anonRateLimitPerMin int, trustedProxyCIDRs []string) {
 	if anonRateLimitPerMin <= 0 || len(trustedProxyCIDRs) > 0 {
 		return
@@ -3241,26 +3200,22 @@ func authModeAdmitsAnonymous(mode string) bool {
 	}
 }
 
-// warnOpenCORS logs a warning at startup when CORS is set to
-// allow every origin AND auth_mode permits authenticated calls.
-// The combination lets any third-party site issue authenticated
-// requests against the API on behalf of a logged-in browser
-// user — a classic CSRF amplifier when paired with cookie-based
-// auth (we use bearer tokens, which mitigates the worst of it,
-// but the wide-open posture is still a smell).
+// warnOpenCORS logs a warning at startup when CORS allows every origin AND
+// auth_mode permits authenticated calls: any third-party site could then issue
+// authenticated requests on behalf of a logged-in browser user (a CSRF
+// amplifier with cookie auth; we use bearer tokens, which mitigates the worst
+// of it, but the posture is still a smell). Default config ships
+// AllowedOrigins=[] (same-origin only); this fires only once an operator opts
+// into the wildcard.
 //
-// Default config ships AllowedOrigins=[] (same-origin only); this
-// warning only fires once an operator has
-// explicitly opted into the wildcard.
 // parseFiatPeggedClassics resolves the operator's
-// pricing_guard.fiat_pegged_classic_assets map (classic asset_key →
-// ISO-4217 ticker) into the asset_id → canonical fiat Asset map the
-// declared-peg price fill consumes. Config.Validate already hard-fails
-// malformed entries at load; the soft-fail here is belt-and-braces for
-// non-Validate construction paths, mirroring TradesConfig.USDPeggedClassics
-// (a missing peg is a smaller failure than refusing to start). Keys
-// are re-canonicalised via Asset.String() so lookup never depends on
-// the operator's exact spelling.
+// pricing_guard.fiat_pegged_classic_assets map (classic asset_key -> ISO-4217
+// ticker) into the asset_id -> canonical fiat Asset map the declared-peg price
+// fill consumes. Config.Validate already hard-fails malformed entries; the
+// soft-fail here is belt-and-braces for non-Validate construction paths,
+// mirroring TradesConfig.USDPeggedClassics (a missing peg is a smaller failure
+// than refusing to start). Keys are re-canonicalised via Asset.String() so
+// lookup never depends on the operator's spelling.
 func parseFiatPeggedClassics(raw map[string]string, logger *slog.Logger) map[string]canonical.Asset {
 	if len(raw) == 0 {
 		return nil
@@ -3381,11 +3336,11 @@ func (sessionPeekerAdapter) SessionFromContext(ctx context.Context) (v1.SessionI
 	}, true
 }
 
-// prewarmCaches keeps the heaviest read caches hot: the
-// /v1/sources?include=stats and /v1/markets / /v1/pools aggregations over the
-// trades hypertable take 5-10s cold, and TTLs of 30s-10min mean a pageload with
-// no recent neighbours would always pay the full cost. Stops on ctx cancel;
-// errors log at debug since the next cycle retries.
+// prewarmCaches keeps the heaviest read caches hot: the /v1/sources?include=stats
+// and /v1/markets / /v1/pools aggregations over the trades hypertable take 5-10s
+// cold, and TTLs of 30s-10min mean a pageload with no recent neighbours would
+// always pay the full cost. Stops on ctx cancel; errors log at debug since the
+// next cycle retries.
 //
 // Two cadences, because one 25s cycle running the 8s source-stats query, 12
 // market/pool variants and an assetsReader refresh held a Postgres backend at
@@ -3396,12 +3351,10 @@ func (sessionPeekerAdapter) SessionFromContext(ctx context.Context) (v1.SessionI
 //   - Light (markets/pools/assetsReader): 60s; each query is sub-second.
 //
 // The panic guard is registered inside prewarmCaches, not at the `go
-// prewarmCaches(…)` call site, so it stays correct if started from a second
+// prewarmCaches(...)` call site, so it stays correct if started from a second
 // place; it is a named function so the panic-guard test resolves this
-// declaration.
-//
-// lightCadence and issuersCacheTTL are package-level so the TTL-headroom
-// invariant between them has one source of truth.
+// declaration. lightCadence and issuersCacheTTL are package-level so the
+// TTL-headroom invariant between them has one source of truth.
 const (
 	lightCadence    = 60 * time.Second
 	issuersCacheTTL = 5 * time.Minute
@@ -3422,29 +3375,20 @@ func prewarmCaches(
 	defer recoverBackgroundWorker(logger, "prewarm-caches")
 	heavyCadence := 5 * time.Minute
 
-	// Fire both immediately on startup so the first user request
-	// after a binary restart hits a warm cache — CONCURRENTLY, because
-	// running them in sequence meant the user-facing pass waited on the
-	// operator-facing one.
+	// Fire both immediately on startup so the first user request after a restart
+	// hits a warm cache, CONCURRENTLY: run in sequence, the user-facing pass waited
+	// on the operator-facing one.
 	//
-	// prewarmHeavy's sources_stats query alone takes ~8s (see its own
-	// note below), and it ran FIRST. So for tens of seconds after every
-	// restart the listing keys were still cold while the heavy
-	// diagnostic aggregate churned. Measured on r1 with the API up at
-	// 05:10:16:
+	// prewarmHeavy's sources_stats query alone takes ~8s and it ran FIRST, so for
+	// tens of seconds after every restart the listing keys were cold while the heavy
+	// diagnostic aggregate churned. Measured on r1: real users, 21s and 46s after
+	// boot, paid 10 s cold fills (/v1/assets?limit=50 took 10026 ms, 2016 ms on the
+	// second hit) for keys the prewarm had not reached yet. Steady state was
+	// healthy, so this was purely a startup-window defect that recurred on every
+	// deploy.
 	//
-	//	05:10:37  10025 ms  /v1/assets?include=sparkline&limit=10&order_by=…
-	//	05:10:37  10026 ms  /v1/assets?limit=50
-	//	05:11:02   2016 ms  both again
-	//
-	// Real users, 21s and 46s after boot, paying cold fills for keys the
-	// prewarm had not reached yet. Steady state was already healthy (a
-	// constant 11 detail-prewarms per cycle, 94% cache hit rate), so this
-	// is purely a startup-window defect — and it recurs on every deploy.
-	//
-	// The two passes touch disjoint readers (stats vs
-	// markets/assets/issuers), so there is no shared state to race; each
-	// already carries its own per-call deadlines.
+	// The two passes touch disjoint readers (stats vs markets/assets/issuers), so
+	// there is no shared state to race; each carries its own per-call deadlines.
 	var warm sync.WaitGroup
 	warm.Add(2)
 	go func() {
@@ -3777,19 +3721,15 @@ var assetListingPrewarmLimits = []int{1, 5, 10, 50, 100, 500}
 // The handler overfetches by one (`ListAssetsOptions{Limit: limit + 1}`, for
 // cursor pagination), so a `?limit=50` request looks up the key for 51. This
 // helper takes USER-facing limits and applies the +1 itself so the arithmetic
-// lives in one place; measured at the r1 origin, a warm ?limit=50 took 0.007 s
-// and ?limit=51 (cold) 1.359 s.
+// lives in one place (r1 origin: warm ?limit=50 0.007 s, cold ?limit=51 1.359 s).
 //
 // Both orders are warmed: `order_by` is absent on most requests
 // (parseAssetsOrder maps that to AssetsOrderObservationCountDesc), but the
-// explorer's home table asks for volume_24h_usd_desc.
+// explorer's home table asks for volume_24h_usd_desc. Every other option stays
+// zero: those are the no-filter, no-cursor first-page requests.
 //
-// Every other option stays at its zero value: those are the no-filter, no-cursor
-// first-page requests; a filtered or paginated request is a deliberate narrowing
-// past the landing page.
-//
-// Each successfully warmed variant is also persisted to Redis (`snaps`,
-// nil-safe) so the NEXT process can seed this cache before it starts listening
+// Each warmed variant is also persisted to Redis (`snaps`, nil-safe) so the NEXT
+// process can seed this cache before it starts listening
 // (assets_listing_snapshot.go). The read goes through ListAssetsExtAt rather
 // than ListAssetsExt so the snapshot carries the rows' REAL observation time:
 // re-persisting a stale entry must not reset the age of data nothing has
@@ -3915,11 +3855,8 @@ const classicLakeSupplySweepGap = time.Minute
 //
 // Sweep-then-sleep rather than a ticker, like the protocol sweep: a cold pass
 // takes minutes and overlapping passes would double ClickHouse load when it is
-// already highest.
-//
-// Named, not inlined, so the first-sweep-runs-immediately property can be
-// asserted without standing up run(). It takes no logger: the listing read and
-// the lake read each log their own failures inside the Server.
+// already highest. Named, not inlined, so the first-sweep-runs-immediately
+// property can be asserted without standing up run(); it takes no logger.
 func prewarmClassicLakeSupply(ctx context.Context, srv *v1.Server) {
 	if srv == nil {
 		return
@@ -4045,27 +3982,20 @@ func selfPrewarmAdmitted(authMode string) bool {
 	return false
 }
 
-// selfPrewarmAssetEndpoints loops every 60s and HTTP-GETs
-// /v1/assets/<id> for native + every verified currency, against
-// our own listener. This warms ALL caches the handler touches —
-// not just the 7 CachedAssetsReader SWR slots that prewarmCaches
-// already covers, but also the F2-path readers (Volume24hUSDForAsset,
-// supply.LatestSupply, lookupUSDPrice, populateChange24h) that
-// prewarmCaches doesn't know about. Drift-safe by construction:
-// the call hits the same Server.Handler the user request would,
-// so every internal lookup happens with byte-identical args.
+// selfPrewarmAssetEndpoints loops every 60s and HTTP-GETs /v1/assets/<id> for
+// native + every verified currency, against our own listener. This warms ALL
+// caches the handler touches, not just the 7 CachedAssetsReader SWR slots that
+// prewarmCaches covers but also the F2-path readers (Volume24hUSDForAsset,
+// supply.LatestSupply, lookupUSDPrice, populateChange24h) it doesn't know about.
+// Drift-safe by construction: the call hits the same Server.Handler the user
+// request would, so every internal lookup happens with byte-identical args.
 //
-// Per `feedback_prewarm_handler_drift`: this is the canonical
-// pattern when handler fan-out is wider than the prewarm
-// goroutine's per-reader enumeration. Adding a new reader to the
-// /v1/assets/{id} handler tomorrow needs zero update here —
-// because we don't enumerate readers, we just exercise the
-// handler.
+// Per `feedback_prewarm_handler_drift`: this is the canonical pattern when
+// handler fan-out is wider than the prewarm goroutine's per-reader enumeration.
+// Adding a reader to the /v1/assets/{id} handler needs zero update here.
 //
-// Initial 3s sleep: lets the listener bind + lets prewarmCaches'
-// first cycle settle (so the user-facing latency we measure on
-// first warm hit reflects steady state, not the
-// boot-sequence-race window).
+// Initial 3s sleep: lets the listener bind and prewarmCaches' first cycle settle,
+// so the latency measured on the first warm hit reflects steady state.
 func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenAddr string, verifiedAssetIDs []string) {
 	// Guarded on the callee side for the same reason as prewarmCaches:
 	// this runs on a detached goroutine, and every request it issues
@@ -4137,26 +4067,24 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 	}
 }
 
-// storePriceAtReader adapts *timescale.Store to v1.PriceAtReader —
-// the point-in-time lookup behind /v1/price/at AND the
-// per-horizon references behind /v1/price/changes. Delegates to
-// ClosedVWAPAtOrBefore, which picks the finest CAGG resolution
-// (prices_1m → … → prices_1d) whose nearest at-or-before bucket is
-// within maxStaleness. sql.ErrNoRows translates to the sentinel so
-// the handler can 404 (or null a horizon) honestly.
-// This seam reads the SAME prices_1m closed
-// buckets as wiring.StorePriceReader.LatestPrice, so it must carry the SAME
-// withholding gates — otherwise one extra path segment (/v1/price/at,
-// /v1/price/changes) republishes every price /v1/price refuses. The
-// gates live here, at the reader seam, rather than in each handler:
-// both leaking routes call PriceAt, so gating once covers both and any
-// future PriceAt consumer inherits it. See wiring.PriceWithheld().
+// storePriceAtReader adapts *timescale.Store to v1.PriceAtReader: the
+// point-in-time lookup behind /v1/price/at AND the per-horizon references behind
+// /v1/price/changes. Delegates to ClosedVWAPAtOrBefore, which picks the finest
+// CAGG resolution (prices_1m -> ... -> prices_1d) whose nearest at-or-before
+// bucket is within maxStaleness. sql.ErrNoRows translates to the sentinel so the
+// handler can 404 (or null a horizon) honestly.
 //
-// The thin-market half is asked about `ts`, not about now. The
-// number served here is the bucket at-or-before ts, and a trailing
-// window ending today decides nothing about it — it withheld the whole
-// history of a market that has since gone quiet, and it passed the
-// dust-seeded early history of a market that has since become real.
+// This seam reads the SAME prices_1m closed buckets as
+// wiring.StorePriceReader.LatestPrice, so it must carry the SAME withholding
+// gates, otherwise one extra path segment (/v1/price/at, /v1/price/changes)
+// republishes every price /v1/price refuses. The gates live at the reader seam
+// rather than in each handler: both leaking routes call PriceAt, so gating once
+// covers both and any future PriceAt consumer. See wiring.PriceWithheld().
+//
+// The thin-market half is asked about `ts`, not about now. The number served is
+// the bucket at-or-before ts, and a trailing window ending today decides nothing
+// about it: it withheld the whole history of a market that has since gone quiet,
+// and passed the dust-seeded early history of a market that has since become real.
 type storePriceAtReader struct {
 	s         *timescale.Store
 	substance *pricingguard.SubstanceGate // nil → no thin-market gate

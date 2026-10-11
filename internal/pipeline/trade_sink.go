@@ -58,30 +58,24 @@ func isCtxErr(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// faultClass is the ADR-0041 classification of a write failure on the
-// ingest sink's durability edge. It is the single source of truth for
-// "retry or drop?" across all three sink paths — the trade batch path,
-// the external retry buffer, and the dispatcher's non-trade drain — so
-// they can never disagree about what a given error means.
+// faultClass is the ADR-0041 classification of a write failure on the ingest sink's durability
+// edge. It is the single source of truth for "retry or drop?" across all three sink paths — the
+// trade batch path, the external retry buffer, and the dispatcher's non-trade drain — so they can
+// never disagree about what a given error means.
 //
-// The rule is deliberately ASYMMETRIC: a DROP requires POSITIVE proof
-// that the write can never succeed; a block-and-retry is the DEFAULT.
-// The opposite rule — retry only what [timescale.IsInfraError]
-// positively recognises and drop everything else — handles a genuine
-// infrastructure fault whose SQLSTATE that predicate does not
-// enumerate (53100 disk_full, 53200 out_of_memory, class 58 system/I-O
-// errors, XX000 internal_error) as a permanent per-row data fault: the
-// trade is dropped while the enqueue-advanced cursor (ADR-0041
-// Decision 1) sails past its ledger, which is precisely the silent
-// served-tier gap ADR-0041 exists to prevent.
+// The rule is deliberately ASYMMETRIC: a DROP requires POSITIVE proof that the write can never
+// succeed; a block-and-retry is the DEFAULT. The opposite rule — retry only what
+// [timescale.IsInfraError] positively recognises and drop everything else — handles a genuine
+// infrastructure fault whose SQLSTATE that predicate does not enumerate (53100 disk_full, 53200
+// out_of_memory, class 58 system/I-O errors, XX000 internal_error) as a permanent per-row data
+// fault: the trade is dropped while the enqueue-advanced cursor (ADR-0041 Decision 1) sails past
+// its ledger, which is precisely the silent served-tier gap ADR-0041 exists to prevent.
 //
-// Under the asymmetric rule an unrecognised fault blocks-and-retries
-// instead: the drain goroutine stalls, the events channel fills,
-// ProcessLedger's `events <- ev` send blocks, and the cursor cannot
-// advance past writes that have not landed. Nothing is lost and the
-// stall is loud — every attempt bumps
-// TradeInsertRetriesTotal{outcome="retry"}, which the
-// `trade_insert_backpressure` alert fires on.
+// Under the asymmetric rule an unrecognised fault blocks-and-retries instead: the drain goroutine
+// stalls, the events channel fills, ProcessLedger's `events <- ev` send blocks, and the cursor
+// cannot advance past writes that have not landed. Nothing is lost and the stall is loud — every
+// attempt bumps TradeInsertRetriesTotal{outcome="retry"}, which the `trade_insert_backpressure`
+// alert fires on.
 type faultClass int
 
 const (
@@ -164,9 +158,8 @@ func isPermanentDataFault(err error) bool {
 	return false
 }
 
-// retryInfra runs do and, while it returns a [faultInfra]-classified
-// error, retries with capped exponential backoff until do succeeds,
-// returns a permanent data fault, or ctx is done.
+// retryInfra runs do and, while it returns a [faultInfra]-classified error, retries with capped
+// exponential backoff until do succeeds, returns a permanent data fault, or ctx is done.
 //
 // Return contract:
 //   - nil                         — do eventually succeeded.
@@ -177,16 +170,13 @@ func isPermanentDataFault(err error) bool {
 //     (shutdown); the caller surfaces the abandoned, lake-recoverable
 //     work.
 //
-// The retry predicate is [classifyFault], not [timescale.IsInfraError]
-// — an error nobody has positively classified is retried, not dropped.
-// See the [faultClass] godoc.
-//
-// Used for single-row trade inserts AND for the dispatcher drain's
-// non-trade served-tier writes, hence the `op` label in the logs.
-//
-// Blocking is the point: while this loops, the calling drain goroutine
-// is not consuming the events channel, which is the backpressure that
-// gates the on-chain ledger cursor during a Postgres outage.
+// The retry predicate is [classifyFault], not [timescale.IsInfraError] — an error nobody has
+// positively classified is retried, not dropped. See the [faultClass] godoc.
+// Used for single-row trade inserts AND for the dispatcher drain's non-trade served-tier writes,
+// hence the `op` label in the logs.
+// Blocking is the point: while this loops, the calling drain goroutine is not consuming the events
+// channel, which is the backpressure that gates the on-chain ledger cursor during a Postgres
+// outage.
 func retryInfra(ctx context.Context, logger *slog.Logger, op string, do func(context.Context) error) error {
 	backoff := infraRetryInitialBackoff
 	attempts := 0
@@ -224,11 +214,9 @@ func retryInfra(ctx context.Context, logger *slog.Logger, op string, do func(con
 	}
 }
 
-// flushTradeBatch writes one buffered trade batch with the resilient
-// failure policy (ADR-0041): a plain "batch failed -> per-row -> drop"
-// path would silently lose writes during a Postgres outage while the
-// cursor advanced.
-//
+// flushTradeBatch writes one buffered trade batch with the resilient failure policy (ADR-0041): a
+// plain "batch failed -> per-row -> drop" path would silently lose writes during a Postgres outage
+// while the cursor advanced.
 //   - success: return.
 //   - not positively recognised as infra: isolate per-row, so one bad
 //     row can't sink the batch. Each row is re-classified on its own
@@ -239,15 +227,12 @@ func retryInfra(ctx context.Context, logger *slog.Logger, op string, do func(con
 //     CEX/FX trades (no cursor, vendor-refillable) go to the bounded
 //     async retry buffer, which drops-oldest under sustained overflow.
 //
-// extBuf may be nil (shutdown drain / projector / backfill paths); then
-// every trade block-and-retries within the caller's bounded context.
-//
-// Returns the trades neither written nor permanently dropped because
-// ctx was cancelled mid-flush (nil otherwise). The caller must carry
-// them into its shutdown drain ([persistWorker] -> flushShutdown):
-// per-row isolation against the same dead ctx would misreport accepted
-// trades as lost. Bounded shutdown callers report leftovers via
-// [reportAbandonedTrades]; there an abandon is a genuine loss.
+// extBuf may be nil (shutdown drain / projector / backfill); then every trade block-and-retries.
+// Returns the trades neither written nor permanently dropped because ctx was cancelled mid-flush
+// (nil otherwise). The caller must carry them into its shutdown drain ([persistWorker] ->
+// flushShutdown): per-row isolation against the same dead ctx would misreport accepted trades as
+// lost. Bounded shutdown callers report leftovers via [reportAbandonedTrades]; there an abandon is
+// a genuine loss.
 func flushTradeBatch(ctx context.Context, logger *slog.Logger, w tradeWriter, extBuf *externalRetryBuffer, batch []canonical.Trade, workerID int) []canonical.Trade {
 	if len(batch) == 0 {
 		return nil
@@ -328,28 +313,23 @@ func reportAbandonedTrades(logger *slog.Logger, lt *lossTracker, phase string, a
 		"phase", phase, "batch_size", len(abandoned), "ledger_from", lo, "ledger_to", hi, "err", err)
 }
 
-// persistTradeRouted persists ONE trade with the ADR-0041 policy while
-// preserving the on-chain / external split that [flushTradeBatch]'s
-// infra path applies to a whole batch: on-chain trades block-and-retry
-// (cursor gating), external CEX/FX trades hand off to the bounded async
-// buffer so they never block the pipeline. A permanent data fault is
-// counted and skipped for both.
+// persistTradeRouted persists ONE trade with the ADR-0041 policy while preserving the on-chain /
+// external split that [flushTradeBatch]'s infra path applies to a whole batch: on-chain trades
+// block-and-retry (cursor gating), external CEX/FX trades hand off to the bounded async buffer so
+// they never block the pipeline. A permanent data fault is counted and skipped for both.
 //
-// extBuf == nil (shutdown drain / projector / backfill paths) makes
-// every trade block-and-retry inside the caller's bounded context.
+// extBuf == nil (shutdown drain / projector / backfill paths) makes every trade block-and-retry
+// inside the caller's bounded context.
 //
-// The batch path's per-row isolation pass must not call persistTrade
-// directly: an unrecognised fault blocks-and-retries, so routing
-// external rows here is what keeps "external never blocks the
+// The batch path's per-row isolation pass must not call persistTrade directly: an unrecognised
+// fault blocks-and-retries, so routing external rows here is what keeps "external never blocks the
 // pipeline" (ADR-0041 acceptance caveat) true.
 //
-// Returns persistTrade's abandon error (ctx cancelled mid-retry) for a
-// trade that block-retried, so [flushTradeBatch] can hand the un-landed
-// row back to its caller; a *[TradeDroppedError] when the trade was
-// permanently dropped on EITHER arm (the same contract as
-// [persistTrade], so nil never means "dropped"); nil when the trade landed
-// or was handed to the external retry buffer (not lost). The batch-path
-// callers carry a row only on [isCtxErr], which a drop never satisfies.
+// Returns persistTrade's abandon error (ctx cancelled mid-retry) for a trade that block-retried, so
+// [flushTradeBatch] can hand the un-landed row back to its caller; a *[TradeDroppedError] when the
+// trade was permanently dropped on EITHER arm (the same contract as [persistTrade], so nil never
+// means "dropped"); nil when the trade landed or was handed to the external retry buffer (not
+// lost). The batch-path callers carry a row only on [isCtxErr], which a drop never satisfies.
 func persistTradeRouted(ctx context.Context, logger *slog.Logger, w tradeWriter, extBuf *externalRetryBuffer, t canonical.Trade) error {
 	if extBuf == nil || external.IsOnChain(t.Source) {
 		return persistTrade(ctx, logger, w, t)

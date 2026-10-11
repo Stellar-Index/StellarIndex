@@ -14,30 +14,25 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// CoverageFloorReader answers one question for a pair: when does this
-// deployment's served history for it BEGIN? An empty series is two different
-// answers in the same wire shape ("the market was quiet" vs "the window is before
-// anything held for this pair"), and no serving read can tell them apart.
-//
-// Production wiring is timescale.Store: one bounded, index-backed `min(bucket)`
-// over prices_<granularity>. The methods differ only in WHICH stored rows they
-// span, and a surface picks the one its own serving read spans, never a wider
-// one: a floor over rows a surface cannot serve is a coverage claim about bars
-// that will never arrive.
-//
+// CoverageFloorReader answers one question for a pair: when does this deployment's served history
+// for it BEGIN? An empty series is two different answers in the same wire shape ("the market was
+// quiet" vs "the window is before anything held for this pair"), and no serving read can tell them
+// apart. Production wiring is timescale.Store: one bounded, index-backed `min(bucket)` over
+// prices_<granularity>. The methods differ only in WHICH stored rows they span, and a surface picks
+// the one its own serving read spans, never a wider one: a floor over rows a surface cannot serve
+// is a coverage claim about bars that will never arrive.
 //   - EarliestBucket folds both legs' alias families and both stored directions,
 //     matching reads that walk the spellings of both legs (chartMergeAliasPairs,
 //     lookupPriceAt, the non-fiat ohlcSeriesWithAliases,
 //     tradesInRangeAfterWithAliases) and combine base/quote and quote/base rows.
-//   - EarliestBucketAsStored reads the requested orientation only. No surface
-//     takes it today.
+//   - EarliestBucketAsStored reads the requested orientation only (no surface uses it today).
 //   - EarliestBucketLiteralQuote drops the alias fold on the quote leg, matching
 //     the fiat combine (ohlcSeriesFiatCombined), which reads each USD-pegged
 //     constituent under the one quote spelling the peg expansion named.
 //
-// [from, to) is half-open and `to` MUST be after `from`; the store rejects a
-// degenerate window rather than reporting it empty, so a bad probe range fails
-// loudly instead of claiming a pair has no coverage.
+// [from, to) is half-open and `to` MUST be after `from`; the store rejects a degenerate window
+// rather than reporting it empty, so a bad probe range fails loudly instead of claiming a pair has
+// no coverage.
 type CoverageFloorReader interface {
 	EarliestBucket(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error)
 	EarliestBucketAsStored(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error)
@@ -178,14 +173,10 @@ type coverageFloorCache struct {
 	entries map[string]coverageFloorEntry
 }
 
-// coverageFloorKey folds a pair onto the one identity its floor is a
-// property of UNDER THE GIVEN SPAN. A leg the span reads alias-complete
-// folds onto its family; a leg the span reads literally keeps its own
-// spelling, or two probes with different answers would share an entry.
-//
-// Three folds, each load-bearing, and each done with a SINGLE registry
+// coverageFloorKey folds a pair onto the one identity its floor is a property of UNDER THE GIVEN SPAN. A leg the span
+// reads alias-complete folds onto its family; a leg the span reads literally keeps its own spelling, or two probes
+// with different answers would share an entry. Three folds, each load-bearing, and each done with a SINGLE registry
 // lookup per leg rather than a walk over alias combinations:
-//
 //   - Alias family. `native`, `crypto:XLM` and the XLM SAC are the same
 //     asset; a probe that reads all of their forms in one query must
 //     resolve every spelling of that leg to the same cache entry or the
@@ -255,28 +246,22 @@ func (c *coverageFloorCache) store(key string, e coverageFloorEntry, now time.Ti
 	c.entries[key] = e
 }
 
-// coverageSet is the population a surface's serving read for one pair
-// draws on — and therefore what that surface's floor is a property of.
+// coverageSet is the population a surface's serving read for one pair draws on — and therefore what
+// that surface's floor is a property of.
 //
-// A fiat quote is the case that makes this a SET rather than a pair.
-// Nothing on chain quotes in `fiat:USD`; the surfaces answer a
-// fiat-quoted request from the USD-pegged constituents (the direct
-// pair, the abstract stablecoin backers, the operator-declared classic
-// pegs, and on /v1/chart a derivation through XLM), each surface with
-// its own enumeration. A floor read on the LITERAL pair alone describes
-// the wrong population twice over: a constituent whose buckets predate
-// the direct pair's makes a served-and-empty window look uncovered,
-// and a direct pair with buckets no constituent read would find makes
-// an uncovered window look quiet. So the floor is measured over exactly
-// the pairs the serving read enumerates, obtained from the same helpers
-// that read uses — [Server.usdPeggedConstituents],
-// [Server.chartFiatProxyPairs], [fiatCrossLegsThroughXLM],
-// [Server.priceAtUSDPegPairs] — so the two cannot drift apart by
-// editing one of them.
+// A fiat quote is the case that makes this a SET rather than a pair. Nothing on chain quotes in
+// `fiat:USD`; the surfaces answer a fiat-quoted request from the USD-pegged constituents (the
+// direct pair, the abstract stablecoin backers, the operator-declared classic pegs, and on
+// /v1/chart a derivation through XLM), each surface with its own enumeration. A floor read on the
+// LITERAL pair alone describes the wrong population twice over: a constituent whose buckets predate
+// the direct pair's makes a served-and-empty window look uncovered, and a direct pair with buckets
+// no constituent read would find makes an uncovered window look quiet. So the floor is measured
+// over exactly the pairs the serving read enumerates, obtained from the same helpers that read uses
+// — [Server.usdPeggedConstituents], [Server.chartFiatProxyPairs], [fiatCrossLegsThroughXLM],
+// [Server.priceAtUSDPegPairs] — so the two cannot drift apart by editing one of them.
 //
-// Enumerating the same pairs is only half of it: a probe also spans
-// more or fewer SPELLINGS of each pair than the read that requested it,
-// which is what `span` pins. See [coverageProbeSpan].
+// Enumerating the same pairs is only half of it: a probe also spans more or fewer SPELLINGS of each
+// pair than the read that requested it, which is what `span` pins. See [coverageProbeSpan].
 type coverageSet struct {
 	// direct pairs. The serving read answers from any one of them that
 	// holds buckets, so the set's floor is the EARLIEST of their floors.
@@ -319,30 +304,23 @@ func (s *Server) ohlcCoverageSet(pair canonical.Pair) coverageSet {
 	return coverageSet{direct: s.usdPeggedConstituents(pair), span: spanLiteralQuote}
 }
 
-// chartCoverageSet mirrors [Server.chartSeriesPoints], the chain behind
-// every CAGG-served chart: the requested pair's alias spellings
-// ([Server.chartAliasPairs]), then for a fiat quote the proxy list
-// [Server.chartStablecoinFallback] fills from
-// ([Server.chartFiatProxyPairs]), then the XLM cross
-// [Server.fiatSeriesThroughXLM] derives — its two legs as one derived
-// entry, since the cross exists only where both legs do.
+// chartCoverageSet mirrors [Server.chartSeriesPoints], the chain behind every CAGG-served chart:
+// the requested pair's alias spellings ([Server.chartAliasPairs]), then for a fiat quote the proxy
+// list [Server.chartStablecoinFallback] fills from ([Server.chartFiatProxyPairs]), then the XLM
+// cross [Server.fiatSeriesThroughXLM] derives — its two legs as one derived entry, since the cross
+// exists only where both legs do.
 //
-// The set is built from the read's OWN enumeration helpers, so the two
-// cannot drift by editing one of them. That the probe and the serving
-// read now agree on the SAC-quoted pool is a property of the read, not
-// of this list: the list has always named `<base>/<peg SAC>` pairs, but
-// until the merge became per bucket the serving read short-circuited on
-// the first source pair holding any bucket at all, and a pool named
-// after that pair was enumerated and never read. A floor is consulted
-// only on an EMPTY answer, and an empty answer is one where every pair
-// in the list came back empty — which is now true of the read as well
-// as of the list.
+// The set is built from the read's OWN enumeration helpers, so the two cannot drift by editing one
+// of them. That the probe and the serving read now agree on the SAC-quoted pool is a property of
+// the read, not of this list: the list has always named `<base>/<peg SAC>` pairs, but until the
+// merge became per bucket the serving read short-circuited on the first source pair holding any
+// bucket at all, and a pool named after that pair was enumerated and never read. A floor is
+// consulted only on an EMPTY answer, and an empty answer is one where every pair in the list came
+// back empty — which is now true of the read as well as of the list.
 //
-// The default span (both legs' aliases, both directions) is what this
-// chain spans: every entry is read through [Server.chartSeriesPoints],
-// which crosses both base aliases with every canonical form of each
-// declared peg ([Server.chartFiatProxyQuotes]'s established pass then
-// held-back pass).
+// The default span (both legs' aliases, both directions) is what this chain spans: every entry is
+// read through [Server.chartSeriesPoints], which crosses both base aliases with every canonical
+// form of each declared peg ([Server.chartFiatProxyQuotes]'s established pass then held-back pass).
 func (s *Server) chartCoverageSet(pair canonical.Pair) coverageSet {
 	set := coverageSet{direct: s.chartAliasPairs(pair)}
 	if pair.Quote.Type != canonical.AssetFiat {

@@ -102,28 +102,25 @@ type HistoryReader interface {
 	// Used by /v1/ohlc's multi-bar mode (CG/CMC parity).
 	OHLCSeries(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]OHLCSeriesBar, error)
 
-	// LatestTradePerSource returns the most-recent trade FROM EACH source that has ever
-	// recorded a trade on the market `pair` names. Empty slice + nil error when none.
+	// LatestTradePerSource returns the most-recent trade FROM EACH source that has ever recorded a
+	// trade on the market `pair` names. Empty slice + nil error when none.
 	//
-	// EITHER STORED DIRECTION, returned in the requested orientation. The SDEX decoder
-	// records XLM/USDC and USDC/XLM as separate rows, so binding (base_asset,
-	// quote_asset) literally would answer `base=AQUA&quote=USDC` with nothing for a market
-	// recorded the other way round while /v1/history serves it. Implementations MUST read
-	// both directions and re-express the flipped rows: the two legs and the two
-	// smallest-unit amounts SWAP, so a derived price is the exact reciprocal and nothing
-	// is divided. A source that traded both ways folds to its later trade.
+	// EITHER STORED DIRECTION, returned in the requested orientation. The SDEX decoder records
+	// XLM/USDC and USDC/XLM as separate rows, so binding (base_asset, quote_asset) literally would
+	// answer `base=AQUA&quote=USDC` with nothing for a market recorded the other way round while
+	// /v1/history serves it. Implementations MUST read both directions and re-express the flipped
+	// rows: the two legs and the two smallest-unit amounts SWAP, so a derived price is the exact
+	// reciprocal and nothing is divided. A source that traded both ways folds to its later trade.
 	//
-	// sourceFilter ("" = none) restricts to one source, applied at the SQL layer.
-	// Storage primitive for ADR-0018 Surface 3 `/v1/observations`; the production impl is
-	// a `DISTINCT ON (source) ... ORDER BY source, ts DESC` scan per direction, unioned,
-	// with no time bound.
+	// sourceFilter ("" = none) restricts to one source, applied at the SQL layer. Storage primitive
+	// for ADR-0018 Surface 3 `/v1/observations`; the production impl is a `DISTINCT ON (source) ...
+	// ORDER BY source, ts DESC` scan per direction, unioned, with no time bound.
 	//
-	// COST, measured on r1: `trades_pair_source_ts_idx` (migration 0037) exists and
-	// Timescale plans a Merge Append of per-chunk SkipScans: 49 ms across 249 chunks for
-	// native/fiat:USD, 289 ms for the heaviest pair. No index build is pending; do not
-	// re-schedule one. Planning (40-210 ms) can exceed execution on a novel key. The
-	// two-arm read is estimated, not measured, well inside the 8s ceiling.
-	// [CachedHistoryReader] SWR-caches this.
+	// COST, measured on r1: `trades_pair_source_ts_idx` (migration 0037) exists and Timescale plans a
+	// Merge Append of per-chunk SkipScans: 49 ms across 249 chunks for native/fiat:USD, 289 ms for the
+	// heaviest pair. No index build is pending; do not re-schedule one. Planning (40-210 ms) can
+	// exceed execution on a novel key. The two-arm read is estimated, not measured, well inside the 8s
+	// ceiling. [CachedHistoryReader] SWR-caches this.
 	LatestTradePerSource(ctx context.Context, pair canonical.Pair, sourceFilter string) ([]canonical.Trade, error)
 }
 
@@ -160,12 +157,10 @@ type TradeRow struct {
 	BaseAmount  string   `json:"base_amount"`
 	QuoteAmount string   `json:"quote_amount"`
 	Price       *string  `json:"price"` // quote/base as decimal; nil when a leg is zero
-	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
-	// side's amount: divide base_amount by 10^base_decimals (and quote by
-	// 10^quote_decimals) to get whole-asset units.
+	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each side's amount: divide
+	// base_amount by 10^base_decimals (and quote by 10^quote_decimals) to get whole-asset units.
 	//
-	// The scale is a property of the ROW'S SOURCE, not of the asset, and
-	// a single page MIXES BOTH:
+	// The scale is a property of the ROW'S SOURCE, not of the asset, and a single page MIXES BOTH:
 	//
 	//   on-chain rows (sdex, soroswap, aquarius, phoenix, comet) carry
 	//     the asset's own scale — 7 for native/classic, the token
@@ -174,13 +169,11 @@ type TradeRow struct {
 	//     REGARDLESS of the pair — the external normalisation scale, not
 	//     anything about the asset.
 	//
-	// Never substitute a constant. A reader that assumed 7 per-asset
-	// mis-scaled real rows in production once already, and the error is
-	// PAYLOAD-UNDETECTABLE: `price` is quote/base and therefore
-	// scale-invariant, so nothing in the response looks wrong.
+	// Never substitute a constant. A reader that assumed 7 per-asset mis-scaled real rows in
+	// production once already, and the error is PAYLOAD-UNDETECTABLE: `price` is quote/base and
+	// therefore scale-invariant, so nothing in the response looks wrong.
 	//
-	// Populated on /v1/history; omitted (0) on /v1/observations, whose
-	// rows carry no per-side scale.
+	// Populated on /v1/history; omitted (0) on /v1/observations, whose rows carry no per-side scale.
 	BaseDecimals  int `json:"base_decimals,omitempty"`
 	QuoteDecimals int `json:"quote_decimals,omitempty"`
 	// RoutedVia is the router/aggregator whose same-tx invocation
@@ -1052,26 +1045,21 @@ type tradeStream struct {
 	limit int
 }
 
-// completeOverLimitTieGroup re-reads every stream that stopped ON the
-// tie group a `limit`-row page would have to serve past, so the merge
-// may serve the group whole. Returns `streams` untouched when no group
-// straddles the page edge, which is every ordinary request: this path
-// needs more rows sharing one (ts, ledger, tx_hash, op_index) than the
-// caller asked for in total, across every alias form.
+// completeOverLimitTieGroup re-reads every stream that stopped ON the tie group a `limit`-row page
+// would have to serve past, so the merge may serve the group whole. Returns `streams` untouched
+// when no group straddles the page edge, which is every ordinary request: this path needs more rows
+// sharing one (ts, ledger, tx_hash, op_index) than the caller asked for in total, across every
+// alias form.
 //
-// A group that both opens the page and still holds rows at index
-// `limit` cannot take the lower edge — that edge is index 0, and a page
-// of no rows carrying a cursor would stall the client — so it must run
-// to the group's UPPER edge instead, over `limit`. That is only safe if
-// the group is COMPLETE across every stream that could hold more of it
-// ([tieGroupFetched]): a stream whose read stopped ON the group may hold
-// further rows differing only in `source`, and a cursor minted past the
-// group would exclude them under the database's own comparison. So the
-// group is completed here first — one re-read per under-read stream,
-// straight to [tieGroupReadMax] (see that constant for why one read
-// ends the question). The remaining check exists only to make the
-// impossible state LOUD: a group needing more rows than there are
-// distinct sources.
+// A group that both opens the page and still holds rows at index `limit` cannot take the lower edge
+// — that edge is index 0, and a page of no rows carrying a cursor would stall the client — so it
+// must run to the group's UPPER edge instead, over `limit`. That is only safe if the group is
+// COMPLETE across every stream that could hold more of it ([tieGroupFetched]): a stream whose read
+// stopped ON the group may hold further rows differing only in `source`, and a cursor minted past
+// the group would exclude them under the database's own comparison. So the group is completed here
+// first — one re-read per under-read stream, straight to [tieGroupReadMax] (see that constant for
+// why one read ends the question). The remaining check exists only to make the impossible state
+// LOUD: a group needing more rows than there are distinct sources.
 func (s *Server) completeOverLimitTieGroup(
 	streams []tradeStream,
 	read func(canonical.Pair, int) ([]canonical.Trade, error),
@@ -1279,27 +1267,23 @@ func tradePageCut(merged []canonical.Trade, limit int) int {
 	return cut
 }
 
-// streamPageCursor is where the next page resumes after `merged[:cut]`,
-// or nil when the window is drained.
+// streamPageCursor is where the next page resumes after `merged[:cut]`, or nil when the window is
+// drained.
 //
-// TWO FORMS, and which one is used is the difference between
-// exactly-once and at-least-once pagination on this endpoint.
+// TWO FORMS, and which one is used is the difference between exactly-once and at-least-once
+// pagination on this endpoint.
 //
-// The default names the LAST SERVED ROW's primary key. It never skips —
-// but a row tying with it on (ts, ledger, tx_hash, op_index) and served
-// EARLIER on the same page comes back when the database orders that
-// row's `source` above the cursor's, and is served twice. The merge
-// puts earlier streams' rows before later ones' on a tie, and the
-// database orders the group by `source`, so the two can disagree by
-// construction whenever a group spans more than one stream.
+// The default names the LAST SERVED ROW's primary key. It never skips — but a row tying with it on
+// (ts, ledger, tx_hash, op_index) and served EARLIER on the same page comes back when the database
+// orders that row's `source` above the cursor's, and is served twice. The merge puts earlier
+// streams' rows before later ones' on a tie, and the database orders the group by `source`, so the
+// two can disagree by construction whenever a group spans more than one stream.
 //
-// So when the page ends on a tie group that is COMPLETE across every
-// stream that could hold more of it — no fetched row of it left behind
-// the cut, and no stream stopped inside it ([tieGroupFetched]) — the
-// cursor steps past the whole group by key instead ([tieGroupCursor]).
-// Every row of the group has been served, so nothing is skipped, and no
-// row of it can return. Where completeness does not hold, the last-row
-// cursor stands.
+// So when the page ends on a tie group that is COMPLETE across every stream that could hold more of
+// it — no fetched row of it left behind the cut, and no stream stopped inside it
+// ([tieGroupFetched]) — the cursor steps past the whole group by key instead ([tieGroupCursor]).
+// Every row of the group has been served, so nothing is skipped, and no row of it can return. Where
+// completeness does not hold, the last-row cursor stands.
 func streamPageCursor(merged []canonical.Trade, cut int, streams []tradeStream, more bool) *historyCursor {
 	if !more || cut < 1 || cut > len(merged) {
 		return nil
@@ -1331,28 +1315,24 @@ func allStreamsFetchedGroup(streams []tradeStream, last canonical.Trade) bool {
 	return true
 }
 
-// tieGroupCursor is the resume point strictly PAST a tie group whose every row has
-// been served: the group's (ts, ledger, tx_hash) with op_index stepped once and NO
-// source.
+// tieGroupCursor is the resume point strictly PAST a tie group whose every row has been served: the
+// group's (ts, ledger, tx_hash) with op_index stepped once and NO source.
 //
-// Correct because the database compares (ts, ledger, tx_hash, op_index, source) as a
-// tuple: against (T, L, H, op+1, EMPTY) every group row loses on the fourth component
-// and every later row wins on one of the first four, whatever the collation. The one
-// class that could tie into the fifth, (T, L, H, op+1, S), is kept for every S
-// because [canonical.Trade.Validate] rejects an empty source.
+// Correct because the database compares (ts, ledger, tx_hash, op_index, source) as a tuple: against
+// (T, L, H, op+1, EMPTY) every group row loses on the fourth component and every later row wins on
+// one of the first four, whatever the collation. The one class that could tie into the fifth, (T,
+// L, H, op+1, S), is kept for every S because [canonical.Trade.Validate] rejects an empty source.
 //
-// THAT PREMISE IS THE APPLICATION'S, NOT THE SCHEMA'S: `trades.source` is
-// `text NOT NULL`, which admits the empty string. A row inserted around the
-// application with an empty source would be skipped. Deliberately NOT closed with a
-// CHECK (a migration on the trades hypertable for a hazard reachable only by direct
-// writes); [decodeHistoryCursor] already refuses an empty source. Recorded so the next
-// person adding a write path knows what holds it up.
+// THAT PREMISE IS THE APPLICATION'S, NOT THE SCHEMA'S: `trades.source` is `text NOT NULL`, which
+// admits the empty string. A row inserted around the application with an empty source would be
+// skipped. Deliberately NOT closed with a CHECK (a migration on the trades hypertable for a hazard
+// reachable only by direct writes); [decodeHistoryCursor] already refuses an empty source. Recorded
+// so the next person adding a write path knows what holds it up.
 //
-// Guard: op_index is uint32, so op+1 at [math.MaxUint32] wraps to 0 and would re-serve
-// the transaction forever. That returns false and the caller keeps the last-row cursor,
-// which on this path alone can repeat a row, never skip or loop. Doubly unreachable
-// (op_index is stored as `integer`), but wrapping arithmetic on a served cursor should
-// not be left implicit.
+// Guard: op_index is uint32, so op+1 at [math.MaxUint32] wraps to 0 and would re-serve the
+// transaction forever. That returns false and the caller keeps the last-row cursor, which on this
+// path alone can repeat a row, never skip or loop. Doubly unreachable (op_index is stored as
+// `integer`), but wrapping arithmetic on a served cursor should not be left implicit.
 func tieGroupCursor(last canonical.Trade) (historyCursor, bool) {
 	if last.OpIndex == math.MaxUint32 {
 		return historyCursor{}, false
