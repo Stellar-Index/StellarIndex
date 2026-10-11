@@ -9,11 +9,9 @@ import (
 )
 
 // EntryChange is one op-scoped ledger_entry_changes row: a snapshot of a LedgerEntry produced by
-// ONE classic operation, decoded for ADR-0047's entry-changes-correlated movement
-// reconstruction (LiquidityPoolDeposit/Withdraw and CAP-0038 revocation-edge arms).
-//
-// Entry is nil for a 'removed' change (the row carries only the key); every other ChangeType
-// ('state'/'created'/'updated'/'restored') carries the full decoded LedgerEntry.
+// ONE classic operation, decoded for ADR-0047's movement reconstruction (LiquidityPoolDeposit/
+// Withdraw and CAP-0038 revocation-edge arms). Entry is nil for a 'removed' change (the row
+// carries only the key); every other ChangeType carries the full decoded LedgerEntry.
 type EntryChange struct {
 	Ledger      uint32
 	ClosedAt    time.Time
@@ -26,11 +24,11 @@ type EntryChange struct {
 
 // streamEntryChangesQuery backs StreamEntryChanges. FINAL:
 // stellar.ledger_entry_changes is ReplacingMergeTree(ingested_at); a re-derived window leaves
-// un-merged duplicate parts until a background merge, and without dedup fn would run TWICE for
-// one op-scoped change, over-counting the movement reconstruction. FINAL, not `LIMIT 1 BY`:
-// this is an operator-run backfill, not a serving path; entry_xdr is KB-scale and `LIMIT n BY`
-// has breached memory budgets on wide columns; and the `ledger_seq BETWEEN ? AND ?` window
-// bounds FINAL's merge cost. The ORDER BY (the per-op grouping order callers rely on) is kept.
+// un-merged duplicate parts, and without dedup fn would run TWICE for one change, over-counting
+// the movement reconstruction. FINAL, not `LIMIT 1 BY`: this is an operator-run backfill, entry_xdr
+// is KB-scale and `LIMIT n BY` has breached memory budgets on wide columns, and the
+// `ledger_seq BETWEEN ? AND ?` window bounds FINAL's merge cost. The ORDER BY (the per-op grouping
+// order callers rely on) is kept.
 const streamEntryChangesQuery = `
 	SELECT ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_xdr
 	FROM stellar.ledger_entry_changes FINAL
@@ -40,8 +38,7 @@ const streamEntryChangesQuery = `
 	ORDER BY ledger_seq, tx_hash, op_index, change_index
 `
 
-// StreamEntryChanges reads OP-SCOPED (op_index >= 0; fee/tx-level changes at op_index=-1 are
-// irrelevant to movement reconstruction) rows for [from,to] restricted to entryType
+// StreamEntryChanges reads OP-SCOPED (op_index >= 0) rows for [from,to] restricted to entryType
 // ('liquidity_pool' or 'claimable_balance'), invoking fn in (ledger_seq, tx_hash, op_index,
 // change_index) order, stellar-core's own per-op order, so the first row of an op is "before"
 // and the last "after" without a sort.
@@ -106,17 +103,13 @@ func StreamEntryChanges(ctx context.Context, addr string, from, to uint32, entry
 
 // CountOpScopedEntryChanges returns how many op-scoped (op_index >= 0) rows exist for [from,to]:
 // the window-level fidelity probe to run, once per window, before trusting an "empty per-op
-// group" from StreamEntryChanges.
-//
-// Zero (with a non-empty window) means the per-op backfill hasn't reached this range: treat every
-// LiquidityPoolDeposit/Withdraw and CAP-0038-eligible AllowTrust/SetTrustLineFlags op in it as
-// entry-changes-unavailable without querying per op.
+// group" from StreamEntryChanges. Zero (with a non-empty window) means the per-op backfill
+// hasn't reached this range: treat its LiquidityPoolDeposit/Withdraw and CAP-0038-eligible
+// AllowTrust/SetTrustLineFlags ops as entry-changes-unavailable without querying per op.
 //
 // Returns uint64 because the clickhouse-go driver rejects scanning a UInt64 into *int64.
-//
 // uniqExact over the PRIMARY KEY tuple, not count(): the table is a ReplacingMergeTree, so
-// un-merged duplicate parts would inflate the count into a false fidelity signal. Only four
-// narrow key columns are touched.
+// un-merged duplicate parts would inflate the count into a false fidelity signal.
 func CountOpScopedEntryChanges(ctx context.Context, addr string, from, to uint32) (uint64, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

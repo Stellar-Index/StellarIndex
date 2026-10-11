@@ -12,9 +12,9 @@ import (
 
 // ClassicOp is one lake-derived classic operation eligible for pre-P23 movement reconstruction
 // (ADR-0047): op body, result and tx-level context for a classicmovements decoder via
-// dispatcher.OpContext. Source is the op's effective source (op override else tx source;
-// stellar.operations.source_account is already resolved so at extract time); the caller wires
-// it into OpContext.TxSource, as ch-rebuild's SDEX pass does, and leaves OpContext.OpSource empty.
+// dispatcher.OpContext. Source is the op's effective source (already resolved at extract time);
+// the caller wires it into OpContext.TxSource, as ch-rebuild's SDEX pass does, and leaves
+// OpContext.OpSource empty.
 type ClassicOp struct {
 	Ledger   uint32
 	ClosedAt time.Time
@@ -39,17 +39,15 @@ func classicOpTypeInList(opTypes []string) string {
 // StreamClassicOps reads stellar.operations JOIN operation_results for
 // [from,to] inclusive, restricted to opTypes (xdr.OperationType.String() values) AND successful
 // transactions, rebuilds op.Body and the OperationResult from the retained XDR blobs, and
-// invokes fn for each in dispatcher emission order.
-//
-// This is the SHARED ADR-0047 lake-read harness: later phases extend the CALLER's opTypes list,
-// not this function.
+// invokes fn for each in dispatcher emission order. This is the SHARED ADR-0047 lake-read
+// harness: later phases extend the CALLER's opTypes list, not this function.
 //
 // Same NO-FINAL / grace_hash-join rationale as StreamSDEXOps: duplicate rows from unmerged parts
 // are harmless on the WRITE side (account_movements is a ReplacingMergeTree, ADR-0048 D2) but
 // not on the READ side, where a duplicate op fans out to k*m identical ClassicOp rows. Callers
 // that count MUST dedupe on (ledger_seq, tx_hash, op_index), as classicMovementsDecodeOpsSurface
-// does. Failed transactions are excluded because their op results can carry stale data for ops
-// that were rolled back and never happened.
+// does. Failed transactions are excluded because their op results can carry data for ops that
+// were rolled back.
 func StreamClassicOps(ctx context.Context, addr string, from, to uint32, opTypes []string, fn func(ClassicOp) error) error {
 	if len(opTypes) == 0 {
 		return fmt.Errorf("clickhouse: StreamClassicOps: opTypes is empty")
@@ -75,9 +73,9 @@ func StreamClassicOps(ctx context.Context, addr string, from, to uint32, opTypes
 //
 // Shape and rationale are sdexOpsQuery's, clause for clause: the successful-tx restriction is a
 // grace_hash INNER JOIN over a `GROUP BY tx_hash` derived table, never an IN-subquery (the set
-// build blew the 10 GiB budget on a dense 250k-ledger window), spelled BEFORE the outer WHERE
-// so ClickHouse still propagates the ledger window through o.ledger_seq = r.ledger_seq and
-// primary-key-prunes stellar.operation_results.
+// build blew the 10 GiB budget on a dense window), spelled BEFORE the outer WHERE so ClickHouse
+// still propagates the ledger window through o.ledger_seq = r.ledger_seq and primary-key-prunes
+// stellar.operation_results.
 //
 // The FOUR bind parameters are, in order: the derived table's from + to (written FIRST), then
 // the outer ledger window's from + to. opTypes is INTERPOLATED; see classicOpTypeInList.

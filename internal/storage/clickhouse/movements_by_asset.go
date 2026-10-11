@@ -67,10 +67,8 @@ func assetMovementsSQL(hasCursor, exactDedup bool) string {
 
 // AssetMovements returns one asset's movements from stellar.movements_by_asset, newest first,
 // keyset-paged by (ledger, tx_hash, op_index, leg_index), never above maxLedger (inclusive).
-// asset is the id the table stores ("native", "CODE-ISSUER", or a contract id); the caller
-// folds aliases.
-//
-// Any participant row rebuilds a movement, since each carries both sides. The newest
+// asset is the id the table stores ("native", "CODE-ISSUER", or a contract id); the caller folds
+// aliases. Any participant row rebuilds a movement, since each carries both sides. The newest
 // ingested_at wins, which also drops a stale row a re-derive left under a different address.
 func (r *ExplorerReader) AssetMovements(ctx context.Context, asset string, limit int, cur AccountMovementCursor, maxLedger uint32) ([]AssetMovementRow, error) {
 	if limit <= 0 || limit > 200 {

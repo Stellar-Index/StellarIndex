@@ -12,9 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Phoenix pool PERSISTENT-storage layout, from the protocol's Rust source (phoenix-contracts,
-// contracts/pool/src/storage.rs). DataKey is a #[repr(u32)] enum, so storage keys are plain ScvU32
-// values (as in Soroswap pairs):
+// Phoenix pool PERSISTENT-storage layout, from phoenix-contracts (contracts/pool/src/storage.rs).
+// DataKey is a #[repr(u32)] enum, so storage keys are plain ScvU32 values (as in Soroswap pairs):
 //
 //	U32(0) = TotalShares (i128)
 //	U32(1) = ReserveA    (i128)   <- read
@@ -25,11 +24,10 @@ import (
 // plus `CONFIG` -> a Config struct (ScvMap keyed by field-name Symbols) whose `token_a` / `token_b`
 // Address fields carry the token identities (read). All are PERSISTENT contract_data entries, not
 // the instance entry.
-//
 // Pools upgrade in place (two WASM generations: phoenix.MainnetPools vs MainnetMapPools), so after
-// any upgrade check ledger_entries_current FINAL still returns three contract_data rows for
-// phoenixPoolKeys of one curated pool and that reserves match the latest phoenix_trades
-// post-state. A mismatch surfaces as undecodable pools: fail-to-absent.
+// an upgrade check that ledger_entries_current FINAL still returns three contract_data rows for
+// phoenixPoolKeys and that reserves match the latest phoenix_trades post-state. A mismatch
+// surfaces as undecodable pools: fail-to-absent.
 const (
 	phoenixKeyReserveA = 1 // DataKey::ReserveA
 	phoenixKeyReserveB = 2 // DataKey::ReserveB
@@ -91,12 +89,11 @@ func (p *phoenixPoolParts) complete() bool {
 }
 
 // PhoenixPoolReserves reads current reserve state for the given pools in one batched
-// `key_xdr IN (...)` lookup (3 keys per pool), mirroring SoroswapPairReserves:
-//
-//   - No captured entries, or TTL-archived entries (only a positively-resolved lapsed TTL drops a
-//     pool): absent from both returns. Absence is "unavailable", never zero.
-//   - Entries that do not decode to the verified shape, or a partial set: returned in the second
-//     return (undecodable, sorted), so callers can count them. Never partially decoded.
+// `key_xdr IN (...)` lookup (3 keys per pool), mirroring SoroswapPairReserves. Pools with no
+// captured entries, or TTL-archived ones (only a positively-resolved lapsed TTL drops a pool), are
+// absent from both returns: absence is "unavailable", never zero. Entries that do not decode to
+// the verified shape, or a partial set, come back in the second return (undecodable, sorted) so
+// callers can count them; they are never partially decoded.
 func (r *ExplorerReader) PhoenixPoolReserves(ctx context.Context, pools []string) (map[string]PhoenixPoolState, []string, error) {
 	keys, refByKey, err := phoenixPoolKeys(pools)
 	if err != nil {

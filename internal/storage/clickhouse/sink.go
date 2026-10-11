@@ -142,12 +142,12 @@ type LedgerEntryChangeRow struct {
 	Balance int64
 	// IntraLedgerSeq is the change's position in the ledger-wide canonical walk, in PHASE order,
 	// not per-tx: (1) fee changes, (2) apply-phase meta, (3) post-apply fee changes (Soroban
-	// refunds), (4) evicted keys. Mirrors the SDK's ingest.LedgerChangeReader and dispatcher
+	// refunds), (4) evicted keys, as in the SDK's ingest.LedgerChangeReader and dispatcher
 	// walkLedgerEntryChanges. It is folded into ledger_entries_current's RMT version
 	// (ledger_seq<<32 | intra_ledger_seq) so FINAL keeps the LAST same-ledger change; change_index
 	// cannot serve (per-tx counter). Seed rows stamp seedIntraLedgerSeq. Positions are comparable
-	// only within one dispatcher.EntryWalkVersion: a bump renumbers every ledger, so the partition
-	// must be dropped before re-ingest. DEFAULT 0 in the lake.
+	// only within one dispatcher.EntryWalkVersion: a bump renumbers every ledger, so drop the
+	// partition before re-ingest. DEFAULT 0 in the lake.
 	IntraLedgerSeq uint32
 }
 
@@ -381,8 +381,7 @@ func (s *Sink) Add(ctx context.Context, e LedgerExtract) error {
 // Flush sends one native batch per table, then clears the buffers. A partial failure keeps them so
 // the caller retries the range (idempotent under ReplacingMergeTree). ORDERING IS LOAD-BEARING:
 // stellar.ledgers is flushed LAST as the per-ledger commit marker (the INSERTs are not
-// transactional); the projector's ContiguousWatermark relies on it never passing a half-written
-// ledger.
+// transactional), so the projector's ContiguousWatermark never passes a half-written ledger.
 func (s *Sink) Flush(ctx context.Context) error {
 	n := len(s.ledgers)
 	if n == 0 {

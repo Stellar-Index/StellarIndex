@@ -34,7 +34,7 @@ func (w HashChainWindowResult) Checked() uint64 {
 //
 // FINAL is required: this reads ledger_hash/prev_hash VALUES through a window function, and an
 // unmerged duplicate row for a ledger_seq would tie the ORDER BY lagInFrame relies on.
-// boundedScanSettings caps per-query memory.
+// boundedScanSettings caps memory.
 const hashChainWindowLinksQuery = `
 	SELECT count() AS present, countIf(want_prev != '' AND prev_hash != want_prev) AS broken
 	FROM (
@@ -75,9 +75,9 @@ func QueryHashChainWindowLinks(ctx context.Context, addr string, from, to, strid
 // PredecessorSeq's (Seq-1's) ledger_hash? lagInFrame never sees across a window edge, so the seam
 // link needs this separate 2-row point lookup.
 //
-// SeqPresent / PredecessorPresent separate a substrate gap at the seam (one ledger absent, still
-// counted as a broken link; verify-contiguity reports gaps precisely) from both present with a
-// hash mismatch (true corruption). Linked is true only when both are present AND the hashes agree.
+// SeqPresent / PredecessorPresent separate a substrate gap at the seam (counted as a broken link;
+// verify-contiguity reports gaps precisely) from a hash mismatch with both present (true
+// corruption). Linked is true only when both are present AND the hashes agree.
 type HashChainBoundaryResult struct {
 	Seq, PredecessorSeq            uint32
 	SeqPresent, PredecessorPresent bool

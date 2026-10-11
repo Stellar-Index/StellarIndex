@@ -27,9 +27,8 @@ type rollupStep struct {
 	walk bool
 	// windowBinds is how many `BETWEEN ? AND ?` pairs sql carries: one per SOURCE TABLE, since a
 	// join condition prunes neither side's partitions and an unbounded side costs the whole
-	// archive per window. The same window is bound into every pair, in placeholder order.
-	// Zero reads as one. TestRollupCyclesDeclareTheirWindowBinds pins the count against the
-	// placeholders present, so a template that grows a source cannot bind the wrong number.
+	// archive per window. The same window is bound into every pair. Zero reads as one.
+	// TestRollupCyclesDeclareTheirWindowBinds pins the count against the placeholders present.
 	windowBinds int
 }
 
@@ -54,7 +53,7 @@ func windowBindArgs(lo, hi uint32, pairs int) []any {
 // plus, where it joins, a build side sized by every account; that outgrows any fixed ceiling as
 // the chain grows. Walking makes population per-window, and the account-population join runs
 // ONCE against the narrow working table the walk wrote. A join kept in a walked step has a
-// window-bounded build side, pinned rather than left to a planner estimate.
+// window-bounded build side.
 //
 // The walk writes to a working table, not staging, so an interrupted cycle leaves the live
 // board untouched; the single EXCHANGE is the one moment anything becomes visible.

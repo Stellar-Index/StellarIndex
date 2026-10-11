@@ -111,10 +111,9 @@ func scValText(v xdr.ScVal) string {
 // sanitiseTokenSymbol trims a declared symbol and refuses one that is
 // not a plausible ticker.
 //
-// The refusal is deliberate, not best-effort clean-up. The value is compared against an
-// allow-list of instrument codes, and control characters, newlines or an essay mean the token
-// is not declaring a symbol at all. Reporting it absent is true and safe; trimming it toward
-// a match is neither.
+// The refusal is deliberate: the value is compared against an allow-list of instrument codes, and
+// control characters, newlines or an essay mean the token is not declaring a symbol at all.
+// Reporting it absent is true and safe; trimming it toward a match is neither.
 func sanitiseTokenSymbol(s string) (string, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {

@@ -12,8 +12,8 @@ import (
 // source read: stellar.transactions is ReplacingMergeTree(ingested_at), so a re-ingested window can
 // hold un-merged duplicate PARTS, and without FINAL the INSERT would index the STALE tx_hash beside
 // the corrected one (same ingested_at-tie ambiguity as txByLedgerAndHash). FINAL is bounded by the
-// ledger_seq window predicate. The ARRAY JOIN indexes a fee bump's inner hash beside its outer one,
-// the backfill twin of tx_hash_index_inner_mv.
+// ledger_seq window. The ARRAY JOIN indexes a fee bump's inner hash beside its outer one, as
+// tx_hash_index_inner_mv does.
 const txHashIndexBackfillQuery = `INSERT INTO stellar.tx_hash_index (tx_hash, ledger_seq, tx_index)
 	SELECT h, ledger_seq, tx_index FROM stellar.transactions FINAL
 	ARRAY JOIN arrayFilter(x -> x != '', [tx_hash, inner_tx_hash]) AS h

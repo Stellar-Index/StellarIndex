@@ -50,8 +50,7 @@ func StreamMintBurnFlows(ctx context.Context, addr string, from, to uint32, useF
 // assertable (it dials its own connection via openRead; see sdexOpsQuery's note on the seam).
 //
 // TWO bind parameters: the ledger window's from + to. useFinal is a SHAPE toggle, not a bound
-// value, so the two variants differ ONLY by the FINAL keyword and must not diverge in predicate or
-// column list.
+// value, so the two variants must differ ONLY by the FINAL keyword.
 func mintBurnFlowsQuery(useFinal bool) string {
 	final := ""
 	if useFinal {

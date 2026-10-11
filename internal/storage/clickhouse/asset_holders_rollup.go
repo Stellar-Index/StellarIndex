@@ -25,11 +25,9 @@ const holdersRollupExchangeStatement = `EXCHANGE TABLES stellar.asset_holders_ro
                  stellar.accounts_trustline_histogram_staging AND stellar.accounts_trustline_histogram`
 
 // holdersRollupStatements builds one recompute cycle: truncate staging, fill both arms
-// (trustline assets + native XLM), counts and accounts-analytics, then exchange.
-//
-// Every INSERT stamps computed_at with cycleAt, not each table's `DEFAULT now()`, so all
-// five tables share one stamp; readers compare it across round trips to detect a swap
-// landing mid-read.
+// (trustline assets + native XLM), counts and accounts-analytics, then exchange. Every INSERT
+// stamps computed_at with cycleAt, not each table's `DEFAULT now()`, so all five tables share
+// one stamp; readers compare it across round trips to detect a swap landing mid-read.
 func holdersRollupStatements(cycleAt time.Time) []string {
 	// Explicit 'UTC': a bare toDateTime(literal) uses the server timezone and would skew the
 	// age holdersRollupFresh gates on.
@@ -265,11 +263,10 @@ func runHoldersRollupSwap(ctx context.Context, conn holdersRollupConn, cycleAt t
 const holdersRollupMaxAge = 2 * time.Hour
 
 // holdersRollupBoard is AssetHolders' precomputed fast path (keyed sub-millisecond reads).
-// ok=false when the rollup is unavailable or its stamp is older than holdersRollupMaxAge;
-// the caller falls back to per-request scans, an honest slow answer over a fast stale one.
-//
-// The board and count tables are exchanged together but read in two round trips, so a swap
-// between them could pair different cycles; a computed_at mismatch retries once.
+// ok=false when the rollup is unavailable or its stamp is older than holdersRollupMaxAge; the
+// caller falls back to per-request scans, an honest slow answer over a fast stale one. The board
+// and count tables are exchanged together but read in two round trips, so a swap between them
+// could pair different cycles; a computed_at mismatch retries once.
 func (r *ExplorerReader) holdersRollupBoard(ctx context.Context, asset string, limit int) ([]AssetHolder, int64, bool, error) {
 	if !r.probeSchema(ctx, &r.holdersRollupProbe,
 		`SELECT rank FROM stellar.asset_holders_rollup LIMIT 1`, true) {

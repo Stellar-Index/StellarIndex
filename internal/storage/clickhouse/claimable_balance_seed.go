@@ -18,11 +18,10 @@ import (
 )
 
 // ClaimableBalanceSeed is one currently-live ClaimableBalanceEntry rebuilt from the lake's
-// append-log (ADR-0034), shaped for seeding claimable_observations.
-// Without the seed, balances created before the live observer started and still unclaimed are
-// invisible to the classic-supply sum. The live observer supersedes a seeded row on the next real
-// change (a claim writes is_removal=true at a HIGHER ledger, which the served reader's
-// DISTINCT ON ... ORDER BY ledger DESC picks).
+// append-log, shaped for seeding claimable_observations. Without it, balances created before the
+// live observer started are invisible to the classic-supply sum. A later claim writes
+// is_removal=true at a HIGHER ledger, which the served reader's DISTINCT ON ... ORDER BY ledger
+// DESC picks, so the live observer supersedes the seed.
 type ClaimableBalanceSeed struct {
 	// ClaimableID is the V0 hash hex, byte-identical to the live observer's claimableIDHex, so
 	// seeded and live rows for one balance collide on the natural key instead of double-counting.
@@ -69,11 +68,10 @@ const (
 // calls fn for each still-live one in scope.
 // `assets` scopes to supply.AssetKey strings; nil or empty means EVERY classic credit asset, since
 // a partial default would under-report the rest.
-// Reads ledger_entry_changes, NOT ledger_entries_current: the current-state projection only holds
-// rows inserted after its view was created, so it misses older unclaimed balances.
-// Walks the whole chain and emits nothing until the last window; silence is not a hang.
-// Under walk.VerifyLake the range is proven intact first (a hole hiding a claim would resurrect the
-// claimed balance); the SeedEvidence records it.
+// Reads ledger_entry_changes, NOT ledger_entries_current: that projection only holds rows inserted
+// after its view was created, so it misses older unclaimed balances.
+// Emits nothing until the last window; silence is not a hang. Under walk.VerifyLake the range is
+// proven intact first (a hole hiding a claim would resurrect the claimed balance).
 // `served` maps hex claimable id to asset_key for balances the served tier holds live; each whose
 // latest lake change is a removal is emitted as a tombstone. Nil retracts nothing.
 func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[string]struct{}, served map[string]string, walk SeedWalk, fn func(ClaimableBalanceSeed) error) (SeedEvidence, error) {
@@ -178,11 +176,9 @@ type claimableSeedWinner struct {
 }
 
 // claimableSeedReducer finishes in Go the latest-write-wins reduction the per-window queries only
-// complete within a window.
-// Memory is bounded so it does not grow with chain history: `live` holds only balances whose latest
-// change is a live in-scope classic-credit entry; `dead` holds ordering tombstones so a removal
-// seen in window N still suppresses a live row re-offered from N-1, and startWindow compacts
-// tombstones no future offer could lose to.
+// complete within a window. Memory stays bounded by live balances: `dead` holds ordering
+// tombstones so a removal seen in window N still suppresses a live row re-offered from N-1, and
+// startWindow compacts tombstones no future offer could lose to.
 type claimableSeedReducer struct {
 	// assets is the CODE:ISSUER scope; nil/empty = every classic credit asset.
 	assets map[string]struct{}
@@ -231,10 +227,9 @@ func (r *claimableSeedReducer) retractServed(served map[string]string) error {
 }
 
 // startWindow declares that rows offered until the next call are from ledgers >= from, and compacts
-// tombstones. Safe: lakeEntryChangeOrder compares ledger_seq first, so a tombstone below `from` can
-// never win again.
-// A bisection retry re-declares the same start; out-of-order walks (e.g. parallel) error rather
-// than resurrect claimed balances.
+// tombstones. Safe because lakeEntryChangeOrder compares ledger_seq first, so a tombstone below
+// `from` can never win again. Out-of-order (e.g. parallel) walks error rather than resurrect
+// claimed balances.
 func (r *claimableSeedReducer) startWindow(from uint32) error {
 	if r.haveWindowSeen && from < r.windowStart {
 		return fmt.Errorf("clickhouse: claimable seed: windows must be walked in non-decreasing ledger order (got start %d after %d)", from, r.windowStart)
@@ -250,9 +245,8 @@ func (r *claimableSeedReducer) startWindow(from uint32) error {
 
 // offer folds one window-winning row into the per-key reduction as a maximum under
 // lakeEntryChangeOrder.after, so it is idempotent and order-independent (a bisected retry re-reads
-// rows already delivered).
-// A removal must be able to win (a claim in window N suppresses the creation in N-1), so removals
-// are tombstones dropped at emit, never short-circuited.
+// rows already delivered). Removals must be able to win (a claim in window N suppresses the
+// creation in N-1), so they are tombstones dropped at emit, never short-circuited.
 func (r *claimableSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime time.Time, ord lakeEntryChangeOrder) error {
 	id, ok, err := claimableIDFromKeyXDR(keyXDR)
 	if err != nil {
@@ -400,8 +394,7 @@ func claimableIDFromKeyXDR(keyXDR string) ([32]byte, bool, error) {
 // assetKeyFromAsset produces; ok=false for native, a future variant, or a non-Ed25519 issuer.
 // Reimplemented, not imported: lint-imports.sh L/storage-below-compute forbids internal/storage
 // importing internal/sources. It avoids canonical.AssetFromXDR, which requires ASCII-alphanumeric
-// codes; the observer does not, so validating here would seed a strict subset and miss
-// control-byte codes that occur on pubnet.
+// codes the observer does not, so validating here would miss control-byte codes seen on pubnet.
 func claimableSeedAssetKey(a xdr.Asset) (string, bool) {
 	var (
 		code   string

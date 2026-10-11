@@ -366,9 +366,9 @@ func appendOpResult(ext *LedgerExtract, seq uint32, txHash string, opIndex uint3
 // opArgs[i].Args ONLY when its own contract is opArgs[i].ContractID (the dispatcher's provenance
 // gate): wrapper-reached events get empty op_args_xdr, so args-requiring decoders (Redstone)
 // refuse instead of reading attacker-chosen args. A failed tx contributes nothing, as in
-// dispatcher.ProcessLedger and CensusLedger, so ledgers.soroban_event_count == COUNT(contract_events)
-// == census (ch-gate) and in_successful_call = 1 is true of every row; supply_flows never credits
-// unapplied mint/burn amounts.
+// dispatcher.ProcessLedger and CensusLedger, so ledgers.soroban_event_count ==
+// COUNT(contract_events) == census (ch-gate), in_successful_call = 1 holds for every row, and
+// supply_flows never credits unapplied mint/burn amounts.
 func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash string, opArgs []*opInvokeArgs, successful bool) {
 	if !successful {
 		return

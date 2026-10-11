@@ -114,12 +114,10 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 }
 
 // refreshAccountState kicks one detached scan for account (returning the existing flight's channel
-// while one is up), outliving the request that noticed the miss.
-//
-// saturated is true only when this call owned the flight and the shared refresh gate was full.
-// Non-owners read the entry's saturated flag, set by the owner before end() closes done (the close
-// is the happens-before edge, as ttlFlight.err), so every waiter sees a skipped flight as
-// retryable backpressure.
+// while one is up), outliving the request that noticed the miss. saturated is true only when this
+// call owned the flight and the shared refresh gate was full. Non-owners read the entry's
+// saturated flag, set by the owner before end() closes done (the close is the happens-before
+// edge, as ttlFlight.err), so every waiter sees a skipped flight as retryable backpressure.
 func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEntry, saturated bool) {
 	fl, owner := r.stateFlight.begin(account)
 	if !owner {
