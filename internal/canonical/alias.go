@@ -12,14 +12,11 @@ import (
 // XLMSacContractID is the PUBNET Stellar Asset Contract address wrapping native XLM, XLM's third
 // identity alongside `native` (SDEX) and `crypto:XLM` (CEX tickers).
 //
-// It is the derivation of `NativeAsset().SacContractID()` against [PubnetPassphrase], pinned by
-// TestSacContractID_Golden and TestXLMSacContractID_MatchesDerivation. Pubnet default only; code
-// that must follow the configured network calls [NativeSACContractID].
+// Pubnet default only; code that must follow the configured network calls [NativeSACContractID].
 const XLMSacContractID = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 
 // xlmAliasFamily is the XLM equivalence class in canonical priority order: established forms
-// first, SAC last (see [AssetAliases]). Struct literals, because the New* helpers return errors;
-// TestXLMAliasFamily_IsValid pins that every member passes Validate().
+// first, SAC last (see [AssetAliases]). Struct literals, because the New* helpers return errors.
 var xlmAliasFamily = xlmAliasFamilyFor(XLMSacContractID)
 
 func xlmAliasFamilyFor(sac string) []Asset {
@@ -59,20 +56,17 @@ func baseAliasFamiliesFor(xlmSAC string) map[string][]Asset {
 // asset to its family, in the priority order read paths must try (SAC LAST, a money-safety
 // invariant; see [AssetAliases]).
 //
-// It is the compile-time baseline plus every classic↔SAC pair in `[supply].sac_wrappers`,
-// resolved once at start-up. A nil *AliasRegistry behaves as the installed network's baseline
-// (pubnet when none), so leaf callers without config stay correct.
+// It is the compile-time baseline plus every classic↔SAC pair in `[supply].sac_wrappers`. A nil
+// *AliasRegistry behaves as the installed network's baseline (pubnet when none).
 type AliasRegistry struct {
 	families map[string][]Asset
 }
 
-// defaultAliasRegistry is the compile-time registry used until [InstallAliasRegistry] runs, e.g.
-// in unit tests.
+// defaultAliasRegistry is the compile-time registry used until [InstallAliasRegistry] runs.
 var defaultAliasRegistry = &AliasRegistry{families: baseAliasFamilies}
 
-// activeRegistry holds the process-wide registry [AssetAliases] reads. It is written once at
-// start-up; the atomic pointer keeps that publish race-free and lets tests swap registries
-// without a lock. A nil load means "not installed", so the baseline is used.
+// activeRegistry holds the process-wide registry [AssetAliases] reads; the atomic pointer lets
+// tests swap registries without a lock. A nil load means "not installed", so the baseline is used.
 var activeRegistry atomic.Pointer[AliasRegistry]
 
 // InstallAliasRegistry publishes r as the process-wide registry behind [AssetAliases] and
@@ -263,18 +257,15 @@ func (r *AliasRegistry) AliasStrings(asset Asset) []string {
 // AssetAliases returns every form equivalent to asset that a read path should try: the literal
 // input first, then the rest of its class in canonical order. No second form returns just itself.
 //
-// XLM has three identities, all the same asset: `native` (SDEX rows, prices_1m, the CAGGs),
-// `crypto:XLM` (CEX venues, Reflector's CEX oracle) and the SAC wrapping native XLM (Soroban
-// AMMs). A read keyed by one form that skips the others silently omits every venue publishing
-// under an alias.
+// XLM has three identities, all the same asset: `native` (SDEX rows, the CAGGs), `crypto:XLM`
+// (CEX venues, Reflector's CEX oracle) and the SAC wrapping native XLM (Soroban AMMs). A read
+// keyed by one form silently omits every venue publishing under another.
 //
 // The SAC form is LAST on purpose: read paths take the FIRST form that answers, and Soroban XLM
 // pools are far thinner than SDEX and CEX feeds, so one small pool could become THE served XLM
-// price. A caller naming the C-address still gets it first; set-shaped callers need
-// completeness, not order.
+// price. A caller naming the C-address still gets it first.
 //
-// Other SAC-wrapped classic assets come from [NewAliasRegistry] and [InstallAliasRegistry];
-// until one installs, the baseline for [InstallNetworkPassphrase]'s network applies.
+// Other SAC-wrapped classic assets come from [NewAliasRegistry] and [InstallAliasRegistry].
 func AssetAliases(asset Asset) []Asset {
 	return activeAliasRegistry().Aliases(asset)
 }

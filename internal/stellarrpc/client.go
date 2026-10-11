@@ -79,12 +79,10 @@ func newDefaultTransport() http.RoundTripper {
 // Endpoint returns the URL the client talks to.
 func (c *Client) Endpoint() string { return c.endpoint }
 
-// HTTPStatusError is returned by every call whose HTTP response carried a status >= 400, whatever
-// the body looked like. The status is what tells "rate limiting or briefly unwell" from "this
-// request is wrong", so classify with errors.As on this type, never by matching the message.
-//
-// When the body was a JSON-RPC error envelope, Err is the *[JSONRPCError] and Unwrap exposes it,
-// so errors.As for *[JSONRPCError] still works on a non-2xx response. Otherwise Err is nil.
+// HTTPStatusError is returned by every call whose response status is >= 400, whatever the body.
+// The status tells "rate limiting or briefly unwell" from "this request is wrong", so classify
+// with errors.As, never by message. Err is the *[JSONRPCError] when the body was an error
+// envelope (Unwrap exposes it), else nil.
 type HTTPStatusError struct {
 	// Method is the JSON-RPC method that was called.
 	Method string
@@ -114,11 +112,9 @@ func (e *HTTPStatusError) Error() string {
 // Unwrap returns the JSON-RPC error envelope the response carried, if any.
 func (e *HTTPStatusError) Unwrap() error { return e.Err }
 
-// ResponseDecodeError is returned when a response with a status below 400 has a body that does not
-// decode as a JSON-RPC envelope (empty, cut short, or a proxy's HTML page served with a 200). It
-// is a property of that one response, so a retrying caller can tell it from an envelope that
-// decoded but did not fit the target type, which stays a plain error because re-asking returns
-// the same shape.
+// ResponseDecodeError is returned when a status below 400 carries a body that is not a JSON-RPC
+// envelope (empty, cut short, or a proxy's HTML page). It is per-response, so a retrying caller can
+// tell it from an envelope that decoded but did not fit the target type, which re-asking would not fix.
 type ResponseDecodeError struct {
 	// Method is the JSON-RPC method that was called.
 	Method string
@@ -156,10 +152,8 @@ func endpointFailure(endpoint string) string {
 	return "invalid request to " + externalchainlink.RedactEndpoint(endpoint)
 }
 
-// newHTTPStatusError builds the error for a status >= 400. The body is
-// decoded on a best-effort basis only to recover an error envelope; a
-// body that is empty, not JSON, or JSON of another shape still yields
-// an *HTTPStatusError, never a decode error that loses the status.
+// newHTTPStatusError builds the error for a status >= 400. The body is decoded only to recover an
+// error envelope, so an undecodable body never replaces the status with a decode error.
 func newHTTPStatusError(method string, status int, body []byte) *HTTPStatusError {
 	e := &HTTPStatusError{Method: method, StatusCode: status, Body: truncate(string(body), 256)}
 	var envelope jsonrpcResponse
@@ -207,10 +201,8 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Read full body so callers see JSON-level errors even on !=200,
-	// but cap the read so a runaway upstream can't OOM us. The +1
-	// lets us detect overshoot cleanly — if we read MaxResponseBytes+1
-	// bytes, the stream wasn't done.
+	// Read the full body so JSON-level errors show even on non-200, capped so a runaway upstream
+	// cannot OOM us; the +1 detects overshoot.
 	limited := io.LimitReader(resp.Body, MaxResponseBytes+1)
 	respBody, err := io.ReadAll(limited)
 	if err != nil {

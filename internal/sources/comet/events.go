@@ -28,11 +28,9 @@ const SourceName = "comet"
 // (docs/operations/wasm-audits/comet.md) found exactly one deployed pool.
 const MainnetBackstopPool = "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM"
 
-// MainnetGatedSet is the curated Comet pool allowlist the decoder seeds, the ADR-0040 gate trust
-// root (comet has no factory namespace, so no deploy event to anchor on). A new pool must be
-// operator-admitted (a protocol_contracts row or a new entry here) before its events are
-// attributed; until then it fail-closes as a visible ADR-0033 recognition gap. No WASM-hash
-// sweep admits pools (ADR-0040 section 1, mechanism 3).
+// MainnetGatedSet is the curated Comet pool allowlist, the ADR-0040 gate trust root (no factory
+// deploy event to anchor on). A new pool must be operator-admitted before its events are
+// attributed; until then it fail-closes as a visible ADR-0033 recognition gap.
 func MainnetGatedSet() []string { return []string{MainnetBackstopPool} }
 
 // cometTopicArity is the minimum topic count on every Comet event: [Symbol("POOL"),
@@ -107,11 +105,9 @@ var (
 	// non-swap event. New decoders should prefer ErrNotCometEvent.
 	ErrNotCometSwap = errors.New("comet: not a Comet POOL.swap event")
 
-	// ErrNotCometEvent - topic[0..1] doesn't match any known Comet (POOL, <kind>) tuple: a
-	// variant from a future upgrade, or an unrelated contract. Unknown kinds are rejected in
-	// Matches, so they land in the dispatcher's global unmatched tally (decoder_stats_5m); comet
-	// has no EvictedOrphans() reporter, so the per-source orphan series never populates and
-	// nothing alerts on it. The live signal for a new kind on the gated pool is the ADR-0033
+	// ErrNotCometEvent - topic[0..1] doesn't match any known Comet (POOL, <kind>) tuple. Unknown
+	// kinds are rejected in Matches and land in the dispatcher's global unmatched tally; comet has
+	// no EvictedOrphans() reporter, so the signal for a new kind on the gated pool is the ADR-0033
 	// recognition audit (RecognitionOK=false).
 	ErrNotCometEvent = errors.New("comet: not a recognised Comet POOL event")
 
@@ -120,12 +116,10 @@ var (
 
 	// ErrNonPositiveAmounts - token_amount_in or token_amount_out is zero or negative. A valid
 	// swap has positive amounts on both sides, and liquidity events reject them too.
-	// CAVEAT: the wdr_tokn_amt_in_get_lp_tokns_out withdraw variant asserts pool_amount_in > 0
-	// but not token_amount_out > 0, so a dust BPT withdraw with min_amount_out=0 can burn BPT
-	// with token_amount_out: 0, a real state change this reject drops. The drop is honest-blind,
-	// not silent: the event Matches but fails Decode, so the ADR-0033 reconcile counts it
-	// blind.Undecodable and flips the comet verdict to complete=false. Accepting zero-out
-	// withdraws would also need the writer and the comet_liquidity CHECK(amount > 0) relaxed, a
-	// policy call not taken unilaterally.
+	// CAVEAT: a dust wdr_tokn_amt_in_get_lp_tokns_out withdraw can burn BPT with token_amount_out
+	// 0, a real state change this reject drops. The drop is visible, not silent: the event Matches
+	// but fails Decode, so the ADR-0033 reconcile counts it blind.Undecodable and flips the comet
+	// verdict to complete=false. Accepting it would need the comet_liquidity CHECK(amount > 0)
+	// relaxed.
 	ErrNonPositiveAmounts = errors.New("comet: amounts must be positive")
 )

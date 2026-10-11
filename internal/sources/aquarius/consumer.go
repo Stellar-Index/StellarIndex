@@ -7,9 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// TradeEvent is the [consumer.Event] Aquarius's Decoder emits on
-// a successful decode. The indexer's event sink type-switches on
-// this at its output channel.
+// TradeEvent is the [consumer.Event] Aquarius's Decoder emits on a successful trade decode.
 type TradeEvent struct {
 	Trade canonical.Trade
 }
@@ -20,13 +18,11 @@ func (TradeEvent) EventKind() string { return "aquarius.trade" }
 // Source implements [consumer.Event].
 func (TradeEvent) Source() string { return SourceName }
 
-// LiquidityAction discriminates the two Aquarius liquidity-mutating
-// events. String values are stamped onto aquarius_liquidity.action and
-// match the migration-0089 CHECK constraint.
+// LiquidityAction discriminates the two liquidity-mutating events; values match the
+// aquarius_liquidity.action CHECK constraint.
 type LiquidityAction string
 
-// Liquidity actions. `deposit` (deposit_liquidity) grows pool
-// reserves; `withdraw` (withdraw_liquidity) shrinks them.
+// Liquidity actions: `deposit` grows pool reserves, `withdraw` shrinks them.
 const (
 	LiquidityDeposit  LiquidityAction = "deposit"
 	LiquidityWithdraw LiquidityAction = "withdraw"
@@ -104,13 +100,11 @@ func (LiquidityEvent) EventKind() string { return "aquarius.liquidity" }
 // Source implements [consumer.Event].
 func (LiquidityEvent) Source() string { return SourceName }
 
-// RewardsAction discriminates the twelve rewards-gauge event kinds
-// (migration 0099). String values match the
+// RewardsAction discriminates the twelve rewards-gauge event kinds; values match the
 // aquarius_rewards_events.event_kind CHECK constraint.
 type RewardsAction string
 
-// Rewards-gauge event kinds. See README.md's "Rewards-gauge subsystem" section and
-// decode_rewards.go for the per-kind wire shapes.
+// Rewards-gauge event kinds; decode_rewards.go has the per-kind wire shapes.
 const (
 	RewardsPoolState           RewardsAction = RewardsAction(EventPoolState)
 	RewardsClaimReward         RewardsAction = RewardsAction(EventClaimReward)
@@ -126,10 +120,9 @@ const (
 	RewardsConfigRewards       RewardsAction = RewardsAction(EventConfigRewards)
 )
 
-// RewardsEvent is the [consumer.Event] Aquarius's Decoder emits on a
-// successful decode of any of the twelve rewards-gauge event kinds. UserAddress / Amount are
-// promoted fields, empty/nil when the kind lacks them; Attributes carries the kind-specific
-// remainder, with i128/u128/u256 values as decimal strings (ADR-0003: jsonb numbers are lossy).
+// RewardsEvent is the [consumer.Event] emitted for any of the twelve rewards-gauge kinds.
+// UserAddress / Amount are promoted fields, empty/nil when the kind lacks them; Attributes carries
+// the remainder, with i128/u128/u256 values as decimal strings (ADR-0003: jsonb numbers are lossy).
 type RewardsEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -154,8 +147,7 @@ func (RewardsEvent) EventKind() string { return "aquarius.rewards" }
 // Source implements [consumer.Event].
 func (RewardsEvent) Source() string { return SourceName }
 
-// AdminAction discriminates the eight governance/upgrade admin event
-// kinds (migration 0100). String values match the
+// AdminAction discriminates the eight governance/upgrade admin event kinds; values match the
 // aquarius_admin.event_kind CHECK constraint.
 type AdminAction string
 
@@ -171,9 +163,8 @@ const (
 	AdminPoolGaugeSwitchToken    AdminAction = AdminAction(EventPoolGaugeSwitchToken)
 )
 
-// AdminEvent is the [consumer.Event] Aquarius's Decoder emits on a
-// successful decode of any of the eight governance/upgrade event kinds. Admin / Target are
-// promoted fields, empty when the kind lacks them; Attributes carries the remainder.
+// AdminEvent is the [consumer.Event] emitted for any of the eight governance/upgrade kinds. Admin /
+// Target are promoted fields, empty when the kind lacks them; Attributes carries the remainder.
 type AdminEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -182,9 +173,8 @@ type AdminEvent struct {
 	EventIndex uint32
 	ObservedAt time.Time
 	Kind       AdminAction
-	// Admin is the initiating-actor topic slot. Empty for every observed kind (none carries an
-	// admin topic distinct from the addressed entity); kept for schema symmetry with
-	// aquarius_admin.admin.
+	// Admin is the initiating-actor topic slot; empty for every observed kind, kept for schema
+	// symmetry with aquarius_admin.admin.
 	Admin string
 	// Target is the addressed entity: the new Wasm hash (hex) for *_upgrade, the new admin for
 	// *_transfer_ownership, the new reward token for pool_gauge_switch_token. Empty when a kind

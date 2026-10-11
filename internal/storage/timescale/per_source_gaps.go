@@ -79,10 +79,9 @@ type GapDetectorTarget struct {
 // ledger_ingest_log (a PK range scan; soroban_event_count is the LCM-derived census) instead of
 // scanning the huge soroban_events hypertable.
 //
-// It counts ledgers RECORDED as carrying >= 1 eligible event, not rows present. During a
-// sink-writer halt density therefore reads HIGH while the `_gap_*` gauges stay row-based, and a
-// range repaired by `stellarindex-ops backfill` without `census-backfill` reads 0;
-// `stellarindex-ops verify` surfaces the divergence. Ledgers below the log floor read 0.
+// It counts ledgers RECORDED as carrying events, not rows present, so density reads HIGH during a
+// writer halt and 0 for a range repaired by `backfill` without `census-backfill`; `verify`
+// surfaces the divergence. Ledgers below the log floor read 0.
 const sorobanEventsDistinctLedgerCountSQL = `SELECT COUNT(*) FROM ledger_ingest_log WHERE ledger_seq BETWEEN $1 AND $2 AND soroban_event_count > 0`
 
 // SourceNetKey is the [sourcenet] name for this target — its
@@ -127,12 +126,8 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// SEP-41 supply events fire only on mint/burn/clawback — much rarer than
 	// transfers.
 	{Source: "sep41-supply", CanonicalSource: "sep41_supply", Table: "sep41_supply_events", LedgerColumn: "ledger", Genesis: 50_457_424, MinGapSizeOverride: 100000},
-	// CCTP / Rozo are sparse cross-chain bridges: natural quiet windows exceed 100K ledgers, so
-	// 200K sits above the observed envelope. Genesis is each bridge's first event.
-	//
-	// Ledger-gap coverage is a different axis from per-op event loss: rows ingested before
-	// migration 0112 could collapse a second same-op same-event_type row via ON CONFLICT, a
-	// same-ledger drop this detector cannot see. "Complete" here means no missing ledgers.
+	// CCTP / Rozo are sparse bridges whose natural quiet windows exceed 100K ledgers, so 200K sits
+	// above the envelope. This detector sees missing ledgers only, not same-ledger row loss.
 	{Source: "cctp", Table: "cctp_events", LedgerColumn: "ledger", Genesis: 62_146_641, MinGapSizeOverride: 200000},
 	{Source: "rozo", Table: "rozo_events", LedgerColumn: "ledger", Genesis: 60_829_397, MinGapSizeOverride: 100000},
 	// comet_liquidity: pool events are sparse (max natural gap 7826 ledgers, ~11h); 50K threshold.
@@ -214,20 +209,17 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	{Source: "sorocredit-statements", CanonicalSource: "sorocredit", Table: "credit_statements", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
 	{Source: "sorocredit-settlements", CanonicalSource: "sorocredit", Table: "credit_settlements", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
 	{Source: "sorocredit-events", CanonicalSource: "sorocredit", Table: "credit_events", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
-	// soroban-events spans the whole Soroban era (same floor as sep41-transfers). Long
-	// ScanCadence: with 50M+ rows the scan dominates postgres for 5+ min, so a 30 min cadence
-	// starves trade-insert latency. The gap scan still reads observed rows, chunk-pruned via
+	// soroban-events spans the whole Soroban era. The long ScanCadence is because a 50M+ row scan
+	// holds postgres for 5+ min and would starve trade inserts at 30 min; it is chunk-pruned via
 	// CloseTimeColumn.
 	{Source: "soroban-events", CanonicalSource: "soroban_events", Table: "soroban_events", LedgerColumn: "ledger", Genesis: 50_457_424, ScanCadence: 6 * time.Hour, MinGapSizeOverride: 100000, DistinctLedgerCountSQL: sorobanEventsDistinctLedgerCountSQL, CloseTimeColumn: "ledger_close_time"},
-	// SDEX is classic DEX and does not flow through soroban_events; WhereFilter slices its rows out
-	// of the shared `trades` hypertable, so a classic-DEX writer halt is still detected.
-	// Natural gaps reach ~575K ledgers, hence the 1M override. The scan covers tens of millions
-	// of rows, hence the long ScanCadence.
+	// SDEX does not flow through soroban_events; WhereFilter slices it out of the shared `trades`
+	// hypertable. Natural gaps reach ~575K ledgers (hence 1M), and tens of millions of rows need
+	// the long ScanCadence.
 	{Source: "sdex", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'sdex'", Genesis: 2, MinGapSizeOverride: 1000000, ScanCadence: 6 * time.Hour},
-	// NO target for sdex_offer_events: no writer inserts into it, so a target would report a
-	// permanent genesis-to-tip "gap" for a phantom source. Add one only with an offer-events writer.
-	// Soroban-DEX sources also write into `trades`; each needs a source-tagged WhereFilter target
-	// or `backfill_coverage` reports 0% for it. Genesis is each contract's pubnet deploy ledger.
+	// No target for sdex_offer_events: nothing writes it, so it would report a permanent
+	// genesis-to-tip gap. Soroban-DEX sources also write into `trades`; each needs a source-tagged
+	// WhereFilter target or `backfill_coverage` reports 0% for it.
 	{Source: "aquarius", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'aquarius'", Genesis: 52_728_375, MinGapSizeOverride: 100000},
 	{Source: "soroswap", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'soroswap'", Genesis: 50_746_266, MinGapSizeOverride: 100000},
 	{Source: "phoenix", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'phoenix'", Genesis: 51_572_016, MinGapSizeOverride: 100000},
@@ -262,10 +254,9 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 // returns the rest in scan order, logging the exclusion set once so an operator sees why a
 // target's gauges are absent.
 //
-// Every Genesis is a pubnet deploy ledger, so on a test net the scan window comes out inverted
-// and [Store.FindPerSourceLedgerGaps] would reject it as `invalid range` every cycle. sourcenet
-// is the one table saying whether a source exists on a network, so the detector asks it. Pubnet,
-// and an empty or unknown network name, keeps every target.
+// Every Genesis is a pubnet deploy ledger, so on a test net the scan window is inverted and
+// [Store.FindPerSourceLedgerGaps] would reject it every cycle. Pubnet, and an empty or unknown
+// network name, keeps every target.
 func ApplicableGapDetectorTargets(targets []GapDetectorTarget, network string, logger *slog.Logger) []GapDetectorTarget {
 	out := make([]GapDetectorTarget, 0, len(targets))
 	var excluded []string

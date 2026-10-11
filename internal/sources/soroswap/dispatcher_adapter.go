@@ -27,32 +27,26 @@ type PairTokens struct {
 // The dispatcher is serial; the mutex exists so operator tooling can call SeedPair concurrently
 // at startup.
 type Decoder struct {
-	// mu guards buf, pairTokens and the skip counters. Critical sections that call anything
-	// release it via defer: the dispatcher's panic guard makes that load-bearing (see
-	// [Decoder.absorbEvent]). The bare counter increments in emitCompleted cannot panic.
+	// mu guards buf, pairTokens and the skip counters. Critical sections that call anything release
+	// it via defer; see [Decoder.absorbEvent].
 	mu  sync.RWMutex
 	buf *buffer
 	// pairTokens maps pair-contract C-strkey to (token0, token1); seeded at startup via SeedPair.
 	pairTokens map[string]PairTokens
 
-	// onNewPair, when non-nil, runs for every factory new_pair event after the registry is
-	// updated, so the mapping can be persisted for restarts and parallel backfill chunks. It runs
-	// with mu NOT held (see [Decoder.storePairTokens]) but on the caller's goroutine, so keep it
-	// short.
+	// onNewPair, when non-nil, runs for every factory new_pair event after the registry is updated,
+	// so the mapping can be persisted. It runs with mu NOT held but on the caller's goroutine, so
+	// keep it short.
 	onNewPair func(pairStrkey, token0Strkey, token1Strkey string)
 
 	// evictedOrphans counts swap-without-sync evictions ONLY, the real loss class. evictedBareSync
-	// counts sync-without-swap evictions, which deposit/withdraw/skim produce on every call and
-	// are LP-traffic noise; splitting them keeps a real lost swap visible in evictedOrphans.
-	//
-	// evictedOrphans is read by internal/dispatcher via the duck-typed EvictedOrphans() and
-	// skippedUnknownPair via UnknownContractDrops() (see [Decoder.UnknownContractDrops]).
+	// counts sync-without-swap evictions, which deposit/withdraw/skim produce on every call; the
+	// split keeps a real lost swap visible.
 	evictedOrphans     int
 	evictedBareSync    int
 	skippedUnknownPair int
-	// skippedNonDirectional counts completed swap+sync pairs whose
-	// swap carried no cross-token exchange (ErrNonDirectionalSwap) —
-	// recognized no-ops, not decode errors.
+	// skippedNonDirectional counts completed pairs whose swap carried no cross-token exchange
+	// (ErrNonDirectionalSwap): recognized no-ops, not decode errors.
 	skippedNonDirectional int
 }
 
@@ -136,9 +130,7 @@ func (d *Decoder) Matches(ev events.Event) bool {
 		return false
 	}
 	if kind == EventNewPair {
-		// Soroswap has more than one factory (the primary + launch-era
-		// ones); gate on the full verified set so no factory's pairs are
-		// dropped (ADR-0035 multi-factory).
+		// Soroswap has more than one factory; gate on the full verified set (ADR-0035).
 		return IsMainnetFactory(ev.ContractID)
 	}
 	_, known := d.pairTokensFor(ev.ContractID)
@@ -152,8 +144,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		return nil, nil
 	}
 
-	// Factory new_pair: populate the registry (which fires the
-	// onNewPair hook for persistence), emit nothing.
+	// Factory new_pair: populate the registry, emit nothing.
 	if kind == EventNewPair {
 		fields, err := decodeNewPair(ev.Value)
 		if err != nil {
@@ -209,22 +200,19 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	return d.emitCompleted(completed)
 }
 
-// absorbEvent feeds one swap/sync into the correlation buffer under the
-// decoder lock and returns the pairs that just completed.
+// absorbEvent feeds one swap/sync into the correlation buffer and returns the pairs that just
+// completed.
 //
-// It uses `defer d.mu.Unlock()` because the dispatcher RECOVERS a decoder panic and carries on
-// (internal/dispatcher/panic_guard.go). An Unlock skipped by a panic would leave d.mu held, the
-// next Matches would block on RLock, and dispatch would deadlock while the unit still looks
-// healthy, which is worse than a crash-loop. The other stateful adapters unlock via defer too.
+// It unlocks via defer because the dispatcher RECOVERS a decoder panic and carries on. An Unlock
+// skipped by a panic would leave d.mu held, the next Matches would block, and dispatch would
+// deadlock while the unit still looks healthy, which is worse than a crash-loop.
 func (d *Decoder) absorbEvent(ev *events.Event, kind string, closedAt time.Time) []RawPair {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	completed, evicted := d.buf.absorb(ev, kind, closedAt)
 	for _, p := range evicted {
-		// An evicted entry is always missing exactly one side (a
-		// complete pair is removed from the buffer, never aged out).
-		// Swap==nil means a bare sync — deposit/withdraw/skim traffic
-		// (README Q2), not a lost trade.
+		// An evicted entry is always missing exactly one side. Swap==nil is a bare sync from
+		// deposit/withdraw/skim traffic, not a lost trade.
 		if p.Swap == nil {
 			d.evictedBareSync++
 			continue
@@ -234,10 +222,8 @@ func (d *Decoder) absorbEvent(ev *events.Event, kind string, closedAt time.Time)
 	return completed
 }
 
-// pairTokensFor reads the pair→tokens registry under the read lock.
-// One helper for the three readers (Matches, emitLiquidity,
-// emitCompleted) so the release is a `defer` in exactly one place —
-// same panic-safety reasoning as [Decoder.absorbEvent].
+// pairTokensFor reads the pair→tokens registry under the read lock, with the release deferred in
+// one place for panic safety (see [Decoder.absorbEvent]).
 func (d *Decoder) pairTokensFor(contractID string) (PairTokens, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -245,9 +231,9 @@ func (d *Decoder) pairTokensFor(contractID string) (PairTokens, bool) {
 	return tokens, ok
 }
 
-// GatedContractSet returns every contract Matches can accept: the verified
-// factories plus every registered pair, sorted. The completeness re-derive
-// scopes its lake read to this set, so it must never be narrower than the gate.
+// GatedContractSet returns every contract Matches can accept (verified factories plus registered
+// pairs), sorted. The completeness re-derive scopes its lake read to it, so it must never be
+// narrower than the gate.
 func (d *Decoder) GatedContractSet() []string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -263,10 +249,8 @@ func (d *Decoder) GatedContractSet() []string {
 }
 
 // emitLiquidity decodes a pair deposit/withdraw event into a LiquidityEvent; token identities come
-// from the new_pair registry because the body carries only amounts. Matches already confirmed
-// registry membership, so the empty-token branch is unreachable defence-in-depth. An UNSEEDED
-// pair never reaches here: it fails CLOSED into an ADR-0033 recognition gap instead of being
-// written as a NULL-token row.
+// from the new_pair registry because the body carries only amounts. An UNSEEDED pair never reaches
+// here: it fails CLOSED into an ADR-0033 recognition gap instead of a NULL-token row.
 func (d *Decoder) emitLiquidity(ev events.Event, kind string) ([]consumer.Event, error) {
 	closedAt, err := ev.EventClosedAt()
 	if err != nil {
@@ -300,10 +284,8 @@ func (d *Decoder) emitLiquidity(ev events.Event, kind string) ([]consumer.Event,
 	}}, nil
 }
 
-// emitCompleted turns completed swap+sync pairs (and swap-only groups a
-// same-pair re-entry rotated out, see buffer.absorb) into TradeEvents,
-// skipping (with counters) the two recognized non-trade classes:
-// unknown-pair token mappings and non-directional swaps.
+// emitCompleted turns completed swap+sync pairs into TradeEvents, skipping (with counters) unknown
+// pair token mappings and non-directional swaps.
 func (d *Decoder) emitCompleted(completed []RawPair) ([]consumer.Event, error) {
 	out := make([]consumer.Event, 0, len(completed))
 	for _, r := range completed {
@@ -334,9 +316,8 @@ func (d *Decoder) emitCompleted(completed []RawPair) ([]consumer.Event, error) {
 	return out, nil
 }
 
-// Drain implements [dispatcher.Drainer]: it flushes the open swap/sync
-// groups at the end of a bounded stream. A swap-only group is final (the
-// trade reads from the swap body alone, as on a same-pair rotation); a
+// Drain implements [dispatcher.Drainer]: it flushes the open swap/sync groups at the end of a
+// bounded stream. A swap-only group is final (the trade reads from the swap body alone); a
 // sync-only group is LP-traffic noise and only counted.
 func (d *Decoder) Drain() []consumer.Event {
 	d.mu.Lock()
@@ -363,9 +344,8 @@ func (d *Decoder) Drain() []consumer.Event {
 	return out
 }
 
-// EvictedOrphans is the count of swap-only (no matching sync) buffer
-// entries dropped by age-out — a real lost trade. Excludes bare-sync
-// evictions (see [Decoder.EvictedBareSync]).
+// EvictedOrphans is the count of swap-only buffer entries dropped by age-out, a real lost trade;
+// bare-sync evictions are in [Decoder.EvictedBareSync].
 func (d *Decoder) EvictedOrphans() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -381,8 +361,7 @@ func (d *Decoder) EvictedBareSync() int {
 	return d.evictedBareSync
 }
 
-// SkippedUnknownPair is the count of completed swap+sync pairs
-// whose token mapping wasn't in the registry at decode time.
+// SkippedUnknownPair counts completed pairs whose token mapping was not in the registry.
 func (d *Decoder) SkippedUnknownPair() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -395,9 +374,7 @@ func (d *Decoder) UnknownContractDrops() int {
 	return d.SkippedUnknownPair()
 }
 
-// SkippedNonDirectional is the count of completed swap+sync pairs
-// whose swap carried no cross-token exchange (recognized no-ops;
-// see ErrNonDirectionalSwap).
+// SkippedNonDirectional counts completed pairs whose swap carried no cross-token exchange.
 func (d *Decoder) SkippedNonDirectional() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

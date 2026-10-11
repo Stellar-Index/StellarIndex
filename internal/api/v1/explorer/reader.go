@@ -68,15 +68,12 @@ func retryableColdMiss(callCtx context.Context, err error) bool {
 	return lakeUnreachable(err)
 }
 
-// lakeUnreachable reports whether err is a TRANSPORT-layer failure below the query layer
-// (connection refused, socket died mid-query, host stopped resolving). A query cannot provoke
-// these, so they mean "dependency down, retry", not a bug in this process.
-//
-// Matching only net.Error with Timeout() true is not enough: a hard-down lake answers instantly
-// with a *net.OpError whose Timeout() is false, and an outage would read as a code bug (500) in
-// the 5xx SLA probe and every alert. Keep in step with IsCacheUnavailable (cache_errors.go) and
-// transientStorageErr (envelope.go). *net.DNSError arrives bare, not in an OpError; the errno arms
-// catch a driver that re-wrapped only the syscall error.
+// lakeUnreachable reports whether err is a transport-layer failure below the query layer
+// (refused, reset, DNS), which means "dependency down, retry", not a bug in this process.
+// Timeout-only matching is not enough: a hard-down lake answers instantly with a non-timeout
+// *net.OpError, which would otherwise read as a 500 in the 5xx SLA probe. Keep in step with
+// IsCacheUnavailable and transientStorageErr; *net.DNSError arrives bare, and the errno arms catch
+// a driver that re-wrapped only the syscall error.
 func lakeUnreachable(err error) bool {
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
@@ -115,9 +112,8 @@ func (h *Handler) writeRetryable(w http.ResponseWriter, r *http.Request, err err
 				"retry in a few seconds")
 		return
 	}
-	// Third cause, same 503: the lake is unreachable. A refused dial answers in microseconds, so
-	// "timed out" would send an operator hunting a slow query that never ran. Logged here because
-	// call sites log a fixed "deadline exceeded" line without err.
+	// Third cause, same 503: the lake is unreachable. Saying "timed out" would send an operator
+	// hunting a slow query that never ran. Logged here because call sites omit err.
 	if lakeUnreachable(err) {
 		h.Logger.Warn("explorer lake unreachable", "err", err, "path", r.URL.Path)
 		w.Header().Set("Retry-After", retryAfterDependencyDown)
@@ -193,12 +189,11 @@ type ExplorerReader interface {
 	AssetHolders(ctx context.Context, asset string, limit int) ([]clickhouse.AssetHolder, int64, error)
 	AccountsByWealth(ctx context.Context, assets, prices []string, limit int) ([]clickhouse.AccountWealth, error)
 	// AccountsByWealthCached serves the ranking from a background-refreshed cache and NEVER runs
-	// the FINAL scan on the caller's deadline. AsOf/AsOfLedger are the ranking's vintage; an entry
-	// past its TTL is still served (flagged degraded) so failed refreshes yield old-but-real data,
-	// not 503s. ok=false means never computed: render a warming state, never fall back to
-	// AccountsByWealth on the request path (the scan needs 11-20s against an 8s deadline).
-	// Basis ("usd" | "native_xlm") is the unit of the cached ranking, for labelling when no USD
-	// price map was available.
+	// the FINAL scan on the caller's deadline. An entry past its TTL is still served (flagged
+	// degraded), so failed refreshes yield old-but-real data, not 503s. ok=false means never
+	// computed: render a warming state, never fall back to AccountsByWealth on the request path
+	// (the scan needs 11-20s against an 8s deadline). Basis ("usd" | "native_xlm") labels the
+	// ranking's unit when no USD price map was available.
 	AccountsByWealthCached(ctx context.Context, assets, prices []string, limit int) (clickhouse.AccountWealthSnapshot, bool)
 	SoroswapPairReserves(ctx context.Context, pairs []string) (map[string]clickhouse.SoroswapPairState, error)
 	NativeLiquidityPoolReserves(ctx context.Context, poolIDs []string) (map[string]clickhouse.NativeLiquidityPoolState, error)
@@ -217,9 +212,8 @@ type ExplorerReader interface {
 	// from-genesis backfill marker (0 = not derived / not verified).
 	EntryHistoryCoverage(ctx context.Context) (watermark, backfilledThru uint32, err error)
 	// Cap67MovementsWatermark is the highest ledger the cap67 movement derive has completed
-	// through (0 when the feed isn't provisioned). The movements handler floors its Postgres tail
-	// arm at watermark+1 and ceilings the ClickHouse arm at the watermark, keeping the merge
-	// gap-free and double-count-free. Implementations cache (~60s).
+	// through (0 when not provisioned). The movements merge floors its Postgres arm at watermark+1
+	// and ceilings the ClickHouse arm at the watermark: gap-free, no double count. Cached (~60s).
 	Cap67MovementsWatermark(ctx context.Context) (uint32, error)
 	// Cap67SupplyCoverage is the ledger range, at or below the watermark,
 	// the derive has also covered with mint, burn and clawback (ok=false:
@@ -330,31 +324,27 @@ type Handler struct {
 	// (rationale on opsDirCache in operations.go). Zero value is ready to use.
 	opsDir opsDirCache
 
-	// opTypeStats caches the trailing-24h op-type breakdown SEPARATELY from the directory cache:
-	// it summarises a 24-hour window over a 34B-row table, so recomputing it on the directory's
-	// few-second cadence blew the /v1/operations read deadline under load.
+	// opTypeStats caches the trailing-24h op-type breakdown separately from the directory cache:
+	// it scans a huge table, so the directory's few-second cadence would blow the read deadline.
 	opTypeStats opTypeStatsCache
 
-	// assetHolders and contractsDir are the bounded-TTL, single-flighted caches in front of the two
-	// UNAUTHENTICATED reads whose cost scales with the lake, not the request (holders: two
-	// current-state FINAL scans; contracts directory: a multi-day GROUP BY over contract_events).
-	// Zero values are ready; see hot_reads.go.
+	// assetHolders and contractsDir are bounded-TTL, single-flighted caches in front of two
+	// unauthenticated reads whose cost scales with the lake (FINAL scans; a multi-day GROUP BY).
+	// See hot_reads.go.
 	assetHolders assetHoldersCache
 	contractsDir contractsDirCache
 	// contractStats is the single-entry snapshot behind GET /v1/contracts/stats.
 	contractStats contractStatsCache
 
-	// contractDetail is the bounded-TTL, single-flighted cache in front of the per-contract reads;
-	// inline on the request deadline a busy contract would time out every time and no retry could
-	// land warm. See contract_detail_cache.go.
+	// contractDetail is the single-flighted cache in front of the per-contract reads; inline, a
+	// busy contract would time out every time and no retry could land warm.
 	contractDetail contractDetailCache
 
 	// sacNames memoises proven SAC resolutions across requests (movements.go).
 	sacNames sacNameMemo
 
-	// throughput is the single-entry, single-flighted cache in front of GET /v1/network/throughput,
-	// a FINAL scan over up to a year of stellar.ledgers that would miss the 8s request budget.
-	// See network_throughput_cache.go.
+	// throughput is the single-flighted cache in front of GET /v1/network/throughput, a FINAL scan
+	// over up to a year of stellar.ledgers that would miss the 8s budget.
 	throughput networkThroughputCache
 
 	// attribution memoises the contract → protocol registry map read by the

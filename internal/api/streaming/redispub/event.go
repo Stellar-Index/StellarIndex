@@ -18,22 +18,17 @@ const KindFrozen = "frozen"
 // Additions are non-breaking because decoding ignores unknown fields; removals or type changes
 // require a new channel name (see [DefaultChannel]).
 type ClosedBucketEvent struct {
-	// Asset + Quote echo the canonical asset strings the
-	// aggregator just published a closed bucket for. The
-	// API-side subscriber routes by (Asset, Quote, WindowSeconds)
-	// into `closed:<asset>/<quote>/<window_seconds>` Hub topics.
+	// Asset + Quote are the canonical asset strings; the subscriber routes by (Asset, Quote,
+	// WindowSeconds) into `closed:<asset>/<quote>/<window_seconds>` Hub topics.
 	Asset string `json:"asset"`
 	Quote string `json:"quote"`
 
-	// WindowSeconds is the closed-bucket window expressed as
-	// integer seconds. Encoded as a number rather than a Go
-	// duration string for cross-language subscriber friendliness.
+	// WindowSeconds is the window in integer seconds, not a Go duration string, so non-Go
+	// subscribers can read it.
 	WindowSeconds int64 `json:"window_seconds"`
 
-	// ValueDecimal is the VWAP rendered as a fixed-precision
-	// decimal string (12 fractional digits) — the same form the
-	// aggregator wrote to the Redis cache key. Strings preserve
-	// big.Rat precision the JSON `number` type would lose.
+	// ValueDecimal is the VWAP as a 12-fractional-digit decimal string, the form the aggregator
+	// wrote to the Redis cache key; a string keeps big.Rat precision a JSON number would lose.
 	ValueDecimal string `json:"value_decimal"`
 
 	// ObservedAt is the end of the closed 1-minute bucket the VWAP was computed at, covering
@@ -42,15 +37,13 @@ type ClosedBucketEvent struct {
 	// repeat or an older bucket.
 	ObservedAt time.Time `json:"observed_at"`
 
-	// ProducerID names the publishing aggregator process (minted once
-	// per [Publisher]). Never forwarded to clients; the subscriber uses
-	// it to report two aggregators publishing the same bucket.
+	// ProducerID names the publishing aggregator process. Never forwarded to clients; the
+	// subscriber uses it to report two aggregators publishing the same bucket.
 	ProducerID string `json:"producer_id,omitempty"`
 
-	// Truncated is the value's window coverage: true when its trade read
-	// hit the row cap, so the value covers only trades after CoveredFrom
-	// completely, not the whole window. Both absent when coverage is
-	// unknown (a triangulated composite).
+	// Truncated is true when the trade read hit the row cap, so the value covers only trades
+	// after CoveredFrom completely. Both are absent when coverage is unknown (a triangulated
+	// composite).
 	Truncated   *bool      `json:"truncated,omitempty"`
 	CoveredFrom *time.Time `json:"covered_from,omitempty"`
 

@@ -230,10 +230,8 @@ func (a *tvlProtocolAccumulator) finish() (ProtocolTVLView, []DEXTVLPoolView) {
 // it expensive. Degradation is explicit, never a fabricated empty figure:
 //
 //   - unknown protocol → 404 (same problem as /v1/protocols/{name});
-//   - a known protocol with no pooled-liquidity derivation → 404 naming
-//     the reason (the standing scope exclusion where one applies);
-//   - a derived protocol with no figure this cycle (first read failed,
-//     or the read returned no pools) → 404 saying exactly that;
+//   - a known protocol with no pooled-liquidity derivation → 404 naming the reason;
+//   - a derived protocol with no figure this cycle (failed read, or no pools) → 404 saying so;
 //   - no cache wired, or wired but not yet refreshed → 503 problem.
 //
 // A figure carried forward from an earlier cycle is SERVED, labelled carried_forward with

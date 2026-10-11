@@ -51,12 +51,9 @@ type ReadyChecker interface {
 // schema must be at least this and not dirty, or [NewSchemaVersionChecker] fails readiness
 // (critical, 503) so a stale schema never hides behind a green healthz.
 //
-// The comparison is `applied >= expected`, not `==`: a NEWER schema is safe during a rolling
-// deploy (migrations run ahead of the swap) and after a rollback. A dirty row alone is not a
-// mismatch, see [nonAtomicMigrationVersions].
-//
-// MUST equal the head under migrations/; TestExpectedSchemaVersionMatchesMigrationsHead
-// fails CI if a migration is added without bumping it.
+// The comparison is `applied >= expected`: a NEWER schema is safe during a rolling deploy and
+// after a rollback. A dirty row alone is not a mismatch, see [nonAtomicMigrationVersions].
+// TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration is added unbumped.
 const ExpectedSchemaVersion uint = 214
 
 // nonAtomicMigrationVersions lists migrations whose up.sql commits mid-file, breaking
@@ -185,11 +182,10 @@ type Server struct {
 	assetListings assetListingCache
 	// holds is the operator under-review list (SetHolds).
 	holds atomic.Pointer[[]holds.Hold]
-	// Cached lake watermark, see lakeWatermark() in lake_watermark.go. lakeWMMu guards the
-	// entry ONLY and is never held across the lake read: that would queue every lake-backed
-	// caller behind one ClickHouse round-trip on a non-context-aware mutex, burning their
-	// deadlines. lakeWMFlight coalesces refreshes onto one detached read; lakeWMNextTry is the
-	// negative cache, so a wedged lake is retried once per lakeWatermarkRetryGap, not per request.
+	// Cached lake watermark, see lakeWatermark(). lakeWMMu guards the entry only and is never
+	// held across the lake read, which would queue callers on a non-context-aware mutex past their
+	// deadlines. lakeWMFlight coalesces refreshes; lakeWMNextTry is the negative cache, so a
+	// wedged lake is retried once per lakeWatermarkRetryGap, not per request.
 	lakeWMMu       sync.Mutex
 	lakeWMLedger   uint32
 	lakeWMClosedAt time.Time
@@ -205,9 +201,8 @@ type Server struct {
 	// priceReadFlight coalesces concurrent readPriceWithAliasesServed calls for the same
 	// (asset, quote) pair, so a burst of identical price requests for a hot pair costs one DB read.
 	priceReadFlight singleflight.Group
-	// Cached top-N native (CAP-38) liquidity-pool listing: a whole-prefix lake scan (~40k
-	// pools) ranked in Go, cached so the endpoint does not re-scan per request. nativeLPMu
-	// guards the entry and is NEVER held across the scan, or the first caller after each TTL
+	// Cached top-N native (CAP-38) liquidity-pool listing: a whole-prefix lake scan (~40k pools)
+	// ranked in Go. nativeLPMu is NEVER held across the scan, or the first caller after each TTL
 	// lapse would pay it inline while the rest queue. nativeLPFillMu collapses concurrent COLD
 	// fills onto one scan; nativeLPRefreshing admits one detached rescan at a time.
 	nativeLPMu         sync.Mutex
@@ -265,13 +260,12 @@ type Server struct {
 	sep1ImagesFlight    chan struct{}
 
 	// RWA membership set: the (code, issuer) pairs meeting the internal/rwa definition, rebuilt
-	// off the request path behind a TTL + single-flight because its inputs move daily. It holds
-	// no valuation; membership is decided before any number is attached.
+	// off the request path behind a TTL + single-flight. It holds no valuation; membership is
+	// decided before any number is attached.
 	//
 	// rwaAt is the last rebuilt time; rwaAttemptAt the last started time, which rate-limits a
-	// failing rebuild (see [Server.readRWAMembership]). rwaFailedAt is the latest failed rebuild,
-	// cleared by the next success; it tells a lapsed set a rebuild will replace from one nothing
-	// is replacing, which look identical from outside but call for opposite responses.
+	// failing rebuild (see [Server.readRWAMembership]). rwaFailedAt is cleared by the next
+	// success; it distinguishes a lapsed set a rebuild will replace from one nothing is replacing.
 	rwaMu        sync.Mutex
 	rwaCache     *rwaMembership
 	rwaAt        time.Time
@@ -408,10 +402,10 @@ const defaultRequestTimeout = 15 * time.Second
 // above the global request deadline never fires: the middleware deadline reaches the reader
 // first and the handler's specific 503 branch is unreachable.
 //
-// The 3s headroom is response-writing room against the default deadline, not a boot-enforced
-// minimum; [config.APIConfig.validate] requires only api.request_timeout >
-// [config.APIMaxHandlerBudget]. TestHandlerBudgets_StayInsideTheRequestTimeout enforces the
-// bound and TestMaxHandlerBudgetMatchesConfigBound keeps the config mirror equal.
+// The 3s headroom is response-writing room, not a boot-enforced minimum;
+// [config.APIConfig.validate] requires only api.request_timeout > [config.APIMaxHandlerBudget].
+// TestHandlerBudgets_StayInsideTheRequestTimeout and TestMaxHandlerBudgetMatchesConfigBound
+// enforce the bound and the config mirror.
 const maxHandlerBudget = defaultRequestTimeout - 3*time.Second
 
 // DashboardAuthMounter is satisfied by main.go's dashboardauth.Handlers. It is defined here so
@@ -1109,14 +1103,13 @@ func valueOr(s, fallback string) string {
 // heartbeat for exactly these (plus "api") and rolls `overall` up from them.
 var defaultStatusServices = []string{"indexer", "aggregator"}
 
-// statusServicesOr normalises Options.StatusServices: nil/empty falls back to the pubnet
-// pair. The slice is copied so callers cannot mutate it through the Server, and the result is
-// never nil, so a deployment with NO background service still reports its own "api" entry.
+// statusServicesOr normalises Options.StatusServices: nil/empty falls back to the pubnet pair.
+// The result is a copy and never nil, so a deployment with NO background service still reports
+// its own "api" entry.
 //
-// Names are lower-cased as well as trimmed, the SAME transform config validation applies.
-// The heartbeat map is keyed by lower-case Prometheus `job` labels, so a trim-only transform
-// would let `status_services = ["Indexer"]` boot clean, then report "unknown" on every
-// /v1/status request and pin `overall` at degraded.
+// Names are lower-cased as well as trimmed, the SAME transform config validation applies: the
+// heartbeat map is keyed by lower-case Prometheus `job` labels, so a trim-only transform would
+// boot clean on ["Indexer"] then pin `overall` at degraded.
 func statusServicesOr(names []string) []string {
 	out := make([]string, 0, len(names))
 	for _, n := range names {
@@ -1176,15 +1169,12 @@ func globalPriceOptsWithDefaults(o aggregate.GlobalPriceOptions) aggregate.Globa
 	return o
 }
 
-// BeginStreamDrain tells every SSE connection that the process is shutting down, so each ends
-// promptly instead of holding http.Server.Shutdown open until the drain budget expires.
-// Register it with http.Server.RegisterOnShutdown, which fires the moment Shutdown starts.
+// BeginStreamDrain tells every SSE connection the process is shutting down, so each ends
+// promptly instead of holding http.Server.Shutdown open. Register it with
+// http.Server.RegisterOnShutdown. Idempotent and safe from any goroutine.
 //
-// Deliberately NOT http.Server.BaseContext: deriving request contexts from the process root
-// would also abort every ordinary in-flight request on SIGTERM. This signal is visible only to
-// stream writers, so other handlers drain normally. See [streaming.Drain].
-//
-// Idempotent and safe from any goroutine.
+// Deliberately NOT http.Server.BaseContext: that would also abort every ordinary in-flight
+// request on SIGTERM; this signal is visible only to stream writers. See [streaming.Drain].
 func (s *Server) BeginStreamDrain() { s.streamDrain.Begin() }
 
 // streamOptions is the [streaming.StreamOptions] every stream handler passes. Centralised so
@@ -1257,16 +1247,11 @@ type stackEntry struct {
 	mw   middleware.Middleware
 }
 
-// middlewareStack is the request-path middleware order, outermost first.
-// middleware/doc.go documents it and TestMiddlewareStackMatchesPackageDoc
-// fails when the two disagree.
+// middlewareStack is the request-path middleware order, outermost first. middleware/doc.go
+// documents it and TestMiddlewareStackMatchesPackageDoc fails when the two disagree.
 //
-// HTTPMetrics sits outside Logger+Recoverer so metrics count every request, including those
-// where the handler panicked.
-//
-// SecurityHeaders runs INSIDE Recoverer so a panic's 500 problem+json response still carries
-// nosniff: the recoverer synthesises the response, and the inner handler is what panics.
-//
+// HTTPMetrics sits outside Logger+Recoverer so metrics count requests whose handler panicked.
+// SecurityHeaders runs INSIDE Recoverer so a panic's synthesised 500 still carries nosniff.
 // CORS runs outside RateLimit so preflight OPTIONS requests do not consume rate-limit budget.
 // RateLimit runs inside Logger, Auth, KeyPolicy, RequireEmailVerified, UsageTracker and
 // MonthlyQuota so the remote IP and Subject are populated when it keys.
@@ -1276,9 +1261,7 @@ func (s *Server) middlewareStack() []stackEntry {
 		{"HTTPMetrics", obs.HTTPMetrics},
 		{"Logger", middleware.Logger(s.logger)},
 		{"Recoverer", middleware.Recoverer(s.logger)},
-		// Security headers live inside Recoverer so even a panic's
-		// 500 problem+json response carries nosniff. Cheap, always
-		// safe, idempotent with any edge-proxy that also sets it.
+		// Inside Recoverer so a panic's 500 response carries nosniff; idempotent with edge proxies.
 		{"SecurityHeaders", middleware.SecurityHeaders},
 		// Cache-Control per route, set BEFORE handlers run so writeJSON / writeProblem inherit
 		// it; handlers may override. CDN-tier `s-maxage` is gated on s.CDNEnabled so a
@@ -1300,17 +1283,15 @@ func (s *Server) middlewareStack() []stackEntry {
 	// can reject the request. They run outside obs.CaptureRoute (innermost), so without this
 	// a gate-rejected request would be bucketed "unmatched" by UsageTracker.
 	stack = append(stack, stackEntry{"ResolveRoute", middleware.ResolveRoute(s.mux)})
-	// RequestTimeout bounds every non-streaming request's context so every handler inherits a
-	// deadline even if it forgets to wrap its own DB/ClickHouse read. It sits OUTSIDE the
-	// credential/quota/limit block, whose Redis and Postgres round-trips would otherwise run
-	// outside the deadline (go-redis's 3 s default cancels nothing in flight), and INSIDE
-	// CORS and TrailingSlashRedirect so a preflight short-circuits without a timer.
+	// RequestTimeout gives every handler a deadline even if it forgets to wrap its own DB read.
+	// It sits OUTSIDE the credential/quota/limit block, whose Redis and Postgres round-trips would
+	// otherwise run outside the deadline, and INSIDE CORS and TrailingSlashRedirect so a preflight
+	// short-circuits without a timer.
 	//
 	// The pre-handler seams (MonthlyQuota read, RateLimit take, Auth's failed-auth throttle)
-	// detach from request cancellation via context.WithoutCancel so a client abort cannot
-	// arm their dwell clocks; middleware.throttleContext re-applies this deadline.
-	// Post-response bookkeeping uses [middleware.AfterResponse]. SSE is exempt; off when
-	// requestTimeout <= 0.
+	// detach from request cancellation via context.WithoutCancel so a client abort cannot arm
+	// their dwell clocks; middleware.throttleContext re-applies this deadline. SSE is exempt;
+	// off when requestTimeout <= 0.
 	if s.requestTimeout > 0 {
 		stack = append(stack, stackEntry{"RequestTimeout", middleware.RequestTimeout(s.requestTimeout)})
 	}
@@ -1320,9 +1301,8 @@ func (s *Server) middlewareStack() []stackEntry {
 	if s.Auth != nil {
 		stack = append(stack, stackEntry{"PublicRoutes", s.publicRoutes.Mark()}, stackEntry{"Auth", s.Auth})
 	}
-	// KeyPolicy runs after Auth (so the Subject is on context) but
-	// before RateLimit (so a policy-denied 403 never spends a
-	// rate-limit token).
+	// KeyPolicy runs after Auth (Subject on context) and before RateLimit (a policy-denied 403
+	// never spends a token).
 	if s.KeyPolicy != nil {
 		stack = append(stack, stackEntry{"KeyPolicy", s.KeyPolicy})
 	}
@@ -1331,18 +1311,16 @@ func (s *Server) middlewareStack() []stackEntry {
 	if s.RequireEmailVerified != nil {
 		stack = append(stack, stackEntry{"RequireEmailVerified", s.RequireEmailVerified})
 	}
-	// Usage tracker runs OUTSIDE both quota and rate-limit so it observes BOTH kinds of 429
-	// and records them under the `throttled` class; inside MonthlyQuota a quota denial
-	// returns without calling next and would be counted nowhere. The billable per-day
-	// total (the MonthlyQuota input) excludes 429s and 5xx other than a timed-out read, see
-	// middleware.billableClass, so a counted 429 cannot feed back into the quota that denied
-	// it. Best-effort; failures log at debug and never block.
+	// Usage tracker runs OUTSIDE both quota and rate-limit so it records both kinds of 429 under
+	// the `throttled` class; inside MonthlyQuota a quota denial would be counted nowhere. The
+	// billable per-day total (the MonthlyQuota input) excludes 429s and most 5xx, see
+	// middleware.billableClass, so a counted 429 cannot feed back into the quota that denied it.
+	// Best-effort; failures log at debug and never block.
 	if s.UsageTracker != nil {
 		stack = append(stack, stackEntry{"UsageTracker", s.UsageTracker})
 	}
-	// MonthlyQuota runs AFTER auth/key-policy (so the Subject is
-	// on context) but BEFORE rate-limit (so a quota-rejected
-	// request doesn't also spend a per-minute token).
+	// MonthlyQuota runs AFTER auth/key-policy (Subject on context) and BEFORE rate-limit (a
+	// quota-rejected request spends no per-minute token).
 	if s.MonthlyQuota != nil {
 		stack = append(stack, stackEntry{"MonthlyQuota", s.MonthlyQuota})
 	}
@@ -1384,14 +1362,11 @@ var proxyForwardHeaders = []string{
 // scrape. Used for `/metrics`.
 //
 // Both required: (1) RemoteAddr is loopback; (2) NO proxy-forwarding header. (2) makes the
-// guard real: Caddy runs ON THE SAME HOST, so a misconfigured Caddy forwarding public traffic
-// presents a LOOPBACK RemoteAddr and passes a RemoteAddr-only check, while mainstream proxies
-// set X-Forwarded-For by default.
+// guard real: Caddy runs on the same host, so a misconfigured Caddy presents a LOOPBACK
+// RemoteAddr for public traffic, while mainstream proxies set X-Forwarded-For by default.
 //
-// Defence in depth, not the control: the real control is the Caddyfile 404ing /metrics from
-// public hosts (configs/caddy/Caddyfile.api). A proxy that STRIPS forwarding headers would
-// still pass, which is why the Caddyfile rule is not optional.
-//
+// Defence in depth: the real control is the Caddyfile 404ing /metrics from public hosts
+// (configs/caddy/Caddyfile.api); a proxy that STRIPS forwarding headers would still pass.
 // 404 (not 403) deliberately: 403 confirms the route exists.
 func loopbackOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1457,10 +1432,8 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// the JSON file the daily verify timer writes. Backs the explorer
 	// /diagnostics archive panel. 503 when unconfigured, 404 pre-first-run.
 	s.mux.HandleFunc("GET /v1/diagnostics/archive", s.handleDiagnosticsArchive)
-	// Backup + DR-evidence freshness vs. SLO (pgBackRest full/diff/WAL,
-	// offsite repo, restore drill, ClickHouse schema snapshot), read
-	// from Prometheus. Backs the public status page's Backups panel.
-	// 503 when no metrics backend is wired.
+	// Backup + DR-evidence freshness vs. SLO, read from Prometheus; backs the status page's
+	// Backups panel. 503 when no metrics backend is wired.
 	s.mux.HandleFunc("GET /v1/diagnostics/backups", s.handleDiagnosticsBackups)
 	s.mux.HandleFunc("GET /v1/coverage", s.handleCoverageVerdicts)
 
@@ -1535,10 +1508,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 
 	// Prometheus scrape endpoint. Deliberately unversioned: operator-facing, not public API.
 	//
-	// Also gated at the Go layer on loopback AND un-proxied (see loopbackOnly) because Caddy is
-	// meant to 404 `/metrics` from public hosts, and this catches a stale Caddyfile or an
-	// unaudited proxy. A public hit fingerprints the deployment (runtime stats, per-source
-	// counters, build info), which justifies two layers.
+	// Also gated at the Go layer on loopback AND un-proxied (see loopbackOnly): Caddy should
+	// already 404 it, and this catches a stale Caddyfile. A public hit fingerprints the
+	// deployment, which justifies two layers.
 	s.mux.Handle("GET /metrics", loopbackOnly(obs.Handler()))
 
 	// Asset catalogue.
@@ -1651,10 +1623,8 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// the explorer's /oracles "price streams" table.
 	s.mux.HandleFunc("GET /v1/oracle/streams", s.handleOracleStreams)
 
-	// SEP-40 passthrough surface — same data as /v1/price, reshaped
-	// to the single-quote SEP-40 contract that on-chain oracle
-	// readers expect. Quote fixed at fiat:USD on /lastprice;
-	// /x_last_price takes explicit base + quote.
+	// SEP-40 passthrough: /v1/price data reshaped to the single-quote contract on-chain oracle
+	// readers expect. Quote is fixed at fiat:USD on /lastprice; /x_last_price takes base + quote.
 	s.mux.HandleFunc("GET /v1/oracle/lastprice", s.handleOracleLastPrice)
 	s.mux.HandleFunc("GET /v1/oracle/prices", s.handleOraclePrices)
 	s.mux.HandleFunc("GET /v1/oracle/x_last_price", s.handleOracleXLastPrice)
@@ -1707,10 +1677,8 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// rwa_premium_history.go.
 	s.mux.HandleFunc("GET /v1/rwa/premium", s.handleRWAPremiumHistory)
 
-	// Account self-service. /me and /usage require an authenticated
-	// Subject; /keys (POST) additionally requires the AccountStore
-	// to be wired (typically only when Redis is reachable). All
-	// three return 401 for anonymous callers.
+	// Account self-service: all three return 401 for anonymous callers; POST /keys also needs
+	// the AccountStore wired (typically only when Redis is reachable).
 	s.mux.HandleFunc("GET /v1/account/me", s.handleAccountMe)
 	s.mux.HandleFunc("GET /v1/account/usage", s.handleAccountUsage)
 	s.mux.HandleFunc("GET /v1/account/keys", s.handleAccountKeysList)
@@ -1721,10 +1689,8 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Operator surface (handleAdmin gates tier + X-Reason at the mount):
 	// mint a key for ANOTHER identifier; audit-logged via Options.Audit.
 	s.handleAdmin("POST /v1/admin/keys", s.handleAdminKeysCreate)
-	// Operator surface: revoke ANOTHER identifier's key — the leaked-key
-	// kill switch. Self-service revoke needs the customer's own
-	// credential, so an operator needs this path to stop a compromised
-	// key. It requires X-Reason and audit-logs "key.revoke".
+	// Operator surface: revoke ANOTHER identifier's key, the leaked-key kill switch (self-service
+	// revoke needs the customer's own credential). Requires X-Reason and audit-logs "key.revoke".
 	s.handleAdmin("DELETE /v1/admin/keys/{keyID}", s.handleAdminKeysRevoke)
 	// Operator surface: per-account tier, status and rate-limit / monthly-quota overrides. Same
 	// TierOperator gate as /v1/admin/keys; PATCH also requires an X-Reason header and audit-logs
@@ -1791,10 +1757,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// the explorer's copy so the two cannot drift.
 	s.handlePublic("GET /.well-known/security.txt", s.handleSecurityTxt)
 
-	// /errors/{slug}: dereferenceable RFC 9457 problem `type` URIs. Every problem+json response
-	// carries type=".../errors/<slug>" and RFC 9457 says it SHOULD resolve to documentation. This
-	// serves a self-describing page (slug humanised plus a pointer at the full reference) without
-	// maintaining hand-written docs per slug.
+	// /errors/{slug}: dereferenceable RFC 9457 problem `type` URIs, which SHOULD resolve to
+	// documentation. Serves a self-describing page (humanised slug plus a pointer at the full
+	// reference) without hand-written docs per slug.
 	s.mux.HandleFunc("GET /errors/{slug}", s.handleErrorDoc)
 	s.mux.HandleFunc("GET /errors/{$}", s.handleErrorIndex)
 }
@@ -1825,10 +1790,9 @@ type checkResult struct {
 // handleHealthz is the shallow liveness probe: 200 while the process runs and the mux serves.
 // It does NOT touch the database or Redis; that is the readiness probe's job.
 //
-// /healthz and /readyz are scoped to the serving plane (process, postgres, redis) and do NOT
-// report ingest lag, supply, oracle freshness or SLA latency, which live at `/v1/status`.
-// Liveness probes must not flap when a backfill stalls or one source goes silent. The
-// response links to /v1/status.
+// /healthz and /readyz cover the serving plane only (process, postgres, redis); ingest lag,
+// supply and oracle freshness live at `/v1/status`, since probes must not flap when a backfill
+// stalls or one source goes silent.
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, healthResponse{
 		Status:     "ok",
@@ -1843,12 +1807,11 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 // flap the pod.
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	// Single-flight + 1s result cache: /v1/readyz is unauthenticated and unlimited (LB probes
-	// must never be throttled) and each round pings every checker, holding DB pool slots up to
-	// 2s, so uncached spam could exhaust the shared pool. Callers share ONE round per second.
+	// must never be throttled) and each round holds DB pool slots up to 2s, so uncached spam
+	// could exhaust the shared pool. Callers share ONE round per second.
 	//
-	// readyzMu is held only to read/write the cache and flight fields, never across the round:
-	// queued callers would block for up to the 2s budget. The round runs detached in
-	// fillReadyz; waiters select on its done channel and can abandon via their own context.
+	// readyzMu is never held across the round, or queued callers would block up to the 2s budget.
+	// The round runs detached in fillReadyz; waiters can abandon via their own context.
 	s.readyzMu.Lock()
 	if time.Since(s.readyzAt) < time.Second && s.readyzBody != nil {
 		code, body := s.readyzCode, s.readyzBody
@@ -1972,10 +1935,8 @@ func (s *Server) computeReadyz() (int, []byte) {
 	}
 	wg.Wait()
 
-	// Split fail-cases into critical (503) vs non-critical (200 with
-	// status="degraded") so a Redis outage cannot 503 readyz and make
-	// HAProxy drain every healthy API backend while the Timescale
-	// fallback keeps the customer-facing surface serving.
+	// Critical failures 503; non-critical ones return 200 status="degraded", so a Redis outage
+	// cannot make HAProxy drain every healthy backend while the Timescale fallback still serves.
 	criticalFailed := false
 	anyFailed := false
 	for i, r := range results {
@@ -2061,14 +2022,13 @@ type lakeHealth struct {
 }
 
 // handleLivezLake is the LAKE-critical health probe. /v1/readyz treats ClickHouse as
-// NON-critical so a lake outage degrades rather than un-readies pricing, but that 200 keeps a
-// lake-dead region in a load balancer's pool for lake-backed routes. This is the complement:
-// 200 iff the ClickHouse checker pings; 503 on failure OR when no lake is wired (absent fails
-// closed). Point lake-route LB monitors here, pricing monitors on /v1/readyz.
+// NON-critical, so a lake-dead region stays in a load balancer's pool for lake-backed routes.
+// This is the complement: 200 iff the ClickHouse checker pings; 503 on failure OR when no lake
+// is wired (absent fails closed). Lake-route monitors point here, pricing monitors at /v1/readyz.
 //
 // Single-flight + 1s result cache: the route shares readyz's auth and rate-limit exemptions,
-// which are only safe behind it; otherwise EVERY anonymous request would run a fresh
-// `LakeTipLedger` query, an amplifier aimed at the lake exactly when it struggles.
+// which are only safe behind it; otherwise every anonymous request would run a fresh
+// `LakeTipLedger` query against a lake that is already struggling.
 //
 // livezLakeMu is never held across the ping, or queued callers would block up to the 5s budget
 // during the outage the route exists to surface. The round runs detached in fillLivezLake;
@@ -2212,10 +2172,9 @@ func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 // self-descriptive, so the humanised slug plus a link to the full reference beats a 404.
 // Content-negotiated: JSON for API clients, minimal HTML for a browser.
 func (s *Server) handleErrorDoc(w http.ResponseWriter, r *http.Request) {
-	// The slug is URL-path input; constrain it to the closed kebab-case
-	// charset every real error type uses. Anything else can't be one of
-	// ours, so we don't reflect it — this also makes the value provably
-	// free of HTML metacharacters before it reaches any renderer.
+	// The slug is URL-path input; constrain it to the kebab-case charset real error types use.
+	// Anything else is not ours and is not reflected, which also keeps HTML metacharacters out
+	// of every renderer.
 	slug := r.PathValue("slug")
 	if !errorSlugRE.MatchString(slug) {
 		slug = "unknown"

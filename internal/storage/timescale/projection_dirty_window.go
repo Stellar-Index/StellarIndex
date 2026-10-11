@@ -7,16 +7,14 @@ import (
 	"time"
 )
 
-// ProjectionDirtyWindow is one source's pending re-reconcile obligation
-// (migration 0125): the ledger window a `stellarindex-ops projector-replay`
-// rewound over that no completeness run has re-verified clean yet.
+// ProjectionDirtyWindow is one source's pending re-reconcile obligation: the ledger window a
+// `stellarindex-ops projector-replay` rewound over that no completeness run has re-verified yet.
 //
-// It closes the carried-claim invalidation gap: the daily compute-completeness driver reconciles
-// each source only from its prior watermark to tip and CARRIES the prior clean projection claim
-// for the older prefix (projectionClaim rule 3). That carry is sound only while the served tier
-// below the watermark is immutable, and a projector-replay rewind rewrites exactly that region.
-// Without a durable record of the rewind, the rewritten range stays certified by a claim whose
-// evidence the replay just invalidated.
+// The daily compute-completeness driver reconciles each source only from its prior watermark to
+// tip and CARRIES the prior clean projection claim for the older prefix (projectionClaim rule 3).
+// That carry is sound only while the served tier below the watermark is immutable, and a rewind
+// rewrites exactly that region; without a durable record the rewritten range stays certified by
+// a claim the replay just invalidated.
 type ProjectionDirtyWindow struct {
 	Source string
 	// From is the rewind target (inclusive), the first ledger whose served rows were re-written.
@@ -40,15 +38,14 @@ type ProjectionDirtyWindow struct {
 //   - `ch-rebuild -record-dirty-window` (scripts/ops/ch-rebuild-projected.sh), when a clean-slate
 //     window was DELETEd and its re-derive did not complete: the range is EMPTY until the
 //     recovery run finishes.
-//   - `ch-rebuild -write` rewrites the range from the lake, recorded before its first write; it
-//     never touches the cursor.
-//   - `backfill -write` rewrites NON-projected served rows, recorded before their first write;
-//     they have no projector cursor. `backfill -source soroban-events` also stamps the full range
-//     on every PROJECTED source with a cursor: those rows are not rewritten but stale until a
-//     projector-replay re-projects them.
+//   - `ch-rebuild -write` rewrites the range from the lake, recorded before its first write.
+//   - `backfill -write` rewrites NON-projected served rows (no projector cursor), recorded before
+//     their first write. `backfill -source soroban-events` also stamps the full range on every
+//     PROJECTED source with a cursor: those rows are stale until a projector-replay re-projects
+//     them.
 //
-// The constructors and the predicate below are the ONE place the format lives. The prefixes
-// reproduce byte-for-byte what released binaries have written since migration 0125 (pinned by
+// The constructors and the predicate below are the ONE place the format lives. The prefixes must
+// reproduce byte-for-byte what released binaries wrote (pinned by
 // TestProjectionDirtyWindowReasonIsStableAcrossReleases).
 const (
 	reasonProjectorReplayPrefix  = "projector-replay rewind "
@@ -87,27 +84,21 @@ func BackfillWriteReason(from, to uint32) string {
 	return fmt.Sprintf("%s[%d,%d]", reasonBackfillWritePrefix, from, to)
 }
 
-// IsProjectorReplay reports whether this window was recorded by
-// `projector-replay`, the only writer that rewinds the live projector cursor and so the only one
-// whose window can EXPLAIN lag.
+// IsProjectorReplay reports whether this window was recorded by `projector-replay`, the only
+// writer that rewinds the live projector cursor and so the only one whose window can EXPLAIN lag.
 //
-// Read by the projector's replay-window watcher: a `projected-rebuild` window must never raise
-// stellarindex_projector_replay_window_active, because its range routinely covers the live
-// cursor's position and would suppress the lag ticket while the source is HELD, the very state
-// the ticket exists to catch.
-//
-// Unknown/empty reasons answer false: the flag only SUPPRESSES an alert, so anything
-// unrecognised must leave it armed.
+// A `projected-rebuild` window must never raise stellarindex_projector_replay_window_active: its
+// range routinely covers the live cursor and would suppress the lag ticket while the source is
+// HELD, the very state the ticket exists to catch. Unknown/empty reasons answer false, since the
+// flag only SUPPRESSES an alert.
 func (w ProjectionDirtyWindow) IsProjectorReplay() bool {
 	return strings.HasPrefix(w.Reason, reasonProjectorReplayPrefix)
 }
 
 // RecordProjectionDirtyWindow records (or widens) a source's dirty window. projector-replay calls
 // it BEFORE rewinding: a crash between the two leaves a spurious window one clean verify clears,
-// the opposite order a rewind with no record.
-//
-// The conflict arm WIDENS (LEAST(from), GREATEST(to)): a second replay can only grow the
-// un-reverified obligation while one is pending, never shrink it.
+// the opposite order a rewind with no record. The conflict arm WIDENS (LEAST(from),
+// GREATEST(to)): a second replay can only grow a pending obligation, never shrink it.
 func (s *Store) RecordProjectionDirtyWindow(ctx context.Context, w ProjectionDirtyWindow) error {
 	const q = `
         INSERT INTO projection_dirty_windows (source, from_ledger, to_ledger, reason)
@@ -160,9 +151,8 @@ func (s *Store) ProjectionDirtyWindows(ctx context.Context) (map[string]Projecti
 // still the one the caller verified; it runs inside [Store.PublishCompletenessVerdict]'s
 // transaction. Package-level so the predicate can be asserted without a database.
 //
-// The bounds catch a WIDENED window (a concurrent replay that grew the range survives) but not a
-// same-or-narrower re-record, so `updated_at = $4` is the load-bearing conjunct: any re-record
-// bumps updated_at and the delete matches nothing, leaving the window pending.
+// The bounds catch a WIDENED window but not a same-or-narrower re-record, so `updated_at = $4`
+// is the load-bearing conjunct: any re-record bumps it and the delete matches nothing.
 const clearProjectionDirtyWindowQuery = `
         DELETE FROM projection_dirty_windows
         WHERE source = $1 AND from_ledger >= $2 AND to_ledger <= $3

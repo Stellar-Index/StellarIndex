@@ -27,10 +27,8 @@ const SourceName = "coinbase"
 // authentication for the matches channel.
 const WSEndpoint = "wss://ws-feed.exchange.coinbase.com"
 
-// Message `type` values on the Coinbase wire. We act on `match`
-// and `last_match`; `subscriptions` is the subscribe ack; `error`
-// is a subscription failure; others (heartbeat, ticker, l2update)
-// we never subscribe to in v1.
+// Message `type` values on the Coinbase wire. We act on `match` and `last_match`; `subscriptions`
+// is the subscribe ack and `error` a subscription failure. Other types are never subscribed.
 const (
 	TypeMatch         = "match"
 	TypeLastMatch     = "last_match"
@@ -38,9 +36,8 @@ const (
 	TypeError         = "error"
 )
 
-// ChannelName — only `matches` is subscribed in v1. `ticker` and
-// `level2` channels exist and would add book-depth detail; defer
-// until the aggregator needs it.
+// ChannelName is the only channel subscribed; `ticker` and `level2` would add book depth the
+// aggregator does not need.
 const ChannelName = "matches"
 
 // Compile-time assertion: venue's class matches external.ClassExchange.
@@ -57,10 +54,8 @@ var (
 	// the expected shape. Single-frame skip; stream stays up.
 	ErrMalformedFrame = errors.New("coinbase: malformed frame")
 
-	// ErrUnknownProduct — match arrived on a product_id not in
-	// our PairMap. Defensive: Start rejects subscription-level
-	// misconfiguration upfront, so hitting this at runtime means
-	// Coinbase listed a new pair we're implicitly subscribed to.
+	// ErrUnknownProduct — match arrived on a product_id not in our PairMap. Defensive: Start
+	// rejects misconfiguration upfront, so this means the venue sent a pair we did not ask for.
 	ErrUnknownProduct = errors.New("coinbase: product_id not in configured PairMap")
 
 	// ErrSubscriptionRejected — venue returned a `type:"error"`

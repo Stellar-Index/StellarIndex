@@ -62,10 +62,8 @@ const sdexTradesFilter = "source = 'sdex'"
 // excludes one-side-zero fills because older ledgers hold none.
 const sdexPriceableFilter = "base_amount > 0 AND quote_amount > 0"
 
-// countFilter is the predicate for the served-side row COUNT. It equals
-// whereFilter except for the sdex target, where it adds sdexPriceableFilter.
-// Use it only for CountRowsByLedger; floor identity (TargetFloorKey, MinLedger,
-// the floor upsert) stays on whereFilter.
+// countFilter is the served-side COUNT predicate: whereFilter, plus sdexPriceableFilter for sdex.
+// Floor identity (TargetFloorKey, MinLedger, the floor upsert) stays on whereFilter.
 func (t reconTarget) countFilter() string {
 	if t.table == "trades" && t.whereFilter == sdexTradesFilter {
 		return t.whereFilter + " AND " + sdexPriceableFilter
@@ -125,9 +123,8 @@ type reconSource struct {
 	// fixed historical span may opt out.
 	aggregate *aggregateWaiver
 
-	// waived names the served rows this source writes that the projection
-	// reconcile deliberately does NOT count, with why. It is the runtime
-	// record of what "reconciled" excludes for this source.
+	// waived names the served rows the projection reconcile deliberately does NOT count, with why,
+	// so "reconciled" never overclaims.
 	waived []waivedTable
 
 	// newGatedDec, when non-nil, scopes the lake read to the source's gated set (factory plus
@@ -141,10 +138,9 @@ type reconSource struct {
 	reproofOutlastsPass string
 }
 
-// aggregateWaiver is a source's opt-out from strict per-ledger reconcile.
-// boundary is the highest ledger of the keying vintage that justifies the
-// netting; projectionDelta reconciles a waiver with boundary 0 strict, so a
-// netting exception without its bound cannot mark a source complete.
+// aggregateWaiver is a source's opt-out from strict per-ledger reconcile. boundary is the highest
+// ledger of the keying vintage that justifies netting; boundary 0 reconciles strict, so an
+// unbounded netting exception cannot mark a source complete.
 type aggregateWaiver struct {
 	reason   string
 	boundary uint32
@@ -180,10 +176,9 @@ func targetLabel(table, filter string) string {
 	return table + "[" + filter + "]"
 }
 
-// projectionScope renders which served tables the projection reconcile counted
-// and which it waived, for the verdict detail. scopes is parallel to s.targets;
-// a target whose scope is empty was skipped by reconcileTarget, so it is named
-// as not reconciled. The text carries no "; ": detail is joined on that separator.
+// projectionScope renders which served tables the reconcile counted and which it waived, for the
+// verdict detail. scopes is parallel to s.targets; an empty scope was skipped, so it is named as
+// not reconciled. The text carries no "; " because detail is joined on that separator.
 func (s reconSource) projectionScope(scopes []projectionScope) string {
 	rec := make([]string, 0, len(s.targets))
 	var uncounted []string
@@ -228,10 +223,8 @@ func (s reconSource) projectionScope(scopes []projectionScope) string {
 // from-genesis re-proof (the SDEX census, or a named heavy source).
 func (s reconSource) outlastsPass() bool { return s.census || s.reproofOutlastsPass != "" }
 
-// gatedDecoder is a decoder that can enumerate its gated contract set — the
-// factory trust roots ∪ registered children. Both aquarius.Decoder and
-// phoenix.Decoder satisfy it. Used by gatedPrefilter to build the -ch
-// re-derive contract-id prefilter.
+// gatedDecoder can enumerate its gated contract set (factory trust roots ∪ registered children),
+// which gatedPrefilter turns into the -ch re-derive contract-id prefilter.
 type gatedDecoder interface {
 	completeness.Decoder
 	GatedContractSet() []string
@@ -270,9 +263,8 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// pools announced after that snapshot from the router's add_pool events.
 			name: "aquarius", genesis: 52_728_375, dec: aquarius.NewDecoder(),
 			factories: []string{aquarius.MainnetRouter}, creationSym: aquarius.EventAddPool,
-			// Scope the re-derive read to the router and its pools; the whole lake would run the
-			// dirty-window re-derive past the -pass deadline. Matches() gates purely on pool
-			// identity, so counts are identical.
+			// Scoping the read to the router and its pools keeps the re-derive inside the -pass
+			// deadline; Matches() gates purely on pool identity, so counts are identical.
 			newGatedDec: func() gatedDecoder { return aquarius.NewDecoder() },
 			targets: []reconTarget{
 				{"trades", "source = 'aquarius'", []string{"aquarius.trade"}},
@@ -282,10 +274,8 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				{"aquarius_admin", "", []string{"aquarius.admin"}},
 				{"aquarius_protocol_fee", "", []string{"aquarius.fee"}},
 				{"aquarius_kill_switches", "", []string{"aquarius.kill"}},
-				// Deliberately not reconciled (see waived below): reserves, reserves_sync and
-				// liquidity fan one event out to one row per token position, so an event-count
-				// reconcile would false-flag nearly every ledger. They stay on the density
-				// gap-detector until a fan-out-aware reconcile exists, not claimed complete.
+				// reserves, reserves_sync and liquidity are waived below (fan-out); the density
+				// gap-detector covers them and they are not claimed complete.
 			},
 			waived: []waivedTable{
 				{"aquarius_reserves", "", fanoutWaiver},
@@ -295,18 +285,14 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		},
 		{
 			// The pre-upgrade pool WASM emits swaps as 7 field-events (a RawSwap needs 8), so a group
-			// flushes only when a later event ages it out of the correlation buffer. The trade keeps
-			// its first-field ledger and the re-derive counts it there (see eventLedgerCarrier).
+			// flushes only when a later event ages it out of the buffer. The trade keeps its first-field
+			// ledger and eventLedgerCarrier counts it there, so phoenix reconciles strictly per-ledger.
 			name: "phoenix", genesis: 51_572_016, dec: phoenix.NewDecoder(),
-			// Re-derive prefilter, identity-gated as for aquarius: scope the lake read to the curated
-			// pool and stake set. Matches() gates purely on contract identity and the correlation
-			// buffer groups one pool's events, so counts are identical. factories/creationSym make
-			// gatedPrefilter's walk run, so pools created after the curated seed are still picked up.
+			// Identity-gated as for aquarius: Matches() keys purely on contract identity, so scoping
+			// the lake read to the curated set leaves counts identical. factories/creationSym keep
+			// pools created after the seed in the prefilter walk.
 			factories: []string{phoenix.MainnetFactory}, creationSym: phoenix.EventActionCreate,
 			newGatedDec: func() gatedDecoder { return phoenix.NewDecoder() },
-			// eventLedgerCarrier attribution (completeness.countLedger) counts each sweep-rescued
-			// 7-field-era trade at its own first-field ledger, where the served row lives. Phoenix
-			// therefore reconciles strictly per-ledger over its full range, with no netting.
 			targets: []reconTarget{
 				{"trades", "source = 'phoenix'", []string{"phoenix.trade"}},
 				{"phoenix_liquidity", "", []string{"phoenix.liquidity"}},
@@ -317,19 +303,17 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				{"phoenix_admin_events", "", []string{"phoenix.admin"}},
 			},
 		},
-		// contractIDs scopes the lake read to the curated pool (regateSource unions
-		// the protocol_contracts registry in); without it the re-derive streamed
-		// every POOL-topic-candidate event in [floor, tip] and timed out the pass.
+		// contractIDs scopes the lake read to the curated pool (regateSource unions the registry in);
+		// otherwise the re-derive streams every POOL-topic candidate and times out the pass.
 		{name: "comet", genesis: 51_499_546, dec: comet.NewDecoder(), contractIDs: comet.MainnetGatedSet(), targets: []reconTarget{
 			{"trades", "source = 'comet'", []string{"comet.trade"}},
 			{"comet_liquidity", "", []string{"comet.liquidity"}},
 		}},
 		{
-			// Factory-anchored. NewDecoder() carries the in-code pool seed so a sub-range re-derive
-			// resolves tokens; factories/creationSym admit pools created after that seed was frozen.
+			// Factory-anchored; factories/creationSym admit pools created after the in-code seed.
 			// newGatedDec, not a static contractIDs list, scopes the re-derive: a static list would
-			// drop later pools from ch-rebuild and ch-reproject.
-			// Strict per-ledger: a V3 swap body is self-contained, so the served row keys 1:1.
+			// drop later pools from ch-rebuild and ch-reproject. A V3 swap body is self-contained,
+			// so the served row keys 1:1.
 			name:        "sushiswap_v3",
 			genesis:     sushiswap_v3.FactoryGenesisLedger,
 			dec:         sushiswap_v3.NewDecoder(),
@@ -344,11 +328,9 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			},
 		},
 		{
-			// upshift: contract-gated on a curated two-vault set, with no factory and so no newGatedDec.
-			// contractIDs lets the re-derive finish and keeps recognition honest: a stranger's
-			// `deposit` would otherwise cap this source instead of the system-wide bucket.
-			// Strict per-ledger, 1:1: recognised-but-unserved kinds decode to zero rows, so their
-			// ledgers count as expected-zero rather than blind.
+			// upshift: contract-gated on a curated vault set with no factory. contractIDs lets the
+			// re-derive finish and keeps recognition honest: a stranger's `deposit` would otherwise
+			// cap this source instead of the system-wide bucket.
 			name:           "upshift",
 			genesis:        upshift.GenesisLedger,
 			dec:            upshift.NewDecoder(),
@@ -374,16 +356,13 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			},
 		},
 		{
-			// blend_emitter: ADR-0035/0040 contract-gated on one curated contract, with no factory.
-			// contractIDs pins recognition attribution, so an unrecognised topic caps this source
-			// rather than the system-wide bucket.
+			// blend_emitter: contract-gated on one curated contract. contractIDs pins recognition
+			// attribution so an unrecognised topic caps this source, not the system-wide bucket.
 			name: "blend_emitter", genesis: 51_499_914, dec: blend_emitter.NewDecoder(),
 			contractIDs: blend_emitter.MainnetGatedSet(),
 			targets: []reconTarget{
-				// The `drop` kind fans out (one row per recipient) and would false-flag every drop
-				// ledger, but distribute and swap are strictly 1:1. So only drop rows are carved out
-				// of the served side and the drop kind is omitted from the re-derive; drop ledgers
-				// fall to the density gap-detector. See blendEmitterDropWaiver.
+				// Only the fan-out `drop` rows are carved out of both sides; distribute and swap
+				// are 1:1. See blendEmitterDropWaiver.
 				{"blend_emitter_events", "event_kind <> 'drop'", []string{
 					"blend_emitter.distribute", "blend_emitter.swap_config",
 				}},
@@ -391,44 +370,37 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			waived: []waivedTable{{"blend_emitter_events", "event_kind = 'drop'", blendEmitterDropWaiver}},
 		},
 		{
-			// Lake-derived exact genesis (mirrors protocols_registry.go): the MessageTransmitter's
-			// first event. The later ingestion-config floor would leave real served rows below the
-			// verify floor, outside every verdict.
+			// Genesis is the MessageTransmitter's first lake event; the later ingestion-config floor
+			// would leave real served rows below the verify floor, outside every verdict.
 			name: "cctp", genesis: 62_146_641, dec: cctp.NewDecoder(),
-			// contractIDs pins recognition attribution: without it an
-			// unhandled cctp topic falls into the system-wide recognition
-			// bucket instead of capping THIS source.
+			// contractIDs pins recognition attribution so an unhandled cctp topic caps THIS source.
 			contractIDs: cctp.MainnetContracts(),
 			targets: []reconTarget{
 				{"cctp_events", "", []string{"cctp.event"}},
 			},
 		},
-		// Lake-derived exact genesis (mirrors protocols_registry.go):
-		// first event across all four Rozo contracts; rozo_events is
-		// projected to exactly here. The 62_403_000 ingestion-config floor
-		// sits ~1.57M ledgers late.
+		// Genesis is the first event across all four Rozo contracts; the 62_403_000 ingestion-config
+		// floor sits ~1.57M ledgers late.
 		{
 			name: "rozo", genesis: 60_829_397, dec: rozo.NewDecoder(),
-			// contractIDs pins recognition attribution, as for cctp. Rozo is not a gated-registry
-			// source, so without the pin nothing puts its contracts in ownerOf and its own
-			// recognition_ok could never go false. The decoder gates on this same set, so the pin
-			// is counts-identical as a prefilter. Copied so the catalogue never aliases the slice.
+			// Rozo is not a gated-registry source, so without this pin nothing puts its contracts in
+			// ownerOf and its recognition_ok could never go false. The decoder gates on the same set,
+			// so counts are identical. Copied so the catalogue never aliases the slice.
 			contractIDs: append([]string(nil), rozo.MainnetPaymentContracts...),
 			targets: []reconTarget{
 				{"rozo_events", "", []string{"rozo.event"}},
 			},
 		},
 		{
-			// sorocredit: identity-gated on its main contract plus the Collateral children it
-			// announces. A root-only contractIDs pin would drop child events from re-derives while
-			// the live projector serves them, so children are preseeded and newGatedDec scopes the
-			// read. One Event type fans out to four tables by EventKind(), hence a target per table.
+			// sorocredit: identity-gated on its main contract plus announced Collateral children. A
+			// root-only contractIDs pin would drop child events the live projector serves, so
+			// children are preseeded and newGatedDec scopes the read.
 			name: sorocredit.SourceName, genesis: sorocredit.GenesisLedger,
 			dec:       sorocredit.NewDecoder(),
 			factories: []string{sorocredit.MainnetContract}, creationSym: sorocredit.TopicNewCollateralContract,
 			newGatedDec: func() gatedDecoder { return sorocredit.NewDecoder() },
-			// Its 139k+ children overflow the contract prefilter; these exact
-			// topics (none in the firehose) keep the unscoped read narrow.
+			// Its 139k+ children overflow the contract prefilter; these non-firehose topics keep the
+			// unscoped read narrow.
 			topic0Syms: sorocredit.EventSymbols(),
 			targets: []reconTarget{
 				{"credit_positions", "", []string{"sorocredit.new_collateral_contract"}},
@@ -443,8 +415,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		},
 		{
 			name: blend_backstop.SourceName, genesis: blend_backstop.BackstopGenesisLedger, dec: blend_backstop.NewDecoder(),
-			// contractIDs pins recognition attribution, as for rozo. Both the V2 singleton and the V1
-			// it replaced are pinned because the decoder claims both (IsBackstopContract);
+			// Both V2 and the V1 it replaced are pinned because the decoder claims both;
 			// TestCatalogue_RecognitionPinsMatchDecoderIdentity keeps the two in step.
 			contractIDs: []string{blend_backstop.MainnetBackstopV2, blend_backstop.MainnetBackstopV1},
 			targets: []reconTarget{
@@ -454,30 +425,25 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		// contractIDs scopes the lake read to the curated vault and strategy set. A static list is
 		// safe because Decode is per-event and a factory `create` never registers a child.
 		{name: "defindex", genesis: defindex.GenesisLedger, dec: defindex.NewDecoder(), contractIDs: defindex.MainnetGatedSet(), targets: []reconTarget{
-			// Contract-gated on a curated set. The in-code seed (MainnetGatedSet) is the trust root
-			// because the factory create event does not announce the child address; a vault verified
-			// later needs the seed extended. strategy.harvest must be listed: omitting it undercounts
-			// the expected side and false-flags every harvest ledger.
+			// The in-code seed is the trust root because the factory create event does not announce
+			// the child address. strategy.harvest must be listed: omitting it undercounts the
+			// expected side and false-flags every harvest ledger.
 			{"defindex_flows", "", []string{
 				"defindex.strategy.deposit", "defindex.strategy.withdraw",
 				"defindex.strategy.harvest",
 				"defindex.vault.deposit", "defindex.vault.withdraw",
 			}},
-			// dfees: per-asset protocol-fee distribution. The decoder emits one DFeesEvent per Vec
-			// entry on purpose, so the count stays a strict 1:1 per-ledger reconcile with no
-			// waiver. An empty distributed_fees Vec emits zero events and zero rows.
+			// The decoder emits one DFeesEvent per Vec entry on purpose, keeping the count a strict
+			// 1:1 reconcile with no waiver.
 			{"defindex_fees", "", []string{"defindex.vault.dfees"}},
-			// Vault admin topics (rescue / pause toggles / role rotations):
-			// one AdminEvent per on-chain event, one row each.
+			// One AdminEvent per on-chain admin event, one row each.
 			{"defindex_admin_events", "", []string{"defindex.vault.admin"}},
 		}},
 		{
 			name: "blend", genesis: blend.FactoryGenesisLedger, dec: blend.NewDecoder(),
 			factories: blend.MainnetPoolFactories, creationSym: blend.EventDeploy,
-			// Identity-gated (factories ∪ registered pools): scope the lake read to
-			// that set, walked from the factories' deploy events through tip, as
-			// aquarius does. A static contractIDs list would miss pools deployed
-			// after the snapshot; the unscoped read hit the per-source deadline.
+			// Scope the read to factories plus pools walked from deploy events, as aquarius does: a
+			// static contractIDs list would miss later pools and the unscoped read hits the deadline.
 			newGatedDec: func() gatedDecoder { return blend.NewDecoder() },
 			targets: []reconTarget{
 				{"blend_auctions", "", []string{blend.NewAuctionEventKind, blend.FillAuctionEventKind, blend.DeleteAuctionEventKind}},
@@ -530,11 +496,9 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 	// the mainnet router constant, as the indexer does. The empty prefix reconciles to zero.
 	if a := cfg.Oracle.Band.StandardReferenceContract; a != "" {
 		cat = append(cat, reconSource{
-			// 50,842,736 is Band's first on-chain write. The contract emits no events, so a
-			// contract_events probe reads as absence; the ledger comes from contract_instance_changes
-			// and is corroborated by contract_data writes in ledger_entry_changes. With no
-			// servedWindowReason the reconcile floors at genesis, so Band fails projection_ok until
-			// a catch-up fills oracle_updates.
+			// Genesis is Band's first on-chain write; the contract emits no events, so a
+			// contract_events probe reads as absence. With no servedWindowReason the reconcile floors
+			// at genesis, so Band fails projection_ok until a catch-up fills oracle_updates.
 			name: "band", genesis: 50_842_736, callContract: a, callDec: band.NewDecoder(a),
 			targets: []reconTarget{{"oracle_updates", "source = 'band'", nil}},
 		})
@@ -593,11 +557,10 @@ func filterCatalogueByNetwork(cat []reconSource, network string) (kept []reconSo
 }
 
 // warmCatalogueGates gives every contract-gated source the live indexer's gate: its curated set
-// plus the children recorded in protocol_contracts. Without it, a contract admitted through that
-// seam is decoded live but invisible to re-derives, so its served rows read as phantoms and a
-// truncate plus `ch-rebuild -write` drops them. Read-only (withHook=false), since a re-derive
-// that registered contracts would manufacture its own evidence. Call it before
-// preseedFactoryChildren or any stream touches src.dec, because the gated decoders are rebuilt.
+// plus children recorded in protocol_contracts. Without it, a contract admitted that way is decoded
+// live but invisible to re-derives, so its served rows read as phantoms and `ch-rebuild -write`
+// drops them. Read-only (withHook=false), since a re-derive that registered contracts would
+// manufacture its own evidence. Call it before anything touches src.dec, as the decoders are rebuilt.
 func warmCatalogueGates(ctx context.Context, store *timescale.Store, logger *slog.Logger, cat []reconSource) ([]reconSource, error) {
 	gated, err := pipeline.GatedRegistryOptions(ctx, store, logger, ctx, false)
 	if err != nil {
@@ -646,9 +609,7 @@ func regateSource(src *reconSource, meta pipeline.GatedMeta, opts []contractid.O
 		}
 		newDecoder := meta.NewDecoder
 		src.newGatedDec = func() gatedDecoder {
-			// Same constructor, same options as the instance asserted
-			// just above, so the concrete type — and the assertion's
-			// outcome — is the same.
+			// Same constructor and options as the instance asserted above, so the assertion holds.
 			g, _ := newDecoder(opts...).(gatedDecoder)
 			return g
 		}
@@ -733,17 +694,15 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sep41_supply decoder: %w", err)
 	}
-	// Both sep41 targets are watched-set slices of their table, so they need a whereFilter like
-	// `trades` needs `source = '...'`. With "" the axes would measure different populations:
-	// rows for a contract no longer in today's watched set count on the served side but never on
-	// the expected side, a permanent surplus the re-derive can never close.
+	// Both targets are watched-set slices of their table, so they need a whereFilter. With "",
+	// rows for a contract no longer watched count served-side but never expected-side, a permanent
+	// surplus the re-derive can never close.
 	filter, err := contractIDFilter(watched)
 	if err != nil {
 		return nil, err
 	}
-	// topic0Syms mirrors the live projector's SQL prefilter (projector/registry.go), so the
-	// re-derive streams the population the live writer sees. Without it sep41_supply streams the
-	// watched contracts' whole firehose and discards non-supply events one by one.
+	// topic0Syms mirrors the live projector's SQL prefilter, so the re-derive streams the same
+	// population; without it sep41_supply reads the watched contracts' whole firehose.
 	return []reconSource{
 		{
 			name: sep41transfers.SourceName, genesis: floor,

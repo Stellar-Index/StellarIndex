@@ -71,13 +71,11 @@ const (
 	// MainnetPoolFactory is the documented Pool Factory V2. Blend was
 	// REDEPLOYED, so this is not the only factory — see MainnetPoolFactories.
 	MainnetPoolFactory = "CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU"
-	// MainnetPoolFactoryV1 is the earlier pool factory. It emits `deploy` events with an
-	// ScVal::Address body and deployed 4 of the 9 known auction-emitting pools, which a V2-only
-	// gate would silently drop. Its first deploy is at ledger 51_499_915.
+	// MainnetPoolFactoryV1 is the earlier pool factory; it deployed pools a V2-only gate would
+	// silently drop. Its first deploy is at ledger 51_499_915.
 	MainnetPoolFactoryV1 = "CCZD6ESMOGMPWH2KRO4O7RGTAPGTUPFWFQBELQSS7ZUK63V3TZWETGAG"
-	// MainnetBackstop is the Backstop V2 singleton (V1 is below; it was redeployed). Backstop
-	// events are a different surface decoded by internal/sources/blend_backstop. Do NOT add
-	// backstops to the pool gate registry: pool decode paths would mis-decode their bodies.
+	// MainnetBackstop is the Backstop V2 singleton, decoded by internal/sources/blend_backstop. Do
+	// NOT add backstops to the pool gate registry: pool decode paths would mis-decode their bodies.
 	MainnetBackstop = "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7"
 	// MainnetBackstopV1 is the V1-era backstop, identified from the lake by its backstop event
 	// profile (queue_withdrawal/gulp_emissions/...).

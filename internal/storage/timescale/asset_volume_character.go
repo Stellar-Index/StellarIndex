@@ -20,8 +20,7 @@ const (
 	// enough that a corridor that has since gone honest recovers.
 	volumeCharacterWindow = 14 * 24 * time.Hour
 
-	// VolumeCharacterMarket / …Operational / …Concentrated are the wire
-	// values of the derived character.
+	// VolumeCharacterMarket, ...Operational and ...Concentrated are the wire values.
 	VolumeCharacterMarket       = "market"
 	VolumeCharacterOperational  = "operational"
 	VolumeCharacterConcentrated = "concentrated"
@@ -61,16 +60,13 @@ type AssetVolumeCharacter struct {
 	Character              string
 }
 
-// trades.maker is either the resting-offer account (G-strkey) on an order-book fill or the hex
-// pool id on a classic liquidity-pool fill. A pool is not an account, so both queries read
-// maker through these shared fragments:
-//   - volumeCharacterMakerSQL keeps maker only when it is an account and flags the pool fill,
-//     so a pool never counts as a distinct maker, self-cross or issuer-side leg.
-//   - a row with one known account (classic pool fill, or a Soroban AMM swap with no maker) is
-//     keyed on that account, as popularPricelessCandidatesSQL does: one account round-tripping
-//     through pools is one concentrated actor. Rows with no account stay out of the numerator.
-//
-// taker may be a contract (C...) on a Soroban swap, so distinct_takers counts addresses.
+// trades.maker is either the resting-offer account (G-strkey) or the hex pool id on a classic
+// liquidity-pool fill. A pool is not an account, so both queries read maker through these shared
+// fragments: maker is kept only when it is an account, so a pool never counts as a distinct maker,
+// self-cross or issuer-side leg. A row with one known account is keyed on that account, so one
+// account round-tripping through pools is one concentrated actor; rows with no account stay out of
+// the numerator. taker may be a contract (C...) on a Soroban swap, so distinct_takers counts
+// addresses.
 const (
 	volumeCharacterMakerSQL = `CASE WHEN maker ~ '^G[A-Z2-7]{55}$' THEN maker END AS maker,
     (maker IS NOT NULL AND maker !~ '^G[A-Z2-7]{55}$') AS pool_fill`
@@ -78,12 +74,9 @@ const (
 	volumeCharacterPairKeySQL    = `LEAST(COALESCE(maker, taker), taker), GREATEST(COALESCE(maker, taker), taker)`
 )
 
-// assetVolumeCharacterSQL rolls the trailing-window signals in one query.
-//   - $1 = alias array of the asset's canonical forms (native/SAC/…),
-//     matched on either side (alias-complete, like the sibling stats reads).
-//   - $2 = the window as an interval string.
-//   - $3 = the asset's issuer G-address (empty for native/soroban/fiat,
-//     which collapses the issuer-side predicate to a constant-false no-op).
+// assetVolumeCharacterSQL rolls the trailing-window signals in one query. $1 is the asset's alias
+// array (matched on either side), $2 the window interval, $3 the issuer G-address (empty for
+// native/soroban/fiat, which makes the issuer-side predicate constant-false).
 //
 // The (maker,taker) pair is UNORDERED: LEAST/GREATEST folds both directions of a round-trip
 // into one pair, so A-B and B-A ping-pong reads as one concentrated pair, not two 50% halves.
@@ -147,8 +140,7 @@ func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (Asset
 	return volumeCharacterFromSums(totalNum, total, topPair, selfCross, issuerSide, marketStyled, makers, takers), nil
 }
 
-// deriveVolumeCharacter maps the signals to a character. Pure; the taxonomy below is its test
-// oracle:
+// deriveVolumeCharacter maps the signals to a character. Pure; the taxonomy is its test oracle:
 //
 //	species                | signature                          | character
 //	-----------------------|------------------------------------|-------------

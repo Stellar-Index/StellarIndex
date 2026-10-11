@@ -108,10 +108,9 @@ func sharedCacheReusable(values []string) bool {
 	return true
 }
 
-// ledgerDetailPath and txDetailPath match closed-ledger detail paths, which are immutable once
-// the ledger closes. Their band is deliberately modest (1 min client / 5 min CDN), not a year:
-// policyForPath knows nothing about the tip, and a young ledger can be served before every
-// projection for it has landed, so a long TTL could pin a partial view.
+// ledgerDetailPath and txDetailPath match closed-ledger detail paths. Their band stays modest
+// (1 min client / 5 min CDN) because policyForPath knows nothing about the tip, and a young ledger
+// can be served before every projection for it has landed, so a long TTL could pin a partial view.
 var (
 	ledgerDetailPath = regexp.MustCompile(`^/v1/ledgers/[0-9]+(/transactions|/operations)?$`)
 	txDetailPath     = regexp.MustCompile(`^/v1/tx/[0-9a-fA-F]{64}$`)
@@ -129,11 +128,10 @@ var (
 // ok=false means "not one of mine, fall through to the main switch".
 //
 //   - Closed-ledger reads take the modest band described at ledgerDetailPath.
-//   - /v1/ledgers moves every ~5 s and /v1/network/throughput has a server-side cache; both
-//     get the short band.
-//   - /v1/operations and /v1/contracts sit behind caches that refresh only ON a request, so at
-//     a low arrival rate an entry's age is bounded by the inter-arrival gap, not the TTL; a
-//     60 s/300 s band would compound it. /transfers is a cursorless latest-N listing: short band.
+//   - /v1/ledgers moves every ~5 s and /v1/network/throughput has a server-side cache: short band.
+//   - /v1/operations and /v1/contracts sit behind caches that refresh only ON a request, so an
+//     entry's age is bounded by the inter-arrival gap, not the TTL; a 60 s/300 s band would
+//     compound it. /transfers is a cursorless latest-N listing: short band.
 func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	switch {
 	// Operator probes: a cached probe is a lie. Here rather than in the main switch to keep
@@ -157,12 +155,11 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	return "", false
 }
 
-// SLOPriceRoutes are the closed-bucket price surfaces, which get a very short shared cache.
-// A shared cache serving a previous bucket breaks the "most recent closed bucket" clause the SLA
-// probe measures (150 s): a shared TTL of d adds d to the age of `observed_at`, makes `as_of` lie
-// by up to d, and extends by d the window serving a pre-freeze price with `frozen=false`. So
-// s-maxage 5 s stays inside the bound where 60 would not. None belong in the 300 s oracle band.
-// TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe iterates this list.
+// SLOPriceRoutes are the closed-bucket price surfaces, which get a very short shared cache. A
+// shared TTL of d adds d to the age of `observed_at`, makes `as_of` lie by up to d, and extends by
+// d the window serving a pre-freeze price with `frozen=false`, breaking the 150 s SLA probe bound;
+// s-maxage 5 s stays inside it where 60 would not. TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe
+// iterates this list.
 var SLOPriceRoutes = []string{
 	"/v1/price",
 	"/v1/price/batch",
@@ -192,8 +189,6 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		}
 		return "public, max-age=30", true
 
-	// Updates on every bucket close; CDN entry should turn over
-	// inside one bucket so consumers see fresh closed-bucket data.
 	// ─── Current asset / pool state — short cache ───────────────
 	case path == "/v1/assets",
 		strings.HasPrefix(path, "/v1/assets/"),

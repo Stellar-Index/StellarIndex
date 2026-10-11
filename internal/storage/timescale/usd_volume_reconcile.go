@@ -9,21 +9,15 @@ import (
 	"time"
 )
 
-// The usd_volume VALUE reconcile. The usd-volume alerts check COVERAGE only; a trade priced with
-// the WRONG number is 100% covered.
-//
-// This file is the read side: a day-scoped SQL aggregation and the exact rational arithmetic that
-// judges it. The tier classifier lives in trades.go beside the waterfall it mirrors
-// ([ClassifyUSDVolumeTier]); they must move together, and this file must not import
-// internal/sources/external (storage-below-compute layering).
+// The usd_volume VALUE reconcile: the usd-volume alerts check COVERAGE only, and a trade priced
+// with the WRONG number is 100% covered. The tier classifier lives in trades.go beside the
+// waterfall it mirrors ([ClassifyUSDVolumeTier]); they must move together, and this file must not
+// import internal/sources/external (storage-below-compute layering).
 //
 // Upper tiers are VWAP/FX estimates with no calibrated tolerance, so they are measured, not
-// judged. Tiers 1/2 (QUOTE leg is USD or a declared peg) and 2b (BASE leg is) are exact decimal
-// rescalings of an amount on the row:
-//
-// 	usd_volume = pegged_leg_amount / 10^decimals
-//
-// If it fails, `usd_volume` used the wrong scale, leg, peg list or backfill vintage.
+// judged. Tiers 1/2 (QUOTE leg pegged) and 2b (BASE leg pegged) are exact rescalings, so a
+// failure of usd_volume = pegged_leg_amount / 10^decimals means the wrong scale, leg, peg list or
+// backfill vintage.
 
 // USDVolumeTier names how a trade's `usd_volume` was derived, mirroring the waterfall in
 // [tradeUSDVolume]. Stable strings: they appear in the operator report.
@@ -74,14 +68,8 @@ type TradeValuationGroup struct {
 }
 
 // TradeValuationByDay returns the per-(source, base, quote) valuation sums for the UTC day
-// containing `day`.
-//
-// Grouped by pair because the tier cannot be decided in SQL: the peg set lives in Go
-// (`usd_pegged_classic_assets`, `supply.sac_wrappers`, aggregate.FiatProxy). The caller
-// classifies each group with [ClassifyUSDVolumeTier], the insert path's own function.
-//
-// The scan is one day of the `trades` time dimension (a single chunk), yielding a few thousand
-// groups.
+// containing `day`. Grouped by pair because the peg set lives in Go, not SQL, so the caller
+// classifies each group with [ClassifyUSDVolumeTier]. The ts range keeps the scan to one chunk.
 func (s *Store) TradeValuationByDay(ctx context.Context, day time.Time) ([]TradeValuationGroup, error) {
 	start := day.UTC().Truncate(24 * time.Hour)
 	const q = `
@@ -176,16 +164,11 @@ func ExactTierDelta(g TradeValuationGroup, tier USDVolumeTier, decimals int) (de
 }
 
 // DayCloseVWAPXLMUSD returns the daily VWAP for crypto:XLM/fiat:USD (the CEX-fed series, whose
-// inputs are not authorable on-chain) from the prices_1d CAGG for the given UTC day. ok=false
-// when the day has no bucket, and callers then skip the XLM-base bound rather than judge against
-// a missing rate.
+// inputs are not authorable on-chain) from prices_1d. ok=false when the day has no bucket, and
+// callers then skip the XLM-base bound rather than judge against a missing rate.
 //
-// It feeds verify-usd-volume's XLM-base bound: tier-4 rows anchor usd_volume to
-// base_amount/1e7 × XLM/USD at trade time, so a day-group's Σusd_volume must land within an
-// intraday-range tolerance of Σbase/1e7 × day-VWAP.
-//
-// A day-granular rate can false-alarm: the anchor reads a per-minute prices_1m bucket while this
-// reads a day bucket of a different (CEX) series, so an honest day scores up to
+// Tier-4 rows anchor usd_volume to base_amount/1e7 x the per-minute XLM/USD, while this reads a
+// day bucket of a different series, so an honest day scores up to
 // max(intraday_hi/day_vwap, day_vwap/intraday_lo). See [chops.xlmBaseBoundTolerance].
 func (s *Store) DayCloseVWAPXLMUSD(ctx context.Context, day time.Time) (string, bool, error) {
 	start := day.UTC().Truncate(24 * time.Hour)

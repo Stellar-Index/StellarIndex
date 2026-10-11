@@ -17,17 +17,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// RedisTriangulatedLooker adapts the shared Redis client to
-// v1.TriangulatedPriceLooker. It reads the cachekeys VWAP value plus its provenance, observed-at
-// and coverage keys.
+// RedisTriangulatedLooker adapts the shared Redis client to v1.TriangulatedPriceLooker, reading the
+// cachekeys VWAP value plus its provenance, observed-at and coverage keys.
 //
-// "Triangulated" means the aggregator's triangulation worker wrote the value. A missing marker
-// yields isTriangulated=false but the value is still served, because aggregator-rewritten pairs
-// (XLM/fiat:USD) have no prices_1m row to fall back on.
-//
-// A cache miss, or a value with no readable observed-at stamp, returns (found=false, no error):
-// its age is unknowable and a freeze keeps a value alive for its whole hold. Read errors
-// propagate so the handler can fall through to its other fallbacks.
+// A missing triangulation marker yields isTriangulated=false but the value is still served,
+// because aggregator-rewritten pairs (XLM/fiat:USD) have no prices_1m row to fall back on. A miss,
+// or a value with no readable observed-at stamp, returns found=false with no error: its age is
+// unknowable and a freeze keeps a value alive for its whole hold. Read errors propagate.
 type RedisTriangulatedLooker struct{ RDB redis.UniversalClient }
 
 func (r RedisTriangulatedLooker) LookupTriangulatedVWAP(
@@ -36,9 +32,8 @@ func (r RedisTriangulatedLooker) LookupTriangulatedVWAP(
 	if r.RDB == nil {
 		return v1.CachedVWAP{}, false, nil
 	}
-	// One MGET: the aggregator writes value, marker, stamp and coverage in one
-	// MULTI/EXEC, and separate GETs could straddle a write and pair a
-	// value with another write's provenance or stamp.
+	// One MGET: the aggregator writes all four keys in one MULTI/EXEC, and separate GETs could
+	// straddle a write and pair a value with another write's provenance or stamp.
 	valKey := cachekeys.VWAP(base, quote, window)
 	provKey := cachekeys.VWAPProvenance(base, quote, window)
 	atKey := cachekeys.VWAPObservedAt(base, quote, window)
@@ -73,10 +68,9 @@ func (r RedisTriangulatedLooker) LookupTriangulatedVWAP(
 	return out, true, nil
 }
 
-// LookupCompositeMeta reads the router quality-flags blob the
-// aggregator writes alongside a triangulated composite (cachekeys.VWAPCompositeMeta), so
-// /v1/price can surface flags.diverged / flags.rerouted. A miss returns (nil, false, nil).
-// Best-effort: the handler leaves the flags unset on any error, so meta never fails the request.
+// LookupCompositeMeta reads the router quality-flags blob written alongside a triangulated
+// composite, so /v1/price can surface flags.diverged / flags.rerouted. Best-effort: the handler
+// leaves the flags unset on any error, so meta never fails the request.
 func (r RedisTriangulatedLooker) LookupCompositeMeta(
 	ctx context.Context, base, quote canonical.Asset, window time.Duration,
 ) ([]byte, bool, error) {
@@ -119,9 +113,7 @@ type GlobalPriceReader struct {
 func (g GlobalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, int64, []string, bool, error) {
 	pair, err := g.PKPairFor(base, quote)
 	if err != nil {
-		// Invalid pair (e.g. quote == base, or any other allow-list
-		// violation) is the same as "no data" from this seam's
-		// perspective — caller falls through to the aggregator tier.
+		// An invalid pair is "no data" from this seam; the caller falls through to the aggregator tier.
 		return "", time.Time{}, 0, nil, false, nil //nolint:nilerr // intentional: invalid pair → "no data" from this tier
 	}
 	row, err := g.S.LatestClosedVWAP1mForPair(ctx, pair)
@@ -131,32 +123,26 @@ func (g GlobalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 	if err != nil {
 		return "", time.Time{}, 0, nil, false, err
 	}
-	// Thin-market substance gate ([pricing_guard]): a pair whose whole market is attacker-authorable
-	// must not publish a headline price. Withheld reads degrade to "no data" and the caller falls
-	// through to its aggregator tier, which applies its own min-USD-volume floor.
+	// A pair whose whole market is attacker-authorable must not publish a headline price. Withheld
+	// reads degrade to "no data"; the aggregator tier applies its own min-USD-volume floor.
 	if PriceWithheld(ctx, g.Substance, g.Scam, base, quote, "asset_headline") != pricingguard.NotWithheld {
 		return "", time.Time{}, 0, nil, false, nil
 	}
-	// Same serving-sanity guard as StorePriceReader.LatestPrice: the bare Σ(quote)/Σ(base) bucket
-	// bypasses the orchestrator's outlier filter, volume gate and freeze protection. The headline
-	// has no stale flag, so an unvalidated (no baseline) or held bucket reads as "no data" and the
-	// caller falls through, where the change shows in price_authority instead of a silently
-	// frozen vwap_native.
+	// Same serving-sanity guard as StorePriceReader.LatestPrice: the bare bucket bypasses the
+	// orchestrator's outlier filter, volume gate and freeze protection. The headline has no stale
+	// flag, so an unvalidated or held bucket reads as "no data" and the change shows in
+	// price_authority instead of a silently frozen vwap_native.
 	served, lowConfidence, substituted := pricingguard.GuardServedVWAP1mConfidence(ctx, g.S, g.Logger, pair, row)
 	if lowConfidence || substituted {
 		return "", time.Time{}, 0, nil, false, nil
 	}
-	// row.Bucket is the bucket's *start*; the closed-bucket contract
-	// (ADR-0015) means the bucket's served observation_at is the
-	// bucket end. Add one minute to surface the consumer-facing
-	// timestamp matching every other closed-bucket surface.
+	// row.Bucket is the bucket's start; the closed-bucket contract (ADR-0015) serves its end.
 	asOf := served.Bucket.Add(time.Minute)
 	return served.VWAP, asOf, served.TradeCount, served.Sources, true, nil
 }
 
 func (g GlobalPriceReader) LatestAggregatorPrices(ctx context.Context, base, quote canonical.Asset, sources []string) ([]canonical.OracleUpdate, error) {
-	// Scam gate: without it a flagged issuer's headline, withheld by tier
-	// 1, resurfaces from tier 2. Substance is not asked, as on tier 3.
+	// Scam gate: without it a flagged issuer's headline, withheld by tier 1, resurfaces here.
 	if PriceWithheld(ctx, nil, g.Scam, base, quote, "asset_headline") != pricingguard.NotWithheld {
 		return nil, nil
 	}
@@ -164,23 +150,19 @@ func (g GlobalPriceReader) LatestAggregatorPrices(ctx context.Context, base, quo
 }
 
 func (g GlobalPriceReader) LookupTriangulated(ctx context.Context, base, quote canonical.Asset, window time.Duration) (string, time.Time, bool, error) {
-	// Scam-issuer gate, through the chokepoint. A Stellar-only token's literal <asset>/fiat:USD pair
-	// has no prices_1m rows, so tier 1 misses by construction and this tier serves its headline;
-	// without the gate a flagged issuer would be served. Withheld degrades to "no data".
+	// A Stellar-only token's literal <asset>/fiat:USD pair has no prices_1m rows, so tier 1 misses
+	// by construction and this tier serves its headline; without the scam gate a flagged issuer
+	// would be served.
 	//
 	// The substance gate is passed nil DELIBERATELY: its floor is measured over the pair's alias
 	// union, and a triangulated pair has zero rows in its literal form, so it would withhold every
-	// Stellar-only token for lacking a literal market. Substance is asked in tier 1 and in the
-	// per-asset listing gate, the same split /v1/twap, /v1/vwap and /v1/price make.
+	// Stellar-only token. Substance is asked in tier 1 and the per-asset listing gate instead.
 	if PriceWithheld(ctx, nil, g.Scam, base, quote, "asset_headline") != pricingguard.NotWithheld {
 		return "", time.Time{}, false, nil
 	}
 	v, found, err := g.Tri.LookupTriangulatedVWAP(ctx, base, quote, window)
 	if err != nil || !found || !v.Triangulated {
-		// `found && !Triangulated` means the cache had a direct (non-
-		// triangulated) value — per the marker contract we shouldn't
-		// serve that as the triangulation tier. Tell the caller the
-		// tier missed.
+		// found && !Triangulated is a direct value, which must not be served as this tier.
 		return "", time.Time{}, false, err
 	}
 	return v.Value, v.ObservedAt, true, nil
@@ -197,11 +179,10 @@ const defaultVWAPFreshness = 15 * time.Minute
 // the scam and substance gates symmetric: hand-written call sites let
 // disable_substance_gate=true also un-withhold flagged issuers. TestPriceServingSeamsAreGated
 // derives the seam set from calls to it, and TestWithholdingGatesAreSpelledOnlyAtTheChokepoint
-// fails if a call site spells a gate out itself. The logic lives in pricingguard.Gate.
+// fails if a call site spells a gate out itself.
 //
 // Both gates are nil-receiver safe (nil == allow-everything). It returns WHICH gate fired so
-// v1.PriceWithheldError can name the cause. [AsOfInstant] measures the thin-market half over the
-// window ending at that instant; it is an option, not a second chokepoint.
+// v1.PriceWithheldError can name the cause.
 func PriceWithheld(
 	ctx context.Context,
 	substance *pricingguard.SubstanceGate,
@@ -225,10 +206,9 @@ func PriceWithheld(
 	return v.Withholding
 }
 
-// withholdingQuery is what a seam may tell the chokepoint about the
-// read it is gating. pointInTime is an explicit flag rather than "at is
-// non-zero" so that a zero time.Time — what a caller gets from a failed
-// parse — can never quietly select the live measurement.
+// withholdingQuery is what a seam may tell the chokepoint about its read. pointInTime is an
+// explicit flag, not "at is non-zero", so the zero time a failed parse yields can never quietly
+// select the live measurement.
 type withholdingQuery struct {
 	pointInTime bool
 	at          time.Time
@@ -236,9 +216,8 @@ type withholdingQuery struct {
 
 type WithholdingOption func(*withholdingQuery)
 
-// AsOfInstant marks the gated read as point-in-time: the number being
-// served is the bucket at-or-before ts, so the market whose substance
-// matters is the one that existed in the window ending at ts.
+// AsOfInstant marks the gated read as point-in-time: the thin-market half is measured over the
+// window ending at ts. It is an option, not a second chokepoint.
 func AsOfInstant(ts time.Time) WithholdingOption {
 	return func(q *withholdingQuery) {
 		q.pointInTime = true
@@ -262,12 +241,9 @@ func (r StorePriceReader) freshnessWindow() time.Duration {
 	return defaultVWAPFreshness
 }
 
-// bucketIsStale is the staleness rule: a closed 1m bucket is stale once its CLOSE (bucket start
-// + 1 minute) is older than the freshness window, or whenever the read was low-confidence.
-//
-// It is separate from LatestPrice, which needs a live *timescale.Store, so a unit test exercises
-// the real rule. It measures from the CLOSE: from the start, every bucket would read a minute
-// older than it is.
+// bucketIsStale: a closed 1m bucket is stale once its CLOSE (start + 1 minute, else every bucket
+// would read a minute older than it is) passes the freshness window, or when low-confidence. It is
+// separate from LatestPrice so a unit test exercises the real rule without a store.
 func (r StorePriceReader) bucketIsStale(bucket time.Time, lowConfidence bool) bool {
 	return lowConfidence || r.clock().Sub(bucket.Add(time.Minute)) > r.freshnessWindow()
 }
@@ -279,19 +255,15 @@ func (r StorePriceReader) guardedSnapshot(
 	served timescale.Vwap1mRow,
 	lowConfidence, substituted bool,
 ) (v1.PriceSnapshot, bool) {
-	// Stale is judged on the bucket actually served (the candidate, or the older last-known-good
-	// after a guard rejection), so a dormant pair's old VWAP is never stale=false.
-	//
-	// A pair's first served minute has no trailing baseline, so the guard fails OPEN and would
-	// accept a lone manipulated print; lowConfidence serves that as stale, never as confident.
-	// A substituted bucket is a held value standing in for the current minute, so it is stale
-	// however recent it is.
+	// Stale is judged on the bucket actually served, so a dormant pair's old VWAP is never
+	// stale=false. A pair's first served minute has no trailing baseline, so the guard fails OPEN
+	// and would accept a lone manipulated print; lowConfidence serves that as stale. A substituted
+	// bucket is a held value standing in for the current minute, so it is stale however recent.
 	stale := r.bucketIsStale(served.Bucket, lowConfidence || substituted)
 	snap := v1.VWAP1mToSnapshot(asset.String(), quote.String(), served.VWAP, served.Bucket)
-	// Substituted means the guard swapped in an older last-known-good bucket for `row`. The handler's
-	// confidence/composite-flags come from a separate cache keyed by (pair, window) with no as-of,
-	// so they describe the current tick, not this older bucket; snap.Substituted tells the handler
-	// to withhold them rather than attribute a live read to the substituted value.
+	// The handler's confidence/composite-flags come from a cache keyed by (pair, window) with no
+	// as-of, so they describe the current tick, not a substituted older bucket; snap.Substituted
+	// tells the handler to withhold them.
 	snap.Substituted = substituted
 	return snap, stale
 }
@@ -309,19 +281,16 @@ func (r StorePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 		return v1.PriceSnapshot{}, nil, false, err
 	}
 
-	// Primary path: most-recent CLOSED 1-minute VWAP from the prices_1m CAGG (ADR-0015). It is a
-	// bare Σ(quote)/Σ(base), NOT the orchestrator's filtered VWAP: outlier filter, volume gate and
-	// freeze protection live on the orchestrator path, and callers only restore freeze. A pair
-	// with no prices_1m rows (pure-synthetic fiat like native/fiat:USD) misses here (ErrNoRows)
-	// and the handler's Redis-VWAP fallback serves it. GuardServedVWAP1mConfidence therefore
-	// bounds the latest bucket against the trailing closed buckets and serves last-known-good
-	// when it is grossly off.
+	// Primary path: latest CLOSED 1m VWAP from the prices_1m CAGG (ADR-0015), a bare ratio without
+	// the orchestrator's outlier filter, volume gate and freeze protection, so
+	// GuardServedVWAP1mConfidence bounds it against trailing buckets and serves last-known-good
+	// when grossly off. A pair with no prices_1m rows (native/fiat:USD) misses with ErrNoRows and
+	// the handler's Redis-VWAP fallback serves it.
 	row, err := r.S.LatestClosedVWAP1mForPair(ctx, pair)
 	if err == nil {
-		// Thin-market substance gate ([pricing_guard]), checked before the trailing-baseline guard
-		// because they stop different attacks: the baseline guard rejects one bad bucket in a healthy
-		// market; the substance gate refuses a market whose whole history, baseline included, is
-		// attacker-authored. ErrPriceWithheld deliberately bypasses the handler's fallback chain.
+		// The substance gate runs before the baseline guard because they stop different attacks: the
+		// baseline guard rejects one bad bucket in a healthy market; the substance gate refuses a
+		// market whose whole history is attacker-authored. ErrPriceWithheld bypasses the fallbacks.
 		if withheld := PriceWithheld(ctx, r.Substance, r.Scam, asset, quote, "price_read"); withheld != pricingguard.NotWithheld {
 			return v1.PriceSnapshot{}, nil, false, v1.PriceWithheldError(withheld)
 		}
@@ -333,18 +302,15 @@ func (r StorePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 		return v1.PriceSnapshot{}, nil, false, err
 	}
 
-	// Fast-path the synthetic-fiat case: no on-chain trades exist for fiat: / crypto: quotes (the
-	// aggregator's triangulation worker synthesises them). Skipping LatestTradesForPair avoids a
-	// full hypertable chunk-walk that is known to return zero rows; the handler's
-	// tryRedisVWAPFallback picks up the synthesised value via Redis on ErrPriceNotFound.
+	// No on-chain trades exist for fiat:/crypto: quotes (the triangulation worker synthesises
+	// them); skipping LatestTradesForPair avoids a full chunk-walk that returns zero rows. The
+	// handler's tryRedisVWAPFallback serves the synthesised value on ErrPriceNotFound.
 	if quote.Type == canonical.AssetFiat || quote.Type == canonical.AssetCrypto {
 		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
 	}
 
-	// Fallback: latest-trade. Hit when no closed 1m bucket exists for
-	// the pair — typical for a brand-new listing that just got its
-	// first trade in the in-progress bucket. Marks the response
-	// stale=true; clients expecting freshness treat this as degraded.
+	// Fallback: latest trade, for a pair with no closed 1m bucket yet (a brand-new listing). Always
+	// served stale=true.
 	trades, err := r.S.LatestTradesForPair(ctx, pair, 1)
 	if err != nil {
 		return v1.PriceSnapshot{}, nil, false, err
@@ -352,18 +318,15 @@ func (r StorePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	if len(trades) == 0 {
 		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
 	}
-	// Last-trade arm: a pair with no closed 1m bucket inside the gate window has no trailing
-	// substance, so an on-chain pair is withheld; "the last trade was P" for a substanceless
-	// market is the manipulable claim (the raw trade stays on /v1/observations). Off-chain pairs,
-	// never substance-gated, keep the fallback.
-	//
-	// This arm consults BOTH gates via the chokepoint: substance alone would let
-	// disable_substance_gate=true publish a flagged issuer's last trade as its price.
+	// A pair with no closed 1m bucket inside the gate window has no trailing substance, so an
+	// on-chain pair is withheld: "the last trade was P" for a substanceless market is the
+	// manipulable claim (the raw trade stays on /v1/observations). Off-chain pairs keep the
+	// fallback. BOTH gates run via the chokepoint, or disable_substance_gate=true would publish a
+	// flagged issuer's last trade.
 	if withheld := PriceWithheld(ctx, r.Substance, r.Scam, asset, quote, "price_read"); withheld != pricingguard.NotWithheld {
 		return v1.PriceSnapshot{}, nil, false, v1.PriceWithheldError(withheld)
 	}
-	// decimals=7 matches Stellar's default stroop scale. A future
-	// revision reads per-asset decimals from internal/metadata.
+	// decimals=7 is Stellar's default stroop scale.
 	snap, ok := v1.LastTradeToSnapshot(trades[0], 7)
 	if !ok {
 		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
@@ -388,15 +351,12 @@ func (r StorePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 	if len(rows) == 0 {
 		return []v1.PriceSnapshot{}, nil
 	}
-	// Thin-market substance gate: a snapshot SERIES is an aggregated
-	// price claim per bucket, and the SEP-40 oracle surface is the last
-	// place a substanceless market's rate belongs.
+	// A snapshot SERIES is an aggregated price claim per bucket; the SEP-40 oracle surface is the
+	// last place a substanceless market's rate belongs.
 	if withheld := PriceWithheld(ctx, r.Substance, r.Scam, asset, quote, "oracle"); withheld != pricingguard.NotWithheld {
 		return nil, v1.PriceWithheldError(withheld)
 	}
-	// Each bucket is the same bare CAGG ratio /v1/price guards; a
-	// manipulated minute is dropped from the series rather than published
-	// as an oracle record.
+	// Each bucket is the same bare CAGG ratio /v1/price guards; a manipulated minute is dropped.
 	rows = pricingguard.GuardServedVWAP1mSeries(r.Logger, pair, rows, n)
 	out := make([]v1.PriceSnapshot, len(rows))
 	for i, row := range rows {

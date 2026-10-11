@@ -58,9 +58,8 @@ type AuthOptions struct {
 	SEP10 auth.SEP10Validator
 
 	// FailedAuthLimiter, when non-nil, throttles INVALID-credential attempts per client IP and per
-	// API-key prefix. Auth runs before RateLimit, so a rejected credential never reaches the main
-	// limiter and key-guessing would go unthrottled. Each FAILURE consumes a token (see
-	// takeFailedAuth); over budget returns 429. Valid and anonymous requests never touch it.
+	// API-key prefix. Auth runs before RateLimit, so without it key-guessing would go unthrottled.
+	// Valid and anonymous requests never touch it.
 	FailedAuthLimiter *ratelimit.Bucket
 }
 
@@ -122,11 +121,10 @@ func rejectAuth(w http.ResponseWriter, r *http.Request, mode AuthMode, opts Auth
 	writeAuthError(w, err)
 }
 
-// isUnauthenticatedInfraPath reports whether a path is operational plumbing that must answer
-// WITHOUT credentials, whatever `auth_mode` is: Auth() wraps the whole mux, so an apikey cutover
-// would otherwise 401 health probes and the scrape. /metrics is listed because loopbackOnly() is
-// its real gate. Matching is exact so an exemption cannot silently widen; the one prefix,
-// /errors/, fronts a static docs handler.
+// isUnauthenticatedInfraPath reports whether a path must answer WITHOUT credentials whatever
+// `auth_mode` is, or an apikey cutover would 401 health probes and the scrape. /metrics is listed
+// because loopbackOnly() is its real gate. Matching is exact so an exemption cannot silently
+// widen; the one prefix, /errors/, fronts a static docs handler.
 func isUnauthenticatedInfraPath(path string) bool {
 	switch path {
 	case "/v1/healthz", "/v1/readyz", "/v1/livez/lake", "/v1/version", "/metrics", "/robots.txt", "/":
@@ -204,25 +202,19 @@ func isCredentialRejection(err error) bool {
 	}
 }
 
-// takeFailedAuth consumes one failed-auth token per applicable dimension and reports whether the
-// caller is over budget, with the Retry-After seconds. The dimensions are:
-//
-//   - the resolved client IP ("failauth:"; /64 prefix for IPv6, see [remoteIPPrefixFor]),
-//     bounding one source's guessing across every key;
-//   - the presented key's display prefix ("failauth-key:", see [failedAuthKeyPrefix]),
-//     bounding guessing at ONE key from many IPs.
-//
-// Only failures reach here, so filling a victim's key-prefix bucket can 429 other bad guesses
-// but never the victim's valid key. Both key spaces are disjoint from the main limiter's.
+// takeFailedAuth consumes one failed-auth token per dimension and reports whether the caller is
+// over budget, with the Retry-After seconds. The client IP ("failauth:", /64 for IPv6) bounds one
+// source across every key; the key prefix ("failauth-key:") bounds guessing at ONE key from many
+// IPs. Only failures reach here, so filling a victim's key-prefix bucket can 429 other bad guesses
+// but never the victim's valid key.
 func takeFailedAuth(r *http.Request, mode AuthMode, limiter *ratelimit.Bucket) (throttled bool, retryAfter int) {
 	ip := remoteIPPrefixFor(r)
 	if ip == "" {
 		// No resolvable IP: share one bucket rather than skip the throttle.
 		ip = "unknown"
 	}
-	// Detach from request cancellation (see [throttleContext]): ratelimit.Bucket cannot tell a
-	// client abort from a Redis outage, so a caller RSTing mid-take must not arm the fail-closed
-	// dwell clock for these shared buckets.
+	// Detached from request cancellation (see [throttleContext]): the bucket cannot tell a client
+	// abort from a Redis outage, so an RST mid-take must not arm the fail-closed dwell clock.
 	takeCtx, takeCancel := throttleContext(r)
 	defer takeCancel()
 	if throttled, ra := takeFailedAuthBucket(takeCtx, limiter, "failauth:"+ip); throttled {
@@ -247,10 +239,9 @@ func failedAuthKeyPrefix(r *http.Request, mode AuthMode) string {
 
 // takeFailedAuthBucket takes one token from limiter under key.
 //
-// Fails OPEN on a transient backend error so a brief Redis blip does not turn every failed
-// login into a 429. Once [ratelimit.Bucket.Take] reports [ratelimit.ErrThrottleUnavailable]
-// (outage past the dwell time) it fails CLOSED like RateLimit, or a sustained outage would
-// silently disable brute-force protection.
+// Fails OPEN on a transient backend error so a Redis blip does not 429 every failed login, but
+// CLOSED once [ratelimit.ErrThrottleUnavailable] reports an outage past the dwell time, or a
+// sustained outage would silently disable brute-force protection.
 func takeFailedAuthBucket(ctx context.Context, limiter *ratelimit.Bucket, key string) (throttled bool, retryAfter int) {
 	res, err := limiter.Take(ctx, key)
 	if err != nil {
@@ -402,12 +393,10 @@ type authProblem struct {
 
 func writeAuthProblem(w http.ResponseWriter, status int, typeURL, title, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
-	// Override the route's CacheControl directive: a 401/403 on a publicly-cacheable route
-	// would otherwise inherit `public` and a shared cache could store the per-key denial under
-	// the success response's key (see cachecontrol.go's invariant).
+	// Override the route's CacheControl: a 401/403 on a publicly-cacheable route would otherwise
+	// inherit `public` and a shared cache could store the denial under the success key.
 	w.Header().Set("Cache-Control", "no-store")
-	// RFC 7235 section 3.1: every 401 must advertise a challenge. Authenticated v1 endpoints
-	// accept Bearer (API key or SEP-10 token); the cookie path has no standard challenge token.
+	// RFC 7235 section 3.1: every 401 must advertise a challenge; the cookie path has none.
 	if status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="stellarindex.io"`)
 	}
@@ -445,13 +434,11 @@ func bearerOnly(r *http.Request) string {
 }
 
 // anonymousIdentifier builds a stable SHA-256(remoteIP|userAgent) label for the anonymous
-// [auth.Subject], used for log/metric correlation. The port is excluded because it rotates per
-// connection.
+// [auth.Subject], for log/metric correlation only; the port is excluded because it rotates.
 //
-// SECURITY: the rate-limit bucket MUST NOT be keyed on this value. It folds in the
-// client-controlled User-Agent, so rotating the UA would mint a fresh bucket per request and
-// bypass the per-IP anonymous throttle. That key comes from the resolved client IP alone, in
-// [bucketKeyAndOverrideForRequest] / anonymousRateLimitKey.
+// SECURITY: the rate-limit bucket MUST NOT be keyed on this value. The client-controlled
+// User-Agent would let a caller mint a fresh bucket per request; that key comes from the resolved
+// client IP alone, in [bucketKeyAndOverrideForRequest] / anonymousRateLimitKey.
 func anonymousIdentifier(r *http.Request) string {
 	ip := remoteIPFor(r)
 	ua := r.Header.Get("User-Agent")
