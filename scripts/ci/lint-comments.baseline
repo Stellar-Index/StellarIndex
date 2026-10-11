@@ -75,13 +75,10 @@ internal/platform/account.go	long-block
 internal/platform/account.go	long-block
 internal/platform/postgresstore/account_store.go	long-block
 internal/platform/postgresstore/token_store.go	long-block
-internal/projector/sinkfault.go	long-block
 internal/ratelimit/bucket.go	long-block
 internal/ratelimit/inprocess.go	long-block
 internal/ratelimit/throttlekey.go	long-block
 internal/sources/external/scale/scale.go	long-block
-internal/sources/sorocredit/dispatcher_adapter.go	long-block
-internal/sources/soroswap_router/decode.go	long-block
 internal/sources/spectra/consumer.go	long-block
 internal/storage/clickhouse/asset_supply_reader.go	long-block
 internal/storage/clickhouse/ops_auth.go	long-block

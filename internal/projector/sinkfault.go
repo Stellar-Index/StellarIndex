@@ -37,10 +37,9 @@ const QuarantineAfterCyclesNoProgress = 720
 // PermanentSkipPerCycle is the most rows ONE cycle may shed on a
 // [dispositionSkip] verdict — a SQLSTATE class 22/23 rejection or a canonical
 // value-shape rejection raised before the statement ran. IsPermanentDataError
-// is true for ANY class 22/23 error, and those are not always row-local — a
+// is true for ANY class 22/23 error, and those are not always row-local: a
 // migration adding a NOT NULL or CHECK the live rows violate makes every row
-// "poison" at once. Shedding them all on the first cycle would turn a global,
-// fixable fault into unbounded silent loss.
+// "poison" at once, and shedding them all would be unbounded silent loss.
 //
 // So the skip arm borrows BOTH halves of the quarantine arm's rail:
 //
