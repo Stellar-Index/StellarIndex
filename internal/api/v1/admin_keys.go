@@ -284,27 +284,24 @@ func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, 
 }
 
 // handleAdminKeysRevoke serves DELETE
-// /v1/admin/keys/{keyID}?identifier=<owner> — the operator kill switch
-// for a leaked or abused credential.
+// /v1/admin/keys/{keyID}?identifier=<owner> — the operator kill switch for
+// a leaked or abused credential.
 //
 // It is the only way for staff to kill an arbitrary key: self-service
 // revoke (DELETE /v1/account/keys/{keyID}) is scoped to the caller's OWN
-// identifier, so it requires the compromised customer's credential, and
-// the dashboard staff surface is explicitly read-only.
+// identifier, so it requires the compromised customer's credential, and the
+// dashboard staff surface is read-only.
 //
-// `identifier` is required rather than inferred: the key store is
-// keyed by secret hash and indexed by (identifier, key_id), and scoping
-// the delete to a named owner is what stops a mistyped key id from
-// reaching into a different customer's account. Operators read both off
-// GET /v1/account/keys or the audit row for the mint.
+// `identifier` is required rather than inferred: the key store is indexed
+// by (identifier, key_id), and scoping the delete to a named owner stops a
+// mistyped key id reaching into a different customer's account. Operators
+// read both off GET /v1/account/keys or the audit row for the mint.
 //
-// Operator-tier only; requires an `X-Reason` header (same contract as
-// PATCH /v1/admin/accounts). 204 only when a key was
-// actually revoked; 404, with no audit row, when no key matches
-// (identifier, keyID). This is the emergency containment path, so a
-// typo'd identifier must read as a failure, never as a contained leak.
-// "No such key" and "another owner's key" share the 404, so it is still
-// no cross-account enumeration oracle.
+// Operator-tier only; requires an `X-Reason` header (same contract as PATCH
+// /v1/admin/accounts). 204 only when a key was actually revoked; 404, with
+// no audit row, when no key matches (identifier, keyID), so a typo'd
+// identifier reads as a failure, never a contained leak. "No such key" and
+// "another owner's key" share the 404: no cross-account enumeration oracle.
 func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 	subject, ok := s.requireOperator(w, r, "/v1/admin/keys/{keyID}")
 	if !ok {

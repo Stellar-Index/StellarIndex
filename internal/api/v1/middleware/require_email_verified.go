@@ -11,40 +11,25 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// RequireEmailVerified returns a [Middleware] that 403s API-key
-// callers whose `EmailVerifiedAt` timestamp is still zero —
-// i.e. the customer signed up via `POST /v1/signup` but hasn't
-// clicked the verification link in the email yet.
+// RequireEmailVerified returns a [Middleware] that 403s API-key callers
+// whose `EmailVerifiedAt` is still zero: the customer signed up via `POST
+// /v1/signup` but hasn't clicked the verification link. Without it, a
+// valid-looking email string yields a usable plaintext Starter key with no
+// ownership proof; with it, the key stays 403'd until the link is clicked
+// (`/v1/signup/verify` flips the flag).
 //
-// Without it, a valid-looking email string yields a usable
-// plaintext Starter key with no ownership proof. With this
-// middleware wired, the key remains 403'd until the customer
-// proves they own the email by clicking the link, which flips
-// the flag via `/v1/signup/verify`.
+//   - Anonymous Subjects pass (no key to gate).
+//   - Subjects whose `Identifier` does NOT start with `signup-` pass:
+//     operator-minted (`customer-acme-corp`) and dashboard-minted
+//     (`acct:<slug>`) keys never went through the email-link flow. Only
+//     `/v1/signup`-issued keys are checked.
+//   - `EmailVerifiedAt.IsZero()` AND a `signup-` prefix → 403 +
+//     Problem-JSON pointing at the verify endpoint.
 //
-// Behaviour:
-//
-//   - Anonymous Subjects pass through (no key to gate; the
-//     signup endpoint itself is anonymous-only, so anonymous
-//     callers can't have an unverified key by definition).
-//   - Subjects whose `Identifier` does NOT start with `signup-`
-//     pass through unconditionally. Legacy operator-minted
-//     keys (`customer-acme-corp`, etc.) and dashboard-minted
-//     keys (`acct:<slug>`) didn't go through the email-link
-//     flow at all and are scoped out so the gate doesn't break
-//     them. Only `/v1/signup`-issued keys hit the check.
-//   - Subjects with `EmailVerifiedAt.IsZero() == true` AND a
-//     `signup-` identifier prefix get 403 + Problem-JSON with
-//     a clear pointer at the verify endpoint.
-//
-// The api binary mounts this middleware only when
-// `cfg.API.SignupRequireEmailVerification` is true (the default;
-// operators opt out explicitly).
-//
-// Wire AFTER `Auth` (so SubjectFrom returns) and AFTER
-// `KeyPolicy` (which has its own per-key gates) but BEFORE
-// `RateLimit` so a verification-failed request doesn't also
-// spend a rate-limit token.
+// The api binary mounts this only when
+// `cfg.API.SignupRequireEmailVerification` is true (the default). Wire
+// AFTER `Auth` and `KeyPolicy`, BEFORE `RateLimit`, so a
+// verification-failed request doesn't also spend a rate-limit token.
 func RequireEmailVerified() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

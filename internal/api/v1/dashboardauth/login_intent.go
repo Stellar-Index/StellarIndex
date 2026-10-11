@@ -12,34 +12,25 @@ import (
 	"time"
 )
 
-// LoginIntentCookieName is the short-lived cookie that binds a
-// magic link to the browser that asked for it.
+// LoginIntentCookieName is the short-lived cookie binding a magic link to
+// the browser that asked for it.
 //
-// Login CSRF. Without this cookie, `GET /v1/auth/callback` would
-// mint a session from a token carried purely in the query string,
-// and `sessionSameSite()` returns Lax, which *permits* top-level
-// cross-site GET navigation. So an attacker could request a magic
-// link for their OWN account and mail that link to a victim: the
-// victim's browser would follow it and get the attacker's session
-// cookie, and every subsequent action the victim took (minting an
-// API key, attaching a payment method) would land in the attacker's
-// dashboard. That is the classic login-CSRF shape and neither the
-// token's single-use-ness nor its 15-minute TTL touches it — the
-// attacker is happy to spend a fresh token per victim.
+// Login CSRF: without it, `GET /v1/auth/callback` would mint a session from
+// a token carried purely in the query string, and `sessionSameSite()`
+// returns Lax, which *permits* top-level cross-site GET navigation. An
+// attacker could request a magic link for their OWN account and mail it to
+// a victim; the victim's browser would receive the attacker's session
+// cookie, and everything the victim then did (minting an API key, attaching
+// a payment method) would land in the attacker's dashboard. Single use and
+// the 15-minute TTL do not touch this.
 //
-// The binding: `POST /v1/auth/login` stamps this cookie with a
-// random per-browser id and mints a token whose second half is a
-// MAC of its first half and that id ([Generator.newBoundToken]);
-// `GET /v1/auth/callback` refuses to mint a session unless the MAC
-// verifies against the presenting browser's id. The attacker cannot
-// set a cookie on the victim's browser for the API's own host (the
-// __Host- prefix refuses one planted from a sibling host) and cannot
-// compute a tag without the server secret, so their link cannot be
-// completed anywhere but their own browser.
-//
-// Deliberately distinct from [SessionCookieName] so a browser that
-// holds both can't have one surface's credential read as the
-// other's, matching that constant's own rationale.
+// The binding: `POST /v1/auth/login` stamps this cookie with a random
+// per-browser id and mints a token whose second half is a MAC of its first
+// half and that id ([Generator.newBoundToken]); the callback refuses to
+// mint a session unless the MAC verifies against the presenting browser's
+// id. The attacker cannot plant a cookie on the API's own host (the __Host-
+// prefix) nor compute a tag without the server secret. Distinct from
+// [SessionCookieName] so one credential cannot be read as the other.
 const LoginIntentCookieName = "__Host-stellarindex_login_intent"
 
 // loginIntentBrowserLen is the hex length of a browser id and of a

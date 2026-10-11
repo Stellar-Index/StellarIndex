@@ -26,49 +26,25 @@ import (
 // default: a backstop, not the usual limiter.
 const throttleTakeTimeout = 5 * time.Second
 
-// throttleContext derives the context an abuse-prevention seam's
-// backend call runs under: the request's values, WITHOUT its
-// cancellation, bounded by [throttleTakeTimeout] or by whatever remains
-// of the request's own deadline, whichever is sooner. Shared by the
-// pre-dispatch seams in this package — the rate-limit take, the
-// [MonthlyQuota] month-to-date read and the failed-auth throttle —
-// because the hazard below is a property of the dwell-clock design they
-// mirror, not of any one seam.
+// throttleContext derives the context an abuse-prevention seam's backend
+// call runs under: the request's values, WITHOUT its cancellation, bounded
+// by [throttleTakeTimeout] or the request's remaining deadline, whichever
+// is sooner. Shared by the pre-dispatch seams (rate-limit take,
+// [MonthlyQuota] read, failed-auth throttle).
 //
-// A client abort must not reach the limiter as an error. The bucket
-// cannot tell a caller-cancelled call from a Redis outage — every error
-// out of the take arms its dwell clock — so a client that opens a
-// connection, sends a request and immediately RSTs, a few times a
-// second, would keep `redisErrorSince` armed and `healthySince` reset for
-// as long as it cared to, and the 30 s unbroken-success streak needed to
-// disarm could never accumulate. The limiter would then answer
-// ErrThrottleUnavailable and the middleware fail CLOSED with 503 for
-// EVERY caller sharing that bucket (the whole anonymous tier, or the
-// whole authenticated tier) while Redis was perfectly healthy: a remote
-// kill switch for the API, costing an attacker one TCP handshake per
-// tick.
+// A client abort must not reach the limiter as an error. The bucket cannot
+// tell a caller-cancelled call from a Redis outage (every take error arms
+// its dwell clock), so a client that connects, sends a request and RSTs a
+// few times a second would keep the clock armed, and the middleware would
+// fail CLOSED with 503 for EVERY caller sharing that bucket while Redis is
+// healthy: a remote kill switch costing one TCP handshake per tick.
 //
-// Detaching is also the correct charge semantics, and closes the
-// mirror-image hole: attached, an aborted request would have its take
-// error out and the middleware fall OPEN, so the token would never be
-// spent. The request
-// consumed the connection and the dispatch either way — the same
-// reasoning [postResponseWriteTimeout]'s call site records for usage
-// counters, where not counting an aborted request is a quota-evasion
-// vector.
-//
-// Detaching drops the request's DEADLINE along with its cancellation, so
-// the deadline is re-applied here. These seams run before the handler,
-// inside [RequestTimeout]; a flat 5 s per seam would let the pre-handler
-// stack run past the request timeout and, stacked with the handler, past
-// the server's WriteTimeout, answering a client whose response can no
-// longer be written. A deadline is server-set, never client-set, so
-// honouring it hands a client no way to arm the dwell clock.
-//
-// The bound is only as hard as the backend's context honouring. go-redis
-// honours it for the pool wait but, with ContextTimeoutEnabled unset (as
-// wired today), bounds an in-flight command by its own ReadTimeout
-// (3 s default) instead.
+// Detaching is also the correct charge semantics: attached, an aborted
+// request's take would error and fall OPEN, so its token would never be
+// spent although it consumed the connection. The request's DEADLINE is
+// re-applied (a flat 5 s would let the pre-handler stack outrun
+// [RequestTimeout] and WriteTimeout); it is server-set, so a client cannot
+// use it to arm the dwell clock.
 func throttleContext(r *http.Request) (context.Context, context.CancelFunc) {
 	deadline := time.Now().Add(throttleTakeTimeout)
 	if reqDeadline, ok := r.Context().Deadline(); ok && reqDeadline.Before(deadline) {
@@ -93,30 +69,18 @@ const MaxRateLimitKeyLen = 256
 //	X-RateLimit-Limit:     <bucket max>
 //	X-RateLimit-Remaining: <after this request>
 //
-// On 429, additionally:
+// On 429, additionally Retry-After: <seconds until window resets> plus an
+// RFC 9457 problem+json body.
 //
-//	Retry-After: <seconds until window resets>
+// Redis failures follow the bucket's dwell-time policy (internal/ratelimit,
+// "Failure mode"): inside the dwell-time ([ratelimit.DefaultDwellTime])
+// fail OPEN (debug log); [ratelimit.ErrThrottleUnavailable] past it fails
+// CLOSED with 503 + Retry-After. Do not collapse the two branches.
 //
-// plus an RFC 9457 problem+json body.
-//
-// Redis failures follow the bucket's dwell-time policy (the
-// internal/ratelimit package doc, "Failure mode"): a transient error
-// inside the bucket's dwell-time (default [ratelimit.DefaultDwellTime])
-// fails OPEN — logged at debug, the request goes through — and
-// [ratelimit.ErrThrottleUnavailable], once the outage outlasts the
-// dwell-time, fails CLOSED with 503 +
-// Retry-After. Do not collapse the two branches into one fail-open.
-//
-// KeyFn decides the key: per-IP (default if nil), per-API-key, etc.
-// If KeyFn returns "" the request is not rate-limited. Skip allows
-// full bypass for infra endpoints (health probes, metrics).
-//
-// Key length is capped at [MaxRateLimitKeyLen]. A hostile
-// X-Forwarded-For can grow up to the server's MaxHeaderBytes
-// (1 MB default in net/http); without a cap here that would
-// propagate through url.QueryEscape into the Redis key space.
-// Oversize keys get truncated to the cap — still bucketed, just
-// not uniquely per-caller past the first N bytes.
+// KeyFn decides the key (per-IP if nil); "" means not limited. Skip
+// bypasses infra endpoints. Keys are capped at [MaxRateLimitKeyLen] so a
+// hostile X-Forwarded-For (up to MaxHeaderBytes) cannot bloat the Redis key
+// space; oversize keys are truncated, still bucketed.
 func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip func(*http.Request) bool, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -241,42 +205,25 @@ func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens i
 	return true
 }
 
-// ChargeRateLimit re-prices the in-flight request at cost tokens IN
-// TOTAL and charges the difference over what it has already paid. It
-// returns true when the handler may go on, and false once it has
-// written the 429 (or the fail-closed 503) itself — the handler must
-// then return without writing anything.
+// ChargeRateLimit re-prices the in-flight request at cost tokens IN TOTAL
+// and charges the difference over what it has already paid. It returns true
+// when the handler may go on, and false once it has written the 429 (or
+// fail-closed 503) itself; the handler must then return without writing.
 //
-// The limiter charges one token before dispatch because that is all it
-// can know there. For most routes that is the right price. It is wrong
-// for a route whose server-side work is chosen by the client: one token
-// would buy a 1000-id POST /v1/price/batch — a thousand alias-looped price
-// resolutions, sixteen at a time against a 25-connection pool — so the
-// deployed 6000/min anonymous budget would really be six million
-// resolutions a minute. Such a
-// handler calls this AFTER it has validated the parameter and BEFORE it
-// does the work, so the budget is denominated in work rather than in
-// HTTP requests.
+// The limiter charges one token before dispatch because that is all it can
+// know there. That is wrong where the client chooses the work: one token
+// would buy a 1000-id POST /v1/price/batch, so the 6000/min anonymous
+// budget would really be six million price resolutions a minute. Such a
+// handler calls this AFTER validating the parameter and BEFORE doing the
+// work, so the budget is denominated in work, not requests. The middleware
+// cannot: pricing the POST means buffering up to 1 MiB of body for a caller
+// not yet admitted.
 //
-// Why here and not in the middleware: the cost of the POST variant is
-// the length of an array in its JSON body. Pricing it before dispatch
-// would mean buffering and decoding up to 1 MiB of body for a caller
-// the limiter has not admitted yet — the limiter would be doing the
-// expensive thing in order to decide whether to allow the expensive
-// thing. The handler has to parse the body anyway, behind the base
-// charge, and its count is the deduplicated one that matches the work.
-//
-// The total is capped at the subject's ceiling, so a request priced
-// above it spends the whole window rather than being refused in every
-// window ([ratelimit.Bucket.Charge] explains the cap; applying it to
-// the TOTAL here is what keeps the base token from making such a
-// request one token too expensive to ever fit). On success the
-// X-RateLimit-Remaining header is restated to the post-charge value.
-//
-// A request that never crossed a rate-limit middleware (limiting
-// disabled for its class, a skipped path, a handler under test) has no
-// account to charge and proceeds. A cost at or below what has been paid
-// charges nothing: this can raise a request's price, never refund it.
+// The total is capped at the subject's ceiling, so a request priced above
+// it spends the whole window rather than being refused in every window
+// ([ratelimit.Bucket.Charge]). A request that never crossed a rate-limit
+// middleware has no account to charge and proceeds. A cost at or below what
+// was paid charges nothing: this never refunds.
 func ChargeRateLimit(w http.ResponseWriter, r *http.Request, cost int) bool {
 	c, ok := r.Context().Value(rateLimitChargeKey{}).(*rateLimitCharge)
 	if !ok || c == nil {

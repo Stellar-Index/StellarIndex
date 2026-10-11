@@ -88,29 +88,25 @@ func generateMagicLinkToken(read func([]byte) (int, error), secret []byte) (plai
 // replayed as) another derived value.
 const loginCodeDomain = "stellarindex/login-code/v1|"
 
-// codeFromHashKeyed derives the 6-digit email code from a stored
-// token hash UNDER A SERVER-SIDE SECRET.
+// codeFromHashKeyed derives the 6-digit email code from a stored token hash
+// UNDER A SERVER-SIDE SECRET.
 //
 // Why keyed: were the code an unkeyed, public function of
-// magic_link_tokens.token_hash, anyone with a read of that table (SQL
-// injection on any other surface, a stolen backup, a curious operator)
-// could compute every in-flight sign-in code DIRECTLY — no brute force,
-// no email access — and mint a session for any address they could
-// trigger a login for via POST /v1/auth/verify-code. The token
-// PLAINTEXT is not recoverable (preimage-safe), but that would not
-// matter: the code would be equivalent to the token, and public
-// knowledge given the row.
+// magic_link_tokens.token_hash, anyone able to read that table (SQL
+// injection elsewhere, a stolen backup, a curious operator) could compute
+// every in-flight sign-in code directly — no brute force, no email access —
+// and mint a session for any address they could trigger a login for via
+// POST /v1/auth/verify-code. The token plaintext is preimage-safe, but the
+// code would be equivalent to the token.
 //
 // The code is HMAC-SHA256(secret, domain || token_hash) reduced to 6
-// digits. The secret lives in config/env (never in Postgres), so a
-// database read alone yields nothing: without the secret the code is
-// uniformly unpredictable, and the online-guessing bounds (per-token
+// digits. The secret lives in config/env (never Postgres), so a database
+// read alone yields nothing and the online-guessing bounds (per-token
 // attempt cap + durable per-email lockout) are the only attack surface
 // left.
 //
-// The uint32 % 10^6 reduction has negligible modulo bias (2^32 is
-// ~4295 full cycles of 10^6; the first 967296 codes appear once more
-// than the rest — a 0.02% skew, irrelevant at 10 guesses/day).
+// The uint32 % 10^6 reduction has negligible modulo bias (0.02% skew,
+// irrelevant at 10 guesses/day).
 func codeFromHashKeyed(secret, hash []byte) string {
 	if len(hash) < 4 {
 		// Defensive: a malformed hash must not silently produce a

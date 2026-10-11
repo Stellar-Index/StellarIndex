@@ -19,14 +19,12 @@ import (
 //   - CREATION is immutable, but an address can be created more than once
 //     (created, merged away, created again), so `created_by` is a LIST.
 //
-//   - SPONSORSHIP is revocable, and this surface cannot see the live
-//     set. Every sponsorship figure counts arrangements STARTED, NOT those
-//     in force: a revocation names the entry it revokes inside XDR the
-//     rollup does not decode, so it is attributable to the account that
-//     ISSUED it and to no individual edge, and an arrangement also lapses
-//     silently when the sponsored entry is deleted or the account merges
-//     away. `revocations_issued` is therefore account-level, and there is
-//     no per-edge "current" flag.
+//   - SPONSORSHIP is revocable and this surface cannot see the live
+//     set: every figure counts arrangements STARTED, not those in
+//     force. A revocation names its entry inside XDR the rollup does
+//     not decode, so it is attributable to the account that ISSUED it,
+//     not to an edge; `revocations_issued` is therefore account-level,
+//     with no per-edge "current" flag.
 //
 // Stroops-denominated values are decimal STRINGS (ADR-0003); counts are
 // JSON numbers.

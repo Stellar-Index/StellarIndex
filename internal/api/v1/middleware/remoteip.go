@@ -111,21 +111,18 @@ func requestCameViaTrustedProxy(peer string) bool {
 // RIGHT-TO-LEFT and returns the first entry NOT contained in any
 // trusted-proxy CIDR — i.e. the closest untrusted hop to us.
 //
-// This is the only XFF parse that is safe against forging. Most L7
-// proxies (nginx's `proxy_add_x_forwarded_for`, AWS ALB, Cloudflare,
-// Caddy, …) APPEND the immediate peer to whatever XFF the client
-// sent rather than replacing it, so the chain looks like:
+// This is the only XFF parse safe against forging. Most L7 proxies (nginx,
+// ALB, Cloudflare, Caddy, …) APPEND the immediate peer to the client's XFF,
+// so the chain is:
 //
 //	<client-supplied...>, <trusted-proxy-1>, <trusted-proxy-2>
 //
 // Taking the LEFTMOST entry would let a client forge its own value
-// (`X-Forwarded-For: 1.2.3.4` from the client survives at the head
-// of the chain), spoofing per-IP rate-limit identity and bypassing
-// per-key IP allowlists. Walking right-to-left, every trailing entry
-// that falls inside a trusted CIDR is a hop we control; the first
-// entry that does NOT is the real caller (or the furthest-out hop we
-// can still attribute). Anything to the LEFT of it is attacker-
-// controlled and ignored.
+// (`X-Forwarded-For: 1.2.3.4` survives at the head), spoofing per-IP
+// rate-limit identity and bypassing per-key IP allowlists. Walking
+// right-to-left, every trailing entry inside a trusted CIDR is a hop we
+// control; the first that is not is the real caller, and anything to its
+// LEFT is attacker-controlled and ignored.
 //
 // Returns "" when the header is empty, every parseable entry is
 // trusted (degenerate — caller falls back to the direct peer), or

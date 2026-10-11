@@ -5,37 +5,25 @@ import (
 	"time"
 )
 
-// SessionHintCookieName is a JS-readable presence flag that shadows
+// SessionHintCookieName is a JS-readable presence flag shadowing
 // [SessionCookieName]. It is written and cleared in lockstep with the
 // session cookie and carries nothing else.
 //
-// Why it exists: the explorer is a separate origin from the API, so the
-// only way it could tell a signed-in visitor from an anonymous one was
-// to make a credentialed `GET /v1/account/me` and read the status. For
-// an anonymous visitor that is a guaranteed 401 on every page load
-// (plus a refetch every five minutes), and a browser emits its own
-// console entry for any non-2xx response — an entry no amount of
-// client-side error handling can suppress, because it comes from the
-// network layer rather than from the promise.
-//
-// The session cookie itself cannot answer the question: it is HttpOnly
-// (and must stay that way — it is the bearer credential). So the same
-// responses that write the session cookie also write this one, which is
-// NOT HttpOnly. `document.cookie` sees it, and the explorer skips the
-// probe entirely when it is absent.
+// Why: the explorer is a separate origin from the API, so it could only
+// tell a signed-in visitor from an anonymous one by a credentialed `GET
+// /v1/account/me`, a guaranteed 401 on every anonymous page load that logs
+// a console entry no client code can suppress. The session cookie cannot
+// answer: it is HttpOnly (and must stay so, being the bearer credential).
+// So the responses that write it also write this one, NOT HttpOnly, and the
+// explorer skips the probe when it is absent.
 //
 // It is a HINT, never an authorization signal:
-//
-//   - It carries no identity, no token and no email — the value is the
-//     single byte "1". Anything an attacker could forge, they could
-//     equally forge by setting this cookie themselves, and the worst
-//     that buys them is one 401.
-//   - Nothing server-side reads it. Every authenticated route still
-//     resolves [SessionCookieName] against the sessions table.
-//   - It can outlive the real session (server-side expiry, revocation,
-//     one cookie cleared without the other). That is expected: the
-//     probe then runs and 401s exactly as it does today, and the client
-//     drops the stale hint.
+//   - It carries no identity, token or email (the value is "1"), so
+//     forging it buys at most one 401.
+//   - Nothing server-side reads it; every authenticated route resolves
+//     [SessionCookieName] against the sessions table.
+//   - It can outlive the real session; the probe then 401s and the
+//     client drops the stale hint.
 const SessionHintCookieName = "stellarindex_session_present"
 
 // sessionHintValue is the entire contents of the hint cookie. A
