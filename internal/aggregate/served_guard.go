@@ -9,22 +9,18 @@ import (
 // /v1/price serves the most-recent CLOSED prices_1m continuous-aggregate
 // bucket for a directly-quoted pair. That CAGG is a bare Σ(quote)/Σ(base) per
 // bucket — it is NOT run through the orchestrator's σ-outlier filter,
-// min-USD-volume gate, or freeze value-protection (those guard the
-// ORCHESTRATOR path that writes the filtered VWAP to Redis, which the CAGG
-// bypasses). A pure-synthetic fiat pair like native/fiat:USD has no prices_1m
-// rows, so it falls through to the filtered Redis value. But any pair with real
-// prices_1m rows (directly-quoted DEX/CEX pairs, and headline pairs with a real
-// fiat CEX market like crypto:XLM/fiat:USD) serves its raw closed-bucket VWAP
-// unfiltered, so a single fat-finger / manipulation trade in the served minute
-// would corrupt the price with stale=false and no volume floor.
+// min-USD-volume gate, or freeze value-protection (those guard the path that
+// writes the filtered VWAP to Redis, which the CAGG bypasses). A pure-synthetic
+// fiat pair like native/fiat:USD has no prices_1m rows and uses the filtered
+// Redis value, but any pair with real prices_1m rows serves its raw VWAP, so a
+// single fat-finger / manipulation trade in the served minute would corrupt the
+// price with stale=false and no volume floor.
 //
 // [GuardServedVWAP] is a robust sanity bound over the pair's recent trailing
-// closed buckets: it rejects a candidate whose VWAP is grossly off the robust
-// centre and signals the caller to serve last-known-good instead. It is tuned
-// CONSERVATIVELY — the acceptance region is the UNION of a wide ratio band and
-// a MAD band, so it only catches gross deviation, never a legitimately volatile
-// move, and on a healthy bucket it is a pure pass-through. Everything is exact
-// *big.Rat (ADR-0003); no float64 enters the value path.
+// closed buckets: it rejects a candidate grossly off the robust centre and
+// signals the caller to serve last-known-good. It is tuned CONSERVATIVELY: the
+// acceptance region is the UNION of a wide ratio band and a MAD band, so a
+// legitimately volatile move passes. Everything is exact *big.Rat (ADR-0003).
 
 const (
 	// guardMinSamples is the number of trailing closed buckets with a
@@ -41,23 +37,16 @@ var (
 	// guardRatioBound: on a tight/flat history a candidate is accepted
 	// only if it lies within [centre/R, centre*R] of the robust centre.
 	//
-	// R = 3. A 10× bound would admit the
-	// entire 3×–9× manipulation band a served-price sanity guard exists
-	// to stop; 3× catches a 5× pump  and every
-	// larger deviation. A swing beyond 3× in a single 1-minute bucket is
-	// not credible as organic price discovery on a pair whose recent
-	// history is tight, and when a genuine >3× move does occur we serve
-	// the last clean bucket (a real recent price), never a fabricated
-	// number — a one-bucket hold is the conservative, honest trade-off.
+	// R = 3. A 10× bound would admit the 3×–9× manipulation band the guard
+	// exists to stop; 3× catches a 5× pump and anything larger. A swing beyond
+	// 3× in one 1-minute bucket is not credible on a pair with tight history;
+	// when a genuine >3× move occurs we serve the last clean bucket (a real
+	// recent price), never a fabricated number.
 	//
-	// The band is inclusive, so this rejects deviations STRICTLY GREATER
-	// than 3×; a move of up to 3× (covering stablecoin depegs/halvings
-	// and extreme-but-real volatility) is still served. NOTE
-	// (business-value knob): 3 is the served-price manipulation
-	// tolerance — surfaced for the orchestrator to tighten (e.g. to 2×)
-	// per risk appetite. A genuinely volatile pair is not held to this
-	// number: the MAD band below widens acceptance from the pair's own
-	// history.
+	// The band is inclusive: only deviations STRICTLY GREATER than 3× are
+	// rejected. 3 is the served-price manipulation tolerance (a business-value
+	// knob). A genuinely volatile pair is not held to it: the MAD band below
+	// widens acceptance from the pair's own history.
 	guardRatioBound = big.NewRat(3, 1)
 
 	// guardThinRatioBound is the WIDER but FINITE ratio band applied
@@ -88,19 +77,15 @@ var (
 // Returns:
 //   - accept=true, lkgIdx=-1 → serve the candidate. Either it passed the
 //     robust band, or there was no usable baseline to judge it against
-//     (fail-open: favour serving a real price over over-filtering). These
-//     two acceptances are NOT equivalent: the second is an UNVALIDATED
-//     fail-open (a pair's first-ever served minute) that a single
-//     manipulated/fat-finger print would be served through with
-//     stale=false. accept alone cannot tell them apart — the serving path
-//     MUST consult [ServedBaselineValidated] on the same trailing slice
-//     and surface an unvalidated accept as low-confidence/stale.
+//     (fail-open). These are NOT equivalent: the second is UNVALIDATED (a
+//     pair's first-ever served minute) and would serve a fat-finger print
+//     with stale=false. The serving path MUST consult
+//     [ServedBaselineValidated] on the same trailing slice and surface an
+//     unvalidated accept as low-confidence/stale.
 //   - accept=false, lkgIdx>=0 → the candidate is grossly off the robust
-//     centre; serve trailing[lkgIdx] instead — the newest trailing value
-//     that IS within the band (last-known-good). Because the robust
-//     centre is the median of the baseline, at least half the baseline
-//     lies within the band, so a clean member is guaranteed to exist
-//     whenever the guard fires.
+//     centre; serve trailing[lkgIdx], the newest trailing value within the
+//     band. The centre is the median, so at least half the baseline lies
+//     within the band and a clean member always exists when the guard fires.
 func GuardServedVWAP(candidate *big.Rat, trailing []*big.Rat) (accept bool, lkgIdx int) {
 	lo, hi, ok := robustBand(trailing)
 	if !ok || candidate == nil {

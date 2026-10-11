@@ -403,9 +403,8 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 
 // ─── valuation ──────────────────────────────────────────────────────
 
-// rwaContractListingRows reads the admitted contracts through the same /v1/assets
-// post-query pipeline the classic arm runs, then fills the two things that pipeline
-// cannot fill for a contract.
+// rwaContractListingRows reads the admitted contracts through the /v1/assets
+// post-query pipeline, then fills the two things it cannot fill for a contract.
 //
 // Every step runs in the listing's order, as in [Server.rwaListingRows], so the
 // surface cannot drift from /v1/assets one omission at a time
@@ -419,13 +418,10 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 //     dropping the generic fill's cap once it holds its own supply reading, and every
 //     cap on a row whose scale was not read.
 //  2. THE SCAM SUPPRESSION. fillIssuerDirectoryTags runs before the contract fills,
-//     so it cannot reach figures they produce. The directory is the PROVENANCE
-//     requirement here, so tags are re-read at valuation time (not reused from the
-//     membership build): a flag acquired inside the ten-minute TTL still suppresses.
+//     so tags are re-read at valuation time (not reused from the membership build).
 //
-// valuationCut reports that ctx ended mid-fill, so some rows lack a valuation because
-// it was never read, not refused. The caller must say so, not serve the gap as the
-// answer.
+// valuationCut reports ctx ended mid-fill: rows lacking a valuation were never read,
+// not refused. The caller must say so.
 func (s *Server) rwaContractListingRows(
 	ctx context.Context, members []rwaContractMember,
 ) (byID map[string]AssetDetail, notObserved int, valuationCut bool, err error) {
@@ -499,14 +495,11 @@ func (s *Server) rwaContractListingRows(
 // scale was actually READ is returned, and a row absent from it carries no valuation
 // of either kind.
 //
-// The reading goes missing four ways, only one an outage: the decimals reader is
-// unwired or fails while the SUPPLY reader stays up (separate ClickHouse dials); the
-// contract instance is not in the lake; the METADATA map declares no scale under
-// either spelling; or it declares both with DIFFERENT values, which the lake reader
-// refuses. In each the honest answer is "scale unknown", a refusal, not a 7.
+// The reading goes missing when the decimals reader is unwired or fails, the contract
+// instance is not in the lake, or METADATA declares no scale (or conflicting ones).
+// The honest answer is "scale unknown", a refusal, not a 7.
 //
-// A fifth is not a refusal: ctx ending mid-walk. cut reports it and the walk stops,
-// since every later read would fail the same way.
+// ctx ending mid-walk is not a refusal: cut reports it and the walk stops.
 func (s *Server) fillContractDecimals(
 	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
 ) (resolved map[string]struct{}, cut bool) {
@@ -717,17 +710,12 @@ func (s *Server) contractSupplyReading(
 // the two are never summed. Where a token has both, the event reading stands:
 // this path is not reached.
 //
-// Best-effort at every step, like every other supply overlay on this surface.
-// No reader wired, a read error, a Stellar Asset Contract (whose balances live
-// in trustlines, not contract storage), or a holder set past the reader's own
-// cap all yield ok=false and leave the caller with the reading it already had.
-// A fallback that turned a served row into an error because its optional source
-// declined would be worse than the gap it closes.
+// Best-effort: no reader wired, a read error, a Stellar Asset Contract (balances
+// live in trustlines), or a holder set past the reader's cap all yield ok=false
+// and leave the caller with the reading it already had.
 //
-// A zero-entry read is refused rather than published. No balances is not a
-// supply of zero — it is the ABSENCE of a reading, and publishing it would
-// replace one unfounded zero with another, which is the entire defect this
-// path exists to remove.
+// A zero-entry read is refused rather than published. No balances is the ABSENCE
+// of a reading, not a supply of zero.
 func (s *Server) contractStorageCirculating(ctx context.Context, contractID string) (string, bool) {
 	if s.ContractStorageSupply == nil {
 		return "", false

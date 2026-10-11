@@ -4,8 +4,8 @@
 // integers (the prices_* CAGGs, aggregate.VWAP). Per-asset decimals cancel ONLY
 // when base and quote share a scale. Every DEX-traded Stellar token to date is
 // 7-decimal, and decoders store faithful native-decimal amounts (ADR-0003). The
-// latent risk: the first non-7-decimal SEP-41 token to gain liquidity skews every
-// served price for its pairs by 10^(7-decimals), with no other alarm.
+// latent risk: the first non-7-decimal SEP-41 token to gain liquidity skews its
+// pairs' served prices by 10^(7-decimals), with no other alarm.
 //
 // This package is the DETECTION half: a periodic sweep resolves the on-chain
 // decimals() of every recently-DEX-traded Soroban token from the certified lake
@@ -16,9 +16,7 @@
 // and the two CAGG-backed gaps (/v1/price, /v1/ohlc series mode) are in
 // docs/operations/runbooks/dex.md.
 //
-// The sweep sees only a short trailing window (20m default), so a token that
-// traded and went dormant is invisible to it. Guard.Backfill is the startup pass
-// that runs the same classify+report path over a 90d window to close that gap.
+// The sweep's 20m window misses dormant tokens; Guard.Backfill covers 90d at startup.
 package decimalsguard
 
 import (
@@ -120,20 +118,14 @@ type DecimalsAssetWriter interface {
 // price-shaped serving path and the aggregator's VWAP normalise through the
 // projection (aggregate.ResolveDecimals), while GET /v1/assets/{id} scales
 // supply by the lake reading directly (clickhouse.TokenDecimals). The
-// projection can drift from the lake — a hand-seeded row that contradicts
-// the instance, an instance captured or re-captured after the guard's
-// per-process resolved cache latched, a row left behind by a token whose
-// metadata now reads 7 — and nothing re-checked it, so Guard.Reconcile
-// re-reads every persisted row against the lake on each tick and repairs
-// it toward the lake (upsert the lake's value; delete when the lake confirms
-// 7, since the table's CHECK forbids storing 7).
+// projection can drift from the lake (hand-seeded row, instance captured after
+// the resolved cache latched, token now reading 7), so Guard.Reconcile
+// re-reads every persisted row each tick and repairs it toward the lake
+// (upsert; delete when the lake confirms 7, since the CHECK forbids 7).
 //
-// Satisfied by *timescale.Store. The Writer option is type-asserted for it
-// in New, so no wiring change is needed for the bare store. The compile-time
-// assertion below only proves *timescale.Store itself satisfies the seam; a
-// decorator wrapping the writer (metrics, retry) that does not forward this
-// interface disarms Reconcile, and New logs that at ERROR naming the
-// writer's concrete type (see resolveReconciler).
+// Satisfied by *timescale.Store; the Writer option is type-asserted in New. A
+// decorator that does not forward this interface disarms Reconcile, and New
+// logs that at ERROR (see resolveReconciler).
 type DecimalsAssetReconciler interface {
 	DecimalsAssetWriter
 	LoadNonstandardDecimalsAssets(ctx context.Context) ([]timescale.NonstandardDecimalsAsset, error)
@@ -484,19 +476,16 @@ func (g *Guard) report(ctx context.Context, ref timescale.SorobanDEXTradeRef, de
 // The resolved cache is deliberately BYPASSED: a fresh lake read is the point.
 // Per row:
 //
-//   - lake read error or found=false: leave the row, no metric. An unresolvable
-//     reading is not evidence the row is wrong, and an operator hand-seeded row
-//     for an uncaptured instance (runbook "Mitigation") must survive.
+//   - lake read error or found=false: leave the row, no metric. An operator
+//     hand-seeded row for an uncaptured instance (runbook "Mitigation") must survive.
 //   - lake == row.Decimals: in lockstep; refresh the resolved cache.
 //   - lake != row.Decimals: count it
 //     (obs.NonstandardDecimalsLockstepMismatchTotal{site="guard_reconcile"}), log
 //     at ERROR with both values, and repair toward the lake: upsert when non-7,
-//     DELETE when the lake confirms 7 (the table's CHECK forbids 7). The counter
-//     increments on OBSERVATION, so a failed repair re-counts next tick and a
-//     sustained value feeds the correction_failing alert.
+//     DELETE when the lake confirms 7. The counter increments on OBSERVATION, so
+//     a failed repair re-counts next tick and feeds the correction_failing alert.
 //
-// Errors only when the row load fails. Bounded: the table holds confirmed
-// offenders only, so this is a handful of PK-prefix lake lookups per tick.
+// Errors only when the row load fails.
 func (g *Guard) Reconcile(ctx context.Context) error {
 	if g.reconciler == nil {
 		return nil

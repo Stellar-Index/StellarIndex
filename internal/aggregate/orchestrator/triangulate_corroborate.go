@@ -12,27 +12,22 @@ import (
 // Composite corroboration.
 //
 // A triangulation chain also gives a SECOND, independently-routed opinion
-// about a pair we price directly (this file's part). That
-// matters on the thin pairs chains are deployed for (XLM/EUR ran 87.5%
-// single-source minutes, XLM/GBP 100%, XLM/USD 0.0%): a composite through
-// USD reaches them via markets that are not thin.
+// about a pair we price directly. That matters on the thin pairs chains are
+// deployed for (XLM/EUR ran 87.5% single-source minutes, XLM/GBP 100%): a
+// composite through USD reaches them via markets that are not thin.
 //
 // The single-chain DIVERGENCE comparison feeds ONE confidence factor
-// ([confidence.Inputs.TriangulationDivergencePct]). It deliberately does
-// not touch [confidence.Inputs.SourceCount]: a composite re-uses our own
-// leg VWAPs, filters and usually upstream venues, so counting it as a
-// source would satisfy an independence test it does not meet. The
-// confidence leg is graded and self-correcting; source-count is a
-// structural claim about independence.
+// ([confidence.Inputs.TriangulationDivergencePct]). It deliberately does not
+// touch [confidence.Inputs.SourceCount]: a composite re-uses our own leg VWAPs
+// and usually upstream venues, so counting it as a source would claim an
+// independence it lacks.
 //
 // The router's MULTI-ROUTE corroboration count (aggregate.CombineRoutes'
 // corroborationCount) is held to the same rule (ADR-0019 amendment §2):
-// counting it would let configuring a chain disarm the `source_count <= 1`
-// leg of the freeze on exactly those pairs. Both freeze phases read
-// [distinctSourceCount] alone; the count is audit-only. A composite may
-// stand down a single-venue freeze only via the SAME-bucket composite
-// reference (composite_reference.go), which changes the verdict and leaves
-// the source count untouched.
+// counting it would let configuring a chain disarm the `source_count <= 1` leg
+// of the freeze. Both freeze phases read [distinctSourceCount] alone; the count
+// is audit-only. A composite may stand down a single-venue freeze only via the
+// SAME-bucket composite reference (composite_reference.go).
 
 // compositeSample is the most recent composite (triangulated) price the
 // chain pass published for one target (pair, window), with the time it was
@@ -147,28 +142,23 @@ func compositeKey(pair canonical.Pair, window time.Duration) string {
 
 // triangulationDivergencePct returns the % absolute deviation between
 // the direct VWAP just computed for (pair, window) and the most recent
-// composite the chain pass published for the same pair, plus whether a
-// comparison happened (the [confidence.Inputs.TriangulationDivergencePct] /
-// [confidence.Inputs.TriangulationChecked] pair).
+// composite published for the same pair, plus whether a comparison happened
+// ([confidence.Inputs.TriangulationDivergencePct] / TriangulationChecked).
 //
-// Returns (_, false) when there is nothing to compare: no chain
-// configured, none published yet, its last publish older than
-// [compositeMaxAgeTicks], or either price non-positive. Unchecked is
-// fail-closed: [confidence.Compute] drops the factor's weight entirely.
+// Returns (_, false) when there is nothing to compare: no chain configured,
+// none published yet, older than [compositeMaxAgeTicks], or a non-positive
+// price. Unchecked is fail-closed: [confidence.Compute] drops the factor's weight.
 //
-// The composite is one tick old by construction: the chain pass runs AFTER
-// the per-pair refresh loop in [Orchestrator.Tick] (its legs read the VWAPs
-// that loop wrote). Re-deriving chains mid-refresh would double the FX-snap
-// query load and double-count [obs.AggregatorFXSnapFallbackTotal], whose
-// ratio drives the fx-snap-fallback alert.
+// The composite is one tick old by construction: the chain pass runs AFTER the
+// per-pair refresh loop in [Orchestrator.Tick] (its legs read the VWAPs that
+// loop wrote). Re-deriving mid-refresh would double the FX-snap query load and
+// double-count [obs.AggregatorFXSnapFallbackTotal], which drives an alert.
 //
-// A leg frozen this tick makes the chain refuse to publish, so a frozen
-// leg's last-known-good cannot reach the score.
+// A leg frozen this tick makes the chain refuse to publish.
 //
-// Current-bucket precedence: a RESOLVED composite-reference reading for
-// this bucket (composite_reference.go) is returned instead of the prior
-// tick's sample, so the confidence factor, freeze verdict and release lens
-// read ONE sample. An UNAVAILABLE reading falls through to the prior tick.
+// A RESOLVED composite-reference reading for this bucket (composite_reference.go)
+// is returned instead of the prior tick's sample, so confidence, freeze verdict
+// and release lens read ONE sample. An UNAVAILABLE reading falls through.
 func (o *Orchestrator) triangulationDivergencePct(
 	pair canonical.Pair,
 	window time.Duration,

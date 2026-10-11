@@ -702,11 +702,8 @@ type TradeRow struct {
 	//     REGARDLESS of the pair — the external normalisation scale, not
 	//     anything about the asset.
 	//
-	// Never substitute a constant. A reader that assumed 7 per-asset
-	// mis-scaled real rows in production once already, and the error is
-	// payload-undetectable: Price is quote/base and therefore
-	// scale-invariant, so nothing in the response looks wrong. This
-	// endpoint is used for regulatory export — read the field.
+	// Never substitute a constant: Price is quote/base and scale-invariant, so
+	// a wrong assumed scale is undetectable from the payload. Read the field.
 	//
 	// Populated by [Client.History]; omitted (zero) on the
 	// /v1/observations rows, which carry no per-side scale.
@@ -1336,23 +1333,14 @@ type Version struct {
 // [HistoryPoint] (`t` / `p` / `v_usd`) but the envelope-level
 // metadata differs (Timeframe + bound Granularity).
 //
-// Truncated reports whether the requested timeframe extends before
-// the earliest available data on this deployment (e.g. asking for
-// `Timeframe: "1y"` when the deployment only retains 7 days). When
-// true, DataStartsAt + RequestedFrom are populated so consumers
-// can render "history begins at <ts>" instead of guessing whether
-// the deployment is data-thin or the asset is genuinely flat.
-// `Timeframe: "all"` always reports Truncated=false because that
-// timeframe means "everything you have" by definition.
+// Truncated reports whether the requested timeframe extends before the
+// earliest available data on this deployment (e.g. `Timeframe: "1y"` when only
+// 7 days are retained). When true, DataStartsAt + RequestedFrom are populated.
+// `Timeframe: "all"` always reports Truncated=false.
 //
-// Discontinuous reports the other ambiguity Points cannot express:
-// the array is dense, so a hole in the MIDDLE of a series renders as a
-// straight line between the two buckets either side of it. When it is
-// true, GapStartsAt + GapEndsAt bound the widest such gap. Truncated
-// speaks only for the series' start and never fires for
-// `Timeframe: "all"`, and the envelope's coverage annotation speaks
-// only for a series that is entirely empty — so a holed series has
-// nothing else on the wire to declare itself.
+// Discontinuous reports a hole in the MIDDLE of the series, which the dense
+// Points array would render as a straight line. When true, GapStartsAt +
+// GapEndsAt bound the widest such gap. Nothing else on the wire declares it.
 type ChartSeries struct {
 	AssetID string `json:"asset_id"`
 	Quote   string `json:"quote"`
@@ -2151,12 +2139,9 @@ type RWAMembershipSet struct {
 //	                               contract address — nothing to consult
 //	Entries > 0 && Contracts > 0   healthy and populated
 //
-// Then compare ObservedAt against the sync's own clock: a sync that
-// completed after this instant means the set in hand predates the rows
-// it would have used, nothing is broken, and the next rebuild carries
-// them. ObservedAt is when THIS INDEX read the directory, not when the
-// directory was synced. The counts can be re-derived from the table
-// afterwards; that instant cannot be, which is why it is served.
+// Compare ObservedAt against the sync's own clock: a sync completing after it
+// means the set in hand predates those rows; the next rebuild carries them.
+// ObservedAt is when THIS INDEX read the directory, not when it was synced.
 type RWAListingDirectory struct {
 	ObservedAt time.Time `json:"observed_at"`
 	Entries    int       `json:"entries"`
