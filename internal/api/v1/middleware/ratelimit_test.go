@@ -218,11 +218,8 @@ func TestRateLimit_SkipsWhenSkipReturnsTrue(t *testing.T) {
 }
 
 // TestRateLimit_TruncatesLongKeys guards the MaxRateLimitKeyLen cap on
-// RateLimit's entry point: two keys that agree on the first
-// MaxRateLimitKeyLen bytes and differ only after it must collapse onto
-// the same bucket, or a hostile caller mints unlimited distinct buckets
-// by varying an oversize key past the cap (e.g. via a crafted
-// X-Forwarded-For with a custom KeyFn).
+// RateLimit's entry point: keys that differ only past the cap must share a bucket, or a hostile
+// caller mints unlimited buckets by varying an oversize key.
 func TestRateLimit_TruncatesLongKeys(t *testing.T) {
 	rdb, _ := newRLRedis(t)
 	b := ratelimit.New(rdb, 1, time.Minute)
@@ -392,13 +389,9 @@ func TestRateLimitBySubject_AnonymousUsesAnonBucket(t *testing.T) {
 }
 
 // TestRateLimitBySubject_AnonymousSameIPDifferentUADoesNotBypass is
-// the regression: the anonymous bucket must be keyed on the
-// resolved client IP ALONE. A key that folds in a
-// sha256(IP|User-Agent) hash lets a client rotate its
-// User-Agent on every request to mint unlimited distinct buckets and
-// sail past the per-IP anonymous throttle. Here two requests from the
-// SAME IP carry DIFFERENT User-Agents; with a budget of 1 the second
-// MUST be 429'd because both share one bucket.
+// pins that the anonymous bucket is keyed on the resolved client IP ALONE: folding in the
+// User-Agent would let a client mint a bucket per request. Two requests from the same IP with
+// different User-Agents and a budget of 1 must see a 429 on the second.
 func TestRateLimitBySubject_AnonymousSameIPDifferentUADoesNotBypass(t *testing.T) {
 	rdb, _ := newRLRedis(t)
 	anonBucket := ratelimit.New(rdb, 1, time.Minute)
@@ -434,21 +427,13 @@ func TestRateLimitBySubject_AnonymousSameIPDifferentUADoesNotBypass(t *testing.T
 }
 
 // TestRateLimit_NilKeyFnMasksIPv6To64 pins the default (nil) keyFn of
-// the single-bucket RateLimit middleware to the forge-resistant,
-// /64-masked throttle resolver — the SAME resolver the production anon
-// path uses. A default of raw RemoteIPFrom(r) (the
-// unmasked /128 read from context) would let a caller could rotate its IPv6
-// address within a single delegated /64 to mint a fresh bucket per
-// request and bypass the per-IP limit entirely.
+// the single-bucket RateLimit middleware to the forge-resistant, /64-masked resolver the
+// production anon path uses. An unmasked /128 default would let a caller rotate addresses within
+// one delegated /64 and bypass the limit.
 //
-// Two requests carry DIFFERENT /128 addresses that share the same /64;
-// with a budget of 1 the second MUST be 429'd because both mask to the
-// same key. A genuinely different /64 keeps its own budget.
-//
-// Against a RemoteIPFrom(r)-based default this FAILS: it reads the
-// remote_ip context value (never populated here — no Logger
-// middleware), yielding an empty key, so every request bypasses the
-// limiter and the second returns 200 instead of 429.
+// Two different /128 addresses in the same /64 with a budget of 1 must see a 429 on the second;
+// a different /64 keeps its own budget. A RemoteIPFrom default fails this: no Logger runs here,
+// so the key is empty and every request bypasses the limiter.
 func TestRateLimit_NilKeyFnMasksIPv6To64(t *testing.T) {
 	if err := middleware.SetTrustedProxyCIDRs([]string{}); err != nil {
 		t.Fatalf("SetTrustedProxyCIDRs: %v", err)
@@ -511,16 +496,10 @@ func TestSkipHealthAndMetrics(t *testing.T) {
 	}
 }
 
-// TestRateLimitBySubject_SkipsWhenSkipReturnsTrue proves the skip block
-// (ratelimit.go's `if skip != nil && skip(r)`) is exercised on
-// RateLimitBySubject — the ONLY entry point production wires
-// (cmd/stellarindex-api/main.go), with the actual SkipHealthAndMetrics
-// predicate production uses. TestRateLimit_SkipsWhenSkipReturnsTrue
-// drives the same block on RateLimit, which production never
-// constructs (server.go declares it test-only), so it left this path
-// at 0% coverage: deleting the skip check inside RateLimitBySubject
-// left internal/api/v1, internal/ratelimit and cmd/stellarindex-api all
-// green.
+// TestRateLimitBySubject_SkipsWhenSkipReturnsTrue exercises the skip block on
+// RateLimitBySubject, the only entry point production wires, with the real
+// SkipHealthAndMetrics predicate. The RateLimit skip test covers a constructor production never
+// uses, so removing this check would otherwise go unnoticed.
 func TestRateLimitBySubject_SkipsWhenSkipReturnsTrue(t *testing.T) {
 	rdb, _ := newRLRedis(t)
 	anonBucket := ratelimit.New(rdb, 1, time.Minute)
@@ -557,13 +536,9 @@ func TestRateLimitBySubject_SkipsWhenSkipReturnsTrue(t *testing.T) {
 }
 
 // TestRateLimitBySubject_TruncatesLongAuthKeys guards the
-// MaxRateLimitKeyLen cap at RateLimitBySubject's own truncation site
-// (distinct from RateLimit's — TestRateLimit_TruncatesLongKeys does not
-// exercise this one). An authenticated subject's Identifier feeds
-// authenticatedRateLimitKey (UsageKeyForSubject) directly; two
-// identifiers that agree on the first MaxRateLimitKeyLen bytes of the
-// derived key and differ only after it must collapse onto the same
-// bucket.
+// MaxRateLimitKeyLen cap at RateLimitBySubject's own truncation site, which
+// TestRateLimit_TruncatesLongKeys does not exercise. Identifiers that differ only past the cap
+// of the derived authenticatedRateLimitKey must share a bucket.
 func TestRateLimitBySubject_TruncatesLongAuthKeys(t *testing.T) {
 	rdb, _ := newRLRedis(t)
 	anonBucket := ratelimit.New(rdb, 1, time.Minute)
@@ -590,15 +565,10 @@ func TestRateLimitBySubject_TruncatesLongAuthKeys(t *testing.T) {
 	}
 }
 
-// TestRateLimitBySubject_AnonymousIPv6Slash64SharesBucket is the
-// regression: an anonymous caller's throttle key must aggregate IPv6
-// addresses to their /64 network prefix, not the full /128. Without
-// the fix, an attacker who controls an entire delegated /64 (typical
-// residential/mobile ISP allocation) mints a fresh throttle bucket for
-// every address in that block and the per-IP anonymous cap never
-// engages. Here two requests carry DIFFERENT IPv6 addresses that share
-// the same /64; with a budget of 1 the second MUST be 429'd because
-// both addresses key to the same bucket.
+// TestRateLimitBySubject_AnonymousIPv6Slash64SharesBucket pins that the anonymous throttle key
+// aggregates IPv6 to the /64, not the /128: an attacker holding a delegated /64 would otherwise
+// get a fresh bucket per address. Two addresses in one /64 with a budget of 1 must see a 429 on
+// the second.
 func TestRateLimitBySubject_AnonymousIPv6Slash64SharesBucket(t *testing.T) {
 	if err := middleware.SetTrustedProxyCIDRs([]string{}); err != nil {
 		t.Fatalf("SetTrustedProxyCIDRs: %v", err)
@@ -669,11 +639,9 @@ func TestRateLimit_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 	}
 }
 
-// Keying the per-minute limit on KeyID gives every key an
-// account held its own full bucket — a 25-key account runs at 25x its
-// ceiling, and an operator's 100k/min comp becomes 2.5M/min. The monthly
-// quota already counted per account; the rate limit must share that
-// identity, so minting or rotating keys cannot multiply the ceiling.
+// Keying the per-minute limit on KeyID would give each key its own full bucket and multiply the
+// ceiling by the key count. The limit must share the monthly quota's account identity so minting
+// or rotating keys cannot raise it.
 func TestRateLimitBySubject_KeysOnOneAccountShareOneBucket(t *testing.T) {
 	rdb, _ := newRLRedis(t)
 	authBucket := ratelimit.New(rdb, 100, time.Minute)

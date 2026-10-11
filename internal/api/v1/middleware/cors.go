@@ -11,47 +11,25 @@ import (
 // CORSOptions configures [CORS]. Pass a zero-valued struct for the
 // conservative default (no origins allowed — same-origin only).
 type CORSOptions struct {
-	// AllowedOrigins is the exact-match allow-list of `Origin:`
-	// values the middleware honours. Special form `*` means "allow
-	// any origin" (wildcard); use sparingly — it's incompatible
-	// with `Access-Control-Allow-Credentials: true`, so when both
-	// AllowedOrigins=["*"] and AllowCredentials=true are set, the
-	// constructor panics rather than emit a browser-rejected combo.
-	//
-	// Empty slice = no cross-origin access permitted.
+	// AllowedOrigins is the exact-match allow-list of `Origin:` values. `*` allows any origin
+	// but browsers reject it with credentials, so the constructor panics on `*` plus
+	// AllowCredentials. Empty means no cross-origin access.
 	AllowedOrigins []string
 
-	// AllowCredentials emits `Access-Control-Allow-Credentials: true`
-	// on preflight + actual responses to CredentialedOrigins (never
-	// to the rest of AllowedOrigins). Required for credentialed
-	// cross-origin fetches (cookies, HTTP auth, client TLS certs).
-	// Without it browsers strip cookies from the request and reject
-	// Set-Cookie from the response.
-	//
-	// Required by /v1/account/me + /v1/account/keys (magic-link
-	// session cookie auth). Off by default — enabling it is a
-	// per-deployment policy decision the operator makes via config.
+	// AllowCredentials emits `Access-Control-Allow-Credentials: true` to CredentialedOrigins
+	// only, never to the rest of AllowedOrigins. Needed for cookie-authenticated cross-origin
+	// fetches (the magic-link session); off by default as a per-deployment policy decision.
 	AllowCredentials bool
 
-	// CredentialedOrigins is the subset of AllowedOrigins trusted for
-	// credentialed access: they receive
-	// Access-Control-Allow-Credentials: true, and
-	// [RequireSameSiteWrite] treats a plain Origin match against this
-	// list as sufficient to bypass the same-site write guard.
-	//
-	// AllowedOrigins is a public READ allow-list — a
-	// status/docs subdomain that only ever reads /v1/ledger/tip has
-	// no business being trusted to drive a cookie-authenticated
-	// write. Ignored when AllowCredentials is false. Must be a
-	// subset of AllowedOrigins; the constructor panics otherwise.
+	// CredentialedOrigins is the subset of AllowedOrigins trusted for credentialed access: they
+	// receive Allow-Credentials, and [RequireSameSiteWrite] accepts a plain Origin match
+	// against it. AllowedOrigins is a public READ list, so a read-only docs subdomain must not
+	// be trusted to drive a cookie-authenticated write. Ignored when AllowCredentials is false;
+	// the constructor panics if it is not a subset of AllowedOrigins.
 	CredentialedOrigins []string
 
-	// AllowedMethods defaults to {GET, HEAD, OPTIONS, POST} when
-	// empty — matches the v1 surface (POST /v1/account/keys,
-	// POST /v1/auth/sep10/token, POST /v1/price/batch). Operators
-	// who want a stricter cross-origin posture set the field
-	// explicitly (e.g. drop POST when their browser clients only
-	// read).
+	// AllowedMethods defaults to {GET, HEAD, OPTIONS, POST} to match the v1 surface; set it
+	// explicitly for a stricter cross-origin posture.
 	AllowedMethods []string
 
 	// AllowedHeaders is the list of non-safe-listed headers clients
@@ -110,24 +88,14 @@ var DefaultCORSExposedHeaders = []string{
 	"X-StellarIndex-As-Of-Ledger",
 }
 
-// CORS returns middleware that applies W3C CORS headers based on
-// opts. Deliberately conservative: no credentialed requests, no
-// dynamic origin reflection beyond the exact-match / wildcard
-// allow-list. Sophisticated needs (per-route origins, pattern
-// matching) are out of scope — callers that want those should use
-// rs/cors or implement inline.
+// CORS returns middleware that applies W3C CORS headers based on opts. Deliberately
+// conservative: origins match exactly or by wildcard, with no pattern matching or per-route
+// origins.
 //
-// Behaviour:
-//
-//   - On OPTIONS requests with an Origin header: emits the
-//     preflight response (Allow-Origin/Methods/Headers/Max-Age) and
-//     returns 204 without calling next.
-//   - On all other requests: emits Access-Control-Allow-Origin and
-//     Access-Control-Expose-Headers iff the request's Origin is in
-//     the allow-list, then calls next.
-//   - When AllowedOrigins contains "*": the wildcard is echoed
-//     back instead of reflecting the specific origin. Matches the
-//     spec + keeps the middleware simple.
+//   - A preflight (OPTIONS with an Origin) gets the preflight headers and a 204 without
+//     calling next.
+//   - Other requests get Allow-Origin and Expose-Headers iff the Origin is allowed, then next.
+//   - With "*" the wildcard is echoed rather than reflecting the specific origin.
 func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list + preflight branch + Vary handling are all part of one cohesive CORS contract; splitting would scatter the policy
 	allowed := buildOriginSet(opts.AllowedOrigins)
 	wildcard := allowed["*"]
@@ -163,18 +131,9 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 			origin := r.Header.Get("Origin")
 			originAllowed := wildcard || (origin != "" && allowed[origin])
 
-			// Always add `Vary: Origin` (except in strict-wildcard
-			// mode where `Allow-Origin: *` applies regardless of
-			// the requesting origin). Without this, a cacheable
-			// response served to a no-Origin request (curl, server-
-			// side fetch) is keyed without origin discrimination —
-			// a CDN can then return that cached "no CORS" response
-			// to a later browser request whose Origin WOULD have
-			// been allowed, breaking the second client's CORS.
-			// Inverse poisoning is also possible: a response cached
-			// with one allowed Origin's `Allow-Origin: <a>` could
-			// be served to a request from a different allowed
-			// Origin <b>, also breaking CORS.
+			// Vary: Origin on every response (except wildcard mode, where Allow-Origin is
+			// origin-independent). Otherwise a CDN could replay a cached no-CORS response to a
+			// later allowed browser origin, or one origin's Allow-Origin to another.
 			if !wildcard {
 				w.Header().Add("Vary", "Origin")
 			}
@@ -206,15 +165,8 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 				obs.APICORSDecisionsTotal.WithLabelValues("denied").Inc()
 			}
 
-			// Publish the operator's CredentialedOrigins so the
-			// same-site write guard (see [RequireSameSiteWrite]) can
-			// reuse the same narrower list rather than growing a
-			// second, drift-prone copy of it (this is
-			// deliberately NOT the full AllowedOrigins read allow-
-			// list). The policy value is built once at construction
-			// and shared by pointer, so this costs one context node
-			// per request and no per-request allocation of the list
-			// itself.
+			// Publish CredentialedOrigins (deliberately not the wider read allow-list) so
+			// [RequireSameSiteWrite] reuses it instead of keeping a drift-prone second copy.
 			r = r.WithContext(withOriginPolicy(r.Context(), policy))
 
 			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {

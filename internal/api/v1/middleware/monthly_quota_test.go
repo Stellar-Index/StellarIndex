@@ -173,17 +173,12 @@ func TestMonthlyQuota_AnonymousPassThrough(t *testing.T) {
 	}
 }
 
-// TestMonthlyQuota_FailOpenIncrementsCounter is the regression test.
+// TestMonthlyQuota_FailOpenIncrementsCounter guards that a fail-open bypass is observable: a
+// Debug log line is invisible at the production log level, and the overage is unrecoverable once
+// served.
 //
-// The fail-open above is correct and stays — but before this counter the
-// only trace that the metered-spend ceiling had switched itself OFF was a
-// `logger.Debug` line, i.e. nothing at all at the API's production log
-// level. A metered key can bill past its agreed cap for the whole window,
-// and the overage is unrecoverable once the responses are served.
-//
-// Asserts the exact delta (1 per bypassed request) and, crucially, that a
-// HEALTHY read does not touch the counter — a counter that ticks on the
-// success path would make the alert permanently firing and worthless.
+// Asserts the exact delta (1 per bypassed request) and that a HEALTHY read does not touch the
+// counter, since a counter that ticks on success would leave the alert permanently firing.
 func TestMonthlyQuota_FailOpenIncrementsCounter(t *testing.T) {
 	sub := auth.Subject{Tier: auth.TierAPIKey, KeyID: "K1", MonthlyQuota: 100}
 
@@ -295,16 +290,10 @@ func TestMonthlyQuota_TransientBlipFailsOpen(t *testing.T) {
 	}
 }
 
-// TestMonthlyQuota_SustainedFailureFailsClosed (W1-flow-register-4,
-// scenario 2) is the PROVEN-RED assertion. Once the month-to-date
-// counter has been erroring continuously for longer than the dwell
-// window, the middleware must stop serving unmetered and reject with
-// 429 + Retry-After — otherwise a key already at its cap bills free for
-// the whole outage.
-//
-// On the UNFIXED middleware the read-error branch always fails open, so
-// the second request below returns 200 and the `want 429` assertion
-// FAILS — that is the redness this test guards.
+// TestMonthlyQuota_SustainedFailureFailsClosed asserts that once the month-to-date counter has
+// errored continuously for longer than the dwell window, the middleware rejects with 429 +
+// Retry-After instead of serving unmetered, since a key at its cap would otherwise bill free for
+// the whole outage. If the read-error branch always failed open, the second request would be 200.
 func TestMonthlyQuota_SustainedFailureFailsClosed(t *testing.T) {
 	clock := newManualClock()
 	reader := &mutableMTDReader{err: errors.New("redis MISCONF")}

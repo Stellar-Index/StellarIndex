@@ -15,28 +15,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// postResponseWriteTimeout bounds the bookkeeping writes that run AFTER
-// the response has been flushed (usage counters, last-used touch), on
-// the shared [AfterResponse] worker pool rather than the request
-// goroutine. They run under a fresh context.Background(), never
-// the request's — a wedged store must not pin a pool worker forever, and
-// the tasks must survive a client abort or an exhausted RequestTimeout
-// budget. Generous relative to go-redis's 3 s
-// default so it is a backstop, not the usual limiter.
+// postResponseWriteTimeout bounds the bookkeeping writes that run on the [AfterResponse] pool.
+// They use a fresh context.Background(), never the request's: they must survive a client abort
+// or an exhausted RequestTimeout, yet a wedged store must not pin a pool worker forever.
 const postResponseWriteTimeout = 5 * time.Second
 
-// streamMeterInterval is how often [meterOpenStream] re-bills a
-// still-open SSE connection. Without this, a stream is metered once
-// at open: it buys unbounded duration for one quota unit,
-// stays invisible in the DETAIL family for the rest of its lifetime,
-// and never gains a second unit no matter how long it runs. Chosen
-// to match the rate-limit bucket's per-minute granularity.
+// streamMeterInterval is how often [meterOpenStream] re-bills a still-open SSE connection, so a
+// long stream does not buy unbounded duration for one quota unit. It matches the rate-limit
+// bucket's per-minute granularity.
 //
-// atomic.Int64 (nanoseconds), not a plain time.Duration: a
-// per-connection ticker goroutine reads this on every tick from
-// outside the request goroutine, and [SetStreamMeterIntervalForTest]
-// can rewrite it from a still-running test while a previous test's
-// ticker goroutine has not yet observed its stream close.
+// It is an atomic.Int64 (nanoseconds) because per-connection ticker goroutines read it while
+// [SetStreamMeterIntervalForTest] may rewrite it from a still-running test.
 var streamMeterInterval atomic.Int64
 
 func init() {
@@ -47,22 +36,18 @@ func init() {
 // authenticated subject's OWNER ACCOUNT (see [UsageKeyForSubject]).
 // Anonymous requests are skipped: they have no account to bill.
 //
-// Two counter families per request, each advanced by the request's unit
-// count (1 unless the handler raised it via [ChargeUsage]):
-//   - The LEGACY per-day total (usage:<sub>:<day>) feeds [MonthlyQuota]
-//     and the /v1/account/usage fallback. Only BILLABLE traffic
-//     increments it: 429s are excluded so rate-limit rejections don't
-//     eat monthly quota, and 5xx too, since an outage is our fault and
-//     must not burn paid quota.
-//   - The per-endpoint DETAIL hash (usage:ep:<sub>:<day>): one field
-//     per (mux route PATTERN, so bounded cardinality; outcome class ok
-//     / 4xx / 429 / 5xx), folded by the rollup worker into
+// Two counter families per request, each advanced by the request's unit count (1 unless the
+// handler raised it via [ChargeUsage]):
+//   - The LEGACY per-day total (usage:<sub>:<day>) feeds [MonthlyQuota] and the
+//     /v1/account/usage fallback. Only BILLABLE traffic increments it: 429s and 5xx are
+//     excluded so rate-limit rejections and our own outages never burn paid quota.
+//   - The per-endpoint DETAIL hash (usage:ep:<sub>:<day>) has one field per (mux route
+//     PATTERN, so bounded cardinality; outcome class), folded by the rollup worker into
 //     `usage_daily`.
 //
-// An SSE request ([isStreamingPath]) is recorded at header commit
-// ([streamOpenMeter]) and re-billed every [streamMeterInterval]
-// ([meterOpenStream]); others once, after the handler returns. Failures are
-// logged and dropped. Wire AFTER auth and OUTSIDE rate-limit.
+// An SSE request ([isStreamingPath]) is recorded at header commit ([streamOpenMeter]) and
+// re-billed every [streamMeterInterval] ([meterOpenStream]); others once, after the handler
+// returns. Failures are logged and dropped. Wire AFTER auth and OUTSIDE rate-limit.
 func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -85,24 +70,16 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			once := &usageRecordOnce{record: func(panicked bool) {
 				usageTrackerRecord(counter, logger, reqCtx, inner, rec, units, deadlineFired, panicked)
 			}}
-			// Deferred so a panicking handler still gets counted: Recoverer
-			// sits OUTSIDE this middleware, so a panic unwinds through here
-			// on its way up, and straight-line bookkeeping after
-			// next.ServeHTTP would never run. recover()+re-panic
-			// so the outer Recoverer still sees and logs it; a panic never
-			// wrote rec.status, so it's classed as 5xx explicitly rather
-			// than read off the statusRecorder's 200 zero-value.
+			// Deferred so a panicking handler still gets counted: Recoverer sits OUTSIDE this
+			// middleware, so straight-line bookkeeping after next.ServeHTTP would never run.
+			// It re-panics so the outer Recoverer still sees the panic, and classes it as 5xx
+			// explicitly because rec.status was never written.
 			//
-			// Registered BEFORE the streaming block below so it runs AFTER
-			// that block's close(done)+<-exited (defers are LIFO): meterOpenStream
-			// must have FULLY RETURNED, not merely been signalled, before
-			// once.fire can newly flip fired()==true on the panic-before-open
-			// path — signalling alone leaves a window where the goroutine passes
-			// its done re-check, is preempted, sees close(done) then
-			// once.fire(true) both happen, and only then resumes: fired() then
-			// reads true and it bills rec's still-default 200 status as OK,
-			// eating quota on a request this same defer is about to class as
-			// a 5xx, and double-billing besides.
+			// Registered BEFORE the streaming block below so it runs AFTER that block's
+			// close(done)+<-exited (defers are LIFO). meterOpenStream must have fully returned,
+			// not merely been signalled: otherwise it could resume after once.fire(true), see
+			// fired()==true and bill rec's default 200 as OK, double-billing a request this
+			// defer classes as 5xx.
 			defer func() {
 				p := recover()
 				once.fire(p != nil)
@@ -113,11 +90,8 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			var out http.ResponseWriter = rec
 			if isStreamingPath(r.URL.EscapedPath()) {
 				out = &streamOpenMeter{statusRecorder: rec, once: once}
-				// The open-time record above bills interval zero;
-				// without this, a stream held open longer than that buys
-				// unbounded duration for the same one unit. family is read
-				// BEFORE dispatch (pre-dispatch ResolveRoute fallback) so the
-				// ticker goroutine never races the mux's write to inner.Pattern.
+				// The open-time record bills interval zero; this ticker bills the rest. family is
+				// read BEFORE dispatch so the ticker never races the mux's write to inner.Pattern.
 				if subject, ok := auth.SubjectFrom(reqCtx); ok {
 					if id := UsageKeyForSubject(subject); id != "" {
 						family := endpointFamily(inner)
@@ -143,14 +117,10 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 	}
 }
 
-// usageTrackerRecord is [UsageTracker]'s post-dispatch bookkeeping,
-// pulled into its own deferred call so it still runs when the handler
-// panics. On the non-panic path the counter writes go through
-// [AfterResponse], which flushes rec for the client immediately and runs
-// them on the shared post-response pool instead of the request
-// goroutine. On a panic, rec is NOT known-complete (the outer Recoverer
-// still has to write its 500), so the writes are enqueued directly,
-// without flushing.
+// usageTrackerRecord is [UsageTracker]'s post-dispatch bookkeeping, split out so it still runs
+// when the handler panics. Normally the writes go through [AfterResponse], which flushes rec
+// first. On a panic rec is not complete (the outer Recoverer still writes its 500), so the
+// writes are enqueued directly without flushing.
 func usageTrackerRecord(counter *usage.Counter, logger *slog.Logger, reqCtx context.Context, inner *http.Request, rec *statusRecorder, units *usageUnits, deadlineFired *atomic.Bool, panicked bool) {
 	subject, ok := auth.SubjectFrom(reqCtx)
 	if !ok {
@@ -170,23 +140,15 @@ func usageTrackerRecord(counter *usage.Counter, logger *slog.Logger, reqCtx cont
 	}
 	billable := billableClass(class, deadlineFired.Load())
 	n := units.get()
-	// The response is already written, so these counters MUST NOT inherit
-	// the request's cancellation: an aborted client, or a handler that used
-	// the whole RequestTimeout budget, would silently lose its usage row
-	// (the legacy total is the monthly-quota input). They run under
-	// context.Background() on the shared after-response pool, so a wedged
-	// store bounds only a pool worker.
+	// These counters MUST NOT inherit the request's cancellation: an aborted client or an
+	// exhausted RequestTimeout would silently lose the usage row, which is the monthly-quota
+	// input. A wedged store therefore bounds only a pool worker.
 	//
-	// DELIBERATE: an ABORTED request consumes monthly quota. statusRecorder
-	// defaults to 200, so a served-then-abandoned request classes as
-	// billable and the detached Increment lands. The request consumed the
-	// read, the pool connection and the CPU, and NOT counting it is a
-	// quota-evasion vector (abort before the body completes, get unmetered
-	// traffic).
+	// DELIBERATE: an ABORTED request consumes monthly quota. statusRecorder defaults to 200,
+	// so it classes as billable. It still cost the read and the CPU, and not counting it
+	// would be a quota-evasion vector (abort before the body completes, go unmetered).
 	//
-	// The 5 s bound is only as hard as the store's ctx honouring; go-redis
-	// and database/sql both respect it, but a driver that ignored ctx would
-	// block a pool worker for its own timeout.
+	// The 5 s bound is only as hard as the store's ctx honouring.
 	fn := func() { //nolint:contextcheck // intentional detach: post-response work outlives the request ctx
 		ctx, cancel := context.WithTimeout(context.Background(), postResponseWriteTimeout)
 		defer cancel()
@@ -232,11 +194,9 @@ func (o *usageRecordOnce) fired() bool {
 	return o.done.Load()
 }
 
-// streamOpenMeter records an SSE request's usage when the handler commits
-// its response headers, not when the stream closes: a stream can outlive
-// the day it opened on, and one ended by a process kill or deploy never
-// returns through the deferred close-time record at all. The status is
-// known at commit, so a stream refused with 429/5xx still stays unbilled.
+// streamOpenMeter records an SSE request's usage when the handler commits its headers, not when
+// the stream closes: a stream can outlive its day, and one ended by a kill or deploy never
+// reaches the close-time record. The status is known at commit, so a 429/5xx stream stays unbilled.
 type streamOpenMeter struct {
 	*statusRecorder
 	once *usageRecordOnce
@@ -276,21 +236,16 @@ func (u *usageUnits) get() int64 {
 	return u.n
 }
 
-// ChargeUsage prices the in-flight request at units request units IN
-// TOTAL for the monthly meter — both the billable total [MonthlyQuota]
-// enforces and the per-endpoint detail counters. It can raise a
-// request's price, never lower it. A request that never crossed
-// [UsageTracker] has no meter and is unaffected.
+// ChargeUsage prices the in-flight request at units request units IN TOTAL for the monthly
+// meter (the billable total [MonthlyQuota] enforces and the detail counters). It can raise a
+// price, never lower it; a request that never crossed [UsageTracker] is unaffected.
 //
-// This is the monthly-quota counterpart of [ChargeRateLimit], and is
-// deliberately separate from it: rate-limit tokens are a capacity
-// weight (a /v1/assets volume sort costs ten), while request units are
-// the PRODUCT unit a plan sells — one per price returned, so a
-// 1000-id POST /v1/price/batch costs what 1000 GET /v1/price calls do.
+// It is deliberately separate from [ChargeRateLimit]: rate-limit tokens are a capacity weight,
+// while request units are the PRODUCT unit a plan sells, so a 1000-id POST /v1/price/batch
+// costs what 1000 GET /v1/price calls do.
 //
-// The quota gate runs before dispatch and cannot know the cost, so a
-// caller one unit under its cap can finish one batch over it; the
-// overshoot is bounded by that request's size and the next request is
+// The quota gate runs before dispatch and cannot know the cost, so a caller one unit under its
+// cap can finish one batch over it; the overshoot is bounded by that request and the next is
 // refused.
 func ChargeUsage(r *http.Request, units int) {
 	u, ok := r.Context().Value(usageUnitsKey{}).(*usageUnits)
@@ -304,25 +259,19 @@ func ChargeUsage(r *http.Request, units int) {
 	}
 }
 
-// meterOpenStream re-bills a live SSE connection every
-// [streamMeterInterval] while it stays open: metering once at open would
-// buy unbounded duration for one quota unit.
+// meterOpenStream re-bills a live SSE connection every [streamMeterInterval] while it stays
+// open.
 //
-// The ticker starts at DISPATCH; ticks before [streamOpenMeter]'s header
-// commit are skipped, not deferred. Ticks are gated on once.fired(): [streamOpenMeter] fires it at the first
-// write/flush, and an SSE response can't change status after that, so a
-// tick seeing fired()==true reads rec.status/units as they stood at commit
-// without racing the handler goroutine that owns rec. family and id are
-// resolved once before dispatch: afterwards the mux mutates inner.Pattern
-// from the handler's goroutine.
+// Ticks before [streamOpenMeter]'s header commit are skipped, not deferred. They are gated on
+// once.fired(): an SSE response cannot change status after the first write/flush, so a tick
+// seeing fired()==true reads rec.status/units without racing the handler goroutine that owns
+// rec. family and id are resolved before dispatch because the mux later mutates inner.Pattern.
 //
-// It reuses [outcomeClass]/[billableClass]/[units], so a platform 5xx never
-// eats quota on any tick, and a billable tick is refused at the same used
-// >= quota ceiling [MonthlyQuota] applies at open (endStream, then stop).
-// Writes run inline, not via [AfterResponse]'s pool: this goroutine is
-// already dedicated to one connection. Closing exited on the way out (even
-// on panic) lets the caller's deferred <-exited wait until rec/once/units
-// are untouched.
+// It reuses [outcomeClass]/[billableClass], so a platform 5xx never eats quota on any tick, and
+// a billable tick is refused at the same used >= quota ceiling [MonthlyQuota] applies at open
+// (endStream, then stop). Writes run inline because this goroutine is already dedicated to one
+// connection. Closing exited on the way out (even on panic) lets the caller wait until
+// rec/once/units are untouched.
 func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family string, quota int64, endStream context.CancelFunc, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}, exited chan<- struct{}) {
 	defer worker.Recover(logger, "api-usage-stream-meter")
 	defer close(exited)
@@ -344,10 +293,8 @@ func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family str
 // split out so the caller's loop stays simple. Returns false once the
 // stream has closed or been ended for quota, telling meterOpenStream to stop.
 func meterTick(counter *usage.Counter, logger *slog.Logger, id, family string, quota int64, endStream context.CancelFunc, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}) bool {
-	// Re-check done, non-blocking: a tick that was already in
-	// ticker.C's single-slot buffer the instant done closed must
-	// not slip through and read once more from rec after the
-	// request has finished with it.
+	// Re-check done, non-blocking: a tick already buffered in ticker.C when done closed must not
+	// read rec after the request has finished with it.
 	select {
 	case <-done:
 		return false
@@ -406,10 +353,8 @@ func SetStreamMeterIntervalForTest(d time.Duration) (restore func()) {
 	return func() { streamMeterInterval.Store(orig) }
 }
 
-// streamTickHook, when set, runs inside meterOpenStream on every tick,
-// after its done re-check and before it reads once.fired(). Test-only:
-// lets a test pause a tick at exactly the point the once.fire/exited
-// race lives, instead of relying on scheduling luck to land there.
+// streamTickHook, when set, runs on every tick after the done re-check and before once.fired().
+// Test-only: it pauses a tick at the once.fire/exited race instead of relying on scheduling.
 var streamTickHook atomic.Pointer[func()]
 
 // SetStreamTickHookForTest installs fn as [streamTickHook] for the life
@@ -425,20 +370,16 @@ func SetStreamTickHookForTest(fn func()) (restore func()) {
 //  2. KeyID — for credentials with no owner reference (legacy Redis records).
 //  3. "" — anonymous; skip.
 //
-// Why the ACCOUNT, not the credential: the counter feeds [MonthlyQuota] and
-// keys the per-minute bucket ([authenticatedRateLimitKey]); each ceiling is
-// a PLAN budget a customer may only ever LOWER. Keying on KeyID would allow
-// two ways to raise it: MINT (N live keys mean N independent counters) and
-// ROTATE (revoke-and-mint yields a fresh KeyID and a zero month-to-date).
+// Why the ACCOUNT, not the credential: the counter feeds [MonthlyQuota] and keys the per-minute
+// bucket ([authenticatedRateLimitKey]); each ceiling is a PLAN budget a customer may only ever
+// LOWER. Keying on KeyID would let them raise it by minting N keys (N counters) or rotating
+// (fresh KeyID, zero month-to-date).
 //
-// Counting per account conserves the allowance across credentials and
-// rotation. The per-credential `Subject.MonthlyQuota` still sets the
-// ceiling, so lowering ONE key's quota cuts it off at that many
-// ACCOUNT-wide requests: stricter, deliberately (it fails closed).
+// The per-credential `Subject.MonthlyQuota` still sets the ceiling, so lowering ONE key's quota
+// cuts it off at that many ACCOUNT-wide requests: stricter, deliberately (it fails closed).
 //
-// Exported so every reader ([MonthlyQuota], /v1/account/usage) shares one
-// implementation: a drifted copy would key off something the writer never
-// wrote and meter NOTHING.
+// Exported so every reader ([MonthlyQuota], /v1/account/usage) shares one implementation: a
+// drifted copy would key off something the writer never wrote and meter NOTHING.
 func UsageKeyForSubject(s auth.Subject) string {
 	if s.Tier == auth.TierAnonymous || s.Tier == "" {
 		return ""
@@ -456,22 +397,13 @@ func UsageKeyForSubject(s auth.Subject) string {
 // pre-dispatch pattern match under.
 type resolvedRouteKey struct{}
 
-// ResolveRoute pre-computes the mux-matched route pattern via a
-// read-only mux.Handler lookup — no dispatch, so it never runs a
-// handler — and stashes it in the request context. Wire this OUTSIDE
-// every pre-dispatch gate (auth, key policy, monthly quota, rate
-// limit, usage tracker): a request one of those gates rejects never
-// reaches the mux, so [obs.CaptureRoute] (wired innermost, directly
-// above the mux) never runs and obs.RouteFromContext/r.Pattern stay
-// empty for the rest of the stack, including [endpointFamily]'s
-// post-response read. Without this, every gate-rejected request
-// would bucket under the bounded-cardinality "unmatched" family instead
-// of its real route, hiding exactly the per-endpoint throttle
-// pattern the DETAIL family exists to surface.
+// ResolveRoute stashes the mux-matched route pattern in the request context via a read-only
+// mux.Handler lookup (no dispatch). Wire it OUTSIDE every pre-dispatch gate (auth, key policy,
+// monthly quota, rate limit, usage tracker): a request a gate rejects never reaches the mux, so
+// [obs.CaptureRoute] never runs, and the rejected request would bucket under "unmatched",
+// hiding the per-endpoint throttle pattern the DETAIL family exists to surface.
 //
-// [obs.CaptureRoute] remains the authoritative source once the mux
-// actually dispatches — [endpointFamily] still prefers it — so this
-// only fills the gap for requests a gate stops short of the mux.
+// [obs.CaptureRoute] stays authoritative once the mux dispatches; this only fills the gap.
 func ResolveRoute(mux muxMatcher) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -504,29 +436,24 @@ func endpointFamily(r *http.Request) string {
 	if p := r.Pattern; p != "" {
 		return stripMethodPrefix(p)
 	}
-	// A pre-dispatch gate (RateLimit, MonthlyQuota, ...) rejected the
-	// request before the mux ever ran — [ResolveRoute]'s early match
-	// is the only source left. See that doc comment for why this
-	// exists at all.
+	// A pre-dispatch gate rejected the request before the mux ran; [ResolveRoute]'s early
+	// match is the only source left.
 	if p, ok := r.Context().Value(resolvedRouteKey{}).(string); ok && p != "" {
 		return stripMethodPrefix(p)
 	}
 	return "unmatched"
 }
 
-// billableClass reports whether an outcome class increments the
-// LEGACY per-day total — the counter [MonthlyQuota] enforces against.
+// billableClass reports whether an outcome class increments the LEGACY per-day total that
+// [MonthlyQuota] enforces against.
 //
-// Only outcomes the CALLER caused are billable. A 429 is our
-// throttle firing and a fast-failing 5xx is our failure; charging
-// either against the customer's monthly quota means a rate-limit storm
-// or an outage on our side eats the plan they paid for.
+// Only outcomes the CALLER caused are billable: a 429 or fast-failing 5xx is our fault, and
+// charging it would let a rate-limit storm or outage eat the customer's paid plan.
 //
-// The exception is a 5xx on which a server-side read deadline fired
-// ([MarkReadDeadline]): that read held a pool connection for its whole
-// budget, usually because of the request's own size, and leaving it
-// unbilled would make the most expensive request shape free. Every class
-// stays counted in the per-endpoint DETAIL family regardless.
+// The exception is a 5xx on which a read deadline fired ([MarkReadDeadline]): that read held a
+// pool connection for its whole budget, usually due to the request's own size, and leaving it
+// unbilled would make the most expensive request shape free. Every class stays counted in the
+// DETAIL family regardless.
 func billableClass(class string, readDeadlineFired bool) bool {
 	switch class {
 	case usage.ClassThrottled:

@@ -23,11 +23,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// Tests use a session pre-planted on the request context (via
-// dashboardauth.WithSession) instead of the full cookie + DB
-// resolve path — that's already covered by dashboardauth's own
-// tests. Here we only care that the dashboardkeys handlers do
-// the right thing GIVEN a session.
+// Tests plant a session on the request context (dashboardauth.WithSession) because cookie
+// resolution is covered by dashboardauth's own tests; here we only check the handlers given a
+// session.
 
 func newTestRig(t *testing.T) (*Handlers, *fakeKeyStore, dashboardauth.SessionContext) {
 	t.Helper()
@@ -151,14 +149,9 @@ func TestHandleCreate_Rejections(t *testing.T) {
 	}
 }
 
-// TestHandleCreate_TierClampsRateLimit pins
-// the tier clamp: a free account requesting a 100_000/min
-// budget gets clamped to the free-tier ceiling (1000/min under the
-// free-platform model), while a partner account keeps the 100_000
-// ceiling. Legacy tier strings must clamp at their CANONICAL rung
-// (starter≡free, pro/business/enterprise≡partner).
-// Regression-guards against any future change that re-introduces
-// direct customer control over the persisted budget.
+// TestHandleCreate_TierClampsRateLimit pins the tier clamp: a free account requesting 100_000/min
+// is clamped to the free ceiling while a partner keeps it. Legacy tier strings clamp at their
+// canonical rung (starter=free, pro/business/enterprise=partner).
 func TestHandleCreate_TierClampsRateLimit(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -201,13 +194,9 @@ func TestHandleCreate_TierClampsRateLimit(t *testing.T) {
 	}
 }
 
-// TestHandleCreate_ClampsMonthlyQuota pins the quota clamp:
-// the customer-supplied monthly_quota is clamped at mint to the
-// account's hard ceiling (the operator's account-level override when
-// set, else the tier default), so a metered customer can only LOWER
-// their cap, never raise it above the plan. Regression-guards the
-// revenue-exposure hole where a `monthly_quota: 9_000_000_000` was
-// persisted verbatim and then won the auth cascade.
+// TestHandleCreate_ClampsMonthlyQuota pins that monthly_quota is clamped at mint to the account
+// ceiling (operator override, else tier default), so a customer can only lower their cap. An
+// unclamped value would be persisted verbatim and win the auth cascade.
 func TestHandleCreate_ClampsMonthlyQuota(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -253,13 +242,9 @@ func TestHandleCreate_ClampsMonthlyQuota(t *testing.T) {
 	}
 }
 
-// TestDefaultMintedKey_MatchesAccountEffectiveLimits locks the
-// account-level "effective" limits served on /v1/account/me and the
-// staff views to what auth enforces on a key minted here with
-// the request's limits unset: mint through the real handler, resolve
-// the persisted key through the same platform cascade auth's Validate
-// calls, and require both to equal the account view and the expected
-// value. A partner comped to 5,000/min must read 5,000, not the
+// TestDefaultMintedKey_MatchesAccountEffectiveLimits locks the effective limits served on
+// /v1/account/me and the staff views to what auth enforces on a key minted with limits unset:
+// both must equal the expected value. A partner comped to 5,000/min must read 5,000, not the
 // 100,000 tier ceiling.
 func TestDefaultMintedKey_MatchesAccountEffectiveLimits(t *testing.T) {
 	cases := []struct {
@@ -661,11 +646,9 @@ func (f *fakeKeyStore) TouchUsage(_ context.Context, id string, ip net.IP, ua st
 
 var _ platform.APIKeyStore = (*fakeKeyStore)(nil)
 
-// TestToDTO_OmitsZeroTimes is the regression for the dashboard bugs where a
-// fresh key looked "revoked" + "last used ~2025 years ago": a zero time.Time
-// with `omitempty` is NOT omitted (it's a non-empty struct → "0001-01-01...").
-// Pointer times + wiretime.NilIfZero must drop them so a never-revoked / never-used /
-// never-expiring key omits the fields entirely.
+// TestToDTO_OmitsZeroTimes pins that unset times are omitted: a zero time.Time with `omitempty`
+// is a non-empty struct and would serialize as "0001-01-01...", so pointer times plus
+// wiretime.NilIfZero must drop the fields.
 func TestToDTO_OmitsZeroTimes(t *testing.T) {
 	dto := toDTO(platform.APIKey{
 		ID: "kid_1", Name: "fresh", KeyPrefix: "sip_abc123",
@@ -733,16 +716,9 @@ func TestHandleCreate_Scopes(t *testing.T) {
 	}
 }
 
-// TestParseCreateRequest_RejectsCheckConstrainedValues pins that the four
-// fields Postgres CHECK-constrains are rejected as 400s naming the field,
-// not passed through to surface as an opaque 500 from a constraint
-// violation deep in the store.
-//
-// All four would reach Postgres without the check. The
-// operator cost is real: a 500 here is indistinguishable from the
-// genuine 500 that api_keys migration drift produces, so the first
-// conclusion it prompts is "key creation is broken" rather than "the
-// request was malformed".
+// TestParseCreateRequest_RejectsCheckConstrainedValues pins that the four CHECK-constrained
+// fields are rejected as 400s naming the field; a store-level 500 would be indistinguishable
+// from genuine api_keys migration drift.
 func TestParseCreateRequest_RejectsCheckConstrainedValues(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -940,11 +916,9 @@ func TestParseCreateRequest_LengthLimitsCountCodePoints(t *testing.T) {
 	}
 }
 
-// TestHandleList_ServesTheEnforcedKeyCeiling pins that the dashboard
-// could only learn the key cap from the 409, and that 409 called expired
-// keys "active". The list now carries the cap create enforces (the
-// KeyQuotas override, not the default ladder), and the 409 names what
-// the cap counts: every unrevoked key, expired ones included.
+// TestHandleList_ServesTheEnforcedKeyCeiling pins that the list carries the cap create enforces
+// (the KeyQuotas override, not the default ladder), and that the 409 names what the cap counts:
+// every unrevoked key, expired ones included.
 func TestHandleList_ServesTheEnforcedKeyCeiling(t *testing.T) {
 	h, store, sc := newTestRig(t)
 	h.cfg.KeyQuotas = map[platform.Tier]int{sc.Account.Tier: 2}

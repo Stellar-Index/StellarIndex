@@ -175,17 +175,11 @@ func TestUsageTracker_OutcomeClasses(t *testing.T) {
 // under the server-error class but must NOT advance the legacy per-day
 // total.
 //
-// The legacy total is MonthlyQuota's input. Counting our own failures
-// against it means a sustained outage burns the customer's paid
-// monthly quota and then locks them out of their own plan for the rest
-// of the month once we recover — we would charge them for the outage
-// twice. Same reasoning the 429 exclusion already encodes
-// (TestUsageTracker_ThrottledExcludedFromLegacyTotal), applied to the
-// failure class the customer has even less control over.
+// The legacy total is MonthlyQuota's input: counting our own failures would burn the customer's
+// paid quota during an outage and lock them out afterwards. This is the same reasoning as the 429
+// exclusion (TestUsageTracker_ThrottledExcludedFromLegacyTotal).
 //
-// The request stays fully visible in the DETAIL family under the 5xx
-// class, so the traffic is still observable and billable-vs-observed
-// stay separable — only the quota input drops it.
+// The request stays visible in the DETAIL family under the 5xx class; only the quota input drops it.
 func TestUsageTracker_ServerErrorExcludedFromLegacyTotal(t *testing.T) {
 	for _, status := range []int{
 		http.StatusInternalServerError,
@@ -491,17 +485,10 @@ func TestUsageTracker_PanickingHandlerStillCounted(t *testing.T) {
 // TestUsageTracker_RecordsAfterClientAbort pins the post-response half of
 // client-abort handling.
 //
-// UsageTracker's counters run AFTER the response is flushed, but they used
-// `r.Context()` — which is already cancelled when the client aborted, or
-// when the handler consumed the whole RequestTimeout budget. go-redis
-// honours context cancellation, so the write failed and was swallowed at
-// Debug level. The legacy total is the MONTHLY-QUOTA INPUT, so a lost row
-// is lost billing signal, and moving RequestTimeout outward (the other half
-// of the post-response change) would have widened the window.
-//
-// The fix derives the write context with context.WithoutCancel plus its own
-// bound. This test drives the REAL middleware with an already-cancelled
-// request context and asserts the counter still recorded.
+// UsageTracker's counters run AFTER the response is flushed, so they must not use a request
+// context that is already cancelled (client abort or exhausted RequestTimeout): the legacy total
+// is the MONTHLY-QUOTA INPUT, so a lost row is lost billing signal. This test drives the REAL
+// middleware with an already-cancelled request context and asserts the counter still recorded.
 func TestUsageTracker_RecordsAfterClientAbort(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -550,17 +537,11 @@ func TestUsageTracker_RecordsAfterClientAbort(t *testing.T) {
 	}
 }
 
-// TestUsageTracker_AbortedRequestConsumesQuota pins the DECISION that came
-// with the post-response change, so it cannot be silently reverted as
-// "an unintended side effect".
-//
-// Without it an aborted request's Increment died on the cancelled
-// context, so the request was free. After it, the request counts against the
-// monthly quota. That is intended: statusRecorder defaults to 200, a
-// served-then-abandoned request classes as billable, and it really did
-// consume the read, the pool connection and the CPU. Not counting it is a
-// quota-evasion vector — abort before the body completes and get unmetered
-// traffic indefinitely.
+// TestUsageTracker_AbortedRequestConsumesQuota pins the DECISION that an aborted request counts
+// against the monthly quota, so it is not reverted as an unintended side effect. statusRecorder
+// defaults to 200, so a served-then-abandoned request classes as billable, and it did consume
+// the read and the CPU. Not counting it is a quota-evasion vector: abort before the body
+// completes and get unmetered traffic.
 func TestUsageTracker_AbortedRequestConsumesQuota(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -602,18 +583,10 @@ func TestUsageTracker_AbortedRequestConsumesQuota(t *testing.T) {
 	}
 }
 
-// TestUsageTracker_DoesNotBlockRequestGoroutineOnWedgedStore is the core
-// regression: UsageTracker must not run its counter writes INLINE
-// on the request goroutine, under context.WithoutCancel(r.Context()) +
-// postResponseWriteTimeout, entirely OUTSIDE api.request_timeout. A slow
-// store (here, a Redis with every command delayed 300ms) added a
-// multiple of that delay directly to the request's wall-clock latency —
-// two writes (legacy total + detail) meant ~600ms tacked onto a request
-// net/http had already buffered and could have flushed in microseconds.
-//
-// The fix hands both writes to the shared after-response pool
-// (middleware.AfterResponse), so ServeHTTP returns as soon as the
-// handler and the flush are done, regardless of how slow the store is.
+// TestUsageTracker_DoesNotBlockRequestGoroutineOnWedgedStore guards that UsageTracker does not
+// run its counter writes INLINE on the request goroutine: a slow store (here Redis with every
+// command delayed 300ms) would add two such delays to the request's latency. The writes go to
+// the shared after-response pool, so ServeHTTP returns once the handler and flush are done.
 func TestUsageTracker_DoesNotBlockRequestGoroutineOnWedgedStore(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -838,16 +811,10 @@ func TestUsageTracker_StreamEndedAtMonthlyQuota(t *testing.T) {
 // shutdown: once a stream's handler has returned, no further tick may
 // land, however many meter intervals later something looks again.
 //
-// Verified adversarially (1µs interval, 3000 closes) before the
-// defer-reorder + non-blocking done re-check in meterOpenStream: the
-// ticker's own shutdown could still race a simultaneously-ready tick
-// and leak ~1 extra billable unit per 3000 closes. That residual
-// select-fairness tie is not fully eliminable short of a mutex
-// serializing every tick against close (disproportionate given it
-// requires a tick to land within nanoseconds of close even at a 1µs
-// interval, and is irrelevant at the real 1-minute production
-// interval); this test uses a realistic interval, at which it does
-// not flake.
+// A residual select-fairness tie between the ticker's shutdown and a simultaneously-ready tick
+// is not fully eliminable short of a mutex serializing every tick against close, which is
+// disproportionate: it needs a tick within nanoseconds of close and is irrelevant at the real
+// 1-minute interval. This test uses a realistic interval, at which it does not flake.
 func TestUsageTracker_StreamNoTicksAfterClose(t *testing.T) {
 	const interval = 5 * time.Millisecond
 	t.Cleanup(middleware.SetStreamMeterIntervalForTest(interval))
@@ -895,23 +862,13 @@ func TestUsageTracker_StreamNoTicksAfterClose(t *testing.T) {
 	}
 }
 
-// TestUsageTracker_StreamPanicBeforeOpenBillsNothing pins the
-// defer-ordering hazard fixed alongside the periodic re-meter: a
-// handler that panics before ever writing anything never opens the
-// stream (once.fired() stays false the whole time it runs), so
-// UsageTracker's recover defer is the FIRST call to once.fire —
-// classing the request as a platform 5xx, which must never be billed.
+// TestUsageTracker_StreamPanicBeforeOpenBillsNothing pins the defer-ordering hazard: a handler
+// that panics before writing never opens the stream, so UsageTracker's recover defer is the FIRST
+// once.fire and classes the request as a platform 5xx, which must never be billed.
 //
-// If that recover defer runs BEFORE the streaming block's
-// close(done) (defers are LIFO, so close(done), registered first, runs
-// second), meterOpenStream's ticker keeps running for a
-// window after once.fire has already flipped fired()==true. A tick
-// landing in that window reads rec's still-default 200 status (a panic
-// never sets it) and bills it as OK — eating quota on a request this
-// same defer had just classed as non-billable. A 1µs meter interval
-// plus many trials makes the (otherwise sub-microsecond) window
-// observable: without the guard this leaks on about 113 of 3000 trials
-// in development.
+// If that defer ran BEFORE the streaming block's close(done) (defers are LIFO), the ticker would
+// keep running after fired() flipped to true, read rec's default 200 and bill it as OK. A 1us
+// meter interval plus many trials makes that sub-microsecond window observable.
 func TestUsageTracker_StreamPanicBeforeOpenBillsNothing(t *testing.T) {
 	t.Cleanup(middleware.SetStreamMeterIntervalForTest(time.Microsecond))
 
@@ -959,24 +916,15 @@ func TestUsageTracker_StreamPanicBeforeOpenBillsNothing(t *testing.T) {
 	}
 }
 
-// TestUsageTracker_StreamPanicDuringTickBillsNothing pins the race left
-// after the defer-reorder fix: close(done) only SIGNALS
-// meterOpenStream to stop, it does not wait for it to have stopped. A
-// tick that already passed its done re-check when the handler panics
-// can be paused right there while close(done) then once.fire(true) both
-// run, then resume and read once.fired()==true — billing rec's
-// still-default 200 status as OK on a request the recover defer just
-// classed as a non-billable 5xx, and double-billing besides.
+// TestUsageTracker_StreamPanicDuringTickBillsNothing pins the race that remains after the defer
+// reorder: close(done) only SIGNALS meterOpenStream to stop. A tick that already passed its done
+// re-check could resume after once.fire(true), read fired()==true and bill rec's default 200 on a
+// request classed as a non-billable 5xx.
 //
-// A test hook (SetStreamTickHookForTest) pauses the goroutine at
-// exactly that point instead of relying on scheduling luck to land
-// there, making the race deterministic rather than probabilistic. Once
-// paused, the handler is let panic and its defers run as far as they
-// structurally can: close(done), then block on <-exited. once.fire is
-// sequenced strictly after <-exited unblocks in the same goroutine, so
-// it CANNOT have run while the hook holds this goroutine — no matter
-// how long the test waits — only with the exited wait in place. Fails
-// without the wait (close(done) alone); passes with it.
+// SetStreamTickHookForTest pauses the tick at exactly that point, making the race deterministic.
+// The handler then panics and its defers run: close(done), then block on <-exited. once.fire is
+// sequenced after <-exited, so it cannot have run while the hook holds the goroutine. Fails
+// without the exited wait; passes with it.
 func TestUsageTracker_StreamPanicDuringTickBillsNothing(t *testing.T) {
 	t.Cleanup(middleware.SetStreamMeterIntervalForTest(5 * time.Millisecond))
 

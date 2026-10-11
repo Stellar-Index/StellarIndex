@@ -27,11 +27,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// The active-key ceiling is tier-aware: platform.Tier.MaxActiveKeys
-// is the default ladder (free 25 → partner 250), overridable per
-// tier via Config.KeyQuotas. This replaced the flat 25-key
-// MaxKeysPerAccount cap ("tier-aware quotas can replace this once
-// the billing pipeline is wired — Phase 2").
+// The active-key ceiling is tier-aware: platform.Tier.MaxActiveKeys is the default ladder,
+// overridable per tier via Config.KeyQuotas.
 
 // Config wires the handlers' dependencies. Constructed once in
 // cmd/stellarindex-api/main.go alongside the dashboardauth
@@ -45,14 +42,9 @@ type Config struct {
 	// validator reads only its own records, so production wires the
 	// Redis key store here whenever Redis exists, as POST /v1/register does.
 	Mirror KeyMirror
-	// CacheInvalidator, when non-nil, is called by HandleRevoke
-	// after a successful Postgres revoke so the runtime auth
-	// validator's Redis cache stops authenticating the just-
-	// revoked key. Production wires
-	// auth.PostgresAPIKeyValidator.InvalidateCachedKey here.
-	// Nil leaves the cache TTL to roll the row off naturally —
-	// workable but means a revoked key keeps authenticating
-	// until the TTL expires.
+	// CacheInvalidator, when non-nil, is called after a successful revoke so the auth
+	// validator's Redis cache stops authenticating the revoked key. When nil, a revoked key
+	// keeps authenticating until the cache TTL expires.
 	CacheInvalidator CacheInvalidator
 	// Audit, when non-nil, receives the key.mint / key.revoke rows the
 	// /v1/account/keys and /v1/admin/keys routes also write.
@@ -60,12 +52,9 @@ type Config struct {
 	Logger *slog.Logger
 	Now    func() time.Time
 
-	// KeyQuotas optionally overrides the per-tier ceiling on
-	// concurrently active keys. Tiers absent from the map (or a nil
-	// map, the production default) fall back to
-	// [platform.Tier.MaxActiveKeys]. Non-positive values are
-	// ignored — a deployment can raise or lower a tier's quota but
-	// not disable key creation through this seam.
+	// KeyQuotas optionally overrides the per-tier ceiling on active keys; absent tiers use
+	// [platform.Tier.MaxActiveKeys]. Non-positive values are ignored so this seam cannot
+	// disable key creation.
 	KeyQuotas map[platform.Tier]int
 
 	// idempotency backs the optional Idempotency-Key header on
@@ -124,15 +113,10 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 //	POST   /v1/dashboard/keys           — mint a new key
 //	DELETE /v1/dashboard/keys/{id}      — revoke
 //
-// Every route is wrapped in [dashboardauth.RequireSession], so an
-// anonymous request is refused before any other layer runs; each
-// handler still reads the SessionContext (planted by
-// dashboardauth.Middleware) for its account.
-//
-// Every mutation is wrapped in [middleware.RequireSameSiteWrite]:
-// these routes authenticate with the session COOKIE, so a cross-site
-// page could otherwise mint or revoke a logged-in customer's API
-// keys. Reads stay unwrapped — safe methods change nothing.
+// Every route is wrapped in [dashboardauth.RequireSession], so anonymous requests are refused
+// first. Every mutation is also wrapped in [middleware.RequireSameSiteWrite]: these routes
+// authenticate with the session COOKIE, so a cross-site page could otherwise mint or revoke a
+// logged-in customer's API keys. Reads stay unwrapped.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	session := dashboardauth.RequireSession()
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
@@ -279,22 +263,13 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clamp customer-supplied rate_limit_per_min to the account's
-	// tier ceiling ([platform.Tier.MaxRateLimitPerMin]: free 1000/min,
-	// partner 100_000/min). Without this clamp the handler would honour
-	// any value up to 100_000, letting a free account self-mint a key
-	// with 100× its tier budget.
+	// Clamp rate_limit_per_min to the tier ceiling ([platform.Tier.MaxRateLimitPerMin]) so a
+	// free account cannot self-mint a key with a partner-sized budget.
 	req.RateLimitPerMin = clampRateLimitToTier(req.RateLimitPerMin, sc.Account.Tier)
 
-	// Clamp the customer-supplied monthly_quota to the account's hard
-	// ceiling so a metered customer can only LOWER their cap, never
-	// raise it above the plan. Without this clamp the handler would
-	// persist any int64 the POST body carried (e.g. 9_000_000_000), and
-	// the auth cascade would let that per-key value win — an
-	// effectively-unmetered key on a metered plan. The ceiling is the
-	// operator's account-level override when set, else the tier default
-	// (see clampMonthlyQuotaToAccount). It mirrors clampRateLimitToTier
-	// but is a CEILING (only lowers), not a FLOOR.
+	// Clamp monthly_quota to the account ceiling so a customer can only LOWER their cap: the
+	// auth cascade lets the per-key value win, so an unclamped value would make an effectively
+	// unmetered key on a metered plan (see clampMonthlyQuotaToAccount).
 	req.MonthlyQuota = clampMonthlyQuotaToAccount(req.MonthlyQuota, sc.Account)
 
 	maxKeys := h.maxKeysFor(sc.Account.Tier)
@@ -480,11 +455,8 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "key not found", r.URL.Path)
 		return
 	}
-	// canManageKeys lets owner, admin AND member through, but
-	// only owner/admin manage every key on the account — a member's
-	// grant is "own keys" (see the role docstring and canManageKeys).
-	// Without this, a member could revoke any other user's key,
-	// including the owner's.
+	// Only owner/admin may revoke any key; a member's grant is "own keys", otherwise a member
+	// could revoke the owner's key.
 	if !canManageAnyKey(sc.User.Role) && existing.CreatedByUserID != sc.User.ID {
 		writeProblem(w, http.StatusForbidden, "your role can't revoke keys you didn't create", r.URL.Path)
 		return
@@ -571,14 +543,8 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 	if req.RateLimitPerMin > 100000 {
 		return req, http.StatusBadRequest, "rate_limit_per_min must be ≤ 100000"
 	}
-	// Validate the fields that Postgres CHECK-constrains, so a bad
-	// request is rejected as a 400 naming the field rather than
-	// surfacing as an opaque 500 from a constraint violation deep in
-	// finalizeAPIKeyCreate. Without these checks all four would reach
-	// the store, and the operator cost is real: a 500 here is
-	// indistinguishable from the genuine 500 a migration-drift on
-	// api_keys produces, and the first thing it prompts is "key creation
-	// is broken" rather than "your request was malformed".
+	// Validate the CHECK-constrained fields here so a bad request is a 400 naming the field,
+	// not a 500 that looks identical to genuine api_keys migration drift.
 	if utf8.RuneCountInString(req.Description) > 2000 {
 		return req, http.StatusBadRequest, "description must be 2000 chars or fewer"
 	}
@@ -627,16 +593,9 @@ func normaliseScopes(raw []string) ([]string, string) {
 	return out, ""
 }
 
-// clampRateLimitToTier returns the lower of `requested` and the account's
-// per-tier ceiling. A free account that tries to mint a key with
-// `rate_limit_per_min: 100000` is silently downgraded to the free-tier cap
-// (1000/min) rather than rejected — this matches the default fallback in
-// parseCreateRequest and keeps the dashboard UX simple (one field, one cap).
-//
-// Operator-issued or partner-issued keys aren't created through this
-// handler — they go through stellarindex-ops and are not subject to
-// this clamp. See [platform.Tier.MaxRateLimitPerMin] for the
-// per-tier ladder.
+// clampRateLimitToTier returns the lower of requested and the tier ceiling
+// ([platform.Tier.MaxRateLimitPerMin]), silently downgrading rather than rejecting. Operator
+// keys are minted through stellarindex-ops and are not subject to this clamp.
 func clampRateLimitToTier(requested int, tier platform.Tier) int {
 	ceiling := tier.MaxRateLimitPerMin()
 	if requested > ceiling {
@@ -673,22 +632,14 @@ func validateCIDROrIP(entry string) string {
 // account's monthly-quota ceiling, preserving the "0 = inherit /
 // unlimited" sentinel.
 //
-//   - requested <= 0 WITH an account override: pass through unchanged.
-//     0 is the "inherit the account override" sentinel the auth cascade
-//     keys on (internal/auth/apikey_postgres.go); that override is how a
-//     higher-cap key is issued.
-//   - requested <= 0 with NO override: fall back to the tier ceiling.
-//     Passing 0 through would meter the key by nothing (apikey_postgres
-//     resolves 0 → override → 0, and the monthly-quota middleware passes
-//     <= 0 through), so a free key minted with just {"name": "..."} would
-//     have no monthly cap. clampRateLimitToTier has no such hole:
-//     parseCreateRequest gives rate_limit_per_min a positive default.
-//   - requested > 0: clamp to min(requested, ceiling), where the
-//     ceiling is the operator's [platform.Account.MonthlyRequestQuotaOverride]
-//     when set (> 0), else the tier default [platform.Tier.MaxMonthlyQuota].
+//   - requested <= 0 WITH an account override: pass through; 0 is the "inherit the override"
+//     sentinel the auth cascade keys on (internal/auth/apikey_postgres.go).
+//   - requested <= 0 with NO override: fall back to the tier ceiling, because passing 0 through
+//     would leave the key with no monthly cap.
+//   - requested > 0: min(requested, ceiling), where the ceiling is
+//     [platform.Account.MonthlyRequestQuotaOverride] when > 0, else [platform.Tier.MaxMonthlyQuota].
 //
-// The operator's account-level cap is thus a HARD ceiling the customer can
-// only lower, the analogue of the rate-limit floor in clampRateLimitToTier.
+// The account-level cap is a HARD ceiling the customer can only lower.
 func clampMonthlyQuotaToAccount(requested int64, acct platform.Account) int64 {
 	if requested <= 0 && acct.MonthlyRequestQuotaOverride > 0 {
 		// Inherit the operator's explicit override at auth time.

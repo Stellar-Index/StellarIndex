@@ -12,12 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// afterResponseWorkers / afterResponseQueueSize size the shared pool
-// [AfterResponse] hands post-response bookkeeping to: usage
-// metering and TouchUsage's last-seen update. Generous enough that a
-// healthy Redis/Postgres never saturates it under ordinary request
-// volume; a sustained saturation is a signal in its own right (see
-// [obs.AfterResponseTasksDroppedTotal]), not something to size around.
+// afterResponseWorkers / afterResponseQueueSize size the pool for usage metering and last-seen
+// touches. Sustained saturation is a signal in itself ([obs.AfterResponseTasksDroppedTotal]),
+// not something to size around.
 const (
 	afterResponseWorkers   = 64
 	afterResponseQueueSize = 4096
@@ -48,10 +45,7 @@ func newAfterResponsePool(workers, queueSize int) *afterResponsePoolT {
 func (p *afterResponsePoolT) start() {
 	for i := 0; i < p.workers; i++ {
 		go func() {
-			// Belt-and-braces alongside run's own per-task recover: run
-			// already keeps one bad task from taking a worker down, but a
-			// panic anywhere else in loop (not inside a task) would still
-			// need this to avoid taking the whole process down with it.
+			// Backstop for a panic in loop outside a task; run recovers per-task panics itself.
 			defer worker.Recover(nil, "api-after-response-pool")
 			p.loop()
 		}()
@@ -64,10 +58,8 @@ func (p *afterResponsePoolT) loop() {
 	}
 }
 
-// run executes one task with its own recover, so a panicking task logs
-// and dies without taking its worker goroutine (and therefore a slot of
-// shared pool capacity) down with it — the pool must keep serving every
-// OTHER caller's usage/touch bookkeeping after one bad task.
+// run executes one task with its own recover so a panicking task does not kill its worker and
+// shrink the shared pool for every other caller.
 func (p *afterResponsePoolT) run(task func()) {
 	defer p.wg.Done()
 	defer func() {
@@ -78,11 +70,8 @@ func (p *afterResponsePoolT) run(task func()) {
 	task()
 }
 
-// submit enqueues task. wg.Add happens before the enqueue attempt (and
-// therefore before the caller's subsequent Flush) so a test waiting on
-// [AfterResponseDrainForTest] always observes the task as outstanding,
-// never as "not yet submitted". Returns false — without ever blocking —
-// when the queue is full; the caller counts that as a drop.
+// submit enqueues task and returns false, without blocking, when the queue is full. wg.Add runs
+// before the enqueue so [AfterResponseDrainForTest] never sees a task as "not yet submitted".
 func (p *afterResponsePoolT) submit(task func()) bool {
 	p.started.Do(p.start)
 	p.wg.Add(1)
@@ -95,26 +84,15 @@ func (p *afterResponsePoolT) submit(task func()) bool {
 	}
 }
 
-// AfterResponse flushes w — so the client sees the already-written
-// response immediately instead of waiting for bookkeeping the client has
-// no interest in — then hands fn to the shared bounded worker pool
-// instead of running it inline on the request goroutine (otherwise TouchUsage
-// and UsageTracker would run synchronously post-handler under
-// context.WithoutCancel(r.Context()) + a 5 s bound each, so a wedged
-// Redis added up to 10 s to a request net/http had already buffered but
-// never flushed, entirely outside api.request_timeout).
+// AfterResponse flushes w so the client is not held up by bookkeeping, then hands fn to the
+// shared bounded pool rather than running it inline; a wedged Redis would otherwise stall a
+// buffered response outside api.request_timeout.
 //
-// fn must not read or write w or the request — by the time fn runs, the
-// response may already be on the wire and the request's context may be
-// reused or gone. fn gets its own context (typically
-// context.WithTimeout(context.Background(), postResponseWriteTimeout)) —
-// never context.WithoutCancel(r.Context()), which is exactly the
-// pattern this replaces.
+// fn must not touch w or the request, which may be gone by then. It needs its own bounded
+// context (e.g. WithTimeout on Background), never WithoutCancel(r.Context()).
 //
-// If the pool is saturated, fn is dropped (never blocks the request
-// goroutine) and [obs.AfterResponseTasksDroppedTotal] is incremented —
-// silently losing a usage row or a last-seen touch must leave an
-// operator-visible signal.
+// If the pool is saturated fn is dropped without blocking and
+// [obs.AfterResponseTasksDroppedTotal] is incremented, so a lost usage row is operator-visible.
 func AfterResponse(w http.ResponseWriter, fn func()) {
 	submitAfterResponseTask(fn)
 	if f, ok := w.(http.Flusher); ok {
@@ -122,23 +100,17 @@ func AfterResponse(w http.ResponseWriter, fn func()) {
 	}
 }
 
-// submitAfterResponseTask hands fn to the shared pool without touching
-// the response writer. Used by [AfterResponse] on the ordinary path, and
-// directly by callers whose response is NOT yet known-complete — a
-// panicking handler, where the outer Recoverer still has to write the
-// 500 and a premature Flush here would lock the status in at 200 first.
+// submitAfterResponseTask hands fn to the shared pool without flushing. Callers whose response is
+// not yet complete (a panicking handler) use it directly: a premature Flush would lock in 200
+// before the outer Recoverer writes its 500.
 func submitAfterResponseTask(fn func()) {
 	if !afterResponsePool.submit(fn) {
 		obs.AfterResponseTasksDroppedTotal.Inc()
 	}
 }
 
-// AfterResponseDrainForTest blocks until every task submitted to the
-// shared after-response pool so far has completed, or timeout elapses.
-// Reports whether it drained in time. Test-only synchronization point:
-// [AfterResponse] hands work to background goroutines, so a test that
-// asserts on the effect of that work (a usage counter, a touch) must
-// wait for it rather than reading immediately after ServeHTTP returns.
+// AfterResponseDrainForTest blocks until all submitted tasks finish or timeout elapses, and
+// reports whether it drained. Tests asserting on post-response effects must wait on it.
 func AfterResponseDrainForTest(timeout time.Duration) bool {
 	done := make(chan struct{})
 	go func() {

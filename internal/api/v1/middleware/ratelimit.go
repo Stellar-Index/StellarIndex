@@ -18,12 +18,9 @@ import (
 
 // throttleTakeTimeout bounds the throttle's own backend round-trip.
 //
-// The take deliberately does NOT inherit the request's cancellation —
-// see [throttleContext] — so, exactly like the post-response
-// bookkeeping writes, it needs a bound of its own or a wedged Redis
-// would pin the request goroutine forever. 5 s matches
-// [postResponseWriteTimeout] and is generous relative to go-redis's 3 s
-// default: a backstop, not the usual limiter.
+// The take does not inherit the request's cancellation (see [throttleContext]), so it needs its
+// own bound or a wedged Redis would pin the request goroutine. 5 s matches
+// [postResponseWriteTimeout] and is a backstop above go-redis's 3 s default.
 const throttleTakeTimeout = 5 * time.Second
 
 // throttleContext derives the context an abuse-prevention seam's backend
@@ -32,19 +29,15 @@ const throttleTakeTimeout = 5 * time.Second
 // is sooner. Shared by the pre-dispatch seams (rate-limit take,
 // [MonthlyQuota] read, failed-auth throttle).
 //
-// A client abort must not reach the limiter as an error. The bucket cannot
-// tell a caller-cancelled call from a Redis outage (every take error arms
-// its dwell clock), so a client that connects, sends a request and RSTs a
-// few times a second would keep the clock armed, and the middleware would
-// fail CLOSED with 503 for EVERY caller sharing that bucket while Redis is
-// healthy: a remote kill switch costing one TCP handshake per tick.
+// A client abort must not reach the limiter as an error. The bucket cannot tell a cancelled call
+// from a Redis outage (every take error arms its dwell clock), so a client that connects and
+// resets a few times a second would make the middleware fail CLOSED with 503 for EVERY caller
+// sharing that bucket while Redis is healthy.
 //
-// Detaching is also the correct charge semantics: attached, an aborted
-// request's take would error and fall OPEN, so its token would never be
-// spent although it consumed the connection. The request's DEADLINE is
-// re-applied (a flat 5 s would let the pre-handler stack outrun
-// [RequestTimeout] and WriteTimeout); it is server-set, so a client cannot
-// use it to arm the dwell clock.
+// Detaching also keeps charge semantics right: an aborted take would error and fall OPEN, so
+// its token would never be spent. The request's DEADLINE is re-applied (a flat 5 s would let
+// the pre-handler stack outrun [RequestTimeout] and WriteTimeout); it is server-set, so a
+// client cannot use it to arm the dwell clock.
 func throttleContext(r *http.Request) (context.Context, context.CancelFunc) {
 	deadline := time.Now().Add(throttleTakeTimeout)
 	if reqDeadline, ok := r.Context().Deadline(); ok && reqDeadline.Before(deadline) {
@@ -53,12 +46,8 @@ func throttleContext(r *http.Request) (context.Context, context.CancelFunc) {
 	return context.WithDeadline(context.WithoutCancel(r.Context()), deadline)
 }
 
-// MaxRateLimitKeyLen caps the caller-supplied KeyFn output so a
-// hostile header (multi-KB X-Forwarded-For) can't blow up the
-// Redis key space or the url.QueryEscape allocation inside
-// Bucket.Take. 256 bytes fits any legitimate IP (including
-// IPv6 + zone) and any realistic API-key / SEP-10 account id
-// with headroom.
+// MaxRateLimitKeyLen caps the KeyFn output so a hostile header (multi-KB X-Forwarded-For)
+// cannot bloat the Redis key space or the allocation inside Bucket.Take.
 const MaxRateLimitKeyLen = 256
 
 // RateLimit returns middleware that enforces the given Bucket on
@@ -77,24 +66,16 @@ const MaxRateLimitKeyLen = 256
 // fail OPEN (debug log); [ratelimit.ErrThrottleUnavailable] past it fails
 // CLOSED with 503 + Retry-After. Do not collapse the two branches.
 //
-// KeyFn decides the key (per-IP if nil); "" means not limited. Skip
-// bypasses infra endpoints. Keys are capped at [MaxRateLimitKeyLen] so a
-// hostile X-Forwarded-For (up to MaxHeaderBytes) cannot bloat the Redis key
-// space; oversize keys are truncated, still bucketed.
+// KeyFn decides the key (per-IP if nil); "" means not limited. Skip bypasses infra endpoints.
+// Oversize keys are truncated to [MaxRateLimitKeyLen] and still bucketed.
 func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip func(*http.Request) bool, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if keyFn == nil {
-		// Default key: the forge-resistant, /64-masked throttle identity
-		// (remoteIPPrefixFor — the SAME resolver the production anon path
-		// uses) rather than the raw RemoteIPFrom context
-		// value. Keying on the full IPv6 /128 lets a caller rotate
-		// addresses within a single delegated /64 to mint unlimited
-		// distinct buckets and bypass the per-IP limit; masking to /64
-		// keys on the block an attacker actually controls. This middleware
-		// is test-only today, but the default MUST be bypass-resistant in
-		// case it is ever wired live with a nil keyFn.
+		// Default to the forge-resistant, /64-masked identity the production anon path uses:
+		// keying on a full IPv6 /128 lets a caller rotate addresses within one delegated /64 to
+		// mint unlimited buckets and bypass the per-IP limit.
 		keyFn = func(r *http.Request) string { return remoteIPPrefixFor(r) }
 	}
 	return func(next http.Handler) http.Handler {
@@ -123,17 +104,11 @@ func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip 
 	}
 }
 
-// rateLimitCharge is one request's account with the limiter: which
-// bucket and key it is being charged against, and how many tokens it
-// has paid so far. The middleware opens it with the one-token base
-// charge every request pays before dispatch and plants it on the
-// request context; a handler whose work scales with a client-chosen
-// parameter then re-prices the request through [ChargeRateLimit] once
-// it has parsed that parameter.
-//
-// It is per-request state. The mutex is there because nothing stops a
-// handler calling [ChargeRateLimit] from a worker goroutine, not
-// because any does today.
+// rateLimitCharge is one request's account with the limiter: the bucket and key it is charged
+// against and the tokens paid so far. The middleware opens it with the one-token base charge and
+// plants it on the request context; a handler whose work scales with a client-chosen parameter
+// re-prices through [ChargeRateLimit]. The mutex guards against a handler calling it from a
+// worker goroutine.
 type rateLimitCharge struct {
 	bucket   *ratelimit.Bucket
 	key      string
@@ -160,11 +135,9 @@ func (c *rateLimitCharge) effectiveMax() int {
 }
 
 // spend charges tokens against the bucket and settles the outcome onto
-// w. It returns true when the request may proceed, and false once it
-// has written the response — a 429 (over budget) or a 503 (the throttle
-// layer has been unreachable past its dwell-time). Shared by the
-// pre-dispatch base charge and by [ChargeRateLimit] so the two cannot
-// drift on the failure policy or the header set.
+// w. It returns true when the request may proceed, and false once it has written a 429 or a
+// 503 (throttle unreachable past its dwell time). Shared by the base charge and
+// [ChargeRateLimit] so the failure policy and headers cannot drift.
 func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens int) bool {
 	takeCtx, takeCancel := throttleContext(r)
 	res, err := c.bucket.Charge(takeCtx, c.key, tokens, c.override)
@@ -210,20 +183,16 @@ func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens i
 // when the handler may go on, and false once it has written the 429 (or
 // fail-closed 503) itself; the handler must then return without writing.
 //
-// The limiter charges one token before dispatch because that is all it can
-// know there. That is wrong where the client chooses the work: one token
-// would buy a 1000-id POST /v1/price/batch, so the 6000/min anonymous
-// budget would really be six million price resolutions a minute. Such a
-// handler calls this AFTER validating the parameter and BEFORE doing the
-// work, so the budget is denominated in work, not requests. The middleware
-// cannot: pricing the POST means buffering up to 1 MiB of body for a caller
-// not yet admitted.
+// The limiter charges one token before dispatch because that is all it can know. Where the
+// client chooses the work (a 1000-id POST /v1/price/batch) one token would multiply the budget
+// a thousandfold, so such a handler calls this AFTER validating the parameter and BEFORE doing
+// the work. The middleware cannot: pricing the POST means buffering up to 1 MiB for a caller not
+// yet admitted.
 //
-// The total is capped at the subject's ceiling, so a request priced above
-// it spends the whole window rather than being refused in every window
-// ([ratelimit.Bucket.Charge]). A request that never crossed a rate-limit
-// middleware has no account to charge and proceeds. A cost at or below what
-// was paid charges nothing: this never refunds.
+// The total is capped at the subject's ceiling, so an over-ceiling request spends the whole
+// window instead of being refused in every window ([ratelimit.Bucket.Charge]). A request that
+// never crossed a rate-limit middleware proceeds, and a cost at or below what was paid charges
+// nothing: this never refunds.
 func ChargeRateLimit(w http.ResponseWriter, r *http.Request, cost int) bool {
 	c, ok := r.Context().Value(rateLimitChargeKey{}).(*rateLimitCharge)
 	if !ok || c == nil {
@@ -243,16 +212,8 @@ func ChargeRateLimit(w http.ResponseWriter, r *http.Request, cost int) bool {
 }
 
 // nextWindowResetUnix returns the Unix-epoch seconds of when the
-// fixed-window bucket's CURRENT window ends. Mirrors GitHub /
-// Twitter's `X-RateLimit-Reset` semantics: clients can compute
-// `seconds_until_reset = X-RateLimit-Reset - now` to back off
-// proactively without waiting for a 429. See:
-// https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-ratelimit-headers
-//
-// Implementation matches the bucket's key derivation:
-//
-//	bucket key = unix() / window.Seconds()
-//	current window ends at = ((unix()/window) + 1) * window
+// fixed-window bucket's CURRENT window ends, so clients can back off before a 429. It must match
+// the bucket's key derivation: window ends at ((unix()/window) + 1) * window.
 func nextWindowResetUnix(window time.Duration) int64 {
 	if window < time.Second {
 		// Bucket constructor rejects this; defensive zero stops the
@@ -274,13 +235,9 @@ func nextWindowResetUnix(window time.Duration) int64 {
 //   - anonymous with Subject: per-IP bucket (see below)
 //   - no Subject attached: per-IP bucket
 //
-// Per-subject overrides: an authenticated subject with
-// `Subject.RateLimitPerMin > 0` (a paid-tier override sourced from
-// the APIKey record) replaces authBucket's default max as the ceiling
-// THIS request is checked against; the counter it is checked against
-// is still the account's. The override has no effect on anonymous
-// callers — anonRateLimitPerMin is a deployment knob, not a per-IP
-// override.
+// An authenticated subject with `Subject.RateLimitPerMin > 0` replaces authBucket's default max
+// as the ceiling for THIS request, while the counter stays the account's. It never applies to
+// anonymous callers.
 //
 // Nil buckets disable rate limiting for that class.
 func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*http.Request) bool, logger *slog.Logger) Middleware {
@@ -315,23 +272,13 @@ func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*htt
 // bucketKeyAndOverrideForRequest picks the right bucket + Redis key
 // for the inbound request, plus any per-subject limit override.
 //
-// Override is non-zero ONLY for an authenticated subject whose
-// APIKey record carries an explicit `RateLimitPerMin` (paid-tier
-// custom plan). Anonymous callers always get `0` (the bucket's
-// default applies). Operators can still floor the bucket via
-// `cfg.API.KeyRateLimitPerMin` — the override only raises (or
-// lowers) the per-key budget, never the global default.
+// Override is non-zero ONLY for an authenticated subject whose APIKey record carries an explicit
+// `RateLimitPerMin`; anonymous callers always get 0 so the bucket default applies.
 //
-// Anonymous keying is the resolved client IP ALONE. The
-// anonymous Subject.Identifier is a sha256(IP|User-Agent) hash that
-// stays useful as a log/metric label, but it MUST NOT key the
-// throttle bucket: a client can rotate its User-Agent on every
-// request to mint unlimited distinct hashes, each its own bucket,
-// trivially bypassing the per-IP anonymous floor. We key on
-// anonymousRateLimitKey(r), which resolves the client IP through the
-// trusted-proxy XFF logic (forge-resistant) directly from
-// the request — independent of whether the Logger middleware has
-// populated the remote-IP context value yet.
+// Anonymous keying is the resolved client IP ALONE. The anonymous Subject.Identifier hashes in
+// the client-controlled User-Agent, so keying on it would let a caller mint a bucket per request
+// and bypass the per-IP floor. anonymousRateLimitKey(r) resolves the IP from the request itself,
+// independent of whether Logger has populated the context value yet.
 func bucketKeyAndOverrideForRequest(r *http.Request, anonBucket, authBucket *ratelimit.Bucket) (*ratelimit.Bucket, string, int) {
 	if subject, ok := auth.SubjectFrom(r.Context()); ok && subject.Identifier != "" {
 		if subject.Tier != auth.TierAnonymous && subject.Tier != "" {
@@ -364,15 +311,9 @@ func RateLimitCallerKey(r *http.Request) string {
 }
 
 // anonymousRateLimitKey derives the per-IP throttle key for an
-// anonymous caller. IP-ONLY by design — see
-// [bucketKeyAndOverrideForRequest]. Uses [remoteIPPrefixFor] (the
-// forge-resistant XFF resolver, aggregated to a /64 network
-// prefix for IPv6 — see its doc) rather than [RemoteIPFrom]
-// so the key is populated even when the Logger middleware that
-// caches remote_ip in context hasn't run. Falls back to "anon" only
-// when no IP can be resolved at all — collapsing such requests into a
-// single shared bucket is the safe (fail-closed) choice for a
-// throttle.
+// anonymous caller. IP-ONLY by design (see [bucketKeyAndOverrideForRequest]). It uses
+// [remoteIPPrefixFor] rather than [RemoteIPFrom] so it works before Logger has run. It falls
+// back to "anon" only when no IP resolves; one shared bucket is the safe choice for a throttle.
 func anonymousRateLimitKey(r *http.Request) string {
 	ip := remoteIPPrefixFor(r)
 	if ip == "" {
@@ -381,12 +322,10 @@ func anonymousRateLimitKey(r *http.Request) string {
 	return "anon:" + ip
 }
 
-// authenticatedRateLimitKey counts every credential an account holds
-// against ONE per-minute bucket, derived by [UsageKeyForSubject] — the
-// derivation the monthly quota counts under — so the two budgets cannot
-// drift onto opposite identities. Keyed per credential, an account's
-// per-minute ceiling would multiply by the number of keys it holds
-// (a 25-key account with a 100k/min comp ran at 2.5M/min).
+// authenticatedRateLimitKey counts every credential an account holds against ONE per-minute
+// bucket, via [UsageKeyForSubject], the derivation the monthly quota also uses so the two budgets
+// cannot drift onto different identities. Keyed per credential, the ceiling would multiply by the
+// number of keys held.
 func authenticatedRateLimitKey(subject auth.Subject) string {
 	return "auth:" + UsageKeyForSubject(subject)
 }
@@ -417,14 +356,9 @@ type rlProblem struct {
 }
 
 // writeThrottleUnavailableProblem is the 503 + Retry-After response
-// for the dwell-time fail-closed branch. Mirrors
-// writeRateLimitProblem's shape but carries a different error-type
-// URL + status so operators reading access logs (and clients
-// parsing the type tag) can tell "you were rate-limited" apart
-// from "the rate limiter itself is offline."
-//
-// Retry-After is set BEFORE WriteHeader; net/http silently drops
-// headers added after the status line is committed.
+// for the dwell-time fail-closed branch. It uses a different type URL and status than
+// writeRateLimitProblem so logs and clients can tell "rate-limited" from "limiter offline".
+// Retry-After is set BEFORE WriteHeader because net/http drops later headers.
 func writeThrottleUnavailableProblem(w http.ResponseWriter, r *http.Request) {
 	p := rlProblem{
 		Type:     "https://api.stellarindex.io/errors/throttle-unavailable",
