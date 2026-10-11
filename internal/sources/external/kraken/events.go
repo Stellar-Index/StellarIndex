@@ -1,18 +1,16 @@
 // Package kraken streams live trades from Kraken's public WebSocket v2 trade channel. XLM/USD,
 // XLM/EUR and XLM/GBP are all natively quoted (no stablecoin proxy).
 //
-// Differences from Binance that shape the code:
-//   - Symbol format is "XLM/USD" (slash-separated, uppercase); pairs.go normalises both sides.
-//   - Subscription is an explicit JSON method call after connect.
-//   - Numbers arrive as JSON floats; decoding via [encoding/json.Number] keeps the original decimal
-//     string and bypasses float entirely (ADR-0003).
+// Symbols are "XLM/USD" (slash-separated, uppercase) and subscription is an explicit JSON call
+// after connect. Numbers arrive as JSON floats; [encoding/json.Number] keeps the decimal string
+// so no float is involved (ADR-0003).
 //
 // Wire format reference: https://docs.kraken.com/api/docs/websocket-v2/trade
 //
-// The snapshot (last ~50 trades) carries real timestamps and is emitted like any trade; a
-// re-delivered snapshot dedupes on the synthesised tx_hash (symbol + trade_id). BackfillTrades
-// derives the same tx_hash; candles key on close time and never match a live row, so
-// backfill-external refuses a window that already holds rows.
+// The snapshot (last ~50 trades) is emitted like any trade; a re-delivered snapshot dedupes on
+// the synthesised tx_hash (symbol + trade_id), which BackfillTrades derives identically. Candles
+// key on close time and never match a live row, so backfill-external refuses a window that
+// already holds rows.
 package kraken
 
 import (
@@ -41,19 +39,15 @@ const (
 // Compile-time assertion: the constant matches external.ClassExchange.
 var _ = external.ClassExchange
 
-// Errors surfaced by the parser. Transient WS errors live in
-// streamer.go and never escape as sentinels — they're logged and
-// reconnected against.
+// Errors surfaced by the parser. Transient WS errors stay in streamer.go: they are logged and
+// reconnected, never returned as sentinels.
 var (
-	// ErrMalformedFrame — JSON shape didn't match either the
-	// channel envelope or one of the known payload types. Single-
-	// frame skip; stream stays up.
+	// ErrMalformedFrame means the JSON matched neither the channel envelope nor a known payload;
+	// the single frame is skipped and the stream stays up.
 	ErrMalformedFrame = errors.New("kraken: malformed frame")
 
-	// ErrUnknownSymbol — trade's symbol isn't in the configured
-	// PairMap. Happens if Kraken lists a new pair we haven't
-	// added, or if we subscribed to a symbol that wasn't in the
-	// map at construct time (defensive — Start rejects this path).
+	// ErrUnknownSymbol means the trade's symbol is not in the configured PairMap, e.g. Kraken
+	// listed a new pair we have not added.
 	ErrUnknownSymbol = errors.New("kraken: symbol not in configured PairMap")
 
 	// ErrDustTrade means base x price floor-divided to a 0 quote amount: tiny lots underflow the

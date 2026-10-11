@@ -20,8 +20,7 @@ import (
 // could otherwise inject fabricated trades under `source = "comet"`.
 //
 // No creation event announces new pools, so the gate is a curated set: MainnetGatedSet is the
-// trust root and the protocol_contracts warm admits a pool without a redeploy. No WASM-hash
-// sweep admits pools.
+// trust root and the protocol_contracts warm admits a pool without a redeploy.
 //
 // Claims swap (TradeEvent) and join_pool / exit_pool / deposit / withdraw (LiquidityEvent) from
 // a registered pool. BPT transfers use the SEP-41 surface (sep41_supply).
@@ -68,10 +67,9 @@ func (d *Decoder) bumpDroppedSwapMetric(counter *prometheus.CounterVec, closedAt
 // Name implements [dispatcher.Decoder].
 func (d *Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY, not topic bytes
-// (ADR-0035/0040): the bare ("POOL", <event>) tuple is shared by every deployment of the
-// Balancer-v1 code, so it is forgeable. A comet-shaped event from an unregistered contract is
-// left for the recognition audit (ADR-0033 Claim 2a): visible, never silently attributed.
+// Matches implements [dispatcher.Decoder]. Gates on contract identity, not topic bytes: the bare
+// ("POOL", <event>) tuple is shared by every Balancer-v1 deployment, so it is forgeable. An
+// event from an unregistered contract is left visible to the recognition audit, never attributed.
 func (d *Decoder) Matches(ev events.Event) bool {
 	if classify(&ev) == "" {
 		return false
@@ -101,11 +99,10 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if kind == EventSwap {
 		trade, err := decodeSwap(&ev, closedAt)
 		if err != nil {
-			// Determinate "not a serveable trade": the body decoded cleanly but maps to ZERO rows
-			// (self-pair swap via canonical.ErrPairMismatch, or non-positive amounts). Return no
-			// output and NO error so the completeness re-derive counts expected=0 rather than an
-			// undecodable blind spot that would hold `comet` at complete=false forever.
-			// Indeterminate parse failures keep the error path and stay blind.
+			// A cleanly decoded body that maps to zero rows (self-pair or non-positive amounts)
+			// returns no output and no error, so the completeness re-derive counts expected=0
+			// instead of an undecodable blind spot holding `comet` at complete=false forever.
+			// Indeterminate parse failures keep the error path.
 			if errors.Is(err, canonical.ErrPairMismatch) {
 				// Self-pair swap is the exploit primitive; these rows never reach `trades`, so
 				// this counter is the only place the burst is observable. Detection only.

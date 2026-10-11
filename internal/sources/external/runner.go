@@ -22,10 +22,8 @@ import (
 // print, size-biasing the surviving volume and VWAP.
 const dustFloorUSDMicros = 1_000
 
-// externalQuoteScale is the fixed-point scale streamed CEX amounts
-// arrive at (10^8 units per whole quote asset). Streamers are all
-// CEX at this scale; the FX pollers (10^6) don't emit dust, so this
-// guard stays scoped to the streamer path.
+// externalQuoteScale is the fixed-point scale streamed CEX amounts arrive at (10^8 per whole quote
+// asset). FX pollers (10^6) emit no dust, so the guard stays scoped to the streamer path.
 const externalQuoteScale = 100_000_000
 
 // fiatQuoteUSDMicros is the USD reference for ANY fiat quote leg: one unit is about $1. A

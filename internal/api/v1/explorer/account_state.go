@@ -25,10 +25,8 @@ type AccountsListView struct {
 	// is available). Each row's Value is expressed in this unit.
 	RankedBy string             `json:"ranked_by"`
 	Accounts []AccountWealthRow `json:"accounts"`
-	// AsOfLedger is the ranking snapshot's vintage (ADR-0041 Decision 4):
-	// the lake watermark read immediately before the snapshot's scan, so
-	// it pairs with the envelope's as_of and never names a ledger later
-	// than the data ranked. Omitted when the watermark was unreadable.
+	// AsOfLedger is the snapshot's vintage (ADR-0041 Decision 4): the lake watermark read just
+	// before the scan, so it never names a ledger later than the data ranked. Omitted when unreadable.
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 	// LowerBound is always true: each Value counts only the holding domains
 	// CoverageNote names, so it can under-state an account, never over-state it.
@@ -43,10 +41,8 @@ const accountsWealthCoverageNote = "Ranked on classic holdings only: the account
 
 type AccountWealthRow struct {
 	AccountID string `json:"account_id"`
-	// Value is the account's ranked wealth in the response's RankedBy unit —
-	// USD dollars ("usd", 2dp) or whole XLM ("native_xlm", exact to the
-	// stroop from the integer balance, no float in the path). This is the canonical
-	// field; read RankedBy to format it.
+	// Value is the ranked wealth in the response's RankedBy unit: USD dollars ("usd", 2dp) or
+	// whole XLM ("native_xlm", exact to the stroop from the integer balance, no float).
 	Value string `json:"value"`
 	// USDValue is a backward-compatible alias, populated only on the "usd"
 	// basis (equal to Value there). Empty on the "native_xlm" basis — read
@@ -78,16 +74,12 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	// than 503ing or serving an empty list. That fallback is the single key "native" priced at 1;
 	// the cache records the basis (wealthBasis) so the served numbers are labelled correctly.
 	assets, prices := h.wealthRankingInputs(ctx)
-	// Served from a background-refreshed cache; the underlying FINAL scan
-	// over 43.6M current-state rows needs 11-20s and can never fit this
-	// handler's deadline. Run inline, it timed out on EVERY request — 8.1s
-	// of waiting followed by a 500, 100% of the time.
+	// Served from a background-refreshed cache: the FINAL scan over tens of millions of
+	// current-state rows takes 11-20s and can never fit this handler's deadline.
 	snap, warm := h.Reader.AccountsByWealthCached(ctx, assets, prices, limit)
 	if !warm {
-		// Honest degraded state instead of a 500: the ranking has not been
-		// computed yet. Reached ONLY when no ranking has EVER been computed
-		// this process (cold start before the first refresh lands) — an
-		// expired snapshot is served with flags.stale below, never 503'd.
+		// Degraded state instead of a 500, reached ONLY when no ranking has ever been computed
+		// this process; an expired snapshot is served with flags.stale below, never 503'd.
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/warming-up",
 			"Ranking not ready", http.StatusServiceUnavailable,
 			"the account wealth ranking is being computed; retry shortly")
@@ -246,10 +238,9 @@ func (h *Handler) usdPriceMapUncached(ctx context.Context) (assets, prices []str
 	return assets, prices
 }
 
-// priceableAssetIDs is the de-duplicated set of canonical asset ids we attempt
-// to price for wealth ranking: native XLM plus every browseable verified
-// currency's Stellar asset (the catalogue can list the same asset under more
-// than one currency entry — dedup by id). "native" parses via canonical too.
+// priceableAssetIDs is the de-duplicated set of canonical asset ids priced for wealth ranking:
+// native XLM plus every browseable verified currency's asset (the catalogue can list one asset
+// under several currency entries, so dedup by id).
 func (h *Handler) priceableAssetIDs() []string {
 	keys := []string{"native"}
 	seen := map[string]struct{}{"native": {}}
@@ -518,10 +509,8 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	// "CODE:ISSUER" and bare "XLM", but the lake stores "CODE-ISSUER", so the raw string would
 	// cache an authoritative-looking empty board under a duplicate key.
 	asset = parsed.String()
-	// Fold XLM's alias forms to the one canonical board key BEFORE the
-	// cache: "native" and "crypto:XLM" are the same asset (assetAliases
-	// dual-form rule), and keying them separately would run two identical
-	// account-range scans and split the SWR cache.
+	// Fold XLM's alias forms to one board key BEFORE the cache: "native" and "crypto:XLM" are the
+	// same asset, and separate keys would run two identical account scans and split the SWR cache.
 	if isNativeHoldersAsset(parsed) {
 		asset = canonical.NativeAsset().String()
 	}
@@ -596,18 +585,16 @@ func (h *Handler) writeAssetHoldersCSV(w http.ResponseWriter, r *http.Request, v
 
 // PrewarmAccountsWealth primes the wealth-ranking cache so no user meets the cold state.
 //
-// The ranking is a FINAL scan over tens of millions of current-state rows (~23 s) and cannot run
-// on a request deadline. Calling the cached reader is enough: on a miss it starts the detached
-// refresh and returns immediately, so it is cheap on a timer. The cache stores ONE ranking (the
-// top accountsWealthMaxLimit) that every request size slices from; limit is not a cache key.
+// The ranking is a FINAL scan over tens of millions of rows (~23 s), too slow for a request
+// deadline. On a miss the cached reader starts the detached refresh and returns at once, so a
+// timer call is cheap. The cache holds ONE ranking (top accountsWealthMaxLimit) that every request
+// size slices; limit is not a cache key.
 func (h *Handler) PrewarmAccountsWealth(ctx context.Context) {
 	if h.Reader == nil {
 		return
 	}
-	// Same inputs the request path uses — USD price map where available, native
-	// XLM fallback otherwise — so the cache is warmed with one consistent basis
-	// on every network, including the lean nets that would otherwise never
-	// prewarm (usdPriceMap is always empty there) and 503 the first request.
+	// Same inputs as the request path (USD map, else native-XLM fallback) so the cache warms on
+	// one basis on every network, including lean nets where usdPriceMap is empty.
 	assets, prices := h.wealthRankingInputs(ctx)
 	h.Reader.AccountsByWealthCached(ctx, assets, prices, 0)
 }

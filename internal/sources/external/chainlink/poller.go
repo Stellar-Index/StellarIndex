@@ -26,8 +26,7 @@ import (
 // in-memory, so the first poll after a restart re-emits the latest round per feed; the storage
 // PK's ON CONFLICT rejects that idempotently. The runner serialises PollOnce per source.
 type Poller struct {
-	// Client is the EVM JSON-RPC client. Constructor injects the
-	// operator-supplied endpoint (Alchemy / Infura / public).
+	// Client is the EVM JSON-RPC client for the operator-supplied endpoint.
 	Client *Client
 
 	// Logger receives per-feed warn/info messages. nil → slog.Default.
@@ -36,27 +35,22 @@ type Poller struct {
 	// Interval overrides DefaultPollInterval. Zero = default.
 	Interval time.Duration
 
-	// FeedMap maps canonical pair string ("crypto:BTC/fiat:USD")
-	// to the AggregatorV3 contract address + decimals + invert.
-	// Operator-curated; constructor injects from config.
+	// FeedMap maps a canonical pair string ("crypto:BTC/fiat:USD") to the AggregatorV3 contract
+	// address, decimals and invert flag. Operator-curated.
 	FeedMap map[string]FeedSpec
 
-	// Cache holds the last roundId emitted per feed address. Empty
-	// at construction; populated on each successful PollOnce.
+	// Cache holds the last roundId emitted per feed address.
 	Cache *roundCache
 
-	// concurrency caps how many feed eth_call requests we have in
-	// flight at once during one PollOnce tick. Defaults to 8 — well
-	// inside Alchemy's free-tier per-second budget for our pair
-	// counts and a polite ceiling for public RPCs.
+	// Concurrency caps in-flight feed eth_call requests per PollOnce tick (default 8), a polite
+	// ceiling for shared RPC endpoints.
 	Concurrency int
 
-	// decimals is the per-feed on-chain decimals() verification state
-	// (see decimals.go). Built by NewPoller, like Cache.
+	// decimals is the per-feed on-chain decimals() verification state (see decimals.go).
 	decimals *decimalsCache
 
-	// now is the injectable clock for the decimals() refresh / retry
-	// cadence and the updatedAt future-skew guard. nil → time.Now.
+	// now is the injectable clock for the decimals() refresh/retry cadence and the updatedAt
+	// future-skew guard. nil → time.Now.
 	now func() time.Time
 }
 
@@ -68,13 +62,10 @@ func (p *Poller) clock() time.Time {
 	return time.Now()
 }
 
-// NewPoller builds a Poller with sensible defaults. Caller supplies
-// the RPC endpoint (must include the API key for keyed providers
-// like Alchemy) and the feed map.
+// NewPoller builds a Poller with defaults; rpcURL must include the API key for keyed providers.
 func NewPoller(rpcURL string, feedMap map[string]FeedSpec) *Poller {
-	// Seed zero-valued mismatch/verify-failed series per configured feed. FeedMap is fixed at
-	// construction so the label set is bounded, and without seeding a healthy feed is
-	// indistinguishable from one whose counter was never wired.
+	// Seed zero-valued series per configured feed (the label set is bounded), so a healthy feed
+	// is distinguishable from one whose counter was never wired.
 	for k := range feedMap {
 		obs.ChainlinkFeedDecimalsMismatchTotal.WithLabelValues("ingest", k)
 		obs.ChainlinkFeedDecimalsVerifyFailedTotal.WithLabelValues("ingest", k)
@@ -115,8 +106,7 @@ type pollResult struct {
 	round  Round
 }
 
-// Per-feed poll outcomes, the label values of
-// obs.ChainlinkFeedPollsTotal.
+// Per-feed poll outcomes, the label values of obs.ChainlinkFeedPollsTotal.
 const (
 	outcomeEmitted        = "emitted"
 	outcomeUnchanged      = "unchanged"
@@ -127,8 +117,8 @@ const (
 
 var feedOutcomes = []string{outcomeEmitted, outcomeUnchanged, outcomeStale, outcomeCarriedForward, outcomeError}
 
-// recordFeedOutcome counts one feed's poll outcome and, for a fresh
-// round, advances its last-success gauge.
+// recordFeedOutcome counts one feed's poll outcome and advances its last-success gauge when the
+// feed was current.
 func (p *Poller) recordFeedOutcome(pair canonical.Pair, outcome string) {
 	obs.ChainlinkFeedPollsTotal.WithLabelValues(pair.String(), outcome).Inc()
 	if outcome == outcomeEmitted || outcome == outcomeUnchanged {
@@ -148,10 +138,8 @@ func failureOutcome(err error) string {
 	}
 }
 
-// checkRoundCurrent refuses a round that is not a current publication:
-// a carried-forward answer, or one older than the feed's MaxAge. It
-// runs before dedup so a frozen feed keeps reporting stale every tick
-// instead of reading as "unchanged".
+// checkRoundCurrent refuses a carried-forward answer or one older than the feed's MaxAge. It runs
+// before dedup so a frozen feed keeps reporting stale instead of reading as "unchanged".
 func checkRoundCurrent(pair canonical.Pair, spec FeedSpec, rnd Round, now time.Time) error {
 	if rnd.AnsweredInRound != nil && rnd.RoundID != nil && rnd.AnsweredInRound.Cmp(rnd.RoundID) < 0 {
 		return fmt.Errorf("%w: %s round=%s answeredInRound=%s",
@@ -185,9 +173,8 @@ func (p *Poller) pollFeed(ctx context.Context, pair canonical.Pair, spec FeedSpe
 }
 
 func (p *Poller) pollFeedOnce(ctx context.Context, pair canonical.Pair, spec FeedSpec) (pollResult, bool) {
-	// Scale first: the on-chain decimals() verified against the
-	// configured value (decimals.go). A disagreeing or unknown
-	// scale refuses the feed before its price is read.
+	// Scale first: a disagreeing or unknown on-chain decimals() refuses the feed before its price
+	// is read.
 	dec, err := p.resolveDecimals(ctx, pair, spec)
 	if err != nil {
 		return pollResult{err: err, pair: pair}, true
@@ -206,14 +193,12 @@ func (p *Poller) pollFeedOnce(ctx context.Context, pair canonical.Pair, spec Fee
 	}
 	u, err := p.project(pair, spec, rnd)
 	if err != nil {
-		// Do NOT mark the round emitted: a project() failure can be transient, but the round id
-		// only advances when the feed publishes a new answer, so committing here would wedge the
-		// feed at this round until restart.
+		// Do NOT mark the round emitted: the round id only advances on a new answer, so committing
+		// here would wedge the feed at this round until restart.
 		return pollResult{err: err, pair: pair, round: rnd}, true
 	}
-	// Commit the dedup high-water mark only now that the update has actually
-	// been built — the earliest point a failure downstream of this line can
-	// no longer cause silent, permanent data loss for this round.
+	// Commit the dedup high-water mark only once the update is built, so no later failure can
+	// silently lose this round.
 	p.Cache.commitEmit(rnd.FeedAddress, rnd.RoundID)
 	return pollResult{update: u, pair: pair, round: rnd}, true
 }
@@ -237,20 +222,15 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	sem := make(chan struct{}, conc)
 	results := make(chan pollResult, len(pairs))
 
-	// anyCurrent tracks whether ANY feed was current this tick — emitted
-	// OR unchanged. "Unchanged" (ok=false from pollFeed) sends nothing to
-	// results, so without this the fan-in below can't tell "a sibling is
-	// fine, it just has nothing new" from "every feed failed".
+	// anyCurrent tracks whether ANY feed was current (emitted or unchanged). Unchanged feeds send
+	// nothing to results, so without it the fan-in cannot tell "nothing new" from "every feed failed".
 	var anyCurrent atomic.Bool
 
 	var wg sync.WaitGroup
 	for _, pr := range pairs {
 		spec, ok := p.FeedMap[pr.String()]
 		if !ok {
-			// Pair isn't in our feed map — operator misconfig or
-			// the framework passed us a non-Chainlink-ish pair.
-			// Skip silently; logging every miss every 30s would
-			// drown the journal.
+			// Skip silently: logging every miss every tick would drown the journal.
 			continue
 		}
 		wg.Add(1)
@@ -258,9 +238,8 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		go func(pair canonical.Pair, spec FeedSpec) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			// An unrecovered panic in ANY goroutine kills the whole
-			// process; report the feed as failed rather than letting it
-			// silently vanish from `updates`.
+			// An unrecovered panic in any goroutine kills the process; report the feed as failed
+			// rather than letting it vanish from `updates`.
 			defer func() {
 				if rec := recover(); rec != nil {
 					worker.Report(logger, "external-chainlink-feed-poll", rec)
@@ -278,10 +257,8 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		}(pr, spec)
 	}
 	go func() {
-		// Close from a DEFER, not as a trailing statement: if the join
-		// panicked and the panic were merely contained, the fan-in range
-		// below would block on a channel nobody ever closes — a wedged
-		// poll tick is worse than the crash it replaces.
+		// Close from a DEFER: if the join panicked and were merely contained, the fan-in range
+		// would block on a channel nobody closes, and a wedged tick is worse than a crash.
 		defer close(results)
 		defer worker.Recover(logger, "external-chainlink-feed-join")
 		wg.Wait()
@@ -308,11 +285,10 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		updates = append(updates, r.update)
 	}
 
-	// nil/nil/nil means "skipped": an error would mark the whole tick "error" even when most feeds
-	// succeeded. But an all-feeds-failed cycle is not a healthy skip: the runner would bump
-	// ExternalPollerLastSuccessUnix and keep the staleness gauge green while the poller is wedged
-	// (bad endpoint, revoked key, RPC down). An unchanged sibling (ok=false) is current, so
-	// firstErr surfaces only when no feed was current this tick.
+	// nil/nil/nil means "skipped"; an error would mark the whole tick failed even when most feeds
+	// succeeded. An all-feeds-failed cycle is not a healthy skip, though: the staleness gauge
+	// would stay green while the poller is wedged (bad endpoint, revoked key, RPC down), so
+	// firstErr surfaces when no feed was current.
 	if len(updates) == 0 {
 		if firstErr != nil && !anyCurrent.Load() {
 			return nil, nil, firstErr
@@ -322,9 +298,8 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	return nil, updates, nil
 }
 
-// fetchLatest calls latestRoundData on the given feed and decodes
-// the 5-tuple. Wraps the network + decode errors with the pair
-// context the caller logs.
+// fetchLatest calls latestRoundData on the feed and decodes the 5-tuple, wrapping errors with the
+// pair.
 func (p *Poller) fetchLatest(ctx context.Context, pair canonical.Pair, spec FeedSpec) (Round, error) {
 	rawHex, err := p.Client.EthCall(ctx, spec.Address, SelLatestRoundData, "latest")
 	if err != nil {
@@ -352,8 +327,7 @@ func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonic
 		return canonical.OracleUpdate{}, fmt.Errorf("%w: %s feed=%s has no resolved decimals", ErrDecimalsUnresolved, pair.String(), spec.Address)
 	}
 
-	// Apply Invert: 1/answer at the same decimal scale, on the big.Int
-	// (oracle_updates stores raw integers per ADR-0003).
+	// Invert is 1/answer at the same decimal scale, on the big.Int (ADR-0003).
 	rawAnswer, ok := new(big.Int).SetString(rnd.Answer, 10)
 	if !ok {
 		return canonical.OracleUpdate{}, fmt.Errorf("%w: bad decimal answer %q", ErrMalformedResult, rnd.Answer)
@@ -364,8 +338,7 @@ func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonic
 		if rawAnswer.Sign() == 0 {
 			return canonical.OracleUpdate{}, fmt.Errorf("%w: cannot invert zero", ErrMalformedResult)
 		}
-		// Round half-up like every other inverted feed; a truncating
-		// Quo biases every inverted price low.
+		// Round half-up: a truncating Quo biases every inverted price low.
 		answer = scale.InvertScaled(rawAnswer, int(decimals))
 		// The reciprocal is lossy; keep the feed's own answer (ADR-0003).
 		p := canonical.NewAmount(rawAnswer)
@@ -377,7 +350,7 @@ func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonic
 
 	return canonical.OracleUpdate{
 		Source:         SourceName,
-		ContractID:     "", // off-chain; ETH contract address belongs in a separate observability surface, not the canonical row
+		ContractID:     "", // off-chain; the ETH address is not a canonical-row field
 		Ledger:         0,
 		TxHash:         syntheticTxHash(spec.Address, rnd.RoundID),
 		OpIndex:        0,
@@ -391,9 +364,8 @@ func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonic
 	}, nil
 }
 
-// wouldEmit reports whether (feedAddr, roundID) is newer than the last committed round without
-// mutating the cache, so an already-seen round is skipped before any work and the commit waits
-// until the update has survived every failure point (see commitEmit).
+// wouldEmit reports whether (feedAddr, roundID) is newer than the last committed round, without
+// mutating the cache (the commit waits for commitEmit).
 func (c *roundCache) wouldEmit(feedAddr string, roundID *big.Int) bool {
 	if roundID == nil {
 		roundID = new(big.Int)
@@ -404,9 +376,8 @@ func (c *roundCache) wouldEmit(feedAddr string, roundID *big.Int) bool {
 	return !ok || roundID.Cmp(prev) > 0
 }
 
-// commitEmit marks (feedAddr, roundID) as emitted. Call it only after project succeeded: marking
-// earlier would let a project() failure wedge the feed at that round, because the round id only
-// advances when the feed publishes a new answer, so later polls would emit nothing until restart.
+// commitEmit marks (feedAddr, roundID) as emitted. Call it only after project succeeded, or a
+// failure would wedge the feed at that round until restart.
 func (c *roundCache) commitEmit(feedAddr string, roundID *big.Int) {
 	if roundID == nil {
 		roundID = new(big.Int)
@@ -417,14 +388,11 @@ func (c *roundCache) commitEmit(feedAddr string, roundID *big.Int) {
 	if ok && roundID.Cmp(prev) <= 0 {
 		return
 	}
-	// Store a copy so a later mutation of the caller's *big.Int can't
-	// corrupt the cached high-water mark.
+	// Copy so a caller's later mutation cannot corrupt the high-water mark.
 	c.last[feedAddr] = new(big.Int).Set(roundID)
 }
 
-// syntheticTxHash derives a deterministic 64-char hex tx_hash (tx_hash is CHAR(64)) from the
-// (feed address, roundId) pair via SHA-256.
-//
+// syntheticTxHash derives a deterministic 64-char hex tx_hash from (feed address, roundId).
 // roundID is the FULL uint80 proxy round id: rounds from different phases sharing a low-64-bit
 // aggregatorRoundId must hash distinctly or they collide on the storage PK.
 func syntheticTxHash(feedAddress string, roundID *big.Int) string {

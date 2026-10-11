@@ -55,8 +55,7 @@ type LoginThrottle interface {
 	Allow(ctx context.Context, ip, email string) (bool, error)
 }
 
-// Config wires the auth handlers' dependencies. Constructed
-// once at server boot; mounted into the v1 mux.
+// Config wires the auth handlers' dependencies; built once at boot.
 type Config struct {
 	Accounts  platform.AccountStore
 	Users     platform.UserStore
@@ -65,23 +64,17 @@ type Config struct {
 	Generator *Generator
 	Logger    *slog.Logger
 	Now       func() time.Time
-	// EmailLocker (optional) serialises first-login provisioning
-	// per email. nil = no locking; the handler falls through to
+	// EmailLocker (optional) serialises first-login provisioning per email; nil falls through to
 	// the Suspend-on-conflict recovery path.
 	EmailLocker EmailLocker
-	// LoginThrottle (optional) caps magic-link sends per IP + per
-	// target email. nil = no throttle (only the global anon
-	// rate-limit applies).
+	// LoginThrottle (optional) caps magic-link sends per IP and per target email; nil leaves only
+	// the global anon rate-limit.
 	LoginThrottle LoginThrottle
-	// Audit (optional) is the durable audit_log sink for the staff
-	// customer look-up, passkey add/remove, and passkey sign-ins
-	// refused on a clone warning or ceremony replay. nil degrades those
-	// to structured-log-only (Postgres-less deployments).
+	// Audit (optional) is the durable audit_log sink for staff look-ups, passkey changes, and
+	// passkey sign-ins refused on a clone warning or ceremony replay. nil means log-only.
 	Audit platform.AuditStore
-	// Passkeys (optional) is the WebAuthn credential store backing
-	// passkey sign-in (migration 0140). nil leaves the
-	// /v1/auth/passkey/* routes unmounted — email-code sign-in
-	// still works.
+	// Passkeys (optional) backs passkey sign-in; nil leaves /v1/auth/passkey/* unmounted while
+	// email-code sign-in still works.
 	Passkeys platform.WebAuthnCredentialStore
 	// PasskeyCeremonyGuard (optional) makes each WebAuthn ceremony challenge single-use, so a
 	// captured finish request cannot be replayed into a second session. Production wires Redis
@@ -91,45 +84,39 @@ type Config struct {
 	// are {DashboardBaseURL}/auth/callback?token=<plaintext>; post-login redirects land on
 	// {DashboardBaseURL}{next}, with next defaulting to "/".
 	DashboardBaseURL string
-	// EmailFrom is the From: address (e.g.
-	// `Stellar Index <hello@stellarindex.io>`).
+	// EmailFrom is the From: address, e.g. `Stellar Index <hello@stellarindex.io>`.
 	EmailFrom string
-	// MagicLinkTTL — link validity. Default 15 minutes.
+	// MagicLinkTTL is link validity. Default 15 minutes.
 	MagicLinkTTL time.Duration
-	// SessionTTL — cookie session lifetime from sign-in. Default 30
-	// days, fixed: TouchSession records activity but never extends
-	// expires_at.
+	// SessionTTL is the fixed session lifetime from sign-in (default 30 days): TouchSession records
+	// activity but never extends expires_at.
 	SessionTTL time.Duration
-	// SessionIdleTimeout — a session unused for this long is revoked
-	// before SessionTTL. Default [defaultSessionIdleTimeout].
+	// SessionIdleTimeout revokes a session unused this long, before SessionTTL. Default
+	// [defaultSessionIdleTimeout].
 	SessionIdleTimeout time.Duration
-	// CookieSecure — Secure flag on the session-presence hint.
-	// Credential cookies are always Secure (see [credentialCookie]).
+	// CookieSecure sets Secure on the session-presence hint; credential cookies are always Secure
+	// (see [credentialCookie]).
 	CookieSecure bool
-	// SessionHintDomain — Domain attribute of the session-presence
-	// hint only, so an explorer on a sibling host can read it. Empty
-	// = host-only. Credential cookies never carry a Domain.
+	// SessionHintDomain is the Domain of the session-presence hint only, so a sibling-host explorer
+	// can read it; empty means host-only. Credential cookies never carry a Domain.
 	SessionHintDomain string
-	// AccountEraser (optional) backs DELETE /v1/dashboard/account and
-	// AccountExporter (optional) GET /v1/dashboard/account/export; nil
-	// leaves the route unmounted.
+	// AccountEraser backs DELETE /v1/dashboard/account and AccountExporter GET
+	// /v1/dashboard/account/export; each is optional and nil leaves its route unmounted.
 	AccountEraser   AccountEraser
 	AccountExporter AccountExporter
 
-	// accountActions caps erasure and export attempts per user;
-	// accountIdempotency replays a retried erasure. Installed by validate().
+	// accountActions caps erasure and export attempts per user; accountIdempotency replays a
+	// retried erasure. Installed by validate().
 	accountActions     *ratelimit.LocalFixedWindowCounter
 	accountIdempotency *middleware.IdempotencyStore
 
-	// passkeyBeginLimiter caps anonymous begin-login ceremonies per
-	// client IP; installed by validate(), never configurable off.
+	// The three limiters below are installed by validate() and never configurable off.
+	// passkeyBeginLimiter caps anonymous begin-login ceremonies per client IP.
 	passkeyBeginLimiter *ratelimit.LocalFixedWindowCounter
-	// passkeySignupLimiter caps anonymous account-creating ceremonies per
-	// client IP; installed by validate(), never configurable off.
+	// passkeySignupLimiter caps anonymous account-creating ceremonies per client IP.
 	passkeySignupLimiter *ratelimit.LocalFixedWindowCounter
-	// signedInBrowserSends caps the sends [Handlers.admitSignedInBrowser]
-	// lets past a full LoginThrottle: one per address per link lifetime per
-	// instance. Installed by validate(), never configurable off.
+	// signedInBrowserSends caps the sends [Handlers.admitSignedInBrowser] lets past a full
+	// LoginThrottle: one per address per link lifetime per instance.
 	signedInBrowserSends *ratelimit.LocalFixedWindowCounter
 }
 
@@ -139,9 +126,8 @@ func (c *Config) ensureCodeSecret() error {
 		c.Generator = NewGenerator()
 	}
 	if len(c.Generator.Secret) == 0 {
-		// A ceremony begun on one instance must finish on another and
-		// survive a restart; a per-process key fails that with a 400
-		// indistinguishable from tampering, so passkeys require the secret.
+		// A ceremony must finish on another instance or after a restart; a per-process key would fail
+		// with a 400 indistinguishable from tampering, so passkeys require the secret.
 		if c.Passkeys != nil {
 			return errors.New("dashboardauth: passkeys are wired but the server secret is empty — set the api.dashboard.code_secret_env variable")
 		}
@@ -245,17 +231,15 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 	public.Handle(mux, "GET /v1/auth/callback", http.HandlerFunc(h.HandleCallback))
 	public.Handle(mux, "POST /v1/auth/verify-code", sameSite(http.HandlerFunc(h.HandleVerifyCode)))
 	public.Handle(mux, "POST /v1/auth/logout", sameSite(http.HandlerFunc(h.HandleLogout)))
-	// Staff customer look-up: session-gated AND staff-gated (HandleAdminLookup checks IsStaff).
-	// POST although read-only, because the term is an email address that must not travel in a
-	// URL (see [adminLookupRequest]); the same-site gate keeps a cross-site page from driving a
-	// staff session's PII reads.
+	// Staff customer look-up: session- and staff-gated. POST although read-only, because the email
+	// term must not travel in a URL (see [adminLookupRequest]); the same-site gate stops a
+	// cross-site page driving a staff session's PII reads.
 	mux.Handle("POST /v1/account/admin/lookup",
 		RequireSession()(sameSite(http.HandlerFunc(h.HandleAdminLookup))))
 
 	// Passkey routes, only when a credential store is wired. Registration and management are
-	// session-gated; the login and signup pairs are unauthenticated entry points. Every
-	// state-changing route keeps the same-site write gate: finish-login mints a session, so it
-	// is a login-CSRF primitive exactly as verify-code is.
+	// session-gated; login and signup are unauthenticated. Every state-changing route keeps the
+	// same-site gate: finish-login mints a session, a login-CSRF primitive like verify-code.
 	if h.cfg.Passkeys != nil {
 		requireSession := RequireSession()
 		public.Handle(mux, "POST /v1/auth/passkey/begin-login",
@@ -276,8 +260,7 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 			requireSession(sameSite(http.HandlerFunc(h.HandlePasskeyDelete))))
 	}
 
-	// Account erasure and export, session-only: an API key can
-	// neither destroy nor download the account it belongs to.
+	// Erasure and export are session-only: an API key must not destroy or download its own account.
 	if h.cfg.AccountEraser != nil {
 		idem := middleware.Idempotency(h.cfg.accountIdempotency, SessionAccountSubject)
 		mux.Handle("DELETE /v1/dashboard/account",
@@ -299,15 +282,12 @@ const maxCodeAttempts = 5
 // matching every live mint would multiply it by the send throttle's 5. The lockout gates the code
 // path only, so the magic link keeps working. Deliberately not tunable per deployment.
 const (
-	// maxDurableCodeFailures is the per-email failure budget inside
-	// durableCodeFailureWindow before the code path locks.
+	// maxDurableCodeFailures is the per-email failure budget inside durableCodeFailureWindow.
 	maxDurableCodeFailures = 10
-	// durableCodeFailureWindow is how long failures accumulate. A window
-	// that fully elapses without reaching the cap starts fresh.
+	// durableCodeFailureWindow is how long failures accumulate; an elapsed window starts fresh.
 	durableCodeFailureWindow = 24 * time.Hour
-	// durableCodeLockout is how long the code path stays shut once the
-	// cap is met. Matched to the window so the sustained budget is
-	// ~maxDurableCodeFailures per day rather than per window boundary.
+	// durableCodeLockout matches the window so the sustained budget is ~maxDurableCodeFailures per
+	// day, not per window boundary.
 	durableCodeLockout = 24 * time.Hour
 )
 
@@ -344,10 +324,8 @@ func (h *Handlers) refuseLoginWithoutMail(w http.ResponseWriter) bool {
 // is 503 when the mail transport is unconfigured (see refuseLoginWithoutMail). Signup happens
 // on consumption: the callback creates the account if none exists.
 func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
-	// MaxBytesReader, not LimitReader: LimitReader returns (n, nil) at
-	// its cap, so the read would succeed on a silently truncated body and
-	// this branch would be unreachable — an oversize body would surface
-	// as "malformed JSON".
+	// MaxBytesReader, not LimitReader: LimitReader returns (n, nil) at its cap, so an oversize body
+	// would be silently truncated and surface as "malformed JSON".
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "request body too large", "/v1/auth/login")
@@ -372,9 +350,8 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bind the link to THIS browser (login CSRF): the token itself
-	// carries a MAC of this browser's login-intent id. See
-	// [LoginIntentCookieName].
+	// Bind the link to THIS browser (login CSRF): the token carries a MAC of this browser's
+	// login-intent id. See [LoginIntentCookieName].
 	browser := h.setLoginIntentCookie(w, r)
 	plaintext, hash, code, err := h.cfg.Generator.newBoundToken(browser)
 	if err != nil {
@@ -490,10 +467,9 @@ func sessionSameSite() http.SameSite {
 	return http.SameSiteLaxMode
 }
 
-// credentialCookie is the only constructor for the cookies that carry
-// or bind a credential. It takes no Domain on purpose: each such cookie
-// is named __Host-, which browsers store only when Secure, Path=/ and
-// host-only, so no sibling host can read, overwrite or plant it.
+// credentialCookie is the only constructor for cookies that carry or bind a credential. It takes
+// no Domain on purpose: such cookies are __Host- named, which browsers store only when Secure,
+// Path=/ and host-only, so no sibling host can read, overwrite or plant them.
 func credentialCookie(name, value string) *http.Cookie {
 	return &http.Cookie{ //nolint:gosec // G124: Secure and HttpOnly are literal true; sessionSameSite() is Lax
 		Name:     name,
@@ -510,8 +486,7 @@ func credentialCookie(name, value string) *http.Cookie {
 // [LoginIntentCookieName] cookie is checked before the token is consumed, so opening it on a
 // second device does not burn it for the device that asked.
 func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
-	// The request URL carries the magic-link plaintext; set here too so
-	// the guarantee does not depend on the outer middleware stack.
+	// The URL carries the magic-link plaintext, so set this here rather than rely on outer middleware.
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	plaintext := r.URL.Query().Get("token")
 	if plaintext == "" {
@@ -542,9 +517,8 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tok.Purpose != platform.TokenPurposeLogin {
-		// A token minted for invite-accept can't be used to
-		// log in. Same-error-shape as not-found to avoid
-		// leaking whether a token exists for a different purpose.
+		// A token minted for another purpose cannot log in; same error shape as not-found so it
+		// does not leak that such a token exists.
 		writeProblem(w, http.StatusBadRequest, "invalid token", "/v1/auth/callback")
 		return
 	}
@@ -556,9 +530,7 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	h.clearLoginIntentCookie(w)
 
-	// Redirect into the dashboard. Caller-supplied `next` URL
-	// is path-only (we never honour absolute URLs to avoid
-	// open-redirect attacks); empty falls through to "/".
+	// `next` is path-only: absolute URLs are never honoured (open redirect); empty means "/".
 	next := r.URL.Query().Get("next")
 	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
 		next = "/"
@@ -625,16 +597,15 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Nothing to compare against → the answer is already "no", and charging
-	// it would spend the owner's budget on a request that could not match.
+	// With nothing to compare against the answer is already "no"; charging would spend the owner's
+	// budget on a request that could not match.
 	if !h.loginCodeLive(r, email) {
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
 	}
 
-	// The status check above is only a cheap early refusal: under a
-	// concurrent burst every request can pass it. The charge is what
-	// bounds the burst, so it must precede the comparison.
+	// The lockout check is a cheap early refusal that a concurrent burst can all pass; the charge
+	// is what bounds the burst, so it must precede the comparison.
 	if !h.chargeLoginCodeAttempt(r, lockKey) {
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
@@ -653,10 +624,8 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	}
 	matchedHash := cand.TokenHash
 
-	// Atomically consume the matched token so the code can't be
-	// replayed and so it races safely against a magic-link click or a
-	// concurrent verify. The expected terminal states (lost race /
-	// expired in the gap) map to the same generic 400, not a 500.
+	// Consume atomically so the code cannot be replayed and races safely against a magic-link click
+	// or concurrent verify; a lost race or expiry in the gap maps to the generic 400, not a 500.
 	if _, err := h.cfg.Tokens.ConsumeMagicLinkToken(r.Context(), matchedHash); err != nil {
 		if errors.Is(err, platform.ErrNotFound) || errors.Is(err, platform.ErrTokenExpired) {
 			writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
@@ -700,9 +669,8 @@ func (h *Handlers) loginCodeLocked(r *http.Request, email string) bool {
 	return true
 }
 
-// clearLoginCodeLockouts retires both durable code budgets for email: the
-// shared one and the signed-in browsers' one. Best-effort: a failure must
-// never turn a valid login into an error.
+// clearLoginCodeLockouts retires both durable code budgets for email (shared and signed-in
+// browsers'). Best-effort: a failure must never turn a valid login into an error.
 func (h *Handlers) clearLoginCodeLockouts(r *http.Request, email string) {
 	for _, key := range []string{email, platform.LoginCodeDeviceKey(email)} {
 		if err := h.cfg.Tokens.ClearLoginCodeLockout(r.Context(), key); err != nil {
@@ -711,9 +679,8 @@ func (h *Handlers) clearLoginCodeLockouts(r *http.Request, email string) {
 	}
 }
 
-// loginCodeLive reports whether a code candidate exists for email. A
-// store error answers true: the attempt is then charged as before, never
-// waved through uncharged.
+// loginCodeLive reports whether a code candidate exists for email. A store error answers true, so
+// the attempt is charged rather than waved through.
 func (h *Handlers) loginCodeLive(r *http.Request, email string) bool {
 	live, err := h.cfg.Tokens.HasLiveLoginCode(r.Context(), email, maxCodeAttempts)
 	if err != nil {
@@ -734,8 +701,7 @@ func (h *Handlers) chargeLoginCodeAttempt(r *http.Request, email string) bool {
 	state, err := h.cfg.Tokens.RegisterFailedLoginCode(
 		r.Context(), email, maxDurableCodeFailures, durableCodeFailureWindow, durableCodeLockout)
 	if err != nil {
-		// The attempt is free: nothing durable recorded it. Same silence
-		// as the status-check path, same counter.
+		// Fails open: nothing durable recorded the attempt; same counter as the status-check path.
 		obs.LoginCodeLockoutErrorsTotal.WithLabelValues(obs.LoginCodeLockoutOpRegister).Inc()
 		h.cfg.Logger.Warn("register failed login code", "err", err, "email", maskEmail(email))
 		return true
@@ -768,8 +734,7 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 	// owner out. Best-effort.
 	h.clearLoginCodeLockouts(r, email)
 
-	// Mark email verified — a consumed login token proves control of
-	// the address. Passkey logins don't re-prove it, so the flag is
+	// A consumed login token proves control of the address. Passkey logins do not, so the flag is
 	// set here, not in mintSession.
 	user.EmailVerifiedAt = h.cfg.Now()
 
@@ -784,9 +749,8 @@ const maxLiveSessionsPerUser = 10
 // ALREADY-AUTHENTICATED user. It is the single issuance path (link, code and passkey), so every
 // door issues an identical credential.
 func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user platform.User) error {
-	// last_login (+ any caller-staged field like EmailVerifiedAt) is
-	// non-fatal on error — the session can still issue; we just won't
-	// have a fresh timestamp on the next /me lookup.
+	// A failed last_login update (or caller-staged field like EmailVerifiedAt) is non-fatal: the
+	// session still issues.
 	now := h.cfg.Now()
 	user.LastLoginAt = now
 	if err := h.cfg.Users.UpdateUser(r.Context(), user); err != nil {
@@ -819,8 +783,7 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
-	// Bounds the live-session row count per user however fast a door
-	// mints. Best-effort like the replaced-session revoke above.
+	// Bounds live sessions per user however fast a door mints; best-effort.
 	if err := h.cfg.Users.CapUserSessions(r.Context(), user.ID, sess.ID, maxLiveSessionsPerUser); err != nil {
 		h.cfg.Logger.Warn("cap live sessions at login", "err", err, "user_id", user.ID)
 	}
@@ -828,9 +791,8 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 	sc := credentialCookie(SessionCookieName, token) //nolint:gosec // G124: credentialCookie sets Secure, HttpOnly and SameSite=Lax
 	sc.Expires = sess.ExpiresAt
 	http.SetCookie(w, sc)
-	// The JS-readable shadow of the cookie above, written in the same
-	// response so the two can never disagree about whether a session
-	// was just issued. See [SessionHintCookieName].
+	// The JS-readable shadow of the cookie above, written in the same response so the two never
+	// disagree. See [SessionHintCookieName].
 	h.setSessionHintCookie(w, sess.ExpiresAt)
 	if email, err := notify.CanonicalRecipient(user.Email); err == nil && !platform.IsPlaceholderEmail(email) {
 		h.setLoginDeviceCookie(w, email)
@@ -838,9 +800,8 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 	return nil
 }
 
-// revokePresentedSession revokes the session the browser is replacing, so
-// a stolen copy of the old cookie dies when the victim logs in again.
-// Best-effort like HandleLogout: a failed revoke must not block login.
+// revokePresentedSession revokes the session the browser is replacing, so a stolen copy of the old
+// cookie dies on re-login. Best-effort: a failed revoke must not block login.
 func (h *Handlers) revokePresentedSession(r *http.Request) {
 	c, err := r.Cookie(SessionCookieName)
 	if err != nil || c.Value == "" {
@@ -862,8 +823,7 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("all"); v != "" {
 		parsed, err := strconv.ParseBool(v)
 		if err != nil {
-			// Refuse rather than fall back to a narrower logout than the
-			// caller asked for.
+			// Refuse rather than log out narrower than asked.
 			writeProblem(w, http.StatusBadRequest, "all must be true or false", r.URL.Path)
 			return
 		}
@@ -875,8 +835,7 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		sess, err := h.cfg.Users.GetSessionByTokenHash(r.Context(), HashSessionToken(c.Value))
 		switch {
 		case err == nil && all:
-			// Not best-effort: a 200 here tells the user every other
-			// session is dead, so a failed revoke must surface.
+			// Not best-effort: a 200 tells the user every other session is dead.
 			if err := h.cfg.Users.RevokeAllUserSessions(r.Context(), sess.UserID); err != nil {
 				h.cfg.Logger.Error("revoke all sessions at logout", "err", err, "user_id", sess.UserID)
 				writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
@@ -893,8 +852,7 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Clear the cookie regardless — even an invalid one, so
-	// the browser stops sending it.
+	// Clear regardless, even an invalid cookie, so the browser stops sending it.
 	h.clearSessionCookies(w)
 	w.WriteHeader(http.StatusOK)
 }
@@ -937,10 +895,8 @@ func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.Us
 	})
 	if err != nil {
 		if errors.Is(err, platform.ErrConflict) {
-			// Race lost on the email unique index. The OTHER
-			// concurrent callback won, its CreateUser
-			// succeeded, and its account is the canonical one.
-			// Re-fetch and use that user.
+			// Race lost on the email unique index: the other callback's account is canonical, so
+			// re-fetch and use its user.
 			h.cfg.Logger.Warn("signup race: rolling back to winning user",
 				"email", maskEmail(email), "speculative_account_id", acct.ID)
 			winner, getErr := h.cfg.Users.GetUserByEmail(ctx, email)
@@ -960,9 +916,8 @@ func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.Us
 	return user, nil
 }
 
-// createSignupAccount inserts the account for a first-login email.
-// Name and slug are derived from the address, so both are clamped to
-// the accounts CHECK bounds; the full address lives in billing_email.
+// createSignupAccount inserts the account for a first-login email. Name and slug derive from the
+// address and are clamped to the accounts CHECK bounds; the full address lives in billing_email.
 func (h *Handlers) createSignupAccount(ctx context.Context, email string) (platform.Account, error) {
 	slug := slugFromEmail(email)
 	newAccount := func(slug string) platform.Account {
@@ -1069,9 +1024,8 @@ func (h *Handlers) waitForWinnerUser(ctx context.Context, email string) (platfor
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-// looksLikeCode reports whether s is a well-formed 6-digit numeric
-// code. Cheap pre-filter so a malformed body never reaches the token
-// store; the real check is the constant-time match in HandleVerifyCode.
+// looksLikeCode is a cheap 6-digit pre-filter so a malformed body never reaches the token store;
+// the real check is the constant-time match in HandleVerifyCode.
 func looksLikeCode(s string) bool {
 	if len(s) != 6 {
 		return false
@@ -1085,9 +1039,8 @@ func looksLikeCode(s string) bool {
 }
 
 func clientIP(r *http.Request) net.IP {
-	// Use the trusted-proxy-resolved IP: behind the proxy the socket peer is the proxy itself,
-	// and the middleware honours X-Forwarded-For only per trusted_proxy_cidrs. Falls back to the
-	// socket peer when it returns empty.
+	// Behind the proxy the socket peer is the proxy itself; the middleware honours X-Forwarded-For
+	// only per trusted_proxy_cidrs. Falls back to the socket peer when it returns empty.
 	if resolved := middleware.RemoteIP(r); resolved != "" {
 		if ip := net.ParseIP(resolved); ip != nil {
 			return ip
@@ -1130,9 +1083,8 @@ func truncateUA(ua string) string {
 	return uaDangerousChars.ReplaceAllString(safeText(ua, maxUALen), "")
 }
 
-// slugFromEmail derives an account slug from the local part of
-// an email. Lowercase, hyphenated, ASCII-only, at most
-// platform.MaxAccountSlugLen bytes.
+// slugFromEmail derives a lowercase, hyphenated, ASCII slug of at most platform.MaxAccountSlugLen
+// bytes from the email's local part.
 func slugFromEmail(email string) string {
 	at := strings.IndexByte(email, '@')
 	if at <= 0 {
@@ -1154,8 +1106,7 @@ func slugFromEmail(email string) string {
 	return clampSlug(b.String(), platform.MaxAccountSlugLen)
 }
 
-// clampSlug trims hyphens from both ends of an ASCII slug and caps it
-// at maxLen bytes, falling back to "user" when nothing is left.
+// clampSlug trims edge hyphens and caps an ASCII slug at maxLen bytes, falling back to "user".
 func clampSlug(s string, maxLen int) string {
 	s = strings.Trim(s, "-")
 	if len(s) > maxLen {
@@ -1167,14 +1118,12 @@ func clampSlug(s string, maxLen int) string {
 	return s
 }
 
-// suffixSlug appends "-<suffix>" to slug, shortening slug first so the
-// result still fits platform.MaxAccountSlugLen.
+// suffixSlug appends "-<suffix>", shortening slug first to fit platform.MaxAccountSlugLen.
 func suffixSlug(slug, suffix string) string {
 	return clampSlug(slug, platform.MaxAccountSlugLen-len(suffix)-1) + "-" + suffix
 }
 
-// accountNameFromEmail returns email cut to platform.MaxAccountNameLen
-// characters on a rune boundary (Postgres length() counts characters).
+// accountNameFromEmail cuts email to platform.MaxAccountNameLen runes, as Postgres length() counts.
 func accountNameFromEmail(email string) string {
 	n := 0
 	for i := range email {

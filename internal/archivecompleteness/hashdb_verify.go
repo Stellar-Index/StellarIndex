@@ -7,9 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/hashdb"
 )
 
-// HashDBVerifyResult is the outcome of a [HashDBWindowVerifier] pass.
-// Mirrors the shape of [CrossAnchorResult]: counts first, a bounded
-// sample of the interesting sequences second.
+// HashDBVerifyResult is the outcome of a [HashDBWindowVerifier] pass: counts first, then a
+// bounded sample of drifted sequences, like [CrossAnchorResult].
 type HashDBVerifyResult struct {
 	// From, To — the ledger range that was walked (inclusive).
 	From, To uint32
@@ -27,27 +26,22 @@ type HashDBVerifyResult struct {
 	// Not an error: there is no baseline to compare against.
 	Missing int
 
-	// OutOfRange counts ledgers below hashdb's StartLedger — the
-	// caller's window reached further back than the file covers.
-	// Same non-error treatment as Missing.
+	// OutOfRange counts ledgers below hashdb's StartLedger, where the window reaches further back
+	// than the file covers. Not an error, like Missing.
 	OutOfRange int
 
-	// DriftSeqs lists the drifted ledger sequences, ascending, capped
-	// at [MaxHashDBDriftSeqsReported] so a catastrophic drift event
-	// doesn't balloon the result. Drifted is always the true count
-	// even when this slice is truncated.
+	// DriftSeqs lists drifted sequences, ascending, capped at [MaxHashDBDriftSeqsReported] so a
+	// catastrophic drift cannot balloon the result. Drifted stays the true count when truncated.
 	DriftSeqs []uint32
 }
 
-// AnyDrift reports whether the pass found at least one drifted
-// ledger — the alert condition.
+// AnyDrift reports whether the pass found a drifted ledger, the alert condition.
 func (r HashDBVerifyResult) AnyDrift() bool {
 	return r.Drifted > 0
 }
 
-// MaxHashDBDriftSeqsReported caps HashDBVerifyResult.DriftSeqs —
-// mirrors [MaxMissingReported]'s rationale: bound the payload even
-// under a worst-case "every ledger in the window drifted" scenario.
+// MaxHashDBDriftSeqsReported caps HashDBVerifyResult.DriftSeqs, bounding the payload even when
+// every ledger in the window drifted (same rationale as [MaxMissingReported]).
 const MaxHashDBDriftSeqsReported = 64
 
 // HashDBWindowVerifier accumulates a [HashDBVerifyResult] as the caller feeds it one
@@ -63,10 +57,8 @@ type HashDBWindowVerifier struct {
 	res HashDBVerifyResult
 }
 
-// NewHashDBWindowVerifier returns a verifier that will check ledgers
-// in [from, to] (inclusive) against db as the caller calls Observe.
-// db is read-only from this type's perspective — Observe only ever
-// calls db.Verify, never db.Append.
+// NewHashDBWindowVerifier returns a verifier for ledgers in [from, to] (inclusive). db is
+// read-only here: Observe only calls db.Verify, never db.Append.
 func NewHashDBWindowVerifier(db *hashdb.DB, from, to uint32) *HashDBWindowVerifier {
 	return &HashDBWindowVerifier{db: db, res: HashDBVerifyResult{From: from, To: to}}
 }
@@ -92,17 +84,14 @@ func (v *HashDBWindowVerifier) Observe(seq uint32, observed [32]byte) error {
 	case errors.Is(verr, hashdb.ErrOutOfRange):
 		v.res.OutOfRange++
 	default:
-		// Anything else (I/O error against the hashdb file itself) is
-		// not a drift signal — it's "we couldn't even check", a
-		// different failure mode that should surface distinctly
-		// rather than being silently folded into a count.
+		// An I/O error on the hashdb file means "could not check", not drift, so it surfaces
+		// distinctly instead of folding into a count.
 		return fmt.Errorf("archivecompleteness: hashdb verify ledger %d: %w", seq, verr)
 	}
 	return nil
 }
 
-// Result returns the accumulated outcome so far. Safe to call at any
-// point, including mid-walk (e.g. to log partial progress).
+// Result returns the accumulated outcome so far; safe mid-walk.
 func (v *HashDBWindowVerifier) Result() HashDBVerifyResult {
 	return v.res
 }

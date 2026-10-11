@@ -50,12 +50,11 @@ func (s ReconcileEventStreamer) filterWhere(contractIDs, topic0Syms []string) st
 }
 
 // ContiguousWatermark returns the highest ledger L such that stellar.ledgers holds every ledger in
-// [from, L] with no hole: the projector's safe upper read bound (ADR-0041).
-// The live dual-sink can drop whole ledgers while the projector advances its cursor
-// unconditionally, so reading past a hole would silently lose events; clamping to this watermark
-// stalls AT the hole until catch-up heals it. Keyed off ledgers because Sink.Flush writes it LAST.
-// Returns from-1 when CH has not reached `from` or `from` itself is a hole (a case the
-// interior-gap scan cannot see); callers treat tip <= from as idle.
+// [from, L] with no hole: the projector's safe upper read bound (ADR-0041). The live dual-sink can
+// drop whole ledgers while the projector advances its cursor, so clamping to this watermark
+// stalls at the hole until catch-up heals it. Keyed off ledgers because Sink.Flush writes it LAST.
+// Returns from-1 when CH has not reached `from` or `from` itself is a hole; callers treat
+// tip <= from as idle.
 func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -74,14 +73,11 @@ func contiguousWatermarkOn(ctx context.Context, conn driver.Conn, from uint32) (
 // contiguousWatermarkUpTo bounds the gap scan to [from, to] and clamps the result to `to`, so a
 // lagging reader pays one batch window per call.
 func contiguousWatermarkUpTo(ctx context.Context, conn driver.Conn, from, to uint32) (uint32, error) {
-	// first_gap_start sees only INTERIOR gaps, so it is blind to a hole at `from` itself: with
-	// `from` absent, {from+1, ...} is contiguous and it reads 0. min_present exposes that: above
-	// `from`, `from` is missing and the watermark stalls at from-1. scripts/ops/ch-live-catchup.sh
-	// carries both arms; change them together.
-	// leadInFrame returns the row's own value for the last row, so there is no spurious trailing
-	// gap; min() over an empty set is 0, read as "no hole".
-	// Every column is toUInt64(ifNull(..., 0)): scalar subqueries are Nullable and
-	// min(ledger_seq+1) widens to UInt64, and the driver rejects type mismatches.
+	// first_gap_start sees only interior gaps, so a hole at `from` itself reads 0; min_present
+	// exposes it (above `from` means `from` is missing). scripts/ops/ch-live-catchup.sh carries
+	// both arms; change them together. leadInFrame returns the row's own value for the last row,
+	// so there is no spurious trailing gap; min() over an empty set is 0, read as "no hole".
+	// Every column is toUInt64(ifNull(..., 0)) because the driver rejects Nullable/UInt64 mismatches.
 	const q = `
 		SELECT
 			toUInt64(ifNull((SELECT max(ledger_seq) FROM stellar.ledgers), 0)) AS ch_max,
@@ -132,8 +128,8 @@ func NewWatermarkReader(ctx context.Context, addr string) (*WatermarkReader, err
 	return &WatermarkReader{conn: conn}, nil
 }
 
-// ContiguousWatermark is [ContiguousWatermark] on the reader's connection,
-// scanning no further than ledger to and never returning above it.
+// ContiguousWatermark is [ContiguousWatermark] on the reader's connection, scanning and
+// returning no higher than `to`.
 func (w *WatermarkReader) ContiguousWatermark(ctx context.Context, from, to uint32) (uint32, error) {
 	return contiguousWatermarkUpTo(ctx, w.conn, from, to)
 }
@@ -167,10 +163,9 @@ func lakeMinLedgerOn(ctx context.Context, conn driver.Conn) (uint32, error) {
 	return uint32(lo), nil // ledger sequences fit uint32
 }
 
-// substrateWindow bounds each substrate query: both checks need a full sort of their range (window
-// functions), and a whole-lake span exceeds the query memory cap. Both properties are LOCAL
-// (neighbour contiguity, neighbour hash-link), so windows with a 1-ledger overlap prove the same
-// claim at bounded memory.
+// substrateWindow bounds each substrate query: both checks full-sort their range and a whole-lake
+// span exceeds the query memory cap. Both properties are local (neighbour contiguity, neighbour
+// hash-link), so windows with a 1-ledger overlap prove the same claim at bounded memory.
 const substrateWindow = 5_000_000
 
 // substrateChainGenesis is ledger 1, which has no predecessor, so the earliest checkable link is at
@@ -193,9 +188,9 @@ func substrateQueryLo(wlo, from uint64) uint64 {
 
 // SubstrateProblem returns the earliest ledger in [from,to] where the lake substrate fails
 // (ADR-0033 Claim 1): a missing ledger or a hash-chain break (prev_hash != prior ledger_hash).
-// (0, false) means continuous and hash-linked over the whole range. Both checks run over a
-// per-ledger dedup (GROUP BY ledger_seq, argMax by ingested_at) so duplicate parts cannot create
-// false breaks. Windows overlap by one ledger so a break on a boundary is not missed.
+// (0, false) means continuous and hash-linked. Both checks run over a per-ledger dedup
+// (argMax by ingested_at) so duplicate parts cannot create false breaks, and windows overlap by
+// one ledger so a boundary break is not missed.
 func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (problem uint32, hasProblem bool, detail string, err error) {
 	conn, oerr := openRead(ctx, addr)
 	if oerr != nil {
@@ -235,10 +230,9 @@ func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from
 			)
 		) WHERE ledger_seq > ? AND prior_hash != '' AND prev_hash != prior_hash), 0))`
 
-	// Endpoint-presence guard, fail-closed: the windowed scan finds only holes BETWEEN present
-	// ledgers, so an empty range or one missing its head/tail would read as intact and falsely
-	// certify lake_complete during a partial restore. Assert endpoints and count up front; the tail
-	// is re-checked after the scan.
+	// Endpoint-presence guard, fail-closed: the windowed scan finds only holes between present
+	// ledgers, so an empty range or a missing head/tail would falsely certify lake_complete during
+	// a partial restore. The tail is re-checked after the scan.
 	var haveMin, haveMax, present uint64
 	const endpointsQ = `SELECT toUInt64(ifNull(min(ledger_seq),0)), toUInt64(ifNull(max(ledger_seq),0)), toUInt64(uniqExact(ledger_seq)) FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?`
 	if qerr := conn.QueryRow(ctx, endpointsQ, from, to).Scan(&haveMin, &haveMax, &present); qerr != nil {
@@ -250,9 +244,8 @@ func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from
 		return headProblem, true, headDetail, nil
 	}
 
-	// A truncated head does NOT excuse the walks: [haveMin, to] is real data, and a source with
-	// genesis >= haveMin is only certified clean by walking it. [from, haveMin) is already known
-	// missing, so the walk starts at haveMin.
+	// A truncated head does not excuse the walks: a source with genesis >= haveMin is certified
+	// clean only by walking [haveMin, to]. [from, haveMin) is already known missing.
 	walkFrom := uint64(from)
 	if headHasProblem {
 		walkFrom = haveMin
@@ -263,8 +256,8 @@ func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from
 		if whi > uint64(to) {
 			whi = uint64(to)
 		}
-		// The window starts one ledger BEFORE the span it certifies (including the first, whose
-		// seam is the -from junction) so the seam pair is hash-checked and a seam gap is caught.
+		// The window starts one ledger before the span it certifies so the seam pair is
+		// hash-checked and a seam gap is caught.
 		qlo := substrateQueryLo(wlo, walkFrom)
 
 		var firstGap uint64
@@ -286,19 +279,16 @@ func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from
 		}
 	}
 	if headHasProblem {
-		// The interior is clean but [from, haveMin) was never walked: report the head problem (the
-		// FIRST problem in [from, to]). sourceSubstrateOK's `problem < genesis` still passes
-		// sources whose genesis is >= haveMin.
+		// The interior is clean; report the head problem, the first in [from, to].
+		// sourceSubstrateOK's `problem < genesis` still passes sources whose genesis is >= haveMin.
 		return headProblem, true, headDetail, nil
 	}
-	// Tail-presence guard: if the last present ledger is below `to`, return `to` (not haveMax+1) so
-	// `problem < genesis` fails EVERY source, not just those below haveMax+1.
+	// Tail guard: return `to` (not haveMax+1) so `problem < genesis` fails every source.
 	if haveMax < uint64(to) {
 		return to, true, fmt.Sprintf("substrate: missing tail ledger(s) — last present is %d, expected %d", haveMax, to), nil
 	}
-	// Total-count guard: a hole spanning both overlap ledgers of a window seam has no present
-	// ledger on either side in ANY window, so gapQ and chainQ are blind to it. Compare `present`
-	// (uniqExact over the range) against the full range size.
+	// Total-count guard: a hole spanning both overlap ledgers of a window seam is invisible to
+	// gapQ and chainQ, so compare `present` (uniqExact) against the range size.
 	if !substrateCountIntact(from, to, present) {
 		return substrateLocateHole(ctx, addr, from, to)
 	}
@@ -311,8 +301,7 @@ func substrateCountIntact(from, to uint32, present uint64) bool {
 }
 
 // substrateLocateHole finds the first missing ledger once substrateCountIntact proves a
-// seam-straddling hole. It tiles [from,to] into non-overlapping windows (existence is enough) and
-// asks QueryMissingLedgerSeqs for the first tile with a deficit.
+// seam-straddling hole, using non-overlapping windows (existence is enough).
 func substrateLocateHole(ctx context.Context, addr string, from, to uint32) (problem uint32, hasProblem bool, detail string, err error) {
 	werr := forEachLedgerWindow(from, to, substrateWindow, func(lo, hi uint32) error {
 		if hasProblem {
@@ -385,8 +374,7 @@ const eventCensusPartitionWidth = 1_000_000
 type EventCensusShortfall struct {
 	// Partition is intDiv(ledger_seq, 1_000_000).
 	Partition uint32
-	// FirstEventLedger is the lowest ledger in the partition whose
-	// soroban_event_count is non-zero.
+	// FirstEventLedger is the lowest ledger in the partition with a non-zero soroban_event_count.
 	FirstEventLedger uint32
 	// Expected is Σ soroban_event_count (deduplicated per ledger); Present is the active-part row
 	// count.
@@ -395,14 +383,13 @@ type EventCensusShortfall struct {
 }
 
 // EventCensusShortfalls cross-checks contract_events against ledgers per partition touched by
-// [from, to].
-// SubstrateProblem proves only stellar.ledgers, and "ledgers is written LAST" holds for ingest
-// alone: a DROP/REPLACE PARTITION or a restore that brings ledgers back first
+// [from, to]. SubstrateProblem proves only stellar.ledgers, and "ledgers is written LAST" holds
+// for ingest alone: a DROP/REPLACE PARTITION or a restore that brings ledgers back first
 // (docs/operations/clickhouse-destructive-ddl.md) leaves ledgers intact over an empty event table.
-// soroban_event_count increments exactly when a contract_events row is appended, so fewer rows
-// means lost events. Present counts active parts; unmerged duplicates only raise it, so there is
-// no false shortfall (a loss masked by as many duplicates goes undetected).
-// Expected is read BEFORE present, since the sink flushes contract_events before ledgers.
+// soroban_event_count rises exactly when a contract_events row is appended, so fewer rows means
+// lost events. Present counts active parts; unmerged duplicates only raise it, so there is no
+// false shortfall (a loss masked by as many duplicates goes undetected). Expected is read BEFORE
+// present, since the sink flushes contract_events before ledgers.
 func EventCensusShortfalls(ctx context.Context, addr string, from, to uint32) ([]EventCensusShortfall, error) {
 	if from > to {
 		return nil, nil

@@ -48,49 +48,38 @@ type Cache interface {
 // FreezeMarker records an ActionFreeze decision (production: freeze.Writer); all methods MUST be idempotent on (asset, quote).
 // frozenValue is the last-known-good VWAP, formatRatFixed(prev, 12), empty with no prior bucket; it reaches freeze_events via the EventSink, not the Redis marker.
 type FreezeMarker interface {
-	// Mark writes a marker with the writer's flat default TTL and no
-	// lifecycle state. Used by the triangulated-composite refusal,
-	// which is a per-tick decision about a DERIVED price and owns no
-	// freeze lifecycle of its own.
+	// Mark writes a marker with the default TTL and no lifecycle state, for the triangulated-composite
+	// refusal: a per-tick decision about a DERIVED price with no freeze lifecycle of its own.
 	Mark(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) error
 
-	// MarkHold writes a marker carrying the ADR-0019 lifecycle state,
-	// with `ttl` = remaining hold + silence grace. The freeze-duration
-	// path uses this; the marker's expiry is a liveness backstop, not
-	// the freeze policy.
+	// MarkHold writes a marker carrying the ADR-0019 lifecycle state with ttl = remaining hold +
+	// silence grace; the expiry is a liveness backstop, not the freeze policy.
 	MarkHold(ctx context.Context, asset, quote canonical.Asset, frozenValue string,
 		decision anomaly.Decision, state freeze.State, ttl time.Duration) error
 
-	// LoadState reads back the lifecycle state a previous MarkHold
-	// stamped. (State{}, false, nil) means no marker — which the
-	// orchestrator reads as "never frozen" on a cold key and as the
-	// ADR-0019 operator force-unfreeze on a key it believes is frozen.
+	// LoadState reads back the state a previous MarkHold stamped. (State{}, false, nil) means no
+	// marker: "never frozen" on a cold key, an operator force-unfreeze on a key believed frozen.
 	LoadState(ctx context.Context, asset, quote canonical.Asset) (freeze.State, bool, error)
 
-	// Clear deletes the marker, ending the freeze on the serving path
-	// immediately rather than after the remaining hold's TTL.
+	// Clear deletes the marker, ending the freeze on the serving path immediately.
 	Clear(ctx context.Context, asset, quote canonical.Asset) error
 }
 
 // WindowedFreezeMarker is the window-aware half of [FreezeMarker]: the marker is pair-wide but windows freeze independently, so a pair-level ladder let a cold window adopt a sibling's FiredAt, HoldUntil, ExtensionsUsed and Escalated.
 // Optional: a writer that can't scope keeps pair-wide behaviour, which errs towards holding.
 type WindowedFreezeMarker interface {
-	// MarkHoldForWindow is [FreezeMarker.MarkHold] recording `window`
-	// as the owner of `state`, merging with the ladders the marker
-	// already carries for the pair's other windows.
+	// MarkHoldForWindow is [FreezeMarker.MarkHold] recording `window` as the owner of `state`,
+	// merged with the ladders the marker holds for the pair's other windows.
 	MarkHoldForWindow(ctx context.Context, asset, quote canonical.Asset, window time.Duration,
 		frozenValue string, decision anomaly.Decision, state freeze.State, ttl time.Duration) error
 
-	// LoadStateForWindow is [FreezeMarker.LoadState] with the ladder
-	// scoped to `window`: presence stays pair-wide (so the operator
-	// override still reads identically), but the state returned is the
-	// one `window` itself owns — the zero State when it owns none.
+	// LoadStateForWindow is [FreezeMarker.LoadState] scoped to `window`: presence stays pair-wide
+	// (so the operator override reads identically) but the state is the one `window` owns, or zero.
 	LoadStateForWindow(ctx context.Context, asset, quote canonical.Asset,
 		window time.Duration) (freeze.State, bool, error)
 
-	// RetireWindowLadder drops `window`'s ladder from the marker while
-	// leaving the marker in place, for the release of one window of a
-	// pair whose other windows are still frozen.
+	// RetireWindowLadder drops `window`'s ladder but keeps the marker, for releasing one window of
+	// a pair whose other windows are still frozen.
 	RetireWindowLadder(ctx context.Context, asset, quote canonical.Asset, window time.Duration) error
 
 	// ReleaseWindow ends `window`'s freeze when this process knows of no other frozen window: it clears the
@@ -107,19 +96,14 @@ type FreezeOverrideReader interface {
 
 // Config controls the orchestrator's behaviour; the orchestrator itself doesn't know about TOML.
 type Config struct {
-	// Pairs is the list of pairs the orchestrator pre-computes
-	// VWAP for. Empty = orchestrator is a no-op (valid for
-	// deployments that want the binary running as a placeholder
-	// while operators configure their pair set).
+	// Pairs is the set to pre-compute VWAP for; empty makes the orchestrator a no-op.
 	Pairs []canonical.Pair
 
-	// Windows is the list of rolling windows the orchestrator
-	// computes VWAP over. If empty, defaults to [5m, 1h, 24h].
+	// Windows are the rolling windows to compute over; empty defaults to [5m, 1h, 24h].
 	Windows []time.Duration
 
-	// Interval is the gap between tick-driven refreshes. Defaults
-	// to 30 s — matches the Redis `price:` TTL of 60 s with
-	// headroom for tick lateness.
+	// Interval is the gap between ticks; the 30s default leaves headroom inside the 60s Redis
+	// `price:` TTL.
 	Interval time.Duration
 
 	// TickTimeout bounds one [Tick] and every store, cache and reference call in it, so one wedged query (a
@@ -128,9 +112,8 @@ type Config struct {
 	// DefaultTickTimeoutIntervals × Interval.
 	TickTimeout time.Duration
 
-	// MaxTradesPerWindow caps per-query row count to protect
-	// Timescale from a runaway scan on an unexpectedly active
-	// pair. Defaults to 10_000.
+	// MaxTradesPerWindow caps per-query rows so an unexpectedly active pair cannot run away with
+	// Timescale. Defaults to 10_000.
 	MaxTradesPerWindow int
 
 	// EnableStablecoinFiatProxy expands each fiat target into the direct pair plus one stablecoin-backed pair per peg and rewrites those trades onto the target via aggregate.ProxyPair before VWAP.
@@ -181,10 +164,8 @@ type Config struct {
 	// tell unset from false, so the safe default must be the zero value.
 	DisableClassFilter bool
 
-	// ExcludedSources drops every stored trade from the named sources
-	// at read time, before the class filter, so an operator can remove
-	// a misbehaving source from VWAP without purging history. Applies
-	// even when DisableClassFilter is set.
+	// ExcludedSources drops stored trades from the named sources at read time, before the class
+	// filter (and even with DisableClassFilter), so a misbehaving source leaves VWAP without a purge.
 	ExcludedSources []string
 
 	// Phase2Thresholds tunes the ADR-0019 Phase 2 freeze (3-signal AND on confidence, z, source count); zero fields fall back to the [Default*] constants.
@@ -202,10 +183,8 @@ type Config struct {
 	// partitions.
 	FXStore FXStore
 
-	// CompositeReference gates the current-bucket composite-reference
-	// corroboration of the phase-2 freeze for structurally single-venue
-	// targets (see composite_reference.go). Zero value =
-	// off, which is what a Config assembled directly in a test gets.
+	// CompositeReference gates composite-reference corroboration of the phase-2 freeze for
+	// structurally single-venue targets (composite_reference.go). Zero value is off.
 	CompositeReference CompositeReferenceConfig
 
 	// DivergenceRefresher, when non-nil, refreshes the `div:<base>/<quote>` cache once per pair per [Tick] so
@@ -238,8 +217,7 @@ type Config struct {
 	// Nil resolves both legs to StandardDecimals (factor 1).
 	DecimalsLookup aggregate.DecimalsLookup
 
-	// Logger is the structured logger. If nil, slog.Default() is
-	// used.
+	// Logger defaults to slog.Default().
 	Logger *slog.Logger
 }
 
@@ -282,9 +260,8 @@ var DefaultWindows = []time.Duration{
 	24 * time.Hour,
 }
 
-// normalizeWindows returns the positive windows ascending and de-duplicated,
-// in a fresh slice. refreshDivergenceAll reads Windows[0] as the shortest;
-// config validation rejects the rest, this covers a directly built Config.
+// normalizeWindows returns the positive windows ascending and de-duplicated in a fresh slice;
+// refreshDivergenceAll reads Windows[0] as the shortest.
 func normalizeWindows(ws []time.Duration) []time.Duration {
 	out := make([]time.Duration, 0, len(ws))
 	for _, w := range ws {
@@ -296,8 +273,7 @@ func normalizeWindows(ws []time.Duration) []time.Duration {
 	return slices.Compact(out)
 }
 
-// effectiveWindows is the window set [New] runs for a configured one:
-// normalized, or [DefaultWindows] when nothing positive was configured.
+// effectiveWindows is the normalized set [New] runs, or [DefaultWindows] when none is positive.
 func effectiveWindows(ws []time.Duration) []time.Duration {
 	if out := normalizeWindows(ws); len(out) > 0 {
 		return out
@@ -320,21 +296,19 @@ func ShortestWindow(ws []time.Duration) time.Duration {
 // It is also the SSE observed_at cadence and the return granularity ADR-0019 baselines are calibrated at.
 const closedBucket = time.Minute
 
-// decidedBucket is the outcome of the first evaluation of one closed
-// bucket for one (pair, window); see [Orchestrator.refreshPairWindow].
+// decidedBucket is the outcome of the first evaluation of one closed bucket for one (pair,
+// window); see [Orchestrator.refreshPairWindow].
 type decidedBucket struct {
 	end time.Time
-	// published is nil when the bucket was held (frozen, empty, below
-	// the volume floor).
+	// published is nil when the bucket was held (frozen, empty, below the volume floor).
 	published *publishedBucket
-	// frozen records that the bucket was refused by a freeze, so a
-	// replaying tick keeps the leg out of triangulation.
+	// frozen keeps a replaying tick's leg out of triangulation.
 	frozen       bool
 	compositeRef *compositeReference
 }
 
-// publishedBucket is what a published closed bucket wrote, kept so a
-// replaying tick republishes the scored value rather than a re-fetch.
+// publishedBucket is what a published bucket wrote, so a replaying tick republishes the scored
+// value rather than re-fetching.
 type publishedBucket struct {
 	value    string
 	coverage cachekeys.WindowCoverage
@@ -356,10 +330,8 @@ const DefaultMaxTradesPerWindow = 10_000
 // DefaultMaxHops is the route-length cap when [Config.MaxHops] is 0: three legs reach every crypto-USD-fiat cross plus one pivot; [maxRouterHops] clamps to [2,4].
 const DefaultMaxHops = 3
 
-// maxRouterHops is the hard upper bound on [Config.MaxHops]. Four legs
-// is the obscure×obscure worst case (see aggregate.FindRoutes); beyond
-// it the acyclic-path search cost grows without buying reachability the
-// default coverage set needs.
+// maxRouterHops is the hard cap on [Config.MaxHops]: four legs is the obscure x obscure worst
+// case (aggregate.FindRoutes); beyond it search cost grows without adding needed reachability.
 const maxRouterHops = 4
 
 // Orchestrator holds the wired dependencies and runs the tick loop.
@@ -373,24 +345,21 @@ type Orchestrator struct {
 	// WARNING: LOCK-FREE, safe ONLY because one Tick runs at a time with a sequential per-pair loop. The sibling per-Tick maps (frozenThisTick, tickEdgeQuotes, lastComposites, freezeStates) share this invariant; parallelising REQUIRES guarding them with o.mu.
 	prevVWAPs map[string]*big.Rat
 
-	// prevVWAPAt is when each prevVWAPs entry was set; an entry with no
-	// stamp is never aged.
+	// prevVWAPAt is when each prevVWAPs entry was set; an unstamped entry is never aged.
 	prevVWAPAt map[string]time.Time
 
-	// prevVWAPBucketEnd is the closed-bucket end each prevVWAPs entry was
-	// published for: the observed-at stamp a re-seeded held value must carry.
+	// prevVWAPBucketEnd is the bucket end each entry was published for: the observed-at stamp a
+	// re-seeded held value must carry.
 	prevVWAPBucketEnd map[string]time.Time
-	// prevVWAPCoverage is the window coverage of each prevVWAPs entry, so
-	// a freeze reseed restores the held value with its own coverage.
+	// prevVWAPCoverage lets a freeze reseed restore the held value with its own coverage.
 	prevVWAPCoverage map[string]cachekeys.WindowCoverage
 
 	// frozenPrevVWAPs is the shadow comparator for pairs whose bucket the freeze REFUSED. Against the pinned prevVWAPs, z measures drift since the freeze, so auto-unfreeze is reachable only if the market returns to the freeze-time price.
 	// The shadow advances with each refused bucket's VWAP, scoring "is the market calm NOW"; cleared on publish/release.
 	frozenPrevVWAPs map[string]*big.Rat
 
-	// scoredMinutes is the newest closed minute each (pair, window)
-	// decision scored, where the next decision's scoring starts (see
-	// marginalBuckets). Same single-Tick-at-a-time invariant as prevVWAPs.
+	// scoredMinutes is the newest closed minute each (pair, window) decision scored, where the next
+	// scoring starts (see marginalBuckets). Same single-Tick invariant as prevVWAPs.
 	scoredMinutes map[string]minuteVWAP
 
 	// lastWriteAt is the last successful VWAP write per FULL pair (so one quote can't vouch for another), written
@@ -409,18 +378,15 @@ type Orchestrator struct {
 	// tickNow is the CURRENT tick's injected `now`, read once at the top of [Tick], so the composite writer, the direct writer and emitStalenessGauges judge one instant. Zero outside a Tick; same invariant as frozenThisTick.
 	tickNow time.Time
 
-	// decidedBuckets holds, per `pair:window` stateKey, the outcome of
-	// the last closed bucket that was decided, so a later tick inside the
-	// same bucket replays it instead of scoring it a second time. Same
-	// single-Tick-at-a-time invariant as prevVWAPs, so no lock is needed.
+	// decidedBuckets holds the last decided closed bucket per `pair:window`, so a later tick in the
+	// same bucket replays it instead of scoring twice. Lock-free as prevVWAPs.
 	decidedBuckets map[string]decidedBucket
 
 	// heldDirect holds, per `pair:window`, a triangulation target's direct value until the triangulation pass decides whether it or the composite is served, so the shared served key has one writer per tick. Rebuilt every Tick.
 	heldDirect map[string]heldDirect
 
-	// streamedBuckets records, per `pair:window` stateKey, the closed
-	// bucket last published to the stream, so every bucket is streamed
-	// once whichever writer served it. Same invariant as decidedBuckets.
+	// streamedBuckets is the closed bucket last streamed per `pair:window`, so each bucket streams
+	// once whichever writer served it. Lock-free as decidedBuckets.
 	streamedBuckets map[string]time.Time
 
 	// tickEdgeQuotes collects, per window, this tick's published pair VWAPs as router edges; frozen, dropped and empty windows add none, which is how min_usd_volume keeps a dust pair from setting a confident cross.
@@ -439,10 +405,8 @@ type Orchestrator struct {
 	// Rebuilt every Tick; same lock-free invariant as prevVWAPs.
 	tickCompositeRefs map[string]compositeReference
 
-	// refreshOrder is cfg.Pairs re-ordered so composite-reference legs
-	// refresh before their targets (see refreshOrder in
-	// composite_reference.go); identical to cfg.Pairs when the mechanism
-	// is off. Computed once in New.
+	// refreshOrder is cfg.Pairs with composite-reference legs ahead of their targets
+	// (composite_reference.go); identical to cfg.Pairs when that is off. Computed once in New.
 	refreshOrder []canonical.Pair
 
 	// freezeStates holds the ADR-0019 lifecycle per `<pair>:<window>` (hold, extension ladder, escalation, unfreeze streak). A present-but-inactive entry marks a key evaluated, so the Redis hydrate doesn't rerun each tick.
@@ -453,21 +417,13 @@ type Orchestrator struct {
 	// In-memory only, so a restart falls back to the stricter upper gate; same invariant as prevVWAPs.
 	bootstrapReleased map[string]bool
 
-	// windowedFreeze is [Config.FreezeWriter] when it can scope a
-	// marker's ladder to the window that owns it
-	// ([WindowedFreezeMarker]), nil otherwise. Resolved once in [New]
-	// rather than type-asserted per tick.
+	// windowedFreeze and overrideReader are [Config.FreezeWriter] when it implements
+	// [WindowedFreezeMarker] / [FreezeOverrideReader], else nil; resolved once in [New].
 	windowedFreeze WindowedFreezeMarker
-
-	// overrideReader is [Config.FreezeWriter] when it can tell an
-	// operator's force-unfreeze from a lapse ([FreezeOverrideReader]),
-	// nil otherwise.
 	overrideReader FreezeOverrideReader
 
-	// clock is the orchestrator's time source, injectable so the
-	// freeze lifecycle's hold/extension/escalation ladder — which is
-	// measured in tens of minutes — is testable without sleeping.
-	// Defaults to time.Now in [New].
+	// clock is injectable so the freeze ladder, measured in tens of minutes, is testable without
+	// sleeping. Defaults to time.Now.
 	clock func() time.Time
 
 	// Stats exposed for metrics / test assertions. Zero-copy.
@@ -492,9 +448,7 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 	if cfg.MaxTradesPerWindow <= 0 {
 		cfg.MaxTradesPerWindow = DefaultMaxTradesPerWindow
 	}
-	// Router hop budget: 0 = "use default"; clamp anything out of the
-	// accepted [2,4] band. Config-load validation already rejects bad
-	// values, so this only guards a Config assembled directly in a test.
+	// Hop budget: 0 means default; anything outside [2,4] is clamped.
 	if cfg.MaxHops == 0 {
 		cfg.MaxHops = DefaultMaxHops
 	}
@@ -526,9 +480,7 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 		refreshOrder:      refreshOrder(cfg),
 		clock:             time.Now,
 	}
-	// A freeze writer that records which window owns each ladder lets
-	// every window rehydrate ITS OWN freeze on a cold key instead of a
-	// sibling's — see [WindowedFreezeMarker].
+	// A window-aware writer lets each window rehydrate ITS OWN freeze on a cold key, not a sibling's.
 	if windowed, ok := cfg.FreezeWriter.(WindowedFreezeMarker); ok {
 		o.windowedFreeze = windowed
 	}
@@ -589,15 +541,15 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	o.tickCompositeRefs = make(map[string]compositeReference)
 	o.heldDirect = make(map[string]heldDirect)
 
-	// Every store and cache call below runs on tickCtx, so none of them
-	// can outlive the tick's wedge guard — see [Config.TickTimeout].
+	// Every store and cache call below runs on tickCtx so none outlives the wedge guard
+	// ([Config.TickTimeout]).
 	tickCtx, cancel := context.WithTimeout(ctx, o.cfg.TickTimeout)
 	defer cancel()
 
 	tickHadError, loopErr := o.refreshAllPairs(tickCtx, now)
 	if loopErr != nil && ctx.Err() != nil {
-		// The CALLER's context ended (shutdown): stop where we are, as
-		// before. Only the tick's own deadline finishes the accounting.
+		// The CALLER's context ended (shutdown): stop here; only the tick's own deadline finishes
+		// the accounting.
 		return loopErr
 	}
 
@@ -630,10 +582,8 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	// Emit per-asset staleness at end-of-Tick whether or not any window wrote, so pairs with no fresh trades climb past the `stellarindex_api_price_stale` threshold.
 	o.emitStalenessGauges(now)
 
-	// ADR-0019 freeze lifecycle: publish how many (pair, window)
-	// freezes are being HELD right now. A gauge, unlike the engaged
-	// counter, tells "one pair frozen for an hour" apart from "sixty
-	// pairs frozen for one tick" — see obs.AnomalyFreezeActive.
+	// A gauge of freezes HELD now, unlike the engaged counter, tells "one pair frozen for an hour"
+	// from "sixty pairs frozen for one tick" (obs.AnomalyFreezeActive).
 	obs.AnomalyFreezeActive.Set(float64(o.activeFreezeCount()))
 
 	if timedOut {
@@ -666,10 +616,8 @@ func (o *Orchestrator) refreshAllPairs(ctx context.Context, now time.Time) (hadE
 	return hadError, nil
 }
 
-// activeFreezeCount counts the (pair, window) keys currently holding
-// a freeze. Released keys keep a present-but-inactive entry (so the
-// hydrate-once path stays once), so this walks the map rather than
-// taking its len.
+// activeFreezeCount counts keys holding a freeze; released keys keep an inactive entry (so
+// hydration stays once), so it walks the map rather than taking len.
 func (o *Orchestrator) activeFreezeCount() int {
 	n := 0
 	for _, st := range o.freezeStates {
@@ -698,10 +646,8 @@ func (o *Orchestrator) recordPairWrite(pair canonical.Pair, at time.Time) {
 	o.lastWriteAt[pair.String()] = at
 }
 
-// pairLastWrite is the freshest write that can answer a lookup for
-// `pair`. For every base but XLM that is the pair's own stamp. XLM has
-// two interchangeable base forms (see emitStalenessGauges), so either
-// form's write for the SAME quote counts — never another quote's.
+// pairLastWrite is the freshest write that can answer a lookup for `pair`: its own stamp, except
+// XLM, whose two interchangeable base forms count for the SAME quote only.
 func (o *Orchestrator) pairLastWrite(pair canonical.Pair) time.Time {
 	last := o.lastWriteAt[pair.String()]
 	var sibling string
@@ -722,10 +668,8 @@ func (o *Orchestrator) pairLastWrite(pair canonical.Pair) time.Time {
 // emitStalenessGauges sets `stellarindex_price_staleness_seconds` per (base, quote) pair to `now - lastWriteAt[pair]` (never-written falls back to `now`).
 // Labels must match the asset_id customers query (`native` in /v1/price vs `crypto:XLM` here), so a known alias pair is emitted under both forms.
 func (o *Orchestrator) emitStalenessGauges(now time.Time) {
-	// First sighting — treat as "just observed" so the metric is
-	// present but doesn't immediately page. Seeded for every pair
-	// BEFORE any is read, so the dual-form merge in pairLastWrite sees
-	// the same map whichever form cfg.Pairs lists first.
+	// First sighting counts as "just observed" so the metric exists without paging. Seeded for
+	// every pair BEFORE any is read, so the dual-form merge is order-independent.
 	for _, pair := range o.cfg.Pairs {
 		if _, ok := o.lastWriteAt[pair.String()]; !ok {
 			o.recordPairWrite(pair, now)
@@ -808,16 +752,13 @@ func (o *Orchestrator) decideBucket(
 	if !o.cfg.DisableClassFilter {
 		trades = filterForVWAP(trades)
 		if dropped := preFilter - len(trades); dropped > 0 {
-			// `pair` is the CONFIGURED target pair (bounded: only
-			// o.cfg.Pairs entries reach here); per-pair drops let
-			// outlier_storm attribute a single-issuer SDEX token farm.
+			// `pair` is a configured target (bounded cardinality); per-pair drops let outlier_storm
+			// attribute a single-issuer SDEX token farm.
 			obs.AggregatorDroppedTradesTotal.WithLabelValues("class", pair.String()).Add(float64(dropped))
 		}
 	}
 	trades = dropUnpriceable(pair, trades)
-	// Venue-level view of the set the outlier filter is handed: the
-	// outlier_storm alert reads per-venue DISAGREEMENT from this, not
-	// the trim re-count.
+	// The outlier_storm alert reads per-venue DISAGREEMENT from this view, not the trim re-count.
 	recordWindowStage(pair, window, "fetched", preFilter)
 	recordWindowStageVolume(pair, window, "class", trades)
 	o.recordVenueVWAPs(pair, window, trades)
@@ -862,9 +803,7 @@ func (o *Orchestrator) decideBucket(
 	mb := o.scoreMinutes(trades, pair, stateKey, vwap)
 	if action, ok := o.evaluateAndMaybeFreeze(ctx, pair, window, mb, trades, stateKey, now); !ok {
 		_ = action
-		// Freeze: evaluateAndMaybeFreeze has already refreshed the LKG
-		// VWAP key's TTL. Skip the cache write so the prior
-		// bucket's value keeps serving.
+		// Frozen: the LKG key's TTL is already refreshed; skip the write so the prior value serves.
 		return nil, nil
 	}
 
@@ -874,9 +813,8 @@ func (o *Orchestrator) decideBucket(
 	// healthy buckets after the initial hold), and an unscored bucket must not release a live freeze.
 	prevForConfidence := o.prevVWAPs[stateKey]
 	if shadow, frozen := o.frozenPrevVWAPs[stateKey]; frozen {
-		// Mid-freeze: when the window holds no earlier minute, score
-		// against the PREVIOUS refused bucket's fresh VWAP, not the
-		// pinned pre-freeze baseline — see frozenPrevVWAPs.
+		// Mid-freeze, score against the PREVIOUS refused bucket's VWAP, not the pinned baseline
+		// (see frozenPrevVWAPs).
 		prevForConfidence = shadow
 	}
 	// Composite-reference corroboration for an allow-listed single-venue target: build the chain composite on the CURRENT bucket and read it against this fresh VWAP.
@@ -885,38 +823,29 @@ func (o *Orchestrator) decideBucket(
 	if o.compositeReferenceEligible(pair, trades) {
 		compositeRef = o.evaluateCompositeReference(ctx, pair, window, now, vwap)
 	} else {
-		// Not evaluated this tick — retire the previous tick's verdict
-		// rather than leaving it standing (see clearCompositeReference).
+		// Retire the previous tick's verdict rather than leave it standing (clearCompositeReference).
 		o.clearCompositeReference(pair, window)
 	}
 	conf, confOK := o.computeConfidence(ctx, pair, window, vwap, mb.returns(prevForConfidence), trades, now)
-	// The freeze's source_count leg counts VENUES only; router routes are
-	// never a second venue (ADR-0019 amendment §2, see
-	// triangulate_corroborate.go). The composite reference changes only
-	// the VERDICT (compositeRef), never the count.
+	// source_count counts VENUES only; router routes are never a second venue (ADR-0019 amendment
+	// §2). The composite reference changes only the VERDICT, never the count.
 	if o.stepPhase2Freeze(ctx, pair, window, stateKey, now,
 		conf, confOK, distinctSourceCount(trades), vwap, compositeRef) {
-		// Refused: advance the shadow comparator with this bucket's
-		// fresh VWAP so the NEXT frozen bucket scores a per-tick
-		// return (and a post-restart frozen pair becomes scorable
-		// from its second bucket instead of stalling unscored).
+		// Refused: advance the shadow comparator so the NEXT frozen bucket scores a per-tick return
+		// (and a post-restart frozen pair is scorable from its second bucket).
 		o.frozenPrevVWAPs[stateKey] = vwap
 		return nil, nil
 	}
 	// Published (or released this tick): the shadow's job is done.
 	delete(o.frozenPrevVWAPs, stateKey)
 
-	// Aggregator writers stay in big.Rat / big.Int land; API readers
-	// parse the string back to a decimal. Float encoding is prohibited
-	// on this path per ADR-0003.
+	// Money stays big.Rat until this decimal string; float encoding is prohibited (ADR-0003).
 	pub := &publishedBucket{
 		value:    formatRatFixed(vwap, 12),
 		coverage: coverage,
 		score:    conf.Score,
 		confOK:   confOK,
-		// Only a published bucket becomes a router edge / reference leg:
-		// frozen, dropped, empty and below-floor buckets returned above,
-		// which is how a dust pair stays out of the cross-rate graph.
+		// Only a published bucket becomes an edge or leg, which keeps a dust pair out of the graph.
 		edge: newEdgeQuote(pair, vwap, conf, confOK, trades),
 		leg:  o.newLegRef(pair, vwap, trades, proxied),
 	}
@@ -950,8 +879,7 @@ func (o *Orchestrator) ageComparator(stateKey string, now time.Time) {
 	delete(o.prevVWAPCoverage, stateKey)
 }
 
-// heldDirect is a triangulation target's priced direct bucket awaiting
-// the triangulation pass's decision (see [Orchestrator.heldDirect]).
+// heldDirect is a triangulation target's direct bucket awaiting the triangulation decision.
 type heldDirect struct {
 	pair      canonical.Pair
 	window    time.Duration
@@ -993,8 +921,7 @@ func (o *Orchestrator) vwapMaxAge() time.Duration {
 	return cachekeys.VWAPMaxAge
 }
 
-// vwapTTL is [cachekeys.VWAPTTL] derived from this orchestrator's own
-// tick cadence rather than the package-default cadence.
+// vwapTTL is [cachekeys.VWAPTTL] derived from this orchestrator's own tick cadence.
 func (o *Orchestrator) vwapTTL(window time.Duration) time.Duration {
 	return cachekeys.VWAPTTLWithMaxAge(window, o.vwapMaxAge())
 }
@@ -1019,16 +946,13 @@ func (o *Orchestrator) serveDirect(
 		p.Set(ctx, key.String(), pub.value, ttl)
 		return nil
 	}); err != nil {
-		// Operators alert on `rate(...vwap_cache_write_errors_total[5m])
-		// > 0`: without it a Redis that refuses every write (BGSAVE
-		// MISCONF, the May-10 incident) is invisible until /v1/price 404s.
+		// Alerted on rate(...vwap_cache_write_errors_total[5m]) > 0: a Redis refusing every write
+		// (BGSAVE MISCONF) is otherwise invisible until /v1/price 404s.
 		obs.AggregatorVWAPCacheWriteErrorsTotal.Inc()
 		return fmt.Errorf("redis publish %s: %w", key, err)
 	}
 
-	// Cache write confidence (only on successful publish — frozen
-	// buckets must NOT carry a stale score forward). Best-effort:
-	// confidence enrichment, never a publish-blocking signal.
+	// Only on successful publish, so frozen buckets carry no stale score. Best-effort enrichment.
 	if pub.confOK {
 		o.cacheConfidence(ctx, pair, window, pub.score)
 	}
@@ -1045,9 +969,7 @@ func (o *Orchestrator) serveDirect(
 	return nil
 }
 
-// isTriangulationTarget reports whether pair is the target of a
-// configured triangulation chain, i.e. its served key has a second,
-// composite writer.
+// isTriangulationTarget reports whether pair's served key has a second, composite writer.
 func (o *Orchestrator) isTriangulationTarget(pair canonical.Pair) bool {
 	for i := range o.cfg.Triangulations {
 		t := o.cfg.Triangulations[i].Target
@@ -1081,10 +1003,8 @@ func (o *Orchestrator) settleDirect(ctx context.Context, pair canonical.Pair, wi
 	}
 }
 
-// flushHeldDirect runs after the triangulation pass. It serves any direct
-// value the pass left undecided, or drops them when the tick's context
-// has ended: a write on it cannot land, and the next tick replays the
-// bucket.
+// flushHeldDirect serves direct values the triangulation pass left undecided, or drops them when
+// the tick's context has ended (a write cannot land; the next tick replays the bucket).
 func (o *Orchestrator) flushHeldDirect(ctx context.Context) {
 	for _, h := range o.heldDirect {
 		if ctx.Err() != nil {
@@ -1162,9 +1082,8 @@ func (o *Orchestrator) frozenLeg(pair canonical.Pair, window time.Duration) bool
 	return freeze.LadderStillLive(st, grace, o.clock())
 }
 
-// frozenTickKey is the [Orchestrator.frozenThisTick] key. Its own key
-// space — deliberately not shared with refreshPairWindow's stateKey,
-// which happens to use the same shape but serves the prevVWAPs map.
+// frozenTickKey is the [Orchestrator.frozenThisTick] key, deliberately a separate key space from
+// refreshPairWindow's stateKey even though the shape matches.
 func frozenTickKey(pair canonical.Pair, window time.Duration) string {
 	return pair.String() + ":" + window.String()
 }
@@ -1180,10 +1099,8 @@ func (o *Orchestrator) keepFrozenVWAPAlive(ctx context.Context, pair canonical.P
 	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window)
 	metaKey := cachekeys.VWAPCompositeMeta(pair.Base, pair.Quote, window)
 	covKey := cachekeys.VWAPCoverage(pair.Base, pair.Quote, window)
-	// The score cached at the LKG's publish describes the LKG, so it lives
-	// exactly as long as the held value (ADR-0019: confidence on every
-	// published price, frozen included). The refused bucket's score is
-	// never written.
+	// The cached score describes the LKG, so it lives as long as the held value (ADR-0019); the
+	// refused bucket's score is never written.
 	confKey := cachekeys.Confidence(pair.Base, pair.Quote, window)
 	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Expire(ctx, key.String(), ttl)
@@ -1227,8 +1144,7 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 		Pair:     pair,
 		PrevVWAP: step.prev,
 		CurrVWAP: step.curr,
-		// Venues only, as in the Phase 2 leg: router corroboration is not
-		// a second source (see triangulate_corroborate.go).
+		// Venues only, as in Phase 2: router corroboration is not a second source.
 		SourceCount: distinctSourceCount(trades),
 	})
 	if !decision.IsFrozen() {
@@ -1263,10 +1179,7 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 	return decision.Action, false
 }
 
-// distinctSourceCount returns how many distinct trade.Source values
-// contributed to the supplied trades. Zero on empty input — the
-// caller short-circuits before calling Evaluate, but the guard is
-// cheap enough to keep here too.
+// distinctSourceCount returns how many distinct trade.Source values contributed; zero when empty.
 func distinctSourceCount(trades []canonical.Trade) int {
 	if len(trades) == 0 {
 		return 0

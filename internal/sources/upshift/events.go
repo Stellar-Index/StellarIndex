@@ -35,14 +35,12 @@ const EventKind = "upshift.vault_event"
 // Vault contract ids on pubnet. They are IDENTITIES, not tunables: changing one re-points a served
 // row, and for earnUSDC a published oracle price, at a different instrument.
 const (
-	// MainnetVaultEarnUSDC is the earnUSDC vault (native USDC in, shares out) and the base asset of
-	// the RedStone `earnUSDC_FUNDAMENTAL` feed; internal/sources/redstone imports THIS constant so
-	// the two cannot drift.
+	// MainnetVaultEarnUSDC is the earnUSDC vault and the base asset of the RedStone
+	// `earnUSDC_FUNDAMENTAL` feed; redstone imports THIS constant so the two cannot drift.
 	MainnetVaultEarnUSDC = "CCL3WITWFFXIHV2I52ECV5DPIEOFSTU3PBPR53ILPLF2IP5KHECXRUTY"
 
-	// MainnetVaultEarnXLM is the earnXLM vault: native XLM in, earnXLM shares out. Identified
-	// like earnUSDC (package doc): one of only two contracts emitting the bespoke symbols, with
-	// its underlying pinned by the native-SAC `transfer` sharing a tx with its first `deposit`.
+	// MainnetVaultEarnXLM is the earnXLM vault, identified like earnUSDC (package doc): its
+	// underlying is pinned by the native-SAC `transfer` sharing a tx with its first `deposit`.
 	MainnetVaultEarnXLM = "CC6TRAPQD3NK7THUKWPV5SL2JHKQGNXZVB6S6MVYFSLRWAKEFUWZKZ7J"
 )
 

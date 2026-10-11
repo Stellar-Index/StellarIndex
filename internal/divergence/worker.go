@@ -27,10 +27,8 @@ type Cache interface {
 	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
 }
 
-// CachedResult is the wire shape stored at the `div:<base>/<quote>`
-// Redis key per ADR-0007. Mirrors most of [Result] but with a couple
-// of derived fields for API-side consumers that don't want to redo
-// the threshold logic.
+// CachedResult is the wire shape stored at the `div:<base>/<quote>` Redis key (ADR-0007): [Result]
+// plus derived fields so API consumers need not redo the threshold logic.
 type CachedResult struct {
 	// PairID is the canonical pair string the result is for.
 	PairID string `json:"pair_id"`
@@ -66,8 +64,8 @@ type CachedResult struct {
 	// AgreementCount are then no verdict, and WarningFired/FiringSince are carried forward.
 	Pinned bool `json:"our_price_pinned,omitempty"`
 
-	// WindowSeconds is the aggregation window of the VWAP OurPrice was
-	// ([ServiceOptions.Window]); 0 when the writer did not record one.
+	// WindowSeconds is the aggregation window of the VWAP OurPrice was ([ServiceOptions.Window]);
+	// 0 when the writer did not record one.
 	WindowSeconds int `json:"window_seconds,omitempty"`
 
 	// ComputedAt is when the worker wrote this result. RFC 3339 UTC.
@@ -76,9 +74,8 @@ type CachedResult struct {
 
 // ObservationSink is the optional durable mirror of per-(pair, reference) observations; implementations must not block the hot path on network failures.
 type ObservationSink interface {
-	// RecordObservation persists one (pair, reference) comparison.
-	// firing = true when |delta_pct| exceeded the per-reference
-	// threshold at observation time.
+	// RecordObservation persists one (pair, reference) comparison; firing is true when
+	// |delta_pct| exceeded the per-reference threshold at observation time.
 	RecordObservation(ctx context.Context, obs ObservationRecord) error
 }
 
@@ -90,23 +87,19 @@ const DefaultWarningPersistence = 5 * time.Minute
 
 // ServiceOptions configures a [Service].
 type ServiceOptions struct {
-	// References is the list of external sources to compare against.
-	// Empty list disables divergence checking (Service.RefreshPair
-	// returns nil without writing).
+	// References are the external sources to compare against. Empty disables checking
+	// (Service.RefreshPair returns nil without writing).
 	References []Reference
 
-	// Cache is the Redis client used to store CachedResult JSON
-	// at div:<base>/<quote> keys. Required.
+	// Cache stores CachedResult JSON at div:<base>/<quote>. Required.
 	Cache Cache
 
-	// Threshold is the divergence percentage above which
-	// WarningFired is true on the cached result. Default 5.0
-	// (5%). Operators tune higher for noisier asset classes.
+	// Threshold is the divergence percentage above which WarningFired is true. Default 5.0 (5%);
+	// operators tune higher for noisier asset classes.
 	Threshold float64
 
-	// MinSourcesForWarning is the minimum number of successful
-	// references required before WarningFired can be true. Default
-	// 2 — a single dissenting source isn't enough to call divergence.
+	// MinSourcesForWarning is the minimum successful references before WarningFired can be true.
+	// Default 2: a single dissenting source is not divergence.
 	MinSourcesForWarning int
 
 	// WarningPersistence is how long a raw divergence must hold (across two refreshes) before WarningFired is true; it debounces VWAP-vs-spot lag and never blinds a sustained gap.
@@ -117,32 +110,25 @@ type ServiceOptions struct {
 	// restarts instead of maturing on one post-gap sample. Zero means at most WarningPersistence.
 	RefreshInterval time.Duration
 
-	// Window is the aggregation window whose VWAP the caller passes as
-	// ourPrice (the aggregator's shortest). It is stamped on every cached
-	// verdict so a reader serving a value over another window can tell the
-	// verdict does not speak to it. Zero leaves the verdict unscoped.
+	// Window is the aggregation window whose VWAP the caller passes as ourPrice (the aggregator's
+	// shortest). It is stamped on every cached verdict so a reader serving a value over another
+	// window can tell the verdict does not speak to it. Zero leaves the verdict unscoped.
 	Window time.Duration
 
-	// PairCount is how many pairs one refresh pass visits. The caller
-	// refreshes them sequentially, so a pair's div: key is rewritten up
-	// to RefreshInterval plus a whole pass after its previous write;
+	// PairCount is how many pairs one refresh pass visits. Pairs refresh sequentially, so a div:
+	// key is rewritten up to RefreshInterval plus a whole pass after its previous write; together
 	// with RefreshInterval it sizes the key's TTL ([Service.cacheTTL]).
 	PairCount int
 
-	// PerReferenceTimeout is forwarded to [Compare] via
-	// [CompareOptions]. Default 5s.
+	// PerReferenceTimeout is forwarded to [Compare] via [CompareOptions]. Default 5s.
 	PerReferenceTimeout time.Duration
 
-	// ObservationSink, when non-nil, receives one record per (pair,
-	// reference) tuple every refresh. Persists the per-reference
-	// delta history that the Redis cache discards. Optional — nil
-	// leaves the Redis cache as the only record.
+	// ObservationSink, when non-nil, receives one record per (pair, reference) every refresh,
+	// keeping the per-reference delta history the Redis cache discards.
 	ObservationSink ObservationSink
 
-	// Logger, when non-nil, receives WARN-level log lines for sink
-	// failures. Optional — nil silences the path.
-	// The aggregator passes its component logger so failures land
-	// in the same journal stream as the rest of the orchestrator.
+	// Logger, when non-nil, receives WARN lines for sink failures; the aggregator passes its
+	// component logger so they share the orchestrator's journal stream. Nil silences the path.
 	Logger *slog.Logger
 
 	// OnWarningFired, when non-nil, runs on the false-to-true edge only (not every refresh while firing), so subscribers are not re-spammed.
@@ -180,18 +166,16 @@ type Service struct {
 	gaps         *gapTracker
 }
 
-// firingStreak is one pair's raw-firing run: since is its first firing
-// observation, last its most recent one. last is what distinguishes a
-// run observed throughout from one with an unevaluated gap in it.
+// firingStreak is one pair's raw-firing run: since is its first firing observation, last its most
+// recent. last distinguishes a run observed throughout from one with an unevaluated gap.
 type firingStreak struct {
 	since time.Time
 	last  time.Time
 }
 
-// independentReferences drops references that cannot corroborate our
-// VWAP because they price the same book (see [CorrelatedWithOurVWAP]).
-// Filtering here, the one constructor, keeps them out of the median, the
-// quorum and the agreement count whichever binary built the list.
+// independentReferences drops references that price the same book as our VWAP and so cannot
+// corroborate it ([CorrelatedWithOurVWAP]). Filtering in the one constructor keeps them out of the
+// median, quorum and agreement count whichever binary built the list.
 func independentReferences(refs []Reference) []Reference {
 	out := make([]Reference, 0, len(refs))
 	for _, r := range refs {
@@ -254,8 +238,7 @@ func NewService(opts ServiceOptions) (*Service, error) {
 	}, nil
 }
 
-// cacheTTLSlack covers what a pass does besides Compare — the VWAP
-// read, the Redis writes and the observation sink — per pass.
+// cacheTTLSlack covers per-pass work besides Compare: the VWAP read, Redis writes and sink.
 const cacheTTLSlack = time.Minute
 
 // cacheTTL must outlive the longest gap between a pair's writes (pass cadence plus every pair spending Compare's whole budget),
@@ -314,9 +297,8 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 		MinSuccessForMedian: 1, // surface even single-source signals; threshold gate handles trustworthiness
 	})
 
-	// Agreement uses the same threshold as the per-reference firing
-	// test in flushObservations, so "agrees" is exactly "would not
-	// fire" for that reference.
+	// Same threshold as the per-reference firing test in flushObservations, so "agrees" means
+	// exactly "would not fire".
 	agreeing := CountAgreeing(ourPrice, res.Sources, s.threshold)
 
 	// The gate is median-vs-ourPrice OR nobody-agrees: references at +/-8% put the median on our price, so the median leg alone is blind.
@@ -336,9 +318,8 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	key := cachekeys.Divergence(pair)
 	s.restoreWarningState(ctx, pair.String(), key.String(), gateAt)
 
-	// A below-quorum or pinned refresh is unevaluable: it must not assert
-	// "no divergence", restart the persistence streak or reset the webhook
-	// latch, so it carries the last evaluated verdict forward.
+	// A below-quorum or pinned refresh is unevaluable: it must not assert "no divergence", restart
+	// the streak or reset the webhook latch, so it carries the last evaluated verdict forward.
 	warningFired, firingSince := s.lastWarning(pair.String()), s.lastFiringSince(pair.String())
 	if evaluated {
 		// At the SuccessCount==2 quorum floor the median is a mean, so one outlier fires the median leg though the other agrees exactly; require agreement
@@ -386,10 +367,8 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 		return fmt.Errorf("divergence: index expire %s: %w", idxKey, err)
 	}
 
-	// Durable per-reference mirror. Best-effort: a sink failure must
-	// not surface to the caller because the Redis cache write — the
-	// load-bearing operation that drives flags.divergence_warning
-	// on the API response — has already succeeded.
+	// Best-effort durable mirror: a sink failure must not surface, because the Redis write that
+	// drives flags.divergence_warning has already succeeded.
 	if s.sink != nil {
 		// Stamp with the COMPARISON time, not wall clock (which trails by the reference fan-out); observed_at is in the conflict key,
 		// so a re-run stays idempotent. Zero falls back to ComputedAt.
@@ -422,10 +401,8 @@ func (s *Service) lastWarning(pairKey string) bool {
 	return s.warningState[pairKey]
 }
 
-// lastFiringSince returns the persistence-streak start recorded for the
-// pair (zero when there is none, i.e. the raw condition last evaluated
-// clear). It mirrors lastWarning so a below-quorum refresh can carry the
-// streak forward into the cached result without calling warningPersists.
+// lastFiringSince returns the pair's persistence-streak start (zero when the raw condition last
+// evaluated clear), so a below-quorum refresh can carry the streak forward without warningPersists.
 func (s *Service) lastFiringSince(pairKey string) time.Time {
 	s.warningMu.Lock()
 	defer s.warningMu.Unlock()
@@ -542,9 +519,8 @@ func (s *Service) flushObservations(
 ) {
 	for refName, refPrice := range res.Sources {
 		if refPrice == 0 {
-			// Defensive: a reference reporting zero would produce a
-			// divide-by-zero on delta. Skip with no log; this is
-			// the comparator's job to surface.
+			// A zero reference price would divide by zero on delta; surfacing it is the
+			// comparator's job.
 			continue
 		}
 		deltaPct := (ourPrice - refPrice) / refPrice * 100.0
@@ -560,9 +536,7 @@ func (s *Service) flushObservations(
 			ObservedAt:    observedAt,
 			RefObservedAt: res.SourcesAsOf[refName],
 		}); err != nil && s.logger != nil {
-			// Best-effort write — the Redis cache (load-bearing for
-			// flags.divergence_warning) already succeeded. Log so
-			// operators see the durable-mirror gap.
+			// Best-effort: the Redis write already succeeded; log so operators see the mirror gap.
 			s.logger.Warn("divergence: sink RecordObservation failed",
 				"pair", pair.String(),
 				"reference", refName,
@@ -580,10 +554,8 @@ func absFloat(f float64) float64 {
 	return f
 }
 
-// AssetVerdict is [Service.LookupCached]'s by-asset answer. Firing and
-// Checked are asset-level facts aggregated across every quote of the
-// base; Detail is one pair's row for display, and its per-pair counts
-// must not be read as an asset-level verdict.
+// AssetVerdict is [Service.LookupCached]'s by-asset answer. Firing and Checked aggregate every
+// quote of the base; Detail is one pair's row for display, so its counts are not an asset verdict.
 type AssetVerdict struct {
 	// Firing is the OR of the per-pair WarningFired flags.
 	Firing bool
@@ -630,10 +602,8 @@ func (s *Service) LookupCached(ctx context.Context, asset canonical.Asset) (Asse
 			checked = true
 		}
 
-		// Pick the representative detail row: prefer firing pairs over
-		// non-firing, and within the same firing-status prefer the
-		// larger |divergence|. The first contributing pair always
-		// wins its slot (firstContrib short-circuits the comparison).
+		// Representative detail row: firing over non-firing, then larger |divergence|; the first
+		// contributing pair always takes the slot (firstContrib).
 		delta := absFloat(cached.DivergencePct)
 		switch {
 		case !found:
@@ -655,20 +625,16 @@ func (s *Service) LookupCached(ctx context.Context, asset canonical.Asset) (Asse
 func (s *Service) lookupCachedQuote(ctx context.Context, asset canonical.Asset, q string) (result CachedResult, ok bool, err error) {
 	quote, perr := canonical.ParseAsset(q)
 	if perr != nil {
-		// A malformed member can't be turned back into a key; skip it
-		// rather than fail the whole lookup. The index is
-		// worker-written from canonical assets, so this is a
-		// defensive guard, not an expected path.
+		// Skip an unparseable member rather than fail the lookup; the worker writes the index
+		// from canonical assets, so this is only a guard.
 		return CachedResult{}, false, nil //nolint:nilerr // malformed index member is skipped, not a propagated error
 	}
 	pair := canonical.Pair{Base: asset, Quote: quote}
 	key := cachekeys.Divergence(pair)
 	raw, gerr := s.cache.Get(ctx, key.String()).Bytes()
 	if errors.Is(gerr, redis.Nil) {
-		// Value expired but the index member lingered (the set's own
-		// TTL hasn't fired yet). Treat as "no contribution", not an
-		// error — redis.Nil is an expected miss, per LookupCached's
-		// doc comment.
+		// Value expired while the index member lingered (the set's TTL has not fired): no
+		// contribution, not an error.
 		return CachedResult{}, false, nil //nolint:nilerr // redis.Nil is a cache miss, not a propagated error
 	}
 	if gerr != nil {

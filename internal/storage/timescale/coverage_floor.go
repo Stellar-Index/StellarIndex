@@ -146,8 +146,7 @@ func (s *Store) earliestBucket(
 	}
 	table := "prices_" + string(granularity)
 	interval := granularity.closedBucketInterval()
-	// #nosec G201 — table + interval are derived from the validated
-	// HistoryGranularity enum, not user input. See Validate.
+	// #nosec G201 — table + interval come from the validated HistoryGranularity enum, not user input.
 	q := fmt.Sprintf(tmpl, table, interval)
 	bases, quotes := earliestBucketLegs(p, quoteAliases)
 
@@ -155,9 +154,8 @@ func (s *Store) earliestBucket(
 	err := s.db.QueryRowContext(ctx, q, bases, quotes, from.UTC(), to.UTC()).Scan(&bucket)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		// min() over an empty set still yields one NULL row, so this is
-		// unreachable today; treated as "no floor" rather than an error
-		// so a future query rewrite can't turn a miss into a 500.
+		// min() over an empty set yields one NULL row, so this is unreachable today; it maps
+		// to "no floor" so a query rewrite cannot turn a miss into a 500.
 		return time.Time{}, false, nil
 	case err != nil:
 		return time.Time{}, false, fmt.Errorf("timescale: %s[%s]: %w", op, granularity, err)

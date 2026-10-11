@@ -22,40 +22,35 @@ import (
 	"time"
 )
 
-// SourceName is stamped on every canonical.OracleUpdate this package
-// emits. Must match the registry key.
+// SourceName is stamped on every canonical.OracleUpdate and must match the registry key.
 const SourceName = "tiingo"
 
 // DefaultEndpoint is the Tiingo REST base.
 const DefaultEndpoint = "https://api.tiingo.com"
 
-// DefaultPollInterval is hourly: a NAV strikes once per business day, so
-// polling faster spends quota without adding a row.
+// DefaultPollInterval is hourly: a NAV strikes once per business day, so faster polling only
+// spends quota.
 const DefaultPollInterval = time.Hour
 
-// Decimals is the scale of the emitted price, matching the other
-// off-chain FX-style pollers' 1e6. It holds Tiingo's 2-dp NAV exactly.
+// Decimals is the emitted price scale (1e6, as the other FX-style pollers); it holds the 2-dp NAV
+// exactly.
 const Decimals uint8 = 6
 
-// LookbackDays is how far back each poll asks. A week spans a weekend
-// plus a holiday, so one missed day of polling is back-filled on the next
-// successful poll; re-reading a bar already stored is idempotent.
+// LookbackDays is how far back each poll asks. A week spans a weekend plus a holiday, so a missed
+// poll is back-filled by the next one; re-reading a stored bar is idempotent.
 const LookbackDays = 7
 
 // Errors surfaced by the poller.
 var (
-	// ErrAPIKeyRequired — the source is enabled without a key. Surfaced
-	// at NewPoller so the indexer fails at startup, not at first poll.
+	// ErrAPIKeyRequired is raised at NewPoller so the indexer fails at startup, not first poll.
 	ErrAPIKeyRequired = errors.New("tiingo: API key required (set TIINGO_API_KEY)")
 
-	// ErrNoTickers — nothing to poll. The ticker list comes from the
-	// curated fund bindings, so an empty list is a wiring bug.
+	// ErrNoTickers means the curated fund bindings yielded nothing, which is a wiring bug.
 	ErrNoTickers = errors.New("tiingo: no tickers to poll")
 
-	// ErrAPIRejected — a non-200 status from the vendor.
+	// ErrAPIRejected is a non-200 status from the vendor.
 	ErrAPIRejected = errors.New("tiingo: API rejected request")
 
-	// ErrMalformedResponse — the body did not decode to the documented
-	// shape.
+	// ErrMalformedResponse means the body did not decode to the documented shape.
 	ErrMalformedResponse = errors.New("tiingo: malformed response")
 )

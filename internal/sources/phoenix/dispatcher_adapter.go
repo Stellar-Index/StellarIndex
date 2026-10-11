@@ -60,11 +60,10 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 func (*Decoder) Name() string { return SourceName }
 
 // GatedContractSet returns the decoder's gate: the factory trust root plus every registered
-// pool/stake contract. The set grows in-stream as factory create events self-register pools.
-// It is the contract-id prefilter the completeness re-derive scopes its lake read to. Matches()
-// gates purely on contract identity, so streaming just these contracts yields the same counts as
-// a whole-lake stream; the correlation buffer only groups events from a single pool, so the
-// prefilter never splits a group (a cross-contract correlation would break, cf. defindex).
+// pool/stake contract, growing in-stream as factory create events self-register pools. It is the
+// contract-id prefilter the completeness re-derive scopes its lake read to. Matches() gates purely
+// on contract identity and the correlation buffer only groups events from a single pool, so the
+// prefilter never splits a group.
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
 // Matches implements [dispatcher.Decoder]. Phoenix events carry topic[0] = String(<action>) and

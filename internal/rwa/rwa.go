@@ -36,9 +36,8 @@ const (
 	// only because R3 already bound the issuer. A vetted fund-NAV binding ([FundNAVTicker])
 	// also admits here, keyed on the exact pair.
 	BasisOracleFeed = "oracle_rwa_feed"
-	// BasisSep1ISIN: the bound entry's anchor_asset is a well-formed ISIN. Admits without a
-	// class; an agency-assigned, checkable ISIN beats a self-picked class string, and entitlement
-	// to it is left to R2 and R3, which an impersonator must defeat first.
+	// BasisSep1ISIN: the bound entry's anchor_asset is a well-formed ISIN. Admits without a class;
+	// entitlement to the ISIN is left to R2 and R3, which an impersonator must defeat first.
 	BasisSep1ISIN = "sep1_isin_declaration"
 )
 
@@ -189,9 +188,8 @@ type Verdict struct {
 	AnchorClass string
 	// Reject names the FIRST requirement failed, in R1 to R4 order. Empty when admitted.
 	Reject string
-	// Recognition names which route satisfied recognition, set on every admission. Each arm
-	// has two routes of unequal weight (direct attestation vs inference), and a row that could
-	// not say which would serve two evidence strengths as one membership.
+	// Recognition names which R3 route admitted it (direct attestation vs inference), so rows
+	// of unequal evidence strength are not served as one membership.
 	Recognition string
 }
 
@@ -240,9 +238,8 @@ const (
 	// RecognitionDirectory — the curated directory tags THIS issuer account as recognised.
 	RecognitionDirectory = "curated_account_directory"
 	// RecognitionDomainSibling: the directory lists (unflagged) another account the same
-	// issuer-bound SEP-1 declares, e.g. Franklin's gBENJI/grBENJI/sgBENJI beside BENJI.
-	// It ASSUMES one entity per domain; a multi-tenant toml host would let one recognised
-	// tenant pass every other through R3. No such domain has a recognised tenant today.
+	// issuer-bound SEP-1 declares, e.g. gBENJI beside BENJI. It ASSUMES one entity per domain; a
+	// multi-tenant toml host would let one recognised tenant pass every other through R3.
 	RecognitionDomainSibling = "curated_account_directory_via_domain_sibling"
 )
 

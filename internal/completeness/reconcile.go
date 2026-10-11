@@ -54,10 +54,8 @@ type ProjectionGap struct {
 //
 // A row the projector could not decode produced no served row, and one the re-derive cannot
 // decode produces no expected row, so ReconcileCounts sees expected == actual == 0 and reports
-// the ledger CLEAN. Row counts cannot detect this class; the blindness is the only honest signal,
-// hence it is returned rather than logged. A caller certifying completeness must treat "could not
-// evaluate this ledger" as NOT clean. The recognition audit misses it too: a claimed event that
-// fails to Decode is still a recognised event.
+// the ledger CLEAN. The blindness is the only honest signal, so it is returned rather than logged;
+// a caller certifying completeness must treat "could not evaluate this ledger" as NOT clean.
 type BlindSpots struct {
 	// Ledgers holds every ledger with at least one blind row, ascending and deduped. Callers
 	// that pin the watermark append these; others use [BlindSpots.Any].
@@ -68,9 +66,8 @@ type BlindSpots struct {
 	UndecodableMatched int
 
 	// Unreconstructable counts stored soroban_events rows too broken to rebuild into an
-	// events.Event. Matches is never evaluated, so no decoder is to blame, but the projector
-	// dropped them too and the served tier is missing what they held, so they pin as well.
-	// Counted separately so a verdict says which class fired. Always 0 on the ClickHouse path.
+	// events.Event. No decoder is to blame, but the projector dropped them too, so they pin as
+	// well; counted separately so a verdict says which class fired. Always 0 on the ClickHouse path.
 	Unreconstructable int
 }
 
@@ -149,10 +146,9 @@ func (t *BlindTracker) Result() BlindSpots {
 // safeDecode runs dec.Decode under a per-event recover, turning a decoder PANIC into an error for
 // the decode-error path (blind.Undecodable + skip), mirroring the projector's processEventSafely.
 //
-// The projector recovers panics on historical / upgraded-WASM event shapes and silently drops
-// those rows; the re-derive exists to make the drops VISIBLE. An escaped panic would crash
-// compute-completeness before any snapshot, freezing EVERY source's verdict instead of flagging
-// a blind spot.
+// The projector recovers panics on historical / upgraded-WASM shapes and silently drops those
+// rows; the re-derive exists to make the drops VISIBLE. An escaped panic would crash
+// compute-completeness and freeze EVERY source's verdict instead of flagging a blind spot.
 func safeDecode(dec Decoder, ev events.Event) (outs []consumer.Event, err error) {
 	if perr := Guard(func() { outs, err = dec.Decode(ev) }); perr != nil {
 		return nil, fmt.Errorf("decoder panicked on event shape: %w", perr)
@@ -205,9 +201,8 @@ func ReDeriveOutputCountsByKindFromEvents(
 ) (map[string]map[uint32]int, BlindSpots, error) {
 	byKind := make(map[string]map[uint32]int)
 	blind := NewBlindTracker()
-	// Adjacent-duplicate skip: the stream is ordered by event identity, so un-merged
-	// ReplacingMergeTree duplicates arrive consecutively. Comparing with the previous event is
-	// O(1) memory and keeps the read no-FINAL while counting correctly.
+	// The stream is ordered by event identity, so un-merged ReplacingMergeTree duplicates arrive
+	// consecutively; comparing with the previous event dedupes in O(1) memory without FINAL.
 	var (
 		haveLast bool
 		lL       uint32

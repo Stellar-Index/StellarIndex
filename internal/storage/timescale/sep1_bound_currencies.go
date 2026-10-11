@@ -288,15 +288,10 @@ func boundSep1CurrenciesFromPayload(
 // Sep1EntryBindsTo reports whether a [[CURRENCIES]] entry's DECLARED issuer names the account that
 // served the file.
 //
-// The comparison is on the canonical strkey: whitespace or the case an issuer typed its key in
-// does not change which account it is. Strkeys are uppercase base32, so case-only variants decode
-// to the same 32 bytes and folding cannot admit a different account.
-//
-// Anything not shaped like a G-account strkey binds to nothing, since the rule's value is that
-// it names ONE account.
-//
-// Exported so every issuer-binding check (bound-currency scan, image overlay, org-verification)
-// shares one canonicalisation.
+// It compares canonical strkeys: strkeys are uppercase base32, so whitespace and case-only variants
+// decode to the same 32 bytes and folding cannot admit a different account. Anything not shaped
+// like a G-account strkey binds to nothing, since the rule's value is that it names ONE account.
+// Exported so every issuer-binding check shares one canonicalisation.
 func Sep1EntryBindsTo(declared, serving string) bool {
 	d := canonicalAccountStrkey(declared)
 	return d != "" && d == canonicalAccountStrkey(serving)

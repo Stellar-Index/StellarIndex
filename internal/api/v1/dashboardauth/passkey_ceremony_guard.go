@@ -17,17 +17,12 @@ import (
 	"time"
 )
 
-// PasskeyCeremonyGuard makes a WebAuthn ceremony challenge usable
-// exactly once.
+// PasskeyCeremonyGuard makes a WebAuthn ceremony challenge usable exactly once.
 //
-// Implementations:
-//   - production: Redis SETNX (`auth.NewRedisPasskeyCeremonyGuard`),
-//     wired in cmd/stellarindex-api when Redis is reachable so the
-//     spent-set is shared across API instances.
-//   - default: the in-process guard below, installed by
-//     [Config.validate] when the field is left nil. Correct on a
-//     single instance; behind more than one instance a replay routed
-//     to a different instance would not be seen.
+//   - Production: Redis SETNX (`auth.NewRedisPasskeyCeremonyGuard`), so the spent-set is shared
+//     across API instances.
+//   - Default: the in-process guard below, installed by [Config.validate] when the field is nil.
+//     Behind more than one instance a replay routed to another instance would not be seen.
 type PasskeyCeremonyGuard interface {
 	// Consume claims the one-shot slot for a ceremony digest. It returns true for the first
 	// presenter, false for a replay, and an error when the store is unreachable, which callers
@@ -36,12 +31,9 @@ type PasskeyCeremonyGuard interface {
 	Consume(ctx context.Context, digest string, ttl time.Duration) (bool, error)
 }
 
-// inProcessPasskeyCeremonyGuard is the single-instance default: a
-// TTL-bounded set of spent ceremony digests in memory.
-//
-// Only a verified assertion/attestation spends a slot, so memory is bounded by successful
-// ceremonies, not request volume. Not a substitute for the Redis guard on a multi-instance
-// deployment; cmd/stellarindex-api warns when it falls back to this.
+// inProcessPasskeyCeremonyGuard is the single-instance default: a TTL-bounded in-memory set of
+// spent digests. Only a verified ceremony spends a slot, so memory is bounded by successful
+// ceremonies, not request volume.
 type inProcessPasskeyCeremonyGuard struct {
 	now func() time.Time
 
@@ -53,15 +45,12 @@ func newInProcessPasskeyCeremonyGuard(now func() time.Time) *inProcessPasskeyCer
 	return &inProcessPasskeyCeremonyGuard{now: now, seen: map[string]time.Time{}}
 }
 
-// Consume implements [PasskeyCeremonyGuard]. Never errors: the store
-// is this process's own memory.
+// Consume implements [PasskeyCeremonyGuard]; it never errors because the store is local memory.
 func (g *inProcessPasskeyCeremonyGuard) Consume(_ context.Context, digest string, ttl time.Duration) (bool, error) {
 	now := g.now()
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	// Sweep first so an expired record can't refuse a fresh ceremony
-	// that happens to hash the same way (it can't — challenges are 32
-	// random bytes — but the sweep is also what bounds the map).
+	// The sweep is what bounds the map.
 	for d, expiry := range g.seen {
 		if !expiry.After(now) {
 			delete(g.seen, d)
