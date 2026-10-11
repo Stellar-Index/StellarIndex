@@ -1,53 +1,27 @@
-// Package magiclinkreaper bounds the `magic_link_tokens` table
-// (migration 0027) that the dashboard magic-link / email-code sign-in
-// flow writes to.
+// Package magiclinkreaper bounds the `magic_link_tokens` table (migration 0027) that the dashboard
+// magic-link / email-code sign-in flow writes to.
 //
 // # Why this exists
 //
-// `magic_link_tokens` is durable plaintext PII — it stores the
-// requester's email (citext) and requested_ip (inet). Its key is
-// ATTACKER-CHOSEN and the write path is UNAUTHENTICATED:
-//
-//	POST /v1/auth/login {"email":"<random>@example.com"}
-//	  → CreateMagicLinkToken
-//	  → INSERT INTO magic_link_tokens (email = <random>@example.com, requested_ip = <caller>)
-//
-// A row is removed only by being consumed (a successful click of the
-// emailed link), which never happens for an address the caller does
-// not own — nobody clicks the link. Without this reaper the only bound
-// is the anonymous per-IP rate limit, which on a disk-fixed host makes
-// this a slow, cheap, remote table-fill whose first alarm would
-// otherwise be the volume-level disk page. The sibling
-// `login_code_lockouts` table has the same reaper in
-// internal/logincodereaper.
+// The table holds plaintext PII (requester email and IP), its key is ATTACKER-CHOSEN, and the
+// write path (POST /v1/auth/login) is UNAUTHENTICATED. A row is removed only by being consumed,
+// which never happens for an address the caller does not own. Without this reaper the only bound
+// is the anonymous per-IP rate limit, a slow, cheap, remote table-fill whose first alarm would be
+// the volume-level disk page. internal/logincodereaper does the same for `login_code_lockouts`.
 //
 // # What is swept
 //
-// EXPIRED rows only:
-//
-//	expires_at < now() - Retention
-//
-// Every row past `expires_at` is TERMINAL: both ConsumeMagicLinkToken
-// and ReserveLoginCode require `expires_at > now`, so an
-// expired row can never again be redeemed, consumed or not. Retention
-// keeps expired rows a while — long enough to preserve the
-// expired-vs-absent distinction classifyMagicLinkMiss draws for a slow
-// user, and to retain a window of forensics on a mint flood — then
-// deletes them over `magic_link_tokens_expires_idx`. A live
-// (unexpired) token is never touched at any age, mirroring the
-// login-code reaper's live-lock exemption.
-//
-// The worker is the same small ticker loop as
-// internal/logincodereaper (sweep immediately, then every Interval),
-// runs in the API binary, and is bounded to the process root context.
+// EXPIRED rows only (`expires_at < now() - Retention`). A row past `expires_at` is terminal:
+// ConsumeMagicLinkToken and ReserveLoginCode both require `expires_at > now`. Retention keeps
+// expired rows long enough to preserve the expired-vs-absent distinction classifyMagicLinkMiss
+// draws for a slow user and a forensics window on a mint flood, then deletes them over
+// `magic_link_tokens_expires_idx`. A live token is never touched at any age.
 //
 // # Not operator-tunable
 //
-// Deliberately no config section. Retention here is a DoS / PII
-// control, and an operator disabling or lengthening it re-opens the
-// hole — the same reasoning that keeps the login-code reaper
-// un-toggleable. It also cannot be silently disabled by an unrelated
-// toggle (e.g. the signup reaper's `enabled=false`).
+// There is deliberately no config section. Retention is a DoS / PII control, so an operator
+// disabling or lengthening it re-opens the hole, and an unrelated toggle must not be able to
+// disable it silently.
 package magiclinkreaper
 
 import (
@@ -61,24 +35,18 @@ import (
 
 // Defaults for a zero Options.
 const (
-	// DefaultInterval is the sweep cadence. Hourly is far more often
-	// than needed to hold the table flat, and cheap: one indexed range
+	// DefaultInterval is the sweep cadence; hourly holds the table flat for one indexed range
 	// DELETE plus one count.
 	DefaultInterval = time.Hour
-	// DefaultRetention is how long an EXPIRED row is kept past its
-	// expires_at. The magic-link TTL is 15 minutes
-	// (dashboardauth.MagicLinkTTL), so 48 h leaves a wide margin: it
-	// preserves the expired-vs-absent error distinction for a user who
-	// clicks a stale link up to two days late, keeps a window of
-	// forensics on a mint flood, and still holds the table flat.
+	// DefaultRetention is how long an EXPIRED row is kept past expires_at. The magic-link TTL is
+	// 15 minutes, so 48 h preserves the expired-vs-absent error for a user clicking a stale link
+	// two days late and a forensics window on a mint flood, while still holding the table flat.
 	DefaultRetention = 48 * time.Hour
 )
 
-// MagicLinkStore is the reaper's narrow seam, satisfied by
-// *postgresstore.TokenStore. Declared here rather than widening
-// platform.TokenStore so the delete surface stays off the broad
-// interface every token fake would otherwise have to implement — same
-// reasoning as logincodereaper.LockoutStore.
+// MagicLinkStore is the reaper's narrow seam, satisfied by *postgresstore.TokenStore. It is
+// declared here so the delete surface stays off platform.TokenStore, which every token fake would
+// otherwise have to implement.
 type MagicLinkStore interface {
 	// SweepExpiredMagicLinkTokens deletes rows whose expires_at is
 	// before olderThan, returning the number removed. Never deletes a
@@ -157,13 +125,12 @@ func (r *Reaper) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep runs one retention pass and refreshes the row-count gauge.
-// Exported so tests can drive a single pass deterministically.
+// Sweep runs one retention pass and refreshes the row-count gauge; it is exported so tests can
+// drive a single pass.
 //
-// Errors are recorded on [obs.MagicLinkTokenErrorsTotal] and
-// swallowed: this is a background janitor, and a failed sweep is
-// retried next tick. The gauge is refreshed even when the DELETE failed
-// — that is exactly when an operator most needs to see the row count.
+// Errors are recorded on [obs.MagicLinkTokenErrorsTotal] and swallowed because the next tick
+// retries. The gauge is refreshed even when the DELETE failed, since that is when an operator most
+// needs the row count.
 func (r *Reaper) Sweep(ctx context.Context) {
 	deleted, err := r.store.SweepExpiredMagicLinkTokens(ctx, r.now().Add(-r.retention))
 	switch {

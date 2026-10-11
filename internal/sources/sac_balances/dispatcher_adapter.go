@@ -28,17 +28,11 @@ type Observer struct {
 	// wrappers maps SAC contract C-strkey → asset_key (CODE:ISSUER).
 	wrappers map[string]string
 
-	// unknownValShapeDrops counts Balance-keyed changes for a watched
-	// contract whose value decoded as neither a bare i128 nor a
-	// map-with-amount. Matches() only checks KEY shape — a
-	// configured pure-SEP-41 wrapper (contract_id → contract_id, no
-	// classic asset) whose storage layout differs from the native SAC's
-	// still gets claimed on every change and fails every Decode. A
-	// SUSTAINED non-zero rate here means the wrapper's storage layout is
-	// fundamentally undecodable (a config problem: the watched contract
-	// isn't a shape sac_balances understands), as opposed to an
-	// occasional decode blip — indistinguishable from generic decode
-	// errors without this counter. Read via [Observer.UnknownValShapeDrops].
+	// unknownValShapeDrops counts Balance-keyed changes on a watched contract whose value is
+	// neither a bare i128 nor a map-with-amount. Matches() checks only KEY shape, so a
+	// pure-SEP-41 wrapper with a different storage layout is claimed on every change and fails
+	// every Decode. A sustained non-zero rate means a config problem (undecodable layout), which
+	// generic decode errors cannot distinguish from a blip. Read via [Observer.UnknownValShapeDrops].
 	unknownValShapeDrops int
 }
 
@@ -151,21 +145,13 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 // See the field doc on [Observer.unknownValShapeDrops].
 func (o *Observer) UnknownValShapeDrops() int { return o.unknownValShapeDrops }
 
-// contractDataFromChange returns the ContractDataEntry +
-// is-removal flag for any change variant. Removed-variant rows
-// derive ContractData from the LedgerKey (which carries Contract
-// + Key but no Val).
+// contractDataFromChange returns the ContractDataEntry and is-removal flag for any change
+// variant. Removed rows derive ContractData from the LedgerKey (Contract + Key, no Val).
 //
-// Both halves of the Soroban state-archival lifecycle arrive here.
-// Restored is a change variant core emits when an archived entry is
-// brought back. The EVICTION half is not a change variant at all — a
-// TTL-lapsed entry leaves the live state with no transaction touching
-// it — so the dispatcher's eviction phase turns each of the ledger's
-// evicted keys into a Removed change (dispatcher.walkEvictedKeys).
-// Such a change carries an empty TxHash and OpIndex -1: it is
-// ledger-scoped, not transaction-scoped. Nothing extra is needed here —
-// an evicted balance must stop counting toward supply exactly as a
-// deleted one does, and a later Restored change reverses it.
+// Both halves of the Soroban archival lifecycle arrive here. Eviction is not a change variant:
+// the dispatcher turns each evicted key into a Removed change (dispatcher.walkEvictedKeys) with
+// an empty TxHash and OpIndex -1, since it is ledger-scoped. An evicted balance must stop
+// counting toward supply exactly as a deleted one does, and a later Restored change reverses it.
 func contractDataFromChange(change xdr.LedgerEntryChange) (cd *xdr.ContractDataEntry, isRemoval bool, ok bool) {
 	var entry *xdr.LedgerEntry
 	switch change.Type {
@@ -197,13 +183,8 @@ func contractDataFromChange(change xdr.LedgerEntryChange) (cd *xdr.ContractDataE
 	return entry.Data.ContractData, false, entry.Data.ContractData != nil
 }
 
-// The SEP-41 / SAC balance decode helpers
-// — contractID-from-scAddress, the Balance(Address) key
-// predicate, the holder extractor, and the i128-or-map value decoder —
-// now live in internal/scval (scval.ContractIDFromScAddress,
-// IsSEP41BalanceKey, HolderFromBalanceKey, SEP41BalanceAmount). They are
-// shared verbatim with the lake-seed reader in internal/storage/
-// clickhouse so the live observer and the seed recognise + decode
-// exactly the same on-wire shape.
+// The SEP-41 / SAC balance decode helpers live in internal/scval (ContractIDFromScAddress,
+// IsSEP41BalanceKey, HolderFromBalanceKey, SEP41BalanceAmount), shared with the lake-seed reader
+// in internal/storage/clickhouse so the live observer and the seed decode the same on-wire shape.
 
 var _ dispatcher.LedgerEntryChangeDecoder = (*Observer)(nil)

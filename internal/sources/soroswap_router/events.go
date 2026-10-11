@@ -88,12 +88,12 @@ func (e Event) EventKind() string { return "soroswap-router.swap" }
 func (e Event) Source() string { return SourceName }
 
 // CallSig is the per-call discriminator in the soroswap_router_swaps PK: one op can carry several
-// distinct router swaps sharing (ledger, tx_hash, op_index), and without it 106 were lost across pubnet
-// history. It is a 128-bit hash of the economic identity (function, recipient, path, requested amounts),
-// so auth-tree duplicates of one call (a co-signed tx surfaces it at several CallPaths) dedup via ON
-// CONFLICT. deadline and CallPath/CallDepth/CallKind describe the sentinel or position, not the swap, so
-// they are excluded. AuthOccurrence is the one positional input: two identical calls in one auth entry
-// are two executions; occurrence 0 adds nothing to the hash, so stored call_sigs are unchanged.
+// distinct router swaps sharing (ledger, tx_hash, op_index). It is a 128-bit hash of the economic
+// identity (function, recipient, path, requested amounts), so auth-tree duplicates of one call (a
+// co-signed tx surfaces it at several CallPaths) dedup via ON CONFLICT. deadline and
+// CallPath/CallDepth/CallKind describe position, not the swap, and are excluded. AuthOccurrence is
+// the one positional input: two identical calls in one auth entry are two executions, and
+// occurrence 0 adds nothing to the hash, so stored call_sigs stay stable.
 func (s RouterSwap) CallSig() string {
 	parts := make([]string, 0, len(s.Path)+5)
 	parts = append(parts, s.Function, s.Recipient)

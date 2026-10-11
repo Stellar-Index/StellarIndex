@@ -37,12 +37,10 @@ func Recover(logger *slog.Logger, name string) {
 	}
 }
 
-// Report records an ALREADY-RECOVERED panic. It exists because recover()
-// only works one frame deep: a caller with its own deferred function
-// (stellarindex-api's recoverBackgroundWorker, which carries a different
-// log message about the API still serving) cannot delegate to [Recover]
-// and must hand the recovered value here instead. Every binary therefore
-// moves the same counter, which is what the page rule reads.
+// Report records an ALREADY-RECOVERED panic. recover() works only one frame deep, so a caller
+// with its own deferred function (stellarindex-api's recoverBackgroundWorker) cannot delegate to
+// [Recover] and hands the recovered value here, so every binary moves the same counter the page
+// rule reads.
 func Report(logger *slog.Logger, name string, r any) {
 	if logger == nil {
 		logger = slog.Default()

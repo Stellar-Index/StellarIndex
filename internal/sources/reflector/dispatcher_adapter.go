@@ -5,17 +5,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of one Reflector oracle
-// variant (DEX / CEX / FX). Each binary registers three Decoders
-// — one per variant — scoped to their respective mainnet contract
-// addresses.
-//
-// Decoder has no goroutines, no RPC clients, no polling. All state
-// needed to decode a Reflector update lives in the event itself
-// (per docs/architecture/ingest-pipeline.md). Per-entry decode
-// errors (unknown crypto ticker, malformed payload) are surfaced
-// to the dispatcher as non-fatal returns; the dispatcher counts
-// them and continues.
+// Decoder is the dispatcher-facing view of one Reflector oracle variant (DEX / CEX / FX), scoped
+// to that variant's mainnet contract address. It is stateless: everything needed to decode an
+// update lives in the event. Per-entry decode errors (unknown ticker, malformed payload) are
+// non-fatal returns that the dispatcher counts before continuing.
 type Decoder struct {
 	variant    Variant
 	contractID string
@@ -63,11 +56,8 @@ func WithDecoderDecimals(dec uint8) DecoderOption {
 // Name implements [dispatcher.Decoder].
 func (d *Decoder) Name() string { return d.variant.SourceName() }
 
-// Matches implements [dispatcher.Decoder]. Returns true for events
-// from this Decoder's contract whose topic[0..1] bytes are
-// Symbol("REFLECTOR"), Symbol("update"). Topic[2] (timestamp) is
-// not inspected here — classify() handles the arity check once
-// we're routing through Decode.
+// Matches implements [dispatcher.Decoder]. It accepts events from this Decoder's contract whose
+// topic[0..1] are Symbol("REFLECTOR"), Symbol("update"); classify() checks arity (topic[2]).
 func (d *Decoder) Matches(ev events.Event) bool {
 	if ev.ContractID != d.contractID {
 		return false
@@ -82,11 +72,9 @@ func (d *Decoder) Matches(ev events.Event) bool {
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	closedAt, err := ev.EventClosedAt()
 	if err != nil {
-		// Fail closed rather than substituting time.Now(): closedAt
-		// is the fallback decodeUpdate uses when the topic[2] oracle
-		// timestamp is missing / out of its sanity window, so a
-		// wall-clock value here would mis-timestamp the row during a
-		// backfill replay (cf. the comet sibling).
+		// Fail closed rather than substituting time.Now(): closedAt is decodeUpdate's fallback
+		// when the topic[2] timestamp is missing or out of window, and wall-clock time would
+		// mis-timestamp the row during a backfill replay.
 		return nil, err
 	}
 	updates, err := decodeUpdate(&ev, d.variant, d.decimals, d.observer, closedAt)

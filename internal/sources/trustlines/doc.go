@@ -5,7 +5,6 @@
 // `trustline_observations`, which supply.StorageClassicSupplyReader sums
 // as Algorithm 2's trustline component.
 //
-// Classic credit assets only: native XLM is Algorithm 1 (the accounts
-// observer), and pool-share trustlines are covered by the LP-reserve
-// observer in liquidity_pools.
+// Classic credits only: native XLM is the accounts observer and pool shares the liquidity_pools
+// LP-reserve observer.
 package trustlines

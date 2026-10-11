@@ -16,38 +16,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Observer is the dispatcher-facing LiquidityPoolEntry observer
-// per ADR-0022. Implements
-// [dispatcher.LedgerEntryChangeDecoder].
-//
-// Watched-asset driven via the same operator config the
-// trustlines + claimable observers consume.
+// Observer is the dispatcher-facing LiquidityPoolEntry observer (ADR-0022), a
+// [dispatcher.LedgerEntryChangeDecoder] driven by the same watched-asset config as the trustlines
+// and claimable observers.
 type Observer struct {
 	watched map[string]struct{}
 
-	// mu guards preImage + preImageLedger. [dispatcher.Dispatcher]
-	// documents that ProcessLedger must be serialized by the caller,
-	// so this lock is uncontended in production — it is here so a
-	// future concurrent caller degrades to "pairing may miss a
-	// removal" rather than to a data race.
+	// mu guards preImage + preImageLedger. ProcessLedger is serialized by the caller, so this is
+	// uncontended; it makes a concurrent caller miss a pairing rather than race.
 	mu sync.Mutex
 
 	// preImage maps pool_id hex → the watched asset_keys of that pool,
-	// recorded from a body-carrying change (STATE / Created / Updated /
-	// Restored) seen earlier in THIS ledger's entry-change walk.
+	// recorded from a body-carrying change seen earlier in THIS ledger's entry-change walk.
 	//
-	// The LedgerKey on a Removed change carries only the
-	// LiquidityPoolId — not the asset pair — so a fully-withdrawn pool
-	// cannot be attributed from the Removed change alone. stellar-core
-	// emits the full pre-image as a LEDGER_ENTRY_STATE change
-	// immediately before the LEDGER_ENTRY_REMOVED for the same entry
-	// (LedgerTxn::getChanges; the SDK's
-	// ingest.GetChangesFromLedgerEntryChanges relies on the same
-	// adjacency), so the pair is always in hand by then.
+	// A Removed change's LedgerKey carries only the LiquidityPoolId, not the asset pair.
+	// stellar-core emits the full pre-image as a LEDGER_ENTRY_STATE change immediately before the
+	// REMOVED for the same entry (the SDK's change reader relies on the same adjacency), so the
+	// pair is known by then.
 	//
-	// Scoped to one ledger: reset when a change from a different ledger
-	// arrives, bounding the map by the count of watched-asset pool
-	// changes in a single ledger.
+	// Scoped to one ledger: reset when a change from a different ledger arrives, which bounds the
+	// map.
 	preImage       map[string][]string
 	preImageLedger uint32
 }
@@ -78,16 +66,9 @@ func NewObserver(watched []string) (*Observer, error) {
 
 func (*Observer) Name() string { return SourceName }
 
-// Matches returns true when:
-//
-//  1. The change is State/Created/Updated/Restored on a
-//     LiquidityPool entry, AND
-//  2. The pool is ConstantProduct (only LP variant today), AND
-//  3. At least one side of the asset pair is in the watched set.
-//
-// For Removed variants (the pool's last liquidity withdrawn) it
-// returns true only when this ledger's pre-image memo already knows
-// the pool's watched sides — same handling as claimable_balances.
+// Matches returns true for a body-carrying change on a ConstantProduct pool (the only LP variant)
+// with at least one side in the watched set. A Removed variant matches only when the pre-image
+// memo already knows the pool's watched sides, as in claimable_balances.
 func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	if change.Type == xdr.LedgerEntryChangeTypeLedgerEntryRemoved {
 		poolID, ok := removedPoolID(change)
@@ -119,20 +100,16 @@ func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	return false
 }
 
-// Decode implements [dispatcher.LedgerEntryChangeDecoder]. Emits
-// one Observation per asset side that's in the watched set —
-// a pool with both sides watched produces two Observations; one
-// side watched produces one; neither (Match would have skipped).
+// Decode implements [dispatcher.LedgerEntryChangeDecoder]. Emits one Observation per watched
+// asset side.
 //
-// A Removed change (the pool's last liquidity withdrawn, entry
-// deleted) emits one removal Observation per watched side — Balance
-// zero, IsRemoval true — so the served aggregate stops counting the
-// vanished reserves. The removal is an absorbing STATE, not a delta,
-// so re-ingesting a ledger rewrites the identical rows rather than
+// A Removed change (pool deleted) emits one removal Observation per watched side (Balance zero,
+// IsRemoval true) so the served aggregate stops counting the vanished reserves. The removal is an
+// absorbing state, not a delta, so re-ingesting a ledger rewrites the identical rows rather than
 // double-subtracting.
 //
-// A State change carries only the PRE-image; it feeds the memo and
-// emits nothing (emitting would persist a stale reserve).
+// A State change carries only the pre-image; it feeds the memo and emits nothing, since emitting
+// would persist a stale reserve.
 func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.Event, error) {
 	if ctx.Change.Type == xdr.LedgerEntryChangeTypeLedgerEntryRemoved {
 		poolID, ok := removedPoolID(ctx.Change)
@@ -141,14 +118,12 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 		}
 		sides, known := o.lookupPreImage(ctx.Ledger, poolID)
 		if !known {
-			// Matches already said yes on the memo, but hasPreImage does
-			// not apply lookupPreImage's ledger guard — so the entry
-			// belongs to a PREVIOUS ledger and nothing is attributable.
-			// Silent here meant a removed pool's reserves stayed in
-			// SumLPReservesAtOrBefore permanently (a removal is absorbing,
-			// not a delta), over-reporting supply with nothing counting
-			// the loss. Error so it lands on the per-source decode-error
-			// counter.
+			// hasPreImage does not apply lookupPreImage's ledger guard, so the memo entry is from
+			// a PREVIOUS ledger and nothing is attributable.
+			//
+			// Error rather than skip silently: a dropped removal leaves the pool's reserves in
+			// SumLPReservesAtOrBefore permanently, over-reporting supply. The error lands on the
+			// per-source decode-error counter.
 			return nil, fmt.Errorf(
 				"%w: removed pool %s has no pre-image in ledger %d's memo — "+
 					"a watched pool's reserves cannot be attributed, so they "+
@@ -230,13 +205,10 @@ func (o *Observer) rememberPreImage(ledger uint32, poolID string, sides []string
 	o.preImage[poolID] = sides
 }
 
-// lookupPreImage returns the watched asset_keys recorded for `poolID`
-// earlier in THIS ledger's walk. A memo left over from a previous
-// ledger never answers: stellar-core emits the pre-image STATE in the
-// same change list as the REMOVED it belongs to (the SDK's reader
-// asserts that adjacency outright), so a cross-ledger hit would mean
-// the meta broke that invariant — in which case skipping is the honest
-// answer rather than attributing a removal from stale state.
+// lookupPreImage returns the watched asset_keys recorded for poolID earlier in THIS ledger's
+// walk. A memo from a previous ledger never answers: the pre-image STATE shares a change list
+// with its REMOVED, so a cross-ledger hit means the meta broke that invariant, and skipping beats
+// attributing a removal from stale state.
 func (o *Observer) lookupPreImage(ledger uint32, poolID string) ([]string, bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()

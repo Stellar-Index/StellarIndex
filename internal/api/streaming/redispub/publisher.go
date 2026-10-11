@@ -64,11 +64,9 @@ func (p *Publisher) Channel() string { return p.channel }
 // ProducerID returns the id stamped on every event this Publisher sends.
 func (p *Publisher) ProducerID() string { return p.producer }
 
-// PublishClosedBucket implements
-// `orchestrator.StreamPublisher.PublishClosedBucket`. JSON-marshals
-// the event and PUBLISHes to the configured channel. Returns the
-// underlying Redis error wrapped on failure; callers
-// (orchestrator) log + continue, since the next tick retries.
+// PublishClosedBucket implements orchestrator.StreamPublisher: it JSON-marshals the event and
+// PUBLISHes it to the configured channel. The orchestrator logs a failure and continues because
+// the next tick retries.
 func (p *Publisher) PublishClosedBucket(
 	ctx context.Context,
 	pair canonical.Pair,

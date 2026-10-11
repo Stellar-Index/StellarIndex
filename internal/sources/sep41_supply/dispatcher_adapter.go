@@ -57,11 +57,9 @@ func (*Decoder) Name() string { return SourceName }
 //  1. The event is a contract event from a watched contract id.
 //  2. topic[0] decodes to one of mint / burn / clawback.
 //
-// Transfers are explicitly NOT matched — they don't affect total
-// supply (the discovery sniffer in internal/canonical/discovery
-// records transfers separately, for the discovered_assets
-// surface). Match is cheap: contract-id map lookup + base64
-// byte-equality on topic[0].
+// Transfers are NOT matched: they don't change total supply (the discovery sniffer in
+// internal/canonical/discovery records them separately). Match is a contract-id map lookup plus
+// base64 byte-equality on topic[0].
 func (d *Decoder) Matches(ev events.Event) bool {
 	if ev.Type != "contract" {
 		return false

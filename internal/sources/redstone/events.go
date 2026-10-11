@@ -14,9 +14,9 @@
 //	              "write_timestamp":   u64,
 //	           }
 //
-// The event carries no feed identifiers: they are write_prices' `feed_ids` op arg (events.Event.OpArgs),
-// zipped one-to-one against updated_feeds. A freshness-filtered (shorter) updated_feeds is resolved by
-// decode.go's resolveFeedAttribution; see docs/protocols/redstone.md.
+// The event carries no feed identifiers: they are write_prices' `feed_ids` op arg
+// (events.Event.OpArgs), zipped against updated_feeds. A shorter, freshness-filtered
+// updated_feeds is resolved by resolveFeedAttribution; see docs/protocols/redstone.md.
 package redstone
 
 import (

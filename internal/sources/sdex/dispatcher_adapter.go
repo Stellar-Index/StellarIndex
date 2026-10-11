@@ -11,15 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Decoder is the dispatcher-facing OpDecoder for classic SDEX
-// trades. Unlike the Soroban sources (events.Event-driven) SDEX
-// operates on xdr.Operation + xdr.OperationResult pairs via
-// dispatcher.OpContext.
-//
-// Stateless — every claim atom is self-contained. The Decoder
-// owns no correlation buffer; a single op may emit N trades
-// (one per claim atom) but all of them come from the same
-// OpContext in one Decode call.
+// Decoder is the dispatcher-facing OpDecoder for classic SDEX trades; it works on
+// xdr.Operation + xdr.OperationResult pairs via dispatcher.OpContext, not events. Stateless:
+// every claim atom is self-contained, so one op's N trades all come from one Decode call.
 type Decoder struct{}
 
 // NewDecoder constructs an SDEX Decoder.
@@ -36,32 +30,21 @@ func (*Decoder) Matches(op xdr.Operation) bool {
 	return matchesTradeOp(op)
 }
 
-// Decode implements [dispatcher.OpDecoder]. Returns zero trades
-// for ops that didn't cross the book (failed op, or offer rested
-// without claiming anything), one trade per claim atom otherwise.
-//
-// The Taker on every emitted trade is the tx source account
-// (the buyer-side actor who placed the aggressive offer). Maker
-// comes from each claim atom — usually a G-address, but for
-// liquidity-pool fills it's the pool hash (hex-encoded).
+// Decode implements [dispatcher.OpDecoder]: zero trades for ops that didn't cross the book,
+// one per claim atom otherwise. Taker is the tx source account; Maker comes from each claim
+// atom (a G-address, or the hex pool hash for liquidity-pool fills).
 func (d *Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
 	out, _ := d.decodeCounted(ctx)
 	return out, nil
 }
 
-// DecodeCounted is the completeness-census-facing variant of Decode: same
-// decode logic, but also returns how many claim atoms failed to decode
-// (decodeClaimAtom errors other than [ErrNoOpClaim] — structurally malformed
-// claims, NOT the both-zero no-op claims both sides drop, NOR one-sided
-// fills, which decode cleanly and are stored by the writer).
+// DecodeCounted is the completeness-census variant of Decode: same logic, plus the count of
+// claim atoms that failed to decode (errors other than [ErrNoOpClaim]; not both-zero no-ops
+// and not one-sided fills, which decode cleanly).
 //
-// The census (compute_completeness.go's reDeriveSDEXCensusViaDecoder) needs
-// this count to mark a ledger BLIND rather than silently treating a
-// per-claim drop as "zero trades, clean" — the same class of blindness
-// [dispatcher.ContractCallDecoder] callers already thread via
-// completeness.BlindSpots. Decode cannot report it without breaking the
-// dispatcher.OpDecoder signature every other source implements, so it is a
-// second, additive method rather than a signature change.
+// The census (reDeriveSDEXCensusViaDecoder) needs the count to mark a ledger BLIND rather than
+// treating a per-claim drop as "zero trades, clean". Decode cannot report it without breaking
+// the dispatcher.OpDecoder signature, so this is a second, additive method.
 func (d *Decoder) DecodeCounted(ctx dispatcher.OpContext) ([]consumer.Event, int) {
 	return d.decodeCounted(ctx)
 }
@@ -95,19 +78,12 @@ func (*Decoder) decodeCounted(ctx dispatcher.OpContext) ([]consumer.Event, int) 
 			continue
 		}
 		if err != nil {
-			// Count the per-claim failure HERE: the dispatcher only counts a
-			// non-nil return from Decode, and this function swallows every
-			// per-claim error. Without it
-			// stellarindex_source_decode_errors_total{source="sdex"} could never
-			// leave zero, though events.go and the sustained-rate alert name it
-			// as THE signal for this.
-			//
-			// The drop is otherwise invisible: sdexclaim.IsRealTrade mirrors the
-			// same reject, so the census and the lake's classic_trade_effect_count
-			// drop the atom too and the ADR-0033 reconcile nets to zero.
-			//
-			// Still `continue`, not a returned error: the other claims in this op
-			// are independently valid and a returned error would drop them too.
+			// Count the failure HERE: the dispatcher only counts a non-nil return from Decode,
+			// and this function swallows per-claim errors, so the decode-errors metric would
+			// never move. The drop is otherwise invisible: sdexclaim.IsRealTrade mirrors the
+			// reject, so the census and the lake's classic_trade_effect_count drop the atom too
+			// and the reconcile nets to zero. Still `continue`, not a returned error: the
+			// other claims in this op are independently valid.
 			obs.SourceDecodeErrorsTotal.WithLabelValues(SourceName).Inc()
 			failed++
 			continue

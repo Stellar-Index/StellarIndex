@@ -26,19 +26,13 @@ type Observation struct {
 	// Balance is the post-change reserve for this side.
 	Balance *big.Int
 
-	// IsRemoval is true when the change deleted the pool entry (last
-	// liquidity withdrawn). Balance is zeroed and the row lands with
-	// is_removal=true, which the served aggregate
-	// (SumLPReservesAtOrBefore) excludes — so the vanished reserves
-	// stop counting toward total supply.
+	// IsRemoval is true when the change deleted the pool entry. Balance is zeroed and
+	// SumLPReservesAtOrBefore excludes the row, so the vanished reserves stop counting toward supply.
 	IsRemoval bool
 
-	// IntraLedgerSeq is the within-ledger position of the change that
-	// produced this observation, in the dispatcher's canonical meta-walk
-	// order (see dispatcher.LedgerEntryChangeContext.IntraLedgerSeq). Both
-	// asset-side rows from one pool-change share the same position (they come
-	// from the same change). The writer guards its last-writer-wins upsert on
-	// it so an out-of-order PersistEvents worker can never overwrite a later
-	// intra-ledger change with an earlier one.
+	// IntraLedgerSeq is the change's within-ledger position in the dispatcher's canonical
+	// meta-walk order; both side rows of one pool change share it. The writer guards its
+	// last-writer-wins upsert on it so an out-of-order PersistEvents worker cannot overwrite a
+	// later change with an earlier one.
 	IntraLedgerSeq uint32
 }

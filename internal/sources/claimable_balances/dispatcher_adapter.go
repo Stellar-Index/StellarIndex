@@ -14,42 +14,27 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Observer is the dispatcher-facing ClaimableBalanceEntry
-// observer per ADR-0022. Implements
-// [dispatcher.LedgerEntryChangeDecoder].
-//
-// Watched-asset driven via the same operator config the
-// trustlines observer consumes. Removed-variant changes
-// (a claim) are resolved through the pre-image STATE change that
-// stellar-core emits immediately before them — see package doc.
+// Observer is the dispatcher-facing ClaimableBalanceEntry observer (ADR-0022), a
+// [dispatcher.LedgerEntryChangeDecoder] driven by the same watched-asset config as the trustlines
+// observer. Removals (claims) are resolved through the pre-image STATE change that stellar-core
+// emits immediately before them.
 type Observer struct {
 	watched map[string]struct{}
 
-	// mu guards preImage + preImageLedger. [dispatcher.Dispatcher]
-	// documents that ProcessLedger must be serialized by the caller,
-	// so this lock is uncontended in production — it is here so a
-	// future concurrent caller degrades to "pairing may miss a
-	// removal" rather than to a data race.
+	// mu guards preImage + preImageLedger. ProcessLedger is serialized by the caller, so this is
+	// uncontended; it makes a concurrent caller miss a pairing rather than race.
 	mu sync.Mutex
 
 	// preImage maps claimable_id hex → asset_key for watched claimable
-	// balances whose entry body was seen earlier in THIS ledger's
-	// entry-change walk (a STATE / Created / Updated / Restored change).
+	// balances whose entry body was seen earlier in THIS ledger's entry-change walk.
 	//
-	// It exists because the LedgerKey on a Removed change carries only
-	// the BalanceId — not the asset — so a claim cannot be attributed
-	// to a watched asset from the Removed change alone. stellar-core
-	// always emits the full pre-image as a LEDGER_ENTRY_STATE change
-	// immediately before the LEDGER_ENTRY_REMOVED for the same entry
-	// (LedgerTxn::getChanges; the SDK's
-	// ingest.GetChangesFromLedgerEntryChanges relies on the same
-	// adjacency), so the asset is always in hand by the time the
-	// removal arrives.
+	// A Removed change's LedgerKey carries only the BalanceId, not the asset. stellar-core always
+	// emits the full pre-image as a LEDGER_ENTRY_STATE change immediately before the REMOVED for
+	// the same entry (the SDK's change reader relies on the same adjacency), so the asset is
+	// known by the time the removal arrives.
 	//
-	// Scoped to one ledger: reset whenever a change from a different
-	// ledger arrives, which bounds the map by the count of watched-asset
-	// claimable changes in a single ledger (single/double digits) and
-	// keeps the memo from outliving the walk it belongs to.
+	// Scoped to one ledger: reset when a change from a different ledger arrives, which bounds the
+	// map and keeps the memo from outliving its walk.
 	preImage       map[string]string
 	preImageLedger uint32
 }
@@ -80,18 +65,9 @@ func (*Observer) Name() string { return SourceName }
 
 // Matches implements [dispatcher.LedgerEntryChangeDecoder].
 //
-// For body-carrying variants (State / Created / Updated / Restored)
-// it returns true when:
-//
-//  1. The change touches a ClaimableBalance entry, AND
-//  2. The claimable's asset is a classic credit, AND
-//  3. The asset_key is in the watched set.
-//
-// For Removed variants (a claim) it returns true only when this
-// ledger's pre-image memo already knows the balance — i.e. the
-// paired STATE change identified it as a watched classic asset.
-// A removal we cannot attribute to a watched asset is left
-// unmatched, exactly as before.
+// Body-carrying variants match when the entry is a ClaimableBalance with a classic credit asset
+// in the watched set. A Removed variant matches only when the pre-image memo already knows the
+// balance; a removal we cannot attribute to a watched asset stays unmatched.
 func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	if change.Type == xdr.LedgerEntryChangeTypeLedgerEntryRemoved {
 		id, ok := removedClaimableID(change)
@@ -119,14 +95,12 @@ func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 
 // Decode implements [dispatcher.LedgerEntryChangeDecoder].
 //
-// A Removed change emits a removal Observation (Balance zero,
-// IsRemoval true) so the served aggregate stops counting a claimed
-// balance — same shape the trustlines observer uses. The removal is
-// an absorbing STATE, not a delta, so re-ingesting a ledger rewrites
-// the identical row rather than double-subtracting.
+// A Removed change emits a removal Observation (Balance zero, IsRemoval true) so the served
+// aggregate stops counting a claimed balance. The removal is an absorbing state, not a delta, so
+// re-ingesting a ledger rewrites the identical row rather than double-subtracting.
 //
-// A State change carries only the PRE-image; it feeds the memo and
-// emits nothing (emitting would persist a stale balance).
+// A State change carries only the pre-image; it feeds the memo and emits nothing, since emitting
+// would persist a stale balance.
 func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.Event, error) {
 	if ctx.Change.Type == xdr.LedgerEntryChangeTypeLedgerEntryRemoved {
 		id, ok := removedClaimableID(ctx.Change)
@@ -135,18 +109,12 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 		}
 		ak, known := o.lookupPreImage(ctx.Ledger, id)
 		if !known {
-			// Matches already said yes, so the memo held this claimable
-			// when the cheap filter ran — but hasPreImage does NOT apply
-			// the ledger guard that lookupPreImage does, so reaching here
-			// means the memo entry belongs to a PREVIOUS ledger. Nothing
-			// is attributable and we must not guess an asset.
+			// hasPreImage does not apply the ledger guard lookupPreImage does, so reaching here
+			// means the memo entry is from a PREVIOUS ledger; we must not guess an asset.
 			//
-			// Returning (nil, nil) made that silent, and a dropped removal
-			// is not a dropped increment: the removal is the only thing
-			// that stops SumClaimableBalancesAtOrBefore counting a claimed
-			// balance, so the stale amount stays in the served total
-			// FOREVER, over-reporting supply with no counter moving.
-			// Erroring bumps the per-source decode-error counter instead.
+			// Error rather than (nil, nil): a dropped removal is the only thing that stops
+			// SumClaimableBalancesAtOrBefore counting a claimed balance, so it would over-report
+			// supply forever with no counter moving. The error bumps the decode-error counter.
 			return nil, fmt.Errorf(
 				"%w: removed claimable %s has no pre-image in ledger %d's memo — "+
 					"a watched balance was claimed and cannot be attributed, so its "+
@@ -195,13 +163,10 @@ func (o *Observer) rememberPreImage(ledger uint32, claimableID, assetKey string)
 	o.preImage[claimableID] = assetKey
 }
 
-// lookupPreImage returns the watched asset_key recorded for
-// `claimableID` earlier in THIS ledger's walk. A memo left over from
-// a previous ledger never answers: stellar-core emits the pre-image
-// STATE in the same change list as the REMOVED it belongs to (the SDK's
-// reader asserts that adjacency outright), so a cross-ledger hit would
-// mean the meta broke that invariant — in which case skipping is the
-// honest answer rather than attributing a removal from stale state.
+// lookupPreImage returns the watched asset_key recorded for claimableID earlier in THIS ledger's
+// walk. A memo from a previous ledger never answers: the pre-image STATE shares a change list
+// with its REMOVED, so a cross-ledger hit means the meta broke that invariant, and skipping beats
+// attributing a removal from stale state.
 func (o *Observer) lookupPreImage(ledger uint32, claimableID string) (string, bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -212,10 +177,8 @@ func (o *Observer) lookupPreImage(ledger uint32, claimableID string) (string, bo
 	return ak, ok
 }
 
-// hasPreImage is the Match-time pre-filter: does the memo know this
-// claimable at all? Matches gets no [dispatcher.LedgerEntryChangeContext],
-// so the ledger-scoped check is Decode's job — per the decoder contract,
-// Matches is the cheap filter and Decode is authoritative.
+// hasPreImage is the Match-time pre-filter. Matches gets no ledger context, so the ledger-scoped
+// check is Decode's job: Matches is the cheap filter, Decode is authoritative.
 func (o *Observer) hasPreImage(claimableID string) bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -223,11 +186,8 @@ func (o *Observer) hasPreImage(claimableID string) bool {
 	return ok
 }
 
-// claimableFromChange returns the ClaimableBalanceEntry pointer
-// for a State / Created / Updated / Restored change, or
-// (nil, false) otherwise. Removed-variant changes return
-// (nil, false) — they carry only a LedgerKey, not the entry body
-// (see [removedClaimableID]).
+// claimableFromChange returns the ClaimableBalanceEntry for a State / Created / Updated / Restored
+// change, or (nil, false). Removed changes carry only a LedgerKey (see [removedClaimableID]).
 func claimableFromChange(change xdr.LedgerEntryChange) (*xdr.ClaimableBalanceEntry, bool) {
 	var entry *xdr.LedgerEntry
 	switch change.Type {

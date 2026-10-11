@@ -2,17 +2,14 @@ package redispub
 
 import "time"
 
-// DefaultChannel is the Redis pub/sub channel the [Publisher]
-// writes to and the matching Subscriber listens on by default.
-// Operators with multiple deployments sharing one Redis override it
-// per environment with `[storage].redis_closed_bucket_channel`, read
-// by both the aggregator and the API.
+// DefaultChannel is the Redis pub/sub channel the [Publisher] writes and the Subscriber reads.
+// Deployments sharing one Redis override it with `[storage].redis_closed_bucket_channel`, which
+// both the aggregator and the API read.
 const DefaultChannel = "stellarindex:closed-bucket:v1"
 
-// KindFrozen marks a [ClosedBucketEvent] that stands in for a bucket a
-// freeze refused: it carries the bucket's identity and no value. The
-// empty Kind is a published price, so events from producers that predate
-// the field still decode as prices.
+// KindFrozen marks a [ClosedBucketEvent] standing in for a bucket a freeze refused: it carries the
+// bucket's identity and no value. The empty Kind is a published price, so events from producers
+// that omit the field still decode as prices.
 const KindFrozen = "frozen"
 
 // ClosedBucketEvent is the JSON wire shape published per (pair, window) VWAP cache write, carrying

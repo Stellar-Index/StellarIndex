@@ -370,19 +370,15 @@ const (
 	// skew between the aggregator and API hosts.
 	observedAtFutureSkew = 5 * time.Minute
 
-	// observedAtMaxAge bounds how stale a closed-bucket event may be.
-	// ObservedAt is the window's END — the last closed minute, not the
-	// window's start — so even the 24h window lands within a minute of
-	// real time; a day of slack absorbs delivery lag without admitting
-	// an ancient replayed price.
+	// observedAtMaxAge bounds how stale a closed-bucket event may be. ObservedAt is the window's
+	// END, so even the 24h window lands within a minute of real time; a day of slack absorbs
+	// delivery lag without admitting an ancient replayed price.
 	observedAtMaxAge = 24 * time.Hour
 )
 
-// maxValueDecimal is the exclusive upper bound on a published VWAP.
-// 10^18 is astronomically beyond any real quote-per-base price yet
-// still rejects overflow-style garbage. Range validation is
-// defense-in-depth, not a substitute for the network isolation that is
-// the primary control against a plausible-but-forged price.
+// maxValueDecimal is the exclusive upper bound on a published VWAP: 10^18 is far beyond any real
+// quote-per-base price yet rejects overflow-style garbage. It is defense-in-depth; network
+// isolation is the primary control against a plausible-but-forged price.
 var maxValueDecimal = new(big.Rat).SetInt(
 	new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil),
 )

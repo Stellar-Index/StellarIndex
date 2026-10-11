@@ -7,13 +7,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// decodeOne classifies and decodes a single backstop event into the
-// canonical [Event] row. It is the join point between decode.go's
-// per-kind helpers and the universal identity fields carried on
-// events.Event. Returns ("", err) only for a genuinely malformed
-// event (the dispatcher counts + skips it); a promoted field whose
-// shape doesn't match degrades into Attributes inside the per-kind
-// helper rather than erroring here.
+// decodeOne classifies and decodes one backstop event into the canonical [Event] row. It errors
+// only for a genuinely malformed event (the dispatcher counts and skips it); a promoted field
+// with the wrong shape degrades into Attributes in the per-kind helper instead.
 func decodeOne(ev *events.Event) (Event, error) { //nolint:gocyclo // dispatch table; one arm per backstop event kind
 	kind := Classify(ev)
 	if kind == "" {

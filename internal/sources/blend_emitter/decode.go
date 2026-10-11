@@ -8,11 +8,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// classify reports the Emitter event kind on a single-topic
-// Symbol("<event_name>") event, or empty string if the topic isn't
-// one we recognise. Pure byte-equality against the pre-encoded
-// TopicSymbol* blobs — no SCVal body parsing — so it's cheap in the
-// dispatcher's hot path.
+// classify reports the Emitter event kind of a single-topic Symbol event, or "" if unrecognised.
+// It only byte-compares pre-encoded TopicSymbol* blobs, keeping the dispatcher hot path cheap.
 func classify(e *events.Event) string {
 	if len(e.Topic) < emitterTopicArity {
 		return ""
@@ -37,15 +34,11 @@ type distributeFields struct {
 	Amount     canonical.Amount
 }
 
-// decodeDistribute decodes a `distribute` event body.
-//
-// Verified against the real mainnet fixture (ledger 51,524,666, tx
-// a4d9621406d8de34f8599ad6cece90ba4c404263e283873fc88ba74a57f0af00):
+// decodeDistribute decodes a `distribute` body, verified against a real mainnet fixture:
 //
 //	body = Vec[ Address backstop_id, i128 amount ]
 //
-// A fixed 2-element Vec, not a Map — decode positionally (there are
-// no field names to decode by on a bare Vec).
+// It is a fixed 2-element bare Vec, so it is decoded positionally.
 func decodeDistribute(e *events.Event) (distributeFields, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -81,23 +74,14 @@ type dropRecipient struct {
 	Amount    canonical.Amount
 }
 
-// decodeDrop decodes a `drop` event body.
-//
-// Verified against two real mainnet fixtures — ledger 51,499,914
-// (13 recipients, the Emitter's genesis-era airdrop) and ledger
-// 57,467,292, tx fc3056698a541e6a7d5fdfc29538661c199ad2cce28e43dc5fb81d24a3c9be0e
-// (3 recipients) — confirming the outer Vec length is NOT fixed:
+// decodeDrop decodes a `drop` body. Two real fixtures (13 and 3 recipients) confirm the outer
+// Vec length is NOT fixed:
 //
 //	body = Vec[ Vec[ Address recipient, i128 amount ], ... ]
 //
-// Every inner element is itself a fixed 2-element Vec (recipient,
-// amount), decoded positionally (bare Vec, no field names). Returns
-// the full recipient slice for one contract event — the caller /
-// storage layer fans this out one row per recipient with a
-// recipient_index discriminator (same "coarse PK collapses a
-// multi-row emission" lesson Phoenix (event_index) and Aquarius
-// (token_index) already codify — see comet_liquidity's
-// migration-0059 postmortem).
+// Each inner element is a fixed 2-element bare Vec, decoded positionally. It returns the full
+// recipient slice for one contract event; storage fans it out per recipient with a
+// recipient_index, since a coarse PK would collapse a multi-row emission.
 func decodeDrop(e *events.Event) ([]dropRecipient, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -136,12 +120,8 @@ func decodeDrop(e *events.Event) ([]dropRecipient, error) {
 	return out, nil
 }
 
-// swapConfigFields holds the three fields shared by `q_swap` (queue)
-// and `swap` (execute) event bodies — byte-identical shape, verified
-// against the real mainnet fixtures (q_swap: ledger 56,992,670;
-// swap: ledger 57,467,277 — same new_backstop / new_backstop_token /
-// unlock_time values, confirming swap executed exactly what q_swap
-// queued).
+// swapConfigFields holds the three fields shared by `q_swap` (queue) and `swap` (execute) bodies,
+// which have a byte-identical shape: real fixtures show swap executed exactly what q_swap queued.
 type swapConfigFields struct {
 	NewBackstop      string // strkey — the backstop the Emitter will point at / now points at
 	NewBackstopToken string // strkey — that backstop's LP/BLND token

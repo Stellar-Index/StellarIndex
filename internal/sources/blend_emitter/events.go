@@ -29,23 +29,15 @@ import (
 // dispatcher / projector / gated-registry wiring.
 const SourceName = "blend_emitter"
 
-// MainnetEmitter is the single canonical Blend Emitter contract on
-// mainnet — one instance spanning Blend V1→V2 (verified against the
-// ClickHouse lake: 469 total events across its whole
-// history, no address change observed). WASM-audited
-// (docs/operations/wasm-audits/blend_emitter.md): the contract's sole
-// confirmed on-chain WASM hash SHA256-verifies, and all 469 lifetime
-// events decode to the expected shape — BackfillSafe is true.
+// MainnetEmitter is the single mainnet Blend Emitter contract, spanning Blend V1 to V2 with no
+// address change in the lake. WASM-audited (docs/operations/wasm-audits/blend_emitter.md), so
+// BackfillSafe is true.
 const MainnetEmitter = "CCOQM6S7ICIUWA225O5PSJWUBEMXGFSSW2PQFO6FP4DQEKMS5DASRGRR"
 
-// MainnetGatedSet is the curated Emitter allowlist the decoder seeds
-// — the ADR-0040 §1 mechanism-3 trust root (curated set; the Emitter
-// has NO factory namespace, so there is no deploy event to anchor
-// on). Mirrors comet.MainnetGatedSet(): a future genuine second
-// Emitter deployment must be operator-admitted (a protocol_contracts
-// row via seed-protocol-contracts, or a new entry here) before its
-// events attribute — fail-closed, surfaced as an ADR-0033 recognition
-// gap rather than silently attributed.
+// MainnetGatedSet is the curated Emitter allowlist, the ADR-0040 §1 mechanism-3 trust root (no
+// factory namespace, so no deploy event to anchor on). As with comet.MainnetGatedSet(), a second
+// Emitter must be operator-admitted (a protocol_contracts row or a new entry here) before its
+// events attribute; it fails closed and surfaces as an ADR-0033 recognition gap.
 func MainnetGatedSet() []string { return []string{MainnetEmitter} }
 
 // emitterTopicArity is the topic count on every Emitter event: just
@@ -77,13 +69,10 @@ var (
 
 // Errors returned by the decode path.
 var (
-	// ErrNotEmitterEvent — topic[0] doesn't match any known Emitter
-	// symbol. Skip: an unrelated contract, or (post-gate) a future
-	// Emitter WASM upgrade that adds a new event kind. NOTE: blend_emitter implements no EvictedOrphans()
-	// reporter, so stellarindex_source_orphan_events_total never
-	// populates for this source — unknown kinds land in the
-	// dispatcher's global unmatched tally; the ADR-0033 recognition
-	// audit is the real signal that decoder coverage is incomplete.
+	// ErrNotEmitterEvent means topic[0] is no known Emitter symbol: an unrelated contract or,
+	// post-gate, a WASM upgrade adding an event kind. The source has no EvictedOrphans()
+	// reporter, so unknown kinds land in the dispatcher's global unmatched tally and the
+	// ADR-0033 recognition audit is the signal that decoder coverage is incomplete.
 	ErrNotEmitterEvent = errors.New("blend_emitter: not a recognised Emitter event")
 
 	// ErrMalformedPayload — body didn't decode to the expected shape

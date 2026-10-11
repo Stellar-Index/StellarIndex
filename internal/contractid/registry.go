@@ -1,17 +1,15 @@
 // Package contractid provides the shared contract-identity registry
 // that factory-anchored Soroban decoders use to gate Matches().
 //
-// Per ADR-0035, a decoder must only accept events from contracts that
-// belong to its protocol: the protocol's factory (a hard-coded trust
-// root) plus every child contract the factory creates, recursively.
-// Topic symbols (`swap`, `deploy`, ...) are NOT unique across
-// protocols, so topic alone mis-attributes foreign contracts' events.
+// Per ADR-0035, a decoder must only accept events from contracts that belong to its protocol: the
+// protocol's factory (a hard-coded trust root) plus every child the factory creates, recursively.
+// Topic symbols (`swap`, `deploy`, ...) are NOT unique across protocols, so topic alone
+// mis-attributes foreign contracts' events.
 //
-// A Registry is seeded three ways, all through [Registry.Seed]:
-// live (a factory creation event; Seed fires the persistence hook),
-// DB warm (the `protocol_contracts` table, via WithSeed), and
-// genesis / reconcile (operator tooling walks the lake).
-// Seed may run concurrently with reads, so the set is mutex-guarded.
+// A Registry is seeded three ways, all through [Registry.Seed]: live (a factory creation event,
+// which fires the persistence hook), DB warm (`protocol_contracts` via WithSeed), and
+// genesis/reconcile (operator tooling walks the lake). Seed may run concurrently with reads, so
+// the set is mutex-guarded.
 package contractid
 
 import "sync"
@@ -20,11 +18,9 @@ import "sync"
 // plus the protocol's factory trust-root set, with an optional live-upsert
 // persistence hook. The zero value is not usable — construct with [New].
 //
-// A protocol may have MORE THAN ONE factory (verified empirically: e.g.
-// Blend was redeployed and has two pool factories — an early one and the
-// documented V2 — that BOTH deploy real pools). Gating the creation event
-// on a single factory would silently drop the other factory's children, so
-// the factory trust root is a SET, not a scalar.
+// A protocol may have MORE THAN ONE factory (Blend has two pool factories that both deploy real
+// pools). Gating the creation event on a single factory would silently drop the other's children,
+// so the factory trust root is a SET, not a scalar.
 type Registry struct {
 	mu        sync.RWMutex
 	set       map[string]struct{} // discovered children (factory descendants)
@@ -55,12 +51,9 @@ func New(opts ...Option) *Registry {
 // Option configures a Registry at construction time.
 type Option func(*Registry)
 
-// WithFactories sets the protocol's factory trust-root set — the contract
-// IDs whose creation events the decoder honors (and from which every child
-// is seeded). This is a verified, hard-coded SET (a protocol can have
-// several factories); see the per-source list in the decoder package. The
-// completeness of this set is load-bearing: a missing factory means its
-// children's events are silently dropped.
+// WithFactories sets the protocol's factory trust-root set: the contract IDs whose creation events
+// the decoder honors and from which every child is seeded. Its completeness is load-bearing: a
+// missing factory means its children's events are silently dropped.
 func WithFactories(factoryIDs []string) Option {
 	return func(r *Registry) {
 		for _, id := range factoryIDs {
@@ -84,13 +77,11 @@ func WithSeed(childIDs []string) Option {
 	}
 }
 
-// WithHook installs the live-upsert callback fired by Seed whenever a new
-// child is discovered from a factory creation event. The hook receives
-// the child's C-strkey, the C-strkey of the factory that deployed it (for
-// provenance — a protocol can have several factories), and the ledger of
-// the creation event. Keep it cheap — it runs on the decode path (a
-// queued/timeout-bounded ExecContext is fine; a blocking network call is
-// not). The hook is invoked WITHOUT the registry lock held.
+// WithHook installs the live-upsert callback fired by Seed when a factory creation event discovers
+// a child. It receives the child's C-strkey, the deploying factory's C-strkey (provenance; a
+// protocol can have several factories) and the creation ledger. It runs on the decode path, so
+// keep it cheap: a timeout-bounded ExecContext is fine, a blocking network call is not. It is
+// invoked WITHOUT the registry lock held.
 func WithHook(fn func(childID, factoryID string, firstLedger uint32)) Option {
 	return func(r *Registry) { r.hook = fn }
 }
@@ -150,12 +141,10 @@ func (r *Registry) Factories() []string {
 	return out
 }
 
-// Children returns the registered factory-descendant child set (the gate's
-// Has() members), in no guaranteed order. Used by the completeness re-derive
-// to build the contract-id prefilter for the CH lake read — the gated set is
-// exactly the contracts whose events Matches() can accept, so restricting the
-// stream to it (plus the factories, see [Registry.GatedSet]) changes nothing
-// but speed.
+// Children returns the registered factory-descendant set (the gate's Has() members) in no
+// guaranteed order. The completeness re-derive uses it as the contract-id prefilter for the CH lake
+// read; with the factories ([Registry.GatedSet]) it is exactly what Matches() can accept, so the
+// prefilter changes speed only.
 func (r *Registry) Children() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -166,14 +155,10 @@ func (r *Registry) Children() []string {
 	return out
 }
 
-// GatedSet returns the union of the factory trust roots and the registered
-// children — the complete set of contracts whose events the decoder's
-// Matches() can accept (children via Has, factories via IsFactory). It is the
-// tightest sound contract-id prefilter for a re-derive over this decoder: the
-// factories must be included so their creation events still stream (and
-// self-seed children in-window), and every child so its business events
-// stream. Deduped (a factory is never also a child) and unordered; callers
-// needing determinism should sort.
+// GatedSet returns the union of the factory trust roots and the registered children: every contract
+// whose events Matches() can accept. It is the tightest sound contract-id prefilter for a re-derive
+// because factories must stream so their creation events self-seed children in-window, and children
+// so their business events stream. It is deduped and unordered; sort for determinism.
 func (r *Registry) GatedSet() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -189,14 +174,10 @@ func (r *Registry) GatedSet() []string {
 	return out
 }
 
-// Seed registers a child contract (idempotent) and fires the persistence
-// hook (if any). The decoder calls this from Decode when it observes a
-// factory creation event. factoryID is the C-strkey of the factory that
-// deployed the child (the creation event's emitter) — recorded for
-// provenance. firstLedger is the ledger of that creation event — recorded
-// for operator visibility / ordering, not used by the gate. The hook fires
-// on every call (idempotent upsert downstream) so a re-observed creation
-// event refreshes the durable row harmlessly.
+// Seed registers a child contract (idempotent) and fires the persistence hook, if any. factoryID is
+// the creation event's emitter and firstLedger its ledger; both are provenance only, not used by
+// the gate. The hook fires on every call (the upsert downstream is idempotent), so a re-observed
+// creation event refreshes the durable row harmlessly.
 func (r *Registry) Seed(childID, factoryID string, firstLedger uint32) {
 	if childID == "" {
 		return

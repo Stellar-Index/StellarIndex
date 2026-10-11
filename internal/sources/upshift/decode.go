@@ -9,20 +9,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// classify returns the event kind for a topic[0] this protocol emits,
-// or "" for anything else. Byte-equality against the pre-encoded
-// Symbols — no SCVal parse on the reject path.
+// classify returns the event kind for a topic[0] this protocol emits, or "" otherwise, by
+// byte-equality against pre-encoded Symbols (no SCVal parse on the reject path).
 //
-// It enumerates EVERY symbol either vault has ever emitted (the census
-// in the package doc), not just the four that produce rows: the
-// EVERY-event policy means a recognized-but-undecoded event is counted
-// as expected-zero by the ADR-0033 re-derive instead of leaving its
-// ledger blind. A symbol NOT in this list is a schema change we do not
-// claim — Matches returns false and the recognition audit surfaces it.
+// It enumerates EVERY symbol either vault has emitted (the package-doc census), not just the
+// four that produce rows, so a recognized-but-undecoded event counts as expected-zero in the
+// ADR-0033 re-derive instead of leaving its ledger blind. A symbol not listed is a schema
+// change we do not claim: Matches returns false and the recognition audit surfaces it.
 //
-// classify is deliberately topic-only. It is ROUTING, not attribution:
-// the contract-identity gate lives in [Decoder.Matches], which the
-// dispatcher consults first (ADR-0035).
+// classify is topic-only routing, not attribution; the contract-identity gate is
+// [Decoder.Matches], consulted first (ADR-0035).
 func classify(e *events.Event) string {
 	if len(e.Topic) == 0 {
 		return ""
@@ -64,11 +60,8 @@ func classify(e *events.Event) string {
 func newEvent(e *events.Event, kind string) (Event, error) {
 	closedAt, err := e.EventClosedAt()
 	if err != nil {
-		// Fail closed rather than substituting time.Now(): during a
-		// backfill or a completeness re-derive that would stamp every
-		// row with the wall clock of the replay run instead of the
-		// historical ledger. Same stance as the blend / comet / defindex
-		// siblings.
+		// Fail closed rather than substitute time.Now(): in a backfill or re-derive that
+		// would stamp every row with the replay's wall clock instead of the ledger time.
 		return Event{}, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
 	return Event{
@@ -97,18 +90,15 @@ func decodeAddrTopic(e *events.Event, i int, field string) (string, error) {
 	return addr, nil
 }
 
-// bodyI128Fields pulls the named i128 fields out of a Map body, in the
-// order asked for.
+// bodyI128Fields pulls the named i128 fields out of a Map body, in the order asked for.
 //
-// Fields are read BY NAME, never by position, per
-// docs/architecture/ingest-pipeline.md#contract-schema-evolution — a contract upgrade
-// that appends a field must stay readable, and `deployed_assets_changed`
-// puts `new_amount` FIRST on the wire despite `old` being the logically
-// prior value, so positional decoding would silently swap them.
+// Fields are read BY NAME, never by position (docs/architecture/ingest-pipeline.md
+// #contract-schema-evolution): an upgrade that appends a field must stay readable, and
+// `deployed_assets_changed` puts `new_amount` FIRST on the wire, so positional decoding would
+// swap old and new.
 //
-// The map entries never cross a function boundary on purpose: naming
-// their type would pull the raw XDR package into a Soroban event
-// decoder, which ADR-0013 scopes to internal/scval.
+// Map entries never cross a function boundary: naming their type would pull the raw XDR
+// package into an event decoder, which ADR-0013 scopes to internal/scval.
 func bodyI128Fields(e *events.Event, kind string, fields ...string) ([]canonical.Amount, error) {
 	sv, err := scval.Parse(e.Value)
 	if err != nil {
@@ -138,10 +128,8 @@ func bodyI128Fields(e *events.Event, kind string, fields ...string) ([]canonical
 //	topics [Symbol, caller Address, receiver Address, owner Address]
 //	body   Map{ assets: i128, shares: i128 }
 //
-// The (caller, receiver, owner) reading is the OpenZeppelin ERC-4626
-// `Withdraw` ordering; see the package doc for the two lake events that
-// prove it (one per vault, 21 ledgers apart, same holder in the middle
-// slot) and for the caveat that `deposit` never exercised it.
+// The (caller, receiver, owner) reading is the OpenZeppelin ERC-4626 `Withdraw` ordering; the
+// package doc has the lake evidence and the caveat that `deposit` never exercised it.
 func decodeFlow(e *events.Event, kind string) (Event, error) {
 	if len(e.Topic) < 4 {
 		return Event{}, fmt.Errorf("%w: %s expects 4 topics, got %d", ErrShortTopic, kind, len(e.Topic))
@@ -173,20 +161,13 @@ func decodeFlow(e *events.Event, kind string) (Event, error) {
 //	topics [Symbol, from Address, to Address]
 //	body   i128  OR  Map{ amount: i128, to_muxed_id: Address|Void }
 //
-// BOTH body forms are accepted: the bare i128 is the original SEP-41
-// shape and the Map is the CAP-67 / Protocol-23 extension. Every
-// transfer either vault has emitted so far carries the Map form with a
-// Void `to_muxed_id`, but pinning only that shape would break on any
-// pre-CAP-67 replay.
+// BOTH body forms are accepted: the bare i128 (original SEP-41) and the CAP-67 Map. Vaults
+// so far emit the Map with a Void `to_muxed_id`, but pinning that shape would break any
+// pre-CAP-67 replay. The bare form is tried first; the Map is the fallback ONLY on a type
+// mismatch, and any other i128 read failure is returned as a real error.
 //
-// The bare form is tried first and the Map is the fallback, taken ONLY
-// on a type mismatch — any other failure of the i128 read is a real
-// error and is returned as one.
-//
-// `to_muxed_id` is not stored: the muxed destination is a routing detail
-// of the recipient, not a vault-economics fact, and
-// internal/sources/sep41_transfers is the audit-trail surface that
-// carries the full SEP-41 shape.
+// `to_muxed_id` is not stored: it is a recipient routing detail, not a vault-economics fact,
+// and internal/sources/sep41_transfers carries the full SEP-41 shape.
 func decodeTransfer(e *events.Event) (Event, error) {
 	if len(e.Topic) < 3 {
 		return Event{}, fmt.Errorf("%w: transfer expects 3 topics, got %d", ErrShortTopic, len(e.Topic))
@@ -228,12 +209,9 @@ func decodeTransfer(e *events.Event) (Event, error) {
 //	topics [Symbol, operator Address]
 //	body   Map{ old_amount: i128, new_amount: i128 }
 //
-// This is the vault-level total of capital DEPLOYED into strategies,
-// before and after the change. It is emitted by the operator, and in
-// both vaults' history the operator address is a single account. The
-// idle (undeployed) balance is NOT reported by any event, so these two
-// numbers are one leg of the vault's assets and never the whole — see
-// [Event.OldAmount].
+// This is the vault-level total of capital DEPLOYED into strategies, before and after the
+// change. The idle balance is in no event, so these are one leg of the vault's assets, never
+// the whole; see [Event.OldAmount].
 func decodeDeployedAssets(e *events.Event) (Event, error) {
 	if len(e.Topic) < 2 {
 		return Event{}, fmt.Errorf("%w: %s expects 2 topics, got %d",

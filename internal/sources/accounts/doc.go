@@ -4,11 +4,7 @@
 //
 // The watched set is `[supply] sdf_reserve_accounts` ∪ `[metadata]
 // watched_issuer_accounts` (pipeline.AccountObserverWatchSet); there is no
-// `[accounts]` block. sdf_reserve_accounts is the SDF reserve list and
-// nothing else: every balance in it is subtracted from XLM circulating
-// supply (ADR-0011 Algorithm 1) and the list is diffed daily against SDF's.
-// Accounts watched for home_domain go in watched_issuer_accounts.
-// metadata.LCMHomeDomainResolver and supply.LCMReserveBalanceReader read
-// the table, each ahead of its operator-static map. There is no
-// watch-every-account mode (50M+ accounts); adding one needs an ADR.
+// `[accounts]` block. sdf_reserve_accounts holds SDF reserves only, because every balance in it
+// is subtracted from XLM circulating supply (ADR-0011 Algorithm 1); home_domain watches go in
+// watched_issuer_accounts. There is no watch-every-account mode (50M+ accounts) without an ADR.
 package accounts

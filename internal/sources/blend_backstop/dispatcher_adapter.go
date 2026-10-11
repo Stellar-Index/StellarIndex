@@ -6,16 +6,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of the Blend Backstop. It is a
-// stateless topic Decoder — each of the twelve backstop events decodes
-// independently into one blend_backstop_events row; there is no
-// cross-event correlation (unlike Soroswap's swap/sync pairing).
+// Decoder is the dispatcher-facing, stateless view of the Blend Backstop: each of the twelve
+// events decodes independently into one blend_backstop_events row, with no cross-event
+// correlation.
 //
-// Matching is by topic[0] symbol AND contract id. The backstop's
-// symbols (claim / withdraw / queue_withdrawal / gulp_emissions)
-// OVERLAP with Blend POOL event symbols, so the contract-id gate is
-// LOAD-BEARING — never match on the symbol alone (docs/architecture/domain-traps.md "Comet
-// shared topic" + ADR-0035 factory-anchored gating).
+// Matching is by topic[0] symbol AND contract id. Backstop symbols (claim / withdraw /
+// queue_withdrawal / gulp_emissions) OVERLAP with Blend POOL event symbols, so the contract-id
+// gate is LOAD-BEARING (docs/architecture/domain-traps.md "Comet shared topic", ADR-0035).
 type Decoder struct{}
 
 // NewDecoder constructs a Backstop Decoder. Stateless — the returned
@@ -52,11 +49,9 @@ func (*Decoder) Matches(ev events.Event) bool {
 	return IsBackstopContract(ev.ContractID) && Classify(&ev) != ""
 }
 
-// Decode implements [dispatcher.Decoder]. Emits exactly one [Event]
-// per recognised backstop event, or nothing for an event that doesn't
-// match (the dispatcher already filtered via Matches, but Decode
-// re-checks so a direct caller is safe). A decode error is non-fatal
-// per the dispatcher contract — counted and skipped.
+// Decode implements [dispatcher.Decoder]. It emits one [Event] per recognised backstop event and
+// nothing otherwise, re-checking what Matches filtered so direct callers are safe. A decode
+// error is non-fatal: counted and skipped.
 func (*Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if !IsBackstopContract(ev.ContractID) || Classify(&ev) == "" {
 		return nil, nil

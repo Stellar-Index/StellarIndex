@@ -146,15 +146,10 @@ func newMigrator(dir, dsn string) (*migrate.Migrate, error) {
 // checkDSN refuses, without echoing any of it, a DSN the driver would
 // quote back in its own error.
 func checkDSN(dsn string) error {
-	// Parse the DSN here, with the parser the library is about to use, so
-	// that a DSN it would reject never reaches it. Its rejection cannot be
-	// made safe after the fact: net/url's reason quotes the piece it
-	// choked on, and for a password holding `/`, `?` or `#` that piece is
-	// the password up to that character, reported as a bad port. Scrubbing
-	// at the write catches the URL; it cannot tell that fragment from an
-	// honest one. This is the only path on which the library formats the
-	// DSN — a string that parses here parses there — so composing the
-	// failure ourselves removes the fragment instead of chasing it.
+	// Parse with the library's own parser so a DSN it would reject never reaches it: net/url's
+	// error quotes the piece it choked on, which for a password holding `/`, `?` or `#` is the
+	// password itself, and scrubbing cannot tell that fragment from an honest one. A string that
+	// parses here parses there, so composing the failure ourselves is the only safe route.
 	u, err := url.Parse(dsn)
 	if err != nil {
 		return fmt.Errorf("the Postgres DSN from %s does not parse: %s. "+
@@ -162,12 +157,10 @@ func checkDSN(dsn string) error {
 			"every reserved character in it (%% as %%25, @ as %%40)",
 			dsnSource, redact.ParseFailure(dsn, err))
 	}
-	// A DSN that parses can still miss the driver's URL form, and then
-	// lib/pq reads it as keyword/value and quotes all of it, password
-	// included, in `missing "=" after …`. The `//` is checked on the text:
-	// net/url takes `postgres:u:pw@h` as opaque and `postgres:/u:pw@h` as a
-	// path. The host is not required, so the socket form
-	// `postgres:///db?host=/run/postgresql` still passes.
+	// A DSN that parses can still miss the driver's URL form; lib/pq then reads it as
+	// keyword/value and quotes all of it, password included, in `missing "=" after …`. The `//` is
+	// checked on the text because net/url takes `postgres:u:pw@h` as opaque. The host stays
+	// optional so the socket form `postgres:///db?host=/run/postgresql` passes.
 	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
 		return fmt.Errorf("the Postgres DSN from %s does not start with postgres:// or postgresql://. "+
 			"None of the value is shown — it may carry the password", dsnSource)
@@ -240,18 +233,12 @@ func cmdDown(dir, dsn string, n int, yes, iKnow bool) error {
 	return nil
 }
 
-// isInteractive reports whether the process's real stdin is a terminal
-// that can answer a confirmation prompt. It is checked separately from
-// the reader confirmDown consumes so the two can differ in a test: a
-// non-interactive stdin (CI, a backgrounded shell, an agent harness, or
-// simply `go test`) must fail closed rather than block forever on a read
-// that will never resolve, matching scripts/dev/cut-release.sh's rule
-// for the same class of destructive prompt.
+// isInteractive reports whether the real stdin is a terminal that can answer a prompt. It is
+// separate from the reader confirmDown consumes so tests can differ; a non-interactive stdin
+// (CI, `go test`) must fail closed rather than block on a read that never resolves.
 //
-// A pipe or a regular file is ruled out by ModeCharDevice alone, but
-// /dev/null is ITSELF a character device — and is exactly what a nil
-// exec.Cmd.Stdin, a closed fd, or an explicit `< /dev/null` connects —
-// so it is ruled out by identity (device + inode) rather than by mode.
+// ModeCharDevice alone rules out pipes and files, but /dev/null is itself a character device
+// (what a nil exec.Cmd.Stdin or `< /dev/null` connects), so it is excluded by device + inode.
 func isInteractive() bool {
 	stat, err := os.Stdin.Stat()
 	if err != nil || stat.Mode()&os.ModeCharDevice == 0 {
@@ -275,12 +262,9 @@ var errDownNeedsIKnow = errors.New("refusing to roll back without -i-know: down 
 	"constraints or data that no later 'up' restores. Prefer rolling forward; " +
 	"pass -i-know to acknowledge")
 
-// confirmDown gates `down` behind an explicit operator "yes". `down` is
-// the one verb no deploy pipeline runs (only `up` does — see
-// deploy-binary.yml) and rolls back applied schema; it is a manual,
-// break-glass command, so the safe default is to ask before running
-// `m.Steps(-n)`, and to refuse rather than guess when nothing can
-// answer.
+// confirmDown gates `down` behind an explicit operator "yes". No deploy pipeline runs `down`
+// (only `up`), and it rolls back applied schema, so it asks first and refuses rather than
+// guesses when nothing can answer.
 func confirmDown(n int, dsn string, yes bool, in io.Reader, out io.Writer) error {
 	if yes {
 		return nil
@@ -348,49 +332,27 @@ func closeSilent(m *migrate.Migrate) {
 	}
 }
 
-// errf is where this binary writes a diagnostic of its own, and it goes
-// through [stderr], which strips inline credentials on the way out. The
-// only other writer is printUsage's fixed text, which interpolates
-// nothing an operator typed; the flag package's own output goes to
-// io.Discard in main, because it echoes the argument it rejects.
+// errf writes this binary's diagnostics through [stderr], which strips inline credentials. The
+// flag package's own output goes to io.Discard in main because it echoes the rejected argument;
+// messages naming an argument use [describeArg] or its position.
 //
-// Messages that name an argument do so through [describeArg] or by
-// position; the redaction here covers text this binary did not compose.
-//
-// This tool is handed the production DSN, password included, and its
-// stderr is captured by the deploy job, journald and Loki. golang-migrate
-// rejects an unparseable database URL by wrapping net/url's *url.Error,
-// which renders the WHOLE URL, so a password containing an unescaped
-// `%`, `#` or space printed the live credential in full. Redacting at the
-// write covers every call site, including future ones.
-//
-// Scrubbing output is a backstop, not a licence to format a secret on
-// purpose — see internal/redact for which helper renders a value we
-// compose ourselves.
+// The tool is handed the production DSN and its stderr reaches the deploy job, journald and
+// Loki. golang-migrate wraps net/url's *url.Error, which renders the WHOLE URL, so redacting at
+// the write covers every call site, including future ones. It is a backstop, not a licence to
+// format a secret; see internal/redact for rendering values we compose ourselves.
 func errf(format string, args ...any) {
 	fmt.Fprintln(stderr, fmt.Sprintf(format, args...))
 }
 
-// stderr is the SECOND line of defence, and only the second. The first
-// is that no message above interpolates text this tool was given (see
-// [describeArg] and [parseArgv]); this catches what a dependency
-// formats, which is the one class this binary does not write itself —
-// the driver embedding the URL it was handed into its own error.
+// stderr is the SECOND line of defence; the first is that no message interpolates text this
+// tool was given (see [describeArg] and [parseArgv]). It catches what a dependency formats,
+// such as the driver embedding the URL it was handed in its own error.
 //
-// Echo-and-scrub is not the primary control: a malformed DSN is by
-// definition not parseable, so every rule for "where the password ends"
-// in one has a counter-example. Scrubbing is kept because a library's
-// text cannot be audited in advance, not because it is sufficient.
-//
-// It scrubs by VALUE as well as by pattern. This process knows every
-// string a credential can have arrived in — argv and the DSN variable —
-// so it hands them to redact.Known, which cuts each password they hold,
-// whatever characters it contains and in whichever spelling it was
-// written (URL userinfo, `?password=`, libpq `password=`), where the
-// output repeats it after the text it was held behind. The pattern pass
-// behind it covers text that re-renders the DSN rather than repeating
-// it, and is only as good as the boundary that text offers. What
-// redact.Known cannot close is listed on it.
+// Scrubbing is not sufficient alone: a malformed DSN is unparseable, so any rule for "where the
+// password ends" has a counter-example. It scrubs by VALUE as well as by pattern: argv and the
+// DSN variable are every place a credential can arrive, and redact.Known cuts each password
+// they hold in any spelling (URL userinfo, `?password=`, libpq `password=`). The pattern pass
+// behind it covers text that re-renders the DSN. What redact.Known cannot close is listed on it.
 var stderr io.Writer = scrubbingWriter{
 	w:     os.Stderr,
 	known: append([]string{os.Getenv("STELLARINDEX_POSTGRES_DSN")}, os.Args[1:]...),
@@ -402,18 +364,13 @@ var stderr io.Writer = scrubbingWriter{
 // and nothing about it has been written to a log to get there.
 var dsnSource = "-dsn"
 
-// describeArg renders an argument the operator typed, for a message that
-// names it. Text that could be a connection string is NOT echoed, at
-// all, in any scrubbed form: this is the control, and the scrubber
-// behind it is the backstop.
+// describeArg renders an operator-typed argument for a message. Text that could be a connection
+// string is never echoed, even scrubbed; the scrubber is only the backstop.
 //
-// The test is an allowlist rather than a denylist, because the denylist
-// is the thing that failed twice. A token of plain word characters is a
-// mistyped subcommand or a step count and is worth quoting back; an
-// argument holding anything else may be a DSN — or a bare password
-// pasted into the slot where N goes — and is described by its position
-// instead. Over-withholding costs a word of diagnostic; under-
-// withholding costs the production credential.
+// The test is an allowlist because the denylist failed twice. A plain-word token is a mistyped
+// subcommand or step count and is quoted back; anything else may be a DSN or a bare password
+// pasted into the slot where N goes, and is described by position. Over-withholding costs a
+// word of diagnostic; under-withholding costs the production credential.
 var plainArg = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`)
 
 func describeArg(v string) string {
@@ -442,14 +399,11 @@ func die(format string, args ...any) {
 	os.Exit(1)
 }
 
-// printUsage writes its fixed text to the raw os.Stderr on purpose: it
-// interpolates only the build version, and sending it through [stderr]
-// would redact its own example DSN.
+// printUsage writes its fixed text to the raw os.Stderr on purpose: it interpolates only the
+// build version, and [stderr] would redact its own example DSN.
 //
-// fs.PrintDefaults goes wherever the FlagSet's output points, which main
-// sets to io.Discard so that the flag package's own parse errors — which
-// echo the rejected argument — cannot reach a log. It is pointed at
-// stderr for this one write and put back.
+// The FlagSet output is io.Discard so flag parse errors, which echo the rejected argument,
+// cannot reach a log; it is pointed at stderr for this one write and put back.
 func printUsage(fs *flag.FlagSet) {
 	defer fs.SetOutput(io.Discard)
 	fmt.Fprintf(os.Stderr, `stellarindex-migrate %s
@@ -489,15 +443,9 @@ Examples:
 `)
 }
 
-// parseArgv resolves the whole command line into `verb` plus its
-// positionals, leaving every declared flag set on fs — wherever the
-// operator wrote it.
-//
-// It exists because this was a live production-destruction path. See the
-// comment inside for what went wrong and why the fix accepts both
-// placements rather than refusing one. Extracted from main() so the
-// chokepoint has a name; main() is a dispatch switch and every argv
-// decision now happens here.
+// parseArgv resolves the whole command line into `verb` plus its positionals, leaving every
+// declared flag set on fs wherever the operator wrote it. Every argv decision happens here;
+// see the comment inside for why both flag placements are accepted.
 func parseArgv(fs *flag.FlagSet, argv []string) []string {
 	if err := fs.Parse(argv); err != nil {
 		reportFlagFailure(fs, argv, 1)
@@ -509,26 +457,20 @@ func parseArgv(fs *flag.FlagSet, argv []string) []string {
 		os.Exit(2)
 	}
 
-	// Flags are accepted BEFORE the verb or AFTER the verb's positionals,
-	// and an unknown token is a parse error either way.
+	// Flags are accepted BEFORE the verb or AFTER the verb's positionals; an unknown token is a
+	// parse error either way.
 	//
-	// Go's flag package stops parsing at the first non-flag argument, so a
-	// single `fs.Parse(os.Args[1:])` over the whole argv leaves everything
-	// after the verb unparsed. In
+	// Go's flag package stops at the first non-flag argument, so in
 	//
 	//	stellarindex-migrate down 1 -dsn postgres://staging/…
 	//
-	// the -dsn lands in fs.Args(), is silently dropped, and the DSN falls back
-	// to $STELLARINDEX_POSTGRES_DSN — so a migration dropped on what the
-	// operator believed was staging hit production, and the command printed
-	// success.
+	// the -dsn would be silently dropped and the DSN would fall back to
+	// $STELLARINDEX_POSTGRES_DSN, running the rollback on production while printing success.
 	//
-	// Both placements are accepted rather than the trailing form refused:
-	// cmd/stellarindex-ops likewise hands every leaf its own FlagSet over
-	// args[1:], and two binaries disagreeing about where flags go is what
-	// produces the mistake. The verb's leading positionals (down's N, force's
-	// V) are taken first, then the remainder is parsed by the SAME flag set.
-	// Anything left is a hard error: `down -dsn X 1` is ambiguous.
+	// The trailing form is accepted rather than refused because cmd/stellarindex-ops also parses
+	// flags over args[1:], and two binaries disagreeing on placement causes the mistake. The
+	// verb's leading positionals (down's N, force's V) are taken first, then the SAME flag set
+	// parses the rest. Anything left is a hard error: `down -dsn X 1` is ambiguous.
 	rest := args[1:]
 	nPos := 0
 	for nPos < len(rest) && !strings.HasPrefix(rest[nPos], "-") {
@@ -547,19 +489,13 @@ func parseArgv(fs *flag.FlagSet, argv []string) []string {
 	return append([]string{args[0]}, positionals...)
 }
 
-// reportFlagFailure says why the command line was refused and exits. It
-// never repeats the argument that caused the refusal.
+// reportFlagFailure says why the command line was refused and exits, never repeating the
+// offending argument. The flag package does repeat it (`flag provided but not defined:
+// -postgres://user:SECRET@host/db` when a DSN lands in a flag slot) before Parse returns,
+// which is why main points the FlagSet at io.Discard; the position is all an operator needs.
 //
-// The flag package's own message does: `flag provided but not defined:
-// -postgres://user:SECRET@host/db` is what it writes when a DSN lands
-// where a flag name goes — a `-dsn` dropped, a shell variable that
-// expanded into the flag slot — and it writes it before Parse returns,
-// which is why main points the FlagSet at io.Discard. The position of
-// the argument is the part of that message an operator actually needs,
-// and the position discloses nothing.
-//
-// offset is the 1-based position of argv[0] on the whole command line,
-// so a failure in the flags AFTER the verb still names the right one.
+// offset is the 1-based position of argv[0] on the whole command line, so a failure in the
+// flags AFTER the verb still names the right one.
 func reportFlagFailure(fs *flag.FlagSet, argv []string, offset int) {
 	if d, ok := fs.Lookup("dsn").Value.(*dsnFlag); ok && d.rejection != "" {
 		errf("stellarindex-migrate: %s", d.rejection)
@@ -603,12 +539,9 @@ func unknownFlag(fs *flag.FlagSet, argv []string) (idx int, name string, defined
 	return -1, "", false
 }
 
-// dsnFlag is -dsn. It records whether the flag was given at all, so that
-// only its absence falls back to $STELLARINDEX_POSTGRES_DSN: `-dsn ""` from
-// a quoted unset variable would otherwise resolve the environment's
-// (production) database. Repeats are refused in Set because parseArgv runs
-// fs.Parse twice over the same FlagSet, so a later -dsn cannot silently
-// replace an earlier one.
+// dsnFlag is -dsn. It records whether the flag was given so only its absence falls back to
+// $STELLARINDEX_POSTGRES_DSN; `-dsn ""` from a quoted unset variable would otherwise resolve the
+// production database. Set refuses repeats because parseArgv parses the same FlagSet twice.
 type dsnFlag struct {
 	value     string
 	set       bool

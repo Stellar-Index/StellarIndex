@@ -55,14 +55,10 @@ func extractClaimAtoms(op xdr.Operation, result xdr.OperationResult) []xdr.Claim
 		return success.OffersClaimed
 
 	case xdr.OperationTypeCreatePassiveSellOffer:
-		// CreatePassiveSellOffer results are emitted by stellar-core under the
-		// ManageSellOfferResult union arm (core processes passive offers as
-		// manage-sell-offers), so GetCreatePassiveSellOfferResult returns
-		// ok=false on real on-chain data and we'd silently drop every passive
-		// offer's claim atoms (confirmed vs Hubble at ledger 62701151). Try the
-		// passive arm first (XDR spec), then fall back to the manage-sell arm
-		// (what core actually emits). Both carry the same ManageSellOfferResult
-		// shape.
+		// stellar-core emits passive-offer results under the ManageSellOfferResult arm, so
+		// GetCreatePassiveSellOfferResult returns ok=false on real data and every passive
+		// offer's claim atoms would be silently dropped. Try the passive arm (XDR spec) first,
+		// then the manage-sell arm; both carry the same shape.
 		if r, ok := tr.GetCreatePassiveSellOfferResult(); ok {
 			if r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
 				return nil
@@ -96,15 +92,10 @@ func extractClaimAtoms(op xdr.Operation, result xdr.OperationResult) []xdr.Claim
 	return nil
 }
 
-// decodeClaimAtom turns one ClaimAtom into a canonical.Trade.
-// tradeIndex is the 0-based position of this claim within the op
-// — used to generate unique OpIndex values for multi-claim trades
-// via a fanout stride (same pattern as aquarius + reflector).
-//
-// Taker is the tx-level source for the first claim, which matches
-// what a human would read as "the account that placed this trade."
-// (Subsequent claims in the same op are still that same taker —
-// they're chained fills of a single offer-side action.)
+// decodeClaimAtom turns one ClaimAtom into a canonical.Trade. tradeIndex is the claim's
+// 0-based position within the op, used with a fanout stride to make OpIndex unique for
+// multi-claim trades. Taker is the tx-level source for every claim: later claims are chained
+// fills of the same offer-side action.
 func decodeClaimAtom(
 	atom xdr.ClaimAtom,
 	ledgerSeq uint32,
@@ -137,11 +128,9 @@ func decodeClaimAtom(
 		boughtAmount = ob.AmountBought
 
 	case xdr.ClaimAtomTypeClaimAtomTypeLiquidityPool:
-		// Liquidity-pool claim: the counterparty is a classic
-		// liquidity pool (NOT the Soroban AMMs) — identified by
-		// its pool ID, not a G-address. We record the pool ID as
-		// the Maker so analysts can distinguish order-book trades
-		// from LP trades.
+		// The counterparty is a classic liquidity pool (not a Soroban AMM), identified by
+		// pool ID rather than a G-address. The pool ID is stored as Maker so order-book and
+		// LP trades stay distinguishable.
 		lp := atom.MustLiquidityPool()
 		// PoolID is a Hash; encode as hex for the Maker field.
 		sellerAccount = fmt.Sprintf("%x", lp.LiquidityPoolId)
@@ -151,15 +140,10 @@ func decodeClaimAtom(
 		boughtAmount = lp.AmountBought
 
 	case xdr.ClaimAtomTypeClaimAtomTypeV0:
-		// Legacy pre-CAP-27 shape.
-		// Distinguishable from ClaimOfferAtom only by carrying the
-		// seller's raw ed25519 bytes (uint256) instead of an
-		// AccountId discriminant. Surface as a regular OrderBook
-		// trade by deriving the G-strkey from the raw bytes — the
-		// rest of the shape (offer_id, asset+amount sold/bought) is
-		// identical. Returning ErrUnknownClaimAtomType
-		// here would make the parent decoder's per-claim skip drop V0
-		// fills silently, leaving a coverage hole in SDEX history.
+		// Legacy pre-CAP-27 shape: the seller is raw ed25519 bytes, not an AccountId. Derive
+		// the G-strkey and surface it as a regular OrderBook trade; returning
+		// ErrUnknownClaimAtomType would make the per-claim skip drop V0 fills silently and
+		// leave a hole in SDEX history.
 		v0 := atom.MustV0()
 		sellerAccount, _ = strkey.Encode(strkey.VersionByteAccountID, v0.SellerEd25519[:])
 		soldAsset = v0.AssetSold
@@ -171,11 +155,9 @@ func decodeClaimAtom(
 		return canonical.Trade{}, fmt.Errorf("%w: type=%d", ErrUnknownClaimAtomType, atom.Type)
 	}
 
-	// Drop only the both-zero no-op claim atoms stellar-core occasionally emits
-	// (Hubble drops those too). KEEP one-side-zero fills — a rounding artifact
-	// where one leg rounds to 0: these are real trades Hubble records, so we
-	// capture them for completeness. They carry no price (one leg is 0), but the
-	// aggregator/OHLC/outlier paths already skip zero legs (Sign()<=0) and
+	// Drop only both-zero no-op claim atoms (Hubble drops them too). KEEP one-side-zero
+	// fills: a rounding artifact where one leg rounds to 0, a real trade Hubble records. They
+	// carry no price, but aggregator/OHLC/outlier paths skip zero legs (Sign()<=0) and
 	// tradeUSDVolume returns NULL, so pricing is unaffected.
 	if soldAmount <= 0 && boughtAmount <= 0 {
 		return canonical.Trade{}, fmt.Errorf("%w: sold=%d bought=%d",
@@ -211,14 +193,10 @@ func decodeClaimAtom(
 
 // xdrAssetToCanonical converts an xdr.Asset to canonical.Asset.
 //
-// The body lives in [canonical.AssetFromXDR]. It stays a thin local wrapper so this
-// package's call sites and error-wrapping read unchanged, but the RULE
-// — which on-chain assets are representable, and therefore which SDEX
-// fills become trade rows — now lives in the leaf package where
-// internal/sdexclaim can apply the identical test. Before the hoist,
-// the dispatcher census and the ClickHouse extractor counted fills this
-// function would have rejected, so their "should equal COUNT(trades)"
-// oracles could never balance.
+// The rule for which on-chain assets are representable, and so which fills become trade
+// rows, lives in [canonical.AssetFromXDR] so internal/sdexclaim applies the identical test;
+// otherwise the census and ClickHouse extractor would count fills this function rejects and
+// their "should equal COUNT(trades)" oracles could never balance.
 func xdrAssetToCanonical(a xdr.Asset) (canonical.Asset, error) {
 	return canonical.AssetFromXDR(a)
 }
@@ -230,13 +208,7 @@ func amountFromInt64(n xdr.Int64) canonical.Amount {
 	return canonical.FromInt128Parts(int64(n>>63), uint64(int64(n)))
 }
 
-// opIndexFanoutStride spaces the synthetic op_index values for
-// multi-claim operations. A single ManageOffer can cross many book
-// levels in one op; each claim becomes a distinct Trade with a
-// unique (source, ledger, tx_hash, op_index, ts) primary key.
-//
-// 1024 handles any plausible on-chain op (stellar caps ops-per-tx
-// at 100, and classic DEX depth rarely exceeds a few dozen claims
-// per aggressive trade). If we ever see this cap in the wild we
-// have bigger problems.
+// opIndexFanoutStride spaces synthetic op_index values for multi-claim operations: one
+// ManageOffer can cross many book levels, and each claim is a distinct Trade needing a unique
+// (source, ledger, tx_hash, op_index, ts) key. 1024 exceeds any plausible claim count per op.
 const opIndexFanoutStride = 1024

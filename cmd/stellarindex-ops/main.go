@@ -1,12 +1,10 @@
 // Binary stellarindex-ops is the admin CLI for operational tasks that don't
 // belong in the long-running binaries.
 //
-// Subcommand implementations live in internal/ops/{ingest,archive,discovery,
-// supply,diagnostics,chops,incident,usage,keys,accounts}, with helpers shared
-// across them in internal/ops/opsutil. chops (the ADR-0033/ADR-0034
-// ClickHouse-lake tools) is not named clickhouse to avoid shadowing
-// internal/storage/clickhouse in every file there. main.go holds only the
-// dispatch table and the few subcommands too small for a package (docs-config).
+// Subcommand implementations live in internal/ops/*, with shared helpers in internal/ops/opsutil.
+// chops (the ClickHouse-lake tools) is not named clickhouse to avoid shadowing
+// internal/storage/clickhouse in every file there. main.go holds only the dispatch table and
+// subcommands too small for a package (docs-config).
 //
 // The canonical subcommand list is the `subcommands` map below plus the
 // `stellarindex-ops --help` output.
@@ -37,13 +35,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
 
-// main is a thin shim over realMain so deferred functions (notably
-// the SilenceSDKChecksumWarnings flush) execute on every exit
-// path. os.Exit skips defers — see the SilenceSDKChecksumWarnings
-// docstring: without the flush, short-lived subcommands
-// (`backfill -dry-run`, `backfill` with an error) would print only
-// their first line and eat the rest, because the consumer goroutine
-// behind fd 2's filter is killed mid-buffer.
+// main is a thin shim over realMain because os.Exit skips defers. Without the
+// SilenceSDKChecksumWarnings flush, short-lived subcommands would lose all but their first stderr
+// line when the fd-2 filter goroutine is killed mid-buffer.
 func main() {
 	os.Exit(realMain())
 }
@@ -51,20 +45,16 @@ func main() {
 // subcommands maps each subcommand name to its handler: a package Run, or a
 // leaf closure here wrapped in [leaf].
 //
-// A package Run receives the full argv starting at the subcommand name
-// (args[0] is the map key); each internal/ops/* Run switches on args[0], which
-// lets several keys share one Run.
+// A package Run receives the full argv starting at the subcommand name (args[0] is the map key);
+// each internal/ops/* Run switches on args[0], so several keys can share one Run.
 //
-// A leaf handler receives only its own flags: [leaf] strips the verb. This is
-// load-bearing. Leaf handlers call fs.Parse(args) and Go's flag package stops
-// at the first non-flag argument, so a verb-prefixed argv parses nothing and
-// leaves every flag zero. Unit tests call handlers directly with flags-only
-// argv, so only TestSubcommandDispatch_LeafHandlersSeeTheirFlags covers the
-// dispatcher path.
+// A leaf handler receives only its own flags because [leaf] strips the verb: Go's flag package
+// stops at the first non-flag argument, so a verb-prefixed argv parses nothing and leaves every
+// flag zero. Unit tests call handlers with flags-only argv, so only
+// TestSubcommandDispatch_LeafHandlersSeeTheirFlags covers the dispatcher path.
 //
-// Handlers return an error to exit 1; realMain prints the "name: err" prefix.
-// Return opsutil.ErrExitSilently to suppress it after printing a specific
-// message. The canonical list is this table plus the usageBody help text.
+// Handlers return an error to exit 1; realMain prints the "name: err" prefix. Return
+// opsutil.ErrExitSilently to suppress it after printing a specific message.
 var subcommands = map[string]func(args []string) error{
 	"docs-config":           leaf(func([]string) error { return config.EmitMarkdown(os.Stdout) }),
 	"mint-key":              leaf(keys.Mint),
@@ -173,16 +163,12 @@ func leaf(fn func(args []string) error) func(args []string) error {
 }
 
 func realMain() int {
-	// Wrap fd 2 with a line-filter BEFORE any aws-sdk-go-v2 code
-	// captures os.Stderr. Drops the per-S3-GET "Response has no
-	// supported checksum" WARN that floods journald during
-	// verify-archive's 12-way parallel walk (~22k WARN/30s on
-	// r1, ballooning logs to 1.65 GB). An env-var approach is a no-op
-	// because go-stellar-sdk's datastore/s3.go:161 hardcodes
-	// ChecksumMode: Enabled per request. Fail-soft.
+	// Wrap fd 2 with a line-filter BEFORE any aws-sdk-go-v2 code captures os.Stderr. It drops the
+	// per-S3-GET "Response has no supported checksum" WARN that floods journald during parallel
+	// archive walks; an env var cannot do this because go-stellar-sdk hardcodes ChecksumMode
+	// Enabled per request.
 	//
-	// flush MUST be deferred so realMain's return paths drain
-	// the pipe before main() calls os.Exit with the int.
+	// flush MUST be deferred so every return path drains the pipe before main() calls os.Exit.
 	flush := pipeline.SilenceSDKChecksumWarnings()
 	defer flush()
 
@@ -214,11 +200,9 @@ func realMain() int {
 }
 
 // dispatchExitCode turns a subcommand handler's returned error into the
-// process exit code, writing the "<subcommand>: <err>" prefix line to
-// stderr where one is warranted. Split out of realMain so the error
-// classification (ExitCodeError / flag.ErrHelp / ErrExitSilently / plain
-// error) is testable without going through os.Args and the fd-2 filter
-// realMain installs.
+// process exit code, writing the "<subcommand>: <err>" prefix line to stderr where warranted.
+// It is split from realMain so the error classification is testable without os.Args or the
+// fd-2 filter.
 func dispatchExitCode(name string, err error, stderr io.Writer) int {
 	if err == nil {
 		return 0
@@ -230,13 +214,9 @@ func dispatchExitCode(name string, err error, stderr io.Writer) int {
 		}
 		return ec.Code
 	}
-	// Every subcommand's flag.FlagSet uses flag.ContinueOnError (see
-	// opsutil.NewMutatingFlagSet), so `-h`/`-help` on a subcommand already
-	// printed that subcommand's usage via fs.Parse and returns
-	// flag.ErrHelp as the error — it is not a failure. Without this case
-	// it fell through to the generic branch below and printed
-	// "<subcommand>: flag: help requested" then exited 1, telling a
-	// scripted caller that asked for help that it failed.
+	// Subcommand FlagSets use flag.ContinueOnError, so `-h` has already printed usage via
+	// fs.Parse and returns flag.ErrHelp. That is not a failure; exiting 1 would tell a scripted
+	// caller that asked for help that it failed.
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

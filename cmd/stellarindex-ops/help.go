@@ -7,11 +7,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
 
-// usageBody is the static portion of `stellarindex-ops -h`. The header
-// (with version) is prepended at print time so the binary's build
-// version shows in the output. Kept as a package-level const so the
-// printUsage func itself stays short — funlen lint counts the
-// multi-line string literal against the function it's defined in.
+// usageBody is the static portion of `stellarindex-ops -h`; the versioned header is prepended at
+// print time. It is a package-level const because funlen counts a multi-line string literal
+// against the function that defines it.
 const usageBody = `
 Usage:
   stellarindex-ops <subcommand>

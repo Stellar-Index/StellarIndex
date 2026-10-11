@@ -51,12 +51,10 @@ const (
 
 // Config selects the recovery helpers a body may use to satisfy the guard.
 //
-// Guards are call names as written in source: a bare "recoverBackgroundWorker"
-// or a qualified "worker.Recover". A bare `recover()` is deliberately NOT
-// accepted on its own — swallowing a panic without logging it and moving
-// stellarindex_worker_panics_total turns a loud crash into a silent one,
-// which is the failure this whole guard exists to prevent. A deferred
-// function literal counts only when it calls recover() AND one of Guards.
+// Guards are call names as written in source: a bare "recoverBackgroundWorker" or a qualified
+// "worker.Recover". A bare `recover()` is NOT accepted alone: swallowing a panic without logging
+// it or moving stellarindex_worker_panics_total turns a loud crash into a silent one, the failure
+// this guard prevents. A deferred literal counts only when it calls recover() AND one of Guards.
 type Config struct {
 	Guards []string
 }
@@ -89,15 +87,12 @@ type Site struct {
 	fset *token.FileSet
 }
 
-// Calls reports whether the site's body calls name anywhere, including
-// inside nested function literals. name matches either the qualified
-// rendering ("pipeline.PersistEvents") or the bare final identifier
-// ("ListenAndServe"), so a call through a variable receiver still matches.
+// Calls reports whether the site's body calls name anywhere, including inside nested function
+// literals. name matches the qualified rendering ("pipeline.PersistEvents") or the bare final
+// identifier ("ListenAndServe"), so a call through a variable receiver still matches.
 //
-// This is the hook for CONTENT-checked exemptions: a caller that wants to
-// exempt the HTTP listener asserts the body calls "ListenAndServe" rather
-// than trusting a line number, so the exemption cannot silently migrate
-// onto an unrelated worker.
+// It is the hook for CONTENT-checked exemptions: asserting the body calls "ListenAndServe"
+// rather than trusting a line number keeps an exemption from migrating onto an unrelated worker.
 func (s Site) Calls(name string) bool {
 	if s.body == nil {
 		return false
@@ -116,11 +111,9 @@ func (s Site) Calls(name string) bool {
 	return found
 }
 
-// DefersCall reports whether the site's body defers name at its OWN
-// statement level — descending through blocks, if/for/select bodies, but
-// never into a nested function literal. A defer inside a nested literal
-// belongs to that literal, not to this goroutine, so counting it would
-// certify a guard that does not run.
+// DefersCall reports whether the site's body defers name at its OWN statement level, descending
+// through blocks and if/for/select bodies but never into a nested function literal, whose defer
+// does not run for this goroutine and would certify a guard that never fires.
 func (s Site) DefersCall(name string) bool {
 	if s.body == nil {
 		return false
@@ -202,11 +195,9 @@ func (sc *Scanner) ScanFile(path string) ([]Site, error) {
 	}
 
 	var sites []Site
-	// visited guards against re-walking a declaration's body twice: once
-	// because it is one of THIS file's own top-level FuncDecls (walked
-	// directly below) and again because some `go` statement also resolves
-	// a callee onto it. It is seeded with every decl this loop walks
-	// directly so recursion below never re-adds those sites.
+	// visited stops a declaration being walked twice, as one of THIS file's own FuncDecls and
+	// again via a `go` statement that resolves onto it. It is seeded with every decl this loop
+	// walks directly so recursion never re-adds those sites.
 	visited := map[string]bool{}
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -237,20 +228,14 @@ func (sc *Scanner) ScanFile(path string) ([]Site, error) {
 	return sites, nil
 }
 
-// recurseIntoCallee covers nested goroutines: a `go` statement whose
-// callee resolves to a declaration is checked for whether IT recovers, but
-// that declaration may itself start further goroutines — in another file
-// of the same package, or in an imported package — that this scanner would
-// otherwise never see because ScanFile only parses the one file it was
-// given. It walks the resolved body for its OWN `go` statements, resolving
-// and recursing into each of those in turn, attributing every site found
-// to the callee's own file and enclosing function.
+// recurseIntoCallee covers nested goroutines: a resolved callee may itself start goroutines, in
+// another file or package, that ScanFile (one file only) would never see. It walks the callee
+// body for its OWN `go` statements and recurses, attributing each site to the callee's file and
+// enclosing function.
 //
-// visited is keyed by "file:line" of the declaration (stable across the
-// several *token.FileSet values in play) and is seeded with every decl the
-// caller already walks directly, so a callee that happens to be one of
-// those decls is never re-added, and a recursive or mutually-recursive
-// spawn helper is only ever descended into once.
+// visited is keyed by "file:line" of the declaration (stable across the several *token.FileSet
+// values in play) and seeded with every decl the caller walks directly, so no decl is re-added
+// and a recursive or mutually-recursive spawn helper is descended into once.
 func (r *resolver) recurseIntoCallee(callee *resolvedCallee, visited map[string]bool, sites *[]Site) {
 	if callee == nil || callee.decl.Body == nil {
 		return
@@ -411,12 +396,10 @@ func (r *resolver) resolveSelector(s *Site, sel *ast.SelectorExpr, file *ast.Fil
 	return &resolvedCallee{decl: decl, file: idx.files[decl], self: idx, fset: idx.fset}
 }
 
-// typeOfIdent determines the declared type of a local identifier without a
-// type checker. It handles the three shapes that carry a written-down type:
-// the enclosing function's receiver/parameters/named results, an explicit
-// `var x pkg.T`, and `x := pkg.NewT(…)` where NewT's result type is
-// declared in a package this scanner can parse. Anything else returns
-// false, which the caller turns into KindUnresolved.
+// typeOfIdent finds a local identifier's declared type without a type checker, for the three
+// shapes with a written-down type: the enclosing function's receiver/parameters/named results,
+// `var x pkg.T`, and `x := pkg.NewT(…)` with NewT declared in a parseable package. Anything else
+// returns false, which the caller turns into KindUnresolved.
 func (r *resolver) typeOfIdent(name string, file *ast.File, enclosing *ast.FuncDecl, self *pkgIndex) (pkgAlias, typeName string, ok bool) {
 	if enclosing != nil {
 		if p, t, ok := typeFromFieldLists(name, enclosing.Recv, enclosing.Type.Params, enclosing.Type.Results); ok {
@@ -550,11 +533,9 @@ func (r *resolver) declOfCall(fun ast.Expr, file *ast.File, self *pkgIndex) (*as
 	return nil, "", false
 }
 
-// indexImport maps a MODULE-LOCAL import path to its directory and
-// indexes it. Packages outside the module (stdlib, third-party) are
-// deliberately not resolvable: their source is not in the tree this test
-// guards, and a `go` statement into one must be wrapped in a literal so
-// the guard is visible where the goroutine is started.
+// indexImport maps a MODULE-LOCAL import path to its directory and indexes it. Packages outside
+// the module are deliberately unresolvable: a `go` statement into one must be wrapped in a
+// literal so the guard is visible where the goroutine starts.
 func (r *resolver) indexImport(importPath string) (*pkgIndex, error) {
 	if importPath != r.modPath && !strings.HasPrefix(importPath, r.modPath+"/") {
 		return nil, fmt.Errorf("%s is outside module %s — wrap the call in a func literal so the guard is visible at the go statement", importPath, r.modPath)
@@ -619,11 +600,9 @@ func (idx *pkgIndex) addDecls(f *ast.File) {
 	}
 }
 
-// guardIn returns the name of the recovery marker the body registers, or
-// "" when it registers none. Only defers at the body's own statement
-// level count (see DefersCall), and a deferred literal counts only when
-// it both calls recover() and reports through one of the configured
-// guards — a bare recover() swallows the panic silently.
+// guardIn returns the recovery marker the body registers, or "" for none. Only defers at the
+// body's own statement level count (see DefersCall), and a deferred literal must both call
+// recover() and report through a configured guard, since a bare recover() swallows silently.
 func (r *resolver) guardIn(body *ast.BlockStmt) string {
 	var guard string
 	defersAtOwnLevel(body, func(call *ast.CallExpr) bool {

@@ -15,17 +15,10 @@ const SourceName = "trustlines"
 // string to route observations to `trustline_observations`.
 const ObservationKind = "trustlines.observation"
 
-// Observation is one TrustLineEntry-delta record. Captures the
-// post-change trustline state at the ledger that produced the
-// change.
-//
-// One Observation per (account, asset, ledger) — when an account
-// is touched multiple times in a single ledger, the writer's
-// last-writer-wins ON CONFLICT path keeps the final state.
-//
-// Removed-variant changes set IsRemoval=true with Balance zeroed —
-// the reader interprets this as "holder no longer has trustline
-// at this ledger."
+// Observation is the post-change TrustLineEntry state at the ledger that produced the change.
+// One per (account, asset, ledger): if a ledger touches it repeatedly, the writer's
+// last-writer-wins ON CONFLICT path keeps the final state. Removed changes set IsRemoval=true
+// with Balance zeroed, meaning the holder no longer has the trustline at that ledger.
 type Observation struct {
 	// AccountID is the G-strkey of the trustline's holder.
 	AccountID string
@@ -49,11 +42,8 @@ type Observation struct {
 	// Balance is zero on these rows.
 	IsRemoval bool
 
-	// IntraLedgerSeq is the within-ledger position of the change that
-	// produced this observation, in the dispatcher's canonical meta-walk
-	// order (see dispatcher.LedgerEntryChangeContext.IntraLedgerSeq). The
-	// writer guards its last-writer-wins upsert on it so an out-of-order
-	// PersistEvents worker can never overwrite a later intra-ledger change
-	// with an earlier one.
+	// IntraLedgerSeq is the change's within-ledger position in the dispatcher's canonical
+	// meta-walk order. The writer guards its last-writer-wins upsert on it so an out-of-order
+	// PersistEvents worker cannot overwrite a later change with an earlier one.
 	IntraLedgerSeq uint32
 }

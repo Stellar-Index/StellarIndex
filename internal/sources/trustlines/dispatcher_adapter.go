@@ -11,13 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Observer is the dispatcher-facing TrustlineEntry observer per
-// ADR-0022. Implements [dispatcher.LedgerEntryChangeDecoder].
-//
-// Watched-asset driven: the observer only fires on changes
-// touching trustlines whose asset_key is in the operator-
-// configured watched set. Non-classic-credit Trustline variants
-// (native, pool-share) are skipped at the Match level.
+// Observer is the dispatcher-facing TrustlineEntry observer (ADR-0022), implementing
+// [dispatcher.LedgerEntryChangeDecoder]. It fires only on trustlines whose asset_key is in the
+// operator-configured watched set; native and pool-share variants are skipped in Match.
 type Observer struct {
 	// watched maps asset_key (CODE:ISSUER) → struct{}{}. Map
 	// lookup is O(1) per change; the watched set is bounded by
@@ -55,17 +51,9 @@ func NewObserver(watched []string) (*Observer, error) {
 // Name implements [dispatcher.LedgerEntryChangeDecoder].
 func (*Observer) Name() string { return SourceName }
 
-// Matches implements [dispatcher.LedgerEntryChangeDecoder].
-// Returns true when:
-//
-//  1. The change touches a TrustlineEntry, AND
-//  2. The trustline's asset is a classic credit (alphanum4/12;
-//     native + pool-share filtered out), AND
-//  3. The asset_key is in the watched set.
-//
-// Match work is bounded — type discriminator, Asset variant,
-// asset_key derivation, map lookup. No NUMERIC parsing or
-// balance extraction.
+// Matches implements [dispatcher.LedgerEntryChangeDecoder]. It is true when the change touches a
+// TrustlineEntry whose asset is a classic credit (alphanum4/12) with its asset_key in the watched
+// set. The work is bounded (discriminators, key derivation, map lookup) with no balance parsing.
 func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	if !changeIsTrustline(change) {
 		return false

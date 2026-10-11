@@ -11,21 +11,14 @@ import (
 // SourceName is the registry key for this source.
 const SourceName = "blend_backstop"
 
-// Backstop contracts — the two mainnet Blend Backstop deployments.
-// The Backstop is a SEPARATE event surface from the Blend pool /
-// pool-factory decoder (internal/sources/blend); it has its own
-// contract addresses and its own 12-event vocabulary. Gating on BOTH
-// is mandatory: the backstop's symbols (claim / withdraw /
-// queue_withdrawal / gulp_emissions) OVERLAP with Blend POOL event
-// symbols, so the contract-id gate — not the topic symbol — is what
-// disambiguates a backstop event from a pool event. See ADR-0035
-// (factory-anchored contract gating) + the "Comet uses a shared
-// topic" trap in AGENTS.md.
+// Backstop contracts: the two mainnet Blend Backstop deployments, a SEPARATE event surface from
+// the pool decoder (internal/sources/blend). Gating on BOTH is mandatory because backstop
+// symbols overlap with pool event symbols, so the contract id (ADR-0035), not the topic,
+// disambiguates them.
 //
 //   - MainnetBackstopV2 is the Backstop V2 singleton (current).
-//   - MainnetBackstopV1 (the V1 const) is read from the sibling
-//     blend package — both were live for a span and a backfill range
-//     would replay either, so both gate.
+//   - MainnetBackstopV1 is read from the sibling blend package; both were live for a span and a
+//     backfill range may replay either.
 const MainnetBackstopV2 = "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7"
 
 // MainnetBackstopV1 re-exports blend.MainnetBackstopV1 so the
@@ -39,18 +32,13 @@ const MainnetBackstopV1 = blend.MainnetBackstopV1
 // detector's, the reconcile's and a fresh projector cursor's range.
 const BackstopGenesisLedger = blend.FactoryGenesisLedger
 
-// Event names — topic[0] Symbol strings emitted by the backstop
-// contract. 12 events across the V1 + V2 Backstop surface (V1 uses
-// `rw_zone` where V2 uses `rw_zone_add`; V2 additionally exposes
-// `rw_zone_remove`, unconfirmed in the lake — see decode.go).
+// Event names: topic[0] Symbol strings across the V1 + V2 Backstop surface (V1 uses `rw_zone`
+// where V2 uses `rw_zone_add`; V2 also has `rw_zone_remove`, unconfirmed in the lake).
 //
-// SCHEMA PROVENANCE: reverse-engineered from real mainnet lake samples;
-// the V2 shapes are cross-checked against the Blend team's published
-// source (blend-contracts-v2 backstop/src/events.rs) — see decode.go's
-// package doc. V1 has no published source available to us; its arities
-// are pinned against real lake bytes only. Until a full historical
-// replay lands, this source remains LIVE-CAPTURE ONLY for backfill
-// purposes — see README.md §Provenance.
+// SCHEMA PROVENANCE: reverse-engineered from mainnet lake samples; V2 shapes are cross-checked
+// against blend-contracts-v2 backstop/src/events.rs, V1 arities against lake bytes only. Until a
+// full historical replay lands the source is LIVE-CAPTURE ONLY for backfill (README.md
+// Provenance).
 const (
 	EventDeposit           = "deposit"
 	EventClaim             = "claim"
@@ -62,12 +50,8 @@ const (
 	EventDequeueWithdrawal = "dequeue_withdrawal"
 	EventDraw              = "draw"
 	EventRwZoneAdd         = "rw_zone_add"
-	// EventRwZone is the V1 backstop's reward-zone-update topic — V2
-	// renamed this to `rw_zone_add` (and added the separate
-	// `rw_zone_remove`). Same logical action, different wire symbol;
-	// kept as a distinct EventType so the stored event_kind reflects
-	// exactly what was on the wire. A lake census found 5 events, ledgers
-	// 51.50M-55.18M.
+	// EventRwZone is the V1 reward-zone-update topic, renamed `rw_zone_add` in V2. It stays a
+	// distinct kind so the stored event_kind reflects exactly what was on the wire.
 	EventRwZone = "rw_zone"
 	// EventRwZoneRemove: zero lake occurrences at the last census (this
 	// event had never fired on mainnet). Added per the EVERY-event
@@ -94,22 +78,14 @@ var (
 	TopicSymbolRwZoneRemove      = scval.MustEncodeSymbol(EventRwZoneRemove)
 )
 
-// Event is the [consumer.Event] the backstop Decoder emits — one per
-// decoded contract event. It carries the blend_backstop_events row
-// shape (migration 0063): the universal identity fields, the promoted
-// typed columns (Pool / UserAddress / Amount / Amount2), and the
-// event-type-specific remainder in Attributes.
+// Event is the [consumer.Event] the backstop Decoder emits, one per decoded contract event, in
+// the blend_backstop_events row shape: identity fields, promoted columns (Pool / UserAddress /
+// Amount / Amount2) and the remainder in Attributes.
 //
-// Pool / UserAddress are strkey strings; an empty value means "this
-// event type carries no such field" and the sink writes SQL NULL.
-// Amount / Amount2 are decimal i128 strings (ADR-0003 — never
-// int64); empty → SQL NULL.
-//
-// The indexer's event sink type-switches on this at its output
-// channel (internal/pipeline/sink.go) and writes via
-// Store.InsertBlendBackstopEvent. The projector
-// (internal/projector/registry.go) is the sole writer in Phase-4
-// sole-writer mode.
+// Pool / UserAddress are strkeys; Amount / Amount2 are decimal i128 strings (ADR-0003, never
+// int64). An empty value means the event type has no such field and the sink writes SQL NULL.
+// The sink (internal/pipeline/sink.go) type-switches on this; the projector is the sole writer
+// in sole-writer mode.
 type Event struct {
 	ContractID  string
 	Ledger      uint32

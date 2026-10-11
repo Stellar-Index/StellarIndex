@@ -18,22 +18,15 @@ var (
 	// here as defence-in-depth.
 	ErrNotTrustline = errors.New("trustlines: change is not a TrustLineEntry")
 
-	// ErrUnsupportedTrustLineAsset — Trustline references either
-	// native XLM (Algorithm 1, covered by accounts observer) or a
-	// pool-share asset (covered by the LP-reserve observer,
-	// liquidity_pools). Algorithm 2's trustline
-	// component is for classic credits only; other variants are
-	// skipped at Match time.
+	// ErrUnsupportedTrustLineAsset means the trustline is native XLM (accounts observer) or a
+	// pool share (liquidity_pools observer). Algorithm 2's trustline component covers classic
+	// credits only, so other variants are skipped at Match time.
 	ErrUnsupportedTrustLineAsset = errors.New("trustlines: TrustLineAsset is not a classic credit asset")
 )
 
-// extractTrustlineFromChange returns (account_id, asset_key,
-// balance, is_removal) for a TrustlineEntry-delta. Match has
-// already filtered out non-Trustline / non-classic-credit
-// changes; this function does the value extraction.
-//
-// Removed-variant changes use the LedgerKey to recover identity;
-// balance is zero (the entry no longer exists post-change).
+// extractTrustlineFromChange returns (account_id, asset_key, balance, is_removal) for a
+// TrustlineEntry delta that Match already filtered to classic credits. Removed changes recover
+// identity from the LedgerKey and report zero balance.
 func extractTrustlineFromChange(change xdr.LedgerEntryChange) (accountID, assetKey string, balance *big.Int, isRemoval bool, err error) {
 	switch change.Type {
 	case xdr.LedgerEntryChangeTypeLedgerEntryCreated:
@@ -75,12 +68,9 @@ func decodePresentTrustline(tl *xdr.TrustLineEntry, removal bool) (string, strin
 	return acct, ak, big.NewInt(int64(tl.Balance)), removal, nil
 }
 
-// assetKeyFromTrustLineAsset converts the XDR asset variant on a
-// TrustlineEntry to the supply.AssetKey form (CODE:ISSUER).
-//
-// Native + pool-share asset types return [ErrUnsupportedTrustLineAsset]
-// — those entries shouldn't reach Decode (Match filters them) but
-// the guard ensures a misbehaving call doesn't write garbage.
+// assetKeyFromTrustLineAsset converts the XDR asset to the supply.AssetKey form (CODE:ISSUER), so
+// identity is always (code, issuer). Native and pool-share types return
+// [ErrUnsupportedTrustLineAsset]; Match filters them, and the guard stops a stray call writing garbage.
 func assetKeyFromTrustLineAsset(a xdr.TrustLineAsset) (string, error) {
 	switch a.Type {
 	case xdr.AssetTypeAssetTypeCreditAlphanum4:

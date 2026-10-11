@@ -12,21 +12,14 @@ import (
 // Errors returned by extractObservation. Callers classify via
 // errors.Is.
 var (
-	// ErrNotAccountEntry — the change touched an entry that isn't an
-	// AccountEntry. Returned by accountIDFromChange when the type
-	// discriminant doesn't match. The observer's [Observer.Matches]
-	// pre-filters on this so Decode shouldn't see one in practice;
-	// guard anyway.
+	// ErrNotAccountEntry means the change touched a non-AccountEntry. Matches pre-filters
+	// these, so Decode should never see one; the guard stays anyway.
 	ErrNotAccountEntry = errors.New("accounts: change is not an AccountEntry")
 )
 
-// accountIDFromChange returns the G-strkey of the AccountEntry the
-// change references, regardless of whether the change is a
-// Created / Updated / Restored / Removed variant. Returns
-// [ErrNotAccountEntry] when the change's data type is not Account.
-//
-// This is a cheap pre-filter helper used by [Observer.Matches] —
-// no balance/home-domain extraction here.
+// accountIDFromChange returns the G-strkey of the AccountEntry a change references, for any
+// change variant, or [ErrNotAccountEntry]. It is the cheap pre-filter for [Observer.Matches],
+// so it extracts no balance or home domain.
 func accountIDFromChange(change xdr.LedgerEntryChange) (string, error) {
 	switch change.Type {
 	case xdr.LedgerEntryChangeTypeLedgerEntryCreated:
@@ -53,16 +46,10 @@ func accountIDFromChange(change xdr.LedgerEntryChange) (string, error) {
 	return "", fmt.Errorf("%w: unknown change type %d", ErrNotAccountEntry, change.Type)
 }
 
-// extractObservation builds an [Observation] from a
-// LedgerEntryChange already known to touch a watched AccountEntry.
-// Removed-variant changes produce IsRemoval=true with zeroed
-// balance/home_domain; the reader can interpret that as "account
-// no longer exists at this ledger."
-//
-// Caller is responsible for filtering by watched-set before
-// calling this — extractObservation does the cheaper Match work
-// again as a defence-in-depth guard but errs out on mismatch
-// rather than silently coercing.
+// extractObservation builds an [Observation] from a change on a watched AccountEntry.
+// Removed changes yield IsRemoval=true with zeroed balance/home_domain, meaning the account no
+// longer exists at that ledger. The caller filters by watched set; a mismatch errors rather
+// than being silently coerced.
 func extractObservation(change xdr.LedgerEntryChange) (Observation, error) {
 	switch change.Type {
 	case xdr.LedgerEntryChangeTypeLedgerEntryCreated:

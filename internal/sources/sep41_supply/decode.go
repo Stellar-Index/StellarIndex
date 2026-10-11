@@ -37,13 +37,9 @@ func classify(ev *events.Event) string {
 	}
 }
 
-// decodeAmount extracts the i128 event amount and converts it to
-// *big.Int. Per ADR-0011 / ADR-0023 amounts are non-negative (the
-// kind discriminates direction); the storage writer rejects negatives
-// upstream, so this just guards against SDK quirks.
-//
-// The amount arrives in TWO on-chain SHAPES — the body (event.Value)
-// is EITHER a bare i128 OR a CAP-67 map wrapping it (see amountScVal).
+// decodeAmount extracts the i128 event amount as a *big.Int. Amounts are non-negative (the kind
+// gives direction) and the storage writer rejects negatives, so this only guards SDK quirks.
+// The body is EITHER a bare i128 OR a CAP-67 map wrapping it (see amountScVal).
 func decodeAmount(ev *events.Event) (*big.Int, error) {
 	sv, err := scval.Parse(ev.Value)
 	if err != nil {
@@ -71,11 +67,10 @@ func decodeAmount(ev *events.Event) (*big.Int, error) {
 //	bare i128   (ScvI128)                      → the amount directly
 //	CAP-67 map  { amount: i128, to_muxed_id }  → amount lives in the field
 //
-// A mint / transfer emits the MAP form for a muxed destination or when the
-// issuer stamps a memo into `to_muxed_id`. An i128-only decode rejects those
-// with ErrAmountNotI128 and drops the row, driving mint_total to zero so
-// `burn_total > mint_total` trips the aggregator's dominant-burn guard. Decode
-// by map-field NAME (`amount`), never by position
+// A mint / transfer emits the MAP form for a muxed destination or an issuer memo in
+// `to_muxed_id`. An i128-only decode would drop those rows with ErrAmountNotI128, driving
+// mint_total to zero so `burn_total > mint_total` trips the aggregator's dominant-burn guard.
+// Decode by map-field NAME (`amount`), never position
 // (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 func amountScVal(sv xdr.ScVal) (xdr.ScVal, error) {
 	switch sv.Type {
@@ -99,10 +94,8 @@ func amountScVal(sv xdr.ScVal) (xdr.ScVal, error) {
 	}
 }
 
-// decodeCounterparty extracts the recipient (mint) or holder (burn / clawback)
-// Address from the topic vector. Topic[0] is the event symbol; the counterparty
-// POSITION depends on the on-chain SHAPE and topic COUNT alone does not
-// disambiguate, so we branch on the TYPE of topic[2]:
+// decodeCounterparty extracts the recipient (mint) or holder (burn / clawback) Address. Topic
+// COUNT alone does not disambiguate the shape, so it branches on the TYPE of topic[2]:
 //
 //	mint / clawback
 //	  legacy SAC     ["mint", admin(Addr), to(Addr)]            → counterparty = topic[2]
@@ -110,13 +103,10 @@ func amountScVal(sv xdr.ScVal) (xdr.ScVal, error) {
 //	  bare SEP-41    ["mint", to(Addr)]                          → counterparty = topic[1]
 //	burn             ["burn", from(Addr) (, sep0011_asset)]      → counterparty = topic[1] (all shapes)
 //
-// If topic[2] decodes as an Address it is the legacy admin-prefixed form;
-// otherwise it is the sep0011_asset String (CAP-67) or absent, and the
-// counterparty is topic[1]. A fixed-topic[2] decode would DROP the dominant
-// CAP-67 shape (AsAddressStrkey returns ErrScValType on the String, so
-// total_supply under-counts).
-//
-// Shorter topic vectors surface ErrShortTopic so the caller drops the row.
+// An Address at topic[2] is the legacy admin-prefixed form; otherwise it is the CAP-67
+// sep0011_asset String or absent, and the counterparty is topic[1]. A fixed-topic[2] decode
+// would drop the dominant CAP-67 shape (ErrScValType on the String) and under-count
+// total_supply. Shorter topic vectors surface ErrShortTopic so the caller drops the row.
 func decodeCounterparty(ev *events.Event, kind string) (string, error) {
 	switch kind {
 	case SymbolBurn:
